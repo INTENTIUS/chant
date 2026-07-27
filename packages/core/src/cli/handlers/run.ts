@@ -2,12 +2,13 @@ import { resolve, join, dirname } from "node:path";
 import { existsSync, writeFileSync, mkdirSync, readFileSync } from "node:fs";
 import { createConnection } from "node:net";
 import { spawn as spawnChild, type ChildProcess } from "node:child_process";
-import { loadChantConfig, resolveAutoReleaseDisabled } from "../../config";
+import { loadChantConfig, resolveAutoReleaseDisabled, type ChantConfig } from "../../config";
 import { discoverOps } from "../../op/discover";
 import { loadActivities, loadProfiles } from "../../op/activity-registry";
 import { runOpLocally, findGate, LocalGateUnsupportedError, OpRunFailure } from "../../op/local-executor";
 import { renderHuman, renderJson } from "../../op/local-output";
 import { formatError, formatWarning, formatSuccess, formatBold, formatInfo } from "../format";
+import { resolveCliBuildParams, parseParamFlags } from "../build-params-cli";
 import type { CommandContext } from "../registry";
 import {
   loadTemporalClient,
@@ -27,6 +28,7 @@ import { applyConfigDefaults } from "../../components/config-defaults";
 import { maybeRecordAutoRelease, extractRunDigestFromPhaseOutputs } from "../../components/auto-release";
 import { maybePersistBuildManifest, extractRunManifestFromPhaseOutputs } from "../../components/manifest-persistence";
 import type { DriverComponentResult } from "../../components/driver";
+import type { BuildParamProvenance } from "../../provenance";
 
 function kebabToCamel(s: string): string {
   return s.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase());
@@ -669,6 +671,18 @@ async function recordAutoReleasesForRun(
  * Opt out with `--no-release-record` or `chant.config.ts`'s
  * `release.autoRecord: false`; the default is ON. A failed run never reaches
  * this step, so it writes nothing.
+ *
+ * chant #1108 — resolves this invocation's declared build-time parameters
+ * (`chant.config.ts`'s `buildParams`, against `--param`/`--params-file`/a
+ * declared `env` mapping) the exact same way `chant build` does
+ * (`resolveCliBuildParams`, shared with `buildCommand`), BEFORE either the
+ * local or `--temporal` path discovers/imports any `*.component.ts` file.
+ * Before this, `params.*` (`@intentius/chant/params`) was always `{}` under
+ * this command, no matter what a component's `chant.config.ts` declared or a
+ * CI job's environment supplied — see chant #1108. `chant.config.ts` is
+ * loaded once here (with the same defensive fallback the post-run
+ * auto-release check below used to apply itself) and reused for that check,
+ * rather than loaded a second time.
  */
 export async function runOpComponents(ctx: CommandContext): Promise<number> {
   const selector = ctx.args.path;
@@ -680,7 +694,18 @@ export async function runOpComponents(ctx: CommandContext): Promise<number> {
     return 1;
   }
 
-  if (ctx.args.temporal) return runComponentTemporal(ctx, selector);
+  const projectPath = resolve(".");
+  const { config } = await loadChantConfig(projectPath).catch(() => ({ config: {} as ChantConfig }));
+  const paramsResolution = resolveCliBuildParams(config.buildParams, {
+    cli: parseParamFlags(ctx.args.param),
+    paramsFile: ctx.args.paramsFile,
+  });
+  if (!paramsResolution.success) {
+    for (const message of paramsResolution.errors) console.error(message);
+    return 1;
+  }
+
+  if (ctx.args.temporal) return runComponentTemporal(ctx, selector, config, paramsResolution.provenance);
 
   const env = ctx.args.env ?? "local";
   // Seed cross-component/cross-stack outputs from upstream jobs' dumped files
@@ -704,11 +729,12 @@ export async function runOpComponents(ctx: CommandContext): Promise<number> {
   // `undefined` and every `onProgress?.(...)` call in the driver is a no-op —
   // behavior is byte-for-byte unchanged from before this flag existed.
   const onProgress = ctx.args.progressJson ? ndjsonProgressSink() : undefined;
-  const result = await runComponents(resolve("."), selector, {
+  const result = await runComponents(projectPath, selector, {
     env: ctx.args.env,
     componentOutputs: seededOutputs,
     onProgress,
     sandbox: ctx.args.sandbox,
+    buildParams: paramsResolution.provenance,
   });
 
   // Dump the accumulated outputs for a downstream job to seed from. Written
@@ -739,7 +765,6 @@ export async function runOpComponents(ctx: CommandContext): Promise<number> {
   }
 
   if (result.success && result.run) {
-    const { config } = await loadChantConfig(resolve(".")).catch(() => ({ config: {} }));
     const disabled = resolveAutoReleaseDisabled(config, ctx.args.noReleaseRecord);
     await recordAutoReleasesForRun(result.run.results, env, `local-${Date.now()}`, disabled);
   }
@@ -771,8 +796,19 @@ function componentWorkflowId(componentName: string): string {
  * crash and clearable via `chant run signal <name> <signal> --components
  * --temporal` (`runOpSignal` above, extended for components alongside this
  * issue).
+ *
+ * `config`/`buildParams` are resolved once by the caller (`runOpComponents`,
+ * chant #1108) BEFORE this function runs, so `resolveComponentTargets`
+ * below — which discovers/imports the target `*.component.ts` file — sees
+ * `params.*` (`@intentius/chant/params`) already populated, the same
+ * guarantee the local executor path gets.
  */
-async function runComponentTemporal(ctx: CommandContext, selector: string): Promise<number> {
+async function runComponentTemporal(
+  ctx: CommandContext,
+  selector: string,
+  config: ChantConfig,
+  buildParams: BuildParamProvenance[],
+): Promise<number> {
   if (selector === "all") {
     console.error(formatError({
       message: "`chant run --components all --temporal` is not supported",
@@ -782,15 +818,17 @@ async function runComponentTemporal(ctx: CommandContext, selector: string): Prom
   }
 
   const projectPath = resolve(".");
-  const resolved = await resolveComponentTargets(projectPath, selector, ctx.args.sandbox);
+  const resolved = await resolveComponentTargets(projectPath, selector, ctx.args.sandbox, buildParams);
   if (!resolved.success || resolved.targets.length === 0) {
     console.error(formatError({ message: resolved.error ?? `Component "${selector}" not found` }));
     return 1;
   }
   const component = resolved.targets[0];
 
-  // Load config + profile (mirrors runOpTemporal).
-  const { config: chantConfig } = await loadChantConfig(projectPath);
+  // Config + profile (mirrors runOpTemporal). `config` was already loaded by
+  // the caller to resolve build-time parameters (chant #1108); reused here
+  // rather than loading chant.config.ts a second time.
+  const chantConfig = config;
   let profile;
   try {
     profile = resolveProfile(chantConfig as Record<string, unknown>, ctx.args.profile);

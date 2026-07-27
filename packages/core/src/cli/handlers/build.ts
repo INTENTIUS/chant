@@ -4,6 +4,8 @@ import { buildCommand, buildCommandWatch, printErrors, printWarnings, resolveBui
 import { formatError, formatInfo, formatSuccess, formatBold } from "../format";
 import type { CommandContext } from "../registry";
 import { generateComponentsPipeline } from "../../components/cli-support";
+import { loadChantConfig, type ChantConfig } from "../../config";
+import { resolveCliBuildParams, parseParamFlags } from "../build-params-cli";
 
 /**
  * `chant build --components --generate <lexicon>` — generate mode (#563,
@@ -12,10 +14,29 @@ import { generateComponentsPipeline } from "../../components/cli-support";
  * normal lexicon build: no entity discovery, no serializers, no post-synth
  * checks — those apply to lexicon resources, which is a different input to
  * a different command path (`chant build` without `--components`).
+ *
+ * chant #1108 — resolves this invocation's declared build-time parameters
+ * (`chant.config.ts`'s `buildParams`, against `--param`/`--params-file`/a
+ * declared `env` mapping) the exact same way `chant build` does
+ * (`resolveCliBuildParams`, shared with `buildCommand`), BEFORE
+ * `generateComponentsPipeline` discovers/imports any `*.component.ts` file.
+ * Before this, `params.*` (`@intentius/chant/params`) was always `{}` under
+ * this command too — generate mode shares `discoverComponents` with `chant
+ * run --components`, so it had the identical gap.
  */
 async function runGenerateComponents(ctx: CommandContext): Promise<number> {
   const { args } = ctx;
   const lexicon = args.generate as string;
+
+  const { config } = await loadChantConfig(resolve(args.path)).catch(() => ({ config: {} as ChantConfig }));
+  const paramsResolution = resolveCliBuildParams(config.buildParams, {
+    cli: parseParamFlags(args.param),
+    paramsFile: args.paramsFile,
+  });
+  if (!paramsResolution.success) {
+    for (const message of paramsResolution.errors) console.error(message);
+    return 1;
+  }
 
   // Which lexicons support generate mode is a property of the loaded lexicon
   // plugins (those implementing `generateComponentPipeline`, #688), not a
@@ -26,6 +47,7 @@ async function runGenerateComponents(ctx: CommandContext): Promise<number> {
     lexicon,
     { env: args.env },
     args.sandbox,
+    paramsResolution.provenance,
   );
 
   if (!result.success) {
@@ -87,14 +109,7 @@ export async function runBuild(ctx: CommandContext): Promise<number> {
   }
 
   // #1064 — `--param name=value`, repeated, into a flat { name: value } record.
-  const params = args.param?.length
-    ? Object.fromEntries(
-        args.param.map((entry) => {
-          const eq = entry.indexOf("=");
-          return eq === -1 ? [entry, ""] : [entry.slice(0, eq), entry.slice(eq + 1)];
-        }),
-      )
-    : undefined;
+  const params = parseParamFlags(args.param);
 
   if (args.watch) {
     const cleanup = buildCommandWatch({
