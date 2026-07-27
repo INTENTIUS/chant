@@ -548,8 +548,23 @@ function renderProgress(opName: string, history: WorkflowHistoryRaw): void {
  * (`../../components/driver.ts`) rather than a `*.op.ts` Op. Checked first,
  * mirroring `runGraph`'s `if (ctx.args.components) return
  * runComponentGraph(ctx)` branch (../handlers/graph.ts).
+ *
+ * chant #1116 — `--report` with `--components` is checked and hard-errored
+ * before that dispatch. There is no preview/dry-run mode for the component
+ * driver: unlike the Op path (where `--report` reads a past Temporal run),
+ * `runOpComponents` has never read `ctx.args.report` at all, so the flag was
+ * silently ignored and the command fell through to a real dispatch — observed
+ * live reaching an actual cloud shell-out. Erroring here is the safe minimum
+ * called out on the issue; a real preview is future work.
  */
 export async function runOp(ctx: CommandContext): Promise<number> {
+  if (ctx.args.components && ctx.args.report) {
+    console.error(formatError({
+      message: "--report is not supported with --components",
+      hint: "No preview/dry-run mode exists yet for the component driver (see chant#1116). Omit --report.",
+    }));
+    return 1;
+  }
   if (ctx.args.components) return runOpComponents(ctx);
   if (ctx.args.local && ctx.args.temporal) {
     console.error(formatError({
