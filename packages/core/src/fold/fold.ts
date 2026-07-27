@@ -10,11 +10,11 @@ import {
   dynamicElementAccessMessage,
   isLiteralElementKey,
   isLiteralPropertyName,
-  resourceCtorArgMessage,
   unsupportedBinaryMessage,
   unsupportedExpressionMessage,
   type SubsetRuleId,
 } from "./subset";
+import { isFoldableHelperName } from "./foldable-helpers";
 
 /**
  * fold — static AST value reducer (chant #1026/#1021/#1024, part of epic #1019)
@@ -32,9 +32,14 @@ import {
  * ({@link "../lint/rules/evl001-non-literal-expression"}), so the linted
  * subset and the folded subset can never drift apart (#1024).
  *
- * A `CallExpression` has no case — a function call as a value is
+ * A `CallExpression` has almost no case — a function call as a value is
  * structurally unrepresentable, not merely linted against. Composite
- * factory calls are out of scope here (epic Phase 5, #1023).
+ * factory calls are out of scope here (epic Phase 5, #1023). The one
+ * exception (chant #1082) is a call to a REGISTERED chant authoring helper
+ * ({@link "./foldable-helpers"}): those reduce to a symbolic
+ * {@link FoldedHelperCall} envelope — still executing nothing here — the
+ * same way a registered lexicon intrinsic tagged template reduces to a
+ * {@link FoldedIntrinsic} one. Everything else still throws.
  *
  * Cross-file identifier resolution (chant #1020): `consts` alone is always
  * this file's own top-level bindings — that part stays single-file, and
@@ -69,6 +74,7 @@ export type FoldedValue =
   | { [key: string]: FoldedValue }
   | AttrRefValue
   | FoldedIntrinsic
+  | FoldedHelperCall
   | SymbolicValue
   | FoldedResource;
 
@@ -103,6 +109,23 @@ export interface FoldedIntrinsic {
 }
 
 /**
+ * The result of folding a call to a registered chant authoring helper
+ * (chant #1082) — e.g. `phase("Apply", [...])`, `output(ref, "oX")`. Holds
+ * the helper's name and its folded arguments, in source order.
+ *
+ * Symbolic, exactly like {@link FoldedIntrinsic}: `fold()` executes nothing,
+ * it only records that a registered helper was called and with what. The real
+ * function is resolved through the folding file's own imports and invoked by
+ * `../discovery/fold-import.ts`'s `reviveFoldedValue`, which is also where
+ * the "is this name actually bound to chant's own helper" check lives. See
+ * {@link "./foldable-helpers"} for the allowlist and why it is closed.
+ */
+export interface FoldedHelperCall {
+  __helper: string;
+  args: FoldedValue[];
+}
+
+/**
  * A sub-expression inside a folded intrinsic that fold could not reduce to
  * a value without resolving an identifier from outside this file — e.g. an
  * imported pseudo-parameter namespace access like `AWS.StackName`.
@@ -129,6 +152,18 @@ export interface FoldedResource {
    * ../runtime.ts). Present only when the source actually passed one.
    */
   attributes?: { [key: string]: FoldedValue };
+  /**
+   * chant #1082 — every constructor argument, folded, in source order. Present
+   * only when the argument list is NOT the classic `(props)` / `(props,
+   * attributes)` shape — most often because the props object isn't first
+   * (`new Parameter("String", {...})`, whose signature is `(type, props)`).
+   *
+   * When present this is authoritative: the entity is constructed by spreading
+   * it, so the constructor receives exactly what the source wrote. `props`
+   * alongside it is the first object-literal argument, reported for readers,
+   * never re-passed (which would double-count it).
+   */
+  args?: FoldedValue[];
 }
 
 /**
@@ -555,6 +590,28 @@ export function fold(
   }
 
   if (ts.isCallExpression(node)) {
+    // chant #1082 — the ONE call shape that folds: a registered chant
+    // authoring helper ({@link FOLDABLE_AUTHORING_HELPERS}), called through a
+    // bare identifier that this file hasn't shadowed with its own `const`.
+    // Nothing is executed here — the call reduces to a symbolic
+    // {@link FoldedHelperCall} envelope, exactly as a registered intrinsic
+    // tagged template reduces to a {@link FoldedIntrinsic} one, and for the
+    // same reason: the real function lives in another module, and resolving
+    // + invoking it is the async bridge's job (../discovery/fold-import.ts's
+    // `reviveFoldedValue`), which also verifies the name is actually bound to
+    // an import of chant's own before invoking anything. Every other call —
+    // a user's function, a method call, a call to something declared in this
+    // file — still has no case and throws, unchanged.
+    if (
+      ts.isIdentifier(node.expression) &&
+      isFoldableHelperName(node.expression.text) &&
+      !consts.has(node.expression.text)
+    ) {
+      return {
+        __helper: node.expression.text,
+        args: node.arguments.map((arg) => fold(arg, consts, intrinsics, externals)),
+      };
+    }
     throw foldError(node, callExpressionMessage(node));
   }
 
@@ -562,12 +619,23 @@ export function fold(
 }
 
 /**
- * Fold a resource constructor call — `new Type({ ...props }, { ...attributes
- * })` — to its spec. Each argument present must be an object literal
- * (anything else is not statically evaluable and throws a located
- * {@link FoldError}). The second argument (CFN-style resource attributes —
- * `DependsOn`, `Condition`, `DeletionPolicy`, …) is optional, matching
- * `createResource`'s runtime constructor signature (../runtime.ts).
+ * Fold a resource constructor call to its spec.
+ *
+ * The common `createResource` shape (../runtime.ts) is `new Type({ ...props
+ * })` or `new Type({ ...props }, { ...attributes })` — CFN-style resource
+ * attributes (`DependsOn`, `Condition`, `DeletionPolicy`, …) second — and
+ * that shape reduces to `props` (+ `attributes`) exactly as before.
+ *
+ * chant #1082 — but that is a convention, not a rule every lexicon class
+ * follows. AWS's deploy-time `Parameter` is `(type, props)`
+ * (lexicons/aws/src/parameter.ts): the props object is the SECOND argument
+ * and the first is a plain string. `foldResource` used to require argument 0
+ * to be an object literal, so no `new Parameter(...)` anywhere could ever
+ * fold, whatever surrounded it. The general case now folds every argument in
+ * source order into {@link FoldedResource.args}, which the caller constructs
+ * the entity from verbatim — no positional assumption at all. `props` is
+ * still reported (the first object-literal argument, for callers that read
+ * it) but is a VIEW onto `args`, not the thing constructed from.
  */
 export function foldResource(
   node: ts.NewExpression,
@@ -576,24 +644,33 @@ export function foldResource(
   externals?: ReadonlyMap<string, unknown>,
 ): FoldedResource {
   const typeName = node.expression.getText();
-  const [firstArg, secondArg] = node.arguments ?? [];
+  const args = node.arguments ?? ([] as unknown as ts.NodeArray<ts.Expression>);
+  const [firstArg, secondArg] = args;
+  const foldArg = (arg: ts.Expression) => fold(arg, consts, intrinsics, externals);
 
   if (!firstArg) {
     return { __resource: typeName, props: {} };
   }
-  if (!ts.isObjectLiteralExpression(firstArg)) {
-    throw foldError(firstArg, resourceCtorArgMessage(typeName));
-  }
-  const props = fold(firstArg, consts, intrinsics, externals) as { [key: string]: FoldedValue };
 
-  if (!secondArg) {
-    return { __resource: typeName, props };
+  // The classic (props) / (props, attributes) shape — reported without an
+  // `args` list so the spec of an ordinary resource is unchanged.
+  if (ts.isObjectLiteralExpression(firstArg)) {
+    const props = foldArg(firstArg) as { [key: string]: FoldedValue };
+    if (args.length === 1) {
+      return { __resource: typeName, props };
+    }
+    if (args.length === 2 && ts.isObjectLiteralExpression(secondArg)) {
+      return { __resource: typeName, props, attributes: foldArg(secondArg) as { [key: string]: FoldedValue } };
+    }
   }
-  if (!ts.isObjectLiteralExpression(secondArg)) {
-    throw foldError(secondArg, `resource attributes argument must be an object literal: ${typeName}(...)`);
-  }
-  const attributes = fold(secondArg, consts, intrinsics, externals) as { [key: string]: FoldedValue };
-  return { __resource: typeName, props, attributes };
+
+  // Anything else: fold every argument positionally. Each one still has to be
+  // in the fold subset on its own terms — a non-foldable argument throws from
+  // `fold()` exactly as a non-foldable prop value does.
+  const folded = args.map(foldArg);
+  const propsIndex = args.findIndex((arg) => ts.isObjectLiteralExpression(arg));
+  const props = (propsIndex === -1 ? {} : folded[propsIndex]) as { [key: string]: FoldedValue };
+  return { __resource: typeName, props, args: folded };
 }
 
 function hasExportModifier(statement: ts.VariableStatement): boolean {

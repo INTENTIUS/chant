@@ -141,6 +141,18 @@ describe("subset-doc-parity — supported patterns in typescript-as-data.mdx cla
     expect(findSubsetViolation(resourceArg(consts, "access"))).toBeUndefined();
   });
 
+  test("Registered authoring helpers", () => {
+    // chant #1082 — not a `new Type({...})` declaration, so classify the
+    // exported component object literal directly. `findSubsetViolation`
+    // checks the helper NAME only (subset.ts module doc, point 2b); the
+    // doc's own snippet imports them from chant, which is what the bridge
+    // additionally verifies at fold time.
+    const consts = parseConsts(extractFencedBlock("Registered authoring helpers"));
+    const web = consts.get("web");
+    if (!web) throw new Error(`subset-doc-parity: "web" did not parse as a const declaration`);
+    expect(findSubsetViolation(web)).toBeUndefined();
+  });
+
   test("Nullish coalescing for defaults", () => {
     // Not a standalone statement in the doc (a single object-literal
     // property, deliberately shown as a fragment) — wrapped in an object

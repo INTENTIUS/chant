@@ -1,7 +1,7 @@
 import * as ts from "typescript";
 import { readFile } from "node:fs/promises";
 import { existsSync, statSync, readFileSync, realpathSync } from "node:fs";
-import { dirname, basename, join, isAbsolute, resolve as resolvePath } from "node:path";
+import { dirname, basename, join, sep, isAbsolute, resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import { isDeclarable, type Declarable } from "../declarable";
@@ -16,8 +16,10 @@ import {
   type FoldedResource,
   type FoldedValue,
   type FoldedIntrinsic,
+  type FoldedHelperCall,
   type SymbolicValue,
 } from "../fold/fold";
+import { isChantOwnedSpecifier } from "../fold/foldable-helpers";
 import { importModule } from "./import";
 import type { IntrinsicDef } from "../lexicon";
 import type { BuildParamValue } from "../build-params";
@@ -1114,13 +1116,23 @@ async function resolveSymbolicValue(text: string, ctx: ResolveCtx): Promise<unkn
 }
 
 /**
- * Revive a folded value tree: replace any `{__intrinsic}`/`{__symbol}`
- * envelope with the real value it represents. `insideIntrinsic` tracks
- * whether the CURRENT node is (transitively) one of a `{__intrinsic}`'s own
- * `values` — see the module-doc note above on why `{__attrRef}` is only
- * rejected there, not everywhere.
+ * Revive a folded value tree: replace any
+ * `{__intrinsic}`/`{__helper}`/`{__symbol}` envelope with the real value it
+ * represents.
+ *
+ * `requireLiveRefs` tracks whether the CURRENT node is (transitively) an
+ * argument being handed to a real function that will inspect it — a
+ * `{__intrinsic}`'s own interpolated `values`, or a `{__helper}` call's
+ * arguments (chant #1082). In that position a symbolic `{__attrRef}` envelope
+ * is rejected rather than passed along: the receiving implementation needs a
+ * genuine `AttrRef` instance (`instanceof` checks, `WeakRef` derefs — see
+ * `SubIntrinsic`, and `LexiconOutput`'s constructor in ../lexicon-output.ts),
+ * and handing it a look-alike plain object produces output that is wrong
+ * rather than absent. Everywhere else the envelope is left untouched, because
+ * the serializer's generic walker already understands it — see the module-doc
+ * note above.
  */
-async function reviveFoldedValue(value: FoldedValue, ctx: ResolveCtx, insideIntrinsic: boolean): Promise<unknown> {
+async function reviveFoldedValue(value: FoldedValue, ctx: ResolveCtx, requireLiveRefs: boolean): Promise<unknown> {
   if (value === null || typeof value !== "object") return value;
 
   // chant #1020 — a REAL, already-constructed live object reached via
@@ -1141,7 +1153,7 @@ async function reviveFoldedValue(value: FoldedValue, ctx: ResolveCtx, insideIntr
 
   if (Array.isArray(value)) {
     const revived: unknown[] = [];
-    for (const el of value) revived.push(await reviveFoldedValue(el, ctx, insideIntrinsic));
+    for (const el of value) revived.push(await reviveFoldedValue(el, ctx, requireLiveRefs));
     return revived;
   }
 
@@ -1161,10 +1173,14 @@ async function reviveFoldedValue(value: FoldedValue, ctx: ResolveCtx, insideIntr
     return (Fn as (...fnArgs: unknown[]) => unknown)(intrinsic.strings, ...revivedValues);
   }
 
+  if ("__helper" in value) {
+    return reviveHelperCall(value as FoldedHelperCall, ctx);
+  }
+
   if ("__attrRef" in value) {
-    if (insideIntrinsic) {
+    if (requireLiveRefs) {
       throw cheapError(
-        "a same-file resource reference inside a folded intrinsic's interpolation is not foldable yet",
+        "a same-file resource reference passed to a folded intrinsic or authoring helper is not foldable yet",
       );
     }
     return value;
@@ -1178,9 +1194,91 @@ async function reviveFoldedValue(value: FoldedValue, ctx: ResolveCtx, insideIntr
 
   const revived: Record<string, unknown> = {};
   for (const [key, v] of Object.entries(value)) {
-    revived[key] = await reviveFoldedValue(v as FoldedValue, ctx, insideIntrinsic);
+    revived[key] = await reviveFoldedValue(v as FoldedValue, ctx, requireLiveRefs);
   }
   return revived;
+}
+
+/**
+ * chant #1082 — the provenance half of the registered-authoring-helper check
+ * (the shape/name half is `fold()`'s, see ../fold/foldable-helpers.ts's module
+ * doc). Being in the allowlist is not permission to invoke whatever the name
+ * happens to be bound to: the name must be bound by THIS FILE'S OWN `import`,
+ * and that import must actually come from chant. Only then is the real
+ * function called, with the folded arguments — the same function the run path
+ * would have called, from the same module the source itself named, so fold
+ * cannot diverge from run by construction.
+ *
+ * Anything short of that throws, which falls the whole file back to run: a
+ * local `function phase(...)`, a `phase` imported from the project's own
+ * helpers, a chant-owned import that turns out not to be a function.
+ */
+async function reviveHelperCall(call: FoldedHelperCall, ctx: ResolveCtx): Promise<unknown> {
+  const name = call.__helper;
+  const binding = ctx.imports.get(name);
+  if (!binding) {
+    throw cheapError(`authoring helper "${name}(...)" is not a resolvable import`);
+  }
+  if (!isChantOwnedHelperBinding(binding, ctx)) {
+    throw cheapError(
+      `"${name}" is imported from "${binding.specifier}", which is not chant's own — ` +
+        `only chant's registered authoring helpers fold as calls`,
+    );
+  }
+
+  const Fn = await resolveImportedExport(name, ctx);
+  if (typeof Fn !== "function") {
+    throw cheapError(`authoring helper "${name}" did not resolve to a function`);
+  }
+
+  // `requireLiveRefs` — a helper receives its arguments as real values and may
+  // inspect them (`output()` derefs the ref's `WeakRef` parent), so a symbolic
+  // `{__attrRef}` envelope is rejected here rather than silently wrapped into
+  // a wrong result. A ref that resolved cross-file to a genuine live `AttrRef`
+  // passes straight through (see `reviveFoldedValue`'s early return).
+  const args: unknown[] = [];
+  for (const arg of call.args) args.push(await reviveFoldedValue(arg, ctx, true));
+  return (Fn as (...fnArgs: unknown[]) => unknown)(...args);
+}
+
+/**
+ * True when `binding` names a helper import chant itself owns: a published
+ * chant package specifier ({@link isChantOwnedSpecifier}), or — for in-repo
+ * and test callers, which import chant-core by relative/absolute path the way
+ * this module's own fixtures do — a specifier that resolves to a file inside
+ * chant-core's own tree.
+ *
+ * The path arm resolves only for a relative/absolute specifier, never a bare
+ * one: resolving an arbitrary bare specifier here would reintroduce the
+ * pathological cold-resolution cost chant#1020 measured (see
+ * {@link fastResolveBareSpecifier}), and a bare specifier chant publishes is
+ * already covered by the text arm.
+ */
+function isChantOwnedHelperBinding(binding: ImportBinding, ctx: ResolveCtx): boolean {
+  if (isChantOwnedSpecifier(binding.specifier)) return true;
+  if (!isProjectFileSpecifier(binding.specifier)) return false;
+  let targetPath: string;
+  try {
+    targetPath = resolveModulePathMemoized(binding.specifier, ctx.file, ctx.resolvePathCache);
+  } catch {
+    return false;
+  }
+  const root = chantCoreRoot();
+  return targetPath === root || targetPath.startsWith(root + sep);
+}
+
+/**
+ * chant-core's own module root — `packages/core/src` in this repo,
+ * `<pkg>/dist` in a published install — derived from THIS module's location.
+ * Pure string arithmetic on `import.meta.url`, no filesystem access at all, so
+ * it is safe in the #1045 sandbox child (which locks reads to an allowlist);
+ * lazy and memoized purely to avoid doing it per call.
+ */
+let chantCoreRootMemo: string | undefined;
+function chantCoreRoot(): string {
+  // .../<root>/discovery/fold-import.ts -> .../<root>
+  chantCoreRootMemo ??= dirname(dirname(fileURLToPath(import.meta.url)));
+  return chantCoreRootMemo;
 }
 
 /** Revive every value in a folded props/attributes object (see {@link reviveFoldedValue}). */
@@ -1220,11 +1318,27 @@ async function resolveResourceEntity(
   // real runtime values before constructing the entity. A no-op walk when
   // this file used no registered intrinsics (the overwhelming majority of
   // cases today).
-  let props: Record<string, unknown>;
-  let attributes: Record<string, unknown> | undefined;
+  //
+  // chant #1082 — when `spec.args` is present the constructor's argument list
+  // isn't the classic `(props)`/`(props, attributes)` shape (AWS's `Parameter`
+  // is `(type, props)`), so revive the whole list and spread it below instead
+  // of reviving `spec.props`, which in that case is only a view onto one of
+  // its entries and would be double-counted.
+  let ctorArgs: unknown[];
   try {
-    props = await reviveFoldedProps(spec.props, ctx);
-    attributes = spec.attributes ? await reviveFoldedProps(spec.attributes, ctx) : undefined;
+    if (spec.args) {
+      ctorArgs = [];
+      for (const arg of spec.args) ctorArgs.push(await reviveFoldedValue(arg, ctx, false));
+    } else {
+      const props = await reviveFoldedProps(spec.props, ctx);
+      // The runtime constructor's optional second argument (`attributes` —
+      // CFN's DependsOn/Condition/DeletionPolicy/…, see createResource in
+      // ../runtime.ts) is only present in `spec` when the source actually
+      // passed one (see foldResource in ../fold/fold.ts). Passing `undefined`
+      // when it's absent matches the run path's own default
+      // (`attributes ?? {}` inside the constructor).
+      ctorArgs = [props, spec.attributes ? await reviveFoldedProps(spec.attributes, ctx) : undefined];
+    }
   } catch (err) {
     return {
       ok: false,
@@ -1264,17 +1378,10 @@ async function resolveResourceEntity(
     return { ok: false, reason: `"${binding.imported}" from "${binding.specifier}" is not a constructor` };
   }
 
-  // The runtime constructor's optional second argument (`attributes` —
-  // CFN's DependsOn/Condition/DeletionPolicy/…, see createResource in
-  // ../runtime.ts) is only present in `spec` when the source actually passed
-  // one (see foldResource in ../fold/fold.ts). Passing `undefined` when it's
-  // absent matches the run path's own default (`attributes ?? {}` inside the
-  // constructor).
-  const ResourceCtor = Ctor as new (
-    props: Record<string, unknown>,
-    attributes?: Record<string, unknown>,
-  ) => Declarable;
-  const entity = new ResourceCtor(props, attributes);
+  // Constructed with exactly the arguments the source wrote (see the revival
+  // block above for how `ctorArgs` was built for each of the two shapes).
+  const ResourceCtor = Ctor as new (...ctorArguments: unknown[]) => Declarable;
+  const entity = new ResourceCtor(...ctorArgs);
   return { ok: true, entity };
 }
 

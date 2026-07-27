@@ -142,6 +142,32 @@ The `??` operator is supported for providing default values, particularly useful
 timeout: props.timeout ?? 30,
 ```
 
+### Registered authoring helpers
+
+A function call is not a value chant can evaluate statically, with one closed exception: chant's own authoring helpers. `phase()`, `gate()`, `activity()`, `stackOutput()` and `output()` are pure functions of their arguments, and they are the API chant documents for writing components and outputs — source using them cannot avoid a call and still use the feature.
+
+```typescript
+import { phase, stackOutput, type Component } from "@intentius/chant/components";
+
+export const web: Component = {
+  name: "web",
+  dependsOn: ["shared-foundation"],
+  deploy: [
+    phase("Apply", [
+      {
+        kind: "cfn-deploy",
+        stack: "web",
+        inputs: { pVpcId: stackOutput("shared-foundation", "oVpcId") },
+      },
+    ]),
+  ],
+};
+```
+
+The list is a hand-written allowlist in chant's source (`packages/core/src/fold/foldable-helpers.ts`), not a rule about what calls look like. Two things must both hold before one folds: the callee is a bare identifier naming a registered helper, and that name is bound by an `import` from chant itself. A helper of your own that happens to share a name is not chant's, so it does not fold — the file falls back to running, exactly as any other call does. Registering a name never causes chant to substitute its own reimplementation: the function that runs is the one your `import` names, so a folded call and a run call are the same call.
+
+Helpers that read the environment are deliberately excluded. `env()` is a function call like the others, but its result depends on `CHANT_ENV` rather than on its arguments, so folding it would freeze one run's environment into the output. Use [build-time parameters](/chant/concepts/build-time-parameters/) where you need an external value in foldable source.
+
 ## Unsupported Patterns
 
 The following patterns are caught by the evaluability lint rules (EVL). Your editor shows them as lint errors, and `chant lint` reports them in CI. By default, `chant build` does not enforce them — it imports and runs your file regardless, so a pattern below still produces whatever JavaScript produces, correct or not. Run lint, or rely on your editor, to keep source inside the supported subset.
@@ -156,6 +182,8 @@ export const store = new StorageType({
   name: getName(),  // function call — not a literal
 });
 ```
+
+Your own functions, arrow functions, and method calls (`naming.name(...)`) are never evaluated statically — the value would depend on running code. The only calls that fold are chant's own [registered authoring helpers](#registered-authoring-helpers). Where you need a computed value in foldable source, move the computation into a composite, which chant expands for real.
 
 ### Control flow around resources
 
@@ -241,14 +269,14 @@ None of this is something you opt into piecemeal or write differently for — it
 ### Fold coverage today
 
 {/* GENERATED:fold-coverage:start */}
-As of this measurement, **21 of 98** example projects in the corpus fold completely — every file in them reduces to a value with zero module execution. The remaining **77** have at least one file that falls back to running.
+As of this measurement, **24 of 98** example projects in the corpus fold completely — every file in them reduces to a value with zero module execution. The remaining **74** have at least one file that falls back to running.
 {/* GENERATED:fold-coverage:end */}
 
 This is measured over the same corpus [`just fold-differential`](#byte-identical-output) builds both ways: every tutorial under `examples/*/src`, plus each lexicon's own build fixtures under `lexicons/*/examples/*/src`. It's a count of chant's own example suite, not a sample of real-world source — read it as "how much of chant's examples fold today," not as an estimate for any other codebase.
 
 That corpus is also chant's own maintained examples, and some of them are expected to be rewritten into foldable shapes over time, or dropped. Both changes move this number without the folder gaining or losing any actual capability: rewriting an example raises the count for a reason unrelated to what `--fold` can do, and adding or removing an example moves the denominator the same way. Treat a change here as "the corpus changed," not as evidence either way about fold coverage of your own project.
 
-As measured when this page was last written (chant `a0e7ffe9`): a function call used as a value blocks 56 files across the corpus, and is the *only* blocker in 45 of the run-fallback entries — by far the largest single gap, and the target of #1044. Cross-file references into a lexicon package's own exports (rather than a project's own source files) block 44 files across 25 entries, tracked as [#1063](https://github.com/INTENTIUS/chant/issues/1063). A remaining 3 blocks in 1 entry hit an unrelated shape gap — a resource constructor whose first argument isn't the props object literal. These three counts are a snapshot, not refreshed by the mechanism above; they'll drift from the corpus over time the same way the rest of this page would without #1062.
+As measured when this page was last written (chant `a0e7ffe9`): a function call used as a value blocks 56 files across the corpus, and is the *only* blocker in 45 of the run-fallback entries — by far the largest single gap, and the target of #1044. Cross-file references into a lexicon package's own exports (rather than a project's own source files) block 44 files across 25 entries, tracked as [#1063](https://github.com/INTENTIUS/chant/issues/1063). These counts are a snapshot, not refreshed by the mechanism above; they'll drift from the corpus over time the same way the rest of this page would without #1062. The third gap they named — a resource constructor whose first argument isn't the props object literal — is closed as of #1082: constructor arguments are folded positionally, so a class like the AWS `Parameter` (`new Parameter("String", {...})`) folds like any other.
 
 ### Isolating the run-fallback path
 
