@@ -41,6 +41,8 @@ const RESOLVE_MODULE = join(DISCOVERY_DIR, "resolve.ts");
 const ENTITY_WIRE_CODEC_MODULE = join(DISCOVERY_DIR, "entity-wire-codec.ts");
 const CHILD_ERRORS_MODULE = join(HERE, "child-errors.ts");
 const PROVENANCE_MODULE = join(dirname(DISCOVERY_DIR), "provenance.ts");
+// chant #1113 — the config driver's serializability contract (see ./config-wire.ts).
+const CONFIG_WIRE_MODULE = join(HERE, "config-wire.ts");
 
 export interface GenerateDriverOptions {
   /** Absolute paths to the run-fallback files this build decided NOT to fold — see `discover()`'s fold/taint loop in `../index.ts`. */
@@ -144,4 +146,70 @@ export function generateDriverSource(options: GenerateDriverOptions): string {
   );
 
   return lines.join("\n");
+}
+
+/**
+ * chant #1113 — generate the driver module that evaluates a project's
+ * `chant.config.ts` INSIDE the sandboxed child and hands back plain JSON.
+ *
+ * Same machinery as {@link generateDriverSource} above, deliberately: one
+ * literal-specifier dynamic `import()` esbuild can trace and inline, one IPC
+ * message back, `./child-errors.ts` for classification so a permission denial
+ * names the config file rather than leaking `ERR_ACCESS_DENIED`. The only
+ * difference is what crosses — a config is data, not an entity graph, so there
+ * is no naming/`AttrRef` step and no `EntitySetWire`; the child instead runs
+ * `./config-wire.ts`'s serializability scan and refuses to hand back a config
+ * that `JSON.stringify` would silently mangle.
+ *
+ * The child returns the raw module namespace's chosen export as-is — the
+ * `default ?? config ?? namespace` selection and Zod validation
+ * (`normalizeConfig`) stay in the parent, where they were, so `--sandbox`
+ * changes where the file is *evaluated* and nothing about how its result is
+ * interpreted.
+ */
+export function generateConfigDriverSource(configPath: string): string {
+  return [
+    `import { classifyChildError } from ${lit(CHILD_ERRORS_MODULE)};`,
+    `import { scanConfigWireSafety } from ${lit(CONFIG_WIRE_MODULE)};`,
+    ``,
+    `function send(payload) {`,
+    `  if (typeof process.send === "function") process.send(payload);`,
+    `  else console.log(JSON.stringify(payload));`,
+    `}`,
+    ``,
+    `async function main() {`,
+    `  let namespace;`,
+    `  try {`,
+    `    namespace = await import(${lit(configPath)});`,
+    `  } catch (err) {`,
+    `    send({ kind: "chant-config", ok: false, error: classifyChildError(${lit(configPath)}, err).toJSON() });`,
+    `    return;`,
+    `  }`,
+    ``,
+    // Mirrors loadChantConfig's own selection so the scan sees exactly the
+    // object the parent will normalize. A namespace object is not a plain
+    // object; scanConfigWireSafety walks its own keys rather than rejecting it.
+    `  const selected = namespace.default ?? namespace.config ?? namespace;`,
+    ``,
+    `  const offenders = scanConfigWireSafety(selected);`,
+    `  if (offenders.length > 0) {`,
+    `    send({ kind: "chant-config", ok: false, offenders });`,
+    `    return;`,
+    `  }`,
+    ``,
+    `  try {`,
+    // Round-trip here, not just at the IPC boundary: this is what proves the
+    // payload really is JSON before it leaves the child, and turns anything
+    // the scan somehow missed into a named error instead of a quiet drop.
+    `    const config = JSON.parse(JSON.stringify(selected ?? {}));`,
+    `    send({ kind: "chant-config", ok: true, config });`,
+    `  } catch (err) {`,
+    `    send({ kind: "chant-config", ok: false, error: classifyChildError(${lit(configPath)}, err, "resolution").toJSON() });`,
+    `  }`,
+    `}`,
+    ``,
+    `main().catch((err) => {`,
+    `  send({ kind: "chant-config", ok: false, error: classifyChildError(${lit(configPath)}, err).toJSON() });`,
+    `});`,
+  ].join("\n");
 }

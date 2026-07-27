@@ -17,11 +17,12 @@ Folding a file was never quite "zero execution" of *anything*, though — which 
 
 For one build:
 
-1. `chant build`'s fold/run decision runs, with one difference from a plain `--fold` build: a file whose fold would require importing and invoking a project-owned factory, constructor or intrinsic falls back to run instead of folding (chant #1093). Files that fold are constructed by reducing their AST — chant #1022/#1023 — and stay in the CLI's own process, because at that point nothing of the project's has to execute for them.
-2. Every run-fallback file for the build is bundled together into ONE self-contained module with [esbuild](https://esbuild.github.io/) — not split into one bundle per file. This matters for correctness, not just efficiency: two files in the same build that both import a third all need to observe the SAME object instance for cross-file references to resolve, exactly as they would running unbundled in one process today. Bundling the whole set together, once, preserves that.
-3. The bundle runs in a child process started with Node's `--permission` flag and a scrubbed environment.
-4. The child does its own entity collection and reference resolution over just that run-fallback set, then reports back a plain JSON entity set (chant #1045 Phase 1's wire format) over the process's IPC channel — never live objects, which can't cross a process boundary anyway.
-5. The parent decodes that JSON, merges it with whatever folded in-process, and continues the build exactly as it would without `--sandbox`.
+1. The project's `chant.config.ts` is evaluated in a sandboxed child and comes back as plain JSON (chant #1113). This happens first, before anything else, because the config is the first project-authored file the CLI reads — and it is project-authored code like any other. A `chant.config.json` project skips this: JSON is data, parsed in-process, with nothing to execute.
+2. `chant build`'s fold/run decision runs, with one difference from a plain `--fold` build: a file whose fold would require importing and invoking a project-owned factory, constructor or intrinsic falls back to run instead of folding (chant #1093). Files that fold are constructed by reducing their AST — chant #1022/#1023 — and stay in the CLI's own process, because at that point nothing of the project's has to execute for them.
+3. Every run-fallback file for the build is bundled together into ONE self-contained module with [esbuild](https://esbuild.github.io/) — not split into one bundle per file. This matters for correctness, not just efficiency: two files in the same build that both import a third all need to observe the SAME object instance for cross-file references to resolve, exactly as they would running unbundled in one process today. Bundling the whole set together, once, preserves that.
+4. The bundle runs in a child process started with Node's `--permission` flag and a scrubbed environment.
+5. The child does its own entity collection and reference resolution over just that run-fallback set, then reports back a plain JSON entity set (chant #1045 Phase 1's wire format) over the process's IPC channel — never live objects, which can't cross a process boundary anyway.
+6. The parent decodes that JSON, merges it with whatever folded in-process, and continues the build exactly as it would without `--sandbox`.
 
 Enable it with the CLI flag or project-wide:
 
@@ -41,6 +42,8 @@ chant build ./infra/ --fold --sandbox
 
 `--sandbox` composes with `--fold` but doesn't require it: without `--fold`, every discovered file is a run-fallback file, and `--sandbox` isolates all of them.
 
+The two ways of enabling it are **not** equivalent for the config file itself, and `chant build` says so rather than leaving it implied. Reading `build.sandbox` out of `chant.config.ts` means evaluating that file, so a config-only opt-in cannot cover its own evaluation — by the time chant knows the project asked for sandboxing, the project's config has already run in the CLI's process. Only `--sandbox` on the command line, known before any config is touched, puts the config inside the boundary; a config-only opt-in still sandboxes everything from step 2 onward and emits a warning naming the file. (`chant.config.json` has no such limit — it is never executed, so `build.sandbox: true` there is fully honest.)
+
 ## What is isolated (verified on Node v24.13.1)
 
 | Vector | Mechanism | Result |
@@ -49,7 +52,7 @@ chant build ./infra/ --fold --sandbox
 | Filesystem write | Not granted at all | Any write anywhere is denied |
 | Spawning a process | Not granted at all | `child_process.execSync`/`spawn`/`fork` are denied |
 | Worker threads | Not granted at all | `new Worker(...)` is denied — meaningful because bundling removes the need for a TypeScript loader (`tsx`) inside the child, which itself needed worker threads and a writable temp directory |
-| Ambient environment | The child is spawned with a scrubbed `env`, not a permission flag | `process.env` shows only `PATH`; nothing the parent process had is visible |
+| Ambient environment | The child is spawned with a scrubbed `env`, not a permission flag | `process.env` shows only `PATH` (plus `CHANT_ENV` in the config child — see below); nothing else the parent process had is visible |
 
 A denial surfaces as a chant `DiscoveryError` naming the file and the operation (e.g. `sandbox denied FileSystemRead (/etc/hosts): "…/evil.ts" attempted an operation outside the sandbox's allowlist`) — never Node's raw `ERR_ACCESS_DENIED`.
 
@@ -65,16 +68,31 @@ Node has no permission flag for network access. `--permission` does not gate `fe
 
 ## The trust boundary, precisely
 
-With `--sandbox`, the only code that executes in the CLI's own process during discovery is chant's own and the packages of the lexicons this build loaded. Nothing from the project's source directory runs there — folded or not.
+With `chant build --sandbox`, no file the project authored is executed in the CLI's own process while chant reads the project's configuration and discovers its resources — not its source files, folded or not, and not its `chant.config.ts`. The only code that runs there is chant's own and the packages of the lexicons this build loaded.
 
 That allowlist is enforced by resolution, not by what the source says. A specifier is trusted when it is one of the lexicon package names the *build* resolved (`resolveProjectLexicons` → `loadPlugins`, the same closed set chant #1063 established), or when it resolves to a path inside chant-core's own executing tree. A specifier that merely *looks* chant-owned — `@intentius/chant`, `@intentius/chant-lexicon-anything` — is not enough: an untrusted repo controls both the text in its source and the contents of its own `node_modules`.
 
-`examples/sandbox-execution-boundary.test.ts` asserts this over the whole corpus: every one of the 98 example directories is built with `{ fold: true, sandbox: true }` while `importModule` is recorded, and no path inside the project's own source directory may appear.
+`examples/sandbox-execution-boundary.test.ts` asserts this over the whole corpus. Every one of the 101 example directories has its config loaded and is then built with `{ fold: true, sandbox: true }`, while the only two places project code can execute in this process are recorded — `importModule` (`packages/core/src/discovery/import.ts`) and `importConfigModule`/`requireConfigModule` (`packages/core/src/config-import.ts`). No path inside the project's own source directory may appear in the first, and the second must not be called at all.
 
-Two residuals worth naming, both pre-existing and neither closed by this flag:
+Two residuals remain, both pre-existing and neither closed by this flag:
 
-- **`chant.config.ts` is imported in-process.** It is the project's own file, and the CLI reads its configuration by importing it before any of this applies.
 - **Lexicon packages are resolved from the project's install.** A repo that ships a poisoned `@intentius/chant-lexicon-aws` in its own `node_modules` gets it executed — but the CLI already imports every active lexicon package into its own process to obtain serializers and lint rules, long before discovery starts, so this is a property of loading lexicons at all rather than something fold or `--sandbox` introduces.
+- **`lint.policies` and `lint.plugins` are project-authored modules chant loads and calls.** They are *declared* in the config as paths, so the config crossing the boundary as data does not make them cross with it — `chant build` imports each policy module and calls its `check` function against the built resources, in this process, after discovery is over. That is the point of them: a policy is a callback over the result, not data. Sandboxing them needs a different design than this one (the function has to run somewhere it can see the resolved resources), and is not attempted here.
+
+## What a sandboxed config may contain
+
+Only JSON crosses a process boundary, so under `--sandbox` a `chant.config.ts` must evaluate to data. Every field `ChantConfig` declares already is: string arrays (`lexicons`, `capabilities`, `environments`), strings, nested plain objects of strings and booleans (`ownership`, `build`, `release`, `sbom`, `signing`, `vulnPolicy`), arrays of plain objects (`stacks`), records of plain objects (`buildParams`). `lint.plugins` and `lint.policies` are file *paths* — chant loads those modules itself; they are not functions embedded in the config. Lexicon extensions ride on the schema's `passthrough` (the temporal lexicon's `temporal:` block), and those are data too.
+
+A value that would not survive the round trip is **named and refused**, never dropped:
+
+```
+Cannot evaluate /p/chant.config.ts inside the --sandbox boundary: it holds values that are not data.
+  hooks.beforeBuild: a function
+```
+
+Functions, symbols, bigints, `NaN`/`Infinity`, `Date`/`RegExp`/`Map`/`Set`/class instances, circular references and `undefined` array elements all report their key path. The one thing dropped rather than reported is an `undefined`-valued object property, because `{ sourceDir: undefined }` and `{}` are indistinguishable to every reader of `ChantConfig`.
+
+One environment variable is forwarded into the config child: `CHANT_ENV`, the value of `--env`. The CLI sets it before loading the config precisely so a config can branch on the environment, and dropping it would silently produce a *different* configuration under `--sandbox`. It is a value the user typed on the command line, not an ambient secret. Nothing else from `process.env` is visible — a config reading `process.env.AWS_SECRET_ACCESS_KEY` gets `undefined`.
 
 ## What is deliberately NOT sandboxed
 
@@ -84,6 +102,6 @@ Two residuals worth naming, both pre-existing and neither closed by this flag:
 
 ## Fold coverage today
 
-Fold covers 53 of the corpus's 98 example directories in full; the other 45 have at least one file that falls back to run. `--sandbox` isolates that remainder — increasing fold coverage (tracked separately) is an optimization on top of that, not a precondition for it.
+Fold covers 55 of the corpus's 101 example directories in full; the other 46 have at least one file that falls back to run. `--sandbox` isolates that remainder — increasing fold coverage (tracked separately) is an optimization on top of that, not a precondition for it.
 
-Coverage under `--sandbox` is measured separately, because the #1093 refusal can only demote: across the same 98 directories it costs 3 files and **zero** fully-folded entries, so `--sandbox` folds the same 53. Real chant source imports its constructors and composites from lexicon packages; a project-owned factory is rare, and where it exists the file simply runs in the child instead. The numbers are reported by `just sandbox-differential`.
+Coverage under `--sandbox` is measured separately, because the #1093 refusal can only demote: across the same 101 directories it costs 3 files and **zero** fully-folded entries, so `--sandbox` folds the same 55. Real chant source imports its constructors and composites from lexicon packages; a project-owned factory is rare, and where it exists the file simply runs in the child instead. The numbers are reported by `just sandbox-differential`.
