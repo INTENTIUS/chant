@@ -283,6 +283,167 @@ describe("fold — intrinsic tagged templates", () => {
   });
 });
 
+/**
+ * chant #1044 — registered lexicon intrinsics in PLAIN-CALL form.
+ *
+ * The registry is the whole door: a name folds as a call only when an active
+ * lexicon registered it AND set `foldsAsCall`. Everything below that pairs a
+ * folding case with the near-miss that must keep rejecting.
+ */
+describe("fold — registered call-form intrinsics (#1044)", () => {
+  /** Shaped like aws's real registration (lexicons/aws/src/plugin.ts). */
+  const REF: IntrinsicDef = { name: "Ref", isTag: false, foldsAsCall: true };
+  const JOIN: IntrinsicDef = { name: "Join", isTag: false, foldsAsCall: true };
+  /** Registered, but its lexicon never opted the call form in — the default. */
+  const NOT_OPTED_IN: IntrinsicDef = { name: "Reference", isTag: false };
+  const SUB: IntrinsicDef = { name: "Sub", isTag: true };
+
+  test("an opted-in call folds to the intrinsic node form, arguments folded in order", () => {
+    const consts = parseConsts(`const env = "prod"; const x = Ref(env);`);
+    const expr = consts.get("x");
+    if (!expr) throw new Error("fixture error");
+    expect(fold(expr, consts, [REF])).toEqual({ __intrinsic: "Ref", args: ["prod"] });
+  });
+
+  test("the envelope is the same family the tagged-template form produces — same __intrinsic key, positional args", () => {
+    const consts = parseConsts(`const x = Join("-", ["a", "b"]);`);
+    const expr = consts.get("x");
+    if (!expr) throw new Error("fixture error");
+    expect(fold(expr, consts, [JOIN])).toEqual({ __intrinsic: "Join", args: ["-", ["a", "b"]] });
+  });
+
+  test("calls nest, and a call-form intrinsic folds inside a registered tag's interpolation", () => {
+    const consts = parseConsts(`const env = "prod"; const x = Sub\`\${Ref(env)}-fn\`;`);
+    const expr = consts.get("x");
+    if (!expr) throw new Error("fixture error");
+    expect(fold(expr, consts, [SUB, REF])).toEqual({
+      __intrinsic: "Sub",
+      strings: ["", "-fn"],
+      values: [{ __intrinsic: "Ref", args: ["prod"] }],
+    });
+  });
+
+  test("an argument nothing can resolve stays symbolic, exactly as inside a tag", () => {
+    const consts = parseConsts(`const x = Ref(AWS.StackName);`);
+    const expr = consts.get("x");
+    if (!expr) throw new Error("fixture error");
+    expect(fold(expr, consts, [REF])).toEqual({
+      __intrinsic: "Ref",
+      args: [{ __symbol: "AWS.StackName" }],
+    });
+  });
+
+  test("an already-resolved cross-file binding wins over the symbolic path — identity must survive", () => {
+    const consts = parseConsts(`const x = Ref(environment);`);
+    const expr = consts.get("x");
+    if (!expr) throw new Error("fixture error");
+    const live = { marker: "the real, shared Parameter instance" };
+    const folded = fold(expr, consts, [REF], new Map([["environment", live]])) as {
+      __intrinsic: string;
+      args: unknown[];
+    };
+    expect(folded.args[0]).toBe(live);
+  });
+
+  test("a REGISTERED intrinsic that was never opted in is still rejected — the opt-in is the door, not registration", () => {
+    const consts = parseConsts(`const x = Reference("db");`);
+    const expr = consts.get("x");
+    if (!expr) throw new Error("fixture error");
+    let error: unknown;
+    try {
+      fold(expr, consts, [NOT_OPTED_IN]);
+    } catch (e) {
+      error = e;
+    }
+    expect(error).toBeInstanceOf(FoldError);
+    expect((error as FoldError).message).toContain("function call as a value is not foldable: Reference(...)");
+  });
+
+  test("an opted-in name is rejected when its lexicon isn't among the active ones", () => {
+    const consts = parseConsts(`const x = Ref("db");`);
+    const expr = consts.get("x");
+    if (!expr) throw new Error("fixture error");
+    expect(() => fold(expr, consts)).toThrow(FoldError);
+  });
+
+  test("a TAGGED-TEMPLATE intrinsic called as a plain function is rejected — the two forms are disjoint", () => {
+    const consts = parseConsts(`const x = Sub("literal");`);
+    const expr = consts.get("x");
+    if (!expr) throw new Error("fixture error");
+    expect(() => fold(expr, consts, [SUB])).toThrow(FoldError);
+  });
+
+  test("a call-form intrinsic used as a TAG is rejected too — opting the call in doesn't register a tag", () => {
+    const consts = parseConsts(`const x = Ref\`literal\`;`);
+    const expr = consts.get("x");
+    if (!expr) throw new Error("fixture error");
+    let error: unknown;
+    try {
+      fold(expr, consts, [REF]);
+    } catch (e) {
+      error = e;
+    }
+    expect(error).toBeInstanceOf(FoldError);
+    expect((error as FoldError).message).toContain("unregistered tagged template intrinsic: Ref");
+  });
+
+  test("a registered name reached as a METHOD (`ns.Ref(...)`) is rejected — only a bare identifier callee folds", () => {
+    const consts = parseConsts(`const x = aws.Ref("db");`);
+    const expr = consts.get("x");
+    if (!expr) throw new Error("fixture error");
+    expect(() => fold(expr, consts, [REF])).toThrow(FoldError);
+  });
+
+  test("an array method taking a closure is rejected — .map is arbitrary JS, not a registered intrinsic", () => {
+    const consts = parseConsts(`const cidrs = ["10.0.0.0/24"]; const x = cidrs.map((c) => Ref(c));`);
+    const expr = consts.get("x");
+    if (!expr) throw new Error("fixture error");
+    let error: unknown;
+    try {
+      fold(expr, consts, [REF]);
+    } catch (e) {
+      error = e;
+    }
+    expect(error).toBeInstanceOf(FoldError);
+    expect((error as FoldError).message).toContain("cidrs.map(...)");
+  });
+
+  test("a user-defined function is rejected however it's named", () => {
+    const consts = parseConsts(`const x = makeName("a", "b");`);
+    const expr = consts.get("x");
+    if (!expr) throw new Error("fixture error");
+    expect(() => fold(expr, consts, [REF])).toThrow(FoldError);
+  });
+
+  test("a registered name SHADOWED by a local const is rejected — the local binding wins, and it isn't the lexicon's", () => {
+    const consts = parseConsts(`const Ref = (n) => ({ mine: n }); const x = Ref("db");`);
+    const expr = consts.get("x");
+    if (!expr) throw new Error("fixture error");
+    expect(() => fold(expr, consts, [REF])).toThrow(FoldError);
+  });
+
+  test("an unfoldable argument still rejects the whole call", () => {
+    const consts = parseConsts(`const x = Ref(getName());`);
+    const expr = consts.get("x");
+    if (!expr) throw new Error("fixture error");
+    let error: unknown;
+    try {
+      fold(expr, consts, [REF]);
+    } catch (e) {
+      error = e;
+    }
+    expect(error).toBeInstanceOf(FoldError);
+    expect((error as FoldError).message).toContain("getName(...)");
+  });
+
+  test("a same-file resource passed to an intrinsic call rejects rather than folding to a look-alike envelope", () => {
+    const consts = parseConsts(`const bucket = new S3Bucket({ name: "b" }); const x = Ref(bucket);`);
+    const expr = consts.get("x");
+    if (!expr) throw new Error("fixture error");
+    expect(() => fold(expr, consts, [REF])).toThrow(FoldError);
+  });
+});
+
 describe("fold — registered authoring helpers (#1082)", () => {
   test("a registered helper call folds to the helper-call node form, arguments folded in order", () => {
     const consts = parseConsts(`const stack = "web"; const x = phase("Apply", [{ kind: "cfn-deploy", stack }]);`);

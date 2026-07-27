@@ -6,6 +6,7 @@ import {
   IntrinsicDefSchema,
   LexiconEntrySchema,
 } from "./lexicon-schema";
+import { intrinsicFolds, intrinsicTagFolds, intrinsicCallFolds } from "./lexicon";
 
 // ---------------------------------------------------------------------------
 // validateManifest
@@ -144,6 +145,46 @@ describe("IntrinsicDefSchema", () => {
     expect(IntrinsicDefSchema.safeParse({ name: "Sub", isTag: true }).success).toBe(true);
     expect(IntrinsicDefSchema.safeParse({ name: "Ref", isTag: false }).success).toBe(true);
     expect(IntrinsicDefSchema.safeParse({ name: "Ref", isTag: "false" }).success).toBe(false);
+  });
+
+  test("foldsAsCall is optional and boolean — omitted means not opted in (chant #1044)", () => {
+    const omitted = IntrinsicDefSchema.safeParse({ name: "Ref", isTag: false });
+    expect(omitted.success).toBe(true);
+    if (omitted.success) expect(omitted.data.foldsAsCall).toBeUndefined();
+    expect(IntrinsicDefSchema.safeParse({ name: "Ref", isTag: false, foldsAsCall: true }).success).toBe(true);
+    expect(IntrinsicDefSchema.safeParse({ name: "Ref", isTag: false, foldsAsCall: "yes" }).success).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Foldability predicates (chant #1044)
+// ---------------------------------------------------------------------------
+
+describe("intrinsic foldability predicates", () => {
+  test("a tagged template folds as a tag, never as a call", () => {
+    const sub = { isTag: true };
+    expect(intrinsicTagFolds(sub)).toBe(true);
+    expect(intrinsicCallFolds(sub)).toBe(false);
+    expect(intrinsicFolds(sub)).toBe(true);
+  });
+
+  test("a plain call folds only once its lexicon opts it in — never by inference", () => {
+    expect(intrinsicCallFolds({ isTag: false })).toBe(false);
+    expect(intrinsicFolds({ isTag: false })).toBe(false);
+    expect(intrinsicCallFolds({ isTag: false, foldsAsCall: true })).toBe(true);
+    expect(intrinsicFolds({ isTag: false, foldsAsCall: true })).toBe(true);
+    expect(intrinsicTagFolds({ isTag: false, foldsAsCall: true })).toBe(false);
+  });
+
+  test("a registration claiming BOTH forms does not fold as a call — isTag wins, and check-lexicon fails it", () => {
+    expect(intrinsicCallFolds({ isTag: true, foldsAsCall: true })).toBe(false);
+    expect(intrinsicTagFolds({ isTag: true, foldsAsCall: true })).toBe(true);
+  });
+
+  test("an older manifest with neither field folds in neither form", () => {
+    expect(intrinsicFolds({})).toBe(false);
+    expect(intrinsicTagFolds({})).toBe(false);
+    expect(intrinsicCallFolds({})).toBe(false);
   });
 });
 

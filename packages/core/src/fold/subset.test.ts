@@ -1,6 +1,7 @@
 import { describe, test, expect } from "vitest";
 import * as ts from "typescript";
 import { fold, foldResource, collectConsts, FoldError } from "./fold";
+import { findSubsetViolation } from "./subset";
 import { evl001NonLiteralExpressionRule } from "../lint/rules/evl001-non-literal-expression";
 import { evl003DynamicPropertyAccessRule } from "../lint/rules/evl003-dynamic-property-access";
 import { evl004SpreadNonConstRule } from "../lint/rules/evl004-spread-non-const";
@@ -273,5 +274,79 @@ describe("documented divergences — NOT unified by design (see subset.ts module
 
     const context: LintContext = { sourceFile, entities: [], filePath: "t.ts", lexicon: undefined };
     expect(evl001NonLiteralExpressionRule.check(context)).toHaveLength(0);
+  });
+});
+
+/**
+ * chant #1044 — the shared predicate's optional intrinsic registry.
+ *
+ * `findSubsetViolation` answers "is this shape foldable?" for two kinds of
+ * caller: `fold()`'s own EVL twin, which has no registry, and a tool that
+ * does (a control plane deciding whether a repository needs a sandboxed
+ * child process). The parameter is what lets the second kind get fold()'s
+ * real answer without running fold, while the first keeps the answer it
+ * always had.
+ */
+describe("findSubsetViolation — optional intrinsic registry (#1044)", () => {
+  const REF: IntrinsicDef[] = [{ name: "Ref", isTag: false, foldsAsCall: true }];
+
+  /** The `x` initializer of `const bad = new Thing({ x: <expr> });`. */
+  function propValue(expr: string, preamble = ""): ts.Expression {
+    const sourceFile = ts.createSourceFile(
+      "t.ts",
+      `${preamble}\nconst bad = new Thing({ x: ${expr} });`,
+      ts.ScriptTarget.Latest,
+      true,
+    );
+    const consts = collectConsts(sourceFile);
+    const init = consts.get("bad") as ts.NewExpression;
+    const props = init.arguments![0] as ts.ObjectLiteralExpression;
+    return (props.properties[0] as ts.PropertyAssignment).initializer;
+  }
+
+  test("with the registry supplied, an opted-in intrinsic call is not a violation — the same answer fold() gives", () => {
+    expect(findSubsetViolation(propValue(`Ref(env)`), REF)).toBeUndefined();
+    const consts = collectConsts(
+      ts.createSourceFile("t.ts", `const env = "p"; const x = Ref(env);`, ts.ScriptTarget.Latest, true),
+    );
+    expect(fold(consts.get("x") as ts.Expression, consts, REF)).toEqual({ __intrinsic: "Ref", args: ["p"] });
+  });
+
+  test("with NO registry, every call stays a violation — the pre-#1044 answer, and the safe one", () => {
+    const v = findSubsetViolation(propValue(`Ref(env)`));
+    expect(v?.ruleId).toBe("EVL001");
+    expect(v?.message).toContain("function call as a value is not foldable: Ref(...)");
+  });
+
+  test("the registry doesn't widen anything else: a name in it without the opt-in, a method call, and .map all stay violations", () => {
+    const notOptedIn: IntrinsicDef[] = [{ name: "Reference", isTag: false }];
+    expect(findSubsetViolation(propValue(`Reference("db")`), notOptedIn)).toBeDefined();
+    expect(findSubsetViolation(propValue(`aws.Ref("db")`), REF)).toBeDefined();
+    expect(findSubsetViolation(propValue(`cidrs.map((c) => c)`, `const cidrs = [];`), REF)).toBeDefined();
+    expect(findSubsetViolation(propValue(`makeName("a")`), REF)).toBeDefined();
+  });
+
+  test("arguments are still classified on their own terms, at their own position", () => {
+    const v = findSubsetViolation(propValue(`Ref(getName())`), REF);
+    expect(v?.message).toContain("getName(...)");
+  });
+
+  test("registry-less EVL is now STRICTER than fold on an opted-in call — a known divergence, not a hole", () => {
+    // chant #1044 — EVL001 has no registry (see subset.ts module doc, point
+    // 2c), so it still flags `Ref(...)` in a resource's props exactly as it
+    // did before this change, while fold() — which is always given one —
+    // folds it. Recorded here so the divergence is a tracked property with a
+    // test rather than a surprise; closing it means handing the lint engine
+    // the active lexicons' intrinsics, which is a change to lint's own
+    // surface and deliberately not part of #1044.
+    const source = `const bad = new Thing({ x: Ref(env) });`;
+    const sourceFile = ts.createSourceFile("t.ts", source, ts.ScriptTarget.Latest, true);
+    const consts = collectConsts(sourceFile);
+    const badInit = consts.get("bad") as ts.NewExpression;
+
+    expect(() => foldResource(badInit, consts, REF)).not.toThrow();
+
+    const context: LintContext = { sourceFile, entities: [], filePath: "t.ts", lexicon: undefined };
+    expect(evl001NonLiteralExpressionRule.check(context).length).toBeGreaterThan(0);
   });
 });

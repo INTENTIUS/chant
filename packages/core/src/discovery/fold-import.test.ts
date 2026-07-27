@@ -1339,3 +1339,260 @@ describe("tryFoldFile — constructor argument positions (#1082)", () => {
     expect(result.reason).toContain("computeType(...)");
   });
 });
+
+/**
+ * chant #1044 — registered lexicon intrinsics in PLAIN-CALL form, end to end.
+ *
+ * The unit tests in ../fold/fold.test.ts cover the reducer's half (a call
+ * reduces to a `{__intrinsic, args}` envelope, executing nothing). These
+ * cover the other half: the envelope is revived by resolving the name
+ * through THIS FILE'S OWN imports and invoking the real function, so what
+ * lands in a resource's props is a genuine live intrinsic instance — the
+ * same object the run path would have built.
+ */
+describe("tryFoldFile — registered call-form intrinsics (#1044)", () => {
+  let testDir: string;
+
+  beforeEach(async () => {
+    testDir = join(tmpdir(), `chant-fold-import-callintrinsic-test-${Date.now()}-${Math.random()}`);
+    await mkdir(testDir, { recursive: true });
+  });
+
+  afterEach(async () => {
+    await rm(testDir, { recursive: true, force: true });
+  });
+
+  const REF: IntrinsicDef = { name: "Ref", isTag: false, foldsAsCall: true, outputKey: "Test::Ref" };
+  const NOT_OPTED_IN: IntrinsicDef = { name: "Ref", isTag: false };
+
+  /** A plain-call intrinsic shaped exactly like aws's real `Ref`: a factory returning a class that implements the `Intrinsic` contract and resolves its target at `toJSON()` time. */
+  async function writeCallIntrinsicDefs(): Promise<void> {
+    await writeFile(
+      join(testDir, "intrinsics.ts"),
+      `
+        import { INTRINSIC_MARKER } from ${JSON.stringify(intrinsicPath)};
+
+        export class RefIntrinsic {
+          constructor(target) {
+            this[INTRINSIC_MARKER] = true;
+            this.target = target;
+          }
+          toJSON() {
+            return { "Test::Ref": typeof this.target === "string" ? this.target : this.target.logicalHint };
+          }
+        }
+
+        export function Ref(target) {
+          return new RefIntrinsic(target);
+        }
+
+        export const NS = { Region: "NS::Region" };
+      `,
+    );
+  }
+
+  test("an opted-in call folds end-to-end to the real intrinsic instance — zero module execution", async () => {
+    await writeCallIntrinsicDefs();
+    await writeFile(
+      join(testDir, "resources.ts"),
+      `
+        import { createResource } from ${JSON.stringify(runtimePath)};
+        export const Bucket = createResource("Test::Bucket", "aws", { arn: "Arn" });
+      `,
+    );
+    const file = join(testDir, "main.ts");
+    await writeFile(
+      file,
+      `
+        import { Bucket } from "./resources";
+        import { Ref } from "./intrinsics";
+        throw new Error("must never execute — sentinel for #1044 fold verification");
+        export const bucket = new Bucket({ name: Ref("environment") });
+      `,
+    );
+
+    const result = await tryFoldFile(file, [REF]);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const [, entity] = result.entities[0];
+    if (!isDeclarable(entity)) throw new Error("expected a Declarable");
+    const name = (entity as unknown as { props: { name: unknown } }).props.name;
+    // A genuine live instance built by the file's own `Ref`, not the
+    // `{ __intrinsic, args }` envelope the reducer produced internally.
+    expect((name as { toJSON(): unknown }).toJSON()).toEqual({ "Test::Ref": "environment" });
+  });
+
+  test("a call-form intrinsic folds inside a registered tag's interpolation, and a symbolic argument resolves through the file's own import", async () => {
+    await writeFile(
+      join(testDir, "intrinsics.ts"),
+      `
+        import { INTRINSIC_MARKER } from ${JSON.stringify(intrinsicPath)};
+        export class RefIntrinsic {
+          constructor(target) { this[INTRINSIC_MARKER] = true; this.target = target; }
+          toJSON() { return { "Test::Ref": this.target }; }
+        }
+        export function Ref(target) { return new RefIntrinsic(target); }
+        export class SubIntrinsic {
+          constructor(strings, values) { this[INTRINSIC_MARKER] = true; this.strings = strings; this.values = values; }
+          toJSON() {
+            let out = "";
+            for (let i = 0; i < this.strings.length; i++) {
+              out += this.strings[i];
+              if (i < this.values.length) out += JSON.stringify(this.values[i].toJSON ? this.values[i].toJSON() : this.values[i]);
+            }
+            return { "Test::Sub": out };
+          }
+        }
+        export function Sub(strings, ...values) { return new SubIntrinsic(strings, values); }
+        export const NS = { Region: "NS::Region" };
+      `,
+    );
+    await writeFile(
+      join(testDir, "resources.ts"),
+      `
+        import { createResource } from ${JSON.stringify(runtimePath)};
+        export const Bucket = createResource("Test::Bucket", "aws", { arn: "Arn" });
+      `,
+    );
+    const file = join(testDir, "main.ts");
+    await writeFile(
+      file,
+      `
+        import { Bucket } from "./resources";
+        import { Sub, Ref, NS } from "./intrinsics";
+        export const bucket = new Bucket({ name: Sub\`\${Ref(NS.Region)}-fn\` });
+      `,
+    );
+
+    const result = await tryFoldFile(file, [REF, { name: "Sub", isTag: true }]);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const [, entity] = result.entities[0];
+    if (!isDeclarable(entity)) throw new Error("expected a Declarable");
+    const name = (entity as unknown as { props: { name: unknown } }).props.name;
+    expect((name as { toJSON(): unknown }).toJSON()).toEqual({
+      "Test::Sub": `{"Test::Ref":"NS::Region"}-fn`,
+    });
+  });
+
+  test("a cross-file resource passed to an intrinsic call arrives as the SHARED live instance, not a re-imported copy", async () => {
+    await writeCallIntrinsicDefs();
+    await writeFile(
+      join(testDir, "resources.ts"),
+      `
+        import { createResource } from ${JSON.stringify(runtimePath)};
+        export const Param = createResource("Test::Param", "aws", {});
+      `,
+    );
+    await writeFile(
+      join(testDir, "params.ts"),
+      `
+        import { Param } from "./resources";
+        export const environment = new Param({ logicalHint: "EnvParam" });
+      `,
+    );
+    const file = join(testDir, "main.ts");
+    await writeFile(
+      file,
+      `
+        import { Param } from "./resources";
+        import { environment } from "./params";
+        import { Ref } from "./intrinsics";
+        export const other = new Param({ name: Ref(environment) });
+      `,
+    );
+
+    const session = createFoldSession([REF]);
+    const paramsResult = await tryFoldFile(join(testDir, "params.ts"), [REF], session);
+    const result = await tryFoldFile(file, [REF], session);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok || !paramsResult.ok) return;
+    const [, entity] = result.entities[0];
+    if (!isDeclarable(entity)) throw new Error("expected a Declarable");
+    const ref = (entity as unknown as { props: { name: { target: unknown } } }).props.name;
+    // Identity, not equality: the SAME object params.ts's own fold produced
+    // and discovery will collect. A second instance would serialize with no
+    // logical name at all (see planFoldTaint's doc).
+    expect(ref.target).toBe(paramsResult.exportedValues.get("environment"));
+  });
+
+  test("a REGISTERED intrinsic with no opt-in still falls the file back to run", async () => {
+    await writeCallIntrinsicDefs();
+    await writeFile(
+      join(testDir, "resources.ts"),
+      `
+        import { createResource } from ${JSON.stringify(runtimePath)};
+        export const Bucket = createResource("Test::Bucket", "aws", { arn: "Arn" });
+      `,
+    );
+    const file = join(testDir, "main.ts");
+    await writeFile(
+      file,
+      `
+        import { Bucket } from "./resources";
+        import { Ref } from "./intrinsics";
+        export const bucket = new Bucket({ name: Ref("environment") });
+      `,
+    );
+
+    const result = await tryFoldFile(file, [NOT_OPTED_IN]);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toContain("function call as a value is not foldable: Ref(...)");
+  });
+
+  test("an opted-in NAME that this file never imported falls back — the registry is not permission to invoke a name", async () => {
+    await writeFile(
+      join(testDir, "resources.ts"),
+      `
+        import { createResource } from ${JSON.stringify(runtimePath)};
+        export const Bucket = createResource("Test::Bucket", "aws", { arn: "Arn" });
+      `,
+    );
+    const file = join(testDir, "main.ts");
+    await writeFile(
+      file,
+      `
+        import { Bucket } from "./resources";
+        export const bucket = new Bucket({ name: Ref("environment") });
+      `,
+    );
+
+    const result = await tryFoldFile(file, [REF]);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toContain(`"Ref" is not a resolvable import`);
+  });
+
+  test("a same-file resource reference passed to an intrinsic call falls back rather than folding to the wrong value", async () => {
+    await writeCallIntrinsicDefs();
+    await writeFile(
+      join(testDir, "resources.ts"),
+      `
+        import { createResource } from ${JSON.stringify(runtimePath)};
+        export const Bucket = createResource("Test::Bucket", "aws", { arn: "Arn" });
+      `,
+    );
+    const file = join(testDir, "main.ts");
+    await writeFile(
+      file,
+      `
+        import { Bucket } from "./resources";
+        import { Ref } from "./intrinsics";
+        export const source = new Bucket({ name: "src" });
+        export const bucket = new Bucket({ name: Ref(source.arn) });
+      `,
+    );
+
+    const result = await tryFoldFile(file, [REF]);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toContain("same-file resource reference");
+  });
+});

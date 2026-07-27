@@ -104,6 +104,17 @@ const report: ReportRow[] = [];
  * helpers (`phase`, `output`, …) foldable, which doesn't move any corpus
  * entry on its own — the corpus has no component-authoring entry gated
  * solely on one — but is what unblocks real component-using applications.
+ *
+ * chant #1044 grew it from 24 to 32. The eight added entries are the AWS
+ * examples whose only blocker was `Ref(...)` used as a value — seven
+ * `lambda-*` plus `rds-postgres` — now that a registered intrinsic's
+ * plain-call form folds when its lexicon opts it in. Two more AWS entries
+ * (`shared-alb-api`, `shared-alb-ui`) cleared their `Ref` blocker and stopped
+ * on the next one (a nested `new Parameter(...)` as a composite argument),
+ * and both azure entries whose only blocker was `Concat(...)` cleared it and
+ * stopped on `Azure.ResourceGroupLocation` — a lexicon-package namespace
+ * access, #1063. That is the measured ceiling this PR reports: azure's
+ * remaining corpus is gated on #1063, not on #1044.
  */
 const EXPECTED_FOLD: readonly string[] = [
   "examples/alert-triage",
@@ -113,8 +124,16 @@ const EXPECTED_FOLD: readonly string[] = [
   "examples/local-cloud-trio",
   "examples/temporal-stack",
   "lexicons/aws/examples/fargate-alb",
+  "lexicons/aws/examples/lambda-dynamodb",
+  "lexicons/aws/examples/lambda-eventbridge",
+  "lexicons/aws/examples/lambda-function",
+  "lexicons/aws/examples/lambda-s3",
+  "lexicons/aws/examples/lambda-scheduled",
+  "lexicons/aws/examples/lambda-sns",
+  "lexicons/aws/examples/lambda-sqs",
   "lexicons/aws/examples/lifecycle-reconcile-aws",
   "lexicons/aws/examples/multi-service-alb",
+  "lexicons/aws/examples/rds-postgres",
   "lexicons/aws/examples/vpc",
   "lexicons/docker/examples/basic-app",
   "lexicons/gitlab/examples/node-pipeline",
