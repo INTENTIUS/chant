@@ -882,6 +882,37 @@ describe("runOp dispatcher: --components routes to runOpComponents", () => {
     expect(discoverOpsMock).not.toHaveBeenCalled();
     vi.restoreAllMocks();
   });
+
+  // chant #1116 — --report is Op/Temporal-only (reads a past workflow run);
+  // the component driver never checked it, so it was silently ignored and the
+  // command fell through to a real dispatch. Hard-error instead, before
+  // runComponents is ever reached.
+  test("--report combined with --components → exit 1 before any dispatch, no fall-through (#1116)", async () => {
+    discoverOpsMock.mockReset();
+    const stderr = makeStderrSpy();
+
+    const exit = await runOp({ args: makeArgs({ path: "svc", components: true, report: true, temporal: false }), plugins: [], serializers: [] });
+
+    expect(exit).toBe(1);
+    expect(stderr.join("\n")).toContain("not supported with --components");
+    expect(stderr.join("\n")).toContain("#1116");
+    expect(discoverOpsMock).not.toHaveBeenCalled();
+    expect(runComponentsMock).not.toHaveBeenCalled();
+  });
+
+  // Plain --components (no --report) must be unaffected: it still reaches a
+  // real dispatch through runComponents — mocked here, never a real cloud call.
+  test("plain --components (no --report) still dispatches to runComponents (#1116 regression guard)", async () => {
+    discoverOpsMock.mockReset();
+    runComponentsMock.mockResolvedValue({ success: true, selected: ["svc"], run: { order: ["svc"], waves: [["svc"]], results: [{ component: "svc", ok: true, records: [] }], ok: true } });
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+    const exit = await runOp({ args: makeArgs({ path: "svc", components: true, report: false, temporal: false }), plugins: [], serializers: [] });
+
+    expect(exit).toBe(0);
+    expect(runComponentsMock).toHaveBeenCalled();
+    vi.restoreAllMocks();
+  });
 });
 
 describe("runOpComponents", () => {
