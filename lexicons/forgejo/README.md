@@ -112,5 +112,16 @@ export default {
   reused github-lexicon entities (which are tagged `lexicon: "github"`). Its
   rule prefix is `WFJ` to keep Forgejo diagnostics namespaced apart from
   github's `GHA`.
-- No codegen: this lexicon has no spec of its own. Run `chant generate` in the
-  github lexicon if you need to refresh entities.
+- No entity codegen: this lexicon has no spec of its own, so `chant generate`
+  in this package is a no-op — run it in the github lexicon if you need to
+  refresh entities. `npm run generate`/`npm run bundle` still exist and
+  produce a (deliberately empty) `dist/manifest.json` and `dist/meta.json` so
+  forgejo packages like every other lexicon; see `src/codegen/generate.ts`.
+- LSP completions/hover are delegated, not duplicated: `.completionProvider()`
+  and `.hoverProvider()` forward straight to `githubPlugin`'s
+  (`src/lsp/completions.ts`, `src/lsp/hover.ts`). Lint rules are wrapped, not
+  re-exported verbatim: `forgejoPlugin.lintRules()` returns every github rule
+  with its `id` prefixed `WFJ-` (e.g. `WFJ-GHA001`) and its check logic
+  untouched (`src/lint/rules/delegate-to-github.ts`) — a plain re-export would
+  collide by id the moment something loads the github and forgejo plugins
+  together (`chant audit` does exactly that).

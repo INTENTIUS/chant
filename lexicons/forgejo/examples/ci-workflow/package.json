@@ -1,0 +1,18 @@
+{
+  "name": "forgejo-ci-workflow-example",
+  "version": "0.0.1",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "chant build src --lexicon forgejo -o .forgejo/workflows/ci.yml",
+    "lint": "chant lint src",
+    "dev": "chant build src --lexicon forgejo --watch -o .forgejo/workflows/ci.yml"
+  },
+  "dependencies": {
+    "@intentius/chant-lexicon-forgejo": "*",
+    "@intentius/chant": "*"
+  },
+  "devDependencies": {
+    "typescript": "*"
+  }
+}

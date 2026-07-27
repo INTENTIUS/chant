@@ -1,0 +1,15 @@
+---
+title: "Lint Rules"
+description: "Lint rules and post-synth checks provided by the Forgejo lexicon"
+---
+
+The Forgejo lexicon provides **2** rules: 0 lint rules and 2 post-synth checks.
+
+## Post-Synth Checks
+
+Post-synth checks validate the serialized output after the build pipeline completes.
+
+| ID | Description |
+|----|-------------|
+| `WFJ010` | Unresolved action reference (won't resolve on Forgejo) |
+| `WFJ011` | GitHub-hosted runner label with no Forgejo equivalent |

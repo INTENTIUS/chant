@@ -288,7 +288,7 @@ None of this is something you opt into piecemeal or write differently for — it
 ### Fold coverage today
 
 {/* GENERATED:fold-coverage:start */}
-As of this measurement, **54 of 99** example projects in the corpus fold completely — every file in them reduces to a value with zero module execution. The remaining **45** have at least one file that falls back to running.
+As of this measurement, **55 of 101** example projects in the corpus fold completely — every file in them reduces to a value with zero module execution. The remaining **46** have at least one file that falls back to running.
 {/* GENERATED:fold-coverage:end */}
 
 This is measured over the same corpus [`just fold-differential`](#byte-identical-output) builds both ways: every tutorial under `examples/*/src`, plus each lexicon's own build fixtures under `lexicons/*/examples/*/src`. It's a count of chant's own example suite, not a sample of real-world source — read it as "how much of chant's examples fold today," not as an estimate for any other codebase.
@@ -303,9 +303,7 @@ These counts are a snapshot, not refreshed by the mechanism above; they'll drift
 
 ### Isolating the run-fallback path
 
-Folded files execute none of their own code, but a run-fallback file does — in the CLI's own process by default. `chant build --sandbox` (#1045) runs every run-fallback file for a build together, isolated, in one child process with the filesystem, process-spawn, and environment access locked down, instead of trusting the file to behave.
-
-It composes with `--fold`, and tightens it (#1093). Folding never runs the file's own statements, but it does call the real factory behind `SomeComposite({...})` and the real constructor behind `new SomeType({...})` — trusted code when they come from a lexicon package, project code when they come from a sibling file. Under `--sandbox` the folder refuses the second kind, and the file falls back to the sandboxed run path, so the guarantee is uniform: nothing from the project's source directory executes in the CLI's process. See [Sandboxed Execution](/chant/architecture/sandbox/) for exactly what that does and does not protect against.
+Folded files execute none of their own code, but a run-fallback file does — in the CLI's own process by default. `chant build --sandbox` (#1045) runs every run-fallback file for a build together, isolated, in one child process with the filesystem, process-spawn, and environment access locked down, instead of trusting the file to behave. It composes with `--fold`: folded files are unaffected (there's nothing to isolate), and the run-fallback remainder is what gets sandboxed — see [Sandboxed Execution](/chant/architecture/sandbox/) for exactly what that does and does not protect against.
 
 ## Why These Constraints?
 

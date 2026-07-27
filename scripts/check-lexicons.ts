@@ -37,6 +37,18 @@
  * tsc build, so a change can pass locally and only fail in CI's "Generate
  * lexicon artifacts" step. Unlike the tier-1 checks above, a tsc failure
  * here is never something to track-and-allow — it always fails the gate.
+ *
+ * chant #1072 resolved the architecture-mismatch question above (option 1:
+ * build both up to the bar, not relax it for them). Forgejo now has a
+ * manifest, a plugin.test.ts, docs, and an example project, and its lint
+ * rules/LSP completions/hover wrap or delegate to github's rather than
+ * forking them — see lexicons/forgejo/src/lint/rules/delegate-to-github.ts
+ * and lexicons/forgejo/src/lsp/. Temporal now has a real source-level lint
+ * rule (TMP020, alongside its existing TMP00x post-synth checks), LSP
+ * completions/hover over its own 4-resource catalog, and an example project
+ * — see lexicons/temporal/src/lint/rules/use-activity-profiles.ts and
+ * lexicons/temporal/src/lsp/. Neither has an entry in KNOWN_FAILURES below
+ * anymore.
  */
 
 import { existsSync, readdirSync } from "fs";
@@ -53,39 +65,11 @@ const lexiconsDir = join(repoRoot, "lexicons");
  * Every entry here MUST reference a filed, open issue.
  */
 const KNOWN_FAILURES: Record<string, Record<string, string>> = {
-  forgejo: {
-    "At least 1 lint rule in src/lint/rules/":
-      "#1072 — forgejo is a thin github-dialect (serializer + `uses:` resolver) with no lint rules of its own — delegates to github's.",
-    "src/lsp/completions.ts exists":
-      "#1072 — forgejo has no LSP completions provider of its own — delegates to github's.",
-    "src/lsp/hover.ts exists":
-      "#1072 — forgejo has no LSP hover provider of its own — delegates to github's.",
-    "dist/manifest.json exists":
-      "#1072 — forgejo's prepack is `npm run build` only (no generate/bundle step) — it never produces dist/manifest.json.",
-    "dist/manifest.json declares a chantVersion":
-      "#1072 — same root cause as \"dist/manifest.json exists\" above — no manifest, so no chantVersion.",
-    "At least 1 example in examples/":
-      "#1072 — forgejo has no example projects of its own.",
-    "plugin.test.ts exists":
-      "#1072 — forgejo has no plugin.test.ts.",
-    "At least 1 .mdx doc page":
-      "#1072 — forgejo has no docs/ site of its own.",
-  },
   github: {
     "Registered intrinsics are exported by the package":
       "#1069 — plugin.ts registers an \"expression\" intrinsic; src/index.ts exports the `Expression` class (capitalized) and helper functions, but nothing literally named `expression`.",
     "Registered intrinsics' isTag matches how they're authored":
       "#1069 — same root cause as the export check above — unresolvable, so unverifiable.",
-  },
-  temporal: {
-    "At least 1 lint rule in src/lint/rules/":
-      "#1072 — temporal's TMP00x checks are post-synth checks (src/lint/post-synth/), not pre-synth lint rules — it has no src/lint/rules/ directory.",
-    "src/lsp/completions.ts exists":
-      "#1072 — temporal has no LSP completions provider.",
-    "src/lsp/hover.ts exists":
-      "#1072 — temporal has no LSP hover provider.",
-    "At least 1 example in examples/":
-      "#1072 — temporal has no example projects — it's consumed via composites in other examples (e.g. temporal-crdb-deploy) rather than shipping its own.",
   },
 };
 
