@@ -5,6 +5,7 @@ import type { Serializer, SerializerResult } from "../../serializer";
 import type { LexiconPlugin } from "../../lexicon";
 import { runPostSynthChecks } from "../../lint/post-synth";
 import { loadPolicyChecks } from "../../lint/policy";
+import { armSandboxPolicyExecution, runProjectPolicies } from "../../lint/policy-sandbox";
 import { sortedJsonReplacer } from "../../utils";
 import { formatError, formatWarning, formatSuccess, formatBold, formatInfo } from "../format";
 import { writeFileSync, mkdirSync } from "fs";
@@ -144,9 +145,7 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
   // Project-authored organizational policy checks (lint.policies), run over the
   // resolved resources during build. Resolve paths relative to the config dir.
   const configDir = loaded.configPath ? dirname(loaded.configPath) : infraPath;
-  const policyChecks = config.lint?.policies?.length
-    ? await loadPolicyChecks(config.lint.policies, configDir)
-    : [];
+  const policies = config.lint?.policies ?? [];
 
   // #1022 — opt-in fold path: the CLI flag wins over `chant.config.ts`'s
   // `build.fold`, which wins over the (unchanged) default of running every
@@ -157,6 +156,22 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
   // without --fold, every file). Same CLI-flag-wins-over-config precedence
   // as fold, resolved independently.
   const sandbox = resolveSandboxEnabled(config, options.sandbox);
+
+  // #1131 — arm sandboxed policy execution from the RESOLVED value, before any
+  // policy module could be loaded. Resolved, not `options.sandbox`, because
+  // policies have none of the config's bootstrap limit: they are loaded long
+  // after `build.sandbox` is known, so a config-only opt-in sandboxes them just
+  // as the CLI flag does. Arming (rather than threading a flag to each caller)
+  // makes `loadPolicyChecks` refuse process-wide — a call site that forgot to
+  // ask gets a loud error instead of quietly running project code here.
+  if (sandbox) armSandboxPolicyExecution();
+
+  // Unsandboxed, the policy pack is still loaded HERE, before the build — a
+  // policy path that doesn't resolve has always failed the command up front,
+  // including when the build itself then fails, and #1131 does not change that.
+  // Sandboxed, there is nothing to load in this process at all.
+  const preloadedPolicyChecks =
+    !sandbox && policies.length > 0 ? await loadPolicyChecks([...policies], configDir) : undefined;
 
   // #1113 — the bootstrap limit, surfaced rather than left implicit. Reading
   // `build.sandbox` out of `chant.config.ts` requires evaluating that file, so
@@ -298,8 +313,21 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
 
     // Project-authored organizational policy — cross-cutting, so it sees every
     // lexicon's output at once (not scoped per-plugin), with the current env.
-    if (policyChecks.length > 0) {
-      const policyDiags = runPostSynthChecks(policyChecks, result, env);
+    //
+    // #1131 — under `--sandbox` this is where the LAST piece of project-
+    // authored code the CLI used to execute in its own process moves behind
+    // the boundary: `runProjectPolicies` hands the merged, serialized build
+    // result to a post-merge sandboxed child, which imports the policy modules
+    // and runs their checks there, and only plain `PostSynthDiagnostic`s come
+    // back. Unsandboxed, it is the same in-process load-and-run as before.
+    if (policies.length > 0) {
+      const policyDiags = await runProjectPolicies({
+        policies,
+        configDir,
+        buildResult: result,
+        env,
+        preloaded: preloadedPolicyChecks,
+      });
       for (const diag of policyDiags) {
         const prefix = diag.entity ? `[${diag.entity}] ` : "";
         const where = diag.lexicon ? ` (${diag.lexicon})` : "";

@@ -2,7 +2,7 @@ import { readdirSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import type { Serializer, SerializerResult } from "@intentius/chant/serializer";
 import type { DiscoveryError, BuildError } from "@intentius/chant/errors";
-import type { IntrinsicDef } from "@intentius/chant/lexicon";
+import type { IntrinsicDef, LexiconPlugin } from "@intentius/chant/lexicon";
 import { awsSerializer, awsPlugin } from "@intentius/chant-lexicon-aws";
 import { gcpSerializer, gcpPlugin } from "@intentius/chant-lexicon-gcp";
 import { azureSerializer, azurePlugin } from "@intentius/chant-lexicon-azure";
@@ -81,6 +81,43 @@ export const ALL_INTRINSICS: IntrinsicDef[] = [
 ].flatMap((plugin) => plugin.intrinsics?.() ?? []);
 
 /**
+ * chant #1131 — the plugin objects themselves, for the differentials that
+ * drive the CLI's `buildCommand` rather than core's `build()` (the
+ * `lint.policies` half of `sandbox-execution-boundary.test.ts`).
+ * `buildCommand` takes `plugins` to run each lexicon's own post-synth checks;
+ * without them a corpus build through the CLI would be quietly weaker than a
+ * real `chant build`.
+ */
+export const ALL_PLUGINS: LexiconPlugin[] = [
+  awsPlugin,
+  gcpPlugin,
+  azurePlugin,
+  k8sPlugin,
+  gitlabPlugin,
+  githubPlugin,
+  forgejoPlugin,
+  helmPlugin,
+  dockerPlugin,
+  temporalPlugin,
+  flyPlugin,
+];
+
+/** One lexicon's own plugin, keyed the same way as {@link SERIALIZER_BY_LEXICON}. */
+export const PLUGIN_BY_LEXICON: Record<string, LexiconPlugin> = {
+  aws: awsPlugin,
+  gcp: gcpPlugin,
+  azure: azurePlugin,
+  k8s: k8sPlugin,
+  gitlab: gitlabPlugin,
+  github: githubPlugin,
+  forgejo: forgejoPlugin,
+  helm: helmPlugin,
+  docker: dockerPlugin,
+  temporal: temporalPlugin,
+  fly: flyPlugin,
+};
+
+/**
  * One lexicon's own intrinsics, keyed the same way as
  * {@link SERIALIZER_BY_LEXICON}.
  */
@@ -124,6 +161,8 @@ export interface CorpusEntry {
   serializers: Serializer[];
   /** Intrinsics to fold with (chant #1039) — see {@link ALL_INTRINSICS}/{@link INTRINSICS_BY_LEXICON}. */
   intrinsics: IntrinsicDef[];
+  /** The plugin objects matching {@link serializers} — only needed by a differential that drives the CLI's `buildCommand` (chant #1131). */
+  plugins: LexiconPlugin[];
   /**
    * chant #1063 — the lexicon NAMES active for this entry, matching the
    * serializer/intrinsic selection below. The differentials build through
@@ -187,6 +226,7 @@ export function discoverCorpus(): CorpusEntry[] {
         srcDir,
         serializers: ALL_SERIALIZERS,
         intrinsics: ALL_INTRINSICS,
+        plugins: ALL_PLUGINS,
         lexicons: ALL_LEXICONS,
       });
     }
@@ -208,6 +248,7 @@ export function discoverCorpus(): CorpusEntry[] {
           srcDir,
           serializers: [serializer],
           intrinsics: INTRINSICS_BY_LEXICON[lexDirent.name] ?? [],
+          plugins: PLUGIN_BY_LEXICON[lexDirent.name] ? [PLUGIN_BY_LEXICON[lexDirent.name]] : [],
           lexicons: [lexDirent.name],
         });
       }

@@ -45,6 +45,24 @@ export interface SandboxForkOptions {
   timeoutMs: number;
   /** What timed out / exited early, for the error message (e.g. `"sandboxed run"`). */
   label: string;
+  /**
+   * chant #1131 — an optional payload sent to the child over the SAME IPC
+   * channel its response comes back on, immediately after the fork.
+   *
+   * The run and config children are fully described by their generated driver
+   * source, so they need nothing inbound. The policy child does: its input is
+   * the finished build result, which exists only after the parent has merged
+   * and serialized, long after the bundle was built. Sending it rather than
+   * baking it into a source literal keeps the bundle small (esbuild would
+   * otherwise parse a multi-megabyte literal) and keeps it off disk.
+   *
+   * Safe to send before the child has booted: `child.send` writes to the IPC
+   * pipe and Node queues the message until the child's channel is read, and
+   * the driver registers its `process.on("message", …)` synchronously at module
+   * top level — before the event loop can deliver anything. This is NOT a
+   * second protocol: same channel, same JSON, same one-message-back response.
+   */
+  send?: Record<string, unknown>;
 }
 
 /**
@@ -56,7 +74,7 @@ export function forkSandboxed<T>(
   options: SandboxForkOptions,
   isResponse: (value: unknown) => value is T,
 ): Promise<T> {
-  const { bundlePath, bundleDir, projectRealpath, externalReadPaths, env, timeoutMs, label } = options;
+  const { bundlePath, bundleDir, projectRealpath, externalReadPaths, env, timeoutMs, label, send } = options;
 
   return new Promise((resolvePromise, reject) => {
     const readAllowances = [bundleDir, projectRealpath, ...externalReadPaths].map(
@@ -78,6 +96,16 @@ export function forkSandboxed<T>(
       reject(new Error(`${label} timed out after ${timeoutMs}ms`));
     }, timeoutMs);
 
+    if (send !== undefined) {
+      child.send(send, (err) => {
+        if (settled || !err) return;
+        settled = true;
+        clearTimeout(timeout);
+        child.kill();
+        reject(new Error(`${label}: failed to send the child its input: ${err.message}`));
+      });
+    }
+
     child.stderr?.on("data", (chunk: Buffer) => {
       stderrBuf += chunk.toString();
     });
@@ -86,6 +114,16 @@ export function forkSandboxed<T>(
       if (settled || !isResponse(msg)) return;
       settled = true;
       clearTimeout(timeout);
+      // chant #1131 — the child's entire job is to send this one message, so
+      // once it has arrived there is nothing left to wait for. Killing it here
+      // rather than hoping it exits on its own closes a real hang: an open
+      // handle on the child side (a `setInterval` in project source, an
+      // `http.Server` a policy started, or simply an IPC listener the driver
+      // registered to RECEIVE its input) keeps the child's event loop alive,
+      // and a live IPC channel then keeps the PARENT's alive too. `chant build`
+      // never noticed because `cli/main.ts` ends with `process.exit`; anything
+      // embedding chant as a library would have hung forever.
+      child.kill();
       resolvePromise(msg);
     });
 

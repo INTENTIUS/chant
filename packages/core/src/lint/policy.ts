@@ -9,15 +9,33 @@ import { resolveProjectLexicons, loadPlugins } from "../cli/plugins";
 import { build } from "../build";
 import { runPostSynthChecks, isPostSynthCheck } from "./post-synth";
 import type { PostSynthCheck, PostSynthDiagnostic } from "./post-synth";
+import { importPolicyModule, isSandboxPolicyExecutionArmed } from "./policy-import";
 
-/** Load project policy checks (one or more `PostSynthCheck` exports) from files. */
+/**
+ * Load project policy checks (one or more `PostSynthCheck` exports) from files,
+ * **into this process**.
+ *
+ * chant #1131 — refuses while `./policy-sandbox.ts` is armed. Under `--sandbox`
+ * the policy modules are imported and their checks run inside a child process
+ * (`runProjectPolicies`); reaching this function anyway means a call site is
+ * about to execute project-authored code in the CLI's own process, which is
+ * precisely the thing the flag promises does not happen. Failing loudly is the
+ * only honest option — falling through would make `--sandbox` mean less than it
+ * says without anything visible to notice.
+ */
 export async function loadPolicyChecks(paths: string[], configDir: string): Promise<PostSynthCheck[]> {
+  if (isSandboxPolicyExecutionArmed()) {
+    throw new Error(
+      `Cannot load lint.policies (${paths.join(", ")}) in the chant process under --sandbox: a policy module is project-authored code, and it must be imported inside the sandbox boundary. This is a chant bug — the caller should route through runProjectPolicies() (packages/core/src/lint/policy-sandbox.ts).`,
+    );
+  }
+
   const checks: PostSynthCheck[] = [];
   for (const p of paths) {
     const resolved = resolve(configDir, p);
     let mod: Record<string, unknown>;
     try {
-      mod = (await import(resolved)) as Record<string, unknown>;
+      mod = await importPolicyModule(resolved);
     } catch (err) {
       throw new Error(
         `Failed to load policy "${p}": ${err instanceof Error ? err.message : String(err)}`,

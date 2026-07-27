@@ -43,6 +43,9 @@ const CHILD_ERRORS_MODULE = join(HERE, "child-errors.ts");
 const PROVENANCE_MODULE = join(dirname(DISCOVERY_DIR), "provenance.ts");
 // chant #1113 — the config driver's serializability contract (see ./config-wire.ts).
 const CONFIG_WIRE_MODULE = join(HERE, "config-wire.ts");
+// chant #1131 — the policy driver's build-result decoding + diagnostics contract.
+const POLICY_WIRE_MODULE = join(HERE, "policy-wire.ts");
+const POST_SYNTH_MODULE = join(dirname(DISCOVERY_DIR), "lint", "post-synth.ts");
 
 export interface GenerateDriverOptions {
   /** Absolute paths to the run-fallback files this build decided NOT to fold — see `discover()`'s fold/taint loop in `../index.ts`. */
@@ -212,4 +215,133 @@ export function generateConfigDriverSource(configPath: string): string {
     `  send({ kind: "chant-config", ok: false, error: classifyChildError(${lit(configPath)}, err).toJSON() });`,
     `});`,
   ].join("\n");
+}
+
+/**
+ * chant #1131 — generate the driver module that imports a project's
+ * `lint.policies` modules INSIDE the sandboxed child, runs their checks over
+ * the build result the parent hands it, and sends back plain
+ * `PostSynthDiagnostic`s.
+ *
+ * Same machinery again: literal-specifier dynamic `import()`s esbuild can trace
+ * and inline, `./child-errors.ts` for classification so a permission denial
+ * names the policy file, one IPC message back. Two things are specific to this
+ * one:
+ *
+ *  - **It receives before it sends.** The run and config drivers are fully
+ *    parameterized by their generated source; a policy check needs the finished
+ *    build result, which is neither known at bundle time nor something to bake
+ *    into a source literal. It arrives as one IPC message (see `./fork.ts`'s
+ *    `send`). The `process.on("message", …)` registration is top-level and
+ *    synchronous, so it is in place before the event loop can deliver anything
+ *    — a message the parent sent before the child finished booting is queued on
+ *    the channel, not lost.
+ *  - **Checks run wrapped, not raw.** `runPostSynthChecks` (chant's own, from
+ *    `../../lint/post-synth.ts`) is invoked ONCE over every check from every
+ *    policy module, exactly as `cli/commands/build.ts` invokes it in-process —
+ *    so the checks share one `PostSynthContext` and run in one order, and the
+ *    diagnostics come back in the same sequence. The wrapper around each check
+ *    is what makes a bad return value attributable: it scans that check's own
+ *    output and throws a `PolicyWireError` naming the module the check was
+ *    loaded from, rather than reporting an offending index in a merged array.
+ */
+export function generatePolicyDriverSource(policyPaths: readonly string[]): string {
+  const lines: string[] = [
+    `import { classifyChildError } from ${lit(CHILD_ERRORS_MODULE)};`,
+    `import { decodePolicyBuildResult, scanPolicyDiagnostics, PolicyWireError } from ${lit(POLICY_WIRE_MODULE)};`,
+    `import { runPostSynthChecks, isPostSynthCheck } from ${lit(POST_SYNTH_MODULE)};`,
+    ``,
+    `function send(payload) {`,
+    `  if (typeof process.send === "function") process.send(payload);`,
+    `  else console.log(JSON.stringify(payload));`,
+    `}`,
+    ``,
+    `function fail(file, err, type) {`,
+    `  if (err instanceof PolicyWireError) {`,
+    `    send({ kind: "chant-policy", ok: false, offenders: err.offenders });`,
+    `    return;`,
+    `  }`,
+    `  send({ kind: "chant-policy", ok: false, error: classifyChildError(file, err, type).toJSON() });`,
+    `}`,
+    ``,
+    // The wrapper described in the doc above: same id/description so any
+    // chant-side reporting keyed off them is unchanged, same ctx, same return
+    // value — plus the per-check serializability scan.
+    `function guard(check, policy) {`,
+    `  return {`,
+    `    id: check.id,`,
+    `    description: check.description,`,
+    `    check(ctx) {`,
+    `      const produced = check.check(ctx);`,
+    `      const offenders = scanPolicyDiagnostics(produced, policy);`,
+    `      if (offenders.length > 0) throw new PolicyWireError(offenders);`,
+    `      return produced;`,
+    `    },`,
+    `  };`,
+    `}`,
+    ``,
+    `async function main(request) {`,
+    `  let buildResult;`,
+    `  try {`,
+    `    buildResult = decodePolicyBuildResult(request.buildResult);`,
+    `  } catch (err) {`,
+    `    fail("", err, "resolution");`,
+    `    return;`,
+    `  }`,
+    ``,
+    `  const checks = [];`,
+  ];
+
+  // One block per policy module, in the order `lint.policies` declares them —
+  // the same order `loadPolicyChecks` collects in, so the diagnostics sequence
+  // matches the in-process one exactly.
+  for (const policyPath of policyPaths) {
+    lines.push(
+      `  try {`,
+      `    const mod = await import(${lit(policyPath)});`,
+      `    for (const value of Object.values(mod)) {`,
+      `      if (isPostSynthCheck(value)) checks.push(guard(value, ${lit(policyPath)}));`,
+      `    }`,
+      `  } catch (err) {`,
+      `    fail(${lit(policyPath)}, err, "import");`,
+      `    return;`,
+      `  }`,
+    );
+  }
+
+  lines.push(
+    ``,
+    `  let diagnostics;`,
+    `  try {`,
+    `    diagnostics = runPostSynthChecks(checks, buildResult, request.env ?? undefined);`,
+    `  } catch (err) {`,
+    `    fail("", err, "resolution");`,
+    `    return;`,
+    `  }`,
+    ``,
+    `  send({ kind: "chant-policy", ok: true, diagnostics });`,
+    `}`,
+    ``,
+    // Registered synchronously at module top level — see the doc above on why
+    // that is what makes the parent's send-before-boot safe.
+    //
+    // Removed again as soon as the input arrives, and that is not tidiness: a
+    // `message` listener REFS the IPC channel, so leaving it registered would
+    // keep this child's event loop alive after it had already answered — and a
+    // live channel keeps the PARENT's alive too. `chant build` would not have
+    // noticed (`cli/main.ts` ends in `process.exit`); anything embedding chant
+    // as a library would have hung. `./fork.ts` kills the child on receipt as
+    // the other half of the same fix.
+    `let started = false;`,
+    `function onRequest(request) {`,
+    `  if (started) return;`,
+    `  if (!request || request.kind !== "chant-policy-request") return;`,
+    `  started = true;`,
+    `  process.off("message", onRequest);`,
+    `  main(request).catch((err) => fail("", err, "resolution"));`,
+    `}`,
+    `process.on("message", onRequest);`,
+  );
+
+  return lines.join("\n");
 }
