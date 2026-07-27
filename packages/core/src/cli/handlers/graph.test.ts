@@ -52,8 +52,9 @@ const discoverComponentsMock = vi.fn();
 vi.mock("../../components/discover", () => ({
   discoverComponents: (...a: unknown[]) => discoverComponentsMock(...a),
 }));
+const chantConfigMock = vi.fn(() => Promise.resolve({ config: {} }));
 vi.mock("../../config", () => ({
-  loadChantConfig: () => Promise.resolve({ config: {} }),
+  loadChantConfig: (...a: unknown[]) => chantConfigMock(...a),
 }));
 vi.mock("../../build", () => ({
   build: () => Promise.resolve({ errors: [] }),
@@ -339,6 +340,30 @@ describe("runGraph", () => {
       const out = stdoutBuf.join("\n");
       expect(out).not.toContain("No lexicons implement describeResources");
       expect(out).toContain("web-vpc");
+    });
+
+    // #1158: a multi-stack project (ChantConfig.stacks) observes each declared
+    // stack, same as lifecycle snapshot/diff — not the single-stack convention.
+    test("ChantConfig.stacks: observeResources gets every declared stack name", async () => {
+      resolveLexMock.mockResolvedValue(["aws"]);
+      loadPluginsMock.mockResolvedValue([
+        { name: "aws", serializer: {}, describeResources: () => Promise.resolve({}) },
+      ]);
+      chantConfigMock.mockResolvedValueOnce({
+        config: {
+          stacks: [
+            { name: "estate-east", src: "east/src" },
+            { name: "estate-west", src: "west/src" },
+          ],
+        },
+      });
+      observeMock.mockResolvedValue({ observations: [], errors: [] });
+      const exit = await runGraph({ args: makeArgs({ format: "ir", live: true, env: "prod" }), plugins: [], serializers: [] });
+      expect(exit).toBe(0);
+      expect(observeMock).toHaveBeenCalledWith("prod", expect.anything(), expect.anything(), {
+        owned: true,
+        stacks: ["estate-east", "estate-west"],
+      });
     });
 
     // Regression for #57: a single-stack project (no `*.component.ts` files —

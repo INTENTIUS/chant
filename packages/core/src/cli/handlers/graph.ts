@@ -120,6 +120,9 @@ async function runGraphLive(
   } else {
     console.error(formatWarning({ message: "component discovery failed — observing the single-stack convention instead" }));
   }
+  // ChantConfig.stacks (#1158): a multi-stack project declares its deployed
+  // stacks directly — observe each of them, same as lifecycle snapshot/diff.
+  for (const declared of config.stacks ?? []) stacks.add(declared.name);
 
   const { observations, errors } = await observeResources(environment, observing, buildResult, {
     owned: true,
