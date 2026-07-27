@@ -127,12 +127,27 @@ For Pod Identity, no K8s-side composite is needed — configure the association 
 
 ## Karpenter
 
-Karpenter replaces Cluster Autoscaler for node provisioning. Karpenter NodePool and EC2NodeClass are simple CRDs — use CRD import rather than composites:
+Karpenter replaces Cluster Autoscaler for node provisioning. Karpenter's `NodePool` and `EC2NodeClass` are simple CRDs — add them to the k8s lexicon's CRD source list rather than importing per-project. There is no `chant import --url` flag; CRD-from-URL is lexicon-authoring-time codegen, done once in `lexicons/k8s/src/crd/crd-sources.ts`, not a per-project command:
+
+```typescript
+// lexicons/k8s/src/crd/crd-sources.ts
+const KARPENTER_VERSION = "v1.0.0"; // pin an operator release, not `main`
+const KARPENTER_CRD_BASE = `https://raw.githubusercontent.com/aws/karpenter-provider-aws/${KARPENTER_VERSION}/pkg/apis/crds`;
+
+export const CRD_SOURCES: CRDSource[] = [
+  // ...existing sources
+  { type: "url", url: `${KARPENTER_CRD_BASE}/karpenter.sh_nodepools.yaml` },
+  { type: "url", url: `${KARPENTER_CRD_BASE}/karpenter.k8s.aws_ec2nodeclasses.yaml` },
+];
+```
+
+Then regenerate the lexicon so the new kinds are typed:
 
 ```bash
-# Import Karpenter CRDs into your chant project
-chant import --url https://raw.githubusercontent.com/aws/karpenter/main/pkg/apis/crds/karpenter.sh_nodepools.yaml
+npm run generate -w @intentius/chant-lexicon-k8s
 ```
+
+See [Add a Third-Party CRD](/chant/lexicon-authoring/crd-sources/) for the full workflow (namespace mapping, verifying the generated type, adding rules).
 
 ## Fargate Considerations
 
