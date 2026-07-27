@@ -31,18 +31,11 @@ export async function packageLexicon(opts: PackageOptions = {}): Promise<Package
       generate: (genOpts) => generate({ verbose: genOpts.verbose, force: genOpts.force }),
 
       buildManifest: (_genResult) => {
-        const intrinsics: IntrinsicDef[] = [
-          {
-            name: "reference",
-            // Kept in sync with ../plugin.ts's own registration — see its
-            // comment: `reference(...)` is a plain call, not a tagged
-            // template, and the YAML `!reference` tag renders via
-            // `ReferenceIntrinsic.toYAML()`, unrelated to this flag.
-            description: "!reference tag — reference another job's properties",
-            outputKey: "!reference",
-            isTag: false,
-          },
-        ];
+        // Derived from the plugin's own registration (chant #1067) — this
+        // used to be a hand-maintained array independent of ../plugin.ts
+        // (despite the comment claiming otherwise), free to drift from the
+        // real registration without anything noticing.
+        const intrinsics: IntrinsicDef[] = gitlabPlugin.intrinsics?.() ?? [];
 
         return {
           name: "gitlab",

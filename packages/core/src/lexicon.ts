@@ -18,6 +18,41 @@ export type { ReferenceCatalog, IdentityRule, RefRule } from "./graph-refs";
 
 /**
  * Manifest for a packaged lexicon — metadata embedded in the tarball.
+ *
+ * chant #1067 decided each optional field below explicitly rather than
+ * leaving them all equally unchecked:
+ *
+ * - `chantVersion` — now validated for presence/shape by `chant dev
+ *   check-lexicon` (a lexicon's `dist/manifest.json` must declare one).
+ *   NOT validated for compatibility against the core version actually
+ *   running — that needs a live check at plugin-load time (a different
+ *   surface: `loadPlugin`/`loadPlugins` in `./cli/plugins.ts`), which stays
+ *   a deliberate non-goal here.
+ * - `namespace` — deliberately NOT validated for cross-lexicon uniqueness in
+ *   #1067. `chant dev check-lexicon <dir>` only ever inspects one lexicon at
+ *   a time, so it structurally can't catch a collision between two
+ *   *different* lexicons. The natural home is `checkConflicts` (./cli/
+ *   conflict-check.ts), which already detects cross-lexicon rule-id/skill/
+ *   MCP-tool/MCP-resource collisions when multiple plugins load together —
+ *   but `namespace` isn't on the runtime `LexiconPlugin` surface at all
+ *   (manifest-only, baked in at package time), so extending that check would
+ *   mean adding a new field to `LexiconPlugin` itself. Deferred rather than
+ *   done under time pressure alongside a concurrent, unrelated change to
+ *   this same interface (chant #1064).
+ * - `pseudoParameters` — deliberately NOT validated against what the
+ *   lexicon actually exports in #1067, unlike `intrinsics` (see
+ *   `IntrinsicDef.isTag` below and `./cli/commands/check-lexicon-
+ *   intrinsics.ts`). The same static-analysis approach would apply — check
+ *   each declared pseudo-parameter's short name against the real exported
+ *   namespace object's properties (`AWS.StackName`, `Azure.ResourceGroupName`,
+ *   ...) — but unlike `intrinsics()`, `pseudoParameters(): string[]` is a
+ *   flat list of dotted strings with no structural link back to a specific
+ *   export/property declaration, making the same trick more involved to
+ *   generalize correctly. Relevant to #1063 (folding cross-file references
+ *   into lexicon pseudo-parameter namespaces): once that lands, a wrong or
+ *   missing pseudo-parameter property would silently break folding exactly
+ *   the way #1039 did for intrinsics, which would be the moment this
+ *   deferral needs revisiting.
  */
 export interface LexiconManifest {
   name: string;
@@ -102,7 +137,22 @@ export interface IntrinsicDef {
   readonly name: string;
   readonly description?: string;
   readonly outputKey?: string;
-  readonly isTag?: boolean;
+  /**
+   * Whether this intrinsic is authored as a JS tagged template (`` Sub`...` ``)
+   * rather than a plain function call (`Ref(...)`). Required — chant #1067 —
+   * because an omitted value silently defaulted to "not a tag" with no
+   * signal that the registration had never been decided. That produced #1039
+   * in both directions at once: aws's `Sub` (a genuine tagged template, the
+   * most-used intrinsic in the ecosystem) shipped with no `isTag` at all and
+   * silently never folded, while gitlab's `reference()` (a plain call)
+   * shipped with `isTag: true`. Both were wrong, and both shipped, because
+   * nothing forced the declaration or checked it against how the intrinsic is
+   * actually authored. `chant dev check-lexicon` now validates every
+   * registration here against its real declaration (tagged-template
+   * signature vs plain call) and against the package's own exports — see
+   * `../cli/commands/check-lexicon-intrinsics.ts`.
+   */
+  readonly isTag: boolean;
 }
 
 /**
@@ -123,8 +173,16 @@ export interface IntrinsicDef {
  * foldable; every caller keeps working unchanged, and the generated matrix
  * updates the moment a lexicon's registration says a given intrinsic now
  * folds — no doc rewrite, no second code path to remember.
+ *
+ * Takes `{ isTag?: boolean }` rather than `Pick<IntrinsicDef, "isTag">`
+ * deliberately: `IntrinsicDef.isTag` is required for new registrations
+ * (chant #1067), but this predicate also reads `isTag` off untrusted,
+ * possibly-older parsed JSON (`ManifestJSON` in `./codegen/docs-types.ts`,
+ * on disk as a published lexicon's `dist/manifest.json`) that may predate
+ * the required field. `undefined` there means the same thing it always
+ * did — not a tag — so the check below is intentionally unchanged.
  */
-export function intrinsicFolds(def: Pick<IntrinsicDef, "isTag">): boolean {
+export function intrinsicFolds(def: { isTag?: boolean }): boolean {
   return def.isTag === true;
 }
 

@@ -37,15 +37,15 @@ export const azurePlugin: LexiconPlugin = {
 
   intrinsics(): IntrinsicDef[] {
     return [
-      { name: "ResourceId", description: "Generate a resource ID for an Azure resource" },
-      { name: "Reference", description: "Get the runtime state of a deployed resource" },
-      { name: "Concat", description: "Concatenate multiple string values" },
-      { name: "ResourceGroup", description: "Get the current resource group object" },
-      { name: "Subscription", description: "Get the current subscription object" },
-      { name: "UniqueString", description: "Generate a deterministic hash string" },
-      { name: "Format", description: "Format a string with arguments" },
-      { name: "If", description: "Conditional expression" },
-      { name: "ListKeys", description: "List access keys for a resource" },
+      { name: "ResourceId", description: "Generate a resource ID for an Azure resource", isTag: false },
+      { name: "Reference", description: "Get the runtime state of a deployed resource", isTag: false },
+      { name: "Concat", description: "Concatenate multiple string values", isTag: false },
+      { name: "ResourceGroup", description: "Get the current resource group object", isTag: false },
+      { name: "Subscription", description: "Get the current subscription object", isTag: false },
+      { name: "UniqueString", description: "Generate a deterministic hash string", isTag: false },
+      { name: "Format", description: "Format a string with arguments", isTag: false },
+      { name: "If", description: "Conditional expression", isTag: false },
+      { name: "ListKeys", description: "List access keys for a resource", isTag: false },
     ];
   },
 

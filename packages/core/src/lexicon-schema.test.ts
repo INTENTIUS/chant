@@ -131,6 +131,20 @@ describe("IntrinsicDefSchema", () => {
     const result = IntrinsicDefSchema.safeParse({ description: "no name" });
     expect(result.success).toBe(false);
   });
+
+  // chant #1067 — isTag went from optional to required: a registration
+  // silently defaulting to "not a tag" is exactly how #1039 shipped
+  // (aws's Sub had no isTag at all and never folded in production).
+  test("rejects a registration with isTag omitted", () => {
+    const result = IntrinsicDefSchema.safeParse({ name: "Sub", description: "no isTag" });
+    expect(result.success).toBe(false);
+  });
+
+  test("accepts isTag: true and isTag: false, rejects non-boolean isTag", () => {
+    expect(IntrinsicDefSchema.safeParse({ name: "Sub", isTag: true }).success).toBe(true);
+    expect(IntrinsicDefSchema.safeParse({ name: "Ref", isTag: false }).success).toBe(true);
+    expect(IntrinsicDefSchema.safeParse({ name: "Ref", isTag: "false" }).success).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------

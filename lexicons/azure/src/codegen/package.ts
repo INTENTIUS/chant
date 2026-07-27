@@ -39,12 +39,16 @@ export async function packageLexicon(opts: PackageOptions = {}): Promise<Package
 
       buildManifest: (_genResult) => {
         // Lazy-import to avoid circular dependency
+        // Trust the plugin's own `isTag` registration (chant #1067) instead
+        // of hardcoding `false` for every entry regardless of what
+        // ../plugin.ts declares — see aws's codegen/package.ts for the bug
+        // this pattern produced (#1039) when the two sources disagree.
         const intrinsics: IntrinsicDef[] = (azurePlugin.intrinsics?.() ?? []).map(
           (i: IntrinsicDef) => ({
             name: i.name,
             description: i.description,
             outputKey: intrinsicOutputKey(i.name),
-            isTag: false,
+            isTag: i.isTag,
           }),
         );
 

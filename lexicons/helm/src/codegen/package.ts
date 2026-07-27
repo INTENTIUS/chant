@@ -35,15 +35,15 @@ export async function packageLexicon(opts: PackageOptions = {}): Promise<Package
           version: pkgJson.version ?? "0.0.0",
           chantVersion: ">=0.1.0",
           namespace: "Helm",
-          intrinsics: [
-            { name: "values", description: "Proxy accessor for {{ .Values.x }} references" },
-            { name: "Release", description: "Built-in Release object" },
-            { name: "ChartRef", description: "Built-in Chart object" },
-            { name: "include", description: "Include a named template" },
-            { name: "If", description: "Conditional resource/value" },
-            { name: "Range", description: "Range loop" },
-            { name: "With", description: "With scope" },
-          ],
+          // Derived from the plugin's own registration (chant #1067) — this
+          // used to be a hand-maintained array of 7 entries, independent of
+          // ../plugin.ts's real registration (which has grown to 22) and
+          // never updated to match. That drift is exactly why an
+          // independent second source of truth for the same data is
+          // dangerous: the generated intrinsics doc page (chant #1062) was
+          // silently reporting "7 intrinsic functions" for a lexicon that
+          // ships 22.
+          intrinsics: helmPlugin.intrinsics?.() ?? [],
           pseudoParameters: {},
         };
       },

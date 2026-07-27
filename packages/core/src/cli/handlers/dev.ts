@@ -41,7 +41,7 @@ export async function runDevOnboard(ctx: CommandContext): Promise<number> {
 export async function runDevCheckLexicon(ctx: CommandContext): Promise<number> {
   const dir = ctx.args.extraPositional ?? ".";
   const { checkLexicon, printCheckResult } = await import("../commands/check-lexicon");
-  const result = checkLexicon(resolve(dir));
+  const result = await checkLexicon(resolve(dir));
   printCheckResult(result, ctx.args.format === "json");
   return result.tier1Pass ? 0 : 1;
 }

@@ -307,7 +307,7 @@ export async function printOnboardResult(result: OnboardResult, name: string): P
     console.log("");
     console.log("Lexicon completeness:");
     const { checkLexicon, printCheckResult } = await import("./check-lexicon");
-    const checkResult = checkLexicon(lexiconDir);
+    const checkResult = await checkLexicon(lexiconDir);
     printCheckResult(checkResult, false);
   }
 }

@@ -55,14 +55,14 @@ export const awsPlugin: LexiconPlugin = {
   intrinsics(): IntrinsicDef[] {
     return [
       { name: "Sub", description: "Fn::Sub template string interpolation", isTag: true },
-      { name: "Ref", description: "Reference a parameter or resource" },
-      { name: "GetAtt", description: "Fn::GetAtt — get resource attribute" },
-      { name: "If", description: "Fn::If — conditional value" },
-      { name: "Join", description: "Fn::Join — join values with delimiter" },
-      { name: "Select", description: "Fn::Select — select value by index" },
-      { name: "Split", description: "Fn::Split — split string by delimiter" },
-      { name: "Base64", description: "Fn::Base64 — encode to Base64" },
-      { name: "GetAZs", description: "Fn::GetAZs — list Availability Zones" },
+      { name: "Ref", description: "Reference a parameter or resource", isTag: false },
+      { name: "GetAtt", description: "Fn::GetAtt — get resource attribute", isTag: false },
+      { name: "If", description: "Fn::If — conditional value", isTag: false },
+      { name: "Join", description: "Fn::Join — join values with delimiter", isTag: false },
+      { name: "Select", description: "Fn::Select — select value by index", isTag: false },
+      { name: "Split", description: "Fn::Split — split string by delimiter", isTag: false },
+      { name: "Base64", description: "Fn::Base64 — encode to Base64", isTag: false },
+      { name: "GetAZs", description: "Fn::GetAZs — list Availability Zones", isTag: false },
     ];
   },
 
