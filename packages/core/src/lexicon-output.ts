@@ -7,6 +7,27 @@ import { AttrRef } from "./attrref";
 export type LexiconOutputLiteral = string | number | boolean;
 
 /**
+ * Marker symbol for LexiconOutput identification (chant #1122).
+ *
+ * A GLOBAL symbol (via `Symbol.for`), like every other chant-core brand
+ * check — `DECLARABLE_MARKER`, `STACK_OUTPUT_MARKER`, `INTRINSIC_MARKER` —
+ * holds across separately-loaded copies of chant-core the way `instanceof`
+ * does not. Two copies in one process is a plain npm-dedupe outcome: a
+ * lexicon pinned to a chant range that does not overlap the project's own
+ * gets a nested `node_modules/@intentius/chant`, and a project file
+ * importing `output` from that lexicon then holds a different `LexiconOutput`
+ * class than the CLI does. `instanceof LexiconOutput` returns false for a
+ * real output built by the other copy, and every `Outputs` entry vanishes
+ * silently.
+ *
+ * Installed non-enumerably in the constructor (not as a public class field)
+ * so a shallow spread/clone of a real instance — which would already lack
+ * its prototype methods (`getOutputValue()`, `_setSourceEntity()`, …) — does
+ * not silently pick up the marker and pass this guard too.
+ */
+export const LEXICON_OUTPUT_MARKER = Symbol.for("chant.lexiconOutput");
+
+/**
  * Sanitize auto-generated Output name parts into a valid CloudFormation
  * logical id. Real CloudFormation logical ids (including `Outputs` keys)
  * must match `^[A-Za-z0-9]+$` — no dots, underscores, or other punctuation.
@@ -46,6 +67,10 @@ export function sanitizeLogicalId(...parts: string[]): string {
  */
 export class LexiconOutput implements Intrinsic {
   readonly [INTRINSIC_MARKER] = true as const;
+  /** @internal Brand marker — see {@link LEXICON_OUTPUT_MARKER}. Declared
+   * here only for type purposes; the real, non-enumerable property is
+   * installed by the constructor. */
+  readonly [LEXICON_OUTPUT_MARKER]!: true;
   readonly sourceLexicon: string;
   readonly sourceEntity: string;
   readonly sourceAttribute: string | null;
@@ -71,6 +96,10 @@ export class LexiconOutput implements Intrinsic {
   readonly _literalValue: LexiconOutputLiteral | null;
 
   constructor(ref: AttrRef | Intrinsic | LexiconOutputLiteral, name: string) {
+    Object.defineProperty(this, LEXICON_OUTPUT_MARKER, {
+      value: true,
+      enumerable: false,
+    });
     if (ref instanceof AttrRef) {
       const parent = ref.parent.deref();
       if (!parent) {
@@ -204,8 +233,21 @@ export function output(ref: AttrRef | Intrinsic | LexiconOutputLiteral, name: st
 }
 
 /**
- * Type guard to check if a value is a LexiconOutput
+ * Type guard to check if a value is a LexiconOutput.
+ *
+ * Structural, not `instanceof` (chant #1122) — keys off {@link
+ * LEXICON_OUTPUT_MARKER}, a global symbol, so it holds across separately-
+ * loaded copies of chant-core the way `instanceof` does not. Every caller
+ * (`collect.ts`, `build.ts`, `graph-ir.ts`, `entity-wire-codec.ts`) reads
+ * only own-prototype members off the result (`outputName`, `_sourceParent`,
+ * `_setSourceEntity()`, `getOutputValue()`), all of which work identically
+ * on a cross-copy instance.
  */
 export function isLexiconOutput(value: unknown): value is LexiconOutput {
-  return value instanceof LexiconOutput;
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    LEXICON_OUTPUT_MARKER in value &&
+    (value as Record<symbol, unknown>)[LEXICON_OUTPUT_MARKER] === true
+  );
 }
