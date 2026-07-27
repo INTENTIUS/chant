@@ -9,6 +9,7 @@
 import { AttrRef } from "./attrref";
 import { INTRINSIC_MARKER } from "./intrinsic";
 import { DECLARABLE_MARKER } from "./declarable";
+import { isAttrRefLike } from "./utils";
 
 export type InterpolationValueSerializer = (value: unknown) => string;
 
@@ -26,8 +27,15 @@ export function defaultInterpolationSerializer(
   serializeRef: (refName: string) => string,
 ): InterpolationValueSerializer {
   return (value: unknown): string => {
-    // Handle AttrRef
-    if (value instanceof AttrRef) {
+    // Handle AttrRef. Duck-type, not `instanceof` (chant #1137): a lexicon
+    // built against a separate copy of `@intentius/chant` produces AttrRefs
+    // that fail `instanceof AttrRef` here but carry the same shape — and
+    // since AttrRef also implements Intrinsic, missing this branch does not
+    // fail loud. The value instead falls into the generic Intrinsic branch
+    // below, which calls `toJSON()` (returning the `{__attrRef}` wire
+    // envelope, not a `Ref`) and silently stringifies it to `[object
+    // Object]` in the interpolated output.
+    if (isAttrRefLike(value)) {
       const logicalName = value.getLogicalName();
       if (!logicalName) {
         throw new Error(

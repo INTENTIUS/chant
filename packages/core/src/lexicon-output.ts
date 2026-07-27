@@ -1,5 +1,6 @@
 import { INTRINSIC_MARKER, isIntrinsic, type Intrinsic } from "./intrinsic";
 import { AttrRef } from "./attrref";
+import { isAttrRefLike } from "./utils";
 
 /** A value `output()` accepts that is already fully resolved — not a
  * reference to anything, just data the author computed (a literal, a prop,
@@ -100,7 +101,16 @@ export class LexiconOutput implements Intrinsic {
       value: true,
       enumerable: false,
     });
-    if (ref instanceof AttrRef) {
+    // Duck-type, not `instanceof` (chant #1137): a lexicon built against a
+    // separate copy of `@intentius/chant` produces AttrRefs that fail
+    // `instanceof AttrRef` here but carry the same shape — and since AttrRef
+    // also implements Intrinsic, missing this branch does not fail loud.
+    // The value instead falls into the `isIntrinsic(ref)` branch below,
+    // stored as `_intrinsic` rather than an AttrRef-sourced output, so
+    // `getOutputValue()` later calls the foreign AttrRef's own `toJSON()`
+    // (the `{__attrRef}` wire envelope) instead of emitting `Fn::GetAtt` —
+    // a broken Output emitted with no error at synth time.
+    if (isAttrRefLike(ref)) {
       const parent = ref.parent.deref();
       if (!parent) {
         throw new Error("Cannot create LexiconOutput: parent entity has been garbage collected");
@@ -132,7 +142,7 @@ export class LexiconOutput implements Intrinsic {
       // a reference to anything. The `string` arm of the exported type
       // exists for a documented reason: a generated resource's attribute
       // accessor is typed `string` at the TypeScript level but is a real
-      // `AttrRef` at runtime, caught by `instanceof AttrRef` above — so
+      // `AttrRef` at runtime, caught by the `isAttrRefLike` check above — so
       // anything that reaches this branch genuinely has no source entity
       // or attribute, and is recorded to be emitted as a plain `Value`
       // rather than a fabricated `Fn::GetAtt` (chant #1121).

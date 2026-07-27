@@ -23,20 +23,25 @@
  * value) becomes a name-keyed marker instead. {@link decodeEntitySet} is the
  * inverse — it rebuilds a live `Map<string, Declarable>` whose entities are
  * BEHAVIORALLY indistinguishable from what `discover()` would have produced
- * in-process: real `AttrRef` instances (several call sites downstream key off
- * `instanceof AttrRef`, not just duck typing — `intrinsic-interpolation.ts`'s
+ * in-process: real `AttrRef` instances, not a duck-typed `{__attrRef}`
+ * envelope alone. `new AttrRef(...)` here is plain, direct construction from
+ * this module's own class — this codec runs inside the same module graph as
+ * every downstream reader (`intrinsic-interpolation.ts`'s
  * `defaultInterpolationSerializer`, `discovery/graph.ts`'s
  * `buildDependencyGraph`, `build.ts`'s `detectCrossLexiconRefs`/
- * `computeStackGraph` — so a plain `{__attrRef}` envelope alone is not
- * enough), and whole-entity embeds restored to the SAME object reference
- * (not a structurally-equal clone), so `entityNames.get(decl)` keeps working
- * by identity exactly as it does today.
+ * `computeStackGraph`, all converted to `isAttrRefLike` duck-typing by chant
+ * #1137 for the OTHER hazard, a separately-loaded lexicon copy) — so there is
+ * no dual-package boundary to duck-type across here, and building the real
+ * class is simply less code than hand-assembling a shape-alike stand-in with
+ * matching methods, and whole-entity embeds restored to the SAME object
+ * reference (not a structurally-equal clone), so `entityNames.get(decl)`
+ * keeps working by identity exactly as it does today.
  *
  * `serializer-walker.ts`'s `walkValue` needs NO changes for this: it already
  * falls back to reading a plain `{__attrRef}` envelope (added for intrinsics
  * whose own `toJSON()` embeds one). `decodeEntitySet` goes further and
- * reconstructs the real class so every OTHER `instanceof AttrRef` call site
- * keeps working too, not just the walker.
+ * reconstructs the real class, both simpler here and a belt-and-suspenders
+ * match for any call site that still checks `instanceof AttrRef` directly.
  *
  * Naming happens exactly once, inside the boundary — `resolveAttrRefs`
  * (./resolve.ts) runs as part of `discover()`, before `encodeEntitySet` is
@@ -85,7 +90,7 @@ import { isChildProject } from "../child-project";
  *   form. `refs` additionally captures any `AttrRef`/whole-entity reference
  *   found while walking the intrinsic's OWN fields (not through `toJSON()`)
  *   — `buildDependencyGraph` and `detectCrossLexiconRefs`/`computeStackGraph`
- *   walk raw entity property trees looking for `instanceof AttrRef`/a
+ *   walk raw entity property trees looking for an `AttrRef`-like value/a
  *   tracked `Declarable`, not through `toJSON()`, so a ref nested inside e.g.
  *   a `Sub` template needs to still be discoverable post-decode for
  *   cross-lexicon output auto-detection and dependency ordering to keep

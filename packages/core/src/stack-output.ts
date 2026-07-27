@@ -9,6 +9,7 @@
 import { DECLARABLE_MARKER, type Declarable } from "./declarable";
 import { AttrRef } from "./attrref";
 import { isIntrinsic, type Intrinsic } from "./intrinsic";
+import { isAttrRefLike } from "./utils";
 
 /**
  * Marker symbol for stack output identification.
@@ -32,10 +33,15 @@ export interface StackOutput extends Declarable {
 }
 
 /** Find the first AttrRef anywhere inside a value (walking intrinsics/objects/
- * arrays), so a wrapping intrinsic can still borrow its parent's lexicon. */
+ * arrays), so a wrapping intrinsic can still borrow its parent's lexicon.
+ * Duck-type, not `instanceof` (chant #1137): a lexicon built against a
+ * separate copy of `@intentius/chant` produces AttrRefs that fail
+ * `instanceof AttrRef` here but carry the same shape — missing one would
+ * make the walk recurse into the AttrRef's own (unhelpful) fields instead
+ * of stopping on it, silently failing to find the anchor. */
 function firstAttrRef(value: unknown, seen = new Set<unknown>()): AttrRef | undefined {
   if (value === null || typeof value !== "object" || seen.has(value)) return undefined;
-  if (value instanceof AttrRef) return value;
+  if (isAttrRefLike(value)) return value;
   seen.add(value);
   const children = Array.isArray(value) ? value : Object.values(value as Record<string, unknown>);
   for (const child of children) {
@@ -79,12 +85,22 @@ export function stackOutput(
   ref: AttrRef | Intrinsic,
   options?: { description?: string },
 ): StackOutput {
-  if (!(ref instanceof AttrRef) && !isIntrinsic(ref)) {
+  // Duck-type, not `instanceof` (chant #1137): AttrRef also implements
+  // Intrinsic (a global-symbol marker), so `isIntrinsic(ref)` alone already
+  // happens to accept a foreign-copy AttrRef here — this check would not
+  // misfire even with the raw `instanceof` left in. It is converted anyway
+  // so the guard's own logic states the invariant explicitly ("ref must be
+  // AttrRef-like or Intrinsic") rather than relying on that coincidence,
+  // matching the anchor selection right below it, which does misbehave.
+  if (!isAttrRefLike(ref) && !isIntrinsic(ref)) {
     throw new Error("stackOutput(ref): ref must be an attribute reference or an intrinsic wrapping one");
   }
   // Derive lexicon from the referenced entity — for a bare AttrRef, its parent;
-  // for an intrinsic (Join etc.), the first AttrRef nested inside it.
-  const anchor = ref instanceof AttrRef ? ref : firstAttrRef(ref);
+  // for an intrinsic (Join etc.), the first AttrRef nested inside it. A
+  // foreign-copy AttrRef failing raw `instanceof` here would fall to
+  // `firstAttrRef`, which (before its own #1137 fix) would also miss it —
+  // silently anchoring on nothing and recording `lexicon: "unknown"`.
+  const anchor = isAttrRefLike(ref) ? ref : firstAttrRef(ref);
   const parent = anchor?.parent.deref();
   const lexicon = parent && typeof (parent as Record<string, unknown>).lexicon === "string"
     ? (parent as Record<string, unknown>).lexicon as string

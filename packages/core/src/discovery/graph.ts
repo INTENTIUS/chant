@@ -1,6 +1,7 @@
 import type { Declarable } from "../declarable";
 import { isDeclarable } from "../declarable";
 import { AttrRef } from "../attrref";
+import { isAttrRefLike } from "../utils";
 
 /**
  * Builds a dependency graph from a collection of entities
@@ -95,8 +96,13 @@ function findDependencies(
     return;
   }
 
-  // Check if this is an AttrRef
-  if (value instanceof AttrRef) {
+  // Check if this is an AttrRef. Duck-type, not `instanceof` (chant #1137):
+  // a lexicon built against a separate copy of `@intentius/chant` produces
+  // AttrRefs that fail `instanceof AttrRef` here but carry the same shape.
+  // Without this, the dependency edge is silently dropped instead of
+  // recorded, which can misorder — or fail to detect a cycle in — the
+  // file-discovery build order this graph exists to compute.
+  if (isAttrRefLike(value)) {
     if (visited.has(value)) {
       return;
     }
