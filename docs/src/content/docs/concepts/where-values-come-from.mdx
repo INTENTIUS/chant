@@ -23,6 +23,8 @@ Literals, `const` bindings, spreads from `const` sources, and symbolic reference
 
 Layered configuration is static data too. Merging `const` objects across environments is composition over fixed values, not a lookup. It stays inside the boundary as long as the layers are `const` and the merge runs at synthesis.
 
+A **build-time parameter** (`import { params } from "@intentius/chant/params"`, declared in `chant.config.ts`'s `buildParams`, supplied via `chant build --param`/`--params-file`) is static data too, resolved before synthesis begins rather than read from the committed source alone — same parameters in, same output out. This is the supported way to vary a build across environments; reading `process.env` directly is a runtime lookup (below), not static data. See [Build-Time Parameters](/chant/concepts/build-time-parameters/).
+
 ### Deploy-time input
 
 Some values are not known when you build. A VPC ID minted by another system. A secret ARN that exists only after apply. A value another stack exports. These do not enter synthesis at all. They enter the *artifact* as a placeholder — a parameter or an intrinsic — and the platform resolves them when it applies.
@@ -32,6 +34,8 @@ The placeholder is static. The value arrives later. Synthesis emits `${StackName
 ### Runtime lookup
 
 Reaching out during the build — calling a cloud API to discover an ID, reading a secret store, fetching HTTP, reading mutable state — is refused. The [evaluability rules](/chant/lint-rules/evaluability/) (EVL) reject it. A value that depends on a function call, a network round-trip, or the moment you ran the build is not a value synthesis can own. Same source would stop meaning same output.
+
+`process.env.X` read at module scope is this category too: the value depends on whatever process happens to be running the build, not on the source. [Build-time parameters](/chant/concepts/build-time-parameters/) are the supported way across this exact boundary — the same environment-dependence, but resolved explicitly at build invocation instead of read ambiently.
 
 <Aside type="note" title="The test">
 If a value can change without the source changing, it is not static data. It is either a deploy-time input the platform resolves at apply, or it belongs before synthesis — written into the source by an agent or a script. It is never a lookup the build performs.

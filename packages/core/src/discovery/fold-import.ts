@@ -2,6 +2,7 @@ import * as ts from "typescript";
 import { readFile } from "node:fs/promises";
 import { existsSync, statSync, readFileSync, realpathSync } from "node:fs";
 import { dirname, basename, join, isAbsolute, resolve as resolvePath } from "node:path";
+import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import { isDeclarable, type Declarable } from "../declarable";
 import { isCompositeInstance, type CompositeInstance } from "../composite";
@@ -19,6 +20,7 @@ import {
 } from "../fold/fold";
 import { importModule } from "./import";
 import type { IntrinsicDef } from "../lexicon";
+import type { BuildParamValue } from "../build-params";
 
 /**
  * Bridges the static folder ({@link ../fold/fold}, #1026) into discovery
@@ -144,11 +146,23 @@ export interface FoldSession {
    * `discover()` call, unlike the bare-specifier one.
    */
   readonly resolvePathCache: Map<string, string>;
+  /**
+   * chant #1064 — this build's resolved build-time parameter values (see
+   * ../build-params.ts), consulted only by {@link buildExternals}'s one
+   * recognized bare-specifier case: a named `params` import resolving to
+   * ../params.ts. `undefined` when the build supplied none (no `chant.config.ts`
+   * `buildParams` declared, or the caller didn't pass any) — a project that
+   * doesn't use build-time parameters pays nothing extra here.
+   */
+  readonly buildParams?: Readonly<Record<string, BuildParamValue>>;
 }
 
 /** Create a fresh, empty {@link FoldSession}. */
-export function createFoldSession(intrinsics: readonly IntrinsicDef[] = []): FoldSession {
-  return { intrinsics, cache: new Map(), stack: [], importCache: new Map(), resolvePathCache: new Map() };
+export function createFoldSession(
+  intrinsics: readonly IntrinsicDef[] = [],
+  buildParams?: Readonly<Record<string, BuildParamValue>>,
+): FoldSession {
+  return { intrinsics, cache: new Map(), stack: [], importCache: new Map(), resolvePathCache: new Map(), buildParams };
 }
 
 /**
@@ -728,6 +742,19 @@ function resolveModulePath(specifier: string, fromFile: string): string {
   if (fast !== undefined) return fast;
   return createRequire(fromFile).resolve(specifier);
 }
+
+/**
+ * chant #1064 — the absolute path of chant-core's OWN build-time-parameters
+ * runtime module (../params.ts), resolved once, from THIS file's own
+ * location, via the exact same relative-specifier resolution
+ * {@link resolveModulePath} already applies to project files. Used by
+ * {@link buildExternals} to recognize a project file's `import { params }
+ * from "@intentius/chant/params"` (a BARE specifier, resolved the normal way
+ * through the consuming project's own `node_modules`) as referring to this
+ * same installed package — install-layout-agnostic (dev "src" condition or
+ * built "dist"), with no text-matching of the specifier string itself.
+ */
+const PARAMS_MODULE_PATH = resolveModulePath("../params", fileURLToPath(import.meta.url));
 
 // ─────────────────────────────────────────────────────────────────────────
 // Resolution: given the scan + import map, compute the REAL runtime value
@@ -1339,7 +1366,42 @@ async function buildExternals(
   const failures = new Map<string, string>();
 
   for (const [localName, binding] of imports) {
-    if (!isProjectFileSpecifier(binding.specifier)) continue;
+    // chant #1064 — recognized regardless of specifier SHAPE (bare package,
+    // relative, or absolute): a named `params` import that resolves to
+    // chant-core's own build-time-parameters module (../params.ts) is
+    // substituted directly from this build's already-resolved values, with
+    // NO import performed — so `params.tier` folds to a LITERAL rather than
+    // a symbolic node (contrast the `{__symbol}` deferral a pseudo-parameter
+    // namespace import like `AWS.StackName` gets — that genuinely can't
+    // resolve until a real module runs; a build parameter's value is already
+    // fully known here). Checked BEFORE the project-file/bare-specifier
+    // branch below, cheaply (one memoized resolve), so it applies whichever
+    // way the real specifier happens to be spelled; a real project's
+    // "@intentius/chant/params" bare import and this module's own tests'
+    // absolute-path import both take this path identically. Any OTHER
+    // `params`-named import (a project file that happens to export something
+    // called `params`) simply doesn't match `PARAMS_MODULE_PATH` and falls
+    // through unaffected.
+    if (session.buildParams && binding.imported === "params") {
+      try {
+        const targetPath = resolveModulePathMemoized(binding.specifier, file, session.resolvePathCache);
+        if (targetPath === PARAMS_MODULE_PATH) {
+          externals.set(localName, session.buildParams);
+          continue;
+        }
+      } catch {
+        // Unresolvable specifier — fall through to the ordinary handling
+        // below, same as any other import this loop can't resolve.
+      }
+    }
+
+    if (!isProjectFileSpecifier(binding.specifier)) {
+      // Every other bare specifier (a lexicon/vendor package) is left alone
+      // here, exactly as before #1064: it resolves lazily, through the
+      // pre-existing `importModule` mechanism, only once a constructor/
+      // composite-factory/intrinsic tag actually consumes it.
+      continue;
+    }
     let targetPath: string;
     try {
       targetPath = resolveModulePathMemoized(binding.specifier, file, session.resolvePathCache);

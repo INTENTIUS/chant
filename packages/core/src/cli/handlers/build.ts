@@ -86,6 +86,16 @@ export async function runBuild(ctx: CommandContext): Promise<number> {
     console.error(formatInfo(formatWarningMsg));
   }
 
+  // #1064 — `--param name=value`, repeated, into a flat { name: value } record.
+  const params = args.param?.length
+    ? Object.fromEntries(
+        args.param.map((entry) => {
+          const eq = entry.indexOf("=");
+          return eq === -1 ? [entry, ""] : [entry.slice(0, eq), entry.slice(eq + 1)];
+        }),
+      )
+    : undefined;
+
   if (args.watch) {
     const cleanup = buildCommandWatch({
       path: args.path,
@@ -95,6 +105,8 @@ export async function runBuild(ctx: CommandContext): Promise<number> {
       plugins,
       fold: args.fold,
       sandbox: args.sandbox,
+      params,
+      paramsFile: args.paramsFile,
     });
     process.on("SIGINT", () => {
       cleanup();
@@ -114,6 +126,8 @@ export async function runBuild(ctx: CommandContext): Promise<number> {
     env: args.env,
     fold: args.fold,
     sandbox: args.sandbox,
+    params,
+    paramsFile: args.paramsFile,
   });
 
   // When --lexicon filters to a subset, suppress "No serializer" warnings for excluded lexicons

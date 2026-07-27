@@ -23,6 +23,8 @@ chant build [path] [flags]
 | `-w, --watch` | `bool` | `false` | Watch for file changes and rebuild |
 | `--fold` | `bool` | `false` | Fold source files statically instead of importing and running them (opt-in). Falls back to running a file, per file, for anything outside the fold subset — logged as `[fold:fold]` or `[fold:run] <reason>` |
 | `--sandbox` | `bool` | `false` | Run run-fallback source files (or every file, without `--fold`) together, isolated, in one sandboxed child process instead of in-process (opt-in). No filesystem write, no process spawn, no worker threads, no ambient environment visible to project source; network egress is not blocked — see [Sandboxed Execution](/chant/architecture/sandbox/) |
+| `--param <name=value>` | `string` | — | Bind a declared build-time parameter (`chant.config.ts`'s `buildParams`) to a value; repeatable. See [Build-Time Parameters](/chant/concepts/build-time-parameters/) |
+| `--params-file <path>` | `string` | — | JSON file of `{ "name": value }` build-time parameter values; second precedence, after `--param` |
 
 ## Usage
 
@@ -47,6 +49,12 @@ chant build --fold
 
 # Isolate run-fallback files in a sandboxed child process (opt-in)
 chant build --fold --sandbox
+
+# Bind a declared build-time parameter (repeatable)
+chant build --fold --param tier=production --param env=staging
+
+# Or from a JSON file
+chant build --fold --params-file ./params.prod.json
 ```
 
 ## Fold vs run
@@ -76,6 +84,10 @@ export default {
 ```
 
 The `--sandbox` flag always wins over `build.sandbox` when both are present.
+
+## Build-time parameters
+
+`--param name=value` (repeatable) and `--params-file <path>` bind declared build-time parameters — `chant.config.ts`'s `buildParams` — so source can read `params.<name>` (`import { params } from "@intentius/chant/params"`) instead of `process.env`. Unlike the AWS lexicon's deploy-time `Parameter()`, a build-time parameter resolves before synthesis, so its value can change which resources are produced at all. An unknown name, a missing required value, or a value outside a declared `enum` is reported as a build error naming the parameter — never a thrown error from inside project source. Every resolved parameter is logged (`[param] name = value (source)`) and recorded on the build result for provenance. See [Build-Time Parameters](/chant/concepts/build-time-parameters/) for the full picture, including precedence and why it folds to a literal.
 
 ## Exit Codes
 

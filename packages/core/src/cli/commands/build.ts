@@ -1,12 +1,13 @@
 import { build } from "../../build";
 import { loadChantConfig, resolveOwnershipMarker, resolveFoldEnabled, resolveSandboxEnabled } from "../../config";
+import { resolveBuildParams } from "../../build-params";
 import type { Serializer, SerializerResult } from "../../serializer";
 import type { LexiconPlugin } from "../../lexicon";
 import { runPostSynthChecks } from "../../lint/post-synth";
 import { loadPolicyChecks } from "../../lint/policy";
 import { sortedJsonReplacer } from "../../utils";
 import { formatError, formatWarning, formatSuccess, formatBold, formatInfo } from "../format";
-import { writeFileSync, mkdirSync } from "fs";
+import { writeFileSync, mkdirSync, readFileSync } from "fs";
 import { resolve, dirname, join, relative } from "path";
 import { watchDirectory, formatTimestamp, formatChangedFiles } from "../watch";
 
@@ -49,6 +50,21 @@ export interface BuildOptions {
    * this flag, when true, always wins for the invocation.
    */
   sandbox?: boolean;
+
+  /**
+   * chant #1064 — `--param name=value` flags (repeatable), parsed to a flat
+   * `{ name: value }` record of raw (unvalidated) strings. Highest
+   * precedence in {@link resolveBuildParams}'s resolution against the
+   * project's declared `chant.config.ts` `buildParams`.
+   */
+  params?: Record<string, string>;
+
+  /**
+   * chant #1064 — `--params-file <path>`: a JSON file of `{ "name": value }`
+   * build-time parameter values, read and parsed here. Second precedence,
+   * after {@link params}.
+   */
+  paramsFile?: string;
 }
 
 /**
@@ -98,6 +114,8 @@ export interface BuildResult {
   errors: string[];
   /** Warning messages */
   warnings: string[];
+  /** This build's resolved build-time parameters (#1064) — see `BuildResult.buildParams` (../../build.ts). Empty when the project declares/supplies none. */
+  buildParams?: import("../../provenance").BuildParamProvenance[];
 }
 
 /**
@@ -137,6 +155,45 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
   // as fold, resolved independently.
   const sandbox = resolveSandboxEnabled(config, options.sandbox);
 
+  // #1064 — resolve declared build-time parameters (chant.config.ts's
+  // buildParams) against this invocation's --param/--params-file/declared
+  // env mapping, BEFORE calling build() — a resolution failure (an unknown
+  // name, a missing required value, a type/enum mismatch) is reported as a
+  // chant build error naming the parameter, never a thrown error from inside
+  // user source (which is what loomster's hand-rolled `tierFromEnv()`-style
+  // validators did before migrating to this mechanism).
+  let paramsFileContent: Record<string, unknown> | undefined;
+  if (options.paramsFile) {
+    try {
+      paramsFileContent = JSON.parse(readFileSync(resolve(options.paramsFile), "utf-8"));
+    } catch (err) {
+      errors.push(
+        formatError({
+          message: `Failed to read/parse --params-file "${options.paramsFile}": ${err instanceof Error ? err.message : String(err)}`,
+        }),
+      );
+    }
+  }
+  const paramsResolution = resolveBuildParams(config.buildParams, {
+    cli: options.params,
+    fromFile: paramsFileContent,
+    env: process.env,
+  });
+  for (const message of paramsResolution.errors) {
+    errors.push(formatError({ message }));
+  }
+  if (errors.length > 0) {
+    return { success: false, resourceCount: 0, fileCount: 0, errors, warnings };
+  }
+  // #1064 — build-provenance visibility: report every resolved build-time
+  // parameter (name, value, and which source won it) the same
+  // unconditional-log-not-gated-on---verbose way #1022's fold decisions are
+  // reported just below, so a build's environment-varying inputs are as
+  // visible as its fold-vs-run choices.
+  for (const p of paramsResolution.provenance) {
+    console.error(formatInfo(`[param] ${p.name} = ${JSON.stringify(p.value)} (${p.source})`));
+  }
+
   // #1039 — thread each loaded plugin's registered intrinsics (e.g. AWS's
   // `Sub`) through to the fold path, so a file using a registered intrinsic
   // tagged template folds instead of unconditionally falling back to run.
@@ -151,6 +208,7 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
     fold,
     sandbox,
     intrinsics,
+    buildParams: paramsResolution.provenance,
   });
 
   // #1022 — report per-file fold vs run so it's visible what still runs.
@@ -408,6 +466,7 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
     fileCount,
     errors,
     warnings,
+    buildParams: paramsResolution.provenance,
   };
 }
 

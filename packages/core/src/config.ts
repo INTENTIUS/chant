@@ -6,6 +6,7 @@ import type { OwnershipMarker } from "./ownership";
 import { DEFAULT_SBOM_FORMAT, type SbomFormat } from "./components/verbs/sbom-generator";
 import type { Severity } from "./components/verbs/vuln-scan";
 import type { VulnPolicy } from "./components/verbs/vuln-gate";
+import type { BuildParamsConfig } from "./build-params";
 
 /**
  * Zod schema for ChantConfig validation.
@@ -24,6 +25,17 @@ export const ChantConfigSchema = z.object({
   build: z.object({
     fold: z.boolean().optional(),
   }).optional(),
+  buildParams: z.record(
+    z.string(),
+    z.object({
+      type: z.enum(["string", "number", "boolean"]),
+      default: z.union([z.string(), z.number(), z.boolean()]).optional(),
+      enum: z.array(z.union([z.string(), z.number(), z.boolean()])).optional(),
+      env: z.string().min(1).optional(),
+      required: z.boolean().optional(),
+      description: z.string().optional(),
+    }),
+  ).optional(),
   release: z.object({
     autoRecord: z.boolean().optional(),
   }).optional(),
@@ -144,6 +156,20 @@ export interface ChantConfig {
      */
     sandbox?: boolean;
   };
+
+  /**
+   * Build-time parameters (#1064) — values supplied to `chant build` (a
+   * `--param name=value` flag, a `--params-file` JSON file, or a declared
+   * `env` var mapping) and bound to `params.<name>` (`@intentius/chant/params`)
+   * for source to reference, instead of reading `process.env` at module
+   * scope. Distinct from the deploy-time `Parameter` class
+   * (`lexicons/aws/src/parameter.ts`, a CloudFormation `Parameters:` entry
+   * that resolves at stack deploy) — a build-time parameter resolves before
+   * the template is even synthesized, so it can change which resources are
+   * produced at all (e.g. a tier selecting `light` vs `production`). See
+   * {@link resolveBuildParams} in `./build-params.ts`.
+   */
+  buildParams?: BuildParamsConfig;
 
   /**
    * Release-ledger recording behavior (#597, epic #551). Auto-emitting a

@@ -434,6 +434,21 @@ export function fold(
       if (externals?.has(node.text)) {
         return externals.get(node.text) as FoldedValue;
       }
+      // chant #1064 — a bare `process` reference is ALWAYS an ambient
+      // environment read (`process.env.X`, `process.argv`, …), never
+      // something a future resolution pass could fold: it's Node's global,
+      // not a local const or an importable module export. Point at the
+      // supported alternative instead of leaving the author to infer the fix
+      // from the generic "unresolved identifier" message — see
+      // ../build-params.ts/../params.ts.
+      if (node.text === "process") {
+        throw foldError(
+          node,
+          `ambient "process" read is not foldable — declare a build-time parameter instead ` +
+            `(chant.config.ts's buildParams + \`chant build --param name=value\`/\`--params-file\`) and reference ` +
+            `it via \`import { params } from "@intentius/chant/params"\`, rather than reading process.env directly`,
+        );
+      }
       throw foldError(node, `unresolved identifier: ${node.text}`);
     }
     return fold(consts.get(node.text) as ts.Expression, consts, intrinsics, externals);

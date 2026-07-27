@@ -248,6 +248,28 @@ describe("parseArgs", () => {
     const result = parseArgs(["run", "--components", "search-service"]);
     expect(result.progressJson).toBeUndefined();
   });
+
+  // ── --param / --params-file (chant #1064) ────────────────────────────────
+
+  test("parses a single --param as a one-element array", () => {
+    const result = parseArgs(["build", "src", "--param", "tier=production"]);
+    expect(result.param).toEqual(["tier=production"]);
+  });
+
+  test("repeated --param accumulates in order", () => {
+    const result = parseArgs(["build", "src", "--param", "tier=production", "--param", "env=staging"]);
+    expect(result.param).toEqual(["tier=production", "env=staging"]);
+  });
+
+  test("--param is undefined when omitted", () => {
+    const result = parseArgs(["build", "src"]);
+    expect(result.param).toBeUndefined();
+  });
+
+  test("parses --params-file with a path", () => {
+    const result = parseArgs(["build", "src", "--params-file", "./params.json"]);
+    expect(result.paramsFile).toBe("./params.json");
+  });
 });
 
 // ── resolveCommand tests ──────────────────────────────────────────

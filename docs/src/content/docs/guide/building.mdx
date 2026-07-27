@@ -13,9 +13,10 @@ chant build ./infra        # Build from a specific path
 chant build -o stack.json  # Output to file
 chant build --format yaml  # YAML output
 chant build --watch        # Re-run on file changes
+chant build --param tier=production  # Bind a declared build-time parameter
 ```
 
-See the [build CLI reference](/chant/cli/build/) for full flag documentation.
+See the [build CLI reference](/chant/cli/build/) for full flag documentation, and [Build-Time Parameters](/chant/concepts/build-time-parameters/) for varying a build across environments without reading `process.env`.
 
 ## What Happens
 

@@ -8,6 +8,9 @@ import { resolveAttrRefs } from "./resolve";
 import { buildDependencyGraph } from "./graph";
 import { tryFoldFile, planFoldTaint, createFoldSession } from "./fold-import";
 import { getProvenance } from "../provenance";
+import type { BuildParamProvenance } from "../provenance";
+import { buildParamValues } from "../build-params";
+import { setBuildParams } from "../params";
 
 /**
  * Per-file fold-vs-run outcome (chant #1022, epic #1019), populated only
@@ -64,6 +67,19 @@ export interface DiscoveryOptions {
    * (no bundling, no child process, no IPC), is unchanged unless requested.
    */
   sandbox?: boolean;
+
+  /**
+   * chant #1064 — this build's resolved build-time parameter values (see
+   * ../build-params.ts's `resolveBuildParams`, driven by the CLI's
+   * `--param`/`--params-file`/declared `env` mapping/`chant.config.ts`
+   * defaults). Populated into `../params.ts`'s shared `params` object
+   * (`setBuildParams`, below) before any project file is imported or folded,
+   * and threaded into the fold session so a `params.<name>` reference
+   * resolves to a literal instead of an unresolved identifier. Default: none
+   * — `params` stays empty, matching a project that declares no
+   * `buildParams` at all.
+   */
+  buildParams?: BuildParamProvenance[];
 }
 
 /**
@@ -99,6 +115,18 @@ export async function discover(path: string, options?: DiscoveryOptions): Promis
   const sourceFiles: string[] = [];
   const foldDecisions: FoldDecision[] = [];
 
+  // chant #1064 — populate the shared build-time-parameters object BEFORE any
+  // project file is imported or folded, so both paths observe the identical
+  // values: the fold path substitutes them directly (see
+  // fold-import.ts's `buildExternals`), and a run(-fallback) file that
+  // imports "@intentius/chant/params" for real sees them too, since
+  // `setBuildParams` mutates the shared object in place rather than
+  // rebinding it. Unconditional (not just when `buildParams` is set) so a
+  // stale value from a PRIOR `discover()` call in the same process (tests,
+  // `--watch`) never leaks into a build that supplied none.
+  const buildParamValuesMap = buildParamValues(options?.buildParams ?? []);
+  setBuildParams(buildParamValuesMap);
+
   // Step 1: Scan for TypeScript files
   const files = await findInfraFiles(path);
   sourceFiles.push(...files);
@@ -128,7 +156,7 @@ export async function discover(path: string, options?: DiscoveryOptions): Promis
   // a project file imported by several others is folded exactly once, so
   // every referrer shares the identical constructed Declarable/
   // CompositeInstance objects rather than each building its own copy.
-  const foldSession = options?.fold ? createFoldSession(options.intrinsics) : undefined;
+  const foldSession = options?.fold ? createFoldSession(options.intrinsics, buildParamValuesMap) : undefined;
   if (options?.fold) {
     for (const file of files) {
       foldAttempts.set(file, await tryFoldFile(file, options.intrinsics, foldSession));
