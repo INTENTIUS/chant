@@ -1,6 +1,11 @@
 import { HelmStatefulService } from "@intentius/chant-lexicon-helm";
 
-export const { chart, values, statefulSet, service } = HelmStatefulService({
+export const {
+  chart: ssChart,
+  values: ssValues,
+  statefulSet: ssStatefulSet,
+  service: ssService,
+} = HelmStatefulService({
   name: "postgres",
   imageRepository: "postgres",
   imageTag: "16",

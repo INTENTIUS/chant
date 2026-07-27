@@ -1,6 +1,6 @@
 import { HelmExternalSecret } from "@intentius/chant-lexicon-helm";
 
-export const { chart, values, externalSecret } = HelmExternalSecret({
+export const { chart: esChart, values: esValues, externalSecret: esExternalSecret } = HelmExternalSecret({
   name: "app-secrets",
   secretStoreName: "vault-backend",
   secretStoreKind: "ClusterSecretStore",

@@ -1,4 +1,11 @@
 import { HelmWebApp } from "@intentius/chant-lexicon-helm";
 
-export const { chart, values, deployment, service, ingress, hpa, serviceAccount } =
-  HelmWebApp({ name: "my-web-app" });
+export const {
+  chart: webChart,
+  values: webValues,
+  deployment: webDeployment,
+  service: webService,
+  ingress: webIngress,
+  hpa: webHpa,
+  serviceAccount: webSa,
+} = HelmWebApp({ name: "my-web-app" });

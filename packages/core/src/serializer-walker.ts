@@ -61,6 +61,20 @@ export function walkValue(
     if (name) {
       return visitor.resourceRef(name);
     }
+    // A resource-kind Declarable constructed inline rather than exported as
+    // its own top-level entity (e.g. K8s `new PersistentVolumeClaim({...})`
+    // embedded directly in a StatefulSet's `volumeClaimTemplates`) has no
+    // logical name to Ref — it was never a key in `entities`, so
+    // resolveAttrRefs() never assigns one. Falling through to the generic
+    // "object" branch below would walk the Declarable's own enumerable
+    // properties, which for a Declarable are its self-referencing attribute
+    // accessors (AttrRef instances whose parent is the Declarable itself,
+    // still unresolved) — never its authored `.props`. That either threw
+    // "logical name not set" (when the resource type declares any
+    // attributes) or silently serialized as `{}` (when it doesn't), instead
+    // of the embedded spec the caller wrote. Embed its own props inline
+    // instead, exactly like a property-kind Declarable already does.
+    return visitor.propertyDeclarable(decl, (v) => walkValue(v, entityNames, visitor));
   }
 
   // Handle arrays

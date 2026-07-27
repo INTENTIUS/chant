@@ -1,6 +1,11 @@
 import { HelmCronJob } from "@intentius/chant-lexicon-helm";
 
-export const { chart, values, cronJob, serviceAccount } = HelmCronJob({
+export const {
+  chart: csChart,
+  values: csValues,
+  cronJob: csCronJob,
+  serviceAccount: csSa,
+} = HelmCronJob({
   name: "report-generator",
   imageRepository: "myorg/reporter",
   imageTag: "v1.3.0",

@@ -1,7 +1,14 @@
 import { HelmWebApp } from "@intentius/chant-lexicon-helm";
 
-export const { chart, values, deployment, service, serviceAccount, ingress, hpa } =
-  HelmWebApp({
+export const {
+  chart: hwChart,
+  values: hwValues,
+  deployment: hwDeployment,
+  service: hwService,
+  serviceAccount: hwSa,
+  ingress: hwIngress,
+  hpa: hwHpa,
+} = HelmWebApp({
     name: "secure-frontend",
     imageRepository: "myorg/frontend",
     port: 8080,

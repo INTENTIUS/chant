@@ -33,9 +33,9 @@ describeAllExamples(
     },
     "web-app-with-ingress": { skipLint: true, skipBuild: true },
     "microservice-chart": { skipLint: true, skipBuild: true },
-    "composites-basic": { skipLint: true, skipBuild: true },
-    "composites-infrastructure": { skipLint: true, skipBuild: true },
-    "composites-production": { skipLint: true, skipBuild: true },
+    "composites-basic": { skipLint: true },
+    "composites-infrastructure": { skipLint: true },
+    "composites-production": { skipLint: true },
     // HelmRender example — fetches a real upstream chart at build time, so
     // skip in CI (would require network + the helm CLI inside the test
     // sandbox). render.test.ts covers the codepath via a local chart.

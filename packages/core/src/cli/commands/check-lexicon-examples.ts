@@ -32,6 +32,7 @@ import { join } from "path";
 import { build } from "../../build";
 import { findInfraFiles } from "../../discovery/files";
 import { detectLexicons } from "../../detectLexicon";
+import { loadChantConfig } from "../../config";
 import { loadPlugins } from "../plugins";
 
 export interface ExampleBuildResult {
@@ -64,7 +65,21 @@ export async function checkExamplesBuild(lexiconDir: string): Promise<ExampleBui
       const files = await findInfraFiles(srcDir);
       if (files.length === 0) continue;
 
-      const lexiconNames = await detectLexicons(files);
+      // An example's own chant.config.{ts,json} (living beside src/, not in
+      // it) can declare `lexicons` explicitly — the same precedence real
+      // `chant build` gives it via resolveProjectLexicons() in ../plugins.ts.
+      // Needed for examples like helm's HelmRender ones, whose composite
+      // legitimately produces entities tagged with a lexicon (e.g. "k8s")
+      // that no source-file import mentions — detection from imports alone
+      // can never see it, so the example built with only its "own" lexicon's
+      // plugin and silently dropped every entity of the other, undetectable
+      // one. Detection from source-file imports (unchanged) remains the
+      // fallback for the many examples with no declared `lexicons` list.
+      const { config: exampleConfig } = await loadChantConfig(join(examplesDir, entry.name));
+      const lexiconNames =
+        exampleConfig.lexicons && exampleConfig.lexicons.length > 0
+          ? exampleConfig.lexicons
+          : await detectLexicons(files);
       if (lexiconNames.length === 0) {
         results.push({
           example: entry.name,

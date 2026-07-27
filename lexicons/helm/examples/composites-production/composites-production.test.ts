@@ -9,10 +9,10 @@ function makeEntities(...pairs: [string, Declarable][]): Map<string, Declarable>
   return m;
 }
 
-import { chart as hwChart, values as hwValues, deployment as hwDeployment, service as hwService, serviceAccount as hwSa, ingress as hwIngress, hpa as hwHpa } from "./src/hardened-web-app";
-import { chart as bmChart, values as bmValues, job as bmJob, serviceAccount as bmSa, role as bmRole, roleBinding as bmRoleBinding } from "./src/batch-migration";
-import { chart as maChart, values as maValues, deployment as maDeployment, service as maService, serviceAccount as maSa, serviceMonitor as maServiceMonitor, prometheusRule as maPrometheusRule } from "./src/monitored-api";
-import { chart as csChart, values as csValues, cronJob as csCronJob, serviceAccount as csSa } from "./src/cron-secured";
+import { hwChart, hwValues, hwDeployment, hwService, hwSa, hwIngress, hwHpa } from "./src/hardened-web-app";
+import { bmChart, bmValues, bmJob, bmSa, bmRole, bmRoleBinding } from "./src/batch-migration";
+import { maChart, maValues, maDeployment, maService, maSa, maServiceMonitor, maPrometheusRule } from "./src/monitored-api";
+import { csChart, csValues, csCronJob, csSa } from "./src/cron-secured";
 
 describe("helm composites-production: hardened-web-app", () => {
   test("serializes with security context", () => {

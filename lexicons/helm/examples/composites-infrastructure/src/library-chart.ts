@@ -1,6 +1,6 @@
 import { HelmLibrary } from "@intentius/chant-lexicon-helm";
 
-export const { chart, helpers } = HelmLibrary({
+export const { chart: libChart, helpers: libHelpers } = HelmLibrary({
   name: "common-lib",
   version: "1.0.0",
   description: "Shared helper templates for all microservices",
