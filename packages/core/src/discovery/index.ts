@@ -57,6 +57,19 @@ export interface DiscoveryOptions {
   intrinsics?: IntrinsicDef[];
 
   /**
+   * chant #1063 — the lexicon NAMES loaded for this build (`["aws", "k8s"]`),
+   * i.e. what `resolveProjectLexicons()` returned and `loadPlugins()` then
+   * imported. Threaded into the fold session as the ALLOWLIST of packages a
+   * bare import specifier may be resolved into, so a lexicon's plain data
+   * exports (`Azure`/`GCP`'s pseudo-parameter namespaces, AWS's `S3Actions`,
+   * gitlab's `CI`) fold as identifier values instead of failing the file.
+   * Only meaningful when {@link fold} is set. Default: none — a caller that
+   * doesn't say which lexicons are active gets no bare-specifier resolution
+   * at all, rather than a looser fallback.
+   */
+  lexicons?: readonly string[];
+
+  /**
    * chant #1045 Phase 2 — opt-in: whatever would otherwise reach the
    * in-process `importModule` step (every file, when {@link fold} isn't set;
    * only the per-file run-fallback remainder, when it is) instead runs
@@ -156,7 +169,9 @@ export async function discover(path: string, options?: DiscoveryOptions): Promis
   // a project file imported by several others is folded exactly once, so
   // every referrer shares the identical constructed Declarable/
   // CompositeInstance objects rather than each building its own copy.
-  const foldSession = options?.fold ? createFoldSession(options.intrinsics, buildParamValuesMap) : undefined;
+  const foldSession = options?.fold
+    ? createFoldSession(options.intrinsics, buildParamValuesMap, options.lexicons)
+    : undefined;
   if (options?.fold) {
     for (const file of files) {
       foldAttempts.set(file, await tryFoldFile(file, options.intrinsics, foldSession));

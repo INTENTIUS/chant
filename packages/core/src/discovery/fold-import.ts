@@ -7,6 +7,7 @@ import { createRequire } from "node:module";
 import { isDeclarable, type Declarable } from "../declarable";
 import { isCompositeInstance, type CompositeInstance } from "../composite";
 import { isAttrRefLike } from "../utils";
+import { isIntrinsic } from "../intrinsic";
 import {
   collectConsts,
   foldResource,
@@ -171,14 +172,58 @@ export interface FoldSession {
    * doesn't use build-time parameters pays nothing extra here.
    */
   readonly buildParams?: Readonly<Record<string, BuildParamValue>>;
+  /**
+   * chant #1063 — the exact package specifiers of the lexicons LOADED for
+   * this build (`@intentius/chant-lexicon-aws`, …), derived from the lexicon
+   * names the build already resolved (`resolveProjectLexicons` ->
+   * `loadPlugins`, see ../cli/plugins.ts). This is the entire allowlist
+   * {@link buildExternals} will follow a bare import specifier into — see
+   * {@link activeLexiconPackage} for why the set is matched by TEXT and
+   * built from names the build already knows, rather than by resolving
+   * specifiers to find out what they are.
+   *
+   * Empty when the caller supplied no lexicon list, which disables
+   * lexicon-package resolution entirely rather than falling back to
+   * something more permissive: "an active lexicon of this build" is the
+   * boundary, and a build that can't say what its lexicons are hasn't
+   * established one.
+   */
+  readonly lexiconPackages: ReadonlySet<string>;
 }
 
-/** Create a fresh, empty {@link FoldSession}. */
+/**
+ * chant #1063 — the package specifier a lexicon NAME (`"aws"`, `"gitlab"`)
+ * is installed under. The one naming convention the whole CLI already
+ * depends on: `loadPlugin(name)` imports exactly this
+ * (../cli/plugins.ts), `detectLexicons` scans source for exactly this
+ * (../detectLexicon.ts), and `chant init` writes exactly this into
+ * package.json.
+ */
+export function lexiconPackageName(lexiconName: string): string {
+  return `@intentius/chant-lexicon-${lexiconName}`;
+}
+
+/**
+ * Create a fresh, empty {@link FoldSession}.
+ *
+ * @param lexicons - chant #1063: the lexicon NAMES active for this build
+ *   (`["aws", "k8s"]`). Converted to package specifiers via
+ *   {@link lexiconPackageName}; see {@link FoldSession.lexiconPackages}.
+ */
 export function createFoldSession(
   intrinsics: readonly IntrinsicDef[] = [],
   buildParams?: Readonly<Record<string, BuildParamValue>>,
+  lexicons: readonly string[] = [],
 ): FoldSession {
-  return { intrinsics, cache: new Map(), stack: [], importCache: new Map(), resolvePathCache: new Map(), buildParams };
+  return {
+    intrinsics,
+    cache: new Map(),
+    stack: [],
+    importCache: new Map(),
+    resolvePathCache: new Map(),
+    buildParams,
+    lexiconPackages: new Set(lexicons.map(lexiconPackageName)),
+  };
 }
 
 /**
@@ -805,6 +850,100 @@ function paramsModulePath(): string | null {
   return paramsModulePathMemo;
 }
 
+/**
+ * chant #1063 — is `specifier` a bare import of a package that is an ACTIVE
+ * LEXICON of this build? Returns the specifier itself when so, `undefined`
+ * otherwise.
+ *
+ * Three deliberate restrictions, each of which is the point rather than an
+ * omission:
+ *
+ *  - **Text only, no resolution.** The answer is a `Set.has` on a set built
+ *    from the lexicon names the build ALREADY resolved before discovery ran
+ *    (`resolveProjectLexicons` -> `loadPlugins`). Nothing is probed, read, or
+ *    resolved to decide whether a specifier is in scope — so an import of
+ *    some unrelated package costs a string comparison and is then left alone,
+ *    never resolved "just to find out what it is". That matters here more
+ *    than anywhere: `resolveModulePath`'s bare branch can fall through to
+ *    `createRequire(fromFile).resolve(specifier)`, measured at up to ~361s
+ *    for the first resolution of a genuinely new bare specifier in a process
+ *    (see {@link bareSpecifierPathCache}/{@link fastResolveBareSpecifier} —
+ *    this exact class of cost regressed twice during chant#1020).
+ *
+ *  - **Exact package specifier, no subpaths.** `@intentius/chant-lexicon-aws`
+ *    matches; `@intentius/chant-lexicon-aws/actions` does not. Every lexicon
+ *    re-exports its whole public surface from its barrel and every example
+ *    imports it that way, so subpaths buy nothing — and they would cost
+ *    something real: {@link fastResolveBareSpecifier} only recognizes a
+ *    package ROOT (it looks for `<node_modules>/<specifier>/package.json`),
+ *    so a subpath specifier falls through to exactly the slow
+ *    `createRequire().resolve()` path this restriction exists to avoid.
+ *
+ *  - **Lexicons of THIS build only.** Not "any `@intentius/chant-lexicon-*`
+ *    package on disk", and emphatically not "any bare specifier". A lexicon
+ *    the build did not load is as out of scope as `node:fs`.
+ */
+function activeLexiconPackage(specifier: string, lexiconPackages: ReadonlySet<string>): string | undefined {
+  return lexiconPackages.has(specifier) ? specifier : undefined;
+}
+
+/**
+ * chant #1063 — resolve one named import binding against an active lexicon
+ * package's REAL exports, for {@link buildExternals}.
+ *
+ * The lexicon module is imported (through the session-wide
+ * {@link FoldSession.importCache}, so at most one real `import()` per package
+ * per build) and the requested export read straight off it. That is the same
+ * module object the run path gets — `importModule` is a plain dynamic
+ * `import()` with no cache-busting — so what fold captures here is not a
+ * reconstruction of the lexicon's data but the identical value, down to
+ * object identity for `Azure.ResourceGroupLocation`-style singletons. It is
+ * also the same two-step (resolve path, then import) that
+ * `resolveImportedExport` has always used to reach a lexicon's constructors
+ * and intrinsic functions; the only thing new is that a plain DATA export is
+ * now reachable too.
+ *
+ * Callable exports are deliberately excluded. A lexicon's functions — its
+ * resource classes, composite factories, intrinsic implementations — already
+ * have dedicated resolution paths that know how to INVOKE them
+ * (`resolveResourceEntity`, `resolveCallExpression`, `reviveFoldedValue`), and
+ * binding them as plain identifier values here would widen what folds in ways
+ * this issue neither needs nor measured: none of the references #1063 exists
+ * to unblock (`Azure`, `GCP`, `S3Actions`, gitlab's `CI`) is a function.
+ *
+ * Returns `undefined` — never throws — for a package that isn't an active
+ * lexicon, an export the package doesn't have, a callable export, or an
+ * import that fails. The binding is then simply absent from `externals`,
+ * exactly as before, and `fold()`'s ordinary "unresolved identifier" failure
+ * still fires if the name is actually referenced.
+ */
+async function resolveActiveLexiconExport(
+  binding: ImportBinding,
+  fromFile: string,
+  session: FoldSession,
+): Promise<{ value: unknown } | undefined> {
+  if (!activeLexiconPackage(binding.specifier, session.lexiconPackages)) return undefined;
+
+  let modulePath: string;
+  try {
+    modulePath = resolveModulePathMemoized(binding.specifier, fromFile, session.resolvePathCache);
+  } catch {
+    return undefined;
+  }
+
+  let mod: Record<string, unknown>;
+  try {
+    mod = await importModuleMemoized(modulePath, session.importCache);
+  } catch {
+    return undefined;
+  }
+
+  if (!(binding.imported in mod)) return undefined;
+  const value = mod[binding.imported];
+  if (typeof value === "function") return undefined;
+  return { value };
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 // Resolution: given the scan + import map, compute the REAL runtime value
 // (Declarable | CompositeInstance) each foldable export would have had if
@@ -1161,7 +1300,17 @@ async function reviveFoldedValue(value: FoldedValue, ctx: ResolveCtx, requireLiv
   // destroying the very identity #1020 exists to preserve. Passed through
   // completely unchanged, exactly like `resolveCallExpression`'s own
   // `live.value` passthrough for a composite-call argument.
-  if (isAttrRefLike(value) || isDeclarable(value) || isCompositeInstance(value)) {
+  // chant #1063 adds the third kind of real object cross-file resolution can
+  // now put here: a live `Intrinsic` instance read off an active lexicon
+  // package (`Azure.ResourceGroupLocation`, `GCP.ProjectId` — see
+  // `resolveActiveLexiconExport`). Same hazard, same fix: the generic walk
+  // below would rebuild it as a plain `{}` copy, dropping the prototype that
+  // carries `toJSON()` and so serializing `{}` where the run path emits
+  // `[resourceGroup().location]`. `isIntrinsic` keys off
+  // `Symbol.for("chant.intrinsic")` (../intrinsic.ts), a GLOBAL symbol, so it
+  // holds across separately-loaded copies of chant-core the way a bare
+  // `instanceof` would not.
+  if (isAttrRefLike(value) || isDeclarable(value) || isCompositeInstance(value) || isIntrinsic(value)) {
     return value;
   }
 
@@ -1585,10 +1734,36 @@ async function buildExternals(
     }
 
     if (!isProjectFileSpecifier(binding.specifier)) {
-      // Every other bare specifier (a lexicon/vendor package) is left alone
-      // here, exactly as before #1064: it resolves lazily, through the
-      // pre-existing `importModule` mechanism, only once a constructor/
-      // composite-factory/intrinsic tag actually consumes it.
+      // chant #1063 — a bare specifier naming one of THIS BUILD's active
+      // lexicon packages resolves to that package's real export, so a plain
+      // data export a lexicon publishes (`Azure`/`GCP`'s pseudo-parameter
+      // namespaces, AWS's `S3Actions`, gitlab's `CI`) is an ordinary
+      // identifier value here rather than fold's most common remaining
+      // "unresolved identifier" failure. See
+      // {@link resolveActiveLexiconExport} for the allowlist, the no-cold-
+      // resolution rule, and why callable exports stay out.
+      //
+      // No `liveSources` edge is recorded for what comes back, unlike the
+      // project-file case just below. `liveSources` (chant #1044) exists so
+      // that a folded file which captured ANOTHER FILE's objects is
+      // invalidated when that file is forced back to run — a fold/run
+      // disagreement about identity. A lexicon package has no such duality:
+      // it is not a discovered source file, `planFoldTaint` never considers
+      // it (it filters to the discovered `files` set), it never falls back to
+      // run, and both paths reach it through the identical un-cache-busted
+      // `import()` of the identical resolved path — so the object fold
+      // captures IS the object the run path holds. There is nothing for the
+      // two sides to disagree about, hence nothing to taint.
+      const lexiconExport = await resolveActiveLexiconExport(binding, file, session);
+      if (lexiconExport) {
+        externals.set(localName, lexiconExport.value);
+        continue;
+      }
+      // Every other bare specifier (a non-lexicon vendor package, a lexicon
+      // this build didn't load) is left alone here, exactly as before #1064:
+      // it resolves lazily, through the pre-existing `importModule`
+      // mechanism, only once a constructor/composite-factory/intrinsic tag
+      // actually consumes it.
       continue;
     }
     let targetPath: string;

@@ -216,6 +216,7 @@ async function buildBothWays(entry: CorpusEntry) {
       fold: true,
       sandbox: true,
       intrinsics: entry.intrinsics,
+      lexicons: entry.lexicons,
     });
 
   const runResult = await run();
@@ -276,6 +277,7 @@ describe("sandbox differential — sandboxed-run output === in-process-run outpu
         const plainFold = await build(entry.srcDir, entry.serializers, undefined, {
           fold: true,
           intrinsics: entry.intrinsics,
+          lexicons: entry.lexicons,
         });
         expect(
           classifyMode(sandboxedResult.foldDecisions),

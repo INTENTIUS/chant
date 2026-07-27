@@ -201,6 +201,14 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
   // any), hence the guard.
   const intrinsics = options.plugins?.flatMap((plugin) => plugin.intrinsics?.() ?? []) ?? [];
 
+  // #1063 — the same loaded plugins, by NAME, are this build's allowlist for
+  // following a bare import specifier into a lexicon package (so `Azure`,
+  // `GCP`, `S3Actions`, `CI` fold as values). A plugin's `name` is the
+  // lexicon name `loadPlugin()` was called with, which is exactly what
+  // `@intentius/chant-lexicon-<name>` was imported from — see
+  // ../plugins.ts and fold-import.ts's `lexiconPackageName`.
+  const lexicons = options.plugins?.map((plugin) => plugin.name) ?? [];
+
   // Run the build
   const result = await build(infraPath, options.serializers, undefined, {
     ownership,
@@ -208,6 +216,7 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
     fold,
     sandbox,
     intrinsics,
+    lexicons,
     buildParams: paramsResolution.provenance,
   });
 
