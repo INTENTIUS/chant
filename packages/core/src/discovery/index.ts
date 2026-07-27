@@ -74,10 +74,21 @@ export interface DiscoveryOptions {
    * in-process `importModule` step (every file, when {@link fold} isn't set;
    * only the per-file run-fallback remainder, when it is) instead runs
    * together, isolated, in one sandboxed child process — see
-   * `./sandbox/run.ts`. Folded files are unaffected: fold already executes
-   * zero of a file's own top-level code, so it stays in this process exactly
-   * as it does today. Default `false` — behavior, including performance
-   * (no bundling, no child process, no IPC), is unchanged unless requested.
+   * `./sandbox/run.ts`.
+   *
+   * chant #1093 — this ALSO tightens what fold itself may do in this process.
+   * Fold executes none of a file's own top-level code, but it does import and
+   * invoke the module behind a composite factory / resource constructor /
+   * intrinsic tag; when that module is project-owned, a file reported as
+   * "folded" still ran project code here. With `sandbox` set, fold refuses
+   * any import outside chant's own packages and this build's active lexicons,
+   * and the file demotes to the (sandboxed) run path instead — so the
+   * security property is uniform: under `sandbox`, project source executes
+   * only inside the child, folded or not. Fold COVERAGE is therefore lower
+   * under `sandbox` than under plain `fold` — deliberately.
+   *
+   * Default `false` — behavior, including performance (no bundling, no child
+   * process, no IPC) and fold coverage, is unchanged unless requested.
    */
   sandbox?: boolean;
 
@@ -169,8 +180,16 @@ export async function discover(path: string, options?: DiscoveryOptions): Promis
   // a project file imported by several others is folded exactly once, so
   // every referrer shares the identical constructed Declarable/
   // CompositeInstance objects rather than each building its own copy.
+  // chant #1093 — `sandbox` is threaded into the fold session, not just used
+  // for the run-fallback set below: fold itself resolves a composite factory /
+  // resource constructor / intrinsic tag by IMPORTING the module that defines
+  // it and invoking it, which for a project-owned one means executing project
+  // code in this process even though the file is reported as "folded". Under
+  // `sandbox` the session refuses those imports and the file demotes to the
+  // run path — which, under `sandbox`, is the isolated child. See
+  // fold-import.ts's `sandboxedExecutionRefusal`.
   const foldSession = options?.fold
-    ? createFoldSession(options.intrinsics, buildParamValuesMap, options.lexicons)
+    ? createFoldSession(options.intrinsics, buildParamValuesMap, options.lexicons, options.sandbox === true)
     : undefined;
   if (options?.fold) {
     for (const file of files) {

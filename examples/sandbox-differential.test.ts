@@ -37,13 +37,23 @@ import {
  * the run half now executes) and merges whatever it produced, so there's no
  * partial-coverage case to skip here either.
  *
- * chant #1045's acceptance criteria: fold coverage must stay at EXACTLY
- * today's split (15 fully-folded corpus entries / 83 with at least one
- * run-fallback file — see `fold-differential.test.ts`'s `EXPECTED_FOLD`) —
- * sandboxing changes HOW the run-fallback subset executes, not WHAT folds.
- * The per-entry `foldDecisions` comparison below is the direct check for
- * that: the sandboxed build's fold/run split must match the plain build's,
- * file for file.
+ * chant #1045's acceptance criteria said fold coverage must stay at EXACTLY
+ * the plain-`--fold` split — sandboxing changes HOW the run-fallback subset
+ * executes, not WHAT folds — and the per-entry `foldDecisions` comparison
+ * below checked it file for file.
+ *
+ * chant #1093 changes that on purpose. Fold executes none of a file's own
+ * top-level code, but it does import and invoke the module behind a composite
+ * factory / resource constructor / intrinsic tag, so a file reported as
+ * "folded" could still execute PROJECT code in the CLI's process. Under
+ * `--sandbox` those imports are now refused and the file demotes to the
+ * (sandboxed) run path instead. So the invariant here is no longer equality
+ * but a one-way refinement: every file the plain build runs, the sandboxed
+ * build also runs; the sandboxed build may run MORE. The demotion is
+ * measured and reported per entry (see the report at the bottom), and output
+ * must still be byte-identical to the in-process run — which is the check
+ * that actually matters, since a demoted file's factory runs in the child
+ * with the same arguments and must produce the same spec.
  */
 
 /**
@@ -114,6 +124,12 @@ interface ReportRow {
   excluded: boolean;
   runFallbackFileCount: number;
   sandboxedMs: number;
+  /** chant #1093 — how this entry classifies under plain `{ fold: true }`. */
+  plainMode?: "fold" | "run-fallback" | "empty";
+  /** chant #1093 — and under `{ fold: true, sandbox: true }`. A "fold" -> "run-fallback" pair is a demotion: the entry folds in-process but needs the child under `--sandbox`. */
+  sandboxMode?: "fold" | "run-fallback" | "empty";
+  /** chant #1093 — files this entry folds plainly but runs (in the child) under `--sandbox`. */
+  demotedFileCount?: number;
   error?: string;
 }
 
@@ -269,20 +285,35 @@ describe("sandbox differential — sandboxed-run output === in-process-run outpu
         const sandboxedNorm = canonicalizeOutputs(normalizeOutputs(sandboxedResult.outputs));
         const identical = outputsEqual(sandboxedNorm, runNorm);
 
-        report.push({ name: entry.name, identical, excluded: false, runFallbackFileCount, sandboxedMs });
-
-        // chant#1045: sandboxing must not change WHAT folds — the plain
-        // `{ fold: true }` decision and the `{ fold: true, sandbox: true }`
-        // decision must classify every file identically.
+        // chant#1093: sandboxing may only DEMOTE (fold -> run), never
+        // promote. Every file the plain `{ fold: true }` build runs must
+        // still run under `{ fold: true, sandbox: true }`; the sandboxed
+        // build may additionally run a file whose fold would have required
+        // executing project code in this process.
         const plainFold = await build(entry.srcDir, entry.serializers, undefined, {
           fold: true,
           intrinsics: entry.intrinsics,
           lexicons: entry.lexicons,
         });
-        expect(
-          classifyMode(sandboxedResult.foldDecisions),
-          `fold/run split drifted for ${entry.name}`,
-        ).toBe(classifyMode(plainFold.foldDecisions));
+        const plainByFile = new Map(plainFold.foldDecisions.map((d) => [d.file, d.mode]));
+        const promoted = sandboxedResult.foldDecisions
+          .filter((d) => d.mode === "fold" && plainByFile.get(d.file) === "run")
+          .map((d) => d.file);
+        expect(promoted, `${entry.name}: sandboxing must never make a file fold that plain --fold ran`).toEqual([]);
+        const demotedFileCount = sandboxedResult.foldDecisions.filter(
+          (d) => d.mode === "run" && plainByFile.get(d.file) === "fold",
+        ).length;
+
+        report.push({
+          name: entry.name,
+          identical,
+          excluded: false,
+          runFallbackFileCount,
+          sandboxedMs,
+          plainMode: classifyMode(plainFold.foldDecisions),
+          sandboxMode: classifyMode(sandboxedResult.foldDecisions),
+          demotedFileCount,
+        });
 
         expect(normalizeErrors(sandboxedResult.errors), `sandbox-vs-run error drift in ${entry.name}`).toEqual(
           normalizeErrors(runResult.errors),
@@ -322,6 +353,13 @@ describe("sandbox differential — sandboxed-run output === in-process-run outpu
     const sandboxedCount = report.filter((r) => r.runFallbackFileCount > 0).length;
     const totalSandboxedMs = report.reduce((sum, r) => sum + r.sandboxedMs, 0);
     const maxSandboxedMs = report.reduce((max, r) => Math.max(max, r.sandboxedMs), 0);
+    // chant #1093 — the measured corpus cost of keeping project code out of
+    // the CLI process: entries that fold fully under plain `--fold` but need
+    // the sandboxed child for at least one file under `--sandbox`.
+    const plainFoldCount = report.filter((r) => r.plainMode === "fold").length;
+    const sandboxFoldCount = report.filter((r) => r.sandboxMode === "fold").length;
+    const demotedEntries = report.filter((r) => r.plainMode === "fold" && r.sandboxMode !== "fold");
+    const demotedFiles = report.reduce((sum, r) => sum + (r.demotedFileCount ?? 0), 0);
 
     const lines = [
       "",
@@ -329,9 +367,13 @@ describe("sandbox differential — sandboxed-run output === in-process-run outpu
       `corpus: ${report.length}/${CORPUS.length} source directories built both ways`,
       `  identical: ${identicalCount}   excluded: ${excludedCount}   drift: ${driftCount}   entries with >=1 sandboxed file: ${sandboxedCount}`,
       `  sandboxed build wall time — total: ${totalSandboxedMs.toFixed(0)}ms   max single entry: ${maxSandboxedMs.toFixed(0)}ms`,
+      `  #1093 fold coverage — plain --fold: ${plainFoldCount}   --sandbox: ${sandboxFoldCount}   demoted entries: ${demotedEntries.length}   demoted files: ${demotedFiles}`,
+      ...(demotedEntries.length > 0
+        ? [`  demoted under --sandbox: ${demotedEntries.map((r) => r.name).join(", ")}`]
+        : []),
       ...report.map(
         (r) =>
-          `  [${r.excluded ? "excluded " : r.identical ? "identical" : "DRIFT    "}] run-fallback-files:${r.runFallbackFileCount} ${r.sandboxedMs.toFixed(0).padStart(5)}ms ${r.name}${r.error ? `  (${r.error})` : ""}`,
+          `  [${r.excluded ? "excluded " : r.identical ? "identical" : "DRIFT    "}] run-fallback-files:${r.runFallbackFileCount}${(r.demotedFileCount ?? 0) > 0 ? ` demoted:${r.demotedFileCount}` : ""} ${r.sandboxedMs.toFixed(0).padStart(5)}ms ${r.name}${r.error ? `  (${r.error})` : ""}`,
       ),
       "────────────────────────────────────────────────────────────────────",
     ];

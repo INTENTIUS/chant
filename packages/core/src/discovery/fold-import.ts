@@ -190,6 +190,20 @@ export interface FoldSession {
    * established one.
    */
   readonly lexiconPackages: ReadonlySet<string>;
+  /**
+   * chant #1093 — this build asked for the #1045 sandbox
+   * (`DiscoveryOptions.sandbox`, `chant build --sandbox`), so fold must not
+   * import or invoke a module the CLI process isn't already trusted to
+   * execute. See {@link isTrustedExecutableBinding} for what that allowlist
+   * is and {@link sandboxedExecutionRefusal} for what happens at each site
+   * that would otherwise execute one.
+   *
+   * `false` (the default, plain `--fold`) leaves every resolution path
+   * exactly as it was: fold already trusts the code enough to fall back to
+   * an in-process `importModule` when it can't fold something, so gating
+   * only the fold half would buy nothing there.
+   */
+  readonly sandbox: boolean;
 }
 
 /**
@@ -210,11 +224,15 @@ export function lexiconPackageName(lexiconName: string): string {
  * @param lexicons - chant #1063: the lexicon NAMES active for this build
  *   (`["aws", "k8s"]`). Converted to package specifiers via
  *   {@link lexiconPackageName}; see {@link FoldSession.lexiconPackages}.
+ * @param sandbox - chant #1093: this build asked for the #1045 sandbox, so
+ *   fold may not import or invoke anything outside the trusted allowlist —
+ *   see {@link FoldSession.sandbox}.
  */
 export function createFoldSession(
   intrinsics: readonly IntrinsicDef[] = [],
   buildParams?: Readonly<Record<string, BuildParamValue>>,
   lexicons: readonly string[] = [],
+  sandbox = false,
 ): FoldSession {
   return {
     intrinsics,
@@ -224,6 +242,7 @@ export function createFoldSession(
     resolvePathCache: new Map(),
     buildParams,
     lexiconPackages: new Set(lexicons.map(lexiconPackageName)),
+    sandbox,
   };
 }
 
@@ -1007,6 +1026,16 @@ interface ResolveCtx {
    * {@link resolveModulePathMemoized} with this map.
    */
   resolvePathCache: Map<string, string>;
+  /**
+   * chant #1063 — this build's active lexicon PACKAGE specifiers (see
+   * {@link FoldSession.lexiconPackages}). Threaded down here, not just used
+   * in `buildExternals`, because chant #1093's trust check
+   * ({@link isTrustedExecutableBinding}) needs the same allowlist at every
+   * site that imports and executes a module.
+   */
+  lexiconPackages: ReadonlySet<string>;
+  /** chant #1093 — see {@link FoldSession.sandbox}. */
+  sandbox: boolean;
 }
 
 /** `{ value }` when `node`'s shape was recognized and resolved (value may itself be `undefined`/`null` — e.g. an optional composite member that wasn't created); `undefined` when the shape isn't one the live resolver understands (a plain literal, etc.) — callers fall back to the original, unchanged handling for that shape. */
@@ -1115,6 +1144,14 @@ async function resolveCallExpression(node: ts.CallExpression, ctx: ResolveCtx): 
   if (!binding) {
     throw cheapError(callExpressionMessage(node));
   }
+
+  // chant #1093 — THE gap this check exists for. Invoking the callee runs
+  // project code (the factory body, and its whole module's top level) in the
+  // CLI's own process; under --sandbox that has to happen in the child
+  // instead, so refuse here and let the file fall back to the sandboxed run
+  // path. See {@link sandboxedExecutionRefusal}.
+  const refusal = sandboxedExecutionRefusal(binding, ctx, calleeName, "composite factory");
+  if (refusal) throw cheapError(refusal);
 
   let modulePath: string;
   try {
@@ -1233,6 +1270,14 @@ async function resolveImportedExport(name: string, ctx: ResolveCtx): Promise<unk
   if (!binding) {
     throw cheapError(`"${name}" is not a resolvable import`);
   }
+
+  // chant #1093 — reached for an intrinsic tag and for a symbolic chain's root
+  // (`AWS.StackName`), both of which are resolved BY NAME out of the file's own
+  // imports: nothing guarantees the module behind that name is a lexicon's.
+  // `reviveHelperCall` checks chant-ownership before it gets here; this covers
+  // the paths that don't.
+  const refusal = sandboxedExecutionRefusal(binding, ctx, name, "import");
+  if (refusal) throw cheapError(refusal);
 
   let modulePath: string;
   try {
@@ -1434,6 +1479,15 @@ async function reviveHelperCall(call: FoldedHelperCall, ctx: ResolveCtx): Promis
  * pathological cold-resolution cost chant#1020 measured (see
  * {@link fastResolveBareSpecifier}), and a bare specifier chant publishes is
  * already covered by the text arm.
+ *
+ * Not the same question as chant#1093's {@link isTrustedExecutableBinding}
+ * below, and deliberately not shared with it: this one asks "may this NAME be
+ * invoked as one of chant's registered authoring helpers", and a text match
+ * is the right answer for it — a project that shadows `@intentius/chant` in
+ * its own `node_modules` gets its own copy of `output()` invoked either way,
+ * fold or run, so fold cannot diverge from run by trusting the text here.
+ * #1093's question is "may this module execute in the CLI's process at all",
+ * where a specifier the project controls the text of proves nothing.
  */
 function isChantOwnedHelperBinding(binding: ImportBinding, ctx: ResolveCtx): boolean {
   if (isChantOwnedSpecifier(binding.specifier)) return true;
@@ -1446,6 +1500,89 @@ function isChantOwnedHelperBinding(binding: ImportBinding, ctx: ResolveCtx): boo
   }
   const root = chantCoreRoot();
   return targetPath === root || targetPath.startsWith(root + sep);
+}
+
+/**
+ * chant #1093 — the closed allowlist of modules fold may import AND EXECUTE
+ * in the CLI's own process when the #1045 sandbox is active. Exactly two
+ * arms, and neither of them trusts text the project controls:
+ *
+ *  1. **An ACTIVE lexicon package of this build** — matched against
+ *     {@link FoldSession.lexiconPackages}, a closed set built from the
+ *     lexicon names the BUILD resolved and `loadPlugins` already imported
+ *     (../cli/plugins.ts), not from anything the file under fold says.
+ *  2. **chant-core's own executing tree** — the specifier is RESOLVED and the
+ *     resulting path checked against {@link chantCoreRoot}. A text match is
+ *     not enough here: `@intentius/chant` and `@intentius/chant-lexicon-evil`
+ *     are both strings an untrusted repo can write into its own source and
+ *     back with its own `node_modules` directory, and
+ *     {@link isChantOwnedSpecifier} would accept either. Resolution happens
+ *     before the decision rather than after, so an allowed binding pays
+ *     exactly the resolution it was about to pay anyway (the memoized one —
+ *     see {@link resolveModulePathMemoized}); a bare specifier that isn't
+ *     even chant-shaped is rejected on text alone, so no arbitrary bare
+ *     specifier is ever resolved here (chant#1020's cold-resolution cost).
+ *
+ * This is deliberately the boundary chant #1045 drew: "the boundary is around
+ * executing PROJECT SOURCE, which is the untrusted input" — not around chant
+ * itself or the lexicon packages, which the CLI has already imported and
+ * executed in its own process before discovery starts, to get the serializers
+ * and lint rules it cannot run without. Fold reaching the same already-loaded
+ * module (the identical un-cache-busted `import()` of the identical resolved
+ * path) adds no execution the process wasn't already performing.
+ *
+ * Everything else is out: a sibling project file, a project-local helper
+ * module, an arbitrary npm dependency, a lexicon this build didn't load. A
+ * build that supplied no lexicon list keeps only arm 2, rather than falling
+ * back to something more permissive — the same stance
+ * {@link FoldSession.lexiconPackages} takes for #1063.
+ */
+function isTrustedExecutableBinding(binding: ImportBinding, ctx: ResolveCtx): boolean {
+  if (activeLexiconPackage(binding.specifier, ctx.lexiconPackages) !== undefined) return true;
+  // Only a chant-shaped or project-relative specifier is worth resolving; any
+  // other bare specifier is untrusted by definition, and resolving it to find
+  // that out would cost the pathological cold `require.resolve` (chant#1020).
+  if (!isProjectFileSpecifier(binding.specifier) && !isChantOwnedSpecifier(binding.specifier)) return false;
+  let targetPath: string;
+  try {
+    targetPath = resolveModulePathMemoized(binding.specifier, ctx.file, ctx.resolvePathCache);
+  } catch {
+    return false;
+  }
+  const root = chantCoreRoot();
+  return targetPath === root || targetPath.startsWith(root + sep);
+}
+
+/**
+ * chant #1093 — the one-line fold-fallback reason for a resolution that would
+ * import and execute an untrusted module in the CLI's own process, or
+ * `undefined` when the import may proceed (the sandbox wasn't asked for, or
+ * the module is on {@link isTrustedExecutableBinding}'s allowlist).
+ *
+ * A refusal is not a failure to fold something folder-shaped — the shape is
+ * perfectly foldable and folds fine under plain `--fold`. It is a deliberate
+ * demotion: the file falls back to the run path, and under `--sandbox` the
+ * run path is the sandboxed child (`./index.ts` queues every run-fallback
+ * file for `./sandbox/run.ts`). So the factory/constructor/intrinsic still
+ * executes, with the same arguments, in the same module graph as the rest of
+ * that file — just behind Node's Permission Model and a scrubbed environment
+ * instead of inside the CLI. Coverage drops; the boundary holds.
+ *
+ * @param what - What the binding is being resolved AS, for the message
+ *   ("composite factory", "constructor", …).
+ */
+function sandboxedExecutionRefusal(
+  binding: ImportBinding,
+  ctx: ResolveCtx,
+  name: string,
+  what: string,
+): string | undefined {
+  if (!ctx.sandbox) return undefined;
+  if (isTrustedExecutableBinding(binding, ctx)) return undefined;
+  return (
+    `${what} "${name}" is imported from "${binding.specifier}", which is neither chant's own nor an active lexicon — ` +
+    `under --sandbox it is executed in the sandboxed child, not in this process`
+  );
 }
 
 /**
@@ -1532,6 +1669,14 @@ async function resolveResourceEntity(
   if (!binding) {
     return { ok: false, reason: `constructor "${typeName}" for "${name}" is not a resolvable import` };
   }
+
+  // chant #1093 — a resource class is a lexicon export in every corpus entry
+  // today, but nothing forces that: `new Thing(...)` where `Thing` comes from
+  // a project file (or an arbitrary dependency) would import and run that
+  // module here, in the CLI's process. Same refusal as the composite-factory
+  // path above.
+  const refusal = sandboxedExecutionRefusal(binding, ctx, typeName, "constructor");
+  if (refusal) return { ok: false, reason: refusal };
 
   let modulePath: string;
   try {
@@ -1903,6 +2048,8 @@ async function tryFoldFileCore(file: string, session: FoldSession): Promise<Fold
       crossFileFailures: failures,
       importCache: session.importCache,
       resolvePathCache: session.resolvePathCache,
+      lexiconPackages: session.lexiconPackages,
+      sandbox: session.sandbox,
     };
 
     const entities: FoldedEntity[] = [];

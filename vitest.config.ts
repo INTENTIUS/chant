@@ -52,6 +52,10 @@ export default defineConfig({
       // differential. Same corpus-walking shape as the two above (no Docker;
       // spawns real, short-lived child processes of its own instead).
       "examples/sandbox-differential.test.ts",
+      // chant #1093 — the sandbox execution-boundary gate: over the same
+      // corpus, nothing from a project's own source directory may be imported
+      // into the CLI's process during a `{ fold: true, sandbox: true }` build.
+      "examples/sandbox-execution-boundary.test.ts",
     ],
     environment: "node",
     poolOptions: {
