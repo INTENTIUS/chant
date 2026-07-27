@@ -1,4 +1,4 @@
-import type { LexiconPlugin } from "../../lexicon";
+import type { LexiconPlugin, IntrinsicDef } from "../../lexicon";
 import type { CompletionContext, HoverContext, CodeActionContext } from "../../lsp/types";
 import { computeCapabilities } from "./capabilities";
 import { toLspDiagnostics } from "./diagnostics";
@@ -356,13 +356,18 @@ export class LspServer {
     try {
       const { runLint } = await import("../../lint/engine");
       const rules = [];
+      // chant #1106 — the same active plugins' registered intrinsics, so
+      // EVL001 answers exactly like `fold()` does for a registered,
+      // opted-in call instead of flagging every call as a violation.
+      const intrinsics: IntrinsicDef[] = [];
       for (const plugin of this.plugins) {
         rules.push(...(plugin.lintRules?.() ?? []));
+        intrinsics.push(...(plugin.intrinsics?.() ?? []));
       }
 
       if (rules.length === 0) return [];
 
-      const { diagnostics } = await runLint([filePath], rules);
+      const { diagnostics } = await runLint([filePath], rules, undefined, intrinsics);
       return toLspDiagnostics(diagnostics);
     } catch {
       return [];

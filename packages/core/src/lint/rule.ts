@@ -1,4 +1,5 @@
 import type * as ts from "typescript";
+import type { IntrinsicDef } from "../lexicon";
 
 /**
  * Severity level for lint diagnostics
@@ -60,6 +61,19 @@ export interface LintContext {
   filePath: string;
   /** Optional lexicon context (undefined for core rules) */
   lexicon?: string;
+  /**
+   * chant #1106 — the active lexicons' registered intrinsics (`Ref`,
+   * `GetAtt`, ...), threaded down from `runLint` (../lint/engine.ts) so a
+   * rule built on the shared `../fold/subset.ts` predicate
+   * (`findSubsetViolation`/`checkObjectMember`, used by EVL001) gets the
+   * SAME answer `fold()` does for a registered, opted-in call. Mirrors how
+   * `discover()` has threaded `IntrinsicDef[]` into the fold path since
+   * #1039/#1105. Undefined when the caller hasn't resolved a project's
+   * lexicons (a bare unit test constructing a `LintContext` directly, for
+   * instance) — subset.ts then falls back to its pre-#1044 answer: every
+   * call is a violation.
+   */
+  intrinsics?: readonly IntrinsicDef[];
 }
 
 /**
