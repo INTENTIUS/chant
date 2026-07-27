@@ -202,7 +202,11 @@ release bump="patch":
         | if .peerDependencies["@intentius/chant-lexicon-github"] then .peerDependencies["@intentius/chant-lexicon-github"] = "^" + $v else . end
       ' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
     done
-    git add packages/core/package.json lexicons/*/package.json
+    # Keep the committed lockfile's workspace entries in step with the bump —
+    # without this every release leaves package-lock.json recording the
+    # previous version for all 12 workspace packages (#1094).
+    npm install --package-lock-only
+    git add packages/core/package.json lexicons/*/package.json package-lock.json
     git commit -m "chant-v$next"
     git tag "chant-v$next"
     git push origin main "chant-v$next"
