@@ -243,6 +243,24 @@ export async function checkLexicon(dir: string): Promise<CheckResult> {
           : undefined,
   });
 
+  // chant #1044 — the call-form opt-in (`foldsAsCall`) admits a plain call
+  // into `fold()`, which has no general CallExpression case. Declaring it on
+  // a tagged template claims a form the intrinsic cannot be invoked in, so
+  // it fails here rather than being quietly ignored — the same reasoning as
+  // the isTag check above.
+  const badCallForm = intrinsicAudit.filter((i) => !i.callFormOk);
+  items.push({
+    name: "Registered intrinsics' foldsAsCall opt-in is only on plain calls",
+    tier: 1,
+    pass: badCallForm.length === 0,
+    detail:
+      badCallForm.length > 0
+        ? badCallForm.map((i) => i.callFormDetail).join(" | ")
+        : intrinsicAudit.length > 0
+          ? `${intrinsicAudit.length} intrinsic(s) checked`
+          : undefined,
+  });
+
   const hasPluginTest = findFiles(join(dir, "src"), (n) => n === "plugin.test.ts").length > 0;
   items.push({
     name: "plugin.test.ts exists",

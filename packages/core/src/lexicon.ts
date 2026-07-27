@@ -153,37 +153,87 @@ export interface IntrinsicDef {
    * `../cli/commands/check-lexicon-intrinsics.ts`.
    */
   readonly isTag: boolean;
+  /**
+   * chant #1044 — opt this intrinsic's PLAIN-CALL form into folding
+   * (`Ref(bucket)`, `Concat(a, b)` reduce to their intrinsic node instead of
+   * falling the whole file back to the run path).
+   *
+   * Optional, and OFF unless a lexicon writes `true`. That default is the
+   * point: `fold()` has no general `CallExpression` case by construction
+   * (epic #1019), and this field is the only thing that admits one. It is a
+   * closed, lexicon-declared allowlist, decided one intrinsic at a time —
+   * never inferred from `isTag`, from the name, or from the call's shape. An
+   * intrinsic with no `foldsAsCall` behaves exactly as it did before #1044.
+   *
+   * Only set it when calling the intrinsic is a pure function of its
+   * arguments that builds a deterministic data envelope — the whole
+   * correctness argument is that invoking it while folding is
+   * indistinguishable from invoking it during a real run of the file. An
+   * intrinsic that reads the environment, mutates state, or depends on
+   * anything but its arguments does not qualify, and neither does a tagged
+   * template (see {@link isTag}: the two forms are mutually exclusive, and
+   * `chant dev check-lexicon` rejects `isTag: true` + `foldsAsCall: true`).
+   *
+   * Registration is by name. It is not permission to invoke whatever that
+   * name happens to be bound to: `fold()` reduces the call to a symbolic
+   * envelope executing nothing, and `../discovery/fold-import.ts` resolves
+   * the name through the folding FILE'S OWN imports before invoking the real
+   * function — so the function that runs while folding is the same one the
+   * run path would have called, from the module the source itself named.
+   */
+  readonly foldsAsCall?: boolean;
 }
 
 /**
- * Whether `chant build --fold` can ever fold a call to this intrinsic
- * (chant #1062, epic #1019). Today the answer is a direct function of
- * `isTag`: `fold()` (../fold/fold.ts) has no `CallExpression` case at all —
- * a plain-call intrinsic (`Ref(...)`, `Concat(...)`, `reference(...)`, …) is
- * always a run-fallback, no matter what it's named or registered as — while
- * a *registered* tagged-template intrinsic (`Sub\`...\``) folds because
- * `foldTaggedTemplate` recognizes its tag and recurses into the interior.
+ * Whether `chant build --fold` can ever fold a use of this intrinsic
+ * (chant #1062, epic #1019) — in EITHER authored form.
  *
- * This function is the single predicate both `fold()` (deciding whether a
- * tag is registered for real) and the generated per-lexicon intrinsics page
- * (`../codegen/docs-sections.ts`'s "Folds?" column) call — never two copies
- * of the same `isTag === true` check that could silently drift. #1044 (per-
- * intrinsic, per-lexicon foldability) changes this function's body to
- * consult something more than `isTag` for a plain call that becomes
- * foldable; every caller keeps working unchanged, and the generated matrix
- * updates the moment a lexicon's registration says a given intrinsic now
- * folds — no doc rewrite, no second code path to remember.
+ * Two disjoint ways to qualify, one per form:
  *
- * Takes `{ isTag?: boolean }` rather than `Pick<IntrinsicDef, "isTag">`
- * deliberately: `IntrinsicDef.isTag` is required for new registrations
- * (chant #1067), but this predicate also reads `isTag` off untrusted,
- * possibly-older parsed JSON (`ManifestJSON` in `./codegen/docs-types.ts`,
- * on disk as a published lexicon's `dist/manifest.json`) that may predate
- * the required field. `undefined` there means the same thing it always
- * did — not a tag — so the check below is intentionally unchanged.
+ *   - a registered tagged-template intrinsic (`Sub\`...\``) folds because
+ *     `foldTaggedTemplate` recognizes its tag and recurses into the interior
+ *     ({@link intrinsicTagFolds});
+ *   - a registered plain-call intrinsic (`Ref(...)`, `Concat(...)`) folds
+ *     only when its lexicon opted it in with `foldsAsCall`
+ *     ({@link intrinsicCallFolds}, chant #1044). Before #1044 no plain call
+ *     folded at all, whatever it was named or registered as.
+ *
+ * This function is the single predicate the generated per-lexicon intrinsics
+ * page (`../codegen/docs-sections.ts`'s "Folds?" column) calls — never a
+ * restated copy that could silently drift from the code. `fold()` itself
+ * calls the two form-specific predicates below rather than this one, because
+ * it always knows which form it is looking at, and a tag must not fold as a
+ * call (or vice versa) merely because the other form was opted in.
+ *
+ * Takes a structural `{ isTag?, foldsAsCall? }` rather than
+ * `Pick<IntrinsicDef, ...>` deliberately: `IntrinsicDef.isTag` is required
+ * for new registrations (chant #1067), but these predicates also read off
+ * untrusted, possibly-older parsed JSON (`ManifestJSON` in
+ * `./codegen/docs-types.ts`, on disk as a published lexicon's
+ * `dist/manifest.json`) that may predate either field. `undefined` there
+ * means what it always did — not a tag, not opted in.
  */
-export function intrinsicFolds(def: { isTag?: boolean }): boolean {
+export function intrinsicFolds(def: { isTag?: boolean; foldsAsCall?: boolean }): boolean {
+  return intrinsicTagFolds(def) || intrinsicCallFolds(def);
+}
+
+/** True when this intrinsic's TAGGED-TEMPLATE form folds (`Sub\`...\``) — see {@link intrinsicFolds}. */
+export function intrinsicTagFolds(def: { isTag?: boolean }): boolean {
   return def.isTag === true;
+}
+
+/**
+ * True when this intrinsic's PLAIN-CALL form folds (`Ref(...)`) — i.e. the
+ * lexicon opted it in via {@link IntrinsicDef.foldsAsCall} (chant #1044).
+ *
+ * `isTag: true` disqualifies regardless: a tagged template is invoked as
+ * `` Name`...` ``, so a call to it isn't the registered authoring form at
+ * all. Keeping that here rather than trusting registrations means a lexicon
+ * that declares both flags cannot quietly widen `fold()`'s call case — and
+ * `chant dev check-lexicon` fails the registration outright.
+ */
+export function intrinsicCallFolds(def: { isTag?: boolean; foldsAsCall?: boolean }): boolean {
+  return def.isTag !== true && def.foldsAsCall === true;
 }
 
 /**

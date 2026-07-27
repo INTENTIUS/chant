@@ -32,9 +32,14 @@ describe("generateIntrinsics — Folds? column", () => {
     expect(page).toContain("| `Sub` | — | `Sub` | Yes | Yes |");
   });
 
-  test("a plain-call intrinsic does not fold today", () => {
+  test("a plain-call intrinsic its lexicon never opted in does not fold", () => {
     const page = generateIntrinsics(config, manifestWith([{ name: "Ref", isTag: false }]));
     expect(page).toContain("| `Ref` | — | `Ref` | No | No |");
+  });
+
+  test("a plain-call intrinsic opted into call-form folding does fold (chant #1044)", () => {
+    const page = generateIntrinsics(config, manifestWith([{ name: "Ref", isTag: false, foldsAsCall: true }]));
+    expect(page).toContain("| `Ref` | — | `Ref` | No | Yes |");
   });
 
   test("an intrinsic with isTag omitted does not fold (same as isTag: false)", () => {
@@ -47,6 +52,7 @@ describe("generateIntrinsics — Folds? column", () => {
       { name: "Sub", isTag: true },
       { name: "Ref" },
       { name: "GetAtt", isTag: false },
+      { name: "Join", isTag: false, foldsAsCall: true },
     ];
     const page = generateIntrinsics(config, manifestWith(intrinsics));
     for (const fn of intrinsics) {

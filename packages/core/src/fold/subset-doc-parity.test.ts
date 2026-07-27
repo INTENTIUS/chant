@@ -135,6 +135,21 @@ describe("subset-doc-parity — supported patterns in typescript-as-data.mdx cla
     expect(findSubsetViolation(resourceArg(consts, "store"))).toBeUndefined();
   });
 
+  test("Registered intrinsic calls", () => {
+    // chant #1044 — the one doc snippet that needs the registry to classify:
+    // `Ref(...)` is only in the subset because a lexicon opted its call form
+    // in, and `findSubsetViolation` answers exactly that question when it is
+    // given the registry (subset.ts module doc, point 2c). Without one it
+    // would report a violation, which is the pre-#1044 answer EVL still gets.
+    const consts = parseConsts(extractFencedBlock("Registered intrinsic calls"));
+    const intrinsics = [
+      { name: "Sub", isTag: true },
+      { name: "Ref", isTag: false, foldsAsCall: true },
+    ];
+    expect(findSubsetViolation(resourceArg(consts, "store"), intrinsics)).toBeUndefined();
+    expect(findSubsetViolation(resourceArg(consts, "store"))).toBeDefined();
+  });
+
   test("Typed property-kind constructors", () => {
     const consts = parseConsts(extractFencedBlock("Typed property-kind constructors"));
     expect(findSubsetViolation(resourceArg(consts, "config"))).toBeUndefined();

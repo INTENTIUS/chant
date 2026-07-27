@@ -16,6 +16,11 @@ export const IntrinsicDefSchema = z.object({
   // Required (chant #1067) — no silent default for whether an intrinsic
   // folds. See IntrinsicDef.isTag in ../lexicon.ts for the history.
   isTag: z.boolean(),
+  // chant #1044 — optional and default-off on purpose: absent means "this
+  // intrinsic's plain-call form does not fold", which is what every
+  // registration written before #1044 means. Only an explicit `true` opts a
+  // call into folding. See IntrinsicDef.foldsAsCall in ../lexicon.ts.
+  foldsAsCall: z.boolean().optional(),
 });
 
 // ---------------------------------------------------------------------------

@@ -28,6 +28,8 @@ function writeFixture(dir: string): void {
       { name: "Mismatch1", description: "claims tag but is a plain call", isTag: true },
       { name: "Mismatch2", description: "claims plain but is a tagged template", isTag: false },
       { name: "Missing1", description: "registered but never exported", isTag: false },
+      { name: "Plain2", description: "a plain call opted into call-form folding", isTag: false, foldsAsCall: true },
+      { name: "Tag2", description: "a tagged template wrongly opted into call-form folding", isTag: true, foldsAsCall: true },
     ];
   },
 };
@@ -36,7 +38,7 @@ function writeFixture(dir: string): void {
 
   writeFileSync(
     join(dir, "src/index.ts"),
-    `export { Tag1, Plain1, Mismatch1, Mismatch2 } from "./intrinsics";
+    `export { Tag1, Plain1, Mismatch1, Mismatch2, Plain2, Tag2 } from "./intrinsics";
 `,
   );
 
@@ -59,6 +61,16 @@ export function Mismatch1(x: string): string {
 // Registered as isTag: false above — this is the #1039 "gitlab reference()"
 // shape: a genuine tagged template wrongly claimed as a plain call.
 export function Mismatch2(strings: TemplateStringsArray, ...values: unknown[]): string {
+  return strings.join("");
+}
+
+export function Plain2(x: string): string {
+  return x;
+}
+
+// chant #1044 — registered with foldsAsCall: true above, but authored as a
+// tagged template, so there is no plain-call form to opt in.
+export function Tag2(strings: TemplateStringsArray, ...values: unknown[]): string {
   return strings.join("");
 }
 `,
@@ -110,6 +122,28 @@ describe("auditIntrinsics", () => {
     expect(item?.exported).toBe(false);
     expect(item?.ok).toBe(false);
     expect(item?.detail).toMatch(/not exported from src\/index\.ts/);
+  });
+
+  test("a plain call opted into call-form folding passes (chant #1044)", () => {
+    const items = auditIntrinsics(dir);
+    const item = items.find((i) => i.name === "Plain2");
+    expect(item).toMatchObject({ exported: true, actualIsTag: false, ok: true, declaredFoldsAsCall: true, callFormOk: true });
+  });
+
+  test("a tagged template registered with foldsAsCall: true fails — the opt-in is for plain calls only (chant #1044)", () => {
+    const items = auditIntrinsics(dir);
+    const item = items.find((i) => i.name === "Tag2");
+    // The isTag half is fine (it really is a tag); the call-form half is not.
+    expect(item?.ok).toBe(true);
+    expect(item?.callFormOk).toBe(false);
+    expect(item?.callFormDetail).toMatch(/authored as a tagged template.*foldsAsCall: true/);
+  });
+
+  test("an intrinsic with no foldsAsCall at all is simply not opted in — absent, not false (chant #1044)", () => {
+    const items = auditIntrinsics(dir);
+    const item = items.find((i) => i.name === "Plain1");
+    expect(item?.declaredFoldsAsCall).toBeUndefined();
+    expect(item?.callFormOk).toBe(true);
   });
 
   test("returns [] for a lexicon with no intrinsics() method", () => {

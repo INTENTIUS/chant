@@ -24,6 +24,13 @@
  *    tag (see ../../fold/fold.ts). Anything else (a plain function, a class,
  *    a const object/proxy) cannot be invoked as `` Name`...` `` and must be
  *    `isTag: false`.
+ *
+ * chant #1044 adds a third question, for the same reason the first two
+ * exist: `foldsAsCall` opts an intrinsic's PLAIN-CALL form into folding, so
+ * declaring it on something authored as a tagged template claims a form that
+ * cannot be called that way. The two flags are mutually exclusive, and a
+ * registration setting both is a failure here rather than a silently ignored
+ * field.
  */
 
 import { existsSync, readFileSync } from "fs";
@@ -36,6 +43,8 @@ export interface IntrinsicAuditItem {
   name: string;
   /** The `isTag` value as registered in `src/plugin.ts`'s `intrinsics()`. */
   declaredIsTag: boolean | undefined;
+  /** The `foldsAsCall` opt-in as registered in `src/plugin.ts` (chant #1044); `undefined` when absent, which means "not opted in". */
+  declaredFoldsAsCall: boolean | undefined;
   /** Whether `name` resolves to a real export of `src/index.ts`. */
   exported: boolean;
   /**
@@ -50,11 +59,20 @@ export interface IntrinsicAuditItem {
   /** True only when exported AND the authored shape matches `declaredIsTag`. */
   ok: boolean;
   detail?: string;
+  /**
+   * chant #1044 — false only when `foldsAsCall: true` is registered on
+   * something authored as a tagged template. Tracked separately from
+   * {@link ok} so the two failures report as the two different registration
+   * mistakes they are, rather than one message covering both.
+   */
+  callFormOk: boolean;
+  callFormDetail?: string;
 }
 
 interface DeclaredIntrinsic {
   name: string;
   isTag: boolean | undefined;
+  foldsAsCall: boolean | undefined;
 }
 
 interface ExportTarget {
@@ -80,7 +98,7 @@ function parseFile(path: string): ts.SourceFile | undefined {
 /**
  * Find `intrinsics(): IntrinsicDef[] { return [ ... ]; }` (or the arrow-
  * function-property equivalent) in a plugin.ts source file and extract each
- * registered `{ name, isTag }` pair from the array literal. Returns
+ * registered `{ name, isTag, foldsAsCall }` triple from the array literal. Returns
  * `undefined` when no `intrinsics` method exists at all (lexicons with no
  * intrinsics, e.g. gcp/k8s, still return `[]` — that's a real empty array,
  * not `undefined`).
@@ -127,6 +145,7 @@ function extractDeclaredIntrinsics(pluginPath: string): DeclaredIntrinsic[] | un
     if (!ts.isObjectLiteralExpression(el)) continue;
     let name: string | undefined;
     let isTag: boolean | undefined;
+    let foldsAsCall: boolean | undefined;
 
     for (const prop of el.properties) {
       if (!ts.isPropertyAssignment(prop) || !ts.isIdentifier(prop.name)) continue;
@@ -136,10 +155,13 @@ function extractDeclaredIntrinsics(pluginPath: string): DeclaredIntrinsic[] | un
       } else if (key === "isTag") {
         if (prop.initializer.kind === ts.SyntaxKind.TrueKeyword) isTag = true;
         else if (prop.initializer.kind === ts.SyntaxKind.FalseKeyword) isTag = false;
+      } else if (key === "foldsAsCall") {
+        if (prop.initializer.kind === ts.SyntaxKind.TrueKeyword) foldsAsCall = true;
+        else if (prop.initializer.kind === ts.SyntaxKind.FalseKeyword) foldsAsCall = false;
       }
     }
 
-    if (name !== undefined) result.push({ name, isTag });
+    if (name !== undefined) result.push({ name, isTag, foldsAsCall });
   }
 
   return result;
@@ -271,10 +293,12 @@ export function auditIntrinsics(lexiconDir: string): IntrinsicAuditItem[] {
       items.push({
         name: d.name,
         declaredIsTag: d.isTag,
+        declaredFoldsAsCall: d.foldsAsCall,
         exported: false,
         actualIsTag: undefined,
         ok: false,
         detail: `"${d.name}" is registered in plugin.ts intrinsics() but is not exported from src/index.ts`,
+        callFormOk: true,
       });
       continue;
     }
@@ -284,22 +308,34 @@ export function auditIntrinsics(lexiconDir: string): IntrinsicAuditItem[] {
       items.push({
         name: d.name,
         declaredIsTag: d.isTag,
+        declaredFoldsAsCall: d.foldsAsCall,
         exported: true,
         actualIsTag: undefined,
         ok: false,
         detail: `could not locate the declaration of "${d.name}" (exported from ${target.modulePath}) to verify it against isTag`,
+        callFormOk: true,
       });
       continue;
     }
 
     const declaredTag = d.isTag === true;
     const ok = resolved.isTag === declaredTag;
+    // chant #1044 — `foldsAsCall` opts the PLAIN-CALL form in, so it is
+    // meaningless (and, if honored, wrong) on a tagged template. Judged
+    // against how the export is really authored, not against the sibling
+    // `isTag` claim, which may itself be the thing that's wrong.
+    const callFormOk = !(d.foldsAsCall === true && resolved.isTag === true);
     items.push({
       name: d.name,
       declaredIsTag: d.isTag,
+      declaredFoldsAsCall: d.foldsAsCall,
       exported: true,
       actualIsTag: resolved.isTag,
       ok,
+      callFormOk,
+      callFormDetail: callFormOk
+        ? undefined
+        : `"${d.name}" is authored as a tagged template but registered with foldsAsCall: true — the call-form opt-in applies to plain-call intrinsics only`,
       detail: ok
         ? undefined
         : resolved.isTag

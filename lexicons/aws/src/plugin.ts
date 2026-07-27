@@ -52,17 +52,36 @@ export const awsPlugin: LexiconPlugin = {
     return discoverLintRules(rulesDir, import.meta.url);
   },
 
+  /**
+   * chant #1044 — every plain-call intrinsic below carries
+   * `foldsAsCall: true`, opting its CALL form into `chant build --fold`.
+   *
+   * Audited one at a time against the criterion in `IntrinsicDef.foldsAsCall`
+   * (core's lexicon.ts): the call must be a pure function of its arguments
+   * that builds a deterministic data envelope. Each of these constructs its
+   * `*Intrinsic` class and stores the arguments verbatim (../intrinsics.ts) —
+   * no I/O, no environment, no module state, and no CloudFormation semantics
+   * evaluated locally: `Base64("x")` emits `{"Fn::Base64": "x"}` for the
+   * deployment to encode, it does not encode anything here. Calling one while
+   * folding is therefore indistinguishable from calling it during a real run
+   * of the file.
+   *
+   * `Sub` is the one intrinsic NOT opted in, and cannot be: it is authored as
+   * a tagged template (`isTag: true`), which already folds through
+   * `foldTaggedTemplate`. `Sub(...)` as a plain call is not its authoring
+   * form, and `chant dev check-lexicon` rejects a registration claiming both.
+   */
   intrinsics(): IntrinsicDef[] {
     return [
       { name: "Sub", description: "Fn::Sub template string interpolation", isTag: true },
-      { name: "Ref", description: "Reference a parameter or resource", isTag: false },
-      { name: "GetAtt", description: "Fn::GetAtt — get resource attribute", isTag: false },
-      { name: "If", description: "Fn::If — conditional value", isTag: false },
-      { name: "Join", description: "Fn::Join — join values with delimiter", isTag: false },
-      { name: "Select", description: "Fn::Select — select value by index", isTag: false },
-      { name: "Split", description: "Fn::Split — split string by delimiter", isTag: false },
-      { name: "Base64", description: "Fn::Base64 — encode to Base64", isTag: false },
-      { name: "GetAZs", description: "Fn::GetAZs — list Availability Zones", isTag: false },
+      { name: "Ref", description: "Reference a parameter or resource", isTag: false, foldsAsCall: true },
+      { name: "GetAtt", description: "Fn::GetAtt — get resource attribute", isTag: false, foldsAsCall: true },
+      { name: "If", description: "Fn::If — conditional value", isTag: false, foldsAsCall: true },
+      { name: "Join", description: "Fn::Join — join values with delimiter", isTag: false, foldsAsCall: true },
+      { name: "Select", description: "Fn::Select — select value by index", isTag: false, foldsAsCall: true },
+      { name: "Split", description: "Fn::Split — split string by delimiter", isTag: false, foldsAsCall: true },
+      { name: "Base64", description: "Fn::Base64 — encode to Base64", isTag: false, foldsAsCall: true },
+      { name: "GetAZs", description: "Fn::GetAZs — list Availability Zones", isTag: false, foldsAsCall: true },
     ];
   },
 

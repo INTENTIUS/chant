@@ -166,6 +166,15 @@ export async function discover(path: string, options?: DiscoveryOptions): Promis
     ? await planFoldTaint(
         files,
         new Map(files.map((file) => [file, foldAttempts.get(file)?.ok === true])),
+        // chant #1044 — which files' OBJECTS each successful fold captured,
+        // so a file forced back to run also invalidates the folds that
+        // already hold its instances (see planFoldTaint's doc).
+        new Map(
+          files.flatMap((file) => {
+            const attempt = foldAttempts.get(file);
+            return attempt?.ok === true ? [[file, attempt.liveSources] as const] : [];
+          }),
+        ),
       )
     : new Set<string>();
 

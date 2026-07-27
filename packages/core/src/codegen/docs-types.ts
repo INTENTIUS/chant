@@ -55,6 +55,8 @@ export interface ManifestJSON {
     description?: string;
     outputKey?: string;
     isTag?: boolean;
+    /** chant #1044 — the call-form fold opt-in, as published in the lexicon's manifest. Absent in any manifest built before #1044, which reads the same as "not opted in". */
+    foldsAsCall?: boolean;
   }>;
   pseudoParameters?: Record<string, string>;
 }

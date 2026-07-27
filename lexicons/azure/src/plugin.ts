@@ -35,17 +35,31 @@ export const azurePlugin: LexiconPlugin = {
     return [hardcodedLocationRule, storageHttpsRule, nsgWildcardRule];
   },
 
+  /**
+   * chant #1044 — azure has no tagged templates at all, so before this every
+   * intrinsic use fell the whole file back to the run path. All nine opt
+   * their call form in.
+   *
+   * Audited against `IntrinsicDef.foldsAsCall` (core's lexicon.ts): each one
+   * stores its arguments and renders an ARM bracket expression at
+   * serialization time (../intrinsics.ts). Nothing is evaluated locally —
+   * `UniqueString(x)` emits `[uniqueString(x)]` for ARM to hash at deployment
+   * (it does not hash anything at build time), and `Reference`/`ListKeys`
+   * name a deployment-time read rather than performing one. Every call is a
+   * pure function of its arguments, so calling it while folding is
+   * indistinguishable from calling it during a real run of the file.
+   */
   intrinsics(): IntrinsicDef[] {
     return [
-      { name: "ResourceId", description: "Generate a resource ID for an Azure resource", isTag: false },
-      { name: "Reference", description: "Get the runtime state of a deployed resource", isTag: false },
-      { name: "Concat", description: "Concatenate multiple string values", isTag: false },
-      { name: "ResourceGroup", description: "Get the current resource group object", isTag: false },
-      { name: "Subscription", description: "Get the current subscription object", isTag: false },
-      { name: "UniqueString", description: "Generate a deterministic hash string", isTag: false },
-      { name: "Format", description: "Format a string with arguments", isTag: false },
-      { name: "If", description: "Conditional expression", isTag: false },
-      { name: "ListKeys", description: "List access keys for a resource", isTag: false },
+      { name: "ResourceId", description: "Generate a resource ID for an Azure resource", isTag: false, foldsAsCall: true },
+      { name: "Reference", description: "Get the runtime state of a deployed resource", isTag: false, foldsAsCall: true },
+      { name: "Concat", description: "Concatenate multiple string values", isTag: false, foldsAsCall: true },
+      { name: "ResourceGroup", description: "Get the current resource group object", isTag: false, foldsAsCall: true },
+      { name: "Subscription", description: "Get the current subscription object", isTag: false, foldsAsCall: true },
+      { name: "UniqueString", description: "Generate a deterministic hash string", isTag: false, foldsAsCall: true },
+      { name: "Format", description: "Format a string with arguments", isTag: false, foldsAsCall: true },
+      { name: "If", description: "Conditional expression", isTag: false, foldsAsCall: true },
+      { name: "ListKeys", description: "List access keys for a resource", isTag: false, foldsAsCall: true },
     ];
   },
 
