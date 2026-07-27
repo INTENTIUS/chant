@@ -224,6 +224,16 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.sandbox = true;
     } else if (arg === "--param") {
       (result.param ??= []).push(args[++i]);
+    } else if (arg.startsWith("--param=")) {
+      // chant #1118 — this parser never supports an `--flag=value` joined
+      // form for any value-taking flag (every branch above is an exact `===`
+      // match, so a joined token falls through unrecognized and is silently
+      // dropped — see the "ignores unknown flags" case below). `--param
+      // name=value` (space-separated) is the only accepted form. Rather than
+      // teach the parser joined forms generally, `--param=name=value` is
+      // called out as a hard error instead of a silent no-op: a dropped
+      // `--param` can silently change what a build measures/deploys.
+      throw new Error(`${arg} is not supported. Use --param name=value (space-separated) instead.`);
     } else if (arg === "--params-file") {
       result.paramsFile = args[++i];
     } else if (!arg.startsWith("-")) {
