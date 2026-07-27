@@ -7,7 +7,7 @@
  */
 
 import type { Declarable } from "@intentius/chant/declarable";
-import { isPropertyDeclarable } from "@intentius/chant/declarable";
+import { isPropertyDeclarable, isResourceDeclarable } from "@intentius/chant/declarable";
 import type { Serializer, SerializerResult } from "@intentius/chant/serializer";
 import type { LexiconOutput } from "@intentius/chant/lexicon-output";
 import { walkValue, type SerializerVisitor } from "@intentius/chant/serializer-walker";
@@ -58,7 +58,7 @@ function githubVisitor(entityNames: Map<Declarable, string>): SerializerVisitor 
     attrRef: (name, _attr) => name,
     resourceRef: (name) => toKebabCase(name),
     propertyDeclarable: (entity, walk) => {
-      if (!("props" in entity) || typeof entity.props !== "object" || entity.props === null) {
+      if (!isResourceDeclarable(entity) || typeof entity.props !== "object" || entity.props === null) {
         return undefined;
       }
       const props = entity.props as Record<string, unknown>;
@@ -173,7 +173,7 @@ function buildStandaloneJobsSection(
   const jobsSection: Record<string, unknown> = {};
   for (const [name, job] of jobs) {
     const jProps = toYAMLValue(
-      (job as unknown as Record<string, unknown>).props,
+      isResourceDeclarable(job) ? job.props : undefined,
       entityNames,
     ) as Record<string, unknown> | undefined;
     if (jProps) jobsSection[toKebabCase(name)] = convertKeys(jProps);
@@ -262,7 +262,7 @@ export const githubSerializer: Serializer = {
     // alongside (or instead of) any workflow output.
     if (dependabot.length > 0) {
       const [, dep] = dependabot[0];
-      const depProps = (dep as unknown as Record<string, unknown>).props as Record<string, unknown>;
+      const depProps = (isResourceDeclarable(dep) ? dep.props : undefined) as Record<string, unknown>;
       const dependabotYaml = emitDependabotYaml(depProps);
       if (typeof workflowOut === "string") {
         return { primary: workflowOut, files: { "dependabot.yml": dependabotYaml } };
@@ -305,7 +305,7 @@ function serializeSingleWorkflow(
   // Workflow-level properties
   if (workflows.length > 0) {
     const [, wf] = workflows[0];
-    const props = toYAMLValue((wf as unknown as Record<string, unknown>).props, entityNames) as Record<string, unknown> | undefined;
+    const props = toYAMLValue(isResourceDeclarable(wf) ? wf.props : undefined, entityNames) as Record<string, unknown> | undefined;
     if (props) {
       if (props.name) doc.name = props.name;
       if (props["run-name"] || props.runName) doc["run-name"] = props["run-name"] ?? props.runName;
@@ -329,7 +329,7 @@ function serializeSingleWorkflow(
       const eventName = TRIGGER_TYPE_TO_EVENT[entityType];
       if (!eventName) continue;
 
-      const props = toYAMLValue((trigger as unknown as Record<string, unknown>).props, entityNames) as Record<string, unknown> | undefined;
+      const props = toYAMLValue(isResourceDeclarable(trigger) ? trigger.props : undefined, entityNames) as Record<string, unknown> | undefined;
       if (props && Object.keys(props).length > 0) {
         onSection[eventName] = convertValueKeys(props);
       } else {
@@ -342,7 +342,7 @@ function serializeSingleWorkflow(
   // Jobs: prefer Workflow.props.jobs (raw) when present; fall back to standalone Job exports
   let jobsSection: Record<string, unknown> | undefined;
   if (workflows.length > 0) {
-    const rawProps = (workflows[0][1] as unknown as Record<string, unknown>).props as Record<string, unknown>;
+    const rawProps = (isResourceDeclarable(workflows[0][1]) ? workflows[0][1].props : undefined) as Record<string, unknown>;
     jobsSection = buildInlineJobsSection(rawProps, entityNames);
   }
   if (!jobsSection) jobsSection = buildStandaloneJobsSection(jobs, entityNames);
@@ -364,7 +364,7 @@ function serializeMultiWorkflow(
   for (let i = 0; i < workflows.length; i++) {
     const [name, wf] = workflows[i];
     const doc: Record<string, unknown> = {};
-    const props = toYAMLValue((wf as unknown as Record<string, unknown>).props, entityNames) as Record<string, unknown> | undefined;
+    const props = toYAMLValue(isResourceDeclarable(wf) ? wf.props : undefined, entityNames) as Record<string, unknown> | undefined;
 
     if (props) {
       if (props.name) doc.name = props.name;
@@ -382,7 +382,7 @@ function serializeMultiWorkflow(
         const entityType = (trigger as unknown as Record<string, unknown>).entityType as string;
         const eventName = TRIGGER_TYPE_TO_EVENT[entityType];
         if (!eventName) continue;
-        const tProps = toYAMLValue((trigger as unknown as Record<string, unknown>).props, entityNames) as Record<string, unknown> | undefined;
+        const tProps = toYAMLValue(isResourceDeclarable(trigger) ? trigger.props : undefined, entityNames) as Record<string, unknown> | undefined;
         if (tProps && Object.keys(tProps).length > 0) {
           onSection[eventName] = convertValueKeys(tProps);
         } else {
@@ -394,7 +394,7 @@ function serializeMultiWorkflow(
 
     // Jobs: use Workflow.props.jobs when defined, otherwise fall back to standalone exports
     // (standalone exports only assigned to first workflow, for backwards compat with composites)
-    const rawProps = (wf as unknown as Record<string, unknown>).props as Record<string, unknown>;
+    const rawProps = (isResourceDeclarable(wf) ? wf.props : undefined) as Record<string, unknown>;
     const inlineJobs = buildInlineJobsSection(rawProps, entityNames);
     const jobsSection = inlineJobs ?? (i === 0 ? buildStandaloneJobsSection(jobs, entityNames) : undefined);
     if (jobsSection) doc.jobs = jobsSection;

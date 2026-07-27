@@ -9,6 +9,7 @@
  */
 
 import type { Declarable } from "@intentius/chant/declarable";
+import { isResourceDeclarable } from "@intentius/chant/declarable";
 import type { OpConfig, PhaseDefinition, StepDefinition, ActivityStep, GateStep } from "@intentius/chant/op";
 import { kebabToCamel, signalVarName, generateWorkerBootstrap } from "../codegen-shared";
 
@@ -275,7 +276,7 @@ function generateWorker(config: OpConfig): string {
 // ── Public API ────────────────────────────────────────────────────────────────
 
 function getProps(entity: Declarable): Record<string, unknown> {
-  if ("props" in entity && typeof entity.props === "object" && entity.props !== null) {
+  if (isResourceDeclarable(entity) && typeof entity.props === "object" && entity.props !== null) {
     return entity.props as Record<string, unknown>;
   }
   return {};

@@ -14,7 +14,7 @@
  */
 
 import type { Declarable } from "@intentius/chant/declarable";
-import { isPropertyDeclarable } from "@intentius/chant/declarable";
+import { isPropertyDeclarable, isResourceDeclarable } from "@intentius/chant/declarable";
 import { INTRINSIC_MARKER } from "@intentius/chant/intrinsic";
 import type { Serializer, SerializerResult } from "@intentius/chant/serializer";
 import type { LexiconOutput } from "@intentius/chant/lexicon-output";
@@ -57,7 +57,7 @@ function helmVisitor(): SerializerVisitor {
     attrRef: (name, _attr) => name,
     resourceRef: (name) => name,
     propertyDeclarable: (entity, walk) => {
-      if (!("props" in entity) || typeof entity.props !== "object" || entity.props === null) {
+      if (!isResourceDeclarable(entity) || typeof entity.props !== "object" || entity.props === null) {
         return undefined;
       }
       const props = entity.props as Record<string, unknown>;

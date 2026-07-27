@@ -7,7 +7,7 @@
 
 import { createRequire } from "module";
 import type { Declarable } from "@intentius/chant/declarable";
-import { isPropertyDeclarable } from "@intentius/chant/declarable";
+import { isPropertyDeclarable, isResourceDeclarable } from "@intentius/chant/declarable";
 import type { Serializer, SerializerResult, SerializeContext } from "@intentius/chant/serializer";
 import { ownershipEntries, LABEL_OWNERSHIP_KEYS } from "@intentius/chant/ownership";
 import type { LexiconOutput } from "@intentius/chant/lexicon-output";
@@ -125,7 +125,7 @@ function k8sVisitor(entityNames: Map<Declarable, string>): SerializerVisitor {
     },
     resourceRef: (name) => name,
     propertyDeclarable: (entity, walk) => {
-      if (!("props" in entity) || typeof entity.props !== "object" || entity.props === null) {
+      if (!isResourceDeclarable(entity) || typeof entity.props !== "object" || entity.props === null) {
         return undefined;
       }
       const props = entity.props as Record<string, unknown>;
@@ -190,7 +190,7 @@ export const k8sSerializer: Serializer = {
       if (!gvk) continue;
 
       const props = toYAMLValue(
-        (entity as unknown as Record<string, unknown>).props,
+        isResourceDeclarable(entity) ? entity.props : undefined,
         entityNames,
       ) as Record<string, unknown> | undefined;
 

@@ -10,7 +10,7 @@
  */
 
 import type { Declarable } from "@intentius/chant/declarable";
-import { isPropertyDeclarable } from "@intentius/chant/declarable";
+import { isPropertyDeclarable, isResourceDeclarable } from "@intentius/chant/declarable";
 import type { Serializer, SerializerResult } from "@intentius/chant/serializer";
 import type { LexiconOutput } from "@intentius/chant/lexicon-output";
 import { walkValue, type SerializerVisitor } from "@intentius/chant/serializer-walker";
@@ -31,7 +31,7 @@ function isDefaultAnnotationsEntity(entity: Declarable): boolean {
 }
 
 function getProps(entity: Declarable): Record<string, unknown> {
-  if ("props" in entity && typeof entity.props === "object" && entity.props !== null) {
+  if (isResourceDeclarable(entity) && typeof entity.props === "object" && entity.props !== null) {
     return entity.props as Record<string, unknown>;
   }
   return {};

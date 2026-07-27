@@ -1,5 +1,5 @@
 import type { Declarable, CoreParameter } from "@intentius/chant/declarable";
-import { isPropertyDeclarable } from "@intentius/chant/declarable";
+import { isPropertyDeclarable, isResourceDeclarable } from "@intentius/chant/declarable";
 import type { Serializer, SerializerResult, SerializeContext } from "@intentius/chant/serializer";
 import { ownershipEntries, type OwnershipMarker } from "@intentius/chant/ownership";
 import { AWS_TAG_OWNERSHIP_KEYS } from "./ownership";
@@ -82,7 +82,7 @@ function cfnVisitor(entityNames: Map<Declarable, string>): SerializerVisitor {
     attrRef: (name, attr) => ({ "Fn::GetAtt": [name, attr] }),
     resourceRef: (name) => ({ Ref: name }),
     propertyDeclarable: (entity, walk) => {
-      if (!("props" in entity) || typeof entity.props !== "object" || entity.props === null) {
+      if (!isResourceDeclarable(entity) || typeof entity.props !== "object" || entity.props === null) {
         return undefined;
       }
       const props = entity.props as Record<string, unknown>;
@@ -136,7 +136,7 @@ function toProperties(
   entity: Declarable,
   entityNames: Map<Declarable, string>
 ): Record<string, unknown> | undefined {
-  if (!("props" in entity) || typeof entity.props !== "object" || entity.props === null) {
+  if (!isResourceDeclarable(entity) || typeof entity.props !== "object" || entity.props === null) {
     return undefined;
   }
 
@@ -281,7 +281,7 @@ function serializeToTemplate(
       };
 
       // Read resource-level attributes from the second constructor arg
-      const attrs = ("attributes" in entity && typeof entity.attributes === "object" && entity.attributes !== null)
+      const attrs = (isResourceDeclarable(entity) && typeof entity.attributes === "object" && entity.attributes !== null)
         ? entity.attributes as Record<string, unknown>
         : undefined;
 

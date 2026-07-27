@@ -30,7 +30,7 @@
  */
 
 import type { Declarable } from "@intentius/chant/declarable";
-import { isPropertyDeclarable } from "@intentius/chant/declarable";
+import { isPropertyDeclarable, isResourceDeclarable } from "@intentius/chant/declarable";
 import type { Serializer, SerializeContext } from "@intentius/chant/serializer";
 import type { LexiconOutput } from "@intentius/chant/lexicon-output";
 import { ownershipEntries, OWNERSHIP_MANAGED_BY_VALUE } from "@intentius/chant/ownership";
@@ -68,7 +68,7 @@ function flyVisitor(): SerializerVisitor {
     attrRef: (name) => name,
     resourceRef: (name) => name,
     propertyDeclarable: (entity, walk) => {
-      const props = (entity as unknown as { props?: unknown }).props;
+      const props = isResourceDeclarable(entity) ? entity.props : undefined;
       if (!props || typeof props !== "object") return undefined;
       const result: Record<string, unknown> = {};
       for (const [key, value] of Object.entries(props)) {
@@ -80,7 +80,7 @@ function flyVisitor(): SerializerVisitor {
 }
 
 function readProps(entity: Declarable): Record<string, unknown> {
-  const props = (entity as unknown as { props?: unknown }).props;
+  const props = isResourceDeclarable(entity) ? entity.props : undefined;
   return props && typeof props === "object" ? (props as Record<string, unknown>) : {};
 }
 
