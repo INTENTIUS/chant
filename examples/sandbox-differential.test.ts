@@ -86,34 +86,27 @@ vi.setConfig({ testTimeout: 60_000 });
 const CORPUS = discoverCorpus();
 
 /**
- * `lexicons/aws/examples/core-concepts` deliberately re-declares the bare
- * name `dataBucket` in two different files in the SAME directory
- * (`cross-ref-storage.ts` and `naming-shared-config.ts`, both demonstrating
- * unrelated concepts) — a genuine collision `collectEntities` (`./collect.ts`)
- * rejects today on EVERY build path (confirmed both with and without
- * `--fold`: this example produces no valid output regardless).
+ * Known, understood entries where sandboxed and in-process output are
+ * allowed to differ (or to agree-by-both-erroring) instead of matching
+ * byte-for-byte — mirrors `fold-differential.test.ts`'s `EXPECTED_FOLD` and
+ * `json-boundary-differential.test.ts`'s round-trip gate. Empty today.
  *
- * `discover()`'s sandboxed merge step (`./index.ts`) detects the exact same
- * collision — the two entities can never be the same object, since one comes
- * from the parent's fold-only `collectEntities` call and the other from the
- * child's run-only one, so a shared key is always a real duplicate — but
- * attributes it to whichever file its own two-pass split happened to process
- * SECOND, which is not necessarily the same file a single unified
- * `collectEntities` call (today's baseline) would blame: that one depends on
- * `findInfraFiles`' overall file order, not on which side of the fold/run
- * split either file landed on. The result is a real, narrow, already-
- * documented limitation (see the comment on the merge step in
- * `packages/core/src/discovery/index.ts`): the SAME error, on a file that
- * differs between the two sides. Tracked here by name, not silently — see
- * the assertion below the exclusion is still required to hit ("both sides
- * still reject the same duplicate").
+ * `lexicons/aws/examples/core-concepts` used to need an entry here:
+ * it re-declared the bare name `dataBucket` in two different files in the
+ * same directory (`cross-ref-storage.ts` and `naming-shared-config.ts`,
+ * demonstrating unrelated concepts), a genuine collision `collectEntities`
+ * (`./collect.ts`) rejected on every build path. `discover()`'s sandboxed
+ * merge step (`./index.ts`) detected the exact same collision but attributed
+ * it to whichever file its own two-pass split happened to process SECOND,
+ * not necessarily the same file a single unified `collectEntities` call
+ * would blame — the same error, on a file that differs between the two
+ * sides. chant #1067 fixed the underlying collision (renamed the unrelated
+ * `naming-shared-config.ts` export to `sharedDataBucket`) rather than
+ * leaving a shipped example broken, which removed the only corpus entry
+ * that exercised this narrow attribution difference. No exclusion needed
+ * until a new one demonstrates it.
  */
-const EXPECTED_EXCLUSIONS: ReadonlyMap<string, string> = new Map([
-  [
-    "lexicons/aws/examples/core-concepts",
-    'same-directory duplicate export ("dataBucket", split across a folded and a run-fallback file) is rejected by both build paths, but attributed to a different one of the two colliding files — see the differential file doc',
-  ],
-]);
+const EXPECTED_EXCLUSIONS: ReadonlyMap<string, string> = new Map([]);
 
 interface ReportRow {
   name: string;

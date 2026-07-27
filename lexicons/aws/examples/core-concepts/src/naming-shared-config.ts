@@ -2,7 +2,7 @@ import { Bucket, Queue } from "@intentius/chant-lexicon-aws";
 
 const app = { name: "myapp", team: "platform" } as const;
 
-export const dataBucket = new Bucket({
+export const sharedDataBucket = new Bucket({
   BucketName: `${app.name}-data`,
   Tags: [{ Key: "Team", Value: app.team }],
   PublicAccessBlockConfiguration: {
