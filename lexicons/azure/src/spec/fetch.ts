@@ -69,10 +69,42 @@ export interface ArmSchemaDefinition {
   items?: ArmSchemaProperty;
 }
 
-const TARBALL_URL =
-  "https://github.com/Azure/azure-resource-manager-schemas/archive/refs/heads/main.tar.gz";
+/**
+ * Pinned commit of Azure/azure-resource-manager-schemas (#1144).
+ *
+ * The repo has no tagged releases, so unlike gcp (`KCC_VERSION`) or k8s
+ * (`K8S_SCHEMA_VERSION`) there is no version tag to pin against — codegen
+ * used to fetch `refs/heads/main` directly. That meant a cold cache picked
+ * up whatever upstream state had landed since the cache last expired, while
+ * a warm cache kept serving whatever was current when it was last filled.
+ * Azure republishes per-provider schema files under new dates constantly,
+ * and a later date can drop resources an earlier one defined (see
+ * PROVIDER_VERSION_OVERRIDES in ./api-versions.ts) — so which resources
+ * even exist to generate depends on exactly when you fetch, not just what
+ * the fetch URL happens to be. That broke composites/vm-linux.ts at tsc
+ * nondeterministically, depending on which runner's cache was warm.
+ *
+ * Pinning to a commit SHA makes generation reproducible regardless of cache
+ * state. Bump policy: #523's scheduled lexicon-upgrade cron (rolling-spec
+ * bucket, sub-issue #526) is meant to propose bumps to this constant as a
+ * reviewable PR once built. Until then, bump by hand: take the current
+ * `main` HEAD sha from
+ * https://github.com/Azure/azure-resource-manager-schemas/commits/main,
+ * regenerate, fix up any composite left referencing a renamed or vanished
+ * export (adding a PROVIDER_VERSION_OVERRIDES entry if a resource dropped
+ * out of the naive "latest by date" pick), and update this constant +
+ * comment.
+ */
+export const AZURE_SCHEMA_COMMIT = "0085cb6f3a98e735359807143bcb1667aeec930f";
+
+const TARBALL_URL = `https://github.com/Azure/azure-resource-manager-schemas/archive/${AZURE_SCHEMA_COMMIT}.tar.gz`;
 const CACHE_DIR = join(homedir(), ".chant");
-const CACHE_FILE = join(CACHE_DIR, "azure-resource-manager-schemas.tar.gz");
+// The cache filename embeds the pin so a stale tarball from before a bump
+// can never mask the bump: restoring an old ~/.chant (e.g. a CI cache
+// partial-key fallback, or a developer's pre-existing cache) simply misses
+// this filename and re-downloads, instead of silently serving pre-bump
+// schemas under a name that still matches (#1144).
+const CACHE_FILE = join(CACHE_DIR, `azure-resource-manager-schemas-${AZURE_SCHEMA_COMMIT}.tar.gz`);
 
 /** Paths to skip (common-types, non-provider files). */
 function isProviderSchema(path: string): boolean {
