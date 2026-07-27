@@ -57,7 +57,10 @@
     "@intentius/chant-lexicon-github": "^0.23.0"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json && tsc-alias -p tsconfig.build.json && find dist -type f \\( -name \"*.js\" -o -name \"*.js.map\" \\) -delete",
-    "prepack": "npm run build"
+    "generate": "tsx src/codegen/generate-cli.ts",
+    "bundle": "tsx src/codegen/package-cli.ts",
+    "docs": "tsx src/codegen/docs-cli.ts",
+    "prepack": "npm run generate && npm run bundle && npm run build",
+    "build": "tsc -p tsconfig.build.json && tsc-alias -p tsconfig.build.json && find dist -type f \\( -name \"*.js\" -o -name \"*.js.map\" \\) -delete"
   }
 }

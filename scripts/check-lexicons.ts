@@ -37,6 +37,14 @@
  * tsc build, so a change can pass locally and only fail in CI's "Generate
  * lexicon artifacts" step. Unlike the tier-1 checks above, a tsc failure
  * here is never something to track-and-allow — it always fails the gate.
+ *
+ * chant #1072 resolved the forgejo half of the architecture-mismatch
+ * question above (option 1: build up to the bar, not relax it): forgejo now
+ * has a manifest, a plugin.test.ts, docs, and an example project, and its
+ * lint rules/LSP completions/hover wrap or delegate to github's rather than
+ * forking them — see lexicons/forgejo/src/lint/rules/delegate-to-github.ts
+ * and lexicons/forgejo/src/lsp/. No forgejo entry remains in KNOWN_FAILURES
+ * below.
  */
 
 import { existsSync, readdirSync } from "fs";
@@ -53,24 +61,6 @@ const lexiconsDir = join(repoRoot, "lexicons");
  * Every entry here MUST reference a filed, open issue.
  */
 const KNOWN_FAILURES: Record<string, Record<string, string>> = {
-  forgejo: {
-    "At least 1 lint rule in src/lint/rules/":
-      "#1072 — forgejo is a thin github-dialect (serializer + `uses:` resolver) with no lint rules of its own — delegates to github's.",
-    "src/lsp/completions.ts exists":
-      "#1072 — forgejo has no LSP completions provider of its own — delegates to github's.",
-    "src/lsp/hover.ts exists":
-      "#1072 — forgejo has no LSP hover provider of its own — delegates to github's.",
-    "dist/manifest.json exists":
-      "#1072 — forgejo's prepack is `npm run build` only (no generate/bundle step) — it never produces dist/manifest.json.",
-    "dist/manifest.json declares a chantVersion":
-      "#1072 — same root cause as \"dist/manifest.json exists\" above — no manifest, so no chantVersion.",
-    "At least 1 example in examples/":
-      "#1072 — forgejo has no example projects of its own.",
-    "plugin.test.ts exists":
-      "#1072 — forgejo has no plugin.test.ts.",
-    "At least 1 .mdx doc page":
-      "#1072 — forgejo has no docs/ site of its own.",
-  },
   github: {
     "Registered intrinsics are exported by the package":
       "#1069 — plugin.ts registers an \"expression\" intrinsic; src/index.ts exports the `Expression` class (capitalized) and helper functions, but nothing literally named `expression`.",

@@ -9,6 +9,7 @@
  */
 
 import type { LexiconPlugin, InitTemplateSet, MigrationSource } from "@intentius/chant/lexicon";
+import type { LintRule } from "@intentius/chant/lint/rule";
 import { postSynthChecks as postSynthCheckList } from "./lint/post-synth";
 import { forgejoAuditCatalog } from "./lint/audit-catalog";
 import { createSkillsLoader, createDiffTool } from "@intentius/chant/lexicon-plugin-helpers";
@@ -17,6 +18,9 @@ import { fileURLToPath } from "url";
 import { forgejoSerializer } from "./serializer";
 import { forgejoContextTools } from "./mcp/context-tools";
 import { generateForgejoPipeline } from "./components/generate-pipeline";
+import { forgejoLintRules } from "./lint/rules/delegate-to-github";
+import { forgejoCompletions } from "./lsp/completions";
+import { forgejoHover } from "./lsp/hover";
 
 const reuseNote =
   "forgejo reuses the github lexicon's entities — run `chant generate` in the github lexicon instead.";
@@ -133,6 +137,20 @@ export const build = new Job({
     return postSynthCheckList;
   },
 
+  // Lint rules and LSP support are delegated to github, not forked — see
+  // ./lint/rules/delegate-to-github.ts and ./lsp/{completions,hover}.ts.
+  lintRules(): LintRule[] {
+    return forgejoLintRules;
+  },
+
+  completionProvider(ctx: import("@intentius/chant/lsp/types").CompletionContext) {
+    return forgejoCompletions(ctx);
+  },
+
+  hoverProvider(ctx: import("@intentius/chant/lsp/types").HoverContext) {
+    return forgejoHover(ctx);
+  },
+
   mcpTools() {
     return [
       createDiffTool(forgejoSerializer, "Compare current build output against previous output for Forgejo Actions", "forgejo"),
@@ -174,7 +192,26 @@ export const build = new Job({
   async coverage(): Promise<void> {
     console.error(reuseNote);
   },
-  async package(): Promise<void> {
-    console.error(reuseNote);
+
+  // Packaging is real (unlike generate/validate/coverage above): forgejo
+  // ships its own dist/manifest.json — an empty resource catalog plus its
+  // own post-synth checks and skill — even though the catalog it packages
+  // is empty. See ./codegen/{generate,package}.ts.
+  async package(options?: { verbose?: boolean; force?: boolean }): Promise<void> {
+    const { packageLexicon } = await import("./codegen/package");
+    const { writeBundleSpec } = await import("@intentius/chant/codegen/package");
+    const { join: pathJoin, dirname: pathDirname } = await import("path");
+    const { fileURLToPath: toPath } = await import("url");
+
+    const { spec, stats } = await packageLexicon(options);
+    const pkgDir = pathDirname(pathDirname(toPath(import.meta.url)));
+    writeBundleSpec(spec, pathJoin(pkgDir, "dist"));
+
+    console.error(`Packaged ${stats.resources} resources, ${stats.ruleCount} rules, ${stats.skillCount} skills`);
+  },
+
+  async docs(options?: { verbose?: boolean }): Promise<void> {
+    const { generateDocs } = await import("./codegen/docs");
+    return generateDocs(options);
   },
 };
