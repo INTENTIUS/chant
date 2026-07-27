@@ -141,6 +141,22 @@ export function isLiteralElementKey(node: ts.Expression): node is ts.StringLiter
   return ts.isStringLiteral(node) || ts.isNumericLiteral(node);
 }
 
+/**
+ * A short, single-line rendering of `node`'s source text for embedding in a
+ * diagnostic message — never the raw `getText()`, which reproduces the
+ * node's ENTIRE source verbatim and can span dozens of lines for a real
+ * composite call or object literal (chant #1054: a fold fallback reason that
+ * embeds one of these buries the actual error after it, and breaks any
+ * line-oriented consumer of `[fold:run]` output). Internal whitespace
+ * (including newlines) collapses to a single space, and the result is capped
+ * to a bounded length so one pathological node can't blow out an otherwise
+ * one-line reason either.
+ */
+export function briefNodeText(node: ts.Node, maxLength = 60): string {
+  const collapsed = node.getText().replace(/\s+/g, " ").trim();
+  return collapsed.length > maxLength ? `${collapsed.slice(0, maxLength - 3)}...` : collapsed;
+}
+
 // ---------------------------------------------------------------------------
 // Shared message builders — `fold()` and `findSubsetViolation` both call
 // these so the diagnostic text for the same violation kind is the same
@@ -148,11 +164,11 @@ export function isLiteralElementKey(node: ts.Expression): node is ts.StringLiter
 // ---------------------------------------------------------------------------
 
 export function computedPropertyNameMessage(node: ts.PropertyName): string {
-  return `computed/dynamic property name not foldable: ${node.getText()}`;
+  return `computed/dynamic property name not foldable: ${briefNodeText(node)}`;
 }
 
 export function dynamicElementAccessMessage(keyNode: ts.Expression): string {
-  return `dynamic property access — computed key must be a string or numeric literal: ${keyNode.getText()}`;
+  return `dynamic property access — computed key must be a string or numeric literal: ${briefNodeText(keyNode)}`;
 }
 
 export const UNSUPPORTED_OBJECT_MEMBER_MESSAGE = "unsupported object member";
@@ -163,8 +179,19 @@ export function unsupportedBinaryMessage(opKind: ts.SyntaxKind): string {
   return `unsupported binary operator: ${ts.SyntaxKind[opKind]}`;
 }
 
+/**
+ * chant #1054 — the ONE wording for "a bare function/method call used where
+ * chant needs a value it can fold." Before this, `fold()` (this message) and
+ * `../discovery/fold-import.ts`'s `resolveCallExpression` (a top-level
+ * export's own call-as-a-value check) had each grown their own hand-written
+ * copy — "function call as a value" here, "call expression as a value"
+ * there — for the identical rejection, which meant a tool grouping fallback
+ * reasons by text had to match both to avoid silently under-counting one of
+ * them. `resolveCallExpression` now calls this function directly instead of
+ * building its own string.
+ */
 export function callExpressionMessage(node: ts.CallExpression): string {
-  return `function call as a value is not foldable: ${node.expression.getText()}(...)`;
+  return `function call as a value is not foldable: ${briefNodeText(node.expression)}(...)`;
 }
 
 export function unsupportedExpressionMessage(node: ts.Node): string {

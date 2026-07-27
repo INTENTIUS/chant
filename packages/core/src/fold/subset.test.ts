@@ -1,7 +1,7 @@
 import { describe, test, expect } from "vitest";
 import * as ts from "typescript";
 import { fold, foldResource, collectConsts, FoldError } from "./fold";
-import { findSubsetViolation } from "./subset";
+import { briefNodeText, callExpressionMessage, findSubsetViolation } from "./subset";
 import { evl001NonLiteralExpressionRule } from "../lint/rules/evl001-non-literal-expression";
 import { evl003DynamicPropertyAccessRule } from "../lint/rules/evl003-dynamic-property-access";
 import { evl004SpreadNonConstRule } from "../lint/rules/evl004-spread-non-const";
@@ -348,5 +348,71 @@ describe("findSubsetViolation — optional intrinsic registry (#1044)", () => {
 
     const context: LintContext = { sourceFile, entities: [], filePath: "t.ts", lexicon: undefined };
     expect(evl001NonLiteralExpressionRule.check(context).length).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * chant #1054 — `briefNodeText` is what keeps every fold fallback reason
+ * that used to embed a node's raw `getText()` down to one bounded line. A
+ * real composite call's source is many lines; a fold reason that reproduces
+ * it verbatim buries the actual error after all of it (the bug this issue
+ * reports) and breaks any line-oriented consumer of `[fold:run]` output.
+ */
+describe("briefNodeText — single-line, bounded diagnostic text (chant #1054)", () => {
+  function initializerOf(source: string): ts.Expression {
+    const sourceFile = ts.createSourceFile("t.ts", source, ts.ScriptTarget.Latest, true);
+    const consts = collectConsts(sourceFile);
+    const init = consts.get("x");
+    if (!init) throw new Error(`fixture error: "x" did not parse in ${JSON.stringify(source)}`);
+    return init;
+  }
+
+  test("a short, single-line node passes through unchanged", () => {
+    expect(briefNodeText(initializerOf(`const x = GkeCluster;`))).toBe("GkeCluster");
+  });
+
+  test("a multi-line node's newlines collapse to spaces — the result is always one line", () => {
+    const text = briefNodeText(
+      initializerOf(`
+        const x = GkeCluster({
+          name: config.clusterName,
+          location: config.region,
+        });
+      `),
+    );
+    expect(text).not.toContain("\n");
+    expect(text.split("\n")).toHaveLength(1);
+  });
+
+  test("text over the length cap is truncated with a trailing marker rather than left unbounded", () => {
+    const text = briefNodeText(
+      initializerOf(`const x = { aVeryLongPropertyNameNumberOne: 1, aVeryLongPropertyNameNumberTwo: 2 };`),
+      20,
+    );
+    expect(text.length).toBe(20);
+    expect(text.endsWith("...")).toBe(true);
+  });
+});
+
+describe("callExpressionMessage — one line regardless of the call's own argument list (chant #1054)", () => {
+  test("only the callee is embedded — a multi-line argument list never leaks into the message", () => {
+    const sourceFile = ts.createSourceFile(
+      "t.ts",
+      `
+        const x = GkeCluster({
+          name: config.clusterName,
+          location: config.region,
+          machineType: "n2-standard-2",
+        });
+      `,
+      ts.ScriptTarget.Latest,
+      true,
+    );
+    const consts = collectConsts(sourceFile);
+    const call = consts.get("x") as ts.CallExpression;
+
+    const message = callExpressionMessage(call);
+
+    expect(message).toBe("function call as a value is not foldable: GkeCluster(...)");
   });
 });
