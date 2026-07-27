@@ -9,13 +9,15 @@ description: What chant build --sandbox isolates project source from, and what i
 
 ## Why this is independent of fold coverage
 
-A file that folds executes zero of its own code either way — folding was already safe. The files that mattered for isolation were always the run-fallback ones, and partial fold coverage did nothing for them: an attacker's payload just needs to land in any file the folder doesn't recognize (an arrow function, a cross-file reference, an ordinary composite call), which is unremarkable, idiomatic chant. `--sandbox` isolates that remainder directly, so the property holds regardless of what fraction of files happen to fold today.
+A file that folds executes zero of *its own* code either way. The files that mattered for isolation were always the run-fallback ones, and partial fold coverage did nothing for them: an attacker's payload just needs to land in any file the folder doesn't recognize (an arrow function, a cross-file reference, an ordinary composite call), which is unremarkable, idiomatic chant. `--sandbox` isolates that remainder directly, so the property holds regardless of what fraction of files happen to fold today.
+
+Folding a file was never quite "zero execution" of *anything*, though — which is what chant #1093 closed. To fold `export const web = WebApp({...})`, the folder has to resolve `WebApp` and call it for real; likewise for `new Bucket({...})`'s constructor and a registered intrinsic tag. When those come from a lexicon package, that's the same trusted code the CLI already loaded. When they come from a sibling project file, folding executed *project* code — that file's whole module top level, plus the factory body — inside the CLI's process, for a file reported as `[fold:fold]`. Under `--sandbox` the folder now refuses any such import and the file falls back to the (sandboxed) run path instead. See [The trust boundary, precisely](#the-trust-boundary-precisely).
 
 ## What `--sandbox` does
 
 For one build:
 
-1. `chant build`'s existing fold/run decision runs exactly as it does without `--sandbox` (or, without `--fold`, every file is a run-fallback file). Folded files are constructed by reducing their AST — chant #1022/#1023 — never executed, so they stay exactly where they are: in the CLI's own process, unsandboxed, because there's nothing to isolate.
+1. `chant build`'s fold/run decision runs, with one difference from a plain `--fold` build: a file whose fold would require importing and invoking a project-owned factory, constructor or intrinsic falls back to run instead of folding (chant #1093). Files that fold are constructed by reducing their AST — chant #1022/#1023 — and stay in the CLI's own process, because at that point nothing of the project's has to execute for them.
 2. Every run-fallback file for the build is bundled together into ONE self-contained module with [esbuild](https://esbuild.github.io/) — not split into one bundle per file. This matters for correctness, not just efficiency: two files in the same build that both import a third all need to observe the SAME object instance for cross-file references to resolve, exactly as they would running unbundled in one process today. Bundling the whole set together, once, preserves that.
 3. The bundle runs in a child process started with Node's `--permission` flag and a scrubbed environment.
 4. The child does its own entity collection and reference resolution over just that run-fallback set, then reports back a plain JSON entity set (chant #1045 Phase 1's wire format) over the process's IPC channel — never live objects, which can't cross a process boundary anyway.
@@ -61,12 +63,27 @@ Node has no permission flag for network access. `--permission` does not gate `fe
 - **Network namespace locally** — `unshare --net` (Linux) or an equivalent sandboxed network namespace with no interface configured.
 - **`sandbox-exec` (macOS)** — a `seatbelt` profile denying network sockets, layered on top of `--sandbox`'s filesystem/process/environment restrictions.
 
+## The trust boundary, precisely
+
+With `--sandbox`, the only code that executes in the CLI's own process during discovery is chant's own and the packages of the lexicons this build loaded. Nothing from the project's source directory runs there — folded or not.
+
+That allowlist is enforced by resolution, not by what the source says. A specifier is trusted when it is one of the lexicon package names the *build* resolved (`resolveProjectLexicons` → `loadPlugins`, the same closed set chant #1063 established), or when it resolves to a path inside chant-core's own executing tree. A specifier that merely *looks* chant-owned — `@intentius/chant`, `@intentius/chant-lexicon-anything` — is not enough: an untrusted repo controls both the text in its source and the contents of its own `node_modules`.
+
+`examples/sandbox-execution-boundary.test.ts` asserts this over the whole corpus: every one of the 98 example directories is built with `{ fold: true, sandbox: true }` while `importModule` is recorded, and no path inside the project's own source directory may appear.
+
+Two residuals worth naming, both pre-existing and neither closed by this flag:
+
+- **`chant.config.ts` is imported in-process.** It is the project's own file, and the CLI reads its configuration by importing it before any of this applies.
+- **Lexicon packages are resolved from the project's install.** A repo that ships a poisoned `@intentius/chant-lexicon-aws` in its own `node_modules` gets it executed — but the CLI already imports every active lexicon package into its own process to obtain serializers and lint rules, long before discovery starts, so this is a property of loading lexicons at all rather than something fold or `--sandbox` introduces.
+
 ## What is deliberately NOT sandboxed
 
 - **chant itself and the lexicon packages.** The boundary is around executing *project source* — the untrusted input. chant's own discovery/collection/resolution code (and the lexicon a project imports) is trusted, and runs the same whether or not `--sandbox` is on.
-- **Folded files.** They already execute zero of their own top-level code; there's nothing to isolate.
+- **Folded files.** A file that folds under `--sandbox` executes nothing of the project's at all — that is what the #1093 refusal above guarantees — so there is nothing left to isolate.
 - **`typescript`, resolved and loaded directly.** Several lexicons' lint rules do AST-based analysis with the `typescript` compiler package, which every one of those lexicons re-exports eagerly — bundling it runs into a well-known esbuild limitation (its own internal `require("fs")`-style calls don't survive being bundled into an ESM module). It's left unbundled and resolved to its real, fixed location on disk instead, which the sandboxed child is also granted read access to. This is a fixed, chant-shipped dependency; project source never controls what's installed there, so this doesn't weaken the boundary around untrusted code.
 
 ## Fold coverage today
 
-Fold currently covers 32 of the corpus's 98 example directories in full; the other 66 have at least one file that falls back to run. `--sandbox` isolates that 66 today, at the same coverage fold has now — increasing fold coverage (tracked separately; #1044 landed registered call-form intrinsics, #1063 is the largest remaining cause) is an optimization on top of that, not a precondition for it.
+Fold covers 53 of the corpus's 98 example directories in full; the other 45 have at least one file that falls back to run. `--sandbox` isolates that remainder — increasing fold coverage (tracked separately) is an optimization on top of that, not a precondition for it.
+
+Coverage under `--sandbox` is measured separately, because the #1093 refusal can only demote: across the same 98 directories it costs 3 files and **zero** fully-folded entries, so `--sandbox` folds the same 53. Real chant source imports its constructors and composites from lexicon packages; a project-owned factory is rare, and where it exists the file simply runs in the child instead. The numbers are reported by `just sandbox-differential`.

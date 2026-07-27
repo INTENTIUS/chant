@@ -74,7 +74,9 @@ The `--fold` flag always wins over `build.fold` when both are present.
 
 ## Sandboxed execution
 
-`--sandbox` runs every run-fallback file for the build together, isolated, in one child process with the filesystem, process-spawn, worker-thread, and environment access locked down — see [Sandboxed Execution](/chant/architecture/sandbox/) for exactly what that isolates (and, importantly, what it doesn't: Node has no way to block network egress, so that's a documented residual risk with its own deployment guidance, not something this flag claims to close). It composes with `--fold`: folded files are unaffected, and the run-fallback remainder is what gets sandboxed.
+`--sandbox` runs every run-fallback file for the build together, isolated, in one child process with the filesystem, process-spawn, worker-thread, and environment access locked down — see [Sandboxed Execution](/chant/architecture/sandbox/) for exactly what that isolates (and, importantly, what it doesn't: Node has no way to block network egress, so that's a documented residual risk with its own deployment guidance, not something this flag claims to close). It composes with `--fold`: the run-fallback remainder is what gets sandboxed.
+
+With `--sandbox`, no project source executes in the CLI's process at all. That is slightly stricter than `--fold` alone: folding a `SomeComposite({...})` call or a `new SomeType({...})` has to invoke the real factory or constructor, so when those are imported from a *project* file rather than a lexicon package, the file falls back to the sandboxed run path instead of folding. Across the 98-directory example corpus that costs 3 files and no fully-folded directory.
 
 ```typescript
 // chant.config.ts
