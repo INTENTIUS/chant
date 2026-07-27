@@ -2,6 +2,7 @@ import { describe, test, expect } from "vitest";
 import * as ts from "typescript";
 import { evl001NonLiteralExpressionRule } from "./evl001-non-literal-expression";
 import type { LintContext } from "../rule";
+import type { IntrinsicDef } from "../../lexicon";
 
 function createContext(code: string, filePath = "test.ts"): LintContext {
   const sourceFile = ts.createSourceFile(filePath, code, ts.ScriptTarget.Latest, true);
@@ -154,5 +155,43 @@ describe("EVL001: non-literal-expression", () => {
     const diags = evl001NonLiteralExpressionRule.check(ctx);
     expect(diags).toHaveLength(1);
     expect(diags[0].ruleId).toBe("EVL001");
+  });
+
+  /**
+   * chant #1106 — `LintContext.intrinsics`, threaded from `runLint`, is what
+   * lets this rule answer a registered call-form intrinsic exactly like
+   * `fold()` does instead of flagging every call. See ../../fold/subset.ts
+   * and ../../fold/subset.test.ts for the shared predicate this rule calls.
+   */
+  describe("context.intrinsics (#1106)", () => {
+    const REF: IntrinsicDef[] = [{ name: "Ref", isTag: false, foldsAsCall: true }];
+
+    test("flags a call to a registered, opted-in intrinsic when the context carries no registry", () => {
+      const ctx = createContext(`new Bucket({ name: Ref(env) });`);
+      const diags = evl001NonLiteralExpressionRule.check(ctx);
+      expect(diags).toHaveLength(1);
+      expect(diags[0].ruleId).toBe("EVL001");
+    });
+
+    test("does not flag that same call once the context carries the registry", () => {
+      const ctx: LintContext = { ...createContext(`new Bucket({ name: Ref(env) });`), intrinsics: REF };
+      expect(evl001NonLiteralExpressionRule.check(ctx)).toHaveLength(0);
+    });
+
+    test("a registered name WITHOUT the call opt-in still flags, even with the registry present", () => {
+      const notOptedIn: IntrinsicDef[] = [{ name: "Reference", isTag: false }];
+      const ctx: LintContext = {
+        ...createContext(`new Bucket({ name: Reference(env) });`),
+        intrinsics: notOptedIn,
+      };
+      const diags = evl001NonLiteralExpressionRule.check(ctx);
+      expect(diags).toHaveLength(1);
+    });
+
+    test("an unregistered call still flags with the registry present", () => {
+      const ctx: LintContext = { ...createContext(`new Bucket({ name: makeName() });`), intrinsics: REF };
+      const diags = evl001NonLiteralExpressionRule.check(ctx);
+      expect(diags).toHaveLength(1);
+    });
   });
 });
