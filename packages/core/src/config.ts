@@ -139,12 +139,12 @@ export interface ChantConfig {
    */
   build?: {
     /**
-     * Opt-in: fold source modules statically instead of importing/running
-     * them, falling back to run per-file for anything the folder can't
-     * represent (composite factory calls, non-`new` exports, …). Default
-     * `false`. The `--fold` CLI flag overrides this per-invocation (a flag
-     * of `true` always wins; the flag cannot force fold *off* when this is
-     * `true`). See {@link resolveFoldEnabled}.
+     * Fold source modules statically instead of importing/running them,
+     * falling back to run per-file for anything the folder can't represent.
+     * DEFAULT `true` since chant #1134 — set `false` to make this project
+     * run every module (the pre-#1134 behavior). The `--fold`/`--no-fold`
+     * CLI flags override this per-invocation in either direction. See
+     * {@link resolveFoldEnabled}.
      */
     fold?: boolean;
 
@@ -353,14 +353,18 @@ export function resolveAutoReleaseDisabled(config: ChantConfig, cliFlag?: boolea
 
 /**
  * Whether `chant build` should use the fold path (#1022, epic #1019)
- * instead of running each source module. Opt-in: off unless the CLI's
- * `--fold` flag was passed (`cliFlag`) or the project config sets
- * `build.fold: true` — the flag always wins for that one invocation,
- * regardless of config.
+ * instead of running each source module. DEFAULT-ON since chant #1134: fold
+ * is the build path unless something turns it off. Precedence, most specific
+ * wins: an explicit CLI flag (`--fold` → true, `--no-fold` → false, arriving
+ * here as `cliFlag`), then the project config's `build.fold`, then the
+ * default of `true`. The epic's evidence base for the flip — coverage,
+ * byte-identity, and the sandbox execution boundary — is recorded on #1134
+ * and #1090.
  */
 export function resolveFoldEnabled(config: ChantConfig, cliFlag?: boolean): boolean {
-  if (cliFlag) return true;
-  return config.build?.fold === true;
+  if (cliFlag !== undefined) return cliFlag;
+  if (config.build?.fold !== undefined) return config.build.fold;
+  return true;
 }
 
 /**

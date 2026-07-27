@@ -322,7 +322,7 @@ export const testEntity = {
     expect(byName.get("env")).toEqual({ name: "env", value: "from-file", source: "params-file" });
   });
 
-  test("--fold is opt-in: omitting it builds via the unchanged run path", async () => {
+  test("fold is the default (#1134): omitting the flag folds; --no-fold restores the run path", async () => {
     await writeFile(
       join(testDir, "test.infra.ts"),
       `
@@ -345,7 +345,21 @@ export const testEntity = {
       expect(result.success).toBe(true);
       expect(result.resourceCount).toBe(1);
       const anyFoldLine = errorSpy.mock.calls.map((call) => String(call[0])).some((line) => line.includes("[fold:"));
-      expect(anyFoldLine).toBe(false);
+      expect(anyFoldLine).toBe(true);
+
+      errorSpy.mockClear();
+      const runResult = await buildCommand({
+        path: testDir,
+        format: "json",
+        serializers: [mockSerializer],
+        fold: false,
+      });
+      expect(runResult.success).toBe(true);
+      expect(runResult.resourceCount).toBe(1);
+      const anyFoldLineOff = errorSpy.mock.calls
+        .map((call) => String(call[0]))
+        .some((line) => line.includes("[fold:"));
+      expect(anyFoldLineOff).toBe(false);
     } finally {
       errorSpy.mockRestore();
     }

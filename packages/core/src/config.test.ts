@@ -1,5 +1,11 @@
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
-import { loadChantConfig, DEFAULT_CHANT_CONFIG, resolveAutoReleaseDisabled, resolveSbomFormat } from "./config";
+import {
+  loadChantConfig,
+  DEFAULT_CHANT_CONFIG,
+  resolveAutoReleaseDisabled,
+  resolveFoldEnabled,
+  resolveSbomFormat,
+} from "./config";
 import { writeFileSync, mkdirSync, rmSync } from "fs";
 import { join } from "path";
 
@@ -125,6 +131,27 @@ describe("loadChantConfig", () => {
 
     const result = await loadChantConfig(TEST_DIR);
     expect(result.config.sbom?.format).toBe("cyclonedx");
+  });
+});
+
+describe("resolveFoldEnabled (#1134 — fold is the default build path)", () => {
+  test("default (no flag, no config) → fold ON", () => {
+    expect(resolveFoldEnabled({})).toBe(true);
+  });
+
+  test("config build.fold: false turns it off; true keeps it on", () => {
+    expect(resolveFoldEnabled({ build: { fold: false } })).toBe(false);
+    expect(resolveFoldEnabled({ build: { fold: true } })).toBe(true);
+    expect(resolveFoldEnabled({ build: {} })).toBe(true);
+  });
+
+  test("--fold (flag true) beats config false", () => {
+    expect(resolveFoldEnabled({ build: { fold: false } }, true)).toBe(true);
+  });
+
+  test("--no-fold (flag false) beats config true and the default", () => {
+    expect(resolveFoldEnabled({ build: { fold: true } }, false)).toBe(false);
+    expect(resolveFoldEnabled({}, false)).toBe(false);
   });
 });
 
