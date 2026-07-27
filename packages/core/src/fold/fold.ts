@@ -5,6 +5,7 @@ import {
   SUPPORTED_UNARY_OPERATORS,
   UNSUPPORTED_OBJECT_MEMBER_MESSAGE,
   UNSUPPORTED_UNARY_MESSAGE,
+  briefNodeText,
   callExpressionMessage,
   computedPropertyNameMessage,
   dynamicElementAccessMessage,
@@ -396,7 +397,7 @@ function foldTaggedTemplate(
   const tagName = node.tag.getText();
   const isRegistered = intrinsics.some((i) => i.name === tagName && intrinsicTagFolds(i));
   if (!isRegistered) {
-    throw foldError(node, `unregistered tagged template intrinsic: ${tagName}\`...\``);
+    throw foldError(node, `unregistered tagged template intrinsic: ${briefNodeText(node.tag)}\`...\``);
   }
 
   const template = node.template;
@@ -635,7 +636,10 @@ export function fold(
     // Reject so the file falls back to run, which constructs and serializes it
     // correctly. EVL permits this statically — it's a documented fold/EVL
     // divergence, like identifier resolution and spread runtime type.
-    throw foldError(node, `nested \`new ${node.expression.getText()}(...)\` as a value is not foldable — falls back to run`);
+    throw foldError(
+      node,
+      `nested \`new ${briefNodeText(node.expression)}(...)\` as a value is not foldable — falls back to run`,
+    );
   }
 
   if (ts.isCallExpression(node)) {
