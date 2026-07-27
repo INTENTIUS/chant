@@ -53,9 +53,21 @@ export function parseSchemaPath(
  * includes the plain `roleAssignments` / `roleDefinitions` resources; they live
  * in 2022-04-01, the latest stable that still has them. Pin it so those
  * generate (the naming table maps both). See #223.
+ *
+ * Microsoft.Compute has the same issue (#1144): at the schema commit pinned
+ * in ../spec/fetch.ts, the newest dated `Microsoft.Compute.json` (2026-03-02)
+ * is a narrow disk-only delta that drops `virtualMachines`,
+ * `virtualMachineScaleSets`, and `availabilitySets` entirely — not a rename,
+ * an omission, since Azure alternates between a "VM flavor" and a "disk
+ * flavor" of this file across dates rather than publishing one cumulative
+ * file. 2026-03-01 is the most recent date that still has the VM family
+ * (validate.ts's REQUIRED_NAMES and composites/vm-linux.ts depend on it);
+ * it drops the disk-only resources (disks, diskAccesses, diskEncryptionSets,
+ * snapshots), which nothing here currently references.
  */
 export const PROVIDER_VERSION_OVERRIDES: Record<string, string> = {
   "Microsoft.Authorization": "2022-04-01",
+  "Microsoft.Compute": "2026-03-01",
 };
 
 /**
