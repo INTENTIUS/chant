@@ -20,8 +20,15 @@ spec:
         openAPIV3Schema:
           type: object`;
 
-export const { chart, values, crdInstallJob, crdConfigMap, serviceAccount, clusterRole, clusterRoleBinding } =
-  HelmCRDLifecycle({
+export const {
+  chart: crdChart,
+  values: crdValues,
+  crdInstallJob,
+  crdConfigMap,
+  serviceAccount: crdSa,
+  clusterRole,
+  clusterRoleBinding,
+} = HelmCRDLifecycle({
     name: "cert-manager-crd",
     crdContent: crdYaml,
     kubectlImage: "bitnami/kubectl",

@@ -10,11 +10,11 @@ function makeEntities(...pairs: [string, Declarable][]): Map<string, Declarable>
 }
 
 // Import composite results from source files
-import { chart as webChart, values as webValues, deployment as webDeployment, service as webService, ingress as webIngress, hpa as webHpa, serviceAccount as webSa } from "./src/web-app";
-import { chart as msChart, values as msValues, deployment as msDeployment, service as msService, serviceAccount as msSa, configMap as msConfigMap, ingress as msIngress, hpa as msHpa, pdb as msPdb } from "./src/microservice";
-import { chart as ssChart, values as ssValues, statefulSet as ssStatefulSet, service as ssService } from "./src/stateful-service";
-import { chart as cronChart, values as cronValues, cronJob } from "./src/cron-job";
-import { chart as wkChart, values as wkValues, deployment as wkDeployment, serviceAccount as wkSa, hpa as wkHpa, pdb as wkPdb } from "./src/worker";
+import { webChart, webValues, webDeployment, webService, webIngress, webHpa, webSa } from "./src/web-app";
+import { msChart, msValues, msDeployment, msService, msSa, msConfigMap, msIngress, msHpa, msPdb } from "./src/microservice";
+import { ssChart, ssValues, ssStatefulSet, ssService } from "./src/stateful-service";
+import { cronChart, cronValues, cronJob } from "./src/cron-job";
+import { wkChart, wkValues, wkDeployment, wkSa, wkHpa, wkPdb } from "./src/worker";
 
 describe("helm composites-basic: web-app", () => {
   test("serializes to valid Helm chart", () => {

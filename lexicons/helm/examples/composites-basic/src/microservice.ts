@@ -1,8 +1,17 @@
 import { HelmMicroservice } from "@intentius/chant-lexicon-helm";
 
-export const { chart, values, deployment, service, serviceAccount, configMap, ingress, hpa, pdb } =
-  HelmMicroservice({
-    name: "order-api",
-    port: 3000,
-    replicas: 3,
-  });
+export const {
+  chart: msChart,
+  values: msValues,
+  deployment: msDeployment,
+  service: msService,
+  serviceAccount: msSa,
+  configMap: msConfigMap,
+  ingress: msIngress,
+  hpa: msHpa,
+  pdb: msPdb,
+} = HelmMicroservice({
+  name: "order-api",
+  port: 3000,
+  replicas: 3,
+});

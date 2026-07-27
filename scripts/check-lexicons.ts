@@ -81,10 +81,6 @@ const KNOWN_FAILURES: Record<string, Record<string, string>> = {
     "Registered intrinsics' isTag matches how they're authored":
       "#1069 — same root cause as the export check above — unresolvable, so unverifiable.",
   },
-  helm: {
-    "Every shipped example builds":
-      "#1070 — composites-basic/composites-infrastructure/composites-production each bundle multiple independent per-composite demo files that destructure the same generic names (`chart`, `values`, `deployment`, `service`, ...) from different HelmXxx(...) composite calls — fine as isolated per-file demos (and covered that way in their own .test.ts), but a \"Duplicate export name\" the moment the whole src/ directory builds as one project. helm-render-external-secrets produces no output; stateful-service hits a \"Cannot serialize AttrRef ... logical name not set\" error.",
-  },
   temporal: {
     "At least 1 lint rule in src/lint/rules/":
       "#1072 — temporal's TMP00x checks are post-synth checks (src/lint/post-synth/), not pre-synth lint rules — it has no src/lint/rules/ directory.",

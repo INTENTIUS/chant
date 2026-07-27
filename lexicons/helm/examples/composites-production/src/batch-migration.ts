@@ -1,6 +1,13 @@
 import { HelmBatchJob } from "@intentius/chant-lexicon-helm";
 
-export const { chart, values, job, serviceAccount, role, roleBinding } = HelmBatchJob({
+export const {
+  chart: bmChart,
+  values: bmValues,
+  job: bmJob,
+  serviceAccount: bmSa,
+  role: bmRole,
+  roleBinding: bmRoleBinding,
+} = HelmBatchJob({
   name: "db-migration",
   imageRepository: "myorg/migrator",
   imageTag: "v2.1.0",

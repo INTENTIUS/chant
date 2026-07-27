@@ -1,6 +1,6 @@
 import { HelmCronJob } from "@intentius/chant-lexicon-helm";
 
-export const { chart, values, cronJob } = HelmCronJob({
+export const { chart: cronChart, values: cronValues, cronJob } = HelmCronJob({
   name: "nightly-cleanup",
   imageRepository: "alpine",
   imageTag: "3.19",

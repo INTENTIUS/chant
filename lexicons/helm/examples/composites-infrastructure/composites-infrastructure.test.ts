@@ -9,12 +9,12 @@ function makeEntities(...pairs: [string, Declarable][]): Map<string, Declarable>
   return m;
 }
 
-import { chart as siChart, values as siValues, ingress as siIngress, certificate as siCert } from "./src/secure-ingress";
-import { chart as nsChart, values as nsValues, namespace as nsNamespace, resourceQuota as nsRQ, limitRange as nsLR, networkPolicy as nsNP } from "./src/namespace-env";
-import { chart as dsChart, values as dsValues, daemonSet as dsDaemonSet, serviceAccount as dsSa } from "./src/daemon-set";
-import { chart as esChart, values as esValues, externalSecret as esExternalSecret } from "./src/external-secret";
-import { chart as crdChart, values as crdValues, crdInstallJob, crdConfigMap, serviceAccount as crdSa, clusterRole, clusterRoleBinding } from "./src/crd-lifecycle";
-import { chart as libChart, helpers as libHelpers } from "./src/library-chart";
+import { siChart, siValues, siIngress, siCert } from "./src/secure-ingress";
+import { nsChart, nsValues, nsNamespace, nsRQ, nsLR, nsNP } from "./src/namespace-env";
+import { dsChart, dsValues, dsDaemonSet, dsSa } from "./src/daemon-set";
+import { esChart, esValues, esExternalSecret } from "./src/external-secret";
+import { crdChart, crdValues, crdInstallJob, crdConfigMap, crdSa, clusterRole, clusterRoleBinding } from "./src/crd-lifecycle";
+import { libChart, libHelpers } from "./src/library-chart";
 
 describe("helm composites-infrastructure: secure-ingress", () => {
   test("serializes with TLS ingress", () => {

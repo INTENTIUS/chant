@@ -1,6 +1,11 @@
 import { HelmDaemonSet } from "@intentius/chant-lexicon-helm";
 
-export const { chart, values, daemonSet, serviceAccount } = HelmDaemonSet({
+export const {
+  chart: dsChart,
+  values: dsValues,
+  daemonSet: dsDaemonSet,
+  serviceAccount: dsSa,
+} = HelmDaemonSet({
   name: "log-collector",
   imageRepository: "fluent/fluent-bit",
   imageTag: "3.0",

@@ -1,7 +1,14 @@
 import { HelmMonitoredService } from "@intentius/chant-lexicon-helm";
 
-export const { chart, values, deployment, service, serviceAccount, serviceMonitor, prometheusRule } =
-  HelmMonitoredService({
+export const {
+  chart: maChart,
+  values: maValues,
+  deployment: maDeployment,
+  service: maService,
+  serviceAccount: maSa,
+  serviceMonitor: maServiceMonitor,
+  prometheusRule: maPrometheusRule,
+} = HelmMonitoredService({
     name: "payment-api",
     imageRepository: "myorg/payment-api",
     port: 8080,
