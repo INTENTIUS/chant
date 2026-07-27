@@ -94,6 +94,16 @@ const report: ReportRow[] = [];
  * whose first argument isn't the props object literal, a nested `new` used
  * as a value — pre-existing #1022-era limitations, not cross-file), so this
  * PR doesn't move those, by design.
+ *
+ * chant #1082 grew it from 21 to 24. The three added entries (`fargate-alb`,
+ * `multi-service-alb`, `vpc`) are the corpus's `new Parameter("String",
+ * {...})` users: the AWS deploy-time `Parameter` takes `(type, props)`, and
+ * `foldResource` used to require argument 0 to be the props object literal,
+ * so no `new Parameter(...)` could fold anywhere. Constructor arguments now
+ * fold positionally. The same PR made chant's own registered authoring
+ * helpers (`phase`, `output`, …) foldable, which doesn't move any corpus
+ * entry on its own — the corpus has no component-authoring entry gated
+ * solely on one — but is what unblocks real component-using applications.
  */
 const EXPECTED_FOLD: readonly string[] = [
   "examples/alert-triage",
@@ -102,7 +112,10 @@ const EXPECTED_FOLD: readonly string[] = [
   "examples/getting-started",
   "examples/local-cloud-trio",
   "examples/temporal-stack",
+  "lexicons/aws/examples/fargate-alb",
   "lexicons/aws/examples/lifecycle-reconcile-aws",
+  "lexicons/aws/examples/multi-service-alb",
+  "lexicons/aws/examples/vpc",
   "lexicons/docker/examples/basic-app",
   "lexicons/gitlab/examples/node-pipeline",
   "lexicons/gitlab/examples/python-pipeline",
