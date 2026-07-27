@@ -1,5 +1,5 @@
 import { Composite, mergeDefaults } from "@intentius/chant";
-import type { Step } from "../generated/index";
+import { Step } from "../generated/index";
 
 export interface UploadArtifactProps {
   name: string;
@@ -20,9 +20,7 @@ export const UploadArtifact = Composite<UploadArtifactProps>((props) => {
   if (props.retentionDays !== undefined) withObj["retention-days"] = String(props.retentionDays);
   if (props.compressionLevel !== undefined) withObj["compression-level"] = String(props.compressionLevel);
 
-  const { createProperty } = require("@intentius/chant/runtime");
-  const StepClass = createProperty("GitHub::Actions::Step", "github");
-  const step = new StepClass(mergeDefaults({
+  const step = new Step(mergeDefaults({
     name: "Upload Artifact",
     uses: "actions/upload-artifact@v4",
     with: withObj,

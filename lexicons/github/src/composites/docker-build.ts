@@ -1,5 +1,5 @@
 import { Composite, mergeDefaults } from "@intentius/chant";
-import type { Job, Workflow } from "../generated/index";
+import { Job, Step, Workflow } from "../generated/index";
 
 export interface DockerBuildProps {
   /** Image tag. Default: "${{ github.sha }}" */
@@ -43,15 +43,10 @@ export const DockerBuild = Composite<DockerBuildProps>((props) => {
     defaults,
   } = props;
 
-  const { createProperty, createResource } = require("@intentius/chant/runtime");
-  const StepClass = createProperty("GitHub::Actions::Step", "github");
-  const JobClass = createResource("GitHub::Actions::Job", "github", {});
-  const WorkflowClass = createResource("GitHub::Actions::Workflow", "github", {});
-
   // ── Steps ──────────────────────────────────────────────────────────
-  const checkout = new StepClass({ name: "Checkout", uses: "actions/checkout@v4" });
+  const checkout = new Step({ name: "Checkout", uses: "actions/checkout@v4" });
 
-  const login = new StepClass({
+  const login = new Step({
     name: "Log in to container registry",
     uses: "docker/login-action@v3",
     with: {
@@ -61,7 +56,7 @@ export const DockerBuild = Composite<DockerBuildProps>((props) => {
     },
   });
 
-  const setupBuildx = new StepClass({
+  const setupBuildx = new Step({
     name: "Set up Docker Buildx",
     uses: "docker/setup-buildx-action@v3",
   });
@@ -72,7 +67,7 @@ export const DockerBuild = Composite<DockerBuildProps>((props) => {
     tags.push(`${imageName}:latest`);
   }
 
-  const metadata = new StepClass({
+  const metadata = new Step({
     name: "Extract metadata",
     id: "meta",
     uses: "docker/metadata-action@v5",
@@ -100,18 +95,18 @@ export const DockerBuild = Composite<DockerBuildProps>((props) => {
       .join("\n");
   }
 
-  const buildPush = new StepClass({
+  const buildPush = new Step({
     name: "Build and push",
     uses: "docker/build-push-action@v6",
     with: buildPushWith,
   });
 
-  const job = new JobClass(mergeDefaults({
+  const job = new Job(mergeDefaults({
     "runs-on": runsOn,
     steps: [checkout, login, setupBuildx, metadata, buildPush],
   }, defaults?.job));
 
-  const workflow = new WorkflowClass(mergeDefaults({
+  const workflow = new Workflow(mergeDefaults({
     name: "Docker Build",
     on: {
       push: { branches: ["main"] },

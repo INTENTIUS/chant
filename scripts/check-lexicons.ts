@@ -76,8 +76,6 @@ const KNOWN_FAILURES: Record<string, Record<string, string>> = {
       "#1072 — forgejo has no docs/ site of its own.",
   },
   github: {
-    "Every shipped example builds":
-      "#1068 — every github example fails with \"require is not defined in ES module scope\" — several composites (checkout.ts, cache.ts, node-ci.ts, and others) lazily `require(\"@intentius/chant/runtime\")` to avoid a circular import, which is fundamentally incompatible with running as ESM.",
     "Registered intrinsics are exported by the package":
       "#1069 — plugin.ts registers an \"expression\" intrinsic; src/index.ts exports the `Expression` class (capitalized) and helper functions, but nothing literally named `expression`.",
     "Registered intrinsics' isTag matches how they're authored":

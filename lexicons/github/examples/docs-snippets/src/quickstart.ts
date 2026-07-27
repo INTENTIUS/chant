@@ -9,7 +9,7 @@ export const workflow = new Workflow({
   permissions: { contents: "read" },
 });
 
-export const build = new Job({
+export const buildJob = new Job({
   "runs-on": "ubuntu-latest",
   timeoutMinutes: 15,
   steps: [

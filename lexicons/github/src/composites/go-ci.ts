@@ -1,5 +1,5 @@
 import { Composite, mergeDefaults } from "@intentius/chant";
-import type { Job, Workflow } from "../generated/index";
+import { Job, Step, Workflow } from "../generated/index";
 
 export interface GoCIProps {
   /** Go version. Default: "1.22" */
@@ -30,52 +30,47 @@ export const GoCI = Composite<GoCIProps>((props) => {
     defaults,
   } = props;
 
-  const { createProperty, createResource } = require("@intentius/chant/runtime");
-  const StepClass = createProperty("GitHub::Actions::Step", "github");
-  const JobClass = createResource("GitHub::Actions::Job", "github", {});
-  const WorkflowClass = createResource("GitHub::Actions::Workflow", "github", {});
-
   // ── Build job ──────────────────────────────────────────────────────
-  const buildJob = new JobClass(mergeDefaults({
+  const buildJob = new Job(mergeDefaults({
     "runs-on": runsOn,
     steps: [
-      new StepClass({ name: "Checkout", uses: "actions/checkout@v4" }),
-      new StepClass({
+      new Step({ name: "Checkout", uses: "actions/checkout@v4" }),
+      new Step({
         name: "Setup Go",
         uses: "actions/setup-go@v5",
         with: { "go-version": goVersion },
       }),
-      new StepClass({ name: "Build", run: buildCommand }),
+      new Step({ name: "Build", run: buildCommand }),
     ],
   }, defaults?.buildJob));
 
   // ── Test job ───────────────────────────────────────────────────────
-  const testJob = new JobClass(mergeDefaults({
+  const testJob = new Job(mergeDefaults({
     "runs-on": runsOn,
     steps: [
-      new StepClass({ name: "Checkout", uses: "actions/checkout@v4" }),
-      new StepClass({
+      new Step({ name: "Checkout", uses: "actions/checkout@v4" }),
+      new Step({
         name: "Setup Go",
         uses: "actions/setup-go@v5",
         with: { "go-version": goVersion },
       }),
-      new StepClass({ name: "Test", run: testCommand }),
+      new Step({ name: "Test", run: testCommand }),
     ],
   }, defaults?.testJob));
 
   // ── Lint job (optional) ────────────────────────────────────────────
   const lintJob =
     lintCommand !== null
-      ? new JobClass(mergeDefaults({
+      ? new Job(mergeDefaults({
           "runs-on": runsOn,
           steps: [
-            new StepClass({ name: "Checkout", uses: "actions/checkout@v4" }),
-            new StepClass({
+            new Step({ name: "Checkout", uses: "actions/checkout@v4" }),
+            new Step({
               name: "Setup Go",
               uses: "actions/setup-go@v5",
               with: { "go-version": goVersion },
             }),
-            new StepClass({
+            new Step({
               name: "Lint",
               uses: "golangci/golangci-lint-action@v6",
               with: { args: lintCommand },
@@ -84,7 +79,7 @@ export const GoCI = Composite<GoCIProps>((props) => {
         }, defaults?.lintJob))
       : undefined;
 
-  const workflow = new WorkflowClass(mergeDefaults({
+  const workflow = new Workflow(mergeDefaults({
     name: "Go CI",
     on: {
       push: { branches: ["main"] },

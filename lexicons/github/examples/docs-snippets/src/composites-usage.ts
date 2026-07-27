@@ -43,7 +43,7 @@ const download = DownloadArtifact({
 });
 
 // Combine composites in a job
-export const build = new Job({
+export const combinedJob = new Job({
   "runs-on": "ubuntu-latest",
   steps: [
     checkout.step,

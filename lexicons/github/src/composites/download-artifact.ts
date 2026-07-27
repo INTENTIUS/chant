@@ -1,5 +1,5 @@
 import { Composite, mergeDefaults } from "@intentius/chant";
-import type { Step } from "../generated/index";
+import { Step } from "../generated/index";
 
 export interface DownloadArtifactProps {
   name?: string;
@@ -17,9 +17,7 @@ export const DownloadArtifact = Composite<DownloadArtifactProps>((props) => {
   if (props.path !== undefined) withObj.path = props.path;
   if (props.mergeMultiple !== undefined) withObj["merge-multiple"] = String(props.mergeMultiple);
 
-  const { createProperty } = require("@intentius/chant/runtime");
-  const StepClass = createProperty("GitHub::Actions::Step", "github");
-  const step = new StepClass(mergeDefaults({
+  const step = new Step(mergeDefaults({
     name: "Download Artifact",
     uses: "actions/download-artifact@v4",
     ...(Object.keys(withObj).length > 0 ? { with: withObj } : {}),

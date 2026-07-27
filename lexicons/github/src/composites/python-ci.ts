@@ -1,5 +1,5 @@
 import { Composite, mergeDefaults } from "@intentius/chant";
-import type { Job, Workflow } from "../generated/index";
+import { Job, Step, Workflow } from "../generated/index";
 
 export interface PythonCIProps {
   /** Python version. Default: "3.12" */
@@ -32,59 +32,54 @@ export const PythonCI = Composite<PythonCIProps>((props) => {
     defaults,
   } = props;
 
-  const { createProperty, createResource } = require("@intentius/chant/runtime");
-  const StepClass = createProperty("GitHub::Actions::Step", "github");
-  const JobClass = createResource("GitHub::Actions::Job", "github", {});
-  const WorkflowClass = createResource("GitHub::Actions::Workflow", "github", {});
-
   const cacheType = usePoetry ? "poetry" : "pip";
   const installSteps = usePoetry
     ? [
-        new StepClass({ name: "Install Poetry", run: "pip install poetry" }),
-        new StepClass({ name: "Install dependencies", run: "poetry install" }),
+        new Step({ name: "Install Poetry", run: "pip install poetry" }),
+        new Step({ name: "Install dependencies", run: "poetry install" }),
       ]
     : [
-        new StepClass({ name: "Install dependencies", run: `pip install -r ${requirementsFile}` }),
+        new Step({ name: "Install dependencies", run: `pip install -r ${requirementsFile}` }),
       ];
 
   // ── Test job ───────────────────────────────────────────────────────
-  const testJob = new JobClass(mergeDefaults({
+  const testJob = new Job(mergeDefaults({
     "runs-on": runsOn,
     steps: [
-      new StepClass({ name: "Checkout", uses: "actions/checkout@v4" }),
-      new StepClass({
+      new Step({ name: "Checkout", uses: "actions/checkout@v4" }),
+      new Step({
         name: "Setup Python",
         uses: "actions/setup-python@v5",
         with: { "python-version": pythonVersion, cache: cacheType },
       }),
       ...installSteps,
-      new StepClass({ name: "Test", run: testCommand }),
+      new Step({ name: "Test", run: testCommand }),
     ],
   }, defaults?.testJob));
 
   // ── Lint job (optional) ────────────────────────────────────────────
   const lintJob =
     lintCommand !== null
-      ? new JobClass(mergeDefaults({
+      ? new Job(mergeDefaults({
           "runs-on": runsOn,
           steps: [
-            new StepClass({ name: "Checkout", uses: "actions/checkout@v4" }),
-            new StepClass({
+            new Step({ name: "Checkout", uses: "actions/checkout@v4" }),
+            new Step({
               name: "Setup Python",
               uses: "actions/setup-python@v5",
               with: { "python-version": pythonVersion, cache: cacheType },
             }),
             ...installSteps.map((s: any) => {
               // Create fresh step instances for the lint job
-              return new StepClass({ name: s.props.name, run: s.props.run });
+              return new Step({ name: s.props.name, run: s.props.run });
             }),
-            new StepClass({ name: "Lint", run: lintCommand }),
+            new Step({ name: "Lint", run: lintCommand }),
           ],
         }, defaults?.lintJob))
       : undefined;
 
   // ── Workflow ───────────────────────────────────────────────────────
-  const workflow = new WorkflowClass(mergeDefaults({
+  const workflow = new Workflow(mergeDefaults({
     name: "Python CI",
     on: {
       push: { branches: ["main"] },

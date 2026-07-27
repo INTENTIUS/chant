@@ -1,5 +1,5 @@
 import { Composite, mergeDefaults } from "@intentius/chant";
-import type { Job, Workflow } from "../generated/index";
+import { Job, Step, Workflow } from "../generated/index";
 
 export interface NodeCIProps {
   nodeVersion?: string;
@@ -26,17 +26,12 @@ export const NodeCI = Composite<NodeCIProps>((props) => {
   const install = installCommand ?? (packageManager === "npm" ? "npm ci" : `${packageManager} install`);
   const run = packageManager === "npm" ? "npm run" : packageManager;
 
-  const { createProperty, createResource } = require("@intentius/chant/runtime");
-  const StepClass = createProperty("GitHub::Actions::Step", "github");
-  const JobClass = createResource("GitHub::Actions::Job", "github", {});
-  const WorkflowClass = createResource("GitHub::Actions::Workflow", "github", {});
-
-  const checkoutStep = new StepClass({
+  const checkoutStep = new Step({
     name: "Checkout",
     uses: "actions/checkout@v4",
   });
 
-  const setupNodeStep = new StepClass({
+  const setupNodeStep = new Step({
     name: "Setup Node.js",
     uses: "actions/setup-node@v4",
     with: {
@@ -45,27 +40,27 @@ export const NodeCI = Composite<NodeCIProps>((props) => {
     },
   });
 
-  const installStep = new StepClass({
+  const installStep = new Step({
     name: "Install dependencies",
     run: install,
   });
 
-  const buildStep = new StepClass({
+  const buildStep = new Step({
     name: "Build",
     run: `${run} ${buildScript}`,
   });
 
-  const testStep = new StepClass({
+  const testStep = new Step({
     name: "Test",
     run: `${run} ${testScript}`,
   });
 
-  const job = new JobClass(mergeDefaults({
+  const job = new Job(mergeDefaults({
     "runs-on": "ubuntu-latest",
     steps: [checkoutStep, setupNodeStep, installStep, buildStep, testStep],
   }, defaults?.job));
 
-  const workflow = new WorkflowClass(mergeDefaults({
+  const workflow = new Workflow(mergeDefaults({
     name: "CI",
     on: {
       push: { branches: ["main"] },
