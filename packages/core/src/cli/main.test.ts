@@ -130,10 +130,23 @@ describe("parseArgs", () => {
     expect(result.help).toBe(false);
   });
 
-  test("ignores unknown flags", () => {
-    const result = parseArgs(["build", "--unknown", "value"]);
+  test("throws on an unknown bare flag instead of silently ignoring it (chant #1127)", () => {
+    // Was "ignores unknown flags" — pinned the old silent-drop as intended
+    // behavior. #1127 flips it: an unrecognized `--flag` is a hard error.
+    expect(() => parseArgs(["build", "--unknown", "value"])).toThrow(/Unknown flag: --unknown/);
+  });
+
+  test("unknown flag error points at --help", () => {
+    expect(() => parseArgs(["build", "--unknown"])).toThrow(/--help/);
+  });
+
+  test("throws on an unknown joined flag (--unknown=value)", () => {
+    expect(() => parseArgs(["build", "--unknown=value"])).toThrow(/Unknown flag: --unknown/);
+  });
+
+  test("unknown short flags are still silently ignored (unchanged; out of #1127 scope)", () => {
+    const result = parseArgs(["build", "-x", "value"]);
     expect(result.command).toBe("build");
-    // Unknown flags are silently ignored
   });
 
   test("parses --watch flag", () => {
@@ -271,27 +284,90 @@ describe("parseArgs", () => {
     expect(result.paramsFile).toBe("./params.json");
   });
 
-  // ── --param=name=value hard error (chant #1118) ──────────────────────────
-  // The joined `--flag=value` form is not supported anywhere in this parser
-  // (see "ignores unknown flags" above) — a dropped --param can silently
-  // change what a build measures/deploys, so this form is rejected loudly
-  // instead of silently accepted as a no-op.
-
-  test("--param=name=value throws instead of silently dropping", () => {
-    expect(() => parseArgs(["build", "src", "--param=tier=production"])).toThrow(/--param=tier=production/);
-  });
-
-  test("--param=name=value error names the working form", () => {
-    expect(() => parseArgs(["build", "src", "--param=tier=production"])).toThrow(/--param name=value/);
-  });
-
-  test("--param= (empty value) also throws", () => {
-    expect(() => parseArgs(["build", "src", "--param="])).toThrow(/--param=/);
-  });
-
   test("plain --param name=value is unaffected", () => {
     const result = parseArgs(["build", "src", "--param", "tier=production"]);
     expect(result.param).toEqual(["tier=production"]);
+  });
+
+  // ── generic --flag=value joined form (chant #1127) ────────────────────────
+  // #1118 taught this parser to hard-error `--param=name=value` specifically,
+  // because it was the one flag known (from #1118's investigation) to sit
+  // behind a silent drop. #1127's audit found the drop was general — every
+  // value-taking flag shares it — so the fix is general too: split any
+  // `--flag=value` token at its first `=` and re-dispatch as `--flag` +
+  // `value`, the exact shape every branch below already handles. This
+  // supersedes #1118's `--param=` hard error entirely: the joined form is now
+  // just as valid as the space-separated one, for every flag, not a rejected
+  // special case for one flag.
+
+  test("--param=name=value now works instead of throwing — joined form matches the space-separated form", () => {
+    const result = parseArgs(["build", "src", "--param=tier=production"]);
+    expect(result.param).toEqual(["tier=production"]);
+  });
+
+  test("--env=value joined form works", () => {
+    const result = parseArgs(["build", "src", "--env=staging"]);
+    expect(result.env).toBe("staging");
+  });
+
+  test("--format=value joined form works", () => {
+    const result = parseArgs(["build", "src", "--format=yaml"]);
+    expect(result.format).toBe("yaml");
+  });
+
+  test("--lexicon=value joined form works", () => {
+    const result = parseArgs(["build", "src", "--lexicon=aws"]);
+    expect(result.lexicon).toBe("aws");
+  });
+
+  test("repeated --param=name=value (joined) accumulates in order, same as space-separated", () => {
+    const result = parseArgs(["build", "src", "--param=tier=production", "--param=env=staging"]);
+    expect(result.param).toEqual(["tier=production", "env=staging"]);
+  });
+
+  test("joined form only splits on the FIRST '=' — a value containing '=' is preserved whole", () => {
+    // --param's own value shape is `name=value`, so `--param=tier=production`
+    // must split into flag `--param` + value `tier=production`, not further
+    // fragment on the second `=`.
+    const result = parseArgs(["build", "src", "--param=tier=production=east"]);
+    expect(result.param).toEqual(["tier=production=east"]);
+  });
+
+  test("joined form works mixed with space-separated flags in the same invocation", () => {
+    const result = parseArgs(["build", "src", "--env=prod", "--format", "json", "--lexicon=k8s"]);
+    expect(result.env).toBe("prod");
+    expect(result.format).toBe("json");
+    expect(result.lexicon).toBe("k8s");
+  });
+
+  // ── boolean-only flag given a joined value (chant #1127) ──────────────────
+  // Decision: reject it. A boolean flag (--fold, --watch, --json, ...) has no
+  // value slot — its branch just sets a field to `true` and never consumes a
+  // following token. Silently coercing "true"/"false" would need to invent
+  // parsing rules (what about "1", "yes", mixed case?) for a form none of
+  // this CLI's flags need; silently dropping the value and reinterpreting it
+  // as the next positional (a path, a component name, ...) is exactly the
+  // silent misparse #1127 closes. So it errors, naming the flag as boolean.
+
+  test("a boolean flag given a joined value throws, naming the flag as boolean", () => {
+    expect(() => parseArgs(["build", "src", "--fold=true"])).toThrow(/--fold is a boolean flag/);
+  });
+
+  test("boolean-with-value error does not silently reinterpret the value as a positional", () => {
+    expect(() => parseArgs(["build", "src", "--watch=false"])).toThrow(/--watch is a boolean flag/);
+  });
+
+  test("--json=1 (another boolean flag) also throws", () => {
+    expect(() => parseArgs(["run", "myop", "--json=1"])).toThrow(/--json is a boolean flag/);
+  });
+
+  test("--report keeps its context-sensitive bare-vs-value behavior when joined", () => {
+    // --report is deliberately not in the boolean-reject set: bare --report is
+    // a boolean (`run`), but --report <path> is a SARIF destination (migrate).
+    // The joined form should resolve the same way the space-separated one does.
+    const result = parseArgs(["migrate", "wf.yml", "--report=out.sarif"]);
+    expect(result.reportFile).toBe("out.sarif");
+    expect(result.report).toBeUndefined();
   });
 });
 

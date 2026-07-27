@@ -29,9 +29,59 @@ import { runOp, runOpList, runOpStatus, runOpSignal, runOpCancel, runOpLog } fro
 import { runEmulator } from "./handlers/emulator";
 
 /**
+ * Long-form flags that are pure booleans in {@link parseArgs} — their branch
+ * below sets a field to `true` and never consumes a following array element.
+ * Used only to reject a joined `--flag=value` form for these (chant #1127):
+ * a boolean has no value to assign, and silently reinterpreting the joined
+ * value as the next positional argument (path, component name, ...) would be
+ * exactly the kind of silent misparse this issue exists to close. `--report`
+ * is deliberately excluded — it's context-sensitive (bare boolean vs a SARIF
+ * path, decided by lookahead), so a joined value for it is legitimate and
+ * already handled correctly once split.
+ */
+const BOOLEAN_FLAGS = new Set([
+  "--help",
+  "--force",
+  "--fix",
+  "--watch",
+  "--verbose",
+  "--live",
+  "--overlay",
+  "--owned",
+  "--verbatim",
+  "--apply-rewrites",
+  "--write",
+  "--strict",
+  "--validate",
+  "--use-composites",
+  "--stacks",
+  "--components",
+  "--up",
+  "--down",
+  "--include-dependents",
+  "--local",
+  "--temporal",
+  "--json",
+  "--progress-json",
+  "--update-snapshot",
+  "--run-examples",
+  "--check",
+  "--bump",
+  "--no-release-record",
+  "--fold",
+  "--sandbox",
+]);
+
+/**
  * Parse command line arguments
  */
 export function parseArgs(args: string[]): ParsedArgs {
+  // Local mutable copy — chant #1127's joined-`--flag=value` splitting below
+  // rewrites the array in place (one token becomes two), so this must not
+  // mutate whatever array the caller passed in (e.g. `process.argv.slice(2)`
+  // is already a fresh copy, but callers shouldn't have to know that).
+  args = args.slice();
+
   const result: ParsedArgs = {
     command: "",
     path: ".",
@@ -68,7 +118,29 @@ export function parseArgs(args: string[]): ParsedArgs {
 
   let i = 0;
   while (i < args.length) {
-    const arg = args[i];
+    let arg = args[i];
+
+    // chant #1127 — generic joined `--flag=value` support. Every value-taking
+    // flag below is matched by an exact `arg === "--flag"` check and then
+    // consumes the *next* array element (`args[++i]`) as its value; a joined
+    // token like `--env=prod` never matches any of those, doesn't match the
+    // trailing positional branch either (it starts with `-`), and used to
+    // vanish with no error. Splitting the token at its FIRST `=` and
+    // re-dispatching as two array elements makes every flag below see the
+    // exact shape it already handles — including a flag like `--param`
+    // whose own value legitimately contains `=` (`--param=tier=production`
+    // splits to flag `--param`, value `tier=production`, not further split
+    // on the second `=`).
+    if (arg.startsWith("--") && arg.includes("=")) {
+      const eq = arg.indexOf("=");
+      const flag = arg.slice(0, eq);
+      const value = arg.slice(eq + 1);
+      if (BOOLEAN_FLAGS.has(flag)) {
+        throw new Error(`${arg} — ${flag} is a boolean flag and does not take a value. Pass ${flag} on its own.`);
+      }
+      args.splice(i, 1, flag, value);
+      arg = args[i];
+    }
 
     if (arg === "--help" || arg === "-h") {
       result.help = true;
@@ -225,19 +297,28 @@ export function parseArgs(args: string[]): ParsedArgs {
     } else if (arg === "--sandbox") {
       result.sandbox = true;
     } else if (arg === "--param") {
+      // chant #1118/#1127 — `--param name=value` (space-separated) and
+      // `--param=name=value` (joined, split above at its first `=` into flag
+      // `--param` + value `name=value`) both land here and behave
+      // identically; there is no separate joined-form error anymore (the
+      // #1118 hard error this superseded only existed because the parser
+      // didn't support joined forms at all — now that it does, the joined
+      // form is just as valid as the space-separated one).
       (result.param ??= []).push(args[++i]);
-    } else if (arg.startsWith("--param=")) {
-      // chant #1118 — this parser never supports an `--flag=value` joined
-      // form for any value-taking flag (every branch above is an exact `===`
-      // match, so a joined token falls through unrecognized and is silently
-      // dropped — see the "ignores unknown flags" case below). `--param
-      // name=value` (space-separated) is the only accepted form. Rather than
-      // teach the parser joined forms generally, `--param=name=value` is
-      // called out as a hard error instead of a silent no-op: a dropped
-      // `--param` can silently change what a build measures/deploys.
-      throw new Error(`${arg} is not supported. Use --param name=value (space-separated) instead.`);
     } else if (arg === "--params-file") {
       result.paramsFile = args[++i];
+    } else if (arg.startsWith("--")) {
+      // chant #1127 — every recognized flag is matched above; anything left
+      // starting with `--` is unrecognized, whether it arrived bare
+      // (`--bogus`) or joined (`--bogus=value`, already split into
+      // `--bogus` + `value` above). This used to fall through silently (the
+      // "ignores unknown flags" case) — a typo'd or misremembered flag would
+      // vanish with no diagnostic, exactly like the silent-drop this issue
+      // closes for joined values. Point at --help rather than enumerating
+      // every flag here: this parser's flag set is one flat list shared by
+      // every command, not scoped per-command, so "the command's known
+      // flags" isn't something this loop can name in isolation.
+      throw new Error(`Unknown flag: ${arg}\nRun "chant --help" to see supported flags.`);
     } else if (!arg.startsWith("-")) {
       if (!result.command) {
         result.command = arg;
