@@ -1,0 +1,4 @@
+{
+  "app": "node --cpu-prof --cpu-prof-dir=../captures --cpu-prof-name=cdk-app.cpuprofile app.js",
+  "context": {}
+}

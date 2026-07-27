@@ -1,0 +1,28 @@
+{
+  "chant": {
+    "AWS::Lambda::Permission": 1,
+    "AWS::Lambda::Function": 1,
+    "AWS::ApiGatewayV2::Integration": 1,
+    "AWS::IAM::Role": 1,
+    "AWS::ApiGatewayV2::Stage": 1,
+    "AWS::ApiGatewayV2::Route": 4,
+    "AWS::ApiGatewayV2::Api": 1,
+    "AWS::DynamoDB::Table": 1
+  },
+  "cdk": {
+    "AWS::DynamoDB::Table": 1,
+    "AWS::IAM::Role": 1,
+    "AWS::IAM::Policy": 1,
+    "AWS::Lambda::Function": 1,
+    "AWS::ApiGatewayV2::Api": 1,
+    "AWS::ApiGatewayV2::Stage": 1,
+    "AWS::ApiGatewayV2::Integration": 1,
+    "AWS::Lambda::Permission": 4,
+    "AWS::ApiGatewayV2::Route": 4
+  },
+  "expectedDeltas": {
+    "AWS::IAM::Policy": 1,
+    "AWS::Lambda::Permission": 3
+  },
+  "problems": []
+}

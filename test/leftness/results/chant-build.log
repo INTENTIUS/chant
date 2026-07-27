@@ -1,0 +1,7 @@
+[90m[fold:fold] api.ts — 3 resource(s), no module execution[0m
+[90m[fold:fold] fn.ts — 2 resource(s), no module execution[0m
+[90m[fold:fold] outputs.ts — 0 resource(s), no module execution[0m
+[90m[fold:fold] routes.ts — 5 resource(s), no module execution[0m
+[90m[fold:fold] table.ts — 1 resource(s), no module execution[0m
+[33mwarning[0m: [crudFn] Lambda function "crudFn" is not configured with a VPC — consider adding VpcConfig for network isolation (aws)
+[33mwarning[0m: [itemsTable] DynamoDB table "itemsTable" does not have point-in-time recovery enabled — consider enabling for data protection (aws)

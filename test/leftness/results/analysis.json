@@ -1,0 +1,124 @@
+{
+  "chant": {
+    "tool": "chant",
+    "capture": "captures/chant-build.cpuprofile",
+    "projectCodeExecuted": false,
+    "projectFilesObserved": [],
+    "trustedComputingBase": {
+      "synthesizerBytes": 11381700,
+      "definitionLibraryBytes": 0,
+      "packages": [
+        {
+          "pkg": "typescript",
+          "files": 1,
+          "bytes": 9112572,
+          "role": "synthesizer"
+        },
+        {
+          "pkg": "@intentius/chant-lexicon-aws",
+          "files": 5,
+          "bytes": 1425277,
+          "role": "synthesizer"
+        },
+        {
+          "pkg": "@intentius/chant",
+          "files": 16,
+          "bytes": 322187,
+          "role": "synthesizer"
+        },
+        {
+          "pkg": "tsx",
+          "files": 11,
+          "bytes": 209118,
+          "role": "synthesizer"
+        },
+        {
+          "pkg": "js-yaml",
+          "files": 1,
+          "bytes": 103854,
+          "role": "synthesizer"
+        },
+        {
+          "pkg": "esbuild",
+          "files": 1,
+          "bytes": 97214,
+          "role": "synthesizer"
+        },
+        {
+          "pkg": "zod",
+          "files": 4,
+          "bytes": 91088,
+          "role": "synthesizer"
+        },
+        {
+          "pkg": "picomatch",
+          "files": 3,
+          "bytes": 20390,
+          "role": "synthesizer"
+        }
+      ]
+    },
+    "nodeInternalModulesObserved": 54
+  },
+  "cdk": {
+    "tool": "cdk",
+    "capture": "captures/cdk-app.cpuprofile",
+    "projectCodeExecuted": true,
+    "projectFilesObserved": [
+      "app.js"
+    ],
+    "trustedComputingBase": {
+      "synthesizerBytes": 0,
+      "definitionLibraryBytes": 1854240,
+      "packages": [
+        {
+          "pkg": "aws-cdk-lib",
+          "files": 68,
+          "bytes": 1584898,
+          "role": "definition-library"
+        },
+        {
+          "pkg": "@aws-cdk/cloud-assembly-api",
+          "files": 5,
+          "bytes": 85672,
+          "role": "definition-library"
+        },
+        {
+          "pkg": "constructs",
+          "files": 3,
+          "bytes": 64733,
+          "role": "definition-library"
+        },
+        {
+          "pkg": "jsonschema",
+          "files": 3,
+          "bytes": 42045,
+          "role": "definition-library"
+        },
+        {
+          "pkg": "@aws-cdk/cloud-assembly-schema",
+          "files": 3,
+          "bytes": 40957,
+          "role": "definition-library"
+        },
+        {
+          "pkg": "@aws/cloudformation-validate",
+          "files": 2,
+          "bytes": 31889,
+          "role": "definition-library"
+        },
+        {
+          "pkg": "semver",
+          "files": 2,
+          "bytes": 4046,
+          "role": "definition-library"
+        }
+      ]
+    },
+    "nodeInternalModulesObserved": 18
+  },
+  "invariants": {
+    "chantFoldRunCount": 0,
+    "agreement": "capture and fold log agree: zero project-code execution on the chant side"
+  }
+}
