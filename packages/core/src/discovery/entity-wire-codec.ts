@@ -54,7 +54,7 @@
  * today.
  */
 
-import { DECLARABLE_MARKER, type Declarable } from "../declarable";
+import { DECLARABLE_MARKER, isResourceDeclarable, type Declarable } from "../declarable";
 import { AttrRef } from "../attrref";
 import { INTRINSIC_MARKER, type Intrinsic } from "../intrinsic";
 import { isAttrRefLike } from "../utils";
@@ -256,7 +256,7 @@ function encodeValue(value: unknown, entityNames: Map<unknown, string>): WireVal
     // directly rather than walking `resource` as a Declarable reference).
     // Inline exactly that, discarding the unresolvable (and, in every corpus
     // entry today, unread) identity layer.
-    const props = "props" in decl ? (decl as unknown as { props?: unknown }).props : undefined;
+    const props = isResourceDeclarable(decl) ? decl.props : undefined;
     return { __property: { lexicon: decl.lexicon, entityType: decl.entityType, props: props !== undefined ? encodeValue(props, entityNames) : undefined } };
   }
 
@@ -280,11 +280,13 @@ function encodeDeclarable(entity: Declarable, entityNames: Map<unknown, string>)
   const wire: Omit<WireDeclarableEntity, "form" | "name"> = { lexicon: entity.lexicon, entityType: entity.entityType, markers: [] };
   if (entity.kind !== undefined) wire.kind = entity.kind;
 
-  if ("props" in entity && (entity as unknown as { props?: unknown }).props !== undefined) {
-    wire.props = encodeValue((entity as unknown as { props: unknown }).props, entityNames);
-  }
-  if ("attributes" in entity && (entity as unknown as { attributes?: unknown }).attributes !== undefined) {
-    wire.attributes = encodeValue((entity as unknown as { attributes: unknown }).attributes, entityNames);
+  if (isResourceDeclarable(entity)) {
+    if (entity.props !== undefined) {
+      wire.props = encodeValue(entity.props, entityNames);
+    }
+    if (entity.attributes !== undefined) {
+      wire.attributes = encodeValue(entity.attributes, entityNames);
+    }
   }
 
   const markers: string[] = [];

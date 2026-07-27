@@ -8,7 +8,7 @@
  */
 
 import type { Declarable } from "@intentius/chant/declarable";
-import { isPropertyDeclarable } from "@intentius/chant/declarable";
+import { isPropertyDeclarable, isResourceDeclarable } from "@intentius/chant/declarable";
 import type { Serializer } from "@intentius/chant/serializer";
 import type { LexiconOutput } from "@intentius/chant/lexicon-output";
 import { walkValue, type SerializerVisitor } from "@intentius/chant/serializer-walker";
@@ -23,7 +23,7 @@ function gitlabVisitor(entityNames: Map<Declarable, string>): SerializerVisitor 
     attrRef: (name, _attr) => name,
     resourceRef: (name) => name.replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase(),
     propertyDeclarable: (entity, walk) => {
-      if (!("props" in entity) || typeof entity.props !== "object" || entity.props === null) {
+      if (!isResourceDeclarable(entity) || typeof entity.props !== "object" || entity.props === null) {
         return undefined;
       }
       const props = entity.props as Record<string, unknown>;
@@ -123,7 +123,7 @@ export const gitlabSerializer: Serializer = {
     // Emit stages (collect from jobs)
     const stages = new Set<string>();
     for (const [, entity] of jobs) {
-      const props = (entity as unknown as Record<string, unknown>).props as Record<string, unknown> | undefined;
+      const props = isResourceDeclarable(entity) ? (entity.props as Record<string, unknown> | undefined) : undefined;
       if (props?.stage && typeof props.stage === "string") {
         stages.add(props.stage);
       }
@@ -135,7 +135,7 @@ export const gitlabSerializer: Serializer = {
     // Emit defaults
     for (const [, entity] of defaults) {
       const converted = toYAMLValue(
-        (entity as unknown as Record<string, unknown>).props,
+        (isResourceDeclarable(entity) ? entity.props : undefined),
         entityNames,
       ) as Record<string, unknown> | undefined;
       if (converted) {
@@ -146,7 +146,7 @@ export const gitlabSerializer: Serializer = {
     // Emit workflow
     for (const [, entity] of workflows) {
       const converted = toYAMLValue(
-        (entity as unknown as Record<string, unknown>).props,
+        (isResourceDeclarable(entity) ? entity.props : undefined),
         entityNames,
       ) as Record<string, unknown> | undefined;
       if (converted) {
@@ -157,7 +157,7 @@ export const gitlabSerializer: Serializer = {
     // Emit jobs
     for (const [name, entity] of jobs) {
       const converted = toYAMLValue(
-        (entity as unknown as Record<string, unknown>).props,
+        (isResourceDeclarable(entity) ? entity.props : undefined),
         entityNames,
       ) as Record<string, unknown> | undefined;
       if (converted) {

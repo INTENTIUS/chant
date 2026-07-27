@@ -14,6 +14,26 @@ export interface Declarable {
 }
 
 /**
+ * A `Declarable` that carries a resource payload — the `props`/`attributes`
+ * fields that most lexicon serializers read to produce output. Not every
+ * `Declarable` has one (outputs and parameters genuinely don't), so this is
+ * kept as a sub-interface rather than widening the base type. See chant #1049.
+ */
+export interface ResourceDeclarable extends Declarable {
+  readonly props: unknown;
+  readonly attributes?: unknown;
+}
+
+/**
+ * Type guard for `ResourceDeclarable` — replaces the ad-hoc `"props" in x`
+ * checks that were previously repeated (with an `as unknown as` cast) at every
+ * call site that reads `props`/`attributes` off a `Declarable`.
+ */
+export function isResourceDeclarable(value: Declarable): value is ResourceDeclarable {
+  return "props" in value;
+}
+
+/**
  * Core parameter type for lexicon-agnostic parameters
  */
 export interface CoreParameter extends Declarable {

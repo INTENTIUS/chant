@@ -12,6 +12,7 @@
  */
 
 import type { Declarable } from "@intentius/chant/declarable";
+import { isResourceDeclarable } from "@intentius/chant/declarable";
 import type { Serializer, SerializerResult } from "@intentius/chant/serializer";
 import type { TemporalServerProps, TemporalNamespaceProps, SearchAttributeProps, TemporalScheduleProps } from "./resources";
 import { serializeOps } from "./op/serializer";
@@ -19,7 +20,7 @@ import { serializeOps } from "./op/serializer";
 // ── Helpers ─────────────────────────────────────────────────────────
 
 function getProps(entity: Declarable): Record<string, unknown> {
-  if ("props" in entity && typeof entity.props === "object" && entity.props !== null) {
+  if (isResourceDeclarable(entity) && typeof entity.props === "object" && entity.props !== null) {
     return entity.props as Record<string, unknown>;
   }
   return {};

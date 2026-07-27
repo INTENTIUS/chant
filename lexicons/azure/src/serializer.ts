@@ -11,7 +11,7 @@
  */
 
 import type { Declarable, CoreParameter } from "@intentius/chant/declarable";
-import { isPropertyDeclarable } from "@intentius/chant/declarable";
+import { isPropertyDeclarable, isResourceDeclarable } from "@intentius/chant/declarable";
 import type { Serializer, SerializerResult, SerializeContext } from "@intentius/chant/serializer";
 import { ownershipEntries, type OwnershipMarker } from "@intentius/chant/ownership";
 import { AZURE_TAG_OWNERSHIP_KEYS } from "./ownership";
@@ -147,7 +147,7 @@ function armVisitor(entityNames: Map<Declarable, string>): SerializerVisitor {
       return `[resourceId('${name}')]`;
     },
     propertyDeclarable: (entity, walk) => {
-      if (!("props" in entity) || typeof entity.props !== "object" || entity.props === null) {
+      if (!isResourceDeclarable(entity) || typeof entity.props !== "object" || entity.props === null) {
         return undefined;
       }
       const props = entity.props as Record<string, unknown>;
@@ -244,7 +244,7 @@ function serializeToTemplate(
     } else if (!isPropertyDeclarable(entity)) {
       const resourceType = entity.entityType;
       // Prefer apiVersion from entity attributes (set by composites) over registry lookup
-      const attrs0 = ("attributes" in entity && typeof entity.attributes === "object" && entity.attributes !== null)
+      const attrs0 = (isResourceDeclarable(entity) && typeof entity.attributes === "object" && entity.attributes !== null)
         ? entity.attributes as Record<string, unknown>
         : undefined;
       const apiVersion = (typeof attrs0?.apiVersion === "string") ? attrs0.apiVersion : getApiVersion(resourceType);
@@ -256,7 +256,7 @@ function serializeToTemplate(
       };
 
       // Extract all props
-      if ("props" in entity && typeof entity.props === "object" && entity.props !== null) {
+      if (isResourceDeclarable(entity) && typeof entity.props === "object" && entity.props !== null) {
         const props = entity.props as Record<string, unknown>;
         const armProperties: Record<string, unknown> = {};
 
@@ -284,7 +284,7 @@ function serializeToTemplate(
       }
 
       // Handle DependsOn
-      const attrs = ("attributes" in entity && typeof entity.attributes === "object" && entity.attributes !== null)
+      const attrs = (isResourceDeclarable(entity) && typeof entity.attributes === "object" && entity.attributes !== null)
         ? entity.attributes as Record<string, unknown>
         : undefined;
 

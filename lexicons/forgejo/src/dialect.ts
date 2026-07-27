@@ -17,7 +17,7 @@
  * transform faithful: the github serializer still does the actual emission.
  */
 
-import { DECLARABLE_MARKER, type Declarable } from "@intentius/chant/declarable";
+import { DECLARABLE_MARKER, isResourceDeclarable, type Declarable } from "@intentius/chant/declarable";
 import { resolveActionRef } from "./actions";
 
 /**
@@ -134,7 +134,7 @@ function transformValue(value: unknown, ctx: TransformCtx): unknown {
 function cloneDeclarable(entity: Declarable, ctx: TransformCtx): Declarable {
   const descriptors = Object.getOwnPropertyDescriptors(entity);
   const clone = Object.create(Object.getPrototypeOf(entity), descriptors) as Declarable;
-  const rawProps = (entity as unknown as { props?: unknown }).props;
+  const rawProps = isResourceDeclarable(entity) ? entity.props : undefined;
   const newProps = transformValue(rawProps, ctx);
   Object.defineProperty(clone, "props", {
     value: newProps,
