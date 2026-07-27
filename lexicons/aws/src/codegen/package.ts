@@ -42,12 +42,16 @@ export async function packageLexicon(opts: PackageOptions = {}): Promise<Package
 
       buildManifest: (_genResult) => {
         // Lazy-import to avoid circular dependency
+        // Trust the plugin's own `isTag` registration (chant #1067) — this
+        // used to recompute `isTag: i.name === "Sub"` independently of
+        // ../plugin.ts, a second source of truth that could silently drift
+        // from the real registration (the exact shape of bug #1039 found).
         const intrinsics: IntrinsicDef[] = (awsPlugin.intrinsics?.() ?? []).map(
           (i: IntrinsicDef) => ({
             name: i.name,
             description: i.description,
             outputKey: intrinsicOutputKey(i.name),
-            isTag: i.name === "Sub",
+            isTag: i.isTag,
           }),
         );
 

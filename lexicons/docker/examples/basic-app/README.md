@@ -7,7 +7,7 @@ A minimal example using the Docker lexicon to define a Node.js app with a Postgr
 Running `npm run build` generates:
 
 - `dist/docker-compose.yml` — the primary Compose file with `api`, `db` services and `pgdata` volume
-- `dist/Dockerfile.api` — the multi-stage Dockerfile for the API service
+- `dist/Dockerfile.apiImage` — the multi-stage Dockerfile for the API service
 
 ## Files
 

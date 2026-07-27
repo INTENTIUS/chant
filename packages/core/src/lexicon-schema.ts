@@ -13,7 +13,9 @@ export const IntrinsicDefSchema = z.object({
   name: z.string().min(1, "intrinsic name must not be empty"),
   description: z.string().optional(),
   outputKey: z.string().optional(),
-  isTag: z.boolean().optional(),
+  // Required (chant #1067) — no silent default for whether an intrinsic
+  // folds. See IntrinsicDef.isTag in ../lexicon.ts for the history.
+  isTag: z.boolean(),
 });
 
 // ---------------------------------------------------------------------------

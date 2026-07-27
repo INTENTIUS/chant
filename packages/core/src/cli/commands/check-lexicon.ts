@@ -1,5 +1,7 @@
 import { existsSync, readdirSync, readFileSync } from "fs";
 import { join, basename } from "path";
+import { auditIntrinsics } from "./check-lexicon-intrinsics";
+import { checkExamplesBuild } from "./check-lexicon-examples";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -65,7 +67,7 @@ function countSubdirs(dir: string): number {
 /**
  * Run all completeness checks against a lexicon directory.
  */
-export function checkLexicon(dir: string): CheckResult {
+export async function checkLexicon(dir: string): Promise<CheckResult> {
   const items: CheckItem[] = [];
 
   // ── Tier 1: Required ───────────────────────────────────────────
@@ -117,12 +119,128 @@ export function checkLexicon(dir: string): CheckResult {
     pass: existsSync(join(dir, "dist/manifest.json")),
   });
 
+  // chant #1067 — chantVersion was "optional, unchecked": a lexicon could
+  // declare (or omit) a core-version constraint and nothing failed. This
+  // does not validate compatibility against the running core version — that
+  // needs a live check at plugin-load time (a different tool: candidates are
+  // `loadPlugin`/`loadPlugins` in ../plugins.ts), which is a deliberate
+  // non-goal here (see PR description). It closes the narrower gap that the
+  // field can be silently absent or malformed in the shipped manifest.
+  const manifestJson = readOr(join(dir, "dist/manifest.json"));
+  let chantVersionOk = false;
+  let chantVersionDetail: string | undefined;
+  if (manifestJson) {
+    try {
+      const parsed = JSON.parse(manifestJson) as { chantVersion?: unknown };
+      const cv = parsed.chantVersion;
+      chantVersionOk = typeof cv === "string" && /\d/.test(cv);
+      chantVersionDetail = chantVersionOk ? `chantVersion: ${cv as string}` : `chantVersion: ${JSON.stringify(cv)}`;
+    } catch {
+      chantVersionDetail = "dist/manifest.json is not valid JSON";
+    }
+  } else {
+    chantVersionDetail = "dist/manifest.json missing or unreadable";
+  }
+  items.push({
+    name: "dist/manifest.json declares a chantVersion",
+    tier: 1,
+    pass: chantVersionOk,
+    detail: chantVersionDetail,
+  });
+
+  // chant #1067 — packaging shape ("all 11 lexicons route exports['.'].default
+  // at ./src/index.ts and delete emitted JS in build") was real but
+  // unenforced; a lexicon shipping differently would break consumers
+  // silently. Cheap structural check on package.json, not a build execution.
+  const packageJsonRaw = readOr(join(dir, "package.json"));
+  let packagingOk = false;
+  let packagingDetail: string | undefined;
+  if (packageJsonRaw) {
+    try {
+      const pkg = JSON.parse(packageJsonRaw) as {
+        exports?: { "."?: { default?: string } };
+        scripts?: { build?: string };
+      };
+      const defaultExport = pkg.exports?.["."]?.default;
+      const buildScript = pkg.scripts?.build ?? "";
+      const exportOk = defaultExport === "./src/index.ts";
+      const deletesEmittedJs = /-delete/.test(buildScript) && /\.js/.test(buildScript);
+      packagingOk = exportOk && deletesEmittedJs;
+      const problems: string[] = [];
+      if (!exportOk) problems.push(`exports["."].default is ${JSON.stringify(defaultExport)}, expected "./src/index.ts"`);
+      if (!deletesEmittedJs) problems.push(`build script doesn't delete emitted .js from dist/: ${JSON.stringify(buildScript)}`);
+      packagingDetail = problems.length > 0 ? problems.join("; ") : undefined;
+    } catch {
+      packagingDetail = "package.json is not valid JSON";
+    }
+  } else {
+    packagingDetail = "package.json missing or unreadable";
+  }
+  items.push({
+    name: 'package.json routes exports["."].default at ./src/index.ts and deletes emitted JS in build',
+    tier: 1,
+    pass: packagingOk,
+    detail: packagingDetail,
+  });
+
   const exampleCount = countSubdirs(join(dir, "examples"));
   items.push({
     name: "At least 1 example in examples/",
     tier: 1,
     pass: exampleCount > 0,
     detail: exampleCount > 0 ? `${exampleCount} example(s)` : undefined,
+  });
+
+  // chant #1067 — every shipped example must actually build. The prior
+  // checks only ever counted example directories; none tried to build one,
+  // so `lexicons/aws/examples/core-concepts` shipped with a discovery-time
+  // "Duplicate export name" error while this tool reported "All tier-1
+  // checks passed." See ./check-lexicon-examples.ts for exactly what
+  // "builds" means here (discovery + serialization, not post-synth/lint).
+  const exampleBuilds = await checkExamplesBuild(dir);
+  const brokenExamples = exampleBuilds.filter((e) => !e.ok);
+  items.push({
+    name: "Every shipped example builds",
+    tier: 1,
+    pass: brokenExamples.length === 0,
+    detail:
+      brokenExamples.length > 0
+        ? brokenExamples.map((e) => `${e.example}: ${e.detail}`).join(" | ")
+        : exampleBuilds.length > 0
+          ? `${exampleBuilds.length} example(s) built`
+          : undefined,
+  });
+
+  // chant #1067 — foldability (isTag) is required and validated, not an
+  // optional flag nobody checks. #1039 shipped with it wrong in both
+  // directions (aws's Sub missing isTag; gitlab's reference() claiming
+  // isTag: true for a plain call) and nothing caught either half. See
+  // ./check-lexicon-intrinsics.ts for what "exported"/"matches" mean.
+  const intrinsicAudit = auditIntrinsics(dir);
+  const unexportedIntrinsics = intrinsicAudit.filter((i) => !i.exported);
+  items.push({
+    name: "Registered intrinsics are exported by the package",
+    tier: 1,
+    pass: unexportedIntrinsics.length === 0,
+    detail:
+      unexportedIntrinsics.length > 0
+        ? unexportedIntrinsics.map((i) => i.detail).join(" | ")
+        : intrinsicAudit.length > 0
+          ? `${intrinsicAudit.length} intrinsic(s) checked`
+          : undefined,
+  });
+
+  const mismatchedIntrinsics = intrinsicAudit.filter((i) => !i.ok);
+  items.push({
+    name: "Registered intrinsics' isTag matches how they're authored",
+    tier: 1,
+    pass: mismatchedIntrinsics.length === 0,
+    detail:
+      mismatchedIntrinsics.length > 0
+        ? mismatchedIntrinsics.map((i) => i.detail).join(" | ")
+        : intrinsicAudit.length > 0
+          ? `${intrinsicAudit.length} intrinsic(s) checked`
+          : undefined,
   });
 
   const hasPluginTest = findFiles(join(dir, "src"), (n) => n === "plugin.test.ts").length > 0;

@@ -6,7 +6,7 @@ import { Dockerfile } from "@intentius/chant-lexicon-docker";
  * Stage 1 (builder): Install deps and compile TypeScript.
  * Stage 2 (runtime): Minimal production image.
  */
-export const api = new Dockerfile({
+export const apiImage = new Dockerfile({
   stages: [
     {
       from: "node:20-alpine",

@@ -30,14 +30,11 @@ export async function packageLexicon(opts: PackageOptions = {}): Promise<Package
       generate: (genOpts) => generate({ verbose: genOpts.verbose, force: genOpts.force }),
 
       buildManifest: (_genResult) => {
-        const intrinsics: IntrinsicDef[] = [
-          {
-            name: "expression",
-            description: "${{ }} expression wrapper for GitHub Actions contexts",
-            outputKey: "expression",
-            isTag: false,
-          },
-        ];
+        // Derived from the plugin's own registration (chant #1067) — this
+        // used to be a hand-maintained array independent of ../plugin.ts,
+        // free to drift from the real registration without anything
+        // noticing.
+        const intrinsics: IntrinsicDef[] = githubPlugin.intrinsics?.() ?? [];
 
         return {
           name: "github",
