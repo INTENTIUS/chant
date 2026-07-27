@@ -467,6 +467,25 @@ describe("detectCrossLexiconRefs", () => {
     expect(collected[0].getOutputValue()).toEqual({ "Fn::Sub": "http://example.com/path" });
   });
 
+  // chant #1121 — `output(<already-resolved value>, name)`, exactly the
+  // shape of a top-level `export const oParamName = output(data.Name,
+  // "oParamName")`, must reach the serializer as a plain `Value`, never a
+  // `Fn::GetAtt` pointing at the output's own logical id.
+  test("literal-valued output() emits its value verbatim, not a self-referencing Fn::GetAtt", () => {
+    const literalOutput = output("fold-output-repro", "oParamName");
+
+    const entities = new Map<string, Declarable>([
+      ["oParamName", literalOutput as unknown as Declarable],
+    ]);
+
+    const collected = collectLexiconOutputs(entities);
+    expect(collected).toHaveLength(1);
+    expect(collected[0].outputName).toBe("oParamName");
+    expect(collected[0].sourceEntity).toBe("");
+    expect(collected[0].sourceAttribute).toBeNull();
+    expect(collected[0].getOutputValue()).toBe("fold-output-repro");
+  });
+
   test("deduplicates when same cross-lexicon ref appears in multiple entities", () => {
     const alphaBucket = {
       lexicon: "alpha",

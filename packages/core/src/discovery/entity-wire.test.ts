@@ -197,6 +197,32 @@ describe("entity-wire round trip (chant #1045 Phase 1)", () => {
     expect(isAttrRefLike(embedded[0])).toBe(true);
   });
 
+  // chant #1121 — before this fix, encoding a literal-valued LexiconOutput
+  // (neither an AttrRef nor an Intrinsic) threw
+  // `encodeEntitySet: LexiconOutput "..." has neither a resolvable AttrRef
+  // parent nor an intrinsic` — this is the sandboxed-child boundary a
+  // `chant build --sandbox` run crosses for every entity, so a project using
+  // `output("literal", "name")` could not build under `--sandbox` at all.
+  test.each([
+    ["string", "fold-output-repro"],
+    ["number", 42],
+    ["boolean", true],
+  ] as const)("LexiconOutput built from a %s literal round-trips via its real constructor", (_kind, value) => {
+    const lexOutput = new LexiconOutput(value, "LiteralOut");
+    const entities = new Map<string, Declarable>([["LiteralOut", lexOutput as unknown as Declarable]]);
+
+    const wire = encodeEntitySet(entities);
+    assertPureJson(wire);
+
+    const decoded = decodeEntitySet(JSON.parse(JSON.stringify(wire)) as EntitySetWire);
+    const decodedOutput = decoded.get("LiteralOut") as unknown as LexiconOutput;
+    expect(isLexiconOutput(decodedOutput)).toBe(true);
+    expect(decodedOutput.outputName).toBe("LiteralOut");
+    expect(decodedOutput.sourceEntity).toBe("");
+    expect(decodedOutput.sourceAttribute).toBeNull();
+    expect(decodedOutput.getOutputValue()).toBe(value);
+  });
+
   test("a lexicon-specific marker symbol (not core-owned) round-trips generically", () => {
     const MARKER = Symbol.for("chant.test.customMarker");
     const custom: Declarable = {

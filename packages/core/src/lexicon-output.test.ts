@@ -92,6 +92,60 @@ describe("LexiconOutput", () => {
     const lo = new LexiconOutput(mockIntrinsic, "MyUrl");
     expect(lo.getOutputValue()).toEqual({ "Fn::Sub": "http://${Param}/path" });
   });
+
+  // chant #1121 — an already-resolved plain value (not a reference to
+  // anything) must be emitted verbatim as the Output's Value, never coerced
+  // into a bogus Fn::GetAtt pointing at the output's own logical id.
+  describe("literal-valued output (chant #1121)", () => {
+    test("accepts a string literal and sets no source entity/attribute", () => {
+      const lo = new LexiconOutput("us-east-1", "Region");
+      expect(lo.sourceLexicon).toBe("");
+      expect(lo.sourceEntity).toBe("");
+      expect(lo.sourceAttribute).toBeNull();
+      expect(lo.outputName).toBe("Region");
+    });
+
+    test("getOutputValue() returns a string literal verbatim", () => {
+      const lo = new LexiconOutput("fold-output-repro", "oParamName");
+      expect(lo.getOutputValue()).toBe("fold-output-repro");
+    });
+
+    test("getOutputValue() returns a number literal verbatim", () => {
+      const lo = new LexiconOutput(42, "oCount");
+      expect(lo.getOutputValue()).toBe(42);
+    });
+
+    test("getOutputValue() returns a boolean literal verbatim (including false)", () => {
+      expect(new LexiconOutput(true, "oEnabled").getOutputValue()).toBe(true);
+      expect(new LexiconOutput(false, "oDisabled").getOutputValue()).toBe(false);
+    });
+
+    test("getOutputValue() returns 0 and empty string verbatim (falsy but valid)", () => {
+      expect(new LexiconOutput(0, "oZero").getOutputValue()).toBe(0);
+      expect(new LexiconOutput("", "oEmpty").getOutputValue()).toBe("");
+    });
+
+    test("_setSourceEntity has no effect on getOutputValue() for a literal", () => {
+      const lo = new LexiconOutput("v1", "oVersion");
+      lo._setSourceEntity("someUnrelatedEntity");
+      expect(lo.getOutputValue()).toBe("v1");
+    });
+
+    test("throws for a ref that is neither an AttrRef, an Intrinsic, nor a string/number/boolean literal", () => {
+      // Mirrors what a resource member access that resolves to `undefined`
+      // looks like at runtime (e.g. a typo, or a non-attribute field a
+      // generated resource class never echoes onto the instance).
+      expect(() => new LexiconOutput(undefined as unknown as string, "oBroken")).toThrow(
+        /must be an AttrRef, an Intrinsic, or an already-resolved string\/number\/boolean/,
+      );
+    });
+
+    test("throws for null", () => {
+      expect(() => new LexiconOutput(null as unknown as string, "oBroken")).toThrow(
+        /must be an AttrRef, an Intrinsic, or an already-resolved string\/number\/boolean/,
+      );
+    });
+  });
 });
 
 describe("LexiconOutput.auto", () => {
@@ -164,6 +218,20 @@ describe("output() helper", () => {
     expect(result.sourceAttribute).toBe("Arn");
     expect(result.outputName).toBe("DataBucketArn");
   });
+
+  // chant #1121
+  test.each([
+    ["string", "v1"],
+    ["number", 42],
+    ["boolean", true],
+  ] as const)("creates a literal-valued LexiconOutput from a %s and emits it verbatim", (_kind, value) => {
+    const result = output(value, "oLiteral");
+
+    expect(result).toBeInstanceOf(LexiconOutput);
+    expect(result.sourceEntity).toBe("");
+    expect(result.sourceAttribute).toBeNull();
+    expect(result.getOutputValue()).toBe(value);
+  });
 });
 
 describe("isLexiconOutput", () => {
@@ -230,5 +298,38 @@ describe("collectLexiconOutputs", () => {
 
     expect(collected).toHaveLength(1);
     expect(collected[0].outputName).toBe("BucketArn");
+  });
+
+  // chant #1121 — a literal-valued output has no source entity. Before this
+  // fix, a top-level `export const x = output("literal", "x")` fell back to
+  // naming the output's OWN map key as its "source entity" (there being no
+  // `_sourceParent` to resolve), which `getOutputValue()`'s `Fn::GetAtt`
+  // fallback then read back out as a self-referencing, invalid reference.
+  test("does NOT fall back to the output's own key as sourceEntity for a literal-valued output", () => {
+    const literalOutput = output("fold-output-repro", "oParamName");
+
+    const entities = new Map<string, Declarable>();
+    entities.set("oParamName", literalOutput as unknown as Declarable);
+
+    const collected = collectLexiconOutputs(entities);
+
+    expect(collected).toHaveLength(1);
+    expect(collected[0].sourceEntity).toBe("");
+    expect(collected[0].getOutputValue()).toBe("fold-output-repro");
+  });
+
+  test("does NOT fall back to the containing entity's name for a literal-valued output nested in props", () => {
+    const bucket = new MockResource();
+    const literalOutput = output(123, "oNested");
+    bucket.props.nested = literalOutput;
+
+    const entities = new Map<string, Declarable>();
+    entities.set("dataBucket", bucket as unknown as Declarable);
+
+    const collected = collectLexiconOutputs(entities);
+
+    expect(collected).toHaveLength(1);
+    expect(collected[0].sourceEntity).toBe("");
+    expect(collected[0].getOutputValue()).toBe(123);
   });
 });
