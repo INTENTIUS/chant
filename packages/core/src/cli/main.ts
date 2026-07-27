@@ -69,6 +69,7 @@ const BOOLEAN_FLAGS = new Set([
   "--bump",
   "--no-release-record",
   "--fold",
+  "--no-fold",
   "--sandbox",
 ]);
 
@@ -294,6 +295,10 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.noReleaseRecord = true;
     } else if (arg === "--fold") {
       result.fold = true;
+    } else if (arg === "--no-fold") {
+      // chant #1134 — fold is the default build path; this is the explicit
+      // opt-out, and like --fold it beats chant.config.ts's build.fold.
+      result.fold = false;
     } else if (arg === "--sandbox") {
       result.sandbox = true;
     } else if (arg === "--param") {
@@ -514,8 +519,11 @@ Options:
                         to run per-file for anything else outside the fold
                         subset (a cross-file-only reference, a re-export,
                         \`export default\`, ...). Logs which path each file
-                        took. Default: off (also settable via
-                        chant.config.ts's build.fold: true; #1022)
+                        took. DEFAULT since #1134 — this flag forces it on
+                        over a chant.config.ts \`build.fold: false\`.
+  --no-fold             (build) Opt out of folding for this invocation: every
+                        source module is imported and run, the pre-#1134
+                        behavior. Beats chant.config.ts's build.fold.
   --sandbox             (build) Run run-fallback source files (or every
                         file, without --fold) together, isolated, in one
                         sandboxed child process instead of in-process

@@ -245,7 +245,7 @@ For the full EVL rule reference with configuration options, see [Evaluability Ru
 
 By default, `chant build` imports and runs every source file to collect the exported resource objects. The evaluability rules (EVL, above) are what keep that run deterministic: they reject anything a running file could do besides read literals, constants, and cross-resource references, so running the supported subset has no side effects and no dependency on the environment.
 
-`chant build --fold` (opt-in — part of the fold epic, #1019) takes a different path: instead of importing and running a file, chant reduces its AST directly to the resource spec, with zero module execution. Nothing changes about what you write to use it — the supported subset above is the same subset that folds. What changes is how the build gets there:
+Folding is the **default build path** (#1134; opt-in via `--fold` until then): instead of importing and running a file, chant reduces its AST directly to the resource spec, with zero module execution. Nothing changes about what you write to use it — the supported subset above is the same subset that folds. What changes is how the build gets there:
 
 | | Default (run) | `--fold` |
 |---|---|---|
@@ -253,7 +253,7 @@ By default, `chant build` imports and runs every source file to collect the expo
 | What keeps it deterministic | The evaluability rules (a lint-time discipline) | The fold subset itself (a build-time construction) |
 | A pattern outside the subset | Still runs; produces whatever the code produces | Rejected for that file, which falls back to running it instead |
 | Output | Resource objects | Same resource objects — [byte-identical serialized output](#byte-identical-output) |
-| Default state | On, always | Off — pass `--fold` or set `build.fold: true` |
+| Default state | Off — pass `--no-fold` or set `build.fold: false` | **On by default** (#1134) |
 
 Folding happens per file, not per project. A file either folds entirely or falls back to running entirely — chant never partially executes a file. `chant build --fold` logs which path each file took, and why, in a real run:
 
@@ -279,7 +279,9 @@ If a project needs to vary a build (an environment name, a tier that changes whi
 
 Fold and run are also kept from ever disagreeing about a shared entity's identity, in both directions. If file B imports file A and B falls back to run, A is forced back to run too, even if A would have folded on its own — otherwise B's real import of A and A's own folded copy would be two different objects. And if A is forced back to run for that reason, any file that already folded while capturing one of A's objects (a cross-file resource reference, a resource passed to an intrinsic) is forced back too, since the instance it captured is no longer the instance the build collects.
 
-None of this is something you opt into piecemeal or write differently for — it's the existing supported subset, enforced by construction instead of by lint. Also settable project-wide via `chant.config.ts`'s `build.fold: true`; the `--fold` flag always wins when passed.
+None of this is something you opt into piecemeal or write differently for — it's the existing supported subset, enforced by construction instead of by lint. Settable project-wide via `chant.config.ts`'s `build.fold` (default `true`); an explicit `--fold`/`--no-fold` flag always wins when passed.
+
+**Migrating from pre-#1134 builds**: the one observable change of fold-by-default is that a *folded* file's module-scope side effects (a `console.log`, a global registry mutation, an ambient read at import time) no longer run at build time — eliminating exactly that execution is what folding is. Files outside the subset still run, unchanged. If a build genuinely depends on module side effects, `--no-fold` (or `build.fold: false`) restores the pre-#1134 behavior wholesale, and each `[fold:fold]` log line tells you which files stopped executing.
 
 ### Byte-identical output
 

@@ -35,11 +35,12 @@ export interface BuildOptions {
    */
   env?: string;
   /**
-   * chant #1022 (epic #1019) — opt-in: fold source modules statically
-   * instead of importing/running them (`chant build --fold`). Falls back to
-   * run per-file for anything the folder can't represent. Merged with the
-   * project's `chant.config.ts` `build.fold` via {@link resolveFoldEnabled}
-   * — this flag, when true, always wins for the invocation.
+   * chant #1022/#1134 (epic #1019) — fold source modules statically instead
+   * of importing/running them; the DEFAULT build path since #1134. Falls
+   * back to run per-file for anything the folder can't represent. Tri-state:
+   * `--fold` → true, `--no-fold` → false, unset → the project config /
+   * default via {@link resolveFoldEnabled}. An explicit flag always wins for
+   * the invocation, in either direction.
    */
   fold?: boolean;
 
@@ -147,9 +148,9 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
   const configDir = loaded.configPath ? dirname(loaded.configPath) : infraPath;
   const policies = config.lint?.policies ?? [];
 
-  // #1022 — opt-in fold path: the CLI flag wins over `chant.config.ts`'s
-  // `build.fold`, which wins over the (unchanged) default of running every
-  // module.
+  // #1022/#1134 — fold is the default build path: an explicit CLI flag
+  // (--fold/--no-fold) wins over `chant.config.ts`'s `build.fold`, which
+  // wins over the default of `true`.
   const fold = resolveFoldEnabled(config, options.fold);
 
   // #1045 Phase 2 — opt-in sandboxed execution of run-fallback files (or,

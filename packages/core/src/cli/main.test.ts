@@ -4,6 +4,12 @@ import { parseArgs, waitForStreamDrain } from "./main";
 import { resolveCommand, type CommandDef, type ParsedArgs } from "./registry";
 
 describe("parseArgs", () => {
+  test("--fold and --no-fold set the tri-state fold option (#1134)", () => {
+    expect(parseArgs(["build", "src"]).fold).toBeUndefined();
+    expect(parseArgs(["build", "src", "--fold"]).fold).toBe(true);
+    expect(parseArgs(["build", "src", "--no-fold"]).fold).toBe(false);
+  });
+
   test("parses command as first positional arg", () => {
     const result = parseArgs(["build"]);
     expect(result.command).toBe("build");
