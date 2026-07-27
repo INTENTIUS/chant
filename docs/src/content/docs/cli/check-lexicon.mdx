@@ -20,7 +20,7 @@ chant dev check-lexicon <dir> [--format json]
 Most checks are filesystem checks — file presence, directory contents, simple content inspection. Two tier-1 checks (chant #1067) go further and actually run something:
 
 - **Every shipped example builds** discovers and serializes each `examples/*/src/` directory (the same discover-and-serialize pipeline `chant build` runs) and fails if any produces a structural error or no output. It does **not** additionally require the output to pass post-synth/lint checks — that's a separate, already-gated contract with its own severity model.
-- **Registered intrinsics are exported** / **... `isTag` matches how they're authored** parse `src/plugin.ts`'s `intrinsics()` registrations and `src/index.ts`'s export surface (no execution — static AST analysis) to verify every registered intrinsic actually exists and that its `isTag` claim matches whether it's really authored as a tagged template.
+- **Registered intrinsics are exported** / **... `isTag` matches how they're authored** / **... `foldsAsCall` opt-in is only on plain calls** parse `src/plugin.ts`'s `intrinsics()` registrations and `src/index.ts`'s export surface (no execution — static AST analysis) to verify every registered intrinsic actually exists, that its `isTag` claim matches whether it's really authored as a tagged template, and that a `foldsAsCall: true` opt-in is not declared on a tagged template, which has no plain-call form to opt in.
 
 This command runs for real: `just check-lexicons` (which also runs each lexicon's own `tsconfig.build.json` build first) and CI's "Lexicon completeness contract" step, both gated against a small, explicit, issue-linked allowlist of currently-known gaps (see `scripts/check-lexicons.ts`) rather than silently skipped.
 

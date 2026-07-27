@@ -118,6 +118,23 @@ export const store = new StorageType({
 
 See your lexicon's documentation for available intrinsics.
 
+### Registered intrinsic calls
+
+Most intrinsics are not tagged templates. AWS writes `Ref(...)`, `GetAtt(...)`, `Join(...)`; Azure writes `Concat(...)`, `Reference(...)`. A lexicon can opt one of these into folding, one intrinsic at a time:
+
+```typescript
+import { StorageType, Ref, Sub, Params } from "@intentius/chant-lexicon-<name>";
+
+export const store = new StorageType({
+  name: Sub`${Params.StackName}-${Ref(environment)}-data`,
+  owner: Ref(environment),
+});
+```
+
+This is the one place a call folds that isn't chant's own [authoring helpers](#registered-authoring-helpers), and it is a closed list, not a rule about what calls look like. Three things must hold: the lexicon registered the intrinsic, the lexicon marked that intrinsic's call form foldable (`foldsAsCall` — off unless written, never inferred), and the name is bound by this file's own `import`. Your own function that happens to be called `Ref` is not the lexicon's, so it does not fold. Neither does a method call (`aws.Ref(...)`), an array `.map(...)`, or an intrinsic whose lexicon has not opted it in.
+
+Nothing about the value changes: the function that runs is the one your `import` names, called with statically-folded arguments, producing the same intrinsic object the run path would have produced. Your lexicon's intrinsics page has a **Folds?** column saying which of its intrinsics are opted in.
+
 ### Typed property-kind constructors
 
 Sub-resource properties can use typed constructors for autocompletion and validation:
@@ -183,7 +200,7 @@ export const store = new StorageType({
 });
 ```
 
-Your own functions, arrow functions, and method calls (`naming.name(...)`) are never evaluated statically — the value would depend on running code. The only calls that fold are chant's own [registered authoring helpers](#registered-authoring-helpers). Where you need a computed value in foldable source, move the computation into a composite, which chant expands for real.
+Your own functions, arrow functions, and method calls (`naming.name(...)`) are never evaluated statically — the value would depend on running code. Two closed exceptions fold: chant's own [registered authoring helpers](#registered-authoring-helpers), and a [lexicon intrinsic whose call form its lexicon opted in](#registered-intrinsic-calls). Both are allowlists of names, checked against what your file actually imported — neither widens to calls in general. Where you need a computed value in foldable source, move the computation into a composite, which chant expands for real.
 
 ### Control flow around resources
 
@@ -250,15 +267,16 @@ Fold covers more than a single leaf resource now:
 - **Leaf resources** — `export const x = new Type({ ...literals, const refs, templates })` (#1021/#1026).
 - **Composite factory calls** — `export const stack = MyStack({...})`, `propagate(MyStack({...}), {...})`, member access on the result (`web.deployment`), and destructuring (`export const { a, b } = MyStack({...})`, or a local `const` destructured and re-exported by name) all fold too (#1023). A composite factory is a pure function of its props, so chant resolves it through the file's own imports and calls it for real with statically-folded arguments — no execution of the file itself.
 - **Registered intrinsic tagged templates** — a lexicon can register a tagged template (e.g. a string-substitution helper) as foldable; when it's registered, an interpolation inside it folds like any other value in the subset. A tagged template whose tag *isn't* registered falls outside the subset. See your lexicon's intrinsics page for which of its intrinsics are tagged templates.
+- **Registered intrinsic calls** — the same, for an intrinsic authored as a plain call (`Ref(...)`, `Concat(...)`), where its lexicon has opted that intrinsic in (#1044). Arguments fold by the ordinary subset rules; the real function is resolved through the file's own imports and invoked, so the intrinsic object is the one the run path would have built. Opt-in is per intrinsic and off by default — see [Registered intrinsic calls](#registered-intrinsic-calls).
 - **Cross-file references** — an imported `const`, or an imported resource referenced through an attribute, resolves through the module graph and folds in the defining file's own scope, including re-export chains (#1020). Each cross-file export folds exactly once per build and every referrer shares that one instance, so a symbolic reference always points at the same entity the defining file produced. An import cycle is rejected with a located error rather than followed.
 
-What still forces a fallback to run, per file: **a function call used as a value** — the largest remaining gap, and the one most likely to affect real cloud source, since intrinsics implemented as plain calls (`Ref(...)`, `Concat(...)`) land here rather than as tagged templates (#1044). Also: a composite call or `new Type(...)` nested as a *value* inside something else rather than being the file's own top-level export, a re-export, `export default`, `let`/`var`, and an exported function or class declaration.
+What still forces a fallback to run, per file: **a function call used as a value that is neither a registered authoring helper nor an opted-in intrinsic** — your own helper, an array `.map(...)`, a method call, an intrinsic whose lexicon has not opted it in. Also: a composite call or `new Type(...)` nested as a *value* inside something else rather than being the file's own top-level export, a re-export, `export default`, `let`/`var`, and an exported function or class declaration.
 
 `process.env.X` and other environment-dependent references are rejected by the same mechanism, but not because of a gap left to close: an environment read is a value fold can only get by executing code and consulting whatever process happens to be running the build, which is exactly what folding is built to avoid. It's an unresolved identifier like any other, and it falls back to run by design, the same way it does today without `--fold` — and `--fold` reports it with a pointed message rather than the generic "unresolved identifier", naming the alternative below.
 
 If a project needs to vary a build (an environment name, a tier that changes which resources are even produced), the supported way is a **build-time parameter** (#1064), not `process.env`: declare it in `chant.config.ts`'s `buildParams` (type, optional `default`/`enum`/`env` mapping), supply it via `chant build --param name=value` / `--params-file`, and reference it in source as `params.<name>` (`import { params } from "@intentius/chant/params"`). Because the value is known at build invocation — before any file is imported or folded — `params.<name>` folds to a **literal**, exactly like a `const`, instead of falling back to run. Values are recorded on the build result (`BuildResult.buildParams`) so a build's inputs are auditable, not read invisibly from whatever environment happened to be running it. See [Build-Time Parameters](/chant/concepts/build-time-parameters/).
 
-Fold and run are also kept from ever disagreeing about a shared entity's identity: if file B imports file A and B falls back to run, A is forced back to run too, even if A would have folded on its own — otherwise B's real import of A and A's own folded copy would be two different objects.
+Fold and run are also kept from ever disagreeing about a shared entity's identity, in both directions. If file B imports file A and B falls back to run, A is forced back to run too, even if A would have folded on its own — otherwise B's real import of A and A's own folded copy would be two different objects. And if A is forced back to run for that reason, any file that already folded while capturing one of A's objects (a cross-file resource reference, a resource passed to an intrinsic) is forced back too, since the instance it captured is no longer the instance the build collects.
 
 None of this is something you opt into piecemeal or write differently for — it's the existing supported subset, enforced by construction instead of by lint. Also settable project-wide via `chant.config.ts`'s `build.fold: true`; the `--fold` flag always wins when passed.
 
@@ -276,7 +294,11 @@ This is measured over the same corpus [`just fold-differential`](#byte-identical
 
 That corpus is also chant's own maintained examples, and some of them are expected to be rewritten into foldable shapes over time, or dropped. Both changes move this number without the folder gaining or losing any actual capability: rewriting an example raises the count for a reason unrelated to what `--fold` can do, and adding or removing an example moves the denominator the same way. Treat a change here as "the corpus changed," not as evidence either way about fold coverage of your own project.
 
-As measured when this page was last written (chant `a0e7ffe9`): a function call used as a value blocks 56 files across the corpus, and is the *only* blocker in 45 of the run-fallback entries — by far the largest single gap, and the target of #1044. Cross-file references into a lexicon package's own exports (rather than a project's own source files) block 44 files across 25 entries, tracked as [#1063](https://github.com/INTENTIUS/chant/issues/1063). These counts are a snapshot, not refreshed by the mechanism above; they'll drift from the corpus over time the same way the rest of this page would without #1062. The third gap they named — a resource constructor whose first argument isn't the props object literal — is closed as of #1082: constructor arguments are folded positionally, so a class like the AWS `Parameter` (`new Parameter("String", {...})`) folds like any other.
+As measured on the corpus after #1044 (chant `1fb1b375`, per-file fallback reasons classified by cause): a function call used as a value blocks 37 files and is the only blocker in 9 entries — down from 77 files and 21 entries before opting the AWS and Azure intrinsics in. What's left there is a lexicon that hasn't been audited yet (github's `Checkout`, 6 entries; helm's `include`/`printf`, 3) plus array `.map(...)` and project-local helpers, which are arbitrary JavaScript and stay rejected by construction. Cross-file references into a lexicon package's own exports (rather than a project's own source files) now block 116 files across 36 entries, tracked as [#1063](https://github.com/INTENTIUS/chant/issues/1063), and are the largest remaining cause.
+
+Per lexicon, so the two can be judged separately: the AWS corpus went from 4 of 18 entries folding to **12 of 18**, and the 6 that remain are blocked by cross-file references, shape gaps, and composite-factory calls — not by intrinsics. The Azure corpus went from **0 of 13 to 0 of 13**: `Concat(...)` stopped blocking both entries where it was the only blocker, and both then stopped on `Azure.ResourceGroupLocation` used as a plain value, which is #1063. Azure's fold coverage is capped at zero by that, not by anything #1044 could have fixed. This is also the correction to what #1039 predicted: the intrinsics wiring was called "the single biggest lever" and moved one entry; the call form moved eight; and for Azure specifically the lever that matters is a different issue entirely.
+
+These counts are a snapshot, not refreshed by the mechanism above; they'll drift from the corpus over time the same way the rest of this page would without #1062. One gap the earlier snapshot named — a resource constructor whose first argument isn't the props object literal — is closed as of #1082: constructor arguments are folded positionally, so a class like the AWS `Parameter` (`new Parameter("String", {...})`) folds like any other.
 
 ### Isolating the run-fallback path
 
