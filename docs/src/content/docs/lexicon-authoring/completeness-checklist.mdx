@@ -13,7 +13,7 @@ Pass `--format json` for machine-readable output.
 
 ## Tier 1 — Required
 
-These must all pass for the command to exit 0. CI should gate on this.
+These must all pass for the command to exit 0. Run for real via `just check-lexicons` and gated in CI (chant #1067) — see [`chant dev check-lexicon`](/chant/cli/check-lexicon/) for the exceptions currently tracked, not silently skipped.
 
 | Check | What it verifies |
 |---|---|
@@ -24,10 +24,19 @@ These must all pass for the command to exit 0. CI should gate on this.
 | `src/lsp/completions.ts` exists | LSP completion provider |
 | `src/lsp/hover.ts` exists | LSP hover provider |
 | `dist/manifest.json` exists | Lexicon bundle was built |
+| `dist/manifest.json` declares a `chantVersion` | Not silently absent — see [Declaring `chantVersion`](#chantversion) below |
+| `package.json` packaging shape | `exports["."].default` is `./src/index.ts`; `build` script deletes emitted `.js`/`.js.map` from `dist/` |
 | At least 1 example | Non-empty subdirectory in `examples/` |
+| **Every shipped example builds** | Discovers and serializes each `examples/*/src/` — not just counts them (chant #1067; see [core-concepts](https://github.com/INTENTIUS/chant/issues/1067) for the defect this caught) |
+| **Registered intrinsics are exported** | Every `plugin.ts` `intrinsics()` entry's `name` resolves to a real export of `src/index.ts` (chant #1067) |
+| **Registered intrinsics' `isTag` matches how they're authored** | A tagged-template claim (`isTag: true`) must correspond to a function whose first parameter is `TemplateStringsArray`; a plain-call claim (`isTag: false`) to anything else (chant #1067 — this is exactly the check that would have caught #1039 in both directions) |
 | `plugin.test.ts` exists | Plugin unit test |
 | `serializer.test.ts` exists | Serializer unit test |
 | At least 1 `.mdx` doc page | Documentation exists |
+
+### `chantVersion`
+
+`chantVersion` on the manifest is checked for presence and shape only — it is **not** validated for compatibility against the core version actually running. That would need a live check at plugin-load time (a different tool, e.g. `loadPlugin`/`loadPlugins`), and is a deliberate non-goal of chant #1067.
 
 ## Tier 2 — Recommended
 

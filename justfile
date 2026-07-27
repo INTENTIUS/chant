@@ -65,6 +65,14 @@ fold-differential: _ensure-gen
 sandbox-differential: _ensure-gen
     npx vitest run examples/sandbox-differential.test.ts --reporter=verbose
 
+# chant #1067 — the lexicon completeness contract, actually enforced. Runs
+# each lexicon's own tsconfig.build.json build, then `chant dev check-lexicon`
+# (all tier-1 checks, including intrinsic-foldability validation and "every
+# shipped example builds"), gated against the tracked KNOWN_FAILURES
+# allowlist in scripts/check-lexicons.ts. An untracked failure exits 1.
+check-lexicons: _ensure-gen
+    npx tsx scripts/check-lexicons.ts
+
 # Scaffold a throwaway lexicon and verify it installs + typechecks (#749 guard).
 # Catches core-API drift that would break `chant init lexicon`. Needs the network
 # (npm install). On-demand; not part of gating `check`.
@@ -84,7 +92,7 @@ lint:
     npx eslint packages/
 
 # Run all checks (build, lint, test)
-check: build lint test
+check: build lint test check-lexicons
 
 # Build diagram SVGs from .dot source files (requires graphviz)
 diagrams:
