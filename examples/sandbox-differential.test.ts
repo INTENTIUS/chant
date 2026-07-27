@@ -1,9 +1,9 @@
 import { afterAll, describe, expect, test, vi } from "vitest";
-import { build } from "@intentius/chant/build";
 import { sortedJsonReplacer } from "@intentius/chant/utils";
 import { parseYAML } from "@intentius/chant/yaml";
 import {
   discoverCorpus,
+  loadBuild,
   normalizeOutputs,
   outputsEqual,
   normalizeErrors,
@@ -226,9 +226,13 @@ function canonicalizeOutputs(normalized: NormalizedOutputs): NormalizedOutputs {
  * vitest-only key-ordering artifact either.
  */
 async function buildBothWays(entry: CorpusEntry) {
-  const run = () => build(entry.srcDir, entry.serializers, undefined, { fold: false });
-  const sandboxed = () =>
-    build(entry.srcDir, entry.serializers, undefined, {
+  // chant #1112 — `build` is loaded per call, never captured once at module
+  // scope, so the in-process baseline is always produced by the same
+  // chant-core copy the project files were just loaded into. See
+  // {@link loadBuild} for what a stale one silently drops.
+  const run = async () => (await loadBuild())(entry.srcDir, entry.serializers, undefined, { fold: false });
+  const sandboxed = async () =>
+    (await loadBuild())(entry.srcDir, entry.serializers, undefined, {
       fold: true,
       sandbox: true,
       intrinsics: entry.intrinsics,
@@ -290,7 +294,7 @@ describe("sandbox differential — sandboxed-run output === in-process-run outpu
         // still run under `{ fold: true, sandbox: true }`; the sandboxed
         // build may additionally run a file whose fold would have required
         // executing project code in this process.
-        const plainFold = await build(entry.srcDir, entry.serializers, undefined, {
+        const plainFold = await (await loadBuild())(entry.srcDir, entry.serializers, undefined, {
           fold: true,
           intrinsics: entry.intrinsics,
           lexicons: entry.lexicons,

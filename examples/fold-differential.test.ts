@@ -1,9 +1,10 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, describe, expect, test, vi } from "vitest";
-import { build } from "@intentius/chant/build";
+import type { build } from "@intentius/chant/build";
 import {
   discoverCorpus,
+  loadBuild,
   normalizeOutputs,
   outputsEqual,
   normalizeErrors,
@@ -116,6 +117,14 @@ const report: ReportRow[] = [];
  * access, #1063. That is the measured ceiling this PR reports: azure's
  * remaining corpus is gated on #1063, not on #1044.
  *
+ * chant #1112 grew it from 53 to 54 by ADDING an entry, not by folding an
+ * existing one: `lexicons/aws/examples/stack-outputs` declares all three
+ * output shapes (`output(ref, …)`, `output(intrinsic, …)`, `stackOutput(ref)`)
+ * in a file separate from the resources they reference, which is what fold
+ * was silently dropping. Thirteen corpus entries already had an `output(...)`
+ * in a folding file and still reported `[identical]` — see this suite's
+ * `buildBothWays`/`loadBuild` for why, and the #1112 PR for the before/after.
+ *
  * chant #1063 grew it from 32 to 53 — the largest single jump so far, and
  * the whole of azure's and gcp's corpora at once. The 21 added entries are
  * every azure example (13) and every gcp example (8): each had exactly one
@@ -146,6 +155,7 @@ const EXPECTED_FOLD: readonly string[] = [
   "lexicons/aws/examples/lifecycle-reconcile-aws",
   "lexicons/aws/examples/multi-service-alb",
   "lexicons/aws/examples/rds-postgres",
+  "lexicons/aws/examples/stack-outputs",
   "lexicons/aws/examples/vpc",
   "lexicons/azure/examples/aks-cluster",
   "lexicons/azure/examples/basic-storage",
@@ -214,17 +224,28 @@ const EXPECTED_FOLD: readonly string[] = [
 async function buildBothWays(
   entry: CorpusEntry,
 ): Promise<{ run: Awaited<ReturnType<typeof build>>; fold: Awaited<ReturnType<typeof build>>; neededIsolation: boolean }> {
-  const run = await build(entry.srcDir, entry.serializers, undefined, { fold: false });
-  const fold = await build(entry.srcDir, entry.serializers, undefined, { fold: true, intrinsics: entry.intrinsics, lexicons: entry.lexicons });
+  // chant #1112 — `build` is loaded per call, never captured once at module
+  // scope, so the run baseline is always produced by the same chant-core copy
+  // the project files were just loaded into. See {@link loadBuild}.
+  const runOnce = async () => (await loadBuild())(entry.srcDir, entry.serializers, undefined, { fold: false });
+  const foldOnce = async () =>
+    (await loadBuild())(entry.srcDir, entry.serializers, undefined, {
+      fold: true,
+      intrinsics: entry.intrinsics,
+      lexicons: entry.lexicons,
+    });
+
+  const run = await runOnce();
+  const fold = await foldOnce();
 
   if (outputsEqual(normalizeOutputs(fold.outputs), normalizeOutputs(run.outputs))) {
     return { run, fold, neededIsolation: false };
   }
 
   vi.resetModules();
-  const freshRun = await build(entry.srcDir, entry.serializers, undefined, { fold: false });
+  const freshRun = await runOnce();
   vi.resetModules();
-  const freshFold = await build(entry.srcDir, entry.serializers, undefined, { fold: true, intrinsics: entry.intrinsics, lexicons: entry.lexicons });
+  const freshFold = await foldOnce();
   return { run: freshRun, fold: freshFold, neededIsolation: true };
 }
 
@@ -242,7 +263,7 @@ describe("fold differential — fold output === run output (#1025, epic #1019)",
       // both-ways comparison + module-reset retry; that retry (which reloads the
       // whole module graph) is what makes the full corpus intractable now that
       // many entries fall back, and it buys nothing for entries we don't gate.
-      const probe = await build(entry.srcDir, entry.serializers, undefined, { fold: true, intrinsics: entry.intrinsics, lexicons: entry.lexicons });
+      const probe = await (await loadBuild())(entry.srcDir, entry.serializers, undefined, { fold: true, intrinsics: entry.intrinsics, lexicons: entry.lexicons });
       const mode = classifyFoldMode(probe.foldDecisions);
       if (mode !== "fold") {
         report.push({ name: entry.name, mode, identical: true, fileCount: probe.foldDecisions.length, neededIsolation: false });

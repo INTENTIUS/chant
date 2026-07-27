@@ -1,8 +1,8 @@
 import { afterAll, describe, expect, test, vi } from "vitest";
-import { build, buildFromEntitiesJson } from "@intentius/chant/build";
-import { discoverEntitySetJson } from "@intentius/chant/discovery/entity-wire";
 import {
   discoverCorpus,
+  loadBuild,
+  loadEntityWireBuild,
   normalizeOutputs,
   outputsEqual,
   normalizeErrors,
@@ -73,8 +73,13 @@ const report: ReportRow[] = [];
  * cross-build state bleed as a JSON-boundary defect.
  */
 async function buildBothWays(entry: ReturnType<typeof discoverCorpus>[number]) {
-  const run = async () => build(entry.srcDir, entry.serializers, undefined, { fold: false });
+  // chant #1112 — both sides are loaded per call, never captured once at
+  // module scope, so neither is built by a chant-core copy the project files
+  // were not loaded into. See {@link loadBuild} for what a stale one silently
+  // drops.
+  const run = async () => (await loadBuild())(entry.srcDir, entry.serializers, undefined, { fold: false });
   const viaJson = async () => {
+    const { discoverEntitySetJson, buildFromEntitiesJson } = await loadEntityWireBuild();
     const json = await discoverEntitySetJson(entry.srcDir, { fold: false });
     // The actual "is this pure JSON" proof — a real wire round trip, not just
     // handing the in-memory object across.

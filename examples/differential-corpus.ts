@@ -217,6 +217,55 @@ export function discoverCorpus(): CorpusEntry[] {
   return entries.sort((a, b) => a.name.localeCompare(b.name));
 }
 
+/**
+ * chant #1112 — `build()` from whatever module graph is CURRENT, rather than
+ * the one that happened to be loaded when this file was first evaluated.
+ *
+ * Every differential here retries a mismatch with `vi.resetModules()` (to
+ * rule out `propagate()`'s in-place mutation compounding across two builds of
+ * the same directory). That reset re-instantiates the module registry, so the
+ * project files a subsequent build imports get a FRESH copy of chant-core —
+ * while a statically imported `build` keeps running the ORIGINAL copy. The
+ * two halves then disagree on object identity across the seam, and the
+ * baseline silently degrades: `collectEntities` decides whether an export is
+ * an output with `isLexiconOutput` (`../packages/core/src/lexicon-output.ts`),
+ * so a stale `build` classifies a fresh `LexiconOutput` as an ordinary,
+ * ignorable export and drops it. The run side loses its whole `Outputs`
+ * section too — and a fold path that had dropped outputs for a real reason
+ * then compares EQUAL to it and reports `[identical]`.
+ *
+ * That is exactly how #1112 hid: `lexicons/aws/examples/lambda-function` (a
+ * folding entry with an `output(...)`) drifted on the fast path, took the
+ * retry, and came back "identical" because neither side had outputs any more.
+ * Worse, the registry reset is global for the rest of the file's run, so ONE
+ * entry needing the retry silently disarmed every entry sorted after it.
+ *
+ * Loading `build` per call closes it: both sides of every comparison are
+ * built by the same graph the project files were loaded into, so a fold-side
+ * drop has nothing to cancel against. Without a reset this is just a cache
+ * hit on an already-loaded module.
+ */
+export async function loadBuild(): Promise<typeof import("@intentius/chant/build").build> {
+  return (await import("@intentius/chant/build")).build;
+}
+
+/**
+ * The JSON-entity-boundary pair (`json-boundary-differential.test.ts`), loaded
+ * from the current module graph for the same reason as {@link loadBuild}.
+ * Both halves together, since they have to agree on the entity types they
+ * hand each other.
+ */
+export async function loadEntityWireBuild(): Promise<{
+  discoverEntitySetJson: typeof import("@intentius/chant/discovery/entity-wire").discoverEntitySetJson;
+  buildFromEntitiesJson: typeof import("@intentius/chant/build").buildFromEntitiesJson;
+}> {
+  const [{ discoverEntitySetJson }, { buildFromEntitiesJson }] = await Promise.all([
+    import("@intentius/chant/discovery/entity-wire"),
+    import("@intentius/chant/build"),
+  ]);
+  return { discoverEntitySetJson, buildFromEntitiesJson };
+}
+
 /** A build's outputs, normalized to plain strings for byte-exact comparison. */
 export type NormalizedOutputs = Record<string, { primary: string; files: Record<string, string> }>;
 
