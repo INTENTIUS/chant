@@ -3,6 +3,7 @@ import { readFileSync, writeFileSync, readdirSync, statSync } from "fs";
 import { execFileSync } from "child_process";
 import { runLint, parseDisableComments } from "../../lint/engine";
 import type { LintRule, LintDiagnostic, LintFix } from "../../lint/rule";
+import type { IntrinsicDef } from "../../lexicon";
 import { loadPlugins, resolveProjectLexicons } from "../plugins";
 import { formatStylish, formatJson, formatSarif } from "../reporters/stylish";
 import { loadLocalRules } from "../../lint/rule-loader";
@@ -86,8 +87,17 @@ export async function loadPluginRules(
 
 /**
  * Load all lint rules: core COR/EVL rules, then lexicon plugin rules.
+ *
+ * Also returns the active lexicons' registered intrinsics (chant #1106) —
+ * gathered here because this is where the project's lexicon plugins are
+ * already resolved and loaded (`loadPlugins`), the same set `../commands/
+ * build.ts` reads `plugin.intrinsics?.()` off of for the fold path. Handed
+ * back alongside `rules` so `lintCommand` can thread it into every
+ * `runLint` call without loading plugins a second time.
  */
-async function loadAllPluginRules(projectPath: string): Promise<Map<string, LintRule>> {
+async function loadAllPluginRules(
+  projectPath: string,
+): Promise<{ rules: Map<string, LintRule>; intrinsics: IntrinsicDef[] }> {
   const rules = new Map<string, LintRule>();
 
   // Load core COR/EVL rules directly
@@ -105,6 +115,13 @@ async function loadAllPluginRules(projectPath: string): Promise<Map<string, Lint
 
   // Load only project lexicon plugins (no "chant" injection)
   const plugins = await loadPlugins(lexiconNames);
+
+  // chant #1106 — the same plugins' registered intrinsics (`Ref`, `GetAtt`,
+  // ...), so EVL001 can answer "does this call fold?" exactly like fold()
+  // does instead of flagging every call as a violation. A plugin's
+  // `intrinsics` is an optional extension (not every lexicon defines any),
+  // hence the guard.
+  const intrinsics = plugins.flatMap((plugin) => plugin.intrinsics?.() ?? []);
 
   for (const plugin of plugins) {
     if (plugin.lintRules) {
@@ -127,7 +144,7 @@ async function loadAllPluginRules(projectPath: string): Promise<Map<string, Lint
     rules.set(r.id, r);
   }
 
-  return rules;
+  return { rules, intrinsics };
 }
 
 /**
@@ -428,7 +445,14 @@ export async function lintCommand(options: LintOptions): Promise<LintResult> {
   const hasOverrides = config.overrides && config.overrides.length > 0;
 
   // Load all rules from lexicon plugins (core "chant" + lexicon-specific)
-  let allRules = await loadAllPluginRules(projectRoot);
+  const loaded = await loadAllPluginRules(projectRoot);
+  let allRules = loaded.rules;
+  // chant #1106 — the active lexicons' registered intrinsics, threaded into
+  // every runLint() call below so EVL001 answers exactly like fold() does
+  // for a registered, opted-in call (`Ref(...)`, `GetAtt(...)`) instead of
+  // flagging it. Computed once here regardless of which branch below runs,
+  // same as `allRules`.
+  const intrinsics = loaded.intrinsics;
 
   // Merge in any config-level plugin rules (custom .ts rule files)
   if (config.plugins && config.plugins.length > 0) {
@@ -443,7 +467,7 @@ export async function lintCommand(options: LintOptions): Promise<LintResult> {
   let diagnostics: LintDiagnostic[];
   let suppressed: Array<LintDiagnostic & { reason?: string }> = [];
   if (options.rules) {
-    const result = await runLint(files, options.rules, undefined);
+    const result = await runLint(files, options.rules, undefined, intrinsics);
     diagnostics = result.diagnostics;
     suppressed = result.suppressed;
   } else if (hasOverrides) {
@@ -451,13 +475,13 @@ export async function lintCommand(options: LintOptions): Promise<LintResult> {
     for (const file of files) {
       const relativePath = relative(projectRoot, file);
       const { rules: fileRules, ruleOptions } = getDefaultRules(projectRoot, relativePath, allRules);
-      const result = await runLint([file], fileRules, ruleOptions);
+      const result = await runLint([file], fileRules, ruleOptions, intrinsics);
       diagnostics.push(...result.diagnostics);
       suppressed.push(...result.suppressed);
     }
   } else {
     const { rules, ruleOptions } = getDefaultRules(projectRoot, undefined, allRules);
-    const result = await runLint(files, rules, ruleOptions);
+    const result = await runLint(files, rules, ruleOptions, intrinsics);
     diagnostics = result.diagnostics;
     suppressed = result.suppressed;
   }
@@ -491,7 +515,7 @@ export async function lintCommand(options: LintOptions): Promise<LintResult> {
 
     // Re-lint after fixes to get updated diagnostics
     if (options.rules) {
-      const postResult = await runLint(files, options.rules, undefined);
+      const postResult = await runLint(files, options.rules, undefined, intrinsics);
       diagnostics = postResult.diagnostics;
       suppressed = postResult.suppressed;
     } else if (hasOverrides) {
@@ -500,13 +524,13 @@ export async function lintCommand(options: LintOptions): Promise<LintResult> {
       for (const file of files) {
         const relativePath = relative(projectRoot, file);
         const { rules: fileRules, ruleOptions } = getDefaultRules(projectRoot, relativePath, allRules);
-        const postResult = await runLint([file], fileRules, ruleOptions);
+        const postResult = await runLint([file], fileRules, ruleOptions, intrinsics);
         diagnostics.push(...postResult.diagnostics);
         suppressed.push(...postResult.suppressed);
       }
     } else {
       const { rules, ruleOptions } = getDefaultRules(projectRoot, undefined, allRules);
-      const postResult = await runLint(files, rules, ruleOptions);
+      const postResult = await runLint(files, rules, ruleOptions, intrinsics);
       diagnostics = postResult.diagnostics;
       suppressed = postResult.suppressed;
     }

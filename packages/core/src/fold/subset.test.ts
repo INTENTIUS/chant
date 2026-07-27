@@ -280,12 +280,15 @@ describe("documented divergences — NOT unified by design (see subset.ts module
 /**
  * chant #1044 — the shared predicate's optional intrinsic registry.
  *
- * `findSubsetViolation` answers "is this shape foldable?" for two kinds of
- * caller: `fold()`'s own EVL twin, which has no registry, and a tool that
- * does (a control plane deciding whether a repository needs a sandboxed
- * child process). The parameter is what lets the second kind get fold()'s
- * real answer without running fold, while the first keeps the answer it
- * always had.
+ * `findSubsetViolation` answers "is this shape foldable?" for a caller that
+ * has a registry and one that doesn't: with it, the answer for a call is
+ * exact (fold()'s own); without it, every call is a violation, the
+ * pre-#1044 answer. EVL001 (`chant lint`) is the first kind as of #1106 —
+ * `runLint` threads the active lexicons' intrinsics onto
+ * `LintContext.intrinsics`, which EVL001 forwards here — and the second
+ * kind whenever a caller hasn't resolved a project's lexicons (a bare unit
+ * test, a tool asking "would this fold?" with no lexicon context of its
+ * own).
  */
 describe("findSubsetViolation — optional intrinsic registry (#1044)", () => {
   const REF: IntrinsicDef[] = [{ name: "Ref", isTag: false, foldsAsCall: true }];
@@ -331,14 +334,15 @@ describe("findSubsetViolation — optional intrinsic registry (#1044)", () => {
     expect(v?.message).toContain("getName(...)");
   });
 
-  test("registry-less EVL is now STRICTER than fold on an opted-in call — a known divergence, not a hole", () => {
-    // chant #1044 — EVL001 has no registry (see subset.ts module doc, point
-    // 2c), so it still flags `Ref(...)` in a resource's props exactly as it
-    // did before this change, while fold() — which is always given one —
-    // folds it. Recorded here so the divergence is a tracked property with a
-    // test rather than a surprise; closing it means handing the lint engine
-    // the active lexicons' intrinsics, which is a change to lint's own
-    // surface and deliberately not part of #1044.
+  test("EVL converges with fold on an opted-in call once it carries the registry (chant #1106)", () => {
+    // chant #1044 left EVL001 with no registry (see subset.ts module doc,
+    // point 2c), so it flagged `Ref(...)` in a resource's props even though
+    // fold() — which is always given one — folded it cleanly. #1106 closes
+    // that by threading `runLint`'s intrinsics parameter onto
+    // `LintContext.intrinsics`, which EVL001 passes straight through to this
+    // same `findSubsetViolation`/`checkObjectMember` predicate. A
+    // `LintContext` built WITH the registry (what `chant lint` now
+    // constructs for a real project) no longer flags what fold() accepts.
     const source = `const bad = new Thing({ x: Ref(env) });`;
     const sourceFile = ts.createSourceFile("t.ts", source, ts.ScriptTarget.Latest, true);
     const consts = collectConsts(sourceFile);
@@ -346,6 +350,16 @@ describe("findSubsetViolation — optional intrinsic registry (#1044)", () => {
 
     expect(() => foldResource(badInit, consts, REF)).not.toThrow();
 
+    const context: LintContext = { sourceFile, entities: [], filePath: "t.ts", lexicon: undefined, intrinsics: REF };
+    expect(evl001NonLiteralExpressionRule.check(context)).toHaveLength(0);
+  });
+
+  test("without the registry, EVL001 keeps the pre-#1044 conservative answer", () => {
+    // A `LintContext` built without `intrinsics` (a caller that hasn't
+    // resolved a project's lexicons) still flags the call — the safe
+    // default subset.ts's module doc describes, unchanged by #1106.
+    const source = `const bad = new Thing({ x: Ref(env) });`;
+    const sourceFile = ts.createSourceFile("t.ts", source, ts.ScriptTarget.Latest, true);
     const context: LintContext = { sourceFile, entities: [], filePath: "t.ts", lexicon: undefined };
     expect(evl001NonLiteralExpressionRule.check(context).length).toBeGreaterThan(0);
   });

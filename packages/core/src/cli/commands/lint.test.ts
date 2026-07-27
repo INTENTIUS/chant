@@ -332,6 +332,80 @@ describe("plugin integration", () => {
   });
 });
 
+/**
+ * chant #1106 — `runLint`'s EVL rules now receive the active lexicons'
+ * registered intrinsics (threaded from `loadAllPluginRules`'s
+ * `plugin.intrinsics?.()`, mirroring how `../commands/build.ts` gathers the
+ * same set for the fold path). Before this, `chant lint` flagged
+ * `Ref(...)` — a registered, opted-in call-form intrinsic (aws's
+ * `lexicons/aws/src/plugin.ts`) that `chant build --fold` folds cleanly —
+ * as EVL001, purely because EVL001's shared `../../fold/subset.ts`
+ * predicate never saw the registry. These use the real aws lexicon plugin
+ * (already a workspace dependency) rather than a mock, so the registration
+ * this asserts against is the one that actually ships.
+ */
+describe("lintCommand — EVL/intrinsic registry convergence (#1106)", () => {
+  let testDir: string;
+
+  beforeEach(async () => {
+    testDir = join(tmpdir(), `chant-lint-intrinsics-test-${Date.now()}-${Math.random()}`);
+    await mkdir(testDir, { recursive: true });
+    process.env.NO_COLOR = "1";
+  });
+
+  afterEach(async () => {
+    await rm(testDir, { recursive: true, force: true });
+    delete process.env.NO_COLOR;
+  });
+
+  test("a registered, opted-in intrinsic call (aws's Ref) is not flagged as EVL001", async () => {
+    await writeFile(join(testDir, "chant.config.json"), JSON.stringify({ lexicons: ["aws"] }));
+    await writeFile(
+      join(testDir, "index.ts"),
+      `
+import { Ref } from "@intentius/chant-lexicon-aws";
+
+class Queue {
+  constructor(_props: Record<string, unknown>) {}
+}
+
+export const environment = "prod";
+export const queue = new Queue({ name: Ref(environment) });
+      `,
+    );
+
+    const result = await lintCommand({ path: testDir, format: "stylish" });
+
+    expect(result.diagnostics.filter((d) => d.ruleId === "EVL001")).toHaveLength(0);
+  });
+
+  test("an unregistered call is still flagged as EVL001 in the same project", async () => {
+    await writeFile(join(testDir, "chant.config.json"), JSON.stringify({ lexicons: ["aws"] }));
+    await writeFile(
+      join(testDir, "index.ts"),
+      `
+import { Ref } from "@intentius/chant-lexicon-aws";
+
+class Queue {
+  constructor(_props: Record<string, unknown>) {}
+}
+
+function makeName(): string {
+  return "generated";
+}
+
+export const queue = new Queue({ name: makeName() });
+      `,
+    );
+
+    const result = await lintCommand({ path: testDir, format: "stylish" });
+
+    const evl001 = result.diagnostics.filter((d) => d.ruleId === "EVL001");
+    expect(evl001).toHaveLength(1);
+    expect(evl001[0].message).toContain("statically evaluable");
+  });
+});
+
 describe("lintCommand — project-root config resolution (scoped lint)", () => {
   let testDir: string;
 

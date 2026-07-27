@@ -31,7 +31,7 @@ function checkNode(node: ts.Node, context: LintContext, diagnostics: LintDiagnos
       const firstArg = node.arguments[0];
       if (ts.isObjectLiteralExpression(firstArg)) {
         for (const prop of firstArg.properties) {
-          const violation = checkObjectMember(prop);
+          const violation = checkObjectMember(prop, context.intrinsics);
           if (violation) {
             const { line, character } = context.sourceFile.getLineAndCharacterOfPosition(
               violation.node.getStart(context.sourceFile),

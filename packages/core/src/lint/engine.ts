@@ -1,4 +1,5 @@
 import type { LintRule, LintDiagnostic, LintContext } from "./rule";
+import type { IntrinsicDef } from "../lexicon";
 import { parseFile } from "./parser";
 import { readFileSync } from "fs";
 
@@ -193,12 +194,22 @@ function isDiagnosticDisabled(
  * @param files - Array of file paths to lint
  * @param rules - Array of lint rules to execute
  * @param ruleOptions - Optional map of rule ID to options object
+ * @param intrinsics - chant #1106 — the active lexicons' registered
+ *   intrinsics (e.g. AWS's `Ref`, `GetAtt`), put on every file's
+ *   `LintContext.intrinsics` so a rule built on `../fold/subset.ts`'s
+ *   shared predicate (EVL001) answers exactly like `fold()` does for a
+ *   registered, opted-in call, instead of degrading to "every call is a
+ *   violation". Mirrors how `discover()` has threaded the same
+ *   `IntrinsicDef[]` into the fold path since #1039/#1105. Optional and
+ *   defaulting to none, so a caller that hasn't resolved a project's
+ *   lexicons (a unit test, `bench.test.ts`) is unaffected.
  * @returns LintRunResult with diagnostics and suppressed items
  */
 export async function runLint(
   files: string[],
   rules: LintRule[],
   ruleOptions?: Map<string, Record<string, unknown>>,
+  intrinsics?: readonly IntrinsicDef[],
 ): Promise<LintRunResult> {
   const allDiagnostics: LintDiagnostic[] = [];
   const allSuppressed: Array<LintDiagnostic & { reason?: string }> = [];
@@ -219,6 +230,7 @@ export async function runLint(
         entities: [],
         filePath,
         lexicon: undefined,
+        intrinsics,
       };
 
       // Execute each rule

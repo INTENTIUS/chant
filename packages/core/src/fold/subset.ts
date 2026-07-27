@@ -69,8 +69,22 @@ import { intrinsicCallFolds, type IntrinsicDef } from "../lexicon";
  *      the flow-sensitivity note below — the single divergence in the other
  *      direction, and the one this module treats as a wart). A caller with
  *      no registry degrades to "assume it runs", which is safe and cheap to
- *      reason about; EVL is exactly such a caller and its behavior on calls
- *      is unchanged by #1044.
+ *      reason about.
+ *
+ *      chant #1106 — EVL is no longer such a caller by default. `runLint`
+ *      (../lint/engine.ts) takes the active lexicons' `IntrinsicDef[]` as a
+ *      parameter and puts it on `LintContext.intrinsics`
+ *      (../lint/rule.ts), and EVL001 (evl001-non-literal-expression.ts)
+ *      passes it straight through to `checkObjectMember`. `chant lint`'s
+ *      three CLI entry points (the `lint` command's initial pass, its
+ *      `--fix` re-lint, and the LSP's per-file diagnostics) all resolve the
+ *      project's lexicons and thread their intrinsics through, mirroring
+ *      how `discover()` has done it for the fold path since #1039/#1105 —
+ *      so `chant lint` on a real project no longer flags `Ref(...)` that
+ *      `fold()` accepts. A `LintContext` built without that plumbing (a
+ *      unit test constructing one directly, a consumer that hasn't
+ *      resolved lexicons) still gets the pre-#1044 conservative answer —
+ *      that path was never wrong, only stricter than it had to be.
  *   3. Runtime *type* of a folded value — e.g. spreading `const n = 5`
  *      (`{...n}`) is shape-valid (`n` is a plain identifier) but `fold()`
  *      rejects it once it discovers `n` folds to a number, not an object.
