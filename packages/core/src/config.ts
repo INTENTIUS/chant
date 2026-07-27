@@ -8,6 +8,7 @@ import type { Severity } from "./components/verbs/vuln-scan";
 import type { VulnPolicy } from "./components/verbs/vuln-gate";
 import type { BuildParamsConfig } from "./build-params";
 import { findProjectConfig } from "./project-root";
+import { evaluateProjectConfig } from "./config-sandbox";
 
 /**
  * Zod schema for ChantConfig validation.
@@ -274,16 +275,24 @@ export const DEFAULT_CHANT_CONFIG: ChantConfig = {};
 /**
  * Load project configuration from a directory.
  *
- * Tries `chant.config.ts` first (via dynamic import), then `chant.config.json`.
- * Returns default config if neither exists.
+ * Tries `chant.config.ts` first, then `chant.config.json`. Returns default
+ * config if neither exists.
+ *
+ * chant #1113 — `chant.config.ts` is project-authored code, so *where* it is
+ * evaluated is a security question, and the answer is
+ * `./config-sandbox.ts`'s: in a sandboxed child when this process was armed by
+ * `chant build --sandbox`, in-process (exactly as before) otherwise. Either
+ * way the result is the same plain configuration object, and validation
+ * ({@link normalizeConfig}) happens here, in the trusted process.
+ * `chant.config.json` is data, not code — it is parsed in-process under
+ * `--sandbox` too, because there is nothing to execute.
  */
 export async function loadChantConfig(dir: string): Promise<ResolvedConfig> {
   // Try chant.config.ts first
   const tsPath = join(dir, "chant.config.ts");
   if (existsSync(tsPath)) {
-    const mod = await import(tsPath);
-    const config = mod.default ?? mod.config ?? mod;
-    return { config: normalizeConfig(config, tsPath), configPath: tsPath };
+    const config = await evaluateProjectConfig(tsPath, dir);
+    return { config: normalizeConfig(config as Record<string, unknown>, tsPath), configPath: tsPath };
   }
 
   // Fall back to chant.config.json

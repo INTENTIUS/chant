@@ -6,6 +6,7 @@ import { formatSuccess, formatError } from "./format";
 import { loadPlugins, resolveProjectLexicons } from "./plugins";
 import { resolveCommand, type CommandDef, type ParsedArgs } from "./registry";
 import { loadChantConfigUpward } from "../config";
+import { armSandboxConfigEvaluation } from "../config-sandbox";
 import { ENV_VAR, unknownEnvError } from "../env";
 import { initRuntime } from "../runtime-adapter";
 import { runBuild } from "./handlers/build";
@@ -597,6 +598,15 @@ async function main(): Promise<void> {
   // / build) reflects that environment. Set early, before config import, since
   // chant.config itself may branch on the env. (#505)
   if (args.env) process.env[ENV_VAR] = args.env;
+
+  // chant #1113 — `--sandbox` is a property of the whole invocation, and it
+  // has to be known BEFORE the first config load, because `chant.config.ts` is
+  // itself project-authored code. Arming here, straight off the parsed flag,
+  // is the only ordering that works: the project's own `build.sandbox: true`
+  // cannot cover its own evaluation (reading it means running it), so the
+  // command-line flag is what puts the config inside the boundary. See
+  // `../config-sandbox.ts`.
+  if (args.sandbox) armSandboxConfigEvaluation();
 
   // Initialize runtime adapter early — before plugins or commands run.
   // chant #1117 — walks up from `args.path` to the project root: for a

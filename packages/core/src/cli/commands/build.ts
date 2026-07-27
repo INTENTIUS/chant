@@ -158,6 +158,19 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
   // as fold, resolved independently.
   const sandbox = resolveSandboxEnabled(config, options.sandbox);
 
+  // #1113 — the bootstrap limit, surfaced rather than left implicit. Reading
+  // `build.sandbox` out of `chant.config.ts` requires evaluating that file, so
+  // a config-only opt-in cannot have covered its own evaluation; only the CLI
+  // flag, known before any config is touched, arms `../config-sandbox.ts`.
+  // Say so instead of letting two different boundaries share one word.
+  if (sandbox && !options.sandbox && loaded.configPath?.endsWith(".ts")) {
+    warnings.push(
+      formatWarning({
+        message: `build.sandbox is enabled by ${loaded.configPath}, but that file was itself evaluated in this process — reading the setting requires running the config. Pass --sandbox on the command line to evaluate chant.config.ts inside the boundary too.`,
+      }),
+    );
+  }
+
   // #1064 (factored into ../build-params-cli.ts's resolveCliBuildParams by
   // #1108, so the component deploy driver runs the identical sequence) —
   // resolve declared build-time parameters (chant.config.ts's buildParams)

@@ -1,7 +1,7 @@
 import { readFileSync, existsSync } from "fs";
 import { join, dirname, resolve } from "path";
-import { createRequire } from "module";
 import { z } from "zod";
+import { evaluateProjectConfigSync } from "../config-sandbox";
 import type { Severity, RuleConfig } from "./rule";
 import { moduleDir, getRuntime } from "../runtime-adapter";
 import strictPreset from "./presets/strict.json";
@@ -337,6 +337,12 @@ function loadConfigFile(configPath: string, visited: Set<string> = new Set()): L
  * then falls back to `chant.config.json` (legacy LintConfig format).
  * Returns default configuration if neither exists.
  *
+ * chant #1113 — the `chant.config.ts` branch executes project-authored code,
+ * so it goes through `../config-sandbox.ts` like every other config load
+ * rather than `require`-ing the file itself. Unarmed (which is every `chant
+ * lint` invocation today — `lint` has no `--sandbox` flag) that is the
+ * identical `createRequire` path this used before, moved one module over.
+ *
  * @param dir - Directory path to search for config file
  * @returns Loaded and merged configuration, or default config if not found
  */
@@ -345,9 +351,7 @@ export function loadConfig(dir: string): LintConfig {
   const tsConfigPath = join(dir, "chant.config.ts");
   if (existsSync(tsConfigPath)) {
     try {
-      const _require = createRequire(join(dir, "package.json"));
-      const mod = _require(tsConfigPath);
-      const config = mod.default ?? mod.config ?? mod;
+      const config = evaluateProjectConfigSync(tsConfigPath, dir);
       if (typeof config === "object" && config !== null) {
         // ChantConfig format: extract lint property
         if ("lint" in config && typeof config.lint === "object") {
