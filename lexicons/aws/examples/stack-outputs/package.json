@@ -1,0 +1,20 @@
+{
+  "name": "stack-outputs-example",
+  "version": "0.0.1",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "chant build src --lexicon aws -o template.json",
+    "lint": "chant lint src",
+    "test": "npx vitest run",
+    "deploy": "aws cloudformation deploy --template-file template.json --stack-name stack-outputs --capabilities CAPABILITY_NAMED_IAM",
+    "teardown": "aws cloudformation delete-stack --stack-name stack-outputs"
+  },
+  "dependencies": {
+    "@intentius/chant-lexicon-aws": "*",
+    "@intentius/chant": "*"
+  },
+  "devDependencies": {
+    "typescript": "*"
+  }
+}
