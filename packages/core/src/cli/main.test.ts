@@ -270,6 +270,29 @@ describe("parseArgs", () => {
     const result = parseArgs(["build", "src", "--params-file", "./params.json"]);
     expect(result.paramsFile).toBe("./params.json");
   });
+
+  // ── --param=name=value hard error (chant #1118) ──────────────────────────
+  // The joined `--flag=value` form is not supported anywhere in this parser
+  // (see "ignores unknown flags" above) — a dropped --param can silently
+  // change what a build measures/deploys, so this form is rejected loudly
+  // instead of silently accepted as a no-op.
+
+  test("--param=name=value throws instead of silently dropping", () => {
+    expect(() => parseArgs(["build", "src", "--param=tier=production"])).toThrow(/--param=tier=production/);
+  });
+
+  test("--param=name=value error names the working form", () => {
+    expect(() => parseArgs(["build", "src", "--param=tier=production"])).toThrow(/--param name=value/);
+  });
+
+  test("--param= (empty value) also throws", () => {
+    expect(() => parseArgs(["build", "src", "--param="])).toThrow(/--param=/);
+  });
+
+  test("plain --param name=value is unaffected", () => {
+    const result = parseArgs(["build", "src", "--param", "tier=production"]);
+    expect(result.param).toEqual(["tier=production"]);
+  });
 });
 
 // ── resolveCommand tests ──────────────────────────────────────────
