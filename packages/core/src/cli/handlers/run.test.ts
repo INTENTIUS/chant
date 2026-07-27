@@ -878,7 +878,7 @@ describe("runOp dispatcher: --components routes to runOpComponents", () => {
     const exit = await runOp({ args: makeArgs({ path: "svc", components: true, temporal: false }), plugins: [], serializers: [] });
 
     expect(exit).toBe(0);
-    expect(runComponentsMock).toHaveBeenCalledWith(expect.any(String), "svc", { env: undefined, componentOutputs: {} });
+    expect(runComponentsMock).toHaveBeenCalledWith(expect.any(String), "svc", { env: undefined, componentOutputs: {}, buildParams: [] });
     expect(discoverOpsMock).not.toHaveBeenCalled();
     vi.restoreAllMocks();
   });
@@ -900,6 +900,87 @@ describe("runOpComponents", () => {
     expect(runComponentsMock).not.toHaveBeenCalled();
   });
 
+  // ── build-time parameters (chant #1108) — resolved BEFORE dispatch ────────
+
+  describe("build-time parameters", () => {
+    test("chant.config.ts's declared buildParams resolve and log before dispatching to runComponents", async () => {
+      loadChantConfigMock.mockResolvedValue({
+        config: { buildParams: { tier: { type: "string", default: "light" } } },
+      });
+      runComponentsMock.mockResolvedValue({
+        success: true,
+        selected: ["svc"],
+        run: { order: ["svc"], waves: [["svc"]], results: [{ component: "svc", ok: true, records: [] }], ok: true },
+      });
+      const stderr = makeStderrSpy();
+
+      const exit = await runOpComponents({ args: makeArgs({ path: "svc", temporal: false }), plugins: [], serializers: [] });
+
+      expect(exit).toBe(0);
+      expect(runComponentsMock).toHaveBeenCalledWith(expect.any(String), "svc", expect.objectContaining({
+        buildParams: [{ name: "tier", value: "light", source: "default" }],
+      }));
+      expect(stderr.join("\n")).toContain("[param] tier");
+    });
+
+    test("--param overrides a declared default and is threaded through to runComponents", async () => {
+      loadChantConfigMock.mockResolvedValue({
+        config: { buildParams: { tier: { type: "string", default: "light" } } },
+      });
+      runComponentsMock.mockResolvedValue({
+        success: true,
+        selected: ["svc"],
+        run: { order: ["svc"], waves: [["svc"]], results: [{ component: "svc", ok: true, records: [] }], ok: true },
+      });
+      vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+      const stderr = makeStderrSpy();
+
+      const exit = await runOpComponents({
+        args: makeArgs({ path: "svc", temporal: false, param: ["tier=production"] }),
+        plugins: [],
+        serializers: [],
+      });
+
+      expect(exit).toBe(0);
+      expect(runComponentsMock).toHaveBeenCalledWith(expect.any(String), "svc", expect.objectContaining({
+        buildParams: [{ name: "tier", value: "production", source: "cli" }],
+      }));
+      expect(stderr.join("\n")).toContain("[param] tier");
+      vi.restoreAllMocks();
+    });
+
+    test("an unresolved required build-time parameter → exit 1 with a formatted error naming it, never reaches runComponents (the previously-{} probe, now a hard stop instead)", async () => {
+      loadChantConfigMock.mockResolvedValue({
+        config: { buildParams: { tier: { type: "string" } } },
+      });
+      const stderr = makeStderrSpy();
+
+      const exit = await runOpComponents({ args: makeArgs({ path: "svc", temporal: false }), plugins: [], serializers: [] });
+
+      expect(exit).toBe(1);
+      expect(stderr.join("\n")).toMatch(/"tier"/);
+      expect(runComponentsMock).not.toHaveBeenCalled();
+    });
+
+    test("an enum violation on --param → exit 1 with a formatted error, never reaches runComponents", async () => {
+      loadChantConfigMock.mockResolvedValue({
+        config: { buildParams: { tier: { type: "string", enum: ["light", "production"] } } },
+      });
+      const stderr = makeStderrSpy();
+
+      const exit = await runOpComponents({
+        args: makeArgs({ path: "svc", temporal: false, param: ["tier=bogus"] }),
+        plugins: [],
+        serializers: [],
+      });
+
+      expect(exit).toBe(1);
+      expect(stderr.join("\n")).toMatch(/"tier"/);
+      expect(stderr.join("\n")).toMatch(/bogus/);
+      expect(runComponentsMock).not.toHaveBeenCalled();
+    });
+  });
+
   test("happy path: single component, human output, exit 0", async () => {
     runComponentsMock.mockResolvedValue({
       success: true,
@@ -916,7 +997,7 @@ describe("runOpComponents", () => {
     const exit = await runOpComponents({ args: makeArgs({ path: "svc", temporal: false }), plugins: [], serializers: [] });
 
     expect(exit).toBe(0);
-    expect(runComponentsMock).toHaveBeenCalledWith(expect.any(String), "svc", { env: undefined, componentOutputs: {} });
+    expect(runComponentsMock).toHaveBeenCalledWith(expect.any(String), "svc", { env: undefined, componentOutputs: {}, buildParams: [] });
     const printed = stderrWrite.mock.calls.map((c) => String(c[0])).join("");
     expect(printed).toContain("interpret run completed");
     vi.restoreAllMocks();
@@ -928,7 +1009,7 @@ describe("runOpComponents", () => {
 
     await runOpComponents({ args: makeArgs({ path: "svc", env: "staging", temporal: false }), plugins: [], serializers: [] });
 
-    expect(runComponentsMock).toHaveBeenCalledWith(expect.any(String), "svc", { env: "staging", componentOutputs: {} });
+    expect(runComponentsMock).toHaveBeenCalledWith(expect.any(String), "svc", { env: "staging", componentOutputs: {}, buildParams: [] });
     vi.restoreAllMocks();
   });
 
@@ -994,6 +1075,7 @@ describe("runOpComponents", () => {
       env: undefined,
       componentOutputs: {},
       onProgress: undefined,
+      buildParams: [],
     });
     expect(stdoutWrite).not.toHaveBeenCalled();
     vi.restoreAllMocks();
@@ -1018,7 +1100,7 @@ describe("runOpComponents", () => {
     const exit = await runOpComponents({ args: makeArgs({ path: "all", temporal: false }), plugins: [], serializers: [] });
 
     expect(exit).toBe(0);
-    expect(runComponentsMock).toHaveBeenCalledWith(expect.any(String), "all", { env: undefined, componentOutputs: {} });
+    expect(runComponentsMock).toHaveBeenCalledWith(expect.any(String), "all", { env: undefined, componentOutputs: {}, buildParams: [] });
     const printed = stderrWrite.mock.calls.map((c) => String(c[0])).join("");
     expect(printed).toContain("shared-alb");
     expect(printed).toContain("search-service");
@@ -1269,7 +1351,13 @@ describe("runOpComponents: --temporal routes to the durable path", () => {
     resolveComponentTargetsMock.mockReset();
     findComponentGateMock.mockReset();
     loadComponentTemporalCodegenMock.mockReset();
-    loadChantConfigMock.mockReset();
+    // chant #1108 — runOpComponents now resolves build-time parameters (which
+    // needs chant.config.ts's declared `buildParams`) BEFORE dispatching to
+    // either the local or --temporal path, so every test in this block hits
+    // loadChantConfig at least once now, even ones that never reach the rest
+    // of the durable path (e.g. "unknown component"). Individual tests below
+    // still override this where they care about a specific config shape.
+    loadChantConfigMock.mockReset().mockResolvedValue({ config: {} });
     resolveProfileMock.mockReset();
     loadTemporalClientMock.mockReset();
     spawnChildMock.mockReset();
@@ -1295,6 +1383,73 @@ describe("runOpComponents: --temporal routes to the durable path", () => {
 
     expect(exit).toBe(1);
     expect(stderr.join("\n")).toContain('Component "missing" not found');
+  });
+
+  // ── build-time parameters (chant #1108) — resolved before discovery here too ─
+
+  test("resolved build-time parameters are forwarded into resolveComponentTargets on the --temporal path", async () => {
+    process.env.LOOM_ENV = "staging";
+    resolveComponentTargetsMock.mockResolvedValue({
+      success: true,
+      targets: [{ name: "gated-svc", dependsOn: [], deploy: [] }],
+    });
+    resolveProfileMock.mockReturnValue({ address: "localhost:7233", namespace: "default", taskQueue: "q" });
+    loadComponentTemporalCodegenMock.mockResolvedValue({
+      serializeComponent: () => ({ "components/gated-svc/worker.ts": "// worker" }),
+      componentWorkflowFnName: (name: string) => `${name}ComponentWorkflow`,
+    });
+    const mockClient = createMockTemporalClient({
+      describeByWorkflowId: {
+        "chant-component-gated-svc": {
+          workflowId: "chant-component-gated-svc", runId: "r1",
+          status: { name: "COMPLETED" }, startTime: new Date(),
+          taskQueue: "gated-svc", type: { name: "gatedSvcComponentWorkflow" },
+        },
+      },
+      historyByWorkflowId: { "chant-component-gated-svc": [] },
+    });
+    // setupTemporalClient sets its own default loadChantConfigMock resolved
+    // value, so the test's own (buildParams-declaring) config must be set
+    // AFTER calling it, not before.
+    setupTemporalClient(mockClient);
+    loadChantConfigMock.mockResolvedValue({
+      config: { buildParams: { env: { type: "string", env: "LOOM_ENV", default: "dev" } } },
+    });
+    const { proc } = makeFakeChildProcess();
+    spawnChildMock.mockReturnValue(proc);
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+    try {
+      vi.useFakeTimers();
+      const promise = runOpComponents({ args: makeArgs({ path: "gated-svc", temporal: true }), plugins: [], serializers: [] });
+      await vi.advanceTimersByTimeAsync(5000);
+      const exit = await promise;
+
+      expect(exit).toBe(0);
+      expect(resolveComponentTargetsMock).toHaveBeenCalledWith(
+        expect.any(String),
+        "gated-svc",
+        undefined,
+        [{ name: "env", value: "staging", source: "env" }],
+      );
+    } finally {
+      vi.useRealTimers();
+      vi.restoreAllMocks();
+      delete process.env.LOOM_ENV;
+    }
+  });
+
+  test("an unresolved required build-time parameter → exit 1, never reaches resolveComponentTargets", async () => {
+    loadChantConfigMock.mockResolvedValue({
+      config: { buildParams: { tier: { type: "string" } } },
+    });
+    const stderr = makeStderrSpy();
+
+    const exit = await runOpComponents({ args: makeArgs({ path: "gated-svc", temporal: true }), plugins: [], serializers: [] });
+
+    expect(exit).toBe(1);
+    expect(stderr.join("\n")).toMatch(/"tier"/);
+    expect(resolveComponentTargetsMock).not.toHaveBeenCalled();
   });
 
   test("compiles the component, spawns the worker, submits the workflow, polls to COMPLETED", async () => {

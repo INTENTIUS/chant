@@ -23,6 +23,7 @@
  */
 
 import { discoverComponents } from "./discover";
+import type { BuildParamProvenance } from "../provenance";
 import { projectToJson, type Archetype } from "./component";
 import {
   resolveComponentGraph,
@@ -185,6 +186,8 @@ export interface GenerateComponentsResult {
   /** Every generated job, for a machine-readable view (`--format json`). */
   jobs?: Array<{ jobName: string; component: string; stage: string; needs: string[] }>;
   error?: string;
+  /** This invocation's resolved build-time parameters (chant #1108) — the generate-mode counterpart of `../cli/commands/build.ts`'s `BuildResult.buildParams`. Empty when the project declares/supplies none. */
+  buildParams?: BuildParamProvenance[];
 }
 
 /**
@@ -221,6 +224,15 @@ export async function generateComponentsPipeline(
   lexicon: GenerateLexicon,
   options?: ComponentPipelineOptions,
   sandbox?: boolean,
+  /**
+   * chant #1108 — this invocation's resolved build-time parameter values
+   * (../cli/handlers/build.ts resolves them, the same sequence `chant build`
+   * runs, BEFORE calling this function), forwarded into discovery so a
+   * `params.<name>` reference inside a discovered `*.component.ts` file
+   * resolves instead of reading `{}`. See `discoverComponents`'s
+   * `buildParams` option (./discover.ts) for the full doc.
+   */
+  buildParams?: BuildParamProvenance[],
 ): Promise<GenerateComponentsResult> {
   const plugin = await loadLexiconPlugin(lexicon);
   if (!plugin?.generateComponentPipeline) {
@@ -230,7 +242,7 @@ export async function generateComponentsPipeline(
     };
   }
 
-  const result = await discoverComponents(path, { sandbox });
+  const result = await discoverComponents(path, { sandbox, buildParams });
   if (result.errors.length > 0) {
     return { success: false, error: result.errors.map((e) => e.message).join("\n") };
   }
@@ -243,7 +255,7 @@ export async function generateComponentsPipeline(
 
   try {
     const { yaml, stages, jobs } = plugin.generateComponentPipeline(driverComponents, options);
-    return { success: true, yaml, stages, jobs };
+    return { success: true, yaml, stages, jobs, buildParams };
   } catch (err) {
     if (err instanceof UnknownDependencyError || err instanceof DependencyCycleError) {
       return { success: false, error: err.message };
@@ -344,6 +356,21 @@ export interface RunComponentsOptions {
    * `--progress-json`, in which case nothing changes.
    */
   onProgress?: (event: RunProgressEvent) => void;
+  /**
+   * chant #1108 — this run's resolved build-time parameter values, resolved
+   * the exact same way `chant build` resolves them
+   * (../cli/build-params-cli.ts's `resolveCliBuildParams`, driven by
+   * `--param`/`--params-file`/a declared `env` mapping/`chant.config.ts`'s
+   * `buildParams` defaults). The CLI handler (../cli/handlers/run.ts)
+   * resolves + logs these BEFORE calling `runComponents`, the same
+   * sequencing `chant build` uses — this function only forwards the
+   * already-resolved values into discovery (`resolveComponentTargets` below,
+   * then `discoverComponents`); it does not resolve them itself, so
+   * `runComponents` stays free of CLI-flag-parsing/formatting concerns.
+   * Default: none — `params.*` stays `{}`, matching every caller (including
+   * every test in `cli-support.test.ts`) that doesn't supply this.
+   */
+  buildParams?: BuildParamProvenance[];
 }
 
 /** Result of `chant run --components <name|all>`. */
@@ -356,6 +383,8 @@ export interface RunComponentsResult {
   error?: string;
   /** Set when a selected component (or one of its `deploy`/`rollback` phases) contains a `gate` the local executor cannot run. */
   gateUnsupported?: { component: string; signalName: string };
+  /** This run's resolved build-time parameters (chant #1108) — the component-driver counterpart of `../cli/commands/build.ts`'s `BuildResult.buildParams`. Present only once the run actually reached dispatch (mirrors `BuildResult.buildParams`, which is likewise absent on an early-error return). */
+  buildParams?: BuildParamProvenance[];
 }
 
 /**
@@ -404,8 +433,10 @@ export async function resolveComponentTargets(
   path: string,
   selector: string,
   sandbox?: boolean,
+  /** chant #1108 — this invocation's resolved build-time parameter values, forwarded into `discoverComponents` so a `params.<name>` reference inside a discovered `*.component.ts` file resolves instead of reading `{}`. See `discoverComponents`'s `buildParams` option (./discover.ts). */
+  buildParams?: BuildParamProvenance[],
 ): Promise<ResolvedComponentTargets> {
-  const result = await discoverComponents(path, { sandbox });
+  const result = await discoverComponents(path, { sandbox, buildParams });
   if (result.errors.length > 0) {
     return { success: false, targets: [], error: result.errors.map((e) => e.message).join("\n") };
   }
@@ -433,7 +464,7 @@ export async function runComponents(
   selector: string,
   options: RunComponentsOptions = {},
 ): Promise<RunComponentsResult> {
-  const resolved = await resolveComponentTargets(path, selector, options.sandbox);
+  const resolved = await resolveComponentTargets(path, selector, options.sandbox, options.buildParams);
   if (!resolved.success) {
     return { success: false, selected: [], error: resolved.error };
   }
@@ -479,7 +510,7 @@ export async function runComponents(
   try {
     if (selector === "all") {
       const run = await runInterpretDriver(resolvedTargets, registry, { env, componentOutputs: seedOutputs, onProgress });
-      return { success: true, run, selected };
+      return { success: true, run, selected, buildParams: options.buildParams };
     }
 
     // Single-component invocation: run just this component, bypassing
@@ -518,7 +549,7 @@ export async function runComponents(
       failedComponent: componentResult.ok ? undefined : componentResult.component,
       componentOutputs,
     };
-    return { success: componentResult.ok, run, selected };
+    return { success: componentResult.ok, run, selected, buildParams: options.buildParams };
   } catch (err) {
     if (err instanceof DriverRunFailure) {
       return { success: false, run: err.result, selected, error: err.message };

@@ -1,13 +1,13 @@
 import { build } from "../../build";
 import { loadChantConfig, resolveOwnershipMarker, resolveFoldEnabled, resolveSandboxEnabled } from "../../config";
-import { resolveBuildParams } from "../../build-params";
+import { resolveCliBuildParams } from "../build-params-cli";
 import type { Serializer, SerializerResult } from "../../serializer";
 import type { LexiconPlugin } from "../../lexicon";
 import { runPostSynthChecks } from "../../lint/post-synth";
 import { loadPolicyChecks } from "../../lint/policy";
 import { sortedJsonReplacer } from "../../utils";
 import { formatError, formatWarning, formatSuccess, formatBold, formatInfo } from "../format";
-import { writeFileSync, mkdirSync, readFileSync } from "fs";
+import { writeFileSync, mkdirSync } from "fs";
 import { resolve, dirname, join, relative } from "path";
 import { watchDirectory, formatTimestamp, formatChangedFiles } from "../watch";
 
@@ -155,43 +155,23 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
   // as fold, resolved independently.
   const sandbox = resolveSandboxEnabled(config, options.sandbox);
 
-  // #1064 — resolve declared build-time parameters (chant.config.ts's
-  // buildParams) against this invocation's --param/--params-file/declared
-  // env mapping, BEFORE calling build() — a resolution failure (an unknown
-  // name, a missing required value, a type/enum mismatch) is reported as a
-  // chant build error naming the parameter, never a thrown error from inside
-  // user source (which is what loomster's hand-rolled `tierFromEnv()`-style
-  // validators did before migrating to this mechanism).
-  let paramsFileContent: Record<string, unknown> | undefined;
-  if (options.paramsFile) {
-    try {
-      paramsFileContent = JSON.parse(readFileSync(resolve(options.paramsFile), "utf-8"));
-    } catch (err) {
-      errors.push(
-        formatError({
-          message: `Failed to read/parse --params-file "${options.paramsFile}": ${err instanceof Error ? err.message : String(err)}`,
-        }),
-      );
-    }
-  }
-  const paramsResolution = resolveBuildParams(config.buildParams, {
+  // #1064 (factored into ../build-params-cli.ts's resolveCliBuildParams by
+  // #1108, so the component deploy driver runs the identical sequence) —
+  // resolve declared build-time parameters (chant.config.ts's buildParams)
+  // against this invocation's --param/--params-file/declared env mapping,
+  // BEFORE calling build() — a resolution failure (an unknown name, a
+  // missing required value, a type/enum mismatch) is reported as a chant
+  // build error naming the parameter, never a thrown error from inside user
+  // source (which is what loomster's hand-rolled `tierFromEnv()`-style
+  // validators did before migrating to this mechanism). Also logs every
+  // resolved value (`[param] name = value (source)`) on success.
+  const paramsResolution = resolveCliBuildParams(config.buildParams, {
     cli: options.params,
-    fromFile: paramsFileContent,
-    env: process.env,
+    paramsFile: options.paramsFile,
   });
-  for (const message of paramsResolution.errors) {
-    errors.push(formatError({ message }));
-  }
-  if (errors.length > 0) {
+  if (!paramsResolution.success) {
+    errors.push(...paramsResolution.errors);
     return { success: false, resourceCount: 0, fileCount: 0, errors, warnings };
-  }
-  // #1064 — build-provenance visibility: report every resolved build-time
-  // parameter (name, value, and which source won it) the same
-  // unconditional-log-not-gated-on---verbose way #1022's fold decisions are
-  // reported just below, so a build's environment-varying inputs are as
-  // visible as its fold-vs-run choices.
-  for (const p of paramsResolution.provenance) {
-    console.error(formatInfo(`[param] ${p.name} = ${JSON.stringify(p.value)} (${p.source})`));
   }
 
   // #1039 — thread each loaded plugin's registered intrinsics (e.g. AWS's

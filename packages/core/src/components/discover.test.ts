@@ -11,9 +11,11 @@
 
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import { mkdir, writeFile, rm } from "node:fs/promises";
-import { join } from "node:path";
+import { join, dirname, resolve as resolvePath } from "node:path";
+import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 import { discoverComponents } from "./discover";
+import { params } from "../params";
 
 describe("discoverComponents", () => {
   let testDir: string;
@@ -348,5 +350,65 @@ describe("discoverComponents", () => {
     // scope and not descended into.
     expect(result.components.has("first-svc")).toBe(true);
     expect(result.components.has("nested-svc")).toBe(false);
+  });
+
+  // ── chant #1108 — build-time parameters populated before import ────────────
+
+  describe("buildParams (chant #1108)", () => {
+    const thisDir = dirname(fileURLToPath(import.meta.url));
+    const paramsPath = resolvePath(thisDir, "../params");
+
+    test("with no buildParams option, params.* stays empty (matches every non-run/generate caller today)", async () => {
+      await writeFile(
+        join(testDir, "svc.component.ts"),
+        `
+          export const svc = {
+            name: "svc",
+            dependsOn: [],
+            deploy: [{ phase: "Apply", steps: [{ kind: "shell" }] }],
+          };
+        `,
+      );
+
+      const result = await discoverComponents(testDir);
+
+      expect(result.components.has("svc")).toBe(true);
+      expect(params).toEqual({});
+    });
+
+    test("populates params.* BEFORE importing *.component.ts, so a live import observes the resolved value", async () => {
+      await writeFile(
+        join(testDir, "svc.component.ts"),
+        `
+          import { params } from ${JSON.stringify(paramsPath)};
+          export const svc = {
+            name: "svc",
+            dependsOn: [],
+            deploy: [{ phase: "Apply", steps: [{ kind: "shell", command: String(params.tier) }] }],
+          };
+        `,
+      );
+
+      const result = await discoverComponents(testDir, {
+        buildParams: [{ name: "tier", value: "production", source: "cli" }],
+      });
+
+      expect(result.errors).toEqual([]);
+      const svc = result.components.get("svc");
+      expect((svc?.component.deploy[0].steps[0] as { command?: unknown }).command).toBe("production");
+    });
+
+    test("a second call with no buildParams resets params.* — no stale leak from a prior call in the same process", async () => {
+      await writeFile(
+        join(testDir, "a.component.ts"),
+        `export const a = { name: "a", dependsOn: [], deploy: [{ phase: "Apply", steps: [{ kind: "shell" }] }] };`,
+      );
+
+      await discoverComponents(testDir, { buildParams: [{ name: "tier", value: "production", source: "cli" }] });
+      expect(params).toEqual({ tier: "production" });
+
+      await discoverComponents(testDir);
+      expect(params).toEqual({});
+    });
   });
 });

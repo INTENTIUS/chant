@@ -46,6 +46,9 @@ import { pathToFileURL } from "node:url";
 import { existsSync } from "node:fs";
 import { DiscoveryError } from "../errors";
 import { isComponent, type Component } from "./component";
+import type { BuildParamProvenance } from "../provenance";
+import { buildParamValues } from "../build-params";
+import { setBuildParams } from "../params";
 
 /** One discovered component, paired with the file it was exported from. */
 export interface DiscoveredComponent {
@@ -75,6 +78,34 @@ export interface ComponentDiscoveryOptions {
    * requested.
    */
   sandbox?: boolean;
+
+  /**
+   * chant #1108 — this invocation's resolved build-time parameter values
+   * (../build-params.ts's `resolveBuildParams`, driven by the CLI's
+   * `--param`/`--params-file`/a declared `env` mapping/`chant.config.ts`'s
+   * `buildParams` defaults — see ../cli/build-params-cli.ts's
+   * `resolveCliBuildParams`, the exact resolution `chant build` runs).
+   * Populated into ../params.ts's shared `params` object (`setBuildParams`,
+   * below) before any `*.component.ts` file is scanned/imported, mirroring
+   * ../discovery/index.ts's `discover()` — the lexicon-resource counterpart
+   * of this function, and the thing chant #1108 exists to bring this one to
+   * parity with. Before #1108, no caller populated this, so a live `import {
+   * params } from "@intentius/chant/params"` inside a component file (e.g. a
+   * naming helper deriving a stack name) always saw `{}`.
+   *
+   * Default: none — `params` stays `{}`, matching every caller that doesn't
+   * resolve build-time parameters today (`chant list/describe/graph/lint
+   * --components`, `chant components status`); only the run and generate
+   * call sites (../cli/handlers/run.ts, ../cli/handlers/build.ts) pass a
+   * resolved value.
+   *
+   * Only takes effect for the in-process (non-sandboxed) import path below —
+   * `{ sandbox: true }`'s child process gets its own, unpopulated `params`
+   * module instance, the same pre-existing gap `discover({ sandbox: true })`
+   * has for lexicon resources (chant #1045 Phase 2 never threaded
+   * `buildParams` into its sandboxed child either; out of scope here too).
+   */
+  buildParams?: BuildParamProvenance[];
 }
 
 /** One already-imported `*.component.ts` module — the input to {@link collectComponents}. */
@@ -240,6 +271,17 @@ export async function discoverComponents(
   path: string,
   options?: ComponentDiscoveryOptions,
 ): Promise<ComponentDiscoveryResult> {
+  // chant #1108 — populate the shared build-time-parameters object BEFORE
+  // scanning/importing any *.component.ts file below, so a live `import {
+  // params } from "@intentius/chant/params"` inside a component file
+  // observes this invocation's resolved values instead of an empty object.
+  // Unconditional (not just when `buildParams` is set) so a stale value from
+  // a PRIOR discoverComponents() call in the same process (tests, several
+  // `--components` subcommands run back-to-back) never leaks into a call
+  // that supplied none — mirrors ../discovery/index.ts's `discover()`,
+  // identical rationale.
+  setBuildParams(buildParamValues(options?.buildParams ?? []));
+
   const sourceFiles = await findComponentFiles(path);
 
   if (options?.sandbox && sourceFiles.length > 0) {
