@@ -10,12 +10,22 @@
  * Resource-not-found is silent — `state diff --live` then reports it as
  * missing (declared, not in cloud). Unknown entity types are warn-skipped;
  * extending the KUBECTL_RESOURCE map covers more.
+ *
+ * Before touching any resource, the environment is resolved to a cluster
+ * identity (chant #1100) via `resolveClusterTarget` — see `./config.ts` for
+ * the `k8s.profiles.<env>.context` binding shape. A declared binding is
+ * passed explicitly as `--context` on every kubectl call below; an ambient
+ * context that disagrees with it aborts the whole describe with a loud
+ * error rather than silently reading the wrong cluster. No binding keeps
+ * today's behavior (ambient context), with a visible warning.
  */
 
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
 import type { ResourceMetadata } from "@intentius/chant/lexicon";
 import { hasOwnershipMarker, classifyOwnership, LABEL_OWNERSHIP_KEYS } from "@intentius/chant/ownership";
+import { loadChantConfig } from "@intentius/chant/config";
+import { resolveClusterTarget } from "@intentius/chant/kubectl-context";
 
 const execAsync = promisify(exec);
 
@@ -91,6 +101,14 @@ export async function describeResources(options: {
   const result: Record<string, ResourceMetadata> = {};
   const skippedTypes = new Set<string>();
 
+  // Resolve the cluster identity for this environment before touching any
+  // resource — a declared-but-mismatched binding throws here, aborting the
+  // whole describe rather than letting a per-entity try/catch below absorb
+  // it as an ordinary "not found".
+  const { config } = await loadChantConfig(process.cwd());
+  const target = await resolveClusterTarget(config as Record<string, unknown>, options.environment, "k8s");
+  const ctxArg = target.context ? ["--context", target.context] : [];
+
   for (const [entityName, { entityType, props }] of options.entities) {
     const kubectlResource = KUBECTL_RESOURCE[entityType];
     if (!kubectlResource) {
@@ -103,7 +121,7 @@ export async function describeResources(options: {
     if (!name) continue;
 
     const nsArg = metadata.namespace ? ["-n", metadata.namespace] : [];
-    const cmd = ["kubectl", "get", kubectlResource, name, ...nsArg, "-o", "json"].join(" ");
+    const cmd = ["kubectl", "get", kubectlResource, name, ...nsArg, ...ctxArg, "-o", "json"].join(" ");
 
     try {
       const { stdout } = await execAsync(cmd);

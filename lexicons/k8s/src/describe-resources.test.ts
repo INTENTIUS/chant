@@ -11,6 +11,11 @@ vi.mock("node:child_process", async () => {
   } };
 });
 
+const loadChantConfigMock = vi.fn();
+vi.mock("@intentius/chant/config", () => ({
+  loadChantConfig: (...args: unknown[]) => loadChantConfigMock(...args),
+}));
+
 const { describeResources } = await import("./describe-resources");
 
 function makeEntities(records: Array<{ name: string; entityType: string; props: Record<string, unknown> }>) {
@@ -20,6 +25,10 @@ function makeEntities(records: Array<{ name: string; entityType: string; props: 
 describe("k8s describeResources", () => {
   beforeEach(() => {
     execMock.mockReset();
+    loadChantConfigMock.mockReset();
+    // No binding declared by default — matches every test below except the
+    // dedicated cluster-binding tests, which override this per case.
+    loadChantConfigMock.mockResolvedValue({ config: {} });
   });
 
   test("queries kubectl for each declared K8s entity and maps response to ResourceMetadata", async () => {
@@ -86,7 +95,8 @@ describe("k8s describeResources", () => {
 
     expect(result).toEqual({});
     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("kubectl mapping"));
-    expect(warnSpy.mock.calls[0][0]).toContain("K8s::Custom::CRD::SomeOperator");
+    const mappingWarning = warnSpy.mock.calls.find((c) => String(c[0]).includes("kubectl mapping"));
+    expect(mappingWarning?.[0]).toContain("K8s::Custom::CRD::SomeOperator");
     warnSpy.mockRestore();
   });
 
@@ -158,5 +168,73 @@ describe("k8s describeResources", () => {
 
     expect(result).toEqual({});
     expect(execMock).not.toHaveBeenCalled();
+  });
+
+  // chant #1100 — environment→cluster binding: bound-and-matching,
+  // bound-and-mismatched (loud refusal), and unbound (unchanged) paths.
+  describe("cluster binding (chant #1100)", () => {
+    function deploymentEntities() {
+      return makeEntities([
+        { name: "web", entityType: "K8s::Apps::Deployment", props: { metadata: { name: "web", namespace: "prod" } } },
+      ]);
+    }
+
+    const deploymentStdout = JSON.stringify({
+      metadata: { name: "web", namespace: "prod", uid: "uid-1", creationTimestamp: "2026-05-01T00:00:00Z" },
+      status: { readyReplicas: 1, replicas: 1 },
+    });
+
+    test("bound and ambient context matches: observes explicitly via --context", async () => {
+      loadChantConfigMock.mockResolvedValue({ config: { k8s: { profiles: { prod: { context: "prod-eks" } } } } });
+      let receivedCmd = "";
+      execMock.mockImplementation((cmd: string) => {
+        if (cmd.includes("current-context")) return { stdout: "prod-eks\n", stderr: "" };
+        receivedCmd = cmd;
+        return { stdout: deploymentStdout, stderr: "" };
+      });
+
+      const result = await describeResources({ environment: "prod", buildOutput: "", entityNames: ["web"], entities: deploymentEntities() });
+
+      expect(receivedCmd).toContain("--context prod-eks");
+      expect(result["web"]).toMatchObject({ type: "K8s::Apps::Deployment", physicalId: "uid-1", status: "READY" });
+    });
+
+    test("bound and ambient context mismatches: refuses loudly instead of observing the wrong cluster", async () => {
+      loadChantConfigMock.mockResolvedValue({ config: { k8s: { profiles: { prod: { context: "prod-eks" } } } } });
+      execMock.mockImplementation((cmd: string) => {
+        if (cmd.includes("current-context")) return { stdout: "staging-eks\n", stderr: "" };
+        throw new Error(`unexpected cmd (should have refused before any kubectl get): ${cmd}`);
+      });
+
+      await expect(
+        describeResources({ environment: "prod", buildOutput: "", entityNames: ["web"], entities: deploymentEntities() }),
+      ).rejects.toThrow(/environment "prod".*"prod-eks".*"staging-eks"/s);
+
+      // Only the ambient-context probe ran — no per-entity kubectl get was attempted.
+      expect(execMock).toHaveBeenCalledTimes(1);
+    });
+
+    test("unbound: ambient context is used unchanged, but the fallback is visible (not silent)", async () => {
+      loadChantConfigMock.mockResolvedValue({ config: {} });
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      let receivedCmd = "";
+      execMock.mockImplementation((cmd: string) => {
+        receivedCmd = cmd;
+        return { stdout: deploymentStdout, stderr: "" };
+      });
+
+      const result = await describeResources({ environment: "prod", buildOutput: "", entityNames: ["web"], entities: deploymentEntities() });
+
+      // Unchanged: no ambient-context probe, no --context flag, same result shape as today.
+      expect(receivedCmd).not.toContain("--context");
+      expect(receivedCmd).not.toContain("current-context");
+      expect(result["web"]).toMatchObject({ type: "K8s::Apps::Deployment", physicalId: "uid-1", status: "READY" });
+
+      // Visible, not silent: a warning names the environment and the missing binding.
+      const bindingWarning = warnSpy.mock.calls.find((c) => String(c[0]).includes("no cluster binding"));
+      expect(bindingWarning?.[0]).toContain('environment "prod"');
+      expect(bindingWarning?.[0]).toContain("k8s.profiles.prod.context");
+      warnSpy.mockRestore();
+    });
   });
 });

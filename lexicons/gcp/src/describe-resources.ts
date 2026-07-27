@@ -10,12 +10,21 @@
  *   GCP::Compute::Subnetwork → kubectl get computesubnetwork.compute.cnrm.cloud.google.com
  *
  * Resource-not-found is silent — `state diff --live` reports it as missing.
+ *
+ * Since this reads Config Connector CRDs through the same kubectl path as
+ * the K8s lexicon, it resolves the same environment→cluster binding (chant
+ * #1100) via `resolveClusterTarget` — `k8s.profiles.<env>.context` in
+ * `chant.config.ts` (see `lexicons/k8s/src/config.ts`), not a separate
+ * `gcp.profiles` key, because it is fundamentally the same kubectl context a
+ * project's K8s entities would use against the same cluster.
  */
 
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
 import type { ResourceMetadata } from "@intentius/chant/lexicon";
 import { hasOwnershipMarker, classifyOwnership, LABEL_OWNERSHIP_KEYS } from "@intentius/chant/ownership";
+import { loadChantConfig } from "@intentius/chant/config";
+import { resolveClusterTarget } from "@intentius/chant/kubectl-context";
 
 const execAsync = promisify(exec);
 
@@ -85,6 +94,14 @@ export async function describeResources(options: {
 }): Promise<Record<string, ResourceMetadata>> {
   const result: Record<string, ResourceMetadata> = {};
 
+  // Resolve the cluster identity for this environment before touching any
+  // resource — a declared-but-mismatched binding throws here, aborting the
+  // whole describe rather than letting the per-entity try/catch below
+  // absorb it as an ordinary "not found".
+  const { config } = await loadChantConfig(process.cwd());
+  const target = await resolveClusterTarget(config as Record<string, unknown>, options.environment, "gcp");
+  const ctxArg = target.context ? ["--context", target.context] : [];
+
   for (const [entityName, { entityType, props }] of options.entities) {
     const gvk = deriveGVK(entityType);
     if (!gvk) continue;
@@ -95,7 +112,7 @@ export async function describeResources(options: {
 
     const kubectlResource = `${gvk.kind.toLowerCase()}.${gvk.group}`;
     const nsArg = metadata.namespace ? ["-n", metadata.namespace] : [];
-    const cmd = ["kubectl", "get", kubectlResource, name, ...nsArg, "-o", "json"].join(" ");
+    const cmd = ["kubectl", "get", kubectlResource, name, ...nsArg, ...ctxArg, "-o", "json"].join(" ");
 
     try {
       const { stdout } = await execAsync(cmd);
