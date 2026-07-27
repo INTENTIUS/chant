@@ -7,9 +7,13 @@
  */
 
 import type { LexiconPlugin } from "@intentius/chant/lexicon";
+import type { LintRule } from "@intentius/chant/lint/rule";
 import { postSynthChecks as postSynthCheckList } from "./lint/post-synth";
+import { useActivityProfilesRule } from "./lint/rules/use-activity-profiles";
 import { createSkillsLoader, createDiffTool, createCatalogResource } from "@intentius/chant/lexicon-plugin-helpers";
 import { temporalSerializer } from "./serializer";
+import { temporalCompletions } from "./lsp/completions";
+import { temporalHover } from "./lsp/hover";
 
 export const temporalPlugin: LexiconPlugin = {
   name: "temporal",
@@ -57,6 +61,18 @@ export const temporalPlugin: LexiconPlugin = {
 
   postSynthChecks() {
     return postSynthCheckList;
+  },
+
+  lintRules(): LintRule[] {
+    return [useActivityProfilesRule];
+  },
+
+  completionProvider(ctx: import("@intentius/chant/lsp/types").CompletionContext) {
+    return temporalCompletions(ctx);
+  },
+
+  hoverProvider(ctx: import("@intentius/chant/lsp/types").HoverContext) {
+    return temporalHover(ctx);
   },
 
   skills() {

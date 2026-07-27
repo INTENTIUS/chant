@@ -5,6 +5,7 @@
 import { describe, expect, it } from "vitest";
 import { temporalPlugin } from "./plugin";
 import { isLexiconPlugin } from "@intentius/chant/lexicon";
+import type { CompletionContext, HoverContext } from "@intentius/chant/lsp/types";
 
 describe("temporal plugin", () => {
   it("is a valid LexiconPlugin", () => {
@@ -25,6 +26,36 @@ describe("temporal plugin", () => {
     expect(Array.isArray(checks)).toBe(true);
     const ids = checks?.map((c) => c.id).sort();
     expect(ids).toEqual(["TMP001", "TMP002", "TMP010", "TMP011"]);
+  });
+
+  it("lintRules() returns 1 rule (TMP020)", () => {
+    const rules = temporalPlugin.lintRules?.();
+    expect(Array.isArray(rules)).toBe(true);
+    expect(rules?.map((r) => r.id)).toEqual(["TMP020"]);
+  });
+
+  it("completionProvider() returns Temporal resource completions", () => {
+    const ctx: CompletionContext = {
+      uri: "file:///t.ts",
+      content: "const ns = new TemporalNamespace",
+      position: { line: 0, character: 33 },
+      wordAtCursor: "TemporalNamespace",
+      linePrefix: "const ns = new TemporalNamespace",
+    };
+    const items = temporalPlugin.completionProvider?.(ctx);
+    expect(items?.some((i) => i.label === "TemporalNamespace")).toBe(true);
+  });
+
+  it("hoverProvider() returns Temporal resource hover info", () => {
+    const ctx: HoverContext = {
+      uri: "file:///t.ts",
+      content: "",
+      position: { line: 0, character: 0 },
+      word: "TemporalSchedule",
+      lineText: "",
+    };
+    const info = temporalPlugin.hoverProvider?.(ctx);
+    expect(info?.contents).toContain("Temporal::Schedule");
   });
 
   it("mcpTools() returns 1 diff tool", () => {

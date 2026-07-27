@@ -1,0 +1,18 @@
+{
+  "name": "temporal-local-dev-server-example",
+  "version": "0.0.1",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "chant build src --lexicon temporal -o dist/docker-compose.yml",
+    "lint": "chant lint src",
+    "dev": "chant build src --lexicon temporal --watch -o dist/docker-compose.yml"
+  },
+  "dependencies": {
+    "@intentius/chant-lexicon-temporal": "*",
+    "@intentius/chant": "*"
+  },
+  "devDependencies": {
+    "typescript": "*"
+  }
+}
