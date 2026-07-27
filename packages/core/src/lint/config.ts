@@ -411,3 +411,25 @@ export function resolveRulesForFile(config: LintConfig, filePath: string): Recor
 
   return rules;
 }
+
+/**
+ * The configured severity override for a rule id, or undefined when the
+ * project doesn't override it. Reads `lint.rules` off a raw config object
+ * (severity string, or `[severity, options]` tuple). Used by build's
+ * post-synth pass so those findings honor the same overrides as declarative
+ * rules (#1138) — "off" means suppress entirely.
+ */
+export function ruleSeverityOverride(
+  config: { lint?: unknown },
+  ruleId: string,
+): "off" | "error" | "warning" | "info" | undefined {
+  const lint = config.lint;
+  if (!lint || typeof lint !== "object") return undefined;
+  const rules = (lint as { rules?: unknown }).rules;
+  if (!rules || typeof rules !== "object") return undefined;
+  const entry = (rules as Record<string, unknown>)[ruleId];
+  const severity = Array.isArray(entry) ? entry[0] : entry;
+  return severity === "off" || severity === "error" || severity === "warning" || severity === "info"
+    ? severity
+    : undefined;
+}
