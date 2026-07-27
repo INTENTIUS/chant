@@ -4,7 +4,7 @@
  * `policyGate` Op step runs this to gate an apply on the same checks.
  */
 import { resolve, dirname } from "node:path";
-import { loadChantConfig } from "../config";
+import { loadChantConfigUpward } from "../config";
 import { resolveProjectLexicons, loadPlugins } from "../cli/plugins";
 import { build } from "../build";
 import { runPostSynthChecks, isPostSynthCheck } from "./post-synth";
@@ -55,10 +55,10 @@ export async function evaluateProjectPolicies(opts: {
   const plugins = await loadPlugins(lexiconNames);
   const serializers = plugins.map((p) => p.serializer);
 
-  // Config can live in the build dir or its parent (the project root).
-  const loaded = await loadChantConfig(buildPath).then((r) =>
-    r.configPath ? r : loadChantConfig(dirname(buildPath)),
-  );
+  // chant #1117 — walks up from the build dir to the project root, same as
+  // `chant build` (`../cli/commands/build.ts`'s `loadChantConfigUpward`), not
+  // just the build dir's immediate parent.
+  const loaded = await loadChantConfigUpward(buildPath);
   const config = loaded.config;
   const configDir = loaded.configPath ? dirname(loaded.configPath) : buildPath;
   const env = opts.env ?? config.ownership?.env;

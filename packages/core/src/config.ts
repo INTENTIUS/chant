@@ -7,6 +7,7 @@ import { DEFAULT_SBOM_FORMAT, type SbomFormat } from "./components/verbs/sbom-ge
 import type { Severity } from "./components/verbs/vuln-scan";
 import type { VulnPolicy } from "./components/verbs/vuln-gate";
 import type { BuildParamsConfig } from "./build-params";
+import { findProjectConfig } from "./project-root";
 
 /**
  * Zod schema for ChantConfig validation.
@@ -295,6 +296,28 @@ export async function loadChantConfig(dir: string): Promise<ResolvedConfig> {
   }
 
   return { config: DEFAULT_CHANT_CONFIG };
+}
+
+/**
+ * Load project configuration by walking up from `startDir` to the project
+ * root (chant #1117), instead of trying only `startDir` itself.
+ *
+ * `chant build src/<stack>` (and anything else invoked with a subdirectory —
+ * `lint.policies`' `evaluateProjectPolicies`, `--components --generate`)
+ * builds scoped to that subdirectory, but `chant.config.ts` almost always
+ * lives at the project root, one or more levels up. Before this, callers
+ * either read `startDir` alone or bolted on a single `dirname()` fallback —
+ * fine for a one-level-deep stack, silently blind to anything deeper
+ * (loomster's `src/<stack>` layout is exactly one level too deep: `buildParams`'
+ * declared `env:` mappings never resolved, so `LOOM_TIER`/`LOOM_ENV` were inert
+ * under every `npm run synth:*` for two releases — loomster#162). Uses the
+ * same walk `chant lint`/`chant graph` already used ({@link findProjectConfig},
+ * shared with `./lint/config.ts`'s `findProjectRoot`) — one config-discovery
+ * contract for the whole CLI.
+ */
+export async function loadChantConfigUpward(startDir: string): Promise<ResolvedConfig> {
+  const { dir } = findProjectConfig(startDir);
+  return loadChantConfig(dir);
 }
 
 /**

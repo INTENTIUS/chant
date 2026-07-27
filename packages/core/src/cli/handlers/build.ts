@@ -4,7 +4,7 @@ import { buildCommand, buildCommandWatch, printErrors, printWarnings, resolveBui
 import { formatError, formatInfo, formatSuccess, formatBold } from "../format";
 import type { CommandContext } from "../registry";
 import { generateComponentsPipeline } from "../../components/cli-support";
-import { loadChantConfig, type ChantConfig } from "../../config";
+import { loadChantConfigUpward, type ChantConfig } from "../../config";
 import { resolveCliBuildParams, parseParamFlags } from "../build-params-cli";
 
 /**
@@ -23,12 +23,17 @@ import { resolveCliBuildParams, parseParamFlags } from "../build-params-cli";
  * Before this, `params.*` (`@intentius/chant/params`) was always `{}` under
  * this command too — generate mode shares `discoverComponents` with `chant
  * run --components`, so it had the identical gap.
+ *
+ * chant #1117 — loads config by walking up from `args.path` to the project
+ * root (`loadChantConfigUpward`), same as `chant build` proper, instead of
+ * `args.path` alone: a components-only project built from a subdirectory
+ * otherwise never sees the root `chant.config.ts`'s `buildParams` either.
  */
 async function runGenerateComponents(ctx: CommandContext): Promise<number> {
   const { args } = ctx;
   const lexicon = args.generate as string;
 
-  const { config } = await loadChantConfig(resolve(args.path)).catch(() => ({ config: {} as ChantConfig }));
+  const { config } = await loadChantConfigUpward(resolve(args.path)).catch(() => ({ config: {} as ChantConfig }));
   const paramsResolution = resolveCliBuildParams(config.buildParams, {
     cli: parseParamFlags(args.param),
     paramsFile: args.paramsFile,

@@ -1,7 +1,7 @@
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import { loadConfig, DEFAULT_CONFIG, findProjectRoot } from "./config";
 import { writeFileSync, mkdirSync, rmSync } from "fs";
-import { join } from "path";
+import { join, resolve } from "path";
 
 const TEST_DIR = join(import.meta.dirname, "__test_config__");
 
@@ -705,10 +705,15 @@ describe("findProjectRoot", () => {
     expect(findProjectRoot(sub)).toBe(TEST_DIR);
   });
 
-  test("falls back to the start dir when no config is found", () => {
+  test("stops at the nearest .git/package.json boundary when no config is found (#1117)", () => {
     const sub = join(TEST_DIR, "nowhere");
     mkdirSync(sub, { recursive: true });
-    // No chant.config anywhere under TEST_DIR — returns the (resolved) start dir.
-    expect(findProjectRoot(sub)).toBe(sub);
+    // No chant.config anywhere under TEST_DIR — walking up from this real
+    // repo location reaches `packages/core`'s own package.json before the
+    // filesystem root, so that's the returned boundary, not `sub` itself
+    // (chant #1117 — discovery must never wander past the project just
+    // because it declares no config).
+    const packageRoot = resolve(import.meta.dirname, "..", "..");
+    expect(findProjectRoot(sub)).toBe(packageRoot);
   });
 });

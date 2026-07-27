@@ -1,5 +1,5 @@
 import { build } from "../../build";
-import { loadChantConfig, resolveOwnershipMarker, resolveFoldEnabled, resolveSandboxEnabled } from "../../config";
+import { loadChantConfigUpward, resolveOwnershipMarker, resolveFoldEnabled, resolveSandboxEnabled } from "../../config";
 import { resolveCliBuildParams } from "../build-params-cli";
 import type { Serializer, SerializerResult } from "../../serializer";
 import type { LexiconPlugin } from "../../lexicon";
@@ -128,11 +128,14 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
   // Resolve the path
   const infraPath = resolve(options.path);
 
-  // Resolve opt-in ownership marking from project config (search the infra dir
-  // and its parent, where chant.config.* usually lives).
-  const loaded = await loadChantConfig(infraPath).then((r) =>
-    r.configPath ? r : loadChantConfig(dirname(infraPath)),
-  );
+  // Resolve opt-in ownership marking from project config. chant #1117 — walks
+  // up from the infra dir to the project root (`loadChantConfigUpward`), not
+  // just the infra dir's immediate parent: a project whose stacks live two or
+  // more levels below `chant.config.ts` (loomster's `src/<stack>` layout)
+  // otherwise never finds the root config at all, and every declared
+  // `buildParams`/`ownership`/`lint.policies` setting silently falls back to
+  // its default.
+  const loaded = await loadChantConfigUpward(infraPath);
   const config = loaded.config;
   const ownership = resolveOwnershipMarker(config);
 
@@ -172,6 +175,26 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
   if (!paramsResolution.success) {
     errors.push(...paramsResolution.errors);
     return { success: false, resourceCount: 0, fileCount: 0, errors, warnings };
+  }
+
+  // chant #1117 — a project that declares buildParams but resolves NONE of
+  // them for this build is the exact shape that let loomster#162 live for two
+  // releases: the discovered config wasn't the one the project author
+  // expected (a stale --path, a workspace boundary that stopped the walk
+  // short), or every declared parameter's `env:` var went unset, and either
+  // way every `params.<name>` read silently falls back to `undefined` — with
+  // no error (an all-`required: false` declaration resolves successfully to
+  // an empty set). Warn, naming the config path this build actually
+  // discovered, so a mismatch is visible instead of silent.
+  if (
+    Object.keys(config.buildParams ?? {}).length > 0 &&
+    paramsResolution.provenance.length === 0
+  ) {
+    warnings.push(
+      formatWarning({
+        message: `chant.config.ts declares buildParams${loaded.configPath ? ` (${loaded.configPath})` : ""}, but none resolved for this build — every params.<name> read will be undefined. Pass --param/--params-file, or check that this is the config you expect.`,
+      }),
+    );
   }
 
   // #1039 — thread each loaded plugin's registered intrinsics (e.g. AWS's

@@ -5,7 +5,7 @@ import { isEntryPoint } from "./is-entry-point";
 import { formatSuccess, formatError } from "./format";
 import { loadPlugins, resolveProjectLexicons } from "./plugins";
 import { resolveCommand, type CommandDef, type ParsedArgs } from "./registry";
-import { loadChantConfig } from "../config";
+import { loadChantConfigUpward } from "../config";
 import { ENV_VAR, unknownEnvError } from "../env";
 import { initRuntime } from "../runtime-adapter";
 import { runBuild } from "./handlers/build";
@@ -598,11 +598,15 @@ async function main(): Promise<void> {
   // chant.config itself may branch on the env. (#505)
   if (args.env) process.env[ENV_VAR] = args.env;
 
-  // Initialize runtime adapter early — before plugins or commands run
+  // Initialize runtime adapter early — before plugins or commands run.
+  // chant #1117 — walks up from `args.path` to the project root: for a
+  // subdirectory build/command (`chant build src/<stack> --env prod`) the
+  // declared `environments` almost always live in the root `chant.config.ts`,
+  // not `args.path` itself.
   const projectPath0 = resolve(args.path === "." ? "." : args.path);
   let loadedConfig;
   try {
-    loadedConfig = await loadChantConfig(projectPath0);
+    loadedConfig = await loadChantConfigUpward(projectPath0);
     initRuntime();
   } catch {
     // Config may not exist yet (e.g. `chant init`)

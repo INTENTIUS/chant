@@ -8,8 +8,10 @@
  * run --components` (see ../handlers/run.test.ts's "build-time parameters"
  * describe block for the equivalent local/`--temporal` coverage).
  *
- * Mocks `generateComponentsPipeline` and `loadChantConfig` and exercises the
- * public `runBuild` dispatcher (`runGenerateComponents` itself isn't
+ * Mocks `generateComponentsPipeline` and `loadChantConfigUpward` (chant
+ * #1117 — `runGenerateComponents` walks up to the project root now, same as
+ * `chant build` proper, instead of reading `args.path` alone) and exercises
+ * the public `runBuild` dispatcher (`runGenerateComponents` itself isn't
  * exported), mirroring `run.test.ts`'s style of driving the handler through
  * its `CommandContext` entrypoint rather than reaching into private helpers.
  */
@@ -17,14 +19,14 @@ import { describe, test, expect, vi, beforeEach } from "vitest";
 import type { ParsedArgs } from "../registry";
 
 const generateComponentsPipelineMock = vi.fn();
-const loadChantConfigMock = vi.fn();
+const loadChantConfigUpwardMock = vi.fn();
 
 vi.mock("../../components/cli-support", () => ({
   generateComponentsPipeline: (...args: unknown[]) => generateComponentsPipelineMock(...args),
 }));
 vi.mock("../../config", async () => {
   const actual = await vi.importActual<typeof import("../../config")>("../../config");
-  return { ...actual, loadChantConfig: (...args: unknown[]) => loadChantConfigMock(...args) };
+  return { ...actual, loadChantConfigUpward: (...args: unknown[]) => loadChantConfigUpwardMock(...args) };
 });
 
 const { runBuild } = await import("./build");
@@ -54,7 +56,7 @@ function makeStderrSpy() {
 describe("runBuild --components --generate (chant #1108 build-time parameters)", () => {
   beforeEach(() => {
     generateComponentsPipelineMock.mockReset();
-    loadChantConfigMock.mockReset().mockResolvedValue({ config: {} });
+    loadChantConfigUpwardMock.mockReset().mockResolvedValue({ config: {} });
   });
 
   test("no declared buildParams → generateComponentsPipeline is called with an empty provenance array", async () => {
@@ -69,7 +71,7 @@ describe("runBuild --components --generate (chant #1108 build-time parameters)",
   });
 
   test("chant.config.ts's declared buildParams resolve, log, and are forwarded to generateComponentsPipeline", async () => {
-    loadChantConfigMock.mockResolvedValue({
+    loadChantConfigUpwardMock.mockResolvedValue({
       config: { buildParams: { tier: { type: "string", default: "light" } } },
     });
     generateComponentsPipelineMock.mockResolvedValue({ success: true, yaml: "stages: []", stages: [], jobs: [] });
@@ -91,7 +93,7 @@ describe("runBuild --components --generate (chant #1108 build-time parameters)",
   });
 
   test("--param overrides a declared default", async () => {
-    loadChantConfigMock.mockResolvedValue({
+    loadChantConfigUpwardMock.mockResolvedValue({
       config: { buildParams: { tier: { type: "string", default: "light" } } },
     });
     generateComponentsPipelineMock.mockResolvedValue({ success: true, yaml: "stages: []", stages: [], jobs: [] });
@@ -115,7 +117,7 @@ describe("runBuild --components --generate (chant #1108 build-time parameters)",
   });
 
   test("an unresolved required build-time parameter → exit 1, never reaches generateComponentsPipeline", async () => {
-    loadChantConfigMock.mockResolvedValue({
+    loadChantConfigUpwardMock.mockResolvedValue({
       config: { buildParams: { tier: { type: "string" } } },
     });
     const stderr = makeStderrSpy();
@@ -128,7 +130,7 @@ describe("runBuild --components --generate (chant #1108 build-time parameters)",
   });
 
   test("an enum violation on --param → exit 1, never reaches generateComponentsPipeline", async () => {
-    loadChantConfigMock.mockResolvedValue({
+    loadChantConfigUpwardMock.mockResolvedValue({
       config: { buildParams: { tier: { type: "string", enum: ["light", "production"] } } },
     });
     const stderr = makeStderrSpy();
