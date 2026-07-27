@@ -1,4 +1,5 @@
 import * as ts from "typescript";
+import { isFoldableHelperName } from "./foldable-helpers";
 
 /**
  * subset — the single canonical definition of chant's statically-foldable
@@ -37,6 +38,14 @@ import * as ts from "typescript";
  *      manifest, which isn't available to a syntax-only lint rule. `fold()`
  *      alone checks it; this module treats any tag name as shape-valid and
  *      only classifies the interpolated values.
+ *   2b. Authoring-helper *provenance* (chant #1082) — a call to a registered
+ *      chant helper (`phase(...)`, `output(...)`; ./foldable-helpers.ts)
+ *      folds, but only when the name is genuinely bound to an import of
+ *      chant's own. That needs the module graph, which a syntax-only lint
+ *      rule doesn't have. This module checks the NAME only and stays
+ *      permissive; `fold()`'s bridge does the provenance check and falls the
+ *      file back to run when it fails. Same direction as every other item
+ *      here — a false negative for EVL, never a false positive.
  *   3. Runtime *type* of a folded value — e.g. spreading `const n = 5`
  *      (`{...n}`) is shape-valid (`n` is a plain identifier) but `fold()`
  *      rejects it once it discovers `n` folds to a number, not an object.
@@ -135,10 +144,6 @@ export function callExpressionMessage(node: ts.CallExpression): string {
 
 export function unsupportedExpressionMessage(node: ts.Node): string {
   return `unsupported expression: ${ts.SyntaxKind[node.kind]}`;
-}
-
-export function resourceCtorArgMessage(typeName: string): string {
-  return `resource constructor argument must be an object literal: ${typeName}(...)`;
 }
 
 /**
@@ -282,12 +287,16 @@ export function findSubsetViolation(node: ts.Node): SubsetViolation | undefined 
   }
 
   if (ts.isNewExpression(node)) {
-    const [firstArg] = node.arguments ?? [];
-    if (!firstArg) return undefined;
-    if (!ts.isObjectLiteralExpression(firstArg)) {
-      return violation(firstArg, resourceCtorArgMessage(node.expression.getText()));
+    // chant #1082 — no positional assumption about which argument is the
+    // props object. `foldResource` folds every argument in source order (the
+    // props object is second in `new Parameter("String", {...})`), so every
+    // argument is classified on its own terms and nothing is rejected merely
+    // for being in the "wrong" position.
+    for (const arg of node.arguments ?? []) {
+      const v = findSubsetViolation(arg);
+      if (v) return v;
     }
-    return findSubsetViolation(firstArg);
+    return undefined;
   }
 
   if (ts.isSpreadElement(node)) {
@@ -295,6 +304,23 @@ export function findSubsetViolation(node: ts.Node): SubsetViolation | undefined 
   }
 
   if (ts.isCallExpression(node)) {
+    // chant #1082 — a call to a REGISTERED chant authoring helper folds
+    // (`phase(...)`, `output(...)`, …; see ./foldable-helpers.ts), so this
+    // classifier must accept it too or EVL001 would flag source `fold()`
+    // reduces cleanly. Name-only here, deliberately: this module classifies
+    // shape and never resolves bindings (module doc, point 1), and the
+    // provenance half of the check — is this name actually bound to an import
+    // of chant's own? — needs the module graph, which only
+    // ../discovery/fold-import.ts has. Same asymmetry as intrinsic tag
+    // registration (point 2) and in the same direction: this module can only
+    // ever be MORE permissive than `fold()`, never stricter.
+    if (ts.isIdentifier(node.expression) && isFoldableHelperName(node.expression.text)) {
+      for (const arg of node.arguments) {
+        const v = findSubsetViolation(arg);
+        if (v) return v;
+      }
+      return undefined;
+    }
     return violation(node, callExpressionMessage(node));
   }
 

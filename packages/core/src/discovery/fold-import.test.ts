@@ -1024,3 +1024,318 @@ describe("tryFoldFile — build-time parameters (chant #1064)", () => {
     setBuildParams({});
   });
 });
+
+/**
+ * chant #1082 — registered authoring helpers, and constructor argument
+ * positions.
+ *
+ * Fixtures import chant-core's REAL helpers by absolute path (the convention
+ * every other suite in this file uses), which is also the second arm of the
+ * provenance check: a specifier that resolves inside chant-core's own tree
+ * counts as chant's own, exactly like the `@intentius/chant*` package
+ * specifier a real project writes.
+ */
+describe("tryFoldFile — registered authoring helpers (#1082)", () => {
+  let testDir: string;
+
+  beforeEach(async () => {
+    testDir = join(tmpdir(), `chant-fold-import-helpers-test-${Date.now()}-${Math.random()}`);
+    await mkdir(testDir, { recursive: true });
+  });
+
+  afterEach(async () => {
+    await rm(testDir, { recursive: true, force: true });
+  });
+
+  /** Absolute path to the real component-authoring helpers (`phase`, `gate`, `stackOutput`). */
+  const componentPath = resolve(thisDir, "../components/component");
+  /** Absolute path to the real `output()` / `LexiconOutput`. */
+  const lexiconOutputPath = resolve(thisDir, "../lexicon-output");
+
+  test("a component authored with phase()/gate()/stackOutput() folds to the real plain data — zero module execution", async () => {
+    const file = join(testDir, "web.component.ts");
+    await writeFile(
+      file,
+      `
+        import { phase, gate, stackOutput } from ${JSON.stringify(componentPath)};
+        throw new Error("must never execute — sentinel for #1082 fold verification");
+        export const web = {
+          name: "web",
+          dependsOn: ["shared-foundation"],
+          deploy: [
+            phase("Apply", [
+              { kind: "cfn-deploy", stack: "web", inputs: { pVpcId: stackOutput("shared-foundation", "oVpcId") } },
+              gate("approve", { timeout: "24h" }),
+            ], { parallel: true }),
+          ],
+        };
+      `,
+    );
+
+    const result = await tryFoldFile(file);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // The revived value is what the real helpers return, not an envelope:
+    // `phase()`'s `{ phase, steps, parallel }`, `gate()`'s `{ kind: "gate", … }`,
+    // `stackOutput()`'s `{ stackOutput: { stack, name } }`.
+    expect(result.exportedValues.get("web")).toEqual({
+      name: "web",
+      dependsOn: ["shared-foundation"],
+      deploy: [
+        {
+          phase: "Apply",
+          parallel: true,
+          steps: [
+            {
+              kind: "cfn-deploy",
+              stack: "web",
+              inputs: { pVpcId: { stackOutput: { stack: "shared-foundation", name: "oVpcId" } } },
+            },
+            { kind: "gate", signalName: "approve", timeout: "24h" },
+          ],
+        },
+      ],
+    });
+  });
+
+  test("a nested (fan-out) phase folds — helper envelopes revive bottom-up", async () => {
+    const file = join(testDir, "fanout.component.ts");
+    await writeFile(
+      file,
+      `
+        import { phase } from ${JSON.stringify(componentPath)};
+        export const fanout = { deploy: [phase("Outer", [phase("Inner", [{ kind: "noop" }])])] };
+      `,
+    );
+
+    const result = await tryFoldFile(file);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.exportedValues.get("fanout")).toEqual({
+      deploy: [{ phase: "Outer", steps: [{ phase: "Inner", steps: [{ kind: "noop" }] }] }],
+    });
+  });
+
+  test("a registered NAME imported from the project's own code does NOT fold — the allowlist is chant's, not the name's", async () => {
+    await writeFile(
+      join(testDir, "helpers.ts"),
+      `export function phase(name, steps) { return { phase: name, steps, mine: true }; }`,
+    );
+    const file = join(testDir, "web.component.ts");
+    await writeFile(
+      file,
+      `
+        import { phase } from "./helpers";
+        export const web = { deploy: [phase("Apply", [])] };
+      `,
+    );
+
+    const result = await tryFoldFile(file);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toContain("./helpers");
+    expect(result.reason).toContain("not chant's own");
+  });
+
+  test("a registered name declared in the file itself does NOT fold — it is not an import at all", async () => {
+    const file = join(testDir, "local.component.ts");
+    await writeFile(
+      file,
+      `
+        function phase(name, steps) { return { phase: name, steps }; }
+        export const web = { deploy: [phase("Apply", [])] };
+      `,
+    );
+
+    const result = await tryFoldFile(file);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toContain("is not a resolvable import");
+  });
+
+  test("an UNREGISTERED chant import called as a value still falls back — registration is per-helper, not per-module", async () => {
+    const file = join(testDir, "unregistered.component.ts");
+    await writeFile(
+      file,
+      `
+        import { inferArchetype } from ${JSON.stringify(componentPath)};
+        export const web = { archetype: inferArchetype({ deploy: [] }) };
+      `,
+    );
+
+    const result = await tryFoldFile(file);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toContain("inferArchetype(...)");
+  });
+
+  test("output() folds against a REAL cross-file AttrRef, producing a genuine LexiconOutput", async () => {
+    await writeFile(
+      join(testDir, "defs.ts"),
+      `
+        import { createResource } from ${JSON.stringify(runtimePath)};
+        export const Bucket = createResource("Test::Bucket", "aws", { arn: "Arn" });
+      `,
+    );
+    await writeFile(
+      join(testDir, "resources.ts"),
+      `
+        import { Bucket } from "./defs";
+        export const bucket = new Bucket({ name: "my-bucket" });
+      `,
+    );
+    const file = join(testDir, "outputs.ts");
+    await writeFile(
+      file,
+      `
+        import { output } from ${JSON.stringify(lexiconOutputPath)};
+        import { bucket } from "./resources";
+        export const oArn = bucket ? output(bucket.arn, "oArn") : undefined;
+      `,
+    );
+
+    const result = await tryFoldFile(file);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const oArn = result.exportedValues.get("oArn") as { outputName: string; sourceLexicon: string };
+    // A genuine LexiconOutput built from the real AttrRef — it read the ref's
+    // parent through its WeakRef to learn the lexicon, which is only possible
+    // with a live reference, never with a `{ __attrRef }` envelope.
+    expect(oArn.outputName).toBe("oArn");
+    expect(oArn.sourceLexicon).toBe("aws");
+  });
+
+  test("output() over a SAME-FILE resource reference falls back rather than wrapping a symbolic envelope", async () => {
+    await writeFile(
+      join(testDir, "defs.ts"),
+      `
+        import { createResource } from ${JSON.stringify(runtimePath)};
+        export const Bucket = createResource("Test::Bucket", "aws", { arn: "Arn" });
+      `,
+    );
+    const file = join(testDir, "same-file-outputs.ts");
+    await writeFile(
+      file,
+      `
+        import { Bucket } from "./defs";
+        import { output } from ${JSON.stringify(lexiconOutputPath)};
+        const enabled = true;
+        export const bucket = new Bucket({ name: "my-bucket" });
+        export const oArn = enabled ? output(bucket.arn, "oArn") : undefined;
+      `,
+    );
+
+    const result = await tryFoldFile(file);
+
+    // `bucket.arn` folds to a `{ __attrRef }` envelope, and `LexiconOutput`'s
+    // constructor needs a real `AttrRef` (it derefs the parent to learn the
+    // lexicon). Constructing it from the envelope would silently produce a
+    // wrong output, so the whole file falls back to run instead.
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toContain("same-file resource reference");
+  });
+});
+
+describe("tryFoldFile — constructor argument positions (#1082)", () => {
+  let testDir: string;
+
+  beforeEach(async () => {
+    testDir = join(tmpdir(), `chant-fold-import-ctorargs-test-${Date.now()}-${Math.random()}`);
+    await mkdir(testDir, { recursive: true });
+  });
+
+  afterEach(async () => {
+    await rm(testDir, { recursive: true, force: true });
+  });
+
+  /** A `(type, props)` constructor, structurally identical to the real AWS deploy-time `Parameter` (lexicons/aws/src/parameter.ts). */
+  async function writeParameterDef(): Promise<void> {
+    await writeFile(
+      join(testDir, "parameter.ts"),
+      `
+        import { DECLARABLE_MARKER } from ${JSON.stringify(resolve(thisDir, "../declarable"))};
+
+        export class Parameter {
+          constructor(type, options) {
+            this[DECLARABLE_MARKER] = true;
+            this.lexicon = "aws";
+            this.entityType = "AWS::CloudFormation::Parameter";
+            this.parameterType = type;
+            this.description = options?.description;
+            this.defaultValue = options?.defaultValue;
+          }
+        }
+      `,
+    );
+  }
+
+  test("`new Parameter(\"String\", {...})` folds — the props object need not be the first argument", async () => {
+    await writeParameterDef();
+    const file = join(testDir, "params.ts");
+    await writeFile(
+      file,
+      `
+        import { Parameter } from "./parameter";
+        throw new Error("must never execute — sentinel for #1082 fold verification");
+        export const pVpcId = new Parameter("AWS::EC2::VPC::Id", { description: "vpc id" });
+      `,
+    );
+
+    const result = await tryFoldFile(file);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.entities).toHaveLength(1);
+    const [name, entity] = result.entities[0];
+    expect(name).toBe("pVpcId");
+    if (!isDeclarable(entity)) throw new Error("expected a Declarable");
+    // Both arguments reached the real constructor, in the right positions.
+    expect((entity as unknown as { parameterType: string }).parameterType).toBe("AWS::EC2::VPC::Id");
+    expect((entity as unknown as { description: string }).description).toBe("vpc id");
+  });
+
+  test("a constructor called with only a non-object argument folds too — no props object is invented", async () => {
+    await writeParameterDef();
+    const file = join(testDir, "params.ts");
+    await writeFile(
+      file,
+      `
+        import { Parameter } from "./parameter";
+        export const pName = new Parameter("String");
+      `,
+    );
+
+    const result = await tryFoldFile(file);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const [, entity] = result.entities[0];
+    expect((entity as unknown as { parameterType: string }).parameterType).toBe("String");
+    expect((entity as unknown as { description?: string }).description).toBeUndefined();
+  });
+
+  test("a non-foldable argument in any position still falls the file back to run", async () => {
+    await writeParameterDef();
+    const file = join(testDir, "params.ts");
+    await writeFile(
+      file,
+      `
+        import { Parameter } from "./parameter";
+        export const pName = new Parameter(computeType(), { description: "x" });
+      `,
+    );
+
+    const result = await tryFoldFile(file);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toContain("computeType(...)");
+  });
+});

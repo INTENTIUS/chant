@@ -283,6 +283,76 @@ describe("fold — intrinsic tagged templates", () => {
   });
 });
 
+describe("fold — registered authoring helpers (#1082)", () => {
+  test("a registered helper call folds to the helper-call node form, arguments folded in order", () => {
+    const consts = parseConsts(`const stack = "web"; const x = phase("Apply", [{ kind: "cfn-deploy", stack }]);`);
+    const expr = consts.get("x");
+    if (!expr) throw new Error("fixture error");
+    expect(fold(expr, consts)).toEqual({
+      __helper: "phase",
+      args: ["Apply", [{ kind: "cfn-deploy", stack: "web" }]],
+    });
+  });
+
+  test("helper calls nest, so a fan-out phase folds to nested envelopes", () => {
+    const consts = parseConsts(`const x = phase("Outer", [phase("Inner", []), gate("approve")]);`);
+    const expr = consts.get("x");
+    if (!expr) throw new Error("fixture error");
+    expect(fold(expr, consts)).toEqual({
+      __helper: "phase",
+      args: [
+        "Outer",
+        [
+          { __helper: "phase", args: ["Inner", []] },
+          { __helper: "gate", args: ["approve"] },
+        ],
+      ],
+    });
+  });
+
+  test("an unfoldable argument still rejects the whole call", () => {
+    const consts = parseConsts(`const x = phase("Apply", [{ stack: getName() }]);`);
+    const expr = consts.get("x");
+    if (!expr) throw new Error("fixture error");
+    expect(() => fold(expr, consts)).toThrow(FoldError);
+  });
+
+  test("an UNREGISTERED name is still rejected — the allowlist is closed, not a general call case", () => {
+    const consts = parseConsts(`const x = compose("Apply", []);`);
+    const expr = consts.get("x");
+    if (!expr) throw new Error("fixture error");
+    let error: unknown;
+    try {
+      fold(expr, consts);
+    } catch (e) {
+      error = e;
+    }
+    expect(error).toBeInstanceOf(FoldError);
+    expect((error as FoldError).message).toContain("function call as a value is not foldable: compose(...)");
+  });
+
+  test("a registered name SHADOWED by a local const is rejected — the local binding wins, and it isn't chant's", () => {
+    const consts = parseConsts(`const phase = (n) => ({ phase: n }); const x = phase("Apply");`);
+    const expr = consts.get("x");
+    if (!expr) throw new Error("fixture error");
+    expect(() => fold(expr, consts)).toThrow(FoldError);
+  });
+
+  test("a registered name used as a METHOD (`ns.phase(...)`) is rejected — only a bare identifier callee folds", () => {
+    const consts = parseConsts(`const x = helpers.phase("Apply", []);`);
+    const expr = consts.get("x");
+    if (!expr) throw new Error("fixture error");
+    expect(() => fold(expr, consts)).toThrow(FoldError);
+  });
+
+  test("a spread argument is rejected — fold has no case for one, registered callee or not", () => {
+    const consts = parseConsts(`const steps = []; const x = phase(...steps);`);
+    const expr = consts.get("x");
+    if (!expr) throw new Error("fixture error");
+    expect(() => fold(expr, consts)).toThrow(FoldError);
+  });
+});
+
 describe("fold — nullish coalescing, ternary, arithmetic", () => {
   test("?? falls through only on null/undefined", () => {
     expect(foldConst(`const x = null ?? "fallback";`, "x")).toBe("fallback");
@@ -425,6 +495,52 @@ describe("fold — rejections", () => {
   test("an unsupported expression form is not foldable", () => {
     const src = `const bad = function () { return 1; };`;
     expect(() => foldConst(src, "bad")).toThrow(FoldError);
+  });
+});
+
+describe("foldResource — constructor argument positions (#1082)", () => {
+  test("a props object that isn't the FIRST argument still folds, reported as a positional arg list", () => {
+    // AWS's deploy-time Parameter is `(type, props)` — lexicons/aws/src/parameter.ts.
+    const src = `export const p = new Parameter("String", { description: "vpc id", defaultValue: "" });`;
+    const result = foldModule(src);
+    expect(result.p).toEqual({
+      ok: true,
+      spec: {
+        __resource: "Parameter",
+        props: { description: "vpc id", defaultValue: "" },
+        args: ["String", { description: "vpc id", defaultValue: "" }],
+      },
+    });
+  });
+
+  test("a constructor with no object-literal argument at all folds to its bare argument list", () => {
+    const src = `export const p = new Parameter("String");`;
+    const result = foldModule(src);
+    expect(result.p).toEqual({ ok: true, spec: { __resource: "Parameter", props: {}, args: ["String"] } });
+  });
+
+  test("the classic (props) shape is unchanged — no `args` list", () => {
+    const src = `export const b = new S3Bucket({ name: "b" });`;
+    const result = foldModule(src);
+    expect(result.b).toEqual({ ok: true, spec: { __resource: "S3Bucket", props: { name: "b" } } });
+  });
+
+  test("the classic (props, attributes) shape is unchanged — no `args` list", () => {
+    const src = `export const b = new S3Bucket({ name: "b" }, { DependsOn: "other" });`;
+    const result = foldModule(src);
+    expect(result.b).toEqual({
+      ok: true,
+      spec: { __resource: "S3Bucket", props: { name: "b" }, attributes: { DependsOn: "other" } },
+    });
+  });
+
+  test("a non-object-literal argument is folded, not rejected for its position — but must still be foldable", () => {
+    const src = `export const p = new Parameter(getType(), { description: "x" });`;
+    const result = foldModule(src);
+    expect(result.p?.ok).toBe(false);
+    if (result.p && !result.p.ok) {
+      expect(result.p.error).toContain("getType(...)");
+    }
   });
 });
 

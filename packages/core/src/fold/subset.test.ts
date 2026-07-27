@@ -58,11 +58,28 @@ const SUPPORTED_CASES: SubsetCase[] = [
     expr: "Sub`${name}-data`",
     intrinsics: [{ name: "Sub", isTag: true }],
   },
+  {
+    // chant #1082 — a registered chant authoring helper is the one call shape
+    // that folds, so EVL001 must not flag it either.
+    name: "registered authoring helper call with foldable arguments",
+    preamble: `const stack = "web";`,
+    expr: `phase("Apply", [{ kind: "cfn-deploy", stack }])`,
+  },
+  {
+    name: "registered authoring helper nested inside another",
+    expr: `phase("Outer", [phase("Inner", []), gate("approve")])`,
+  },
 ];
 
 const UNSUPPORTED_CASES: SubsetCase[] = [
   { name: "function call as a value", expr: `getName()` },
   { name: "method call as a value", expr: `config.getName()` },
+  // chant #1082 — a registered helper NAME reached through a namespace is
+  // still a method call, and still rejected by both sides.
+  { name: "registered helper name reached as a method", expr: `helpers.phase("Apply", [])` },
+  // ...and a registered helper with an unfoldable argument is rejected on the
+  // argument, by both sides, at the argument's own position.
+  { name: "registered helper with an unfoldable argument", expr: `phase("Apply", [getName()])` },
   { name: "computed/dynamic object-literal key", expr: `{ [dynKey]: 1 }` },
   { name: "dynamic element-access key", expr: `config[dynKey]` },
   { name: "non-whitelisted binary operator (%)", expr: `n % 2` },
@@ -216,6 +233,25 @@ describe("documented divergences — NOT unified by design (see subset.ts module
     const badInit = consts.get("bad") as ts.NewExpression;
 
     expect(() => foldResource(badInit, consts, [{ name: "Sub", isTag: true }])).toThrow(FoldError);
+
+    const context: LintContext = { sourceFile, entities: [], filePath: "t.ts", lexicon: undefined };
+    expect(evl001NonLiteralExpressionRule.check(context)).toHaveLength(0);
+  });
+
+  test("authoring-helper shadowing: fold rejects a registered name bound to a local const; EVL001 does not (shape-only, no binding resolution)", () => {
+    // chant #1082 — `phase` is registered, but here it's the file's own local
+    // arrow function, so the local binding wins and fold() rejects. EVL has no
+    // binding resolver (subset.ts module doc, point 1) and stays permissive —
+    // the same direction as every other divergence here.
+    const source = `
+      const phase = (n) => ({ phase: n });
+      const bad = new Thing({ x: phase("Apply") });
+    `;
+    const sourceFile = ts.createSourceFile("t.ts", source, ts.ScriptTarget.Latest, true);
+    const consts = collectConsts(sourceFile);
+    const badInit = consts.get("bad") as ts.NewExpression;
+
+    expect(() => foldResource(badInit, consts, [])).toThrow(FoldError);
 
     const context: LintContext = { sourceFile, entities: [], filePath: "t.ts", lexicon: undefined };
     expect(evl001NonLiteralExpressionRule.check(context)).toHaveLength(0);
