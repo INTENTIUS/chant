@@ -33,9 +33,13 @@ The CDK capture lights up, and a marker lands on the first project frame near th
 
 ![cdk synth timeline — project frames highlighted, first project frame marked near t=0](/leftness/cdk-synth.svg)
 
+[Explore the CDK capture interactively](https://spicypath.intentius.workers.dev/#eyJ2dCI6ImZsYW1lIiwibW9kZSI6ImNoYXJ0IiwicSI6Ikl0ZW1zU3RhY2siLCJtayI6W1sxMDU3NTE4NzM0NTksImZpcnN0IHByb2plY3QgZnJhbWUiXV0sInNyYyI6InNhbXBsZXMvbGVmdG5lc3MtY2RrLXN5bnRoLmNwdXByb2ZpbGUiLCJzcmNUeXBlIjoic2FtcGxlIn0=) — the link restores the timeline, the highlight, and the marker.
+
 The chant capture is a busy timeline — the TypeScript parser is doing real work — with an empty highlight. There is no marker because there is no project frame to mark:
 
 ![chant build --fold timeline — zero project functions matched, no project frame exists to mark](/leftness/chant-build-fold.svg)
+
+[Explore the chant capture interactively](https://spicypath.intentius.workers.dev/#eyJ2dCI6ImZsYW1lIiwibW9kZSI6ImNoYXJ0Iiwic3JjIjoic2FtcGxlcy9sZWZ0bmVzcy1jaGFudC1idWlsZC5jcHVwcm9maWxlIiwic3JjVHlwZSI6InNhbXBsZSJ9) — same viewer, same question, nothing to mark.
 
 A blank flame graph would look like a broken file. A full one with nothing to highlight is the accurate picture: the tool works, your code never runs.
 
