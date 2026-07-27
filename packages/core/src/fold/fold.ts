@@ -1,5 +1,5 @@
 import * as ts from "typescript";
-import { intrinsicFolds, type IntrinsicDef } from "../lexicon";
+import { intrinsicCallFolds, intrinsicTagFolds, type IntrinsicDef } from "../lexicon";
 import {
   SUPPORTED_BINARY_OPERATORS,
   SUPPORTED_UNARY_OPERATORS,
@@ -34,12 +34,20 @@ import { isFoldableHelperName } from "./foldable-helpers";
  *
  * A `CallExpression` has almost no case — a function call as a value is
  * structurally unrepresentable, not merely linted against. Composite
- * factory calls are out of scope here (epic Phase 5, #1023). The one
- * exception (chant #1082) is a call to a REGISTERED chant authoring helper
- * ({@link "./foldable-helpers"}): those reduce to a symbolic
- * {@link FoldedHelperCall} envelope — still executing nothing here — the
- * same way a registered lexicon intrinsic tagged template reduces to a
- * {@link FoldedIntrinsic} one. Everything else still throws.
+ * factory calls are out of scope here (epic Phase 5, #1023). There are
+ * exactly two exceptions, both closed allowlists of names declared
+ * somewhere a human had to write them down, and both reducing to a symbolic
+ * envelope that executes nothing here:
+ *
+ *   - a call to a REGISTERED chant authoring helper
+ *     ({@link "./foldable-helpers"}, chant #1082) → {@link FoldedHelperCall};
+ *   - a call to a lexicon intrinsic whose lexicon registered it AND opted
+ *     its call form in ({@link intrinsicCallFolds}, ../lexicon.ts, chant
+ *     #1044) → {@link FoldedIntrinsicCall}, the same `{__intrinsic}` family
+ *     the tagged-template form already reduces to.
+ *
+ * Everything else — a user's function, a method call, an array `.map`, a
+ * registered name shadowed by a local binding — still throws.
  *
  * Cross-file identifier resolution (chant #1020): `consts` alone is always
  * this file's own top-level bindings — that part stays single-file, and
@@ -102,10 +110,31 @@ export interface AttrRefValue {
  * Mirrors the runtime call shape `Tag(strings, ...values)` so a later
  * build path can replay it into the real intrinsic object (#1022).
  */
-export interface FoldedIntrinsic {
+export type FoldedIntrinsic = FoldedIntrinsicTag | FoldedIntrinsicCall;
+
+/** The tagged-template form: `Sub\`${x}-y\`` — see {@link FoldedIntrinsic}. */
+export interface FoldedIntrinsicTag {
   __intrinsic: string;
   strings: string[];
   values: FoldedValue[];
+}
+
+/**
+ * The plain-call form of a registered, opted-in lexicon intrinsic
+ * (chant #1044) — `Ref(bucket)`, `Concat("a", b)`, `GetAtt("Fn", "Arn")`.
+ * Same `__intrinsic` key as the tagged-template form, so the same revival
+ * branch handles both and nothing downstream learns a new envelope; the
+ * payload differs because the call shape does — positional `args` mirroring
+ * `Name(...args)`, where the tag form mirrors `Name(strings, ...values)`.
+ *
+ * Symbolic, exactly like the tag form: `fold()` executes nothing, it only
+ * records that a registered intrinsic was called and with what. The real
+ * function is resolved through the folding file's own imports and invoked by
+ * `../discovery/fold-import.ts`'s `reviveFoldedValue`.
+ */
+export interface FoldedIntrinsicCall {
+  __intrinsic: string;
+  args: FoldedValue[];
 }
 
 /**
@@ -292,26 +321,49 @@ function resolvesToResource(consts: Map<string, ts.Expression>, ident: ts.Identi
 
 /**
  * True when `node` is an identifier, or a dotted/bracketed access chain
- * rooted at an identifier, that isn't bound in `consts` — e.g.
- * `AWS.StackName` from an imported pseudo-parameter namespace, or a bare
- * imported identifier. Resolving what it actually refers to requires
- * following an import (#1020), which is out of scope here.
+ * rooted at an identifier, that neither `consts` nor `externals` can resolve
+ * — e.g. `AWS.StackName` from an imported pseudo-parameter namespace inside
+ * a lexicon package (still #1063). Nothing here can say what it refers to,
+ * so an intrinsic's interior keeps it symbolically rather than rejecting it.
+ *
+ * `externals` (chant #1020) is consulted so a root that fold CAN resolve is
+ * not treated as unresolved: `Ref(environment)`, where `environment` is a
+ * `Parameter` imported from a sibling project file, must fold to the REAL,
+ * already-constructed Declarable the fold session made for that file, not to
+ * a `{__symbol}` the bridge later re-imports — re-importing the defining
+ * module builds a second, differently-identified instance of the same
+ * resource, which is exactly the shared-identity property #1020 exists to
+ * preserve (see fold-import.ts's module doc).
  */
-function isUnresolvedSymbolChain(node: ts.Expression, consts: Map<string, ts.Expression>): boolean {
-  if (ts.isIdentifier(node)) return node.text !== "undefined" && !consts.has(node.text);
-  if (ts.isPropertyAccessExpression(node)) return isUnresolvedSymbolChain(node.expression, consts);
-  if (ts.isElementAccessExpression(node)) return isUnresolvedSymbolChain(node.expression, consts);
-  if (ts.isNonNullExpression(node)) return isUnresolvedSymbolChain(node.expression, consts);
+function isUnresolvedSymbolChain(
+  node: ts.Expression,
+  consts: Map<string, ts.Expression>,
+  externals?: ReadonlyMap<string, unknown>,
+): boolean {
+  if (ts.isIdentifier(node)) {
+    return node.text !== "undefined" && !consts.has(node.text) && !externals?.has(node.text);
+  }
+  if (ts.isPropertyAccessExpression(node)) return isUnresolvedSymbolChain(node.expression, consts, externals);
+  if (ts.isElementAccessExpression(node)) return isUnresolvedSymbolChain(node.expression, consts, externals);
+  if (ts.isNonNullExpression(node)) return isUnresolvedSymbolChain(node.expression, consts, externals);
   return false;
 }
 
 /**
- * Fold one interpolated sub-expression of a registered intrinsic tagged
- * template. Identical to {@link fold}, except an unresolved external
- * symbol chain (a pseudo-parameter-style access this file can't see the
- * import for) folds to a {@link SymbolicValue} instead of throwing — the
- * run path resolves it once the module actually imports and runs; fold
- * preserves it symbolically rather than stringifying or rejecting it.
+ * Fold one sub-expression of a registered intrinsic's interior — an
+ * interpolation of its tagged-template form, or (chant #1044) an argument of
+ * its plain-call form. Identical to {@link fold}, except a symbol chain
+ * nothing can resolve (a pseudo-parameter-style access into a lexicon
+ * package, `AWS.StackName`) folds to a {@link SymbolicValue} instead of
+ * throwing — the run path resolves it once the module actually imports and
+ * runs; fold preserves it symbolically rather than stringifying or rejecting
+ * it, and fold-import.ts's `resolveSymbolicValue` resolves it for real
+ * before the intrinsic is constructed.
+ *
+ * `externals` (chant #1020) takes precedence over the symbolic path: see
+ * {@link isUnresolvedSymbolChain} for why an already-resolved cross-file
+ * binding must reach the intrinsic as the real, shared object rather than as
+ * a symbol the bridge re-imports.
  */
 function foldIntrinsicValue(
   node: ts.Expression,
@@ -319,16 +371,7 @@ function foldIntrinsicValue(
   intrinsics: readonly IntrinsicDef[],
   externals?: ReadonlyMap<string, unknown>,
 ): FoldedValue {
-  // Deliberately checks `consts` only, not `externals` — an imported
-  // identifier here still folds to a symbolic `{__symbol}` node exactly as
-  // before #1020, revived later by fold-import.ts's own
-  // `resolveSymbolicValue` (a real, trusted import of the defining module —
-  // fine for a plain pseudo-parameter-style namespace, the only shape this
-  // path exists for). Wiring `externals` in here too would mean two
-  // different mechanisms resolving the same cross-file name inside an
-  // intrinsic interpolation; out of scope for #1020, which only needs
-  // identifiers/property access OUTSIDE tagged templates to resolve.
-  if (isUnresolvedSymbolChain(node, consts)) {
+  if (isUnresolvedSymbolChain(node, consts, externals)) {
     return { __symbol: node.getText() };
   }
   return fold(node, consts, intrinsics, externals);
@@ -336,9 +379,13 @@ function foldIntrinsicValue(
 
 /**
  * Fold a `TaggedTemplateExpression` whose tag is a registered, foldable
- * lexicon intrinsic ({@link intrinsicFolds}, `../lexicon.ts`) to its node
+ * lexicon intrinsic ({@link intrinsicTagFolds}, `../lexicon.ts`) to its node
  * form. An unregistered — or registered-but-not-foldable — tag throws a
  * located {@link FoldError}.
+ *
+ * Checks the TAG-form predicate specifically (chant #1044): an intrinsic
+ * whose lexicon opted its plain-call form in is not thereby usable as a
+ * tagged template, and `` Ref`...` `` stays a rejection.
  */
 function foldTaggedTemplate(
   node: ts.TaggedTemplateExpression,
@@ -347,7 +394,7 @@ function foldTaggedTemplate(
   externals?: ReadonlyMap<string, unknown>,
 ): FoldedIntrinsic {
   const tagName = node.tag.getText();
-  const isRegistered = intrinsics.some((i) => i.name === tagName && intrinsicFolds(i));
+  const isRegistered = intrinsics.some((i) => i.name === tagName && intrinsicTagFolds(i));
   if (!isRegistered) {
     throw foldError(node, `unregistered tagged template intrinsic: ${tagName}\`...\``);
   }
@@ -367,13 +414,15 @@ function foldTaggedTemplate(
 /**
  * Fold a single expression node to a value. Throws {@link FoldError} for
  * anything outside the supported subset — including any `CallExpression`
- * that isn't a registered intrinsic tagged template.
+ * that is neither a registered chant authoring helper nor a registered,
+ * call-form-opted-in lexicon intrinsic (see the module doc).
  *
- * @param intrinsics - Lexicon-registered intrinsics that fold
- *   ({@link intrinsicFolds}, e.g. `Sub`). A tagged template whose tag isn't
- *   in this list, or is registered but not foldable, is rejected. Defaults
- *   to none — pass the target lexicon's manifest `intrinsics` to recognize
- *   its tags.
+ * @param intrinsics - The active lexicons' registered intrinsics. A tagged
+ *   template whose tag isn't in this list, or is in it without
+ *   {@link intrinsicTagFolds}, is rejected; a plain call is rejected unless
+ *   its callee is in this list with {@link intrinsicCallFolds} (chant
+ *   #1044). Defaults to none — pass the target lexicon's manifest
+ *   `intrinsics` to recognize either form.
  * @param externals - chant #1020: pre-resolved imported bindings, consulted
  *   only when an identifier isn't in `consts`. See the module doc above.
  *   `undefined` (the default) preserves the exact pre-#1020 single-file
@@ -612,6 +661,37 @@ export function fold(
         args: node.arguments.map((arg) => fold(arg, consts, intrinsics, externals)),
       };
     }
+
+    // chant #1044 — the other call shape that folds: a lexicon intrinsic in
+    // PLAIN-CALL form (`Ref(bucket)`, `Concat("a", b)`), where that lexicon
+    // registered it AND opted its call form in ({@link intrinsicCallFolds},
+    // ../lexicon.ts — default off, never inferred). Reduces to the same
+    // `{__intrinsic}` envelope family the tagged-template form produces, with
+    // positional `args`; nothing is executed here, for the same reason as the
+    // tag form — the real function lives in the lexicon module, and resolving
+    // it through this file's own imports and invoking it is the async
+    // bridge's job (../discovery/fold-import.ts's `reviveFoldedValue`).
+    //
+    // Arguments fold through {@link foldIntrinsicValue}, exactly like a tag's
+    // interpolations: an intrinsic's interior is where a pseudo-parameter
+    // chain (`GetAZs(AWS.Region)`) legitimately appears, and it stays
+    // symbolic rather than rejecting.
+    //
+    // The door does not open any wider than this. A bare-identifier callee
+    // only, so `ns.Ref(...)` and `arr.map(...)` are untouched; the file's own
+    // `const` shadowing wins, so a local `Ref` is not the lexicon's; and a
+    // name absent from the active lexicons' registered set — or registered
+    // without the opt-in — falls straight through to the throw below.
+    if (ts.isIdentifier(node.expression) && !consts.has(node.expression.text)) {
+      const calleeName = node.expression.text;
+      if (intrinsics.some((i) => i.name === calleeName && intrinsicCallFolds(i))) {
+        return {
+          __intrinsic: calleeName,
+          args: node.arguments.map((arg) => foldIntrinsicValue(arg, consts, intrinsics, externals)),
+        };
+      }
+    }
+
     throw foldError(node, callExpressionMessage(node));
   }
 

@@ -84,6 +84,20 @@ export type FoldFileResult =
        * exact same object every referencing file sees.
        */
       exportedValues: Map<string, unknown>;
+      /**
+       * chant #1044 — the OTHER project files whose exported OBJECTS this
+       * fold consumed (a cross-file `Declarable`, composite instance, or any
+       * other non-primitive reached through `buildExternals`/a re-export).
+       *
+       * Object identity is the thing that cannot survive one side of the
+       * build folding while the other runs, so `planFoldTaint` needs to know
+       * who consumed whose objects: if a file here is forced back to run, the
+       * instance THIS file already captured is not the instance discovery
+       * will collect, and serialization fails on an entity with no logical
+       * name. A primitive (string, number, boolean, null) is never recorded —
+       * it has no identity to disagree about.
+       */
+      liveSources: ReadonlySet<string>;
     }
   | { ok: false; reason: string };
 
@@ -1166,11 +1180,23 @@ async function reviveFoldedValue(value: FoldedValue, ctx: ResolveCtx, requireLiv
     const intrinsic = value as FoldedIntrinsic;
     const Fn = await resolveImportedExport(intrinsic.__intrinsic, ctx);
     if (typeof Fn !== "function") {
-      throw cheapError(`intrinsic tag "${intrinsic.__intrinsic}" did not resolve to a function`);
+      throw cheapError(`intrinsic "${intrinsic.__intrinsic}" did not resolve to a function`);
     }
-    const revivedValues: unknown[] = [];
-    for (const v of intrinsic.values) revivedValues.push(await reviveFoldedValue(v, ctx, true));
-    return (Fn as (...fnArgs: unknown[]) => unknown)(intrinsic.strings, ...revivedValues);
+    // Two authored forms, one envelope family (../fold/fold.ts's
+    // `FoldedIntrinsic`): the tagged template replays as
+    // `Name(strings, ...values)`, the plain call (chant #1044) as
+    // `Name(...args)`. Both hand their interior to the REAL function the
+    // file itself imported, with `requireLiveRefs` — an intrinsic inspects
+    // what it is given (`SubIntrinsic`'s `instanceof` checks, `Ref`'s
+    // `getLogicalName`), so a look-alike `{__attrRef}` envelope must be
+    // rejected here rather than silently serialized as something else.
+    const revived: unknown[] = [];
+    if ("args" in intrinsic) {
+      for (const a of intrinsic.args) revived.push(await reviveFoldedValue(a, ctx, true));
+      return (Fn as (...fnArgs: unknown[]) => unknown)(...revived);
+    }
+    for (const v of intrinsic.values) revived.push(await reviveFoldedValue(v, ctx, true));
+    return (Fn as (...fnArgs: unknown[]) => unknown)(intrinsic.strings, ...revived);
   }
 
   if ("__helper" in value) {
@@ -1501,9 +1527,11 @@ async function buildExternals(
   imports: Map<string, ImportBinding>,
   namespaceImports: Map<string, NamespaceImportBinding>,
   session: FoldSession,
-): Promise<{ externals: Map<string, unknown>; failures: Map<string, string> }> {
+): Promise<{ externals: Map<string, unknown>; failures: Map<string, string>; liveSources: Set<string> }> {
   const externals = new Map<string, unknown>();
   const failures = new Map<string, string>();
+  // chant #1044 — see `FoldFileResult.liveSources`.
+  const liveSources = new Set<string>();
 
   for (const [localName, binding] of imports) {
     // chant #1064 — a named `params` import that resolves to chant-core's own
@@ -1575,7 +1603,9 @@ async function buildExternals(
       continue;
     }
     if (result.exportedValues.has(binding.imported)) {
-      externals.set(localName, result.exportedValues.get(binding.imported));
+      const value = result.exportedValues.get(binding.imported);
+      externals.set(localName, value);
+      if (hasObjectIdentity(value)) liveSources.add(targetPath);
     } else {
       failures.set(
         localName,
@@ -1601,9 +1631,28 @@ async function buildExternals(
     // access on it (`ns.someExport`) is then just an ordinary bracket index,
     // exactly like on a real composite instance (see `isIndexableObject`).
     externals.set(localName, Object.fromEntries(result.exportedValues));
+    for (const value of result.exportedValues.values()) {
+      if (hasObjectIdentity(value)) {
+        liveSources.add(targetPath);
+        break;
+      }
+    }
   }
 
-  return { externals, failures };
+  return { externals, failures, liveSources };
+}
+
+/**
+ * True when `value` is something whose IDENTITY matters across the
+ * fold/run boundary — any object or function, as opposed to a primitive
+ * (chant #1044). Deliberately coarse: an object that merely *contains* a
+ * `Declarable` is as identity-bearing as the Declarable itself, and cheaply
+ * treating every object as such avoids a deep walk whose only payoff would
+ * be keeping a handful of extra files folded inside an entry that already
+ * falls back. See {@link FoldFileResult.liveSources}.
+ */
+function hasObjectIdentity(value: unknown): boolean {
+  return value !== null && (typeof value === "object" || typeof value === "function");
 }
 
 /**
@@ -1647,7 +1696,7 @@ async function tryFoldFileCore(file: string, session: FoldSession): Promise<Fold
     if (scan.declarators.length === 0) return { ok: false, reason: "no foldable resource exports" };
 
     const collected = collectImports(sourceFile);
-    const { externals, failures } = await buildExternals(file, collected.named, collected.namespaces, session);
+    const { externals, failures, liveSources } = await buildExternals(file, collected.named, collected.namespaces, session);
 
     const ctx: ResolveCtx = {
       file,
@@ -1751,11 +1800,16 @@ async function tryFoldFileCore(file: string, session: FoldSession): Promise<Fold
             reason: locatedMessage(decl.specifierNode, `"${imported}" is not exported by "${decl.specifier}"`),
           };
         }
-        applyResolvedValue(exportedName, result.exportedValues.get(imported), entities, exportedValues);
+        const value = result.exportedValues.get(imported);
+        // chant #1044 — a re-export hands another file's OBJECT straight
+        // through under this file's name, so it is a live-identity edge
+        // exactly like an imported binding is (see `liveSources`).
+        if (hasObjectIdentity(value)) liveSources.add(targetPath);
+        applyResolvedValue(exportedName, value, entities, exportedValues);
       }
     }
 
-    return { ok: true, entities, exportedValues };
+    return { ok: true, entities, exportedValues, liveSources };
   } catch (err) {
     // Any unexpected failure degrades to "fall back to run" rather than
     // taking discovery down with it — fold is opt-in, not a new failure mode.
@@ -1832,6 +1886,21 @@ export async function tryFoldFile(
  * the discovered files' relative-import graph, seeded from every file that
  * doesn't fold on its own.
  *
+ * chant #1044 adds the OTHER half of the same hazard, in the opposite
+ * direction along the same edges. Forward taint covers "a run file imports a
+ * folded file"; it does not cover "a FOLDED file consumed the objects of a
+ * file that later got forced to run". Once a plain-call intrinsic can fold,
+ * that second case is easy to reach: in `lexicons/aws/examples/lambda-api`,
+ * `health-api.ts` folds and captures `params.ts`'s real `Parameter` instance
+ * through `Ref(environment)`, while `params.ts` itself is forced to run
+ * because a DIFFERENT sibling (`data-bucket.ts`) imports it and falls back.
+ * Discovery then collects the run instance and serializes the folded one —
+ * the same "Logical name not set" crash described above, arriving from the
+ * other side. So `liveSources` (see {@link FoldFileResult}) contributes
+ * reverse edges here: a tainted file taints every folded file that captured
+ * one of its objects. Only object identity propagates — a file that imported
+ * a plain string from a tainted file has nothing to disagree about.
+ *
  * chant #1020 changes the calculus but not this function: `alb.ts` can now
  * often fold `network.vpc.VpcId` too (see `buildExternals`/`foldFileMemoized`
  * above), by reusing THE EXACT SAME `tryFoldFile("network.ts")` call (memoized
@@ -1847,6 +1916,7 @@ export async function tryFoldFile(
 export async function planFoldTaint(
   files: readonly string[],
   wouldFold: ReadonlyMap<string, boolean>,
+  liveSources?: ReadonlyMap<string, ReadonlySet<string>>,
 ): Promise<Set<string>> {
   const fileSet = new Set(files);
 
@@ -1894,6 +1964,22 @@ export async function planFoldTaint(
       // file itself, which is enough to seed it as tainted below.
     }
     edges.set(file, targets);
+  }
+
+  // chant #1044 — reverse edges: consumed-file -> the folded files that
+  // captured its objects. Same taint set, same fixpoint walk; see this
+  // function's doc for the crash this closes.
+  for (const [consumer, sources] of liveSources ?? []) {
+    if (!fileSet.has(consumer)) continue;
+    for (const source of sources) {
+      if (!fileSet.has(source)) continue;
+      let back = edges.get(source);
+      if (!back) {
+        back = new Set<string>();
+        edges.set(source, back);
+      }
+      back.add(consumer);
+    }
   }
 
   const tainted = new Set<string>(files.filter((f) => wouldFold.get(f) !== true));

@@ -1,5 +1,6 @@
 import * as ts from "typescript";
 import { isFoldableHelperName } from "./foldable-helpers";
+import { intrinsicCallFolds, type IntrinsicDef } from "../lexicon";
 
 /**
  * subset — the single canonical definition of chant's statically-foldable
@@ -46,6 +47,30 @@ import { isFoldableHelperName } from "./foldable-helpers";
  *      permissive; `fold()`'s bridge does the provenance check and falls the
  *      file back to run when it fails. Same direction as every other item
  *      here — a false negative for EVL, never a false positive.
+ *   2c. Intrinsic *call-form* registration (chant #1044) — a plain call to a
+ *      lexicon intrinsic the lexicon opted in (`Ref(bucket)`,
+ *      `Concat(a, b)`; `IntrinsicDef.foldsAsCall`, ../lexicon.ts) folds.
+ *      Whether a given name is such an intrinsic is not knowable from shape,
+ *      so {@link findSubsetViolation} takes the registry as an OPTIONAL
+ *      parameter instead of guessing: supply it and the answer for a call is
+ *      exact (fold()'s own), omit it and every call is a violation, the
+ *      pre-#1044 answer.
+ *
+ *      That parameter is the whole reason the call case lives here rather
+ *      than only in `fold()`. This module is a shared predicate, and the
+ *      point of a shared predicate is that a consumer can ask "will this
+ *      fold?" without running fold — a control plane deciding whether a
+ *      repository needs a sandboxed child process at all, for instance.
+ *      Keeping the case out of here would make the predicate answer "no" for
+ *      idiomatic `Ref(...)` source that `fold()` reduces cleanly: not a
+ *      permissive gap but a systematically WRONG answer in the expensive
+ *      direction, and the one direction this module is not allowed to be
+ *      wrong in (see the false-negative/false-positive rule in point 1, and
+ *      the flow-sensitivity note below — the single divergence in the other
+ *      direction, and the one this module treats as a wart). A caller with
+ *      no registry degrades to "assume it runs", which is safe and cheap to
+ *      reason about; EVL is exactly such a caller and its behavior on calls
+ *      is unchanged by #1044.
  *   3. Runtime *type* of a folded value — e.g. spreading `const n = 5`
  *      (`{...n}`) is shape-valid (`n` is a plain identifier) but `fold()`
  *      rejects it once it discovers `n` folds to a number, not an object.
@@ -153,26 +178,32 @@ export function unsupportedExpressionMessage(node: ts.Node): string {
  * the value. Returns the first violation within this member, or
  * `undefined` when it's fully in the subset.
  */
-export function checkObjectMember(prop: ts.ObjectLiteralElementLike): SubsetViolation | undefined {
+export function checkObjectMember(
+  prop: ts.ObjectLiteralElementLike,
+  intrinsics?: readonly IntrinsicDef[],
+): SubsetViolation | undefined {
   if (ts.isPropertyAssignment(prop)) {
     if (!isLiteralPropertyName(prop.name)) {
       return violation(prop.name, computedPropertyNameMessage(prop.name));
     }
-    return findSubsetViolation(prop.initializer);
+    return findSubsetViolation(prop.initializer, intrinsics);
   }
   if (ts.isShorthandPropertyAssignment(prop)) {
     return undefined;
   }
   if (ts.isSpreadAssignment(prop)) {
-    return findSubsetViolation(prop.expression);
+    return findSubsetViolation(prop.expression, intrinsics);
   }
   return violation(prop, UNSUPPORTED_OBJECT_MEMBER_MESSAGE);
 }
 
 /** Classify one array-literal element: a value, or a `...spread`. */
-function checkArrayElement(el: ts.Expression): SubsetViolation | undefined {
-  if (ts.isSpreadElement(el)) return findSubsetViolation(el.expression);
-  return findSubsetViolation(el);
+function checkArrayElement(
+  el: ts.Expression,
+  intrinsics?: readonly IntrinsicDef[],
+): SubsetViolation | undefined {
+  if (ts.isSpreadElement(el)) return findSubsetViolation(el.expression, intrinsics);
+  return findSubsetViolation(el, intrinsics);
 }
 
 /**
@@ -185,14 +216,17 @@ function checkArrayElement(el: ts.Expression): SubsetViolation | undefined {
  * `fold()`-evaluation-order) unsupported node, or `undefined` when `node`'s
  * whole shape is foldable.
  */
-export function findSubsetViolation(node: ts.Node): SubsetViolation | undefined {
+export function findSubsetViolation(
+  node: ts.Node,
+  intrinsics?: readonly IntrinsicDef[],
+): SubsetViolation | undefined {
   if (
     ts.isParenthesizedExpression(node) ||
     ts.isAsExpression(node) ||
     ts.isSatisfiesExpression(node) ||
     ts.isNonNullExpression(node)
   ) {
-    return findSubsetViolation(node.expression);
+    return findSubsetViolation(node.expression, intrinsics);
   }
 
   if (
@@ -227,7 +261,7 @@ export function findSubsetViolation(node: ts.Node): SubsetViolation | undefined 
 
   if (ts.isTemplateExpression(node)) {
     for (const span of node.templateSpans) {
-      const v = findSubsetViolation(span.expression);
+      const v = findSubsetViolation(span.expression, intrinsics);
       if (v) return v;
     }
     return undefined;
@@ -235,7 +269,7 @@ export function findSubsetViolation(node: ts.Node): SubsetViolation | undefined 
 
   if (ts.isObjectLiteralExpression(node)) {
     for (const prop of node.properties) {
-      const v = checkObjectMember(prop);
+      const v = checkObjectMember(prop, intrinsics);
       if (v) return v;
     }
     return undefined;
@@ -243,28 +277,28 @@ export function findSubsetViolation(node: ts.Node): SubsetViolation | undefined 
 
   if (ts.isArrayLiteralExpression(node)) {
     for (const el of node.elements) {
-      const v = checkArrayElement(el);
+      const v = checkArrayElement(el, intrinsics);
       if (v) return v;
     }
     return undefined;
   }
 
   if (ts.isPropertyAccessExpression(node)) {
-    return findSubsetViolation(node.expression);
+    return findSubsetViolation(node.expression, intrinsics);
   }
 
   if (ts.isElementAccessExpression(node)) {
     if (!isLiteralElementKey(node.argumentExpression)) {
       return violation(node.argumentExpression, dynamicElementAccessMessage(node.argumentExpression), "EVL003");
     }
-    return findSubsetViolation(node.expression);
+    return findSubsetViolation(node.expression, intrinsics);
   }
 
   if (ts.isPrefixUnaryExpression(node)) {
     if (!SUPPORTED_UNARY_OPERATORS.has(node.operator)) {
       return violation(node, UNSUPPORTED_UNARY_MESSAGE);
     }
-    return findSubsetViolation(node.operand);
+    return findSubsetViolation(node.operand, intrinsics);
   }
 
   if (ts.isBinaryExpression(node)) {
@@ -274,15 +308,15 @@ export function findSubsetViolation(node: ts.Node): SubsetViolation | undefined 
     }
     // Flow-insensitive — see module doc: fold() short-circuits &&/||/?? and
     // only evaluates the taken side; EVL requires both sides shape-valid.
-    return findSubsetViolation(node.left) ?? findSubsetViolation(node.right);
+    return findSubsetViolation(node.left, intrinsics) ?? findSubsetViolation(node.right, intrinsics);
   }
 
   if (ts.isConditionalExpression(node)) {
     // Flow-insensitive — see module doc: fold() only folds the taken branch.
     return (
-      findSubsetViolation(node.condition) ??
-      findSubsetViolation(node.whenTrue) ??
-      findSubsetViolation(node.whenFalse)
+      findSubsetViolation(node.condition, intrinsics) ??
+      findSubsetViolation(node.whenTrue, intrinsics) ??
+      findSubsetViolation(node.whenFalse, intrinsics)
     );
   }
 
@@ -293,14 +327,14 @@ export function findSubsetViolation(node: ts.Node): SubsetViolation | undefined 
     // argument is classified on its own terms and nothing is rejected merely
     // for being in the "wrong" position.
     for (const arg of node.arguments ?? []) {
-      const v = findSubsetViolation(arg);
+      const v = findSubsetViolation(arg, intrinsics);
       if (v) return v;
     }
     return undefined;
   }
 
   if (ts.isSpreadElement(node)) {
-    return findSubsetViolation(node.expression);
+    return findSubsetViolation(node.expression, intrinsics);
   }
 
   if (ts.isCallExpression(node)) {
@@ -316,11 +350,32 @@ export function findSubsetViolation(node: ts.Node): SubsetViolation | undefined 
     // ever be MORE permissive than `fold()`, never stricter.
     if (ts.isIdentifier(node.expression) && isFoldableHelperName(node.expression.text)) {
       for (const arg of node.arguments) {
-        const v = findSubsetViolation(arg);
+        const v = findSubsetViolation(arg, intrinsics);
         if (v) return v;
       }
       return undefined;
     }
+
+    // chant #1044 — a plain call to a lexicon intrinsic whose lexicon opted
+    // its call form in folds too (`Ref(bucket)`, `Concat("a", b)`). Unlike
+    // the helper case above, this one is only answerable with the registry
+    // in hand, which is exactly why it is a parameter: a caller that passes
+    // `intrinsics` gets fold()'s own answer, and a caller that can't supply
+    // one (EVL, any syntax-only tool) keeps the pre-#1044 answer — every
+    // call is a violation. See the module doc, point 2c, for why the
+    // registry-less answer is the safe one to leave in place.
+    if (
+      intrinsics &&
+      ts.isIdentifier(node.expression) &&
+      intrinsics.some((i) => i.name === (node.expression as ts.Identifier).text && intrinsicCallFolds(i))
+    ) {
+      for (const arg of node.arguments) {
+        const v = findSubsetViolation(arg, intrinsics);
+        if (v) return v;
+      }
+      return undefined;
+    }
+
     return violation(node, callExpressionMessage(node));
   }
 
