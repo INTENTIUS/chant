@@ -1,0 +1,17 @@
+{
+  "name": "leftness-chant-app",
+  "version": "0.0.0",
+  "type": "module",
+  "private": true,
+  "description": "chant side of the left-of-line matched pair — same infrastructure as ../cdk-app",
+  "scripts": {
+    "synth": "chant build src --lexicon aws --fold -o out/template.json"
+  },
+  "dependencies": {
+    "@intentius/chant": "0.22.0",
+    "@intentius/chant-lexicon-aws": "0.22.0"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3"
+  }
+}

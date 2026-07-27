@@ -134,6 +134,10 @@ gitlab-runtime-e2e:
 forgejo-runtime-e2e:
     bash test/forgejo-runtime-e2e.sh
 
+# Left-of-line proof capture (#1084): profile chant build --fold vs cdk synth on the matched pair, one measurement on both (on-demand, needs network for pinned installs; no cloud credentials)
+leftness-capture:
+    bash test/leftness/capture.sh
+
 # Deploy the components-aws-e2e example against a local AWS emulator (Floci in Docker; on-demand, needs Docker + aws CLI)
 components-aws-e2e:
     bash test/components-aws-e2e.sh
