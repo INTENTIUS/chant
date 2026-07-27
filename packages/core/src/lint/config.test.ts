@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
-import { loadConfig, DEFAULT_CONFIG, findProjectRoot } from "./config";
+import { loadConfig, DEFAULT_CONFIG, findProjectRoot, ruleSeverityOverride } from "./config";
 import { writeFileSync, mkdirSync, rmSync } from "fs";
 import { join, resolve } from "path";
 
@@ -715,5 +715,24 @@ describe("findProjectRoot", () => {
     // because it declares no config).
     const packageRoot = resolve(import.meta.dirname, "..", "..");
     expect(findProjectRoot(sub)).toBe(packageRoot);
+  });
+});
+
+describe("ruleSeverityOverride", () => {
+  test("returns the configured severity string", () => {
+    expect(ruleSeverityOverride({ lint: { rules: { WAW019: "off" } } }, "WAW019")).toBe("off");
+    expect(ruleSeverityOverride({ lint: { rules: { WAW019: "warning" } } }, "WAW019")).toBe("warning");
+  });
+
+  test("unwraps tuple rule configs", () => {
+    expect(
+      ruleSeverityOverride({ lint: { rules: { WAW019: ["off", { reason: "deliberate" }] } } }, "WAW019"),
+    ).toBe("off");
+  });
+
+  test("returns undefined for unconfigured rules or malformed config", () => {
+    expect(ruleSeverityOverride({}, "WAW019")).toBeUndefined();
+    expect(ruleSeverityOverride({ lint: { rules: {} } }, "WAW019")).toBeUndefined();
+    expect(ruleSeverityOverride({ lint: { rules: { WAW019: 42 } } }, "WAW019")).toBeUndefined();
   });
 });

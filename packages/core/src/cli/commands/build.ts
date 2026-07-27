@@ -4,6 +4,7 @@ import { resolveCliBuildParams } from "../build-params-cli";
 import type { Serializer, SerializerResult } from "../../serializer";
 import type { LexiconPlugin } from "../../lexicon";
 import { runPostSynthChecks } from "../../lint/post-synth";
+import { ruleSeverityOverride } from "../../lint/config";
 import { loadPolicyChecks } from "../../lint/policy";
 import { armSandboxPolicyExecution, runProjectPolicies } from "../../lint/policy-sandbox";
 import { sortedJsonReplacer } from "../../utils";
@@ -302,9 +303,14 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
       const scopedResult = { ...result, outputs: scopedOutputs };
       const postDiags = runPostSynthChecks(checks, scopedResult, env);
       for (const diag of postDiags) {
+        // Post-synth findings honor the same lint.rules severity overrides as
+        // declarative rules (#1138): "off" suppresses, other severities remap.
+        const override = ruleSeverityOverride(config, diag.checkId);
+        if (override === "off") continue;
+        const severity = override ?? diag.severity;
         const prefix = diag.entity ? `[${diag.entity}] ` : "";
         const lexiconSuffix = diag.lexicon ? ` (${diag.lexicon})` : "";
-        if (diag.severity === "error") {
+        if (severity === "error") {
           errors.push(formatError({ message: `${prefix}${diag.message}${lexiconSuffix}` }));
         } else {
           warnings.push(formatWarning({ message: `${prefix}${diag.message}${lexiconSuffix}` }));
