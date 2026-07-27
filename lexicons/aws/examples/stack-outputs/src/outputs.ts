@@ -16,3 +16,8 @@ export const vpcArn = output(
 export const PublicSubnetId = stackOutput(network.publicSubnet1.SubnetId, {
   description: "First public subnet, for a consumer stack to import",
 });
+
+// `output(literal, name)` — export an already-resolved value (chant #1121):
+// a real string/number/boolean the caller computed, not a reference to
+// anything. Emitted as a plain `Value`, never coerced into a `Fn::GetAtt`.
+export const apiVersion = output("v1", "ApiVersion");
