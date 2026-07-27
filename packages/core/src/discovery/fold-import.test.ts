@@ -7,6 +7,7 @@ import { tryFoldFile, createFoldSession } from "./fold-import";
 import { isDeclarable } from "../declarable";
 import { isCompositeInstance } from "../composite";
 import { isAttrRefLike } from "../utils";
+import { isIntrinsic } from "../intrinsic";
 import { params as sharedParams } from "../params";
 import type { AttrRef } from "../attrref";
 import type { IntrinsicDef } from "../lexicon";
@@ -1594,5 +1595,239 @@ describe("tryFoldFile — registered call-form intrinsics (#1044)", () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.reason).toContain("same-file resource reference");
+  });
+});
+
+/**
+ * chant #1063 — cross-file references into an ACTIVE LEXICON PACKAGE's
+ * exports.
+ *
+ * #1020 taught fold to follow an identifier into another module, but only
+ * through a relative/absolute specifier — a bare package specifier was
+ * skipped outright, so `Azure`, `GCP`, `S3Actions` and gitlab's `CI` all
+ * failed as "unresolved identifier" even though every one of them is a plain
+ * `as const` object the folder already handles. These tests install a real
+ * package into the fixture tree's own `node_modules` and drive the identical
+ * resolution a real `@intentius/chant-lexicon-azure` import takes: a genuine
+ * bare specifier, resolved by {@link fastResolveBareSpecifier} walking up to
+ * `<testDir>/node_modules`, then really imported.
+ *
+ * Every fixture package gets a UNIQUE name. `bareSpecifierPathCache` is
+ * process-wide and keyed by specifier alone (deliberately — see its doc), so
+ * two tests reusing one name would have the second silently resolve to the
+ * first's already-deleted directory.
+ */
+describe("tryFoldFile — active lexicon package exports (#1063)", () => {
+  let testDir: string;
+  let seq = 0;
+
+  beforeEach(async () => {
+    testDir = join(tmpdir(), `chant-fold-import-lexpkg-test-${Date.now()}-${Math.random()}`);
+    await mkdir(testDir, { recursive: true });
+  });
+
+  afterEach(async () => {
+    await rm(testDir, { recursive: true, force: true });
+  });
+
+  /**
+   * Install a package into `<testDir>/node_modules/<name>` and return its
+   * bare specifier. `lexiconName` is what a build would list in
+   * `chant.config.ts`'s `lexicons`; the package name follows chant's one
+   * naming convention (`@intentius/chant-lexicon-<name>`), same as
+   * `loadPlugin()` uses.
+   */
+  async function installLexiconPackage(source: string): Promise<{ lexicon: string; specifier: string }> {
+    const lexicon = `fold1063x${seq++}${Date.now().toString(36)}`;
+    const specifier = `@intentius/chant-lexicon-${lexicon}`;
+    const dir = join(testDir, "node_modules", specifier);
+    await mkdir(dir, { recursive: true });
+    await writeFile(
+      join(dir, "package.json"),
+      JSON.stringify({ name: specifier, version: "0.0.0", type: "module", exports: { ".": "./index.js" } }),
+    );
+    await writeFile(join(dir, "index.js"), source);
+    return { lexicon, specifier };
+  }
+
+  /** A pseudo-parameter namespace shaped exactly like `lexicons/azure/src/pseudo.ts`'s `Azure`, plus a plain-data constants object and a callable export. */
+  const LEXICON_SOURCE = `
+    const INTRINSIC_MARKER = Symbol.for("chant.intrinsic");
+    class ArmPseudoParameter {
+      constructor(expression) {
+        this[INTRINSIC_MARKER] = true;
+        this.expression = expression;
+      }
+      toJSON() { return this.expression; }
+    }
+    export const ResourceGroupLocation = new ArmPseudoParameter("[resourceGroup().location]");
+    export const Azure = { ResourceGroupLocation };
+    export const CI = { CommitBranch: "$CI_COMMIT_BRANCH", DefaultBranch: "$CI_DEFAULT_BRANCH" };
+    export const S3Actions = { ReadOnly: ["s3:GetObject", "s3:ListBucket"] };
+    export function defaultTags(tags) { return tags; }
+  `;
+
+  test("a lexicon package's plain-data export resolves and folds when referenced as a value", async () => {
+    const { lexicon, specifier } = await installLexiconPackage(LEXICON_SOURCE);
+    const file = join(testDir, "main.ts");
+    await writeFile(
+      file,
+      `
+        import { CI, S3Actions } from ${JSON.stringify(specifier)};
+        throw new Error("must never execute — sentinel for #1063 fold verification");
+        export const branch = CI.CommitBranch;
+        export const rule = \`\${CI.CommitBranch} == \${CI.DefaultBranch}\`;
+        export const actions = S3Actions.ReadOnly;
+      `,
+    );
+
+    const result = await tryFoldFile(file, [], createFoldSession([], undefined, [lexicon]));
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.exportedValues.get("branch")).toBe("$CI_COMMIT_BRANCH");
+    // A template literal is the real test that the VALUE arrived, not a
+    // symbolic envelope: an envelope would stringify to "[object Object]".
+    expect(result.exportedValues.get("rule")).toBe("$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH");
+    expect(result.exportedValues.get("actions")).toEqual(["s3:GetObject", "s3:ListBucket"]);
+  });
+
+  test("a pseudo-parameter reached through the namespace stays the REAL live Intrinsic instance, prototype intact", async () => {
+    const { lexicon, specifier } = await installLexiconPackage(LEXICON_SOURCE);
+    await writeFile(
+      join(testDir, "resources.ts"),
+      `
+        import { createResource } from ${JSON.stringify(runtimePath)};
+        export const Group = createResource("Test::Group", "azure", {});
+      `,
+    );
+    const file = join(testDir, "main.ts");
+    await writeFile(
+      file,
+      `
+        import { Azure } from ${JSON.stringify(specifier)};
+        import { Group } from "./resources";
+        export const group = new Group({ location: Azure.ResourceGroupLocation });
+      `,
+    );
+
+    const result = await tryFoldFile(file, [], createFoldSession([], undefined, [lexicon]));
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const [, entity] = result.entities[0];
+    const location = (entity as unknown as { props: { location: unknown } }).props.location;
+    // Not a plain-object copy: the generic revive walk would have rebuilt it
+    // as `{ expression: … }` and dropped `toJSON`, which is what actually
+    // reaches the serializer.
+    expect(isIntrinsic(location)).toBe(true);
+    expect((location as { toJSON(): unknown }).toJSON()).toBe("[resourceGroup().location]");
+    // Identity: the very object the module exports, not a reconstruction —
+    // the same one a run-path import of this package would hand the file.
+    const mod = (await import(join(testDir, "node_modules", specifier, "index.js"))) as {
+      Azure: { ResourceGroupLocation: unknown };
+    };
+    expect(location).toBe(mod.Azure.ResourceGroupLocation);
+  });
+
+  test("a lexicon package NOT active for this build is not resolved", async () => {
+    const { specifier } = await installLexiconPackage(LEXICON_SOURCE);
+    const file = join(testDir, "main.ts");
+    await writeFile(
+      file,
+      `
+        import { CI } from ${JSON.stringify(specifier)};
+        export const branch = CI.CommitBranch;
+      `,
+    );
+
+    // The package is installed and importable — the ONLY thing missing is
+    // this build having loaded it as a lexicon.
+    const result = await tryFoldFile(file, [], createFoldSession([], undefined, ["aws"]));
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toContain("unresolved identifier: CI");
+  });
+
+  test("with no active lexicons at all, a bare specifier is skipped exactly as before", async () => {
+    const { specifier } = await installLexiconPackage(LEXICON_SOURCE);
+    const file = join(testDir, "main.ts");
+    await writeFile(
+      file,
+      `
+        import { CI } from ${JSON.stringify(specifier)};
+        export const branch = CI.CommitBranch;
+      `,
+    );
+
+    const result = await tryFoldFile(file);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toContain("unresolved identifier: CI");
+  });
+
+  test("a non-lexicon package is never followed, even when it is installed right next to one that is", async () => {
+    const { lexicon } = await installLexiconPackage(LEXICON_SOURCE);
+    const vendorDir = join(testDir, "node_modules", "some-vendor-pkg");
+    await mkdir(vendorDir, { recursive: true });
+    await writeFile(
+      join(vendorDir, "package.json"),
+      JSON.stringify({ name: "some-vendor-pkg", version: "0.0.0", type: "module", exports: { ".": "./index.js" } }),
+    );
+    await writeFile(join(vendorDir, "index.js"), `export const SETTINGS = { region: "us-east-1" };`);
+
+    const file = join(testDir, "main.ts");
+    await writeFile(
+      file,
+      `
+        import { SETTINGS } from "some-vendor-pkg";
+        export const region = SETTINGS.region;
+      `,
+    );
+
+    const result = await tryFoldFile(file, [], createFoldSession([], undefined, [lexicon]));
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toContain("unresolved identifier: SETTINGS");
+  });
+
+  test("a lexicon package's CALLABLE export is not bound as an identifier value", async () => {
+    const { lexicon, specifier } = await installLexiconPackage(LEXICON_SOURCE);
+    const file = join(testDir, "main.ts");
+    await writeFile(
+      file,
+      `
+        import { defaultTags } from ${JSON.stringify(specifier)};
+        export const tags = defaultTags;
+      `,
+    );
+
+    const result = await tryFoldFile(file, [], createFoldSession([], undefined, [lexicon]));
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toContain("unresolved identifier: defaultTags");
+  });
+
+  test("process.env still rejects, with the build-parameter guidance, even with an active lexicon package in scope", async () => {
+    const { lexicon, specifier } = await installLexiconPackage(LEXICON_SOURCE);
+    const file = join(testDir, "main.ts");
+    await writeFile(
+      file,
+      `
+        import { CI } from ${JSON.stringify(specifier)};
+        export const branch = CI.CommitBranch;
+        export const region = process.env.AWS_REGION;
+      `,
+    );
+
+    const result = await tryFoldFile(file, [], createFoldSession([], undefined, [lexicon]));
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toContain(`ambient "process" read is not foldable`);
   });
 });

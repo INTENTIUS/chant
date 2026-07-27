@@ -171,6 +171,14 @@ export interface BuildOptions {
   intrinsics?: IntrinsicDef[];
 
   /**
+   * chant #1063 — the lexicon names loaded for this build. Passed straight
+   * through to {@link DiscoveryOptions.lexicons} in `./discovery/index`;
+   * ignored unless {@link fold} is set. The CLI populates this from
+   * `options.plugins.map(p => p.name)`.
+   */
+  lexicons?: readonly string[];
+
+  /**
    * chant #1045 Phase 2 — opt-in: run-fallback files (or, when {@link fold}
    * isn't set, every file) execute together, isolated, in one sandboxed
    * child process instead of in-process. Passed straight through to
@@ -513,6 +521,7 @@ export async function build(
   const discoveryResult = await discover(path, {
     fold: options?.fold,
     intrinsics: options?.intrinsics,
+    lexicons: options?.lexicons,
     sandbox: options?.sandbox,
     buildParams: options?.buildParams,
   });
