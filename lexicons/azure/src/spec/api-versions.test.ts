@@ -38,13 +38,30 @@ describe("compareApiDates", () => {
 
 describe("latestVersionPerProvider", () => {
   it("picks the latest API version per provider", () => {
+    // Providers with no PROVIDER_VERSION_OVERRIDES entry — Microsoft.Compute
+    // and Microsoft.Authorization are pinned (#1144, #223) and covered by
+    // their own describe block below.
     const paths = [
       "schemas/2022-01-01/Microsoft.Storage.json",
       "schemas/2023-06-01/Microsoft.Storage.json",
-      "schemas/2023-01-01/Microsoft.Compute.json",
+      "schemas/2023-01-01/Microsoft.Network.json",
     ];
     const result = latestVersionPerProvider(paths);
     expect(result.get("Microsoft.Storage")?.apiVersion).toBe("2023-06-01");
-    expect(result.get("Microsoft.Compute")?.apiVersion).toBe("2023-01-01");
+    expect(result.get("Microsoft.Network")?.apiVersion).toBe("2023-01-01");
+  });
+});
+
+describe("PROVIDER_VERSION_OVERRIDES", () => {
+  it("pins Microsoft.Compute to the last date with the virtualMachines family (#1144)", () => {
+    const paths = [
+      "schemas/2025-11-01/Microsoft.Compute.json",
+      "schemas/2026-03-01/Microsoft.Compute.json",
+      "schemas/2026-03-02/Microsoft.Compute.json",
+    ];
+    const result = latestVersionPerProvider(paths);
+    // 2026-03-02 is the naive "latest by date" but drops virtualMachines
+    // (a disk-only delta); the override keeps 2026-03-01 instead.
+    expect(result.get("Microsoft.Compute")?.apiVersion).toBe("2026-03-01");
   });
 });
