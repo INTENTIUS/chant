@@ -1,97 +1,12 @@
 ---
 title: "Intrinsic Functions"
-description: "GitLab CI/CD intrinsic functions and their chant syntax"
+description: "Built-in intrinsic functions for the GitLab CI/CD lexicon"
 ---
-The GitLab lexicon provides one intrinsic function: `reference()`, which maps to GitLab's `!reference` YAML tag.
 
-`reference()` is a plain function call, not a TypeScript tagged template — like any function call used as a value, it's outside the subset [`chant build --fold`](/chant/concepts/typescript-as-data/#folded-vs-run) can reduce. A file that calls `reference()` anywhere in a resource's properties falls back to the normal run path under `--fold`.
+The GitLab CI/CD lexicon provides **1** intrinsic functions.
 
-## `reference()` — reuse job properties
+**Tag?** shows how an intrinsic is authored: a genuine tagged template (`Sub\`...\``) or a plain function call (`Ref(...)`). **Folds?** shows whether [`chant build --fold`](/chant/concepts/typescript-as-data/#folded-vs-run) can reduce a call to this intrinsic today, without running the file — generated directly from this lexicon's registration, not restated by hand. Right now folding only reaches tagged templates, so most rows read `No`; that reflects the current state of the folder, not something specific to these intrinsics, and it changes as folding gains coverage.
 
-The `reference()` intrinsic lets you reuse properties from other jobs or hidden keys. It produces the `!reference` YAML tag:
-
-```typescript title="reference-basic.ts"
-import { Job, reference } from "@intentius/chant-lexicon-gitlab";
-
-export const deployRef = new Job({
-  script: reference(".setup", "script"),
-});
-```
-
-Serializes to:
-
-```yaml
-deploy:
-  script: !reference [.setup, script]
-```
-
-### Syntax
-
-```typescript
-reference(jobName: string, property: string): ReferenceTag
-```
-
-- `jobName` — the job or hidden key to reference (e.g. `".setup"`, `"build"`)
-- `property` — the property to extract (e.g. `"script"`, `"before_script"`, `"rules"`)
-
-### Use cases
-
-```typescript title="reference-shared.ts"
-import { Job, reference } from "@intentius/chant-lexicon-gitlab";
-
-// Shared setup scripts from external YAML
-export const testRef = new Job({
-  stage: "test",
-  before_script: reference(".node-setup", "before_script"),
-  script: ["npm test"],
-});
-
-export const lintRef = new Job({
-  stage: "test",
-  before_script: reference(".node-setup", "before_script"),
-  script: ["npm run lint"],
-});
-
-// Shared rules
-export const buildRef = new Job({
-  stage: "build",
-  rules: reference(".default-rules", "rules"),
-  script: ["npm run build"],
-});
-```
-
-Produces:
-
-```yaml
-test:
-  stage: test
-  before_script: !reference [.node-setup, before_script]
-  script:
-    - npm test
-
-lint:
-  stage: test
-  before_script: !reference [.node-setup, before_script]
-  script:
-    - npm run lint
-```
-
-### When to use `reference()` vs direct imports
-
-```typescript title="reference-vs-import.ts"
-import { Job, reference } from "@intentius/chant-lexicon-gitlab";
-import { npmCache, testArtifacts } from "./config";
-
-// Preferred for chant-managed config — resolved at build time
-export const testImported = new Job({
-  cache: npmCache,
-  artifacts: testArtifacts,
-  script: ["npm test"],
-});
-
-// For external/included YAML definitions — produces !reference tags
-export const testExternal = new Job({
-  before_script: reference(".ci-setup", "before_script"),
-  script: ["npm test"],
-});
-```
+| Function | Description | Output Key | Tag? | Folds? |
+|----------|-------------|------------|------|--------|
+| `reference` | !reference tag — reference another job's properties | `!reference` | No | No |

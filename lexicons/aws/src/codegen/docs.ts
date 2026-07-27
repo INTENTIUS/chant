@@ -102,7 +102,15 @@ export async function generateDocs(options?: { verbose?: boolean }): Promise<voi
     overview,
     outputFormat,
     serviceFromType,
-    suppressPages: ["pseudo-parameters", "intrinsics", "rules"],
+    // "intrinsics" is no longer suppressed (chant #1067) — the reference
+    // table at that slug is now generated from the plugin's own
+    // `intrinsics()` registration (docsPipeline's generateIntrinsics, same
+    // mechanism azure/helm already use), so its "Folds?" column can never
+    // drift from the registration the way #1062's foldability matrix
+    // depends on. The hand-written usage guide with full worked examples
+    // moves to a separate "intrinsics-guide" page below — content
+    // unchanged, just no longer sharing a slug with generated data.
+    suppressPages: ["pseudo-parameters", "rules"],
     examplesDir: join(pkgDir, "examples"),
     extraPages: [
       {
@@ -210,7 +218,7 @@ Runtime context values available in every template, accessed via the \`AWS\` nam
 
 ## Intrinsic functions
 
-The lexicon provides 9 intrinsic functions (\`Sub\`, \`Ref\`, \`GetAtt\`, \`If\`, \`Join\`, \`Select\`, \`Split\`, \`Base64\`, \`GetAZs\`) that map directly to CloudFormation \`Fn::\` calls. See [Intrinsic Functions](../intrinsics/) for full usage examples.
+The lexicon provides 9 intrinsic functions (\`Sub\`, \`Ref\`, \`GetAtt\`, \`If\`, \`Join\`, \`Select\`, \`Split\`, \`Base64\`, \`GetAZs\`) that map directly to CloudFormation \`Fn::\` calls. See [Intrinsic Functions](../intrinsics/) for the reference table or the [Intrinsics Guide](../intrinsics-guide/) for full usage examples.
 
 ## Dependencies
 
@@ -319,10 +327,12 @@ No other changes needed — all taggable resources in the project get these tags
 Tag values support strings, \`Parameter\` references, and intrinsic functions (\`Sub\`, \`Ref\`, etc.).`,
       },
       {
-        slug: "intrinsics",
-        title: "Intrinsic Functions",
-        description: "CloudFormation intrinsic functions and their chant syntax",
-        content: `CloudFormation intrinsic functions are available as imports from the lexicon. They produce the corresponding \`Fn::\` calls in the serialized template.
+        slug: "intrinsics-guide",
+        title: "Intrinsics Guide",
+        description: "Worked examples for every CloudFormation intrinsic function and their chant syntax",
+        content: `See [Intrinsic Functions](../intrinsics/) for the generated reference table (name, description, output key, whether it's a tagged template, whether \`chant build --fold\` can fold it). This page is the worked-example companion — one \`Fn::\` intrinsic function per section, with real usage.
+
+CloudFormation intrinsic functions are available as imports from the lexicon. They produce the corresponding \`Fn::\` calls in the serialized template.
 
 Only \`Sub\` is a tagged template — the others below are plain function calls. That distinction matters for [\`chant build --fold\`](/chant/concepts/typescript-as-data/#folded-vs-run): a registered intrinsic tagged template is one of the shapes the static folder can reduce with no module execution. A plain function call is not, today — \`chant build --fold\` has no case for a bare call used as a value yet ([#1044](https://github.com/INTENTIUS/chant/issues/1044) tracks changing that, per intrinsic). Using \`Ref\`, \`GetAtt\`, \`If\`, \`Join\`, \`Select\`, \`Split\`, \`Base64\`, or \`GetAZs\` anywhere in a resource's props forces that file back to the normal run path under \`--fold\` for now.
 

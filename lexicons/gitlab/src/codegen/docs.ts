@@ -98,7 +98,15 @@ export async function generateDocs(opts?: { verbose?: boolean }): Promise<void> 
     overview,
     outputFormat,
     serviceFromType,
-    suppressPages: ["intrinsics", "rules"],
+    // "intrinsics" is no longer suppressed (chant #1067) — the reference
+    // table at that slug is now generated from the plugin's own
+    // `intrinsics()` registration (docsPipeline's generateIntrinsics, same
+    // mechanism azure/helm already use), so its "Folds?" column can never
+    // drift from the registration the way #1062's foldability matrix
+    // depends on. The hand-written `reference()` usage guide moves to a
+    // separate "intrinsics-guide" page below — content unchanged, just no
+    // longer sharing a slug with generated data.
+    suppressPages: ["rules"],
     examplesDir: join(pkgDir, "examples"),
     extraPages: [
       {
@@ -299,10 +307,12 @@ Jobs can override any default property individually.
 `,
       },
       {
-        slug: "intrinsics",
-        title: "Intrinsic Functions",
-        description: "GitLab CI/CD intrinsic functions and their chant syntax",
-        content: `The GitLab lexicon provides one intrinsic function: \`reference()\`, which maps to GitLab's \`!reference\` YAML tag.
+        slug: "intrinsics-guide",
+        title: "Intrinsics Guide",
+        description: "Worked examples for the GitLab reference() intrinsic and its chant syntax",
+        content: `See [Intrinsic Functions](../intrinsics/) for the generated reference table (name, description, output key, whether it's a tagged template, whether \`chant build --fold\` can fold it). This page is the worked-example companion.
+
+The GitLab lexicon provides one intrinsic function: \`reference()\`, which maps to GitLab's \`!reference\` YAML tag.
 
 \`reference()\` is a plain function call, not a TypeScript tagged template — like any function call used as a value, it's outside the subset [\`chant build --fold\`](/chant/concepts/typescript-as-data/#folded-vs-run) can reduce. A file that calls \`reference()\` anywhere in a resource's properties falls back to the normal run path under \`--fold\`.
 

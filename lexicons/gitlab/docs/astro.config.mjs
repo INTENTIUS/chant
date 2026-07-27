@@ -29,8 +29,8 @@ export default defineConfig({
                   "slug": "variables"
             },
             {
-                  "label": "Intrinsic Functions",
-                  "slug": "intrinsics"
+                  "label": "Intrinsics Guide",
+                  "slug": "intrinsics-guide"
             },
             {
                   "label": "Lint Rules",
@@ -43,6 +43,10 @@ export default defineConfig({
             {
                   "label": "AI Skills",
                   "slug": "skills"
+            },
+            {
+                  "label": "Intrinsics",
+                  "slug": "intrinsics"
             },
             {
                   "label": "Serialization",
