@@ -21,6 +21,7 @@ import {
   type SymbolicValue,
 } from "../fold/fold";
 import { isChantOwnedSpecifier } from "../fold/foldable-helpers";
+import { briefNodeText, callExpressionMessage } from "../fold/subset";
 import { importModule } from "./import";
 import type { IntrinsicDef } from "../lexicon";
 import type { BuildParamValue } from "../build-params";
@@ -1101,13 +1102,18 @@ async function resolveLiveValue(node: ts.Expression, ctx: ResolveCtx): Promise<L
  * `isDeclarable`/`isCompositeInstance` value for a top-level export).
  */
 async function resolveCallExpression(node: ts.CallExpression, ctx: ResolveCtx): Promise<unknown> {
+  // chant #1054 — reuses ../fold/subset's `callExpressionMessage` (the SAME
+  // builder `fold()` throws with for a call used as a prop value) rather
+  // than a hand-written "call expression as a value" copy: the two used to
+  // say different things for the identical rejection, which silently broke
+  // any tooling grouping fallback reasons by text.
   if (!ts.isIdentifier(node.expression)) {
-    throw cheapError(`call expression as a value is not foldable: ${node.expression.getText()}(...)`);
+    throw cheapError(callExpressionMessage(node));
   }
   const calleeName = node.expression.text;
   const binding = ctx.imports.get(calleeName);
   if (!binding) {
-    throw cheapError(`call expression as a value is not foldable: ${calleeName}(...)`);
+    throw cheapError(callExpressionMessage(node));
   }
 
   let modulePath: string;
@@ -1592,6 +1598,18 @@ function describeFoldFailure(err: unknown, ctx: ResolveCtx): string {
   return err.message;
 }
 
+/**
+ * chant #1054 — a short, single-line label for a destructured export's
+ * source expression, for a fold fallback reason: the callee plus `(...)`
+ * for the common composite-call source (`GkeCluster(...)`), or a brief,
+ * bounded rendering of whatever else it is otherwise. Never the source's own
+ * `getText()` — for a real composite call that's the entire multi-line
+ * argument list.
+ */
+function describeDestructureSource(node: ts.Expression): string {
+  return ts.isCallExpression(node) ? `${briefNodeText(node.expression)}(...)` : briefNodeText(node);
+}
+
 /** Build a located `FoldError`'s formatted "line:col - message" string anchored at `node` — for a cross-file failure detected here in fold-import.ts (an import cycle, a name genuinely absent from the target module's exports) rather than inside `fold()` itself. */
 function locatedMessage(node: ts.Node, message: string): string {
   const { line, column } = locate(node);
@@ -1911,18 +1929,26 @@ async function tryFoldFileCore(file: string, session: FoldSession): Promise<Fold
 
       if (decl.kind === "destructure") {
         let value: unknown;
+        // chant #1054 — identify the destructured export by its BINDING
+        // NAMES and the source's callee (`"cluster, nodePool" (destructured
+        // from GkeCluster(...))`), never `decl.node.getText()`: for a real
+        // composite call that's the entire multi-line source, which buries
+        // the actual error after it and breaks any line-oriented consumer of
+        // `[fold:run]` output.
+        const boundNames = decl.elements.map((el) => el.bindingName).join(", ");
+        const source = describeDestructureSource(decl.node);
         try {
           value = (await resolveDeclaratorValue(decl.node, ctx)).value;
         } catch (err) {
           return {
             ok: false,
-            reason: `destructured export from "${decl.node.getText()}" is not foldable: ${describeFoldFailure(err, ctx)}`,
+            reason: `"${boundNames}" (destructured from ${source}) is not foldable: ${describeFoldFailure(err, ctx)}`,
           };
         }
         if (!isIndexableObject(value)) {
           return {
             ok: false,
-            reason: `destructured export from "${decl.node.getText()}" is not foldable (not a composite call or object)`,
+            reason: `"${boundNames}" (destructured from ${source}) is not foldable: not a composite call or object`,
           };
         }
         for (const { propKey, bindingName } of decl.elements) {

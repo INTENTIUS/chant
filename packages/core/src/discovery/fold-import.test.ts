@@ -166,7 +166,28 @@ describe("tryFoldFile", () => {
 
     expect(result.ok).toBe(false);
     if (result.ok) return;
-    expect(result.reason).toContain("LocalStack");
+    // chant #1054 — locks in the ONE wording for "a call used as a value,
+    // not foldable" (../fold/subset.ts's `callExpressionMessage`), which
+    // `resolveCallExpression` now reuses instead of its own hand-written
+    // "call expression as a value" copy.
+    expect(result.reason).toBe('"stack" is not foldable: function call as a value is not foldable: LocalStack(...)');
+  });
+
+  test("falls back when a top-level export's callee isn't a plain identifier (chant #1054: same wording as any other call-as-a-value rejection)", async () => {
+    const file = join(testDir, "main.ts");
+    await writeFile(
+      file,
+      `
+        const builder = { build: (props: { name: string }) => ({ name: props.name }) };
+        export const stack = builder.build({ name: "x" });
+      `,
+    );
+
+    const result = await tryFoldFile(file);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toBe('"stack" is not foldable: function call as a value is not foldable: builder.build(...)');
   });
 
   test("falls back when a prop value is not foldable", async () => {
@@ -286,6 +307,77 @@ describe("tryFoldFile", () => {
       DeletionPolicy: "Retain",
       DependsOn: "otherResource",
     });
+  });
+
+  // chant #1054 — a destructured composite export's fallback reason used to
+  // embed `decl.node.getText()`: the ENTIRE call expression, which for a
+  // real multi-prop composite call is many lines, burying the real error
+  // after all of it. These lock in the fix: the reason names the binding(s)
+  // and the callee briefly instead, and stays on one line.
+  test("a destructured composite export whose source fails to resolve reports a brief, single-line reason naming the binding names and the callee", async () => {
+    await writeFile(
+      join(testDir, "composites.ts"),
+      `
+        import { createResource } from ${JSON.stringify(runtimePath)};
+        import { Composite } from ${JSON.stringify(compositePath)};
+        const Cluster = createResource("Test::Cluster", "gcp", {});
+        const NodePool = createResource("Test::NodePool", "gcp", {});
+        export const GkeCluster = Composite<{ name: string; location: string }>((props) => {
+          const cluster = new Cluster({ name: props.name });
+          const nodePool = new NodePool({ location: props.location });
+          return { cluster, nodePool };
+        }, "GkeCluster");
+      `,
+    );
+    const file = join(testDir, "cluster.ts");
+    await writeFile(
+      file,
+      `
+        import { GkeCluster } from "./composites";
+        export const { cluster, nodePool } = GkeCluster({
+          name: config.clusterName,
+          location: config.region,
+        });
+      `,
+    );
+
+    const result = await tryFoldFile(file);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).not.toContain("\n");
+    expect(result.reason).toContain('"cluster, nodePool" (destructured from GkeCluster(...))');
+    expect(result.reason).toContain("unresolved identifier: config");
+    // The whole multi-line source is gone — the reason never reproduces the
+    // call's own argument list verbatim.
+    expect(result.reason).not.toContain("clusterName");
+  });
+
+  test("a destructured export whose source resolves but isn't an object still reports a brief, single-line reason", async () => {
+    await writeFile(
+      join(testDir, "factory.ts"),
+      `
+        export function StringFactory(props: { text: string }): string {
+          return props.text;
+        }
+      `,
+    );
+    const file = join(testDir, "main.ts");
+    await writeFile(
+      file,
+      `
+        import { StringFactory } from "./factory";
+        export const { length } = StringFactory({ text: "hello" });
+      `,
+    );
+
+    const result = await tryFoldFile(file);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toBe(
+      '"length" (destructured from StringFactory(...)) is not foldable: not a composite call or object',
+    );
   });
 });
 
