@@ -52,6 +52,11 @@ export async function packageLexicon(opts: PackageOptions = {}): Promise<Package
             description: i.description,
             outputKey: intrinsicOutputKey(i.name),
             isTag: i.isTag,
+            // chant #1044 — carried through verbatim for the same reason as
+            // `isTag`: the packaged manifest is what a consumer reads to
+            // learn which intrinsics fold, so recomputing it here would be a
+            // second source of truth able to drift from ../plugin.ts.
+            foldsAsCall: i.foldsAsCall,
           }),
         );
 
