@@ -18,6 +18,12 @@
  * the project code it is inspecting — so it must not import anything, and must
  * not touch the filesystem, the environment or the process.
  *
+ * chant #1131 reuses the same walk for the OTHER direction: a `lint.policies`
+ * check runs inside a sandboxed child and its `PostSynthDiagnostic[]` has to
+ * come back as data (`./policy-wire.ts`). That is the same "JSON is lossy
+ * without complaining" problem with a different root value, so the walk is
+ * exported as {@link scanValueWireSafety} rather than copied.
+ *
  * ## What `ChantConfig` legally holds
  *
  * Every field of `ChantConfig` (`../../config.ts`) is JSON data: string arrays
@@ -131,6 +137,21 @@ function walk(
     walk(child, childPath, depth + 1, seen, out);
   }
   seen.delete(obj);
+}
+
+/**
+ * chant #1131 — report every value ANYWHERE in `value` that cannot cross the
+ * sandbox boundary as JSON, with paths rooted at `rootPath`.
+ *
+ * {@link scanConfigWireSafety} is the config-shaped entry point (it tolerates a
+ * module namespace object at the root); this one takes the value as given, so
+ * an array root (`diagnostics`) or a plain object root both work. Same rules,
+ * same `undefined`-object-property allowance — see the module doc.
+ */
+export function scanValueWireSafety(value: unknown, rootPath = ""): ConfigWireOffender[] {
+  const out: ConfigWireOffender[] = [];
+  walk(value, rootPath, 0, new Set<object>(), out);
+  return out;
 }
 
 /**

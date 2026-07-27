@@ -7,6 +7,7 @@ import { loadPlugins, resolveProjectLexicons } from "./plugins";
 import { resolveCommand, type CommandDef, type ParsedArgs } from "./registry";
 import { loadChantConfigUpward } from "../config";
 import { armSandboxConfigEvaluation } from "../config-sandbox";
+import { armSandboxPolicyExecution } from "../lint/policy-import";
 import { ENV_VAR, unknownEnvError } from "../env";
 import { initRuntime } from "../runtime-adapter";
 import { runBuild } from "./handlers/build";
@@ -607,6 +608,14 @@ async function main(): Promise<void> {
   // command-line flag is what puts the config inside the boundary. See
   // `../config-sandbox.ts`.
   if (args.sandbox) armSandboxConfigEvaluation();
+
+  // chant #1131 — the same for `lint.policies`. Armed from the flag here so
+  // the mode is set for the whole invocation, not just `chant build`; the build
+  // command arms it again from the RESOLVED value (a project's own
+  // `build.sandbox: true` also sandboxes its policies — unlike the config,
+  // policies have no bootstrap limit, since they load long after the config is
+  // known). See `../lint/policy-sandbox.ts`.
+  if (args.sandbox) armSandboxPolicyExecution();
 
   // Initialize runtime adapter early — before plugins or commands run.
   // chant #1117 — walks up from `args.path` to the project root: for a

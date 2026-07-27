@@ -56,6 +56,21 @@ error: [policy:ORG-PROD-TLS] [storefront] Ingress "storefront" must terminate TL
 Policy evaluates the **synthesized artifact**, offline — it never touches the
 cloud. Live checks are [`chant lifecycle`](/chant/cli/lifecycle/), not this.
 
+### Under `--sandbox`
+
+A policy is your code, and `chant build --sandbox` runs it in an isolated child
+process rather than in the CLI's own — after the build is merged and
+serialized, over the same resources, with the same `env`, producing the same
+diagnostics. Nothing about how you write one changes.
+
+What does change is what it may do while running: it may read the project
+directory and nothing else, it may not write files or spawn processes, and it
+sees only `PATH` and `CHANT_ENV` in its environment. A policy that writes a
+report or shells out to a scanner fails under `--sandbox`, naming the file and
+the operation. See [Sandboxed
+Execution](/chant/architecture/sandbox/#what-a-sandboxed-policy-sees) for the
+full contract, including the handful of ways the resource view is narrower.
+
 ## Why not a separate engine
 
 chant already has the machinery: a [post-synth phase](/chant/lexicon-authoring/post-synth-checks/)

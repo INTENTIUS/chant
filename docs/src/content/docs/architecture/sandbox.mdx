@@ -23,6 +23,7 @@ For one build:
 4. The bundle runs in a child process started with Node's `--permission` flag and a scrubbed environment.
 5. The child does its own entity collection and reference resolution over just that run-fallback set, then reports back a plain JSON entity set (chant #1045 Phase 1's wire format) over the process's IPC channel — never live objects, which can't cross a process boundary anyway.
 6. The parent decodes that JSON, merges it with whatever folded in-process, and continues the build exactly as it would without `--sandbox`.
+7. If the project declares `lint.policies`, those checks run in a *second* sandboxed child once the build is merged and serialized (chant #1131). The encoded build result goes in, plain `PostSynthDiagnostic`s come back, and no policy module is imported in the CLI's process. See [What a sandboxed policy sees](#what-a-sandboxed-policy-sees).
 
 Enable it with the CLI flag or project-wide:
 
@@ -52,7 +53,7 @@ The two ways of enabling it are **not** equivalent for the config file itself, a
 | Filesystem write | Not granted at all | Any write anywhere is denied |
 | Spawning a process | Not granted at all | `child_process.execSync`/`spawn`/`fork` are denied |
 | Worker threads | Not granted at all | `new Worker(...)` is denied — meaningful because bundling removes the need for a TypeScript loader (`tsx`) inside the child, which itself needed worker threads and a writable temp directory |
-| Ambient environment | The child is spawned with a scrubbed `env`, not a permission flag | `process.env` shows only `PATH` (plus `CHANT_ENV` in the config child — see below); nothing else the parent process had is visible |
+| Ambient environment | The child is spawned with a scrubbed `env`, not a permission flag | `process.env` shows only `PATH` (plus `CHANT_ENV` in the config and policy children — see below); nothing else the parent process had is visible |
 
 A denial surfaces as a chant `DiscoveryError` naming the file and the operation (e.g. `sandbox denied FileSystemRead (/etc/hosts): "…/evil.ts" attempted an operation outside the sandbox's allowlist`) — never Node's raw `ERR_ACCESS_DENIED`.
 
@@ -68,16 +69,19 @@ Node has no permission flag for network access. `--permission` does not gate `fe
 
 ## The trust boundary, precisely
 
-With `chant build --sandbox`, no file the project authored is executed in the CLI's own process while chant reads the project's configuration and discovers its resources — not its source files, folded or not, and not its `chant.config.ts`. The only code that runs there is chant's own and the packages of the lexicons this build loaded.
+With `chant build --sandbox`, no file the project authored is executed in the CLI's own process — not its source files, folded or not, not its `chant.config.ts`, and not its `lint.policies` modules. That covers the whole build: reading the configuration, discovering the resources, and enforcing the project's own organizational policy over the result. The only code that runs there is chant's own and the packages of the lexicons this build loaded.
 
 That allowlist is enforced by resolution, not by what the source says. A specifier is trusted when it is one of the lexicon package names the *build* resolved (`resolveProjectLexicons` → `loadPlugins`, the same closed set chant #1063 established), or when it resolves to a path inside chant-core's own executing tree. A specifier that merely *looks* chant-owned — `@intentius/chant`, `@intentius/chant-lexicon-anything` — is not enough: an untrusted repo controls both the text in its source and the contents of its own `node_modules`.
 
-`examples/sandbox-execution-boundary.test.ts` asserts this over the whole corpus. Every one of the 101 example directories has its config loaded and is then built with `{ fold: true, sandbox: true }`, while the only two places project code can execute in this process are recorded — `importModule` (`packages/core/src/discovery/import.ts`) and `importConfigModule`/`requireConfigModule` (`packages/core/src/config-import.ts`). No path inside the project's own source directory may appear in the first, and the second must not be called at all.
+`examples/sandbox-execution-boundary.test.ts` asserts this over the whole corpus. Every one of the 101 example directories has its config loaded and is then built with `{ fold: true, sandbox: true }`, while the three places project code can execute in this process are recorded — `importModule` (`packages/core/src/discovery/import.ts`), `importConfigModule`/`requireConfigModule` (`packages/core/src/config-import.ts`), and `importPolicyModule` (`packages/core/src/lint/policy-import.ts`). No path inside the project's own source directory may appear in the first, and neither of the others may be called at all.
 
-Two residuals remain, both pre-existing and neither closed by this flag:
+The policy half needs a differently-shaped test, and that is what let it survive two rounds of this work: `lint.policies` is loaded by `buildCommand`, not by `build()`, so a corpus loop that builds through `build()` never reaches it. A second section drives the real `buildCommand` over every corpus entry that declares policies, twice — plain, then `--fold --sandbox` — and asserts both that no policy module was imported here and that the `[policy:…]` diagnostics are identical.
+
+One residual remains, pre-existing and not closed by this flag:
 
 - **Lexicon packages are resolved from the project's install.** A repo that ships a poisoned `@intentius/chant-lexicon-aws` in its own `node_modules` gets it executed — but the CLI already imports every active lexicon package into its own process to obtain serializers and lint rules, long before discovery starts, so this is a property of loading lexicons at all rather than something fold or `--sandbox` introduces.
-- **`lint.policies` and `lint.plugins` are project-authored modules chant loads and calls.** They are *declared* in the config as paths, so the config crossing the boundary as data does not make them cross with it — `chant build` imports each policy module and calls its `check` function against the built resources, in this process, after discovery is over. That is the point of them: a policy is a callback over the result, not data. Sandboxing them needs a different design than this one (the function has to run somewhere it can see the resolved resources), and is not attempted here.
+
+`lint.plugins` — declarative lint rules, the other project-authored module list in the config — is **not** part of this. `chant build` never loads it; only `chant lint` does, and `chant lint` has no `--sandbox`. It is a different command with a different (unsandboxed) trust model, not a hole in this one.
 
 ## What a sandboxed config may contain
 
@@ -93,6 +97,30 @@ Cannot evaluate /p/chant.config.ts inside the --sandbox boundary: it holds value
 Functions, symbols, bigints, `NaN`/`Infinity`, `Date`/`RegExp`/`Map`/`Set`/class instances, circular references and `undefined` array elements all report their key path. The one thing dropped rather than reported is an `undefined`-valued object property, because `{ sourceDir: undefined }` and `{}` are indistinguishable to every reader of `ChantConfig`.
 
 One environment variable is forwarded into the config child: `CHANT_ENV`, the value of `--env`. The CLI sets it before loading the config precisely so a config can branch on the environment, and dropping it would silently produce a *different* configuration under `--sandbox`. It is a value the user typed on the command line, not an ambient secret. Nothing else from `process.env` is visible — a config reading `process.env.AWS_SECRET_ACCESS_KEY` gets `undefined`.
+
+## What a sandboxed policy sees
+
+A `lint.policies` check is a callback over the finished build, so unlike the config it cannot be evaluated somewhere and carried back as a value — it has to run where it can see the resources. Under `--sandbox` that place is a second child, spawned after the parent has merged and serialized, handed the encoded build result. Only `PostSynthDiagnostic`s come back, and they are validated as data inside the child before they cross.
+
+Four of the five things a `PostSynthContext` gives a check are already data and cross unchanged: `outputs`, `warnings`, `errors`, `sourceFileCount`. (`env` too.) The fifth, `entities`, is a live map whose cross-entity references are object identity and `WeakRef`s, so it crosses through the same entity wire format the discovery child already uses. That is enough for every policy pattern in this repo and for every lexicon-shipped post-synth check except one, but it is not literally the same object graph, and the differences are:
+
+- **An intrinsic** (`Sub`, `Ref`, gitlab's `!reference`, …) arrives as a marker-bearing wrapper exposing `toJSON()` and, where the original had it, `toYAML()`. A check that reads an intrinsic's *serialized form* is unaffected; one that reaches into the intrinsic's own fields or tests `instanceof` its class sees nothing.
+- **A decoded entity** is a marker-bearing plain object rather than an instance of the lexicon's resource class. `entity.props`, `entity.entityType`, `entity.lexicon`, `Object.keys(entity)`, `isDeclarable(entity)` and `instanceof AttrRef` all behave identically; `instanceof SomeResourceClass` does not.
+- **`nestedStack()`** has no wire form at all. A build that uses it *and* declares `lint.policies` fails under `--sandbox`, naming the entity, rather than running the policy over a silently incomplete set. (No example in this repo uses it.)
+- **`errors`** arrive as plain objects rather than `Error` instances. Never observable in practice: `chant build` runs policies only when the build produced no errors.
+
+The first two are not new. A `--sandbox` build already merges decoded entities for every run-fallback file, so a policy on such a build was already looking at decoded entities for part of the set; this widens that to all of them and nothing else (the encoding is idempotent — asserted in `packages/core/src/discovery/sandbox/policy-wire.test.ts`).
+
+What genuinely changes is what a policy is allowed to *do*. It gets the same permission profile as a run-fallback file — read the bundle and the project directory, nothing else; no writes, no spawning, no worker threads; an environment of `PATH` plus `CHANT_ENV`. A policy that writes a compliance report, shells out to a scanner, or reads `~/.aws/credentials` therefore fails under `--sandbox`, naming the file and the operation. That is the flag working, not a bug, but it is a real cost and worth knowing before turning it on. Its `console.log` output is not forwarded either, the same as a run-fallback file's.
+
+A diagnostic that is not data is **named and refused**, never silently mangled by `JSON.stringify`:
+
+```
+Cannot run lint.policies inside the --sandbox boundary: a policy check's return value holds values that are not data.
+  /p/policies/org.ts [0].fix: a function
+```
+
+The same applies to a diagnostic that is data but is not a diagnostic — a missing `checkId`, or a `severity` outside `error`/`warning`/`info`.
 
 ## What is deliberately NOT sandboxed
 
