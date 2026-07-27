@@ -58,7 +58,7 @@ import { DECLARABLE_MARKER, isResourceDeclarable, type Declarable } from "../dec
 import { AttrRef } from "../attrref";
 import { INTRINSIC_MARKER, type Intrinsic } from "../intrinsic";
 import { isAttrRefLike } from "../utils";
-import { isLexiconOutput, LexiconOutput } from "../lexicon-output";
+import { isLexiconOutput, LexiconOutput, type LexiconOutputLiteral } from "../lexicon-output";
 import { isChildProject } from "../child-project";
 
 /**
@@ -137,7 +137,7 @@ export interface WireLexiconOutputEntity {
   form: "lexiconOutput";
   name: string;
   outputName: string;
-  /** The wrapped `AttrRef` or `Intrinsic` — encodes to `{__attrRef}` or `{__intrinsic}` respectively (see {@link WireValue}). */
+  /** The wrapped `AttrRef`, `Intrinsic`, or literal — encodes to `{__attrRef}`, `{__intrinsic}`, or a plain JSON primitive respectively (chant #1121; see {@link WireValue}). */
   ref: WireValue;
 }
 
@@ -156,15 +156,22 @@ const CORE_FIELD_NAMES = new Set(["lexicon", "entityType", "kind", "props", "att
 
 /**
  * Read a `LexiconOutput`'s internal ref without re-deriving it — see the
- * `_intrinsic`/`_sourceParent` fields in `../lexicon-output.ts`. When it was
- * built from an `AttrRef`, `LexiconOutput` keeps only the parent `WeakRef` +
- * attribute name (not the original `AttrRef` instance), so a fresh one is
- * synthesized here — its logical name must be set explicitly (from
- * `entityNames`, the same map every other reference in this module resolves
- * names through) since it never went through `resolveAttrRefs`.
+ * `_intrinsic`/`_sourceParent`/`_literalValue` fields in `../lexicon-output.ts`.
+ * When it was built from an `AttrRef`, `LexiconOutput` keeps only the parent
+ * `WeakRef` + attribute name (not the original `AttrRef` instance), so a
+ * fresh one is synthesized here — its logical name must be set explicitly
+ * (from `entityNames`, the same map every other reference in this module
+ * resolves names through) since it never went through `resolveAttrRefs`.
+ *
+ * chant #1121 — a literal-valued output (a real string/number/boolean the
+ * author's code already computed, not a reference) has neither a parent nor
+ * an intrinsic to hand back; its `_literalValue` round-trips as a plain wire
+ * primitive instead, and `LexiconOutput`'s own constructor reconstructs it
+ * identically on decode (see `decodeEntitySet` below).
  */
-function lexiconOutputRef(output: LexiconOutput, entityNames: Map<unknown, string>): AttrRef | Intrinsic {
+function lexiconOutputRef(output: LexiconOutput, entityNames: Map<unknown, string>): AttrRef | Intrinsic | LexiconOutputLiteral {
   if (output._intrinsic) return output._intrinsic;
+  if (output._literalValue !== null) return output._literalValue;
   const parent = output._sourceParent?.deref();
   const parentName = parent ? entityNames.get(parent) : undefined;
   if (!parent || output.sourceAttribute === null || !parentName) {
@@ -475,9 +482,11 @@ export function decodeEntitySet(wire: EntitySetWire): Map<string, Declarable> {
     }
 
     // LexiconOutput — constructed via its real constructor from the decoded
-    // ref, so it derives sourceLexicon/_sourceParent/sourceAttribute exactly
-    // the way constructing it from a live AttrRef/Intrinsic would.
-    const ref = decodeValue(entry.ref, registry) as AttrRef | Intrinsic;
+    // ref, so it derives sourceLexicon/_sourceParent/sourceAttribute/
+    // _literalValue exactly the way constructing it from a live
+    // AttrRef/Intrinsic/literal would (chant #1121 for the literal case: a
+    // plain wire primitive decodes back to itself, see `decodeValue` above).
+    const ref = decodeValue(entry.ref, registry) as AttrRef | Intrinsic | LexiconOutputLiteral;
     const output = new LexiconOutput(ref, entry.outputName);
     registry.set(entry.name, output);
     result.set(entry.name, output as unknown as Declarable);

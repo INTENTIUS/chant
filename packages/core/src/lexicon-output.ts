@@ -1,5 +1,10 @@
-import { INTRINSIC_MARKER, type Intrinsic } from "./intrinsic";
+import { INTRINSIC_MARKER, isIntrinsic, type Intrinsic } from "./intrinsic";
 import { AttrRef } from "./attrref";
+
+/** A value `output()` accepts that is already fully resolved — not a
+ * reference to anything, just data the author computed (a literal, a prop,
+ * a template string). See chant #1121. */
+export type LexiconOutputLiteral = string | number | boolean;
 
 /**
  * Sanitize auto-generated Output name parts into a valid CloudFormation
@@ -34,8 +39,10 @@ export function sanitizeLogicalId(...parts: string[]): string {
  *
  * Implements Intrinsic so it can be used as Value<string> anywhere.
  *
- * Accepts either an AttrRef (resource attribute reference) or any Intrinsic
- * (e.g. Sub, Join) for computed output values like constructed URLs.
+ * Accepts an AttrRef (resource attribute reference), any Intrinsic (e.g. Sub,
+ * Join) for computed output values like constructed URLs, or an already-
+ * resolved literal (string/number/boolean) — a constant the author's code
+ * computed rather than a reference to anything (chant #1121).
  */
 export class LexiconOutput implements Intrinsic {
   readonly [INTRINSIC_MARKER] = true as const;
@@ -52,8 +59,18 @@ export class LexiconOutput implements Intrinsic {
    * checking on every field it reads (#1047).
    */
   readonly _intrinsic: Intrinsic | null;
+  /**
+   * @internal The already-resolved literal (string/number/boolean) when
+   * constructed from neither an AttrRef nor an Intrinsic — non-null exactly
+   * when `_intrinsic` is null AND `sourceAttribute` is null. There is no
+   * source entity or attribute to reference, so `getOutputValue()` returns
+   * this value verbatim rather than fabricating a `Fn::GetAtt` out of an
+   * unset attribute (chant #1121). Readable outside the class for the same
+   * reason as `_intrinsic`/`_sourceParent` above.
+   */
+  readonly _literalValue: LexiconOutputLiteral | null;
 
-  constructor(ref: AttrRef | Intrinsic | string, name: string) {
+  constructor(ref: AttrRef | Intrinsic | LexiconOutputLiteral, name: string) {
     if (ref instanceof AttrRef) {
       const parent = ref.parent.deref();
       if (!parent) {
@@ -70,16 +87,45 @@ export class LexiconOutput implements Intrinsic {
       this.outputName = name;
       this._sourceParent = ref.parent;
       this._intrinsic = null;
-    } else {
-      // Intrinsic (Sub, Join, Ref, etc.) — no parent entity tracking needed
-      // Note: `string` in the union is for attribute accessors typed as string at the
-      // TypeScript level (they are AttrRef at runtime, caught by instanceof above).
+      this._literalValue = null;
+    } else if (isIntrinsic(ref)) {
+      // Intrinsic (Sub, Join, Ref, etc.) — no parent entity tracking needed.
       this.sourceLexicon = "";
       this.sourceEntity = "";
       this.sourceAttribute = null;
       this.outputName = name;
       this._sourceParent = null;
-      this._intrinsic = typeof ref !== "string" ? ref : null;
+      this._intrinsic = ref;
+      this._literalValue = null;
+    } else if (typeof ref === "string" || typeof ref === "number" || typeof ref === "boolean") {
+      // An already-resolved literal — a real string/number/boolean the
+      // caller computed (a prop, a template string, a plain constant), not
+      // a reference to anything. The `string` arm of the exported type
+      // exists for a documented reason: a generated resource's attribute
+      // accessor is typed `string` at the TypeScript level but is a real
+      // `AttrRef` at runtime, caught by `instanceof AttrRef` above — so
+      // anything that reaches this branch genuinely has no source entity
+      // or attribute, and is recorded to be emitted as a plain `Value`
+      // rather than a fabricated `Fn::GetAtt` (chant #1121).
+      this.sourceLexicon = "";
+      this.sourceEntity = "";
+      this.sourceAttribute = null;
+      this.outputName = name;
+      this._sourceParent = null;
+      this._intrinsic = null;
+      this._literalValue = ref;
+    } else {
+      // Neither a reference NOR a resolved value — most commonly `undefined`
+      // from accessing a resource member that looks like an attribute but
+      // isn't one (a typo, or a genuine prop that was never wired onto the
+      // instance as either an AttrRef or an echoed literal). Silently
+      // treating this as a literal would trade one invalid Output (a
+      // fabricated `Fn::GetAtt`) for another (a `Value` that is missing or
+      // `null`) — fail loudly instead, the same call `stackOutput()` already
+      // makes for a ref it cannot anchor (chant #1121).
+      throw new Error(
+        `output(ref, "${name}"): ref must be an AttrRef, an Intrinsic, or an already-resolved string/number/boolean — got ${ref === null ? "null" : typeof ref} instead. If this came from a resource member access (e.g. "resource.SomeField"), that member is neither a generated attribute nor a real value here — check for a typo or a property that CloudFormation does not expose via Fn::GetAtt.`,
+      );
     }
   }
 
@@ -94,10 +140,14 @@ export class LexiconOutput implements Intrinsic {
 
   /**
    * Returns the CloudFormation Output Value for this output.
+   * For a literal output: the resolved value itself, verbatim.
    * For AttrRef-based outputs: emits Fn::GetAtt.
    * For Intrinsic-based outputs: delegates to the intrinsic's toJSON().
    */
   getOutputValue(): unknown {
+    if (this._literalValue !== null) {
+      return this._literalValue;
+    }
     if (this._intrinsic) {
       return this._intrinsic.toJSON();
     }
@@ -130,7 +180,8 @@ export class LexiconOutput implements Intrinsic {
 }
 
 /**
- * Create a LexiconOutput from an AttrRef or Intrinsic and a user-provided output name.
+ * Create a LexiconOutput from an AttrRef, an Intrinsic, or an already-
+ * resolved literal, and a user-provided output name.
  *
  * Usage with AttrRef:
  * ```ts
@@ -141,8 +192,14 @@ export class LexiconOutput implements Intrinsic {
  * ```ts
  * const solrUrl = output(Sub`http://${Ref(albDnsName)}/solr`, "solrUrl");
  * ```
+ *
+ * Usage with a literal (chant #1121) — a real value the caller already
+ * computed, not a reference:
+ * ```ts
+ * const apiVersion = output("v1", "ApiVersion");
+ * ```
  */
-export function output(ref: AttrRef | Intrinsic | string, name: string): LexiconOutput {
+export function output(ref: AttrRef | Intrinsic | LexiconOutputLiteral, name: string): LexiconOutput {
   return new LexiconOutput(ref, name);
 }
 

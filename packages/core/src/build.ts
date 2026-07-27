@@ -296,18 +296,28 @@ export function collectLexiconOutputs(
   for (const [name, entity] of entities) {
     if (isLexiconOutput(entity as unknown)) {
       const lexiconOutput = entity as unknown as LexiconOutput;
-      // Resolve source entity name from the WeakRef parent identity
-      const parent = lexiconOutput._sourceParent?.deref();
-      let sourceName = name;
-      if (parent) {
-        for (const [entityName, e] of entities) {
-          if (e === parent) {
-            sourceName = entityName;
-            break;
+      // A literal-valued output (chant #1121) has no source entity at all —
+      // it isn't a reference to anything, so it must not fall back to the
+      // output's OWN map key the way an AttrRef whose parent didn't resolve
+      // would. Leaving `sourceEntity` empty keeps `getOutputValue()`'s
+      // (never-reached, for a literal) `Fn::GetAtt` fallback from ever being
+      // handed a bogus source, and keeps consumers that read `sourceEntity`
+      // directly (e.g. `graph-ir.ts`'s cross-stack export, the build
+      // manifest) from reporting the output as its own source.
+      if (lexiconOutput._literalValue === null) {
+        // Resolve source entity name from the WeakRef parent identity
+        const parent = lexiconOutput._sourceParent?.deref();
+        let sourceName = name;
+        if (parent) {
+          for (const [entityName, e] of entities) {
+            if (e === parent) {
+              sourceName = entityName;
+              break;
+            }
           }
         }
+        lexiconOutput._setSourceEntity(sourceName);
       }
-      lexiconOutput._setSourceEntity(sourceName);
       outputs.push(lexiconOutput);
       continue;
     }
@@ -317,7 +327,8 @@ export function collectLexiconOutputs(
       const prevLength = outputs.length;
       walk(entity.props);
       for (let i = prevLength; i < outputs.length; i++) {
-        if (!outputs[i].sourceEntity) {
+        // Same #1121 guard as above — a literal has no source entity to name.
+        if (!outputs[i].sourceEntity && outputs[i]._literalValue === null) {
           outputs[i]._setSourceEntity(name);
         }
       }
