@@ -8,6 +8,12 @@
  * This is entity-level provenance (which file declared it, and which composite
  * expanded it), not a YAML-line source map. It answers "where did this resource
  * come from?", which is the question an agent asks before changing it.
+ *
+ * {@link BuildParamProvenance} (chant #1064) is the other half: not "where did
+ * this ENTITY come from" but "what INPUTS was this whole BUILD invoked with" —
+ * the question ambient `process.env` reads used to answer invisibly. See
+ * ../build-params.ts for declaration/resolution and ../build.ts's
+ * `BuildResult.buildParams` for where a build surfaces it.
  */
 
 const PROVENANCE = Symbol.for("chant.provenance");
@@ -51,4 +57,20 @@ export function setProvenance(entity: object, prov: EntityProvenance): void {
 /** Read an entity's build provenance, if any was stamped. */
 export function getProvenance(entity: object): EntityProvenance | undefined {
   return (entity as Record<symbol, unknown>)[PROVENANCE] as EntityProvenance | undefined;
+}
+
+/**
+ * One resolved build-time parameter (chant #1064, see ../build-params.ts): its
+ * final value and which source won it, so a build's parameter inputs are
+ * auditable rather than inferred. `source` records precedence, most to least
+ * specific: an explicit `--param`/`--params-file` value beats a declared `env`
+ * mapping, which beats `chant.config.ts`'s `default`.
+ */
+export interface BuildParamProvenance {
+  /** The declared parameter name (a key of `chant.config.ts`'s `buildParams`). */
+  name: string;
+  /** The resolved, type-coerced value actually bound to `params.<name>` for this build. */
+  value: string | number | boolean;
+  /** Which input supplied the value. */
+  source: "cli" | "params-file" | "env" | "default";
 }

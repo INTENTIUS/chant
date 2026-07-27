@@ -3,6 +3,7 @@ import type { Serializer, SerializerResult } from "./serializer";
 import type { OwnershipMarker } from "./ownership";
 import type { BuildError, DiscoveryErrorType } from "./errors";
 import type { IntrinsicDef } from "./lexicon";
+import type { BuildParamProvenance } from "./provenance";
 import { DiscoveryError, BuildError as BuildErrorClass } from "./errors";
 import { LexiconOutput, isLexiconOutput } from "./lexicon-output";
 import { AttrRef } from "./attrref";
@@ -177,6 +178,20 @@ export interface BuildOptions {
    * (unchanged behavior/performance).
    */
   sandbox?: boolean;
+
+  /**
+   * chant #1064 — this build's resolved build-time parameter values (see
+   * ./build-params.ts's `resolveBuildParams`, driven by the CLI's
+   * `--param`/`--params-file`/declared `env` mapping/`chant.config.ts`
+   * `buildParams` defaults). Threaded through to `discover()`, which
+   * populates `./params.ts`'s shared `params` object before any project file
+   * is imported or folded, and into the fold session so a `params.<name>`
+   * reference resolves to a literal. Passed through verbatim onto
+   * {@link BuildResult.buildParams} — `build()` itself does no
+   * declaration/validation (that's the CLI/config layer's job); it only
+   * carries the already-resolved records for provenance.
+   */
+  buildParams?: BuildParamProvenance[];
 }
 
 export interface BuildResult {
@@ -199,6 +214,15 @@ export interface BuildResult {
    * {@link BuildOptions.fold} was set.
    */
   foldDecisions: FoldDecision[];
+
+  /**
+   * This build's resolved build-time parameters (#1064) — the build
+   * provenance record for `params.<name>` values, alongside the existing
+   * entity-level provenance (./provenance.ts). Passed through verbatim from
+   * {@link BuildOptions.buildParams}; empty when the project declares/
+   * supplies none.
+   */
+  buildParams: BuildParamProvenance[];
 }
 
 /**
@@ -490,6 +514,7 @@ export async function build(
     fold: options?.fold,
     intrinsics: options?.intrinsics,
     sandbox: options?.sandbox,
+    buildParams: options?.buildParams,
   });
 
   return buildFromDiscoveryResult(discoveryResult, path, serializers, parentBuildStack, options);
@@ -659,6 +684,7 @@ async function buildFromDiscoveryResult(
     manifest,
     sourceFileCount: discoveryResult.sourceFiles.length,
     foldDecisions: discoveryResult.foldDecisions,
+    buildParams: options?.buildParams ?? [],
   };
 }
 

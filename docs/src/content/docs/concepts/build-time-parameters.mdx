@@ -1,0 +1,113 @@
+---
+title: Build-Time Parameters
+description: Vary a build across environments without reading process.env — declare a parameter, supply it to chant build, reference it as a literal.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+A real application often needs to vary a build: which environment, which tier, which region. The naive way is `process.env.LOOM_TIER` read at module scope. It works, and it is exactly the kind of value [TypeScript as Data](/chant/concepts/typescript-as-data/) refuses to fold — an ambient read depends on whatever process happens to be running the build, not on the source. Build-time parameters are the supported alternative: the same environment-dependence, moved out of module scope and into the build invocation, where it is explicit, validated, and recorded.
+
+<Aside type="caution" title="Not the deploy-time Parameter()">
+The AWS lexicon already has a `Parameter` (`new Parameter("String", {...})`, see [Parameters & Outputs](/chant/getting-started/parameters-and-outputs/)). That is a **deploy-time** CloudFormation parameter — it emits a `Parameters:` block and resolves when the *stack* deploys. A build-time parameter resolves before the template is even synthesized, so its value can change which resources are produced at all (a tier selecting `light` vs `production` vs `production-ha`). The two are unrelated; nothing here touches the emitted `Parameters:` section.
+</Aside>
+
+## Declare
+
+Declare each parameter in `chant.config.ts`'s `buildParams`:
+
+```typescript
+// chant.config.ts
+import type { ChantConfig } from "@intentius/chant";
+
+export default {
+  buildParams: {
+    tier: {
+      type: "string",
+      enum: ["light", "production", "production-ha"],
+      default: "light",
+    },
+    env: {
+      type: "string",
+      default: "dev",
+      // Opt-in, EXPLICIT env-var fallback — the only place an env var may
+      // feed a build-time parameter. Reading process.env directly from
+      // project source is never supported.
+      env: "LOOM_ENV",
+    },
+  },
+} satisfies ChantConfig;
+```
+
+Each parameter declares a `type` (`"string" | "number" | "boolean"`), an optional `default`, an optional `enum` of allowed values, and an optional `env` mapping.
+
+## Supply
+
+```bash
+# Highest precedence — repeatable
+chant build --param tier=production --param env=staging
+
+# Second precedence — a JSON file of { "name": value }
+chant build --params-file ./params.prod.json
+
+# Third precedence — only when the parameter declares an `env` mapping
+LOOM_ENV=staging chant build
+
+# Lowest precedence — chant.config.ts's declared default
+chant build
+```
+
+Precedence, most to least specific: `--param` > `--params-file` > the parameter's own declared `env` mapping > `default`. A parameter with no default and no supplied value is a build error naming the parameter — never a silently-`undefined` value, and never a thrown error from inside project source:
+
+```
+build parameter "tier" has no value — pass --param tier=<value>, use --params-file, or add a default in chant.config.ts's buildParams
+build parameter "tier" must be one of "light", "production", "production-ha", got "bogus"
+```
+
+This replaces a hand-written validator like:
+
+```typescript
+function tierFromEnv(): Tier {
+  const raw = process.env.LOOM_TIER ?? "light";
+  if (!VALID_TIERS.includes(raw)) throw new Error(`LOOM_TIER must be one of ${VALID_TIERS.join(", ")}, got "${raw}"`);
+  return raw as Tier;
+}
+```
+
+A declared `enum` reports the same violation as a build error naming the parameter, instead of a thrown `Error` from inside a function chant has no way to attribute.
+
+## Reference
+
+Source imports the resolved values from `@intentius/chant/params` — never reads `process.env`:
+
+```typescript
+import { params } from "@intentius/chant/params";
+
+export const tier = params.tier as Tier;
+export const env = params.env ?? "dev";
+```
+
+`params` is a plain object, so ordinary property access, optional chaining, and `??` all work exactly as they do on any other value.
+
+## Why it folds
+
+Because the value is known at build invocation — before any project file is imported or folded — a `params.<name>` reference resolves to a **literal**, not a symbolic node, and not a function call. `env: process.env.LOOM_ENV ?? "dev"` cannot fold: the value comes from ambient state at module-evaluation time. `env: params.env` folds to `"dev"` (or whatever the build was invoked with) the same way a `const` does, so [`chant build --fold`](/chant/concepts/typescript-as-data/#folded-vs-run) reduces it with zero module execution.
+
+Determinism is preserved, not weakened: same parameters in, same output out. The parameters are supplied explicitly and recorded (`BuildResult.buildParams`), rather than read invisibly from whatever environment happened to be running the build.
+
+## A pointed error for `process.env`
+
+`chant build --fold` rejects a bare `process` reference with a message naming this mechanism, not the generic "unresolved identifier":
+
+```
+ambient "process" read is not foldable — declare a build-time parameter instead
+(chant.config.ts's buildParams + `chant build --param name=value`/`--params-file`)
+and reference it via `import { params } from "@intentius/chant/params"`,
+rather than reading process.env directly
+```
+
+## See also
+
+- [TypeScript as Data](/chant/concepts/typescript-as-data/) — the fold subset a `params.<name>` reference resolves within
+- [Where Values Come From](/chant/concepts/where-values-come-from/) — how a build-time parameter fits among static data, deploy-time inputs, and refused runtime lookups
+- [Parameters & Outputs](/chant/getting-started/parameters-and-outputs/) — the deploy-time `Parameter()`, a different concept
+- [`chant build` CLI reference](/chant/cli/build/) — `--param`/`--params-file` flags

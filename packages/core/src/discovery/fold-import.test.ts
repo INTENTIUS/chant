@@ -7,6 +7,7 @@ import { tryFoldFile, createFoldSession } from "./fold-import";
 import { isDeclarable } from "../declarable";
 import { isCompositeInstance } from "../composite";
 import { isAttrRefLike } from "../utils";
+import { params as sharedParams } from "../params";
 import type { AttrRef } from "../attrref";
 import type { IntrinsicDef } from "../lexicon";
 
@@ -24,6 +25,13 @@ const compositePath = resolve(thisDir, "../composite");
  * intrinsic fixture that is structurally identical to a real lexicon's,
  * not a simplified stand-in. */
 const intrinsicPath = resolve(thisDir, "../intrinsic");
+/** Absolute path to `packages/core/src/params.ts` — chant #1064's build-time-parameters
+ * runtime module. A real project imports this as the bare specifier
+ * "@intentius/chant/params"; fixture files below use the absolute path instead
+ * (same convention as `runtimePath` etc. above), but {@link buildExternals}'s
+ * recognition is specifier-shape-agnostic — see fold-import.ts's own comment —
+ * so this exercises the identical code path a real bare import would take. */
+const paramsPath = resolve(thisDir, "../params");
 
 describe("tryFoldFile", () => {
   let testDir: string;
@@ -835,5 +843,184 @@ describe("tryFoldFile — registered intrinsic tagged templates (#1039)", () => 
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.reason).toContain("not foldable");
+  });
+});
+
+describe("tryFoldFile — build-time parameters (chant #1064)", () => {
+  let testDir: string;
+
+  beforeEach(async () => {
+    testDir = join(tmpdir(), `chant-fold-import-buildparams-test-${Date.now()}-${Math.random()}`);
+    await mkdir(testDir, { recursive: true });
+  });
+
+  afterEach(async () => {
+    await rm(testDir, { recursive: true, force: true });
+  });
+
+  async function writeResourceDefs(): Promise<void> {
+    await writeFile(
+      join(testDir, "resources.ts"),
+      `
+        import { createResource } from ${JSON.stringify(runtimePath)};
+        export const Bucket = createResource("Test::Bucket", "aws", { arn: "Arn" });
+      `,
+    );
+  }
+
+  test("a direct params.<name> declarator folds to a LITERAL, not a symbolic node", async () => {
+    const file = join(testDir, "main.ts");
+    await writeFile(
+      file,
+      `
+        import { params } from ${JSON.stringify(paramsPath)};
+        export const tier = params.tier;
+      `,
+    );
+
+    const session = createFoldSession([], { tier: "production" });
+    const result = await tryFoldFile(file, [], session);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.exportedValues.get("tier")).toBe("production");
+  });
+
+  test("params.<name> nested inside a resource's props folds through the general reducer", async () => {
+    await writeResourceDefs();
+    const file = join(testDir, "main.ts");
+    await writeFile(
+      file,
+      `
+        import { Bucket } from "./resources";
+        import { params } from ${JSON.stringify(paramsPath)};
+        export const bucket = new Bucket({ name: params.env });
+      `,
+    );
+
+    const session = createFoldSession([], { env: "staging" });
+    const result = await tryFoldFile(file, [], session);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.entities).toHaveLength(1);
+    const [, entity] = result.entities[0];
+    if (!isDeclarable(entity)) throw new Error("expected a Declarable");
+    expect((entity as unknown as { props: { name: unknown } }).props.name).toBe("staging");
+  });
+
+  test("a nullish-coalesced default still folds to a literal (loomster's `params.x ?? \"default\"` pattern)", async () => {
+    const file = join(testDir, "main.ts");
+    await writeFile(
+      file,
+      `
+        import { params } from ${JSON.stringify(paramsPath)};
+        export const project = params.project ?? "loom";
+      `,
+    );
+
+    // No "project" key supplied — falls through to the literal default.
+    const session = createFoldSession([], {});
+    const result = await tryFoldFile(file, [], session);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.exportedValues.get("project")).toBe("loom");
+  });
+
+  test("an unrelated import also named `params` (not resolving to ../params.ts) is unaffected", async () => {
+    await writeFile(
+      join(testDir, "local-config.ts"),
+      `export const params = { tier: "should-not-be-used" };`,
+    );
+    const file = join(testDir, "main.ts");
+    await writeFile(
+      file,
+      `
+        import { params } from "./local-config";
+        export const tier = params.tier;
+      `,
+    );
+
+    const session = createFoldSession([], { tier: "production" });
+    const result = await tryFoldFile(file, [], session);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // Resolved via the ORDINARY cross-file project resolution, not the
+    // build-time-parameters substitution — proves the two never collide.
+    expect(result.exportedValues.get("tier")).toBe("should-not-be-used");
+  });
+
+  test("a `params`-named import from an unrelated BARE specifier is left alone (text-match only, never resolved)", async () => {
+    // Regression guard: buildExternals must recognize the build-time-params
+    // bare specifier by an exact TEXT match, never by resolving an arbitrary
+    // bare specifier just because the imported binding happens to be named
+    // "params" — resolving every such specifier would reintroduce the exact
+    // cold bare-specifier-resolution cost chant#1020 already fixed (up to
+    // ~361s for a genuinely new package's first resolution in a process).
+    // "left-pad" is never installed in this repo, so if this DID try to
+    // resolve it, it would throw (caught) rather than hang — this test
+    // mainly documents the invariant; the perf regression itself was only
+    // observable via a real corpus/CI run, not a unit test.
+    const file = join(testDir, "main.ts");
+    await writeFile(
+      file,
+      `
+        import { params } from "left-pad";
+        export const tier = params.tier;
+      `,
+    );
+
+    const session = createFoldSession([], { tier: "production" });
+    const result = await tryFoldFile(file, [], session);
+
+    // Not substituted from build-time parameters (would be "production" if
+    // it were) — falls back to run via the ordinary unresolved-bare-specifier
+    // path, exactly as any other unimportable bare specifier would.
+    expect(result.ok).toBe(false);
+  });
+
+  test("without a FoldSession buildParams, params.<name> is an unresolved identifier (matches an ordinary bare import)", async () => {
+    const file = join(testDir, "main.ts");
+    await writeFile(
+      file,
+      `
+        import { params } from ${JSON.stringify(paramsPath)};
+        export const tier = params.tier;
+      `,
+    );
+
+    // No session passed at all — tryFoldFile creates a private one with no buildParams.
+    const result = await tryFoldFile(file);
+
+    expect(result.ok).toBe(false);
+  });
+
+  test("real end-to-end parity: the fold path substitutes without ever importing ../params.ts, while a real run-fallback import sees the same values via setBuildParams", async () => {
+    // Simulates what discover() does before either fold or run touches a file.
+    const { setBuildParams } = await import("../params");
+    setBuildParams({ tier: "production-ha" });
+
+    const file = join(testDir, "main.ts");
+    await writeFile(
+      file,
+      `
+        import { params } from ${JSON.stringify(paramsPath)};
+        export const tier = params.tier;
+      `,
+    );
+
+    const session = createFoldSession([], { tier: "production-ha" });
+    const folded = await tryFoldFile(file, [], session);
+    expect(folded.ok).toBe(true);
+    if (folded.ok) expect(folded.exportedValues.get("tier")).toBe("production-ha");
+
+    // A real import of the shared module (what a run-fallback file's own
+    // `import()` would do) observes the identical value — same object,
+    // mutated in place, not re-bound.
+    expect(sharedParams.tier).toBe("production-ha");
+
+    setBuildParams({});
   });
 });

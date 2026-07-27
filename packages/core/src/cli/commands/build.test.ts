@@ -181,6 +181,147 @@ export const testEntity = {
     }
   });
 
+  test("#1064 — a declared build-time parameter binds to params.<name> and folds to a literal", async () => {
+    const thisDir = dirname(fileURLToPath(import.meta.url));
+    const runtimePath = resolvePath(thisDir, "../../runtime");
+    const paramsPath = resolvePath(thisDir, "../../params");
+
+    await writeFile(
+      join(testDir, "chant.config.ts"),
+      `
+        export default {
+          buildParams: {
+            tier: { type: "string", enum: ["light", "production"], default: "light" },
+          },
+        };
+      `,
+    );
+    await writeFile(
+      join(testDir, "resources.ts"),
+      `
+        import { createResource } from ${JSON.stringify(runtimePath)};
+        export const Bucket = createResource("Test::Bucket", "aws", { arn: "Arn" });
+      `,
+    );
+    await writeFile(
+      join(testDir, "main.ts"),
+      `
+        import { Bucket } from "./resources";
+        import { params } from ${JSON.stringify(paramsPath)};
+        throw new Error("must never execute — sentinel for #1064 fold verification");
+        export const bucket = new Bucket({ name: params.tier });
+      `,
+    );
+
+    const awsSerializer: Serializer = {
+      name: "aws",
+      rulePrefix: "TEST",
+      serialize: (entities) => JSON.stringify([...entities.values()].map((e) => (e as unknown as { props: unknown }).props)),
+    };
+
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const result = await buildCommand({
+        path: testDir,
+        format: "json",
+        serializers: [awsSerializer],
+        fold: true,
+        params: { tier: "production" },
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.resourceCount).toBe(1);
+      expect(result.buildParams).toEqual([{ name: "tier", value: "production", source: "cli" }]);
+
+      const loggedParamLine = errorSpy.mock.calls
+        .map((call) => String(call[0]))
+        .some((line) => line.includes("[param] tier") && line.includes("production") && line.includes("cli"));
+      expect(loggedParamLine).toBe(true);
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  test("#1064 — an unresolved required build-time parameter is a build error naming the parameter, not a thrown error", async () => {
+    await writeFile(
+      join(testDir, "chant.config.ts"),
+      `
+        export default {
+          buildParams: { tier: { type: "string" } },
+        };
+      `,
+    );
+
+    const result = await buildCommand({
+      path: testDir,
+      format: "json",
+      serializers: [mockSerializer],
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.errors.some((e) => e.includes('"tier"') && e.includes("--param"))).toBe(true);
+  });
+
+  test("#1064 — an enum violation is a build error naming the parameter and the allowed values", async () => {
+    await writeFile(
+      join(testDir, "chant.config.ts"),
+      `
+        export default {
+          buildParams: { tier: { type: "string", enum: ["light", "production"] } },
+        };
+      `,
+    );
+
+    const result = await buildCommand({
+      path: testDir,
+      format: "json",
+      serializers: [mockSerializer],
+      params: { tier: "bogus" },
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.errors.some((e) => e.includes('"tier"') && e.includes("bogus"))).toBe(true);
+  });
+
+  test("#1064 — --params-file supplies values from a JSON file, second precedence after --param", async () => {
+    await writeFile(
+      join(testDir, "chant.config.ts"),
+      `
+        export default {
+          buildParams: {
+            tier: { type: "string", default: "light" },
+            env: { type: "string", default: "dev" },
+          },
+        };
+      `,
+    );
+    await writeFile(
+      join(testDir, "test.infra.ts"),
+      `
+        export const testEntity = {
+          lexicon: "test",
+          entityType: "TestEntity",
+          [Symbol.for("chant.declarable")]: true,
+        };
+      `,
+    );
+    const paramsFilePath = join(testDir, "params.json");
+    await writeFile(paramsFilePath, JSON.stringify({ tier: "production", env: "from-file" }));
+
+    const result = await buildCommand({
+      path: testDir,
+      format: "json",
+      serializers: [mockSerializer],
+      params: { tier: "from-cli" },
+      paramsFile: paramsFilePath,
+    });
+
+    expect(result.success).toBe(true);
+    const byName = new Map((result.buildParams ?? []).map((p) => [p.name, p]));
+    expect(byName.get("tier")).toEqual({ name: "tier", value: "from-cli", source: "cli" });
+    expect(byName.get("env")).toEqual({ name: "env", value: "from-file", source: "params-file" });
+  });
+
   test("--fold is opt-in: omitting it builds via the unchanged run path", async () => {
     await writeFile(
       join(testDir, "test.infra.ts"),

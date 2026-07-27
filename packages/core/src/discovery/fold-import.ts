@@ -2,6 +2,7 @@ import * as ts from "typescript";
 import { readFile } from "node:fs/promises";
 import { existsSync, statSync, readFileSync, realpathSync } from "node:fs";
 import { dirname, basename, join, isAbsolute, resolve as resolvePath } from "node:path";
+import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import { isDeclarable, type Declarable } from "../declarable";
 import { isCompositeInstance, type CompositeInstance } from "../composite";
@@ -19,6 +20,7 @@ import {
 } from "../fold/fold";
 import { importModule } from "./import";
 import type { IntrinsicDef } from "../lexicon";
+import type { BuildParamValue } from "../build-params";
 
 /**
  * Bridges the static folder ({@link ../fold/fold}, #1026) into discovery
@@ -144,11 +146,23 @@ export interface FoldSession {
    * `discover()` call, unlike the bare-specifier one.
    */
   readonly resolvePathCache: Map<string, string>;
+  /**
+   * chant #1064 — this build's resolved build-time parameter values (see
+   * ../build-params.ts), consulted only by {@link buildExternals}'s one
+   * recognized bare-specifier case: a named `params` import resolving to
+   * ../params.ts. `undefined` when the build supplied none (no `chant.config.ts`
+   * `buildParams` declared, or the caller didn't pass any) — a project that
+   * doesn't use build-time parameters pays nothing extra here.
+   */
+  readonly buildParams?: Readonly<Record<string, BuildParamValue>>;
 }
 
 /** Create a fresh, empty {@link FoldSession}. */
-export function createFoldSession(intrinsics: readonly IntrinsicDef[] = []): FoldSession {
-  return { intrinsics, cache: new Map(), stack: [], importCache: new Map(), resolvePathCache: new Map() };
+export function createFoldSession(
+  intrinsics: readonly IntrinsicDef[] = [],
+  buildParams?: Readonly<Record<string, BuildParamValue>>,
+): FoldSession {
+  return { intrinsics, cache: new Map(), stack: [], importCache: new Map(), resolvePathCache: new Map(), buildParams };
 }
 
 /**
@@ -727,6 +741,52 @@ function resolveModulePath(specifier: string, fromFile: string): string {
   const fast = fastResolveBareSpecifier(specifier, fromFile);
   if (fast !== undefined) return fast;
   return createRequire(fromFile).resolve(specifier);
+}
+
+/**
+ * chant #1064 — the one real published subpath a project imports chant's
+ * build-time-parameters module from. {@link buildExternals} matches a bare
+ * specifier against this by TEXT ONLY, never by resolving it — see that
+ * function's own comment for why resolving an arbitrary bare specifier here
+ * would reintroduce the exact pathological cold-resolution cost chant#1020
+ * already fixed once (this module's other comments measure it at up to
+ * ~361s for the first resolution of a genuinely new bare specifier).
+ */
+const PARAMS_BARE_SPECIFIER = "@intentius/chant/params";
+
+/**
+ * chant #1064 — the absolute path of chant-core's OWN build-time-parameters
+ * runtime module (../params.ts), resolved lazily on first use, from THIS
+ * file's own location, via the exact same relative-specifier resolution
+ * {@link resolveModulePath} already applies to project files — cheap
+ * (`existsSync`/`statSync` candidate probing only, never Node's package
+ * resolution). Used by {@link buildExternals} to recognize a RELATIVE/
+ * ABSOLUTE import of the params module (this module's own test fixtures use
+ * an absolute path, matching the rest of this file's test convention) — a
+ * real project's bare `@intentius/chant/params` import is instead matched by
+ * {@link PARAMS_BARE_SPECIFIER}'s text alone, never through this path.
+ *
+ * Lazy and failure-safe, NOT a module-scope constant: this module is also
+ * bundled into the #1045 sandbox child, where module-init code runs inside
+ * `--permission` with a read allowlist. There `import.meta.url` is the
+ * bundle's temp-dir path, so an init-time probe reaches for `<tmp>/params` —
+ * outside the allowlist — and the `existsSync` throws `ERR_ACCESS_DENIED`,
+ * killing the child before it reports (a real, observed sandbox-vs-run error
+ * drift across six corpus entries). The child runs only the run path and
+ * never calls {@link buildExternals}, so deferring the probe to first fold
+ * use keeps it out of the sandbox entirely; if probing still fails there,
+ * `null` just disables the relative-path recognition rather than erroring.
+ */
+let paramsModulePathMemo: string | null | undefined;
+function paramsModulePath(): string | null {
+  if (paramsModulePathMemo === undefined) {
+    try {
+      paramsModulePathMemo = resolveModulePath("../params", fileURLToPath(import.meta.url));
+    } catch {
+      paramsModulePathMemo = null;
+    }
+  }
+  return paramsModulePathMemo;
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -1339,7 +1399,63 @@ async function buildExternals(
   const failures = new Map<string, string>();
 
   for (const [localName, binding] of imports) {
-    if (!isProjectFileSpecifier(binding.specifier)) continue;
+    // chant #1064 — a named `params` import that resolves to chant-core's own
+    // build-time-parameters module (../params.ts) is substituted directly
+    // from this build's already-resolved values, with NO import performed —
+    // so `params.tier` folds to a LITERAL rather than a symbolic node
+    // (contrast the `{__symbol}` deferral a pseudo-parameter namespace import
+    // like `AWS.StackName` gets — that genuinely can't resolve until a real
+    // module runs; a build parameter's value is already fully known here).
+    //
+    // A BARE specifier is recognized by an exact TEXT match against the one
+    // real published subpath ({@link PARAMS_BARE_SPECIFIER}), NEVER by
+    // resolving it: `resolveModulePathMemoized`'s bare-specifier branch falls
+    // through to Node's own package resolution
+    // (`createRequire(fromFile).resolve(specifier)`), which chant#1020's own
+    // fix-history (see this module's other comments) measured at up to ~361s
+    // for the FIRST resolution of a genuinely new bare specifier in a
+    // process — a cost `buildExternals` previously never paid at all for
+    // bare specifiers (the pre-#1064 code skipped them outright). Since
+    // `binding.imported === "params"` alone says nothing about which package
+    // a project actually imported from, resolving EVERY such bare specifier
+    // to check it would reintroduce exactly that pathological cost for any
+    // corpus/project file that happens to import a same-named binding from
+    // an unrelated package — a real, measured regression this text-match
+    // avoids entirely (no filesystem/package resolution for a bare
+    // specifier, ever, in this branch).
+    //
+    // A RELATIVE/ABSOLUTE specifier is still resolved and path-compared
+    // against {@link paramsModulePath} — that resolution is always cheap
+    // (`existsSync`/`statSync` candidate probing, never Node's package
+    // resolution), so it's safe for this module's own absolute-path test
+    // fixtures to exercise the identical substitution a real bare import
+    // takes, without the bare-specifier cost concern applying.
+    if (session.buildParams && binding.imported === "params") {
+      if (binding.specifier === PARAMS_BARE_SPECIFIER) {
+        externals.set(localName, session.buildParams);
+        continue;
+      }
+      if (isProjectFileSpecifier(binding.specifier)) {
+        try {
+          const targetPath = resolveModulePathMemoized(binding.specifier, file, session.resolvePathCache);
+          if (targetPath === paramsModulePath()) {
+            externals.set(localName, session.buildParams);
+            continue;
+          }
+        } catch {
+          // Unresolvable specifier — fall through to the ordinary handling
+          // below, same as any other import this loop can't resolve.
+        }
+      }
+    }
+
+    if (!isProjectFileSpecifier(binding.specifier)) {
+      // Every other bare specifier (a lexicon/vendor package) is left alone
+      // here, exactly as before #1064: it resolves lazily, through the
+      // pre-existing `importModule` mechanism, only once a constructor/
+      // composite-factory/intrinsic tag actually consumes it.
+      continue;
+    }
     let targetPath: string;
     try {
       targetPath = resolveModulePathMemoized(binding.specifier, file, session.resolvePathCache);
