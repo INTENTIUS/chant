@@ -1,5 +1,5 @@
 import { Composite, mergeDefaults } from "@intentius/chant";
-import type { Step } from "../generated/index";
+import { Step } from "../generated/index";
 
 export interface CacheActionProps {
   path: string;
@@ -18,9 +18,7 @@ export const CacheAction = Composite<CacheActionProps>((props) => {
   };
   if (props.restoreKeys !== undefined) withObj["restore-keys"] = props.restoreKeys.join("\n");
 
-  const { createProperty } = require("@intentius/chant/runtime");
-  const StepClass = createProperty("GitHub::Actions::Step", "github");
-  const step = new StepClass(mergeDefaults({
+  const step = new Step(mergeDefaults({
     name: "Cache",
     uses: "actions/cache@v4",
     with: withObj,

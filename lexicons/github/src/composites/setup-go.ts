@@ -1,5 +1,5 @@
 import { Composite, mergeDefaults } from "@intentius/chant";
-import type { Step } from "../generated/index";
+import { Step } from "../generated/index";
 
 export interface SetupGoProps {
   goVersion?: string;
@@ -17,9 +17,7 @@ export const SetupGo = Composite<SetupGoProps>((props) => {
   if (props.goVersionFile !== undefined) withObj["go-version-file"] = props.goVersionFile;
   if (props.cache !== undefined) withObj.cache = String(props.cache);
 
-  const { createProperty } = require("@intentius/chant/runtime");
-  const StepClass = createProperty("GitHub::Actions::Step", "github");
-  const step = new StepClass(mergeDefaults({
+  const step = new Step(mergeDefaults({
     name: "Setup Go",
     uses: "actions/setup-go@v5",
     ...(Object.keys(withObj).length > 0 ? { with: withObj } : {}),

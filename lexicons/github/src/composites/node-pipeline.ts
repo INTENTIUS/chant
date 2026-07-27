@@ -1,5 +1,5 @@
 import { Composite, withDefaults, mergeDefaults } from "@intentius/chant";
-import type { Job, Workflow } from "../generated/index";
+import { Job, Step, Workflow } from "../generated/index";
 
 export interface NodePipelineProps {
   /** Node.js version. Default: "22" */
@@ -72,29 +72,24 @@ export const NodePipeline = Composite<NodePipelineProps>((props) => {
   const install = installCommand ?? pm.installCmd;
   const run = pm.runPrefix;
 
-  const { createProperty, createResource } = require("@intentius/chant/runtime");
-  const StepClass = createProperty("GitHub::Actions::Step", "github");
-  const JobClass = createResource("GitHub::Actions::Job", "github", {});
-  const WorkflowClass = createResource("GitHub::Actions::Workflow", "github", {});
-
   const isBun = packageManager === "bun";
 
   // ── Build job steps ────────────────────────────────────────────────
-  const buildCheckout = new StepClass({ name: "Checkout", uses: "actions/checkout@v4" });
+  const buildCheckout = new Step({ name: "Checkout", uses: "actions/checkout@v4" });
 
   const buildSetup = isBun
-    ? new StepClass({ name: "Setup Bun", uses: "oven-sh/setup-bun@v2" })
-    : new StepClass({
+    ? new Step({ name: "Setup Bun", uses: "oven-sh/setup-bun@v2" })
+    : new Step({
         name: "Setup Node.js",
         uses: "actions/setup-node@v4",
         with: { "node-version": nodeVersion, cache: pm.cache },
       });
 
-  const buildInstall = new StepClass({ name: "Install dependencies", run: install });
+  const buildInstall = new Step({ name: "Install dependencies", run: install });
 
-  const buildRun = new StepClass({ name: "Build", run: `${run} ${buildScript}` });
+  const buildRun = new Step({ name: "Build", run: `${run} ${buildScript}` });
 
-  const buildUpload = new StepClass({
+  const buildUpload = new Step({
     name: "Upload build artifacts",
     uses: "actions/upload-artifact@v4",
     with: {
@@ -104,40 +99,40 @@ export const NodePipeline = Composite<NodePipelineProps>((props) => {
     },
   });
 
-  const buildJob = new JobClass(mergeDefaults({
+  const buildJob = new Job(mergeDefaults({
     "runs-on": runsOn,
     steps: [buildCheckout, buildSetup, buildInstall, buildRun, buildUpload],
   }, defaults?.buildJob));
 
   // ── Test job steps ─────────────────────────────────────────────────
-  const testCheckout = new StepClass({ name: "Checkout", uses: "actions/checkout@v4" });
+  const testCheckout = new Step({ name: "Checkout", uses: "actions/checkout@v4" });
 
   const testSetup = isBun
-    ? new StepClass({ name: "Setup Bun", uses: "oven-sh/setup-bun@v2" })
-    : new StepClass({
+    ? new Step({ name: "Setup Bun", uses: "oven-sh/setup-bun@v2" })
+    : new Step({
         name: "Setup Node.js",
         uses: "actions/setup-node@v4",
         with: { "node-version": nodeVersion, cache: pm.cache },
       });
 
-  const testInstall = new StepClass({ name: "Install dependencies", run: install });
+  const testInstall = new Step({ name: "Install dependencies", run: install });
 
-  const testDownload = new StepClass({
+  const testDownload = new Step({
     name: "Download build artifacts",
     uses: "actions/download-artifact@v4",
     with: { name: artifactName },
   });
 
-  const testRun = new StepClass({ name: "Test", run: `${run} ${testScript}` });
+  const testRun = new Step({ name: "Test", run: `${run} ${testScript}` });
 
-  const testJob = new JobClass(mergeDefaults({
+  const testJob = new Job(mergeDefaults({
     "runs-on": runsOn,
     needs: ["build"],
     steps: [testCheckout, testSetup, testInstall, testDownload, testRun],
   }, defaults?.testJob));
 
   // ── Workflow ───────────────────────────────────────────────────────
-  const workflow = new WorkflowClass(mergeDefaults({
+  const workflow = new Workflow(mergeDefaults({
     name: "Node Pipeline",
     on: {
       push: { branches: ["main"] },

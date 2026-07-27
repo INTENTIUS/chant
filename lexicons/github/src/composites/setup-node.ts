@@ -1,5 +1,5 @@
 import { Composite, mergeDefaults } from "@intentius/chant";
-import type { Step } from "../generated/index";
+import { Step } from "../generated/index";
 
 export interface SetupNodeProps {
   nodeVersion?: string;
@@ -19,9 +19,7 @@ export const SetupNode = Composite<SetupNodeProps>((props) => {
   if (props.cache !== undefined) withObj.cache = props.cache;
   if (props.cacheFilePath !== undefined) withObj["cache-dependency-path"] = props.cacheFilePath;
 
-  const { createProperty } = require("@intentius/chant/runtime");
-  const StepClass = createProperty("GitHub::Actions::Step", "github");
-  const step = new StepClass(mergeDefaults({
+  const step = new Step(mergeDefaults({
     name: "Setup Node.js",
     uses: "actions/setup-node@v4",
     ...(Object.keys(withObj).length > 0 ? { with: withObj } : {}),

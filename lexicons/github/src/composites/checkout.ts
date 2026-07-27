@@ -1,5 +1,5 @@
 import { Composite, mergeDefaults } from "@intentius/chant";
-import type { Step } from "../generated/index";
+import { Step } from "../generated/index";
 
 export interface CheckoutProps {
   ref?: string;
@@ -23,10 +23,7 @@ export const Checkout = Composite<CheckoutProps>((props) => {
   if (props.submodules !== undefined) withObj.submodules = String(props.submodules);
   if (props.sshKey !== undefined) withObj["ssh-key"] = props.sshKey;
 
-  // Import Step lazily to avoid circular dependency at module load time
-  const { createProperty } = require("@intentius/chant/runtime");
-  const StepClass = createProperty("GitHub::Actions::Step", "github");
-  const step = new StepClass(mergeDefaults({
+  const step = new Step(mergeDefaults({
     name: "Checkout",
     uses: "actions/checkout@v4",
     ...(Object.keys(withObj).length > 0 ? { with: withObj } : {}),

@@ -1,5 +1,5 @@
 import { Composite, mergeDefaults } from "@intentius/chant";
-import type { Job } from "../generated/index";
+import { Job, Step } from "../generated/index";
 
 export interface DeployEnvironmentProps {
   /** Environment name. Required. */
@@ -38,15 +38,11 @@ export const DeployEnvironment = Composite<DeployEnvironmentProps>((props) => {
   const deployScriptArr = Array.isArray(deployScript) ? deployScript : [deployScript];
   const cleanupScriptArr = Array.isArray(cleanupScript) ? cleanupScript : [cleanupScript];
 
-  const { createProperty, createResource } = require("@intentius/chant/runtime");
-  const StepClass = createProperty("GitHub::Actions::Step", "github");
-  const JobClass = createResource("GitHub::Actions::Job", "github", {});
-
   // ── Deploy job ─────────────────────────────────────────────────────
   const deploySteps = [
-    new StepClass({ name: "Checkout", uses: "actions/checkout@v4" }),
+    new Step({ name: "Checkout", uses: "actions/checkout@v4" }),
     ...deployScriptArr.map(
-      (cmd: string) => new StepClass({ name: "Deploy", run: cmd }),
+      (cmd: string) => new Step({ name: "Deploy", run: cmd }),
     ),
   ];
 
@@ -55,7 +51,7 @@ export const DeployEnvironment = Composite<DeployEnvironmentProps>((props) => {
     environment.url = url;
   }
 
-  const deployJob = new JobClass(mergeDefaults({
+  const deployJob = new Job(mergeDefaults({
     "runs-on": runsOn,
     environment,
     concurrency: {
@@ -67,13 +63,13 @@ export const DeployEnvironment = Composite<DeployEnvironmentProps>((props) => {
 
   // ── Cleanup job ────────────────────────────────────────────────────
   const cleanupSteps = [
-    new StepClass({ name: "Checkout", uses: "actions/checkout@v4" }),
+    new Step({ name: "Checkout", uses: "actions/checkout@v4" }),
     ...cleanupScriptArr.map(
-      (cmd: string) => new StepClass({ name: "Cleanup", run: cmd }),
+      (cmd: string) => new Step({ name: "Cleanup", run: cmd }),
     ),
   ];
 
-  const cleanupJob = new JobClass(mergeDefaults({
+  const cleanupJob = new Job(mergeDefaults({
     "runs-on": runsOn,
     environment: { name },
     steps: cleanupSteps,

@@ -56,7 +56,7 @@ describeAllExamples(
         expect(output).toContain("GITHUB_OUTPUT");
       },
     },
-    "docs-snippets": { skipLint: true, skipBuild: true },
+    "docs-snippets": { skipLint: true },
     "reusable-workflow": {
       skipLint: true,
       checks: (output) => {
