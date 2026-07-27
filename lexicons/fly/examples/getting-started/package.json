@@ -1,9 +1,18 @@
 {
-  "name": "@intentius/chant-lexicon-fly-example-getting-started",
+  "name": "fly-getting-started-example",
   "version": "0.0.1",
   "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "chant build src --lexicon fly -o dist/fly.json",
+    "lint": "chant lint src",
+    "dev": "chant build src --lexicon fly --watch -o dist/fly.json"
+  },
   "dependencies": {
-    "@intentius/chant-lexicon-fly": "workspace:*",
-    "@intentius/chant": "workspace:*"
+    "@intentius/chant": "*",
+    "@intentius/chant-lexicon-fly": "*"
+  },
+  "devDependencies": {
+    "typescript": "*"
   }
 }

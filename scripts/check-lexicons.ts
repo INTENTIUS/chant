@@ -53,10 +53,6 @@ const lexiconsDir = join(repoRoot, "lexicons");
  * Every entry here MUST reference a filed, open issue.
  */
 const KNOWN_FAILURES: Record<string, Record<string, string>> = {
-  fly: {
-    "Every shipped example builds":
-      "#1071 — fly's only example (getting-started) is still the unfilled `chant init` scaffold stub — never fleshed out into a real Fly Machines example.",
-  },
   forgejo: {
     "At least 1 lint rule in src/lint/rules/":
       "#1072 — forgejo is a thin github-dialect (serializer + `uses:` resolver) with no lint rules of its own — delegates to github's.",
