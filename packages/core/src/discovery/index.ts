@@ -216,9 +216,20 @@ export async function discover(path: string, options?: DiscoveryOptions): Promis
     if (options?.fold) {
       const folded = foldAttempts.get(file)!;
       if (folded.ok && !taintedFiles.has(file)) {
-        const exportsObj: Record<string, unknown> = {};
-        for (const [name, value] of folded.entities) exportsObj[name] = value;
-        modules.push({ file, exports: exportsObj });
+        // chant #1112 — hand `collectEntities` the file's WHOLE folded export
+        // namespace, exactly as the run path hands it the real module
+        // namespace object `importModule` returns. It used to get only the
+        // `Declarable`/`CompositeInstance` subset fold had already picked
+        // out, which quietly made fold-import a SECOND owner of the "which
+        // export becomes an entity" decision — and it had one fewer case than
+        // the real owner (`./collect.ts`'s `enumerateEntries`): a
+        // `LexiconOutput` (`export const oArn = output(bucket.Arn, "oArn")`)
+        // was resolved, dropped, and the template lost its whole `Outputs`
+        // section with no warning and exit 0. Fold now decides nothing here;
+        // `collectEntities` filters both paths' exports the same way, so a
+        // shape it learns about (today: outputs and arrays of declarables)
+        // cannot reach one path and not the other.
+        modules.push({ file, exports: Object.fromEntries(folded.exportedValues) });
         foldDecisions.push({ file, mode: "fold", resourceCount: folded.entities.length });
         continue;
       }
