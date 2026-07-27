@@ -1,4 +1,4 @@
-import { describe, test, expect } from "vitest";
+import { describe, test, expect, vi } from "vitest";
 import { LexiconOutput, output, isLexiconOutput } from "./lexicon-output";
 import { AttrRef } from "./attrref";
 import { INTRINSIC_MARKER } from "./intrinsic";
@@ -255,6 +255,41 @@ describe("isLexiconOutput", () => {
     const ref = new AttrRef(parent, "Arn");
 
     expect(isLexiconOutput(ref)).toBe(false);
+  });
+
+  // chant #1122 — the guard used to be `value instanceof LexiconOutput`,
+  // which returns false when the value was built by a SEPARATELY-LOADED
+  // copy of this module (a plain npm-dedupe outcome: a lexicon pinned to a
+  // chant range that doesn't overlap the project's own gets its own nested
+  // `node_modules/@intentius/chant`). `vi.resetModules()` + a fresh dynamic
+  // import reproduces that split module graph exactly, without needing an
+  // actual second install on disk — the resulting instance is structurally
+  // and behaviorally identical to a real LexiconOutput, just built from a
+  // distinct `LexiconOutput` class object.
+  test("recognizes a LexiconOutput built by a second, separately-loaded copy of this module", async () => {
+    vi.resetModules();
+    const secondCopy = await import("./lexicon-output");
+
+    // Sanity check that this really is a distinct module instance — the
+    // premise the rest of the test depends on.
+    expect(secondCopy.LexiconOutput).not.toBe(LexiconOutput);
+
+    const second = new secondCopy.LexiconOutput("v2", "oFromSecondCopy");
+
+    // The historic bug: instanceof fails across separately-loaded copies of
+    // chant-core, even though the two classes are structurally identical.
+    expect(second instanceof LexiconOutput).toBe(false);
+
+    // The fix: a Symbol.for global marker holds across copies the way
+    // DECLARABLE_MARKER/INTRINSIC_MARKER/STACK_OUTPUT_MARKER already do —
+    // isLexiconOutput (from EITHER copy) recognizes the other copy's output.
+    expect(isLexiconOutput(second)).toBe(true);
+    expect(secondCopy.isLexiconOutput(second)).toBe(true);
+
+    // And the callers that gate on this guard only ever read own-prototype
+    // members that survive the cross-copy split.
+    expect(second.getOutputValue()).toBe("v2");
+    vi.resetModules();
   });
 });
 
