@@ -17,9 +17,18 @@ build:
 # fresh clone has only `npm install`. Idempotent — a lexicon is (re)built only
 # when its barrel or meta.json is missing, so repeat runs are a no-op. Use
 # `just regen` to force a full rebuild.
+#
+# Two passes (chant #1133): every `generate` below completes before any
+# `bundle` starts. `lexicons/*/` iterates alphabetically, and forgejo's
+# bundle step reads github's `src/generated/` barrel — on a clean clone
+# (forgejo needing both, github needing only its barrel not yet built)
+# a single alphabetical pass runs forgejo's bundle before github's generate
+# and dies. Collecting which lexicons still need bundling and running that
+# as a second, later pass removes the ordering dependency entirely.
 _ensure-gen:
     #!/usr/bin/env bash
     set -euo pipefail
+    needs_bundle=""
     for lex in lexicons/*/; do
       grep -q '"generate"' "${lex}package.json" 2>/dev/null || continue
       needs=false
@@ -32,11 +41,19 @@ _ensure-gen:
       if [ "$needs" = true ]; then
         echo "gen: $(basename "$lex")"
         npm run --prefix "$lex" generate
-        grep -q '"bundle"' "${lex}package.json" 2>/dev/null && npm run --prefix "$lex" bundle
+        grep -q '"bundle"' "${lex}package.json" 2>/dev/null && needs_bundle="$needs_bundle $lex"
       fi
     done
+    for lex in $needs_bundle; do
+      echo "bundle: $(basename "$lex")"
+      npm run --prefix "$lex" bundle
+    done
 
-# Force-rebuild every lexicon's test artifacts (generate + bundle)
+# Force-rebuild every lexicon's test artifacts (generate + bundle).
+# Two passes (chant #1133) — see _ensure-gen above for why: every lexicon's
+# generate runs before any lexicon's bundle, so a consumer (forgejo) whose
+# bundle step reads a producer's (github's) generated barrel never runs
+# ahead of that producer, regardless of alphabetical directory order.
 regen:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -44,7 +61,12 @@ regen:
       grep -q '"generate"' "${lex}package.json" 2>/dev/null || continue
       echo "gen: $(basename "$lex")"
       npm run --prefix "$lex" generate
-      grep -q '"bundle"' "${lex}package.json" 2>/dev/null && npm run --prefix "$lex" bundle
+    done
+    for lex in lexicons/*/; do
+      grep -q '"generate"' "${lex}package.json" 2>/dev/null || continue
+      grep -q '"bundle"' "${lex}package.json" 2>/dev/null || continue
+      echo "bundle: $(basename "$lex")"
+      npm run --prefix "$lex" bundle
     done
 
 # Run tests (builds missing lexicon artifacts first — see _ensure-gen)
