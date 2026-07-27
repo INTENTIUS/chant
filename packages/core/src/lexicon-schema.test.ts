@@ -169,16 +169,18 @@ describe("intrinsic foldability predicates", () => {
   });
 
   test("a plain call folds only once its lexicon opts it in — never by inference", () => {
+    const optedIn = { isTag: false, foldsAsCall: true };
     expect(intrinsicCallFolds({ isTag: false })).toBe(false);
     expect(intrinsicFolds({ isTag: false })).toBe(false);
-    expect(intrinsicCallFolds({ isTag: false, foldsAsCall: true })).toBe(true);
-    expect(intrinsicFolds({ isTag: false, foldsAsCall: true })).toBe(true);
-    expect(intrinsicTagFolds({ isTag: false, foldsAsCall: true })).toBe(false);
+    expect(intrinsicCallFolds(optedIn)).toBe(true);
+    expect(intrinsicFolds(optedIn)).toBe(true);
+    expect(intrinsicTagFolds(optedIn)).toBe(false);
   });
 
   test("a registration claiming BOTH forms does not fold as a call — isTag wins, and check-lexicon fails it", () => {
-    expect(intrinsicCallFolds({ isTag: true, foldsAsCall: true })).toBe(false);
-    expect(intrinsicTagFolds({ isTag: true, foldsAsCall: true })).toBe(true);
+    const both = { isTag: true, foldsAsCall: true };
+    expect(intrinsicCallFolds(both)).toBe(false);
+    expect(intrinsicTagFolds(both)).toBe(true);
   });
 
   test("an older manifest with neither field folds in neither form", () => {
