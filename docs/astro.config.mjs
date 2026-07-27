@@ -37,6 +37,7 @@ export default defineConfig({
 						{ label: 'Choosing Your Deployment Model', slug: 'concepts/deployment-paths' },
 						{ label: 'Components', slug: 'concepts/components' },
 						{ label: 'TypeScript as Data', slug: 'concepts/typescript-as-data' },
+						{ label: 'Left of the Line', slug: 'concepts/left-of-line' },
 						{ label: 'Build-Time Parameters', slug: 'concepts/build-time-parameters' },
 						{ label: 'Where Values Come From', slug: 'concepts/where-values-come-from' },
 						{ label: 'Evaluation Pipeline', slug: 'concepts/evaluation-pipeline' },

@@ -1,0 +1,50 @@
+---
+title: Left of the Line
+description: A measured comparison — what chant and CDK each know about your infrastructure before running your code
+---
+
+chant claims it knows a project's resource graph before executing any of the project's code. CDK cannot make that claim, and the reason is structural rather than a gap in its tooling: mutation after construction, aspects, escape hatches, and jsii mean there is no static path from a CDK app to its graph. `cdk synth` learns what your infrastructure is by running your program.
+
+That difference is usually asserted in prose. This page shows it as a measurement, taken by one procedure that runs identically against both tools.
+
+## The procedure
+
+The same infrastructure — a CRUD items API (DynamoDB table, Lambda handler, HTTP API with four routes, and the IAM the wiring implies) — expressed twice, once as chant declarables and once as a plain-JavaScript CDK app. A parity check keeps the pair honest: the resource surfaces are identical apart from two documented expansion-style differences, both of which make the CDK template larger, never the reverse.
+
+Both synths run under `node --cpu-prof`. On the CDK side the capture profiles the app subprocess, not the CLI — `cdk synth` spawns your program, so profiling the CLI would measure the wrong process, and the app-only capture is the version CDK has no grounds to object to. One analyzer then asks both captures the same question:
+
+**Did any frame from the project's own source files execute?**
+
+| | `chant build --fold` | `cdk synth` (app process) |
+| --- | --- | --- |
+| project code executed | **no** | **yes** |
+| third-party code executed because the definitions ran | 0 MB | ~1.8 MB (`aws-cdk-lib` + its closure) |
+| synthesizer machinery executed | ~10.9 MB (chant, TypeScript parser, tsx) | not in this capture (the CLI is a separate process) |
+
+Timing appears nowhere in this table on purpose. CDK's profile is wider — bundling, asset hashing, jsii startup — but all of that happens after the boundary, so none of it moves these numbers. This is not a benchmark, and if it ever reports which tool is faster the metric has drifted.
+
+The chant "no" is not just an absence of sampled frames, which a sampling profiler could in principle miss. The capture run fails unless every file in the estate reports `[fold:fold]` — zero module execution, enforced by the build itself, not inferred from samples. A sampler can miss a frame; it cannot invent one, so the CDK "yes" is definitive on its own.
+
+## The same fact, rendered
+
+Both captures below are timelines: the x-axis is time, so *left* literally means *before*. Frames are colored by package. Frames belonging to the project's own source files are highlighted; everything else is dimmed.
+
+The CDK capture lights up, and a marker lands on the first project frame near the start of the run — everything CDK learns about the infrastructure comes after that line:
+
+![cdk synth timeline — project frames highlighted, first project frame marked near t=0](/leftness/cdk-synth.svg)
+
+The chant capture is a busy timeline — the TypeScript parser is doing real work — with an empty highlight. There is no marker because there is no project frame to mark:
+
+![chant build --fold timeline — zero project functions matched, no project frame exists to mark](/leftness/chant-build-fold.svg)
+
+A blank flame graph would look like a broken file. A full one with nothing to highlight is the accurate picture: the tool works, your code never runs.
+
+## Capability and delivery, side by side
+
+The measurement above is a capability claim about code inside chant's supported subset: the harness estate folds 5 of 5 files, so the boolean holds by construction. It is not yet a delivery claim about arbitrary real applications. On loomster, the largest real application built on chant, no resource-bearing infrastructure file folds today — the blockers are ordinary authoring patterns (exported helper functions and their import closure) that the fold subset deliberately excludes. Those files run in a sandboxed child instead; the numbers on this page describe the folded path.
+
+Both facts belong in the same paragraph. chant is left of the line for what folds, the fold subset is growing, and the honest way to read this page is: the boundary exists by construction, and how much of your application lives left of it depends on how much of it folds.
+
+## Reproducing
+
+Everything regenerates from committed inputs — pinned package versions, lockfiles, and the raw `.cpuprofile` captures live in [`test/leftness/`](https://github.com/INTENTIUS/chant/tree/main/test/leftness) with the procedure in its README. `just leftness-capture` runs the whole thing offline; no cloud credentials are involved. The timeline renderings are static SVG exports from [spicypath](https://github.com/INTENTIUS/spicypath), regenerable with `node exhibits/render.mjs`.
