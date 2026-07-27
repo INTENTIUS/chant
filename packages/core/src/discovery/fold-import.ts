@@ -756,8 +756,8 @@ const PARAMS_BARE_SPECIFIER = "@intentius/chant/params";
 
 /**
  * chant #1064 — the absolute path of chant-core's OWN build-time-parameters
- * runtime module (../params.ts), resolved once, from THIS file's own
- * location, via the exact same relative-specifier resolution
+ * runtime module (../params.ts), resolved lazily on first use, from THIS
+ * file's own location, via the exact same relative-specifier resolution
  * {@link resolveModulePath} already applies to project files — cheap
  * (`existsSync`/`statSync` candidate probing only, never Node's package
  * resolution). Used by {@link buildExternals} to recognize a RELATIVE/
@@ -765,8 +765,29 @@ const PARAMS_BARE_SPECIFIER = "@intentius/chant/params";
  * an absolute path, matching the rest of this file's test convention) — a
  * real project's bare `@intentius/chant/params` import is instead matched by
  * {@link PARAMS_BARE_SPECIFIER}'s text alone, never through this path.
+ *
+ * Lazy and failure-safe, NOT a module-scope constant: this module is also
+ * bundled into the #1045 sandbox child, where module-init code runs inside
+ * `--permission` with a read allowlist. There `import.meta.url` is the
+ * bundle's temp-dir path, so an init-time probe reaches for `<tmp>/params` —
+ * outside the allowlist — and the `existsSync` throws `ERR_ACCESS_DENIED`,
+ * killing the child before it reports (a real, observed sandbox-vs-run error
+ * drift across six corpus entries). The child runs only the run path and
+ * never calls {@link buildExternals}, so deferring the probe to first fold
+ * use keeps it out of the sandbox entirely; if probing still fails there,
+ * `null` just disables the relative-path recognition rather than erroring.
  */
-const PARAMS_MODULE_PATH = resolveModulePath("../params", fileURLToPath(import.meta.url));
+let paramsModulePathMemo: string | null | undefined;
+function paramsModulePath(): string | null {
+  if (paramsModulePathMemo === undefined) {
+    try {
+      paramsModulePathMemo = resolveModulePath("../params", fileURLToPath(import.meta.url));
+    } catch {
+      paramsModulePathMemo = null;
+    }
+  }
+  return paramsModulePathMemo;
+}
 
 // ─────────────────────────────────────────────────────────────────────────
 // Resolution: given the scan + import map, compute the REAL runtime value
@@ -1404,7 +1425,7 @@ async function buildExternals(
     // specifier, ever, in this branch).
     //
     // A RELATIVE/ABSOLUTE specifier is still resolved and path-compared
-    // against {@link PARAMS_MODULE_PATH} — that resolution is always cheap
+    // against {@link paramsModulePath} — that resolution is always cheap
     // (`existsSync`/`statSync` candidate probing, never Node's package
     // resolution), so it's safe for this module's own absolute-path test
     // fixtures to exercise the identical substitution a real bare import
@@ -1417,7 +1438,7 @@ async function buildExternals(
       if (isProjectFileSpecifier(binding.specifier)) {
         try {
           const targetPath = resolveModulePathMemoized(binding.specifier, file, session.resolvePathCache);
-          if (targetPath === PARAMS_MODULE_PATH) {
+          if (targetPath === paramsModulePath()) {
             externals.set(localName, session.buildParams);
             continue;
           }
