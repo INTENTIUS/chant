@@ -9,6 +9,7 @@ import { resolveProjectLexicons, loadPlugins } from "../cli/plugins";
 import { build } from "../build";
 import { runPostSynthChecks, isPostSynthCheck } from "./post-synth";
 import type { PostSynthCheck, PostSynthDiagnostic } from "./post-synth";
+import { applyConfiguredSeverity } from "./config";
 import { importPolicyModule, isSandboxPolicyExecutionArmed } from "./policy-import";
 
 /**
@@ -49,12 +50,18 @@ export async function loadPolicyChecks(paths: string[], configDir: string): Prom
 }
 
 export interface PolicyEvaluation {
-  /** All policy diagnostics (errors + warnings). */
+  /** All policy diagnostics (errors + warnings), after `lint.rules` severity overrides. */
   diagnostics: PostSynthDiagnostic[];
-  /** The error-severity subset — these are policy *violations* that gate. */
+  /** The error-severity subset (post-override) — these are policy *violations* that gate. */
   violations: PostSynthDiagnostic[];
   /** The environment policies were evaluated against (if any). */
   env?: string;
+  /**
+   * chant #1138 — diagnostics `lint.rules` turned `"off"`, present here rather
+   * than dropped so a caller (`policyGate`, below) can report a count instead
+   * of the finding just vanishing.
+   */
+  suppressed: PostSynthDiagnostic[];
 }
 
 /**
@@ -90,10 +97,15 @@ export async function evaluateProjectPolicies(opts: {
     ? await loadPolicyChecks(config.lint.policies, configDir)
     : [];
   if (checks.length === 0) {
-    return { diagnostics: [], violations: [], env };
+    return { diagnostics: [], violations: [], env, suppressed: [] };
   }
 
-  const diagnostics = runPostSynthChecks(checks, result, env);
+  const raw = runPostSynthChecks(checks, result, env);
+  // chant #1138 — same `lint.rules` resolution `chant build` applies
+  // (`../cli/commands/build.ts`), so a check `lint.rules` turned "off"/
+  // "warning" doesn't gate an apply here even though `chant build` no longer
+  // fails on it either, and vice versa for a check turned UP to "error".
+  const { diagnostics, suppressed } = applyConfiguredSeverity(raw, config.lint?.rules);
   const violations = diagnostics.filter((d) => d.severity === "error");
-  return { diagnostics, violations, env };
+  return { diagnostics, violations, env, suppressed };
 }

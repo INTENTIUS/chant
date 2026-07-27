@@ -11,10 +11,18 @@ import { mkdtempSync, rmSync, readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+// Partial mock (`importOriginal`) rather than a full replacement: this module
+// is reachable — via `@intentius/chant`'s own root barrel, not just this
+// test's direct imports — from other real exports the plugin/import path
+// touches (e.g. `moduleDir`, which `../../lint/config.ts` calls at module
+// scope), so replacing the whole module wholesale breaks anything that
+// transitively loads one of those, for reasons entirely unrelated to what
+// this test is mocking (`spawn`).
 const spawnMock = vi.fn();
-vi.mock("@intentius/chant/runtime-adapter", () => ({
-  getRuntime: () => ({ spawn: spawnMock }),
-}));
+vi.mock("@intentius/chant/runtime-adapter", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@intentius/chant/runtime-adapter")>();
+  return { ...actual, getRuntime: () => ({ ...actual.getRuntime(), spawn: spawnMock }) };
+});
 
 const { awsPlugin } = await import("./plugin");
 const { liveImportFromPlugins } = await import("@intentius/chant/cli/commands/import");

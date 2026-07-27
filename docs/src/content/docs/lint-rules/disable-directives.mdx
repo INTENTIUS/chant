@@ -64,3 +64,14 @@ export const helper = { key: "value" };
 - Always specify the rule ID rather than suppressing all rules
 - Include a `-- reason` when suppressing rules in shared or long-lived code
 - Use file-level `disable` sparingly — typically only for generated files
+
+## What this does not cover
+
+`chant-disable` suppresses diagnostics from AST rules (`COR`/`EVL`) and, at
+file-level only, COMP* composition checks (see
+[Composition Rules](/chant/lint-rules/composition/)). Post-synth checks and
+organizational policies (a lexicon's `WAW019`, a project's `ORG-COST-CENTER`)
+are diagnostics over the *synthesized output*, not source lines — a
+`chant-disable` comment has nothing to anchor to. Suppress those with
+`lint.rules` instead; see [Post-Synth Checks and
+Policies](/chant/lint-rules/configuration/#post-synth-checks-and-policies).

@@ -1,12 +1,14 @@
 import { describe, test, expect, beforeEach, afterEach, vi } from "vitest";
 import { buildCommand, resolveBuildFormat, type BuildOptions } from "./build";
 import type { Serializer } from "../../serializer";
+import type { LexiconPlugin } from "../../lexicon";
 import { parseYAML } from "../../yaml";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { existsSync, readFileSync } from "node:fs";
 import { join, dirname, resolve as resolvePath } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
+import { resetSandboxPolicyExecutionForTests } from "../../lint/policy-sandbox";
 
 describe("buildCommand", () => {
   let testDir: string;
@@ -513,6 +515,194 @@ export const testEntity = {
       { Key: "team", Value: "infra" },
       { Key: "env", Value: "prod" },
     ]);
+  });
+
+  /**
+   * chant #1138 — post-synth findings (a lexicon-shipped check's, and a
+   * project's `lint.policies`') honor `lint.rules` severity overrides the
+   * same way a pre-synth COR/EVL/COMP diagnostic does. `runComponentChecks`
+   * proved the shape (`component-lint.test.ts`); this proves the post-synth
+   * side of the same fix.
+   */
+  describe("post-synth findings honor lint.rules (chant #1138)", () => {
+    // `armSandboxPolicyExecution` is a one-way, process-global latch — once a
+    // `--sandbox` build in this file arms it, EVERY later `buildCommand` call
+    // in this worker (sandboxed or not) would otherwise see it armed and
+    // refuse to load policies in-process. Reset it around each test here so
+    // the plain/sandboxed pairs below are actually independent.
+    beforeEach(() => resetSandboxPolicyExecutionForTests());
+    afterEach(() => resetSandboxPolicyExecutionForTests());
+
+    /**
+     * One trivial declarable using the `mockSerializer`'s "test" lexicon, so
+     * `result.outputs` is non-empty and the build's own "discovered source
+     * but produced no output" guard (`../commands/build.ts`) doesn't fire —
+     * these tests are about post-synth suppression, not that guard.
+     */
+    async function writeTrivialEntity(): Promise<void> {
+      await writeFile(
+        join(testDir, "main.ts"),
+        `export const e = { lexicon: "test", entityType: "TestEntity", [Symbol.for("chant.declarable")]: true };\n`,
+      );
+    }
+
+    /** A minimal `LexiconPlugin` whose one post-synth check always emits one fixed diagnostic — the fixed-input half of a severity-override test. */
+    function fakePostSynthPlugin(checkId: string, severity: "error" | "warning" | "info"): LexiconPlugin {
+      return {
+        name: "fake",
+        serializer: { name: "fake", rulePrefix: "FAKE", serialize: () => "{}" },
+        generate: async () => {},
+        validate: async () => {},
+        coverage: async () => {},
+        package: async () => {},
+        postSynthChecks: () => [
+          {
+            id: checkId,
+            description: "test check",
+            check: () => [{ checkId, severity, message: `${checkId} triggered` }],
+          },
+        ],
+      };
+    }
+
+    test("lint.rules off suppresses a lexicon-shipped post-synth finding and reports a suppressed count", async () => {
+      await writeTrivialEntity();
+      await writeFile(
+        join(testDir, "chant.config.ts"),
+        `export default { lint: { rules: { "FAKE001": "off" } } };\n`,
+      );
+
+      const result = await buildCommand({
+        path: testDir,
+        format: "json",
+        serializers: [mockSerializer],
+        plugins: [fakePostSynthPlugin("FAKE001", "error")],
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.errors).toEqual([]);
+      expect(result.errors.join("\n")).not.toContain("FAKE001 triggered");
+      expect(result.warnings.some((w) => w.includes("1 post-synth finding(s) suppressed"))).toBe(true);
+    });
+
+    test("lint.rules downgrades an error-severity post-synth check to warning, so it no longer fails the build", async () => {
+      await writeTrivialEntity();
+      await writeFile(
+        join(testDir, "chant.config.ts"),
+        `export default { lint: { rules: { "FAKE002": "warning" } } };\n`,
+      );
+
+      const result = await buildCommand({
+        path: testDir,
+        format: "json",
+        serializers: [mockSerializer],
+        plugins: [fakePostSynthPlugin("FAKE002", "error")],
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.errors).toEqual([]);
+      expect(result.warnings.some((w) => w.includes("FAKE002 triggered"))).toBe(true);
+    });
+
+    test("lint.rules upgrades a warning-severity post-synth check to error, so it now fails the build", async () => {
+      await writeTrivialEntity();
+      await writeFile(
+        join(testDir, "chant.config.ts"),
+        `export default { lint: { rules: { "FAKE003": "error" } } };\n`,
+      );
+
+      const result = await buildCommand({
+        path: testDir,
+        format: "json",
+        serializers: [mockSerializer],
+        plugins: [fakePostSynthPlugin("FAKE003", "warning")],
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.errors.some((e) => e.includes("FAKE003 triggered"))).toBe(true);
+    });
+
+    test("an unconfigured post-synth check id is unaffected — no drift from this fix for the common case", async () => {
+      await writeTrivialEntity();
+      await writeFile(join(testDir, "chant.config.ts"), `export default {};\n`);
+
+      const result = await buildCommand({
+        path: testDir,
+        format: "json",
+        serializers: [mockSerializer],
+        plugins: [fakePostSynthPlugin("FAKE004", "error")],
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.errors.some((e) => e.includes("FAKE004 triggered"))).toBe(true);
+      expect(result.warnings.some((w) => w.includes("suppressed"))).toBe(false);
+    });
+
+    /** Write a `lint.policies` project: one policy file whose check always emits one fixed diagnostic. */
+    async function writePolicyProject(checkId: string, severity: "error" | "warning", rules: Record<string, string>): Promise<void> {
+      await mkdir(join(testDir, "policies"), { recursive: true });
+      await writeTrivialEntity();
+      await writeFile(
+        join(testDir, "policies", "org.ts"),
+        `export const check = {\n` +
+          `  id: ${JSON.stringify(checkId)},\n` +
+          `  description: "test policy",\n` +
+          `  check: () => [{ checkId: ${JSON.stringify(checkId)}, severity: ${JSON.stringify(severity)}, message: ${JSON.stringify(`${checkId} triggered`)} }],\n` +
+          `};\n`,
+      );
+      await writeFile(
+        join(testDir, "chant.config.ts"),
+        `export default { lint: { policies: ["policies/org.ts"], rules: ${JSON.stringify(rules)} } };\n`,
+      );
+    }
+
+    test(
+      "lint.rules off suppresses a lint.policies finding identically under plain and --sandbox builds",
+      async () => {
+        await writePolicyProject("ORG-OFF", "error", { "ORG-OFF": "off" });
+
+        const plain = await buildCommand({ path: testDir, format: "json", serializers: [mockSerializer], plugins: [] });
+        const sandboxed = await buildCommand({
+          path: testDir,
+          format: "json",
+          serializers: [mockSerializer],
+          plugins: [],
+          fold: true,
+          sandbox: true,
+        });
+
+        for (const result of [plain, sandboxed]) {
+          expect(result.success).toBe(true);
+          expect(result.errors).toEqual([]);
+          expect(result.warnings.some((w) => w.includes("1 post-synth finding(s) suppressed"))).toBe(true);
+        }
+      },
+      30_000,
+    );
+
+    test(
+      "lint.rules upgrades a lint.policies warning to error identically under plain and --sandbox builds",
+      async () => {
+        await writePolicyProject("ORG-UP", "warning", { "ORG-UP": "error" });
+
+        const plain = await buildCommand({ path: testDir, format: "json", serializers: [mockSerializer], plugins: [] });
+        const sandboxed = await buildCommand({
+          path: testDir,
+          format: "json",
+          serializers: [mockSerializer],
+          plugins: [],
+          fold: true,
+          sandbox: true,
+        });
+
+        for (const result of [plain, sandboxed]) {
+          expect(result.success).toBe(false);
+          expect(result.errors.some((e) => e.includes("[policy:ORG-UP]") && e.includes("ORG-UP triggered"))).toBe(true);
+          expect(result.warnings.some((w) => w.includes("suppressed"))).toBe(false);
+        }
+      },
+      30_000,
+    );
   });
 });
 

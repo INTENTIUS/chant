@@ -35,6 +35,19 @@ export function getPrimaryOutput(output: string | SerializerResult): string {
 
 /**
  * A diagnostic from a post-synthesis check.
+ *
+ * chant #1138 — deliberately carries no `file`/`line` the way `LintDiagnostic`
+ * (`./rule.ts`) does. A post-synth check runs over `ctx.outputs` — the
+ * SYNTHESIZED output text (a CloudFormation template, a Kubernetes manifest) —
+ * not a `ts.SourceFile`, so there is no AST position to report in the first
+ * place. `entity` (below) is the closest thing to a locator and is NOT a
+ * substitute: it names a resource in that synthesized output (a CFN logical
+ * id, a k8s `metadata.name`), which several checks in this repo never even
+ * set (a cross-cutting check with no single implicated resource), and which
+ * is not guaranteed to match a `ctx.entities` map key. This is why source-
+ * comment (`chant-disable`) suppression is out of scope for post-synth
+ * findings — see `./config.ts`'s `applyConfiguredSeverity` doc for the full
+ * reasoning and what suppression surface post-synth findings get instead.
  */
 export interface PostSynthDiagnostic {
   /** ID of the check that produced this diagnostic */
@@ -43,7 +56,11 @@ export interface PostSynthDiagnostic {
   severity: Severity;
   /** Human-readable message */
   message: string;
-  /** Optional entity name related to this diagnostic */
+  /**
+   * Optional resource name related to this diagnostic — a name from the
+   * SYNTHESIZED OUTPUT (a CFN logical id, a k8s `metadata.name`), not a
+   * source file/line. See this interface's doc comment.
+   */
   entity?: string;
   /** Optional lexicon related to this diagnostic */
   lexicon?: string;
@@ -96,3 +113,15 @@ export function runPostSynthChecks(
   }
   return diagnostics;
 }
+
+// chant #1138 — `applyConfiguredSeverity` (the `lint.rules` severity-override
+// pass over a set of `PostSynthDiagnostic`s) lives in `./config.ts`, not here,
+// even though it operates on this module's own type. This file is a leaf:
+// every lexicon's post-synth checks import it as a real runtime module (not
+// just for types — `getPrimaryOutput` above is a plain function several
+// checks call directly), so it has to stay cheap to load. `./config.ts` is
+// not cheap — it resolves built-in preset paths via the runtime adapter at
+// module scope — and pulling that into every lexicon's check barrel merely to
+// share one filter function is the wrong trade. `applyConfiguredSeverity`
+// only needs this module's TYPE (`PostSynthDiagnostic`), which costs nothing
+// at runtime, so the dependency runs the other way instead.

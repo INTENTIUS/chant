@@ -56,6 +56,26 @@ error: [policy:ORG-PROD-TLS] [storefront] Ingress "storefront" must terminate TL
 Policy evaluates the **synthesized artifact**, offline — it never touches the
 cloud. Live checks are [`chant lifecycle`](/chant/cli/lifecycle/), not this.
 
+## Suppressing a check
+
+Turn a check off (or down to `warning`) with `lint.rules`, keyed by the
+check's own `id` — same mechanism as any lexicon lint rule:
+
+```typescript
+export default {
+  lexicons: ["k8s"],
+  lint: {
+    policies: ["policies/org.ts"],
+    rules: { "ORG-PROD-TLS": "off" },
+  },
+} satisfies ChantConfig;
+```
+
+`chant-disable` source comments do not apply to a policy finding — see [Post-
+Synth Checks and Policies](/chant/lint-rules/configuration/#post-synth-checks-and-policies)
+for why. A suppressed finding is counted, not dropped: `chant build` and
+`policyGate` both print how many `lint.rules` suppressed.
+
 ### Under `--sandbox`
 
 A policy is your code, and `chant build --sandbox` runs it in an isolated child

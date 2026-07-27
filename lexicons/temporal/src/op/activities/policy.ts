@@ -18,7 +18,7 @@ export interface PolicyGateArgs {
  * Runs in both executors — it is a plain activity, not a Temporal gate.
  */
 export async function policyGate(args: PolicyGateArgs, _signal?: AbortSignal): Promise<void> {
-  const { violations, env } = await evaluateProjectPolicies({ path: args.path ?? ".", env: args.env });
+  const { violations, suppressed, env } = await evaluateProjectPolicies({ path: args.path ?? ".", env: args.env });
   if (violations.length > 0) {
     const summary = violations
       .map((v) => `[${v.checkId}]${v.entity ? ` ${v.entity}:` : ""} ${v.message}`)
@@ -27,6 +27,11 @@ export async function policyGate(args: PolicyGateArgs, _signal?: AbortSignal): P
       `Organizational policy blocked the apply — ${violations.length} violation(s): ${summary}`,
       "PolicyViolation",
     );
+  }
+  // chant #1138 — a check `lint.rules` turned "off" is counted here rather
+  // than vanishing silently, mirroring `chant build`'s own suppressed-count line.
+  if (suppressed.length > 0) {
+    console.log(`[policy] ${suppressed.length} finding(s) suppressed via lint.rules`);
   }
   console.log(`[policy] ${env ? `env=${env}: ` : ""}no violations — apply may proceed`);
 }
