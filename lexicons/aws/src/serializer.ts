@@ -341,7 +341,10 @@ function serializeToTemplate(
       // AttrRef type resolves across the workspace/published boundary.
       const ref: unknown = stackOutput.sourceRef;
       let value: unknown;
-      if (isAttrRefLike(ref)) {
+      if (typeof ref === "string") {
+        // Literal output (constants a stack publishes, e.g. a port number).
+        value = ref;
+      } else if (isAttrRefLike(ref)) {
         const logicalName = ref.getLogicalName();
         if (!logicalName) continue;
         // Use Ref for primary identifier ("Id") since not all resources
@@ -358,6 +361,12 @@ function serializeToTemplate(
       const output: CFOutput = { Value: value };
       if (stackOutput.description) {
         output.Description = stackOutput.description;
+      }
+      // Read defensively: a project may pair this lexicon with an older
+      // published core whose StackOutput type predates exportName.
+      const exportName = (stackOutput as { exportName?: string }).exportName;
+      if (exportName) {
+        output.Export = { Name: exportName };
       }
       template.Outputs[name] = output;
     }
