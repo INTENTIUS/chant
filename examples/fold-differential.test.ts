@@ -115,6 +115,18 @@ const report: ReportRow[] = [];
  * stopped on `Azure.ResourceGroupLocation` — a lexicon-package namespace
  * access, #1063. That is the measured ceiling this PR reports: azure's
  * remaining corpus is gated on #1063, not on #1044.
+ *
+ * chant #1063 grew it from 32 to 53 — the largest single jump so far, and
+ * the whole of azure's and gcp's corpora at once. The 21 added entries are
+ * every azure example (13) and every gcp example (8): each had exactly one
+ * file, failing on `Azure.<PseudoParameter>` / `GCP.<PseudoParameter>` — an
+ * identifier imported from the LEXICON PACKAGE rather than from a sibling
+ * project file, which #1020's cross-file resolution skipped by construction
+ * (it followed relative specifiers only). Following a bare specifier into an
+ * ACTIVE lexicon package also cleared every remaining `S3Actions` (aws),
+ * `CI` (gitlab) and value-position `AWS` (aws) failure in the corpus, but
+ * those all live in `docs-snippets` entries carrying several unrelated
+ * blockers apiece, so they move no entry on their own.
  */
 const EXPECTED_FOLD: readonly string[] = [
   "examples/alert-triage",
@@ -135,7 +147,28 @@ const EXPECTED_FOLD: readonly string[] = [
   "lexicons/aws/examples/multi-service-alb",
   "lexicons/aws/examples/rds-postgres",
   "lexicons/aws/examples/vpc",
+  "lexicons/azure/examples/aks-cluster",
+  "lexicons/azure/examples/basic-storage",
+  "lexicons/azure/examples/container-instance",
+  "lexicons/azure/examples/cosmos-db",
+  "lexicons/azure/examples/function-app",
+  "lexicons/azure/examples/key-vault",
+  "lexicons/azure/examples/multi-resource",
+  "lexicons/azure/examples/private-endpoint",
+  "lexicons/azure/examples/redis-cache",
+  "lexicons/azure/examples/service-bus",
+  "lexicons/azure/examples/sql-database",
+  "lexicons/azure/examples/vnet-vms",
+  "lexicons/azure/examples/web-app",
   "lexicons/docker/examples/basic-app",
+  "lexicons/gcp/examples/basic-bucket",
+  "lexicons/gcp/examples/cloud-function",
+  "lexicons/gcp/examples/cloud-run",
+  "lexicons/gcp/examples/cloud-sql",
+  "lexicons/gcp/examples/cloud-storage-lifecycle",
+  "lexicons/gcp/examples/gke-cluster",
+  "lexicons/gcp/examples/pubsub",
+  "lexicons/gcp/examples/vpc-network",
   "lexicons/gitlab/examples/node-pipeline",
   "lexicons/gitlab/examples/python-pipeline",
   "lexicons/helm/examples/composites-basic",
@@ -182,7 +215,7 @@ async function buildBothWays(
   entry: CorpusEntry,
 ): Promise<{ run: Awaited<ReturnType<typeof build>>; fold: Awaited<ReturnType<typeof build>>; neededIsolation: boolean }> {
   const run = await build(entry.srcDir, entry.serializers, undefined, { fold: false });
-  const fold = await build(entry.srcDir, entry.serializers, undefined, { fold: true, intrinsics: entry.intrinsics });
+  const fold = await build(entry.srcDir, entry.serializers, undefined, { fold: true, intrinsics: entry.intrinsics, lexicons: entry.lexicons });
 
   if (outputsEqual(normalizeOutputs(fold.outputs), normalizeOutputs(run.outputs))) {
     return { run, fold, neededIsolation: false };
@@ -191,7 +224,7 @@ async function buildBothWays(
   vi.resetModules();
   const freshRun = await build(entry.srcDir, entry.serializers, undefined, { fold: false });
   vi.resetModules();
-  const freshFold = await build(entry.srcDir, entry.serializers, undefined, { fold: true, intrinsics: entry.intrinsics });
+  const freshFold = await build(entry.srcDir, entry.serializers, undefined, { fold: true, intrinsics: entry.intrinsics, lexicons: entry.lexicons });
   return { run: freshRun, fold: freshFold, neededIsolation: true };
 }
 
@@ -209,7 +242,7 @@ describe("fold differential — fold output === run output (#1025, epic #1019)",
       // both-ways comparison + module-reset retry; that retry (which reloads the
       // whole module graph) is what makes the full corpus intractable now that
       // many entries fall back, and it buys nothing for entries we don't gate.
-      const probe = await build(entry.srcDir, entry.serializers, undefined, { fold: true, intrinsics: entry.intrinsics });
+      const probe = await build(entry.srcDir, entry.serializers, undefined, { fold: true, intrinsics: entry.intrinsics, lexicons: entry.lexicons });
       const mode = classifyFoldMode(probe.foldDecisions);
       if (mode !== "fold") {
         report.push({ name: entry.name, mode, identical: true, fileCount: probe.foldDecisions.length, neededIsolation: false });

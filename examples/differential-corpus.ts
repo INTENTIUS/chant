@@ -124,7 +124,20 @@ export interface CorpusEntry {
   serializers: Serializer[];
   /** Intrinsics to fold with (chant #1039) — see {@link ALL_INTRINSICS}/{@link INTRINSICS_BY_LEXICON}. */
   intrinsics: IntrinsicDef[];
+  /**
+   * chant #1063 — the lexicon NAMES active for this entry, matching the
+   * serializer/intrinsic selection below. The differentials build through
+   * core's `build()` rather than the CLI, so — exactly as they already do for
+   * `intrinsics` — they have to reproduce `cli/commands/build.ts`'s own
+   * `options.plugins.map(p => p.name)` step, or the fold path would be
+   * measured without the bare-specifier allowlist real `chant build --fold`
+   * gives it.
+   */
+  lexicons: string[];
 }
+
+/** Every lexicon name the corpus can build with — the keys of {@link SERIALIZER_BY_LEXICON}. */
+export const ALL_LEXICONS: string[] = Object.keys(SERIALIZER_BY_LEXICON);
 
 function isDir(p: string): boolean {
   try {
@@ -169,7 +182,13 @@ export function discoverCorpus(): CorpusEntry[] {
     if (!dirent.isDirectory()) continue;
     const srcDir = resolve(examplesDir, dirent.name, "src");
     if (isDir(srcDir)) {
-      entries.push({ name: `examples/${dirent.name}`, srcDir, serializers: ALL_SERIALIZERS, intrinsics: ALL_INTRINSICS });
+      entries.push({
+        name: `examples/${dirent.name}`,
+        srcDir,
+        serializers: ALL_SERIALIZERS,
+        intrinsics: ALL_INTRINSICS,
+        lexicons: ALL_LEXICONS,
+      });
     }
   }
 
@@ -189,6 +208,7 @@ export function discoverCorpus(): CorpusEntry[] {
           srcDir,
           serializers: [serializer],
           intrinsics: INTRINSICS_BY_LEXICON[lexDirent.name] ?? [],
+          lexicons: [lexDirent.name],
         });
       }
     }

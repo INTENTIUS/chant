@@ -30,7 +30,7 @@ const corpus = discoverCorpus();
 let foldCount = 0;
 
 for (const entry of corpus) {
-  const result = await build(entry.srcDir, entry.serializers, undefined, { fold: true, intrinsics: entry.intrinsics });
+  const result = await build(entry.srcDir, entry.serializers, undefined, { fold: true, intrinsics: entry.intrinsics, lexicons: entry.lexicons });
   const mode = classifyFoldMode(result.foldDecisions);
   if (mode === "fold") foldCount++;
   console.error(`  ${mode.padEnd(12)} ${entry.name}`);
