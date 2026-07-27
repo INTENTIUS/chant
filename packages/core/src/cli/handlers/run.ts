@@ -3,6 +3,7 @@ import { existsSync, writeFileSync, mkdirSync, readFileSync } from "node:fs";
 import { createConnection } from "node:net";
 import { spawn as spawnChild, type ChildProcess } from "node:child_process";
 import { loadChantConfig, resolveAutoReleaseDisabled } from "../../config";
+import { applyBuildParams, parseParamFlags } from "../../build-params";
 import { discoverOps } from "../../op/discover";
 import { loadActivities, loadProfiles } from "../../op/activity-registry";
 import { runOpLocally, findGate, LocalGateUnsupportedError, OpRunFailure } from "../../op/local-executor";
@@ -709,6 +710,11 @@ export async function runOpComponents(ctx: CommandContext): Promise<number> {
     componentOutputs: seededOutputs,
     onProgress,
     sandbox: ctx.args.sandbox,
+    // chant #1108 — bind declared build-time parameters for the deploy driver
+    // exactly as `chant build` binds them, so a component file reading
+    // `params.<name>` sees the same values on both paths.
+    params: parseParamFlags(ctx.args.param),
+    paramsFile: ctx.args.paramsFile,
   });
 
   // Dump the accumulated outputs for a downstream job to seed from. Written
@@ -782,6 +788,22 @@ async function runComponentTemporal(ctx: CommandContext, selector: string): Prom
   }
 
   const projectPath = resolve(".");
+
+  // chant #1108 — bind declared build-time parameters BEFORE discovery
+  // imports any `*.component.ts` file, matching the local-mode path above
+  // (`runComponents` binds its own; this durable path calls
+  // `resolveComponentTargets` directly, so it binds here).
+  const { config: paramsConfig } = await loadChantConfig(projectPath);
+  const paramsResolution = applyBuildParams(paramsConfig.buildParams, {
+    cli: parseParamFlags(ctx.args.param),
+    paramsFilePath: ctx.args.paramsFile,
+    env: process.env,
+  });
+  if (paramsResolution.errors.length > 0) {
+    for (const message of paramsResolution.errors) console.error(formatError({ message }));
+    return 1;
+  }
+
   const resolved = await resolveComponentTargets(projectPath, selector, ctx.args.sandbox);
   if (!resolved.success || resolved.targets.length === 0) {
     console.error(formatError({ message: resolved.error ?? `Component "${selector}" not found` }));

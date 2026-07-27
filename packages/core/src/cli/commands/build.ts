@@ -1,13 +1,13 @@
 import { build } from "../../build";
 import { loadChantConfig, resolveOwnershipMarker, resolveFoldEnabled, resolveSandboxEnabled } from "../../config";
-import { resolveBuildParams } from "../../build-params";
+import { applyBuildParams } from "../../build-params";
 import type { Serializer, SerializerResult } from "../../serializer";
 import type { LexiconPlugin } from "../../lexicon";
 import { runPostSynthChecks } from "../../lint/post-synth";
 import { loadPolicyChecks } from "../../lint/policy";
 import { sortedJsonReplacer } from "../../utils";
 import { formatError, formatWarning, formatSuccess, formatBold, formatInfo } from "../format";
-import { writeFileSync, mkdirSync, readFileSync } from "fs";
+import { writeFileSync, mkdirSync } from "fs";
 import { resolve, dirname, join, relative } from "path";
 import { watchDirectory, formatTimestamp, formatChangedFiles } from "../watch";
 
@@ -162,21 +162,9 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
   // chant build error naming the parameter, never a thrown error from inside
   // user source (which is what loomster's hand-rolled `tierFromEnv()`-style
   // validators did before migrating to this mechanism).
-  let paramsFileContent: Record<string, unknown> | undefined;
-  if (options.paramsFile) {
-    try {
-      paramsFileContent = JSON.parse(readFileSync(resolve(options.paramsFile), "utf-8"));
-    } catch (err) {
-      errors.push(
-        formatError({
-          message: `Failed to read/parse --params-file "${options.paramsFile}": ${err instanceof Error ? err.message : String(err)}`,
-        }),
-      );
-    }
-  }
-  const paramsResolution = resolveBuildParams(config.buildParams, {
+  const paramsResolution = applyBuildParams(config.buildParams, {
     cli: options.params,
-    fromFile: paramsFileContent,
+    paramsFilePath: options.paramsFile,
     env: process.env,
   });
   for (const message of paramsResolution.errors) {

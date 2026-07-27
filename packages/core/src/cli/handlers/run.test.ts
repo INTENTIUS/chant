@@ -1269,7 +1269,10 @@ describe("runOpComponents: --temporal routes to the durable path", () => {
     resolveComponentTargetsMock.mockReset();
     findComponentGateMock.mockReset();
     loadComponentTemporalCodegenMock.mockReset();
-    loadChantConfigMock.mockReset();
+    // chant #1108 — the durable path now loads config to bind build-time
+    // parameters BEFORE resolving component targets, so the mock needs a
+    // resolved value even for tests that fail at target resolution.
+    loadChantConfigMock.mockReset().mockResolvedValue({ config: {} });
     resolveProfileMock.mockReset();
     loadTemporalClientMock.mockReset();
     spawnChildMock.mockReset();

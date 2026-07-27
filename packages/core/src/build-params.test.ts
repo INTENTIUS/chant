@@ -1,5 +1,15 @@
-import { describe, expect, test } from "vitest";
-import { resolveBuildParams, buildParamValues, type BuildParamsConfig } from "./build-params";
+import { describe, expect, test, afterEach } from "vitest";
+import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import {
+  resolveBuildParams,
+  buildParamValues,
+  applyBuildParams,
+  parseParamFlags,
+  type BuildParamsConfig,
+} from "./build-params";
+import { params, setBuildParams } from "./params";
 
 const TIER_DEF: BuildParamsConfig = {
   tier: { type: "string", default: "light", enum: ["light", "production", "production-ha"] },
@@ -140,5 +150,71 @@ describe("buildParamValues", () => {
 
   test("empty provenance yields an empty map", () => {
     expect(buildParamValues([])).toEqual({});
+  });
+});
+
+describe("applyBuildParams (#1108)", () => {
+  afterEach(() => {
+    setBuildParams({});
+  });
+
+  test("binds resolved values to the shared params object", () => {
+    const result = applyBuildParams(TIER_DEF, { cli: { tier: "production" } });
+    expect(result.errors).toEqual([]);
+    expect(params).toEqual({ tier: "production" });
+  });
+
+  test("on a resolution error, binds nothing — params keeps its previous contents", () => {
+    setBuildParams({ tier: "light" });
+    const result = applyBuildParams(TIER_DEF, { cli: { bogus: "x" } });
+    expect(result.errors).toHaveLength(1);
+    expect(params).toEqual({ tier: "light" });
+  });
+
+  test("reads and applies a params file by path", () => {
+    const dir = mkdtempSync(join(tmpdir(), "chant-apply-params-"));
+    try {
+      const file = join(dir, "params.json");
+      writeFileSync(file, JSON.stringify({ tier: "production-ha" }));
+      const result = applyBuildParams(TIER_DEF, { paramsFilePath: file });
+      expect(result.errors).toEqual([]);
+      expect(params).toEqual({ tier: "production-ha" });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("an unreadable/unparseable params file is a returned error naming the path, and binds nothing", () => {
+    setBuildParams({ tier: "light" });
+    const result = applyBuildParams(TIER_DEF, { paramsFilePath: "/nonexistent/params.json" });
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0]).toContain('/nonexistent/params.json');
+    expect(params).toEqual({ tier: "light" });
+  });
+
+  test("a declared env mapping resolves from the supplied env", () => {
+    const defs: BuildParamsConfig = { tier: { type: "string", default: "light", env: "CHANT_TEST_TIER" } };
+    const result = applyBuildParams(defs, { env: { CHANT_TEST_TIER: "production" } });
+    expect(result.errors).toEqual([]);
+    expect(params).toEqual({ tier: "production" });
+  });
+});
+
+describe("parseParamFlags (#1108)", () => {
+  test("splits repeated name=value entries into a record", () => {
+    expect(parseParamFlags(["tier=production", "replicas=3"])).toEqual({ tier: "production", replicas: "3" });
+  });
+
+  test("a value containing '=' splits on the first one only", () => {
+    expect(parseParamFlags(["token=a=b"])).toEqual({ token: "a=b" });
+  });
+
+  test("a value-less entry maps to the empty string", () => {
+    expect(parseParamFlags(["flag"])).toEqual({ flag: "" });
+  });
+
+  test("undefined or empty input yields undefined", () => {
+    expect(parseParamFlags(undefined)).toBeUndefined();
+    expect(parseParamFlags([])).toBeUndefined();
   });
 });

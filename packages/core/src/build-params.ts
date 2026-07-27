@@ -1,4 +1,7 @@
+import { readFileSync } from "node:fs";
+import { resolve as resolvePath } from "node:path";
 import type { BuildParamProvenance } from "./provenance";
+import { setBuildParams } from "./params";
 
 /**
  * Build-time parameter declaration + resolution (chant #1064, follow-up to
@@ -204,4 +207,63 @@ export function resolveBuildParams(defs: BuildParamsConfig | undefined, input: B
 /** Project the resolved provenance records down to a plain `{ name: value }` map — what actually gets bound to `params.<name>` (see ./params.ts). */
 export function buildParamValues(provenance: readonly BuildParamProvenance[]): Record<string, BuildParamValue> {
   return Object.fromEntries(provenance.map((p) => [p.name, p.value]));
+}
+
+/** Split repeated `--param name=value` flag values into a flat record — shared by every command that accepts the flag (chant #1108: `build`, `run --components`, generate mode). A value-less entry (`--param name`) maps to `""`, matching `chant build`'s longstanding parse. */
+export function parseParamFlags(entries?: readonly string[]): Record<string, string> | undefined {
+  if (!entries?.length) return undefined;
+  return Object.fromEntries(
+    entries.map((entry) => {
+      const eq = entry.indexOf("=");
+      return eq === -1 ? [entry, ""] : [entry.slice(0, eq), entry.slice(eq + 1)];
+    }),
+  );
+}
+
+/** Inputs for {@link applyBuildParams} — the same three sources `chant build` accepts, with the file still unread. */
+export interface ApplyBuildParamsInput {
+  /** `--param name=value` flags, already split into a record — highest precedence. */
+  cli?: Record<string, string>;
+  /** Path to a `--params-file` JSON file of `{ "name": value }` — second precedence. Read + parsed here so every command reports a bad file the same way. */
+  paramsFilePath?: string;
+  /** The process environment, consulted only for a parameter with a declared `env` mapping. */
+  env?: Record<string, string | undefined>;
+}
+
+/**
+ * Resolve a project's declared build-time parameters and bind them to the
+ * shared `params` object (./params.ts's `setBuildParams`) — the one sequence
+ * every command that imports project source must run BEFORE that import
+ * happens, whether the import is `discover()`'s (chant build),
+ * `discoverComponents`'s (`chant run --components`, generate mode, chant
+ * #1108), or a sandboxed child's (the drivers snapshot the values this bound
+ * — see ../discovery/sandbox/driver.ts / ../components/sandbox/driver.ts).
+ *
+ * On any resolution error nothing is bound (`params` keeps its previous
+ * contents) and the errors are returned for the caller to report — matching
+ * `buildCommand`'s fail-before-discovery behavior.
+ */
+export function applyBuildParams(
+  defs: BuildParamsConfig | undefined,
+  input: ApplyBuildParamsInput,
+): BuildParamsResolution {
+  let fromFile: Record<string, unknown> | undefined;
+  if (input.paramsFilePath) {
+    try {
+      fromFile = JSON.parse(readFileSync(resolvePath(input.paramsFilePath), "utf-8"));
+    } catch (err) {
+      return {
+        provenance: [],
+        errors: [
+          `Failed to read/parse --params-file "${input.paramsFilePath}": ${err instanceof Error ? err.message : String(err)}`,
+        ],
+      };
+    }
+  }
+
+  const resolution = resolveBuildParams(defs, { cli: input.cli, fromFile, env: input.env });
+  if (resolution.errors.length === 0) {
+    setBuildParams(buildParamValues(resolution.provenance));
+  }
+  return resolution;
 }

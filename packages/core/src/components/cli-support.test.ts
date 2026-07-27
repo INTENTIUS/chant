@@ -12,6 +12,8 @@ import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import { mkdir, writeFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { fileURLToPath } from "node:url";
+import { setBuildParams } from "../params";
 import Ajv2020 from "ajv/dist/2020";
 import componentSchema from "./component.schema.json";
 import { listComponents, describeComponent, computeComponentGraph, runComponents, findComponentGate } from "./cli-support";
@@ -666,5 +668,76 @@ describe("runComponents — onProgress (--progress-json wiring, M3)", () => {
     const result = await runComponents(testDir, "svc", { registry: fakeRegistry() });
     expect(result.success).toBe(true);
     expect(result.run?.ok).toBe(true);
+  });
+});
+
+// ── runComponents build-time parameters (#1108) ─────────────────────────────
+
+describe("runComponents — build-time parameters (#1108)", () => {
+  let testDir: string;
+  const PARAMS_MODULE = fileURLToPath(new URL("../params.ts", import.meta.url));
+
+  beforeEach(async () => {
+    testDir = join(tmpdir(), `chant-run-components-params-test-${Date.now()}-${Math.random()}`);
+    await mkdir(testDir, { recursive: true });
+  });
+
+  afterEach(async () => {
+    await rm(testDir, { recursive: true, force: true });
+    setBuildParams({});
+  });
+
+  /** A component file whose name is computed from `params.stage` AT IMPORT TIME — the exact shape #1108's reproduction used (loomster's stack naming). */
+  async function writeParamsComponent(): Promise<void> {
+    await writeFile(
+      join(testDir, "svc.component.ts"),
+      `import { params } from ${JSON.stringify(PARAMS_MODULE)};
+       export const svc = { name: "svc-" + (params.stage ?? "unbound"), dependsOn: [], deploy: [{ phase: "Apply", steps: [{ kind: "deploy-thing" }] }] };`,
+    );
+  }
+
+  const CONFIG = {
+    buildParams: { stage: { type: "string" as const, default: "dev", env: "CHANT_TEST_1108_STAGE" } },
+  };
+
+  test("a component file reading params.<name> sees the declared default under the deploy driver", async () => {
+    await writeParamsComponent();
+    const result = await runComponents(testDir, "all", { registry: fakeRegistry(), config: CONFIG });
+    expect(result.success).toBe(true);
+    expect(result.selected).toEqual(["svc-dev"]);
+  });
+
+  test("--param wins: options.params overrides the default before discovery imports the file", async () => {
+    await writeParamsComponent();
+    const result = await runComponents(testDir, "all", {
+      registry: fakeRegistry(),
+      config: CONFIG,
+      params: { stage: "prod" },
+    });
+    expect(result.success).toBe(true);
+    expect(result.selected).toEqual(["svc-prod"]);
+  });
+
+  test("a declared env mapping resolves from process.env, same as chant build", async () => {
+    await writeParamsComponent();
+    process.env.CHANT_TEST_1108_STAGE = "staging";
+    try {
+      const result = await runComponents(testDir, "all", { registry: fakeRegistry(), config: CONFIG });
+      expect(result.success).toBe(true);
+      expect(result.selected).toEqual(["svc-staging"]);
+    } finally {
+      delete process.env.CHANT_TEST_1108_STAGE;
+    }
+  });
+
+  test("a resolution error fails the run before any component file is imported", async () => {
+    await writeParamsComponent();
+    const result = await runComponents(testDir, "all", {
+      registry: fakeRegistry(),
+      config: CONFIG,
+      params: { bogus: "x" },
+    });
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('unknown build parameter "bogus"');
   });
 });

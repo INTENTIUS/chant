@@ -4,6 +4,7 @@ import { buildCommand, buildCommandWatch, printErrors, printWarnings, resolveBui
 import { formatError, formatInfo, formatSuccess, formatBold } from "../format";
 import type { CommandContext } from "../registry";
 import { generateComponentsPipeline } from "../../components/cli-support";
+import { parseParamFlags } from "../../build-params";
 
 /**
  * `chant build --components --generate <lexicon>` — generate mode (#563,
@@ -26,6 +27,9 @@ async function runGenerateComponents(ctx: CommandContext): Promise<number> {
     lexicon,
     { env: args.env },
     args.sandbox,
+    // chant #1108 — generate mode imports `*.component.ts` files, so it takes
+    // the same --param/--params-file inputs `chant build` does.
+    { params: parseParamFlags(args.param), paramsFile: args.paramsFile },
   );
 
   if (!result.success) {
@@ -87,14 +91,7 @@ export async function runBuild(ctx: CommandContext): Promise<number> {
   }
 
   // #1064 — `--param name=value`, repeated, into a flat { name: value } record.
-  const params = args.param?.length
-    ? Object.fromEntries(
-        args.param.map((entry) => {
-          const eq = entry.indexOf("=");
-          return eq === -1 ? [entry, ""] : [entry.slice(0, eq), entry.slice(eq + 1)];
-        }),
-      )
-    : undefined;
+  const params = parseParamFlags(args.param);
 
   if (args.watch) {
     const cleanup = buildCommandWatch({

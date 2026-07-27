@@ -43,6 +43,7 @@ import { buildCapabilityRegistry } from "./capability-plugin-loader";
 import type { CapabilityRegistry } from "./capability";
 import { applyConfigDefaults } from "./config-defaults";
 import { loadChantConfig, type ChantConfig } from "../config";
+import { applyBuildParams } from "../build-params";
 
 /** One component in `chant list --components` output. */
 export interface ListedComponent {
@@ -221,6 +222,7 @@ export async function generateComponentsPipeline(
   lexicon: GenerateLexicon,
   options?: ComponentPipelineOptions,
   sandbox?: boolean,
+  buildParams?: { params?: Record<string, string>; paramsFile?: string },
 ): Promise<GenerateComponentsResult> {
   const plugin = await loadLexiconPlugin(lexicon);
   if (!plugin?.generateComponentPipeline) {
@@ -228,6 +230,20 @@ export async function generateComponentsPipeline(
       success: false,
       error: `Lexicon "${lexicon}" does not support generate mode (no generateComponentPipeline). GitLab, GitHub, and Forgejo are supported today.`,
     };
+  }
+
+  // chant #1108 — bind declared build-time parameters BEFORE discovery
+  // imports any `*.component.ts` file, exactly as `buildCommand` does before
+  // `discover()`: a component file reading `params.<name>` must see the same
+  // values under generate mode as under `chant build`.
+  const { config } = await loadChantConfig(path);
+  const paramsResolution = applyBuildParams(config.buildParams, {
+    cli: buildParams?.params,
+    paramsFilePath: buildParams?.paramsFile,
+    env: process.env,
+  });
+  if (paramsResolution.errors.length > 0) {
+    return { success: false, error: paramsResolution.errors.join("\n") };
   }
 
   const result = await discoverComponents(path, { sandbox });
@@ -333,6 +349,17 @@ export interface RunComponentsOptions {
    */
   componentOutputs?: Record<string, Record<string, unknown>>;
   /**
+   * chant #1108 — `--param name=value` flags (already split into a record),
+   * bound to declared build-time parameters (chant.config.ts's `buildParams`)
+   * BEFORE any `*.component.ts` file is imported, with the same precedence
+   * `chant build` gives them. Without this, a component file reading
+   * `params.<name>` silently saw `{}` under the deploy driver while the
+   * build path saw the resolved values.
+   */
+  params?: Record<string, string>;
+  /** chant #1108 — `--params-file <path>`, second precedence after `params`, same as `chant build`. */
+  paramsFile?: string;
+  /**
    * Opt-in structured progress observer (`chant run --components <name|all>
    * --progress-json`, see ./run-progress.ts). Threaded straight through to
    * `runInterpretDriver` for `selector === "all"`; for a single-component
@@ -433,6 +460,24 @@ export async function runComponents(
   selector: string,
   options: RunComponentsOptions = {},
 ): Promise<RunComponentsResult> {
+  // (#629) config also drives capability-plugin loading further down; loaded
+  // up front since #1108 needs `buildParams` BEFORE discovery imports any
+  // `*.component.ts` file.
+  const { config } = options.config ? { config: options.config } : await loadChantConfig(path);
+
+  // chant #1108 — bind declared build-time parameters before discovery, the
+  // same sequence `buildCommand` runs before `discover()`. A resolution
+  // failure fails the run before any component file is imported, matching
+  // the build path's fail-before-discovery behavior.
+  const paramsResolution = applyBuildParams(config.buildParams, {
+    cli: options.params,
+    paramsFilePath: options.paramsFile,
+    env: process.env,
+  });
+  if (paramsResolution.errors.length > 0) {
+    return { success: false, selected: [], error: paramsResolution.errors.join("\n") };
+  }
+
   const resolved = await resolveComponentTargets(path, selector, options.sandbox);
   if (!resolved.success) {
     return { success: false, selected: [], error: resolved.error };
@@ -450,17 +495,16 @@ export async function runComponents(
     }
   }
 
-  // (#629) Resolve `chant.config.ts`'s `sbom`/`signing`/`vulnPolicy` sections
-  // and fill their defaults into every recognized step (`generate-sbom`,
-  // `sign`/`attest-provenance`, `verify`, `vuln-gate`) that didn't already
-  // specify the value itself, BEFORE dispatching to the driver — the driver
-  // itself stays capability-agnostic and never reads project config (see
-  // ./config-defaults.ts's module doc). Loaded up front here (rather than just
-  // before `applyConfigDefaults`) so the same config drives which capability
-  // plugins the registry loads: a component's cloud leaves (e.g. `cfn-deploy`)
-  // are contributed by the project's active lexicons (`config.lexicons`), not
-  // baked into core — see ./capability-plugin-loader.ts.
-  const { config } = options.config ? { config: options.config } : await loadChantConfig(path);
+  // (#629) `config` (loaded before discovery, above) resolves `chant.config.ts`'s
+  // `sbom`/`signing`/`vulnPolicy` sections and fills their defaults into every
+  // recognized step (`generate-sbom`, `sign`/`attest-provenance`, `verify`,
+  // `vuln-gate`) that didn't already specify the value itself, BEFORE
+  // dispatching to the driver — the driver itself stays capability-agnostic
+  // and never reads project config (see ./config-defaults.ts's module doc).
+  // The same config drives which capability plugins the registry loads: a
+  // component's cloud leaves (e.g. `cfn-deploy`) are contributed by the
+  // project's active lexicons (`config.lexicons`), not baked into core — see
+  // ./capability-plugin-loader.ts.
   const registry: CapabilityRegistry =
     options.registry ??
     (await buildCapabilityRegistry({
