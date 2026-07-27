@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach, afterEach } from "vitest";
+import { describe, test, expect, beforeEach, afterEach, vi } from "vitest";
 import { build, partitionByLexicon, detectCrossLexiconRefs, collectLexiconOutputs, computeStackGraph } from "./build";
 import { output } from "./lexicon-output";
 import { AttrRef } from "./attrref";
@@ -599,6 +599,58 @@ describe("detectCrossLexiconRefs", () => {
     const detected = detectCrossLexiconRefs(entities);
     expect(detected).toHaveLength(0);
   });
+
+  // chant #1137 — `detectCrossLexiconRefs`'s walk used to check
+  // `value instanceof AttrRef`, which returns false for an AttrRef built by
+  // a SEPARATELY-LOADED copy of `./attrref` (the same dual-npm-copy hazard
+  // #1122 fixed for `LexiconOutput`: a lexicon pinned to a chant range that
+  // doesn't overlap the project's own gets its own nested
+  // `node_modules/@intentius/chant`). `vi.resetModules()` + a fresh dynamic
+  // import reproduces that split module graph exactly. Before the fix, a
+  // foreign AttrRef here falls through to the generic object walk instead
+  // of being recognized, and the auto-detected `Outputs` entry vanishes
+  // silently — no error, just a missing cross-lexicon output.
+  test("detects a cross-lexicon ref built by a second, separately-loaded copy of AttrRef", async () => {
+    const alphaBucket = {
+      lexicon: "alpha",
+      entityType: "Alpha::Storage::Bucket",
+      [DECLARABLE_MARKER]: true,
+    } as Declarable;
+
+    vi.resetModules();
+    const secondCopy = await import("./attrref");
+
+    // Sanity check that this really is a distinct module instance — the
+    // premise the rest of the test depends on.
+    expect(secondCopy.AttrRef).not.toBe(AttrRef);
+
+    const foreignRef = new secondCopy.AttrRef(alphaBucket, "Endpoint");
+
+    // The historic bug: instanceof fails across separately-loaded copies of
+    // chant-core, even though the two classes are structurally identical.
+    expect(foreignRef instanceof AttrRef).toBe(false);
+
+    const ghAction = {
+      lexicon: "github",
+      entityType: "Action",
+      [DECLARABLE_MARKER]: true,
+      props: { url: foreignRef },
+    } as unknown as Declarable;
+
+    const entities = new Map<string, Declarable>([
+      ["dataBucket", alphaBucket],
+      ["deployAction", ghAction],
+    ]);
+
+    // The fix: `isAttrRefLike` duck-types on shape, so a foreign-copy
+    // AttrRef is still recognized and auto-detected as a cross-lexicon output.
+    const detected = detectCrossLexiconRefs(entities);
+    expect(detected).toHaveLength(1);
+    expect(detected[0].sourceLexicon).toBe("alpha");
+    expect(detected[0].sourceEntity).toBe("dataBucket");
+    expect(detected[0].sourceAttribute).toBe("Endpoint");
+    vi.resetModules();
+  });
 });
 
 describe("computeStackGraph (#200 — cross-stack apply ordering)", () => {
@@ -645,5 +697,29 @@ describe("computeStackGraph (#200 — cross-stack apply ordering)", () => {
       ["base", "left", "right", "top"],
     );
     expect(g.waves).toEqual([["base"], ["left", "right"], ["top"]]);
+  });
+
+  // chant #1137 — same dual-npm-copy hazard as detectCrossLexiconRefs above,
+  // this time for the cross-stack apply-ordering graph: a foreign-copy
+  // AttrRef that fails `instanceof` here used to fall through to the
+  // generic object walk instead of producing an edge, silently dropping a
+  // real cross-stack dependency (which can misorder — or fail to detect a
+  // cycle in — the apply order this graph exists to compute).
+  test("infers a consumer→producer edge from an AttrRef built by a second, separately-loaded copy", async () => {
+    const vpc = ent("aws");
+
+    vi.resetModules();
+    const secondCopy = await import("./attrref");
+    expect(secondCopy.AttrRef).not.toBe(AttrRef);
+
+    const foreignRef = new secondCopy.AttrRef(vpc, "id");
+    expect(foreignRef instanceof AttrRef).toBe(false); // the historic bug
+
+    const svc = ent("k8s", { vpcId: foreignRef });
+    const g = computeStackGraph(new Map([["vpc", vpc], ["svc", svc]]), ["aws", "k8s"]);
+
+    expect(g.edges).toEqual([{ from: "k8s", to: "aws" }]);
+    expect(g.order).toEqual(["aws", "k8s"]);
+    vi.resetModules();
   });
 });

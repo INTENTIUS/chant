@@ -1,4 +1,4 @@
-import { describe, test, expect } from "vitest";
+import { describe, test, expect, vi } from "vitest";
 import { buildDependencyGraph } from "./graph";
 import { DECLARABLE_MARKER, type Declarable } from "../declarable";
 import { AttrRef } from "../attrref";
@@ -512,5 +512,44 @@ describe("buildDependencyGraph", () => {
     // Entity3 should only depend on Entity2, not traverse into Entity2's properties
     expect(graph.get("Entity3")?.has("Entity2")).toBe(true);
     expect(graph.get("Entity3")?.size).toBe(1);
+  });
+
+  // chant #1137 — `findDependencies` used to check `value instanceof
+  // AttrRef`, which returns false for an AttrRef built by a SEPARATELY-
+  // LOADED copy of `../attrref` (the same dual-npm-copy hazard #1122 fixed
+  // for `LexiconOutput`). `vi.resetModules()` + a fresh dynamic import
+  // reproduces that split module graph exactly. Before the fix, a foreign
+  // AttrRef here recurses into the object's own (unhelpful) fields instead
+  // of being recorded as a dependency, silently dropping the edge — which
+  // can misorder the file-discovery build order this graph exists to compute.
+  test("detects dependency from an AttrRef built by a second, separately-loaded copy", async () => {
+    const parent: Declarable = {
+      lexicon: "test",
+      entityType: "parent",
+      [DECLARABLE_MARKER]: true,
+    };
+
+    vi.resetModules();
+    const secondCopy = await import("../attrref");
+    expect(secondCopy.AttrRef).not.toBe(AttrRef);
+
+    const foreignRef = new secondCopy.AttrRef(parent, "someAttr");
+    expect(foreignRef instanceof AttrRef).toBe(false); // the historic bug
+
+    const child: Declarable & { ref: AttrRef } = {
+      lexicon: "test",
+      entityType: "child",
+      [DECLARABLE_MARKER]: true,
+      ref: foreignRef,
+    };
+
+    const entities = new Map([
+      ["Parent", parent],
+      ["Child", child],
+    ]);
+    const graph = buildDependencyGraph(entities);
+
+    expect(graph.get("Child")?.has("Parent")).toBe(true);
+    vi.resetModules();
   });
 });

@@ -7,6 +7,7 @@ import type { BuildParamProvenance } from "./provenance";
 import { DiscoveryError, BuildError as BuildErrorClass } from "./errors";
 import { LexiconOutput, isLexiconOutput } from "./lexicon-output";
 import { AttrRef } from "./attrref";
+import { isAttrRefLike } from "./utils";
 import { isChildProject, type ChildProjectInstance } from "./child-project";
 import { discover, type DiscoveryResult, type FoldDecision } from "./discovery/index";
 import { decodeEntitySet, type DiscoveredEntitiesJson } from "./discovery/entity-wire";
@@ -77,7 +78,13 @@ export function computeStackGraph(
     if (value === null || value === undefined || typeof value !== "object") return;
     if (visited.has(value)) return;
     visited.add(value);
-    if (value instanceof AttrRef) {
+    // Duck-type, not `instanceof` (chant #1137): a lexicon built against a
+    // separate copy of `@intentius/chant` produces AttrRefs that fail
+    // `instanceof AttrRef` here but carry the same shape. Without this, a
+    // real cross-stack dependency silently falls through to the generic
+    // object walk below instead of producing an edge, which can misorder —
+    // or entirely drop — the apply order this graph exists to compute.
+    if (isAttrRefLike(value)) {
       const parent = value.parent.deref();
       const producer = parent ? (parent as Record<string, unknown>).lexicon : undefined;
       if (typeof producer === "string" && producer !== consumer) addEdge(consumer, producer);
@@ -370,7 +377,13 @@ export function detectCrossLexiconRefs(
     if (visited.has(value)) return;
     visited.add(value);
 
-    if (value instanceof AttrRef) {
+    // Duck-type, not `instanceof` (chant #1137): a lexicon built against a
+    // separate copy of `@intentius/chant` produces AttrRefs that fail
+    // `instanceof AttrRef` here but carry the same shape. Without this, a
+    // real cross-lexicon reference silently falls through to the generic
+    // object walk below instead of auto-creating a `LexiconOutput`, and the
+    // whole `Outputs` entry for it vanishes (same failure shape as #1122).
+    if (isAttrRefLike(value)) {
       const parent = value.parent.deref();
       if (!parent) return;
 

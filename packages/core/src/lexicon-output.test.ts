@@ -87,6 +87,42 @@ describe("LexiconOutput", () => {
     expect(lo.getOutputValue()).toEqual({ "Fn::GetAtt": ["myBucket", "Arn"] });
   });
 
+  // chant #1137 — the constructor used to check `ref instanceof AttrRef`,
+  // which returns false for an AttrRef built by a SEPARATELY-LOADED copy of
+  // `./attrref` (the same dual-npm-copy hazard #1122 fixed for
+  // `isLexiconOutput` itself). Because AttrRef also implements Intrinsic,
+  // the miss was not loud: a foreign AttrRef fell into the `isIntrinsic(ref)`
+  // branch instead, stored as `_intrinsic` rather than recognized as an
+  // AttrRef-sourced output — so `getOutputValue()` called the foreign
+  // AttrRef's own `toJSON()` (the `{__attrRef}` wire envelope) instead of
+  // emitting `Fn::GetAtt`, a broken Output with no error at synth time.
+  // `vi.resetModules()` + a fresh dynamic import reproduces the split
+  // module graph exactly.
+  test("recognizes an AttrRef built by a second, separately-loaded copy of AttrRef", async () => {
+    const bucket = new MockResource();
+
+    vi.resetModules();
+    const secondCopy = await import("./attrref");
+    expect(secondCopy.AttrRef).not.toBe(AttrRef);
+
+    const foreignRef = new secondCopy.AttrRef(bucket, "Arn");
+
+    // The historic bug: instanceof fails across separately-loaded copies of
+    // chant-core, even though the two classes are structurally identical.
+    expect(foreignRef instanceof AttrRef).toBe(false);
+
+    const lo = new LexiconOutput(foreignRef, "BucketArn");
+    lo._setSourceEntity("myBucket");
+
+    // The fix: recognized as AttrRef-sourced, not misfiled as a generic
+    // Intrinsic — sourceAttribute is set and getOutputValue() emits a real
+    // Fn::GetAtt, not the foreign AttrRef's own wire-envelope toJSON().
+    expect(lo.sourceLexicon).toBe("testdom");
+    expect(lo.sourceAttribute).toBe("Arn");
+    expect(lo.getOutputValue()).toEqual({ "Fn::GetAtt": ["myBucket", "Arn"] });
+    vi.resetModules();
+  });
+
   test("getOutputValue() returns intrinsic toJSON for Intrinsic-based output", () => {
     const mockIntrinsic = { [INTRINSIC_MARKER]: true as const, toJSON: () => ({ "Fn::Sub": "http://${Param}/path" }) };
     const lo = new LexiconOutput(mockIntrinsic, "MyUrl");

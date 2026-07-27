@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { buildInterpolatedString, defaultInterpolationSerializer } from "./intrinsic-interpolation";
 import { AttrRef } from "./attrref";
 import { INTRINSIC_MARKER } from "./intrinsic";
@@ -52,6 +52,32 @@ describe("defaultInterpolationSerializer", () => {
     const ref = new AttrRef(parent, "Arn");
 
     expect(() => serialize(ref)).toThrow("logical name not set");
+  });
+
+  // chant #1137 — this dispatch used to check `value instanceof AttrRef`,
+  // which returns false for an AttrRef built by a SEPARATELY-LOADED copy of
+  // `./attrref` (the same dual-npm-copy hazard #1122 fixed for
+  // `LexiconOutput`). Because AttrRef also implements Intrinsic, the miss
+  // was not loud: a foreign AttrRef fell into the generic Intrinsic branch
+  // below instead, whose `toJSON()` returns the `{__attrRef}` wire envelope
+  // (not a `Ref`), silently stringified to `[object Object]` in the
+  // interpolated output. `vi.resetModules()` + a fresh dynamic import
+  // reproduces the split module graph exactly.
+  test("serializes an AttrRef built by a second, separately-loaded copy of AttrRef", async () => {
+    vi.resetModules();
+    const secondCopy = await import("./attrref");
+    expect(secondCopy.AttrRef).not.toBe(AttrRef);
+
+    const parent = {};
+    const foreignRef = new secondCopy.AttrRef(parent, "Arn");
+    foreignRef._setLogicalName("MyBucket");
+
+    // The historic bug: instanceof fails across separately-loaded copies of
+    // chant-core, even though the two classes are structurally identical.
+    expect(foreignRef instanceof AttrRef).toBe(false);
+
+    expect(serialize(foreignRef)).toBe("${MyBucket.Arn}");
+    vi.resetModules();
   });
 
   test("serializes Intrinsic with Ref toJSON", () => {
