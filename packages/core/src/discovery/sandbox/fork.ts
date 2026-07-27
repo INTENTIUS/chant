@@ -11,6 +11,11 @@ import { fork } from "node:child_process";
  * one function is the cheapest way to make "same profile" a fact rather than
  * a claim.
  *
+ * chant #1148 — this is also the one place chant forwards a sandboxed
+ * child's own stdout/stderr, so `./run.ts`, `./config-run.ts` and
+ * `./policy-run.ts` cannot drift on whether project output vanishes. See
+ * {@link SandboxForkOptions.outputPrefix}.
+ *
  * Isolation mechanics (verified on Node v24.13.1 — see the chant#1045 PR
  * description for the full write-up):
  *  - `--permission --allow-fs-read=<bundle dir>,<project dir>[,<trusted
@@ -46,6 +51,26 @@ export interface SandboxForkOptions {
   /** What timed out / exited early, for the error message (e.g. `"sandboxed run"`). */
   label: string;
   /**
+   * chant #1148 — prepended to every line the child writes on EITHER stdout
+   * or stderr before it is relayed, line-buffered, to this process's own
+   * stderr (e.g. `"[sandbox:run]"`, `"[sandbox:config]"`,
+   * `"[policy:org.ts]"`).
+   *
+   * A sandboxed child's `console.log`/`console.error` used to go nowhere: its
+   * stdout was piped but never read, and its stderr was captured only into
+   * {@link stderrBuf}'s error-message use, never surfaced on a successful
+   * run. Diagnostics crossing as data (the whole point of the boundary) is
+   * not the same thing as incidental output being silently dropped — chant's
+   * stance is that nothing the project prints vanishes, sandboxed or not.
+   *
+   * This is forwarding, not a second capture: {@link stderrBuf} still
+   * accumulates the child's raw stderr for `classifyChildError`/the
+   * exited-before-reporting message exactly as before. Both read the same
+   * `data` events; one buffers for classification, this one relays for a
+   * human to see.
+   */
+  outputPrefix: string;
+  /**
    * chant #1131 — an optional payload sent to the child over the SAME IPC
    * channel its response comes back on, immediately after the fork.
    *
@@ -66,6 +91,36 @@ export interface SandboxForkOptions {
 }
 
 /**
+ * chant #1148 — buffers arbitrary chunks and calls `emit` once per complete
+ * line, never on a chunk boundary that happens to split a line in two (a
+ * pipe makes no promise that one `write()` on the child's side arrives as one
+ * `data` event on ours). `flush()` emits whatever partial line never got a
+ * trailing newline, so the last unterminated write doesn't silently vanish
+ * when the stream ends — the same no-dropping stance this whole feature
+ * exists for.
+ */
+function lineBuffered(emit: (line: string) => void) {
+  let pending = "";
+  return {
+    push(chunk: Buffer | string): void {
+      pending += chunk.toString();
+      let newlineAt = pending.indexOf("\n");
+      while (newlineAt !== -1) {
+        emit(pending.slice(0, newlineAt));
+        pending = pending.slice(newlineAt + 1);
+        newlineAt = pending.indexOf("\n");
+      }
+    },
+    flush(): void {
+      if (pending.length > 0) {
+        emit(pending);
+        pending = "";
+      }
+    },
+  };
+}
+
+/**
  * Fork `bundlePath` under `--permission` with a scrubbed environment, and
  * resolve with the first IPC message that satisfies `isResponse` (or reject
  * on crash / timeout / fork error).
@@ -74,7 +129,8 @@ export function forkSandboxed<T>(
   options: SandboxForkOptions,
   isResponse: (value: unknown) => value is T,
 ): Promise<T> {
-  const { bundlePath, bundleDir, projectRealpath, externalReadPaths, env, timeoutMs, label, send } = options;
+  const { bundlePath, bundleDir, projectRealpath, externalReadPaths, env, timeoutMs, label, send, outputPrefix } =
+    options;
 
   return new Promise((resolvePromise, reject) => {
     const readAllowances = [bundleDir, projectRealpath, ...externalReadPaths].map(
@@ -106,9 +162,27 @@ export function forkSandboxed<T>(
       });
     }
 
+    // chant #1148 — forward, don't just capture. Both streams write to THIS
+    // process's stderr, prefixed and line-buffered, independent of
+    // `stderrBuf` below (which keeps accumulating raw stderr for
+    // `classifyChildError`'s use — forwarded and captured are not mutually
+    // exclusive, the same bytes feed both).
+    const forwardLine = (line: string): void => {
+      process.stderr.write(`${outputPrefix} ${line}\n`);
+    };
+    const stdoutForwarder = lineBuffered(forwardLine);
+    const stderrForwarder = lineBuffered(forwardLine);
+
+    child.stdout?.on("data", (chunk: Buffer) => {
+      stdoutForwarder.push(chunk);
+    });
+    child.stdout?.on("end", () => stdoutForwarder.flush());
+
     child.stderr?.on("data", (chunk: Buffer) => {
       stderrBuf += chunk.toString();
+      stderrForwarder.push(chunk);
     });
+    child.stderr?.on("end", () => stderrForwarder.flush());
 
     child.on("message", (msg: unknown) => {
       if (settled || !isResponse(msg)) return;

@@ -1,5 +1,5 @@
 import { realpathSync, rmSync } from "node:fs";
-import { resolve } from "node:path";
+import { basename, resolve } from "node:path";
 import type { PostSynthDiagnostic } from "../../lint/post-synth";
 import { bundleDriver } from "./bundle";
 import { generatePolicyDriverSource } from "./driver";
@@ -77,6 +77,17 @@ interface PolicyChildResponse {
   diagnostics?: PostSynthDiagnostic[];
   offenders?: PolicyDiagnosticOffender[];
   error?: { name: string; file: string; message: string; type: string };
+}
+
+/**
+ * chant #1148 — `[policy:<module-basename>]`, joined when a project declares
+ * more than one policy module (all of them share the one child — see the
+ * module doc above). One policy module is the only shape this repo's own
+ * corpus exercises (`lexicons/k8s/examples/org-policy`), so this is the
+ * common case, not a hypothetical.
+ */
+function policyOutputPrefix(policyPaths: readonly string[]): string {
+  return `[policy:${policyPaths.map((p) => basename(p)).join(",")}]`;
 }
 
 function isPolicyChildResponse(value: unknown): value is PolicyChildResponse {
@@ -158,6 +169,9 @@ export async function runPoliciesSandboxed(options: SandboxPolicyOptions): Promi
         timeoutMs: POLICY_CHILD_TIMEOUT_MS,
         label: `sandboxed evaluation of lint.policies (${policyPaths.length} module(s))`,
         send: payload,
+        // chant #1148 — a policy's own console.log/error no longer goes
+        // nowhere; see `./fork.ts`'s `outputPrefix` doc.
+        outputPrefix: policyOutputPrefix(policyPaths),
       },
       isPolicyChildResponse,
     );

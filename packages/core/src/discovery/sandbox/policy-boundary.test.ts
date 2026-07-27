@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach, afterEach } from "vitest";
+import { describe, test, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdir, writeFile, rm, realpath, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -279,6 +279,61 @@ describe("lint.policies execution under --sandbox (chant #1131)", () => {
     armSandboxPolicyExecution();
 
     expect(await run([])).toEqual([]);
+  });
+
+  /**
+   * chant #1148 — a policy's own `console.log`/`console.error` used to go
+   * nowhere under `--sandbox` (noted as a residual when #1131 shipped). Same
+   * relay as the run-fallback and config children, keyed to the policy
+   * module's own basename rather than a generic tag.
+   */
+  describe("console output forwarding (chant #1148)", () => {
+    beforeEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    /** Spies on `process.stderr.write` and returns the lines captured so far — same shape as `../../cli/handlers/emulator.test.ts`'s `stdout()`/`stderr()` helpers. */
+    function captureStderr(): string[] {
+      const lines: string[] = [];
+      vi.spyOn(process.stderr, "write").mockImplementation((chunk: unknown) => {
+        lines.push(String(chunk));
+        return true;
+      });
+      return lines;
+    }
+
+    // See ./run.test.ts's identical helper doc: the IPC "message" the
+    // awaited call resolves on and the child's stdout/stderr pipe data are
+    // independent channels, so polling briefly avoids a flaky assertion.
+    async function waitFor(lines: string[], matcher: RegExp, timeoutMs = 5000): Promise<void> {
+      const start = Date.now();
+      while (Date.now() - start < timeoutMs) {
+        if (matcher.test(lines.join(""))) return;
+        await new Promise((r) => setTimeout(r, 10));
+      }
+      throw new Error(`stderr never matched ${matcher}. Captured so far:\n${lines.join("")}`);
+    }
+
+    test("a policy's console.log/console.error are forwarded, prefixed with [policy:<module-basename>]", async () => {
+      const stderr = captureStderr();
+      await writeMarkerPolicy(
+        "org.ts",
+        `console.log("hello from policy stdout");\n` +
+          `console.error("hello from policy stderr");\n` +
+          `export const c = { id: "X", description: "d", check: () => [] };\n`,
+      );
+      armSandboxPolicyExecution();
+
+      const diags = await run(["org.ts"]);
+
+      expect(diags).toEqual([]);
+      await waitFor(stderr, /^\[policy:org\.ts\] hello from policy stdout$/m);
+      await waitFor(stderr, /^\[policy:org\.ts\] hello from policy stderr$/m);
+    });
   });
 
   test("a program that runs a policy child EXITS — the child is not left holding the event loop", async () => {

@@ -111,7 +111,23 @@ Four of the five things a `PostSynthContext` gives a check are already data and 
 
 The first two are not new. A `--sandbox` build already merges decoded entities for every run-fallback file, so a policy on such a build was already looking at decoded entities for part of the set; this widens that to all of them and nothing else (the encoding is idempotent — asserted in `packages/core/src/discovery/sandbox/policy-wire.test.ts`).
 
-What genuinely changes is what a policy is allowed to *do*. It gets the same permission profile as a run-fallback file — read the bundle and the project directory, nothing else; no writes, no spawning, no worker threads; an environment of `PATH` plus `CHANT_ENV`. A policy that writes a compliance report, shells out to a scanner, or reads `~/.aws/credentials` therefore fails under `--sandbox`, naming the file and the operation. That is the flag working, not a bug, but it is a real cost and worth knowing before turning it on. Its `console.log` output is not forwarded either, the same as a run-fallback file's.
+What genuinely changes is what a policy is allowed to *do*. It gets the same permission profile as a run-fallback file — read the bundle and the project directory, nothing else; no writes, no spawning, no worker threads; an environment of `PATH` plus `CHANT_ENV`. A policy that writes a compliance report, shells out to a scanner, or reads `~/.aws/credentials` therefore fails under `--sandbox`, naming the file and the operation. That is the flag working, not a bug, but it is a real cost and worth knowing before turning it on.
+
+Its `console.log`/`console.error` output IS forwarded (chant #1148), the same as a run-fallback file's or the config's — see the next section.
+
+## Sandboxed output is forwarded, prefixed, never dropped
+
+A run-fallback file, `chant.config.ts`, and a `lint.policies` module all run in a child process, and all three can print — a stray debug `console.log`, a warning a policy wants a human to see, a stack trace from something that throws without going through chant's own error classification. Diagnostics crossing the boundary as *data* (an entity set, a config, a `PostSynthDiagnostic`) was never meant to imply that this incidental output vanishes; a sandboxed build stays as loud as an unsandboxed one.
+
+Each child's stdout AND stderr are relayed, line-buffered, to the CLI's own stderr, prefixed by which child produced them:
+
+| Child | Prefix |
+| --- | --- |
+| Run-fallback source (chant #1045 Phase 2) | `[sandbox:run]` |
+| `chant.config.ts` (chant #1113) | `[sandbox:config]` |
+| `lint.policies` (chant #1131) | `[policy:<module-basename>]` (every declared module's basename, joined, when a project declares more than one) |
+
+This is forwarding, not a second capture: a permission denial or an early exit is still classified into the same `DiscoveryError`/thrown message it always was — the raw stderr a child produced before dying still names the failure. Forwarding and classification read the same bytes; one relays them for a human to see as they arrive, the other keeps feeding the existing error path.
 
 A diagnostic that is not data is **named and refused**, never silently mangled by `JSON.stringify`:
 

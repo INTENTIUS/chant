@@ -108,6 +108,9 @@ export async function evaluateConfigSandboxed(
         env,
         timeoutMs: CONFIG_CHILD_TIMEOUT_MS,
         label: `sandboxed evaluation of ${configPath}`,
+        // chant #1148 — the config's own console.log/error no longer goes
+        // nowhere; see `./fork.ts`'s `outputPrefix` doc.
+        outputPrefix: "[sandbox:config]",
       },
       isConfigChildResponse,
     );
