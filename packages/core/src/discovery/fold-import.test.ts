@@ -952,6 +952,35 @@ describe("tryFoldFile — build-time parameters (chant #1064)", () => {
     expect(result.exportedValues.get("tier")).toBe("should-not-be-used");
   });
 
+  test("a `params`-named import from an unrelated BARE specifier is left alone (text-match only, never resolved)", async () => {
+    // Regression guard: buildExternals must recognize the build-time-params
+    // bare specifier by an exact TEXT match, never by resolving an arbitrary
+    // bare specifier just because the imported binding happens to be named
+    // "params" — resolving every such specifier would reintroduce the exact
+    // cold bare-specifier-resolution cost chant#1020 already fixed (up to
+    // ~361s for a genuinely new package's first resolution in a process).
+    // "left-pad" is never installed in this repo, so if this DID try to
+    // resolve it, it would throw (caught) rather than hang — this test
+    // mainly documents the invariant; the perf regression itself was only
+    // observable via a real corpus/CI run, not a unit test.
+    const file = join(testDir, "main.ts");
+    await writeFile(
+      file,
+      `
+        import { params } from "left-pad";
+        export const tier = params.tier;
+      `,
+    );
+
+    const session = createFoldSession([], { tier: "production" });
+    const result = await tryFoldFile(file, [], session);
+
+    // Not substituted from build-time parameters (would be "production" if
+    // it were) — falls back to run via the ordinary unresolved-bare-specifier
+    // path, exactly as any other unimportable bare specifier would.
+    expect(result.ok).toBe(false);
+  });
+
   test("without a FoldSession buildParams, params.<name> is an unresolved identifier (matches an ordinary bare import)", async () => {
     const file = join(testDir, "main.ts");
     await writeFile(
