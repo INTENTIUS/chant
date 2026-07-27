@@ -8,15 +8,44 @@
  * rather than going through the CLI arg-parsing/handler dispatch layer.
  */
 
-import { describe, test, expect, beforeEach, afterEach } from "vitest";
+import { describe, test, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdir, writeFile, rm } from "node:fs/promises";
-import { join } from "node:path";
+import { join, dirname, resolve as resolvePath } from "node:path";
+import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 import Ajv2020 from "ajv/dist/2020";
 import componentSchema from "./component.schema.json";
-import { listComponents, describeComponent, computeComponentGraph, runComponents, findComponentGate } from "./cli-support";
+import {
+  listComponents,
+  describeComponent,
+  computeComponentGraph,
+  runComponents,
+  findComponentGate,
+  resolveComponentTargets,
+  generateComponentsPipeline,
+} from "./cli-support";
 import { CapabilityRegistry, type DeployContext } from "./capability";
 import type { DriverComponent, RunProgressEvent } from "./driver";
+
+// A minimal stand-in for the real gitlab lexicon plugin, satisfying
+// `isLexiconPlugin` (../lexicon.ts) — used only by the `generateComponentsPipeline`
+// buildParams test below, so that test doesn't depend on how `@intentius/
+// chant-lexicon-gitlab`'s own real module resolves under the test runner.
+vi.mock("@intentius/chant-lexicon-gitlab", () => ({
+  gitlab: {
+    name: "gitlab",
+    serializer: { name: "gitlab", rulePrefix: "GL", serialize: () => "" },
+    generate: () => {},
+    validate: () => [],
+    coverage: () => ({ total: 0, covered: 0 }),
+    package: () => "gitlab",
+    generateComponentPipeline: (components: DriverComponent[]) => ({
+      yaml: components.map((c) => c.name).join(","),
+      stages: ["wave-1"],
+      jobs: components.map((c) => ({ jobName: c.name, component: c.name, stage: "wave-1", needs: [] })),
+    }),
+  },
+}));
 
 describe("listComponents", () => {
   let testDir: string;
@@ -575,6 +604,195 @@ describe("runComponents", () => {
     });
 
     expect(capability.calls[0]?.input).toMatchObject({ format: "cyclonedx" });
+  });
+});
+
+// ── build-time parameters (chant #1108) ──────────────────────────────────────
+//
+// Before #1108, `discoverComponents`'s callers here never resolved
+// `chant.config.ts`'s declared `buildParams` at all, so a `*.component.ts`
+// file reading `params.<name>` (`@intentius/chant/params`) always saw `{}` —
+// the exact probe from chant#1108's reproduction. These tests lock in that
+// `runComponents`/`resolveComponentTargets`/`generateComponentsPipeline` now
+// forward an already-resolved `buildParams` into discovery, so a component's
+// `params.<name>` read reflects it before any step dispatches.
+
+const thisDir = dirname(fileURLToPath(import.meta.url));
+const paramsModulePath = resolvePath(thisDir, "../params");
+
+describe("runComponents — buildParams (chant #1108)", () => {
+  let testDir: string;
+
+  beforeEach(async () => {
+    testDir = join(tmpdir(), `chant-run-components-buildparams-test-${Date.now()}-${Math.random()}`);
+    await mkdir(testDir, { recursive: true });
+  });
+
+  afterEach(async () => {
+    await rm(testDir, { recursive: true, force: true });
+  });
+
+  test("the previously-{} case: a component's params.<name> read resolves when buildParams is passed", async () => {
+    await writeFile(
+      join(testDir, "svc.component.ts"),
+      `
+        import { params } from ${JSON.stringify(paramsModulePath)};
+        export const svc = {
+          name: "svc",
+          dependsOn: [],
+          deploy: [{ phase: "Apply", steps: [{ kind: "deploy-thing", tier: params.tier }] }],
+        };
+      `,
+    );
+
+    const capability = fakeCapability("deploy-thing");
+    const registry = new CapabilityRegistry();
+    registry.register(capability);
+
+    const result = await runComponents(testDir, "svc", {
+      registry,
+      buildParams: [{ name: "tier", value: "production", source: "cli" }],
+    });
+
+    expect(result.success).toBe(true);
+    expect(capability.calls[0]?.input).toMatchObject({ tier: "production" });
+  });
+
+  test("without buildParams, params.<name> is undefined (the bug this issue fixes, still true for a caller that resolves none)", async () => {
+    await writeFile(
+      join(testDir, "svc.component.ts"),
+      `
+        import { params } from ${JSON.stringify(paramsModulePath)};
+        export const svc = {
+          name: "svc",
+          dependsOn: [],
+          deploy: [{ phase: "Apply", steps: [{ kind: "deploy-thing", tier: params.tier ?? "unset" }] }],
+        };
+      `,
+    );
+
+    const capability = fakeCapability("deploy-thing");
+    const registry = new CapabilityRegistry();
+    registry.register(capability);
+
+    const result = await runComponents(testDir, "svc", { registry });
+
+    expect(result.success).toBe(true);
+    expect(capability.calls[0]?.input).toMatchObject({ tier: "unset" });
+  });
+
+  test("RunComponentsResult.buildParams echoes back the resolved provenance that was passed in", async () => {
+    await writeFile(
+      join(testDir, "svc.component.ts"),
+      `export const svc = { name: "svc", dependsOn: [], deploy: [{ phase: "Apply", steps: [{ kind: "deploy-thing" }] }] };`,
+    );
+
+    const registry = fakeRegistry();
+    const result = await runComponents(testDir, "svc", {
+      registry,
+      buildParams: [{ name: "tier", value: "production", source: "cli" }],
+    });
+
+    expect(result.buildParams).toEqual([{ name: "tier", value: "production", source: "cli" }]);
+  });
+
+  test("selector 'all' also forwards buildParams into discovery", async () => {
+    await writeFile(
+      join(testDir, "svc.component.ts"),
+      `
+        import { params } from ${JSON.stringify(paramsModulePath)};
+        export const svc = { name: "svc", dependsOn: [], deploy: [{ phase: "Apply", steps: [{ kind: "deploy-thing", tier: params.tier }] }] };
+      `,
+    );
+
+    const capability = fakeCapability("deploy-thing");
+    const registry = new CapabilityRegistry();
+    registry.register(capability);
+
+    const result = await runComponents(testDir, "all", {
+      registry,
+      buildParams: [{ name: "tier", value: "staging", source: "env" }],
+    });
+
+    expect(result.success).toBe(true);
+    expect(capability.calls[0]?.input).toMatchObject({ tier: "staging" });
+  });
+});
+
+describe("resolveComponentTargets — buildParams (chant #1108)", () => {
+  let testDir: string;
+
+  beforeEach(async () => {
+    testDir = join(tmpdir(), `chant-resolve-targets-buildparams-test-${Date.now()}-${Math.random()}`);
+    await mkdir(testDir, { recursive: true });
+  });
+
+  afterEach(async () => {
+    await rm(testDir, { recursive: true, force: true });
+  });
+
+  test("forwards buildParams into discovery — the durable (--temporal) path's entrypoint", async () => {
+    await writeFile(
+      join(testDir, "svc.component.ts"),
+      `
+        import { params } from ${JSON.stringify(paramsModulePath)};
+        export const svc = {
+          name: "svc",
+          dependsOn: [],
+          deploy: [{ phase: "Apply", steps: [{ kind: "cfn-deploy", stack: params.env }] }],
+        };
+      `,
+    );
+
+    const result = await resolveComponentTargets(testDir, "svc", undefined, [
+      { name: "env", value: "prod-a", source: "env" },
+    ]);
+
+    expect(result.success).toBe(true);
+    expect((result.targets[0].deploy[0].steps[0] as { stack?: unknown }).stack).toBe("prod-a");
+  });
+});
+
+describe("generateComponentsPipeline — buildParams (chant #1108)", () => {
+  let testDir: string;
+
+  beforeEach(async () => {
+    testDir = join(tmpdir(), `chant-generate-components-buildparams-test-${Date.now()}-${Math.random()}`);
+    await mkdir(testDir, { recursive: true });
+  });
+
+  afterEach(async () => {
+    await rm(testDir, { recursive: true, force: true });
+  });
+
+  test("forwards buildParams into discovery before synthesizing the pipeline", async () => {
+    await writeFile(
+      join(testDir, "svc.component.ts"),
+      `
+        import { params } from ${JSON.stringify(paramsModulePath)};
+        export const svc = {
+          name: String(params.name),
+          dependsOn: [],
+          deploy: [{ phase: "Apply", steps: [{ kind: "shell" }] }],
+        };
+      `,
+    );
+
+    // Uses the mocked "gitlab" plugin above (see the `vi.mock` at the top of
+    // this file) — proves the component name `discoverComponents` resolved
+    // (via `params.name`) made it all the way through to the synthesized
+    // pipeline, not just to `discover()`'s own return value.
+    const result = await generateComponentsPipeline(
+      testDir,
+      "gitlab",
+      undefined,
+      undefined,
+      [{ name: "name", value: "named-from-params", source: "cli" }],
+    );
+
+    expect(result.success).toBe(true);
+    expect(result.jobs?.map((j) => j.component)).toEqual(["named-from-params"]);
+    expect(result.buildParams).toEqual([{ name: "name", value: "named-from-params", source: "cli" }]);
   });
 });
 
