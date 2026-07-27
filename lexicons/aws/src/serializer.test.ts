@@ -941,3 +941,31 @@ describe("default tags serialization", () => {
     expect(template.Resources.MyBucket.Properties.Tags).toBeUndefined();
   });
 });
+
+
+describe("stack output exports and literals", () => {
+  test("exportName emits Output.Export.Name", () => {
+    const bucket = new MockBucket({ BucketName: "my-bucket" });
+    const arnRef = new AttrRef(bucket, "Arn");
+    arnRef._setLogicalName("MyBucket");
+    const output = stackOutput(arnRef, { exportName: "my-stack-BucketArn" });
+
+    const entities = new Map<string, Declarable>();
+    entities.set("MyBucket", bucket);
+    entities.set("MyBucketArn", output as unknown as Declarable);
+
+    const template = JSON.parse(awsSerializer.serialize(entities) as string);
+    expect(template.Outputs.MyBucketArn.Export).toEqual({ Name: "my-stack-BucketArn" });
+  });
+
+  test("literal output serializes its string value with export", () => {
+    const output = stackOutput("22", { lexicon: "aws", exportName: "my-stack-OpenSSHPort" });
+
+    const entities = new Map<string, Declarable>();
+    entities.set("OpenSSHPort", output as unknown as Declarable);
+
+    const template = JSON.parse(awsSerializer.serialize(entities) as string);
+    expect(template.Outputs.OpenSSHPort.Value).toBe("22");
+    expect(template.Outputs.OpenSSHPort.Export).toEqual({ Name: "my-stack-OpenSSHPort" });
+  });
+});

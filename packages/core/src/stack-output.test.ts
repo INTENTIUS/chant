@@ -41,9 +41,9 @@ describe("stackOutput", () => {
     expect(out.description).toBe("Primary VPC id");
   });
 
-  test("throws for a value that is neither AttrRef-like nor an Intrinsic", () => {
-    expect(() => stackOutput("not-a-ref" as unknown as AttrRef)).toThrow(
-      "stackOutput(ref): ref must be an attribute reference or an intrinsic wrapping one",
+  test("throws for a value that is neither AttrRef-like, Intrinsic, nor a string literal", () => {
+    expect(() => stackOutput(42 as unknown as AttrRef)).toThrow(
+      "stackOutput(ref): ref must be an attribute reference, an intrinsic wrapping one, or a literal string",
     );
   });
 
@@ -114,5 +114,23 @@ describe("isStackOutput", () => {
     expect(isStackOutput(null)).toBe(false);
     expect(isStackOutput("x")).toBe(false);
     expect(isStackOutput(42)).toBe(false);
+  });
+});
+
+describe("stackOutput export names and literals", () => {
+  test("carries exportName through to the declaration", () => {
+    const ref = new AttrRef(vpc, "VpcId");
+    const out = stackOutput(ref, { exportName: "my-stack-VpcId" });
+    expect(out.exportName).toBe("my-stack-VpcId");
+  });
+
+  test("accepts a literal string with an explicit lexicon", () => {
+    const out = stackOutput("22", { lexicon: "aws", exportName: "my-stack-OpenSSHPort" });
+    expect(out.sourceRef).toBe("22");
+    expect(out.lexicon).toBe("aws");
+  });
+
+  test("rejects a literal without a lexicon", () => {
+    expect(() => stackOutput("22")).toThrow(/options\.lexicon/);
   });
 });

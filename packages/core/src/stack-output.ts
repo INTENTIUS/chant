@@ -26,10 +26,13 @@ export interface StackOutput extends Declarable {
   readonly lexicon: string;
   readonly entityType: string;
   readonly kind: "output";
-  /** The exported value: a bare attribute reference, or an intrinsic wrapping
-   * one (e.g. `Join(",", zone.NameServers)`). */
-  readonly sourceRef: AttrRef | Intrinsic;
+  /** The exported value: a bare attribute reference, an intrinsic wrapping
+   * one (e.g. `Join(",", zone.NameServers)`), or a literal string. */
+  readonly sourceRef: AttrRef | Intrinsic | string;
   readonly description?: string;
+  /** When set, the serializer emits a cross-stack export under this name
+   * (CloudFormation `Output.Export.Name`) in addition to the plain output. */
+  readonly exportName?: string;
 }
 
 /** Find the first AttrRef anywhere inside a value (walking intrinsics/objects/
@@ -82,8 +85,8 @@ export function isStackOutput(value: unknown): value is StackOutput {
  * ```
  */
 export function stackOutput(
-  ref: AttrRef | Intrinsic,
-  options?: { description?: string },
+  ref: AttrRef | Intrinsic | string,
+  options?: { description?: string; exportName?: string; lexicon?: string },
 ): StackOutput {
   // Duck-type, not `instanceof` (chant #1137): AttrRef also implements
   // Intrinsic (a global-symbol marker), so `isIntrinsic(ref)` alone already
@@ -92,19 +95,27 @@ export function stackOutput(
   // so the guard's own logic states the invariant explicitly ("ref must be
   // AttrRef-like or Intrinsic") rather than relying on that coincidence,
   // matching the anchor selection right below it, which does misbehave.
-  if (!isAttrRefLike(ref) && !isIntrinsic(ref)) {
-    throw new Error("stackOutput(ref): ref must be an attribute reference or an intrinsic wrapping one");
+  if (typeof ref !== "string" && !isAttrRefLike(ref) && !isIntrinsic(ref)) {
+    throw new Error(
+      "stackOutput(ref): ref must be an attribute reference, an intrinsic wrapping one, or a literal string",
+    );
+  }
+  if (typeof ref === "string" && !options?.lexicon) {
+    throw new Error(
+      "stackOutput(literal): a literal output has no entity to derive its lexicon from — pass options.lexicon",
+    );
   }
   // Derive lexicon from the referenced entity — for a bare AttrRef, its parent;
   // for an intrinsic (Join etc.), the first AttrRef nested inside it. A
   // foreign-copy AttrRef failing raw `instanceof` here would fall to
   // `firstAttrRef`, which (before its own #1137 fix) would also miss it —
   // silently anchoring on nothing and recording `lexicon: "unknown"`.
-  const anchor = isAttrRefLike(ref) ? ref : firstAttrRef(ref);
+  const anchor = typeof ref === "string" ? undefined : isAttrRefLike(ref) ? ref : firstAttrRef(ref);
   const parent = anchor?.parent.deref();
-  const lexicon = parent && typeof (parent as Record<string, unknown>).lexicon === "string"
+  const derived = parent && typeof (parent as Record<string, unknown>).lexicon === "string"
     ? (parent as Record<string, unknown>).lexicon as string
     : "unknown";
+  const lexicon = options?.lexicon ?? derived;
 
   const output: StackOutput = {
     [STACK_OUTPUT_MARKER]: true,
@@ -114,6 +125,7 @@ export function stackOutput(
     kind: "output",
     sourceRef: ref,
     description: options?.description,
+    exportName: options?.exportName,
   };
 
   return output;
