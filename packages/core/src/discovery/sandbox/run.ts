@@ -1,4 +1,3 @@
-import { fork } from "node:child_process";
 import { realpathSync, rmSync } from "node:fs";
 import { resolve } from "node:path";
 import type { Declarable } from "../../declarable";
@@ -7,6 +6,7 @@ import { decodeEntitySet, type EntitySetWire } from "../entity-wire-codec";
 import { bundleDriver } from "./bundle";
 import { classifyChildError } from "./child-errors";
 import { generateDriverSource } from "./driver";
+import { forkSandboxed } from "./fork";
 
 /**
  * chant #1045 Phase 2 — runs every run-fallback file for a build TOGETHER, as
@@ -14,26 +14,16 @@ import { generateDriverSource } from "./driver";
  * the same shape `discover()`'s own in-process run path would have produced:
  * a named, ref-resolved entities map plus any errors.
  *
- * Isolation mechanics (verified on Node v24.13.1 — see the chant#1045 PR
- * description for the full write-up):
- *  - `--permission --allow-fs-read=<bundle dir>,<project dir>[,<trusted
- *    external package dirs>]` — no filesystem write, no child-process, no
- *    worker-thread access. Bundling with esbuild first (not a packaging
- *    change — see `./bundle.ts`) means the child needs NO TypeScript loader
- *    (no `tsx`, so no `--allow-worker` and no writable temp dir either),
- *    unlike the plain `tsx`-based run path. The "trusted external package
- *    dirs" allowance is narrow and specific: `./bundle.ts` deliberately
- *    leaves a couple of chant/lexicon-internal dependencies (`typescript`)
- *    unbundled and resolves them to their real, fixed location instead —
- *    project source never controls what's installed there.
- *  - The env is a spawn-time scrub (`env: {}` below, plus `PATH` — see the
- *    option below), not `--permission`: Node's Permission Model does not gate
- *    `process.env` at all (confirmed: every key stays readable even under
- *    `--permission`).
- *  - Network egress is NOT addressed here — Node has no flag for it. See the
- *    chant#1045 PR description / docs for the residual-risk statement and
- *    deployment guidance (a container with no egress, a network namespace).
- *    This function does not claim to close that gap.
+ * Isolation mechanics live in `./fork.ts` — the one function that spawns a
+ * sandboxed child, shared with chant #1113's config evaluation
+ * (`./config-run.ts`) so the two cannot drift apart. In short:
+ * `--permission --allow-fs-read=<bundle dir>,<project dir>[,<trusted external
+ * package dirs>]`, a spawn-time environment scrub, no writes, no spawning, no
+ * worker threads, and no network guarantee. The "trusted external package
+ * dirs" allowance is narrow and specific: `./bundle.ts` deliberately leaves a
+ * couple of chant/lexicon-internal dependencies (`typescript`) unbundled and
+ * resolves them to their real, fixed location instead — project source never
+ * controls what's installed there.
  *
  * What does NOT run inside the child: fold (`tryFoldFile`, `../fold-import`)
  * stays exactly where it is today, in the parent, unsandboxed — fold already
@@ -108,7 +98,23 @@ export async function runFallbackFilesSandboxed(
       projectRealpath = resolve(buildRoot);
     }
 
-    const response = await runChildProcess(bundlePath, bundleDir, projectRealpath, externalReadPaths);
+    const response = await forkSandboxed(
+      {
+        bundlePath,
+        bundleDir,
+        projectRealpath,
+        externalReadPaths,
+        // chant #1045 Phase 2 — Node's Permission Model does not gate
+        // `process.env`; scrubbing it at spawn is the only way to keep the
+        // ambient environment out of untrusted project source's reach. `PATH`
+        // is kept only because some platforms' module resolution/dynamic
+        // linking consults it; it carries no project secrets.
+        env: { PATH: process.env.PATH ?? "" },
+        timeoutMs: CHILD_TIMEOUT_MS,
+        label: "sandboxed run",
+      },
+      isChildResponse,
+    );
 
     const errors = (response.errors ?? []).map(
       (e) => new DiscoveryError(e.file, e.message, e.type),
@@ -130,67 +136,4 @@ export async function runFallbackFilesSandboxed(
   } finally {
     rmSync(bundleDir, { recursive: true, force: true });
   }
-}
-
-/** Fork the bundle under `--permission`, with a scrubbed environment, and resolve with its one IPC message (or reject on crash/timeout/fork error). */
-function runChildProcess(
-  bundlePath: string,
-  bundleDir: string,
-  projectRealpath: string,
-  externalReadPaths: readonly string[],
-): Promise<ChildResponse> {
-  return new Promise((resolvePromise, reject) => {
-    const readAllowances = [bundleDir, projectRealpath, ...externalReadPaths].map(
-      (p) => `--allow-fs-read=${p}`,
-    );
-    const child = fork(bundlePath, [], {
-      execArgv: ["--permission", ...readAllowances],
-      // chant #1045 Phase 2 — Node's Permission Model does not gate
-      // `process.env`; scrubbing it here is the only way to keep the ambient
-      // environment out of untrusted project source's reach. `PATH` is kept
-      // only because some platforms' module resolution/dynamic linking
-      // consults it; it carries no project secrets.
-      env: { PATH: process.env.PATH ?? "" },
-      stdio: ["ignore", "pipe", "pipe", "ipc"],
-    });
-
-    let settled = false;
-    let stderrBuf = "";
-
-    const timeout = setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      child.kill();
-      reject(new Error(`sandboxed run timed out after ${CHILD_TIMEOUT_MS}ms`));
-    }, CHILD_TIMEOUT_MS);
-
-    child.stderr?.on("data", (chunk: Buffer) => {
-      stderrBuf += chunk.toString();
-    });
-
-    child.on("message", (msg: unknown) => {
-      if (settled || !isChildResponse(msg)) return;
-      settled = true;
-      clearTimeout(timeout);
-      resolvePromise(msg);
-    });
-
-    child.on("error", (err) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timeout);
-      reject(err);
-    });
-
-    child.on("exit", (code, signal) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timeout);
-      reject(
-        new Error(
-          `sandboxed child exited before reporting results (code ${code}, signal ${signal})${stderrBuf.trim() ? `: ${stderrBuf.trim()}` : ""}`,
-        ),
-      );
-    });
-  });
 }
