@@ -6,6 +6,7 @@ import { isLexiconOutput, type LexiconOutput } from "./lexicon-output";
 import { getProvenance } from "./provenance";
 import { INTRINSIC_MARKER } from "./intrinsic";
 import type { ResourceMetadata } from "./lexicon";
+import type { UnobservedEntity } from "./observation";
 
 /**
  * Graph IR — the engine-neutral, lint-gated representation of a project's
@@ -419,6 +420,12 @@ function sortKeys(rec: Record<string, string[]>): Record<string, string[]> {
 export interface LiveObservation {
   lexicon: string;
   resources: Record<string, ResourceMetadata>;
+  /**
+   * Declared entities the lexicon could not observe (#1089), keyed by name.
+   * They are not live nodes — but they are not confirmed-absent either, so the
+   * overlay must not paint them "pending". See {@link sourceOverlayGraphs}.
+   */
+  unobserved?: Record<string, UnobservedEntity>;
 }
 
 /**
@@ -446,7 +453,10 @@ export function buildLiveGraphIr(observations: LiveObservation[]): GraphIR {
         attrs: meta.attributes ?? {},
       };
       if (meta.physicalId) node.physicalId = meta.physicalId;
-      if (meta.ownership) node.ownership = meta.ownership;
+      // `unknown` is a legitimate verdict on the metadata (#1089) but carries no
+      // information for a painter, and the IR's `ownership` field means "a
+      // verdict was reached" — so only owned/foreign land on the node.
+      if (meta.ownership === "owned" || meta.ownership === "foreign") node.ownership = meta.ownership;
       nodes.push(node);
       (byLexicon[lexicon] ??= []).push(name);
       // A live lexicon maps to one deployable stack, same as the source IR.
@@ -465,22 +475,60 @@ export function buildLiveGraphIr(observations: LiveObservation[]): GraphIR {
   return { nodes, edges: [], groups };
 }
 
+/** How an overlay learns which declared nodes were never looked at (#1089). */
+export interface OverlayOptions {
+  /**
+   * Declared entities the observation could not read, keyed by name (union of
+   * every {@link LiveObservation}'s `unobserved`). They are tagged `neutral`
+   * instead of `accent`: "not yet provisioned" is a claim the read never
+   * supported.
+   */
+  unobserved?: Record<string, UnobservedEntity>;
+}
+
+/** The union of every observation's unobserved entities — the input to the overlays. */
+export function collectUnobserved(observations: LiveObservation[]): Record<string, UnobservedEntity> {
+  const out: Record<string, UnobservedEntity> = {};
+  for (const o of observations) Object.assign(out, o.unobserved ?? {});
+  return out;
+}
+
+/** Paint status a node carries in an overlay. `neutral` = chant could not look. */
+type OverlayNodeStatus = "good" | "warn" | "accent" | "neutral";
+
+function tagStatus(n: IRNode, status: OverlayNodeStatus, unobserved?: UnobservedEntity): IRNode {
+  return {
+    ...n,
+    attrs: {
+      ...n.attrs,
+      _status: status,
+      ...(unobserved ? { _unobserved: unobserved.reason } : {}),
+    },
+  };
+}
+
 /**
  * Overlay the declared graph on the provisioned one (#780, `chant graph --live
  * --overlay`) and classify each resource, tagging a `_status` a renderer colours:
  *   - **managed** (declared + provisioned) → `good`
  *   - **foreign** (provisioned, not declared) → `warn`
- *   - **pending** (declared, not yet provisioned) → `accent`
+ *   - **pending** (declared, provider confirmed absent) → `accent`
+ *   - **unobserved** (declared, chant could not look — #1089) → `neutral`,
+ *     plus an `_unobserved` attr carrying the reason
  * Live nodes keep their edges/containment; pending nodes are appended (they have
  * no live edges). Sorted; the live groups pass through unchanged.
  */
-export function overlayGraphs(live: GraphIR, declared: GraphIR): GraphIR {
+export function overlayGraphs(live: GraphIR, declared: GraphIR, opts?: OverlayOptions): GraphIR {
   const declaredIds = new Set(declared.nodes.map((n) => n.id));
   const liveIds = new Set(live.nodes.map((n) => n.id));
-  const tagged = (n: IRNode, status: "good" | "warn" | "accent"): IRNode => ({ ...n, attrs: { ...n.attrs, _status: status } });
+  const unobserved = opts?.unobserved ?? {};
 
-  const nodes: IRNode[] = live.nodes.map((n) => tagged(n, declaredIds.has(n.id) ? "good" : "warn"));
-  for (const n of declared.nodes) if (!liveIds.has(n.id)) nodes.push(tagged(n, "accent"));
+  const nodes: IRNode[] = live.nodes.map((n) => tagStatus(n, declaredIds.has(n.id) ? "good" : "warn"));
+  for (const n of declared.nodes) {
+    if (liveIds.has(n.id)) continue;
+    const u = unobserved[n.id];
+    nodes.push(u ? tagStatus(n, "neutral", u) : tagStatus(n, "accent"));
+  }
   nodes.sort((a, b) => a.id.localeCompare(b.id));
 
   return { ...live, nodes };
@@ -497,27 +545,35 @@ export function overlayGraphs(live: GraphIR, declared: GraphIR): GraphIR {
  * Each declared node is classified against live observation and tagged `_status`:
  *   - **managed** (declared + provisioned) → `good`, carrying the observed
  *     `physicalId` / `ownership` onto the declared node
- *   - **pending** (declared, not provisioned) → `accent`
+ *   - **pending** (declared, provider confirmed absent) → `accent`
+ *   - **unobserved** (declared, chant could not look — #1089) → `neutral`, with
+ *     the reason on `_unobserved`. A wrong-cluster or unsupported-kind read used
+ *     to paint the whole estate "pending", which is the diagram equivalent of
+ *     planning a create for something that already exists.
  * **Foreign** resources (provisioned, not declared) are appended and tagged
  * `warn`, together with any live-reconstructed edges that touch them — a declared
  * edge cannot describe an undeclared resource. Declared groups/exports pass
  * through unchanged; nodes and edges are sorted for deterministic output.
  */
-export function sourceOverlayGraphs(declared: GraphIR, live: GraphIR): GraphIR {
+export function sourceOverlayGraphs(declared: GraphIR, live: GraphIR, opts?: OverlayOptions): GraphIR {
   const liveById = new Map(live.nodes.map((n) => [n.id, n]));
   const declaredIds = new Set(declared.nodes.map((n) => n.id));
   const foreignIds = new Set(live.nodes.filter((n) => !declaredIds.has(n.id)).map((n) => n.id));
-  const tagged = (n: IRNode, status: "good" | "warn" | "accent"): IRNode => ({ ...n, attrs: { ...n.attrs, _status: status } });
+  const unobserved = opts?.unobserved ?? {};
 
   const nodes: IRNode[] = declared.nodes.map((n) => {
     const obs = liveById.get(n.id);
-    if (!obs) return tagged(n, "accent"); // pending — declared, not provisioned
+    if (!obs) {
+      const u = unobserved[n.id];
+      // unobserved — declared, and nobody looked; not "pending"
+      return u ? tagStatus(n, "neutral", u) : tagStatus(n, "accent");
+    }
     const merged: IRNode = { ...n }; // managed — carry the observed identity
     if (obs.physicalId) merged.physicalId = obs.physicalId;
     if (obs.ownership) merged.ownership = obs.ownership;
-    return tagged(merged, "good");
+    return tagStatus(merged, "good");
   });
-  for (const n of live.nodes) if (foreignIds.has(n.id)) nodes.push(tagged(n, "warn")); // foreign
+  for (const n of live.nodes) if (foreignIds.has(n.id)) nodes.push(tagStatus(n, "warn")); // foreign
   nodes.sort((a, b) => a.id.localeCompare(b.id));
 
   // Declared edges are the canvas (the cross-substrate topology). Add only the

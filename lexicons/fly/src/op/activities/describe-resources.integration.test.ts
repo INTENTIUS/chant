@@ -77,15 +77,15 @@ describe("describeResources against live mudflaps (#767)", () => {
 
     // 3. describeResources sees web owned, legacy foreign.
     const live = await describeResources({ environment: "it", buildOutput, entityNames: [...ents.keys()], entities: ents, endpoint });
-    expect(live.web?.ownership).toBe("owned");
-    expect(live.web?.status).toBe("started");
-    expect(live.legacy?.ownership).toBe("foreign");
-    expect(live.app?.ownership).toBe("owned"); // app-boundary: carries an owned machine
+    expect(live.resources.web?.ownership).toBe("owned");
+    expect(live.resources.web?.status).toBe("started");
+    expect(live.resources.legacy?.ownership).toBe("foreign");
+    expect(live.resources.app?.ownership).toBe("owned"); // app-boundary: carries an owned machine
 
     // 4. The owned filter drops the unmarked machine.
     const ownedOnly = await describeResources({ environment: "it", buildOutput, entityNames: [...ents.keys()], entities: ents, owned: true, endpoint });
-    expect(ownedOnly.web?.ownership).toBe("owned");
-    expect(ownedOnly.legacy).toBeUndefined();
+    expect(ownedOnly.resources.web?.ownership).toBe("owned");
+    expect(ownedOnly.resources.legacy).toBeUndefined();
 
     // 5. Drop "web" from the declared plan. The plan now classifies the live
     //    owned "web" as a delete; the unmarked "legacy" stays adopt (never delete).

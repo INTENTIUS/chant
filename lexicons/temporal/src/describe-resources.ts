@@ -21,7 +21,8 @@ import {
   resolveProfile,
   type WorkerProfile,
 } from "@intentius/chant/cli/handlers/run-client";
-import type { ResourceMetadata } from "@intentius/chant/lexicon";
+import type { ObservationResult, ResourceMetadata, UnobservedEntity } from "@intentius/chant/lexicon";
+import { observation } from "@intentius/chant/observation";
 
 interface NamespaceListResponse {
   namespaces?: Array<{
@@ -195,7 +196,7 @@ export async function describeResources(options: {
   buildOutput: string;
   entityNames: string[];
   entities: Map<string, { entityType: string; props: Record<string, unknown> }>;
-}): Promise<Record<string, ResourceMetadata>> {
+}): Promise<ObservationResult> {
   const { config } = await loadChantConfig(process.cwd());
   const profile = resolveProfileForEnv(config as Record<string, unknown>, options.environment);
 
@@ -205,6 +206,26 @@ export async function describeResources(options: {
 
   const idx = buildEntityIndex(options.entities);
   const result: Record<string, ResourceMetadata> = {};
+  const unobserved: Record<string, UnobservedEntity> = {};
+
+  /**
+   * A per-namespace list that failed leaves every entity it would have covered
+   * unread. Recording those as holes (#1089) is what stops a temporarily
+   * failing `listSearchAttributes` from planning a re-registration of search
+   * attributes that already exist.
+   */
+  const markNamespaceUnread = (
+    index: Map<string, string>,
+    namespace: string,
+    detail: string,
+  ): void => {
+    const prefix = `${namespace}/`;
+    for (const [key, entityName] of index) {
+      if (!key.startsWith(prefix) || result[entityName]) continue;
+      const type = options.entities.get(entityName)?.entityType;
+      unobserved[entityName] = { ...(type ? { type } : {}), reason: "read-failed", detail };
+    }
+  };
 
   // Map a server-side identifier to a chant entity name when possible;
   // otherwise fall back to the server-side prefixed key (orphan).
@@ -249,12 +270,12 @@ export async function describeResources(options: {
           };
         }
       } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
         // eslint-disable-next-line no-console
         console.warn(
-          `[temporal] failed to list search attributes for namespace "${name}": ${
-            err instanceof Error ? err.message : String(err)
-          }`,
+          `[temporal] failed to list search attributes for namespace "${name}": ${message} — reporting them as unobserved, not absent`,
         );
+        markNamespaceUnread(idx.searchAttrByKey, name, `listSearchAttributes failed for namespace "${name}": ${message}`);
       }
 
       // Schedules — same fail-soft policy.
@@ -274,12 +295,12 @@ export async function describeResources(options: {
           };
         }
       } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
         // eslint-disable-next-line no-console
         console.warn(
-          `[temporal] failed to list schedules for namespace "${name}": ${
-            err instanceof Error ? err.message : String(err)
-          }`,
+          `[temporal] failed to list schedules for namespace "${name}": ${message} — reporting them as unobserved, not absent`,
         );
+        markNamespaceUnread(idx.scheduleByKey, name, `schedule list failed for namespace "${name}": ${message}`);
       }
     }
   } finally {
@@ -288,7 +309,8 @@ export async function describeResources(options: {
     }
   }
 
-  return result;
+  for (const name of Object.keys(result)) delete unobserved[name];
+  return observation(result, unobserved);
 }
 
 function pruneUndefined<T extends Record<string, unknown>>(obj: T): Record<string, unknown> {

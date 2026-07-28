@@ -13,11 +13,12 @@
  * load-bearing.
  */
 import { diffLive, type AttributeChange, type DiffLiveInput } from "./live-diff";
+import { unobservedReasonText, type UnobservedReason } from "../observation";
 
 /**
  * What the projection proposes for a single resource.
  *
- * - `create` — declared in source, absent from live.
+ * - `create` — declared in source, and the provider **confirmed** it absent.
  * - `update` — declared and live, but live config drifted.
  * - `delete` — a chant-owned resource that is live but no longer declared.
  *   Only emitted once ownership is known (#121); never inferred from the
@@ -25,8 +26,11 @@ import { diffLive, type AttributeChange, type DiffLiveInput } from "./live-diff"
  * - `adopt` — live but undeclared, ownership not established → a candidate to
  *   pull back into source, never an auto-delete.
  * - `noop` — declared and live with no drift, or already reconciled.
+ * - `unobserved` — declared, and the lexicon could not look (#1089). Not a
+ *   proposal at all: it is the plan admitting a hole. Never a create, never a
+ *   delete. Read `unobservedReason` for which hole.
  */
-export type ChangeAction = "create" | "update" | "delete" | "adopt" | "noop";
+export type ChangeAction = "create" | "update" | "delete" | "adopt" | "noop" | "unobserved";
 
 /**
  * Who answers "is this resource chant's?". `unknown` until a live ownership
@@ -47,13 +51,24 @@ export interface ChangeSetEntry {
     declared: boolean;
     /** Present in the last snapshot. */
     inSnapshot: boolean;
-    /** Observed in the live system right now. */
+    /** Observed present in the live system right now. */
     live: boolean;
+    /**
+     * The lexicon actually looked at this entity (#1089). `false` with
+     * `live: false` means "unknown", not "absent" — the distinction the whole
+     * change set now rests on. Absent-and-looked-at is `observed: true,
+     * live: false`.
+     */
+    observed: boolean;
   };
   /** Attribute-level changes, for `update`. */
   deltas?: AttributeChange[];
   /** Live-marker ownership. Defaults to `unknown`. */
   ownership: Ownership;
+  /** Why the entity could not be observed, for `action: "unobserved"` (#1089). */
+  unobservedReason?: UnobservedReason;
+  /** Human-readable backing for `unobservedReason` (the failing command, the missing binding). */
+  unobservedDetail?: string;
 }
 
 export interface ChangeSet {
@@ -67,11 +82,16 @@ export interface ChangeSet {
  * `create`/`update` are precise from declared-vs-live. `delete` is never
  * emitted here — an undeclared live resource classifies as `adopt` until
  * ownership is known.
+ *
+ * A declared entity the lexicon could not observe (`input.unobserved`, #1089)
+ * classifies as `unobserved` and nothing else: no `create` is ever synthesized
+ * from a read that did not happen.
  */
 export function buildChangeSet(env: string, input: DiffLiveInput): ChangeSet {
   const diff = diffLive(input);
   const { declared, observedNow } = input;
   const observedThen = input.observedThen ?? {};
+  const unobservedInput = input.unobserved ?? {};
 
   const driftByName = new Map(
     diff.driftedSinceSnapshot.map((d) => [d.name, d.changes] as const),
@@ -81,6 +101,7 @@ export function buildChangeSet(env: string, input: DiffLiveInput): ChangeSet {
     ...declared,
     ...Object.keys(observedNow),
     ...Object.keys(observedThen),
+    ...Object.keys(unobservedInput),
   ]);
 
   const entries: ChangeSetEntry[] = [];
@@ -88,8 +109,11 @@ export function buildChangeSet(env: string, input: DiffLiveInput): ChangeSet {
     const isDeclared = declared.has(name);
     const live = Object.prototype.hasOwnProperty.call(observedNow, name);
     const inSnapshot = Object.prototype.hasOwnProperty.call(observedThen, name);
-    const type = observedNow[name]?.type ?? observedThen[name]?.type;
-    const evidence = { declared: isDeclared, inSnapshot, live };
+    // A returned resource was observed by definition; `unobserved` only counts
+    // for entities the lexicon did not return.
+    const unobservedEntry = live ? undefined : unobservedInput[name];
+    const type = observedNow[name]?.type ?? observedThen[name]?.type ?? unobservedEntry?.type;
+    const evidence = { declared: isDeclared, inSnapshot, live, observed: !unobservedEntry };
 
     // Ownership comes from the LIVE marker only (carried on observedNow), never
     // from the snapshot. This is the invariant that keeps the snapshot from
@@ -100,8 +124,13 @@ export function buildChangeSet(env: string, input: DiffLiveInput): ChangeSet {
     let action: ChangeAction;
     let deltas: AttributeChange[] | undefined;
 
-    if (isDeclared && !live) {
-      // Declared in source, not in the cloud → create.
+    if (unobservedEntry) {
+      // The lexicon never looked. Absence is not established, so neither a
+      // create (declared) nor a delete/adopt (undeclared) can be proposed —
+      // the entry exists to say the plan has a hole here.
+      action = "unobserved";
+    } else if (isDeclared && !live) {
+      // Declared in source, and the provider confirmed it absent → create.
       action = "create";
     } else if (isDeclared && live) {
       const drift = driftByName.get(name);
@@ -120,14 +149,27 @@ export function buildChangeSet(env: string, input: DiffLiveInput): ChangeSet {
       action = "noop";
     }
 
-    entries.push({ name, type, action, evidence, deltas, ownership });
+    entries.push({
+      name,
+      type,
+      action,
+      evidence,
+      deltas,
+      ownership,
+      ...(unobservedEntry
+        ? {
+            unobservedReason: unobservedEntry.reason,
+            ...(unobservedEntry.detail ? { unobservedDetail: unobservedEntry.detail } : {}),
+          }
+        : {}),
+    });
   }
 
   entries.sort((a, b) => a.name.localeCompare(b.name));
   return { env, entries };
 }
 
-const ACTION_ORDER: ChangeAction[] = ["create", "update", "delete", "adopt", "noop"];
+const ACTION_ORDER: ChangeAction[] = ["create", "update", "delete", "adopt", "noop", "unobserved"];
 
 /** Count entries per action. */
 export function summarize(cs: ChangeSet): Record<ChangeAction, number> {
@@ -137,6 +179,7 @@ export function summarize(cs: ChangeSet): Record<ChangeAction, number> {
     delete: 0,
     adopt: 0,
     noop: 0,
+    unobserved: 0,
   };
   for (const e of cs.entries) counts[e.action]++;
   return counts;
@@ -148,8 +191,10 @@ export function summarize(cs: ChangeSet): Record<ChangeAction, number> {
  * GitLab renders an `artifacts:reports:terraform` artifact in the merge-request
  * UI as "N to add, M to change, K to delete". The format is generic — any tool
  * that emits this JSON gets the widget — and the chant plan maps onto it
- * directly. Only the mutating actions count: `adopt` and `noop` are excluded,
- * since the widget has no column for "live but undeclared" or "no change".
+ * directly. Only the mutating actions count: `adopt`, `noop` and `unobserved`
+ * are excluded, since the widget has no column for "live but undeclared", "no
+ * change", or "could not look" (#1089). The widget is therefore a floor, not a
+ * complete plan: read the full change set when entities are unobserved.
  *
  * The widget label reads "Terraform" regardless of producer; that is GitLab's
  * fixed string, not a claim chant makes.
@@ -175,10 +220,17 @@ export function renderChangeSet(cs: ChangeSet): string {
   for (const action of ACTION_ORDER) {
     const group = cs.entries.filter((e) => e.action === action);
     if (group.length === 0) continue;
-    lines.push(`\n${action.toUpperCase()}:`);
+    lines.push(
+      action === "unobserved"
+        ? "\nUNOBSERVED (declared; chant could not read live state — no action proposed):"
+        : `\n${action.toUpperCase()}:`,
+    );
     for (const e of group) {
       const own = e.ownership === "unknown" ? "" : ` [${e.ownership}]`;
-      lines.push(`  ${e.name}${e.type ? ` (${e.type})` : ""}${own}`);
+      const why = e.unobservedReason
+        ? ` — ${unobservedReasonText(e.unobservedReason)}${e.unobservedDetail ? `: ${e.unobservedDetail}` : ""}`
+        : "";
+      lines.push(`  ${e.name}${e.type ? ` (${e.type})` : ""}${own}${why}`);
       for (const d of e.deltas ?? []) {
         lines.push(`      ${d.path}: ${fmt(d.oldValue)} → ${fmt(d.newValue)}`);
       }

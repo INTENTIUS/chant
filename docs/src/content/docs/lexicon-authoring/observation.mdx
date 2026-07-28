@@ -39,10 +39,13 @@ describeResources?(options: {
   buildOutput: string;
   entityNames: string[];
   entities: Map<string, { entityType: string; props: Record<string, unknown> }>;
-}): Promise<Record<string, ResourceMetadata>>;
+  owned?: boolean;
+}): Promise<Record<string, ResourceMetadata> | ObservationResult>;
 ```
 
 Return a map keyed by **chant entity name** (the export name on the `*.ts` file), value is the `ResourceMetadata` chant uses to display status and detect drift.
+
+If your implementation has any case where it *can't look* — an unmapped kind, a failed read, missing credentials — return the `ObservationResult` envelope instead and name those entities in `unobserved`. See [the observation tri-state](#the-observation-tri-state-absent-is-not-the-same-as-unread) below; it is the difference between `chant lifecycle plan` proposing a `create` and admitting it doesn't know.
 
 ### Use entity-prop pass-through to find the cloud-side identifier
 
@@ -93,36 +96,97 @@ function statusFromKubectl(obj: KubectlResponse): string {
 
 The status string is opaque to chant's diff logic (any change is "drift"), so you can be expressive — `READY`, `PROGRESSING(2/3)`, `CrashLoopBackOff`, `ACTIVE` all work fine.
 
-### Silent-skip resources that aren't there
+### The observation tri-state: absent is not the same as unread
 
-Resource-not-found is **expected** during diff — it's how `lifecycle diff --live` reports a `MISSING` (declared, not in cloud) entry. Catch the per-resource error and continue:
+Returning nothing for a declared entity is a claim, and there are two very different claims to make:
+
+| Verdict | How you report it | What chant does with it |
+|---|---|---|
+| **Observed present** | a key in `resources` | drift comparison, `noop` / `update` |
+| **Observed absent** | in neither map — you asked, the provider said no | `MISSING` in the diff, `create` in the plan |
+| **Not observed** | a key in `unobserved`, with a reason | reported as a hole; **never** a create or a delete |
+
+Only the middle row may become a `create`. Before chant #1089 the third row was indistinguishable from the second, so a Kubernetes CRD with no reader — or a read that failed on an expired token — arrived at `chant lifecycle plan` as a confident proposal to create something that was already running.
+
+Report a hole with the `ObservationResult` envelope:
 
 ```typescript
+import { observation } from "@intentius/chant/observation";
+import type { ObservationResult, UnobservedEntity } from "@intentius/chant/lexicon";
+
+const resources: Record<string, ResourceMetadata> = {};
+const unobserved: Record<string, UnobservedEntity> = {};
+
 try {
   const { stdout } = await execAsync(cmd);
-  const obj = JSON.parse(stdout);
-  result[entityName] = { type: entityType, /* ... */ };
-} catch {
-  // Resource not found / kubectl error — leave it out so lifecycle diff
-  // can report it as missing. Don't fail the whole snapshot.
+  resources[entityName] = { type: entityType, /* ... */ };
+} catch (err) {
+  // Only a real not-found leaves the entity out. Everything else proves
+  // nothing about whether the resource exists.
+  const outcome = classifyKubectlFailure(err);
+  if (outcome.kind === "unobserved") {
+    unobserved[entityName] = { type: entityType, reason: outcome.reason, detail: outcome.detail };
+  }
 }
+
+return observation(resources, unobserved);
 ```
 
-Failing the whole snapshot because one Deployment is gone defeats the point.
+The reasons are total — pick one:
 
-### Warn once for unknown entity types
+| Reason | When |
+|---|---|
+| `read-failed` | the provider was reached and the read errored |
+| `no-credentials` | no usable credentials for the target |
+| `no-binding` | the environment resolves to no concrete target (no kubectl context, no subscription, no stack) |
+| `unsupported-kind` | your lexicon has no reader for this entity type |
+| `filtered` | the resource was reached but withheld by `owned: true` (it exists, it just isn't chant's) |
 
-Lexicons grow new resource types over time. If your describe path doesn't cover a type yet, accumulate them and warn once — don't error:
+Returning the bare `Record<string, ResourceMetadata>` map is still valid and means "everything I was asked about, I looked at". Use it only when that is true.
+
+Throwing is the whole-lexicon failure — core catches it and marks **every** declared entity `read-failed`, so a broken read never arrives downstream as an empty environment. Failing the whole snapshot because one Deployment is gone still defeats the point; catch per-resource errors and classify them.
+
+### Unknown entity types are unobserved, not absent
+
+Lexicons grow new resource types over time. If your describe path doesn't cover a type yet, say so per entity — a warning alone is invisible to `lifecycle plan`, which is exactly where the wrong `create` gets proposed:
 
 ```typescript
-const skippedTypes = new Set<string>();
-// ... in the loop, skippedTypes.add(entityType) when unmapped
-if (skippedTypes.size > 0) {
-  console.warn(`[k8s] skipped ${skippedTypes.size} entity type(s) without kubectl mapping: ${[...skippedTypes].join(", ")}`);
+const kubectlResource = KUBECTL_RESOURCE[entityType];
+if (!kubectlResource) {
+  skippedTypes.add(entityType);
+  unobserved[entityName] = {
+    type: entityType,
+    reason: "unsupported-kind",
+    detail: `no kubectl mapping for ${entityType} — extend KUBECTL_RESOURCE to observe it`,
+  };
+  continue;
 }
 ```
 
-The user gets actionable feedback (PR-able list of types to add); the snapshot proceeds with what's covered.
+Keep the accumulated one-line warning too: the user gets a PR-able list of types to add, and the snapshot proceeds with what's covered.
+
+### Ownership verdicts are total
+
+If your read path can't determine ownership (AWS's `describe-stack-resources` returns no tags), stamp `ownership: "unknown"` on what you return rather than leaving the field off and degrading silently. `unknown` is a legitimate verdict — the change set never escalates it to a delete.
+
+### Prove it with the conformance suite
+
+`describeObservationConformance` in `@intentius/chant-test-utils` is the shared suite every observing lexicon runs. Give it scenarios driven by your own transport mocks; it checks the result shape, reason totality, ownership totality, and — through core's real `buildChangeSet` — that an unreadable entity never classifies as `create`:
+
+```typescript
+describeObservationConformance({
+  lexicon: "k8s",
+  scenarios: [
+    {
+      name: "a CRD kind with no reader",
+      declared: ["widget", "gone"],
+      expectUnobserved: ["widget"],
+      expectAbsent: ["gone"],
+      run: () => k8sPlugin.describeResources!({ /* ... */ }),
+    },
+  ],
+});
+```
 
 ## listArtifacts()
 

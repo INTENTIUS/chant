@@ -9,10 +9,17 @@
  * side effects. Snapshotting keeps its own copy for now; a future refactor can
  * fold both onto this primitive.
  */
-import type { ObservationLexicon, ResourceMetadata } from "../lexicon";
+import type { ObservationLexicon } from "../lexicon";
 import type { BuildResult } from "../build";
 import type { SerializerResult } from "../serializer";
 import type { LiveObservation } from "../graph-ir";
+import {
+  mergeObservations,
+  normalizeObservation,
+  unobservedAll,
+  formatUnobserved,
+  type NormalizedObservation,
+} from "../observation";
 
 export interface ObserveResult {
   observations: LiveObservation[];
@@ -25,8 +32,10 @@ export interface ObserveResult {
  * `environment`. `owned` (default true for the managed-only diagram, epic #776)
  * restricts to resources carrying chant's ownership marker; a lexicon with no
  * marker channel logs and returns everything (its own contract). Plugins that
- * throw are collected into `errors` and skipped — one failing lexicon never
- * sinks the whole graph.
+ * throw are collected into `errors` — one failing lexicon never sinks the whole
+ * graph — and every entity they were asked about is recorded as NOT-OBSERVED
+ * (`read-failed`, #1089) rather than dropped, so a failed read is visibly a
+ * hole instead of a silent absence.
  *
  * `stacks` (#57) is for a multi-stack, per-component project (e.g. loomster)
  * where there is no single stack named after the environment — AWS's
@@ -77,36 +86,68 @@ export async function observeResources(
     }
 
     try {
-      let resources: Record<string, ResourceMetadata>;
+      let observed: NormalizedObservation;
       if (stacks.length > 0) {
-        resources = {};
+        const parts: NormalizedObservation[] = [];
         for (const stack of stacks) {
-          const perStack = await plugin.describeResources({
+          parts.push(
+            normalizeObservation(
+              await plugin.describeResources({
+                environment,
+                buildOutput,
+                entityNames,
+                entities,
+                owned,
+                stack,
+              }),
+            ),
+          );
+        }
+        observed = mergeObservations(parts);
+      } else {
+        observed = normalizeObservation(
+          await plugin.describeResources({
             environment,
             buildOutput,
             entityNames,
             entities,
             owned,
-            stack,
-          });
-          Object.assign(resources, perStack);
-        }
-      } else {
-        resources = await plugin.describeResources({
-          environment,
-          buildOutput,
-          entityNames,
-          entities,
-          owned,
-        });
+          }),
+        );
       }
-      if (Object.keys(resources).length > 0) {
-        observations.push({ lexicon: plugin.name, resources });
-      }
+      pushObservation(observations, warnings, plugin.name, observed);
     } catch (err) {
-      errors.push(`${plugin.name}: ${err instanceof Error ? err.message : String(err)}`);
+      // A thrown read is the whole-lexicon failure: every declared entity is
+      // NOT-OBSERVED, not absent (#1089). Emitting nothing here is what made a
+      // failed read look like "none of these exist" to every consumer.
+      const message = err instanceof Error ? err.message : String(err);
+      errors.push(`${plugin.name}: ${message}`);
+      pushObservation(observations, warnings, plugin.name, {
+        resources: {},
+        unobserved: unobservedAll(entityNames, "read-failed", message, entities),
+      });
     }
   }
 
   return { observations, warnings, errors };
+}
+
+/** Record one lexicon's observation, warning once per unobserved entity. */
+function pushObservation(
+  observations: LiveObservation[],
+  warnings: string[],
+  lexicon: string,
+  observed: NormalizedObservation,
+): void {
+  const hasResources = Object.keys(observed.resources).length > 0;
+  const unobservedNames = Object.keys(observed.unobserved);
+  for (const name of unobservedNames) {
+    warnings.push(`${lexicon}: not observed — ${formatUnobserved(name, observed.unobserved[name])}`);
+  }
+  if (!hasResources && unobservedNames.length === 0) return;
+  observations.push({
+    lexicon,
+    resources: observed.resources,
+    ...(unobservedNames.length > 0 ? { unobserved: observed.unobserved } : {}),
+  });
 }

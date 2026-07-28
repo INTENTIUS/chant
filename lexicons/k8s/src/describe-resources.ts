@@ -7,9 +7,14 @@
  * name (using the props.metadata.name + props.metadata.namespace from #39's
  * entity-prop pass-through).
  *
- * Resource-not-found is silent — `state diff --live` then reports it as
- * missing (declared, not in cloud). Unknown entity types are warn-skipped;
- * extending the KUBECTL_RESOURCE map covers more.
+ * The observation tri-state (#1089) is what the return value carries. A genuine
+ * `NotFound` from the API server is an absence, and only that becomes a `create`
+ * downstream. An entity type with no entry in `KUBECTL_RESOURCE` — every CRD —
+ * was never looked at, and comes back `unsupported-kind`: it may well be running
+ * in the cluster, and proposing to create it would be a guess. Auth failures and
+ * unreachable API servers come back `no-credentials` / `no-binding` for the same
+ * reason. Extending the KUBECTL_RESOURCE map converts unsupported-kind holes into
+ * real reads; until then they are holes chant admits to.
  *
  * Before touching any resource, the environment is resolved to a cluster
  * identity (chant #1100) via `resolveClusterTarget` — see `./config.ts` for
@@ -22,10 +27,11 @@
 
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
-import type { ResourceMetadata } from "@intentius/chant/lexicon";
+import type { ObservationResult, ResourceMetadata, UnobservedEntity } from "@intentius/chant/lexicon";
+import { observation } from "@intentius/chant/observation";
 import { hasOwnershipMarker, classifyOwnership, LABEL_OWNERSHIP_KEYS } from "@intentius/chant/ownership";
 import { loadChantConfig } from "@intentius/chant/config";
-import { resolveClusterTarget } from "@intentius/chant/kubectl-context";
+import { resolveClusterTarget, classifyKubectlFailure } from "@intentius/chant/kubectl-context";
 
 const execAsync = promisify(exec);
 
@@ -97,8 +103,9 @@ export async function describeResources(options: {
   entityNames: string[];
   entities: Map<string, { entityType: string; props: Record<string, unknown> }>;
   owned?: boolean;
-}): Promise<Record<string, ResourceMetadata>> {
+}): Promise<ObservationResult> {
   const result: Record<string, ResourceMetadata> = {};
+  const unobserved: Record<string, UnobservedEntity> = {};
   const skippedTypes = new Set<string>();
 
   // Resolve the cluster identity for this environment before touching any
@@ -112,13 +119,29 @@ export async function describeResources(options: {
   for (const [entityName, { entityType, props }] of options.entities) {
     const kubectlResource = KUBECTL_RESOURCE[entityType];
     if (!kubectlResource) {
+      // No reader for this kind (every CRD). The object may exist; chant has no
+      // way to ask. Reporting it as unobserved is what stops `lifecycle plan`
+      // proposing to create a CRD that is already in the cluster (#1089).
       skippedTypes.add(entityType);
+      unobserved[entityName] = {
+        type: entityType,
+        reason: "unsupported-kind",
+        detail: `no kubectl mapping for ${entityType} — extend KUBECTL_RESOURCE to observe it`,
+      };
       continue;
     }
 
     const metadata = props.metadata as { name?: string; namespace?: string } | undefined;
     const name = metadata?.name;
-    if (!name) continue;
+    if (!name) {
+      // Nothing to query by. Not an absence — chant never issued a read.
+      unobserved[entityName] = {
+        type: entityType,
+        reason: "read-failed",
+        detail: "declared entity has no metadata.name to query by",
+      };
+      continue;
+    }
 
     const nsArg = metadata.namespace ? ["-n", metadata.namespace] : [];
     const cmd = ["kubectl", "get", kubectlResource, name, ...nsArg, ...ctxArg, "-o", "json"].join(" ");
@@ -126,8 +149,16 @@ export async function describeResources(options: {
     try {
       const { stdout } = await execAsync(cmd);
       const obj: KubectlResponse = JSON.parse(stdout);
-      // owned filter: skip resources not carrying chant's marker label.
+      // owned filter: withhold resources not carrying chant's marker label.
+      // Withheld is not absent (#1089) — this object exists, it just isn't
+      // chant's, and dropping it silently is how `--owned` used to turn a
+      // declared-but-foreign resource into a proposed `create`.
       if (options.owned && !hasOwnershipMarker(obj.metadata?.labels, LABEL_OWNERSHIP_KEYS)) {
+        unobserved[entityName] = {
+          type: entityType,
+          reason: "filtered",
+          detail: "live object carries no chant ownership marker and --owned was requested",
+        };
         continue;
       }
       result[entityName] = {
@@ -142,18 +173,23 @@ export async function describeResources(options: {
           resourceVersion: obj.metadata?.resourceVersion,
         }),
       };
-    } catch {
-      // Resource not found / kubectl error — leave it out so state diff
-      // can report it as missing. Don't fail the whole snapshot.
+    } catch (err) {
+      // Only a real NotFound leaves the entity out (an absence the diff may
+      // read as missing and the plan as create). Auth, connectivity, and every
+      // other failure prove nothing about existence and are reported as such.
+      const outcome = classifyKubectlFailure(err);
+      if (outcome.kind === "unobserved") {
+        unobserved[entityName] = { type: entityType, reason: outcome.reason, detail: outcome.detail };
+      }
     }
   }
 
   if (skippedTypes.size > 0) {
     // eslint-disable-next-line no-console
     console.warn(
-      `[k8s] skipped ${skippedTypes.size} entity type(s) without kubectl mapping: ${[...skippedTypes].join(", ")}`,
+      `[k8s] no kubectl mapping for ${skippedTypes.size} entity type(s): ${[...skippedTypes].join(", ")} — reported as unobserved (not absent), so no create is proposed for them`,
     );
   }
 
-  return result;
+  return observation(result, unobserved);
 }

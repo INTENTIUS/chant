@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { observeResources } from "./observe";
+import { observation } from "../observation";
 import type { ObservationLexicon, ResourceMetadata } from "../lexicon";
 import type { BuildResult } from "../build";
 
@@ -47,13 +48,20 @@ describe("observeResources", () => {
     expect(names).toEqual(["web-vpc"]);
   });
 
-  it("collects a throwing plugin into errors instead of failing the whole graph", async () => {
+  it("collects a throwing plugin into errors instead of failing the whole graph, and reports its entities unobserved (#1089)", async () => {
     const plugins = [
       awsPlugin(() => { throw new Error("access denied"); }),
     ];
-    const { observations, errors } = await observeResources("prod", plugins, mockBuild());
-    expect(observations).toEqual([]);
+    const { observations, errors, warnings } = await observeResources("prod", plugins, mockBuild());
     expect(errors).toEqual(["aws: access denied"]);
+    // The failed read is a hole, not an empty environment: every declared
+    // entity comes back NOT-OBSERVED so nothing downstream reads it as absent.
+    expect(observations).toHaveLength(1);
+    expect(observations[0].resources).toEqual({});
+    expect(observations[0].unobserved).toEqual({
+      "web-vpc": { reason: "read-failed", type: "AWS::EC2::VPC", detail: "access denied" },
+    });
+    expect(warnings.join("\n")).toContain("web-vpc");
   });
 
   it("skips plugins with no describeResources and drops empty results", async () => {
@@ -61,6 +69,36 @@ describe("observeResources", () => {
     const noObserve = { name: "gitlab", serializer: {} } as unknown as ObservationLexicon;
     const { observations } = await observeResources("prod", [empty, noObserve], mockBuild());
     expect(observations).toEqual([]);
+  });
+
+  it("carries a plugin's own unobserved entities through (#1089)", async () => {
+    const plugin = {
+      name: "aws",
+      serializer: {} as ObservationLexicon["serializer"],
+      describeResources: async () =>
+        observation({}, { "web-vpc": { type: "AWS::EC2::VPC", reason: "unsupported-kind" } }),
+    } as unknown as ObservationLexicon;
+    const { observations, warnings, errors } = await observeResources("prod", [plugin], mockBuild());
+    expect(errors).toEqual([]);
+    expect(observations[0].unobserved).toEqual({
+      "web-vpc": { type: "AWS::EC2::VPC", reason: "unsupported-kind" },
+    });
+    expect(warnings[0]).toContain("no reader for this resource kind");
+  });
+
+  it("merges multi-stack reads with present > not-observed > absent (#1089)", async () => {
+    const stacks = ["a", "b"];
+    const plugin = {
+      name: "aws",
+      serializer: {} as ObservationLexicon["serializer"],
+      describeResources: async (opts: { stack?: string }) =>
+        opts.stack === "a"
+          ? observation({}, { "web-vpc": { reason: "read-failed", detail: "stack a unreadable" } })
+          : observation({ "web-vpc": { type: "AWS::EC2::VPC", status: "CREATE_COMPLETE" } }),
+    } as unknown as ObservationLexicon;
+    const { observations } = await observeResources("prod", [plugin], mockBuild(), { stacks });
+    expect(Object.keys(observations[0].resources)).toEqual(["web-vpc"]);
+    expect(observations[0].unobserved).toBeUndefined();
   });
 
   it("with no stacks: calls describeResources exactly once with no `stack` key (unchanged single-stack path)", async () => {

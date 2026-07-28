@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildLiveGraphIr, overlayGraphs, sourceOverlayGraphs, type LiveObservation, type GraphIR } from "./graph-ir";
+import { buildLiveGraphIr, collectUnobserved, overlayGraphs, sourceOverlayGraphs, type LiveObservation, type GraphIR } from "./graph-ir";
 
 // A fixture "snapshot" — what a lexicon's describeResources() returns for a live
 // environment (managed-only). Two AWS resources; the subnet references the VPC by
@@ -139,5 +139,32 @@ describe("sourceOverlayGraphs (#821 source-anchored overlay)", () => {
     const liveDup: GraphIR = { ...live, edges: [{ from: "app-ingress", to: "web-vpc", kind: "ref", viaAttr: "live-label" }] };
     const ir = sourceOverlayGraphs(declared, liveDup);
     expect(ir.edges.filter((e) => e.from === "app-ingress" && e.to === "web-vpc")).toHaveLength(1);
+  });
+
+  // #1089 — "not deployed yet" is a claim the read has to support.
+  it("paints a declared node nobody could read `neutral`, not `accent`", () => {
+    const ir = sourceOverlayGraphs(declared, live, {
+      unobserved: { "planned-db": { reason: "no-binding", detail: "no kubectl context" } },
+    });
+    const node = ir.nodes.find((x) => x.id === "planned-db")!;
+    expect((node.attrs as { _status?: string })._status).toBe("neutral");
+    expect((node.attrs as { _unobserved?: string })._unobserved).toBe("no-binding");
+  });
+
+  it("still paints a confirmed-absent declared node `accent`", () => {
+    const ir = sourceOverlayGraphs(declared, live, { unobserved: {} });
+    expect((ir.nodes.find((x) => x.id === "planned-db")!.attrs as { _status?: string })._status).toBe("accent");
+  });
+});
+
+describe("collectUnobserved (#1089)", () => {
+  it("unions every observation's holes", () => {
+    expect(
+      collectUnobserved([
+        { lexicon: "aws", resources: {}, unobserved: { a: { reason: "read-failed" } } },
+        { lexicon: "k8s", resources: {} },
+        { lexicon: "gcp", resources: {}, unobserved: { b: { reason: "no-binding" } } },
+      ]),
+    ).toEqual({ a: { reason: "read-failed" }, b: { reason: "no-binding" } });
   });
 });

@@ -4,7 +4,15 @@ import { takeSnapshot } from "../../lifecycle/snapshot";
 import { readSnapshot, readSnapshotAt, readEnvironmentSnapshots, listSnapshots, fetchLifecycle, snapshotStorageKey, StaleLifecycleBranchError } from "../../lifecycle/git";
 import { computeBuildDigest, diffDigests } from "../../lifecycle/digest";
 import { diffLive, diffLiveArtifacts, diffSnapshots, type LiveDiffResult, type LiveArtifactDiffResult, type SnapshotDiffResult } from "../../lifecycle/live-diff";
-import { buildChangeSet, renderChangeSet, gitlabMrReport, type ChangeSet } from "../../lifecycle/change-set";
+import { buildChangeSet, renderChangeSet, gitlabMrReport, summarize, type ChangeSet } from "../../lifecycle/change-set";
+import {
+  formatUnobserved,
+  mergeObservations,
+  normalizeObservation,
+  unobservedAll,
+  type NormalizedObservation,
+  type UnobservedEntity,
+} from "../../observation";
 import { discoverComponents } from "../../components/discover";
 import { cfnDeployStacks } from "./components";
 import { affectedStacks } from "../../lifecycle/affected";
@@ -263,6 +271,7 @@ export async function runLifecycleDiff(ctx: CommandContext): Promise<number> {
   const perStackJson: Record<string, unknown> = {};
   let combinedLexiconsJson: Record<string, unknown> | undefined;
   let totalDrift = 0;
+  let totalUnobserved = 0;
   let totalChecked = 0;
   let anyBuildError = false;
 
@@ -296,6 +305,7 @@ export async function runLifecycleDiff(ctx: CommandContext): Promise<number> {
       }
       const r = await runLifecycleDiffLive({ environment, lexicons, plugins, buildResult, json, stack: target.stack, componentStacks });
       totalDrift += r.totalDrift;
+      totalUnobserved += r.totalUnobserved;
       totalChecked += r.totalLexiconsChecked;
       if (json) {
         if (target.stack) perStackJson[target.stack] = r.byLexicon;
@@ -323,7 +333,15 @@ export async function runLifecycleDiff(ctx: CommandContext): Promise<number> {
       }));
       return 1;
     } else if (totalDrift === 0) {
-      console.error(formatSuccess(`No drift detected across ${totalChecked} lexicon(s)`));
+      // Qualify the all-clear when part of the estate was never read (#1089):
+      // "no drift" over an incomplete observation is not the same claim.
+      console.error(
+        totalUnobserved > 0
+          ? formatWarning({
+              message: `No drift detected across ${totalChecked} lexicon(s), but ${totalUnobserved} declared entity(ies) could not be observed — that part of the estate is unknown, not clean`,
+            })
+          : formatSuccess(`No drift detected across ${totalChecked} lexicon(s)`),
+      );
     }
   }
 
@@ -457,10 +475,73 @@ interface LiveDiffArgs {
 interface LiveDiffOutcome {
   byLexicon: Record<
     string,
-    { resources?: LiveDiffResult; observed?: Record<string, ResourceMetadata>; artifacts?: LiveArtifactDiffResult }
+    {
+      resources?: LiveDiffResult;
+      observed?: Record<string, ResourceMetadata>;
+      /** Declared entities the lexicon could not read (#1089), keyed by name. */
+      unobserved?: Record<string, UnobservedEntity>;
+      artifacts?: LiveArtifactDiffResult;
+    }
   >;
   totalDrift: number;
+  /** Declared entities nobody could read. Not drift — a hole in the report. */
+  totalUnobserved: number;
   totalLexiconsChecked: number;
+}
+
+/**
+ * Read one lexicon's live resources, resolving the observation tri-state
+ * (#1089) for every declared entity: present, confirmed-absent, or not
+ * observed with a reason.
+ *
+ * Two behaviours the old inline call sites did not have. A throw no longer
+ * skips the lexicon — every entity it was asked about comes back
+ * NOT-OBSERVED (`read-failed`), so a failed read shows up in the plan instead
+ * of vanishing from it. And a multi-stack read merges with
+ * present > not-observed > absent, so one unreadable stack cannot un-observe a
+ * resource another stack returned.
+ */
+async function observeLexicon(
+  plugin: ObservationLexicon,
+  opts: {
+    environment: string;
+    buildOutput: string;
+    declared: Set<string>;
+    entities: Map<string, { entityType: string; props: Record<string, unknown> }>;
+    stack?: string;
+    componentStacks?: string[];
+    owned?: boolean;
+  },
+): Promise<NormalizedObservation> {
+  const entityNames = Array.from(opts.declared);
+  const base = {
+    environment: opts.environment,
+    buildOutput: opts.buildOutput,
+    entityNames,
+    entities: opts.entities,
+    ...(opts.owned !== undefined ? { owned: opts.owned } : {}),
+  };
+  try {
+    if (opts.componentStacks && opts.componentStacks.length > 0) {
+      const parts: NormalizedObservation[] = [];
+      for (const stack of opts.componentStacks) {
+        parts.push(normalizeObservation(await plugin.describeResources!({ ...base, stack })));
+      }
+      return mergeObservations(parts);
+    }
+    return normalizeObservation(
+      await plugin.describeResources!({ ...base, ...(opts.stack ? { stack: opts.stack } : {}) }),
+    );
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(formatError({
+      message: `${plugin.name}: describeResources failed — ${message} (reporting ${entityNames.length} declared entity(ies) as not observed, not as absent)`,
+    }));
+    return {
+      resources: {},
+      unobserved: unobservedAll(entityNames, "read-failed", message, opts.entities),
+    };
+  }
 }
 
 /** Diff current build vs live cloud for one stack. Renders the human report
@@ -468,6 +549,7 @@ interface LiveDiffOutcome {
  * once (single-stack keeps the original shape; multi-stack nests under `stacks`). */
 async function runLifecycleDiffLive(args: LiveDiffArgs): Promise<LiveDiffOutcome> {
   let totalDrift = 0;
+  let totalUnobserved = 0;
   let totalLexiconsChecked = 0;
   const byLexicon: LiveDiffOutcome["byLexicon"] = {};
   if (!args.json && args.stack) console.log(`\n${formatBold(`■ stack ${args.stack}`)}`);
@@ -515,38 +597,27 @@ async function runLifecycleDiffLive(args: LiveDiffArgs): Promise<LiveDiffOutcome
 
     // ── Resources path (entity-keyed) ──────────────────────────────────────
     if (plugin.describeResources) {
-      let observedNow: Record<string, ResourceMetadata> = {};
-      try {
-        if (args.componentStacks && args.componentStacks.length > 0) {
-          // Observe each component's own stack and union — the multi-stack fix.
-          for (const stack of args.componentStacks) {
-            Object.assign(
-              observedNow,
-              await plugin.describeResources({ environment: args.environment, buildOutput, entityNames: Array.from(declared), entities, stack }),
-            );
-          }
-        } else {
-          observedNow = await plugin.describeResources({
-            environment: args.environment,
-            buildOutput,
-            entityNames: Array.from(declared),
-            entities,
-            stack: args.stack,
-          });
-        }
-      } catch (err) {
-        console.error(formatError({
-          message: `${lexiconName}: describeResources failed — ${err instanceof Error ? err.message : String(err)}`,
-        }));
-        continue;
-      }
+      const observed = await observeLexicon(plugin, {
+        environment: args.environment,
+        buildOutput,
+        declared,
+        entities,
+        stack: args.stack,
+        componentStacks: args.componentStacks,
+      });
+      const observedNow = observed.resources;
       const observedThen = prevSnapshot?.resources;
-      const diff = diffLive({ declared, observedNow, observedThen });
+      const diff = diffLive({ declared, observedNow, observedThen, unobserved: observed.unobserved });
+      // Unobserved entities are deliberately NOT drift: a hole in the read is
+      // not a change in the cloud. They are reported separately (#1089) so a
+      // "no drift detected" line can never be built on top of a failed read.
       totalDrift += diff.driftedSinceSnapshot.length + diff.missing.length + diff.orphan.length + diff.disappeared.length;
+      totalUnobserved += diff.unobserved.length;
       if (args.json) {
         const entry = (byLexicon[lexiconName] ??= {});
         entry.resources = diff;
         entry.observed = observedNow; // live state (#862) — status/attributes per resource
+        if (Object.keys(observed.unobserved).length > 0) entry.unobserved = observed.unobserved;
       } else renderLiveDiff(lexiconName, args.environment, diff);
       lexiconChecked = true;
     }
@@ -573,21 +644,28 @@ async function runLifecycleDiffLive(args: LiveDiffArgs): Promise<LiveDiffOutcome
     if (lexiconChecked) totalLexiconsChecked++;
   }
 
-  return { byLexicon, totalDrift, totalLexiconsChecked };
+  return { byLexicon, totalDrift, totalUnobserved, totalLexiconsChecked };
 }
 
 function renderLiveDiff(lexiconName: string, environment: string, diff: LiveDiffResult): void {
   const counts =
     `${diff.missing.length} missing, ${diff.orphan.length} orphan, ` +
     `${diff.disappeared.length} disappeared, ${diff.newlyObserved.length} newly observed, ` +
-    `${diff.driftedSinceSnapshot.length} drifted, ${diff.unchanged.length} unchanged`;
+    `${diff.driftedSinceSnapshot.length} drifted, ${diff.unchanged.length} unchanged` +
+    (diff.unobserved.length > 0 ? `, ${diff.unobserved.length} unobserved` : "");
 
   console.log(`\n${formatBold(lexiconName)} — environment: ${environment}`);
   console.log(counts);
   console.log("-".repeat(80));
 
+  if (diff.unobserved.length > 0) {
+    console.log(formatBold("\nUNOBSERVED (declared; chant could not read live state — status unknown):"));
+    for (const u of diff.unobserved) {
+      console.log(`  ? ${formatUnobserved(u.name, u)}`);
+    }
+  }
   if (diff.missing.length > 0) {
-    console.log(formatBold("\nMISSING (declared, not in cloud):"));
+    console.log(formatBold("\nMISSING (declared, provider reports not in cloud):"));
     for (const name of diff.missing) console.log(`  - ${name}`);
   }
   if (diff.orphan.length > 0) {
@@ -662,9 +740,11 @@ function renderLiveArtifactDiff(lexiconName: string, environment: string, diff: 
  * chant lifecycle plan <environment> [lexicon]
  *
  * Promote the live diff to a typed, read-only change set: per-entity
- * create / update / delete / adopt / noop. Strictly read-only — never
- * mutates, never deploys. Deletes are never proposed without ownership
- * data (added in #121); an undeclared live resource is `adopt`.
+ * create / update / delete / adopt / noop / unobserved. Strictly read-only —
+ * never mutates, never deploys. Deletes are never proposed without ownership
+ * data (added in #121); an undeclared live resource is `adopt`; a declared
+ * entity chant could not read is `unobserved` and gets no proposal at all
+ * (#1089) — a create is only ever proposed against a confirmed absence.
  */
 export async function runLifecyclePlan(ctx: CommandContext): Promise<number> {
   const { args, plugins, serializers } = ctx;
@@ -742,36 +822,24 @@ export async function runLifecyclePlan(ctx: CommandContext): Promise<number> {
           ? rawOutput
           : (rawOutput as SerializerResult).primary;
 
-    let observedNow: Record<string, ResourceMetadata> = {};
-    try {
-      if (componentStacks.length > 0) {
-        // Observe each component's own stack and union — the multi-stack fix.
-        for (const stack of componentStacks) {
-          Object.assign(
-            observedNow,
-            await plugin.describeResources({ environment, buildOutput, entityNames: Array.from(declared), entities, stack, owned: args.owned }),
-          );
-        }
-      } else {
-        observedNow = await plugin.describeResources({
-          environment,
-          buildOutput,
-          entityNames: Array.from(declared),
-          entities,
-          owned: args.owned,
-        });
-      }
-    } catch (err) {
-      console.error(formatError({
-        message: `${lexiconName}: describeResources failed — ${err instanceof Error ? err.message : String(err)}`,
-      }));
-      continue;
-    }
+    const observed = await observeLexicon(plugin, {
+      environment,
+      buildOutput,
+      declared,
+      entities,
+      componentStacks,
+      owned: args.owned,
+    });
 
     const content = await readSnapshot(environment, lexiconName);
     const observedThen = content ? (JSON.parse(content) as LifecycleSnapshot).resources : undefined;
 
-    const cs = buildChangeSet(environment, { declared, observedNow, observedThen });
+    const cs = buildChangeSet(environment, {
+      declared,
+      observedNow: observed.resources,
+      observedThen,
+      unobserved: observed.unobserved,
+    });
     merged.entries.push(...cs.entries);
     checked++;
   }
@@ -784,6 +852,15 @@ export async function runLifecyclePlan(ctx: CommandContext): Promise<number> {
   }
 
   merged.entries.sort((a, b) => a.name.localeCompare(b.name));
+
+  // Say it on stderr too, so `--json` and `--report gitlab-mr` consumers (whose
+  // shapes have no room for it) still learn the plan has a hole (#1089).
+  const unobservedCount = summarize(merged).unobserved;
+  if (unobservedCount > 0) {
+    console.error(formatWarning({
+      message: `${unobservedCount} declared entity(ies) could not be observed — no create/update/delete is proposed for them. This plan is incomplete, not clean.`,
+    }));
+  }
 
   // `--report gitlab-mr` emits the GitLab MR plan-widget artifact instead of the
   // human render. Write it to a file (`tfplan.json`) in CI and declare it as

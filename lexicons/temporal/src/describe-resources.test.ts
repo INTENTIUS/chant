@@ -1,4 +1,5 @@
 import { describe, test, expect, vi, beforeEach } from "vitest";
+import { describeObservationConformance } from "@intentius/chant-test-utils";
 
 const loadChantConfigMock = vi.fn();
 const loadTemporalClientMock = vi.fn();
@@ -130,7 +131,7 @@ describe("describeResources", () => {
     });
     setupClientMock(connection, client);
 
-    const result = await describeResources({ environment: "dev", buildOutput: "", entityNames: [], entities: new Map() });
+    const result = (await describeResources({ environment: "dev", buildOutput: "", entityNames: [], entities: new Map() })).resources;
 
     expect(Object.keys(result).sort()).toEqual([
       "namespace/default",
@@ -155,7 +156,7 @@ describe("describeResources", () => {
     });
     setupClientMock(connection, client);
 
-    const result = await describeResources({ environment: "prod", buildOutput: "", entityNames: [], entities: new Map() });
+    const result = (await describeResources({ environment: "prod", buildOutput: "", entityNames: [], entities: new Map() })).resources;
 
     expect(result["namespace/prod"]).toEqual({
       type: "Temporal::Namespace",
@@ -200,7 +201,7 @@ describe("describeResources", () => {
     const client = fakeClient({});
     setupClientMock(connection, client);
 
-    const result = await describeResources({ environment: "dev", buildOutput: "", entityNames: [], entities: new Map() });
+    const result = (await describeResources({ environment: "dev", buildOutput: "", entityNames: [], entities: new Map() })).resources;
 
     expect(result).toEqual({});
   });
@@ -220,7 +221,7 @@ describe("describeResources", () => {
     });
     setupClientMock(connection, client);
 
-    const result = await describeResources({ environment: "dev", buildOutput: "", entityNames: [], entities: new Map() });
+    const result = (await describeResources({ environment: "dev", buildOutput: "", entityNames: [], entities: new Map() })).resources;
 
     // Both namespaces present
     expect(result["namespace/broken"]).toBeDefined();
@@ -250,7 +251,7 @@ describe("describeResources", () => {
       ["prodNs", { entityType: "Temporal::Namespace", props: { name: "prod", retention: "30d" } }],
     ]);
 
-    const result = await describeResources({ environment: "prod", buildOutput: "", entityNames: ["prodNs"], entities });
+    const result = (await describeResources({ environment: "prod", buildOutput: "", entityNames: ["prodNs"], entities })).resources;
 
     expect(result["prodNs"]).toBeDefined();
     expect(result["namespace/prod"]).toBeUndefined();
@@ -270,7 +271,7 @@ describe("describeResources", () => {
       ["projectAttr", { entityType: "Temporal::SearchAttribute", props: { name: "Project", type: "Keyword", namespace: "prod" } }],
     ]);
 
-    const result = await describeResources({ environment: "prod", buildOutput: "", entityNames: ["projectAttr"], entities });
+    const result = (await describeResources({ environment: "prod", buildOutput: "", entityNames: ["projectAttr"], entities })).resources;
 
     expect(result["projectAttr"]).toBeDefined();
     expect(result["searchAttribute/prod/Project"]).toBeUndefined();
@@ -298,7 +299,7 @@ describe("describeResources", () => {
       ["dailyReport", { entityType: "Temporal::Schedule", props: { scheduleId: "daily-report", namespace: "prod" } }],
     ]);
 
-    const result = await describeResources({ environment: "prod", buildOutput: "", entityNames: ["dailyReport"], entities });
+    const result = (await describeResources({ environment: "prod", buildOutput: "", entityNames: ["dailyReport"], entities })).resources;
 
     expect(result["dailyReport"]).toBeDefined();
     expect(result["schedule/prod/daily-report"]).toBeUndefined();
@@ -320,9 +321,76 @@ describe("describeResources", () => {
       ["projectAttr", { entityType: "Temporal::SearchAttribute", props: { name: "Project", type: "Keyword" } }],
     ]);
 
-    const result = await describeResources({ environment: "prod", buildOutput: "", entityNames: ["prodNs", "projectAttr"], entities });
+    const result = (await describeResources({ environment: "prod", buildOutput: "", entityNames: ["prodNs", "projectAttr"], entities })).resources;
 
     expect(result["projectAttr"]).toBeDefined();
     expect(result["searchAttribute/prod/Project"]).toBeUndefined();
   });
+
+  test("a namespace whose search attributes could not be listed reports them unobserved, not absent (#1089)", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const connection = fakeConnection({
+      namespaces: [{ name: "prod" }],
+      searchAttrThrows: new Set(["prod"]),
+    });
+    const client = fakeClient({ schedulesByNs: { prod: [] } });
+    setupClientMock(connection, client);
+
+    const entities = new Map<string, { entityType: string; props: Record<string, unknown> }>([
+      ["prodNs", { entityType: "Temporal::Namespace", props: { name: "prod" } }],
+      ["projectAttr", { entityType: "Temporal::SearchAttribute", props: { name: "Project", namespace: "prod" } }],
+    ]);
+
+    const observed = await describeResources({ environment: "prod", buildOutput: "", entityNames: ["prodNs", "projectAttr"], entities });
+
+    expect(observed.resources["prodNs"]).toBeDefined();
+    expect(observed.unobserved?.projectAttr?.reason).toBe("read-failed");
+    warnSpy.mockRestore();
+  });
+});
+
+// The shared conformance suite (#1089).
+describeObservationConformance({
+  lexicon: "temporal",
+  scenarios: [
+    {
+      name: "a namespace whose search-attribute list fails",
+      declared: ["prodNs", "projectAttr"],
+      expectUnobserved: ["projectAttr"],
+      run: () => {
+        vi.spyOn(console, "warn").mockImplementation(() => {});
+        loadChantConfigMock.mockResolvedValue({ config: { temporal: { profiles: { prod: { address: "localhost:7233", namespace: "default", taskQueue: "q" } } } } });
+        resolveProfileMock.mockReturnValue({ address: "localhost:7233", namespace: "default", taskQueue: "q" });
+        setupClientMock(
+          fakeConnection({ namespaces: [{ name: "prod" }], searchAttrThrows: new Set(["prod"]) }),
+          fakeClient({ schedulesByNs: { prod: [] } }),
+        );
+        return describeResources({
+          environment: "prod",
+          buildOutput: "",
+          entityNames: ["prodNs", "projectAttr"],
+          entities: new Map([
+            ["prodNs", { entityType: "Temporal::Namespace", props: { name: "prod" } }],
+            ["projectAttr", { entityType: "Temporal::SearchAttribute", props: { name: "Project", namespace: "prod" } }],
+          ]),
+        });
+      },
+    },
+    {
+      name: "a healthy read",
+      declared: ["prodNs"],
+      expectPresent: ["prodNs"],
+      run: () => {
+        loadChantConfigMock.mockResolvedValue({ config: { temporal: { profiles: { prod: { address: "localhost:7233", namespace: "default", taskQueue: "q" } } } } });
+        resolveProfileMock.mockReturnValue({ address: "localhost:7233", namespace: "default", taskQueue: "q" });
+        setupClientMock(fakeConnection({ namespaces: [{ name: "prod" }] }), fakeClient({}));
+        return describeResources({
+          environment: "prod",
+          buildOutput: "",
+          entityNames: ["prodNs"],
+          entities: new Map([["prodNs", { entityType: "Temporal::Namespace", props: { name: "prod" } }]]),
+        });
+      },
+    },
+  ],
 });

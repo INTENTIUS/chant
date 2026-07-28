@@ -23,6 +23,7 @@ describe("diffLive", () => {
       newlyObserved: [],
       driftedSinceSnapshot: [],
       unchanged: [],
+      unobserved: [],
     });
   });
 
@@ -111,6 +112,44 @@ describe("diffLive", () => {
     expect(result.newlyObserved).toEqual(["d"]);
     expect(result.driftedSinceSnapshot.map((d) => d.name)).toEqual(["c"]);
     expect(result.unchanged).toEqual(["b"]);
+  });
+
+  // ── The observation tri-state (#1089) ─────────────────────────────────────
+
+  test("declared and not observed → unobserved, not missing", () => {
+    const result = diffLive({
+      declared: new Set(["crd", "gone"]),
+      observedNow: {},
+      observedThen: undefined,
+      unobserved: { crd: { type: "K8s::X::Widget", reason: "unsupported-kind", detail: "no reader" } },
+    });
+    expect(result.missing).toEqual(["gone"]);
+    expect(result.unobserved).toEqual([
+      { name: "crd", type: "K8s::X::Widget", reason: "unsupported-kind", detail: "no reader" },
+    ]);
+  });
+
+  test("an unobserved entity in the last snapshot has not disappeared", () => {
+    const result = diffLive({
+      declared: new Set(["crd"]),
+      observedNow: {},
+      observedThen: { crd: meta() },
+      unobserved: { crd: { reason: "no-credentials" } },
+    });
+    expect(result.disappeared).toEqual([]);
+    expect(result.missing).toEqual([]);
+    expect(result.unobserved.map((u) => u.name)).toEqual(["crd"]);
+  });
+
+  test("a resource that was returned is never also unobserved", () => {
+    const result = diffLive({
+      declared: new Set(["a"]),
+      observedNow: { a: meta() },
+      observedThen: undefined,
+      unobserved: { a: { reason: "read-failed" } },
+    });
+    expect(result.unobserved).toEqual([]);
+    expect(result.newlyObserved).toEqual(["a"]);
   });
 });
 
