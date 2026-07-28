@@ -85,6 +85,17 @@ jobs:
           P=$(npm view @intentius/chant version 2>/dev/null || echo "none")
           [ "$V" = "$P" ] && echo "Already at $V, skipping" || npm publish --access public --provenance
 
+      # The k8s lexicon declares this as an optional dependency (#1074). npm
+      # tolerates an optional dependency that fails to resolve, so publishing it
+      # ahead of the lexicon is what keeps `chant lifecycle diff --live` working
+      # for a registry install rather than silently degrading to holes.
+      - name: Publish @intentius/chant-k8s-client
+        working-directory: packages/k8s-client
+        run: |
+          V=$(node -e "process.stdout.write(require('./package.json').version)")
+          P=$(npm view @intentius/chant-k8s-client version 2>/dev/null || echo "none")
+          [ "$V" = "$P" ] && echo "Already at $V, skipping" || npm publish --access public --provenance
+
       - name: Publish @intentius/chant-lexicon-gitlab
         working-directory: lexicons/gitlab
         run: |

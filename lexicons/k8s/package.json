@@ -70,6 +70,9 @@
     "js-yaml": "^4.1.1",
     "@types/js-yaml": "^4.0.9"
   },
+  "optionalDependencies": {
+    "@intentius/chant-k8s-client": "^0.30.0"
+  },
   "devDependencies": {
     "@intentius/chant": "*",
     "typescript": "^5.9.3"

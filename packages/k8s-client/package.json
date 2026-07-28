@@ -1,0 +1,51 @@
+{
+  "name": "@intentius/chant-k8s-client",
+  "version": "0.30.0",
+  "description": "Typed Kubernetes API client for chant — the read/write path of the k8s lexicon, kept out of the build path",
+  "license": "Apache-2.0",
+  "homepage": "https://intentius.io/chant",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/INTENTIUS/chant.git",
+    "directory": "packages/k8s-client"
+  },
+  "bugs": {
+    "url": "https://github.com/INTENTIUS/chant/issues"
+  },
+  "keywords": [
+    "kubernetes",
+    "k8s",
+    "chant",
+    "infrastructure-as-code"
+  ],
+  "type": "module",
+  "files": [
+    "src/",
+    "dist/"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "exports": {
+    ".": {
+      "development": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./src/index.ts"
+    },
+    "./testing": {
+      "development": "./src/testing.ts",
+      "types": "./dist/testing.d.ts",
+      "default": "./src/testing.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json && tsc-alias -p tsconfig.build.json && find dist -type f \\( -name \"*.js\" -o -name \"*.js.map\" \\) -delete",
+    "prepack": "npm run build"
+  },
+  "dependencies": {
+    "@kubernetes/client-node": "^1.4.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  }
+}

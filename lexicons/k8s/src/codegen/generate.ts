@@ -17,6 +17,7 @@ import { loadMultipleCRDs } from "../crd/loader";
 import { CRD_SOURCES } from "../crd/crd-sources";
 import { NamingStrategy, propertyTypeName, extractDefName } from "./naming";
 import { generateLexiconJSON } from "./generate-lexicon";
+import { generateOperationsJSON } from "./generate-operations";
 import { generateTypeScriptDeclarations } from "./generate-typescript";
 import {
   generateRuntimeIndex as coreGenerateRuntimeIndex,
@@ -98,6 +99,13 @@ export async function generate(opts: K8sGenerateOptions = {}): Promise<GenerateR
     generateRuntimeIndex: (results, naming) => {
       return generateRuntimeIndex(results, naming as NamingStrategy);
     },
+
+    // chant #1074 — the operation surface, out of the same results the types
+    // and the registry come out of, so the live client cannot address a kind
+    // differently from how the declarable surface names it.
+    generateExtraArtifacts: (results) => ({
+      "operations.json": generateOperationsJSON(results),
+    }),
   };
 
   return generatePipeline(config, opts);
@@ -114,6 +122,7 @@ export function writeGeneratedFiles(result: GenerateResult, baseDir: string): vo
       "index.d.ts": result.typesDTS,
       "index.ts": result.indexTS,
       "runtime.ts": `/**\n * Runtime factory constructors — re-exported from core.\n */\nexport { createResource, createProperty } from "@intentius/chant/runtime";\n`,
+      ...(result.extraArtifacts ?? {}),
     },
   });
 }

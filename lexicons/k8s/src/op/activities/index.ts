@@ -11,7 +11,7 @@
  * dependency-light — it shells out to a CLI and does not import the k8s declarable
  * surface — so a Temporal worker loads it cheaply.
  */
-export { kubectlApply } from "./kubectl";
+export { kubectlApply, readManifestDocuments } from "./kubectl";
 export type { KubectlApplyArgs } from "./kubectl";
 
 export { k3dUp, k3dDown, k3dUpCommand, k3dDownCommand, k3dExistsCommand } from "./k3d";
@@ -23,6 +23,7 @@ export type { WaitForArgoSyncArgs, ArgoAppStatus, ArgoStatusFetcher } from "./ar
 export {
   waitForReady,
   defaultResourceFetcher,
+  apiResourceFetcher,
   ReadinessFailedError,
   readinessFor,
   isReady,

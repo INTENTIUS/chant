@@ -34,6 +34,13 @@ export interface CRDSource {
 export interface CRDSpec {
   /** API group (e.g. "cert-manager.io") */
   group: string;
+  /**
+   * Whether instances are namespaced. Declared by the CRD itself, so it is the
+   * authoritative source for a custom resource's scope — the equivalent of what
+   * the OpenAPI `paths` say for built-in kinds (chant #1074). Defaults to
+   * `Namespaced`, matching the API server's own default.
+   */
+  scope?: "Namespaced" | "Cluster";
   /** Name variants for the CRD */
   names: {
     kind: string;

@@ -72,8 +72,18 @@ export interface ResolvedClusterTarget {
   source: "bound" | "ambient";
 }
 
+/**
+ * How the resolver learns which context is ambient. The default shells
+ * `kubectl config current-context`; the k8s lexicon's typed API client
+ * (chant #1074) supplies one that reads the parsed kubeconfig instead, so a
+ * client that never needs the `kubectl` binary does not acquire a dependency
+ * on it just to check the binding. Both answer the same question, so the
+ * refusal semantics below are identical either way.
+ */
+export type AmbientContextReader = () => Promise<string | undefined>;
+
 /** Reads `kubectl config current-context`. Returns undefined if unset or kubectl fails. */
-async function currentAmbientContext(): Promise<string | undefined> {
+const currentAmbientContext: AmbientContextReader = async () => {
   try {
     const { stdout } = await execAsync("kubectl config current-context");
     const trimmed = stdout.trim();
@@ -81,6 +91,15 @@ async function currentAmbientContext(): Promise<string | undefined> {
   } catch {
     return undefined;
   }
+};
+
+/** Options for {@link resolveClusterTarget}. */
+export interface ResolveClusterTargetOptions {
+  /**
+   * Override how the ambient context is read. Defaults to
+   * `kubectl config current-context`.
+   */
+  ambientContext?: AmbientContextReader;
 }
 
 /**
@@ -105,6 +124,7 @@ export async function resolveClusterTarget(
   config: Record<string, unknown>,
   environment: string,
   lexiconName: string,
+  options: ResolveClusterTargetOptions = {},
 ): Promise<ResolvedClusterTarget> {
   const k8sConfig = config.k8s as K8sConfigShape | undefined;
   const bound = k8sConfig?.profiles?.[environment]?.context;
@@ -118,7 +138,7 @@ export async function resolveClusterTarget(
     return { source: "ambient" };
   }
 
-  const ambient = await currentAmbientContext();
+  const ambient = await (options.ambientContext ?? currentAmbientContext)();
   if (ambient && ambient !== bound) {
     throw new ClusterBindingMismatchError(environment, bound, ambient);
   }

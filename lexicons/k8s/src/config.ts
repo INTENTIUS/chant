@@ -60,4 +60,21 @@ export interface K8sClusterProfile {
 export interface K8sChantConfig {
   /** Named environment → cluster bindings, keyed by environment name. */
   profiles?: Record<string, K8sClusterProfile>;
+  /**
+   * Exec credential-plugin commands chant may execute (chant #1074).
+   *
+   * On EKS, AKS and GKE, kubeconfig authentication is a subprocess:
+   * `aws eks get-token`, `kubelogin`, `gke-gcloud-auth-plugin`. Those three
+   * plus `kubectl` are allowed by default. Anything else the kubeconfig names
+   * is refused, because an exec plugin is an arbitrary binary named in a file
+   * chant did not write. Setting this **replaces** the default list.
+   *
+   * ```ts
+   * k8s: {
+   *   profiles: { prod: { context: "prod-eks" } },
+   *   execCredentialPlugins: ["aws", "my-org-oidc-helper"],
+   * } satisfies K8sChantConfig
+   * ```
+   */
+  execCredentialPlugins?: string[];
 }

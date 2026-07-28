@@ -7,6 +7,15 @@ A hand-curated rollup of capabilities shipped recently. If you learned chant bef
 
 For the day-to-day reference docs see [Lifecycle Models](/chant/concepts/lifecycle-models/), [`chant lifecycle`](/chant/cli/lifecycle/), [Live Import](/chant/guide/live-import/), [Reconciling Lifecycle](/chant/guide/reconciling-lifecycle/), [Drift Detection](/chant/concepts/drift-detection/), and [Implementing Observation](/chant/lexicon-authoring/observation/).
 
+## A Kubernetes runtime surface
+
+The k8s lexicon had chant's strongest authoring surface and its weakest runtime one: `describeResources()` shelled `kubectl get` once per declared entity, serially, through a hardcoded twenty-entry map that warn-skipped every CRD. `lifecycle diff --live`, `lifecycle plan` and behold's overlay all inherited that cap. It now reads through a typed API client in its own package — coverage from the same codegen pass that emits the declarable classes (180-odd types, CRDs included) confirmed against the cluster's own API discovery, concurrent reads, and failures carrying the API server's `code` and `reason` instead of a parsed stderr line. A Temporal worker running `kubectlApply` or `waitForReady` no longer needs a `kubectl` binary. See [The Kubernetes API client](/chant/lexicons/k8s/api-client/).
+
+| # | Capability |
+|---|---|
+| [#1073](https://github.com/INTENTIUS/chant/issues/1073) | The epic — what a Kubernetes runtime surface is for (`managedFields`, `ownerReferences`, events/conditions) and what it deliberately is not (no applying operator, no kubectl clone) |
+| [#1074](https://github.com/INTENTIUS/chant/issues/1074) | The typed API client — `kubectl` shell-outs retired from observation, live export, `kubectlApply` and `waitForReady`; exec credential plugins allowlisted, cached and recorded; the client kept off the build path structurally |
+
 ## Provisioned infrastructure diagrams
 
 The newest thread. `chant graph` gained a **live** data source: `chant graph --live --env <name>` graphs the *actually-provisioned* infrastructure, not the declared source — nodes from each lexicon's observation, **edges reconstructed** from the live references between resources (a subnet's VPC, an ALB's target group), and **containment** (VPC ⊃ subnet ⊃ resource) as boundary structure. `--overlay` classifies each resource against declared source — managed / foreign / pending — so the diagram shows drift. The companion painter, [pinhole](https://github.com/INTENTIUS/pinhole), renders the result as an AWS-style architecture diagram. AWS is enriched from the deployed CloudFormation template, so a managed AWS stack draws its real topology. Scope is managed-only (owned resources); a full-account scan is the natural next phase. See [`chant graph --live`](/chant/cli/graph/) and [Implementing Observation](/chant/lexicon-authoring/observation/) for the lexicon-author hooks.
