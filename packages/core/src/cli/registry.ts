@@ -95,6 +95,8 @@ export interface ParsedArgs {
   detail?: number;
   /** `chant graph --lens <kind>:<target>` — focus the graph IR on a slice */
   lens?: string;
+  /** `chant search --show a,b` — extra attributes to include per matched row (#1139). */
+  show?: string;
   /** `chant graph --lens blast:<node> --up` — include upstream producers */
   up?: boolean;
   /** `chant graph --lens blast:<node> --down` — include downstream dependents */
