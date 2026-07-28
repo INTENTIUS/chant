@@ -118,6 +118,14 @@ export interface ParsedArgs {
   theme?: string;
   /** `chant dev surface-diff --update-snapshot` — write the fresh snapshot as the new baseline */
   updateSnapshot?: boolean;
+  /**
+   * `chant lifecycle diff <env> --live --update-baseline` (#1014) — record every
+   * property-level deviation this run reports as *accepted*, so it stops
+   * re-alerting. Value-bound: a later change to the accepted value is drift
+   * again. Writes `<env>/observation-baseline.json` on the chant/lifecycle
+   * orphan branch; never touches the cloud.
+   */
+  updateBaseline?: boolean;
   /** `chant dev surface-diff --run-examples` — also run the example build harness */
   runExamples?: boolean;
   /** `chant dev surface-diff --pinned-digest <file>` — path to SHA-256 digest file for supply-chain verification */

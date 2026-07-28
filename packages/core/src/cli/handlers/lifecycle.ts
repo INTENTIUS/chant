@@ -1,7 +1,19 @@
 import { resolve } from "node:path";
 import { build } from "../../build";
 import { takeSnapshot } from "../../lifecycle/snapshot";
-import { readSnapshot, readSnapshotAt, readEnvironmentSnapshots, listSnapshots, fetchLifecycle, snapshotStorageKey, StaleLifecycleBranchError } from "../../lifecycle/git";
+import { readSnapshot, readSnapshotAt, readEnvironmentSnapshots, listSnapshots, fetchLifecycle, pushLifecycle, snapshotStorageKey, StaleLifecycleBranchError } from "../../lifecycle/git";
+import { deepDiffForLexicon } from "../../lifecycle/deep-observe";
+import { countPropertyDrift, type DeepDiffResult } from "../../lifecycle/deep-diff";
+import {
+  acceptDeviations,
+  baselineForLexicon,
+  emptyBaseline,
+  readObservationBaseline,
+  writeObservationBaseline,
+  OBSERVATION_BASELINE_FILE,
+  type DeviationToAccept,
+  type ObservationBaseline,
+} from "../../lifecycle/observation-baseline";
 import { computeBuildDigest, diffDigests } from "../../lifecycle/digest";
 import { diffLive, diffLiveArtifacts, diffSnapshots, type LiveDiffResult, type LiveArtifactDiffResult, type SnapshotDiffResult } from "../../lifecycle/live-diff";
 import { buildChangeSet, renderChangeSet, gitlabMrReport, summarize, type ChangeSet } from "../../lifecycle/change-set";
@@ -287,6 +299,12 @@ export async function runLifecycleDiff(ctx: CommandContext): Promise<number> {
   let totalChecked = 0;
   let anyBuildError = false;
 
+  // Accepted-deviation baseline (#1014). Read once for the whole run — it is
+  // env-keyed, not stack-keyed, and every deep pass subtracts from the same
+  // committed set. Absent is the normal state (nothing accepted yet).
+  const baseline = args.live ? await readObservationBaseline(environment) : null;
+  const accepted: Record<string, DeviationToAccept[]> = {};
+
   // #1166 — an environment can declare its own endpoint (a local emulator like
   // Floci), so `--live` is self-sufficient even when the ambient shell never
   // exported e.g. AWS_ENDPOINT_URL. Ambient always wins when it's already set.
@@ -324,10 +342,23 @@ export async function runLifecycleDiff(ctx: CommandContext): Promise<number> {
             // no components / discovery failed → single-stack observe path
           }
         }
-        const r = await runLifecycleDiffLive({ environment, lexicons, plugins, buildResult, json, stack: target.stack, componentStacks });
+        const r = await runLifecycleDiffLive({
+          environment,
+          lexicons,
+          plugins,
+          buildResult,
+          json,
+          stack: target.stack,
+          componentStacks,
+          baseline,
+          updateBaseline: args.updateBaseline,
+        });
         totalDrift += r.totalDrift;
         totalUnobserved += r.totalUnobserved;
         totalChecked += r.totalLexiconsChecked;
+        for (const [lexicon, deviations] of Object.entries(r.toAccept)) {
+          (accepted[lexicon] ??= []).push(...deviations);
+        }
         if (json) {
           if (target.stack) perStackJson[target.stack] = r.byLexicon;
           else combinedLexiconsJson = r.byLexicon;
@@ -335,6 +366,13 @@ export async function runLifecycleDiff(ctx: CommandContext): Promise<number> {
       } else {
         await runLifecycleDiffDigest({ environment, lexicons, buildResult, stack: target.stack });
       }
+    }
+
+    // `--update-baseline` (#1014): record what the deep pass just reported as
+    // accepted, so it stops re-alerting. Runs before the summary lines so the
+    // "no drift" verdict below still describes the run that produced it.
+    if (args.live && args.updateBaseline) {
+      await recordAcceptedBaseline(environment, baseline, accepted, json);
     }
 
     if (args.live) {
@@ -369,6 +407,50 @@ export async function runLifecycleDiff(ctx: CommandContext): Promise<number> {
     return anyBuildError ? 1 : 0;
   } finally {
     endpointResult.restore();
+  }
+}
+
+/**
+ * Write the accepted-deviation baseline (#1014) for everything the deep pass
+ * reported this run, and push it on the same orphan branch the snapshots use.
+ *
+ * Acceptance is a deliberate, committed act — that is the whole difference
+ * between this and a suppression flag — so the write is loud: it names the
+ * count and the storage path, and a failed push says so rather than leaving
+ * the operator believing the team's baseline moved.
+ */
+async function recordAcceptedBaseline(
+  environment: string,
+  existing: ObservationBaseline | null,
+  accepted: Record<string, DeviationToAccept[]>,
+  json: boolean,
+): Promise<void> {
+  const total = Object.values(accepted).reduce((n, d) => n + d.length, 0);
+  if (total === 0) {
+    if (!json) {
+      console.error(formatWarning({
+        message: "--update-baseline: nothing to accept — no property-level deviations were reported",
+      }));
+    }
+    return;
+  }
+  let next = existing ?? emptyBaseline(environment);
+  for (const [lexicon, deviations] of Object.entries(accepted)) {
+    next = acceptDeviations(next, lexicon, deviations);
+  }
+  try {
+    await writeObservationBaseline(next);
+    const pushed = await pushLifecycle();
+    if (!json) {
+      console.error(formatSuccess(
+        `--update-baseline: accepted ${total} deviation(s) into ${environment}/${OBSERVATION_BASELINE_FILE} on chant/lifecycle` +
+          (pushed ? " (pushed)" : " (local only — no remote configured or push refused)"),
+      ));
+    }
+  } catch (err) {
+    console.error(formatError({
+      message: `--update-baseline: could not write the baseline — ${err instanceof Error ? err.message : String(err)}`,
+    }));
   }
 }
 
@@ -494,6 +576,10 @@ interface LiveDiffArgs {
    * union (the same fix graph/plan use), else every deployed resource reads as
    * "missing". Empty → the single-stack observe path. */
   componentStacks?: string[];
+  /** Accepted-deviation baseline for this environment (#1014), or null when none is recorded. */
+  baseline: ObservationBaseline | null;
+  /** `--update-baseline`: accept everything the deep pass reports this run. */
+  updateBaseline?: boolean;
 }
 
 interface LiveDiffOutcome {
@@ -504,6 +590,8 @@ interface LiveDiffOutcome {
       observed?: Record<string, ResourceMetadata>;
       /** Declared entities the lexicon could not read (#1089), keyed by name. */
       unobserved?: Record<string, UnobservedEntity>;
+      /** Property-level drift (#1014), present only for lexicons with a deep reader. */
+      deep?: DeepDiffResult;
       artifacts?: LiveArtifactDiffResult;
     }
   >;
@@ -511,6 +599,8 @@ interface LiveDiffOutcome {
   /** Declared entities nobody could read. Not drift — a hole in the report. */
   totalUnobserved: number;
   totalLexiconsChecked: number;
+  /** Deviations `--update-baseline` should record, per lexicon. */
+  toAccept: Record<string, DeviationToAccept[]>;
 }
 
 /**
@@ -576,6 +666,7 @@ async function runLifecycleDiffLive(args: LiveDiffArgs): Promise<LiveDiffOutcome
   let totalUnobserved = 0;
   let totalLexiconsChecked = 0;
   const byLexicon: LiveDiffOutcome["byLexicon"] = {};
+  const toAccept: Record<string, DeviationToAccept[]> = {};
   if (!args.json && args.stack) console.log(`\n${formatBold(`■ stack ${args.stack}`)}`);
 
   for (const lexiconName of args.lexicons) {
@@ -644,6 +735,27 @@ async function runLifecycleDiffLive(args: LiveDiffArgs): Promise<LiveDiffOutcome
         if (Object.keys(observed.unobserved).length > 0) entry.unobserved = observed.unobserved;
       } else renderLiveDiff(lexiconName, args.environment, diff);
       lexiconChecked = true;
+
+      // ── Deep path (property-level, #1014) ───────────────────────────────
+      // Gated purely on the capability: a lexicon without a deep reader is
+      // completely unaffected, including its output.
+      if (plugin.observeResourcesDeep) {
+        const deep = await deepDiffForLexicon(plugin, {
+          environment: args.environment,
+          buildOutput,
+          entities,
+          stack: args.stack,
+          componentStacks: args.componentStacks,
+          baseline: baselineForLexicon(args.baseline, lexiconName),
+        });
+        totalDrift += countPropertyDrift(deep);
+        // Only count a deep hole for an entity the thin read *did* resolve —
+        // otherwise one unreadable entity is counted twice.
+        totalUnobserved += deep.unobserved.filter((u) => !observed.unobserved[u.name]).length;
+        if (args.updateBaseline) toAccept[lexiconName] = deviationsToAccept(deep);
+        if (args.json) (byLexicon[lexiconName] ??= {}).deep = deep;
+        else renderDeepDiff(lexiconName, deep);
+      }
     }
 
     // ── Artifacts path (context-keyed) ─────────────────────────────────────
@@ -668,7 +780,76 @@ async function runLifecycleDiffLive(args: LiveDiffArgs): Promise<LiveDiffOutcome
     if (lexiconChecked) totalLexiconsChecked++;
   }
 
-  return { byLexicon, totalDrift, totalUnobserved, totalLexiconsChecked };
+  return { byLexicon, totalDrift, totalUnobserved, totalLexiconsChecked, toAccept };
+}
+
+/**
+ * Everything a deep diff reported this run, as deviations to record accepted.
+ * `--update-baseline` accepts what was *reported*, never what was already
+ * suppressed — re-accepting an unchanged suppression would rewrite its
+ * `recordedAt` on every run and turn the baseline into a churn file.
+ */
+function deviationsToAccept(deep: DeepDiffResult): DeviationToAccept[] {
+  const out: DeviationToAccept[] = [];
+  for (const entity of deep.drifted) {
+    for (const change of entity.changes) {
+      // Only a value that is actually live can be accepted: `absent` means the
+      // cloud does not carry the declared property, which is a finding to fix
+      // in source or in the cloud, not a value to bless.
+      if (!("live" in change)) continue;
+      out.push({ entity: entity.name, type: entity.type, path: change.path, value: change.live });
+    }
+  }
+  return out;
+}
+
+/** Property-level drift report (#1014). Silent when a lexicon's deep read found nothing to say. */
+function renderDeepDiff(lexiconName: string, deep: DeepDiffResult): void {
+  const drift = countPropertyDrift(deep);
+  if (
+    drift === 0 &&
+    deep.accepted.length === 0 &&
+    deep.unobserved.length === 0 &&
+    deep.undeclaredEntities.length === 0
+  ) {
+    return;
+  }
+
+  const acceptedCount = deep.accepted.reduce((n, e) => n + e.changes.length, 0);
+  console.log(`\n${formatBold(`${lexiconName} (properties)`)}`);
+  console.log(
+    `${drift} property drift across ${deep.drifted.length} resource(s), ` +
+      `${acceptedCount} accepted, ${deep.unchanged.length} unchanged` +
+      (deep.unobserved.length > 0 ? `, ${deep.unobserved.length} unobserved` : ""),
+  );
+  console.log("-".repeat(80));
+
+  if (deep.unobserved.length > 0) {
+    console.log(formatBold("\nPROPERTIES UNOBSERVED (declared; the deep read could not look):"));
+    for (const u of deep.unobserved) console.log(`  ? ${formatUnobserved(u.name, u)}`);
+  }
+  if (deep.drifted.length > 0) {
+    console.log(formatBold("\nPROPERTY DRIFT (declared vs live; baseline shown where one exists):"));
+    for (const entity of deep.drifted) {
+      console.log(`  - ${entity.name} (${entity.type})`);
+      for (const change of entity.changes) {
+        const declared = "declared" in change ? formatValue(change.declared) : "<undeclared>";
+        const live = "live" in change ? formatValue(change.live) : "<absent>";
+        const baseline = "baseline" in change ? ` [accepted: ${formatValue(change.baseline)}]` : "";
+        console.log(`      ${change.path}: ${declared} → ${live}${baseline}`);
+      }
+    }
+  }
+  if (deep.undeclaredEntities.length > 0) {
+    console.log(formatBold("\nUNDECLARED (read deeply, never declared in source):"));
+    for (const name of deep.undeclaredEntities) console.log(`  - ${name}`);
+  }
+  if (acceptedCount > 0) {
+    console.log(formatBold("\nACCEPTED (in the baseline; not drift):"));
+    for (const entity of deep.accepted) {
+      console.log(`  - ${entity.name}: ${entity.changes.map((c) => c.path).join(", ")}`);
+    }
+  }
 }
 
 function renderLiveDiff(lexiconName: string, environment: string, diff: LiveDiffResult): void {

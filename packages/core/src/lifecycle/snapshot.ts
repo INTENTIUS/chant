@@ -10,16 +10,11 @@ import { computeBuildDigest } from "./digest";
 import { writeSnapshot, snapshotStorageKey, getHeadCommit, pushLifecycle } from "./git";
 import { sortedJsonReplacer } from "../utils";
 import { formatUnobserved, normalizeObservation, unobservedAll, type UnobservedEntity } from "../observation";
-
-/** Patterns in attribute names that suggest sensitive data. */
-const SENSITIVE_PATTERNS = [
-  /password/i,
-  /secret/i,
-  /token/i,
-  /private.?key/i,
-  /credential/i,
-  /connection.?string/i,
-];
+// One list of secret-bearing property names for both observation depths
+// (#1014): the thin path warns on them here, the deep path masks them before a
+// property tree is ever rendered or committed. Two lists would eventually
+// disagree about what counts as a secret.
+import { isSensitiveKey } from "../deep-observation";
 
 /**
  * Check for potential sensitive data in resource attributes and return warnings.
@@ -31,7 +26,7 @@ function checkSensitiveData(
   for (const [name, meta] of Object.entries(resources)) {
     if (!meta.attributes) continue;
     for (const attrName of Object.keys(meta.attributes)) {
-      if (SENSITIVE_PATTERNS.some((p) => p.test(attrName))) {
+      if (isSensitiveKey(attrName)) {
         warnings.push(
           `Potential sensitive data in ${name}.attributes.${attrName} — ensure it is scrubbed`,
         );

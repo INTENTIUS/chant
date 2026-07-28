@@ -49,6 +49,7 @@ export * from "./import/parser";
 export * from "./import/generator";
 export * from "./lexicon";
 export * from "./observation";
+export * from "./deep-observation";
 export * from "./lexicon-integrity";
 export * from "./lexicon-manifest";
 export * from "./lexicon-schema";
