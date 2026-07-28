@@ -1,4 +1,4 @@
-import { describe, test, expect } from "vitest";
+import { describe, test, expect, vi } from "vitest";
 import { existsSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
@@ -210,5 +210,62 @@ describe("k8sPlugin", () => {
 
   test("package() method exists", () => {
     expect(typeof k8sPlugin.package).toBe("function");
+  });
+
+  // chant #1078 — the command-group seam's first real tenant: `commands()`
+  // mounts a "kube" verb group, reserving the namespace #1079's `chant kube`
+  // terminal surface will add its own verbs to.
+  describe("commands() — the `kube` command group (#1078)", () => {
+    test("contributes a group named kube with a version verb", () => {
+      const group = k8sPlugin.commands!();
+      expect(group.name).toBe("kube");
+      expect(group.commands.map((c) => c.name)).toContain("version");
+    });
+
+    test("kube version prints the pinned K8S_SCHEMA_VERSION", async () => {
+      const { K8S_SCHEMA_VERSION } = await import("./spec/fetch");
+      const group = k8sPlugin.commands!();
+      const version = group.commands.find((c) => c.name === "version")!;
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+      try {
+        const exitCode = await version.handler({ verb: "version", rawArgs: [] });
+        expect(exitCode).toBe(0);
+        expect(logSpy).toHaveBeenCalledWith(K8S_SCHEMA_VERSION);
+      } finally {
+        logSpy.mockRestore();
+      }
+    });
+
+    test("kube version --format json emits a JSON envelope", async () => {
+      const { K8S_SCHEMA_VERSION } = await import("./spec/fetch");
+      const group = k8sPlugin.commands!();
+      const version = group.commands.find((c) => c.name === "version")!;
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+      try {
+        const exitCode = await version.handler({ verb: "version", rawArgs: ["--format", "json"] });
+        expect(exitCode).toBe(0);
+        expect(logSpy).toHaveBeenCalledWith(JSON.stringify({ schemaVersion: K8S_SCHEMA_VERSION }));
+      } finally {
+        logSpy.mockRestore();
+      }
+    });
+
+    test("kube version --format=json (joined form, #1127 discipline) works identically", async () => {
+      const group = k8sPlugin.commands!();
+      const version = group.commands.find((c) => c.name === "version")!;
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+      try {
+        await version.handler({ verb: "version", rawArgs: ["--format=json"] });
+        expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("schemaVersion"));
+      } finally {
+        logSpy.mockRestore();
+      }
+    });
+
+    test("kube version rejects an unknown flag (#1127 discipline applies to mounted commands)", async () => {
+      const group = k8sPlugin.commands!();
+      const version = group.commands.find((c) => c.name === "version")!;
+      await expect(version.handler({ verb: "version", rawArgs: ["--bogus"] })).rejects.toThrow(/Unknown flag: --bogus/);
+    });
   });
 });

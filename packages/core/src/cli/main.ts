@@ -27,6 +27,8 @@ import { runComponentsStatus, runComponentsReleaseRecord, runComponentsUnknown }
 import { runGraph } from "./handlers/graph";
 import { runOp, runOpList, runOpStatus, runOpSignal, runOpCancel, runOpLog } from "./handlers/run";
 import { runEmulator } from "./handlers/emulator";
+import { splitJoinedFlags, dispatchCommandGroup, collectCommandGroups, formatCommandGroupsHelp, type CommandGroup } from "./command-group";
+import type { LexiconPlugin } from "../lexicon";
 
 /**
  * Long-form flags that are pure booleans in {@link parseArgs} — their branch
@@ -118,31 +120,24 @@ export function parseArgs(args: string[]): ParsedArgs {
     env: undefined,
   };
 
+  // chant #1127 — generic joined `--flag=value` support, factored out to
+  // ./command-group.ts (chant #1078) so a lexicon's own mounted command can
+  // apply the identical splitting discipline to its own flag vocabulary.
+  // Every value-taking flag below is matched by an exact `arg === "--flag"`
+  // check and then consumes the *next* array element (`args[++i]`) as its
+  // value; a joined token like `--env=prod` never matches any of those,
+  // doesn't match the trailing positional branch either (it starts with
+  // `-`), and used to vanish with no error. Splitting the token at its FIRST
+  // `=` and re-dispatching as two array elements makes every flag below see
+  // the exact shape it already handles — including a flag like `--param`
+  // whose own value legitimately contains `=` (`--param=tier=production`
+  // splits to flag `--param`, value `tier=production`, not further split on
+  // the second `=`).
+  args = splitJoinedFlags(args, BOOLEAN_FLAGS);
+
   let i = 0;
   while (i < args.length) {
-    let arg = args[i];
-
-    // chant #1127 — generic joined `--flag=value` support. Every value-taking
-    // flag below is matched by an exact `arg === "--flag"` check and then
-    // consumes the *next* array element (`args[++i]`) as its value; a joined
-    // token like `--env=prod` never matches any of those, doesn't match the
-    // trailing positional branch either (it starts with `-`), and used to
-    // vanish with no error. Splitting the token at its FIRST `=` and
-    // re-dispatching as two array elements makes every flag below see the
-    // exact shape it already handles — including a flag like `--param`
-    // whose own value legitimately contains `=` (`--param=tier=production`
-    // splits to flag `--param`, value `tier=production`, not further split
-    // on the second `=`).
-    if (arg.startsWith("--") && arg.includes("=")) {
-      const eq = arg.indexOf("=");
-      const flag = arg.slice(0, eq);
-      const value = arg.slice(eq + 1);
-      if (BOOLEAN_FLAGS.has(flag)) {
-        throw new Error(`${arg} — ${flag} is a boolean flag and does not take a value. Pass ${flag} on its own.`);
-      }
-      args.splice(i, 1, flag, value);
-      arg = args[i];
-    }
+    const arg = args[i];
 
     if (arg === "--help" || arg === "-h") {
       result.help = true;
@@ -348,9 +343,12 @@ export function parseArgs(args: string[]): ParsedArgs {
 }
 
 /**
- * Print help message
+ * Print help message. `groups` — lexicon-contributed command groups
+ * (chant #1078), best-effort loaded from the current project; composed in
+ * below the static command list so `--help` lists every mounted verb group
+ * alongside core's own commands.
  */
-function printHelp(): void {
+function printHelp(groups: CommandGroup[] = []): void {
   console.log(`
 chant - Declarative infrastructure specification toolkit
 
@@ -575,6 +573,60 @@ Examples:
   chant describe myComponent src/
   chant describe myComponent src/ --format json
 `);
+  const groupsHelp = formatCommandGroupsHelp(groups);
+  if (groupsHelp) console.log(groupsHelp);
+}
+
+/**
+ * Best-effort load the current project's lexicon plugins for a purely
+ * read-only lookup (help composition, plugin-command dispatch) — never
+ * throws, empty on any failure (no config, no lexicons, not a chant
+ * project at all). Mirrors the existing best-effort loading already used
+ * for `emulator`/`components status` in {@link main} below.
+ */
+async function loadPluginsBestEffort(): Promise<LexiconPlugin[]> {
+  try {
+    const lexiconNames = await resolveProjectLexicons(resolve("."));
+    return await loadPlugins(lexiconNames);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * chant #1078 — the lexicon command-group seam's dispatch-time half. Core's
+ * own `parseArgs`/`resolveCommand` know nothing about a lexicon's mounted
+ * verbs, so this is only ever consulted after BOTH of those have already
+ * failed to make sense of the invocation: either `parseArgs` threw on a flag
+ * it doesn't recognize (which is *expected* for a mounted command's own
+ * vocabulary — core has none), or it parsed fine but `resolveCommand` found
+ * no match in the static registry (a mounted command with no extra flags,
+ * e.g. `chant kube version`). Either way, a lexicon-mounted command's group
+ * name and verb are always the first two CLI tokens (mirrors the `emulator
+ * <up|down|status>` compound shape from #920), so `rawArgv` — the untouched
+ * `process.argv.slice(2)` — is all this needs; nothing from the partially or
+ * fully parsed `ParsedArgs` is used, on purpose, since core's flag-parsing
+ * failure or success is irrelevant to a namespace it doesn't own.
+ *
+ * Returns `undefined` when nothing claims the leading token as a command
+ * group at all, so the caller falls back to its own error handling
+ * unchanged — a project with no lexicon exposing `commands()` (or none of
+ * its plugins matching) is completely unaffected.
+ */
+async function tryPluginCommand(rawArgv: string[]): Promise<number | undefined> {
+  const [groupName, verbName] = rawArgv;
+  if (!groupName || groupName.startsWith("-")) return undefined;
+
+  const plugins = await loadPluginsBestEffort();
+  const rawArgs = rawArgv.slice(2);
+  const result = await dispatchCommandGroup(plugins, groupName, verbName, rawArgs);
+
+  if (result.kind === "no-group") return undefined;
+  if (result.kind === "usage-error") {
+    console.error(formatError({ message: result.message, hint: result.hint }));
+    return 1;
+  }
+  return result.exitCode;
 }
 
 /**
@@ -688,10 +740,29 @@ const registry: CommandDef[] = [
  * Main entry point
  */
 async function main(): Promise<void> {
-  const args = parseArgs(process.argv.slice(2));
+  const rawArgv = process.argv.slice(2);
+
+  let args: ParsedArgs;
+  try {
+    args = parseArgs(rawArgv);
+  } catch (err) {
+    // chant #1078 — core's parser has no idea what flags a lexicon's own
+    // mounted verb accepts, so an "unknown flag" here is expected, not a
+    // real error, until we've checked whether this invocation actually
+    // targets a command group. `tryPluginCommand` returns `undefined` when
+    // nothing claims the leading token, in which case this was a genuine
+    // core-flag error and the original is rethrown unchanged.
+    const code = await tryPluginCommand(rawArgv);
+    if (code !== undefined) {
+      await flushAndExit(code);
+      return;
+    }
+    throw err;
+  }
 
   if (args.help || !args.command) {
-    printHelp();
+    const groups = await loadPluginsBestEffort().then(collectCommandGroups).catch(() => []);
+    printHelp(groups);
     process.exit(args.help ? 0 : 1);
   }
 
@@ -742,6 +813,15 @@ async function main(): Promise<void> {
 
   const match = resolveCommand(args, registry);
   if (!match) {
+    // chant #1078 — not one of core's own commands; check whether a lexicon
+    // mounted a command group under this name before giving up. This is the
+    // "parsed fine, matched nothing" trigger for the seam — the flag-error
+    // trigger is above, in the `parseArgs` catch block.
+    const code = await tryPluginCommand(rawArgv);
+    if (code !== undefined) {
+      await flushAndExit(code);
+      return;
+    }
     console.error(formatError({
       message: `Unknown command: ${args.command}`,
       hint: 'Run "chant --help" to see available commands',
