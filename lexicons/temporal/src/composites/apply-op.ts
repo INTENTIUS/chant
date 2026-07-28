@@ -59,6 +59,18 @@ export interface ApplyOpConfig {
    * (kubectl, ARM); `false` to disable.
    */
   compensate?: boolean | { command?: string };
+  /**
+   * kubectl target only (chant #1075). Let the server-side apply take
+   * ownership of fields another field manager already owns, instead of failing
+   * with a conflict naming them.
+   *
+   * Off unless set, and chant never turns it on by itself — a conflict means
+   * something else in the cluster believes it owns that field, and deciding
+   * otherwise is a deliberate act. Set it when chant is meant to be the
+   * authority for those fields (adopting objects a previous `kubectl apply`
+   * created is the usual case).
+   */
+  forceConflicts?: boolean;
   /** Override the task queue. Defaults to `name`. */
   taskQueue?: string;
 }
@@ -101,7 +113,19 @@ export function ApplyOp(config: ApplyOpConfig): ApplyOpResources {
 
   phases.push(
     phase("Apply", [
-      activity("nativeApply", { target, env: config.env, output, deleteMode }, "longInfra"),
+      activity(
+        "nativeApply",
+        {
+          target,
+          env: config.env,
+          output,
+          deleteMode,
+          // Only present when the author asked for it, so an Op that does not
+          // mention conflicts serializes exactly as it always has.
+          ...(config.forceConflicts !== undefined ? { forceConflicts: config.forceConflicts } : {}),
+        },
+        "longInfra",
+      ),
     ]),
   );
 

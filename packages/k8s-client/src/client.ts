@@ -44,6 +44,8 @@ import {
   UnknownResourceError,
 } from "./errors";
 import { assertExecCredentialAllowed, credentialPathOf, DEFAULT_EXEC_ALLOWLIST } from "./credentials";
+import { asFieldManagerConflict } from "./conflict";
+import { assertValidFieldManager, CHANT_FIELD_MANAGER } from "./field-manager";
 import { DEFAULT_CONCURRENCY, mapConcurrent } from "./concurrency";
 import type {
   ApiResourceInfo,
@@ -120,16 +122,39 @@ export interface ReadOptions {
 
 /** Options for {@link K8sClient.apply}. */
 export interface ApplyOptions {
-  /** Field manager recorded on the objects this apply owns. Default `chant`. */
+  /**
+   * Field manager recorded on the fields this apply owns. Defaults to the bare
+   * `chant`; the k8s lexicon passes the stack-qualified `chant:<stack>` derived
+   * by {@link import("./field-manager").fieldManagerFor} (chant #1075).
+   */
   fieldManager?: string;
   /**
    * Take ownership of fields another manager owns instead of failing with a
-   * 409. Default false — chant #1075 is where the conflict surface proper
-   * lives; here a conflict simply arrives as a typed {@link K8sApiError}.
+   * {@link import("./conflict").FieldManagerConflictError}. **Default false,
+   * and nothing in chant sets it for you** — transferring ownership of a live
+   * field is a decision, not a retry (chant #1075).
    */
   force?: boolean;
   /** Server-side dry run — validates and returns the result, persists nothing. */
   dryRun?: boolean;
+  signal?: AbortSignal;
+}
+
+/** Options for {@link K8sClient.delete}. */
+export interface DeleteOptions {
+  /** `Foreground`, `Background` or `Orphan`. Omitted leaves the server's default. */
+  propagationPolicy?: "Foreground" | "Background" | "Orphan";
+  /** Server-side dry run — validates, deletes nothing. */
+  dryRun?: boolean;
+  signal?: AbortSignal;
+}
+
+/** Options for {@link K8sClient.list}. */
+export interface ListOptions {
+  /** Restrict to one namespace. Omitted lists across all of them. */
+  namespace?: string;
+  /** A label selector, e.g. `app.kubernetes.io/managed-by=chant`. */
+  labelSelector?: string;
   signal?: AbortSignal;
 }
 
@@ -149,10 +174,12 @@ export interface K8sClient {
   read(ref: ObjectRef, options?: ReadOptions): Promise<K8sObject>;
   /** GET one object, returning undefined instead of throwing on a 404. */
   readIfPresent(ref: ObjectRef, options?: ReadOptions): Promise<K8sObject | undefined>;
-  /** LIST a kind, optionally namespaced. Follows `continue` tokens. */
-  list(selector: ResourceSelector, options?: { namespace?: string; signal?: AbortSignal }): Promise<K8sObject[]>;
+  /** LIST a kind, optionally namespaced and label-filtered. Follows `continue` tokens. */
+  list(selector: ResourceSelector, options?: ListOptions): Promise<K8sObject[]>;
   /** Server-side apply one object. Creates it when absent. */
   apply(object: K8sObject, options?: ApplyOptions): Promise<K8sObject>;
+  /** DELETE one object. Throws {@link K8sApiError} with `notFound` when absent. */
+  delete(ref: ObjectRef, options?: DeleteOptions): Promise<void>;
   /** Run `fn` over `items` with this client's concurrency ceiling. */
   concurrently<T, R>(items: readonly T[], fn: (item: T, index: number) => Promise<R>): Promise<R[]>;
   /** The API resource lists discovery has been asked for so far, for tests and diagnostics. */
@@ -475,14 +502,14 @@ export async function createK8sClient(options: K8sClientOptions = {}): Promise<K
     }
   }
 
-  async function list(
-    selector: ResourceSelector,
-    opts: { namespace?: string; signal?: AbortSignal } = {},
-  ): Promise<K8sObject[]> {
+  async function list(selector: ResourceSelector, opts: ListOptions = {}): Promise<K8sObject[]> {
     const info = await resolveOrThrow(selector, opts.signal);
     const items: K8sObject[] = [];
     let cont: string | undefined;
     do {
+      const query: Record<string, string> = {};
+      if (cont) query.continue = cont;
+      if (opts.labelSelector) query.labelSelector = opts.labelSelector;
       const page = await sendJson<{ items?: K8sObject[]; metadata?: { continue?: string } }>(
         // Omitting the namespace segment lists across all namespaces, which is
         // what `kubectl get <kind> -A` does and what the import path wants.
@@ -492,7 +519,7 @@ export async function createK8sClient(options: K8sClientOptions = {}): Promise<K
         "GET",
         {
           signal: opts.signal,
-          query: cont ? { continue: cont } : undefined,
+          query: Object.keys(query).length > 0 ? query : undefined,
           target: `list ${selectorText(selector)}`,
         },
       );
@@ -514,20 +541,43 @@ export async function createK8sClient(options: K8sClientOptions = {}): Promise<K
     if (!name) {
       throw new KubeConfigError(`cannot apply a ${apiVersion} ${kind} without metadata.name`);
     }
+    const fieldManager = opts.fieldManager ?? CHANT_FIELD_MANAGER;
+    // Checked before the request so an unusable identity is reported against
+    // the config that produced it, not as a 400 from the cluster.
+    assertValidFieldManager(fieldManager);
     const info = await resolveOrThrow({ apiVersion, kind }, opts.signal);
     const query: Record<string, string> = {
-      fieldManager: opts.fieldManager ?? "chant",
+      fieldManager,
       force: String(opts.force ?? false),
     };
     if (opts.dryRun) query.dryRun = "All";
-    return sendJson<K8sObject>(objectPath(info, name, object.metadata?.namespace), "PATCH", {
-      // Server-side apply. JSON is valid YAML, so the JSON body is accepted
-      // under the apply-patch content type without a YAML round trip.
-      contentType: "application/apply-patch+yaml",
-      body: JSON.stringify(object),
-      query,
+    try {
+      return await sendJson<K8sObject>(objectPath(info, name, object.metadata?.namespace), "PATCH", {
+        // Server-side apply. JSON is valid YAML, so the JSON body is accepted
+        // under the apply-patch content type without a YAML round trip.
+        contentType: "application/apply-patch+yaml",
+        body: JSON.stringify(object),
+        query,
+        signal: opts.signal,
+        target: refText({ apiVersion, kind, name, namespace: object.metadata?.namespace }),
+      });
+    } catch (err) {
+      // A 409 here is the one Kubernetes failure that already carries a
+      // machine-readable account of itself; chant #1075 presents it rather
+      // than letting a one-line 409 stand in for it.
+      throw asFieldManagerConflict(err, fieldManager);
+    }
+  }
+
+  async function remove(ref: ObjectRef, opts: DeleteOptions = {}): Promise<void> {
+    const info = await resolveOrThrow({ apiVersion: ref.apiVersion, kind: ref.kind }, opts.signal);
+    const query: Record<string, string> = {};
+    if (opts.propagationPolicy) query.propagationPolicy = opts.propagationPolicy;
+    if (opts.dryRun) query.dryRun = "All";
+    await sendJson<unknown>(objectPath(info, ref.name, ref.namespace), "DELETE", {
       signal: opts.signal,
-      target: refText({ apiVersion, kind, name, namespace: object.metadata?.namespace }),
+      query: Object.keys(query).length > 0 ? query : undefined,
+      target: refText(ref),
     });
   }
 
@@ -539,6 +589,7 @@ export async function createK8sClient(options: K8sClientOptions = {}): Promise<K
     readIfPresent,
     list,
     apply,
+    delete: remove,
     concurrently: (items, fn) => mapConcurrent(items, fn, concurrency),
     discoveryCacheKeys: () => [...discoveryCache.keys()].sort(),
   };

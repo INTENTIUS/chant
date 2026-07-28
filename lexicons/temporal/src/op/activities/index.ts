@@ -41,7 +41,15 @@ export { reconcilePr } from "./reconcile";
 export type { ReconcilePrArgs, ReconcileResult, ReconcileMode, ReconcileEntry } from "./reconcile";
 
 export { nativeApply, compensateApply } from "./apply";
-export type { NativeApplyArgs, CompensateApplyArgs, ApplyTarget, DeleteMode } from "./apply";
+export type {
+  NativeApplyArgs,
+  NativeApplyResult,
+  CompensateApplyArgs,
+  ApplyTarget,
+  ShellApplyTarget,
+  DeleteMode,
+  K8sApplier,
+} from "./apply";
 
 // argo activity (waitForArgoSync) relocated to the k8s lexicon (#809) —
 // loadActivities(["k8s"]) provides it. Argo CD is Kubernetes-native.

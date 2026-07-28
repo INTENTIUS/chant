@@ -89,7 +89,7 @@ Pre-built step builders:
 |---------|-------------|
 | `shell(cmd, opts?)` | Run an arbitrary shell command |
 | `build(path)` | Run `chant build` |
-| `kubectlApply(manifest, opts?)` | `kubectl apply -f` |
+| `kubectlApply(manifest, opts?)` | Server-side apply a manifest as chant's field manager |
 | `helmInstall(name, chart, opts?)` | `helm upgrade --install` |
 | `waitForStack(stackFile, opts?)` | Poll until a chant stack output file is ready |
 | `gitlabPipeline(projectId, ref, opts?)` | Trigger a GitLab pipeline and wait |
@@ -261,7 +261,7 @@ Run `chant run prod-reconcile` for a one-shot reconcile on the local executor; g
 
 ## Apply (code → cloud)
 
-The `ApplyOp` composite is the other direction: compute the plan, then apply via the target's native mechanism — `kubectl apply`, CloudFormation `deploy`, or an ARM deployment. Authority stays with the platform; chant hosts no state file.
+The `ApplyOp` composite is the other direction: compute the plan, then apply via the target's native mechanism — a Kubernetes server-side apply, CloudFormation `deploy`, or an ARM deployment. Authority stays with the platform; chant hosts no state file.
 
 ```typescript
 import { ApplyOp } from "@intentius/chant-lexicon-temporal";
@@ -279,7 +279,22 @@ const { op } = ApplyOp({
 export default op;
 ```
 
-`delete` controls how apply treats resources no longer declared. Deletes ride the target's **native** delete path scoped to the ownership marker — `kubectl apply --prune --selector app.kubernetes.io/managed-by=chant`, the CloudFormation stack boundary, or ARM `--mode Complete`. Because the prune is marker-scoped, a foreign (unmarked) resource is never touched: deletes are owned-only by construction.
+`delete` controls how apply treats resources no longer declared. Deletes ride the target's **native** delete path scoped to the ownership marker — for Kubernetes, a sweep filtered by `app.kubernetes.io/managed-by=chant` (and by the stack when `ownership.stack` is set), restricted to the namespaces the apply touched; for CloudFormation, the stack boundary; for ARM, `--mode Complete`. Because every delete path is marker-scoped, a foreign (unmarked) resource is never touched: deletes are owned-only by construction.
+
+### Field ownership on the kubectl target
+
+The Kubernetes apply is a **server-side apply** as the field manager `chant:<stack>` (or the bare `chant` when the project sets no `ownership.stack`), so the API server records per field which of your tools wrote it. If something else already owns a field the apply would set, it refuses and names the owner and the paths:
+
+```
+k8s: server-side apply of apps/v1 Deployment prod/web was refused — 1 field is
+owned by another field manager.
+
+  "kubectl-client-side-apply" owns:
+    .spec.replicas
+…
+```
+
+chant never resolves that for you. Set `forceConflicts: true` on the `ApplyOp` to take ownership deliberately — adopting objects a previous `kubectl apply` created is the usual reason. See [the k8s lexicon's API client page](/chant/lexicons/k8s/api-client/) for the full surface.
 
 ### Gates and compensation — where Temporal is load-bearing
 

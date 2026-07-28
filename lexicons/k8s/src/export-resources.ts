@@ -20,33 +20,17 @@ import type { ExportedTemplate, ResourceSelector } from "@intentius/chant/lexico
 import { defaultK8sConnector, type K8sConnector } from "./api/connect";
 import { operationFor } from "./api/operation-surface";
 import { buildExportFromObjects } from "./import/live-export";
+import { DEFAULT_IMPORT_TYPES } from "./api/sweep-types";
 
 /**
  * Entity types a bare `chant import --from <cluster>` sweeps: the workload,
  * config, networking and RBAC kinds people actually author. Everything else is
- * reachable by naming it with `--selector type=...`.
+ * reachable by naming it with `--selector type=...`. Defined in
+ * `./api/sweep-types.ts` and re-exported here, its original home — chant
+ * #1075's ownership-scoped prune needs the same list without pulling the
+ * import parser into a Temporal worker.
  */
-export const DEFAULT_IMPORT_TYPES: readonly string[] = [
-  "K8s::Apps::Deployment",
-  "K8s::Apps::StatefulSet",
-  "K8s::Apps::DaemonSet",
-  "K8s::Apps::ReplicaSet",
-  "K8s::Core::Service",
-  "K8s::Core::ConfigMap",
-  "K8s::Core::Secret",
-  "K8s::Core::Namespace",
-  "K8s::Core::Pod",
-  "K8s::Core::PersistentVolumeClaim",
-  "K8s::Core::ServiceAccount",
-  "K8s::Batch::Job",
-  "K8s::Batch::CronJob",
-  "K8s::Networking::Ingress",
-  "K8s::Networking::NetworkPolicy",
-  "K8s::Rbac::Role",
-  "K8s::Rbac::RoleBinding",
-  "K8s::Rbac::ClusterRole",
-  "K8s::Rbac::ClusterRoleBinding",
-];
+export { DEFAULT_IMPORT_TYPES };
 
 export async function exportResources(
   options: {

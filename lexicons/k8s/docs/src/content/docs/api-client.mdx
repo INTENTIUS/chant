@@ -70,7 +70,88 @@ The allowlist matches the command *name*, not its full path: `aws`, `/usr/local/
 
 ## Applying
 
-`kubectlApply` performs a **server-side apply** with `chant` as the field manager, rather than the client-side three-way merge `kubectl apply` does by default. Server-side apply is where Kubernetes itself has gone, it removes the `last-applied-configuration` annotation from the story, and it is what the field-ownership and conflict surface is built on. A conflict with another field manager arrives as a typed 409 rather than a line of stderr.
+`kubectlApply` performs a **server-side apply**, rather than the client-side three-way merge `kubectl apply` does by default. Server-side apply is where Kubernetes itself has gone, it removes the `last-applied-configuration` annotation from the story, and it is what makes field ownership something the API server tracks rather than something chant has to infer.
+
+`ApplyOp({ target: "kubectl" })` goes through the same path. The kubectl branch of `nativeApply` used to shell `kubectl apply -f`; it now dispatches into this lexicon, where the apply is server-side and the prune runs against the typed client. The dispatcher itself stays in the Temporal lexicon, because "which mechanism applies this target" is not Kubernetes knowledge — but applying to Kubernetes is.
+
+### chant's field manager
+
+The manager chant applies as is derived from the project's ownership stack:
+
+| `ownership.stack` | field manager |
+|---|---|
+| unset (or `ownership.enabled: false`) | `chant` |
+| `web` | `chant:web` |
+
+This is the same identity the `chant.intentius.io/stack` label already carries. The label answers a binary, whole-object question — *is this chant's?* — and server-side apply answers the sub-object version of it, per field, from the API server. One identity, two granularities.
+
+`ownership.env` is deliberately **not** part of the manager. Two environments of one stack only ever touch the same object if they share a namespace and a name, and at that point they are fighting over it; an env-qualified manager would let each own half of it without either noticing.
+
+To see what chant owns on a live object:
+
+```console
+$ kubectl get deploy/web -n prod -o jsonpath='{.metadata.managedFields}' | jq
+```
+
+The entry whose `manager` is `chant:<stack>` and whose `operation` is `Apply` lists exactly the fields the manifest declared.
+
+### Conflicts
+
+If another manager already owns a field the apply would set, the API server refuses with a 409 and says precisely which fields and who holds them. chant presents that rather than passing the raw status through:
+
+```
+k8s: server-side apply of apps/v1 Deployment prod/web was refused — 2 fields are
+owned by another field manager.
+
+  "kubectl-client-side-apply" owns:
+    .spec.replicas
+    .spec.template.spec.containers[name="web"].image
+
+chant applied as field manager "chant:web". Taking these fields means the managers above
+stop owning them, and will contest them again on their next apply.
+
+chant does not force this for you. Either:
+  - remove the contested fields from your chant source, leaving them to their current owner; or
+  - re-run this apply with force-conflicts on, deliberately (the `force: true` activity argument,
+    or `forceConflicts: true` on ApplyOp), which transfers ownership to chant.
+```
+
+The error is a `FieldManagerConflictError` — still a `K8sApiError`, so anything catching 409s keeps working — carrying `conflicts`, `byManager`, `managers`, `fields` and the `fieldManager` chant applied as.
+
+<Aside type="caution">
+**chant never forces a conflict on its own.** Taking a field from another manager decides who owns production, and a tool that decides it silently is how "it works on my cluster" happens. The opt-in exists and is never a default:
+
+```ts
+export const { op } = ApplyOp({
+  name: "prod-apply",
+  env: "prod",
+  target: "kubectl",
+  forceConflicts: true, // adopt objects a previous `kubectl apply` created
+});
+```
+</Aside>
+
+### Deletes
+
+`ApplyOp`'s `delete: "owned-only"` (and `"gated"`) prunes chant-owned objects the manifest no longer declares, which is what `kubectl apply --prune --selector app.kubernetes.io/managed-by=chant` used to do. It keeps both of that command's safety properties and narrows one:
+
+- **Marker-scoped.** The label selector goes to the server, and the marker is re-checked on every object before it is deleted. An object chant never stamped is never a candidate. With `ownership.stack` set, the selector also pins the stack, so one stack never prunes another's.
+- **Namespace-scoped to the apply.** Namespaced kinds are swept only in the namespaces the apply set touched. A manifest that mentions `prod` never reaches into `staging`.
+- **Kind-scoped to the union** of the kinds in the apply set and chant's default sweep set. The union is what lets a kind deleted from source entirely still be pruned — it appears nowhere in the apply set.
+
+### managedFields as a read surface
+
+`@intentius/chant-k8s-client` exports the decoding primitives, since `fieldsV1` is not a shape a caller should have to parse:
+
+```ts
+import { chantOwnedFields, fieldOwners, fieldSetsOf } from "@intentius/chant-k8s-client";
+
+chantOwnedFields(live);        // ['.spec', '.spec.replicas', …] — every chant manager
+fieldOwners(live).get(".spec.replicas");  // ['chant:web', 'kubectl-client-side-apply']
+fieldSetsOf(live);             // one decoded entry per manager, subresources included
+```
+
+Paths render the way `sigs.k8s.io/structured-merge-diff` does — `.spec.template.spec.containers[name="web"].image` — which is the same syntax a conflict cause uses, so the two are comparable as strings. Subresource entries (a controller's `status` writes) are excluded by default.
 
 ## What is still shelled out
 

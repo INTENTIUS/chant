@@ -12,7 +12,8 @@
 
 import { describe, test, expect } from "vitest";
 import { createK8sClient } from "./client";
-import { K8sApiError, K8sTransportError, ExecCredentialNotAllowedError, KubeConfigError, UnknownResourceError } from "./errors";
+import { K8sApiError, K8sTransportError, ExecCredentialNotAllowedError, FieldManagerError, KubeConfigError, UnknownResourceError } from "./errors";
+import { FieldManagerConflictError } from "./conflict";
 import { apiResourceList, fakeKubeconfig, fakeRequestLayer, statusBody } from "./testing";
 import type { RecordedRequest } from "./testing";
 
@@ -358,6 +359,49 @@ describe("list", () => {
     await c.list({ apiVersion: "apps/v1", kind: "Deployment" }, { namespace: "prod" });
     expect(layer.paths()).toContain("/apis/apps/v1/namespaces/prod/deployments");
   });
+
+  test("a label selector is sent to the server, not filtered afterwards (chant #1075)", async () => {
+    const layer = cluster({ "/apis/apps/v1/namespaces/prod/deployments": { items: [deployment("a")] } });
+    const c = await client(layer);
+    await c.list(
+      { apiVersion: "apps/v1", kind: "Deployment" },
+      { namespace: "prod", labelSelector: "app.kubernetes.io/managed-by=chant" },
+    );
+    const listed = layer.requests.find((r) => r.path === "/apis/apps/v1/namespaces/prod/deployments")!;
+    expect(listed.query.labelSelector).toBe("app.kubernetes.io/managed-by=chant");
+  });
+});
+
+describe("delete (chant #1075 — the prune path)", () => {
+  test("DELETEs the addressed object", async () => {
+    const layer = cluster({}, (req) => (req.method === "DELETE" ? { body: statusBody(200, "", "ok") } : undefined));
+    const c = await client(layer);
+    await c.delete({ apiVersion: "apps/v1", kind: "Deployment", name: "web", namespace: "prod" });
+    const deleted = layer.requests.find((r) => r.method === "DELETE")!;
+    expect(deleted.path).toBe("/apis/apps/v1/namespaces/prod/deployments/web");
+    expect(deleted.query.propagationPolicy).toBeUndefined();
+  });
+
+  test("a propagation policy and a dry run are query parameters", async () => {
+    const layer = cluster({}, (req) => (req.method === "DELETE" ? { body: {} } : undefined));
+    const c = await client(layer);
+    await c.delete(
+      { apiVersion: "apps/v1", kind: "Deployment", name: "web", namespace: "prod" },
+      { propagationPolicy: "Foreground", dryRun: true },
+    );
+    const deleted = layer.requests.find((r) => r.method === "DELETE")!;
+    expect(deleted.query).toMatchObject({ propagationPolicy: "Foreground", dryRun: "All" });
+  });
+
+  test("a 404 surfaces as a typed notFound rather than being swallowed", async () => {
+    const layer = cluster();
+    const c = await client(layer);
+    const err = (await c
+      .delete({ apiVersion: "apps/v1", kind: "Deployment", name: "gone", namespace: "prod" })
+      .catch((e: unknown) => e)) as K8sApiError;
+    expect(err).toBeInstanceOf(K8sApiError);
+    expect(err.notFound).toBe(true);
+  });
 });
 
 describe("apply", () => {
@@ -395,6 +439,37 @@ describe("apply", () => {
     const err = (await c.apply(deployment("web") as never).catch((e: unknown) => e)) as K8sApiError;
     expect(err.conflict).toBe(true);
     expect(err.apiMessage).toContain("conflict with");
+  });
+
+  test("that 409 is presented, naming the owner and the contested paths (chant #1075)", async () => {
+    const conflict = {
+      ...statusBody(409, "Conflict", 'Apply failed with 1 conflict: conflict with "helm" using apps/v1'),
+      details: {
+        causes: [
+          { type: "FieldManagerConflict", message: 'conflict with "helm" using apps/v1', field: ".spec.replicas" },
+        ],
+      },
+    };
+    const layer = cluster({}, (req) => (req.method === "PATCH" ? { status: 409, body: conflict } : undefined));
+    const c = await client(layer);
+    const err = (await c
+      .apply(deployment("web") as never, { fieldManager: "chant:web" })
+      .catch((e: unknown) => e)) as FieldManagerConflictError;
+
+    expect(err).toBeInstanceOf(FieldManagerConflictError);
+    expect(err.byManager).toEqual({ helm: [".spec.replicas"] });
+    expect(err.fieldManager).toBe("chant:web");
+    expect(err.message).toContain("apps/v1 Deployment prod/web");
+    expect(err.message).toContain("chant does not force this for you");
+  });
+
+  test("a field manager the API server would reject is refused before any request", async () => {
+    const layer = cluster();
+    const c = await client(layer);
+    await expect(c.apply(deployment("web") as never, { fieldManager: "chant web" })).rejects.toThrow(
+      FieldManagerError,
+    );
+    expect(layer.requests).toHaveLength(0);
   });
 
   test("an object missing apiVersion/kind/name is refused before any request", async () => {

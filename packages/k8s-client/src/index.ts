@@ -22,17 +22,52 @@ export {
   selectorText,
   refText,
 } from "./client";
-export type { K8sClient, ReadOptions, ApplyOptions } from "./client";
+export type { K8sClient, ReadOptions, ApplyOptions, DeleteOptions, ListOptions } from "./client";
 
 export {
   K8sApiError,
   K8sTransportError,
   K8sClientUnavailableError,
   ExecCredentialNotAllowedError,
+  FieldManagerError,
   KubeConfigError,
   UnknownResourceError,
 } from "./errors";
 export type { K8sStatus } from "./errors";
+
+// chant's field-manager identity and the conflict surface — chant #1075.
+export {
+  CHANT_FIELD_MANAGER,
+  FIELD_MANAGER_SEPARATOR,
+  FIELD_MANAGER_MAX_LENGTH,
+  fieldManagerFor,
+  assertValidFieldManager,
+  isChantFieldManager,
+  chantStackOf,
+} from "./field-manager";
+export type { FieldManagerIdentity } from "./field-manager";
+
+export {
+  FieldManagerConflictError,
+  asFieldManagerConflict,
+  parseFieldConflicts,
+  parseConflictMessage,
+  renderConflictReport,
+} from "./conflict";
+export type { FieldConflict, ConflictReport } from "./conflict";
+
+// managedFields primitives — the material chant #1076's deep observation reads.
+export {
+  managedFieldsOf,
+  fieldSetsOf,
+  managersOf,
+  fieldsOwnedBy,
+  chantOwnedFields,
+  fieldOwners,
+  fieldPathsOf,
+  renderSegment,
+} from "./managed-fields";
+export type { ManagedFieldsEntry, ManagerFieldSet } from "./managed-fields";
 
 export {
   DEFAULT_EXEC_ALLOWLIST,
