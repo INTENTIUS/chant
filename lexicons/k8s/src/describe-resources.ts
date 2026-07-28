@@ -35,12 +35,27 @@
  * NOT-OBSERVED with a reason. A declared `k8s.profiles.<env>.context` that
  * disagrees with the ambient one still refuses before a single resource is
  * touched, via the same `resolveClusterTarget` the GCP lexicon shares.
+ *
+ * ## Runtime children (chant #1077)
+ *
+ * A Pod a declared Deployment's controller created is live and undeclared —
+ * exactly the shape `lifecycle diff --live` has always classified `orphan`.
+ * On Kubernetes that is wrong: it is expected runtime, not drift, and will be
+ * recreated the moment it is deleted. After the declared-entity reads above
+ * resolve, this scans Pods in the namespaces they actually live in and walks
+ * each one's `ownerReferences` chain (`./api/owner-chain.ts`) against the
+ * entities this very call resolved. A chain reaching one of them is reported
+ * with `ownerChain: { root: "declared", ... }`; core's diff/change-set engine
+ * reads that as `runtime` instead of `orphan`. Deliberately scoped to Pods —
+ * the concrete case the issue and its acceptance criteria name — and to the
+ * namespaces this observation already touched, not a cluster-wide sweep;
+ * widening to other controller-spawned kinds is the same walk repeated.
  */
 
 import type { ObservationResult, ResourceMetadata, UnobservedEntity } from "@intentius/chant/lexicon";
 import { observation, unobservedAll } from "@intentius/chant/observation";
 import { hasOwnershipMarker, classifyOwnership, LABEL_OWNERSHIP_KEYS } from "@intentius/chant/ownership";
-import type { K8sObject } from "@intentius/chant-k8s-client";
+import type { K8sClient, K8sObject } from "@intentius/chant-k8s-client";
 import { defaultK8sConnector, type K8sConnector } from "./api/connect";
 import {
   classifyApiFailure,
@@ -49,6 +64,7 @@ import {
   MISSING_CLIENT_DETAIL,
 } from "./api/classify";
 import { operationFor } from "./api/operation-surface";
+import { resolveK8sOwnerChain } from "./api/owner-chain";
 
 function pruneUndefined<T extends Record<string, unknown>>(obj: T): Record<string, unknown> {
   const out: Record<string, unknown> = {};
@@ -207,5 +223,74 @@ export async function describeResources(
     }
   });
 
+  await addRuntimeChildren(client, resources, options.owned);
+
   return observation(resources, unobserved);
+}
+
+/**
+ * Scan Pods in the namespaces of entities this call just resolved, and
+ * classify each one's owner-reference chain (#1077). Mutates `resources` in
+ * place, adding an entry per Pod whose chain was worth reporting.
+ *
+ * Best-effort and additive: a namespace this scan cannot list (RBAC denial,
+ * a transient error) is simply skipped rather than failing the observation —
+ * Pods are not declared entities, so there is no NOT-OBSERVED axis for them
+ * to report against, the same way an out-of-band AWS child resource has none
+ * either.
+ */
+async function addRuntimeChildren(
+  client: K8sClient,
+  resources: Record<string, ResourceMetadata>,
+  owned: boolean | undefined,
+): Promise<void> {
+  const declaredByUid = new Map<string, string>();
+  for (const [entityName, meta] of Object.entries(resources)) {
+    if (meta.physicalId) declaredByUid.set(meta.physicalId, entityName);
+  }
+
+  const namespaces = new Set<string>();
+  for (const meta of Object.values(resources)) {
+    const namespace = (meta.attributes as { namespace?: string } | undefined)?.namespace;
+    if (namespace) namespaces.add(namespace);
+  }
+  if (namespaces.size === 0) return;
+
+  await client.concurrently([...namespaces], async (namespace) => {
+    let pods: K8sObject[];
+    try {
+      pods = await client.list({ apiVersion: "v1", kind: "Pod" }, { namespace });
+    } catch {
+      return; // best-effort — see the function doc
+    }
+
+    await client.concurrently(pods, async (pod) => {
+      const uid = pod.metadata?.uid;
+      const name = pod.metadata?.name;
+      if (!uid || !name || declaredByUid.has(uid)) return; // declared directly, or unaddressable
+
+      const ownerChain = await resolveK8sOwnerChain(pod, { declaredByUid, reader: client, namespace });
+
+      // `--owned`: withhold a Pod that is neither a runtime child of a
+      // declared entity nor carrying chant's own marker — the same rule the
+      // declared-entity read above applies, extended to the undeclared axis
+      // this scan introduces.
+      const marker = hasOwnershipMarker(pod.metadata?.labels, LABEL_OWNERSHIP_KEYS);
+      if (owned && ownerChain.root !== "declared" && !marker) return;
+
+      resources[`${namespace}/${name}`] = {
+        type: "K8s::Core::Pod",
+        physicalId: uid,
+        status: statusFromObject(pod),
+        lastUpdated: pod.metadata?.creationTimestamp,
+        ownership: classifyOwnership(pod.metadata?.labels, LABEL_OWNERSHIP_KEYS),
+        ownerChain,
+        attributes: pruneUndefined({
+          namespace,
+          labels: pod.metadata?.labels,
+          resourceVersion: pod.metadata?.resourceVersion,
+        }),
+      };
+    });
+  });
 }

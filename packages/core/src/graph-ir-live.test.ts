@@ -60,6 +60,23 @@ describe("buildLiveGraphIr", () => {
     expect(node.attrs).toEqual({});
   });
 
+  // #1077 — owner-reference chain classification
+  it("carries runtimeOwner only when the owner chain resolves to a declared entity", () => {
+    const ir = buildLiveGraphIr([
+      {
+        lexicon: "k8s",
+        resources: {
+          "prod/web-abc": { type: "K8s::Core::Pod", status: "Running", ownerChain: { root: "declared", entity: "web" } },
+          "prod/other": { type: "K8s::Core::Pod", status: "Running", ownerChain: { root: "foreign" } },
+          "prod/plain": { type: "K8s::Core::Pod", status: "Running" },
+        },
+      },
+    ]);
+    expect(ir.nodes.find((n) => n.id === "prod/web-abc")!.runtimeOwner).toBe("web");
+    expect(ir.nodes.find((n) => n.id === "prod/other")!.runtimeOwner).toBeUndefined();
+    expect(ir.nodes.find((n) => n.id === "prod/plain")!.runtimeOwner).toBeUndefined();
+  });
+
   it("is deterministic for a fixed observation set", () => {
     expect(JSON.stringify(buildLiveGraphIr(observations))).toBe(
       JSON.stringify(buildLiveGraphIr(observations)),
@@ -84,6 +101,18 @@ describe("overlayGraphs (#780 drift overlay)", () => {
     const ir = overlayGraphs({ ...live, edges: [{ from: "rogue-sg", to: "web-vpc", kind: "ref" }] }, declared);
     expect(ir.nodes.map((n) => n.id).sort()).toEqual(["planned-db", "rogue-sg", "web-vpc"]);
     expect(ir.edges).toHaveLength(1);
+  });
+
+  // #1077 — a provisioned, undeclared node whose owner chain reaches a
+  // declared entity paints `runtime`, not `warn` — it is expected runtime,
+  // not a foreign resource needing attention.
+  it("classifies a runtime child via _status, distinct from foreign", () => {
+    const podNode = { id: "prod/web-abc", kind: "K8s::Core::Pod", lexicon: "k8s", attrs: {}, runtimeOwner: "web" };
+    const liveWithChild: GraphIR = { nodes: [node("web-vpc"), node("rogue-sg"), podNode], edges: [], groups: {} };
+    const ir = overlayGraphs(liveWithChild, declared);
+    const statusOf = (id: string) => (ir.nodes.find((n) => n.id === id)!.attrs as { _status?: string })._status;
+    expect(statusOf("prod/web-abc")).toBe("runtime");
+    expect(statusOf("rogue-sg")).toBe("warn"); // still foreign — no runtimeOwner
   });
 });
 
@@ -133,6 +162,17 @@ describe("sourceOverlayGraphs (#821 source-anchored overlay)", () => {
     expect(ir.nodes.map((x) => x.id)).toContain("rogue-sg");
     expect(ir.edges).toContainEqual({ from: "rogue-sg", to: "web-vpc", kind: "ref", viaAttr: "sg" }); // foreign-touching
     expect(ir.groups.byLexicon).toEqual({ aws: ["planned-db", "web-vpc"], k8s: ["app-ingress"] });
+  });
+
+  // #1077 — a live, undeclared node whose owner chain reaches a declared
+  // entity is appended `runtime`, not `warn`, even though it is just as
+  // "foreign" (undeclared) from the declared graph's point of view.
+  it("appends a runtime child as `runtime`, distinct from foreign", () => {
+    const podNode = { id: "prod/web-abc", kind: "K8s::Core::Pod", lexicon: "k8s", attrs: {}, runtimeOwner: "app-ingress" };
+    const liveWithChild: GraphIR = { ...live, nodes: [...live.nodes, podNode] };
+    const ir = sourceOverlayGraphs(declared, liveWithChild);
+    expect(statusOf(ir, "prod/web-abc")).toBe("runtime");
+    expect(statusOf(ir, "rogue-sg")).toBe("warn"); // still foreign
   });
 
   it("drops a live edge between two managed nodes — declared edges already cover it", () => {

@@ -67,6 +67,15 @@ export interface IRNode {
    * `owned` = chant-managed. Absent for source-derived IR.
    */
   ownership?: "owned" | "foreign";
+  /**
+   * Live-only, undeclared nodes: the declared entity this node's
+   * owner-reference chain resolves to (#1077) — a Pod a declared Deployment's
+   * controller created, for instance. Presence of this field is what an
+   * overlay reads to paint the node `runtime` instead of `warn`/foreign; a
+   * node without it (including every declared, source-derived node) is
+   * unaffected.
+   */
+  runtimeOwner?: string;
 }
 
 /** A directed dependency: `from` references an attribute of `to`. */
@@ -504,6 +513,11 @@ export function buildLiveGraphIr(observations: LiveObservation[]): GraphIR {
       // information for a painter, and the IR's `ownership` field means "a
       // verdict was reached" — so only owned/foreign land on the node.
       if (meta.ownership === "owned" || meta.ownership === "foreign") node.ownership = meta.ownership;
+      // Owner-reference chain (#1077): only a resolved `declared` root is
+      // carried onto the node — the same "a verdict was reached" rule as
+      // ownership above, since `unowned`/`foreign`/`unknown` all mean "no
+      // declared owner", which is simply the absence of this field.
+      if (meta.ownerChain?.root === "declared") node.runtimeOwner = meta.ownerChain.entity;
       nodes.push(node);
       (byLexicon[lexicon] ??= []).push(name);
       // A live lexicon maps to one deployable stack, same as the source IR.
@@ -540,8 +554,9 @@ export function collectUnobserved(observations: LiveObservation[]): Record<strin
   return out;
 }
 
-/** Paint status a node carries in an overlay. `neutral` = chant could not look. */
-type OverlayNodeStatus = "good" | "warn" | "accent" | "neutral";
+/** Paint status a node carries in an overlay. `neutral` = chant could not look;
+ * `runtime` = live, undeclared, owner chain reaches a declared entity (#1077). */
+type OverlayNodeStatus = "good" | "warn" | "accent" | "neutral" | "runtime";
 
 function tagStatus(n: IRNode, status: OverlayNodeStatus, unobserved?: UnobservedEntity): IRNode {
   return {
@@ -558,7 +573,10 @@ function tagStatus(n: IRNode, status: OverlayNodeStatus, unobserved?: Unobserved
  * Overlay the declared graph on the provisioned one (#780, `chant graph --live
  * --overlay`) and classify each resource, tagging a `_status` a renderer colours:
  *   - **managed** (declared + provisioned) → `good`
- *   - **foreign** (provisioned, not declared) → `warn`
+ *   - **runtime** (provisioned, not declared, owner chain reaches a declared
+ *     entity — #1077) → `runtime`, e.g. a Pod a declared Deployment's
+ *     controller created — expected, not a foreign resource needing attention
+ *   - **foreign** (provisioned, not declared, no declared owner) → `warn`
  *   - **pending** (declared, provider confirmed absent) → `accent`
  *   - **unobserved** (declared, chant could not look — #1089) → `neutral`,
  *     plus an `_unobserved` attr carrying the reason
@@ -570,7 +588,9 @@ export function overlayGraphs(live: GraphIR, declared: GraphIR, opts?: OverlayOp
   const liveIds = new Set(live.nodes.map((n) => n.id));
   const unobserved = opts?.unobserved ?? {};
 
-  const nodes: IRNode[] = live.nodes.map((n) => tagStatus(n, declaredIds.has(n.id) ? "good" : "warn"));
+  const nodes: IRNode[] = live.nodes.map((n) =>
+    tagStatus(n, declaredIds.has(n.id) ? "good" : n.runtimeOwner ? "runtime" : "warn"),
+  );
   for (const n of declared.nodes) {
     if (liveIds.has(n.id)) continue;
     const u = unobserved[n.id];
@@ -597,8 +617,10 @@ export function overlayGraphs(live: GraphIR, declared: GraphIR, opts?: OverlayOp
  *     the reason on `_unobserved`. A wrong-cluster or unsupported-kind read used
  *     to paint the whole estate "pending", which is the diagram equivalent of
  *     planning a create for something that already exists.
- * **Foreign** resources (provisioned, not declared) are appended and tagged
- * `warn`, together with any live-reconstructed edges that touch them — a declared
+ * **Foreign** resources (provisioned, not declared, no declared owner) are
+ * appended and tagged `warn`; a provisioned-but-undeclared resource whose
+ * owner chain reaches a declared entity (#1077) is tagged `runtime` instead —
+ * both carry any live-reconstructed edges that touch them, since a declared
  * edge cannot describe an undeclared resource. Declared groups/exports pass
  * through unchanged; nodes and edges are sorted for deterministic output.
  */
@@ -620,7 +642,10 @@ export function sourceOverlayGraphs(declared: GraphIR, live: GraphIR, opts?: Ove
     if (obs.ownership) merged.ownership = obs.ownership;
     return tagStatus(merged, "good");
   });
-  for (const n of live.nodes) if (foreignIds.has(n.id)) nodes.push(tagStatus(n, "warn")); // foreign
+  for (const n of live.nodes) {
+    if (!foreignIds.has(n.id)) continue;
+    nodes.push(tagStatus(n, n.runtimeOwner ? "runtime" : "warn")); // runtime child or foreign
+  }
   nodes.sort((a, b) => a.id.localeCompare(b.id));
 
   // Declared edges are the canvas (the cross-substrate topology). Add only the

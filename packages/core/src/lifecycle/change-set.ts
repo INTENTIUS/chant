@@ -3,8 +3,8 @@
  *
  * `chant lifecycle diff --live` computes a three-way comparison — declared now /
  * last snapshot / live now — and prints it. `buildChangeSet` promotes that
- * same signal into a classified create/update/delete/adopt/noop set that other
- * tooling (reconcile, apply) can act on.
+ * same signal into a classified create/update/delete/adopt/runtime/noop set
+ * that other tooling (reconcile, apply) can act on.
  *
  * Strictly read-only and pure: no I/O, no mutation. The classification reads
  * ownership from the live marker only (populated downstream); until ownership
@@ -25,12 +25,17 @@ import { unobservedReasonText, type UnobservedReason } from "../observation";
  *   snapshot.
  * - `adopt` — live but undeclared, ownership not established → a candidate to
  *   pull back into source, never an auto-delete.
+ * - `runtime` — live but undeclared, and its owner-reference chain reaches a
+ *   declared entity (#1077): a Pod a declared Deployment's controller
+ *   created, for instance. Never a delete, never an adopt candidate — it is
+ *   not drift, just the runtime doing its job. `runtimeOwner` names the
+ *   declared entity it belongs to.
  * - `noop` — declared and live with no drift, or already reconciled.
  * - `unobserved` — declared, and the lexicon could not look (#1089). Not a
  *   proposal at all: it is the plan admitting a hole. Never a create, never a
  *   delete. Read `unobservedReason` for which hole.
  */
-export type ChangeAction = "create" | "update" | "delete" | "adopt" | "noop" | "unobserved";
+export type ChangeAction = "create" | "update" | "delete" | "adopt" | "runtime" | "noop" | "unobserved";
 
 /**
  * Who answers "is this resource chant's?". `unknown` until a live ownership
@@ -69,6 +74,8 @@ export interface ChangeSetEntry {
   unobservedReason?: UnobservedReason;
   /** Human-readable backing for `unobservedReason` (the failing command, the missing binding). */
   unobservedDetail?: string;
+  /** The declared entity this resource's owner chain resolves to, for `action: "runtime"` (#1077). */
+  runtimeOwner?: string;
 }
 
 export interface ChangeSet {
@@ -121,6 +128,15 @@ export function buildChangeSet(env: string, input: DiffLiveInput): ChangeSet {
     // record chant has to host.
     const ownership: Ownership = observedNow[name]?.ownership ?? "unknown";
 
+    // Owner-reference chain (#1077), same live-only provenance as ownership
+    // above. Only a `declared` root changes the classification; `unknown` is
+    // deliberately not escalated (#1168's tri-state precedent — an
+    // unconfirmed chain never earns the more confident verdict).
+    const runtimeOwner =
+      !isDeclared && observedNow[name]?.ownerChain?.root === "declared"
+        ? observedNow[name]!.ownerChain!.entity
+        : undefined;
+
     let action: ChangeAction;
     let deltas: AttributeChange[] | undefined;
 
@@ -140,6 +156,13 @@ export function buildChangeSet(env: string, input: DiffLiveInput): ChangeSet {
       } else {
         action = "noop";
       }
+    } else if (live && runtimeOwner) {
+      // Live, undeclared, and its owner chain reaches a declared entity
+      // (#1077) — expected runtime, never a delete/adopt candidate, checked
+      // ahead of the ownership marker below: even a runtime child that
+      // happens to carry chant's own marker (label propagation from its
+      // owner's template) must never be proposed for deletion.
+      action = "runtime";
     } else if (live) {
       // Live but undeclared. Only a chant-owned orphan is a safe delete; a
       // foreign or unknown orphan can be adopted but never auto-deleted.
@@ -162,6 +185,7 @@ export function buildChangeSet(env: string, input: DiffLiveInput): ChangeSet {
             ...(unobservedEntry.detail ? { unobservedDetail: unobservedEntry.detail } : {}),
           }
         : {}),
+      ...(runtimeOwner ? { runtimeOwner } : {}),
     });
   }
 
@@ -169,7 +193,7 @@ export function buildChangeSet(env: string, input: DiffLiveInput): ChangeSet {
   return { env, entries };
 }
 
-const ACTION_ORDER: ChangeAction[] = ["create", "update", "delete", "adopt", "noop", "unobserved"];
+const ACTION_ORDER: ChangeAction[] = ["create", "update", "delete", "adopt", "runtime", "noop", "unobserved"];
 
 /** Count entries per action. */
 export function summarize(cs: ChangeSet): Record<ChangeAction, number> {
@@ -178,6 +202,7 @@ export function summarize(cs: ChangeSet): Record<ChangeAction, number> {
     update: 0,
     delete: 0,
     adopt: 0,
+    runtime: 0,
     noop: 0,
     unobserved: 0,
   };
@@ -191,10 +216,11 @@ export function summarize(cs: ChangeSet): Record<ChangeAction, number> {
  * GitLab renders an `artifacts:reports:terraform` artifact in the merge-request
  * UI as "N to add, M to change, K to delete". The format is generic — any tool
  * that emits this JSON gets the widget — and the chant plan maps onto it
- * directly. Only the mutating actions count: `adopt`, `noop` and `unobserved`
- * are excluded, since the widget has no column for "live but undeclared", "no
- * change", or "could not look" (#1089). The widget is therefore a floor, not a
- * complete plan: read the full change set when entities are unobserved.
+ * directly. Only the mutating actions count: `adopt`, `runtime`, `noop` and
+ * `unobserved` are excluded, since the widget has no column for "live but
+ * undeclared", "expected runtime child" (#1077), "no change", or "could not
+ * look" (#1089). The widget is therefore a floor, not a complete plan: read
+ * the full change set when entities are unobserved or classified runtime.
  *
  * The widget label reads "Terraform" regardless of producer; that is GitLab's
  * fixed string, not a claim chant makes.
@@ -223,14 +249,17 @@ export function renderChangeSet(cs: ChangeSet): string {
     lines.push(
       action === "unobserved"
         ? "\nUNOBSERVED (declared; chant could not read live state — no action proposed):"
-        : `\n${action.toUpperCase()}:`,
+        : action === "runtime"
+          ? "\nRUNTIME (owned by a declared resource; not drift, never a delete/adopt candidate):"
+          : `\n${action.toUpperCase()}:`,
     );
     for (const e of group) {
       const own = e.ownership === "unknown" ? "" : ` [${e.ownership}]`;
       const why = e.unobservedReason
         ? ` — ${unobservedReasonText(e.unobservedReason)}${e.unobservedDetail ? `: ${e.unobservedDetail}` : ""}`
         : "";
-      lines.push(`  ${e.name}${e.type ? ` (${e.type})` : ""}${own}${why}`);
+      const owner = e.runtimeOwner ? ` — owned by ${e.runtimeOwner}` : "";
+      lines.push(`  ${e.name}${e.type ? ` (${e.type})` : ""}${own}${why}${owner}`);
       for (const d of e.deltas ?? []) {
         lines.push(`      ${d.path}: ${fmt(d.oldValue)} → ${fmt(d.newValue)}`);
       }
