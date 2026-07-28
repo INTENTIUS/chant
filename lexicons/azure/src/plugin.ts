@@ -19,6 +19,7 @@ import { ArmParser } from "./import/parser";
 import { ArmGenerator } from "./import/generator";
 import { azureCompletions } from "./lsp/completions";
 import { azureHover } from "./lsp/hover";
+import { azureDeepNormalizationHooks, observeResourcesDeepAzure } from "./deep-observe";
 
 /**
  * Azure Resource Manager lexicon plugin.
@@ -458,6 +459,22 @@ export const tags = defaultTags([
     const { describeResources } = await import("./describe-resources");
     return describeResources(options);
   },
+
+  /**
+   * Property-level live read (#1086) — `az resource show` already returns
+   * the full ARM resource; this normalizes it. Implementation in
+   * ./deep-observe.ts.
+   */
+  async observeResourcesDeep(options) {
+    return observeResourcesDeepAzure({
+      environment: options.environment,
+      entityNames: options.entityNames,
+      entities: options.entities,
+    });
+  },
+
+  /** The noise rules the deep pass applies to both the live and declared trees. */
+  deepNormalizationHooks: azureDeepNormalizationHooks,
 
   async exportResources(options) {
     const { exportResources } = await import("./export-resources");

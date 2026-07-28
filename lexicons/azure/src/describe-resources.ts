@@ -48,8 +48,12 @@ function pruneUndefined<T extends Record<string, unknown>>(obj: T): Record<strin
  * Top-level ARM type — i.e. exactly one `/` separating provider from kind.
  * Nested types like `Microsoft.Storage/storageAccounts/blobServices` need a
  * different query path that this implementation doesn't yet support.
+ *
+ * Exported so the deep reader (./deep-observe.ts, #1086) applies the exact
+ * same scope limit — a nested type is `unsupported-kind` at both depths, not
+ * silently deeper on one and not the other.
  */
-function isTopLevelType(entityType: string): boolean {
+export function isTopLevelType(entityType: string): boolean {
   const slashCount = (entityType.match(/\//g) ?? []).length;
   return slashCount === 1;
 }
