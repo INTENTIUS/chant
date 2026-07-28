@@ -62,3 +62,32 @@ describe("search formatting", () => {
     expect(formatRow(n, ["InstanceType", "Tags"])).toBe("web  AWS::EC2::Instance  i-1  InstanceType=t3.micro");
   });
 });
+
+describe("search edge traversal", () => {
+  const ir = {
+    nodes: [
+      node("webServer", "AWS::EC2::Instance", { physicalId: "i-1" }),
+      node("privSubnet", "AWS::EC2::Subnet", { MapPublicIpOnLaunch: false }),
+      node("pubSubnet", "AWS::EC2::Subnet", { MapPublicIpOnLaunch: true }),
+      node("privServer", "AWS::EC2::Instance", { physicalId: "i-2" }),
+    ],
+    edges: [
+      { from: "webServer", to: "pubSubnet", kind: "ref", viaAttr: "SubnetId" },
+      { from: "privServer", to: "privSubnet", kind: "ref", viaAttr: "SubnetId" },
+    ],
+  } as never;
+
+  test("->attr resolves the instance→subnet→public join", () => {
+    const byId = new Map((ir as { nodes: { id: string }[] }).nodes.map((n) => [n.id, n]));
+    const terms = parseQuery("kind:EC2::Instance ->attr:MapPublicIpOnLaunch=true");
+    const matches = (ir as { nodes: never[] }).nodes.filter((n) =>
+      terms.every((t) => matchTerm(n as never, t, ir, byId as never)),
+    );
+    expect(matches.map((n: { id: string }) => n.id)).toEqual(["webServer"]);
+  });
+
+  test("parses -> and <- into directional edge terms", () => {
+    expect(parseQuery("->kind:Subnet")).toEqual([{ kind: "edge", a: "", dir: "out", sub: { kind: "kind", a: "Subnet" } }]);
+    expect(parseQuery("<-kind:Instance")).toEqual([{ kind: "edge", a: "", dir: "in", sub: { kind: "kind", a: "Instance" } }]);
+  });
+});

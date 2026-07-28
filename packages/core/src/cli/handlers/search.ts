@@ -1,6 +1,7 @@
 import { resolve } from "node:path";
 import { build } from "../../build";
 import { buildGraphIr, buildLiveGraphIr, type GraphIR, type IRNode } from "../../graph-ir";
+import { reconstructEdges, mergeCatalogs, type ReferenceCatalog } from "../../graph-refs";
 import { observeResources } from "../../lifecycle/observe";
 import { discover } from "../../discovery/index";
 import { loadChantConfig } from "../../config";
@@ -19,6 +20,13 @@ import type { CommandContext } from "../registry";
  *   kind:<substr>        node kind contains <substr> (e.g. kind:EC2::Instance)
  *   tag:<key>=<val>      a Tags entry with Key=key and Value containing val
  *   attr:<name>=<val>    attribute <name> equals/contains <val>
+ *   ->kind:X / ->attr:.. this node has an edge TO a node matching the right side
+ *   <-kind:X / <-attr:.. this node has an edge FROM a node matching the right side
+ *
+ * The edge operators are the point of "edge-aware" search (#1139): a small
+ * model shouldn't hand-join instance→subnet→public across many results — one
+ * query does the traversal. `kind:Instance ->attr:MapPublicIpOnLaunch=true`
+ * = instances that reference a public subnet.
  *
  * Output: one line per match — `<id>  <kind>  <key=val ...>` — with only the
  * physical id and any attributes named in `attr:`/`--show`. Tens of tokens, not
@@ -71,12 +79,17 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
         /* enrichment is best-effort; search still works on describe attrs */
       }
     }
+    // Reconstruct edges from the observing lexicons' reference catalogs, so
+    // ->/<- traversal works over the live estate (same as `graph --live`).
+    const catalogs = observing.map((p) => p.referenceCatalog).filter((c): c is ReferenceCatalog => !!c);
+    if (catalogs.length > 0) ir = { ...ir, edges: reconstructEdges(ir.nodes, mergeCatalogs(catalogs)).edges };
   } else {
     const discovered = await discover(resolve(args.src ?? config.sourceDir ?? "."));
     ir = buildGraphIr(discovered.entities);
   }
 
-  const matches = ir.nodes.filter((n) => terms.every((t) => matchTerm(n, t)));
+  const nodeById = new Map(ir.nodes.map((n) => [n.id, n]));
+  const matches = ir.nodes.filter((n) => terms.every((t) => matchTerm(n, t, ir, nodeById)));
   if (matches.length === 0) {
     console.log("(no matches)");
     return 0;
@@ -88,9 +101,24 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
 }
 
 interface Term {
-  kind: "word" | "kind" | "tag" | "attr";
+  kind: "word" | "kind" | "tag" | "attr" | "edge";
   a: string;
   b?: string;
+  /** For edge terms: the direction and the sub-predicate matched at the far end. */
+  dir?: "out" | "in";
+  sub?: Term;
+}
+
+function parseLeaf(tok: string): Term {
+  const m = /^(kind|tag|attr):(.*)$/i.exec(tok);
+  if (m) {
+    const key = m[1].toLowerCase() as Term["kind"];
+    const rest = m[2];
+    const eq = rest.indexOf("=");
+    if (eq >= 0) return { kind: key, a: rest.slice(0, eq), b: rest.slice(eq + 1) };
+    return { kind: key, a: rest };
+  }
+  return { kind: "word", a: tok };
 }
 
 function parseQuery(query: string): Term[] {
@@ -98,15 +126,9 @@ function parseQuery(query: string): Term[] {
   const tokens = query.match(/"[^"]*"|\S+/g) ?? [];
   return tokens.map((raw) => {
     const tok = raw.replace(/^"|"$/g, "");
-    const m = /^(kind|tag|attr):(.*)$/i.exec(tok);
-    if (m) {
-      const key = m[1].toLowerCase() as Term["kind"];
-      const rest = m[2];
-      const eq = rest.indexOf("=");
-      if (eq >= 0) return { kind: key, a: rest.slice(0, eq), b: rest.slice(eq + 1) };
-      return { kind: key, a: rest };
-    }
-    return { kind: "word", a: tok };
+    if (tok.startsWith("->")) return { kind: "edge", a: "", dir: "out", sub: parseLeaf(tok.slice(2)) };
+    if (tok.startsWith("<-")) return { kind: "edge", a: "", dir: "in", sub: parseLeaf(tok.slice(2)) };
+    return parseLeaf(tok);
   });
 }
 
@@ -123,8 +145,18 @@ function attrString(v: unknown): string {
   return String(v);
 }
 
-function matchTerm(n: IRNode, t: Term): boolean {
+function matchTerm(n: IRNode, t: Term, ir?: GraphIR, byId?: Map<string, IRNode>): boolean {
   const attrs = n.attrs ?? {};
+  if (t.kind === "edge") {
+    if (!ir || !byId || !t.sub) return false;
+    // A node matches if it has an edge (out or in) to a node satisfying `sub`.
+    const edges = ir.edges ?? [];
+    const neighbors = edges
+      .filter((e) => (t.dir === "out" ? e.from === n.id : e.to === n.id))
+      .map((e) => byId.get(t.dir === "out" ? e.to : e.from))
+      .filter((x): x is IRNode => !!x);
+    return neighbors.some((m) => matchTerm(m, t.sub!, ir, byId));
+  }
   if (t.kind === "kind") return (n.kind ?? "").toLowerCase().includes(t.a.toLowerCase());
   if (t.kind === "attr") {
     const val = attrString((attrs as Record<string, unknown>)[t.a]);
