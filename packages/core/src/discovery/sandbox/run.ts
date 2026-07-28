@@ -112,6 +112,9 @@ export async function runFallbackFilesSandboxed(
         env: { PATH: process.env.PATH ?? "" },
         timeoutMs: CHILD_TIMEOUT_MS,
         label: "sandboxed run",
+        // chant #1148 — a run-fallback file's own console.log/error no
+        // longer goes nowhere; see `./fork.ts`'s `outputPrefix` doc.
+        outputPrefix: "[sandbox:run]",
       },
       isChildResponse,
     );

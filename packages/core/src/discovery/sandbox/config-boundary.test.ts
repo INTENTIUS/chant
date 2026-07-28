@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach, afterEach } from "vitest";
+import { describe, test, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdir, writeFile, rm, realpath } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -235,5 +235,59 @@ describe("chant.config.ts evaluation under --sandbox (chant #1113)", () => {
       /Cannot read .* synchronously under --sandbox/,
     );
     expect(marker()).toBeUndefined();
+  });
+
+  /**
+   * chant #1148 — `chant.config.ts`'s own `console.log`/`console.error` used
+   * to go nowhere under `--sandbox`. Same relay as the run-fallback child
+   * (`./run.test.ts`), just this child's own prefix.
+   */
+  describe("console output forwarding (chant #1148)", () => {
+    beforeEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    /** Spies on `process.stderr.write` and returns the lines captured so far — same shape as `../../cli/handlers/emulator.test.ts`'s `stdout()`/`stderr()` helpers. */
+    function captureStderr(): string[] {
+      const lines: string[] = [];
+      vi.spyOn(process.stderr, "write").mockImplementation((chunk: unknown) => {
+        lines.push(String(chunk));
+        return true;
+      });
+      return lines;
+    }
+
+    // See ./run.test.ts's identical helper doc: the IPC "message" the awaited
+    // call resolves on and the child's stdout/stderr pipe data are
+    // independent channels, so polling briefly avoids a flaky assertion.
+    async function waitFor(lines: string[], matcher: RegExp, timeoutMs = 5000): Promise<void> {
+      const start = Date.now();
+      while (Date.now() - start < timeoutMs) {
+        if (matcher.test(lines.join(""))) return;
+        await new Promise((r) => setTimeout(r, 10));
+      }
+      throw new Error(`stderr never matched ${matcher}. Captured so far:\n${lines.join("")}`);
+    }
+
+    test("the config's own console.log/console.error are forwarded, prefixed with [sandbox:config]", async () => {
+      const stderr = captureStderr();
+      await writeFile(
+        join(testDir, "chant.config.ts"),
+        `console.log("hello from config stdout");\n` +
+          `console.error("hello from config stderr");\n` +
+          `export default { lexicons: ["aws"] };\n`,
+      );
+      armSandboxConfigEvaluation();
+
+      const { config } = await loadChantConfig(testDir);
+
+      expect(config.lexicons).toEqual(["aws"]);
+      await waitFor(stderr, /^\[sandbox:config\] hello from config stdout$/m);
+      await waitFor(stderr, /^\[sandbox:config\] hello from config stderr$/m);
+    });
   });
 });

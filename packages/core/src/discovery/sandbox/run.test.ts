@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach, afterEach } from "vitest";
+import { describe, test, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdir, writeFile, rm, realpath } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join, dirname, resolve } from "node:path";
@@ -175,5 +175,89 @@ describe("runFallbackFilesSandboxed — isolation", () => {
     const ref = readPolicy.props.resource as { getLogicalName?: () => string | undefined; attribute?: string };
     expect(ref.getLogicalName?.()).toBe("dataBucket");
     expect(ref.attribute).toBe("Arn");
+  });
+
+  /**
+   * chant #1148 — a run-fallback file's own `console.log`/`console.error`
+   * used to go nowhere: the child's stdout was piped but never read, and its
+   * stderr was captured only for `classifyChildError`'s use, never surfaced
+   * on a successful run. `./fork.ts` now relays both, line-buffered and
+   * prefixed, to THIS process's stderr — diagnostics crossing as data was
+   * never meant to mean incidental output vanishes.
+   */
+  describe("console output forwarding (chant #1148)", () => {
+    beforeEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    /** Spies on `process.stderr.write` and returns the lines captured so far — same shape as `../../cli/handlers/emulator.test.ts`'s `stdout()`/`stderr()` helpers. */
+    function captureStderr(): string[] {
+      const lines: string[] = [];
+      vi.spyOn(process.stderr, "write").mockImplementation((chunk: unknown) => {
+        lines.push(String(chunk));
+        return true;
+      });
+      return lines;
+    }
+
+    // The child's IPC "message" (what the awaited call resolves on) and its
+    // stdout/stderr pipe data are two independent channels — nothing orders
+    // one ahead of the other, and #1147 deliberately keeps it that way (see
+    // the hang-regression test in policy-boundary.test.ts). Polling briefly
+    // rather than asserting immediately avoids a flaky test without giving
+    // the production path anything to wait for.
+    async function waitFor(lines: string[], matcher: RegExp, timeoutMs = 5000): Promise<void> {
+      const start = Date.now();
+      while (Date.now() - start < timeoutMs) {
+        if (matcher.test(lines.join(""))) return;
+        await new Promise((r) => setTimeout(r, 10));
+      }
+      throw new Error(`stderr never matched ${matcher}. Captured so far:\n${lines.join("")}`);
+    }
+
+    test("both console.log and console.error are forwarded, prefixed with [sandbox:run]", async () => {
+      const stderr = captureStderr();
+      const file = join(testDir, "noisy.ts");
+      await writeFile(
+        file,
+        `
+          console.log("hello from run-fallback stdout");
+          console.error("hello from run-fallback stderr");
+          export const value = "ok";
+        `,
+      );
+
+      const result = await runFallbackFilesSandboxed([file], testDir);
+
+      expect(result.errors).toEqual([]);
+      await waitFor(stderr, /^\[sandbox:run\] hello from run-fallback stdout$/m);
+      await waitFor(stderr, /^\[sandbox:run\] hello from run-fallback stderr$/m);
+    });
+
+    test("a file that exits hard still has its stderr in the classified error (forwarding doesn't replace capture)", async () => {
+      const stderr = captureStderr();
+      const file = join(testDir, "crashes.ts");
+      await writeFile(
+        file,
+        `
+          console.error("about to exit hard");
+          process.exit(1);
+        `,
+      );
+
+      const result = await runFallbackFilesSandboxed([file], testDir);
+
+      // A hard process.exit() takes the whole bundled child with it — this is
+      // fork.ts's pre-existing "child exited before reporting results" path,
+      // fed by the SAME stderrBuf that now also feeds forwarding.
+      expect(result.errors).toHaveLength(1);
+      expect(result.errors[0].message).toMatch(/about to exit hard/);
+
+      await waitFor(stderr, /^\[sandbox:run\] about to exit hard$/m);
+    });
   });
 });
