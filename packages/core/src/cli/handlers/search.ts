@@ -73,7 +73,7 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
     for (const p of observing) {
       if (!p.enrichLiveAttrs) continue;
       try {
-        const enriched = await p.enrichLiveAttrs({ environment, owned: true });
+        const enriched = await p.enrichLiveAttrs({ environment, owned: true, stacks });
         ir = { ...ir, nodes: ir.nodes.map((n) => (enriched[n.id] ? { ...n, attrs: { ...n.attrs, ...enriched[n.id] } } : n)) };
       } catch {
         /* enrichment is best-effort; search still works on describe attrs */

@@ -135,7 +135,7 @@ async function runGraphLive(
   for (const p of observing) {
     if (!p.enrichLiveAttrs) continue;
     try {
-      const enriched = await p.enrichLiveAttrs({ environment, owned: true });
+      const enriched = await p.enrichLiveAttrs({ environment, owned: true, stacks: [...stacks] });
       ir = {
         ...ir,
         nodes: ir.nodes.map((n) =>

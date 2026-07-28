@@ -703,9 +703,20 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
   // describe-stack-resources is too thin; the deployed template (exportResources)
   // carries the references. Resolve its `{Ref}`/`{Fn::GetAtt}` intrinsics to bare
   // logical ids so the reference resolver matches them.
-  async enrichLiveAttrs(options: { environment: string; stack?: string; owned?: boolean }): Promise<Record<string, Record<string, unknown>>> {
-    const template = await this.exportResources!({ environment: options.environment, stack: options.stack, owned: options.owned });
-    return resolveTemplateAttrs(template);
+  async enrichLiveAttrs(options: { environment: string; stack?: string; stacks?: string[]; owned?: boolean }): Promise<Record<string, Record<string, unknown>>> {
+    // Multi-stack (#1161): a project declaring ChantConfig.stacks passes them
+    // here; enrich per-stack and merge. Otherwise the single-stack convention.
+    const stackNames = options.stacks && options.stacks.length > 0 ? options.stacks : [options.stack ?? options.environment];
+    const merged: Record<string, Record<string, unknown>> = {};
+    for (const stack of stackNames) {
+      try {
+        const template = await this.exportResources!({ environment: options.environment, stack, owned: options.owned });
+        Object.assign(merged, resolveTemplateAttrs(template));
+      } catch {
+        // A stack that isn't deployed yet contributes no live attrs — skip it.
+      }
+    }
+    return merged;
   },
 
   mcpTools() {
