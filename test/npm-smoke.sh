@@ -145,6 +145,23 @@ export const app = new Deployment({
   },
 });'
 
+# The k8s lexicon declares @intentius/chant-k8s-client as an OPTIONAL
+# dependency (#1074): a registry install must be able to resolve it (the
+# live-observation path degrades to holes without it), and its module must
+# load. Registry mode only — the tarball path has no client tarball and the
+# build path never needs it (that isolation is its own gated test).
+if [ "$INSTALL_MODE" = "registry" ]; then
+  k8s_client_dir="/tmp/test-k8s-client-check"
+  mkdir -p "$k8s_client_dir" && cd "$k8s_client_dir"
+  pkg_init
+  if install_from_registry "@intentius/chant-k8s-client" \
+     && node -e "import('@intentius/chant-k8s-client').then(() => process.exit(0), () => process.exit(1))" 2>/dev/null; then
+    pass "k8s-client: installs from registry and imports"
+  else
+    fail "k8s-client: installs from registry and imports"
+  fi
+fi
+
 # Azure manual project
 test_manual_project "azure" "/tarballs/lexicon-azure.tgz" \
   'import { StorageAccount, Azure } from "@intentius/chant-lexicon-azure";
