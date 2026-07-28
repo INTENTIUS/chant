@@ -74,6 +74,19 @@ describe("enrichEffectiveTopology", () => {
     expect(attrs("privServer").internetFacing).toBe(false);
   });
 
+  it("keeps a live-supplied internetFacing (e.g. default VPC) even with no declared route", () => {
+    // A live enrichment marks an instance internetFacing; its subnet's routing
+    // is not in the declared graph (the account's default VPC). Enrichment
+    // must NOT overwrite that truth back to false.
+    const withLive: GraphIR = {
+      nodes: [node("defaultVpcServer", "Instance", { internetFacing: true })] as never,
+      edges: [] as never,
+      groups: {},
+    };
+    const out = enrichEffectiveTopology(withLive);
+    expect((out.nodes[0].attrs as Record<string, unknown>).internetFacing).toBe(true);
+  });
+
   it("SSH-reachable = internetFacing AND effectiveIngress tcp:22:0.0.0.0/0 → only web + lt", () => {
     const reachable = enriched.nodes.filter(
       (n) => (n.attrs as Record<string, unknown>).internetFacing === true &&

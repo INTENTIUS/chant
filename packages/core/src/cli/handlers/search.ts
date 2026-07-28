@@ -72,10 +72,12 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
     });
     for (const e of errors) console.error(formatWarning({ message: e }));
     let live = buildLiveGraphIr(observations);
+    const liveAttrs: Record<string, Record<string, unknown>> = {};
     for (const p of observing) {
       if (!p.enrichLiveAttrs) continue;
       try {
         const enriched = await p.enrichLiveAttrs({ environment, owned: true, stacks });
+        for (const [id, a] of Object.entries(enriched)) liveAttrs[id] = { ...liveAttrs[id], ...a };
         live = { ...live, nodes: live.nodes.map((n) => (enriched[n.id] ? { ...n, attrs: { ...n.attrs, ...enriched[n.id] } } : n)) };
       } catch {
         /* enrichment is best-effort; search still works on describe attrs */
@@ -95,6 +97,11 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
         ? await buildDeclaredPerStack(stacks, projectPath)
         : buildGraphIr((await discover(resolve(args.src ?? config.sourceDir ?? "."))).entities, projectPath);
     ir = sourceOverlayGraphs(declared, live);
+    // Carry live-derived attrs onto the declared canvas — some facts only exist
+    // in live account state (e.g. `internetFacing` for an instance in the
+    // account's default VPC, whose route table chant does not model). The
+    // overlay copies physical identity but not attrs, so merge them here.
+    ir = { ...ir, nodes: ir.nodes.map((n) => (liveAttrs[n.id] ? { ...n, attrs: { ...n.attrs, ...liveAttrs[n.id] } } : n)) };
   } else {
     const discovered = await discover(resolve(args.src ?? config.sourceDir ?? "."));
     ir = buildGraphIr(discovered.entities);

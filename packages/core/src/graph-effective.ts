@@ -91,7 +91,11 @@ export function enrichEffectiveTopology(ir: GraphIR): GraphIR {
   const nodes = ir.nodes.map((n) => {
     if (!isKind(n, "Instance")) return n;
     const effectiveIngress = effectiveSgs(n).flatMap(normalizeIngress);
-    return { ...n, attrs: { ...(n.attrs ?? {}), effectiveIngress, internetFacing: internetFacing(n) } };
+    // A live enrichment may already have set internetFacing for a subnet chant
+    // doesn't model declaratively (e.g. the account's default VPC). Keep that
+    // truth; otherwise derive it from the declared route topology.
+    const live = (n.attrs as Record<string, unknown> | undefined)?.["internetFacing"] === true;
+    return { ...n, attrs: { ...(n.attrs ?? {}), effectiveIngress, internetFacing: live || internetFacing(n) } };
   });
   return { ...ir, nodes };
 }
