@@ -72,3 +72,36 @@ rules: {
   "COR009": ["warning", { max: 12 }],
 }
 ```
+
+## Post-Synth Checks and Policies
+
+`rules` applies to a post-synth check id (a lexicon's `WAW019`, `WK8005`, ...)
+and a project policy's own id (`ORG-COST-CENTER`) exactly the same way it
+applies to `COR004` or `EVL001` above — same key, same severities, `"off"`
+suppresses it entirely:
+
+```typescript
+export default {
+  lexicons: ["aws"],
+  lint: {
+    rules: { "WAW019": "off" },  // this project's scenario needs an open SSH ingress
+  },
+} satisfies ChantConfig;
+```
+
+This is the whole surface for suppressing a post-synth or policy finding.
+Two things that work for `COR`/`EVL`/`COMP` rules do **not** apply here:
+
+- **File-specific `overrides`** — a post-synth check runs over the whole
+  synthesized output, not one file, so there is no file path to match a glob
+  against.
+- **`chant-disable` source comments** — a post-synth diagnostic's only
+  locator (`entity`) names a resource in the *synthesized output* (a
+  CloudFormation logical id, a Kubernetes `metadata.name`), not a source file
+  or line, and several checks never set it at all. There is no reliable
+  anchor to put a directive at, so a project-wide `rules: { ID: "off" }` is
+  the only suppression path.
+
+A suppressed post-synth/policy finding is not silently dropped: `chant build`
+prints a count (`N post-synth finding(s) suppressed via lint.rules`) so the
+suppression stays visible.

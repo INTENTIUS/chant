@@ -4,7 +4,7 @@ import { resolveCliBuildParams } from "../build-params-cli";
 import type { Serializer, SerializerResult } from "../../serializer";
 import type { LexiconPlugin } from "../../lexicon";
 import { runPostSynthChecks } from "../../lint/post-synth";
-import { ruleSeverityOverride } from "../../lint/config";
+import { applyConfiguredSeverity } from "../../lint/config";
 import { loadPolicyChecks } from "../../lint/policy";
 import { armSandboxPolicyExecution, runProjectPolicies } from "../../lint/policy-sandbox";
 import { sortedJsonReplacer } from "../../utils";
@@ -283,6 +283,16 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
   }
 
   // Run post-synth checks from plugins — each plugin only sees its own lexicon's output
+  //
+  // chant #1138 — every diagnostic collected below (a lexicon-shipped check's
+  // AND a project's `lint.policies`') is resolved against `lint.rules` before
+  // it becomes an error/warning line, through the exact same
+  // `applyConfiguredSeverity` (../../lint/post-synth.ts) that keys off
+  // `diag.checkId` the way `lintCommand` keys an AST/COMP* diagnostic off its
+  // rule id — so `lint.rules: { WAW019: "off" }` suppresses a post-synth
+  // finding just as it suppresses a pre-synth one. A finding it suppresses is
+  // counted, not dropped silently — see `suppressedPostSynthCount` below.
+  let suppressedPostSynthCount = 0;
   if (result.errors.length === 0 && options.plugins) {
     for (const plugin of options.plugins) {
       if (!plugin.postSynthChecks) continue;
@@ -302,15 +312,12 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
 
       const scopedResult = { ...result, outputs: scopedOutputs };
       const postDiags = runPostSynthChecks(checks, scopedResult, env);
-      for (const diag of postDiags) {
-        // Post-synth findings honor the same lint.rules severity overrides as
-        // declarative rules (#1138): "off" suppresses, other severities remap.
-        const override = ruleSeverityOverride(config, diag.checkId);
-        if (override === "off") continue;
-        const severity = override ?? diag.severity;
+      const { diagnostics: activeDiags, suppressed } = applyConfiguredSeverity(postDiags, config.lint?.rules);
+      suppressedPostSynthCount += suppressed.length;
+      for (const diag of activeDiags) {
         const prefix = diag.entity ? `[${diag.entity}] ` : "";
         const lexiconSuffix = diag.lexicon ? ` (${diag.lexicon})` : "";
-        if (severity === "error") {
+        if (diag.severity === "error") {
           errors.push(formatError({ message: `${prefix}${diag.message}${lexiconSuffix}` }));
         } else {
           warnings.push(formatWarning({ message: `${prefix}${diag.message}${lexiconSuffix}` }));
@@ -327,6 +334,15 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
     // result to a post-merge sandboxed child, which imports the policy modules
     // and runs their checks there, and only plain `PostSynthDiagnostic`s come
     // back. Unsandboxed, it is the same in-process load-and-run as before.
+    //
+    // #1138 — `applyConfiguredSeverity` runs HERE, in the parent, after the
+    // sandboxed child (when armed) has already returned — never inside it.
+    // The child only knows the policy paths and the encoded build result, not
+    // this project's resolved `lint.rules`, and by design nothing about the
+    // suppression surface needs to cross that boundary: both the plain and
+    // the `--sandbox` path funnel through this identical call with the
+    // identical `config.lint?.rules`, so a sandboxed and an unsandboxed build
+    // of the same project apply the same config to the same diagnostics.
     if (policies.length > 0) {
       const policyDiags = await runProjectPolicies({
         policies,
@@ -335,13 +351,23 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
         env,
         preloaded: preloadedPolicyChecks,
       });
-      for (const diag of policyDiags) {
+      const { diagnostics: activePolicyDiags, suppressed } = applyConfiguredSeverity(policyDiags, config.lint?.rules);
+      suppressedPostSynthCount += suppressed.length;
+      for (const diag of activePolicyDiags) {
         const prefix = diag.entity ? `[${diag.entity}] ` : "";
         const where = diag.lexicon ? ` (${diag.lexicon})` : "";
         const msg = `[policy:${diag.checkId}] ${prefix}${diag.message}${where}`;
         if (diag.severity === "error") errors.push(formatError({ message: msg }));
         else warnings.push(formatWarning({ message: msg }));
       }
+    }
+
+    if (suppressedPostSynthCount > 0) {
+      warnings.push(
+        formatWarning({
+          message: `${suppressedPostSynthCount} post-synth finding(s) suppressed via lint.rules (severity "off")`,
+        }),
+      );
     }
   }
 

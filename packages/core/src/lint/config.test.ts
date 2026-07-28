@@ -1,5 +1,6 @@
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
-import { loadConfig, DEFAULT_CONFIG, findProjectRoot, ruleSeverityOverride } from "./config";
+import { loadConfig, DEFAULT_CONFIG, findProjectRoot, resolveConfiguredSeverity, applyConfiguredSeverity } from "./config";
+import type { PostSynthDiagnostic } from "./post-synth";
 import { writeFileSync, mkdirSync, rmSync } from "fs";
 import { join, resolve } from "path";
 
@@ -718,21 +719,93 @@ describe("findProjectRoot", () => {
   });
 });
 
-describe("ruleSeverityOverride", () => {
-  test("returns the configured severity string", () => {
-    expect(ruleSeverityOverride({ lint: { rules: { WAW019: "off" } } }, "WAW019")).toBe("off");
-    expect(ruleSeverityOverride({ lint: { rules: { WAW019: "warning" } } }, "WAW019")).toBe("warning");
+/**
+ * chant #1138 — the one severity-resolution path AST lint rules
+ * (`../cli/commands/lint.ts`'s `getDefaultRules`), COMP* checks
+ * (`runComponentCheckDiagnostics`), and post-synth checks/policies
+ * (`applyConfiguredSeverity`, below) all now call, keyed by whichever id the
+ * caller has (a `LintRule.id`, a `ComponentCheck.id`, or a
+ * `PostSynthDiagnostic.checkId`) — a rule id behaves the same regardless of
+ * which phase produced it.
+ */
+describe("resolveConfiguredSeverity", () => {
+  test("an id with no config entry falls back to the caller's default severity, with no options", () => {
+    expect(resolveConfiguredSeverity(undefined, "COR001", "error")).toEqual({ severity: "error" });
+    expect(resolveConfiguredSeverity({}, "COR001", "warning")).toEqual({ severity: "warning" });
+    expect(resolveConfiguredSeverity({ OTHER: "off" }, "COR001", "error")).toEqual({ severity: "error" });
   });
 
-  test("unwraps tuple rule configs", () => {
-    expect(
-      ruleSeverityOverride({ lint: { rules: { WAW019: ["off", { reason: "deliberate" }] } } }, "WAW019"),
-    ).toBe("off");
+  test("a bare severity string overrides the default", () => {
+    expect(resolveConfiguredSeverity({ COR001: "warning" }, "COR001", "error")).toEqual({ severity: "warning" });
   });
 
-  test("returns undefined for unconfigured rules or malformed config", () => {
-    expect(ruleSeverityOverride({}, "WAW019")).toBeUndefined();
-    expect(ruleSeverityOverride({ lint: { rules: {} } }, "WAW019")).toBeUndefined();
-    expect(ruleSeverityOverride({ lint: { rules: { WAW019: 42 } } }, "WAW019")).toBeUndefined();
+  test('"off" suppresses regardless of the default severity', () => {
+    expect(resolveConfiguredSeverity({ WAW019: "off" }, "WAW019", "error")).toEqual({ severity: "off" });
+  });
+
+  test("a [severity, options] tuple carries options through", () => {
+    expect(resolveConfiguredSeverity({ COR009: ["warning", { max: 12 }] }, "COR009", "error")).toEqual({
+      severity: "warning",
+      options: { max: 12 },
+    });
+  });
+
+  test("an invalid severity in a [severity, options] tuple throws, naming the bad value", () => {
+    expect(() =>
+      resolveConfiguredSeverity({ COR009: ["fatal" as never, { max: 12 }] }, "COR009", "error"),
+    ).toThrow(/severity "fatal"/);
+  });
+});
+
+/**
+ * chant #1138 — `lint.rules` severity overrides apply to a post-synth check
+ * id (`diag.checkId`) through the identical `resolveConfiguredSeverity` an
+ * AST rule id or a COMP* check id goes through, so
+ * `lint.rules: { WAW019: "off" }` suppresses a post-synth finding just like a
+ * pre-synth one — the bug this issue reports.
+ */
+describe("applyConfiguredSeverity", () => {
+  function diag(overrides: Partial<PostSynthDiagnostic> = {}): PostSynthDiagnostic {
+    return { checkId: "WAW019", severity: "error", message: "open ingress", ...overrides };
+  }
+
+  test("an unconfigured check id passes through unchanged — no drift for the common case", () => {
+    const result = applyConfiguredSeverity([diag()], undefined);
+    expect(result.diagnostics).toEqual([diag()]);
+    expect(result.suppressed).toEqual([]);
+  });
+
+  test('"off" suppresses the finding — moved to `suppressed`, not dropped, so it stays countable', () => {
+    const result = applyConfiguredSeverity([diag()], { WAW019: "off" });
+    expect(result.diagnostics).toEqual([]);
+    expect(result.suppressed).toEqual([diag()]);
+  });
+
+  test('"warning" downgrades an error-severity finding', () => {
+    const result = applyConfiguredSeverity([diag({ severity: "error" })], { WAW019: "warning" });
+    expect(result.diagnostics).toEqual([diag({ severity: "warning" })]);
+    expect(result.suppressed).toEqual([]);
+  });
+
+  test('"error" upgrades a warning-severity finding', () => {
+    const result = applyConfiguredSeverity([diag({ severity: "warning" })], { WAW019: "error" });
+    expect(result.diagnostics).toEqual([diag({ severity: "error" })]);
+  });
+
+  test("resolves each diagnostic by its own checkId — one config, independent ids", () => {
+    const diags = [
+      diag({ checkId: "WAW019" }),
+      diag({ checkId: "WAW049", message: "no logging" }),
+      diag({ checkId: "WAW099", message: "untouched" }),
+    ];
+    const result = applyConfiguredSeverity(diags, { WAW019: "off", WAW049: "warning" });
+    expect(result.suppressed.map((d) => d.checkId)).toEqual(["WAW019"]);
+    expect(result.diagnostics.map((d) => d.checkId)).toEqual(["WAW049", "WAW099"]);
+    expect(result.diagnostics.find((d) => d.checkId === "WAW049")?.severity).toBe("warning");
+    expect(result.diagnostics.find((d) => d.checkId === "WAW099")?.severity).toBe("error");
+  });
+
+  test("an empty diagnostics list is a no-op", () => {
+    expect(applyConfiguredSeverity([], { WAW019: "off" })).toEqual({ diagnostics: [], suppressed: [] });
   });
 });

@@ -3,6 +3,7 @@ import { join, dirname, resolve } from "path";
 import { z } from "zod";
 import { evaluateProjectConfigSync } from "../config-sandbox";
 import type { Severity, RuleConfig } from "./rule";
+import type { PostSynthDiagnostic } from "./post-synth";
 import { moduleDir, getRuntime } from "../runtime-adapter";
 import strictPreset from "./presets/strict.json";
 
@@ -200,6 +201,40 @@ export function parseRuleConfig(value: RuleConfig): ParsedRuleConfig {
   }
 
   return { severity, options };
+}
+
+/**
+ * Resolve one check/rule id's effective severity (and options) against an
+ * already-resolved `lint.rules` map — the ONE place `"off"`/severity-override
+ * resolution happens, so a rule id behaves identically regardless of which
+ * phase produced it.
+ *
+ * chant #1138 — before this, the same `lint.rules: { ID: "off" }` config was
+ * resolved by two independent call sites that had grown their own copy of
+ * this logic (`../cli/commands/lint.ts`'s `getDefaultRules` for AST COR/EVL
+ * rules, and its `runComponentCheckDiagnostics` for whole-component COMP*
+ * checks) — identical in effect, but a rule id's suppression having two
+ * places to (potentially, eventually) diverge is itself the bug class #1138
+ * is about. Both were converted to call this instead, and post-synth checks/
+ * policies (`./post-synth.ts`'s `applyConfiguredSeverity`) now go through it
+ * too, closing the gap the issue reports: a post-synth check id honors
+ * `lint.rules` exactly like an AST rule id does.
+ *
+ * `rules` takes the already-resolved map (`config.rules`, or
+ * `resolveRulesForFile`'s per-file merge) rather than a whole `LintConfig` —
+ * callers that need per-file `overrides` resolve that first; post-synth
+ * checks have no per-file scope to begin with (see {@link
+ * ./post-synth.ts!PostSynthDiagnostic}'s doc for why), so they always pass
+ * `config.rules` directly.
+ */
+export function resolveConfiguredSeverity(
+  rules: Record<string, RuleConfig> | undefined,
+  id: string,
+  defaultSeverity: Severity,
+): ParsedRuleConfig {
+  const configValue = rules?.[id];
+  if (configValue === undefined) return { severity: defaultSeverity };
+  return parseRuleConfig(configValue);
 }
 
 /**
@@ -412,24 +447,75 @@ export function resolveRulesForFile(config: LintConfig, filePath: string): Recor
   return rules;
 }
 
+/** Result of applying `lint.rules` to a set of post-synth diagnostics. */
+export interface PostSynthSeverityResult {
+  /** Diagnostics after config resolution — `"off"`-suppressed ones removed, everything else at its resolved severity. */
+  diagnostics: PostSynthDiagnostic[];
+  /**
+   * Diagnostics `lint.rules` turned `"off"`, unaltered — present so a caller
+   * can report a count (chant #1138) rather than the finding simply
+   * vanishing, mirroring `../lint/engine.ts`'s `LintRunResult.suppressed` for
+   * AST rules.
+   */
+  suppressed: PostSynthDiagnostic[];
+}
+
 /**
- * The configured severity override for a rule id, or undefined when the
- * project doesn't override it. Reads `lint.rules` off a raw config object
- * (severity string, or `[severity, options]` tuple). Used by build's
- * post-synth pass so those findings honor the same overrides as declarative
- * rules (#1138) — "off" means suppress entirely.
+ * Apply `lint.rules` severity overrides to already-produced post-synth
+ * diagnostics — one lexicon-shipped check's findings, or one project's
+ * `lint.policies` findings, it doesn't matter which: both are plain
+ * `PostSynthDiagnostic[]` by the time they reach this function, so both go
+ * through the identical resolution an AST rule id or a COMP* check id gets
+ * (`resolveConfiguredSeverity`, above), keyed by `diag.checkId` instead of
+ * `LintRule.id`/`ComponentCheck.id`. `"off"` suppresses (moved to
+ * `suppressed`); any other configured severity replaces `diag.severity`,
+ * exactly as a config override changes an AST diagnostic's reported level.
+ *
+ * Lives here rather than in `./post-synth.ts` (where `PostSynthDiagnostic` is
+ * declared) on purpose: `post-synth.ts` is a leaf every lexicon's checks
+ * import as a real runtime module, and this file resolves built-in preset
+ * paths via the runtime adapter at module scope — pulling that into every
+ * lexicon's check barrel merely to share one filter function would be the
+ * wrong trade. Only this file's TYPE (`PostSynthDiagnostic`) crosses back,
+ * which costs nothing at runtime.
+ *
+ * chant #1138 — deliberately does NOT also honor `chant-disable` source
+ * comments. `PostSynthDiagnostic` has no source anchor to disable AT — see
+ * its doc comment (`./post-synth.ts`) for why `entity` doesn't supply one —
+ * so there is no coherent site to check for a directive. Even in the one case
+ * a real anchor sometimes exists (a live, in-process `ctx.entities` value
+ * stamped with build provenance, `../provenance.ts`'s `getProvenance`), it
+ * would not generalize: not every check sets `entity`, `entity` isn't
+ * guaranteed to be an entities-map key (it's a name in the synthesized
+ * OUTPUT — a CFN logical id, a k8s `metadata.name` — which a serializer is
+ * free to have derived, prefixed, or renamed from the source-level entity
+ * name), and that provenance never crosses the `--sandbox` policy child's
+ * JSON wire (`../discovery/entity-wire-codec.ts` doesn't carry it, and
+ * re-deriving it on the far side would mean sending source file paths into a
+ * channel that's supposed to carry only the resolved build). Building
+ * directive suppression on a sometimes-present, sometimes-not anchor would
+ * make `chant build` and `chant build --sandbox` disagree about the
+ * identical finding depending on which path happened to still have the
+ * entity object around — precisely the kind of inconsistency #1138 exists to
+ * remove. Config severity (`"off"`) is the one suppression surface this can
+ * offer uniformly; a check that wants a per-instance escape hatch can read
+ * `ctx.env`/its own options to decide not to emit a diagnostic at all.
  */
-export function ruleSeverityOverride(
-  config: { lint?: unknown },
-  ruleId: string,
-): "off" | "error" | "warning" | "info" | undefined {
-  const lint = config.lint;
-  if (!lint || typeof lint !== "object") return undefined;
-  const rules = (lint as { rules?: unknown }).rules;
-  if (!rules || typeof rules !== "object") return undefined;
-  const entry = (rules as Record<string, unknown>)[ruleId];
-  const severity = Array.isArray(entry) ? entry[0] : entry;
-  return severity === "off" || severity === "error" || severity === "warning" || severity === "info"
-    ? severity
-    : undefined;
+export function applyConfiguredSeverity(
+  diagnostics: readonly PostSynthDiagnostic[],
+  rules: Record<string, RuleConfig> | undefined,
+): PostSynthSeverityResult {
+  const kept: PostSynthDiagnostic[] = [];
+  const suppressed: PostSynthDiagnostic[] = [];
+
+  for (const diag of diagnostics) {
+    const resolved = resolveConfiguredSeverity(rules, diag.checkId, diag.severity);
+    if (resolved.severity === "off") {
+      suppressed.push(diag);
+      continue;
+    }
+    kept.push(resolved.severity === diag.severity ? diag : { ...diag, severity: resolved.severity });
+  }
+
+  return { diagnostics: kept, suppressed };
 }

@@ -18,8 +18,7 @@ import { formatError, formatInfo } from "../format";
 import { GENERATED_MARKER } from "../../discovery/files";
 
 // Import config loader
-import { loadConfig, resolveRulesForFile, parseRuleConfig, findProjectRoot } from "../../lint/config";
-import type { RuleConfig } from "../../lint/rule";
+import { loadConfig, resolveRulesForFile, resolveConfiguredSeverity, findProjectRoot } from "../../lint/config";
 
 /**
  * Type guard to check if a value conforms to the LintRule interface.
@@ -263,28 +262,22 @@ function getDefaultRules(
   const ruleOptions = new Map<string, Record<string, unknown>>();
 
   for (const [ruleId, rule] of allRules) {
-    const configValue: RuleConfig | undefined = effectiveRules?.[ruleId];
-
-    if (configValue === undefined) {
-      // Rule not mentioned in config — include with default severity
-      rules.push(rule);
-      continue;
-    }
-
-    const parsed = parseRuleConfig(configValue);
+    // chant #1138 — the same resolution post-synth checks and COMP* checks
+    // now go through too (`resolveConfiguredSeverity`, ../../lint/config.ts),
+    // so `lint.rules: { ID: "off" }` suppresses a rule id identically no
+    // matter which phase produced it.
+    const { severity, options } = resolveConfiguredSeverity(effectiveRules, ruleId, rule.severity);
 
     // Skip rules that are explicitly turned off
-    if (parsed.severity === "off") continue;
+    if (severity === "off") continue;
 
-    // Override severity from config
-    rules.push({
-      ...rule,
-      severity: parsed.severity as "error" | "warning" | "info",
-    });
+    // Override severity from config (a no-op when the rule wasn't mentioned —
+    // `severity` is then just `rule.severity` again)
+    rules.push({ ...rule, severity });
 
     // Store options if present
-    if (parsed.options) {
-      ruleOptions.set(ruleId, parsed.options);
+    if (options) {
+      ruleOptions.set(ruleId, options);
     }
   }
 
@@ -394,12 +387,11 @@ async function runComponentCheckDiagnostics(
     // Discovery errors (COMP000) always surface at error severity — not user-configurable.
     let severity = d.severity;
     if (d.checkId !== "COMP000") {
-      const configValue = config.rules?.[d.checkId];
-      if (configValue !== undefined) {
-        const parsed = parseRuleConfig(configValue);
-        if (parsed.severity === "off") continue;
-        severity = parsed.severity;
-      }
+      // chant #1138 — same resolution function AST rules and post-synth
+      // checks use (`resolveConfiguredSeverity`, ../../lint/config.ts).
+      const resolved = resolveConfiguredSeverity(config.rules, d.checkId, d.severity);
+      if (resolved.severity === "off") continue;
+      severity = resolved.severity;
     }
 
     const disable = fileLevelDisable(d.file, d.checkId);

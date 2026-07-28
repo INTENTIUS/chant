@@ -2,10 +2,18 @@ import { describe, test, expect, vi, beforeEach } from "vitest";
 
 // AWS exportResources reaches the cloud through the runtime adapter's spawn
 // (not node:child_process), so the I/O seam is the runtime-adapter module.
+// Partial mock (`importOriginal`) rather than a full replacement: this module
+// is reachable — via `@intentius/chant`'s own root barrel, not just this
+// test's direct imports — from other real exports the plugin/import path
+// touches (e.g. `moduleDir`, which `../../lint/config.ts` calls at module
+// scope), so replacing the whole module wholesale breaks anything that
+// transitively loads one of those, for reasons entirely unrelated to what
+// this test is mocking (`spawn`).
 const spawnMock = vi.fn();
-vi.mock("@intentius/chant/runtime-adapter", () => ({
-  getRuntime: () => ({ spawn: spawnMock }),
-}));
+vi.mock("@intentius/chant/runtime-adapter", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@intentius/chant/runtime-adapter")>();
+  return { ...actual, getRuntime: () => ({ ...actual.getRuntime(), spawn: spawnMock }) };
+});
 
 import { awsPlugin } from "../plugin";
 

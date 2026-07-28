@@ -141,3 +141,7 @@ describe("isPostSynthCheck", () => {
     expect(isPostSynthCheck("nope")).toBe(false);
   });
 });
+
+// chant #1138 — `applyConfiguredSeverity` (the `lint.rules` severity-override
+// pass over `PostSynthDiagnostic`s) is tested in `./config.test.ts`, where the
+// function itself now lives — see `./config.ts`'s doc comment for why.
