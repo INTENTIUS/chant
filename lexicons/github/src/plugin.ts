@@ -65,8 +65,8 @@ export const githubPlugin: LexiconPlugin = {
   intrinsics(): IntrinsicDef[] {
     return [
       {
-        name: "expression",
-        description: "${{ }} expression wrapper for GitHub Actions contexts",
+        name: "Expression",
+        description: "Typed class wrapping a raw GitHub Actions expression, serializing to `${{ }}` (chant #1069 — was registered as \"expression\", which src/index.ts never exported)",
         outputKey: "expression",
         isTag: false,
       },

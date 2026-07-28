@@ -82,9 +82,11 @@ describe("githubPlugin", () => {
   });
 
   test("provides intrinsics", () => {
+    // chant #1069 — registered as the `Expression` class (capitalized), the
+    // real export of src/index.ts; "expression" (lowercase) was never exported.
     const intrinsics = githubPlugin.intrinsics!();
     expect(intrinsics.length).toBe(1);
-    expect(intrinsics[0].name).toBe("expression");
+    expect(intrinsics[0].name).toBe("Expression");
   });
 
   test("provides init templates", () => {
