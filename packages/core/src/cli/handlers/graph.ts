@@ -112,18 +112,25 @@ async function runGraphLive(
   const componentsDiscovery = await discoverComponents(resolve(args.src ?? config.sourceDir ?? "."), {
     sandbox: args.sandbox,
   });
-  const stacks = new Set<string>();
+  const stacks: Array<{ name: string; region?: string }> = [];
+  const seenStacks = new Set<string>();
   if (componentsDiscovery.errors.length === 0) {
     for (const { component } of componentsDiscovery.components.values()) {
-      for (const stack of cfnDeployStacks(component.deploy)) stacks.add(stack);
+      for (const stack of cfnDeployStacks(component.deploy)) {
+        if (!seenStacks.has(stack)) { seenStacks.add(stack); stacks.push({ name: stack }); }
+      }
     }
   } else {
     console.error(formatWarning({ message: "component discovery failed — observing the single-stack convention instead" }));
   }
+  // ChantConfig.stacks (with optional per-stack region) — multi-region estates.
+  for (const declared of config.stacks ?? []) {
+    if (!seenStacks.has(declared.name)) { seenStacks.add(declared.name); stacks.push({ name: declared.name, region: declared.region }); }
+  }
 
   const { observations, errors } = await observeResources(environment, observing, buildResult, {
     owned: true,
-    stacks: [...stacks],
+    stacks,
   });
   for (const e of errors) console.error(formatWarning({ message: e }));
 
@@ -135,7 +142,7 @@ async function runGraphLive(
   for (const p of observing) {
     if (!p.enrichLiveAttrs) continue;
     try {
-      const enriched = await p.enrichLiveAttrs({ environment, owned: true, stacks: [...stacks] });
+      const enriched = await p.enrichLiveAttrs({ environment, owned: true, stacks });
       ir = {
         ...ir,
         nodes: ir.nodes.map((n) =>

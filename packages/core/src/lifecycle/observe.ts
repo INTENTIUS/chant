@@ -44,10 +44,10 @@ export async function observeResources(
   environment: string,
   plugins: ObservationLexicon[],
   buildResult: BuildResult,
-  opts?: { owned?: boolean; stacks?: string[] },
+  opts?: { owned?: boolean; stacks?: Array<string | { name: string; region?: string }> },
 ): Promise<ObserveResult> {
   const owned = opts?.owned ?? true;
-  const stacks = opts?.stacks ?? [];
+  const stacks = (opts?.stacks ?? []).map((st) => (typeof st === "string" ? { name: st } : st));
   const observations: LiveObservation[] = [];
   const warnings: string[] = [];
   const errors: string[] = [];
@@ -87,7 +87,8 @@ export async function observeResources(
             entityNames,
             entities,
             owned,
-            stack,
+            stack: stack.name,
+            region: stack.region,
           });
           Object.assign(resources, perStack);
         }

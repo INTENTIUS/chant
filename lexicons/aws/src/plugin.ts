@@ -533,11 +533,14 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
     buildOutput: string;
     entityNames: string[];
     stack?: string;
+    region?: string;
     owned?: boolean;
   }): Promise<Record<string, ResourceMetadata>> {
     const { getRuntime } = await import("@intentius/chant/runtime-adapter");
     const rt = getRuntime();
     const resources: Record<string, ResourceMetadata> = {};
+    // Multi-region estates: target this stack's region, not the ambient one.
+    const regionArgs = options.region ? ["--region", options.region] : [];
 
     if (options.owned) {
       // describe-stack-resources does not return tags, so ownership cannot be
@@ -559,6 +562,7 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
     const listResult = await rt.spawn(applyAwsEndpointArgv([
       "aws", "cloudformation", "describe-stack-resources",
       "--stack-name", stackName,
+      ...regionArgs,
       "--output", "json",
     ], process.env.AWS_ENDPOINT_URL));
 
@@ -593,6 +597,7 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
     const describeResult = await rt.spawn(applyAwsEndpointArgv([
       "aws", "cloudformation", "describe-stacks",
       "--stack-name", stackName,
+      ...regionArgs,
       "--output", "json",
     ], process.env.AWS_ENDPOINT_URL));
 
@@ -665,6 +670,7 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
   async exportResources(options: {
     environment: string;
     stack?: string;
+    region?: string;
     selector?: ResourceSelector;
     owned?: boolean;
   }): Promise<ExportedTemplate> {
@@ -674,10 +680,12 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
     // Same stack-name convention as describeResources: an explicit multi-stack
     // stack name (#932), else the stack named after the environment.
     const stackName = options.stack ?? `${options.environment}`;
+    const regionArgs = options.region ? ["--region", options.region] : [];
 
     const result = await rt.spawn(applyAwsEndpointArgv([
       "aws", "cloudformation", "get-template",
       "--stack-name", stackName,
+      ...regionArgs,
       "--template-stage", "Original",
       "--output", "json",
     ], process.env.AWS_ENDPOINT_URL));
@@ -703,14 +711,16 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
   // describe-stack-resources is too thin; the deployed template (exportResources)
   // carries the references. Resolve its `{Ref}`/`{Fn::GetAtt}` intrinsics to bare
   // logical ids so the reference resolver matches them.
-  async enrichLiveAttrs(options: { environment: string; stack?: string; stacks?: string[]; owned?: boolean }): Promise<Record<string, Record<string, unknown>>> {
+  async enrichLiveAttrs(options: { environment: string; stack?: string; stacks?: Array<string | { name: string; region?: string }>; owned?: boolean }): Promise<Record<string, Record<string, unknown>>> {
     // Multi-stack (#1161): a project declaring ChantConfig.stacks passes them
     // here; enrich per-stack and merge. Otherwise the single-stack convention.
-    const stackNames = options.stacks && options.stacks.length > 0 ? options.stacks : [options.stack ?? options.environment];
+    const stackRefs = options.stacks && options.stacks.length > 0
+      ? options.stacks.map((st) => (typeof st === "string" ? { name: st } : st))
+      : [{ name: options.stack ?? options.environment }];
     const merged: Record<string, Record<string, unknown>> = {};
-    for (const stack of stackNames) {
+    for (const ref of stackRefs) {
       try {
-        const template = await this.exportResources!({ environment: options.environment, stack, owned: options.owned });
+        const template = await this.exportResources!({ environment: options.environment, stack: ref.name, region: ref.region, owned: options.owned });
         Object.assign(merged, resolveTemplateAttrs(template));
       } catch {
         // A stack that isn't deployed yet contributes no live attrs — skip it.

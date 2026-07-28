@@ -63,7 +63,7 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
       return 1;
     }
     const observing = plugins.filter((p) => p.describeResources);
-    const stacks = (config.stacks ?? []).map((s) => s.name);
+    const stacks = (config.stacks ?? []).map((s) => ({ name: s.name, region: s.region }));
     const { observations, errors } = await observeResources(environment, observing, buildResult, {
       owned: true,
       stacks,
