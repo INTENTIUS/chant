@@ -36,6 +36,10 @@ It mounts through the lexicon command seam, so it exists only in projects whose 
 Outside a chant project, the read verbs still work (the verdict column reports `unavailable`); the binding refusal only applies where an environment declares one.
 </Aside>
 
+## Try the whole surface live
+
+[behold](https://github.com/INTENTIUS/behold)'s `npm run demo:k8s` is a one-command tour of everything on this page against a real (local) cluster: it brings up a single-node [k3d](https://k3d.io) cluster, deploys a chant-declared app via server-side apply, and walks declared → managed → runtime children → an induced out-of-band change surfacing as field-level drift — including the conflict refusal that names the intruding field manager. Docker is the only prerequisite; the cluster tears itself down on exit.
+
 ## Deliberate gaps
 
 `logs --follow` (needs a streaming seam the client doesn't have yet), `-o go-template`, kubectl's per-kind `describe` templates, and `top`'s quantity summation. Each fails loudly rather than approximating.
