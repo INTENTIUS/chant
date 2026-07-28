@@ -1,6 +1,6 @@
 import { createRequire } from "module";
 import { detectTemplate } from "./detect";
-import type { LexiconPlugin, IntrinsicDef, ObservationResult, ResourceMetadata, ExportedTemplate, ResourceSelector, InitTemplateSet, StackStatusObservation } from "@intentius/chant/lexicon";
+import type { LexiconPlugin, IntrinsicDef, ObservationResult, DeepObservationResult, ResourceMetadata, ExportedTemplate, ResourceSelector, InitTemplateSet, StackStatusObservation } from "@intentius/chant/lexicon";
 const require = createRequire(import.meta.url);
 import type { LintRule } from "@intentius/chant/lint/rule";
 import type { TemplateParser } from "@intentius/chant/import/parser";
@@ -16,6 +16,8 @@ import { fileURLToPath } from "url";
 import { awsSerializer } from "./serializer";
 import { FLOCI_EMULATOR } from "./op/activities/floci";
 import { applyAwsEndpointArgv } from "./components/cloud-executor";
+import { stackDoesNotExist } from "./stack-errors";
+import { awsDeepNormalizationHooks, observeResourcesDeepAws } from "./deep-observe";
 import { awsReferenceCatalog } from "./reference-catalog";
 import { resolveTemplateAttrs } from "./live-attrs";
 import { CFParser } from "./import/parser";
@@ -24,12 +26,9 @@ import { parseStackTemplate } from "./import/live-export";
 import { awsCompletions } from "./lsp/completions";
 import { awsHover } from "./lsp/hover";
 
-/** True when a CloudFormation CLI error means the stack simply isn't there yet
- * (`ValidationError … does not exist`) — the pre-first-apply state, which live
- * queries should treat as "nothing deployed", not a failure. Exported for testing. */
-export function stackDoesNotExist(stderr: string): boolean {
-  return /does not exist/i.test(stderr);
-}
+/** Re-exported from ./stack-errors so the long-standing import path (and its
+ * tests) keep working now that the deep reader shares the classifier. */
+export { stackDoesNotExist } from "./stack-errors";
 
 /**
  * AWS CloudFormation lexicon plugin.
@@ -656,6 +655,31 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
     // absence, not a hole.
     return observation(resources);
   },
+
+  /**
+   * Property-level live read (#1015) via the Cloud Control API — past
+   * CloudFormation's view of the world, into the resource as the service
+   * actually holds it. Implementation in ./deep-observe.ts.
+   */
+  async observeResourcesDeep(options: {
+    environment: string;
+    buildOutput: string;
+    entityNames: string[];
+    entities: Map<string, { entityType: string; props: Record<string, unknown> }>;
+    stack?: string;
+    owned?: boolean;
+  }): Promise<DeepObservationResult> {
+    return observeResourcesDeepAws({
+      environment: options.environment,
+      entityNames: options.entityNames,
+      entities: options.entities,
+      stack: options.stack,
+      owned: options.owned,
+    });
+  },
+
+  /** The noise rules the deep pass applies to both the live and declared trees. */
+  deepNormalizationHooks: awsDeepNormalizationHooks,
 
   async describeStackStatus(options: { environment: string; stack: string }): Promise<StackStatusObservation | null> {
     const { getRuntime } = await import("@intentius/chant/runtime-adapter");
