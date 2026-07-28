@@ -154,6 +154,12 @@ export interface ParsedArgs {
   param?: string[];
   /** `chant build --params-file <path>` (#1064) — a JSON file of `{ "name": value }` build-time parameter values. Second precedence, after `--param`. */
   paramsFile?: string;
+  /** `chant graph --components --format ir --projection <lexicon>` (#989) — add
+   * the CI/pipeline projection (stages/jobs/`needs`) to the component-graph IR,
+   * synthesized by `<lexicon>`'s `generateComponentPipeline` (gitlab, github,
+   * forgejo today) — the same generator `chant build --components --generate
+   * <lexicon>` uses, reused rather than re-derived. */
+  projection?: string;
 }
 
 /**

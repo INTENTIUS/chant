@@ -95,6 +95,12 @@ describe("parseArgs", () => {
     expect(result.down).toBe(true);
   });
 
+  test("parses graph --components --format ir --projection <lexicon>", () => {
+    const result = parseArgs(["graph", "--components", "--format", "ir", "--projection", "gitlab"]);
+    expect(result.components).toBe(true);
+    expect(result.projection).toBe("gitlab");
+  });
+
   test("combines multiple options", () => {
     const result = parseArgs([
       "build",
