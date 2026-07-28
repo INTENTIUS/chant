@@ -160,6 +160,18 @@ if [ "$INSTALL_MODE" = "registry" ]; then
   else
     fail "k8s-client: installs from registry and imports"
   fi
+  # The lexicon's own optionalDependencies RANGE must resolve too — a client
+  # version stranded behind the lexicon (the 0.33.0 skew) makes npm silently
+  # install without it, and live observation degrades to holes with exit 0.
+  k8s_range_dir="/tmp/test-k8s-client-range"
+  rm -rf "$k8s_range_dir"; mkdir -p "$k8s_range_dir"; cd "$k8s_range_dir"
+  pkg_init
+  install_from_registry "@intentius/chant-lexicon-k8s"
+  if [ -d "node_modules/@intentius/chant-k8s-client" ]; then
+    pass "k8s-client: lexicon's optional-dep range resolves it"
+  else
+    fail "k8s-client: lexicon's optional-dep range resolves it (version skew? client stranded behind lexicon)"
+  fi
 fi
 
 # Azure manual project
