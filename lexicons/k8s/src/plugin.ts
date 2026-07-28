@@ -23,6 +23,7 @@ import { k8sCompletions } from "./lsp/completions";
 import { k8sHover } from "./lsp/hover";
 import { K8sParser } from "./import/parser";
 import { K8sGenerator } from "./import/generator";
+import { k8sDeepNormalizationHooks } from "./deep-observe-hooks";
 
 export const k8sPlugin: LexiconPlugin = {
   name: "k8s",
@@ -617,4 +618,19 @@ const { deployment, service, serviceMonitor, prometheusRule } = MonitoredService
     const { exportResources } = await import("./export-resources");
     return exportResources(options);
   },
+
+  // Property-level live drift via SSA managed-fields (#1076, epic #1073).
+  // The reader lives in ./deep-observe.ts, loaded only through this dynamic
+  // import — same reason describeResources/exportResources are — so the API
+  // client never becomes reachable from the build path (chant #1074,
+  // examples/k8s-client-boundary.test.ts). deepNormalizationHooks is plain
+  // data with no client dependency (./deep-observe-hooks.ts) and is imported
+  // statically above, because core applies it to the *declared* tree whether
+  // or not a live read ever happens.
+  async observeResourcesDeep(options) {
+    const { observeResourcesDeepK8s } = await import("./deep-observe");
+    return observeResourcesDeepK8s(options);
+  },
+
+  deepNormalizationHooks: k8sDeepNormalizationHooks,
 };

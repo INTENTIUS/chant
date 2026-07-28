@@ -132,9 +132,13 @@ describe("chant #1074 — the build path cannot reach the k8s API client (static
   test("the modules that DO import it exist, and are reachable only by dynamic import", () => {
     // Without this the test above could pass because nothing imports the client
     // at all — i.e. because the feature is not wired up.
-    const consumers = ["describe-resources.ts", "export-resources.ts", "api/connect.ts", "op/activities/kubectl.ts"].map(
-      (f) => join(K8S_SRC, f),
-    );
+    const consumers = [
+      "describe-resources.ts",
+      "export-resources.ts",
+      "api/connect.ts",
+      "op/activities/kubectl.ts",
+      "deep-observe.ts",
+    ].map((f) => join(K8S_SRC, f));
     for (const file of consumers) {
       expect(existsSync(file), `${file} should exist`).toBe(true);
       expect(graph.files, `${file} must not be statically reachable from the lexicon entry points`).not.toContain(file);
