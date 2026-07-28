@@ -74,6 +74,7 @@ Every lexicon must implement these 4 methods to support the full generation and 
 | `docs()` | `Promise<void>` | Generate documentation pages |
 | `mcpTools()` | `McpToolContribution[]` | MCP tool contributions |
 | `mcpResources()` | `McpResourceContribution[]` | MCP resource contributions |
+| `commands()` | `CommandGroup` | A CLI verb group mounted under `chant <name> <verb>` — core dispatches to it wholesale and knows nothing about what's inside |
 
 ## Registering in chant.config.ts
 

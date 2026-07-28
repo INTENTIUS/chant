@@ -1,7 +1,8 @@
 import type { LexiconPlugin } from "../lexicon";
+import { RESERVED_COMMAND_NAMES } from "./command-group";
 
 export interface ConflictEntry {
-  type: "rule-id" | "skill-name" | "mcp-tool" | "mcp-resource";
+  type: "rule-id" | "skill-name" | "mcp-tool" | "mcp-resource" | "command-group-name";
   key: string;
   plugins: string[];
 }
@@ -82,6 +83,26 @@ export function checkConflicts(plugins: LexiconPlugin[]): ConflictReport {
   for (const [uri, owners] of mcpResourceUris) {
     if (owners.length > 1) {
       warnings.push({ type: "mcp-resource", key: uri, plugins: owners });
+    }
+  }
+
+  // Check command-group name conflicts (hard, chant #1078). Two shapes:
+  // two lexicons claiming the same group name (only one would ever be
+  // reachable, silently), or one lexicon claiming a name core's own static
+  // registry already owns (permanently unreachable — core resolves its own
+  // registry first, unconditionally). Either is a silent-shadowing bug
+  // class, so both are hard conflicts rather than warnings.
+  const commandGroupNames = new Map<string, string[]>();
+  for (const plugin of plugins) {
+    const group = plugin.commands?.();
+    if (!group) continue;
+    const existing = commandGroupNames.get(group.name) ?? [];
+    existing.push(plugin.name);
+    commandGroupNames.set(group.name, existing);
+  }
+  for (const [name, owners] of commandGroupNames) {
+    if (owners.length > 1 || RESERVED_COMMAND_NAMES.has(name)) {
+      conflicts.push({ type: "command-group-name", key: name, plugins: owners });
     }
   }
 

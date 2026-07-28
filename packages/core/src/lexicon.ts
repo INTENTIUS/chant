@@ -14,6 +14,11 @@ import type { ReferenceCatalog } from "./graph-refs";
 import type { DescribeResourcesResult } from "./observation";
 import type { DeepNormalizationHooks, DeepObservationResult } from "./deep-observation";
 import type { OwnerChainVerdict } from "./owner-chain";
+import type { CommandGroup } from "./cli/command-group";
+
+// Re-exported so a lexicon can author its command group (#1078) from the
+// same `@intentius/chant/lexicon` entry it imports the plugin contract from.
+export type { CommandGroup, CommandGroupCommand, CommandGroupContext } from "./cli/command-group";
 
 // Re-exported so lexicons can author a reference catalog (#778) from the same
 // `@intentius/chant/lexicon` entry they import the plugin contract from.
@@ -434,6 +439,24 @@ export interface LexiconPlugin {
    * consumer (behold `--local`) boot it + point apply/observe at it — no cloud
    * account. Absent when the lexicon has no local emulator. */
   readonly emulator?: EmulatorCapability;
+
+  /**
+   * A CLI verb group this lexicon contributes, mounted under `chant <name>
+   * <verb>` (#1078). Core learns that a lexicon MAY contribute a command
+   * group and learns nothing about what is inside it — it finds the group by
+   * name and dispatches to the matched verb's handler wholesale, the same
+   * "spec, not behavior" shape as {@link emulator}. Unlike `emulator`, which
+   * core itself aggregates across every configured lexicon in one command
+   * (`chant emulator up --all`), a command group is owned end-to-end by ONE
+   * lexicon: `get -o wide -l app=x --field-selector` is irreducibly
+   * Kubernetes vocabulary, not something core could generalize or merge
+   * across plugins even if it wanted to. Absent when the lexicon contributes
+   * no CLI surface — registering nothing here changes nothing else about how
+   * the lexicon behaves; the build/fold path never calls this or invokes any
+   * verb's handler, since command dispatch happens only in the CLI's own
+   * entry point, never in discovery/build/fold.
+   */
+  commands?(): CommandGroup;
 
   // ── Optional extensions ───────────────────────────────────
   /** Return lint rules provided by this lexicon */
