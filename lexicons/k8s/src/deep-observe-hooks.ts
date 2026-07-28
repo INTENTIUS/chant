@@ -28,35 +28,19 @@
  * expressed as a fixed rule keyed only by entity type and path — the shape
  * every other hook in this file takes. `./deep-observe.ts` computes it once
  * per resource and layers it on top of the rules below.
- */
-
-import type { DeepArrayElement, DeepNode, DeepNormalizationHooks } from "@intentius/chant/lexicon";
-
-/**
- * Paths pruned unconditionally, on both sides, matched on the exact
- * index-erased pattern (there is exactly one `status`, one
- * `metadata.managedFields`, per object — no per-type variation the way AWS's
- * `Arn`/`RoleId` repeat at every nesting depth).
  *
- * - `status` — the whole subtree is server-computed; chant never declares it.
- * - `metadata.uid`/`resourceVersion`/`generation`/`creationTimestamp` — minted
- *   and incremented by the API server, never authored.
- * - `metadata.managedFields` — the bookkeeping this very row reads to decide
- *   everything else. Left in the tree it would report as permanent drift
- *   (a timestamp changes on every write) and would recurse into the encoded
- *   `fieldsV1` structure as if it were ordinary properties.
- * - `metadata.selfLink` — deprecated API-server bookkeeping some clusters
- *   still echo; never a declared field.
+ * The *entity-type-agnostic* half of these rules — which fields every
+ * Kubernetes API object carries regardless of kind, and the well-known
+ * list-map-key ordering conventions (containers/env/volumes/ports) — lives in
+ * `@intentius/chant/managed-fields` (chant #1087), because a GCP Config
+ * Connector custom resource is a Kubernetes object too and needs the exact
+ * same rules without depending on this lexicon's package. What stays here is
+ * only what's genuinely k8s-*lexicon*-specific: {@link K8S_SERVICE_DEFAULTS},
+ * keyed by chant's own k8s entityType catalog.
  */
-const K8S_UNCONDITIONAL_PRUNE_PATTERNS: ReadonlySet<string> = new Set([
-  "status",
-  "metadata.uid",
-  "metadata.resourceVersion",
-  "metadata.generation",
-  "metadata.creationTimestamp",
-  "metadata.managedFields",
-  "metadata.selfLink",
-]);
+
+import type { DeepNode, DeepNormalizationHooks } from "@intentius/chant/lexicon";
+import { K8S_OBJECT_ENVELOPE_PRUNE_PATTERNS, k8sListMapOrderKey } from "@intentius/chant/managed-fields";
 
 /**
  * Kubernetes-defaulted fields, per entity type, as index-erased property
@@ -108,26 +92,17 @@ function canonicalJson(value: unknown): string {
   );
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-/** The final segment of an index-erased pattern (`spec.template.spec.containers[].env[].name` → `name`'s *container*, i.e. `env`). */
-function lastSegment(pattern: string): string {
-  const withoutIndex = pattern.replace(/\[\]$/, "");
-  const dot = withoutIndex.lastIndexOf(".");
-  return dot === -1 ? withoutIndex : withoutIndex.slice(dot + 1);
-}
-
 /**
- * The k8s lexicon's static noise rules: server-populated fields (unconditional,
- * by pattern) and Kubernetes-defaulted fields (gated on `counterpart ===
- * "absent"`), plus the array orderings the acceptance criteria name —
- * `x-kubernetes-patch-merge-key`/`list-map-keys` conventions the generated
- * surface does not currently carry (see the module doc), so these are the
- * "else named-by-name conventions" the issue calls for: containers by `name`,
- * `env` by `name`, `volumes` by `name`, container/service `ports` by
- * `containerPort`/`port` + `protocol`.
+ * The k8s lexicon's static noise rules: the generic Kubernetes object
+ * envelope (unconditional, by pattern, `@intentius/chant/managed-fields`) and
+ * Kubernetes-defaulted fields (gated on `counterpart === "absent"`), plus the
+ * array orderings the acceptance criteria name — `x-kubernetes-patch-merge-
+ * key`/`list-map-keys` conventions the generated surface does not currently
+ * carry (see the module doc), so these are the "else named-by-name
+ * conventions" the issue calls for: containers by `name`, `env` by `name`,
+ * `volumes` by `name`, container/service `ports` by `containerPort`/`port` +
+ * `protocol` — the same conventions `@intentius/chant/managed-fields`'s
+ * `k8sListMapOrderKey` implements, reused verbatim.
  *
  * This is the object `k8sPlugin.deepNormalizationHooks` is. It is also what
  * `./deep-observe.ts` layers its per-resource managed-fields prune on top of,
@@ -138,7 +113,7 @@ function lastSegment(pattern: string): string {
  */
 export const k8sDeepNormalizationHooks: DeepNormalizationHooks = {
   prune(node: DeepNode): boolean {
-    if (K8S_UNCONDITIONAL_PRUNE_PATTERNS.has(node.pattern)) return true;
+    if (K8S_OBJECT_ENVELOPE_PRUNE_PATTERNS.has(node.pattern)) return true;
 
     if (node.side !== "live" || node.counterpart !== "absent") return false;
     const defaults = K8S_SERVICE_DEFAULTS[node.entityType];
@@ -146,36 +121,5 @@ export const k8sDeepNormalizationHooks: DeepNormalizationHooks = {
     return canonicalJson(defaults[node.pattern]) === canonicalJson(node.value);
   },
 
-  /**
-   * `name` is the element's own identity for containers/volumes/env — the
-   * same field Kubernetes' strategic-merge-patch keys on for these lists.
-   * Container ports key on `containerPort`+`protocol`, and Service ports key
-   * on `port`+`protocol` (Kubernetes' own SSA list-map-keys for each), so both
-   * are handled under one `ports` branch by checking which field is present.
-   */
-  orderKey(element: DeepArrayElement): string | undefined {
-    const name = lastSegment(element.pattern);
-    const el = element.element;
-
-    if (name === "containers" || name === "initContainers" || name === "ephemeralContainers") {
-      return isRecord(el) && typeof el.name === "string" ? el.name : canonicalJson(el);
-    }
-    if (name === "env" || name === "volumes") {
-      return isRecord(el) && typeof el.name === "string" ? el.name : canonicalJson(el);
-    }
-    if (name === "ports") {
-      if (isRecord(el)) {
-        const protocol = typeof el.protocol === "string" ? el.protocol : "TCP";
-        // Zero-padded so the sort key orders numerically, not lexicographically
-        // ("443" would otherwise sort before "80") — cosmetic, since either
-        // order canonicalizes the two sides identically, but a stable,
-        // human-sensible order is free to have here.
-        if (typeof el.containerPort === "number") return `${String(el.containerPort).padStart(5, "0")}/${protocol}`;
-        if (typeof el.port === "number") return `${String(el.port).padStart(5, "0")}/${protocol}`;
-      }
-      return canonicalJson(el);
-    }
-
-    return undefined;
-  },
+  orderKey: k8sListMapOrderKey,
 };

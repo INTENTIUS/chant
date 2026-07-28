@@ -20,6 +20,11 @@
  * `chant.config.ts` (see `lexicons/k8s/src/config.ts`), not a separate
  * `gcp.profiles` key, because it is fundamentally the same kubectl context a
  * project's K8s entities would use against the same cluster.
+ *
+ * `resolveGcpKubectlContext` and `execConfigConnectorGet` below are exported
+ * so `./deep-observe.ts` (chant #1087) shares this exact cluster-binding
+ * resolution and `kubectl get -o json` mechanics rather than restating them —
+ * the two readers differ only in how much of the response each one keeps.
  */
 
 import { exec } from "node:child_process";
@@ -31,6 +36,38 @@ import { loadChantConfig } from "@intentius/chant/config";
 import { resolveClusterTarget, classifyKubectlFailure } from "@intentius/chant/kubectl-context";
 
 const execAsync = promisify(exec);
+
+/**
+ * Resolve this environment's cluster binding once and return the `--context`
+ * argv fragment every subsequent kubectl call should append (empty when
+ * unbound — ambient context, unchanged behavior). Throws on a bound-but-
+ * mismatched context (chant #1100), the same loud refusal both readers rely
+ * on core to turn into NOT-OBSERVED for every declared entity.
+ */
+export async function resolveGcpKubectlContext(environment: string): Promise<string[]> {
+  const { config } = await loadChantConfig(process.cwd());
+  const target = await resolveClusterTarget(config as Record<string, unknown>, environment, "gcp");
+  return target.context ? ["--context", target.context] : [];
+}
+
+/**
+ * `kubectl get <kind>.<group> <name> [-n <namespace>] [--context <ctx>] -o
+ * json`, parsed. Throws on any kubectl failure — callers classify it with
+ * `classifyKubectlFailure` exactly like today, so a NotFound and an
+ * auth/connectivity failure are told apart at the call site, not here.
+ */
+export async function execConfigConnectorGet(
+  gvk: { group: string; kind: string },
+  name: string,
+  namespace: string | undefined,
+  ctxArg: readonly string[],
+): Promise<Record<string, unknown>> {
+  const kubectlResource = `${gvk.kind.toLowerCase()}.${gvk.group}`;
+  const nsArg = namespace ? ["-n", namespace] : [];
+  const cmd = ["kubectl", "get", kubectlResource, name, ...nsArg, ...ctxArg, "-o", "json"].join(" ");
+  const { stdout } = await execAsync(cmd);
+  return JSON.parse(stdout) as Record<string, unknown>;
+}
 
 interface KubectlResponse {
   metadata?: {
@@ -103,9 +140,7 @@ export async function describeResources(options: {
   // resource — a declared-but-mismatched binding throws here, aborting the
   // whole describe rather than letting the per-entity try/catch below
   // absorb it as an ordinary "not found".
-  const { config } = await loadChantConfig(process.cwd());
-  const target = await resolveClusterTarget(config as Record<string, unknown>, options.environment, "gcp");
-  const ctxArg = target.context ? ["--context", target.context] : [];
+  const ctxArg = await resolveGcpKubectlContext(options.environment);
 
   for (const [entityName, { entityType, props }] of options.entities) {
     const gvk = deriveGVK(entityType);
@@ -131,13 +166,8 @@ export async function describeResources(options: {
       continue;
     }
 
-    const kubectlResource = `${gvk.kind.toLowerCase()}.${gvk.group}`;
-    const nsArg = metadata.namespace ? ["-n", metadata.namespace] : [];
-    const cmd = ["kubectl", "get", kubectlResource, name, ...nsArg, ...ctxArg, "-o", "json"].join(" ");
-
     try {
-      const { stdout } = await execAsync(cmd);
-      const obj: KubectlResponse = JSON.parse(stdout);
+      const obj = (await execConfigConnectorGet(gvk, name, metadata.namespace, ctxArg)) as KubectlResponse;
       // owned filter: withhold resources not carrying chant's marker label.
       // Withheld is not absent (#1089) — the CR exists, it just isn't chant's.
       if (options.owned && !hasOwnershipMarker(obj.metadata?.labels, LABEL_OWNERSHIP_KEYS)) {
