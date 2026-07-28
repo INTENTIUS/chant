@@ -69,16 +69,19 @@ Reports added, removed, changed, and unchanged resources at the declaration leve
 chant lifecycle diff prod --live
 ```
 
-Output is grouped into six categories per lexicon:
+Output is grouped into seven categories per lexicon:
 
 | Category | Meaning |
 |---|---|
-| **missing** | Declared in source, but not present in the cloud right now |
+| **missing** | Declared in source, and the provider reported it absent from the cloud |
 | **orphan** | Present in the cloud, but not declared in source |
 | **disappeared** | In the previous snapshot, but gone now |
 | **newly observed** | Declared and observed now, but not in any prior snapshot |
 | **drifted** | Observed in both snapshots; status, physical ID, or attributes changed |
 | **unchanged** | Observed in both snapshots; metadata identical |
+| **unobserved** | Declared, and chant could not read live state for it — status unknown |
+
+Each **unobserved** entry names a reason: `read failed`, `no credentials`, `no binding for this environment`, `no reader for this resource kind`, or `withheld by the --owned filter`. They are not counted as drift and never as missing, and when any are present the summary line says the estate is unknown rather than clean.
 
 Drifted entries include attribute-level deltas (`status`, `physicalId`, `lastUpdated`, and each `attributes.*` key).
 
@@ -96,7 +99,7 @@ Per lexicon (all declared, or the one you name), it reports a two-way delta: **a
 
 ### `lifecycle plan <env>`
 
-Promote the live diff to a typed, **read-only** change set. Where `lifecycle diff --live` reports six observation categories, `lifecycle plan` classifies each resource into one action you can act on:
+Promote the live diff to a typed, **read-only** change set. Where `lifecycle diff --live` reports seven observation categories, `lifecycle plan` classifies each resource into one action you can act on:
 
 ```bash
 chant lifecycle plan prod
@@ -105,11 +108,14 @@ chant lifecycle plan prod --json   # emit the ChangeSet as JSON
 
 | Action | Meaning |
 |---|---|
-| **create** | Declared in source, absent from the cloud |
+| **create** | Declared in source, and the provider confirmed it absent from the cloud |
 | **update** | Declared and live, but the live config drifted |
 | **delete** | A chant-owned resource that is live but no longer declared |
 | **adopt** | Live but undeclared, ownership not established — a candidate to pull back into source, never an auto-delete |
 | **noop** | Declared and live with no drift, or already reconciled |
+| **unobserved** | Declared, and chant could not read live state — no action is proposed, and the reason is printed |
+
+`unobserved` is not a proposal; it is the plan admitting a hole. A resource chant could not look at is never a `create` and never a `delete` — a plan is only as complete as the read behind it, and when entities are unobserved the command says so on stderr (including under `--json` and `--report gitlab-mr`, whose shapes have no column for it).
 
 `create` and `update` are precise from declared-vs-live. `delete` is only ever proposed for an undeclared resource whose **live ownership marker** ([ownership marking](/chant/configuration/config-file/#ownership)) confirms it is chant's; a foreign orphan is `adopt`, and an orphan with no marker data is `adopt`, never `delete`. Pass `--owned` to restrict the query to chant-owned resources.
 
@@ -119,11 +125,12 @@ The classification reads ownership from the live marker, **never from the snapsh
 
 #### Crosswalk: observation categories → plan actions
 
-The six `diff --live` categories and the five `plan` actions describe the same signal on different axes. Observation categories key on three sets — declared in source, observed now, in the last snapshot. The plan collapses the snapshot axis (it's evidence, never authority) and adds an ownership axis. The mapping:
+The `diff --live` categories and the `plan` actions describe the same signal on different axes. Observation categories key on three sets — declared in source, observed now, in the last snapshot. The plan collapses the snapshot axis (it's evidence, never authority) and adds an ownership axis. The mapping:
 
 | Observation category (`diff --live`) | Plan action (`plan`) | Why |
 |---|---|---|
-| **missing** | **create** | Declared, absent from the cloud |
+| **missing** | **create** | Declared, and the provider confirmed it absent |
+| **unobserved** | **unobserved** | Declared, and nobody looked — absence was never established |
 | **drifted** | **update** *(when declared)* | Declared and live, attributes changed since the snapshot |
 | **orphan** | **adopt**, or **delete** when the live ownership marker confirms it's chant's | The one decision the **marker** makes — never the snapshot |
 | **newly observed** | **noop** | Declared and live; no snapshot baseline to drift against yet |

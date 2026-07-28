@@ -38,7 +38,7 @@ For the implementer-side walkthrough, see [Implementing Observation](/chant/lexi
 
 ## The diff categories
 
-`chant lifecycle diff <env> --live` returns ten categories — six for resources, four for artifacts.
+`chant lifecycle diff <env> --live` returns eleven categories — seven for resources, four for artifacts.
 
 ### Resources (three-way diff)
 
@@ -46,16 +46,21 @@ The diff engine compares three axes: what's declared in source now, what was obs
 
 | Category | Declared now | In last snapshot | Observed now | Meaning |
 |---|---|---|---|---|
-| **missing** | ✅ | — | ✗ | Declared but not in cloud — never deployed, manually deleted, or stack rolled back |
+| **missing** | ✅ | — | ✗ | Declared, and the provider reported it absent — never deployed, manually deleted, or stack rolled back |
 | **orphan** | ✗ | — | ✅ | In cloud but not declared — manual creation, untracked tooling, or imported-pending |
 | **disappeared** | — | ✅ | ✗ | Was there at last snapshot, gone now |
 | **newly observed** | — | ✗ | ✅ | Observed now, not in any prior snapshot |
 | **drifted** | — | ✅ | ✅ | Present in both, but `status`, `physicalId`, or `attributes.*` changed |
 | **unchanged** | — | ✅ | ✅ | Present in both, metadata identical |
+| **unobserved** | ✅ | — | ? | Declared, and chant **could not look** — no reader for the kind, the read failed, no credentials, no cluster binding |
 
 Drifted entries include attribute-level deltas so you can see *what* changed, not just *that* something changed.
 
-These six categories collapse into the five `create/update/delete/adopt/noop` actions `chant lifecycle plan` emits — see the [observation-to-action crosswalk](/chant/cli/lifecycle/#crosswalk-observation-categories--plan-actions).
+#### `missing` and `unobserved` are different facts
+
+An unobserved entity is not drift and not absence: it is a hole in the report. It carries a reason (`read-failed`, `no-credentials`, `no-binding`, `unsupported-kind`, `filtered`) and it never becomes a `create` in the plan — chant proposes creating a resource only when a provider actually said it isn't there. When any entity is unobserved, the "no drift detected" line says so: no drift over an incomplete read is not a clean estate.
+
+These categories collapse into the `create/update/delete/adopt/noop/unobserved` actions `chant lifecycle plan` emits — see the [observation-to-action crosswalk](/chant/cli/lifecycle/#crosswalk-observation-categories--plan-actions).
 
 #### Resolving an `orphan`
 
