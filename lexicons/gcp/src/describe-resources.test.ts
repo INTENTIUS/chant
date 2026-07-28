@@ -55,7 +55,7 @@ describe("gcp describeResources (Config Connector)", () => {
     expect(receivedCmd).toContain("data-bucket");
     expect(receivedCmd).toContain("-n config-control");
 
-    expect(result["dataBucket"]).toMatchObject({
+    expect(result.resources["dataBucket"]).toMatchObject({
       type: "GCP::Storage::Bucket",
       physicalId: "uid-1",
       status: "READY",
@@ -99,7 +99,7 @@ describe("gcp describeResources (Config Connector)", () => {
 
     const result = await describeResources({ environment: "prod", buildOutput: "", entityNames: ["x"], entities });
 
-    expect(result["x"].status).toBe("DependencyNotFound");
+    expect(result.resources["x"].status).toBe("DependencyNotFound");
   });
 
   test("missing Ready condition falls back to PRESENT", async () => {
@@ -117,10 +117,10 @@ describe("gcp describeResources (Config Connector)", () => {
 
     const result = await describeResources({ environment: "prod", buildOutput: "", entityNames: ["x"], entities });
 
-    expect(result["x"].status).toBe("PRESENT");
+    expect(result.resources["x"].status).toBe("PRESENT");
   });
 
-  test("kubectl-not-found leaves entity out of result", async () => {
+  test("kubectl-not-found leaves entity out of result (a confirmed absence)", async () => {
     execMock.mockImplementation(() => { throw new Error('Error from server (NotFound): storagebucket "x" not found'); });
 
     const entities = makeEntities([
@@ -129,28 +129,48 @@ describe("gcp describeResources (Config Connector)", () => {
 
     const result = await describeResources({ environment: "prod", buildOutput: "", entityNames: ["x"], entities });
 
-    expect(result).toEqual({});
+    expect(result.resources).toEqual({});
+    expect(result.unobserved ?? {}).toEqual({});
   });
 
-  test("non-GCP entity types are skipped", async () => {
+  test("an unreachable cluster is unobserved, not absent (#1089)", async () => {
+    execMock.mockImplementation(() => {
+      throw Object.assign(new Error("kubectl failed"), {
+        stderr: "Unable to connect to the server: dial tcp: i/o timeout",
+      });
+    });
+
+    const entities = makeEntities([
+      { name: "x", entityType: "GCP::Storage::Bucket", props: { metadata: { name: "x" } } },
+    ]);
+
+    const result = await describeResources({ environment: "prod", buildOutput: "", entityNames: ["x"], entities });
+
+    expect(result.resources).toEqual({});
+    expect(result.unobserved?.x?.reason).toBe("no-binding");
+  });
+
+  test("non-GCP entity types are unobserved — no GVK to query (#1089)", async () => {
     const entities = makeEntities([
       { name: "x", entityType: "AWS::S3::Bucket", props: { metadata: { name: "x" } } },
     ]);
 
     const result = await describeResources({ environment: "prod", buildOutput: "", entityNames: ["x"], entities });
 
-    expect(result).toEqual({});
+    expect(result.resources).toEqual({});
+    expect(result.unobserved?.x?.reason).toBe("unsupported-kind");
     expect(execMock).not.toHaveBeenCalled();
   });
 
-  test("entity without metadata.name is silently skipped", async () => {
+  test("entity without metadata.name is unobserved — nothing was queried", async () => {
     const entities = makeEntities([
       { name: "broken", entityType: "GCP::Storage::Bucket", props: {} },
     ]);
 
     const result = await describeResources({ environment: "prod", buildOutput: "", entityNames: ["broken"], entities });
 
-    expect(result).toEqual({});
+    expect(result.resources).toEqual({});
+    expect(result.unobserved?.broken?.reason).toBe("read-failed");
     expect(execMock).not.toHaveBeenCalled();
   });
 
@@ -182,7 +202,7 @@ describe("gcp describeResources (Config Connector)", () => {
       const result = await describeResources({ environment: "prod", buildOutput: "", entityNames: ["dataBucket"], entities: bucketEntities() });
 
       expect(receivedCmd).toContain("--context prod-cnrm");
-      expect(result["dataBucket"]).toMatchObject({ type: "GCP::Storage::Bucket", physicalId: "uid-1", status: "READY" });
+      expect(result.resources["dataBucket"]).toMatchObject({ type: "GCP::Storage::Bucket", physicalId: "uid-1", status: "READY" });
     });
 
     test("bound and ambient context mismatches: refuses loudly instead of observing the wrong cluster", async () => {
@@ -212,7 +232,7 @@ describe("gcp describeResources (Config Connector)", () => {
 
       expect(receivedCmd).not.toContain("--context");
       expect(receivedCmd).not.toContain("current-context");
-      expect(result["dataBucket"]).toMatchObject({ type: "GCP::Storage::Bucket", physicalId: "uid-1", status: "READY" });
+      expect(result.resources["dataBucket"]).toMatchObject({ type: "GCP::Storage::Bucket", physicalId: "uid-1", status: "READY" });
 
       const bindingWarning = warnSpy.mock.calls.find((c) => String(c[0]).includes("no cluster binding"));
       expect(bindingWarning?.[0]).toContain('environment "prod"');

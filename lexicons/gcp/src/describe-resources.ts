@@ -9,7 +9,10 @@
  *   GCP::Storage::Bucket    → kubectl get storagebucket.storage.cnrm.cloud.google.com
  *   GCP::Compute::Subnetwork → kubectl get computesubnetwork.compute.cnrm.cloud.google.com
  *
- * Resource-not-found is silent — `state diff --live` reports it as missing.
+ * Resource-not-found is an absence — `state diff --live` reports it as missing.
+ * Everything else the kubectl call can fail with (auth, an unreachable API
+ * server, an entity type with no derivable GVK) is NOT-OBSERVED (#1089), so a
+ * read that never happened cannot become a proposed `create`.
  *
  * Since this reads Config Connector CRDs through the same kubectl path as
  * the K8s lexicon, it resolves the same environment→cluster binding (chant
@@ -21,10 +24,11 @@
 
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
-import type { ResourceMetadata } from "@intentius/chant/lexicon";
+import type { ObservationResult, ResourceMetadata, UnobservedEntity } from "@intentius/chant/lexicon";
+import { observation } from "@intentius/chant/observation";
 import { hasOwnershipMarker, classifyOwnership, LABEL_OWNERSHIP_KEYS } from "@intentius/chant/ownership";
 import { loadChantConfig } from "@intentius/chant/config";
-import { resolveClusterTarget } from "@intentius/chant/kubectl-context";
+import { resolveClusterTarget, classifyKubectlFailure } from "@intentius/chant/kubectl-context";
 
 const execAsync = promisify(exec);
 
@@ -91,8 +95,9 @@ export async function describeResources(options: {
   entityNames: string[];
   entities: Map<string, { entityType: string; props: Record<string, unknown> }>;
   owned?: boolean;
-}): Promise<Record<string, ResourceMetadata>> {
+}): Promise<ObservationResult> {
   const result: Record<string, ResourceMetadata> = {};
+  const unobserved: Record<string, UnobservedEntity> = {};
 
   // Resolve the cluster identity for this environment before touching any
   // resource — a declared-but-mismatched binding throws here, aborting the
@@ -104,11 +109,27 @@ export async function describeResources(options: {
 
   for (const [entityName, { entityType, props }] of options.entities) {
     const gvk = deriveGVK(entityType);
-    if (!gvk) continue;
+    if (!gvk) {
+      // Not a `GCP::Service::Kind` this lexicon can turn into a Config
+      // Connector GVK — nothing was queried, so nothing is known (#1089).
+      unobserved[entityName] = {
+        type: entityType,
+        reason: "unsupported-kind",
+        detail: `cannot derive a Config Connector GVK from ${entityType}`,
+      };
+      continue;
+    }
 
     const metadata = props.metadata as { name?: string; namespace?: string } | undefined;
     const name = metadata?.name;
-    if (!name) continue;
+    if (!name) {
+      unobserved[entityName] = {
+        type: entityType,
+        reason: "read-failed",
+        detail: "declared entity has no metadata.name to query by",
+      };
+      continue;
+    }
 
     const kubectlResource = `${gvk.kind.toLowerCase()}.${gvk.group}`;
     const nsArg = metadata.namespace ? ["-n", metadata.namespace] : [];
@@ -117,8 +138,14 @@ export async function describeResources(options: {
     try {
       const { stdout } = await execAsync(cmd);
       const obj: KubectlResponse = JSON.parse(stdout);
-      // owned filter: skip resources not carrying chant's marker label.
+      // owned filter: withhold resources not carrying chant's marker label.
+      // Withheld is not absent (#1089) — the CR exists, it just isn't chant's.
       if (options.owned && !hasOwnershipMarker(obj.metadata?.labels, LABEL_OWNERSHIP_KEYS)) {
+        unobserved[entityName] = {
+          type: entityType,
+          reason: "filtered",
+          detail: "live resource carries no chant ownership marker and --owned was requested",
+        };
         continue;
       }
       result[entityName] = {
@@ -133,10 +160,17 @@ export async function describeResources(options: {
           annotations: obj.metadata?.annotations,
         }),
       };
-    } catch {
-      // CRD or instance not found — skip silently
+    } catch (err) {
+      // A NotFound is a real absence (the CR isn't there, or Config Connector
+      // doesn't serve that CRD, so no instance can be). Anything else — auth,
+      // an unreachable API server, a context that doesn't resolve — proves
+      // nothing and is reported as a hole rather than an absence (#1089).
+      const outcome = classifyKubectlFailure(err);
+      if (outcome.kind === "unobserved") {
+        unobserved[entityName] = { type: entityType, reason: outcome.reason, detail: outcome.detail };
+      }
     }
   }
 
-  return result;
+  return observation(result, unobserved);
 }

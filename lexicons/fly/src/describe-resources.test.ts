@@ -1,4 +1,5 @@
 import { describe, test, expect } from "vitest";
+import { describeObservationConformance } from "@intentius/chant-test-utils";
 import { describeResources, flyPlan } from "./describe-resources";
 import type { FlyHttp } from "./op/activities/fly-apply";
 
@@ -72,21 +73,21 @@ describe("describeResources: live machines → ResourceMetadata verdicts", () =>
     );
 
     // Declared machine keyed by its entity name; orphan keyed by its live name.
-    expect(res.web.type).toBe("Fly::Machines::Machine");
-    expect(res.web.ownership).toBe("owned");
-    expect(res.web.physicalId).toBe("m-web");
-    expect(res.web.status).toBe("started");
-    expect((res.web.attributes as { config?: unknown }).config).toEqual({
+    expect(res.resources.web.type).toBe("Fly::Machines::Machine");
+    expect(res.resources.web.ownership).toBe("owned");
+    expect(res.resources.web.physicalId).toBe("m-web");
+    expect(res.resources.web.status).toBe("started");
+    expect((res.resources.web.attributes as { config?: unknown }).config).toEqual({
       image: "nginx:1",
       metadata: { "managed-by": "chant" },
     });
 
-    expect(res.legacy.ownership).toBe("foreign");
-    expect(res.legacy.type).toBe("Fly::Machines::Machine");
+    expect(res.resources.legacy.ownership).toBe("foreign");
+    expect(res.resources.legacy.type).toBe("Fly::Machines::Machine");
 
     // App surfaced as owned (app-boundary: it carries an owned machine).
-    expect(res.app.type).toBe("Fly::Machines::App");
-    expect(res.app.ownership).toBe("owned");
+    expect(res.resources.app.type).toBe("Fly::Machines::App");
+    expect(res.resources.app.ownership).toBe("owned");
   });
 
   test("the owned filter drops foreign entries", async () => {
@@ -98,8 +99,8 @@ describe("describeResources: live machines → ResourceMetadata verdicts", () =>
       { environment: "prod", buildOutput: PLAN, entityNames: ["app", "web"], entities: ENTS, owned: true, endpoint: ENDPOINT },
       http,
     );
-    expect(res.web?.ownership).toBe("owned");
-    expect(res.legacy).toBeUndefined(); // foreign machine filtered out
+    expect(res.resources.web?.ownership).toBe("owned");
+    expect(res.resources.legacy).toBeUndefined(); // foreign machine filtered out
   });
 
   test("terminal machines (destroyed/destroying) are not reported live", async () => {
@@ -111,8 +112,8 @@ describe("describeResources: live machines → ResourceMetadata verdicts", () =>
       { environment: "prod", buildOutput: PLAN, entityNames: ["app", "web"], entities: ENTS, endpoint: ENDPOINT },
       http,
     );
-    expect(res.web).toBeDefined();
-    expect(res.gone).toBeUndefined();
+    expect(res.resources.web).toBeDefined();
+    expect(res.resources.gone).toBeUndefined();
   });
 
   test("empty build output returns nothing", async () => {
@@ -120,7 +121,27 @@ describe("describeResources: live machines → ResourceMetadata verdicts", () =>
       { environment: "prod", buildOutput: "", entityNames: [], entities: new Map(), endpoint: ENDPOINT },
       fakeHttp([]),
     );
-    expect(res).toEqual({});
+    expect(res.resources).toEqual({});
+  });
+
+  test("with no readable plan, declared entities are unobserved rather than absent (#1089)", async () => {
+    const res = await describeResources(
+      { environment: "prod", buildOutput: "", entityNames: ["web"], entities: ENTS, endpoint: ENDPOINT },
+      fakeHttp([]),
+    );
+    expect(res.resources).toEqual({});
+    expect(res.unobserved?.web?.reason).toBe("read-failed");
+    expect(res.unobserved?.app?.reason).toBe("read-failed");
+  });
+
+  test("the owned filter records a withheld declared machine as `filtered`, not absent (#1089)", async () => {
+    const http = fakeHttp([liveMachine("web", "nginx:1", { id: "m-web", owned: false })]);
+    const res = await describeResources(
+      { environment: "prod", buildOutput: PLAN, entityNames: ["app", "web"], entities: ENTS, owned: true, endpoint: ENDPOINT },
+      http,
+    );
+    expect(res.resources.web).toBeUndefined();
+    expect(res.unobserved?.web?.reason).toBe("filtered");
   });
 });
 
@@ -185,4 +206,56 @@ describe("flyPlan: declared-vs-live change set (create/noop/delete/adopt)", () =
     );
     expect(changeSet.entries.find((e) => e.name === "web")?.action).toBe("update");
   });
+
+  test("an unreadable plan makes every declared entity unobserved, not a create (#1089)", async () => {
+    const { changeSet } = await flyPlan(
+      { environment: "prod", buildOutput: "not json", entityNames: [...ENTS.keys()], entities: ENTS, endpoint: ENDPOINT },
+      fakeHttp([]),
+    );
+    expect(changeSet.entries.map((e) => e.action)).toEqual(["unobserved", "unobserved"]);
+  });
+});
+
+// The shared conformance suite (#1089).
+describeObservationConformance({
+  lexicon: "fly",
+  scenarios: [
+    {
+      name: "a build output that is not a readable fly plan",
+      declared: ["app", "web"],
+      expectUnobserved: ["app", "web"],
+      run: () =>
+        describeResources(
+          { environment: "prod", buildOutput: "{{ not json", entityNames: ["app", "web"], entities: ENTS, endpoint: ENDPOINT },
+          fakeHttp([]),
+        ),
+    },
+    {
+      name: "the owned filter withholding a declared machine",
+      declared: ["app", "web"],
+      expectUnobserved: ["web"],
+      run: () =>
+        describeResources(
+          {
+            environment: "prod",
+            buildOutput: PLAN,
+            entityNames: ["app", "web"],
+            entities: ENTS,
+            owned: true,
+            endpoint: ENDPOINT,
+          },
+          fakeHttp([liveMachine("web", "nginx:1", { owned: false })]),
+        ),
+    },
+    {
+      name: "a healthy read",
+      declared: ["app", "web"],
+      expectPresent: ["app", "web"],
+      run: () =>
+        describeResources(
+          { environment: "prod", buildOutput: PLAN, entityNames: ["app", "web"], entities: ENTS, endpoint: ENDPOINT },
+          fakeHttp([liveMachine("web", "nginx:1")]),
+        ),
+    },
+  ],
 });

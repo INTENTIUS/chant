@@ -27,6 +27,9 @@ vi.mock("@intentius/chant/runtime-adapter", async (importOriginal) => {
 const { awsPlugin } = await import("./plugin");
 const { liveImportFromPlugins } = await import("@intentius/chant/cli/commands/import");
 const { buildChangeSet } = await import("@intentius/chant/lifecycle/change-set");
+const { normalizeObservation } = await import("@intentius/chant/observation");
+const { liveEvidenceFromChangeSet, reconcileStatus } = await import("@intentius/chant/lifecycle/status");
+const { describeObservationConformance } = await import("@intentius/chant-test-utils");
 
 const liveTemplate = {
   AWSTemplateFormatVersion: "2010-09-09",
@@ -84,12 +87,18 @@ describe("aws lifecycle integration (#163)", () => {
       return Promise.resolve(ok(JSON.stringify({ Stacks: [{ Outputs: [] }] })));
     });
 
-    const observedNow = await awsPlugin.describeResources!({
-      environment: "prod",
-      buildOutput: "",
-      entityNames: ["MyBucket"],
-    });
+    const { resources: observedNow } = normalizeObservation(
+      await awsPlugin.describeResources!({
+        environment: "prod",
+        buildOutput: "",
+        entityNames: ["MyBucket"],
+        entities: new Map(),
+      }),
+    );
     expect(observedNow.MyBucket?.type).toBe("AWS::S3::Bucket");
+    // Ownership verdicts are total (#1089): describe-stack-resources carries no
+    // tags, so the verdict is an explicit `unknown`, not a missing field.
+    expect(observedNow.MyBucket?.ownership).toBe("unknown");
 
     // Declared "MyQueue" is absent from live → create; live "MyBucket" is
     // undeclared and unmarked → adopt (never delete without ownership).
@@ -144,4 +153,129 @@ describe("aws lifecycle integration (#163)", () => {
       expect(obs).toBeNull();
     });
   });
+
+  /**
+   * The #1089 chain on the real plugin: a CloudFormation read that fails for
+   * any reason other than "stack does not exist" reports every declared entity
+   * NOT-OBSERVED, and that survives describe → plan → component status.
+   */
+  test("tri-state chain: a failed stack read stays unobserved through describe → plan → status (#1089)", async () => {
+    spawnMock.mockResolvedValue({ stdout: "", stderr: "Unable to locate credentials", exitCode: 255 });
+
+    const observed = normalizeObservation(
+      await awsPlugin.describeResources!({
+        environment: "prod",
+        buildOutput: "",
+        entityNames: ["MyBucket", "MyQueue"],
+        entities: new Map(),
+      }),
+    );
+    expect(observed.resources).toEqual({});
+    expect(observed.unobserved.MyBucket.reason).toBe("no-credentials");
+
+    const cs = buildChangeSet("prod", {
+      declared: new Set(["MyBucket", "MyQueue"]),
+      observedNow: observed.resources,
+      observedThen: undefined,
+      unobserved: observed.unobserved,
+    });
+    expect(cs.entries.map((e) => e.action)).toEqual(["unobserved", "unobserved"]);
+
+    const rows = reconcileStatus("prod", [
+      { component: "MyBucket", env: "prod", digest: "sha256:abc", gitSha: "g", runId: "r", timestamp: "2026-01-01T00:00:00Z", actor: "ci" },
+    ], { liveEvidence: liveEvidenceFromChangeSet(cs) });
+    expect(rows[0].reconciliation).toBe("unknown");
+    expect(rows[0].live).toBeUndefined();
+    expect(rows[0].unobserved?.reason).toBe("no-credentials");
+  });
+
+  test("a stack that does not exist is a real absence — every declared entity is a create", async () => {
+    spawnMock.mockResolvedValue({ stdout: "", stderr: "ValidationError: Stack with id prod does not exist", exitCode: 255 });
+
+    const observed = normalizeObservation(
+      await awsPlugin.describeResources!({
+        environment: "prod",
+        buildOutput: "",
+        entityNames: ["MyBucket"],
+        entities: new Map(),
+      }),
+    );
+    expect(observed.resources).toEqual({});
+    expect(observed.unobserved).toEqual({});
+
+    const cs = buildChangeSet("prod", {
+      declared: new Set(["MyBucket"]),
+      observedNow: observed.resources,
+      observedThen: undefined,
+      unobserved: observed.unobserved,
+    });
+    expect(cs.entries[0].action).toBe("create");
+  });
+});
+
+// The shared conformance suite (#1089).
+describeObservationConformance({
+  lexicon: "aws",
+  scenarios: [
+    {
+      name: "a stack read that fails on credentials",
+      declared: ["MyBucket", "MyQueue"],
+      expectUnobserved: ["MyBucket", "MyQueue"],
+      run: () => {
+        spawnMock.mockResolvedValue({ stdout: "", stderr: "Unable to locate credentials", exitCode: 255 });
+        return awsPlugin.describeResources!({
+          environment: "prod",
+          buildOutput: "",
+          entityNames: ["MyBucket", "MyQueue"],
+          entities: new Map(),
+        });
+      },
+    },
+    {
+      name: "a stack that does not exist yet",
+      declared: ["MyBucket"],
+      expectAbsent: ["MyBucket"],
+      run: () => {
+        spawnMock.mockResolvedValue({ stdout: "", stderr: "ValidationError: Stack with id prod does not exist", exitCode: 255 });
+        return awsPlugin.describeResources!({
+          environment: "prod",
+          buildOutput: "",
+          entityNames: ["MyBucket"],
+          entities: new Map(),
+        });
+      },
+    },
+    {
+      name: "a healthy stack read",
+      declared: ["MyBucket"],
+      expectPresent: ["MyBucket"],
+      run: () => {
+        spawnMock.mockImplementation((argv?: string[]) =>
+          Promise.resolve(
+            argv?.includes("describe-stack-resources")
+              ? ok(
+                  JSON.stringify({
+                    StackResources: [
+                      {
+                        LogicalResourceId: "MyBucket",
+                        ResourceType: "AWS::S3::Bucket",
+                        PhysicalResourceId: "my-bucket",
+                        ResourceStatus: "CREATE_COMPLETE",
+                        Timestamp: "2026-01-01T00:00:00Z",
+                      },
+                    ],
+                  }),
+                )
+              : ok(JSON.stringify({ Stacks: [{ Outputs: [] }] })),
+          ),
+        );
+        return awsPlugin.describeResources!({
+          environment: "prod",
+          buildOutput: "",
+          entityNames: ["MyBucket"],
+          entities: new Map(),
+        });
+      },
+    },
+  ],
 });

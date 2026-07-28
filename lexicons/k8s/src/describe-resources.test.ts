@@ -60,13 +60,13 @@ describe("k8s describeResources", () => {
 
     const result = await describeResources({ environment: "prod", buildOutput: "", entityNames: ["web", "webSvc"], entities });
 
-    expect(result["web"]).toMatchObject({
+    expect(result.resources["web"]).toMatchObject({
       type: "K8s::Apps::Deployment",
       physicalId: "uid-1",
       status: "READY",
       attributes: expect.objectContaining({ namespace: "prod", labels: { app: "web" } }),
     });
-    expect(result["webSvc"]).toMatchObject({
+    expect(result.resources["webSvc"]).toMatchObject({
       type: "K8s::Core::Service",
       physicalId: "uid-2",
       status: "PRESENT",
@@ -82,10 +82,12 @@ describe("k8s describeResources", () => {
 
     const result = await describeResources({ environment: "prod", buildOutput: "", entityNames: ["missing"], entities });
 
-    expect(result).toEqual({});
+    // A real NotFound is an absence: neither present nor unobserved.
+    expect(result.resources).toEqual({});
+    expect(result.unobserved ?? {}).toEqual({});
   });
 
-  test("entity types without kubectl mapping are warn-skipped", async () => {
+  test("entity types without kubectl mapping are reported unobserved, not absent (#1089)", async () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     const entities = makeEntities([
       { name: "exotic", entityType: "K8s::Custom::CRD::SomeOperator", props: { metadata: { name: "x" } } },
@@ -93,11 +95,67 @@ describe("k8s describeResources", () => {
 
     const result = await describeResources({ environment: "prod", buildOutput: "", entityNames: ["exotic"], entities });
 
-    expect(result).toEqual({});
-    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("kubectl mapping"));
+    expect(result.resources).toEqual({});
+    expect(result.unobserved?.exotic).toMatchObject({
+      type: "K8s::Custom::CRD::SomeOperator",
+      reason: "unsupported-kind",
+    });
+    expect(execMock).not.toHaveBeenCalled();
     const mappingWarning = warnSpy.mock.calls.find((c) => String(c[0]).includes("kubectl mapping"));
     expect(mappingWarning?.[0]).toContain("K8s::Custom::CRD::SomeOperator");
     warnSpy.mockRestore();
+  });
+
+  // #1089 — a kubectl failure that is not a NotFound proves nothing about the
+  // object's existence, and must not reach the change set as an absence.
+  test.each([
+    ["error: You must be logged in to the server (Unauthorized)", "no-credentials"],
+    ["The connection to the server 127.0.0.1:6443 was refused - did you specify the right host or port?", "no-binding"],
+    ["error: unexpected EOF while parsing", "read-failed"],
+  ])("kubectl failure %j is reported unobserved (%s)", async (stderr, reason) => {
+    execMock.mockImplementation(() => { throw Object.assign(new Error("kubectl failed"), { stderr }); });
+    const entities = makeEntities([
+      { name: "web", entityType: "K8s::Apps::Deployment", props: { metadata: { name: "web", namespace: "prod" } } },
+    ]);
+
+    const result = await describeResources({ environment: "prod", buildOutput: "", entityNames: ["web"], entities });
+
+    expect(result.resources).toEqual({});
+    expect(result.unobserved?.web?.reason).toBe(reason);
+  });
+
+  test("a CRD kind the server does not serve is a real absence (nothing of that kind can exist)", async () => {
+    execMock.mockImplementation(() => {
+      throw Object.assign(new Error("kubectl failed"), {
+        stderr: 'error: the server doesn\'t have a resource type "widgets"',
+      });
+    });
+    const entities = makeEntities([
+      { name: "web", entityType: "K8s::Apps::Deployment", props: { metadata: { name: "web", namespace: "prod" } } },
+    ]);
+
+    const result = await describeResources({ environment: "prod", buildOutput: "", entityNames: ["web"], entities });
+
+    expect(result.resources).toEqual({});
+    expect(result.unobserved ?? {}).toEqual({});
+  });
+
+  test("--owned withholds an unmarked live object as `filtered`, never as absent (#1089)", async () => {
+    execMock.mockResolvedValue({
+      stdout: JSON.stringify({
+        metadata: { name: "web", namespace: "prod", uid: "uid-1", creationTimestamp: "t", labels: { app: "web" } },
+        status: { readyReplicas: 1, replicas: 1 },
+      }),
+      stderr: "",
+    });
+    const entities = makeEntities([
+      { name: "web", entityType: "K8s::Apps::Deployment", props: { metadata: { name: "web", namespace: "prod" } } },
+    ]);
+
+    const result = await describeResources({ environment: "prod", buildOutput: "", entityNames: ["web"], entities, owned: true });
+
+    expect(result.resources).toEqual({});
+    expect(result.unobserved?.web?.reason).toBe("filtered");
   });
 
   test("Deployment with replicas != readyReplicas reports PROGRESSING", async () => {
@@ -115,7 +173,7 @@ describe("k8s describeResources", () => {
 
     const result = await describeResources({ environment: "prod", buildOutput: "", entityNames: ["web"], entities });
 
-    expect(result["web"].status).toBe("PROGRESSING(1/3)");
+    expect(result.resources["web"].status).toBe("PROGRESSING(1/3)");
   });
 
   test("Pod uses status.phase as the status", async () => {
@@ -133,7 +191,7 @@ describe("k8s describeResources", () => {
 
     const result = await describeResources({ environment: "prod", buildOutput: "", entityNames: ["p"], entities });
 
-    expect(result["p"].status).toBe("Running");
+    expect(result.resources["p"].status).toBe("Running");
   });
 
   test("namespace-less resource omits the -n flag", async () => {
@@ -159,14 +217,15 @@ describe("k8s describeResources", () => {
     expect(receivedCmd).toContain("namespace mynamespace");
   });
 
-  test("entity without metadata.name is silently skipped", async () => {
+  test("entity without metadata.name is unobserved — nothing was queried", async () => {
     const entities = makeEntities([
       { name: "broken", entityType: "K8s::Apps::Deployment", props: {} },
     ]);
 
     const result = await describeResources({ environment: "prod", buildOutput: "", entityNames: ["broken"], entities });
 
-    expect(result).toEqual({});
+    expect(result.resources).toEqual({});
+    expect(result.unobserved?.broken?.reason).toBe("read-failed");
     expect(execMock).not.toHaveBeenCalled();
   });
 
@@ -196,7 +255,7 @@ describe("k8s describeResources", () => {
       const result = await describeResources({ environment: "prod", buildOutput: "", entityNames: ["web"], entities: deploymentEntities() });
 
       expect(receivedCmd).toContain("--context prod-eks");
-      expect(result["web"]).toMatchObject({ type: "K8s::Apps::Deployment", physicalId: "uid-1", status: "READY" });
+      expect(result.resources["web"]).toMatchObject({ type: "K8s::Apps::Deployment", physicalId: "uid-1", status: "READY" });
     });
 
     test("bound and ambient context mismatches: refuses loudly instead of observing the wrong cluster", async () => {
@@ -228,7 +287,7 @@ describe("k8s describeResources", () => {
       // Unchanged: no ambient-context probe, no --context flag, same result shape as today.
       expect(receivedCmd).not.toContain("--context");
       expect(receivedCmd).not.toContain("current-context");
-      expect(result["web"]).toMatchObject({ type: "K8s::Apps::Deployment", physicalId: "uid-1", status: "READY" });
+      expect(result.resources["web"]).toMatchObject({ type: "K8s::Apps::Deployment", physicalId: "uid-1", status: "READY" });
 
       // Visible, not silent: a warning names the environment and the missing binding.
       const bindingWarning = warnSpy.mock.calls.find((c) => String(c[0]).includes("no cluster binding"));

@@ -27,7 +27,8 @@
  * only a digest, so they never enter a diff and are excluded here.
  */
 
-import type { ResourceMetadata } from "@intentius/chant/lexicon";
+import type { ObservationResult, ResourceMetadata, UnobservedEntity } from "@intentius/chant/lexicon";
+import { normalizeObservation, observation, unobservedAll } from "@intentius/chant/observation";
 import {
   buildChangeSet,
   renderChangeSet,
@@ -109,15 +110,33 @@ export async function describeResources(
   options: DescribeResourcesOptions,
   http: FlyHttp = defaultFlyHttp(),
   signal?: AbortSignal,
-): Promise<Record<string, ResourceMetadata>> {
+): Promise<ObservationResult> {
   const result: Record<string, ResourceMetadata> = {};
-  if (!options.buildOutput) return result;
+  const unobserved: Record<string, UnobservedEntity> = {};
+
+  // Without a readable plan there is nothing to key a read by, so chant never
+  // asks flaps anything — every declared entity is unobserved, not absent
+  // (#1089). Returning an empty map here used to plan a create for each.
+  if (!options.buildOutput) {
+    return observation(
+      result,
+      unobservedAll(options.entities.keys(), "read-failed", "no fly plan in the build output to read back", options.entities),
+    );
+  }
 
   let plan: FlyPlan;
   try {
     plan = parsePlan(options.buildOutput);
-  } catch {
-    return result; // not a fly plan we can read back
+  } catch (err) {
+    return observation(
+      result,
+      unobservedAll(
+        options.entities.keys(),
+        "read-failed",
+        `build output is not a readable fly plan: ${err instanceof Error ? err.message : String(err)}`,
+        options.entities,
+      ),
+    );
   }
 
   const ctx: ApplyCtx = { base: resolveEndpoint({ endpoint: options.endpoint }) };
@@ -163,30 +182,75 @@ export async function describeResources(
   const certEntity = new Map<string, string>(); // `${app} ${hostname}`
   const appsToQuery = new Set<string>(appNames);
 
+  /** An entity whose owning app can't be resolved is never queried — a hole, not an absence (#1089). */
+  const unresolvedApp = (entityName: string): void => {
+    const type = options.entities.get(entityName)?.entityType;
+    unobserved[entityName] = {
+      ...(type ? { type } : {}),
+      reason: "read-failed",
+      detail: "owning app could not be resolved from the plan (unresolved app placeholder)",
+    };
+  };
+
   for (const [entityName, req] of machineReqs) {
     const app = owningApp(req, machineAppSegment);
-    if (!app) continue;
+    if (!app) {
+      unresolvedApp(entityName);
+      continue;
+    }
     appsToQuery.add(app);
     machineEntity.set(`${app} ${serializedName(req, entityName)}`, entityName);
   }
   for (const [entityName, req] of volumeReqs) {
     const app = owningApp(req, resourceAppSegment);
-    if (!app) continue;
+    if (!app) {
+      unresolvedApp(entityName);
+      continue;
+    }
     appsToQuery.add(app);
     volumeEntity.set(`${app} ${serializedName(req, entityName)}`, entityName);
   }
   for (const [entityName, req] of ipReqs) {
     const app = owningApp(req, resourceAppSegment);
-    if (!app) continue;
+    if (!app) {
+      unresolvedApp(entityName);
+      continue;
+    }
     appsToQuery.add(app);
     ipEntity.set(`${app} ${declaredIpType(req.body.type)}`, entityName);
   }
   for (const [entityName, req] of certReqs) {
     const app = owningApp(req, resourceAppSegment);
-    if (!app) continue;
+    if (!app) {
+      unresolvedApp(entityName);
+      continue;
+    }
     appsToQuery.add(app);
     certEntity.set(`${app} ${String(req.body.hostname ?? "")}`, entityName);
   }
+
+  /**
+   * The `owned` filter withholds a live resource; it never proves one absent
+   * (#1089). When the withheld resource is one a chant entity declares, record
+   * the hole — dropping it silently is what turned "exists, but foreign" into a
+   * proposed create. An undeclared live resource has no declared axis to
+   * misreport, so it is simply not returned.
+   */
+  const withheld = (entityName: string | undefined, detail: string): void => {
+    const declaredType = entityName ? options.entities.get(entityName)?.entityType : undefined;
+    if (!entityName || !declaredType) return;
+    unobserved[entityName] = { type: declaredType, reason: "filtered", detail };
+  };
+
+  /** Declared entities of one app whose breadth read never completed. */
+  const breadthEntitiesOf = (app: string): string[] => {
+    const prefix = `${app} `;
+    const names: string[] = [];
+    for (const map of [volumeEntity, ipEntity, certEntity]) {
+      for (const [key, entityName] of map) if (key.startsWith(prefix)) names.push(entityName);
+    }
+    return names;
+  };
 
   // The app-boundary log fires at most once per call, and only when the `owned`
   // filter reaches the metadata-less types (mirrors aws's degrade-to-log line).
@@ -219,7 +283,9 @@ export async function describeResources(
     );
     if (appRes.status === 200) {
       const ownership = appManaged ? ("owned" as const) : undefined;
-      if (!(owned && ownership !== "owned")) {
+      if (owned && ownership !== "owned") {
+        withheld(appEntityByName.get(app), "app has no chant-owned machine to prove ownership and --owned was requested");
+      } else {
         const entityName = appEntityByName.get(app) ?? app;
         result[entityName] = {
           type: typeOf(entityName, TYPE.app),
@@ -234,7 +300,11 @@ export async function describeResources(
     // Machines: precise per-marker verdict.
     for (const m of machines) {
       const isOwned = isChantOwned(m.config?.metadata);
-      if (owned && !isOwned) continue; // owned filter drops foreign machines
+      if (owned && !isOwned) {
+        // Withheld by the owned filter — live and foreign, which is not absent.
+        withheld(machineEntity.get(`${app} ${m.name}`), "live machine carries no chant ownership marker and --owned was requested");
+        continue;
+      }
       const entityName = machineEntity.get(`${app} ${m.name}`) ?? m.name;
       result[entityName] = {
         type: typeOf(entityName, TYPE.machine),
@@ -259,6 +329,7 @@ export async function describeResources(
       for (const v of await listVolumes(ctx, app, http, signal)) {
         if (owned && boundaryOwnership !== "owned") {
           noteBoundaryInference();
+          withheld(volumeEntity.get(`${app} ${v.name}`), "volume sits under an app with no chant-owned machine and --owned was requested");
           continue;
         }
         if (owned) noteBoundaryInference();
@@ -273,12 +344,13 @@ export async function describeResources(
       }
 
       for (const ip of await listIps(ctx, app, http, signal)) {
+        const family = ipType(ip.shared, ip.ip);
         if (owned && boundaryOwnership !== "owned") {
           noteBoundaryInference();
+          withheld(ipEntity.get(`${app} ${family}`), "ip sits under an app with no chant-owned machine and --owned was requested");
           continue;
         }
         if (owned) noteBoundaryInference();
-        const family = ipType(ip.shared, ip.ip);
         const entityName = ipEntity.get(`${app} ${family}`) ?? `${app}/${family}`;
         result[entityName] = {
           type: typeOf(entityName, TYPE.ip),
@@ -292,6 +364,7 @@ export async function describeResources(
       for (const c of await listCerts(ctx, app, http, signal)) {
         if (owned && boundaryOwnership !== "owned") {
           noteBoundaryInference();
+          withheld(certEntity.get(`${app} ${c.hostname}`), "certificate sits under an app with no chant-owned machine and --owned was requested");
           continue;
         }
         if (owned) noteBoundaryInference();
@@ -304,13 +377,23 @@ export async function describeResources(
           attributes: pruneUndefined({ app, hostname: c.hostname }),
         };
       }
-    } catch {
+    } catch (err) {
       // A breadth endpoint that is unreachable on this target leaves the diff to
-      // machines + apps rather than failing the whole read.
+      // machines + apps rather than failing the whole read — but the volumes,
+      // ips and certs it would have reported were never read, so they are holes
+      // rather than absences (#1089).
+      const detail = `flaps breadth read failed for app "${app}": ${err instanceof Error ? err.message : String(err)}`;
+      for (const entityName of breadthEntitiesOf(app)) {
+        if (result[entityName]) continue; // already read before the failure
+        const type = options.entities.get(entityName)?.entityType;
+        unobserved[entityName] = { ...(type ? { type } : {}), reason: "read-failed", detail };
+      }
     }
   }
 
-  return result;
+  // Present wins: an entity that was read is never also a hole.
+  for (const name of Object.keys(result)) delete unobserved[name];
+  return observation(result, unobserved);
 }
 
 /**
@@ -333,12 +416,16 @@ export async function flyPlan(
   http: FlyHttp = defaultFlyHttp(),
   signal?: AbortSignal,
 ): Promise<{ changeSet: ChangeSet; rendered: string }> {
-  const observedNow = await describeResources(options, http, signal);
+  const observed = normalizeObservation(await describeResources(options, http, signal));
+  const observedNow = observed.resources;
   const declared = new Set<string>(options.entities.keys());
   const cs = buildChangeSet(options.environment, {
     declared,
     observedNow,
     observedThen: options.observedThen,
+    // Entities flaps could not be asked about stay `unobserved` in the plan
+    // rather than being proposed as creates (#1089).
+    unobserved: observed.unobserved,
   });
 
   // Declared config per entity, for the machine update/noop refinement.
