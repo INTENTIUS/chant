@@ -25,6 +25,18 @@ export type { LexiconOutput } from "@intentius/chant/lexicon-output";
 // Plugin
 export { awsPlugin } from "./plugin";
 
+// Deep observation (#1015): the Cloud Control reader and the noise rules it
+// shares with core's normalization pass.
+export {
+  observeResourcesDeepAws,
+  awsDeepNormalizationHooks,
+  parseCloudControlResource,
+  hasOwnershipMarker,
+  DEEP_READABLE_TYPES,
+  AWS_READ_ONLY_NAMES,
+  AWS_SERVICE_DEFAULTS,
+} from "./deep-observe";
+
 // Intrinsics
 export {
   Sub,

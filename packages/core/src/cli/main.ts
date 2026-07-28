@@ -64,6 +64,7 @@ const BOOLEAN_FLAGS = new Set([
   "--json",
   "--progress-json",
   "--update-snapshot",
+  "--update-baseline",
   "--run-examples",
   "--check",
   "--bump",
@@ -269,6 +270,8 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.progressJson = true;
     } else if (arg === "--update-snapshot") {
       result.updateSnapshot = true;
+    } else if (arg === "--update-baseline") {
+      result.updateBaseline = true;
     } else if (arg === "--run-examples") {
       result.runExamples = true;
     } else if (arg === "--pinned-digest") {
@@ -433,6 +436,9 @@ Lifecycle (alias: lc):
   lifecycle show <env>      Show latest lifecycle snapshot
   lifecycle diff <env>      Compare current build against last snapshot
                             --live: query cloud now and detect drift
+                            (lexicons with a deep reader also report
+                            property-level drift; --update-baseline records
+                            what it reports as accepted so it stops alerting)
   lifecycle plan <env>      Typed change set (create/update/delete/adopt) vs live
   lifecycle affected        Stacks a change affects (--base <ref> [--include-dependents])
                             --json: emit the ChangeSet as JSON

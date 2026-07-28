@@ -85,6 +85,32 @@ Each **unobserved** entry names a reason: `read failed`, `no credentials`, `no b
 
 Drifted entries include attribute-level deltas (`status`, `physicalId`, `lastUpdated`, and each `attributes.*` key).
 
+#### Property-level drift
+
+A lexicon that also implements `observeResourcesDeep()` ([coverage](/chant/lexicons/overview/#runtime-observation-coverage)) adds a second section per lexicon, comparing **property trees** rather than metadata. It reports what the categories above cannot: a property that changed, a property source never declared at all (the console edit CloudFormation's own drift detection does not see), and a declared property the cloud is not carrying.
+
+```
+aws (properties)
+1 property drift across 1 resource(s), 2 accepted, 3 unchanged, 1 unobserved
+
+PROPERTY DRIFT (declared vs live; baseline shown where one exists):
+  - Assets (AWS::S3::Bucket)
+      VersioningConfiguration.Status: Enabled → Suspended
+```
+
+The tree is normalized before it is compared — server-populated fields dropped, tags and policy statements canonicalized, provider defaults subtracted where source is silent, secret-bearing property names masked. A resource whose properties could not be read is listed as unobserved with a reason, exactly like the thin read; it is never reported as clean.
+
+#### `--update-baseline` — accept a deviation
+
+Some deviations are permanent facts of the account: a mandatory tag another team stamps on everything, a setting an org policy flips on. `--update-baseline` records every property deviation the run reported as **accepted**, into `<env>/observation-baseline.json` on the `chant/lifecycle` orphan branch.
+
+```bash
+chant lifecycle diff prod --live                     # see what's there
+chant lifecycle diff prod --live --update-baseline   # accept it, with a commit behind it
+```
+
+Acceptance is value-bound. The accepted value stops alerting; a later change *away* from it is drift again, reported with all three axes (declared, live, and the accepted baseline). The baseline is never authority for a deploy — deleting it costs noise suppression and nothing else.
+
 #### `--between <refA> <refB>` — two saved snapshots
 
 Every `snapshot` is a commit on the `chant/lifecycle` orphan branch (list them with `lifecycle log`). `--between` diffs two of them against **each other** — a purely historical, read-only comparison (no build, no cloud query). It answers "what changed in the cloud between Tuesday and Thursday" independent of source.

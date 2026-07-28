@@ -12,6 +12,7 @@ import type { EmulatorCapability } from "./op/emulator-lifecycle";
 import type { RuleMeta } from "./audit/catalog";
 import type { ReferenceCatalog } from "./graph-refs";
 import type { DescribeResourcesResult } from "./observation";
+import type { DeepNormalizationHooks, DeepObservationResult } from "./deep-observation";
 
 // Re-exported so lexicons can author a reference catalog (#778) from the same
 // `@intentius/chant/lexicon` entry they import the plugin contract from.
@@ -27,6 +28,20 @@ export type {
   UnobservedEntity,
   UnobservedReason,
 } from "./observation";
+
+// The deep observation contract (#1014), re-exported for the same reason: a
+// lexicon authoring `observeResourcesDeep` + its pruning/ordering hooks types
+// them from the same entry. Runtime helpers live in
+// `@intentius/chant/deep-observation`.
+export type {
+  DeepObservationResult,
+  DeepResourceObservation,
+  NormalizedDeepObservation,
+  DeepNormalizationHooks,
+  DeepNode,
+  DeepArrayElement,
+  DeepSide,
+} from "./deep-observation";
 
 /**
  * Manifest for a packaged lexicon — metadata embedded in the tarball.
@@ -570,6 +585,50 @@ export interface LexiconPlugin {
      */
     owned?: boolean;
   }): Promise<DescribeResourcesResult>;
+
+  /**
+   * Read the full live *property tree* for each declared entity (#1014). Opt-in,
+   * and strictly deeper than {@link describeResources}, which reports existence
+   * plus a handful of scrubbed outputs. A lexicon that implements neither, or
+   * only the thin one, is unaffected — `lifecycle diff --live` gains
+   * property-level entries only where this exists.
+   *
+   * The result is keyed by chant entity name, exactly like the thin read, and
+   * carries the same NOT-OBSERVED map. That is the composition rule with #1089:
+   * a deep read that fails for one entity says so with a total
+   * {@link UnobservedReason}. It never returns a thin-but-clean tree, because a
+   * clean tree is a claim that nothing drifted.
+   *
+   * Properties must be normalized before they are returned — run
+   * `normalizeDeepProperties` (../deep-observation.ts) with this lexicon's own
+   * {@link deepNormalizationHooks}, so the trees a consumer sees are already
+   * free of arns, timestamps, status subtrees and unstable orderings.
+   *
+   * Throwing is the whole-lexicon failure, same as the thin read: core turns it
+   * into `read-failed` for every declared entity.
+   */
+  observeResourcesDeep?(options: {
+    environment: string;
+    buildOutput: string;
+    entityNames: string[];
+    entities: Map<string, { entityType: string; props: Record<string, unknown> }>;
+    /** Deployed stack to observe, for a multi-stack project (see `stacks` in {@link ChantConfig}). */
+    stack?: string;
+    /** Restrict to chant-owned resources (#119). A lexicon with no marker channel on this path says so. */
+    owned?: boolean;
+  }): Promise<DeepObservationResult>;
+
+  /**
+   * This lexicon's noise rules for deep observation (#1014): which fields are
+   * read-only / server-populated / controller-managed / provider-defaulted, and
+   * which arrays are sets. Data, not a method — core applies the same rules to
+   * the *declared* tree, which no reader ever touches, and the two sides have
+   * to be normalized identically to be comparable.
+   *
+   * Ships alongside {@link observeResourcesDeep}; a reader without hooks
+   * produces a diff made almost entirely of noise.
+   */
+  deepNormalizationHooks?: DeepNormalizationHooks;
 
   /**
    * Report the live status of one deploy unit by its deployed name. Opt-in.

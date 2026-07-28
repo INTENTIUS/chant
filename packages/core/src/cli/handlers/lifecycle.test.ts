@@ -1,6 +1,6 @@
 import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";
 import { sep } from "node:path";
-import { createMockPlugin, staticDescribeResources, staticObservation, staticListArtifacts } from "@intentius/chant-test-utils";
+import { createMockPlugin, staticDescribeResources, staticObservation, staticDeepObservation, staticListArtifacts } from "@intentius/chant-test-utils";
 import type { LexiconPlugin, ResourceMetadata } from "../../lexicon";
 import type { BuildResult } from "../../build";
 import type { ParsedArgs } from "../registry";
@@ -12,14 +12,22 @@ const readEnvironmentSnapshotsMock = vi.fn();
 const listSnapshotsMock = vi.fn();
 const takeSnapshotMock = vi.fn();
 const loadChantConfigMock = vi.fn();
+const pushLifecycleMock = vi.fn();
+const readBlobFromPathMock = vi.fn();
+const writeBlobToPathMock = vi.fn();
 
 vi.mock("../../build", () => ({ build: (...args: unknown[]) => buildMock(...args) }));
 vi.mock("../../lifecycle/git", () => ({
   fetchLifecycle: () => fetchLifecycleMock(),
+  pushLifecycle: () => pushLifecycleMock(),
   readSnapshot: (...args: unknown[]) => readSnapshotMock(...args),
   readEnvironmentSnapshots: (...args: unknown[]) => readEnvironmentSnapshotsMock(...args),
   listSnapshots: (...args: unknown[]) => listSnapshotsMock(...args),
   snapshotStorageKey: (lexicon: string, stack?: string) => (stack ? `${stack}__${lexicon}` : lexicon),
+  // The accepted-observation baseline (#1014) rides the same orphan-branch
+  // plumbing as the snapshots, so it is mocked at the same seam.
+  readBlobFromPath: (...args: unknown[]) => readBlobFromPathMock(...args),
+  writeBlobToPath: (...args: unknown[]) => writeBlobToPathMock(...args),
 }));
 vi.mock("../../lifecycle/snapshot", () => ({
   takeSnapshot: (...args: unknown[]) => takeSnapshotMock(...args),
@@ -93,6 +101,12 @@ describe("runLifecycleDiff --live", () => {
     readSnapshotMock.mockReset();
     loadChantConfigMock.mockReset();
     loadChantConfigMock.mockResolvedValue({ config: {} });
+    readBlobFromPathMock.mockReset();
+    readBlobFromPathMock.mockResolvedValue(null); // no accepted baseline recorded
+    writeBlobToPathMock.mockReset();
+    writeBlobToPathMock.mockResolvedValue("sha");
+    pushLifecycleMock.mockReset();
+    pushLifecycleMock.mockResolvedValue(true);
   });
 
   test("surfaces drift between previous snapshot and live state", async () => {
@@ -350,6 +364,117 @@ describe("runLifecycleDiff --live", () => {
     expect(output).toContain("aws");
     expect(output).toContain("bucket");
     expect(output).toContain("added");
+  });
+
+  // #1014 — property-level drift, gated purely on the deep capability.
+  describe("deep observation (#1014)", () => {
+    const withDeep = (over: Parameters<typeof createMockPlugin>[0] = {}) =>
+      createMockPlugin({
+        name: "aws",
+        describeResources: staticObservation({ bucket: meta() }),
+        observeResourcesDeep: staticDeepObservation({
+          bucket: {
+            type: "AWS::S3::Bucket",
+            properties: { Versioning: "Suspended", Logging: { Target: "audit" } },
+          },
+        }),
+        ...over,
+      });
+
+    const runDiff = async (plugins: LexiconPlugin[], args: Partial<ParsedArgs> = {}) => {
+      buildMock.mockResolvedValue(makeBuildResult({ aws: ["bucket"] }));
+      // Declared: versioning on, nothing about logging.
+      const build = makeBuildResult({ aws: ["bucket"] });
+      build.entities.set("bucket", {
+        lexicon: "aws",
+        entityType: "AWS::S3::Bucket",
+        props: { Versioning: "Enabled" },
+      } as never);
+      buildMock.mockResolvedValue(build);
+      fetchLifecycleMock.mockResolvedValue(undefined);
+      readSnapshotMock.mockResolvedValue(null);
+      return runLifecycleDiff({
+        args: makeArgs({ command: "state", path: "diff", extraPositional: "prod", live: true, ...args }),
+        plugins,
+        serializers: plugins.map((p) => p.serializer),
+      } as never);
+    };
+
+    test("reports the changed property and the undeclared one", async () => {
+      await runDiff([withDeep()]);
+      const output = stdoutBuf.join("\n");
+      expect(output).toContain("aws (properties)");
+      expect(output).toContain("Versioning: Enabled → Suspended");
+      expect(output).toContain("Logging.Target: <undeclared> → audit");
+    });
+
+    test("a lexicon with no deep reader prints nothing extra", async () => {
+      await runDiff([createMockPlugin({ name: "aws", describeResources: staticObservation({ bucket: meta() }) })]);
+      expect(stdoutBuf.join("\n")).not.toContain("(properties)");
+    });
+
+    test("an accepted deviation in the baseline stops re-alerting", async () => {
+      readBlobFromPathMock.mockResolvedValue(
+        JSON.stringify({
+          baseline: "v1",
+          environment: "prod",
+          lexicons: { aws: { bucket: { accepted: [{ path: "Logging.Target", value: "audit" }] } } },
+        }),
+      );
+      await runDiff([withDeep()]);
+      const output = stdoutBuf.join("\n");
+      expect(output).toContain("Versioning: Enabled → Suspended");
+      expect(output).not.toContain("Logging.Target: <undeclared>");
+      expect(output).toContain("ACCEPTED (in the baseline; not drift)");
+    });
+
+    test("--json carries the property drift under the lexicon's `deep` key", async () => {
+      await runDiff([withDeep()], { json: true });
+      const payload = JSON.parse(stdoutBuf.join("\n")) as {
+        lexicons: { aws: { deep: { drifted: Array<{ changes: Array<{ path: string }> }> } } };
+      };
+      expect(payload.lexicons.aws.deep.drifted[0].changes.map((c) => c.path).sort()).toEqual([
+        "Logging.Target",
+        "Versioning",
+      ]);
+    });
+
+    test("a deep read that could not look is a hole, not drift", async () => {
+      await runDiff([
+        withDeep({
+          observeResourcesDeep: staticDeepObservation(
+            {},
+            { bucket: { type: "AWS::S3::Bucket", reason: "no-credentials", detail: "token expired" } },
+          ),
+        }),
+      ]);
+      const output = `${stdoutBuf.join("\n")}\n${stderrBuf.join("\n")}`;
+      expect(output).toContain("PROPERTIES UNOBSERVED");
+      expect(output).toContain("no credentials");
+      expect(output).toContain("could not be observed — that part of the estate is unknown, not clean");
+    });
+
+    test("--update-baseline writes what was reported and pushes it", async () => {
+      await runDiff([withDeep()], { updateBaseline: true });
+      expect(writeBlobToPathMock).toHaveBeenCalledTimes(1);
+      const [environment, filename, content] = writeBlobToPathMock.mock.calls[0] as [string, string, string];
+      expect(environment).toBe("prod");
+      expect(filename).toBe("observation-baseline.json");
+      const written = JSON.parse(content) as {
+        lexicons: { aws: { bucket: { accepted: Array<{ path: string; value: unknown }> } } };
+      };
+      expect(written.lexicons.aws.bucket.accepted.map((a) => a.path)).toEqual(["Logging.Target", "Versioning"]);
+      expect(pushLifecycleMock).toHaveBeenCalled();
+      expect(stderrBuf.join("\n")).toContain("accepted 2 deviation(s)");
+    });
+
+    test("--update-baseline with nothing reported writes nothing", async () => {
+      await runDiff([
+        withDeep({ observeResourcesDeep: staticDeepObservation({}) }),
+      ], { updateBaseline: true });
+      expect(writeBlobToPathMock).not.toHaveBeenCalled();
+      expect(stderrBuf.join("\n")).toContain("nothing to accept");
+    });
   });
 
   // #1166 — an environment can declare its own endpoint (a local emulator like
