@@ -172,6 +172,9 @@ export interface ChantConfig {
     name: string;
     /** Source directory to build for this stack, relative to the project root. */
     src: string;
+    /** AWS region this stack is deployed in (multi-region estates). When set,
+     * observation/enrichment target this region instead of the ambient one. */
+    region?: string;
   }>;
 
   /** Lint configuration (rules, extends, overrides, plugins) */

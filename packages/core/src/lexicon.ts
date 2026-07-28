@@ -608,6 +608,9 @@ export interface LexiconPlugin {
      * convention (AWS: the stack named after `environment`).
      */
     stack?: string;
+    /** AWS region the stack is in (multi-region). When set, the observation
+     * targets this region instead of the ambient one (#1161 follow-up). */
+    region?: string;
     /**
      * Restrict the result to chant-owned resources (those carrying the
      * ownership marker, #119). Where a lexicon has no durable marker channel,
@@ -695,7 +698,7 @@ export interface LexiconPlugin {
    * thin to carry references (e.g. AWS CloudFormation, where it's sourced from
    * the fuller `exportResources` config).
    */
-  enrichLiveAttrs?(options: { environment: string; stack?: string; owned?: boolean }): Promise<Record<string, Record<string, unknown>>>;
+  enrichLiveAttrs?(options: { environment: string; stack?: string; stacks?: Array<string | { name: string; region?: string }>; owned?: boolean }): Promise<Record<string, Record<string, unknown>>>;
 
   /**
    * List runtime artifacts in the given environment. Opt-in.
@@ -748,6 +751,8 @@ export interface LexiconPlugin {
      * keeps its single-stack convention (AWS: the stack named after
      * `environment`). */
     stack?: string;
+    /** AWS region the stack is in (multi-region estates). */
+    region?: string;
     selector?: ResourceSelector;
     owned?: boolean;
     verbatim?: boolean;

@@ -490,7 +490,7 @@ describe("runGraph", () => {
       expect(exit).toBe(0);
       expect(observeMock).toHaveBeenCalledTimes(1);
       const [, , , opts] = observeMock.mock.calls[0];
-      expect((opts as { stacks: string[] }).stacks.sort()).toEqual([
+      expect((opts as { stacks: Array<{name:string}> }).stacks.map((x)=>x.name).sort()).toEqual([
         "loom-local-a-loom-backend",
         "loom-local-a-loom-backend-jobs",
         "loom-local-a-loom-db",

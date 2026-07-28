@@ -25,6 +25,7 @@ import { runCarveApply } from "./handlers/carve-apply";
 import { runLifecycleSnapshot, runLifecycleShow, runLifecycleDiff, runLifecycleRollback, runLifecyclePlan, runLifecycleAffected, runLifecycleLog, runLifecycleUnknown } from "./handlers/lifecycle";
 import { runComponentsStatus, runComponentsReleaseRecord, runComponentsUnknown } from "./handlers/components";
 import { runGraph } from "./handlers/graph";
+import { runSearch } from "./handlers/search";
 import { runOp, runOpList, runOpStatus, runOpSignal, runOpCancel, runOpLog } from "./handlers/run";
 import { runEmulator } from "./handlers/emulator";
 import { splitJoinedFlags, dispatchCommandGroup, collectCommandGroups, formatCommandGroupsHelp, type CommandGroup } from "./command-group";
@@ -49,6 +50,7 @@ const BOOLEAN_FLAGS = new Set([
   "--verbose",
   "--live",
   "--overlay",
+  "--explain",
   "--owned",
   "--verbatim",
   "--apply-rewrites",
@@ -241,6 +243,10 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.detail = Number(args[++i]);
     } else if (arg === "--lens") {
       result.lens = args[++i];
+    } else if (arg === "--explain") {
+      result.explain = true;
+    } else if (arg === "--show") {
+      result.show = args[++i];
     } else if (arg === "--up") {
       result.up = true;
     } else if (arg === "--down") {
@@ -662,6 +668,7 @@ const registry: CommandDef[] = [
   { name: "lint", handler: runLint },
   { name: "list", handler: runList },
   { name: "describe", handler: runDescribe },
+  { name: "search", handler: runSearch },
   { name: "import", handler: runImport },
   { name: "audit", handler: runAudit },
   { name: "migrate", handler: runMigrate },

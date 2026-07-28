@@ -36,6 +36,59 @@ export { stackDoesNotExist } from "./stack-errors";
  * Provides serializer, lint rules, template detection,
  * import parsing, and code generation for AWS CloudFormation.
  */
+/**
+ * Resolve `internetFacing` per instance LOGICAL id from LIVE route tables — a
+ * subnet is internet-facing iff its route table (an explicit association, else
+ * the VPC's main table) has a default route to an Internet Gateway. This covers
+ * the account's default VPC, whose routing chant does not model declaratively
+ * (the instance references it through a parameter). Best-effort: any failure
+ * returns what it has, so search still works on the declared topology.
+ */
+async function liveInternetFacing(regionArgs: string[], stackName: string): Promise<Record<string, string>> {
+  const { getRuntime } = await import("@intentius/chant/runtime-adapter");
+  const rt = getRuntime();
+  const run = (args: string[]) =>
+    rt.spawn(applyAwsEndpointArgv(["aws", ...args, ...regionArgs, "--output", "json"], process.env.AWS_ENDPOINT_URL));
+  const out: Record<string, string> = {};
+  try {
+    const res = await run(["cloudformation", "describe-stack-resources", "--stack-name", stackName]);
+    if (res.exitCode !== 0) return out;
+    const stackRes = (JSON.parse(res.stdout).StackResources ?? []) as Array<{ LogicalResourceId: string; ResourceType: string; PhysicalResourceId: string }>;
+    const instByLogical = new Map<string, string>();
+    for (const r of stackRes) if (r.ResourceType === "AWS::EC2::Instance") instByLogical.set(r.LogicalResourceId, r.PhysicalResourceId);
+    if (instByLogical.size === 0) return out;
+
+    const di = await run(["ec2", "describe-instances", "--instance-ids", ...instByLogical.values()]);
+    if (di.exitCode !== 0) return out;
+    const locByInst = new Map<string, { subnet?: string; vpc?: string }>();
+    for (const rsv of (JSON.parse(di.stdout).Reservations ?? []) as Array<{ Instances?: Array<{ InstanceId: string; SubnetId?: string; VpcId?: string }> }>)
+      for (const i of rsv.Instances ?? []) locByInst.set(i.InstanceId, { subnet: i.SubnetId, vpc: i.VpcId });
+
+    const rtRes = await run(["ec2", "describe-route-tables"]);
+    if (rtRes.exitCode !== 0) return out;
+    const subnetIgw = new Map<string, string>();
+    const vpcMainIgw = new Map<string, string>();
+    for (const t of (JSON.parse(rtRes.stdout).RouteTables ?? []) as Array<{ RouteTableId?: string; VpcId?: string; Routes?: Array<{ GatewayId?: string }>; Associations?: Array<{ SubnetId?: string; Main?: boolean }> }>) {
+      const igwRoute = (t.Routes ?? []).find((r) => typeof r.GatewayId === "string" && r.GatewayId.startsWith("igw-"));
+      if (!igwRoute) continue;
+      const ev = `${t.RouteTableId ?? "rtb"} → ${igwRoute.GatewayId}`;
+      for (const a of t.Associations ?? []) {
+        if (a.SubnetId) subnetIgw.set(a.SubnetId, ev);
+        if (a.Main && t.VpcId) vpcMainIgw.set(t.VpcId, ev);
+      }
+    }
+
+    for (const [logical, instId] of instByLogical) {
+      const loc = locByInst.get(instId);
+      const ev = loc ? ((loc.subnet && subnetIgw.get(loc.subnet)) || (loc.vpc && vpcMainIgw.get(loc.vpc))) : undefined;
+      if (ev) out[logical] = ev;
+    }
+  } catch {
+    /* best-effort */
+  }
+  return out;
+}
+
 export const awsPlugin: LexiconPlugin = {
   name: "aws",
   serializer: awsSerializer,
@@ -532,12 +585,15 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
     buildOutput: string;
     entityNames: string[];
     stack?: string;
+    region?: string;
     owned?: boolean;
   }): Promise<ObservationResult> {
     const { getRuntime } = await import("@intentius/chant/runtime-adapter");
     const { observation, unobservedAll } = await import("@intentius/chant/observation");
     const rt = getRuntime();
     const resources: Record<string, ResourceMetadata> = {};
+    // Multi-region estates: target this stack's region, not the ambient one.
+    const regionArgs = options.region ? ["--region", options.region] : [];
 
     if (options.owned) {
       // describe-stack-resources does not return tags, so ownership cannot be
@@ -559,6 +615,7 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
     const listResult = await rt.spawn(applyAwsEndpointArgv([
       "aws", "cloudformation", "describe-stack-resources",
       "--stack-name", stackName,
+      ...regionArgs,
       "--output", "json",
     ], process.env.AWS_ENDPOINT_URL));
 
@@ -607,6 +664,7 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
     const describeResult = await rt.spawn(applyAwsEndpointArgv([
       "aws", "cloudformation", "describe-stacks",
       "--stack-name", stackName,
+      ...regionArgs,
       "--output", "json",
     ], process.env.AWS_ENDPOINT_URL));
 
@@ -712,6 +770,7 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
   async exportResources(options: {
     environment: string;
     stack?: string;
+    region?: string;
     selector?: ResourceSelector;
     owned?: boolean;
   }): Promise<ExportedTemplate> {
@@ -721,10 +780,12 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
     // Same stack-name convention as describeResources: an explicit multi-stack
     // stack name (#932), else the stack named after the environment.
     const stackName = options.stack ?? `${options.environment}`;
+    const regionArgs = options.region ? ["--region", options.region] : [];
 
     const result = await rt.spawn(applyAwsEndpointArgv([
       "aws", "cloudformation", "get-template",
       "--stack-name", stackName,
+      ...regionArgs,
       "--template-stage", "Original",
       "--output", "json",
     ], process.env.AWS_ENDPOINT_URL));
@@ -750,9 +811,34 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
   // describe-stack-resources is too thin; the deployed template (exportResources)
   // carries the references. Resolve its `{Ref}`/`{Fn::GetAtt}` intrinsics to bare
   // logical ids so the reference resolver matches them.
-  async enrichLiveAttrs(options: { environment: string; stack?: string; owned?: boolean }): Promise<Record<string, Record<string, unknown>>> {
-    const template = await this.exportResources!({ environment: options.environment, stack: options.stack, owned: options.owned });
-    return resolveTemplateAttrs(template);
+  async enrichLiveAttrs(options: { environment: string; stack?: string; stacks?: Array<string | { name: string; region?: string }>; owned?: boolean }): Promise<Record<string, Record<string, unknown>>> {
+    // Multi-stack (#1161): a project declaring ChantConfig.stacks passes them
+    // here; enrich per-stack and merge. Otherwise the single-stack convention.
+    const stackRefs = options.stacks && options.stacks.length > 0
+      ? options.stacks.map((st) => (typeof st === "string" ? { name: st } : st))
+      : [{ name: options.stack ?? options.environment }];
+    const merged: Record<string, Record<string, unknown>> = {};
+    const multi = options.stacks && options.stacks.length > 0;
+    for (const ref of stackRefs) {
+      try {
+        const template = await this.exportResources!({ environment: options.environment, stack: ref.name, region: ref.region, owned: options.owned });
+        const attrs = resolveTemplateAttrs(template);
+        // Stack-qualify keys to match the observed node ids (#1162).
+        for (const [logicalId, v] of Object.entries(attrs)) {
+          merged[multi ? `${ref.name}::${logicalId}` : logicalId] = v;
+        }
+        // Resolve internetFacing from live route tables (covers the default VPC),
+        // carrying the route-table → IGW evidence so search can justify the match.
+        const facing = await liveInternetFacing(ref.region ? ["--region", ref.region] : [], ref.name);
+        for (const [logicalId, via] of Object.entries(facing)) {
+          const key = multi ? `${ref.name}::${logicalId}` : logicalId;
+          merged[key] = { ...merged[key], internetFacing: true, internetFacingVia: via };
+        }
+      } catch {
+        // A stack that isn't deployed yet contributes no live attrs — skip it.
+      }
+    }
+    return merged;
   },
 
   mcpTools() {
