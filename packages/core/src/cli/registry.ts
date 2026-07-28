@@ -97,6 +97,8 @@ export interface ParsedArgs {
   lens?: string;
   /** `chant search --show a,b` — extra attributes to include per matched row (#1139). */
   show?: string;
+  /** `chant search --explain` — append a footer: universe count + why non-matches were excluded (#1139). */
+  explain?: boolean;
   /** `chant graph --lens blast:<node> --up` — include upstream producers */
   up?: boolean;
   /** `chant graph --lens blast:<node> --down` — include downstream dependents */

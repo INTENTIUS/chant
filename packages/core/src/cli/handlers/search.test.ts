@@ -1,7 +1,7 @@
-import { describe, test, expect } from "vitest";
+import { describe, test, expect, vi } from "vitest";
 import { __searchInternals } from "./search";
 
-const { parseQuery, matchTerm, formatRow } = __searchInternals;
+const { parseQuery, matchTerm, formatRow, explain, describeTerm } = __searchInternals;
 
 function node(id: string, kind: string, attrs: Record<string, unknown> = {}) {
   return { id, kind, lexicon: "aws", attrs } as never;
@@ -89,5 +89,25 @@ describe("search edge traversal", () => {
   test("parses -> and <- into directional edge terms", () => {
     expect(parseQuery("->kind:Subnet")).toEqual([{ kind: "edge", a: "", dir: "out", sub: { kind: "kind", a: "Subnet" } }]);
     expect(parseQuery("<-kind:Instance")).toEqual([{ kind: "edge", a: "", dir: "in", sub: { kind: "kind", a: "Instance" } }]);
+  });
+
+  test("--explain footer: universe count + why the non-match was excluded", () => {
+    const byId = new Map((ir as { nodes: { id: string }[] }).nodes.map((n) => [n.id, n]));
+    const query = "kind:EC2::Instance ->attr:MapPublicIpOnLaunch=true";
+    const terms = parseQuery(query);
+    const matches = (ir as { nodes: never[] }).nodes.filter((n) => terms.every((t) => matchTerm(n as never, t, ir, byId as never)));
+    const lines: string[] = [];
+    const spy = vi.spyOn(console, "log").mockImplementation((s: string) => { lines.push(s); });
+    explain(terms as never, matches as never, ir, byId as never, query);
+    spy.mockRestore();
+    // 1 of 2 Instances matched (webServer public, privServer excluded).
+    expect(lines[0]).toContain("1 of 2 AWS::EC2::Instance matched");
+    expect(lines.join("\n")).toContain("excluded privServer");
+    expect(lines.join("\n")).toContain("MapPublicIpOnLaunch=true");
+  });
+
+  test("describeTerm renders an edge term with direction and no-such-edge reason", () => {
+    expect(describeTerm({ kind: "edge", a: "", dir: "out", sub: { kind: "attr", a: "MapPublicIpOnLaunch", b: "true" } } as never))
+      .toBe("→attr:MapPublicIpOnLaunch=true (no such edge)");
   });
 });

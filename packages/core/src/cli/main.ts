@@ -48,6 +48,7 @@ const BOOLEAN_FLAGS = new Set([
   "--verbose",
   "--live",
   "--overlay",
+  "--explain",
   "--owned",
   "--verbatim",
   "--apply-rewrites",
@@ -246,6 +247,8 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.detail = Number(args[++i]);
     } else if (arg === "--lens") {
       result.lens = args[++i];
+    } else if (arg === "--explain") {
+      result.explain = true;
     } else if (arg === "--show") {
       result.show = args[++i];
     } else if (arg === "--up") {

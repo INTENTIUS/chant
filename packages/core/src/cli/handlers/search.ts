@@ -103,12 +103,47 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
   const matches = ir.nodes.filter((n) => terms.every((t) => matchTerm(n, t, ir, nodeById)));
   if (matches.length === 0) {
     console.log("(no matches)");
+    if (args.explain) explain(terms, matches, ir, nodeById, query);
     return 0;
   }
   for (const n of matches) {
     console.log(formatRow(n, show));
   }
+  if (args.explain) explain(terms, matches, ir, nodeById, query);
   return 0;
+}
+
+/**
+ * `--explain` footer (#1139): a compact, model-DERIVED summary that gives a
+ * small model a reason to trust the result instead of re-deriving it with a
+ * lossy CLI sweep. It reports the universe count ("4 of 6 Instances") — chant's
+ * structural edge, since the typed graph knows the denominator a live sweep
+ * doesn't — and, for the near-miss set, WHY each was excluded (which query term
+ * it fails). Everything here is a property of the query over the graph, not of
+ * any expected answer, so it stays a fair, question-agnostic capability.
+ */
+function explain(terms: Term[], matches: IRNode[], ir: GraphIR, byId: Map<string, IRNode>, query: string): void {
+  const kinds = new Set(matches.map((n) => n.kind).filter((k): k is string => !!k));
+  const universe = kinds.size > 0 ? ir.nodes.filter((n) => n.kind && kinds.has(n.kind)) : ir.nodes;
+  const matched = new Set(matches.map((n) => n.id));
+  const excluded = universe.filter((n) => !matched.has(n.id));
+  const kindLabel = kinds.size > 0 ? [...kinds].join("/") : "nodes";
+  console.log(`— ${matches.length} of ${universe.length} ${kindLabel} matched  (query: ${query})`);
+  const shown = excluded.slice(0, 8);
+  for (const n of shown) {
+    const failing = terms.find((t) => !matchTerm(n, t, ir, byId));
+    const id = n.id.includes("::") ? n.id.slice(n.id.lastIndexOf("::") + 2) : n.id;
+    console.log(`  · excluded ${id} — fails ${failing ? describeTerm(failing) : "(query)"}`);
+  }
+  if (excluded.length > shown.length) console.log(`  · …and ${excluded.length - shown.length} more excluded`);
+}
+
+function describeTerm(t: Term): string {
+  const leaf = (x: Term): string =>
+    x.kind === "kind" ? `kind:${x.a}` : x.kind === "attr" ? `attr:${x.a}${x.b !== undefined ? "=" + x.b : ""}`
+      : x.kind === "tag" ? `tag:${x.a}${x.b !== undefined ? "=" + x.b : ""}` : `"${x.a}"`;
+  if (t.kind === "edge" && t.sub) return `${t.dir === "out" ? "→" : "←"}${leaf(t.sub)} (no such edge)`;
+  return leaf(t);
 }
 
 interface Term {
@@ -204,4 +239,4 @@ function formatRow(n: IRNode, show: string[]): string {
 }
 
 /** Internals exposed for unit tests. */
-export const __searchInternals = { parseQuery, matchTerm, formatRow };
+export const __searchInternals = { parseQuery, matchTerm, formatRow, explain, describeTerm };
