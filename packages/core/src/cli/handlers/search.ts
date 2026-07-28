@@ -140,6 +140,16 @@ function explain(terms: Term[], matches: IRNode[], ir: GraphIR, byId: Map<string
   const excluded = universe.filter((n) => !matched.has(n.id));
   const kindLabel = kinds.size > 0 ? [...kinds].join("/") : "nodes";
   console.log(`— ${matches.length} of ${universe.length} ${kindLabel} matched  (query: ${query})`);
+  // Inclusion evidence: for a derived fact a CLI can't easily re-verify
+  // (internetFacing, resolved across the default VPC's routing), name WHY each
+  // match qualifies, so the agent trusts the result instead of dropping it.
+  if (terms.some((t) => t.kind === "attr" && t.a === "internetFacing")) {
+    for (const n of matches) {
+      const via = (n.attrs as Record<string, unknown> | undefined)?.["internetFacingVia"];
+      const id = n.id.includes("::") ? n.id.slice(n.id.lastIndexOf("::") + 2) : n.id;
+      if (typeof via === "string") console.log(`  ✓ ${id} internet-facing via ${via}`);
+    }
+  }
   const shown = excluded.slice(0, 8);
   for (const n of shown) {
     const failing = terms.find((t) => !matchTerm(n, t, ir, byId));

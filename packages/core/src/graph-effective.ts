@@ -71,8 +71,8 @@ export function enrichEffectiveTopology(ir: GraphIR): GraphIR {
     return [...new Map(all.map((s) => [s.id, s])).values()];
   };
 
-  /** True if the instance's subnet has a route to an Internet Gateway. */
-  const internetFacing = (inst: IRNode): boolean => {
+  /** The IGW an instance's subnet routes to (evidence), or undefined. */
+  const internetFacingVia = (inst: IRNode): string | undefined => {
     for (const subnet of out(inst.id, via("SubnetId")).filter((n) => isKind(n, "Subnet"))) {
       const assocs = incoming(subnet.id, via("SubnetId")).filter((a) => isKind(a, "SubnetRouteTableAssociation"));
       const routeTables = assocs.flatMap((a) => out(a.id, via("RouteTableId")).filter((n) => isKind(n, "RouteTable")));
@@ -80,22 +80,31 @@ export function enrichEffectiveTopology(ir: GraphIR): GraphIR {
         const routes = incoming(rt.id, via("RouteTableId")).filter((n) => isKind(n, "Route"));
         for (const route of routes) {
           const dest = (route.attrs as Record<string, unknown> | undefined)?.["DestinationCidrBlock"];
-          const toIgw = out(route.id, via("GatewayId")).some((g) => isKind(g, "InternetGateway"));
-          if (toIgw && (dest == null || dest === "0.0.0.0/0")) return true;
+          const igw = out(route.id, via("GatewayId")).find((g) => isKind(g, "InternetGateway"));
+          if (igw && (dest == null || dest === "0.0.0.0/0")) {
+            const id = igw.id.includes("::") ? igw.id.slice(igw.id.lastIndexOf("::") + 2) : igw.id;
+            return `${rt.id.includes("::") ? rt.id.slice(rt.id.lastIndexOf("::") + 2) : rt.id} → ${id}`;
+          }
         }
       }
     }
-    return false;
+    return undefined;
   };
 
   const nodes = ir.nodes.map((n) => {
     if (!isKind(n, "Instance")) return n;
     const effectiveIngress = effectiveSgs(n).flatMap(normalizeIngress);
-    // A live enrichment may already have set internetFacing for a subnet chant
-    // doesn't model declaratively (e.g. the account's default VPC). Keep that
-    // truth; otherwise derive it from the declared route topology.
-    const live = (n.attrs as Record<string, unknown> | undefined)?.["internetFacing"] === true;
-    return { ...n, attrs: { ...(n.attrs ?? {}), effectiveIngress, internetFacing: live || internetFacing(n) } };
+    // A live enrichment may already have set internetFacing (+ its evidence) for
+    // a subnet chant doesn't model declaratively (e.g. the account's default
+    // VPC). Keep that truth; otherwise derive it from the declared route topology.
+    const attrs = (n.attrs ?? {}) as Record<string, unknown>;
+    const liveFacing = attrs["internetFacing"] === true;
+    const declaredVia = internetFacingVia(n);
+    const via = (attrs["internetFacingVia"] as string | undefined) ?? declaredVia;
+    return {
+      ...n,
+      attrs: { ...attrs, effectiveIngress, internetFacing: liveFacing || !!declaredVia, ...(via ? { internetFacingVia: via } : {}) },
+    };
   });
   return { ...ir, nodes };
 }

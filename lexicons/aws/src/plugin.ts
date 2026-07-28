@@ -45,12 +45,12 @@ export function stackDoesNotExist(stderr: string): boolean {
  * (the instance references it through a parameter). Best-effort: any failure
  * returns what it has, so search still works on the declared topology.
  */
-async function liveInternetFacing(regionArgs: string[], stackName: string): Promise<Record<string, boolean>> {
+async function liveInternetFacing(regionArgs: string[], stackName: string): Promise<Record<string, string>> {
   const { getRuntime } = await import("@intentius/chant/runtime-adapter");
   const rt = getRuntime();
   const run = (args: string[]) =>
     rt.spawn(applyAwsEndpointArgv(["aws", ...args, ...regionArgs, "--output", "json"], process.env.AWS_ENDPOINT_URL));
-  const out: Record<string, boolean> = {};
+  const out: Record<string, string> = {};
   try {
     const res = await run(["cloudformation", "describe-stack-resources", "--stack-name", stackName]);
     if (res.exitCode !== 0) return out;
@@ -67,20 +67,22 @@ async function liveInternetFacing(regionArgs: string[], stackName: string): Prom
 
     const rtRes = await run(["ec2", "describe-route-tables"]);
     if (rtRes.exitCode !== 0) return out;
-    const subnetHasIgw = new Set<string>();
-    const vpcMainHasIgw = new Set<string>();
-    for (const t of (JSON.parse(rtRes.stdout).RouteTables ?? []) as Array<{ VpcId?: string; Routes?: Array<{ GatewayId?: string }>; Associations?: Array<{ SubnetId?: string; Main?: boolean }> }>) {
-      const hasIgw = (t.Routes ?? []).some((r) => typeof r.GatewayId === "string" && r.GatewayId.startsWith("igw-"));
-      if (!hasIgw) continue;
+    const subnetIgw = new Map<string, string>();
+    const vpcMainIgw = new Map<string, string>();
+    for (const t of (JSON.parse(rtRes.stdout).RouteTables ?? []) as Array<{ RouteTableId?: string; VpcId?: string; Routes?: Array<{ GatewayId?: string }>; Associations?: Array<{ SubnetId?: string; Main?: boolean }> }>) {
+      const igwRoute = (t.Routes ?? []).find((r) => typeof r.GatewayId === "string" && r.GatewayId.startsWith("igw-"));
+      if (!igwRoute) continue;
+      const ev = `${t.RouteTableId ?? "rtb"} → ${igwRoute.GatewayId}`;
       for (const a of t.Associations ?? []) {
-        if (a.SubnetId) subnetHasIgw.add(a.SubnetId);
-        if (a.Main && t.VpcId) vpcMainHasIgw.add(t.VpcId);
+        if (a.SubnetId) subnetIgw.set(a.SubnetId, ev);
+        if (a.Main && t.VpcId) vpcMainIgw.set(t.VpcId, ev);
       }
     }
 
     for (const [logical, instId] of instByLogical) {
       const loc = locByInst.get(instId);
-      if (loc && ((loc.subnet && subnetHasIgw.has(loc.subnet)) || (loc.vpc && vpcMainHasIgw.has(loc.vpc)))) out[logical] = true;
+      const ev = loc ? ((loc.subnet && subnetIgw.get(loc.subnet)) || (loc.vpc && vpcMainIgw.get(loc.vpc))) : undefined;
+      if (ev) out[logical] = ev;
     }
   } catch {
     /* best-effort */
@@ -778,11 +780,12 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
         for (const [logicalId, v] of Object.entries(attrs)) {
           merged[multi ? `${ref.name}::${logicalId}` : logicalId] = v;
         }
-        // Resolve internetFacing from live route tables (covers the default VPC).
+        // Resolve internetFacing from live route tables (covers the default VPC),
+        // carrying the route-table → IGW evidence so search can justify the match.
         const facing = await liveInternetFacing(ref.region ? ["--region", ref.region] : [], ref.name);
-        for (const [logicalId, isFacing] of Object.entries(facing)) {
+        for (const [logicalId, via] of Object.entries(facing)) {
           const key = multi ? `${ref.name}::${logicalId}` : logicalId;
-          merged[key] = { ...merged[key], internetFacing: isFacing };
+          merged[key] = { ...merged[key], internetFacing: true, internetFacingVia: via };
         }
       } catch {
         // A stack that isn't deployed yet contributes no live attrs — skip it.
