@@ -1,6 +1,6 @@
 {
   "name": "@intentius/chant-lexicon-k8s",
-  "version": "0.30.0",
+  "version": "0.31.0",
   "description": "Kubernetes lexicon for chant — declarative IaC in TypeScript",
   "license": "Apache-2.0",
   "homepage": "https://intentius.io/chant",
@@ -71,14 +71,14 @@
     "@types/js-yaml": "^4.0.9"
   },
   "optionalDependencies": {
-    "@intentius/chant-k8s-client": "^0.30.0"
+    "@intentius/chant-k8s-client": "^0.31.0"
   },
   "devDependencies": {
     "@intentius/chant": "*",
     "typescript": "^5.9.3"
   },
   "peerDependencies": {
-    "@intentius/chant": "^0.30.0",
+    "@intentius/chant": "^0.31.0",
     "typescript": "^5.9.3"
   }
 }
