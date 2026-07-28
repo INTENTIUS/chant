@@ -35,6 +35,12 @@ _ensure-gen:
       # packages that import ./generated need the src barrel
       if grep -qE 'from "\./generated' "${lex}src/index.ts" 2>/dev/null \
          && [ ! -f "${lex}src/generated/index.ts" ]; then needs=true; fi
+      # a lexicon whose source reads generated/operations.json (#1177's fifth
+      # artifact) needs it too — an old checkout can have the barrel but
+      # predate the artifact, which _ensure-gen's barrel-only check missed
+      if [ -f "${lex}src/generated/index.ts" ] \
+         && grep -rqls 'generated/operations.json' "${lex}src/api" "${lex}src/codegen" 2>/dev/null \
+         && [ ! -f "${lex}src/generated/operations.json" ]; then needs=true; fi
       # import/audit load the bundled dist/meta.json
       if grep -q '"bundle"' "${lex}package.json" 2>/dev/null \
          && [ ! -f "${lex}dist/meta.json" ]; then needs=true; fi
