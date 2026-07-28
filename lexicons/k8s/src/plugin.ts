@@ -6,8 +6,8 @@
  */
 
 import type { LexiconPlugin, InitTemplateSet, ResourceMetadata } from "@intentius/chant/lexicon";
-import type { CommandGroup, CommandGroupContext } from "@intentius/chant/cli/command-group";
-import { splitJoinedFlags, unknownFlagError } from "@intentius/chant/cli/command-group";
+import type { CommandGroup } from "@intentius/chant/cli/command-group";
+import { kubeCommandGroup } from "./kube/group";
 import { detectTemplate } from "./detect";
 import type { LintRule } from "@intentius/chant/lint/rule";
 import { postSynthChecks as postSynthCheckList } from "./lint/post-synth";
@@ -40,46 +40,15 @@ export const k8sPlugin: LexiconPlugin = {
     upstream: { owner: "kubernetes", repo: "kubernetes", kind: "releases" },
   },
 
-  // chant #1078 — the command-group seam's first real tenant. `kube` also
-  // reserves the exact namespace #1079's `chant kube` terminal surface
-  // (get/describe/logs/events/top/wait/source/apply/delete) will mount its
-  // own verbs into; this deliberately adds only one, tiny, read-only,
-  // cluster-free verb — proving the seam works end to end (mounting,
-  // dispatch, `--help` composition, the mounted command's own flag handling)
-  // without prejudging any of #1079's actual design.
+  // chant #1078/#1079 — the command-group seam's tenant. `kube` mounts the
+  // terminal surface over the typed client: kubectl-compatible reads (get,
+  // describe, logs, events, top, wait), chant's own additions (source, the
+  // `get` verdict column, -o chant), and gated writes (apply, delete) that
+  // route through the exact same machinery the Op activities use — never a
+  // parallel implementation. See ./kube/group.ts for the full verb list;
+  // this plugin only mounts it.
   commands(): CommandGroup {
-    return {
-      name: "kube",
-      description: "Kubernetes lexicon diagnostics (namespace reserved for #1079's terminal surface)",
-      commands: [
-        {
-          name: "version",
-          description: "Print the pinned Kubernetes API schema version this lexicon was generated from",
-          async handler(ctx: CommandGroupContext): Promise<number> {
-            // No boolean flags of its own — `--format` always takes a value —
-            // so an empty set here just gets #1127's joined `--flag=value`
-            // splitting with nothing to reject as "boolean but given a value".
-            const args = splitJoinedFlags(ctx.rawArgs);
-            let format: "text" | "json" = "text";
-            for (let i = 0; i < args.length; i++) {
-              const a = args[i];
-              if (a === "--format" || a === "-f") {
-                format = args[++i] === "json" ? "json" : "text";
-              } else if (a.startsWith("-")) {
-                throw unknownFlagError(a, `"chant kube version" only accepts --format <text|json>.`);
-              }
-            }
-            const { K8S_SCHEMA_VERSION } = await import("./spec/fetch");
-            if (format === "json") {
-              console.log(JSON.stringify({ schemaVersion: K8S_SCHEMA_VERSION }));
-            } else {
-              console.log(K8S_SCHEMA_VERSION);
-            }
-            return 0;
-          },
-        },
-      ],
-    };
+    return kubeCommandGroup();
   },
 
   lintRules(): LintRule[] {

@@ -158,6 +158,21 @@ export interface ListOptions {
   signal?: AbortSignal;
 }
 
+/** Options for {@link K8sClient.readLog} (chant #1079). */
+export interface ReadLogOptions {
+  /** Container name. Required by the API server when a Pod has more than one. */
+  container?: string;
+  /** Read the previous (crashed/restarted) container instance's log. */
+  previous?: boolean;
+  /** Only the last N lines. */
+  tailLines?: number;
+  /** Only entries from the last N seconds. */
+  sinceSeconds?: number;
+  /** Prefix each line with its RFC3339 timestamp. */
+  timestamps?: boolean;
+  signal?: AbortSignal;
+}
+
 /** The client surface the k8s lexicon consumes. */
 export interface K8sClient {
   /** Where this client is pointed and what authorized it. */
@@ -176,6 +191,16 @@ export interface K8sClient {
   readIfPresent(ref: ObjectRef, options?: ReadOptions): Promise<K8sObject | undefined>;
   /** LIST a kind, optionally namespaced and label-filtered. Follows `continue` tokens. */
   list(selector: ResourceSelector, options?: ListOptions): Promise<K8sObject[]>;
+  /**
+   * GET a Pod's `/log` subresource — plain text, not JSON, which is why this
+   * is its own method rather than a `read` variant. A snapshot only: the
+   * server's log endpoint supports `follow` as a chunked stream, but this
+   * client's transport seam (`ResponseContextLike.body.text()`) reads a
+   * response to completion rather than exposing it as a stream, so `--follow`
+   * is out of reach without widening that seam — chant #1079 leaves it there
+   * deliberately rather than half-implementing it.
+   */
+  readLog(ref: ObjectRef, options?: ReadLogOptions): Promise<string>;
   /** Server-side apply one object. Creates it when absent. */
   apply(object: K8sObject, options?: ApplyOptions): Promise<K8sObject>;
   /** DELETE one object. Throws {@link K8sApiError} with `notFound` when absent. */
@@ -569,6 +594,27 @@ export async function createK8sClient(options: K8sClientOptions = {}): Promise<K
     }
   }
 
+  async function readLog(ref: ObjectRef, opts: ReadLogOptions = {}): Promise<string> {
+    const info = await resolveOrThrow({ apiVersion: ref.apiVersion, kind: ref.kind }, opts.signal);
+    const query: Record<string, string> = {};
+    if (opts.container) query.container = opts.container;
+    if (opts.previous) query.previous = "true";
+    if (opts.tailLines !== undefined) query.tailLines = String(opts.tailLines);
+    if (opts.sinceSeconds !== undefined) query.sinceSeconds = String(opts.sinceSeconds);
+    if (opts.timestamps) query.timestamps = "true";
+
+    const target = `${refText(ref)} logs`;
+    const { status, body } = await send(`${objectPath(info, ref.name, ref.namespace)}/log`, "GET", {
+      query: Object.keys(query).length > 0 ? query : undefined,
+      signal: opts.signal,
+      target,
+    });
+    if (status < 200 || status > 299) {
+      throw K8sApiError.fromResponse(status, body, target);
+    }
+    return body;
+  }
+
   async function remove(ref: ObjectRef, opts: DeleteOptions = {}): Promise<void> {
     const info = await resolveOrThrow({ apiVersion: ref.apiVersion, kind: ref.kind }, opts.signal);
     const query: Record<string, string> = {};
@@ -588,6 +634,7 @@ export async function createK8sClient(options: K8sClientOptions = {}): Promise<K
     read,
     readIfPresent,
     list,
+    readLog,
     apply,
     delete: remove,
     concurrently: (items, fn) => mapConcurrent(items, fn, concurrency),

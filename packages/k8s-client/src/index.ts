@@ -22,7 +22,7 @@ export {
   selectorText,
   refText,
 } from "./client";
-export type { K8sClient, ReadOptions, ApplyOptions, DeleteOptions, ListOptions } from "./client";
+export type { K8sClient, ReadOptions, ApplyOptions, DeleteOptions, ListOptions, ReadLogOptions } from "./client";
 
 export {
   K8sApiError,

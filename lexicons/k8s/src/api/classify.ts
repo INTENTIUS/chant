@@ -97,6 +97,19 @@ export function classifyApiFailure(err: unknown): K8sReadOutcome {
 }
 
 /**
+ * The cluster's own discovery reports no such kind at all — distinct from a
+ * kind that exists but currently has zero live instances. `classifyApiFailure`
+ * folds both into `absent` for the declared-entity read path, where "no
+ * instance can exist" is exactly the signal a `create` needs. `chant kube get`
+ * (chant #1079) needs the finer distinction: an ad hoc `chant kube get
+ * widgets` against a kind the cluster has never heard of should say so, not
+ * print "No resources found." as if `widgets` were a real, empty kind.
+ */
+export function isUnknownResource(err: unknown): boolean {
+  return shapeOf(err).name === NAMES.unknownResource;
+}
+
+/**
  * Whether a failure kills the whole observation rather than one entity. A
  * refused binding, a missing client package and a rejected credential plugin
  * are all true of every entity, so they propagate and core marks the lot

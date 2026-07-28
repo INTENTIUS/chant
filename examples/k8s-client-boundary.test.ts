@@ -138,6 +138,21 @@ describe("chant #1074 — the build path cannot reach the k8s API client (static
       "api/connect.ts",
       "op/activities/kubectl.ts",
       "deep-observe.ts",
+      // chant #1079 — `chant kube`'s verb modules, reached only through
+      // ./kube/group.ts's per-verb `await import(...)` (mirroring the
+      // `version` verb's existing `await import("../spec/fetch")`). group.ts
+      // itself IS statically reachable from plugin.ts (it is plain data — a
+      // verb-name/description list) and carries no import of either package,
+      // static or dynamic, which is exactly why the verb modules below have
+      // to be behind their own dynamic import rather than listed there.
+      "kube/connect.ts",
+      "kube/get.ts",
+      "kube/describe.ts",
+      "kube/events.ts",
+      "kube/delete.ts",
+      "kube/render.ts",
+      "kube/target.ts",
+      "kube/verdict.ts",
     ].map((f) => join(K8S_SRC, f));
     for (const file of consumers) {
       expect(existsSync(file), `${file} should exist`).toBe(true);

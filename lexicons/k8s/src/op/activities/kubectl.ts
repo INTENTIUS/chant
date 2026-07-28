@@ -92,6 +92,15 @@ export interface KubectlApplyArgs {
    * stamp is never a candidate.
    */
   deleteMode?: ApplyDeleteMode;
+  /**
+   * Server-side dry run — every document is validated and would-be-applied,
+   * nothing is persisted, and pruning is skipped entirely (a prune candidate
+   * list computed from a state that was never written would be misleading).
+   * Optional and additive (chant #1079): `chant kube apply`'s confirmation
+   * gate uses this to preview an apply before anything mutates the cluster;
+   * Op callers keep the previous behavior by leaving it unset.
+   */
+  dryRun?: boolean;
   /** Project directory whose `chant.config.ts` carries `ownership`. Defaults to cwd. */
   cwd?: string;
 }
@@ -213,6 +222,7 @@ export async function applyManifest(
       const result = await client.apply(document as K8sObject, {
         fieldManager,
         force: args.force ?? false,
+        dryRun: args.dryRun,
         signal,
       });
       const ref: AppliedRef = {
@@ -229,12 +239,12 @@ export async function applyManifest(
         manifest: args.manifest,
         applied: `${ref.kind}/${ref.name}`,
       });
-      console.log(`${ref.apiVersion} ${ref.kind}/${ref.name} applied`);
+      console.log(`${ref.apiVersion} ${ref.kind}/${ref.name} applied${args.dryRun ? " (dry run — nothing persisted)" : ""}`);
     }
 
     const deleteMode = args.deleteMode ?? "never";
     const pruned =
-      deleteMode === "never"
+      deleteMode === "never" || args.dryRun
         ? []
         : await pruneOrphans(client, applied, {
             ...(stack !== undefined ? { stack } : {}),

@@ -372,6 +372,67 @@ describe("list", () => {
   });
 });
 
+describe("readLog (chant #1079)", () => {
+  test("GETs the pod's /log subresource and returns the raw text, not JSON", async () => {
+    const layer = fakeRequestLayer((req) => {
+      if (req.path in ROOT_DISCOVERY) return { body: ROOT_DISCOVERY[req.path] };
+      if (req.path === "/api/v1/namespaces/prod/pods/web/log") {
+        return { body: "line one\nline two\n" };
+      }
+      return { status: 404, body: statusBody(404, "NotFound", "no") };
+    });
+    const c = await client(layer as unknown as ReturnType<typeof cluster>);
+    const text = await c.readLog({ apiVersion: "v1", kind: "Pod", name: "web", namespace: "prod" });
+    expect(text).toBe("line one\nline two\n");
+  });
+
+  test("container, tailLines, sinceSeconds, previous and timestamps are query parameters", async () => {
+    const layer = fakeRequestLayer((req) => {
+      if (req.path in ROOT_DISCOVERY) return { body: ROOT_DISCOVERY[req.path] };
+      if (req.path === "/api/v1/namespaces/prod/pods/web/log") return { body: "" };
+      return { status: 404, body: statusBody(404, "NotFound", "no") };
+    });
+    const c = await client(layer as unknown as ReturnType<typeof cluster>);
+    await c.readLog(
+      { apiVersion: "v1", kind: "Pod", name: "web", namespace: "prod" },
+      { container: "app", tailLines: 50, sinceSeconds: 3600, previous: true, timestamps: true },
+    );
+    const req = layer.requests.find((r) => r.path === "/api/v1/namespaces/prod/pods/web/log")!;
+    expect(req.query).toEqual({
+      container: "app",
+      tailLines: "50",
+      sinceSeconds: "3600",
+      previous: "true",
+      timestamps: "true",
+    });
+  });
+
+  test("a failure is a typed K8sApiError, not a swallowed empty string", async () => {
+    const layer = fakeRequestLayer((req) => {
+      if (req.path in ROOT_DISCOVERY) return { body: ROOT_DISCOVERY[req.path] };
+      return { status: 404, body: statusBody(404, "NotFound", 'pods "web" not found') };
+    });
+    const c = await client(layer as unknown as ReturnType<typeof cluster>);
+    const err = (await c
+      .readLog({ apiVersion: "v1", kind: "Pod", name: "web", namespace: "prod" })
+      .catch((e: unknown) => e)) as K8sApiError;
+    expect(err).toBeInstanceOf(K8sApiError);
+    expect(err.notFound).toBe(true);
+  });
+
+  test("an unresolvable kind throws UnknownResourceError before any log request", async () => {
+    const layer = fakeRequestLayer((req) => {
+      if (req.path in ROOT_DISCOVERY) return { body: ROOT_DISCOVERY[req.path] };
+      return { status: 404, body: statusBody(404, "NotFound", "no") };
+    });
+    const c = await client(layer as unknown as ReturnType<typeof cluster>);
+    await expect(
+      c.readLog({ apiVersion: "v1", kind: "Widget", name: "web", namespace: "prod" }),
+    ).rejects.toThrow(UnknownResourceError);
+    expect(layer.requests.some((r) => r.path.endsWith("/log"))).toBe(false);
+  });
+});
+
 describe("delete (chant #1075 — the prune path)", () => {
   test("DELETEs the addressed object", async () => {
     const layer = cluster({}, (req) => (req.method === "DELETE" ? { body: statusBody(200, "", "ok") } : undefined));
