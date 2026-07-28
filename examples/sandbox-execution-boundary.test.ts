@@ -100,6 +100,7 @@ const { armSandboxConfigEvaluation, resetSandboxConfigEvaluationForTests } = awa
   "../packages/core/src/config-sandbox"
 );
 const { resetSandboxPolicyExecutionForTests } = await import("../packages/core/src/lint/policy-sandbox");
+const { foldExecutionCounts, resetFoldExecutionCounts } = await import("../packages/core/src/discovery/fold-import");
 
 // The whole file measures `--sandbox`, so arm once — exactly as `chant build
 // --sandbox` does off the parsed flag, before the first config load.
@@ -118,6 +119,22 @@ interface ReportRow {
   hasTsConfig: boolean;
   /** Times the config was evaluated in THIS process. Must be 0. */
   inProcessConfigCount: number;
+  /**
+   * chant #1023 — composite factory bodies this sandboxed build evaluated
+   * STATICALLY rather than calling. Each one is a file that would otherwise
+   * have been demoted to the child (chant #1111's measured cost), so this is
+   * the coverage half of the same boundary the counts above are the safety
+   * half of.
+   */
+  factoryInterpretations: number;
+  /**
+   * Factory calls that were still invoked in this process. Every one of them is
+   * on the trusted allowlist by construction — a project-owned callee is
+   * refused under `--sandbox` — so this is expected to be nonzero and the
+   * PROJECT-owned count below is what must be 0.
+   */
+  factoryInvocations: number;
+  projectFactoryInvocations: number;
 }
 
 const report: ReportRow[] = [];
@@ -145,6 +162,7 @@ describe("under --sandbox, no project module is executed in the CLI process (cha
     test(`${entry.name}: nothing from ${entry.name} — config included — runs in this process`, async () => {
       importedPaths.length = 0;
       inProcessConfigEvaluations.length = 0;
+      resetFoldExecutionCounts();
 
       // What `chant build` does before it builds: read the project's config.
       // Armed, this goes through the sandboxed child; the wrapper above is
@@ -160,6 +178,7 @@ describe("under --sandbox, no project module is executed in the CLI process (cha
 
       const seen = [...new Set(importedPaths)];
       const fromProject = seen.filter((p) => p.startsWith(entry.srcDir));
+      const counts = foldExecutionCounts();
 
       report.push({
         name: entry.name,
@@ -168,7 +187,18 @@ describe("under --sandbox, no project module is executed in the CLI process (cha
         projectImportCount: fromProject.length,
         hasTsConfig: loaded.configPath?.endsWith(".ts") ?? false,
         inProcessConfigCount: inProcessConfigEvaluations.length,
+        factoryInterpretations: counts.factoryInterpretations,
+        factoryInvocations: counts.factoryInvocations,
+        projectFactoryInvocations: counts.projectFactoryInvocations,
       });
+
+      // chant #1023 — the same property the import wrapper above proves, at
+      // the one call site that reaches a callee by NAME rather than by module:
+      // no project-owned factory may be invoked here under --sandbox.
+      expect(
+        counts.projectFactoryInvocations,
+        `${entry.name}: a project-owned composite factory was invoked in the CLI process despite --sandbox`,
+      ).toBe(0);
 
       expect(
         fromProject,
@@ -294,6 +324,9 @@ describe("under --sandbox, lint.policies runs in a child, not here (chant #1131)
         `  project source files across the corpus: ${totalFiles}`,
         `  modules importModule() executed in THIS process: ${totalParent} (chant-core + active lexicon packages)`,
         `  of which project source: ${totalProject}`,
+        `  composite factories invoked in THIS process: ${report.reduce((s, r) => s + r.factoryInvocations, 0)} (chant-core + active lexicon packages)`,
+        `  of which project-owned: ${report.reduce((s, r) => s + r.projectFactoryInvocations, 0)}`,
+        `  composite factory bodies INTERPRETED instead (chant #1023): ${report.reduce((s, r) => s + r.factoryInterpretations, 0)}`,
         `  entries whose build resolved a chant.config.ts: ${tsConfigs}`,
         `  of those, evaluated in THIS process: ${inProcessConfigs}`,
         `  entries declaring lint.policies (built through buildCommand): ${policyReport.length}`,

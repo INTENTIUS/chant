@@ -13,6 +13,7 @@ import {
   type FoldMode,
 } from "./differential-corpus";
 import { extractFoldCoverageBlock, renderFoldCoverageBlock } from "./fold-coverage";
+import { foldExecutionCounts, resetFoldExecutionCounts } from "../packages/core/src/discovery/fold-import";
 
 /**
  * chant #1025 (epic #1019) — the fold-vs-run differential safety net.
@@ -59,6 +60,18 @@ interface ReportRow {
   fileCount: number;
   /** True when the fast (no-reset) comparison drifted and a module-isolated retry was needed to tell real fold-vs-run drift apart from cross-build state bleed. See {@link buildBothWays}'s doc. */
   neededIsolation: boolean;
+  /**
+   * chant #1023 — what this entry's plain `--fold` probe build actually
+   * EXECUTED, and what it interpreted instead. `projectFactoryInvocations` is
+   * the number the epic cares about: a composite factory owned by the project,
+   * imported and called in the CLI's own process while the calling file is
+   * nonetheless reported as `[fold:fold]`. That is chant #1093's residual, and
+   * the report below is where it is now visible for plain `--fold` — the
+   * `--sandbox` half has had `sandbox-execution-boundary.test.ts` since #1111.
+   */
+  factoryInvocations: number;
+  projectFactoryInvocations: number;
+  factoryInterpretations: number;
 }
 
 const report: ReportRow[] = [];
@@ -263,10 +276,15 @@ describe("fold differential — fold output === run output (#1025, epic #1019)",
       // both-ways comparison + module-reset retry; that retry (which reloads the
       // whole module graph) is what makes the full corpus intractable now that
       // many entries fall back, and it buys nothing for entries we don't gate.
+      // chant #1023 — counted around the PROBE build only. It is one plain
+      // `--fold` build of the entry, which is exactly the figure the report
+      // wants; the both-ways comparison below would double it.
+      resetFoldExecutionCounts();
       const probe = await (await loadBuild())(entry.srcDir, entry.serializers, undefined, { fold: true, intrinsics: entry.intrinsics, lexicons: entry.lexicons });
+      const counts = foldExecutionCounts();
       const mode = classifyFoldMode(probe.foldDecisions);
       if (mode !== "fold") {
-        report.push({ name: entry.name, mode, identical: true, fileCount: probe.foldDecisions.length, neededIsolation: false });
+        report.push({ name: entry.name, mode, identical: true, fileCount: probe.foldDecisions.length, neededIsolation: false, ...counts });
         return;
       }
 
@@ -274,7 +292,7 @@ describe("fold differential — fold output === run output (#1025, epic #1019)",
       const { run: runResult, fold: foldResult, neededIsolation } = await buildBothWays(entry);
       const runNorm = normalizeOutputs(runResult.outputs);
       const foldNorm = normalizeOutputs(foldResult.outputs);
-      report.push({ name: entry.name, mode, identical: outputsEqual(foldNorm, runNorm), fileCount: foldResult.foldDecisions.length, neededIsolation });
+      report.push({ name: entry.name, mode, identical: outputsEqual(foldNorm, runNorm), fileCount: foldResult.foldDecisions.length, neededIsolation, ...counts });
 
       // Same errors either way (usually none) — the fold path must not
       // silently swallow or invent a discovery/build failure.
@@ -332,12 +350,16 @@ describe("fold differential — fold output === run output (#1025, epic #1019)",
     const emptyCount = report.filter((r) => r.mode === "empty").length;
     const driftCount = report.filter((r) => !r.identical).length;
     const isolatedCount = report.filter((r) => r.neededIsolation).length;
+    const sum = (pick: (r: ReportRow) => number): number => report.reduce((total, r) => total + pick(r), 0);
 
     const lines = [
       "",
       "── Fold differential report (#1025) ──────────────────────────────",
       `corpus: ${report.length}/${CORPUS.length} source directories built both ways`,
       `  fold: ${foldCount}   run-fallback: ${fallbackCount}   empty: ${emptyCount}   drift: ${driftCount}   isolated-retry: ${isolatedCount}`,
+      `  #1023 plain --fold execution — factory invocations: ${sum((r) => r.factoryInvocations)}` +
+        `   of which PROJECT-owned: ${sum((r) => r.projectFactoryInvocations)}` +
+        `   factory bodies interpreted: ${sum((r) => r.factoryInterpretations)}`,
       ...report.map(
         (r) =>
           `  [${r.identical ? "identical" : "DRIFT    "}] ${r.mode.padEnd(12)} ${r.name}${r.neededIsolation ? "  (needed isolated retry)" : ""}`,

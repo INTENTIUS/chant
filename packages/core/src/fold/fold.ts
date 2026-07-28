@@ -298,8 +298,18 @@ export function collectConsts(sourceFile: ts.SourceFile): Map<string, ts.Express
   return consts;
 }
 
-/** A property/element key foldable without execution: identifier, string, or numeric literal. */
-function propName(node: ts.PropertyName): string {
+/**
+ * A property/element key foldable without execution: identifier, string, or
+ * numeric literal.
+ *
+ * Exported for chant #1023's composite-factory interpreter
+ * (../discovery/fold-import.ts), which walks object literals itself — a
+ * factory body may construct a resource inside one, which {@link fold} has no
+ * case for — and must reject a computed key with the identical message
+ * {@link fold} would, rather than growing a second, silently divergent copy of
+ * this rule.
+ */
+export function propName(node: ts.PropertyName): string {
   if (isLiteralPropertyName(node)) return node.text;
   throw foldError(node, computedPropertyNameMessage(node));
 }
