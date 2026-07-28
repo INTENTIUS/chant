@@ -2,6 +2,7 @@ import { resolve } from "node:path";
 import { build } from "../../build";
 import { buildGraphIr, buildLiveGraphIr, sourceOverlayGraphs, type GraphIR, type IRNode } from "../../graph-ir";
 import { buildDeclaredPerStack } from "../../graph-declared";
+import { enrichEffectiveTopology } from "../../graph-effective";
 import { discover } from "../../discovery/index";
 
 import { observeResources } from "../../lifecycle/observe";
@@ -99,6 +100,9 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
     ir = buildGraphIr(discovered.entities);
   }
 
+  // Fold derived reachability facts (effectiveIngress, internetFacing) onto
+  // instance nodes so multi-hop/launch-template joins are one node predicate (#1139).
+  ir = enrichEffectiveTopology(ir);
   const nodeById = new Map(ir.nodes.map((n) => [n.id, n]));
   const matches = ir.nodes.filter((n) => terms.every((t) => matchTerm(n, t, ir, nodeById)));
   if (matches.length === 0) {
