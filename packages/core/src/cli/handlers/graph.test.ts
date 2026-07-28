@@ -52,7 +52,7 @@ const discoverComponentsMock = vi.fn();
 vi.mock("../../components/discover", () => ({
   discoverComponents: (...a: unknown[]) => discoverComponentsMock(...a),
 }));
-const chantConfigMock = vi.fn(() => Promise.resolve({ config: {} }));
+const chantConfigMock = vi.fn((..._a: unknown[]) => Promise.resolve({ config: {} }));
 vi.mock("../../config", () => ({
   loadChantConfig: (...a: unknown[]) => chantConfigMock(...a),
 }));
