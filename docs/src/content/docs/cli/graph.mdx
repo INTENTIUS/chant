@@ -10,6 +10,7 @@ chant graph [path] [--stacks] [--json]
 chant graph [path] [--components] [--json]
 chant graph [path] --format ir|mermaid|dot|layout [--detail 0..3] [--lens <kind>:<target>] [--up] [--down]
 chant graph [path] --format layout [--node-sizes <json|-|@file>] [--layout-engine dagre|graphviz]
+chant graph [path] --components --format ir --projection gitlab|github|forgejo
 chant graph --format ir --live --env <name>
 chant graph --format ir --live --env <name> --overlay
 ```
@@ -176,6 +177,39 @@ Dependencies (consumer → producer):
   search-service → shared-alb
 ```
 
+### `--projection <lexicon>` — the CI/pipeline projection (#989)
+
+`chant graph --components --format ir --projection gitlab|github|forgejo` adds the **CI/pipeline projection** alongside the component-graph IR: the same stages/jobs/`needs` a CI-provider lexicon's `generateComponentPipeline` synthesizes for [`chant build --components --generate <lexicon>`](/chant/cli/build/) (waves become stages, components become jobs, `dependsOn` becomes `needs:`) — reused wholesale, never re-derived, and exposed as first-class IR nodes/edges rather than something a consumer parses back out of generated CI YAML.
+
+```bash
+chant graph --components --format ir --projection gitlab
+```
+
+The projection lands in `ir.pipeline`, alongside the component graph's own `nodes`/`edges`/`groups.byWave`:
+
+```json
+{
+  "nodes": [ /* one per component */ ],
+  "edges": [ /* dependsOn, consumer → producer */ ],
+  "groups": { "byWave": { "wave-1": ["shared-alb"], "wave-2": ["search-service"] } },
+  "pipeline": {
+    "provider": "gitlab",
+    "stages": ["wave-1", "wave-2"],
+    "nodes": [
+      { "id": "shared-alb", "kind": "CIJob", "component": "shared-alb", "stage": "wave-1" },
+      { "id": "search-service", "kind": "CIJob", "component": "search-service", "stage": "wave-2" }
+    ],
+    "edges": [
+      { "from": "search-service", "to": "shared-alb", "kind": "needs" }
+    ]
+  }
+}
+```
+
+`pipeline.nodes`/`pipeline.edges` are a distinct id space from the component graph's own `nodes`/`edges` (a CI-provider's job name isn't always identical to the component name), so a consumer renders them as two related graphs sharing one `component` join key rather than merging them into one. `--projection` only applies to `--format ir` — `mermaid`/`dot`/`layout` don't read `pipeline` yet, and `chant graph --components` without `--format` never builds an IR at all, so either combination is rejected with a clear error.
+
+Any lexicon whose plugin implements `generateComponentPipeline` works, not just gitlab/github/forgejo; an unsupported name fails with the same descriptive error `chant build --components --generate` gives.
+
 ## Op graph (default)
 
 With no format flag, `chant graph` discovers all `*.op.ts` files under the given path and prints the dependency edges declared via each Op's `depends` field.
@@ -192,7 +226,7 @@ Each dependency prints as one edge per line, `<dependency> → <dependent>` — 
 | Code | Meaning |
 |------|---------|
 | 0 | Success |
-| 1 | Discovery errors; lint errors (infra-graph formats); a dependency cycle (`--stacks`, `--components`) or unknown dependency (`--components`); an invalid `--detail`/`--lens`; malformed `--node-sizes`; or a layout-engine failure (e.g. missing `dot` with `--layout-engine graphviz`) |
+| 1 | Discovery errors; lint errors (infra-graph formats); a dependency cycle (`--stacks`, `--components`) or unknown dependency (`--components`); an invalid `--detail`/`--lens`; malformed `--node-sizes`; a layout-engine failure (e.g. missing `dot` with `--layout-engine graphviz`); `--projection` used without `--components --format ir`; or `--projection <lexicon>` naming a lexicon with no `generateComponentPipeline` |
 
 ## See Also
 

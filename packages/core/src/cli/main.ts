@@ -312,6 +312,8 @@ export function parseArgs(args: string[]): ParsedArgs {
       (result.param ??= []).push(args[++i]);
     } else if (arg === "--params-file") {
       result.paramsFile = args[++i];
+    } else if (arg === "--projection") {
+      result.projection = args[++i];
     } else if (arg.startsWith("--")) {
       // chant #1127 — every recognized flag is matched above; anything left
       // starting with `--` is unrecognized, whether it arrived bare
@@ -421,6 +423,10 @@ Ops:
                         --layout-engine graphviz to use dot instead;
                         --detail 0..3: stacks|composites|declarables|attributes;
                         --lens lexicon:<n>|stack:<n>|blast:<node> (--up/--down))
+                        --components --format ir --projection gitlab|github|forgejo:
+                        add the CI/pipeline projection (stages/jobs/needs) to
+                        the component-graph IR, from the same generator
+                        'build --components --generate' uses (#989)
 
 Lifecycle (alias: lc):
   lifecycle snapshot <env>  Query API, save metadata to orphan branch

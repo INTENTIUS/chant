@@ -124,6 +124,51 @@ export interface IRImport {
   node: string;
 }
 
+/**
+ * One generated CI job in the pipeline projection (`chant graph --components
+ * --format ir --projection <lexicon>`, #989) — the same job a CI-provider
+ * lexicon's `generateComponentPipeline` synthesizes for `chant build
+ * --components --generate <lexicon>` (see `ComponentPipelineJob`,
+ * ./lexicon.ts), reshaped into the IR's node vocabulary.
+ */
+export interface IRPipelineNode {
+  /** CI job name (the generator's job id — a safe YAML/workflow key). */
+  id: string;
+  kind: "CIJob";
+  /** The component this job triggers. */
+  component: string;
+  /** The stage/wave this job runs in — the same wave index as the component
+   * graph's `groups.byWave` (one CI stage/`needs:`-level per wave). */
+  stage: string;
+}
+
+/** A `needs:` dependency between two generated CI jobs — mirrors the
+ * `dependsOn` edge it derives from, consumer job → producer job. */
+export interface IRPipelineEdge {
+  from: string;
+  to: string;
+  kind: "needs";
+}
+
+/**
+ * The CI/pipeline projection of a component graph (#989): the stages/jobs/
+ * `needs` a CI-provider lexicon (gitlab, github, forgejo, or any lexicon
+ * implementing `generateComponentPipeline`) would synthesize for `chant build
+ * --components --generate <lexicon>`, reused here — never re-derived — as
+ * first-class IR nodes/edges. A consumer (e.g. behold) reads this alongside
+ * the component graph's `nodes`/`edges`/`groups.byWave` to render the CI
+ * shape without parsing generated YAML. Present only when `chant graph
+ * --components --format ir` is invoked with `--projection <lexicon>`.
+ */
+export interface IRPipeline {
+  /** The CI-provider lexicon that produced this projection (e.g. "gitlab"). */
+  provider: string;
+  /** Wave-ordered stage names — 1:1 with the component graph's `groups.byWave` keys. */
+  stages: string[];
+  nodes: IRPipelineNode[];
+  edges: IRPipelineEdge[];
+}
+
 /** The full graph IR for a project at the default (declarable) detail level. */
 export interface GraphIR {
   nodes: IRNode[];
@@ -135,6 +180,8 @@ export interface GraphIR {
    * `name` to another stack's export `name` to draw the cross-stack edge; the
    * parameter's in-stack consumers are ordinary `$ref` edges to it (#513). */
   imports?: IRImport[];
+  /** The CI/pipeline projection alongside the component graph (#989) — see {@link IRPipeline}. */
+  pipeline?: IRPipeline;
 }
 
 /** A node is anything that serializes to a resource — not a property or output. */

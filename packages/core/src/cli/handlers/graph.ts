@@ -2,7 +2,7 @@ import { resolve } from "node:path";
 import { discoverOps } from "../../op/discover";
 import { discover } from "../../discovery/index";
 import { partitionByLexicon, computeStackGraph, build } from "../../build";
-import { buildGraphIr, buildLiveGraphIr, collectUnobserved, overlayGraphs, sourceOverlayGraphs, type GraphIR, type LiveObservation } from "../../graph-ir";
+import { buildGraphIr, buildLiveGraphIr, collectUnobserved, overlayGraphs, sourceOverlayGraphs, type GraphIR, type IRPipeline, type LiveObservation } from "../../graph-ir";
 import { reconstructEdges, mergeCatalogs, containmentGroups, type ReferenceCatalog, type ContainmentPair } from "../../graph-refs";
 import { observeResources } from "../../lifecycle/observe";
 import { loadChantConfig, environmentNames } from "../../config";
@@ -17,7 +17,7 @@ import { loadPlugins, resolveProjectLexicons } from "../plugins";
 import { readFileSync } from "node:fs";
 import { formatError, formatWarning, formatBold } from "../format";
 import type { CommandContext } from "../registry";
-import { computeComponentGraph } from "../../components/cli-support";
+import { computeComponentGraph, generateComponentsPipeline } from "../../components/cli-support";
 import { discoverComponents } from "../../components/discover";
 import { cfnDeployStacks } from "./components";
 
@@ -34,6 +34,18 @@ import { cfnDeployStacks } from "./components";
 export async function runGraph(ctx: CommandContext): Promise<number> {
   const viewFormats = ["ir", "mermaid", "dot", "layout"] as const;
   const isViewFormat = (viewFormats as readonly string[]).includes(ctx.args.format);
+  // `--projection <lexicon>` (#989) only means anything for the component
+  // graph's IR — it adds the CI/pipeline shape to `GraphIR.pipeline`, a field
+  // the other view formats' emitters (mermaid/dot/layout) don't read, and the
+  // plain (non-`--format`) `--components` text/`--json` modes don't build an
+  // IR at all. Reject every other combination up front rather than silently
+  // ignoring the flag.
+  if (ctx.args.projection && !(ctx.args.components && ctx.args.format === "ir")) {
+    console.error(formatError({
+      message: "--projection needs --components --format ir — the CI/pipeline projection extends the component-graph IR, the only mode that carries it.",
+    }));
+    return 1;
+  }
   // `--live` graphs the provisioned (observed) infrastructure, not the declared
   // source (epic #776). It only makes sense as a view format; default to `ir`.
   if (ctx.args.live) {
@@ -281,6 +293,15 @@ async function runComponentGraph(ctx: CommandContext): Promise<number> {
  * the CI pipeline. Distinct from `runGraphView`, which emits the AWS *entity*
  * graph — the component projection has one node per component, not per resource.
  *
+ * `--projection <lexicon>` (#989, `--format ir` only — validated in `runGraph`)
+ * adds the **CI/pipeline projection** alongside this component graph:
+ * `ir.pipeline` carries the stages/jobs/`needs` `<lexicon>`'s
+ * `generateComponentPipeline` synthesizes for `chant build --components
+ * --generate <lexicon>` (`generateComponentsPipeline`, ../../components/cli-support.ts)
+ * — reused wholesale, not re-derived, so a consumer (e.g. behold, epic #492/
+ * INTENTIUS/behold#54) gets the pipeline shape as first-class IR nodes/edges
+ * instead of re-deriving it from `dependsOn` or parsing generated CI YAML.
+ *
  * Lint-gated like the entity view: the DAG stands for deployable source, so we
  * refuse to emit it for source that does not pass lint.
  */
@@ -312,7 +333,7 @@ async function runComponentGraphView(
   const waveOf = new Map<string, number>();
   graph.waves.forEach((wave, i) => wave.forEach((name) => waveOf.set(name, i + 1)));
 
-  const ir: GraphIR = {
+  let ir: GraphIR = {
     nodes: graph.order.map((name) => ({
       id: name,
       kind: "Component",
@@ -327,7 +348,47 @@ async function runComponentGraphView(
     },
   };
 
+  if (ctx.args.projection) {
+    const pipeline = await buildPipelineProjection(projectPath, ctx.args.projection, ctx.args.sandbox);
+    if (!pipeline.success) {
+      console.error(formatError({ message: pipeline.error ?? `Failed to generate ${ctx.args.projection} pipeline projection` }));
+      return 1;
+    }
+    ir = { ...ir, pipeline: pipeline.pipeline };
+  }
+
   return emitIr(ir, ctx, format);
+}
+
+/**
+ * Reshape `generateComponentsPipeline`'s result (../../components/cli-support.ts
+ * — the exact function `chant build --components --generate <lexicon>` calls)
+ * into the IR's `IRPipeline` vocabulary (#989): one `IRPipelineNode` per
+ * generated CI job, one `IRPipelineEdge` per `needs:` dependency (consumer job
+ * → producer job, mirroring the component edges' consumer → producer
+ * direction). Every shape decision — job naming, one stage per wave,
+ * dependency resolution — stays owned by `lexicon`'s `generateComponentPipeline`;
+ * this only relabels its `{ stages, jobs }` output as IR nodes/edges, it never
+ * re-derives the graph.
+ */
+async function buildPipelineProjection(
+  projectPath: string,
+  lexicon: string,
+  sandbox?: boolean,
+): Promise<{ success: true; pipeline: IRPipeline } | { success: false; error?: string }> {
+  const result = await generateComponentsPipeline(projectPath, lexicon, undefined, sandbox);
+  if (!result.success) return { success: false, error: result.error };
+
+  const jobs = result.jobs ?? [];
+  return {
+    success: true,
+    pipeline: {
+      provider: lexicon,
+      stages: result.stages ?? [],
+      nodes: jobs.map((j) => ({ id: j.jobName, kind: "CIJob" as const, component: j.component, stage: j.stage })),
+      edges: jobs.flatMap((j) => j.needs.map((dep) => ({ from: j.jobName, to: dep, kind: "needs" as const }))),
+    },
+  };
 }
 
 /**
