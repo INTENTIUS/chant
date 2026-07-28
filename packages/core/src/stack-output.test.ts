@@ -97,6 +97,61 @@ describe("stackOutput", () => {
     expect(out.lexicon).toBe("aws");
     vi.resetModules();
   });
+
+  // chant #1152 — a CloudFormation Parameter carries no attributes at all, so
+  // `Ref(param)` (an intrinsic wrapping the Parameter Declarable directly, not
+  // one of its attributes) could never contain a nested AttrRef for the old
+  // AttrRef-only anchor search to find. Before the fix that meant `firstAttrRef`
+  // always came back empty for this shape and the output's `lexicon` silently
+  // became `"unknown"` — not a thrown error (a Parameter-wrapping `Ref` already
+  // carries the `Intrinsic` marker, so the input-validation guard always
+  // accepted it), but `"unknown"` isn't any real lexicon's partition, so the
+  // output was silently dropped from every serializer's `Outputs` section.
+  const param: Declarable = {
+    lexicon: "aws",
+    entityType: "AWS::CloudFormation::Parameter",
+    [DECLARABLE_MARKER]: true,
+  };
+
+  test("derives lexicon from a Declarable referenced directly by a wrapping intrinsic (Ref(param))", () => {
+    const ref = {
+      [INTRINSIC_MARKER]: true as const,
+      target: param,
+      toJSON: () => ({ Ref: "environment" }),
+    };
+
+    const out = stackOutput(ref, { exportName: "EnvironmentName" });
+    expect(out.lexicon).toBe("aws");
+    expect(out.sourceRef).toBe(ref);
+    expect(out.exportName).toBe("EnvironmentName");
+  });
+
+  test("derives lexicon from a Declarable referenced directly, nested inside a further intrinsic (Sub interpolating Ref(param))", () => {
+    const ref = {
+      [INTRINSIC_MARKER]: true as const,
+      target: param,
+      toJSON: () => ({ Ref: "environment" }),
+    };
+    const sub = {
+      [INTRINSIC_MARKER]: true as const,
+      values: [ref],
+      toJSON: () => ({ "Fn::Sub": "env-${environment}" }),
+    };
+
+    const out = stackOutput(sub);
+    expect(out.lexicon).toBe("aws");
+  });
+
+  test("an explicit options.lexicon still wins over a Declarable-derived anchor", () => {
+    const ref = {
+      [INTRINSIC_MARKER]: true as const,
+      target: param,
+      toJSON: () => ({ Ref: "environment" }),
+    };
+
+    const out = stackOutput(ref, { lexicon: "gcp" });
+    expect(out.lexicon).toBe("gcp");
+  });
 });
 
 describe("isStackOutput", () => {
