@@ -103,9 +103,21 @@
  * fields is treated as "no ownership information", which leaves it diffable
  * rather than silently pruned. Reported drift that turns out to be more
  * noise than expected is a tuning problem; drift silently dropped is not.
+ *
+ * ## `buildOwnershipSets` lives in core now
+ *
+ * The ownership walk itself (`walkOwnership`, resolving a `fieldsV1` tree
+ * against the live and declared trees) has nothing k8s-*lexicon*-specific
+ * about it — it is generic Kubernetes SSA machinery. Chant #1087 (GCP's row,
+ * reusing this one, since a Config Connector CR is a Kubernetes object too)
+ * moved it to `@intentius/chant/managed-fields` rather than have gcp depend
+ * on this lexicon's package, the same reason chant #1100's
+ * `resolveClusterTarget` lives in core. This module re-exports
+ * `buildOwnershipSets`/`OwnershipSets` from there so nothing here changes for
+ * an existing importer of this file.
  */
 
-import type { K8sObject, ManagedFieldsEntry } from "@intentius/chant-k8s-client";
+import type { K8sObject } from "@intentius/chant-k8s-client";
 import type {
   DeepNormalizationHooks,
   DeepObservationResult,
@@ -115,6 +127,7 @@ import type {
 import { deepObservation, normalizeDeepProperties } from "@intentius/chant/deep-observation";
 import { unobservedAll } from "@intentius/chant/observation";
 import { hasOwnershipMarker, LABEL_OWNERSHIP_KEYS } from "@intentius/chant/ownership";
+import { buildOwnershipSets, pruneByOwnership, type OwnershipSets } from "@intentius/chant/managed-fields";
 import { defaultK8sConnector, type K8sConnector } from "./api/connect";
 import {
   classifyApiFailure,
@@ -132,7 +145,7 @@ import { k8sDeepNormalizationHooks } from "./deep-observe-hooks";
 // separately, directly from `./deep-observe-hooks` — that file has no
 // dependency on `@intentius/chant-k8s-client`, so it is safe to import
 // statically; this module is not (see the module doc).
-export { k8sDeepNormalizationHooks };
+export { k8sDeepNormalizationHooks, buildOwnershipSets, type OwnershipSets };
 
 export interface K8sDeepObserveOptions {
   environment: string;
@@ -145,187 +158,16 @@ export interface K8sDeepObserveOptions {
   cwd?: string;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function sameJson(a: unknown, b: unknown): boolean {
-  return JSON.stringify(a) === JSON.stringify(b);
-}
-
-function findKeyedIndex(array: readonly unknown[], keyFields: Record<string, unknown>): number {
-  return array.findIndex(
-    (el) => isRecord(el) && Object.entries(keyFields).every(([k, v]) => sameJson(el[k], v)),
-  );
-}
-
-function findValueIndex(array: readonly unknown[], value: unknown): number {
-  return array.findIndex((el) => sameJson(el, value));
-}
-
-function joinField(parent: string, name: string): string {
-  return parent ? `${parent}.${name}` : name;
-}
-
-function joinIndex(parent: string, index: number): string {
-  return `${parent}[${index}]`;
-}
-
-/**
- * Walk one manager's `fieldsV1` tree in lockstep with the live object and the
- * declared props, threading the *live* dot-path (chant's own path syntax —
- * no leading dot, real array indices) as it goes. `owned` collects every path
- * this manager's entry reaches on the live tree; `contested` collects the
- * subset where the declared tree also has a value at the equivalent
- * position, resolved by the same key/value match rather than by index.
- *
- * Only `f:`/`i:`/`v:`/`k:`/`.` are understood — the same five forms
- * `managed-fields.ts`'s `renderSegment` renders — and an unrecognized prefix
- * is skipped, consistent with that module's own behavior, rather than
- * guessed at.
- */
-function walkOwnership(
-  fieldsNode: unknown,
-  liveNode: unknown,
-  declaredNode: unknown,
-  path: string,
-  owned: Set<string>,
-  contested: Set<string>,
-): void {
-  if (fieldsNode === null || typeof fieldsNode !== "object" || Array.isArray(fieldsNode)) return;
-
-  for (const [key, child] of Object.entries(fieldsNode as Record<string, unknown>)) {
-    if (key === ".") {
-      if (path !== "") {
-        owned.add(path);
-        if (declaredNode !== undefined) contested.add(path);
-      }
-      continue;
-    }
-
-    if (key.startsWith("f:")) {
-      const name = key.slice(2);
-      if (!isRecord(liveNode) || !(name in liveNode)) continue;
-      const childLive = liveNode[name];
-      const childDeclared = isRecord(declaredNode) ? declaredNode[name] : undefined;
-      const childPath = joinField(path, name);
-      owned.add(childPath);
-      if (childDeclared !== undefined) contested.add(childPath);
-      walkOwnership(child, childLive, childDeclared, childPath, owned, contested);
-      continue;
-    }
-
-    if (key.startsWith("i:")) {
-      const idx = Number(key.slice(2));
-      if (!Array.isArray(liveNode) || !Number.isInteger(idx) || idx < 0 || idx >= liveNode.length) continue;
-      const childLive: unknown = liveNode[idx];
-      const childDeclared = Array.isArray(declaredNode) ? declaredNode[idx] : undefined;
-      const childPath = joinIndex(path, idx);
-      owned.add(childPath);
-      if (childDeclared !== undefined) contested.add(childPath);
-      walkOwnership(child, childLive, childDeclared, childPath, owned, contested);
-      continue;
-    }
-
-    if (key.startsWith("v:") || key.startsWith("k:")) {
-      if (!Array.isArray(liveNode)) continue;
-      let decoded: unknown;
-      try {
-        decoded = JSON.parse(key.slice(2));
-      } catch {
-        continue; // not decodable JSON — skip rather than mangle, like renderSegment.
-      }
-
-      const liveIdx =
-        key.startsWith("v:")
-          ? findValueIndex(liveNode, decoded)
-          : isRecord(decoded)
-            ? findKeyedIndex(liveNode, decoded)
-            : -1;
-      if (liveIdx === -1) continue;
-
-      let childDeclared: unknown;
-      if (Array.isArray(declaredNode)) {
-        const declaredIdx = key.startsWith("v:")
-          ? findValueIndex(declaredNode, decoded)
-          : isRecord(decoded)
-            ? findKeyedIndex(declaredNode, decoded)
-            : -1;
-        childDeclared = declaredIdx === -1 ? undefined : declaredNode[declaredIdx];
-      }
-
-      const childLive: unknown = liveNode[liveIdx];
-      const childPath = joinIndex(path, liveIdx);
-      owned.add(childPath);
-      if (childDeclared !== undefined) contested.add(childPath);
-      walkOwnership(child, childLive, childDeclared, childPath, owned, contested);
-      continue;
-    }
-    // An unrecognized prefix (a future fieldsV1 encoding) — skip.
-  }
-}
-
-/** One live object's managed-fields ownership, resolved to chant dot-paths. */
-export interface OwnershipSets {
-  /** Paths any chant field manager owns on this object. */
-  chantOwned: ReadonlySet<string>;
-  /** Paths owned by a manager that is not chant. */
-  foreignOwned: ReadonlySet<string>;
-  /** The subset of `foreignOwned` where the declared manifest also sets the path — drift-relevant despite foreign ownership. */
-  foreignContested: ReadonlySet<string>;
-}
-
-/**
- * Build the three ownership sets for one live object. `entries` is
- * `metadata.managedFields`, already decoded by
- * `@intentius/chant-k8s-client`'s `managedFieldsOf`; `isChantManager`
- * classifies each entry's manager name (`isChantFieldManager`, matched on the
- * `chant`/`chant:<stack>` family per chant #1075).
- *
- * Subresource entries (`status`, `scale`) are excluded: a controller writing
- * a Deployment's `status` is not competing for the spec chant declared, the
- * same reasoning `fieldsOwnedBy`'s default already encodes.
- */
-export function buildOwnershipSets(
-  entries: readonly ManagedFieldsEntry[],
-  liveRoot: Record<string, unknown>,
-  declaredRoot: Record<string, unknown>,
-  isChantManager: (manager: string | undefined) => boolean,
-): OwnershipSets {
-  const chantOwned = new Set<string>();
-  const foreignOwned = new Set<string>();
-  const foreignContested = new Set<string>();
-
-  for (const entry of entries) {
-    if (typeof entry.manager !== "string" || entry.manager.length === 0) continue;
-    if (entry.subresource !== undefined) continue;
-
-    if (isChantManager(entry.manager)) {
-      // Chant-owned paths are always diffable, regardless of who else is
-      // involved — "contested" only matters for a *foreign* owner.
-      walkOwnership(entry.fieldsV1, liveRoot, declaredRoot, "", chantOwned, new Set());
-    } else {
-      walkOwnership(entry.fieldsV1, liveRoot, declaredRoot, "", foreignOwned, foreignContested);
-    }
-  }
-
-  return { chantOwned, foreignOwned, foreignContested };
-}
-
 /**
  * The managed-fields prune, composed with the static rules, for one
  * resource's normalization call. See the module doc for the three-question
- * rule this encodes.
+ * rule this encodes (`@intentius/chant/managed-fields`'s `pruneByOwnership`).
  */
 function perResourceHooks(sets: OwnershipSets): DeepNormalizationHooks {
   return {
     prune(node) {
       if (k8sDeepNormalizationHooks.prune?.(node)) return true;
-      if (node.side !== "live") return false;
-      if (sets.chantOwned.has(node.path)) return false;
-      if (!sets.foreignOwned.has(node.path)) return false;
-      if (sets.foreignContested.has(node.path)) return false;
-      return true;
+      return pruneByOwnership(node, sets);
     },
     orderKey: k8sDeepNormalizationHooks.orderKey,
   };
