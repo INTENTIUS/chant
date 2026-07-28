@@ -14,6 +14,7 @@ import { createSkillsLoader, createDiffTool, createCatalogResource } from "@inte
 import { temporalSerializer } from "./serializer";
 import { temporalCompletions } from "./lsp/completions";
 import { temporalHover } from "./lsp/hover";
+import { temporalDeepNormalizationHooks, observeResourcesDeepTemporal } from "./deep-observe";
 
 export const temporalPlugin: LexiconPlugin = {
   name: "temporal",
@@ -298,4 +299,19 @@ export const temporalPlugin: LexiconPlugin = {
     const { describeResources } = await import("./describe-resources");
     return describeResources(options);
   },
+
+  /**
+   * Property-level live read (#1088) over the same config the Temporal
+   * client already returns in full. Implementation in ./deep-observe.ts.
+   */
+  async observeResourcesDeep(options) {
+    return observeResourcesDeepTemporal({
+      environment: options.environment,
+      entityNames: options.entityNames,
+      entities: options.entities,
+    });
+  },
+
+  /** The noise rules the deep pass applies to both the live and declared trees. */
+  deepNormalizationHooks: temporalDeepNormalizationHooks,
 };
