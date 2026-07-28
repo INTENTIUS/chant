@@ -1,0 +1,41 @@
+---
+title: chant kube
+description: A terminal surface over the typed API client — kubectl-shaped reads with chant's own verdicts, and writes that go through the same machinery as deploys
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+`chant kube` is the operator's view of the same live-cluster data that `lifecycle diff --live` and behold consume. Every verb goes through the [typed API client](/chant/lexicons/k8s/api-client/) — same cluster binding, same credentials, same honest error reporting — so what you see in the terminal is what chant's other surfaces see, never a second opinion.
+
+It mounts through the lexicon command seam, so it exists only in projects whose config loads the `k8s` lexicon.
+
+## The verbs
+
+| Verb | What it does |
+| --- | --- |
+| `get <kind> [name]` | List or read any kind the cluster serves — built-in or CRD. Accepts declared chant entity names too. `-n`, `-A`, `-l`, and `-o text\|wide\|json\|yaml\|name\|chant\|jsonpath=\|custom-columns=`. In a chant project, adds a per-row verdict column (declared / drifted / runtime / orphan). |
+| `describe <kind> <name>` | Identity, chant verdict and provenance, spec/status, and recent Events in one view. |
+| `logs <pod>` | Pod logs — `-c`, `--tail`, `--since`, `-p`, `--timestamps`. Snapshot only; there is no `--follow` yet. |
+| `events [--for=Kind/name]` | Cluster events, oldest first. |
+| `top pods\|nodes` | Usage from `metrics.k8s.io`, with an explicit "metrics-server not installed?" error instead of an empty table. |
+| `wait <kind> <name> --for=…` | The same readiness registry the `waitForReady` Op activity uses — `--for=condition=…`, `--for=delete`, `--timeout`. |
+| `source <kind> <name>` | Live object → the `.ts` file and composite that declared it, via chant's provenance. |
+| `apply -f <file>` | Server-side apply through the same function the `kubectlApply` activity calls. **Dry-run by default; `--yes` persists.** Field-manager conflicts render with the owning manager and contested paths named. |
+| `delete <kind> <name>` | Typed delete — the same call the prune path uses. **Preview by default; `--yes` deletes.** Warns visibly when the object is not chant-owned. No bare sweeps: an explicit kind and name are required. |
+| `version` | The pinned Kubernetes schema version this lexicon was generated against. |
+
+## What makes it chant's, not kubectl's
+
+**The environment binding is honored everywhere.** `--env <name>` resolves `k8s.profiles.<env>.context` from `chant.config.ts`; a mismatch with the ambient context is a refusal, not a silent read of the wrong cluster. `--context` overrides explicitly.
+
+**Absence and unreadability are different answers.** A kind the cluster can't serve, an RBAC denial, or a connection failure renders as *not observed* with its reason — never as `No resources found.`
+
+**Writes share the deploy path.** `apply` and `delete` call the exact functions the Op activities call — same field manager identity (`chant:<stack>`), same conflict surface, same ownership checks. There is no parallel implementation to drift.
+
+<Aside type="note">
+Outside a chant project, the read verbs still work (the verdict column reports `unavailable`); the binding refusal only applies where an environment declares one.
+</Aside>
+
+## Deliberate gaps
+
+`logs --follow` (needs a streaming seam the client doesn't have yet), `-o go-template`, kubectl's per-kind `describe` templates, and `top`'s quantity summation. Each fails loudly rather than approximating.
