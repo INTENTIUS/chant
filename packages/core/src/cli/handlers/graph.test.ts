@@ -1,4 +1,4 @@
-import { describe, test, expect, vi, beforeEach } from "vitest";
+import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";
 import type { ParsedArgs } from "../registry";
 import { DECLARABLE_MARKER, type Declarable } from "../../declarable";
 import { AttrRef } from "../../attrref";
@@ -52,9 +52,14 @@ const discoverComponentsMock = vi.fn();
 vi.mock("../../components/discover", () => ({
   discoverComponents: (...a: unknown[]) => discoverComponentsMock(...a),
 }));
-vi.mock("../../config", () => ({
-  loadChantConfig: () => Promise.resolve({ config: {} }),
-}));
+const loadChantConfigMock = vi.fn();
+vi.mock("../../config", async () => {
+  const actual = await vi.importActual<typeof import("../../config")>("../../config");
+  return {
+    ...actual,
+    loadChantConfig: (...a: unknown[]) => loadChantConfigMock(...a),
+  };
+});
 vi.mock("../../build", () => ({
   build: () => Promise.resolve({ errors: [] }),
   partitionByLexicon: () => ({}),
@@ -107,6 +112,8 @@ describe("runGraph", () => {
     observeMock.mockReset();
     loadPluginsMock.mockReset();
     resolveLexMock.mockReset();
+    loadChantConfigMock.mockReset();
+    loadChantConfigMock.mockResolvedValue({ config: {} });
   });
 
   describe("Op graph (default)", () => {
@@ -419,6 +426,60 @@ describe("runGraph", () => {
         stacks: [],
       });
       expect(stderrBuf.join("\n")).toMatch(/component discovery failed/i);
+    });
+
+    // #1166 — an environment can declare its own endpoint (a local emulator
+    // like Floci), so `--live --env floci` observes the right target even when
+    // the ambient shell never exported AWS_ENDPOINT_URL.
+    describe("declared endpoint (#1166)", () => {
+      const prevEndpoint = process.env.AWS_ENDPOINT_URL;
+
+      afterEach(() => {
+        if (prevEndpoint === undefined) delete process.env.AWS_ENDPOINT_URL;
+        else process.env.AWS_ENDPOINT_URL = prevEndpoint;
+      });
+
+      test("applies the declared endpoint to AWS_ENDPOINT_URL for the observe call, then restores it", async () => {
+        delete process.env.AWS_ENDPOINT_URL;
+        loadChantConfigMock.mockResolvedValue({
+          config: { environments: [{ name: "floci", endpoint: "http://localhost:4566" }] },
+        });
+        resolveLexMock.mockResolvedValue(["aws"]);
+        loadPluginsMock.mockResolvedValue([
+          { name: "aws", serializer: {}, describeResources: () => Promise.resolve({}) },
+        ]);
+        let seenDuringObserve: string | undefined;
+        observeMock.mockImplementation(async () => {
+          seenDuringObserve = process.env.AWS_ENDPOINT_URL;
+          return { observations: [], errors: [], warnings: [] };
+        });
+        const exit = await runGraph({ args: makeArgs({ format: "ir", live: true, env: "floci" }), plugins: [], serializers: [] });
+        expect(exit).toBe(0);
+        expect(seenDuringObserve).toBe("http://localhost:4566");
+        expect(process.env.AWS_ENDPOINT_URL).toBeUndefined(); // restored after the read
+        expect(stderrBuf.join("\n")).toMatch(/environment "floci" declares endpoint http:\/\/localhost:4566/);
+      });
+
+      test("ambient AWS_ENDPOINT_URL still wins when already set", async () => {
+        process.env.AWS_ENDPOINT_URL = "http://real-endpoint.example";
+        loadChantConfigMock.mockResolvedValue({
+          config: { environments: [{ name: "floci", endpoint: "http://localhost:4566" }] },
+        });
+        resolveLexMock.mockResolvedValue(["aws"]);
+        loadPluginsMock.mockResolvedValue([
+          { name: "aws", serializer: {}, describeResources: () => Promise.resolve({}) },
+        ]);
+        let seenDuringObserve: string | undefined;
+        observeMock.mockImplementation(async () => {
+          seenDuringObserve = process.env.AWS_ENDPOINT_URL;
+          return { observations: [], errors: [], warnings: [] };
+        });
+        const exit = await runGraph({ args: makeArgs({ format: "ir", live: true, env: "floci" }), plugins: [], serializers: [] });
+        expect(exit).toBe(0);
+        expect(seenDuringObserve).toBe("http://real-endpoint.example"); // ambient wins
+        expect(process.env.AWS_ENDPOINT_URL).toBe("http://real-endpoint.example"); // untouched
+        expect(stderrBuf.join("\n")).toMatch(/ambient AWS_ENDPOINT_URL already set/);
+      });
     });
   });
 });

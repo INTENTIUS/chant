@@ -2,10 +2,11 @@ import { resolve } from "node:path";
 import { discoverOps } from "../../op/discover";
 import { discover } from "../../discovery/index";
 import { partitionByLexicon, computeStackGraph, build } from "../../build";
-import { buildGraphIr, buildLiveGraphIr, collectUnobserved, overlayGraphs, sourceOverlayGraphs, type GraphIR } from "../../graph-ir";
+import { buildGraphIr, buildLiveGraphIr, collectUnobserved, overlayGraphs, sourceOverlayGraphs, type GraphIR, type LiveObservation } from "../../graph-ir";
 import { reconstructEdges, mergeCatalogs, containmentGroups, type ReferenceCatalog, type ContainmentPair } from "../../graph-refs";
 import { observeResources } from "../../lifecycle/observe";
-import { loadChantConfig } from "../../config";
+import { loadChantConfig, environmentNames } from "../../config";
+import { applyLiveEndpoint } from "../../live-endpoint";
 import { applyDetail, type DetailLevel } from "../../graph-detail";
 import { applyLens, parseLens } from "../../graph-lens";
 import { toMermaid } from "../../graph-mermaid";
@@ -76,10 +77,11 @@ async function runGraphLive(
   // lexicon), so `ctx.plugins` is empty. The live path needs the project's
   // observation plugins — load them here, mirroring the lifecycle handlers.
   const plugins = ctx.plugins.length > 0 ? ctx.plugins : await loadPlugins(await resolveProjectLexicons(projectPath));
-  if (config.environments && !config.environments.includes(environment)) {
+  const declaredEnvNames = environmentNames(config.environments);
+  if (declaredEnvNames && !declaredEnvNames.includes(environment)) {
     console.error(formatError({
       message: `Unknown environment "${environment}"`,
-      hint: `Defined environments: ${config.environments.join(", ")}`,
+      hint: `Defined environments: ${declaredEnvNames.join(", ")}`,
     }));
     return 1;
   }
@@ -121,42 +123,58 @@ async function runGraphLive(
     console.error(formatWarning({ message: "component discovery failed — observing the single-stack convention instead" }));
   }
 
-  const { observations, errors, warnings } = await observeResources(environment, observing, buildResult, {
-    owned: true,
-    stacks: [...stacks],
-  });
-  for (const e of errors) console.error(formatWarning({ message: e }));
-  // Unobserved entities (#1089) arrive as warnings — a node missing from the
-  // live graph because nobody looked is a different fact from one that isn't
-  // deployed, and the diagram alone cannot say which. Capped: an estate with no
-  // ownership markers can produce one per declared entity, and a wall of them
-  // buries the graph output. The full list is `lifecycle diff --live`.
-  const WARN_CAP = 5;
-  for (const w of warnings.slice(0, WARN_CAP)) console.error(formatWarning({ message: w }));
-  if (warnings.length > WARN_CAP) {
-    console.error(formatWarning({
-      message: `... and ${warnings.length - WARN_CAP} more entity(ies) not observed — run \`chant lifecycle diff ${environment} --live\` for the full list`,
-    }));
-  }
+  // #1166 — an environment can declare its own endpoint (a local emulator like
+  // Floci), so this read is self-sufficient even when the ambient shell never
+  // exported e.g. AWS_ENDPOINT_URL. Ambient always wins when it's already set.
+  // Scoped to just this describe/enrich pass — restored in `finally` so it
+  // never leaks into a later invocation in the same process.
+  const endpointResult = applyLiveEndpoint(config.environments, environment, observing.map((p) => p.name));
+  if (endpointResult.notice) console.error(formatWarning({ message: endpointResult.notice }));
 
-  let ir: GraphIR = buildLiveGraphIr(observations);
-
-  // Enrich node attrs from the fuller live config (#784) so references are
-  // present for edge reconstruction — describeResources metadata alone is often
-  // too thin (e.g. AWS returns stack outputs, not per-resource references).
-  for (const p of observing) {
-    if (!p.enrichLiveAttrs) continue;
-    try {
-      const enriched = await p.enrichLiveAttrs({ environment, owned: true });
-      ir = {
-        ...ir,
-        nodes: ir.nodes.map((n) =>
-          n.lexicon === p.name && enriched[n.id] ? { ...n, attrs: { ...n.attrs, ...enriched[n.id] } } : n,
-        ),
-      };
-    } catch (err) {
-      console.error(formatWarning({ message: `${p.name}: live attr enrichment failed — edges may be sparse (${err instanceof Error ? err.message : String(err)})` }));
+  let ir: GraphIR;
+  let observations: LiveObservation[];
+  try {
+    const observeResult = await observeResources(environment, observing, buildResult, {
+      owned: true,
+      stacks: [...stacks],
+    });
+    observations = observeResult.observations;
+    const { errors, warnings } = observeResult;
+    for (const e of errors) console.error(formatWarning({ message: e }));
+    // Unobserved entities (#1089) arrive as warnings — a node missing from the
+    // live graph because nobody looked is a different fact from one that isn't
+    // deployed, and the diagram alone cannot say which. Capped: an estate with no
+    // ownership markers can produce one per declared entity, and a wall of them
+    // buries the graph output. The full list is `lifecycle diff --live`.
+    const WARN_CAP = 5;
+    for (const w of warnings.slice(0, WARN_CAP)) console.error(formatWarning({ message: w }));
+    if (warnings.length > WARN_CAP) {
+      console.error(formatWarning({
+        message: `... and ${warnings.length - WARN_CAP} more entity(ies) not observed — run \`chant lifecycle diff ${environment} --live\` for the full list`,
+      }));
     }
+
+    ir = buildLiveGraphIr(observations);
+
+    // Enrich node attrs from the fuller live config (#784) so references are
+    // present for edge reconstruction — describeResources metadata alone is often
+    // too thin (e.g. AWS returns stack outputs, not per-resource references).
+    for (const p of observing) {
+      if (!p.enrichLiveAttrs) continue;
+      try {
+        const enriched = await p.enrichLiveAttrs({ environment, owned: true });
+        ir = {
+          ...ir,
+          nodes: ir.nodes.map((n) =>
+            n.lexicon === p.name && enriched[n.id] ? { ...n, attrs: { ...n.attrs, ...enriched[n.id] } } : n,
+          ),
+        };
+      } catch (err) {
+        console.error(formatWarning({ message: `${p.name}: live attr enrichment failed — edges may be sparse (${err instanceof Error ? err.message : String(err)})` }));
+      }
+    }
+  } finally {
+    endpointResult.restore();
   }
 
   // Reconstruct edges + containment from live references (#778): merge the

@@ -17,7 +17,8 @@ import { discoverComponents } from "../../components/discover";
 import { cfnDeployStacks } from "./components";
 import { affectedStacks } from "../../lifecycle/affected";
 import { rollbackToRevision } from "../../lifecycle/rollback";
-import { loadChantConfig } from "../../config";
+import { loadChantConfig, environmentNames } from "../../config";
+import { applyLiveEndpoint } from "../../live-endpoint";
 import { formatError, formatWarning, formatSuccess, formatBold } from "../format";
 import type { CommandContext } from "../registry";
 import type { LifecycleSnapshot } from "../../lifecycle/types";
@@ -83,10 +84,11 @@ export async function runLifecycleSnapshot(ctx: CommandContext): Promise<number>
   // Validate environment against config
   const projectPath = resolve(".");
   const { config } = await loadChantConfig(projectPath);
-  if (config.environments && !config.environments.includes(environment)) {
+  const declaredEnvNames = environmentNames(config.environments);
+  if (declaredEnvNames && !declaredEnvNames.includes(environment)) {
     console.error(formatError({
       message: `Unknown environment "${environment}"`,
-      hint: `Defined environments: ${config.environments.join(", ")}`,
+      hint: `Defined environments: ${declaredEnvNames.join(", ")}`,
     }));
     return 1;
   }
@@ -113,48 +115,58 @@ export async function runLifecycleSnapshot(ctx: CommandContext): Promise<number>
   let anySnapshotSaved = false;
   let anyHardError = false;
 
-  for (const target of targets) {
-    const label = target.stack ? `stack "${target.stack}"` : "project";
-    const buildResult = await build(target.root, targetSerializers);
-    if (buildResult.errors.length > 0) {
-      console.error(formatError({ message: `Build failed for ${label} — fix errors before taking a snapshot` }));
-      anyHardError = true;
-      continue;
-    }
+  // #1166 — same self-sufficiency as `chant graph --live`: a snapshot is
+  // always a live read, so an environment's declared endpoint applies here
+  // too, unless the ambient shell already set it.
+  const endpointResult = applyLiveEndpoint(config.environments, environment, observingPlugins.map((p) => p.name));
+  if (endpointResult.notice) console.error(formatWarning({ message: endpointResult.notice }));
 
-    let result;
-    try {
-      result = await takeSnapshot(environment, observingPlugins, buildResult, { stack: target.stack });
-    } catch (err) {
-      if (err instanceof StaleLifecycleBranchError) {
-        console.error(formatError({
-          message: `Another snapshot completed for chant/lifecycle after this run started (env: ${environment}).`,
-          hint: `Pull and retry: \`git fetch origin ${"chant/lifecycle"}:${"chant/lifecycle"}\` && \`chant lifecycle snapshot ${environment}\`.`,
-        }));
-        return 1;
+  try {
+    for (const target of targets) {
+      const label = target.stack ? `stack "${target.stack}"` : "project";
+      const buildResult = await build(target.root, targetSerializers);
+      if (buildResult.errors.length > 0) {
+        console.error(formatError({ message: `Build failed for ${label} — fix errors before taking a snapshot` }));
+        anyHardError = true;
+        continue;
       }
-      throw err;
+
+      let result;
+      try {
+        result = await takeSnapshot(environment, observingPlugins, buildResult, { stack: target.stack });
+      } catch (err) {
+        if (err instanceof StaleLifecycleBranchError) {
+          console.error(formatError({
+            message: `Another snapshot completed for chant/lifecycle after this run started (env: ${environment}).`,
+            hint: `Pull and retry: \`git fetch origin ${"chant/lifecycle"}:${"chant/lifecycle"}\` && \`chant lifecycle snapshot ${environment}\`.`,
+          }));
+          return 1;
+        }
+        throw err;
+      }
+
+      for (const w of result.warnings) {
+        console.error(formatWarning({ message: w }));
+      }
+      for (const e of result.errors) {
+        console.error(formatError({ message: e }));
+      }
+
+      if (result.snapshots.length > 0) {
+        anySnapshotSaved = true;
+        const prefix = target.stack ? `${target.stack}: ` : "";
+        const counts = result.snapshots
+          .map((s) => `${s.lexicon}(${Object.keys(s.resources).length})`)
+          .join(" ");
+        console.error(formatSuccess(`${prefix}Snapshot saved to chant/lifecycle (${counts})`));
+      }
+      if (result.errors.length > 0) anyHardError = true;
     }
 
-    for (const w of result.warnings) {
-      console.error(formatWarning({ message: w }));
-    }
-    for (const e of result.errors) {
-      console.error(formatError({ message: e }));
-    }
-
-    if (result.snapshots.length > 0) {
-      anySnapshotSaved = true;
-      const prefix = target.stack ? `${target.stack}: ` : "";
-      const counts = result.snapshots
-        .map((s) => `${s.lexicon}(${Object.keys(s.resources).length})`)
-        .join(" ");
-      console.error(formatSuccess(`${prefix}Snapshot saved to chant/lifecycle (${counts})`));
-    }
-    if (result.errors.length > 0) anyHardError = true;
+    return anyHardError && !anySnapshotSaved ? 1 : 0;
+  } finally {
+    endpointResult.restore();
   }
-
-  return anyHardError && !anySnapshotSaved ? 1 : 0;
 }
 
 /**
@@ -275,77 +287,89 @@ export async function runLifecycleDiff(ctx: CommandContext): Promise<number> {
   let totalChecked = 0;
   let anyBuildError = false;
 
-  for (const target of targets) {
-    const buildResult = await build(target.root, targetSerializers);
-    if (buildResult.errors.length > 0) {
-      const label = target.stack ? `stack "${target.stack}"` : "project";
-      console.error(formatError({ message: `Build failed for ${label} — fix errors before diffing` }));
-      anyBuildError = true;
-      continue;
-    }
+  // #1166 — an environment can declare its own endpoint (a local emulator like
+  // Floci), so `--live` is self-sufficient even when the ambient shell never
+  // exported e.g. AWS_ENDPOINT_URL. Ambient always wins when it's already set.
+  // Scoped to just the live reads below — restored in `finally`.
+  const liveLexicons = args.live ? plugins.filter((p) => p.describeResources || p.listArtifacts).map((p) => p.name) : [];
+  const endpointResult = applyLiveEndpoint(config.environments, environment, liveLexicons);
+  if (endpointResult.notice) console.error(formatWarning({ message: endpointResult.notice }));
 
-    const lexicons = lexiconFilter
-      ? [lexiconFilter]
-      : Array.from(buildResult.manifest.lexicons);
+  try {
+    for (const target of targets) {
+      const buildResult = await build(target.root, targetSerializers);
+      if (buildResult.errors.length > 0) {
+        const label = target.stack ? `stack "${target.stack}"` : "project";
+        console.error(formatError({ message: `Build failed for ${label} — fix errors before diffing` }));
+        anyBuildError = true;
+        continue;
+      }
+
+      const lexicons = lexiconFilter
+        ? [lexiconFilter]
+        : Array.from(buildResult.manifest.lexicons);
+
+      if (args.live) {
+        // Multi-stack component projects: observe each component's own cfn stack
+        // and union (same fix runGraphLive / plan use), so a deployed resource
+        // isn't reported "missing". Only when this target has no explicit stack.
+        let componentStacks: string[] = [];
+        if (!target.stack) {
+          try {
+            const disc = await discoverComponents(target.root, { sandbox: args.sandbox });
+            const set = new Set<string>();
+            for (const { component } of disc.components.values()) for (const s of cfnDeployStacks(component.deploy)) set.add(s);
+            componentStacks = [...set];
+          } catch {
+            // no components / discovery failed → single-stack observe path
+          }
+        }
+        const r = await runLifecycleDiffLive({ environment, lexicons, plugins, buildResult, json, stack: target.stack, componentStacks });
+        totalDrift += r.totalDrift;
+        totalUnobserved += r.totalUnobserved;
+        totalChecked += r.totalLexiconsChecked;
+        if (json) {
+          if (target.stack) perStackJson[target.stack] = r.byLexicon;
+          else combinedLexiconsJson = r.byLexicon;
+        }
+      } else {
+        await runLifecycleDiffDigest({ environment, lexicons, buildResult, stack: target.stack });
+      }
+    }
 
     if (args.live) {
-      // Multi-stack component projects: observe each component's own cfn stack
-      // and union (same fix runGraphLive / plan use), so a deployed resource
-      // isn't reported "missing". Only when this target has no explicit stack.
-      let componentStacks: string[] = [];
-      if (!target.stack) {
-        try {
-          const disc = await discoverComponents(target.root, { sandbox: args.sandbox });
-          const set = new Set<string>();
-          for (const { component } of disc.components.values()) for (const s of cfnDeployStacks(component.deploy)) set.add(s);
-          componentStacks = [...set];
-        } catch {
-          // no components / discovery failed → single-stack observe path
-        }
-      }
-      const r = await runLifecycleDiffLive({ environment, lexicons, plugins, buildResult, json, stack: target.stack, componentStacks });
-      totalDrift += r.totalDrift;
-      totalUnobserved += r.totalUnobserved;
-      totalChecked += r.totalLexiconsChecked;
       if (json) {
-        if (target.stack) perStackJson[target.stack] = r.byLexicon;
-        else combinedLexiconsJson = r.byLexicon;
+        // Single-stack keeps the original `{ environment, lexicons }` shape
+        // (behold's inspect diff, #852); multi-stack nests under `stacks`.
+        console.log(
+          JSON.stringify(
+            combinedLexiconsJson !== undefined
+              ? { environment, lexicons: combinedLexiconsJson }
+              : { environment, stacks: perStackJson },
+          ),
+        );
+      } else if (totalChecked === 0) {
+        console.error(formatWarning({
+          message: "No lexicons implement describeResources or listArtifacts — nothing to diff in --live mode",
+        }));
+        return 1;
+      } else if (totalDrift === 0) {
+        // Qualify the all-clear when part of the estate was never read (#1089):
+        // "no drift" over an incomplete observation is not the same claim.
+        console.error(
+          totalUnobserved > 0
+            ? formatWarning({
+                message: `No drift detected across ${totalChecked} lexicon(s), but ${totalUnobserved} declared entity(ies) could not be observed — that part of the estate is unknown, not clean`,
+              })
+            : formatSuccess(`No drift detected across ${totalChecked} lexicon(s)`),
+        );
       }
-    } else {
-      await runLifecycleDiffDigest({ environment, lexicons, buildResult, stack: target.stack });
     }
-  }
 
-  if (args.live) {
-    if (json) {
-      // Single-stack keeps the original `{ environment, lexicons }` shape
-      // (behold's inspect diff, #852); multi-stack nests under `stacks`.
-      console.log(
-        JSON.stringify(
-          combinedLexiconsJson !== undefined
-            ? { environment, lexicons: combinedLexiconsJson }
-            : { environment, stacks: perStackJson },
-        ),
-      );
-    } else if (totalChecked === 0) {
-      console.error(formatWarning({
-        message: "No lexicons implement describeResources or listArtifacts — nothing to diff in --live mode",
-      }));
-      return 1;
-    } else if (totalDrift === 0) {
-      // Qualify the all-clear when part of the estate was never read (#1089):
-      // "no drift" over an incomplete observation is not the same claim.
-      console.error(
-        totalUnobserved > 0
-          ? formatWarning({
-              message: `No drift detected across ${totalChecked} lexicon(s), but ${totalUnobserved} declared entity(ies) could not be observed — that part of the estate is unknown, not clean`,
-            })
-          : formatSuccess(`No drift detected across ${totalChecked} lexicon(s)`),
-      );
-    }
+    return anyBuildError ? 1 : 0;
+  } finally {
+    endpointResult.restore();
   }
-
-  return anyBuildError ? 1 : 0;
 }
 
 interface BetweenDiffArgs {
@@ -789,59 +813,70 @@ export async function runLifecyclePlan(ctx: CommandContext): Promise<number> {
   const merged: ChangeSet = { env: environment, entries: [] };
   let checked = 0;
 
-  for (const lexiconName of lexicons) {
-    const plugin = plugins.find((p) => p.name === lexiconName);
-    if (!plugin) continue;
-    if (!plugin.describeResources) {
-      // Plan is entity-keyed; artifact-only lexicons have no declared axis.
-      if (!args.json) {
-        console.error(formatWarning({
-          message: `${lexiconName}: lexicon does not implement describeResources — skipping (no declared axis to plan against)`,
-        }));
+  // #1166 — same self-sufficiency as `chant graph --live`: an environment can
+  // declare its own endpoint, applied here unless the ambient shell already
+  // set it. `chant lifecycle plan` is always a live read (no `--live` flag of
+  // its own), so this applies unconditionally.
+  const endpointResult = applyLiveEndpoint(config.environments, environment, lexicons);
+  if (endpointResult.notice) console.error(formatWarning({ message: endpointResult.notice }));
+
+  try {
+    for (const lexiconName of lexicons) {
+      const plugin = plugins.find((p) => p.name === lexiconName);
+      if (!plugin) continue;
+      if (!plugin.describeResources) {
+        // Plan is entity-keyed; artifact-only lexicons have no declared axis.
+        if (!args.json) {
+          console.error(formatWarning({
+            message: `${lexiconName}: lexicon does not implement describeResources — skipping (no declared axis to plan against)`,
+          }));
+        }
+        continue;
       }
-      continue;
-    }
 
-    const declared = new Set<string>();
-    const entities = new Map<string, { entityType: string; props: Record<string, unknown> }>();
-    for (const [name, entity] of buildResult.entities) {
-      if (entity.lexicon === lexiconName) {
-        declared.add(name);
-        entities.set(name, {
-          entityType: entity.entityType,
-          props: ("props" in entity && entity.props != null ? entity.props : {}) as Record<string, unknown>,
-        });
+      const declared = new Set<string>();
+      const entities = new Map<string, { entityType: string; props: Record<string, unknown> }>();
+      for (const [name, entity] of buildResult.entities) {
+        if (entity.lexicon === lexiconName) {
+          declared.add(name);
+          entities.set(name, {
+            entityType: entity.entityType,
+            props: ("props" in entity && entity.props != null ? entity.props : {}) as Record<string, unknown>,
+          });
+        }
       }
+
+      const rawOutput = buildResult.outputs.get(lexiconName);
+      const buildOutput =
+        rawOutput === undefined
+          ? ""
+          : typeof rawOutput === "string"
+            ? rawOutput
+            : (rawOutput as SerializerResult).primary;
+
+      const observed = await observeLexicon(plugin, {
+        environment,
+        buildOutput,
+        declared,
+        entities,
+        componentStacks,
+        owned: args.owned,
+      });
+
+      const content = await readSnapshot(environment, lexiconName);
+      const observedThen = content ? (JSON.parse(content) as LifecycleSnapshot).resources : undefined;
+
+      const cs = buildChangeSet(environment, {
+        declared,
+        observedNow: observed.resources,
+        observedThen,
+        unobserved: observed.unobserved,
+      });
+      merged.entries.push(...cs.entries);
+      checked++;
     }
-
-    const rawOutput = buildResult.outputs.get(lexiconName);
-    const buildOutput =
-      rawOutput === undefined
-        ? ""
-        : typeof rawOutput === "string"
-          ? rawOutput
-          : (rawOutput as SerializerResult).primary;
-
-    const observed = await observeLexicon(plugin, {
-      environment,
-      buildOutput,
-      declared,
-      entities,
-      componentStacks,
-      owned: args.owned,
-    });
-
-    const content = await readSnapshot(environment, lexiconName);
-    const observedThen = content ? (JSON.parse(content) as LifecycleSnapshot).resources : undefined;
-
-    const cs = buildChangeSet(environment, {
-      declared,
-      observedNow: observed.resources,
-      observedThen,
-      unobserved: observed.unobserved,
-    });
-    merged.entries.push(...cs.entries);
-    checked++;
+  } finally {
+    endpointResult.restore();
   }
 
   if (checked === 0) {

@@ -1,4 +1,4 @@
-import { describe, test, expect, vi, beforeEach } from "vitest";
+import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";
 import { sep } from "node:path";
 import { createMockPlugin, staticDescribeResources, staticObservation, staticListArtifacts } from "@intentius/chant-test-utils";
 import type { LexiconPlugin, ResourceMetadata } from "../../lexicon";
@@ -24,11 +24,15 @@ vi.mock("../../lifecycle/git", () => ({
 vi.mock("../../lifecycle/snapshot", () => ({
   takeSnapshot: (...args: unknown[]) => takeSnapshotMock(...args),
 }));
-vi.mock("../../config", () => ({
-  loadChantConfig: (...args: unknown[]) => loadChantConfigMock(...args),
-}));
+vi.mock("../../config", async () => {
+  const actual = await vi.importActual<typeof import("../../config")>("../../config");
+  return {
+    ...actual,
+    loadChantConfig: (...args: unknown[]) => loadChantConfigMock(...args),
+  };
+});
 
-const { runLifecycleDiff, runLifecycleSnapshot, runLifecycleShow, runLifecycleLog, runLifecycleUnknown } = await import("./lifecycle");
+const { runLifecycleDiff, runLifecyclePlan, runLifecycleSnapshot, runLifecycleShow, runLifecycleLog, runLifecycleUnknown } = await import("./lifecycle");
 
 function makeArgs(overrides: Partial<ParsedArgs>): ParsedArgs {
   return {
@@ -347,6 +351,187 @@ describe("runLifecycleDiff --live", () => {
     expect(output).toContain("bucket");
     expect(output).toContain("added");
   });
+
+  // #1166 — an environment can declare its own endpoint (a local emulator like
+  // Floci), applied to the ambient var of every observing lexicon that has one
+  // unless the ambient shell already set it.
+  describe("declared endpoint (#1166)", () => {
+    const prevEndpoint = process.env.AWS_ENDPOINT_URL;
+
+    afterEach(() => {
+      if (prevEndpoint === undefined) delete process.env.AWS_ENDPOINT_URL;
+      else process.env.AWS_ENDPOINT_URL = prevEndpoint;
+    });
+
+    test("applies the declared endpoint to AWS_ENDPOINT_URL for the live describe, then restores it", async () => {
+      delete process.env.AWS_ENDPOINT_URL;
+      buildMock.mockResolvedValue(makeBuildResult({ aws: ["bucket"] }));
+      fetchLifecycleMock.mockResolvedValue(undefined);
+      readSnapshotMock.mockResolvedValue(null);
+      loadChantConfigMock.mockResolvedValue({
+        config: { environments: [{ name: "floci", endpoint: "http://localhost:4566" }] },
+      });
+
+      let seenDuringDescribe: string | undefined;
+      const plugins: LexiconPlugin[] = [
+        createMockPlugin({
+          name: "aws",
+          describeResources: async () => {
+            seenDuringDescribe = process.env.AWS_ENDPOINT_URL;
+            return {};
+          },
+        }),
+      ];
+
+      const exit = await runLifecycleDiff({
+        args: makeArgs({ path: "diff", extraPositional: "floci", live: true }),
+        plugins,
+        serializers: plugins.map((p) => p.serializer),
+      });
+
+      expect(exit).toBe(0);
+      expect(seenDuringDescribe).toBe("http://localhost:4566");
+      expect(process.env.AWS_ENDPOINT_URL).toBeUndefined(); // restored
+      expect(stderrBuf.join("\n")).toMatch(/environment "floci" declares endpoint http:\/\/localhost:4566/);
+    });
+
+    test("ambient AWS_ENDPOINT_URL still wins over the declared endpoint", async () => {
+      process.env.AWS_ENDPOINT_URL = "http://real-endpoint.example";
+      buildMock.mockResolvedValue(makeBuildResult({ aws: ["bucket"] }));
+      fetchLifecycleMock.mockResolvedValue(undefined);
+      readSnapshotMock.mockResolvedValue(null);
+      loadChantConfigMock.mockResolvedValue({
+        config: { environments: [{ name: "floci", endpoint: "http://localhost:4566" }] },
+      });
+
+      let seenDuringDescribe: string | undefined;
+      const plugins: LexiconPlugin[] = [
+        createMockPlugin({
+          name: "aws",
+          describeResources: async () => {
+            seenDuringDescribe = process.env.AWS_ENDPOINT_URL;
+            return {};
+          },
+        }),
+      ];
+
+      const exit = await runLifecycleDiff({
+        args: makeArgs({ path: "diff", extraPositional: "floci", live: true }),
+        plugins,
+        serializers: plugins.map((p) => p.serializer),
+      });
+
+      expect(exit).toBe(0);
+      expect(seenDuringDescribe).toBe("http://real-endpoint.example");
+      expect(process.env.AWS_ENDPOINT_URL).toBe("http://real-endpoint.example");
+      expect(stderrBuf.join("\n")).toMatch(/ambient AWS_ENDPOINT_URL already set/);
+    });
+  });
+});
+
+describe("runLifecyclePlan", () => {
+  let stdoutBuf: string[];
+  let stderrBuf: string[];
+
+  beforeEach(() => {
+    stdoutBuf = [];
+    stderrBuf = [];
+    vi.spyOn(console, "log").mockImplementation((s: string) => { stdoutBuf.push(s); });
+    vi.spyOn(console, "error").mockImplementation((s: string) => { stderrBuf.push(s); });
+    buildMock.mockReset();
+    fetchLifecycleMock.mockReset();
+    fetchLifecycleMock.mockResolvedValue(undefined);
+    readSnapshotMock.mockReset();
+    readSnapshotMock.mockResolvedValue(null);
+    loadChantConfigMock.mockReset();
+    loadChantConfigMock.mockResolvedValue({ config: {} });
+  });
+
+  test("happy path: proposes a create for a declared, unobserved-nowhere-else entity", async () => {
+    buildMock.mockResolvedValue(makeBuildResult({ aws: ["bucket"] }));
+    const plugins: LexiconPlugin[] = [
+      createMockPlugin({ name: "aws", describeResources: staticDescribeResources({}) }),
+    ];
+    const exit = await runLifecyclePlan({
+      args: makeArgs({ path: "plan", extraPositional: "prod" }),
+      plugins,
+      serializers: plugins.map((p) => p.serializer),
+    });
+    expect(exit).toBe(0);
+    expect(stdoutBuf.join("\n")).toContain("bucket");
+  });
+
+  // #1166 — plan is always a live read (no `--live` flag of its own), so a
+  // declared environment endpoint applies here exactly as it does for
+  // `chant graph --live` / `chant lifecycle diff --live`.
+  describe("declared endpoint (#1166)", () => {
+    const prevEndpoint = process.env.AWS_ENDPOINT_URL;
+
+    afterEach(() => {
+      if (prevEndpoint === undefined) delete process.env.AWS_ENDPOINT_URL;
+      else process.env.AWS_ENDPOINT_URL = prevEndpoint;
+    });
+
+    test("applies the declared endpoint to AWS_ENDPOINT_URL for the plan's describe, then restores it", async () => {
+      delete process.env.AWS_ENDPOINT_URL;
+      buildMock.mockResolvedValue(makeBuildResult({ aws: ["bucket"] }));
+      loadChantConfigMock.mockResolvedValue({
+        config: { environments: [{ name: "floci", endpoint: "http://localhost:4566" }] },
+      });
+
+      let seenDuringDescribe: string | undefined;
+      const plugins: LexiconPlugin[] = [
+        createMockPlugin({
+          name: "aws",
+          describeResources: async () => {
+            seenDuringDescribe = process.env.AWS_ENDPOINT_URL;
+            return {};
+          },
+        }),
+      ];
+
+      const exit = await runLifecyclePlan({
+        args: makeArgs({ path: "plan", extraPositional: "floci" }),
+        plugins,
+        serializers: plugins.map((p) => p.serializer),
+      });
+
+      expect(exit).toBe(0);
+      expect(seenDuringDescribe).toBe("http://localhost:4566");
+      expect(process.env.AWS_ENDPOINT_URL).toBeUndefined();
+      expect(stderrBuf.join("\n")).toMatch(/environment "floci" declares endpoint http:\/\/localhost:4566/);
+    });
+
+    test("ambient AWS_ENDPOINT_URL still wins over the declared endpoint", async () => {
+      process.env.AWS_ENDPOINT_URL = "http://real-endpoint.example";
+      buildMock.mockResolvedValue(makeBuildResult({ aws: ["bucket"] }));
+      loadChantConfigMock.mockResolvedValue({
+        config: { environments: [{ name: "floci", endpoint: "http://localhost:4566" }] },
+      });
+
+      let seenDuringDescribe: string | undefined;
+      const plugins: LexiconPlugin[] = [
+        createMockPlugin({
+          name: "aws",
+          describeResources: async () => {
+            seenDuringDescribe = process.env.AWS_ENDPOINT_URL;
+            return {};
+          },
+        }),
+      ];
+
+      const exit = await runLifecyclePlan({
+        args: makeArgs({ path: "plan", extraPositional: "floci" }),
+        plugins,
+        serializers: plugins.map((p) => p.serializer),
+      });
+
+      expect(exit).toBe(0);
+      expect(seenDuringDescribe).toBe("http://real-endpoint.example");
+      expect(process.env.AWS_ENDPOINT_URL).toBe("http://real-endpoint.example");
+      expect(stderrBuf.join("\n")).toMatch(/ambient AWS_ENDPOINT_URL already set/);
+    });
+  });
 });
 
 describe("runLifecycleSnapshot", () => {
@@ -422,6 +607,42 @@ describe("runLifecycleSnapshot", () => {
     expect(exit).toBe(0);
     expect(stderrBuf.join("\n")).toContain("Snapshot saved");
     expect(takeSnapshotMock).toHaveBeenCalledTimes(1);
+  });
+
+  // #1166 — a snapshot is always a live read, so a declared environment
+  // endpoint applies here too, unless the ambient shell already set it.
+  describe("declared endpoint (#1166)", () => {
+    const prevEndpoint = process.env.AWS_ENDPOINT_URL;
+
+    afterEach(() => {
+      if (prevEndpoint === undefined) delete process.env.AWS_ENDPOINT_URL;
+      else process.env.AWS_ENDPOINT_URL = prevEndpoint;
+    });
+
+    test("applies the declared endpoint to AWS_ENDPOINT_URL for takeSnapshot, then restores it", async () => {
+      delete process.env.AWS_ENDPOINT_URL;
+      buildMock.mockResolvedValue(makeBuildResult({ aws: ["bucket"] }));
+      loadChantConfigMock.mockResolvedValue({
+        config: { environments: [{ name: "floci", endpoint: "http://localhost:4566" }] },
+      });
+      let seenDuringSnapshot: string | undefined;
+      takeSnapshotMock.mockImplementation(async () => {
+        seenDuringSnapshot = process.env.AWS_ENDPOINT_URL;
+        return { snapshots: [], commit: "sha", warnings: [], errors: [] };
+      });
+      const plugins: LexiconPlugin[] = [
+        createMockPlugin({ name: "aws", describeResources: staticDescribeResources({}) }),
+      ];
+      const exit = await runLifecycleSnapshot({
+        args: makeArgs({ command: "state", path: "snapshot", extraPositional: "floci" }),
+        plugins,
+        serializers: plugins.map((p) => p.serializer),
+      });
+      expect(exit).toBe(0);
+      expect(seenDuringSnapshot).toBe("http://localhost:4566");
+      expect(process.env.AWS_ENDPOINT_URL).toBeUndefined();
+      expect(stderrBuf.join("\n")).toMatch(/environment "floci" declares endpoint http:\/\/localhost:4566/);
+    });
   });
 });
 

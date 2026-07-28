@@ -20,6 +20,7 @@ import {
   formatUnobserved,
   type NormalizedObservation,
 } from "../observation";
+import { zeroResourcesWarning } from "../live-endpoint";
 
 export interface ObserveResult {
   observations: LiveObservation[];
@@ -115,17 +116,24 @@ export async function observeResources(
           }),
         );
       }
-      pushObservation(observations, warnings, plugin.name, observed);
+      pushObservation(observations, warnings, plugin.name, observed, environment, entityNames.length);
     } catch (err) {
       // A thrown read is the whole-lexicon failure: every declared entity is
       // NOT-OBSERVED, not absent (#1089). Emitting nothing here is what made a
       // failed read look like "none of these exist" to every consumer.
       const message = err instanceof Error ? err.message : String(err);
       errors.push(`${plugin.name}: ${message}`);
-      pushObservation(observations, warnings, plugin.name, {
-        resources: {},
-        unobserved: unobservedAll(entityNames, "read-failed", message, entities),
-      });
+      pushObservation(
+        observations,
+        warnings,
+        plugin.name,
+        {
+          resources: {},
+          unobserved: unobservedAll(entityNames, "read-failed", message, entities),
+        },
+        environment,
+        entityNames.length,
+      );
     }
   }
 
@@ -138,13 +146,24 @@ function pushObservation(
   warnings: string[],
   lexicon: string,
   observed: NormalizedObservation,
+  environment: string,
+  declaredCount: number,
 ): void {
   const hasResources = Object.keys(observed.resources).length > 0;
   const unobservedNames = Object.keys(observed.unobserved);
   for (const name of unobservedNames) {
     warnings.push(`${lexicon}: not observed — ${formatUnobserved(name, observed.unobserved[name])}`);
   }
-  if (!hasResources && unobservedNames.length === 0) return;
+  if (!hasResources && unobservedNames.length === 0) {
+    // #1166 — this is exactly the "wrong endpoint" shape (AWS's
+    // stackDoesNotExist branch returns an empty map with no #1089 hole): a
+    // declared entity list with nothing observed and nothing explained.
+    // Previously this fell straight through with neither an observation nor a
+    // warning — silently indistinguishable from "nothing is deployed yet".
+    const notice = zeroResourcesWarning(lexicon, environment, declaredCount, observed);
+    if (notice) warnings.push(notice);
+    return;
+  }
   observations.push({
     lexicon,
     resources: observed.resources,
