@@ -11,6 +11,11 @@ vi.mock("node:child_process", async () => {
   } };
 });
 
+const loadChantConfigMock = vi.fn();
+vi.mock("@intentius/chant/config", () => ({
+  loadChantConfig: (...args: unknown[]) => loadChantConfigMock(...args),
+}));
+
 const { describeResources } = await import("./describe-resources");
 
 function makeEntities(records: Array<{ name: string; entityType: string; props: Record<string, unknown> }>) {
@@ -20,6 +25,10 @@ function makeEntities(records: Array<{ name: string; entityType: string; props: 
 describe("gcp describeResources (Config Connector)", () => {
   beforeEach(() => {
     execMock.mockReset();
+    loadChantConfigMock.mockReset();
+    // No binding declared by default — matches every test below except the
+    // dedicated cluster-binding tests, which override this per case.
+    loadChantConfigMock.mockResolvedValue({ config: {} });
   });
 
   test("queries kubectl with the derived CC GVK and maps the response", async () => {
@@ -143,5 +152,72 @@ describe("gcp describeResources (Config Connector)", () => {
 
     expect(result).toEqual({});
     expect(execMock).not.toHaveBeenCalled();
+  });
+
+  // chant #1100 — GCP-via-CNRM resolves the same environment→cluster binding
+  // as the K8s lexicon (bound-and-matching, bound-and-mismatched loud
+  // refusal, unbound unchanged), since it observes through the same kubectl
+  // path against the same cluster.
+  describe("cluster binding (chant #1100)", () => {
+    function bucketEntities() {
+      return makeEntities([
+        { name: "dataBucket", entityType: "GCP::Storage::Bucket", props: { metadata: { name: "data-bucket" } } },
+      ]);
+    }
+
+    const bucketStdout = JSON.stringify({
+      metadata: { name: "data-bucket", uid: "uid-1", creationTimestamp: "2026-05-01T00:00:00Z" },
+      status: { conditions: [{ type: "Ready", status: "True" }] },
+    });
+
+    test("bound and ambient context matches: observes explicitly via --context", async () => {
+      loadChantConfigMock.mockResolvedValue({ config: { k8s: { profiles: { prod: { context: "prod-cnrm" } } } } });
+      let receivedCmd = "";
+      execMock.mockImplementation((cmd: string) => {
+        if (cmd.includes("current-context")) return { stdout: "prod-cnrm\n", stderr: "" };
+        receivedCmd = cmd;
+        return { stdout: bucketStdout, stderr: "" };
+      });
+
+      const result = await describeResources({ environment: "prod", buildOutput: "", entityNames: ["dataBucket"], entities: bucketEntities() });
+
+      expect(receivedCmd).toContain("--context prod-cnrm");
+      expect(result["dataBucket"]).toMatchObject({ type: "GCP::Storage::Bucket", physicalId: "uid-1", status: "READY" });
+    });
+
+    test("bound and ambient context mismatches: refuses loudly instead of observing the wrong cluster", async () => {
+      loadChantConfigMock.mockResolvedValue({ config: { k8s: { profiles: { prod: { context: "prod-cnrm" } } } } });
+      execMock.mockImplementation((cmd: string) => {
+        if (cmd.includes("current-context")) return { stdout: "staging-cnrm\n", stderr: "" };
+        throw new Error(`unexpected cmd (should have refused before any kubectl get): ${cmd}`);
+      });
+
+      await expect(
+        describeResources({ environment: "prod", buildOutput: "", entityNames: ["dataBucket"], entities: bucketEntities() }),
+      ).rejects.toThrow(/environment "prod".*"prod-cnrm".*"staging-cnrm"/s);
+
+      expect(execMock).toHaveBeenCalledTimes(1);
+    });
+
+    test("unbound: ambient context is used unchanged, but the fallback is visible (not silent)", async () => {
+      loadChantConfigMock.mockResolvedValue({ config: {} });
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      let receivedCmd = "";
+      execMock.mockImplementation((cmd: string) => {
+        receivedCmd = cmd;
+        return { stdout: bucketStdout, stderr: "" };
+      });
+
+      const result = await describeResources({ environment: "prod", buildOutput: "", entityNames: ["dataBucket"], entities: bucketEntities() });
+
+      expect(receivedCmd).not.toContain("--context");
+      expect(receivedCmd).not.toContain("current-context");
+      expect(result["dataBucket"]).toMatchObject({ type: "GCP::Storage::Bucket", physicalId: "uid-1", status: "READY" });
+
+      const bindingWarning = warnSpy.mock.calls.find((c) => String(c[0]).includes("no cluster binding"));
+      expect(bindingWarning?.[0]).toContain('environment "prod"');
+      expect(bindingWarning?.[0]).toContain("k8s.profiles.prod.context");
+      warnSpy.mockRestore();
+    });
   });
 });

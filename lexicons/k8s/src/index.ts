@@ -85,3 +85,6 @@ export type { PackageOptions, PackageResult } from "./codegen/package";
 export type { CRDSource, CRDSpec } from "./crd/types";
 export { parseCRD, parseCRDSpec } from "./crd/parser";
 export { loadCRDs, loadMultipleCRDs } from "./crd/loader";
+
+// Environment → cluster binding config shape (chant #1100)
+export type { K8sChantConfig, K8sClusterProfile } from "./config";

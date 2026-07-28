@@ -38,3 +38,15 @@ export type {
   ConditionMatch,
   PathMatch,
 } from "./wait-for-ready";
+
+// Environment→cluster binding (chant #1100) — the same resolver
+// `describeResources` (the read path) uses. `kubectlApply` and `waitForReady`
+// above already accept an optional `context`; a workflow author who wants the
+// write path to target the environment's bound cluster (rather than an
+// ambient one, closing the read/write split) resolves it here and passes the
+// result through, e.g. `kubectlApply({ manifest, context: (await
+// resolveClusterTarget(config, environment, "k8s")).context })`. Re-exported
+// from core rather than duplicated so both paths agree on one source of
+// truth — see `lexicons/k8s/src/config.ts` for the config shape.
+export { resolveClusterTarget, ClusterBindingMismatchError } from "@intentius/chant/kubectl-context";
+export type { ResolvedClusterTarget, K8sClusterProfile, K8sConfigShape } from "@intentius/chant/kubectl-context";

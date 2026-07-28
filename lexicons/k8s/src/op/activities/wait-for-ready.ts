@@ -147,7 +147,12 @@ export interface WaitForReadyArgs {
   name: string;
   /** Namespace (omit for cluster-scoped). */
   namespace?: string;
-  /** kubectl context. */
+  /**
+   * kubectl context. To target the same cluster the read path
+   * (`describeResources`) resolved for an environment — chant #1100 —
+   * resolve it with `resolveClusterTarget` from `./index.ts` and pass
+   * `.context` through.
+   */
   context?: string;
   /** API group, used to pick a readiness override when `spec` is not given. */
   group?: string;

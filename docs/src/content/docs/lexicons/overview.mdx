@@ -28,8 +28,8 @@ Lexicons opt into the `chant lifecycle diff <env> --live` pipeline by implementi
 |---|---|---|---|---|
 | AWS | ✅ |  | Tags | `aws cloudformation describe-stack-resources`; `--owned` available on live export (not on describe — tags absent there) |
 | Azure | ✅ |  | Tags | `az resource show` per declared entity; resource-group is the env name. `--owned` available on live export (`az group export` carries tags; not on describe) |
-| GCP (Config Connector) | ✅ |  | Labels | `kubectl get <gvk>` against the GKE management cluster |
-| Kubernetes | ✅ |  | Labels | `kubectl get <kind>` per declared entity; ~20 common types |
+| GCP (Config Connector) | ✅ |  | Labels | `kubectl get <gvk>` against the GKE management cluster; cluster resolved from `k8s.profiles.<env>.context` when bound (chant #1100), else ambient — visibly |
+| Kubernetes | ✅ |  | Labels | `kubectl get <kind>` per declared entity; ~20 common types; cluster resolved from `k8s.profiles.<env>.context` when bound (chant #1100) — a mismatched ambient context refuses loudly rather than reading the wrong cluster |
 | Temporal | ✅ |  | — | Temporal client — namespaces, search attributes, schedules |
 | Helm |  | ✅ | — | `helm list -A -o json` — releases as artifacts |
 | Docker |  | ✅ | — | `docker ps`, `docker image ls`, `docker network ls` (NDJSON) |

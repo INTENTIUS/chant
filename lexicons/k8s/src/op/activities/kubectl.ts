@@ -6,7 +6,12 @@ const execAsync = promisify(exec);
 
 export interface KubectlApplyArgs {
   manifest: string;
-  /** kubectl context name. Uses current context if omitted. */
+  /**
+   * kubectl context name. Uses the ambient context if omitted. To target the
+   * same cluster the read path (`describeResources`) resolved for an
+   * environment — chant #1100 — resolve it with `resolveClusterTarget` from
+   * `./index.ts` and pass `.context` through.
+   */
   context?: string;
 }
 
