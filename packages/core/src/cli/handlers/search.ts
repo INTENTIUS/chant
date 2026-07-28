@@ -1,9 +1,9 @@
 import { resolve } from "node:path";
 import { build } from "../../build";
-import { buildGraphIr, buildLiveGraphIr, type GraphIR, type IRNode } from "../../graph-ir";
-import { reconstructEdges, mergeCatalogs, type ReferenceCatalog } from "../../graph-refs";
-import { observeResources } from "../../lifecycle/observe";
+import { buildGraphIr, buildLiveGraphIr, sourceOverlayGraphs, type GraphIR, type IRNode } from "../../graph-ir";
 import { discover } from "../../discovery/index";
+
+import { observeResources } from "../../lifecycle/observe";
 import { loadChantConfig } from "../../config";
 import { loadPlugins, resolveProjectLexicons } from "../plugins";
 import { formatError, formatWarning } from "../format";
@@ -69,20 +69,23 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
       stacks,
     });
     for (const e of errors) console.error(formatWarning({ message: e }));
-    ir = buildLiveGraphIr(observations);
+    let live = buildLiveGraphIr(observations);
     for (const p of observing) {
       if (!p.enrichLiveAttrs) continue;
       try {
         const enriched = await p.enrichLiveAttrs({ environment, owned: true, stacks });
-        ir = { ...ir, nodes: ir.nodes.map((n) => (enriched[n.id] ? { ...n, attrs: { ...n.attrs, ...enriched[n.id] } } : n)) };
+        live = { ...live, nodes: live.nodes.map((n) => (enriched[n.id] ? { ...n, attrs: { ...n.attrs, ...enriched[n.id] } } : n)) };
       } catch {
         /* enrichment is best-effort; search still works on describe attrs */
       }
     }
-    // Reconstruct edges from the observing lexicons' reference catalogs, so
-    // ->/<- traversal works over the live estate (same as `graph --live`).
-    const catalogs = observing.map((p) => p.referenceCatalog).filter((c): c is ReferenceCatalog => !!c);
-    if (catalogs.length > 0) ir = { ...ir, edges: reconstructEdges(ir.nodes, mergeCatalogs(catalogs)).edges };
+    // Overlay live identity onto the SOURCE graph (same as `graph --overlay`):
+    // the declared graph is the canvas — its edges (computed from source
+    // AttrRefs by buildGraphIr) carry the topology so ->/<- traversal resolves,
+    // while the live side supplies physical ids. Reconstructing edges over
+    // live-only nodes misses joins because their refs are physical, not logical.
+    const declared = buildGraphIr((await discover(resolve(args.src ?? config.sourceDir ?? "."))).entities, projectPath);
+    ir = sourceOverlayGraphs(declared, live);
   } else {
     const discovered = await discover(resolve(args.src ?? config.sourceDir ?? "."));
     ir = buildGraphIr(discovered.entities);
@@ -179,8 +182,9 @@ function matchTerm(n: IRNode, t: Term, ir?: GraphIR, byId?: Map<string, IRNode>)
 function formatRow(n: IRNode, show: string[]): string {
   const attrs = (n.attrs ?? {}) as Record<string, unknown>;
   const parts: string[] = [n.id, n.kind ?? ""];
-  // Prefer a live physical id; skip source-mode AttrRef placeholders (objects).
-  const physical = attrs["physicalId"] ?? attrs["InstanceId"] ?? attrs["Id"];
+  // Prefer the node-level live physicalId (set by the overlay), then attrs;
+  // skip source-mode AttrRef placeholders (objects).
+  const physical = (n as { physicalId?: unknown }).physicalId ?? attrs["physicalId"] ?? attrs["InstanceId"] ?? attrs["Id"];
   if (physical != null && typeof physical !== "object") parts.push(String(physical));
   for (const key of show) {
     const v = attrs[key];
