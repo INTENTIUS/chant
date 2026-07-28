@@ -13,6 +13,7 @@ import type { RuleMeta } from "./audit/catalog";
 import type { ReferenceCatalog } from "./graph-refs";
 import type { DescribeResourcesResult } from "./observation";
 import type { DeepNormalizationHooks, DeepObservationResult } from "./deep-observation";
+import type { OwnerChainVerdict } from "./owner-chain";
 
 // Re-exported so lexicons can author a reference catalog (#778) from the same
 // `@intentius/chant/lexicon` entry they import the plugin contract from.
@@ -555,6 +556,13 @@ export interface LexiconPlugin {
    * `ownership: "unknown"` on what it returns rather than degrading silently —
    * the change set never escalates `unknown` to a `delete`.
    *
+   * An undeclared entry this method returns may carry {@link
+   * ResourceMetadata.ownerChain} (#1077) — set it when the provider's own
+   * parent/child graph (Kubernetes `ownerReferences`) shows this object's
+   * chain reaching a declared entity, so the diff engine classifies it
+   * `runtime` instead of `orphan`. Optional; a lexicon that never sets it
+   * keeps every undeclared entry classified `orphan`, unchanged.
+   *
    * `entities` carries the chant-side entity declarations for this lexicon,
    * keyed by chant entity name (e.g. the export name from a `*.ts` file).
    * Implementations that need to map cloud-side names back to chant entity
@@ -783,6 +791,19 @@ export interface ResourceMetadata {
    * a delete, and never escalates `unknown` to one.
    */
   ownership?: "owned" | "foreign" | "unknown";
+  /**
+   * Where this resource's owner-reference chain leads, for a live resource
+   * that is not itself declared (#1077). A lexicon that maintains an
+   * owner-reference graph (Kubernetes) sets this on an undeclared entry it
+   * returns; the diff engine reads `{ root: "declared" }` as `runtime`
+   * (a Pod a declared Deployment's controller created) rather than `orphan`.
+   * Distinct from {@link ownership}: that is chant's own managed-by marker,
+   * this is the provider's native parent/child graph — a runtime child
+   * usually carries no chant marker of its own at all. Absent means the
+   * lexicon supplies no chain, which is exactly today's behavior: every
+   * undeclared live resource stays `orphan`.
+   */
+  ownerChain?: OwnerChainVerdict;
 }
 
 /**

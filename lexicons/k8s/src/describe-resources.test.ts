@@ -16,7 +16,7 @@ vi.mock("@intentius/chant/config", () => ({
 }));
 
 const { describeResources } = await import("./describe-resources");
-const { fakeCluster, objectKey } = await import("./api/fake-cluster");
+const { fakeCluster, objectKey, ownedObject } = await import("./api/fake-cluster");
 const { defaultK8sConnector } = await import("./api/connect");
 const { fakeKubeconfig, statusBody } = await import("@intentius/chant-k8s-client/testing");
 
@@ -500,5 +500,228 @@ describe("k8s describeResources", () => {
     expect(result.unobserved?.web?.reason).toBe("read-failed");
     expect(result.unobserved?.web?.detail).toContain("npm i @intentius/chant-k8s-client");
     expect(result.unobserved?.web?.type).toBe("K8s::Apps::Deployment");
+  });
+
+  // ── Runtime children: owner-reference chain classification (chant #1077) ──
+
+  describe("runtime children (#1077)", () => {
+    function declaredDeployment() {
+      return makeEntities([
+        { name: "web", entityType: "K8s::Apps::Deployment", props: { metadata: { name: "web", namespace: "prod" } } },
+      ]);
+    }
+
+    test("a Pod owned (via an undeclared ReplicaSet) by a declared Deployment reports ownerChain: declared", async () => {
+      const replicaSet = {
+        apiVersion: "apps/v1",
+        kind: "ReplicaSet",
+        metadata: {
+          name: "web-7d9f8c9c8",
+          namespace: "prod",
+          uid: "rs-uid",
+          ownerReferences: [{ apiVersion: "apps/v1", kind: "Deployment", name: "web", uid: "uid-1", controller: true }],
+        },
+      };
+      const runtimePod = {
+        apiVersion: "v1",
+        kind: "Pod",
+        metadata: {
+          name: "web-7d9f8c9c8-abcde",
+          namespace: "prod",
+          uid: "pod-uid",
+          ownerReferences: [{ apiVersion: "apps/v1", kind: "ReplicaSet", name: "web-7d9f8c9c8", uid: "rs-uid", controller: true }],
+        },
+        status: { phase: "Running" },
+      };
+      const cluster = fakeCluster({
+        objects: {
+          [objectKey("apps/v1", "Deployment", "web", "prod")]: web,
+          [objectKey("apps/v1", "ReplicaSet", "web-7d9f8c9c8", "prod")]: replicaSet,
+          [objectKey("v1", "Pod", "web-7d9f8c9c8-abcde", "prod")]: runtimePod,
+        },
+      });
+
+      const result = await describeResources(
+        { environment: "prod", buildOutput: "", entityNames: ["web"], entities: declaredDeployment() },
+        cluster.connector,
+      );
+
+      const child = result.resources["prod/web-7d9f8c9c8-abcde"];
+      expect(child).toMatchObject({
+        type: "K8s::Core::Pod",
+        physicalId: "pod-uid",
+        status: "Running",
+        ownerChain: { root: "declared", entity: "web" },
+      });
+      // Reads the ReplicaSet to walk past it — one extra request beyond the
+      // Deployment read and the Pod list.
+      expect(cluster.layer.paths()).toContain("/apis/apps/v1/namespaces/prod/replicasets/web-7d9f8c9c8");
+    });
+
+    test("a genuinely unowned Pod in the same namespace reports ownerChain: unowned (still an orphan downstream)", async () => {
+      const standalonePod = {
+        apiVersion: "v1",
+        kind: "Pod",
+        metadata: { name: "standalone", namespace: "prod", uid: "standalone-uid" },
+        status: { phase: "Running" },
+      };
+      const cluster = fakeCluster({
+        objects: {
+          [objectKey("apps/v1", "Deployment", "web", "prod")]: web,
+          [objectKey("v1", "Pod", "standalone", "prod")]: standalonePod,
+        },
+      });
+
+      const result = await describeResources(
+        { environment: "prod", buildOutput: "", entityNames: ["web"], entities: declaredDeployment() },
+        cluster.connector,
+      );
+
+      expect(result.resources["prod/standalone"]).toMatchObject({
+        type: "K8s::Core::Pod",
+        ownerChain: { root: "unowned" },
+      });
+    });
+
+    test("a Pod owned by something never declared reports ownerChain: foreign", async () => {
+      const otherRs = {
+        apiVersion: "apps/v1",
+        kind: "ReplicaSet",
+        metadata: { name: "other-rs", namespace: "prod", uid: "other-rs-uid" }, // no further owner
+      };
+      const otherPod = {
+        apiVersion: "v1",
+        kind: "Pod",
+        metadata: {
+          name: "other-pod",
+          namespace: "prod",
+          uid: "other-pod-uid",
+          ownerReferences: [{ apiVersion: "apps/v1", kind: "ReplicaSet", name: "other-rs", uid: "other-rs-uid", controller: true }],
+        },
+      };
+      const cluster = fakeCluster({
+        objects: {
+          [objectKey("apps/v1", "Deployment", "web", "prod")]: web,
+          [objectKey("apps/v1", "ReplicaSet", "other-rs", "prod")]: otherRs,
+          [objectKey("v1", "Pod", "other-pod", "prod")]: otherPod,
+        },
+      });
+
+      const result = await describeResources(
+        { environment: "prod", buildOutput: "", entityNames: ["web"], entities: declaredDeployment() },
+        cluster.connector,
+      );
+
+      expect(result.resources["prod/other-pod"]).toMatchObject({ ownerChain: { root: "foreign" } });
+    });
+
+    test("--owned withholds an unrelated Pod, but keeps a runtime child of a declared (owned) entity", async () => {
+      // The declared Deployment must itself carry chant's marker for `--owned`
+      // to surface it at all — otherwise it is filtered before a Pod scan ever
+      // has a declared uid to compare against.
+      const ownedWeb = ownedObject("apps/v1", "Deployment", "web", "prod", { status: { readyReplicas: 3, replicas: 3 } });
+      const standalonePod = {
+        apiVersion: "v1",
+        kind: "Pod",
+        metadata: { name: "standalone", namespace: "prod", uid: "standalone-uid" },
+      };
+      const runtimePod = {
+        apiVersion: "v1",
+        kind: "Pod",
+        metadata: {
+          name: "web-abc",
+          namespace: "prod",
+          uid: "pod-uid",
+          ownerReferences: [{ apiVersion: "apps/v1", kind: "Deployment", name: "web", uid: "uid-web", controller: true }],
+        },
+      };
+      const cluster = fakeCluster({
+        objects: {
+          [objectKey("apps/v1", "Deployment", "web", "prod")]: ownedWeb,
+          [objectKey("v1", "Pod", "standalone", "prod")]: standalonePod,
+          [objectKey("v1", "Pod", "web-abc", "prod")]: runtimePod,
+        },
+      });
+
+      const result = await describeResources(
+        {
+          environment: "prod",
+          buildOutput: "",
+          entityNames: ["web"],
+          entities: declaredDeployment(),
+          owned: true,
+        },
+        cluster.connector,
+      );
+
+      expect(result.resources.web).toBeDefined(); // the marker let it through
+      expect(result.resources["prod/standalone"]).toBeUndefined();
+      expect(result.resources["prod/web-abc"]).toMatchObject({ ownerChain: { root: "declared", entity: "web" } });
+    });
+
+    test("a Pod that is itself declared is never duplicated as a runtime child", async () => {
+      const declaredPod = {
+        apiVersion: "v1",
+        kind: "Pod",
+        metadata: { name: "standalone-pod", namespace: "prod", uid: "uid-declared-pod" },
+        status: { phase: "Running" },
+      };
+      const cluster = fakeCluster({
+        objects: {
+          [objectKey("apps/v1", "Deployment", "web", "prod")]: web,
+          [objectKey("v1", "Pod", "standalone-pod", "prod")]: declaredPod,
+        },
+      });
+
+      const result = await describeResources(
+        {
+          environment: "prod",
+          buildOutput: "",
+          entityNames: ["web", "standalonePod"],
+          entities: makeEntities([
+            { name: "web", entityType: "K8s::Apps::Deployment", props: { metadata: { name: "web", namespace: "prod" } } },
+            { name: "standalonePod", entityType: "K8s::Core::Pod", props: { metadata: { name: "standalone-pod", namespace: "prod" } } },
+          ]),
+        },
+        cluster.connector,
+      );
+
+      expect(result.resources.standalonePod).toBeDefined();
+      expect(result.resources["prod/standalone-pod"]).toBeUndefined();
+      expect(Object.keys(result.resources)).toHaveLength(2); // web + standalonePod, no synthetic duplicate
+    });
+
+    test("a Pod-list failure for a namespace is best-effort — declared entities still resolve", async () => {
+      const cluster = fakeCluster({
+        objects: { [objectKey("apps/v1", "Deployment", "web", "prod")]: web },
+        respond: (req) => (req.path.endsWith("/pods") ? { status: 403, body: statusBody(403, "Forbidden", "no pods list") } : undefined),
+      });
+
+      const result = await describeResources(
+        { environment: "prod", buildOutput: "", entityNames: ["web"], entities: declaredDeployment() },
+        cluster.connector,
+      );
+
+      expect(result.resources.web).toMatchObject({ type: "K8s::Apps::Deployment", physicalId: "uid-1" });
+      expect(Object.keys(result.resources)).toEqual(["web"]);
+    });
+
+    test("a lexicon-supported entity type with no namespaced entities resolved does no Pod scan at all", async () => {
+      const ns = { apiVersion: "v1", kind: "Namespace", metadata: { name: "mynamespace", uid: "uid-ns" }, status: { phase: "Active" } };
+      const cluster = fakeCluster({ objects: { [objectKey("v1", "Namespace", "mynamespace")]: ns } });
+
+      const result = await describeResources(
+        {
+          environment: "prod",
+          buildOutput: "",
+          entityNames: ["ns"],
+          entities: makeEntities([{ name: "ns", entityType: "K8s::Core::Namespace", props: { metadata: { name: "mynamespace" } } }]),
+        },
+        cluster.connector,
+      );
+
+      expect(Object.keys(result.resources)).toEqual(["ns"]);
+      expect(cluster.layer.paths().some((p) => p.endsWith("/pods"))).toBe(false);
+    });
   });
 });

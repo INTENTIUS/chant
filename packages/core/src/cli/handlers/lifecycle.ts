@@ -857,6 +857,7 @@ function renderLiveDiff(lexiconName: string, environment: string, diff: LiveDiff
     `${diff.missing.length} missing, ${diff.orphan.length} orphan, ` +
     `${diff.disappeared.length} disappeared, ${diff.newlyObserved.length} newly observed, ` +
     `${diff.driftedSinceSnapshot.length} drifted, ${diff.unchanged.length} unchanged` +
+    (diff.runtimeChildren.length > 0 ? `, ${diff.runtimeChildren.length} runtime` : "") +
     (diff.unobserved.length > 0 ? `, ${diff.unobserved.length} unobserved` : "");
 
   console.log(`\n${formatBold(lexiconName)} — environment: ${environment}`);
@@ -876,6 +877,10 @@ function renderLiveDiff(lexiconName: string, environment: string, diff: LiveDiff
   if (diff.orphan.length > 0) {
     console.log(formatBold("\nORPHAN (in cloud, not declared):"));
     for (const name of diff.orphan) console.log(`  - ${name}`);
+  }
+  if (diff.runtimeChildren.length > 0) {
+    console.log(formatBold("\nRUNTIME (owned by a declared resource; not drift, not an orphan — #1077):"));
+    for (const r of diff.runtimeChildren) console.log(`  - ${r.name} (${r.type}) — owned by ${r.owner}`);
   }
   if (diff.disappeared.length > 0) {
     console.log(formatBold("\nDISAPPEARED (in last snapshot, gone now):"));

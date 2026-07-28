@@ -106,6 +106,77 @@ describe("buildChangeSet (#118)", () => {
     expect(cs.entries.filter((e) => e.action === "adopt").map((e) => e.name)).toEqual(["b", "c"]);
   });
 
+  // ── Owner-reference chain classification (#1077) ──────────────────────────
+
+  test("undeclared, owner chain reaches a declared entity → runtime, never delete or adopt", () => {
+    const cs = buildChangeSet("prod", {
+      declared: new Set(["web"]),
+      observedNow: {
+        web: meta({ type: "K8s::Apps::Deployment" }),
+        "prod/web-abc": meta({ type: "K8s::Core::Pod", ownerChain: { root: "declared", entity: "web" } }),
+      },
+      observedThen: undefined,
+    });
+    const e = cs.entries.find((x) => x.name === "prod/web-abc")!;
+    expect(e.action).toBe("runtime");
+    expect(e.runtimeOwner).toBe("web");
+  });
+
+  test("a runtime child that also carries chant's own ownership marker is still `runtime`, never `delete`", () => {
+    // Guards the ordering in buildChangeSet: runtimeOwner must be checked
+    // before the ownership marker, in case a runtime child ever inherits the
+    // marker (e.g. label propagation from its owner's pod template).
+    const cs = buildChangeSet("prod", {
+      declared: new Set(),
+      observedNow: {
+        "prod/web-abc": meta({ ownership: "owned", ownerChain: { root: "declared", entity: "web" } }),
+      },
+      observedThen: undefined,
+    });
+    const e = cs.entries.find((x) => x.name === "prod/web-abc")!;
+    expect(e.action).toBe("runtime");
+  });
+
+  test("undeclared, unowned → orphan/adopt, not runtime", () => {
+    const cs = buildChangeSet("prod", {
+      declared: new Set(),
+      observedNow: { "prod/standalone": meta({ ownerChain: { root: "unowned" } }) },
+      observedThen: undefined,
+    });
+    const e = cs.entries.find((x) => x.name === "prod/standalone")!;
+    expect(e.action).toBe("adopt");
+    expect(e.runtimeOwner).toBeUndefined();
+  });
+
+  test("undeclared, foreign root → orphan/adopt, not runtime", () => {
+    const cs = buildChangeSet("prod", {
+      declared: new Set(),
+      observedNow: { "prod/other": meta({ ownerChain: { root: "foreign" } }) },
+      observedThen: undefined,
+    });
+    expect(cs.entries.find((x) => x.name === "prod/other")!.action).toBe("adopt");
+  });
+
+  test("undeclared, unresolved chain (unreadable/cycle/depth) → conservative adopt, not runtime", () => {
+    const cs = buildChangeSet("prod", {
+      declared: new Set(),
+      observedNow: { "prod/mystery": meta({ ownerChain: { root: "unknown" } }) },
+      observedThen: undefined,
+    });
+    const e = cs.entries.find((x) => x.name === "prod/mystery")!;
+    expect(e.action).toBe("adopt");
+    expect(e.runtimeOwner).toBeUndefined();
+  });
+
+  test("a lexicon with no owner chain at all is unaffected — undeclared stays adopt/delete as before", () => {
+    const cs = buildChangeSet("prod", {
+      declared: new Set(),
+      observedNow: { orphan: meta({ ownership: "owned" }) },
+      observedThen: undefined,
+    });
+    expect(cs.entries.find((x) => x.name === "orphan")!.action).toBe("delete");
+  });
+
   test("only in snapshot (gone now, undeclared) → noop", () => {
     const cs = buildChangeSet("prod", {
       declared: new Set(),
@@ -148,6 +219,23 @@ describe("summarize / renderChangeSet", () => {
     expect(out).toContain("ADOPT:");
     expect(out).toContain("orphan");
   });
+
+  test("summarize and render surface the runtime action (#1077)", () => {
+    const withRuntime = buildChangeSet("prod", {
+      declared: new Set(["web"]),
+      observedNow: {
+        web: meta({ type: "K8s::Apps::Deployment" }),
+        "prod/web-abc": meta({ type: "K8s::Core::Pod", ownerChain: { root: "declared", entity: "web" } }),
+      },
+      observedThen: undefined,
+    });
+    expect(summarize(withRuntime).runtime).toBe(1);
+    expect(summarize(withRuntime).adopt).toBe(0);
+    const out = renderChangeSet(withRuntime);
+    expect(out).toContain("RUNTIME");
+    expect(out).toContain("prod/web-abc");
+    expect(out).toContain("owned by web");
+  });
 });
 
 describe("gitlabMrReport (#329)", () => {
@@ -167,6 +255,18 @@ describe("gitlabMrReport (#329)", () => {
       },
     });
     expect(gitlabMrReport(cs)).toEqual({ create: 1, update: 1, delete: 1 });
+  });
+
+  test("a runtime child (#1077) is excluded from the widget — never counted as a change", () => {
+    const cs = buildChangeSet("prod", {
+      declared: new Set(["web"]),
+      observedNow: {
+        web: meta({ type: "K8s::Apps::Deployment" }),
+        "prod/web-abc": meta({ type: "K8s::Core::Pod", ownerChain: { root: "declared", entity: "web" } }),
+      },
+      observedThen: undefined,
+    });
+    expect(gitlabMrReport(cs)).toEqual({ create: 0, update: 0, delete: 0 });
   });
 
   test("empty plan reports all zeros", () => {
