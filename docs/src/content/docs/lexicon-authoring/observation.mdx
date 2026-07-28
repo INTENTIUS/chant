@@ -188,6 +188,56 @@ describeObservationConformance({
 });
 ```
 
+## observeResourcesDeep() — property-level drift
+
+Reference implementation: `lexicons/aws/src/deep-observe.ts`.
+
+`describeResources()` answers whether a declared entity exists and carries a handful of scrubbed outputs. That catches a changed status, a replaced physical id, a changed stack output — and misses the drift people actually chase: a hand-edited security-group rule, an inline policy added in the console, a flipped bucket setting, a controller-mutated CRD field. Reading the full live model is what closes that gap.
+
+Opting in is a reader plus two hooks:
+
+```typescript
+observeResourcesDeep?(options: {
+  environment: string; buildOutput: string;
+  entityNames: string[];
+  entities: Map<string, { entityType: string; props: Record<string, unknown> }>;
+  stack?: string; owned?: boolean;
+}): Promise<DeepObservationResult>;
+
+deepNormalizationHooks?: DeepNormalizationHooks;   // { prune, orderKey }
+```
+
+The result is the same tri-state contract, one level down. `deepObservation(resources, unobserved)` builds it; an entity whose *properties* could not be read gets an `unobserved` entry with a total reason, and throwing marks every declared entity `read-failed`. A deep read that fails is never allowed to arrive as a thin-but-clean tree, because a clean tree is a claim that nothing drifted.
+
+### The hard half is noise
+
+A raw live model is mostly fields nobody declared and nobody changed. Without pruning, a deep diff is unreadable, and an unreadable report is an ignored one. The `prune` hook is where a lexicon names its noise:
+
+```typescript
+export const myHooks: DeepNormalizationHooks = {
+  prune(node) {
+    // Server-populated, wherever it appears — pruned on both sides.
+    if (READ_ONLY_NAMES.has(lastSegment(node.pattern))) return true;
+    // A provider default is noise only where source never declared the property.
+    if (node.side !== "live" || node.counterpart !== "absent") return false;
+    return DEFAULTS[node.entityType]?.[node.pattern] === node.value;
+  },
+  // Which arrays are sets, and by what identity. Return undefined to leave order alone.
+  orderKey: (el) => (lastSegment(el.pattern) === "Tags" ? String((el.element as Tag).Key) : undefined),
+};
+```
+
+Two things to get right:
+
+- **The hooks are data on the plugin, not steps inside the reader.** Core applies the identical rules to the *declared* property tree, which no reader ever touches. Bury them in the read and the two sides are normalized differently and everything is drift.
+- **`node.counterpart` is a tri-state** — `present` / `absent` / `unknown`. It says whether the same path exists on the other tree. Default subtraction is gated on `absent`, so a property somebody *did* declare is never pruned out from under the diff; `unknown` (a one-sided pass, e.g. a reader normalizing its own output) prunes nothing default-related.
+
+Core owns the rest of the pass and needs no hook for it: canonical key order, hook-driven array order, secret masking by property name, and non-JSON values (an unevaluated `Fn::Sub`) collapsed so an interpolated property never reads as permanent drift.
+
+### The accepted baseline
+
+Some deviations are permanent facts of the account — a platform team's mandatory tag, a setting an org policy flips on. `chant lifecycle diff <env> --live --update-baseline` records what a run reported into `<env>/observation-baseline.json` on the `chant/lifecycle` orphan branch, and later runs subtract it. Acceptance is **value-bound**: the accepted value stops alerting, a change away from it is drift again, reported with all three axes (declared / live / baseline). Nothing in a lexicon has to implement this — it is applied by core, above the reader.
+
 ## listArtifacts()
 
 Reference implementation: `lexicons/helm/src/list-artifacts.ts`.

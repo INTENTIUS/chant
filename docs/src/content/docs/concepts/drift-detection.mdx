@@ -62,6 +62,21 @@ An unobserved entity is not drift and not absence: it is a hole in the report. I
 
 These categories collapse into the `create/update/delete/adopt/noop/unobserved` actions `chant lifecycle plan` emits — see the [observation-to-action crosswalk](/chant/cli/lifecycle/#crosswalk-observation-categories--plan-actions).
 
+#### Depth: entity-level and property-level
+
+Those seven categories are entity-level — they answer whether a resource is there and whether its metadata moved. A lexicon that implements `observeResourcesDeep()` adds a second, deeper comparison of the same three axes at **property** granularity, with a fourth axis subtracted: an accepted baseline.
+
+| Property category | Meaning |
+|---|---|
+| **changed** | Source and cloud both carry the path, with different values |
+| **undeclared** | The cloud carries a property source never declared — a console edit, an org-policy default, another tool's field |
+| **absent** | Source declares a property the live resource is not carrying |
+| **accepted** | A deviation somebody recorded in the baseline, at the value they accepted. Not drift, but reported, so what is being held back stays visible |
+
+`undeclared` is the interesting one and the reason the deep read exists. CloudFormation's own drift detection compares only the properties it was told about, so a property nobody declared is invisible to it no matter who changed it.
+
+Depth is opt-in per lexicon and changes nothing for the others — see the [coverage matrix](/chant/lexicons/overview/#runtime-observation-coverage) for who reports it, and [`--update-baseline`](/chant/cli/lifecycle/#--update-baseline--accept-a-deviation) for accepting a deviation.
+
 #### Resolving an `orphan`
 
 An orphan is a resource in the cloud that source doesn't know about. Detection is the first position on the [dial](/chant/concepts/lifecycle-models/#the-dial); resolving it is the next. There are two moves:
