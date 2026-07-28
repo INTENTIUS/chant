@@ -810,3 +810,108 @@ describe("foldModule", () => {
     expect(result.bad?.ok).toBe(false);
   });
 });
+
+/**
+ * chant #1169 — a `new Type(...)` used as a VALUE.
+ *
+ * `fold()` produces the same {@link FoldedResource} envelope for a nested
+ * construction as for a top-level one, and it is symbolic in exactly the sense
+ * `{__intrinsic}`/`{__helper}` are: nothing is executed here, the constructor's
+ * NAME and folded arguments are recorded, and ../discovery/fold-import.ts
+ * resolves the name through the file's own imports and builds the real
+ * instance. These tests own the envelope; the construction half is
+ * ../discovery/fold-import.test.ts's.
+ */
+describe("constructions as values (chant #1169)", () => {
+  test("a nested construction folds to a `{__resource}` envelope, recursively", () => {
+    const src = `
+      export const job = new Job({
+        image: new Image({ name: "node:22" }),
+        rules: [new Rule({ if: "$CI" })],
+        deep: { inner: new Guest({ cpus: new Count({ n: 1 }) }) },
+      });
+    `;
+    expect(foldModule(src).job).toEqual({
+      ok: true,
+      spec: {
+        __resource: "Job",
+        props: {
+          image: { __resource: "Image", props: { name: "node:22" } },
+          rules: [{ __resource: "Rule", props: { if: "$CI" } }],
+          deep: {
+            inner: { __resource: "Guest", props: { cpus: { __resource: "Count", props: { n: 1 } } } },
+          },
+        },
+      },
+    });
+  });
+
+  test("a nested construction with a non-props-first signature keeps its positional `args`", () => {
+    // chant #1082's shape, nested. `props` stays the first object-literal
+    // argument (a view, for readers); `args` is what the entity is built from.
+    const src = `export const p = new Outer({ x: new Parameter("String", { Default: "dev" }) });`;
+    const result = foldModule(src);
+    expect(result.p?.ok).toBe(true);
+    if (!result.p?.ok) return;
+    expect(result.p.spec.props.x).toEqual({
+      __resource: "Parameter",
+      props: { Default: "dev" },
+      args: ["String", { Default: "dev" }],
+    });
+  });
+
+  test("a nested `new ns.Type(...)` is rejected — the class must be reachable through a named import", () => {
+    const src = `export const job = new Job({ image: new ns.Image({ name: "x" }) });`;
+    const result = foldModule(src);
+    expect(result.job?.ok).toBe(false);
+    if (result.job?.ok) return;
+    expect(result.job?.error).toContain("needs a plain imported constructor");
+  });
+
+  test("a BARE reference to a same-file resource const is rejected without a caller that can construct", () => {
+    // `fold()` on its own has no module graph, so it cannot hand back the
+    // instance the reference means — and re-folding the initializer would build
+    // a duplicate. Rejected; `externals` (the bridge's pre-resolved same-file
+    // instances) is the only thing that answers this.
+    const src = `
+      const db = new DbCluster({ engine: "aurora" });
+      export const worker = new Instance({ needs: [db] });
+    `;
+    const result = foldModule(src);
+    expect(result.worker?.ok).toBe(false);
+    if (result.worker?.ok) return;
+    expect(result.worker?.error).toContain("same-file resource `db` used as a value is not foldable");
+  });
+
+  test("`externals` answers a same-file resource reference when a caller pre-resolved it", () => {
+    const src = `
+      const db = new DbCluster({ engine: "aurora" });
+      export const worker = new Instance({ needs: [db] });
+    `;
+    const sourceFile = ts.createSourceFile("t.ts", src, ts.ScriptTarget.Latest, true);
+    const consts = collectConsts(sourceFile);
+    const liveDb = { pretendInstance: true };
+
+    const folded = fold(consts.get("worker") as ts.Expression, consts, [], new Map([["db", liveDb]]));
+    // The exact object, not a copy of it: identity is what makes the reference
+    // and the registered entity the same thing.
+    expect((folded as { props: { needs: unknown[] } }).props.needs[0]).toBe(liveDb);
+  });
+
+  test("an ATTRIBUTE reference to a same-file resource is unaffected — still the `{__attrRef}` envelope", () => {
+    const src = `
+      const db = new DbCluster({ engine: "aurora" });
+      export const worker = new Instance({ host: db.Endpoint });
+    `;
+    const sourceFile = ts.createSourceFile("t.ts", src, ts.ScriptTarget.Latest, true);
+    const consts = collectConsts(sourceFile);
+
+    const folded = fold(consts.get("worker") as ts.Expression, consts, [], new Map([["db", { live: true }]]));
+    // `consts` is consulted before `externals` for a property access, so a
+    // pre-resolved instance does not change what a sibling attribute reference
+    // folds to.
+    expect((folded as { props: Record<string, unknown> }).props.host).toEqual({
+      __attrRef: { entity: "db", attribute: "Endpoint" },
+    });
+  });
+});
