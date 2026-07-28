@@ -40,6 +40,7 @@ import { buildLedgerEntries, componentBomSummary, type BuildLedgerEntry } from "
 import { findBuildManifestByArtifactDigest } from "../../lifecycle/build-ledger-store";
 import type { ComponentBomSummary } from "../../lifecycle/build-ledger";
 import { loadChantConfig } from "../../config";
+import { applyLiveEndpoint } from "../../live-endpoint";
 import { build } from "../../build";
 import { discoverComponents } from "../../components/discover";
 import { formatError, formatWarning, formatSuccess, formatBold } from "../format";
@@ -327,53 +328,66 @@ export async function runComponentsStatus(ctx: CommandContext): Promise<number> 
 
     let liveEvidence;
     if (args.live) {
-      const targetSerializers = serializers;
-      const buildResult = await build(resolve(args.src ?? config.sourceDir ?? "."), targetSerializers);
-      const merged: { env: string; entries: import("../../lifecycle/change-set").ChangeSetEntry[] } = { env: environment, entries: [] };
-      for (const plugin of plugins) {
-        if (!plugin.describeResources) continue;
-        const declared = new Set<string>();
-        const entities = new Map<string, { entityType: string; props: Record<string, unknown> }>();
-        for (const [name, entity] of buildResult.entities) {
-          if (entity.lexicon === plugin.name) {
-            declared.add(name);
-            entities.set(name, {
-              entityType: entity.entityType,
-              props: ("props" in entity && entity.props != null ? entity.props : {}) as Record<string, unknown>,
-            });
+      // #1166 — an environment can declare its own endpoint (a local emulator
+      // like Floci), applied here unless the ambient shell already set it, so
+      // `--live` status doesn't silently read the wrong account per environment.
+      const endpointResult = applyLiveEndpoint(
+        config.environments,
+        environment,
+        plugins.filter((p) => p.describeResources || p.describeStackStatus).map((p) => p.name),
+      );
+      if (endpointResult.notice) console.error(formatWarning({ message: endpointResult.notice }));
+      try {
+        const targetSerializers = serializers;
+        const buildResult = await build(resolve(args.src ?? config.sourceDir ?? "."), targetSerializers);
+        const merged: { env: string; entries: import("../../lifecycle/change-set").ChangeSetEntry[] } = { env: environment, entries: [] };
+        for (const plugin of plugins) {
+          if (!plugin.describeResources) continue;
+          const declared = new Set<string>();
+          const entities = new Map<string, { entityType: string; props: Record<string, unknown> }>();
+          for (const [name, entity] of buildResult.entities) {
+            if (entity.lexicon === plugin.name) {
+              declared.add(name);
+              entities.set(name, {
+                entityType: entity.entityType,
+                props: ("props" in entity && entity.props != null ? entity.props : {}) as Record<string, unknown>,
+              });
+            }
           }
+          let observed: NormalizedObservation;
+          try {
+            observed = normalizeObservation(
+              await plugin.describeResources({ environment, buildOutput: "", entityNames: Array.from(declared), entities }),
+            );
+          } catch (err) {
+            // A failed read is not an empty environment (#1089): mark every
+            // declared entity NOT-OBSERVED so the status rows say "unknown"
+            // rather than "stale" (recorded, and nothing live).
+            const message = err instanceof Error ? err.message : String(err);
+            console.error(formatWarning({ message: `${plugin.name}: describeResources failed — ${message} (components in this lexicon report unknown, not stale)` }));
+            observed = { resources: {}, unobserved: unobservedAll(declared, "read-failed", message, entities) };
+          }
+          const cs = buildChangeSet(environment, {
+            declared,
+            observedNow: observed.resources,
+            observedThen: undefined,
+            unobserved: observed.unobserved,
+          });
+          merged.entries.push(...cs.entries);
         }
-        let observed: NormalizedObservation;
-        try {
-          observed = normalizeObservation(
-            await plugin.describeResources({ environment, buildOutput: "", entityNames: Array.from(declared), entities }),
-          );
-        } catch (err) {
-          // A failed read is not an empty environment (#1089): mark every
-          // declared entity NOT-OBSERVED so the status rows say "unknown"
-          // rather than "stale" (recorded, and nothing live).
-          const message = err instanceof Error ? err.message : String(err);
-          console.error(formatWarning({ message: `${plugin.name}: describeResources failed — ${message} (components in this lexicon report unknown, not stale)` }));
-          observed = { resources: {}, unobserved: unobservedAll(declared, "read-failed", message, entities) };
-        }
-        const cs = buildChangeSet(environment, {
-          declared,
-          observedNow: observed.resources,
-          observedThen: undefined,
-          unobserved: observed.unobserved,
-        });
-        merged.entries.push(...cs.entries);
-      }
-      liveEvidence = liveEvidenceFromChangeSet(merged, liveNameMapping);
+        liveEvidence = liveEvidenceFromChangeSet(merged, liveNameMapping);
 
-      // Multi-stack component projects (each component owns its own stack) are
-      // invisible to the entity-keyed, single-stack `describeResources` above —
-      // observe each component's own cfn-deploy stack directly and overlay it as
-      // the authoritative presence signal (#57).
-      const stackObserver = plugins.find((p) => p.describeStackStatus);
-      if (stackObserver) {
-        const stackEvidence = await observeComponentStacks(discovery.components, stackObserver, environment);
-        liveEvidence = mergeLiveEvidence(liveEvidence, stackEvidence);
+        // Multi-stack component projects (each component owns its own stack) are
+        // invisible to the entity-keyed, single-stack `describeResources` above —
+        // observe each component's own cfn-deploy stack directly and overlay it as
+        // the authoritative presence signal (#57).
+        const stackObserver = plugins.find((p) => p.describeStackStatus);
+        if (stackObserver) {
+          const stackEvidence = await observeComponentStacks(discovery.components, stackObserver, environment);
+          liveEvidence = mergeLiveEvidence(liveEvidence, stackEvidence);
+        }
+      } finally {
+        endpointResult.restore();
       }
     }
 

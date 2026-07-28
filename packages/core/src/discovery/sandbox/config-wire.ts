@@ -27,8 +27,9 @@
  * ## What `ChantConfig` legally holds
  *
  * Every field of `ChantConfig` (`../../config.ts`) is JSON data: string arrays
- * (`lexicons`, `capabilities`, `environments`), strings (`sourceDir`), nested
- * plain objects of strings/booleans (`ownership`, `build`, `release`, `sbom`,
+ * (`lexicons`, `capabilities`), strings (`sourceDir`), an array of strings or
+ * plain `{ name, endpoint }` objects (`environments`, #1166), nested plain
+ * objects of strings/booleans (`ownership`, `build`, `release`, `sbom`,
  * `signing`, `vulnPolicy`), arrays of plain objects (`stacks`), and records of
  * plain objects (`buildParams`). `lint` is a `LintConfig`, whose rule values
  * are a severity string or a `[severity, options]` tuple, and whose `plugins`

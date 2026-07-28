@@ -55,6 +55,17 @@ environments: ["local", "staging", "prod"],
 
 `--env <name>` selects one and defaults to `local` when omitted. The selected environment is what [`chant lifecycle`](/chant/cli/lifecycle/) diffs against, the `env` identity stamped into the [ownership](#ownership) marker, and the key the [component release ledger](/chant/components/observability/) records each deploy under — as in `chant run --components <name> --env <env>` and `chant components status <env>`.
 
+An entry can also carry the endpoint that environment's `--live` reads should target, instead of a bare name:
+
+```typescript
+environments: [
+  "prod",
+  { name: "floci", endpoint: "http://localhost:4566" },
+],
+```
+
+This is for a local emulator (Floci, mudflaps) or any non-default endpoint: without it, `--live --env floci` shells out to each lexicon's CLI honoring whatever the ambient shell happens to export (`AWS_ENDPOINT_URL` for AWS, `FLY_FLAPS_BASE_URL` for Fly) — and if that var isn't set, the read silently targets real AWS/Fly instead of the emulator, returning an empty (but not erroring) result. Declaring the endpoint makes `--env floci` self-sufficient: chant injects it into the right ambient var for the read, unless that var is already set in the shell — an ambient value always wins, so nothing changes for a project that already exports it. If a `--live` describe still comes back with zero resources for an environment that has declared entities, chant warns rather than reporting a quiet "nothing here."
+
 ### `lint.extends`
 
 An array of preset configuration paths to inherit from:

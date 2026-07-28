@@ -11,12 +11,60 @@ import { findProjectConfig } from "./project-root";
 import { evaluateProjectConfig } from "./config-sandbox";
 
 /**
+ * One project-declared environment (chant #1166). Historically always a bare
+ * name (`"floci"`); an entry can now instead carry the endpoint that
+ * environment's `--live` reads should target (`{ name: "floci", endpoint:
+ * "http://localhost:4566" }`), so a project pointed at a local emulator is
+ * self-sufficient — no ambient `AWS_ENDPOINT_URL` export required to avoid
+ * silently querying real AWS. See {@link environmentName}, {@link
+ * environmentNames}, {@link environmentEndpoint} below, and
+ * `./live-endpoint.ts`'s `applyLiveEndpoint`, the CLI-side consumer.
+ */
+export type EnvironmentDeclaration = string | { name: string; endpoint?: string };
+
+/** The declared name of one `environments` entry, whichever form it takes. */
+export function environmentName(entry: EnvironmentDeclaration): string {
+  return typeof entry === "string" ? entry : entry.name;
+}
+
+/**
+ * Every declared environment's name, in `environments` order. `undefined` in,
+ * `undefined` out — mirrors the field itself being optional, so a caller that
+ * already writes `config.environments?.something` can keep doing so:
+ * `environmentNames(config.environments)?.includes(name)`.
+ */
+export function environmentNames(environments: EnvironmentDeclaration[] | undefined): string[] | undefined {
+  return environments?.map(environmentName);
+}
+
+/**
+ * The endpoint `name` declares (chant #1166) — `undefined` for a bare-string
+ * entry, an entry with no `endpoint` set, or a name this project doesn't
+ * declare at all. `./live-endpoint.ts`'s `applyLiveEndpoint` is the consumer:
+ * it injects this into the ambient env var each observing lexicon's CLI
+ * shell-out reads (e.g. `AWS_ENDPOINT_URL`), unless that var is already set —
+ * ambient always wins.
+ */
+export function environmentEndpoint(environments: EnvironmentDeclaration[] | undefined, name: string): string | undefined {
+  const found = environments?.find((e) => environmentName(e) === name);
+  return found && typeof found !== "string" ? found.endpoint : undefined;
+}
+
+/**
  * Zod schema for ChantConfig validation.
  */
+const EnvironmentEntrySchema = z.union([
+  z.string().min(1),
+  z.object({
+    name: z.string().min(1),
+    endpoint: z.string().min(1).optional(),
+  }),
+]);
+
 export const ChantConfigSchema = z.object({
   lexicons: z.array(z.string().min(1)).optional(),
   capabilities: z.array(z.string().min(1)).optional(),
-  environments: z.array(z.string().min(1)).optional(),
+  environments: z.array(EnvironmentEntrySchema).optional(),
   sourceDir: z.string().min(1).optional(),
   lint: z.record(z.string(), z.unknown()).optional(),
   ownership: z.object({
@@ -87,8 +135,18 @@ export interface ChantConfig {
    */
   capabilities?: string[];
 
-  /** Environment names (e.g. ["staging", "prod"]) */
-  environments?: string[];
+  /**
+   * Declared environments (e.g. `["staging", "prod"]`). An entry is either a
+   * bare name (unchanged since always) or `{ name, endpoint }` (#1166) when
+   * that environment's `--live` reads should target a specific endpoint —
+   * a local emulator like Floci (`{ name: "floci", endpoint:
+   * "http://localhost:4566" }`) chief among them. See {@link
+   * environmentEndpoint} and `./live-endpoint.ts`'s `applyLiveEndpoint`, which
+   * injects the declared endpoint into the ambient env var each observing
+   * lexicon's CLI shell-out reads (e.g. `AWS_ENDPOINT_URL`) — unless that var
+   * is already set, in which case the ambient value always wins.
+   */
+  environments?: EnvironmentDeclaration[];
 
   /**
    * Directory (relative to the project root) that holds the chant infrastructure

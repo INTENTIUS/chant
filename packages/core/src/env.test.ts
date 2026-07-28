@@ -40,6 +40,18 @@ describe("unknownEnvError", () => {
   test("rejects an undeclared env with a clear message", () => {
     expect(unknownEnvError("stage", ["dev", "prod"])).toMatch(/Unknown environment "stage".*dev, prod/);
   });
+
+  // #1166 — `environments` entries may now be `{ name, endpoint }`; validation
+  // reduces to names either way, unaffected by an object entry's endpoint.
+  test("accepts an object-form declared env, mixed with bare strings", () => {
+    expect(unknownEnvError("floci", ["prod", { name: "floci", endpoint: "http://localhost:4566" }])).toBeUndefined();
+  });
+
+  test("rejects an undeclared env against a mixed string/object list, naming both", () => {
+    expect(
+      unknownEnvError("stage", ["prod", { name: "floci", endpoint: "http://localhost:4566" }]),
+    ).toMatch(/Unknown environment "stage".*prod, floci/);
+  });
 });
 
 describe("env-aware discovery (#505)", () => {

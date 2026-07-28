@@ -1,4 +1,4 @@
-import { describe, test, expect, vi, beforeEach } from "vitest";
+import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";
 import { createMockPlugin, staticDescribeResources } from "@intentius/chant-test-utils";
 import type { LexiconPlugin, ResourceMetadata } from "../../lexicon";
 import type { BuildResult } from "../../build";
@@ -38,9 +38,13 @@ vi.mock("../../lifecycle/release-ledger", async () => {
   };
 });
 
-vi.mock("../../config", () => ({
-  loadChantConfig: (...args: unknown[]) => loadChantConfigMock(...args),
-}));
+vi.mock("../../config", async () => {
+  const actual = await vi.importActual<typeof import("../../config")>("../../config");
+  return {
+    ...actual,
+    loadChantConfig: (...args: unknown[]) => loadChantConfigMock(...args),
+  };
+});
 
 vi.mock("../../build", () => ({
   build: (...args: unknown[]) => buildMock(...args),
@@ -265,6 +269,61 @@ describe("components handlers", () => {
       expect(exit).toBe(0);
       const rows = JSON.parse(stdoutBuf.join(""));
       expect(rows[0]).toMatchObject({ component: "svc", reconciliation: "reconciled" });
+    });
+
+    // #1166 — an environment can declare its own endpoint (a local emulator
+    // like Floci), applied here unless the ambient shell already set it, so
+    // `--live` status doesn't silently read the wrong account.
+    describe("declared endpoint (#1166)", () => {
+      const prevEndpoint = process.env.AWS_ENDPOINT_URL;
+
+      afterEach(() => {
+        if (prevEndpoint === undefined) delete process.env.AWS_ENDPOINT_URL;
+        else process.env.AWS_ENDPOINT_URL = prevEndpoint;
+      });
+
+      test("applies the declared endpoint to AWS_ENDPOINT_URL for the live describe, then restores it", async () => {
+        delete process.env.AWS_ENDPOINT_URL;
+        readReleaseLedgerMock.mockResolvedValue({
+          records: [{
+            version: 1,
+            component: "svc",
+            env: "floci",
+            digest: "sha256:abc",
+            gitSha: "sha1",
+            runId: "run-1",
+            timestamp: "2026-01-01T00:00:00.000Z",
+            actor: "alice",
+          }],
+          malformed: 0,
+        });
+        buildMock.mockResolvedValue(makeBuildResult({ aws: ["svc"] }));
+        loadChantConfigMock.mockResolvedValue({
+          config: { environments: [{ name: "floci", endpoint: "http://localhost:4566" }] },
+        });
+
+        let seenDuringDescribe: string | undefined;
+        const plugins: LexiconPlugin[] = [
+          createMockPlugin({
+            name: "aws",
+            describeResources: async () => {
+              seenDuringDescribe = process.env.AWS_ENDPOINT_URL;
+              return { svc: meta() };
+            },
+          }),
+        ];
+
+        const ctx = {
+          args: makeArgs({ extraPositional: "floci", live: true, json: true }),
+          plugins,
+          serializers: plugins.map((p) => p.serializer),
+        };
+        const exit = await runComponentsStatus(ctx);
+        expect(exit).toBe(0);
+        expect(seenDuringDescribe).toBe("http://localhost:4566");
+        expect(process.env.AWS_ENDPOINT_URL).toBeUndefined();
+        expect(stderrBuf.join("\n")).toMatch(/environment "floci" declares endpoint http:\/\/localhost:4566/);
+      });
     });
 
     test("--live flags an unrecorded live+owned component", async () => {

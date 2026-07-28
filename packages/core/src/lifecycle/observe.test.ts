@@ -71,6 +71,39 @@ describe("observeResources", () => {
     expect(observations).toEqual([]);
   });
 
+  // #1166 — this is exactly the "wrong endpoint" shape: AWS's stackDoesNotExist
+  // branch returns an empty map (bare `{}`, no #1089 envelope) for a declared
+  // entity nobody could actually observe. Before the fix this vanished with
+  // neither an observation nor a warning; now it must say so.
+  it("warns when a lexicon with declared entities observes zero resources and nothing is unobserved either (#1166)", async () => {
+    const empty = awsPlugin(() => ({}));
+    const { observations, warnings } = await observeResources("prod", [empty], mockBuild());
+    expect(observations).toEqual([]); // still no observation pushed — nothing to graph
+    expect(warnings).toEqual([
+      'aws: 0 live resources for env "prod" (1 declared) — check the endpoint/credentials',
+    ]);
+  });
+
+  it("does not warn about zero resources when the lexicon declares no entities at all", async () => {
+    const empty = awsPlugin(() => ({}));
+    const noEntities: BuildResult = { outputs: new Map(), entities: new Map(), errors: [] } as unknown as BuildResult;
+    const { warnings } = await observeResources("prod", [empty], noEntities);
+    expect(warnings).toEqual([]);
+  });
+
+  it("does not double-warn when the emptiness is already explained by #1089 unobserved", async () => {
+    const plugin = {
+      name: "aws",
+      serializer: {} as ObservationLexicon["serializer"],
+      describeResources: async () =>
+        observation({}, { "web-vpc": { type: "AWS::EC2::VPC", reason: "no-binding" } }),
+    } as unknown as ObservationLexicon;
+    const { warnings } = await observeResources("prod", [plugin], mockBuild());
+    // Only the #1089 per-entity warning — no separate "0 live resources" line.
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain("no binding for this environment");
+  });
+
   it("carries a plugin's own unobserved entities through (#1089)", async () => {
     const plugin = {
       name: "aws",
