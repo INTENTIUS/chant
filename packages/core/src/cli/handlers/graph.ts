@@ -3,6 +3,7 @@ import { discoverOps } from "../../op/discover";
 import { discover } from "../../discovery/index";
 import { partitionByLexicon, computeStackGraph, build } from "../../build";
 import { buildGraphIr, buildLiveGraphIr, overlayGraphs, sourceOverlayGraphs, type GraphIR } from "../../graph-ir";
+import { buildDeclaredPerStack } from "../../graph-declared";
 import { reconstructEdges, mergeCatalogs, containmentGroups, type ReferenceCatalog, type ContainmentPair } from "../../graph-refs";
 import { observeResources } from "../../lifecycle/observe";
 import { loadChantConfig } from "../../config";
@@ -112,7 +113,7 @@ async function runGraphLive(
   const componentsDiscovery = await discoverComponents(resolve(args.src ?? config.sourceDir ?? "."), {
     sandbox: args.sandbox,
   });
-  const stacks: Array<{ name: string; region?: string }> = [];
+  const stacks: Array<{ name: string; region?: string; src?: string }> = [];
   const seenStacks = new Set<string>();
   if (componentsDiscovery.errors.length === 0) {
     for (const { component } of componentsDiscovery.components.values()) {
@@ -125,7 +126,7 @@ async function runGraphLive(
   }
   // ChantConfig.stacks (with optional per-stack region) — multi-region estates.
   for (const declared of config.stacks ?? []) {
-    if (!seenStacks.has(declared.name)) { seenStacks.add(declared.name); stacks.push({ name: declared.name, region: declared.region }); }
+    if (!seenStacks.has(declared.name)) { seenStacks.add(declared.name); stacks.push({ name: declared.name, region: declared.region, src: declared.src }); }
   }
 
   const { observations, errors } = await observeResources(environment, observing, buildResult, {
@@ -170,15 +171,29 @@ async function runGraphLive(
   //     so cross-substrate topology survives; live status joined per node.
   //   - live (#780): provisioned graph is the canvas — reconstructed live edges.
   if (args.overlay) {
-    const declared = await discover(resolve(args.src ?? config.sourceDir ?? "."));
-    if (declared.errors.length === 0) {
-      const declaredIr = buildGraphIr(declared.entities, projectPath);
+    // Multi-stack (#1162): the live `ir` keys nodes by `${stack}::${logicalId}`,
+    // so the declared canvas must qualify identically — build each stack's src
+    // scoped rather than a flat whole-project discovery (whose disambiguated
+    // names never match the observed bare ids). Fall back to the flat build when
+    // no stack carries a `src`.
+    const scopedStacks = stacks.filter((s) => s.src);
+    if (scopedStacks.length > 0) {
+      const declaredIr = await buildDeclaredPerStack(scopedStacks, projectPath);
       ir =
         args.overlayAnchor === "live"
           ? overlayGraphs(ir, declaredIr)
           : sourceOverlayGraphs(declaredIr, ir);
     } else {
-      console.error(formatWarning({ message: "overlay: source has discovery errors — showing the provisioned graph without the declared overlay" }));
+      const declared = await discover(resolve(args.src ?? config.sourceDir ?? "."));
+      if (declared.errors.length === 0) {
+        const declaredIr = buildGraphIr(declared.entities, projectPath);
+        ir =
+          args.overlayAnchor === "live"
+            ? overlayGraphs(ir, declaredIr)
+            : sourceOverlayGraphs(declaredIr, ir);
+      } else {
+        console.error(formatWarning({ message: "overlay: source has discovery errors — showing the provisioned graph without the declared overlay" }));
+      }
     }
   }
 

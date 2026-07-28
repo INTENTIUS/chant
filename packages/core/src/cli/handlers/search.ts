@@ -1,6 +1,7 @@
 import { resolve } from "node:path";
 import { build } from "../../build";
 import { buildGraphIr, buildLiveGraphIr, sourceOverlayGraphs, type GraphIR, type IRNode } from "../../graph-ir";
+import { buildDeclaredPerStack } from "../../graph-declared";
 import { discover } from "../../discovery/index";
 
 import { observeResources } from "../../lifecycle/observe";
@@ -63,7 +64,7 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
       return 1;
     }
     const observing = plugins.filter((p) => p.describeResources);
-    const stacks = (config.stacks ?? []).map((s) => ({ name: s.name, region: s.region }));
+    const stacks = (config.stacks ?? []).map((s) => ({ name: s.name, region: s.region, src: s.src }));
     const { observations, errors } = await observeResources(environment, observing, buildResult, {
       owned: true,
       stacks,
@@ -80,11 +81,18 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
       }
     }
     // Overlay live identity onto the SOURCE graph (same as `graph --overlay`):
-    // the declared graph is the canvas — its edges (computed from source
-    // AttrRefs by buildGraphIr) carry the topology so ->/<- traversal resolves,
-    // while the live side supplies physical ids. Reconstructing edges over
-    // live-only nodes misses joins because their refs are physical, not logical.
-    const declared = buildGraphIr((await discover(resolve(args.src ?? config.sourceDir ?? "."))).entities, projectPath);
+    // the declared graph is the canvas — its edges carry the topology so ->/<-
+    // resolves, while the live side supplies physical ids.
+    //
+    // Multi-stack (#1162): build the declared graph PER STACK (scoped to each
+    // stack's src, the way it deploys) and stack-qualify node ids + edges as
+    // `${stack}::${id}` — matching how observation qualifies. A flat whole-
+    // project discovery would disambiguate colliding names by module path
+    // (UsEast1Src…), which never matches the observed bare LogicalResourceIds.
+    const declared =
+      stacks.length > 0
+        ? await buildDeclaredPerStack(stacks, projectPath)
+        : buildGraphIr((await discover(resolve(args.src ?? config.sourceDir ?? "."))).entities, projectPath);
     ir = sourceOverlayGraphs(declared, live);
   } else {
     const discovered = await discover(resolve(args.src ?? config.sourceDir ?? "."));
@@ -181,7 +189,9 @@ function matchTerm(n: IRNode, t: Term, ir?: GraphIR, byId?: Map<string, IRNode>)
 
 function formatRow(n: IRNode, show: string[]): string {
   const attrs = (n.attrs ?? {}) as Record<string, unknown>;
-  const parts: string[] = [n.id, n.kind ?? ""];
+  // Display the bare logical id, not the `${stack}::` qualification (#1162).
+  const displayId = n.id.includes("::") ? n.id.slice(n.id.lastIndexOf("::") + 2) : n.id;
+  const parts: string[] = [displayId, n.kind ?? ""];
   // Prefer the node-level live physicalId (set by the overlay), then attrs;
   // skip source-mode AttrRef placeholders (objects).
   const physical = (n as { physicalId?: unknown }).physicalId ?? attrs["physicalId"] ?? attrs["InstanceId"] ?? attrs["Id"];

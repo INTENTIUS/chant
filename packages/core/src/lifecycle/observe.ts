@@ -11,6 +11,8 @@
  */
 import type { ObservationLexicon, ResourceMetadata } from "../lexicon";
 import type { BuildResult } from "../build";
+import { build as buildProject } from "../build";
+import { resolve as resolvePath } from "node:path";
 import type { SerializerResult } from "../serializer";
 import type { LiveObservation } from "../graph-ir";
 
@@ -44,10 +46,25 @@ export async function observeResources(
   environment: string,
   plugins: ObservationLexicon[],
   buildResult: BuildResult,
-  opts?: { owned?: boolean; stacks?: Array<string | { name: string; region?: string }> },
+  opts?: { owned?: boolean; stacks?: Array<string | { name: string; region?: string; src?: string }> },
 ): Promise<ObserveResult> {
   const owned = opts?.owned ?? true;
   const stacks = (opts?.stacks ?? []).map((st) => (typeof st === "string" ? { name: st } : st));
+  // A stack's `src` (multi-stack, #1162) is built SCOPED to get that stack's
+  // BARE entity names — the names it actually deploys. Matching deployed bare
+  // LogicalResourceIds against the whole-project build's DISAMBIGUATED names
+  // (UsWest1Src…) misses every colliding resource. Cached per src.
+  const serializers = plugins.map((p) => p.serializer);
+  const scopedBuildCache = new Map<string, BuildResult>();
+  const scopedBuild = async (src: string): Promise<BuildResult> => {
+    const key = resolvePath(src);
+    let r = scopedBuildCache.get(key);
+    if (!r) {
+      r = await buildProject(key, serializers);
+      scopedBuildCache.set(key, r);
+    }
+    return r;
+  };
   const observations: LiveObservation[] = [];
   const warnings: string[] = [];
   const errors: string[] = [];
@@ -81,16 +98,43 @@ export async function observeResources(
       if (stacks.length > 0) {
         resources = {};
         for (const stack of stacks) {
+          // Use this stack's scoped build (bare entity names) when it has a src,
+          // so describeResources matches the deployed bare LogicalResourceIds.
+          let stackEntityNames = entityNames;
+          let stackBuildOutput = buildOutput;
+          let stackEntities = entities;
+          if (stack.src) {
+            const sb = await scopedBuild(stack.src);
+            stackEntityNames = [];
+            stackEntities = new Map();
+            for (const [name, entity] of sb.entities) {
+              if (entity.lexicon !== plugin.name) continue;
+              stackEntityNames.push(name);
+              stackEntities.set(name, {
+                entityType: entity.entityType,
+                props: ("props" in entity && entity.props != null ? entity.props : {}) as Record<string, unknown>,
+              });
+            }
+            const raw = sb.outputs.get(plugin.name);
+            stackBuildOutput = raw === undefined ? "" : typeof raw === "string" ? raw : (raw as SerializerResult).primary;
+          }
           const perStack = await plugin.describeResources({
             environment,
-            buildOutput,
-            entityNames,
-            entities,
+            buildOutput: stackBuildOutput,
+            entityNames: stackEntityNames,
+            entities: stackEntities,
             owned,
             stack: stack.name,
             region: stack.region,
           });
-          Object.assign(resources, perStack);
+          // Stack-qualify each logical id (#1162): the same bare LogicalResourceId
+          // (e.g. `vpc`) can appear in multiple stacks, so key observed nodes by
+          // `${stack}::${logicalId}`. The declared side qualifies identically, so
+          // the overlay join is unambiguous. A single stack qualifies too, for a
+          // stable id the declared graph can match.
+          for (const [logicalId, meta] of Object.entries(perStack)) {
+            resources[`${stack.name}::${logicalId}`] = meta;
+          }
         }
       } else {
         resources = await plugin.describeResources({

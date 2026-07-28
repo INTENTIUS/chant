@@ -718,10 +718,15 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
       ? options.stacks.map((st) => (typeof st === "string" ? { name: st } : st))
       : [{ name: options.stack ?? options.environment }];
     const merged: Record<string, Record<string, unknown>> = {};
+    const multi = options.stacks && options.stacks.length > 0;
     for (const ref of stackRefs) {
       try {
         const template = await this.exportResources!({ environment: options.environment, stack: ref.name, region: ref.region, owned: options.owned });
-        Object.assign(merged, resolveTemplateAttrs(template));
+        const attrs = resolveTemplateAttrs(template);
+        // Stack-qualify keys to match the observed node ids (#1162).
+        for (const [logicalId, v] of Object.entries(attrs)) {
+          merged[multi ? `${ref.name}::${logicalId}` : logicalId] = v;
+        }
       } catch {
         // A stack that isn't deployed yet contributes no live attrs — skip it.
       }
