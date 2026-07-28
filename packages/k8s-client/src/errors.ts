@@ -56,7 +56,11 @@ export class K8sApiError extends Error {
     return this.statusCode === 401 || this.reason === "Unauthorized";
   }
 
-  /** Server-side-apply field-ownership conflict (chant #1075 surfaces these properly). */
+  /**
+   * Server-side-apply field-ownership conflict. `./conflict.ts`'s
+   * {@link import("./conflict").FieldManagerConflictError} is the presented
+   * form (chant #1075); this predicate still answers for both.
+   */
   get conflict(): boolean {
     return this.statusCode === 409 || this.reason === "Conflict";
   }
@@ -135,6 +139,19 @@ export class ExecCredentialNotAllowedError extends Error {
         `If "${command}" is expected, add it to k8s.execCredentialPlugins in chant.config.ts.`,
     );
     this.name = "ExecCredentialNotAllowedError";
+  }
+}
+
+/**
+ * chant's own field-manager identity is unusable (chant #1075) — almost always
+ * because `ownership.stack` is too long or carries whitespace. Raised where the
+ * name is derived, before any request, so the config key can be named instead
+ * of the failure arriving as a 400 from a cluster.
+ */
+export class FieldManagerError extends Error {
+  constructor(message: string) {
+    super(`k8s: ${message}`);
+    this.name = "FieldManagerError";
   }
 }
 

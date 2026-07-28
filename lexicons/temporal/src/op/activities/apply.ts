@@ -1,11 +1,44 @@
+/**
+ * `nativeApply` — push declared source to the cloud through the target's own
+ * mechanism. Authority stays with the platform; chant hosts no state file.
+ *
+ * ## Where the Kubernetes half went (chant #1075)
+ *
+ * This used to build a shell command for all three targets, `kubectl apply -f`
+ * among them. Two things were wrong with that. `kubectl apply` defaults to a
+ * client-side three-way merge, which leaves field ownership implicit and gives
+ * the diff engine nothing to key on — the defect chant #1075 exists to fix.
+ * And the kubectl branch was Kubernetes product knowledge living in the
+ * Temporal lexicon, against the one-lexicon-per-product rule that already
+ * moved `kubectlApply`, `k3dUp`/`k3dDown` and `waitForArgoSync` out (chant
+ * #809).
+ *
+ * So the kubectl branch moved to `@intentius/chant-lexicon-k8s`, where it is a
+ * server-side apply over the typed client with chant's own field manager, and
+ * the prune moved with it. **The dispatcher stayed here**, because "which
+ * mechanism applies this target" is not any one product's knowledge — and
+ * because the activity keeps its name, its arguments and its place in
+ * `ApplyOp`, so no existing Op changes shape.
+ *
+ * The k8s lexicon is reached by dynamic import at call time, never by a static
+ * one: this package must not depend on that one. A project applying a kubectl
+ * target already lists `k8s` in its lexicons, so the module is there; when it
+ * is not, the failure names the package to install.
+ */
+
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
-import { LABEL_OWNERSHIP_KEYS, OWNERSHIP_MANAGED_BY_VALUE } from "@intentius/chant/ownership";
 
 const execAsync = promisify(exec);
 
 /** The native apply mechanism for a target. */
 export type ApplyTarget = "cloudformation" | "kubectl" | "arm";
+
+/**
+ * The targets that are still a shell command. `kubectl` is not one of them
+ * since chant #1075 — it goes through the k8s lexicon's typed client.
+ */
+export type ShellApplyTarget = "cloudformation" | "arm";
 
 /**
  * How apply treats resources no longer declared.
@@ -20,42 +53,71 @@ export type DeleteMode = "never" | "owned-only" | "gated";
 export interface NativeApplyArgs {
   /** Native mechanism to delegate to. */
   target: ApplyTarget;
-  /** Environment — CFN stack name / ARM resource group. */
+  /** Environment — CFN stack name / ARM resource group / chant environment. */
   env: string;
   /** Built manifest/template path. Default per target ({@link defaultOutput}):
    * `dist` (a dir) for kubectl, `template.json` (a file) for CloudFormation/ARM. */
   output?: string;
   /** Delete handling. Default: never. */
   deleteMode?: DeleteMode;
+  /**
+   * kubectl target only (chant #1075). Take ownership of fields another field
+   * manager owns instead of failing with a conflict that names them.
+   * **Opt-in, and never defaulted on**: transferring ownership of a live field
+   * is a decision, not a retry.
+   */
+  forceConflicts?: boolean;
+}
+
+/** What an apply did. Shaped by the target, since the targets differ. */
+export interface NativeApplyResult {
+  /** The shell command that ran — CloudFormation and ARM. */
+  command?: string;
+  /** Objects server-side applied — kubectl. */
+  applied?: number;
+  /** Objects pruned because they carried chant's marker and are no longer declared — kubectl. */
+  pruned?: number;
+  /** The field manager the apply claimed ownership as — kubectl. */
+  fieldManager?: string;
 }
 
 /**
- * Build the native apply command. Pure — exported for testing.
+ * The k8s lexicon's server-side apply, as this module needs to call it.
+ * Structural, so nothing here imports the k8s lexicon's types.
+ */
+export type K8sApplier = (
+  args: {
+    manifest: string;
+    environment?: string;
+    deleteMode?: DeleteMode;
+    force?: boolean;
+  },
+  signal?: AbortSignal,
+) => Promise<{ applied: unknown[]; pruned: unknown[]; fieldManager: string }>;
+
+/**
+ * Build the native apply command for the shell targets. Pure — exported for
+ * testing.
  *
- * Authority stays with the platform: the CloudFormation stack, the Kubernetes
- * API server, the ARM resource group. chant hosts no state file. Owned-only
- * deletes ride the native delete path, scoped to the ownership marker so a
- * foreign resource is never touched:
- * - kubectl: `--prune --selector <managed-by>=chant` prunes only chant-owned
- *   objects absent from the apply set.
+ * Authority stays with the platform: the CloudFormation stack, the ARM
+ * resource group. chant hosts no state file. Owned-only deletes ride the
+ * native delete path so a foreign resource is never touched:
  * - CloudFormation: the stack is the boundary; `deploy` deletes resources
  *   removed from the template within it.
  * - ARM: `--mode Complete` removes resources not in the template from the RG.
+ *
+ * The kubectl target has no command: it is a server-side apply through the k8s
+ * lexicon (chant #1075), whose marker-scoped prune replaces
+ * `--prune --selector <managed-by>=chant`.
  */
 export function applyCommand(
-  target: ApplyTarget,
+  target: ShellApplyTarget,
   env: string,
   output: string,
   deleteMode: DeleteMode,
 ): string {
   const deletes = deleteMode !== "never";
   switch (target) {
-    case "kubectl": {
-      const prune = deletes
-        ? ` --prune --selector ${LABEL_OWNERSHIP_KEYS.managedBy}=${OWNERSHIP_MANAGED_BY_VALUE}`
-        : "";
-      return `kubectl apply -f ${output}${prune} --wait=true`;
-    }
     case "cloudformation":
       // CFN deletes resources removed from the template within the stack itself.
       return `aws cloudformation deploy --template-file ${output} --stack-name ${env} --capabilities CAPABILITY_NAMED_IAM`;
@@ -64,6 +126,31 @@ export function applyCommand(
       return `az deployment group create --resource-group ${env} --template-file ${output}${mode}`;
     }
   }
+}
+
+/**
+ * Load the k8s lexicon's apply. A variable specifier, so `tsc` does not
+ * statically resolve a package this one deliberately does not depend on — the
+ * same mechanism core's activity registry uses to load a lexicon's activities.
+ */
+async function loadK8sApplier(): Promise<K8sApplier> {
+  const spec = "@intentius/chant-lexicon-k8s/op/activities";
+  let mod: { applyManifest?: K8sApplier };
+  try {
+    mod = (await import(spec)) as { applyManifest?: K8sApplier };
+  } catch (err) {
+    throw new Error(
+      `apply target "kubectl" needs @intentius/chant-lexicon-k8s, which could not be loaded ` +
+        `(${err instanceof Error ? err.message : String(err)}). Kubernetes applies moved out of the ` +
+        `Temporal lexicon in chant #1075; install the k8s lexicon and list it in chant.config.ts.`,
+    );
+  }
+  if (typeof mod.applyManifest !== "function") {
+    throw new Error(
+      "the installed @intentius/chant-lexicon-k8s exports no applyManifest — it predates chant #1075",
+    );
+  }
+  return mod.applyManifest;
 }
 
 /**
@@ -91,11 +178,41 @@ export function defaultOutput(target: ApplyTarget): string {
 /**
  * Apply declared source to the cloud via the target's native mechanism.
  * Deletes (when enabled) are limited to chant-owned orphans by construction —
- * the native prune/complete path is scoped to the ownership marker.
+ * every delete path is scoped to the ownership marker.
+ *
+ * `applier` is injectable so this dispatcher can be tested without the k8s
+ * lexicon present; production resolves it through {@link loadK8sApplier}.
  */
-export async function nativeApply(args: NativeApplyArgs, signal?: AbortSignal): Promise<{ command: string }> {
+export async function nativeApply(
+  args: NativeApplyArgs,
+  signal?: AbortSignal,
+  applier?: K8sApplier,
+): Promise<NativeApplyResult> {
   const output = args.output ?? defaultOutput(args.target);
   const deleteMode = args.deleteMode ?? "never";
+
+  if (args.target === "kubectl") {
+    const apply = applier ?? (await loadK8sApplier());
+    const result = await apply(
+      {
+        manifest: output,
+        environment: args.env,
+        deleteMode,
+        ...(args.forceConflicts !== undefined ? { force: args.forceConflicts } : {}),
+      },
+      signal,
+    );
+    console.log(
+      `applied ${result.applied.length} object(s) as field manager "${result.fieldManager}"` +
+        (result.pruned.length > 0 ? `; pruned ${result.pruned.length}` : ""),
+    );
+    return {
+      applied: result.applied.length,
+      pruned: result.pruned.length,
+      fieldManager: result.fieldManager,
+    };
+  }
+
   const command = applyEndpoint(
     applyCommand(args.target, args.env, output, deleteMode),
     args.target,
