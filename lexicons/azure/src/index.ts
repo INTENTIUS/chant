@@ -10,6 +10,15 @@ export { azureSerializer } from "./serializer";
 export { azurePlugin } from "./plugin";
 export { Parameter } from "./parameter";
 
+// Deep observation (#1086): the `az resource show` reader and the noise
+// rules it shares with core's normalization pass.
+export {
+  observeResourcesDeepAzure,
+  azureDeepNormalizationHooks,
+  AZURE_READ_ONLY_NAMES,
+  AZURE_SERVICE_DEFAULTS,
+} from "./deep-observe";
+
 // --- Intrinsics ---
 export {
   ResourceId, ResourceIdIntrinsic,
