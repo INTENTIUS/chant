@@ -31,7 +31,7 @@ A third, optional method goes one level deeper. `observeResourcesDeep()` reads t
 | AWS | ✅ | ✅ |  | Tags | `aws cloudformation describe-stack-resources`; deep read via the Cloud Control API for S3 buckets, IAM roles/managed policies and security groups. `--owned` available on the deep read (Cloud Control returns tags) and on live export, not on describe |
 | Azure | ✅ |  |  | Tags | `az resource show` per declared entity; resource-group is the env name. `--owned` available on live export (`az group export` carries tags; not on describe) |
 | GCP (Config Connector) | ✅ |  |  | Labels | `kubectl get <gvk>` against the GKE management cluster; cluster resolved from `k8s.profiles.<env>.context` when bound (chant #1100), else ambient — visibly |
-| Kubernetes | ✅ |  |  | Labels | `kubectl get <kind>` per declared entity; ~20 common types; cluster resolved from `k8s.profiles.<env>.context` when bound (chant #1100) — a mismatched ambient context refuses loudly rather than reading the wrong cluster |
+| Kubernetes | ✅ |  |  | Labels | Typed API client ([`@intentius/chant-k8s-client`](/chant/lexicons/k8s/api-client/)) — concurrent reads, any kind the cluster's discovery reports including CRDs, typed errors; cluster resolved from `k8s.profiles.<env>.context` when bound (chant #1100) — a mismatched ambient context refuses loudly rather than reading the wrong cluster |
 | Temporal | ✅ |  |  | — | Temporal client — namespaces, search attributes, schedules |
 | Helm |  |  | ✅ | — | `helm list -A -o json` — releases as artifacts |
 | Docker |  |  | ✅ | — | `docker ps`, `docker image ls`, `docker network ls` (NDJSON) |
@@ -43,7 +43,7 @@ Lexicons that implement neither are warn-skipped — `--live` doesn't fail the w
 
 The **Ownership** column shows the marker channel a lexicon queries for the `--owned` filter ([ownership marking](/chant/configuration/config-file/#ownership)). `—` means the `--owned` query isn't available for that lexicon — it has no durable marker channel. Where a lexicon is asked for owned resources but can't read a marker on a given path — e.g. AWS and Azure `describeResources`, which the filter degrades to detect-only — it stamps an explicit `unknown` verdict and returns everything rather than silently filtering. The `--owned` filter is honored on live export, where the full config (with tags) is available.
 
-Every observing lexicon reports per declared entity in three states, not two ([the observation contract](/chant/lexicon-authoring/observation/#the-observation-tri-state-absent-is-not-the-same-as-unread)): observed present, observed absent, or **not observed** with a reason. Coverage gaps in the table above — the K8s kind map, Azure's nested ARM types — surface as `unobserved` entries in `lifecycle diff --live` and `lifecycle plan`, never as absences, so an uncovered resource is reported as unknown instead of being proposed for creation.
+Every observing lexicon reports per declared entity in three states, not two ([the observation contract](/chant/lexicon-authoring/observation/#the-observation-tri-state-absent-is-not-the-same-as-unread)): observed present, observed absent, or **not observed** with a reason. Coverage gaps in the table above — Azure's nested ARM types, a read denied by RBAC — surface as `unobserved` entries in `lifecycle diff --live` and `lifecycle plan`, never as absences, so an uncovered resource is reported as unknown instead of being proposed for creation.
 
 ## Cross-lexicon migration
 

@@ -53,6 +53,26 @@ export interface GroupVersionKind {
   kind: string;
 }
 
+/**
+ * How this resource is addressed over the API — chant #1074.
+ *
+ * Read out of the same document the resource's types come from (the OpenAPI
+ * `paths` for core kinds, the CRD's `spec.names` / `spec.scope` for custom
+ * ones), so the operation surface and the declarable surface cannot drift
+ * apart the way a hand-maintained `kind → kubectl resource` table did.
+ *
+ * It is a starting point, not the authority: the live client confirms plural
+ * and scope against the cluster's own discovery, which is the only thing that
+ * knows what a given cluster actually serves.
+ */
+export interface ParsedOperation {
+  /** Plural path segment, e.g. `deployments`. */
+  plural: string;
+  scope: "Namespaced" | "Cluster";
+  /** Verbs the schema documents for the named resource, e.g. `get`, `patch`. */
+  verbs: string[];
+}
+
 export interface K8sParseResult {
   resource: ParsedResource;
   propertyTypes: ParsedPropertyType[];
@@ -60,6 +80,8 @@ export interface K8sParseResult {
   gvk: GroupVersionKind;
   /** Whether this entity is a property type (nested inside resources) */
   isProperty?: boolean;
+  /** How the API addresses this resource. Absent for property types. */
+  operation?: ParsedOperation;
 }
 
 // ── Swagger types ──────────────────────────────────────────────────
@@ -90,8 +112,16 @@ interface SwaggerProperty extends SwaggerDefinition {
 
 interface SwaggerSpec {
   definitions?: Record<string, SwaggerDefinition>;
+  paths?: Record<string, SwaggerPathItem>;
   [key: string]: unknown;
 }
+
+interface SwaggerOperation {
+  "x-kubernetes-group-version-kind"?: GroupVersionKind;
+  "x-kubernetes-action"?: string;
+}
+
+type SwaggerPathItem = Record<string, SwaggerOperation | unknown>;
 
 // ── Well-known property type definitions ───────────────────────────
 
@@ -162,6 +192,7 @@ export function parseK8sSwagger(data: string | Buffer): K8sParseResult[] {
   const spec: SwaggerSpec = JSON.parse(typeof data === "string" ? data : data.toString("utf-8"));
   const definitions = spec.definitions ?? {};
   const results: K8sParseResult[] = [];
+  const operations = parseOperations(spec.paths);
 
   // Phase 1: Extract top-level resources (definitions with GVK)
   for (const [defKey, def] of Object.entries(definitions)) {
@@ -176,7 +207,11 @@ export function parseK8sSwagger(data: string | Buffer): K8sParseResult[] {
 
     const typeName = gvkToTypeName(gvk);
     const result = extractResource(defKey, def, typeName, gvk, definitions);
-    if (result) results.push(result);
+    if (result) {
+      const operation = operations.get(gvkKey(gvk));
+      if (operation) result.operation = operation;
+      results.push(result);
+    }
   }
 
   // Phase 2: Extract well-known property types
@@ -189,6 +224,63 @@ export function parseK8sSwagger(data: string | Buffer): K8sParseResult[] {
   }
 
   return results;
+}
+
+/** Stable key for a GVK, used to join the `paths` pass onto the `definitions` pass. */
+export function gvkKey(gvk: GroupVersionKind): string {
+  return `${gvk.group}|${gvk.version}|${gvk.kind}`;
+}
+
+/**
+ * Derive the operation surface from the OpenAPI `paths` — chant #1074.
+ *
+ * Every Kubernetes operation carries `x-kubernetes-group-version-kind` and
+ * `x-kubernetes-action`, and the path itself carries the two facts a REST call
+ * needs and a definition does not have: the plural segment, and whether the
+ * resource is namespaced (`/namespaces/{namespace}/` appears in its path).
+ *
+ * Only paths addressing a single named object (`.../{plural}/{name}`) are read,
+ * so subresource paths (`.../{name}/status`, `.../{name}/scale`) and collection
+ * paths do not supply the plural — but their verbs are collected, because
+ * "this kind can be listed" is worth knowing.
+ */
+export function parseOperations(paths: Record<string, SwaggerPathItem> | undefined): Map<string, ParsedOperation> {
+  const out = new Map<string, ParsedOperation>();
+  if (!paths) return out;
+
+  for (const [path, item] of Object.entries(paths)) {
+    for (const operation of Object.values(item ?? {})) {
+      if (!operation || typeof operation !== "object") continue;
+      const op = operation as SwaggerOperation;
+      const gvk = op["x-kubernetes-group-version-kind"];
+      const action = op["x-kubernetes-action"];
+      if (!gvk || !action) continue;
+
+      const segments = path.split("/").filter(Boolean);
+      const last = segments[segments.length - 1];
+      // `.../{plural}/{name}` — the only shape that names the plural
+      // unambiguously. `/api/v1/namespaces/{name}` is such a shape too, and
+      // correctly yields plural `namespaces`, cluster-scoped.
+      if (last !== "{name}") continue;
+      const plural = segments[segments.length - 2];
+      if (!plural || plural.startsWith("{")) continue;
+
+      const key = gvkKey(gvk);
+      const existing = out.get(key);
+      if (existing) {
+        if (!existing.verbs.includes(action)) existing.verbs.push(action);
+        continue;
+      }
+      out.set(key, {
+        plural,
+        scope: path.includes("/namespaces/{namespace}/") ? "Namespaced" : "Cluster",
+        verbs: [action],
+      });
+    }
+  }
+
+  for (const operation of out.values()) operation.verbs.sort();
+  return out;
 }
 
 /**

@@ -219,20 +219,23 @@ release bump="patch":
     esac
     next="$major.$minor.$patch"
     echo "Bumping $current → $next"
-    # Bump .version everywhere, and keep the @intentius/* peerDependencies ranges
-    # in lockstep (they were frozen at ^0.1.0, which breaks clean installs — #411).
-    for f in packages/core/package.json lexicons/*/package.json; do
+    # Bump .version everywhere, and keep the @intentius/* peer/optional
+    # dependency ranges in lockstep (they were frozen at ^0.1.0, which breaks
+    # clean installs — #411). packages/k8s-client is published alongside the
+    # lexicons (#1074), so it bumps with them.
+    for f in packages/core/package.json packages/k8s-client/package.json lexicons/*/package.json; do
       jq --arg v "$next" '
         .version = $v
         | if .peerDependencies["@intentius/chant"] then .peerDependencies["@intentius/chant"] = "^" + $v else . end
         | if .peerDependencies["@intentius/chant-lexicon-github"] then .peerDependencies["@intentius/chant-lexicon-github"] = "^" + $v else . end
+        | if .optionalDependencies["@intentius/chant-k8s-client"] then .optionalDependencies["@intentius/chant-k8s-client"] = "^" + $v else . end
       ' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
     done
     # Keep the committed lockfile's workspace entries in step with the bump —
     # without this every release leaves package-lock.json recording the
     # previous version for all 12 workspace packages (#1094).
     npm install --package-lock-only
-    git add packages/core/package.json lexicons/*/package.json package-lock.json
+    git add packages/core/package.json packages/k8s-client/package.json lexicons/*/package.json package-lock.json
     git commit -m "chant-v$next"
     git tag "chant-v$next"
     git push origin main "chant-v$next"

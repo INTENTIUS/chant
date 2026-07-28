@@ -27,6 +27,15 @@ export interface GenerateResult {
   properties: number;
   enums: number;
   warnings: Array<{ file: string; error: string }>;
+  /**
+   * Additional generated files, keyed by filename, produced by the optional
+   * {@link GeneratePipelineConfig.generateExtraArtifacts} hook. They come out
+   * of the same parse a lexicon's types and registry come out of, which is the
+   * point: an artifact derived here cannot drift from the types, the way a
+   * hand-maintained table beside them can (chant #1074's operation surface is
+   * the first of these).
+   */
+  extraArtifacts?: Record<string, string>;
 }
 
 /**
@@ -67,6 +76,14 @@ export interface GeneratePipelineConfig<T extends ParsedResult> {
 
   /** Generate runtime index with factory exports. */
   generateRuntimeIndex: (results: T[], naming: NamingStrategy) => string;
+
+  /**
+   * Optional extra artifacts from the same parsed results — filename → content.
+   * Used when a lexicon needs a second derived table alongside the registry and
+   * the types, and needs it to come from the same pass so the three cannot
+   * skew.
+   */
+  generateExtraArtifacts?: (results: T[], naming: NamingStrategy) => Record<string, string>;
 
   /** Optional pre-parse hook (patches, overlays, extra resources, etc.). */
   augmentSchemas?: (
@@ -161,6 +178,13 @@ export async function generatePipeline<T extends ParsedResult>(
   log("Generating runtime index...");
   const indexTS = config.generateRuntimeIndex(results, naming);
 
+  let extraArtifacts: Record<string, string> | undefined;
+  if (config.generateExtraArtifacts) {
+    log("Generating extra artifacts...");
+    extraArtifacts = config.generateExtraArtifacts(results, naming);
+    log(`Generated ${Object.keys(extraArtifacts).length} extra artifact(s)`);
+  }
+
   // Count stats
   let resourceCount = 0;
   let propertyCount = 0;
@@ -179,6 +203,7 @@ export async function generatePipeline<T extends ParsedResult>(
     properties: propertyCount,
     enums: enumCount,
     warnings,
+    ...(extraArtifacts ? { extraArtifacts } : {}),
   };
 }
 

@@ -45,6 +45,10 @@ export default defineConfig({
                   "slug": "operational-playbook"
             },
             {
+                  "label": "The API Client",
+                  "slug": "api-client"
+            },
+            {
                   "label": "Importing Existing YAML",
                   "slug": "importing-yaml"
             },
