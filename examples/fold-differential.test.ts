@@ -138,7 +138,25 @@ const report: ReportRow[] = [];
  * in a folding file and still reported `[identical]` — see this suite's
  * `buildBothWays`/`loadBuild` for why, and the #1112 PR for the before/after.
  *
- * chant #1063 grew it from 32 to 53 — the largest single jump so far, and
+ * chant #1169 grew it from 55 to 76 — the largest single jump so far, by
+ * lifting the rejection of a `new Type(...)` used as a VALUE. That one cause
+ * was the corpus's biggest gate (64 files, the sole blocker in 22 entries), and
+ * it covered two authoring shapes the old reason string conflated: the
+ * construction written inline (`image: new Image({...})`), which now folds to a
+ * `{__resource}` envelope the bridge constructs for real, and the far more
+ * common one that names it first (`const nodeImage = new Image({...})` then
+ * `image: nodeImage`), which needed the same-file resource pre-pass in
+ * `fold-import.ts`. The 21 added entries are every corpus entry whose remaining
+ * blockers were that cause plus the taint it induced: the five k8s
+ * `new Container(...)`/`new Probe(...)` examples, four gitlab pipelines, the
+ * four fly deploys, `fly/getting-started`, and the seven aws/gitlab shared-ALB
+ * entries whose `params.ts`/`network.ts` were only falling back because a
+ * sibling did. Two entries in that class did NOT flip and are honest about
+ * why: `gitlab/monorepo-pipeline` (`workspaces.map(...)`) and
+ * `github/release-please` (`Checkout(...)`) each stop on a function call as a
+ * value, one blocker behind the one this change removed.
+ *
+ * chant #1063 grew it from 32 to 53 — the largest jump before that, and
  * the whole of azure's and gcp's corpora at once. The 21 added entries are
  * every azure example (13) and every gcp example (8): each had exactly one
  * file, failing on `Azure.<PseudoParameter>` / `GCP.<PseudoParameter>` — an
@@ -151,11 +169,19 @@ const report: ReportRow[] = [];
  * blockers apiece, so they move no entry on their own.
  */
 const EXPECTED_FOLD: readonly string[] = [
+  "examples/adopt-alb-services",
   "examples/alert-triage",
   "examples/bedrock-agentcore-agent",
   "examples/components-aws-e2e",
+  "examples/fly-deploy-rollback",
+  "examples/fly-durable-deploy",
+  "examples/fly-reconcile",
   "examples/getting-started",
+  "examples/gitlab-aws-alb-api",
+  "examples/gitlab-aws-alb-infra",
+  "examples/gitlab-aws-alb-ui",
   "examples/local-cloud-trio",
+  "examples/local-fly",
   "examples/temporal-stack",
   "lexicons/aws/examples/fargate-alb",
   "lexicons/aws/examples/lambda-dynamodb",
@@ -168,6 +194,9 @@ const EXPECTED_FOLD: readonly string[] = [
   "lexicons/aws/examples/lifecycle-reconcile-aws",
   "lexicons/aws/examples/multi-service-alb",
   "lexicons/aws/examples/rds-postgres",
+  "lexicons/aws/examples/shared-alb",
+  "lexicons/aws/examples/shared-alb-api",
+  "lexicons/aws/examples/shared-alb-ui",
   "lexicons/aws/examples/stack-outputs",
   "lexicons/aws/examples/vpc",
   "lexicons/azure/examples/aks-cluster",
@@ -184,6 +213,7 @@ const EXPECTED_FOLD: readonly string[] = [
   "lexicons/azure/examples/vnet-vms",
   "lexicons/azure/examples/web-app",
   "lexicons/docker/examples/basic-app",
+  "lexicons/fly/examples/getting-started",
   "lexicons/gcp/examples/basic-bucket",
   "lexicons/gcp/examples/cloud-function",
   "lexicons/gcp/examples/cloud-run",
@@ -192,19 +222,29 @@ const EXPECTED_FOLD: readonly string[] = [
   "lexicons/gcp/examples/gke-cluster",
   "lexicons/gcp/examples/pubsub",
   "lexicons/gcp/examples/vpc-network",
+  "lexicons/gitlab/examples/docker-build",
+  "lexicons/gitlab/examples/getting-started",
+  "lexicons/gitlab/examples/multi-stage-deploy",
   "lexicons/gitlab/examples/node-pipeline",
   "lexicons/gitlab/examples/python-pipeline",
+  "lexicons/gitlab/examples/review-app",
   "lexicons/helm/examples/composites-basic",
   "lexicons/helm/examples/composites-infrastructure",
   "lexicons/helm/examples/composites-production",
   "lexicons/helm/examples/helm-render-external-secrets",
   "lexicons/helm/examples/microservice-chart",
   "lexicons/helm/examples/web-app-with-ingress",
+  "lexicons/k8s/examples/basic-deployment",
   "lexicons/k8s/examples/batch-workers",
+  "lexicons/k8s/examples/configmap-secret",
+  "lexicons/k8s/examples/cronjob-cleanup",
+  "lexicons/k8s/examples/ingress-tls",
   "lexicons/k8s/examples/layered-config",
   "lexicons/k8s/examples/namespace-rbac",
   "lexicons/k8s/examples/org-policy",
+  "lexicons/k8s/examples/statefulset",
   "lexicons/k8s/examples/web-platform",
+  "lexicons/temporal/examples/local-dev-server",
 ];
 
 /**

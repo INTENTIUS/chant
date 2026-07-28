@@ -35,6 +35,15 @@ import { intrinsicCallFolds, type IntrinsicDef } from "../lexicon";
  *      intentional asymmetry, not a bug: it can only ever be a *false
  *      negative* on EVL's part (EVL passes something `fold()` might later
  *      reject for being unresolved), never the reverse.
+ *
+ *      chant #1169 adds one more resolution-dependent rejection in the same
+ *      direction: an identifier bound to a same-file `const x = new T(...)`,
+ *      used as a VALUE. It is shape-valid here; `fold()` answers it only when
+ *      its caller pre-resolved that const to the one real instance the file
+ *      built (`../discovery/fold-import.ts`), and rejects otherwise, because
+ *      re-folding the initializer would construct a duplicate of a resource
+ *      discovery has already registered. Shape cannot see the difference, and
+ *      the rejection is a fall-back-to-run, never a wrong value.
  *   2. Tagged-template *tag registration* — needs a lexicon's intrinsics
  *      manifest, which isn't available to a syntax-only lint rule. `fold()`
  *      alone checks it; this module treats any tag name as shape-valid and

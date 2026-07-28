@@ -258,14 +258,45 @@ describe("documented divergences — NOT unified by design (see subset.ts module
     expect(evl001NonLiteralExpressionRule.check(context)).toHaveLength(0);
   });
 
-  test("nested resource construction: fold rejects a nested `new Type()` used as a value (falls back to run); EVL001 allows it statically", () => {
-    // A top-level `new Type()` folds (fold-import constructs a real Declarable),
-    // but a NESTED one as a property value can only fold to a {__resource,props}
-    // envelope that is never constructed, so it would serialize wrong (real
-    // fold-vs-run drift, caught by the #1025 differential on gitlab). fold()
-    // therefore rejects it, falling the file back to run; EVL allows it (a valid
-    // TS constructor call), so this is an inherent, out-of-scope divergence.
+  test("nested resource construction: NO LONGER a divergence (chant #1169) — both fold and EVL001 accept it", () => {
+    // This was the largest divergence in the table until #1169: a nested
+    // `new Type()` as a property value could only fold to a {__resource, props}
+    // envelope nothing constructed, so it would have serialized wrong (real
+    // fold-vs-run drift, caught by the #1025 differential on gitlab), and fold()
+    // rejected it while EVL allowed it.
+    //
+    // fold() now produces the envelope and ../discovery/fold-import.ts revives
+    // it into a REAL instance of the class the file imported, so the two sides
+    // agree. Kept as a test rather than deleted: it is the assertion that the
+    // divergence stays closed, and that the envelope carries the nested
+    // constructor's own name and props for the bridge to build from.
     const source = `const bad = new Thing({ x: new Inner({ y: 1 }) });`;
+    const sourceFile = ts.createSourceFile("t.ts", source, ts.ScriptTarget.Latest, true);
+    const consts = collectConsts(sourceFile);
+    const badInit = consts.get("bad") as ts.NewExpression;
+
+    expect(foldResource(badInit, consts, [])).toEqual({
+      __resource: "Thing",
+      props: { x: { __resource: "Inner", props: { y: 1 } } },
+    });
+
+    const context: LintContext = { sourceFile, entities: [], filePath: "t.ts", lexicon: undefined };
+    expect(evl001NonLiteralExpressionRule.check(context)).toHaveLength(0);
+  });
+
+  test("same-file resource used as a bare value: fold rejects it (would build a duplicate); EVL001 allows it statically", () => {
+    // chant #1169's own new divergence, in the same safe direction as every
+    // other one here. `DependsOn: [dbCluster]` hands the run path THE instance
+    // this file already exported; folding the identifier would construct a
+    // SECOND one, which discovery never registers and whose AttrRefs can never
+    // be named. Rejected, so the file falls back to run — where both references
+    // are the same object by construction. EVL sees a plain identifier and has
+    // no binding resolver (subset.ts module doc, point 1), so it stays
+    // permissive.
+    const source = `
+      const db = new DbCluster({ engine: "aurora" });
+      const bad = new Instance({ x: 1 }, { DependsOn: [db] });
+    `;
     const sourceFile = ts.createSourceFile("t.ts", source, ts.ScriptTarget.Latest, true);
     const consts = collectConsts(sourceFile);
     const badInit = consts.get("bad") as ts.NewExpression;

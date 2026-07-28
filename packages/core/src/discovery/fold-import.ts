@@ -2143,12 +2143,18 @@ async function interpretExpression(node: ts.Expression, ctx: ResolveCtx): Promis
  * Construct a real resource from a `new Type(...)` anywhere inside a factory
  * body — a member, a nested property object, an array element.
  *
- * Deliberately NOT routed through {@link resolveResourceEntity}: that one
- * folds its arguments with {@link foldResource}, which rejects a nested `new`
- * as a value because a top-level fold has no way to construct one. Here there
- * IS a way — the defining module's imports are in hand — so each argument is
- * interpreted recursively and the constructor is called with exactly the
- * arguments the source wrote, which is what the run path does.
+ * Deliberately NOT routed through {@link resolveResourceEntity}: a factory body
+ * evaluates against the DEFINING module's scope with the caller's props already
+ * bound to live values, so each argument is interpreted recursively (through
+ * {@link interpretExpression}, which can produce a live composite instance a
+ * plain `fold()` has no representation for) rather than folded and revived.
+ *
+ * chant #1169 removed the asymmetry that used to motivate this comment: a
+ * nested `new` in a TOP-LEVEL value position now constructs too, via
+ * {@link constructFoldedResource}. The two paths reach the same place — the
+ * class named by an `import`, called with the arguments the source wrote — by
+ * different routes, because a factory body and a file's own top level start
+ * from different scopes.
  */
 async function interpretNewExpression(node: ts.NewExpression, ctx: ResolveCtx): Promise<unknown> {
   // Guaranteed an identifier by {@link checkFactoryExpression}; re-checked so a
@@ -2235,10 +2241,16 @@ function applyResolvedValue(
 // envelope structurally (see ../serializer-walker.ts) with no revival
 // needed. But an intrinsic's OWN implementation (e.g. `SubIntrinsic`) needs
 // a genuine `AttrRef` instance internally (`instanceof` checks), which would
-// require wiring a live `WeakRef` to the sibling entity — out of scope here,
-// same call as the existing "nested `new Type(...)` as a value" rejection
-// a few lines up: reject (fall back to run) rather than risk silently wrong
-// output.
+// require wiring a live `WeakRef` to the sibling entity — out of scope here:
+// reject (fall back to run) rather than risk silently wrong output.
+//
+// chant #1169 adds the fourth envelope this walk revives, and the one that
+// closes the corpus's largest fold gate: `{__resource}`, a nested
+// `new Type(...)` used as a value. It is revived the same way and for the same
+// reason as the other three — the real class is resolved through the folding
+// file's own imports and called for real — so what the outer constructor
+// receives is the instance the run path would have handed it, not a look-alike.
+// See {@link constructFoldedResource}.
 // ─────────────────────────────────────────────────────────────────────────
 
 /** Resolve a bare name bound by this file's own `import` to its real, live export — the same two-step (resolve module path, then `importModule`) `resolveResourceEntity`/`resolveCallExpression` already use for constructors and composite factories. */
@@ -2390,9 +2402,24 @@ async function reviveFoldedValue(value: FoldedValue, ctx: ResolveCtx, requireLiv
   }
 
   if ("__resource" in value) {
-    // fold() itself already rejects a nested `new Type(...)` as a value
-    // (see its own comment) — this is defensive, not a reachable path today.
-    throw cheapError("nested resource as a value is not foldable");
+    // chant #1169 — a nested `new Type(...)` used as a value. This is the
+    // branch that makes the envelope safe: it is replaced, here, by a REAL
+    // instance of the class the source named, built by the same
+    // resolve-through-this-file's-imports machinery `resolveResourceEntity`
+    // uses for a top-level resource and `interpretNewExpression` (#1023) uses
+    // for a construction inside a factory body. Nothing symbolic reaches the
+    // serializer — see {@link fold}'s `new` branch for why that is the whole
+    // safety argument.
+    //
+    // `requireLiveRefs` is propagated rather than reset: a construction in an
+    // ordinary prop position keeps the top-level rule (a `{__attrRef}` inside
+    // it stays an envelope, which the serializer's own walker resolves by name
+    // through `propertyDeclarable` exactly as it does for a top-level
+    // resource's props), while a construction inside an intrinsic's interior
+    // keeps the stricter one and rejects — the receiving implementation
+    // inspects what it is handed, and this is the direction that falls back to
+    // run rather than emitting something wrong.
+    return constructFoldedResource(value as FoldedResource, ctx, requireLiveRefs);
   }
 
   const revived: Record<string, unknown> = {};
@@ -2580,19 +2607,194 @@ function chantCoreRoot(): string {
 async function reviveFoldedProps(
   props: { [key: string]: FoldedValue },
   ctx: ResolveCtx,
+  requireLiveRefs: boolean,
 ): Promise<Record<string, unknown>> {
   const revived: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(props)) {
-    revived[key] = await reviveFoldedValue(value, ctx, false);
+    revived[key] = await reviveFoldedValue(value, ctx, requireLiveRefs);
   }
   return revived;
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// Resource construction — unchanged from #1022 (folds the ctor call's props
-// via `fold()`, resolves the constructor through this file's imports,
-// constructs the real Declarable).
+// Resource construction — #1022's mechanism (fold the ctor call's arguments
+// via `fold()`, resolve the constructor through this file's imports,
+// construct the real Declarable), split by chant #1169 into two reusable
+// halves so a NESTED `new Type(...)` used as a value is built by exactly the
+// same code as a file's own top-level resource declaration, not by a second
+// implementation that could quietly differ.
+//
+// `resolveResourceEntity` below is the top-level entry point and keeps its
+// per-declarator reason strings verbatim; `reviveResourceCtorArgs` and
+// `instantiateFoldedResource` are the shared halves, and
+// {@link constructFoldedResource} is the one-call composition of the two that
+// `reviveFoldedValue` uses for a nested construction.
 // ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * Revive a folded constructor call's arguments into the real values the class
+ * will receive.
+ *
+ * chant #1039 — replays any folded intrinsic/symbol envelopes into their real
+ * runtime values before the entity is constructed. A no-op walk when the file
+ * used no registered intrinsics (the overwhelming majority of cases today).
+ *
+ * chant #1082 — when `spec.args` is present the constructor's argument list
+ * isn't the classic `(props)`/`(props, attributes)` shape (AWS's `Parameter` is
+ * `(type, props)`), so the whole list is revived and spread by the caller
+ * instead of `spec.props`, which in that case is only a view onto one of its
+ * entries and would be double-counted.
+ */
+async function reviveResourceCtorArgs(
+  spec: FoldedResource,
+  ctx: ResolveCtx,
+  requireLiveRefs: boolean,
+): Promise<unknown[]> {
+  if (spec.args) {
+    const revived: unknown[] = [];
+    for (const arg of spec.args) revived.push(await reviveFoldedValue(arg, ctx, requireLiveRefs));
+    return revived;
+  }
+  const props = await reviveFoldedProps(spec.props, ctx, requireLiveRefs);
+  // The runtime constructor's optional second argument (`attributes` — CFN's
+  // DependsOn/Condition/DeletionPolicy/…, see createResource in ../runtime.ts)
+  // is only present in `spec` when the source actually passed one (see
+  // foldResource in ../fold/fold.ts). Passing `undefined` when it's absent
+  // matches the run path's own default (`attributes ?? {}` inside the
+  // constructor).
+  return [props, spec.attributes ? await reviveFoldedProps(spec.attributes, ctx, requireLiveRefs) : undefined];
+}
+
+/**
+ * Resolve a folded constructor's NAME through `ctx`'s own `import`
+ * declarations and call the real class with `ctorArgs`.
+ *
+ * Throws a {@link cheapError} for every failure; `resolveResourceEntity` turns
+ * those into its per-declarator `reason` strings and the nested path lets them
+ * fall the whole file back to run. `forClause` is the ` for "<export name>"`
+ * fragment the top-level messages carry and a nested construction has no name
+ * for — the only difference between the two callers' diagnostics.
+ */
+async function instantiateFoldedResource(
+  typeName: string,
+  ctorArgs: readonly unknown[],
+  ctx: ResolveCtx,
+  forClause: string,
+): Promise<unknown> {
+  const binding = ctx.imports.get(typeName);
+  if (!binding) {
+    throw cheapError(`constructor "${typeName}"${forClause} is not a resolvable import`);
+  }
+
+  // chant #1093 — a resource class is a lexicon export in every corpus entry
+  // today, but nothing forces that: `new Thing(...)` where `Thing` comes from
+  // a project file (or an arbitrary dependency) would import and run that
+  // module here, in the CLI's process. Same refusal as the composite-factory
+  // path above, and the reason a nested construction cannot widen the #1093
+  // boundary: it reaches its class by exactly this gate.
+  const refusal = sandboxedExecutionRefusal(binding, ctx, typeName, "constructor");
+  if (refusal) throw cheapError(refusal);
+
+  let modulePath: string;
+  try {
+    modulePath = resolveModulePathMemoized(binding.specifier, ctx.file, ctx.resolvePathCache);
+  } catch (err) {
+    throw cheapError(
+      `could not resolve import "${binding.specifier}" for "${typeName}": ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+
+  // Same import mechanism as `resolveCallExpression` above — see its comment.
+  let mod: Record<string, unknown>;
+  try {
+    mod = await importModuleMemoized(modulePath, ctx.importCache);
+  } catch (err) {
+    throw cheapError(
+      `could not import "${binding.specifier}" to resolve "${typeName}": ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+
+  const Ctor = mod[binding.imported];
+  if (typeof Ctor !== "function") {
+    throw cheapError(`"${binding.imported}" from "${binding.specifier}" is not a constructor`);
+  }
+
+  // Constructed with exactly the arguments the source wrote.
+  return new (Ctor as new (...ctorArguments: unknown[]) => unknown)(...ctorArgs);
+}
+
+/**
+ * chant #1169 — build a real instance from a nested `{__resource}` envelope:
+ * revive its arguments, then resolve its class and call it. The composition
+ * {@link reviveFoldedValue} reaches for; identical in every step to what
+ * {@link resolveResourceEntity} does for a top-level declaration, which is the
+ * point — a nested `new Image({...})` and a top-level `export const image = new
+ * Image({...})` produce the same object, from the same class, from the same
+ * resolved module path.
+ */
+async function constructFoldedResource(
+  spec: FoldedResource,
+  ctx: ResolveCtx,
+  requireLiveRefs: boolean,
+): Promise<unknown> {
+  const ctorArgs = await reviveResourceCtorArgs(spec, ctx, requireLiveRefs);
+  return instantiateFoldedResource(spec.__resource, ctorArgs, ctx, "");
+}
+
+/**
+ * chant #1169 — construct every top-level `const x = new Type(...)` in the file
+ * ONCE, in source order, before any exported declarator is resolved, and put
+ * each instance in `ctx.externals` under its own name.
+ *
+ * This is what makes a same-file resource usable as a VALUE — `image:
+ * nodeImage`, `DependsOn: [dbCluster]`, `export { app }` — and it is the half
+ * of the #1169 gate the nested-`new` lift alone does not reach: the
+ * `{__resource}` envelope covers a construction written INLINE at the value
+ * position, while the far more common authoring shape names it once and refers
+ * to it. `fold()` cannot answer that reference on its own (it is synchronous,
+ * and constructing needs the module graph), so it defers to `externals` — see
+ * its identifier branch for the full argument.
+ *
+ * ONE instance, and identity is the whole point. Every reference in the file
+ * reads this map, and the exported-declarator loop reuses the same object
+ * through `prebuilt` rather than constructing a second one, so a resource
+ * referenced by name and the entity discovery registers are the same object —
+ * which is what makes the serializer's `Ref`/`DependsOn` resolution land on a
+ * logical name at all. Running the module top-to-bottom produces exactly this:
+ * every top-level `const` evaluated once, in order, later ones seeing earlier
+ * ones. Order matters and is preserved — `collectConsts` yields source order, so
+ * `const b = new Thing({ x: a })` finds `a` already built.
+ *
+ * A construction that FAILS is skipped silently rather than failing the file:
+ * the name stays absent from `externals`, so a reference to it rejects with the
+ * identical message it produced before this existed, and an EXPORTED one falls
+ * through to {@link resolveResourceEntity}, which reproduces the failure with
+ * its own located reason. Strictly additive.
+ *
+ * Under `--sandbox` every construction here goes through the same
+ * {@link sandboxedExecutionRefusal} as every other one, so a project-defined
+ * class refuses, the name stays unresolved, and the file demotes to the
+ * sandboxed child exactly as before. Under plain `--fold` this can import a
+ * constructor's module for a const that is never exported — work the RUN path
+ * performs unconditionally for the same file, and through the same
+ * already-memoized `importModule`.
+ */
+async function preresolveResourceConsts(ctx: ResolveCtx): Promise<Map<ts.Expression, unknown>> {
+  const built = new Map<ts.Expression, unknown>();
+  for (const [name, initializer] of ctx.consts) {
+    if (!ts.isNewExpression(initializer) || !ts.isIdentifier(initializer.expression)) continue;
+    try {
+      const spec = foldResource(initializer, ctx.consts, ctx.intrinsics, ctx.externals);
+      const instance = await constructFoldedResource(spec, ctx, false);
+      built.set(initializer, instance);
+      ctx.externals.set(name, instance);
+    } catch {
+      // Not constructible here (an unresolvable constructor import, a prop
+      // outside the fold subset, a --sandbox refusal). Leave the name alone.
+    }
+  }
+  return built;
+}
 
 async function resolveResourceEntity(
   name: string,
@@ -2609,31 +2811,9 @@ async function resolveResourceEntity(
     throw err;
   }
 
-  // chant #1039 — replay any folded intrinsic/symbol envelopes into their
-  // real runtime values before constructing the entity. A no-op walk when
-  // this file used no registered intrinsics (the overwhelming majority of
-  // cases today).
-  //
-  // chant #1082 — when `spec.args` is present the constructor's argument list
-  // isn't the classic `(props)`/`(props, attributes)` shape (AWS's `Parameter`
-  // is `(type, props)`), so revive the whole list and spread it below instead
-  // of reviving `spec.props`, which in that case is only a view onto one of
-  // its entries and would be double-counted.
   let ctorArgs: unknown[];
   try {
-    if (spec.args) {
-      ctorArgs = [];
-      for (const arg of spec.args) ctorArgs.push(await reviveFoldedValue(arg, ctx, false));
-    } else {
-      const props = await reviveFoldedProps(spec.props, ctx);
-      // The runtime constructor's optional second argument (`attributes` —
-      // CFN's DependsOn/Condition/DeletionPolicy/…, see createResource in
-      // ../runtime.ts) is only present in `spec` when the source actually
-      // passed one (see foldResource in ../fold/fold.ts). Passing `undefined`
-      // when it's absent matches the run path's own default
-      // (`attributes ?? {}` inside the constructor).
-      ctorArgs = [props, spec.attributes ? await reviveFoldedProps(spec.attributes, ctx) : undefined];
-    }
+    ctorArgs = await reviveResourceCtorArgs(spec, ctx, false);
   } catch (err) {
     return {
       ok: false,
@@ -2641,51 +2821,12 @@ async function resolveResourceEntity(
     };
   }
 
-  const typeName = spec.__resource;
-  const binding = ctx.imports.get(typeName);
-  if (!binding) {
-    return { ok: false, reason: `constructor "${typeName}" for "${name}" is not a resolvable import` };
-  }
-
-  // chant #1093 — a resource class is a lexicon export in every corpus entry
-  // today, but nothing forces that: `new Thing(...)` where `Thing` comes from
-  // a project file (or an arbitrary dependency) would import and run that
-  // module here, in the CLI's process. Same refusal as the composite-factory
-  // path above.
-  const refusal = sandboxedExecutionRefusal(binding, ctx, typeName, "constructor");
-  if (refusal) return { ok: false, reason: refusal };
-
-  let modulePath: string;
   try {
-    modulePath = resolveModulePathMemoized(binding.specifier, ctx.file, ctx.resolvePathCache);
+    const entity = (await instantiateFoldedResource(spec.__resource, ctorArgs, ctx, ` for "${name}"`)) as Declarable;
+    return { ok: true, entity };
   } catch (err) {
-    return {
-      ok: false,
-      reason: `could not resolve import "${binding.specifier}" for "${typeName}": ${err instanceof Error ? err.message : String(err)}`,
-    };
+    return { ok: false, reason: err instanceof Error ? err.message : String(err) };
   }
-
-  // Same import mechanism as `resolveCallExpression` above — see its comment.
-  let mod: Record<string, unknown>;
-  try {
-    mod = await importModuleMemoized(modulePath, ctx.importCache);
-  } catch (err) {
-    return {
-      ok: false,
-      reason: `could not import "${binding.specifier}" to resolve "${typeName}": ${err instanceof Error ? err.message : String(err)}`,
-    };
-  }
-
-  const Ctor = mod[binding.imported];
-  if (typeof Ctor !== "function") {
-    return { ok: false, reason: `"${binding.imported}" from "${binding.specifier}" is not a constructor` };
-  }
-
-  // Constructed with exactly the arguments the source wrote (see the revival
-  // block above for how `ctorArgs` was built for each of the two shapes).
-  const ResourceCtor = Ctor as new (...ctorArguments: unknown[]) => Declarable;
-  const entity = new ResourceCtor(...ctorArgs);
-  return { ok: true, entity };
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -3031,11 +3172,26 @@ async function tryFoldFileCore(file: string, session: FoldSession): Promise<Fold
       interpretDepth: 0,
     };
 
+    // chant #1169 — every same-file `const x = new Type(...)`, built once, in
+    // source order, before anything references one. See
+    // {@link preresolveResourceConsts}.
+    const prebuiltResources = await preresolveResourceConsts(ctx);
+
     const entities: FoldedEntity[] = [];
     const exportedValues = new Map<string, unknown>();
 
     for (const decl of scan.declarators) {
       if (decl.kind === "resource") {
+        // chant #1169 — the pre-pass already built this exact node. Reuse that
+        // instance rather than constructing a second one: a sibling prop that
+        // referenced this resource by name holds the pre-pass object, and if
+        // the entity discovery registers were a different one, the reference
+        // would have no logical name to resolve against.
+        const prebuilt = prebuiltResources.get(decl.node);
+        if (prebuilt !== undefined) {
+          applyResolvedValue(decl.name, prebuilt, entities, exportedValues);
+          continue;
+        }
         const result = await resolveResourceEntity(decl.name, decl.node, ctx);
         if (!result.ok) return result;
         applyResolvedValue(decl.name, result.entity, entities, exportedValues);
