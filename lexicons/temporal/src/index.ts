@@ -1,6 +1,18 @@
 // Plugin
 export { temporalPlugin } from "./plugin";
 
+// Deep observation (#1088): the Temporal client reader and the noise rules it
+// shares with core's normalization pass.
+export {
+  observeResourcesDeepTemporal,
+  temporalDeepNormalizationHooks,
+  TEMPORAL_NAMESPACE_DEFAULTS,
+  TEMPORAL_SCHEDULE_DEFAULTS,
+  parseDurationSeconds,
+  formatDurationSeconds,
+  reconcileDuration,
+} from "./deep-observe";
+
 // Serializer
 export { temporalSerializer } from "./serializer";
 
