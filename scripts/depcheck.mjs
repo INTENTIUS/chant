@@ -2,8 +2,9 @@
 /**
  * Runtime-dependency audit (#837/#839). For each package under packages/ and
  * lexicons/, find external packages imported at *runtime* (not `import type`) that
- * aren't declared in `dependencies` or `peerDependencies`. Such an import only
- * resolves in the monorepo via hoisting and breaks for a published consumer.
+ * aren't declared in `dependencies`, `peerDependencies` or `optionalDependencies`.
+ * Such an import only resolves in the monorepo via hoisting and breaks for a
+ * published consumer.
  *
  * Exits non-zero when it finds a real gap, so CI can gate on it. False-positive
  * sources are excluded: node builtins, self-imports, and codegen/template/fixture
@@ -52,7 +53,16 @@ let findings = 0;
 for (const dir of pkgDirs.sort()) {
   const pkg = JSON.parse(readFileSync(join(dir, "package.json"), "utf8"));
   if (pkg.private) continue; // a private package can't be installed by a consumer
-  const declared = new Set([...Object.keys(pkg.dependencies || {}), ...Object.keys(pkg.peerDependencies || {})]);
+  // `optionalDependencies` counts as declared: npm installs them by default, so
+  // a published consumer gets one unless they opted out with `--omit=optional`.
+  // What makes an optional dependency safe is that nothing which must always
+  // work imports it — for the Kubernetes API client (chant #1074) that is
+  // enforced structurally by examples/k8s-client-boundary.test.ts, not here.
+  const declared = new Set([
+    ...Object.keys(pkg.dependencies || {}),
+    ...Object.keys(pkg.peerDependencies || {}),
+    ...Object.keys(pkg.optionalDependencies || {}),
+  ]);
   const missing = new Map();
   for (const f of walk(join(dir, "src"))) {
     // Strip template-literal bodies first: scaffolding/docs code (e.g. a plugin's

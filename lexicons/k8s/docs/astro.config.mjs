@@ -29,6 +29,19 @@ export default defineConfig({
                   "slug": "kubernetes-concepts"
             },
             {
+                  "label": "Live Cluster",
+                  "items": [
+                        {
+                              "label": "The API Client",
+                              "slug": "api-client"
+                        },
+                        {
+                              "label": "chant kube",
+                              "slug": "kube"
+                        }
+                  ]
+            },
+            {
                   "label": "Lint Rules",
                   "slug": "lint-rules"
             },

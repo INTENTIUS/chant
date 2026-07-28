@@ -24,6 +24,7 @@ import { GcpParser } from "./import/parser";
 import { GcpGenerator } from "./import/generator";
 import { gcpCompletions } from "./lsp/completions";
 import { gcpHover } from "./lsp/hover";
+import { gcpDeepNormalizationHooks } from "./deep-observe-hooks";
 
 export const gcpPlugin: LexiconPlugin = {
   name: "gcp",
@@ -384,4 +385,20 @@ export const bucket = new StorageBucket({
     const { exportResources } = await import("./export-resources");
     return exportResources(options);
   },
+
+  // Property-level live drift via SSA managed-fields (#1087, epic #1073),
+  // reusing the k8s row (#1076) rather than writing a second implementation —
+  // a Config Connector custom resource is a Kubernetes object too. The
+  // reader lives in ./deep-observe.ts, loaded only through this dynamic
+  // import — same reason describeResources/exportResources are — so nothing
+  // on the build path resolves the live kubectl transport it shares with
+  // ./describe-resources.ts. deepNormalizationHooks is plain data with no
+  // transport dependency and is imported statically above, because core
+  // applies it to the *declared* tree whether or not a live read ever happens.
+  async observeResourcesDeep(options) {
+    const { observeResourcesDeepGcp } = await import("./deep-observe");
+    return observeResourcesDeepGcp(options);
+  },
+
+  deepNormalizationHooks: gcpDeepNormalizationHooks,
 };

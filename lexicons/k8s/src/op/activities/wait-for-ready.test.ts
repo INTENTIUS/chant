@@ -1,6 +1,7 @@
 import { describe, test, expect } from "vitest";
 import {
   waitForReady,
+  apiResourceFetcher,
   ReadinessFailedError,
   readinessFor,
   isReady,
@@ -11,6 +12,7 @@ import {
 } from "./wait-for-ready";
 // The k8sWait profile marks ReadinessFailedError non-retryable for this activity.
 import { TEMPORAL_ACTIVITY_PROFILES } from "@intentius/chant-lexicon-temporal/config";
+import { fakeCluster, objectKey } from "../../api/fake-cluster";
 
 /** A fetcher returning a scripted sequence of objects, repeating the last. */
 function scriptedFetcher(sequence: Array<Record<string, unknown>>): ResourceFetcher {
@@ -101,5 +103,97 @@ describe("waitForReady", () => {
     const fetcher = scriptedFetcher([{ status: { state: "running" } }]);
     const obj = await waitForReady({ kind: "widget", name: "w", intervalMs: 0, spec }, undefined, fetcher);
     expect((obj as any).status.state).toBe("running");
+  });
+});
+
+/**
+ * chant #1074 — the reader underneath. The activity's contract is unchanged
+ * (`kind` is still whatever `kubectl get` accepts), so what has to be proven is
+ * that the same strings still resolve, now through the cluster's own API
+ * discovery rather than by handing them to a `kubectl` process.
+ */
+describe("apiResourceFetcher (chant #1074)", () => {
+  const readyObject = (apiVersion: string, kind: string, name: string, namespace?: string) => ({
+    apiVersion,
+    kind,
+    metadata: { name, ...(namespace ? { namespace } : {}), generation: 1 },
+    status: { observedGeneration: 1, conditions: [{ type: "Ready", status: "True" }] },
+  });
+
+  test.each([
+    ["raycluster.ray.io", "ray.io/v1", "RayCluster", "rayclusters", "K8s::Ray::RayCluster"],
+    ["certificates", "cert-manager.io/v1", "Certificate", "certificates", "K8s::CertManager::Certificate"],
+    ["Certificate", "cert-manager.io/v1", "Certificate", "certificates", "K8s::CertManager::Certificate"],
+    ["deployments", "apps/v1", "Deployment", "deployments", "K8s::Apps::Deployment"],
+  ])("`%s` resolves to %s %s via discovery", async (kindArg, apiVersion, kind, plural, entityType) => {
+    const cluster = fakeCluster({
+      serves: [entityType],
+      objects: { [objectKey(apiVersion, kind, "thing", "prod")]: readyObject(apiVersion, kind, "thing", "prod") },
+    });
+
+    const obj = await waitForReady(
+      { kind: kindArg, name: "thing", namespace: "prod", intervalMs: 0 },
+      undefined,
+      apiResourceFetcher(cluster.connector),
+    );
+
+    expect((obj as Record<string, unknown>).kind).toBe(kind);
+    expect(cluster.layer.paths()).toContain(
+      `${apiVersion.includes("/") ? `/apis/${apiVersion}` : `/api/${apiVersion}`}/namespaces/prod/${plural}/thing`,
+    );
+  });
+
+  test("resolution and the connection are done once, not once per poll", async () => {
+    const notReady = {
+      apiVersion: "cert-manager.io/v1",
+      kind: "Certificate",
+      metadata: { name: "tls", namespace: "prod", generation: 1 },
+      status: { observedGeneration: 1, conditions: [{ type: "Ready", status: "False" }] },
+    };
+    let polls = 0;
+    const cluster = fakeCluster({
+      serves: ["K8s::CertManager::Certificate"],
+      objects: { [objectKey("cert-manager.io/v1", "Certificate", "tls", "prod")]: notReady },
+      respond: (req) => {
+        if (!req.path.endsWith("/certificates/tls")) return undefined;
+        polls++;
+        return polls < 3
+          ? { body: notReady }
+          : { body: { ...notReady, status: { observedGeneration: 1, conditions: [{ type: "Ready", status: "True" }] } } };
+      },
+    });
+
+    await waitForReady(
+      { kind: "certificate", name: "tls", namespace: "prod", intervalMs: 0 },
+      undefined,
+      apiResourceFetcher(cluster.connector),
+    );
+
+    expect(polls).toBe(3);
+    expect(cluster.connects).toHaveLength(1);
+    // Discovery once; the three object reads reuse the cached resource list.
+    expect(cluster.layer.paths().filter((p) => p === "/apis/cert-manager.io/v1")).toHaveLength(1);
+  });
+
+  test("a kind the cluster does not serve fails loudly instead of polling forever", async () => {
+    const cluster = fakeCluster({ serves: ["K8s::Apps::Deployment"] });
+    await expect(
+      waitForReady({ kind: "widgets", name: "w", intervalMs: 0 }, undefined, apiResourceFetcher(cluster.connector)),
+    ).rejects.toThrow(/no resource matching "widgets"/);
+  });
+
+  test("an explicit context is passed to the connector, closing the read/write split", async () => {
+    const cluster = fakeCluster({
+      serves: ["K8s::Apps::Deployment"],
+      objects: { [objectKey("apps/v1", "Deployment", "web", "prod")]: readyObject("apps/v1", "Deployment", "web", "prod") },
+    });
+
+    await waitForReady(
+      { kind: "deployments", name: "web", namespace: "prod", context: "test-context", intervalMs: 0 },
+      undefined,
+      apiResourceFetcher(cluster.connector),
+    );
+
+    expect(cluster.connects[0]).toMatchObject({ context: "test-context" });
   });
 });

@@ -11,10 +11,43 @@ import type { DriverComponent } from "./components/driver";
 import type { EmulatorCapability } from "./op/emulator-lifecycle";
 import type { RuleMeta } from "./audit/catalog";
 import type { ReferenceCatalog } from "./graph-refs";
+import type { DescribeResourcesResult } from "./observation";
+import type { DeepNormalizationHooks, DeepObservationResult } from "./deep-observation";
+import type { OwnerChainVerdict } from "./owner-chain";
+import type { CommandGroup } from "./cli/command-group";
+
+// Re-exported so a lexicon can author its command group (#1078) from the
+// same `@intentius/chant/lexicon` entry it imports the plugin contract from.
+export type { CommandGroup, CommandGroupCommand, CommandGroupContext } from "./cli/command-group";
 
 // Re-exported so lexicons can author a reference catalog (#778) from the same
 // `@intentius/chant/lexicon` entry they import the plugin contract from.
 export type { ReferenceCatalog, IdentityRule, RefRule } from "./graph-refs";
+
+// The observation contract (#1089), re-exported from the same entry so a
+// lexicon's `describeResources` can report NOT-OBSERVED without a second
+// import path. Runtime helpers live in `@intentius/chant/observation`.
+export type {
+  DescribeResourcesResult,
+  ObservationResult,
+  NormalizedObservation,
+  UnobservedEntity,
+  UnobservedReason,
+} from "./observation";
+
+// The deep observation contract (#1014), re-exported for the same reason: a
+// lexicon authoring `observeResourcesDeep` + its pruning/ordering hooks types
+// them from the same entry. Runtime helpers live in
+// `@intentius/chant/deep-observation`.
+export type {
+  DeepObservationResult,
+  DeepResourceObservation,
+  NormalizedDeepObservation,
+  DeepNormalizationHooks,
+  DeepNode,
+  DeepArrayElement,
+  DeepSide,
+} from "./deep-observation";
 
 /**
  * Manifest for a packaged lexicon — metadata embedded in the tarball.
@@ -407,6 +440,24 @@ export interface LexiconPlugin {
    * account. Absent when the lexicon has no local emulator. */
   readonly emulator?: EmulatorCapability;
 
+  /**
+   * A CLI verb group this lexicon contributes, mounted under `chant <name>
+   * <verb>` (#1078). Core learns that a lexicon MAY contribute a command
+   * group and learns nothing about what is inside it — it finds the group by
+   * name and dispatches to the matched verb's handler wholesale, the same
+   * "spec, not behavior" shape as {@link emulator}. Unlike `emulator`, which
+   * core itself aggregates across every configured lexicon in one command
+   * (`chant emulator up --all`), a command group is owned end-to-end by ONE
+   * lexicon: `get -o wide -l app=x --field-selector` is irreducibly
+   * Kubernetes vocabulary, not something core could generalize or merge
+   * across plugins even if it wanted to. Absent when the lexicon contributes
+   * no CLI surface — registering nothing here changes nothing else about how
+   * the lexicon behaves; the build/fold path never calls this or invokes any
+   * verb's handler, since command dispatch happens only in the CLI's own
+   * entry point, never in discovery/build/fold.
+   */
+  commands?(): CommandGroup;
+
   // ── Optional extensions ───────────────────────────────────
   /** Return lint rules provided by this lexicon */
   lintRules?(): LintRule[];
@@ -507,6 +558,34 @@ export interface LexiconPlugin {
    * Use this when each chant entity has a 1:1 cloud equivalent — e.g. an
    * AWS CFN resource, a K8s object, an ARM resource, a Temporal namespace.
    *
+   * **The observation contract (#1089).** Returning nothing for a declared
+   * entity is a claim, and there are two different claims to make. Either the
+   * provider was asked and reported the resource absent — which is what lets
+   * the change set propose `create` — or the lexicon never looked, which must
+   * not. An implementation that has a "did not look" case (no reader for the
+   * kind, the read errored, no credentials, no cluster binding) must return the
+   * {@link ObservationResult} envelope and name those entities in `unobserved`
+   * with a total {@link UnobservedReason}. Warning on stderr is not enough: a
+   * warning is invisible to `lifecycle plan`, which is where the wrong `create`
+   * gets proposed. Returning the bare `name → ResourceMetadata` map is still
+   * valid and means "everything I was asked about, I looked at".
+   *
+   * Throwing is the whole-lexicon failure (see the k8s cluster-binding refusal,
+   * #1100): core catches it and marks every declared entity NOT-OBSERVED with
+   * `read-failed`, so a failed read is never a list of creates.
+   *
+   * Ownership verdicts are total (#1089). When `owned` is requested and the
+   * lexicon has no marker channel on this path, it must stamp
+   * `ownership: "unknown"` on what it returns rather than degrading silently —
+   * the change set never escalates `unknown` to a `delete`.
+   *
+   * An undeclared entry this method returns may carry {@link
+   * ResourceMetadata.ownerChain} (#1077) — set it when the provider's own
+   * parent/child graph (Kubernetes `ownerReferences`) shows this object's
+   * chain reaching a declared entity, so the diff engine classifies it
+   * `runtime` instead of `orphan`. Optional; a lexicon that never sets it
+   * keeps every undeclared entry classified `orphan`, unchanged.
+   *
    * `entities` carries the chant-side entity declarations for this lexicon,
    * keyed by chant entity name (e.g. the export name from a `*.ts` file).
    * Implementations that need to map cloud-side names back to chant entity
@@ -539,7 +618,51 @@ export interface LexiconPlugin {
      * everything.
      */
     owned?: boolean;
-  }): Promise<Record<string, ResourceMetadata>>;
+  }): Promise<DescribeResourcesResult>;
+
+  /**
+   * Read the full live *property tree* for each declared entity (#1014). Opt-in,
+   * and strictly deeper than {@link describeResources}, which reports existence
+   * plus a handful of scrubbed outputs. A lexicon that implements neither, or
+   * only the thin one, is unaffected — `lifecycle diff --live` gains
+   * property-level entries only where this exists.
+   *
+   * The result is keyed by chant entity name, exactly like the thin read, and
+   * carries the same NOT-OBSERVED map. That is the composition rule with #1089:
+   * a deep read that fails for one entity says so with a total
+   * {@link UnobservedReason}. It never returns a thin-but-clean tree, because a
+   * clean tree is a claim that nothing drifted.
+   *
+   * Properties must be normalized before they are returned — run
+   * `normalizeDeepProperties` (../deep-observation.ts) with this lexicon's own
+   * {@link deepNormalizationHooks}, so the trees a consumer sees are already
+   * free of arns, timestamps, status subtrees and unstable orderings.
+   *
+   * Throwing is the whole-lexicon failure, same as the thin read: core turns it
+   * into `read-failed` for every declared entity.
+   */
+  observeResourcesDeep?(options: {
+    environment: string;
+    buildOutput: string;
+    entityNames: string[];
+    entities: Map<string, { entityType: string; props: Record<string, unknown> }>;
+    /** Deployed stack to observe, for a multi-stack project (see `stacks` in {@link ChantConfig}). */
+    stack?: string;
+    /** Restrict to chant-owned resources (#119). A lexicon with no marker channel on this path says so. */
+    owned?: boolean;
+  }): Promise<DeepObservationResult>;
+
+  /**
+   * This lexicon's noise rules for deep observation (#1014): which fields are
+   * read-only / server-populated / controller-managed / provider-defaulted, and
+   * which arrays are sets. Data, not a method — core applies the same rules to
+   * the *declared* tree, which no reader ever touches, and the two sides have
+   * to be normalized identically to be comparable.
+   *
+   * Ships alongside {@link observeResourcesDeep}; a reader without hooks
+   * produces a diff made almost entirely of noise.
+   */
+  deepNormalizationHooks?: DeepNormalizationHooks;
 
   /**
    * Report the live status of one deploy unit by its deployed name. Opt-in.
@@ -688,12 +811,27 @@ export interface ResourceMetadata {
   /** Cloud-assigned output properties */
   attributes?: Record<string, unknown>;
   /**
-   * Live ownership verdict from the resource's marker (#119/#120), when the
-   * lexicon could determine it. `owned` = carries chant's marker; `foreign` =
-   * no marker. Absent = the lexicon has no marker channel here. The change set
-   * reads this — never the snapshot — to decide whether an orphan is a delete.
+   * Live ownership verdict from the resource's marker (#119/#120). `owned` =
+   * carries chant's marker; `foreign` = no marker; `unknown` = the lexicon has
+   * no marker channel on this read path and says so rather than degrading
+   * silently (#1089 — verdicts are total). Absent is read as `unknown`. The
+   * change set reads this — never the snapshot — to decide whether an orphan is
+   * a delete, and never escalates `unknown` to one.
    */
-  ownership?: "owned" | "foreign";
+  ownership?: "owned" | "foreign" | "unknown";
+  /**
+   * Where this resource's owner-reference chain leads, for a live resource
+   * that is not itself declared (#1077). A lexicon that maintains an
+   * owner-reference graph (Kubernetes) sets this on an undeclared entry it
+   * returns; the diff engine reads `{ root: "declared" }` as `runtime`
+   * (a Pod a declared Deployment's controller created) rather than `orphan`.
+   * Distinct from {@link ownership}: that is chant's own managed-by marker,
+   * this is the provider's native parent/child graph — a runtime child
+   * usually carries no chant marker of its own at all. Absent means the
+   * lexicon supplies no chain, which is exactly today's behavior: every
+   * undeclared live resource stays `orphan`.
+   */
+  ownerChain?: OwnerChainVerdict;
 }
 
 /**

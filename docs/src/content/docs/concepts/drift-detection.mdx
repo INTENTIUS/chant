@@ -38,7 +38,7 @@ For the implementer-side walkthrough, see [Implementing Observation](/chant/lexi
 
 ## The diff categories
 
-`chant lifecycle diff <env> --live` returns ten categories — six for resources, four for artifacts.
+`chant lifecycle diff <env> --live` returns eleven categories — seven for resources, four for artifacts.
 
 ### Resources (three-way diff)
 
@@ -46,16 +46,36 @@ The diff engine compares three axes: what's declared in source now, what was obs
 
 | Category | Declared now | In last snapshot | Observed now | Meaning |
 |---|---|---|---|---|
-| **missing** | ✅ | — | ✗ | Declared but not in cloud — never deployed, manually deleted, or stack rolled back |
+| **missing** | ✅ | — | ✗ | Declared, and the provider reported it absent — never deployed, manually deleted, or stack rolled back |
 | **orphan** | ✗ | — | ✅ | In cloud but not declared — manual creation, untracked tooling, or imported-pending |
 | **disappeared** | — | ✅ | ✗ | Was there at last snapshot, gone now |
 | **newly observed** | — | ✗ | ✅ | Observed now, not in any prior snapshot |
 | **drifted** | — | ✅ | ✅ | Present in both, but `status`, `physicalId`, or `attributes.*` changed |
 | **unchanged** | — | ✅ | ✅ | Present in both, metadata identical |
+| **unobserved** | ✅ | — | ? | Declared, and chant **could not look** — no reader for the kind, the read failed, no credentials, no cluster binding |
 
 Drifted entries include attribute-level deltas so you can see *what* changed, not just *that* something changed.
 
-These six categories collapse into the five `create/update/delete/adopt/noop` actions `chant lifecycle plan` emits — see the [observation-to-action crosswalk](/chant/cli/lifecycle/#crosswalk-observation-categories--plan-actions).
+#### `missing` and `unobserved` are different facts
+
+An unobserved entity is not drift and not absence: it is a hole in the report. It carries a reason (`read-failed`, `no-credentials`, `no-binding`, `unsupported-kind`, `filtered`) and it never becomes a `create` in the plan — chant proposes creating a resource only when a provider actually said it isn't there. When any entity is unobserved, the "no drift detected" line says so: no drift over an incomplete read is not a clean estate.
+
+These categories collapse into the `create/update/delete/adopt/noop/unobserved` actions `chant lifecycle plan` emits — see the [observation-to-action crosswalk](/chant/cli/lifecycle/#crosswalk-observation-categories--plan-actions).
+
+#### Depth: entity-level and property-level
+
+Those seven categories are entity-level — they answer whether a resource is there and whether its metadata moved. A lexicon that implements `observeResourcesDeep()` adds a second, deeper comparison of the same three axes at **property** granularity, with a fourth axis subtracted: an accepted baseline.
+
+| Property category | Meaning |
+|---|---|
+| **changed** | Source and cloud both carry the path, with different values |
+| **undeclared** | The cloud carries a property source never declared — a console edit, an org-policy default, another tool's field |
+| **absent** | Source declares a property the live resource is not carrying |
+| **accepted** | A deviation somebody recorded in the baseline, at the value they accepted. Not drift, but reported, so what is being held back stays visible |
+
+`undeclared` is the interesting one and the reason the deep read exists. CloudFormation's own drift detection compares only the properties it was told about, so a property nobody declared is invisible to it no matter who changed it.
+
+Depth is opt-in per lexicon and changes nothing for the others — see the [coverage matrix](/chant/lexicons/overview/#runtime-observation-coverage) for who reports it, and [`--update-baseline`](/chant/cli/lifecycle/#--update-baseline--accept-a-deviation) for accepting a deviation.
 
 #### Resolving an `orphan`
 

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildLiveGraphIr, overlayGraphs, sourceOverlayGraphs, type LiveObservation, type GraphIR } from "./graph-ir";
+import { buildLiveGraphIr, collectUnobserved, overlayGraphs, sourceOverlayGraphs, type LiveObservation, type GraphIR } from "./graph-ir";
 
 // A fixture "snapshot" — what a lexicon's describeResources() returns for a live
 // environment (managed-only). Two AWS resources; the subnet references the VPC by
@@ -60,6 +60,23 @@ describe("buildLiveGraphIr", () => {
     expect(node.attrs).toEqual({});
   });
 
+  // #1077 — owner-reference chain classification
+  it("carries runtimeOwner only when the owner chain resolves to a declared entity", () => {
+    const ir = buildLiveGraphIr([
+      {
+        lexicon: "k8s",
+        resources: {
+          "prod/web-abc": { type: "K8s::Core::Pod", status: "Running", ownerChain: { root: "declared", entity: "web" } },
+          "prod/other": { type: "K8s::Core::Pod", status: "Running", ownerChain: { root: "foreign" } },
+          "prod/plain": { type: "K8s::Core::Pod", status: "Running" },
+        },
+      },
+    ]);
+    expect(ir.nodes.find((n) => n.id === "prod/web-abc")!.runtimeOwner).toBe("web");
+    expect(ir.nodes.find((n) => n.id === "prod/other")!.runtimeOwner).toBeUndefined();
+    expect(ir.nodes.find((n) => n.id === "prod/plain")!.runtimeOwner).toBeUndefined();
+  });
+
   it("is deterministic for a fixed observation set", () => {
     expect(JSON.stringify(buildLiveGraphIr(observations))).toBe(
       JSON.stringify(buildLiveGraphIr(observations)),
@@ -84,6 +101,18 @@ describe("overlayGraphs (#780 drift overlay)", () => {
     const ir = overlayGraphs({ ...live, edges: [{ from: "rogue-sg", to: "web-vpc", kind: "ref" }] }, declared);
     expect(ir.nodes.map((n) => n.id).sort()).toEqual(["planned-db", "rogue-sg", "web-vpc"]);
     expect(ir.edges).toHaveLength(1);
+  });
+
+  // #1077 — a provisioned, undeclared node whose owner chain reaches a
+  // declared entity paints `runtime`, not `warn` — it is expected runtime,
+  // not a foreign resource needing attention.
+  it("classifies a runtime child via _status, distinct from foreign", () => {
+    const podNode = { id: "prod/web-abc", kind: "K8s::Core::Pod", lexicon: "k8s", attrs: {}, runtimeOwner: "web" };
+    const liveWithChild: GraphIR = { nodes: [node("web-vpc"), node("rogue-sg"), podNode], edges: [], groups: {} };
+    const ir = overlayGraphs(liveWithChild, declared);
+    const statusOf = (id: string) => (ir.nodes.find((n) => n.id === id)!.attrs as { _status?: string })._status;
+    expect(statusOf("prod/web-abc")).toBe("runtime");
+    expect(statusOf("rogue-sg")).toBe("warn"); // still foreign — no runtimeOwner
   });
 });
 
@@ -135,9 +164,47 @@ describe("sourceOverlayGraphs (#821 source-anchored overlay)", () => {
     expect(ir.groups.byLexicon).toEqual({ aws: ["planned-db", "web-vpc"], k8s: ["app-ingress"] });
   });
 
+  // #1077 — a live, undeclared node whose owner chain reaches a declared
+  // entity is appended `runtime`, not `warn`, even though it is just as
+  // "foreign" (undeclared) from the declared graph's point of view.
+  it("appends a runtime child as `runtime`, distinct from foreign", () => {
+    const podNode = { id: "prod/web-abc", kind: "K8s::Core::Pod", lexicon: "k8s", attrs: {}, runtimeOwner: "app-ingress" };
+    const liveWithChild: GraphIR = { ...live, nodes: [...live.nodes, podNode] };
+    const ir = sourceOverlayGraphs(declared, liveWithChild);
+    expect(statusOf(ir, "prod/web-abc")).toBe("runtime");
+    expect(statusOf(ir, "rogue-sg")).toBe("warn"); // still foreign
+  });
+
   it("drops a live edge between two managed nodes — declared edges already cover it", () => {
     const liveDup: GraphIR = { ...live, edges: [{ from: "app-ingress", to: "web-vpc", kind: "ref", viaAttr: "live-label" }] };
     const ir = sourceOverlayGraphs(declared, liveDup);
     expect(ir.edges.filter((e) => e.from === "app-ingress" && e.to === "web-vpc")).toHaveLength(1);
+  });
+
+  // #1089 — "not deployed yet" is a claim the read has to support.
+  it("paints a declared node nobody could read `neutral`, not `accent`", () => {
+    const ir = sourceOverlayGraphs(declared, live, {
+      unobserved: { "planned-db": { reason: "no-binding", detail: "no kubectl context" } },
+    });
+    const node = ir.nodes.find((x) => x.id === "planned-db")!;
+    expect((node.attrs as { _status?: string })._status).toBe("neutral");
+    expect((node.attrs as { _unobserved?: string })._unobserved).toBe("no-binding");
+  });
+
+  it("still paints a confirmed-absent declared node `accent`", () => {
+    const ir = sourceOverlayGraphs(declared, live, { unobserved: {} });
+    expect((ir.nodes.find((x) => x.id === "planned-db")!.attrs as { _status?: string })._status).toBe("accent");
+  });
+});
+
+describe("collectUnobserved (#1089)", () => {
+  it("unions every observation's holes", () => {
+    expect(
+      collectUnobserved([
+        { lexicon: "aws", resources: {}, unobserved: { a: { reason: "read-failed" } } },
+        { lexicon: "k8s", resources: {} },
+        { lexicon: "gcp", resources: {}, unobserved: { b: { reason: "no-binding" } } },
+      ]),
+    ).toEqual({ a: { reason: "read-failed" }, b: { reason: "no-binding" } });
   });
 });

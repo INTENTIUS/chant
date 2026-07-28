@@ -6,6 +6,8 @@
  */
 
 import type { LexiconPlugin, InitTemplateSet, ResourceMetadata } from "@intentius/chant/lexicon";
+import type { CommandGroup } from "@intentius/chant/cli/command-group";
+import { kubeCommandGroup } from "./kube/group";
 import { detectTemplate } from "./detect";
 import type { LintRule } from "@intentius/chant/lint/rule";
 import { postSynthChecks as postSynthCheckList } from "./lint/post-synth";
@@ -23,6 +25,7 @@ import { k8sCompletions } from "./lsp/completions";
 import { k8sHover } from "./lsp/hover";
 import { K8sParser } from "./import/parser";
 import { K8sGenerator } from "./import/generator";
+import { k8sDeepNormalizationHooks } from "./deep-observe-hooks";
 
 export const k8sPlugin: LexiconPlugin = {
   name: "k8s",
@@ -35,6 +38,17 @@ export const k8sPlugin: LexiconPlugin = {
     replace: (v, line) =>
       line.replace(/export const K8S_SCHEMA_VERSION\s*=\s*"[^"]+"/, `export const K8S_SCHEMA_VERSION = "${v}"`),
     upstream: { owner: "kubernetes", repo: "kubernetes", kind: "releases" },
+  },
+
+  // chant #1078/#1079 — the command-group seam's tenant. `kube` mounts the
+  // terminal surface over the typed client: kubectl-compatible reads (get,
+  // describe, logs, events, top, wait), chant's own additions (source, the
+  // `get` verdict column, -o chant), and gated writes (apply, delete) that
+  // route through the exact same machinery the Op activities use — never a
+  // parallel implementation. See ./kube/group.ts for the full verb list;
+  // this plugin only mounts it.
+  commands(): CommandGroup {
+    return kubeCommandGroup();
   },
 
   lintRules(): LintRule[] {
@@ -617,4 +631,19 @@ const { deployment, service, serviceMonitor, prometheusRule } = MonitoredService
     const { exportResources } = await import("./export-resources");
     return exportResources(options);
   },
+
+  // Property-level live drift via SSA managed-fields (#1076, epic #1073).
+  // The reader lives in ./deep-observe.ts, loaded only through this dynamic
+  // import — same reason describeResources/exportResources are — so the API
+  // client never becomes reachable from the build path (chant #1074,
+  // examples/k8s-client-boundary.test.ts). deepNormalizationHooks is plain
+  // data with no client dependency (./deep-observe-hooks.ts) and is imported
+  // statically above, because core applies it to the *declared* tree whether
+  // or not a live read ever happens.
+  async observeResourcesDeep(options) {
+    const { observeResourcesDeepK8s } = await import("./deep-observe");
+    return observeResourcesDeepK8s(options);
+  },
+
+  deepNormalizationHooks: k8sDeepNormalizationHooks,
 };

@@ -1,8 +1,5 @@
-import { exec } from "node:child_process";
-import { promisify } from "node:util";
 import { safeHeartbeat, sleep } from "@intentius/chant/op";
-
-const execAsync = promisify(exec);
+import { defaultK8sConnector, type K8sConnector } from "../../api/connect";
 
 /**
  * waitForReady — block until any operator-backed Kubernetes resource reports
@@ -11,9 +8,16 @@ const execAsync = promisify(exec);
  * Like `waitForArgoSync`, this activity is intentionally **dependency-light**:
  * its signature is primitives + a plain readiness spec, so a Temporal worker
  * loads it without importing the generated CRD declarable surface. It reads the
- * resource via `kubectl get -o json` (injectable for tests) and evaluates the
- * spec's predicates. It generalizes the bespoke `waitForArgoSync` /
- * `waitForStack` waits — see #365.
+ * resource and evaluates the spec's predicates. It generalizes the bespoke
+ * `waitForArgoSync` / `waitForStack` waits — see #365.
+ *
+ * chant #1074 moved the read from `kubectl get -o json` to the typed API
+ * client, so a worker image needs no `kubectl` binary. The signature is
+ * unchanged — `kind` is still whatever `kubectl get` accepts, because that is
+ * what every existing caller passes, and the client resolves it through the
+ * cluster's own API discovery exactly as kubectl does: plural, then singular,
+ * then kind, then short name, with anything after the first dot read as the
+ * API group.
  */
 
 // ── Readiness spec (plain data — no generated-type imports) ──────────
@@ -154,6 +158,11 @@ export interface WaitForReadyArgs {
    * `.context` through.
    */
   context?: string;
+  /**
+   * chant environment, used to resolve `k8s.profiles.<env>.context` when no
+   * explicit `context` is given. Optional and additive.
+   */
+  environment?: string;
   /** API group, used to pick a readiness override when `spec` is not given. */
   group?: string;
   /** Explicit readiness spec — wins over the registry/default. */
@@ -168,15 +177,57 @@ export type ResourceFetcher = (
   signal?: AbortSignal,
 ) => Promise<Record<string, unknown>>;
 
-/** Read the resource via `kubectl get -o json`. */
-async function fetchViaKubectl(args: WaitForReadyArgs, signal?: AbortSignal): Promise<Record<string, unknown>> {
-  const ns = args.namespace ? `-n ${args.namespace}` : "";
-  const ctx = args.context ? `--context ${args.context}` : "";
-  const { stdout } = await execAsync(`kubectl get ${args.kind} ${args.name} ${ns} ${ctx} -o json`, { signal });
-  return JSON.parse(stdout) as Record<string, unknown>;
+/**
+ * Read the resource through the typed API client.
+ *
+ * A client is built once per `waitForReady` call and reused for every poll, so
+ * a 20-minute wait does not re-parse the kubeconfig or re-invoke an exec
+ * credential plugin on each iteration — and neither does it re-run discovery,
+ * which the client caches per API version.
+ */
+export function apiResourceFetcher(connect: K8sConnector = defaultK8sConnector): ResourceFetcher {
+  let connection: ReturnType<K8sConnector> | undefined;
+  let resolved: { apiVersion: string; kind: string } | undefined;
+
+  return async (args, signal) => {
+    connection ??= connect({
+      ...(args.environment !== undefined ? { environment: args.environment } : {}),
+      ...(args.context !== undefined ? { context: args.context } : {}),
+    });
+    const { client } = await connection;
+
+    if (!resolved) {
+      const info = await client.resolve(
+        { resource: args.kind, ...(args.group ? { group: args.group } : {}) },
+        signal,
+      );
+      if (!info) {
+        throw new Error(
+          `waitForReady: the cluster's API discovery reports no resource matching "${args.kind}"` +
+            `${args.group ? ` in group "${args.group}"` : ""} — nothing to wait for`,
+        );
+      }
+      resolved = { apiVersion: info.apiVersion, kind: info.kind };
+    }
+
+    return (await client.read(
+      {
+        apiVersion: resolved.apiVersion,
+        kind: resolved.kind,
+        name: args.name,
+        ...(args.namespace ? { namespace: args.namespace } : {}),
+      },
+      { signal },
+    )) as Record<string, unknown>;
+  };
 }
 
-export const defaultResourceFetcher: ResourceFetcher = (args, signal) => fetchViaKubectl(args, signal);
+/**
+ * The production reader. Each call builds its own fetcher, so nothing is
+ * shared between two unrelated waits; a single `waitForReady` passes one
+ * fetcher through all of its polls, which is where the caching matters.
+ */
+export const defaultResourceFetcher: ResourceFetcher = (args, signal) => apiResourceFetcher()(args, signal);
 
 /**
  * Poll until the resource satisfies its readiness spec. Throws
@@ -189,7 +240,7 @@ export const defaultResourceFetcher: ResourceFetcher = (args, signal) => fetchVi
 export async function waitForReady(
   args: WaitForReadyArgs,
   signal?: AbortSignal,
-  fetcher: ResourceFetcher = defaultResourceFetcher,
+  fetcher: ResourceFetcher = apiResourceFetcher(),
 ): Promise<Record<string, unknown>> {
   const spec = args.spec ?? readinessFor(args.group, args.kind);
   const interval = args.intervalMs ?? 15_000;

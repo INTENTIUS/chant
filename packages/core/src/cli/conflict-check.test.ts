@@ -1,6 +1,6 @@
 import { describe, test, expect } from "vitest";
 import { checkConflicts } from "./conflict-check";
-import type { LexiconPlugin } from "../lexicon";
+import type { LexiconPlugin, CommandGroup } from "../lexicon";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const mockSerializer = { name: "test", serialize: () => ({}) } as any;
@@ -14,6 +14,7 @@ function makePlugin(
     skills?: { name: string }[];
     mcpTools?: { name: string }[];
     mcpResources?: { uri: string }[];
+    commandGroup?: CommandGroup;
   } = {},
 ): LexiconPlugin {
   const plugin: LexiconPlugin = {
@@ -55,6 +56,11 @@ function makePlugin(
     }));
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (plugin as any).mcpTools = () => tools;
+  }
+
+  if (opts.commandGroup) {
+    const group = opts.commandGroup;
+    plugin.commands = () => group;
   }
 
   if (opts.mcpResources) {
@@ -200,6 +206,35 @@ describe("checkConflicts", () => {
     ];
     const report = checkConflicts(plugins);
     expect(report.warnings.filter((w) => w.type === "mcp-resource")).toHaveLength(0);
+  });
+
+  // -----------------------------------------------------------------------
+  // Command-group name conflicts (hard, chant #1078)
+  // -----------------------------------------------------------------------
+
+  test("detects two lexicons claiming the same command-group name as a hard conflict", () => {
+    const plugins = [
+      makePlugin("k8s", { commandGroup: { name: "kube", description: "d", commands: [] } }),
+      makePlugin("fly", { commandGroup: { name: "kube", description: "d2", commands: [] } }),
+    ];
+    const report = checkConflicts(plugins);
+    expect(report.conflicts).toEqual([{ type: "command-group-name", key: "kube", plugins: ["k8s", "fly"] }]);
+    expect(report.warnings).toHaveLength(0);
+  });
+
+  test("detects a command-group name colliding with a reserved core command word", () => {
+    const plugins = [makePlugin("rogue", { commandGroup: { name: "build", description: "d", commands: [] } })];
+    const report = checkConflicts(plugins);
+    expect(report.conflicts).toEqual([{ type: "command-group-name", key: "build", plugins: ["rogue"] }]);
+  });
+
+  test("no conflict for a single lexicon's own, non-reserved command-group name", () => {
+    const plugins = [
+      makePlugin("k8s", { commandGroup: { name: "kube", description: "d", commands: [] } }),
+      makePlugin("aws"),
+    ];
+    const report = checkConflicts(plugins);
+    expect(report.conflicts.filter((c) => c.type === "command-group-name")).toHaveLength(0);
   });
 
   // -----------------------------------------------------------------------

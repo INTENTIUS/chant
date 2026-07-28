@@ -6,6 +6,7 @@ import { isLexiconOutput, type LexiconOutput } from "./lexicon-output";
 import { getProvenance } from "./provenance";
 import { INTRINSIC_MARKER } from "./intrinsic";
 import type { ResourceMetadata } from "./lexicon";
+import type { UnobservedEntity } from "./observation";
 
 /**
  * Graph IR — the engine-neutral, lint-gated representation of a project's
@@ -66,6 +67,15 @@ export interface IRNode {
    * `owned` = chant-managed. Absent for source-derived IR.
    */
   ownership?: "owned" | "foreign";
+  /**
+   * Live-only, undeclared nodes: the declared entity this node's
+   * owner-reference chain resolves to (#1077) — a Pod a declared Deployment's
+   * controller created, for instance. Presence of this field is what an
+   * overlay reads to paint the node `runtime` instead of `warn`/foreign; a
+   * node without it (including every declared, source-derived node) is
+   * unaffected.
+   */
+  runtimeOwner?: string;
 }
 
 /** A directed dependency: `from` references an attribute of `to`. */
@@ -123,6 +133,51 @@ export interface IRImport {
   node: string;
 }
 
+/**
+ * One generated CI job in the pipeline projection (`chant graph --components
+ * --format ir --projection <lexicon>`, #989) — the same job a CI-provider
+ * lexicon's `generateComponentPipeline` synthesizes for `chant build
+ * --components --generate <lexicon>` (see `ComponentPipelineJob`,
+ * ./lexicon.ts), reshaped into the IR's node vocabulary.
+ */
+export interface IRPipelineNode {
+  /** CI job name (the generator's job id — a safe YAML/workflow key). */
+  id: string;
+  kind: "CIJob";
+  /** The component this job triggers. */
+  component: string;
+  /** The stage/wave this job runs in — the same wave index as the component
+   * graph's `groups.byWave` (one CI stage/`needs:`-level per wave). */
+  stage: string;
+}
+
+/** A `needs:` dependency between two generated CI jobs — mirrors the
+ * `dependsOn` edge it derives from, consumer job → producer job. */
+export interface IRPipelineEdge {
+  from: string;
+  to: string;
+  kind: "needs";
+}
+
+/**
+ * The CI/pipeline projection of a component graph (#989): the stages/jobs/
+ * `needs` a CI-provider lexicon (gitlab, github, forgejo, or any lexicon
+ * implementing `generateComponentPipeline`) would synthesize for `chant build
+ * --components --generate <lexicon>`, reused here — never re-derived — as
+ * first-class IR nodes/edges. A consumer (e.g. behold) reads this alongside
+ * the component graph's `nodes`/`edges`/`groups.byWave` to render the CI
+ * shape without parsing generated YAML. Present only when `chant graph
+ * --components --format ir` is invoked with `--projection <lexicon>`.
+ */
+export interface IRPipeline {
+  /** The CI-provider lexicon that produced this projection (e.g. "gitlab"). */
+  provider: string;
+  /** Wave-ordered stage names — 1:1 with the component graph's `groups.byWave` keys. */
+  stages: string[];
+  nodes: IRPipelineNode[];
+  edges: IRPipelineEdge[];
+}
+
 /** The full graph IR for a project at the default (declarable) detail level. */
 export interface GraphIR {
   nodes: IRNode[];
@@ -134,6 +189,8 @@ export interface GraphIR {
    * `name` to another stack's export `name` to draw the cross-stack edge; the
    * parameter's in-stack consumers are ordinary `$ref` edges to it (#513). */
   imports?: IRImport[];
+  /** The CI/pipeline projection alongside the component graph (#989) — see {@link IRPipeline}. */
+  pipeline?: IRPipeline;
 }
 
 /** A node is anything that serializes to a resource — not a property or output. */
@@ -419,6 +476,12 @@ function sortKeys(rec: Record<string, string[]>): Record<string, string[]> {
 export interface LiveObservation {
   lexicon: string;
   resources: Record<string, ResourceMetadata>;
+  /**
+   * Declared entities the lexicon could not observe (#1089), keyed by name.
+   * They are not live nodes — but they are not confirmed-absent either, so the
+   * overlay must not paint them "pending". See {@link sourceOverlayGraphs}.
+   */
+  unobserved?: Record<string, UnobservedEntity>;
 }
 
 /**
@@ -446,7 +509,15 @@ export function buildLiveGraphIr(observations: LiveObservation[]): GraphIR {
         attrs: meta.attributes ?? {},
       };
       if (meta.physicalId) node.physicalId = meta.physicalId;
-      if (meta.ownership) node.ownership = meta.ownership;
+      // `unknown` is a legitimate verdict on the metadata (#1089) but carries no
+      // information for a painter, and the IR's `ownership` field means "a
+      // verdict was reached" — so only owned/foreign land on the node.
+      if (meta.ownership === "owned" || meta.ownership === "foreign") node.ownership = meta.ownership;
+      // Owner-reference chain (#1077): only a resolved `declared` root is
+      // carried onto the node — the same "a verdict was reached" rule as
+      // ownership above, since `unowned`/`foreign`/`unknown` all mean "no
+      // declared owner", which is simply the absence of this field.
+      if (meta.ownerChain?.root === "declared") node.runtimeOwner = meta.ownerChain.entity;
       nodes.push(node);
       (byLexicon[lexicon] ??= []).push(name);
       // A live lexicon maps to one deployable stack, same as the source IR.
@@ -465,22 +536,66 @@ export function buildLiveGraphIr(observations: LiveObservation[]): GraphIR {
   return { nodes, edges: [], groups };
 }
 
+/** How an overlay learns which declared nodes were never looked at (#1089). */
+export interface OverlayOptions {
+  /**
+   * Declared entities the observation could not read, keyed by name (union of
+   * every {@link LiveObservation}'s `unobserved`). They are tagged `neutral`
+   * instead of `accent`: "not yet provisioned" is a claim the read never
+   * supported.
+   */
+  unobserved?: Record<string, UnobservedEntity>;
+}
+
+/** The union of every observation's unobserved entities — the input to the overlays. */
+export function collectUnobserved(observations: LiveObservation[]): Record<string, UnobservedEntity> {
+  const out: Record<string, UnobservedEntity> = {};
+  for (const o of observations) Object.assign(out, o.unobserved ?? {});
+  return out;
+}
+
+/** Paint status a node carries in an overlay. `neutral` = chant could not look;
+ * `runtime` = live, undeclared, owner chain reaches a declared entity (#1077). */
+type OverlayNodeStatus = "good" | "warn" | "accent" | "neutral" | "runtime";
+
+function tagStatus(n: IRNode, status: OverlayNodeStatus, unobserved?: UnobservedEntity): IRNode {
+  return {
+    ...n,
+    attrs: {
+      ...n.attrs,
+      _status: status,
+      ...(unobserved ? { _unobserved: unobserved.reason } : {}),
+    },
+  };
+}
+
 /**
  * Overlay the declared graph on the provisioned one (#780, `chant graph --live
  * --overlay`) and classify each resource, tagging a `_status` a renderer colours:
  *   - **managed** (declared + provisioned) → `good`
- *   - **foreign** (provisioned, not declared) → `warn`
- *   - **pending** (declared, not yet provisioned) → `accent`
+ *   - **runtime** (provisioned, not declared, owner chain reaches a declared
+ *     entity — #1077) → `runtime`, e.g. a Pod a declared Deployment's
+ *     controller created — expected, not a foreign resource needing attention
+ *   - **foreign** (provisioned, not declared, no declared owner) → `warn`
+ *   - **pending** (declared, provider confirmed absent) → `accent`
+ *   - **unobserved** (declared, chant could not look — #1089) → `neutral`,
+ *     plus an `_unobserved` attr carrying the reason
  * Live nodes keep their edges/containment; pending nodes are appended (they have
  * no live edges). Sorted; the live groups pass through unchanged.
  */
-export function overlayGraphs(live: GraphIR, declared: GraphIR): GraphIR {
+export function overlayGraphs(live: GraphIR, declared: GraphIR, opts?: OverlayOptions): GraphIR {
   const declaredIds = new Set(declared.nodes.map((n) => n.id));
   const liveIds = new Set(live.nodes.map((n) => n.id));
-  const tagged = (n: IRNode, status: "good" | "warn" | "accent"): IRNode => ({ ...n, attrs: { ...n.attrs, _status: status } });
+  const unobserved = opts?.unobserved ?? {};
 
-  const nodes: IRNode[] = live.nodes.map((n) => tagged(n, declaredIds.has(n.id) ? "good" : "warn"));
-  for (const n of declared.nodes) if (!liveIds.has(n.id)) nodes.push(tagged(n, "accent"));
+  const nodes: IRNode[] = live.nodes.map((n) =>
+    tagStatus(n, declaredIds.has(n.id) ? "good" : n.runtimeOwner ? "runtime" : "warn"),
+  );
+  for (const n of declared.nodes) {
+    if (liveIds.has(n.id)) continue;
+    const u = unobserved[n.id];
+    nodes.push(u ? tagStatus(n, "neutral", u) : tagStatus(n, "accent"));
+  }
   nodes.sort((a, b) => a.id.localeCompare(b.id));
 
   return { ...live, nodes };
@@ -497,27 +612,40 @@ export function overlayGraphs(live: GraphIR, declared: GraphIR): GraphIR {
  * Each declared node is classified against live observation and tagged `_status`:
  *   - **managed** (declared + provisioned) → `good`, carrying the observed
  *     `physicalId` / `ownership` onto the declared node
- *   - **pending** (declared, not provisioned) → `accent`
- * **Foreign** resources (provisioned, not declared) are appended and tagged
- * `warn`, together with any live-reconstructed edges that touch them — a declared
+ *   - **pending** (declared, provider confirmed absent) → `accent`
+ *   - **unobserved** (declared, chant could not look — #1089) → `neutral`, with
+ *     the reason on `_unobserved`. A wrong-cluster or unsupported-kind read used
+ *     to paint the whole estate "pending", which is the diagram equivalent of
+ *     planning a create for something that already exists.
+ * **Foreign** resources (provisioned, not declared, no declared owner) are
+ * appended and tagged `warn`; a provisioned-but-undeclared resource whose
+ * owner chain reaches a declared entity (#1077) is tagged `runtime` instead —
+ * both carry any live-reconstructed edges that touch them, since a declared
  * edge cannot describe an undeclared resource. Declared groups/exports pass
  * through unchanged; nodes and edges are sorted for deterministic output.
  */
-export function sourceOverlayGraphs(declared: GraphIR, live: GraphIR): GraphIR {
+export function sourceOverlayGraphs(declared: GraphIR, live: GraphIR, opts?: OverlayOptions): GraphIR {
   const liveById = new Map(live.nodes.map((n) => [n.id, n]));
   const declaredIds = new Set(declared.nodes.map((n) => n.id));
   const foreignIds = new Set(live.nodes.filter((n) => !declaredIds.has(n.id)).map((n) => n.id));
-  const tagged = (n: IRNode, status: "good" | "warn" | "accent"): IRNode => ({ ...n, attrs: { ...n.attrs, _status: status } });
+  const unobserved = opts?.unobserved ?? {};
 
   const nodes: IRNode[] = declared.nodes.map((n) => {
     const obs = liveById.get(n.id);
-    if (!obs) return tagged(n, "accent"); // pending — declared, not provisioned
+    if (!obs) {
+      const u = unobserved[n.id];
+      // unobserved — declared, and nobody looked; not "pending"
+      return u ? tagStatus(n, "neutral", u) : tagStatus(n, "accent");
+    }
     const merged: IRNode = { ...n }; // managed — carry the observed identity
     if (obs.physicalId) merged.physicalId = obs.physicalId;
     if (obs.ownership) merged.ownership = obs.ownership;
-    return tagged(merged, "good");
+    return tagStatus(merged, "good");
   });
-  for (const n of live.nodes) if (foreignIds.has(n.id)) nodes.push(tagged(n, "warn")); // foreign
+  for (const n of live.nodes) {
+    if (!foreignIds.has(n.id)) continue;
+    nodes.push(tagStatus(n, n.runtimeOwner ? "runtime" : "warn")); // runtime child or foreign
+  }
   nodes.sort((a, b) => a.id.localeCompare(b.id));
 
   // Declared edges are the canvas (the cross-substrate topology). Add only the

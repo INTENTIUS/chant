@@ -32,8 +32,8 @@ describe("status", () => {
       const cs: ChangeSet = {
         env: "prod",
         entries: [
-          { name: "search-service", type: "T", action: "noop", evidence: { declared: true, inSnapshot: true, live: true }, ownership: "owned" },
-          { name: "orphan-thing", type: "T", action: "adopt", evidence: { declared: false, inSnapshot: false, live: true }, ownership: "foreign" },
+          { name: "search-service", type: "T", action: "noop", evidence: { declared: true, inSnapshot: true, live: true, observed: true }, ownership: "owned" },
+          { name: "orphan-thing", type: "T", action: "adopt", evidence: { declared: false, inSnapshot: false, live: true, observed: true }, ownership: "foreign" },
         ],
       };
       const evidence = liveEvidenceFromChangeSet(cs);
@@ -49,7 +49,7 @@ describe("status", () => {
         const cs: ChangeSet = {
           env: "prod",
           entries: [
-            { name: "search-service-v2", type: "T", action: "noop", evidence: { declared: true, inSnapshot: true, live: true }, ownership: "owned" },
+            { name: "search-service-v2", type: "T", action: "noop", evidence: { declared: true, inSnapshot: true, live: true, observed: true }, ownership: "owned" },
           ],
         };
         const mapping: LiveNameMapping = new Map([["search-svc", ["search-service-v2"]]]);
@@ -63,7 +63,7 @@ describe("status", () => {
         const cs: ChangeSet = {
           env: "prod",
           entries: [
-            { name: "search-service", type: "T", action: "noop", evidence: { declared: true, inSnapshot: true, live: true }, ownership: "owned" },
+            { name: "search-service", type: "T", action: "noop", evidence: { declared: true, inSnapshot: true, live: true, observed: true }, ownership: "owned" },
           ],
         };
         const mapping: LiveNameMapping = new Map([["some-other-component", ["renamed-thing"]]]);
@@ -75,8 +75,8 @@ describe("status", () => {
         const cs: ChangeSet = {
           env: "prod",
           entries: [
-            { name: "cluster-node-1", type: "T", action: "noop", evidence: { declared: true, inSnapshot: true, live: true }, ownership: "owned" },
-            { name: "cluster-node-2", type: "T", action: "update", evidence: { declared: true, inSnapshot: true, live: true }, ownership: "owned" },
+            { name: "cluster-node-1", type: "T", action: "noop", evidence: { declared: true, inSnapshot: true, live: true, observed: true }, ownership: "owned" },
+            { name: "cluster-node-2", type: "T", action: "update", evidence: { declared: true, inSnapshot: true, live: true, observed: true }, ownership: "owned" },
           ],
         };
         const mapping: LiveNameMapping = new Map([["neo4j-cluster", ["cluster-node-1", "cluster-node-2"]]]);
@@ -297,7 +297,7 @@ describe("status", () => {
       const cs: ChangeSet = {
         env: "prod",
         entries: [
-          { name: "search-service-v2", type: "T", action: "noop", evidence: { declared: true, inSnapshot: true, live: true }, ownership: "owned" },
+          { name: "search-service-v2", type: "T", action: "noop", evidence: { declared: true, inSnapshot: true, live: true, observed: true }, ownership: "owned" },
         ],
       };
       const mapping: LiveNameMapping = new Map([["search-svc", ["search-service-v2"]]]);
@@ -311,7 +311,7 @@ describe("status", () => {
       const cs: ChangeSet = {
         env: "prod",
         entries: [
-          { name: "search-service", type: "T", action: "noop", evidence: { declared: true, inSnapshot: true, live: true }, ownership: "owned" },
+          { name: "search-service", type: "T", action: "noop", evidence: { declared: true, inSnapshot: true, live: true, observed: true }, ownership: "owned" },
         ],
       };
       const liveEvidence = liveEvidenceFromChangeSet(cs);
@@ -380,6 +380,87 @@ describe("status", () => {
       const supplement = new Map<string, LiveComponentEvidence>([["c", { live: true, ownership: "owned" }]]);
       const merged = mergeLiveEvidence(undefined, supplement);
       expect(merged.get("c")).toEqual({ live: true, ownership: "owned", action: undefined });
+    });
+
+    test("a direct stack observation clears an inherited hole; a failing one keeps it (#1089)", () => {
+      const base = new Map<string, LiveComponentEvidence>([
+        ["a", { live: false, unobserved: { reason: "read-failed" } }],
+        ["b", { live: false, unobserved: { reason: "read-failed" } }],
+      ]);
+      const supplement = new Map<string, LiveComponentEvidence>([
+        ["a", { live: true, ownership: "owned" }],
+        ["b", { live: false, unobserved: { reason: "read-failed", detail: "no determinate status" } }],
+      ]);
+      const merged = mergeLiveEvidence(base, supplement);
+      expect(merged.get("a")!.unobserved).toBeUndefined();
+      expect(merged.get("b")!.unobserved?.reason).toBe("read-failed");
+    });
+  });
+
+  // ── The observation tri-state reaches the status join (#1089) ─────────────
+
+  describe("not-observed never becomes 'stale' (#1089)", () => {
+    const record = {
+      version: 1,
+      component: "search-svc",
+      env: "prod",
+      digest: "sha256:abc",
+      gitSha: "g",
+      runId: "r",
+      timestamp: "2026-01-01T00:00:00Z",
+      actor: "ci",
+    } as const;
+
+    test("a recorded component whose live state could not be read reports unknown", () => {
+      const rows = reconcileStatus("prod", [record], {
+        liveEvidence: new Map<string, LiveComponentEvidence>([
+          ["search-svc", { live: false, unobserved: { reason: "no-binding", detail: "no kubectl context" } }],
+        ]),
+      });
+      expect(rows[0].reconciliation).toBe("unknown");
+      expect(rows[0].detail).toContain("could not be observed");
+      expect(rows[0].detail).toContain("no kubectl context");
+      // `live` is omitted entirely — `false` would read as "not deployed".
+      expect(rows[0].live).toBeUndefined();
+      expect(rows[0].unobserved).toEqual({ reason: "no-binding", detail: "no kubectl context" });
+    });
+
+    test("the same component, actually observed absent, still reports stale", () => {
+      const rows = reconcileStatus("prod", [record], {
+        liveEvidence: new Map<string, LiveComponentEvidence>([["search-svc", { live: false }]]),
+      });
+      expect(rows[0].reconciliation).toBe("stale");
+      expect(rows[0].live).toBe(false);
+    });
+
+    test("an unrecorded component that could not be read is unknown, not unrecorded", () => {
+      const rows = reconcileStatus("prod", [], {
+        allComponents: ["search-svc"],
+        liveEvidence: new Map<string, LiveComponentEvidence>([
+          ["search-svc", { live: false, unobserved: { reason: "read-failed" } }],
+        ]),
+      });
+      expect(rows[0].reconciliation).toBe("unknown");
+    });
+
+    test("liveEvidenceFromChangeSet carries the plan's unobserved verdict", () => {
+      const evidence = liveEvidenceFromChangeSet({
+        env: "prod",
+        entries: [
+          {
+            name: "search-svc",
+            action: "unobserved",
+            evidence: { declared: true, inSnapshot: false, live: false, observed: false },
+            ownership: "unknown",
+            unobservedReason: "unsupported-kind",
+            unobservedDetail: "no reader",
+          },
+        ],
+      });
+      expect(evidence.get("search-svc")!.unobserved).toEqual({
+        reason: "unsupported-kind",
+        detail: "no reader",
+      });
     });
   });
 });

@@ -31,6 +31,8 @@ vi.mock("node:child_process", async () => {
 const { gcpPlugin } = await import("./plugin");
 const { liveImportFromPlugins } = await import("@intentius/chant/cli/commands/import");
 const { buildChangeSet } = await import("@intentius/chant/lifecycle/change-set");
+const { normalizeObservation } = await import("@intentius/chant/observation");
+const { describeObservationConformance } = await import("@intentius/chant-test-utils");
 
 const liveBucket = {
   apiVersion: "storage.cnrm.cloud.google.com/v1beta1",
@@ -84,20 +86,22 @@ describe("gcp lifecycle integration (#163)", () => {
         : new Error("not found"),
     );
 
-    const observedNow = await gcpPlugin.describeResources!({
-      environment: "prod",
-      buildOutput: "",
-      entityNames: ["dataBucket"],
-      entities: new Map([
-        [
-          "dataBucket",
-          {
-            entityType: "GCP::Storage::Bucket",
-            props: { metadata: { name: "data-bucket", namespace: "config-control" } },
-          },
-        ],
-      ]),
-    });
+    const { resources: observedNow } = normalizeObservation(
+      await gcpPlugin.describeResources!({
+        environment: "prod",
+        buildOutput: "",
+        entityNames: ["dataBucket"],
+        entities: new Map([
+          [
+            "dataBucket",
+            {
+              entityType: "GCP::Storage::Bucket",
+              props: { metadata: { name: "data-bucket", namespace: "config-control" } },
+            },
+          ],
+        ]),
+      }),
+    );
     expect(observedNow.dataBucket?.type).toBe("GCP::Storage::Bucket");
 
     const cs = buildChangeSet("prod", {
@@ -116,4 +120,47 @@ describe("gcp lifecycle integration (#163)", () => {
     });
     expect(cs2.entries.find((e) => e.name === "dataBucket")!.action).toBe("noop");
   });
+});
+
+// The shared conformance suite (#1089).
+describeObservationConformance({
+  lexicon: "gcp",
+  scenarios: [
+    {
+      name: "an entity type with no derivable Config Connector GVK",
+      declared: ["notGcp", "gone"],
+      expectUnobserved: ["notGcp"],
+      expectAbsent: ["gone"],
+      run: () => {
+        execMock.mockImplementation(() => new Error('Error from server (NotFound): storagebucket "gone" not found'));
+        return gcpPlugin.describeResources!({
+          environment: "prod",
+          buildOutput: "",
+          entityNames: ["notGcp", "gone"],
+          entities: new Map([
+            ["notGcp", { entityType: "AWS::S3::Bucket", props: { metadata: { name: "not-gcp" } } }],
+            ["gone", { entityType: "GCP::Storage::Bucket", props: { metadata: { name: "gone" } } }],
+          ]),
+        });
+      },
+    },
+    {
+      name: "an unreachable Config Connector cluster",
+      declared: ["dataBucket"],
+      expectUnobserved: ["dataBucket"],
+      run: () => {
+        execMock.mockImplementation(() =>
+          Object.assign(new Error("kubectl failed"), { stderr: "Unable to connect to the server: dial tcp: i/o timeout" }),
+        );
+        return gcpPlugin.describeResources!({
+          environment: "prod",
+          buildOutput: "",
+          entityNames: ["dataBucket"],
+          entities: new Map([
+            ["dataBucket", { entityType: "GCP::Storage::Bucket", props: { metadata: { name: "data-bucket" } } }],
+          ]),
+        });
+      },
+    },
+  ],
 });

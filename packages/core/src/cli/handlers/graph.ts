@@ -2,11 +2,12 @@ import { resolve } from "node:path";
 import { discoverOps } from "../../op/discover";
 import { discover } from "../../discovery/index";
 import { partitionByLexicon, computeStackGraph, build } from "../../build";
-import { buildGraphIr, buildLiveGraphIr, overlayGraphs, sourceOverlayGraphs, type GraphIR } from "../../graph-ir";
+import { buildGraphIr, buildLiveGraphIr, collectUnobserved, overlayGraphs, sourceOverlayGraphs, type GraphIR, type IRPipeline, type LiveObservation } from "../../graph-ir";
 import { buildDeclaredPerStack } from "../../graph-declared";
 import { reconstructEdges, mergeCatalogs, containmentGroups, type ReferenceCatalog, type ContainmentPair } from "../../graph-refs";
 import { observeResources } from "../../lifecycle/observe";
-import { loadChantConfig } from "../../config";
+import { loadChantConfig, environmentNames } from "../../config";
+import { applyLiveEndpoint } from "../../live-endpoint";
 import { applyDetail, type DetailLevel } from "../../graph-detail";
 import { applyLens, parseLens } from "../../graph-lens";
 import { toMermaid } from "../../graph-mermaid";
@@ -17,7 +18,7 @@ import { loadPlugins, resolveProjectLexicons } from "../plugins";
 import { readFileSync } from "node:fs";
 import { formatError, formatWarning, formatBold } from "../format";
 import type { CommandContext } from "../registry";
-import { computeComponentGraph } from "../../components/cli-support";
+import { computeComponentGraph, generateComponentsPipeline } from "../../components/cli-support";
 import { discoverComponents } from "../../components/discover";
 import { cfnDeployStacks } from "./components";
 
@@ -34,6 +35,18 @@ import { cfnDeployStacks } from "./components";
 export async function runGraph(ctx: CommandContext): Promise<number> {
   const viewFormats = ["ir", "mermaid", "dot", "layout"] as const;
   const isViewFormat = (viewFormats as readonly string[]).includes(ctx.args.format);
+  // `--projection <lexicon>` (#989) only means anything for the component
+  // graph's IR — it adds the CI/pipeline shape to `GraphIR.pipeline`, a field
+  // the other view formats' emitters (mermaid/dot/layout) don't read, and the
+  // plain (non-`--format`) `--components` text/`--json` modes don't build an
+  // IR at all. Reject every other combination up front rather than silently
+  // ignoring the flag.
+  if (ctx.args.projection && !(ctx.args.components && ctx.args.format === "ir")) {
+    console.error(formatError({
+      message: "--projection needs --components --format ir — the CI/pipeline projection extends the component-graph IR, the only mode that carries it.",
+    }));
+    return 1;
+  }
   // `--live` graphs the provisioned (observed) infrastructure, not the declared
   // source (epic #776). It only makes sense as a view format; default to `ir`.
   if (ctx.args.live) {
@@ -77,10 +90,11 @@ async function runGraphLive(
   // lexicon), so `ctx.plugins` is empty. The live path needs the project's
   // observation plugins — load them here, mirroring the lifecycle handlers.
   const plugins = ctx.plugins.length > 0 ? ctx.plugins : await loadPlugins(await resolveProjectLexicons(projectPath));
-  if (config.environments && !config.environments.includes(environment)) {
+  const declaredEnvNames = environmentNames(config.environments);
+  if (declaredEnvNames && !declaredEnvNames.includes(environment)) {
     console.error(formatError({
       message: `Unknown environment "${environment}"`,
-      hint: `Defined environments: ${config.environments.join(", ")}`,
+      hint: `Defined environments: ${declaredEnvNames.join(", ")}`,
     }));
     return 1;
   }
@@ -129,30 +143,58 @@ async function runGraphLive(
     if (!seenStacks.has(declared.name)) { seenStacks.add(declared.name); stacks.push({ name: declared.name, region: declared.region, src: declared.src }); }
   }
 
-  const { observations, errors } = await observeResources(environment, observing, buildResult, {
-    owned: true,
-    stacks,
-  });
-  for (const e of errors) console.error(formatWarning({ message: e }));
+  // #1166 — an environment can declare its own endpoint (a local emulator like
+  // Floci), so this read is self-sufficient even when the ambient shell never
+  // exported e.g. AWS_ENDPOINT_URL. Ambient always wins when it's already set.
+  // Scoped to just this describe/enrich pass — restored in `finally` so it
+  // never leaks into a later invocation in the same process.
+  const endpointResult = applyLiveEndpoint(config.environments, environment, observing.map((p) => p.name));
+  if (endpointResult.notice) console.error(formatWarning({ message: endpointResult.notice }));
 
-  let ir: GraphIR = buildLiveGraphIr(observations);
-
-  // Enrich node attrs from the fuller live config (#784) so references are
-  // present for edge reconstruction — describeResources metadata alone is often
-  // too thin (e.g. AWS returns stack outputs, not per-resource references).
-  for (const p of observing) {
-    if (!p.enrichLiveAttrs) continue;
-    try {
-      const enriched = await p.enrichLiveAttrs({ environment, owned: true, stacks });
-      ir = {
-        ...ir,
-        nodes: ir.nodes.map((n) =>
-          n.lexicon === p.name && enriched[n.id] ? { ...n, attrs: { ...n.attrs, ...enriched[n.id] } } : n,
-        ),
-      };
-    } catch (err) {
-      console.error(formatWarning({ message: `${p.name}: live attr enrichment failed — edges may be sparse (${err instanceof Error ? err.message : String(err)})` }));
+  let ir: GraphIR;
+  let observations: LiveObservation[];
+  try {
+    const observeResult = await observeResources(environment, observing, buildResult, {
+      owned: true,
+      stacks: [...stacks],
+    });
+    observations = observeResult.observations;
+    const { errors, warnings } = observeResult;
+    for (const e of errors) console.error(formatWarning({ message: e }));
+    // Unobserved entities (#1089) arrive as warnings — a node missing from the
+    // live graph because nobody looked is a different fact from one that isn't
+    // deployed, and the diagram alone cannot say which. Capped: an estate with no
+    // ownership markers can produce one per declared entity, and a wall of them
+    // buries the graph output. The full list is `lifecycle diff --live`.
+    const WARN_CAP = 5;
+    for (const w of warnings.slice(0, WARN_CAP)) console.error(formatWarning({ message: w }));
+    if (warnings.length > WARN_CAP) {
+      console.error(formatWarning({
+        message: `... and ${warnings.length - WARN_CAP} more entity(ies) not observed — run \`chant lifecycle diff ${environment} --live\` for the full list`,
+      }));
     }
+
+    ir = buildLiveGraphIr(observations);
+
+    // Enrich node attrs from the fuller live config (#784) so references are
+    // present for edge reconstruction — describeResources metadata alone is often
+    // too thin (e.g. AWS returns stack outputs, not per-resource references).
+    for (const p of observing) {
+      if (!p.enrichLiveAttrs) continue;
+      try {
+        const enriched = await p.enrichLiveAttrs({ environment, owned: true, stacks });
+        ir = {
+          ...ir,
+          nodes: ir.nodes.map((n) =>
+            n.lexicon === p.name && enriched[n.id] ? { ...n, attrs: { ...n.attrs, ...enriched[n.id] } } : n,
+          ),
+        };
+      } catch (err) {
+        console.error(formatWarning({ message: `${p.name}: live attr enrichment failed — edges may be sparse (${err instanceof Error ? err.message : String(err)})` }));
+      }
+    }
+  } finally {
+    endpointResult.restore();
   }
 
   // Reconstruct edges + containment from live references (#778): merge the
@@ -171,6 +213,10 @@ async function runGraphLive(
   //     so cross-substrate topology survives; live status joined per node.
   //   - live (#780): provisioned graph is the canvas — reconstructed live edges.
   if (args.overlay) {
+    // Declared nodes chant could not read are painted `neutral`, not
+    // `accent`/pending (#1089) — a wrong-cluster or unsupported-kind read must
+    // not draw the estate as "not deployed yet".
+    const overlayOpts = { unobserved: collectUnobserved(observations) };
     // Multi-stack (#1162): the live `ir` keys nodes by `${stack}::${logicalId}`,
     // so the declared canvas must qualify identically — build each stack's src
     // scoped rather than a flat whole-project discovery (whose disambiguated
@@ -181,16 +227,16 @@ async function runGraphLive(
       const declaredIr = await buildDeclaredPerStack(scopedStacks, projectPath);
       ir =
         args.overlayAnchor === "live"
-          ? overlayGraphs(ir, declaredIr)
-          : sourceOverlayGraphs(declaredIr, ir);
+          ? overlayGraphs(ir, declaredIr, overlayOpts)
+          : sourceOverlayGraphs(declaredIr, ir, overlayOpts);
     } else {
       const declared = await discover(resolve(args.src ?? config.sourceDir ?? "."));
       if (declared.errors.length === 0) {
         const declaredIr = buildGraphIr(declared.entities, projectPath);
         ir =
           args.overlayAnchor === "live"
-            ? overlayGraphs(ir, declaredIr)
-            : sourceOverlayGraphs(declaredIr, ir);
+            ? overlayGraphs(ir, declaredIr, overlayOpts)
+            : sourceOverlayGraphs(declaredIr, ir, overlayOpts);
       } else {
         console.error(formatWarning({ message: "overlay: source has discovery errors — showing the provisioned graph without the declared overlay" }));
       }
@@ -269,6 +315,15 @@ async function runComponentGraph(ctx: CommandContext): Promise<number> {
  * the CI pipeline. Distinct from `runGraphView`, which emits the AWS *entity*
  * graph — the component projection has one node per component, not per resource.
  *
+ * `--projection <lexicon>` (#989, `--format ir` only — validated in `runGraph`)
+ * adds the **CI/pipeline projection** alongside this component graph:
+ * `ir.pipeline` carries the stages/jobs/`needs` `<lexicon>`'s
+ * `generateComponentPipeline` synthesizes for `chant build --components
+ * --generate <lexicon>` (`generateComponentsPipeline`, ../../components/cli-support.ts)
+ * — reused wholesale, not re-derived, so a consumer (e.g. behold, epic #492/
+ * INTENTIUS/behold#54) gets the pipeline shape as first-class IR nodes/edges
+ * instead of re-deriving it from `dependsOn` or parsing generated CI YAML.
+ *
  * Lint-gated like the entity view: the DAG stands for deployable source, so we
  * refuse to emit it for source that does not pass lint.
  */
@@ -300,7 +355,7 @@ async function runComponentGraphView(
   const waveOf = new Map<string, number>();
   graph.waves.forEach((wave, i) => wave.forEach((name) => waveOf.set(name, i + 1)));
 
-  const ir: GraphIR = {
+  let ir: GraphIR = {
     nodes: graph.order.map((name) => ({
       id: name,
       kind: "Component",
@@ -315,7 +370,47 @@ async function runComponentGraphView(
     },
   };
 
+  if (ctx.args.projection) {
+    const pipeline = await buildPipelineProjection(projectPath, ctx.args.projection, ctx.args.sandbox);
+    if (!pipeline.success) {
+      console.error(formatError({ message: pipeline.error ?? `Failed to generate ${ctx.args.projection} pipeline projection` }));
+      return 1;
+    }
+    ir = { ...ir, pipeline: pipeline.pipeline };
+  }
+
   return emitIr(ir, ctx, format);
+}
+
+/**
+ * Reshape `generateComponentsPipeline`'s result (../../components/cli-support.ts
+ * — the exact function `chant build --components --generate <lexicon>` calls)
+ * into the IR's `IRPipeline` vocabulary (#989): one `IRPipelineNode` per
+ * generated CI job, one `IRPipelineEdge` per `needs:` dependency (consumer job
+ * → producer job, mirroring the component edges' consumer → producer
+ * direction). Every shape decision — job naming, one stage per wave,
+ * dependency resolution — stays owned by `lexicon`'s `generateComponentPipeline`;
+ * this only relabels its `{ stages, jobs }` output as IR nodes/edges, it never
+ * re-derives the graph.
+ */
+async function buildPipelineProjection(
+  projectPath: string,
+  lexicon: string,
+  sandbox?: boolean,
+): Promise<{ success: true; pipeline: IRPipeline } | { success: false; error?: string }> {
+  const result = await generateComponentsPipeline(projectPath, lexicon, undefined, sandbox);
+  if (!result.success) return { success: false, error: result.error };
+
+  const jobs = result.jobs ?? [];
+  return {
+    success: true,
+    pipeline: {
+      provider: lexicon,
+      stages: result.stages ?? [],
+      nodes: jobs.map((j) => ({ id: j.jobName, kind: "CIJob" as const, component: j.component, stage: j.stage })),
+      edges: jobs.flatMap((j) => j.needs.map((dep) => ({ from: j.jobName, to: dep, kind: "needs" as const }))),
+    },
+  };
 }
 
 /**

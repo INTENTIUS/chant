@@ -64,14 +64,7 @@ const lexiconsDir = join(repoRoot, "lexicons");
  * lexicon name -> tier-1 check name -> tracking issue/reason.
  * Every entry here MUST reference a filed, open issue.
  */
-const KNOWN_FAILURES: Record<string, Record<string, string>> = {
-  github: {
-    "Registered intrinsics are exported by the package":
-      "#1069 — plugin.ts registers an \"expression\" intrinsic; src/index.ts exports the `Expression` class (capitalized) and helper functions, but nothing literally named `expression`.",
-    "Registered intrinsics' isTag matches how they're authored":
-      "#1069 — same root cause as the export check above — unresolvable, so unverifiable.",
-  },
-};
+const KNOWN_FAILURES: Record<string, Record<string, string>> = {};
 
 let untrackedFailures = 0;
 let trackedFailures = 0;

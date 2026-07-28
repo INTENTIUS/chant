@@ -122,6 +122,14 @@ export interface ParsedArgs {
   theme?: string;
   /** `chant dev surface-diff --update-snapshot` — write the fresh snapshot as the new baseline */
   updateSnapshot?: boolean;
+  /**
+   * `chant lifecycle diff <env> --live --update-baseline` (#1014) — record every
+   * property-level deviation this run reports as *accepted*, so it stops
+   * re-alerting. Value-bound: a later change to the accepted value is drift
+   * again. Writes `<env>/observation-baseline.json` on the chant/lifecycle
+   * orphan branch; never touches the cloud.
+   */
+  updateBaseline?: boolean;
   /** `chant dev surface-diff --run-examples` — also run the example build harness */
   runExamples?: boolean;
   /** `chant dev surface-diff --pinned-digest <file>` — path to SHA-256 digest file for supply-chain verification */
@@ -158,6 +166,12 @@ export interface ParsedArgs {
   param?: string[];
   /** `chant build --params-file <path>` (#1064) — a JSON file of `{ "name": value }` build-time parameter values. Second precedence, after `--param`. */
   paramsFile?: string;
+  /** `chant graph --components --format ir --projection <lexicon>` (#989) — add
+   * the CI/pipeline projection (stages/jobs/`needs`) to the component-graph IR,
+   * synthesized by `<lexicon>`'s `generateComponentPipeline` (gitlab, github,
+   * forgejo today) — the same generator `chant build --components --generate
+   * <lexicon>` uses, reused rather than re-derived. */
+  projection?: string;
 }
 
 /**

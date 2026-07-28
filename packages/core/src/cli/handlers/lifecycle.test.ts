@@ -1,6 +1,6 @@
-import { describe, test, expect, vi, beforeEach } from "vitest";
+import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";
 import { sep } from "node:path";
-import { createMockPlugin, staticDescribeResources, staticListArtifacts } from "@intentius/chant-test-utils";
+import { createMockPlugin, staticDescribeResources, staticObservation, staticDeepObservation, staticListArtifacts } from "@intentius/chant-test-utils";
 import type { LexiconPlugin, ResourceMetadata } from "../../lexicon";
 import type { BuildResult } from "../../build";
 import type { ParsedArgs } from "../registry";
@@ -12,23 +12,35 @@ const readEnvironmentSnapshotsMock = vi.fn();
 const listSnapshotsMock = vi.fn();
 const takeSnapshotMock = vi.fn();
 const loadChantConfigMock = vi.fn();
+const pushLifecycleMock = vi.fn();
+const readBlobFromPathMock = vi.fn();
+const writeBlobToPathMock = vi.fn();
 
 vi.mock("../../build", () => ({ build: (...args: unknown[]) => buildMock(...args) }));
 vi.mock("../../lifecycle/git", () => ({
   fetchLifecycle: () => fetchLifecycleMock(),
+  pushLifecycle: () => pushLifecycleMock(),
   readSnapshot: (...args: unknown[]) => readSnapshotMock(...args),
   readEnvironmentSnapshots: (...args: unknown[]) => readEnvironmentSnapshotsMock(...args),
   listSnapshots: (...args: unknown[]) => listSnapshotsMock(...args),
   snapshotStorageKey: (lexicon: string, stack?: string) => (stack ? `${stack}__${lexicon}` : lexicon),
+  // The accepted-observation baseline (#1014) rides the same orphan-branch
+  // plumbing as the snapshots, so it is mocked at the same seam.
+  readBlobFromPath: (...args: unknown[]) => readBlobFromPathMock(...args),
+  writeBlobToPath: (...args: unknown[]) => writeBlobToPathMock(...args),
 }));
 vi.mock("../../lifecycle/snapshot", () => ({
   takeSnapshot: (...args: unknown[]) => takeSnapshotMock(...args),
 }));
-vi.mock("../../config", () => ({
-  loadChantConfig: (...args: unknown[]) => loadChantConfigMock(...args),
-}));
+vi.mock("../../config", async () => {
+  const actual = await vi.importActual<typeof import("../../config")>("../../config");
+  return {
+    ...actual,
+    loadChantConfig: (...args: unknown[]) => loadChantConfigMock(...args),
+  };
+});
 
-const { runLifecycleDiff, runLifecycleSnapshot, runLifecycleShow, runLifecycleLog, runLifecycleUnknown } = await import("./lifecycle");
+const { runLifecycleDiff, runLifecyclePlan, runLifecycleSnapshot, runLifecycleShow, runLifecycleLog, runLifecycleUnknown } = await import("./lifecycle");
 
 function makeArgs(overrides: Partial<ParsedArgs>): ParsedArgs {
   return {
@@ -89,6 +101,12 @@ describe("runLifecycleDiff --live", () => {
     readSnapshotMock.mockReset();
     loadChantConfigMock.mockReset();
     loadChantConfigMock.mockResolvedValue({ config: {} });
+    readBlobFromPathMock.mockReset();
+    readBlobFromPathMock.mockResolvedValue(null); // no accepted baseline recorded
+    writeBlobToPathMock.mockReset();
+    writeBlobToPathMock.mockResolvedValue("sha");
+    pushLifecycleMock.mockReset();
+    pushLifecycleMock.mockResolvedValue(true);
   });
 
   test("surfaces drift between previous snapshot and live state", async () => {
@@ -126,6 +144,64 @@ describe("runLifecycleDiff --live", () => {
     expect(output).toContain("status:");
     expect(output).toContain("CREATE_COMPLETE");
     expect(output).toContain("UPDATE_COMPLETE");
+  });
+
+  // #1089 — a hole in the read is rendered as a hole, and never silently
+  // inflates the missing/drift counts that the all-clear line reads.
+  test("renders an UNOBSERVED section and qualifies the all-clear", async () => {
+    buildMock.mockResolvedValue(makeBuildResult({ k8s: ["widget"] }));
+    fetchLifecycleMock.mockResolvedValue(undefined);
+    readSnapshotMock.mockResolvedValue(null);
+
+    const plugins: LexiconPlugin[] = [
+      createMockPlugin({
+        name: "k8s",
+        describeResources: staticObservation({}, {
+          widget: { type: "K8s::X::Widget", reason: "unsupported-kind", detail: "no kubectl mapping" },
+        }),
+      }),
+    ];
+
+    const exit = await runLifecycleDiff({
+      args: makeArgs({ path: "diff", extraPositional: "prod", live: true }),
+      plugins,
+      serializers: plugins.map((p) => p.serializer),
+    });
+
+    expect(exit).toBe(0);
+    const stdout = stdoutBuf.join("\n");
+    expect(stdout).toContain("UNOBSERVED");
+    expect(stdout).toContain("widget");
+    expect(stdout).toContain("no reader for this resource kind");
+    // Not counted as missing — "declared, not in cloud" is a claim we can't make.
+    expect(stdout).toContain("0 missing");
+    expect(stderrBuf.join("\n")).toContain("could not be observed");
+  });
+
+  test("a throwing describeResources reports its entities unobserved instead of skipping the lexicon", async () => {
+    buildMock.mockResolvedValue(makeBuildResult({ aws: ["bucket"] }));
+    fetchLifecycleMock.mockResolvedValue(undefined);
+    readSnapshotMock.mockResolvedValue(null);
+
+    const plugins: LexiconPlugin[] = [
+      createMockPlugin({
+        name: "aws",
+        describeResources: async () => { throw new Error("Unable to locate credentials"); },
+      }),
+    ];
+
+    const exit = await runLifecycleDiff({
+      args: makeArgs({ path: "diff", extraPositional: "prod", live: true }),
+      plugins,
+      serializers: plugins.map((p) => p.serializer),
+    });
+
+    expect(exit).toBe(0);
+    expect(stderrBuf.join("\n")).toContain("not as absent");
+    const stdout = stdoutBuf.join("\n");
+    expect(stdout).toContain("UNOBSERVED");
+    expect(stdout).toContain("bucket");
+    expect(stdout).toContain("0 missing");
   });
 
   test("builds from config.sourceDir on a mixed-layout project", async () => {
@@ -289,6 +365,298 @@ describe("runLifecycleDiff --live", () => {
     expect(output).toContain("bucket");
     expect(output).toContain("added");
   });
+
+  // #1014 — property-level drift, gated purely on the deep capability.
+  describe("deep observation (#1014)", () => {
+    const withDeep = (over: Parameters<typeof createMockPlugin>[0] = {}) =>
+      createMockPlugin({
+        name: "aws",
+        describeResources: staticObservation({ bucket: meta() }),
+        observeResourcesDeep: staticDeepObservation({
+          bucket: {
+            type: "AWS::S3::Bucket",
+            properties: { Versioning: "Suspended", Logging: { Target: "audit" } },
+          },
+        }),
+        ...over,
+      });
+
+    const runDiff = async (plugins: LexiconPlugin[], args: Partial<ParsedArgs> = {}) => {
+      buildMock.mockResolvedValue(makeBuildResult({ aws: ["bucket"] }));
+      // Declared: versioning on, nothing about logging.
+      const build = makeBuildResult({ aws: ["bucket"] });
+      build.entities.set("bucket", {
+        lexicon: "aws",
+        entityType: "AWS::S3::Bucket",
+        props: { Versioning: "Enabled" },
+      } as never);
+      buildMock.mockResolvedValue(build);
+      fetchLifecycleMock.mockResolvedValue(undefined);
+      readSnapshotMock.mockResolvedValue(null);
+      return runLifecycleDiff({
+        args: makeArgs({ command: "state", path: "diff", extraPositional: "prod", live: true, ...args }),
+        plugins,
+        serializers: plugins.map((p) => p.serializer),
+      } as never);
+    };
+
+    test("reports the changed property and the undeclared one", async () => {
+      await runDiff([withDeep()]);
+      const output = stdoutBuf.join("\n");
+      expect(output).toContain("aws (properties)");
+      expect(output).toContain("Versioning: Enabled → Suspended");
+      expect(output).toContain("Logging.Target: <undeclared> → audit");
+    });
+
+    test("a lexicon with no deep reader prints nothing extra", async () => {
+      await runDiff([createMockPlugin({ name: "aws", describeResources: staticObservation({ bucket: meta() }) })]);
+      expect(stdoutBuf.join("\n")).not.toContain("(properties)");
+    });
+
+    test("an accepted deviation in the baseline stops re-alerting", async () => {
+      readBlobFromPathMock.mockResolvedValue(
+        JSON.stringify({
+          baseline: "v1",
+          environment: "prod",
+          lexicons: { aws: { bucket: { accepted: [{ path: "Logging.Target", value: "audit" }] } } },
+        }),
+      );
+      await runDiff([withDeep()]);
+      const output = stdoutBuf.join("\n");
+      expect(output).toContain("Versioning: Enabled → Suspended");
+      expect(output).not.toContain("Logging.Target: <undeclared>");
+      expect(output).toContain("ACCEPTED (in the baseline; not drift)");
+    });
+
+    test("--json carries the property drift under the lexicon's `deep` key", async () => {
+      await runDiff([withDeep()], { json: true });
+      const payload = JSON.parse(stdoutBuf.join("\n")) as {
+        lexicons: { aws: { deep: { drifted: Array<{ changes: Array<{ path: string }> }> } } };
+      };
+      expect(payload.lexicons.aws.deep.drifted[0].changes.map((c) => c.path).sort()).toEqual([
+        "Logging.Target",
+        "Versioning",
+      ]);
+    });
+
+    test("a deep read that could not look is a hole, not drift", async () => {
+      await runDiff([
+        withDeep({
+          observeResourcesDeep: staticDeepObservation(
+            {},
+            { bucket: { type: "AWS::S3::Bucket", reason: "no-credentials", detail: "token expired" } },
+          ),
+        }),
+      ]);
+      const output = `${stdoutBuf.join("\n")}\n${stderrBuf.join("\n")}`;
+      expect(output).toContain("PROPERTIES UNOBSERVED");
+      expect(output).toContain("no credentials");
+      expect(output).toContain("could not be observed — that part of the estate is unknown, not clean");
+    });
+
+    test("--update-baseline writes what was reported and pushes it", async () => {
+      await runDiff([withDeep()], { updateBaseline: true });
+      expect(writeBlobToPathMock).toHaveBeenCalledTimes(1);
+      const [environment, filename, content] = writeBlobToPathMock.mock.calls[0] as [string, string, string];
+      expect(environment).toBe("prod");
+      expect(filename).toBe("observation-baseline.json");
+      const written = JSON.parse(content) as {
+        lexicons: { aws: { bucket: { accepted: Array<{ path: string; value: unknown }> } } };
+      };
+      expect(written.lexicons.aws.bucket.accepted.map((a) => a.path)).toEqual(["Logging.Target", "Versioning"]);
+      expect(pushLifecycleMock).toHaveBeenCalled();
+      expect(stderrBuf.join("\n")).toContain("accepted 2 deviation(s)");
+    });
+
+    test("--update-baseline with nothing reported writes nothing", async () => {
+      await runDiff([
+        withDeep({ observeResourcesDeep: staticDeepObservation({}) }),
+      ], { updateBaseline: true });
+      expect(writeBlobToPathMock).not.toHaveBeenCalled();
+      expect(stderrBuf.join("\n")).toContain("nothing to accept");
+    });
+  });
+
+  // #1166 — an environment can declare its own endpoint (a local emulator like
+  // Floci), applied to the ambient var of every observing lexicon that has one
+  // unless the ambient shell already set it.
+  describe("declared endpoint (#1166)", () => {
+    const prevEndpoint = process.env.AWS_ENDPOINT_URL;
+
+    afterEach(() => {
+      if (prevEndpoint === undefined) delete process.env.AWS_ENDPOINT_URL;
+      else process.env.AWS_ENDPOINT_URL = prevEndpoint;
+    });
+
+    test("applies the declared endpoint to AWS_ENDPOINT_URL for the live describe, then restores it", async () => {
+      delete process.env.AWS_ENDPOINT_URL;
+      buildMock.mockResolvedValue(makeBuildResult({ aws: ["bucket"] }));
+      fetchLifecycleMock.mockResolvedValue(undefined);
+      readSnapshotMock.mockResolvedValue(null);
+      loadChantConfigMock.mockResolvedValue({
+        config: { environments: [{ name: "floci", endpoint: "http://localhost:4566" }] },
+      });
+
+      let seenDuringDescribe: string | undefined;
+      const plugins: LexiconPlugin[] = [
+        createMockPlugin({
+          name: "aws",
+          describeResources: async () => {
+            seenDuringDescribe = process.env.AWS_ENDPOINT_URL;
+            return {};
+          },
+        }),
+      ];
+
+      const exit = await runLifecycleDiff({
+        args: makeArgs({ path: "diff", extraPositional: "floci", live: true }),
+        plugins,
+        serializers: plugins.map((p) => p.serializer),
+      });
+
+      expect(exit).toBe(0);
+      expect(seenDuringDescribe).toBe("http://localhost:4566");
+      expect(process.env.AWS_ENDPOINT_URL).toBeUndefined(); // restored
+      expect(stderrBuf.join("\n")).toMatch(/environment "floci" declares endpoint http:\/\/localhost:4566/);
+    });
+
+    test("ambient AWS_ENDPOINT_URL still wins over the declared endpoint", async () => {
+      process.env.AWS_ENDPOINT_URL = "http://real-endpoint.example";
+      buildMock.mockResolvedValue(makeBuildResult({ aws: ["bucket"] }));
+      fetchLifecycleMock.mockResolvedValue(undefined);
+      readSnapshotMock.mockResolvedValue(null);
+      loadChantConfigMock.mockResolvedValue({
+        config: { environments: [{ name: "floci", endpoint: "http://localhost:4566" }] },
+      });
+
+      let seenDuringDescribe: string | undefined;
+      const plugins: LexiconPlugin[] = [
+        createMockPlugin({
+          name: "aws",
+          describeResources: async () => {
+            seenDuringDescribe = process.env.AWS_ENDPOINT_URL;
+            return {};
+          },
+        }),
+      ];
+
+      const exit = await runLifecycleDiff({
+        args: makeArgs({ path: "diff", extraPositional: "floci", live: true }),
+        plugins,
+        serializers: plugins.map((p) => p.serializer),
+      });
+
+      expect(exit).toBe(0);
+      expect(seenDuringDescribe).toBe("http://real-endpoint.example");
+      expect(process.env.AWS_ENDPOINT_URL).toBe("http://real-endpoint.example");
+      expect(stderrBuf.join("\n")).toMatch(/ambient AWS_ENDPOINT_URL already set/);
+    });
+  });
+});
+
+describe("runLifecyclePlan", () => {
+  let stdoutBuf: string[];
+  let stderrBuf: string[];
+
+  beforeEach(() => {
+    stdoutBuf = [];
+    stderrBuf = [];
+    vi.spyOn(console, "log").mockImplementation((s: string) => { stdoutBuf.push(s); });
+    vi.spyOn(console, "error").mockImplementation((s: string) => { stderrBuf.push(s); });
+    buildMock.mockReset();
+    fetchLifecycleMock.mockReset();
+    fetchLifecycleMock.mockResolvedValue(undefined);
+    readSnapshotMock.mockReset();
+    readSnapshotMock.mockResolvedValue(null);
+    loadChantConfigMock.mockReset();
+    loadChantConfigMock.mockResolvedValue({ config: {} });
+  });
+
+  test("happy path: proposes a create for a declared, unobserved-nowhere-else entity", async () => {
+    buildMock.mockResolvedValue(makeBuildResult({ aws: ["bucket"] }));
+    const plugins: LexiconPlugin[] = [
+      createMockPlugin({ name: "aws", describeResources: staticDescribeResources({}) }),
+    ];
+    const exit = await runLifecyclePlan({
+      args: makeArgs({ path: "plan", extraPositional: "prod" }),
+      plugins,
+      serializers: plugins.map((p) => p.serializer),
+    });
+    expect(exit).toBe(0);
+    expect(stdoutBuf.join("\n")).toContain("bucket");
+  });
+
+  // #1166 — plan is always a live read (no `--live` flag of its own), so a
+  // declared environment endpoint applies here exactly as it does for
+  // `chant graph --live` / `chant lifecycle diff --live`.
+  describe("declared endpoint (#1166)", () => {
+    const prevEndpoint = process.env.AWS_ENDPOINT_URL;
+
+    afterEach(() => {
+      if (prevEndpoint === undefined) delete process.env.AWS_ENDPOINT_URL;
+      else process.env.AWS_ENDPOINT_URL = prevEndpoint;
+    });
+
+    test("applies the declared endpoint to AWS_ENDPOINT_URL for the plan's describe, then restores it", async () => {
+      delete process.env.AWS_ENDPOINT_URL;
+      buildMock.mockResolvedValue(makeBuildResult({ aws: ["bucket"] }));
+      loadChantConfigMock.mockResolvedValue({
+        config: { environments: [{ name: "floci", endpoint: "http://localhost:4566" }] },
+      });
+
+      let seenDuringDescribe: string | undefined;
+      const plugins: LexiconPlugin[] = [
+        createMockPlugin({
+          name: "aws",
+          describeResources: async () => {
+            seenDuringDescribe = process.env.AWS_ENDPOINT_URL;
+            return {};
+          },
+        }),
+      ];
+
+      const exit = await runLifecyclePlan({
+        args: makeArgs({ path: "plan", extraPositional: "floci" }),
+        plugins,
+        serializers: plugins.map((p) => p.serializer),
+      });
+
+      expect(exit).toBe(0);
+      expect(seenDuringDescribe).toBe("http://localhost:4566");
+      expect(process.env.AWS_ENDPOINT_URL).toBeUndefined();
+      expect(stderrBuf.join("\n")).toMatch(/environment "floci" declares endpoint http:\/\/localhost:4566/);
+    });
+
+    test("ambient AWS_ENDPOINT_URL still wins over the declared endpoint", async () => {
+      process.env.AWS_ENDPOINT_URL = "http://real-endpoint.example";
+      buildMock.mockResolvedValue(makeBuildResult({ aws: ["bucket"] }));
+      loadChantConfigMock.mockResolvedValue({
+        config: { environments: [{ name: "floci", endpoint: "http://localhost:4566" }] },
+      });
+
+      let seenDuringDescribe: string | undefined;
+      const plugins: LexiconPlugin[] = [
+        createMockPlugin({
+          name: "aws",
+          describeResources: async () => {
+            seenDuringDescribe = process.env.AWS_ENDPOINT_URL;
+            return {};
+          },
+        }),
+      ];
+
+      const exit = await runLifecyclePlan({
+        args: makeArgs({ path: "plan", extraPositional: "floci" }),
+        plugins,
+        serializers: plugins.map((p) => p.serializer),
+      });
+
+      expect(exit).toBe(0);
+      expect(seenDuringDescribe).toBe("http://real-endpoint.example");
+      expect(process.env.AWS_ENDPOINT_URL).toBe("http://real-endpoint.example");
+      expect(stderrBuf.join("\n")).toMatch(/ambient AWS_ENDPOINT_URL already set/);
+    });
+  });
 });
 
 describe("runLifecycleSnapshot", () => {
@@ -364,6 +732,42 @@ describe("runLifecycleSnapshot", () => {
     expect(exit).toBe(0);
     expect(stderrBuf.join("\n")).toContain("Snapshot saved");
     expect(takeSnapshotMock).toHaveBeenCalledTimes(1);
+  });
+
+  // #1166 — a snapshot is always a live read, so a declared environment
+  // endpoint applies here too, unless the ambient shell already set it.
+  describe("declared endpoint (#1166)", () => {
+    const prevEndpoint = process.env.AWS_ENDPOINT_URL;
+
+    afterEach(() => {
+      if (prevEndpoint === undefined) delete process.env.AWS_ENDPOINT_URL;
+      else process.env.AWS_ENDPOINT_URL = prevEndpoint;
+    });
+
+    test("applies the declared endpoint to AWS_ENDPOINT_URL for takeSnapshot, then restores it", async () => {
+      delete process.env.AWS_ENDPOINT_URL;
+      buildMock.mockResolvedValue(makeBuildResult({ aws: ["bucket"] }));
+      loadChantConfigMock.mockResolvedValue({
+        config: { environments: [{ name: "floci", endpoint: "http://localhost:4566" }] },
+      });
+      let seenDuringSnapshot: string | undefined;
+      takeSnapshotMock.mockImplementation(async () => {
+        seenDuringSnapshot = process.env.AWS_ENDPOINT_URL;
+        return { snapshots: [], commit: "sha", warnings: [], errors: [] };
+      });
+      const plugins: LexiconPlugin[] = [
+        createMockPlugin({ name: "aws", describeResources: staticDescribeResources({}) }),
+      ];
+      const exit = await runLifecycleSnapshot({
+        args: makeArgs({ command: "state", path: "snapshot", extraPositional: "floci" }),
+        plugins,
+        serializers: plugins.map((p) => p.serializer),
+      });
+      expect(exit).toBe(0);
+      expect(seenDuringSnapshot).toBe("http://localhost:4566");
+      expect(process.env.AWS_ENDPOINT_URL).toBeUndefined();
+      expect(stderrBuf.join("\n")).toMatch(/environment "floci" declares endpoint http:\/\/localhost:4566/);
+    });
   });
 });
 

@@ -6,7 +6,7 @@
  * it via `nestedStack().outputs.name`.
  */
 
-import { DECLARABLE_MARKER, type Declarable } from "./declarable";
+import { DECLARABLE_MARKER, isDeclarable, type Declarable } from "./declarable";
 import { AttrRef } from "./attrref";
 import { isIntrinsic, type Intrinsic } from "./intrinsic";
 import { isAttrRefLike } from "./utils";
@@ -35,23 +35,45 @@ export interface StackOutput extends Declarable {
   readonly exportName?: string;
 }
 
-/** Find the first AttrRef anywhere inside a value (walking intrinsics/objects/
- * arrays), so a wrapping intrinsic can still borrow its parent's lexicon.
- * Duck-type, not `instanceof` (chant #1137): a lexicon built against a
- * separate copy of `@intentius/chant` produces AttrRefs that fail
- * `instanceof AttrRef` here but carry the same shape — missing one would
- * make the walk recurse into the AttrRef's own (unhelpful) fields instead
- * of stopping on it, silently failing to find the anchor. */
-function firstAttrRef(value: unknown, seen = new Set<unknown>()): AttrRef | undefined {
+/** What a wrapping intrinsic's lexicon gets derived from: either a nested
+ * AttrRef (borrow its parent's `.lexicon`) or a Declarable referenced
+ * directly (use its own `.lexicon`). Two shapes, not one, because
+ * `Ref(someEntity)` (chant #1152) wraps the entity itself — a
+ * CloudFormation Parameter carries no attributes at all, so `Ref(param)`
+ * can never contain a nested AttrRef for a single-shape search to find. */
+type Anchor = { readonly kind: "attrRef"; readonly ref: AttrRef } | { readonly kind: "declarable"; readonly entity: Declarable };
+
+/** Find the first AttrRef or directly-referenced Declarable anywhere inside a
+ * value (walking intrinsics/objects/arrays), so a wrapping intrinsic can
+ * still borrow its source's lexicon. Duck-type, not `instanceof` (chant
+ * #1137): a lexicon built against a separate copy of `@intentius/chant`
+ * produces AttrRefs/Declarables that fail `instanceof` here but carry the
+ * same shape (`isDeclarable`'s `Symbol.for` marker is already dual-copy-safe
+ * on its own) — missing one would make the walk recurse into its own
+ * (unhelpful) fields instead of stopping on it, silently failing to find the
+ * anchor. */
+function findAnchor(value: unknown, seen = new Set<unknown>()): Anchor | undefined {
   if (value === null || typeof value !== "object" || seen.has(value)) return undefined;
-  if (isAttrRefLike(value)) return value;
+  if (isAttrRefLike(value)) return { kind: "attrRef", ref: value };
+  if (isDeclarable(value)) return { kind: "declarable", entity: value };
   seen.add(value);
   const children = Array.isArray(value) ? value : Object.values(value as Record<string, unknown>);
   for (const child of children) {
-    const found = firstAttrRef(child, seen);
+    const found = findAnchor(child, seen);
     if (found) return found;
   }
   return undefined;
+}
+
+/** Derive the lexicon an anchor belongs to: an AttrRef borrows its (deref'd)
+ * parent's `.lexicon`; a directly-referenced Declarable reports its own. */
+function anchorLexicon(anchor: Anchor | undefined): string {
+  if (!anchor) return "unknown";
+  if (anchor.kind === "declarable") return anchor.entity.lexicon;
+  const parent = anchor.ref.parent.deref();
+  return parent && typeof (parent as Record<string, unknown>).lexicon === "string"
+    ? ((parent as Record<string, unknown>).lexicon as string)
+    : "unknown";
 }
 
 /**
@@ -106,16 +128,15 @@ export function stackOutput(
     );
   }
   // Derive lexicon from the referenced entity — for a bare AttrRef, its parent;
-  // for an intrinsic (Join etc.), the first AttrRef nested inside it. A
-  // foreign-copy AttrRef failing raw `instanceof` here would fall to
-  // `firstAttrRef`, which (before its own #1137 fix) would also miss it —
+  // for an intrinsic (Join etc.), the first AttrRef or directly-referenced
+  // Declarable nested inside it (chant #1152: `Ref(param)`/`Ref(resource)`
+  // wrap the entity itself, not one of its attributes). A foreign-copy
+  // AttrRef/Declarable failing raw `instanceof` here would fall to
+  // `findAnchor`, which (before its own #1137 fix) would also miss it —
   // silently anchoring on nothing and recording `lexicon: "unknown"`.
-  const anchor = typeof ref === "string" ? undefined : isAttrRefLike(ref) ? ref : firstAttrRef(ref);
-  const parent = anchor?.parent.deref();
-  const derived = parent && typeof (parent as Record<string, unknown>).lexicon === "string"
-    ? (parent as Record<string, unknown>).lexicon as string
-    : "unknown";
-  const lexicon = options?.lexicon ?? derived;
+  const anchor: Anchor | undefined =
+    typeof ref === "string" ? undefined : isAttrRefLike(ref) ? { kind: "attrRef", ref } : findAnchor(ref);
+  const lexicon = options?.lexicon ?? anchorLexicon(anchor);
 
   const output: StackOutput = {
     [STACK_OUTPUT_MARKER]: true,

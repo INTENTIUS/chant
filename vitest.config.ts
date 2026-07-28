@@ -56,6 +56,11 @@ export default defineConfig({
       // corpus, nothing from a project's own source directory may be imported
       // into the CLI's process during a `{ fold: true, sandbox: true }` build.
       "examples/sandbox-execution-boundary.test.ts",
+      // chant #1074 — the k8s API client boundary gate: nothing on the build
+      // path may statically import (or, when built for real, load) the
+      // optional Kubernetes client package. Same corpus-walking shape as the
+      // differentials above (no Docker, no cluster).
+      "examples/k8s-client-boundary.test.ts",
     ],
     environment: "node",
     poolOptions: {

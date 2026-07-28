@@ -27,11 +27,22 @@ import { isFoldableHelperName } from "./foldable-helpers";
  * cross-resource `{ __attrRef }` case, literal-key-only), unary `!`/`-`,
  * the binary operators `+ - * / === !== > < >= <=`, short-circuit
  * `&& || ??`, conditional expressions, `as`/`satisfies`/`!`/parenthesized
- * unwrapping, a nested `new Type({...})` resource-as-value, and registered
- * lexicon intrinsic tagged templates — is defined ONCE, in {@link "./subset"}
- * ({@link findSubsetViolation}), and shared with EVL001/EVL003
+ * unwrapping, a nested `new Type({...})` resource-as-value (chant #1169), and
+ * registered lexicon intrinsic tagged templates — is defined ONCE, in
+ * {@link "./subset"} ({@link findSubsetViolation}), and shared with EVL001/EVL003
  * ({@link "../lint/rules/evl001-non-literal-expression"}), so the linted
  * subset and the folded subset can never drift apart (#1024).
+ *
+ * chant #1169 closed the largest of the documented fold/EVL divergences in the
+ * process: a nested `new Type(...)` used as a value was shape-valid for
+ * `./subset` and rejected by `fold()`, because `fold()` could only produce the
+ * `{__resource, props}` envelope and nothing constructed it. Now it folds to
+ * that envelope and ../discovery/fold-import.ts constructs the REAL instance
+ * from it. The remaining divergences are the resolution-dependent ones
+ * ./subset's own module doc enumerates, plus one this change adds in the same
+ * safe direction: a BARE identifier bound to a same-file `new` is shape-valid
+ * there and rejected here, because folding it would build a duplicate of a
+ * resource discovery already registered — see {@link fold}'s identifier branch.
  *
  * A `CallExpression` has almost no case — a function call as a value is
  * structurally unrepresentable, not merely linted against. Composite
@@ -170,6 +181,15 @@ export interface SymbolicValue {
 
 /**
  * The result of folding a resource constructor: `new Type({ ...props })`.
+ *
+ * chant #1169 — produced for a NESTED `new Type(...)` used as a value too, not
+ * just for a file's own top-level resource declaration. It is symbolic in
+ * exactly the sense {@link FoldedIntrinsic} and {@link FoldedHelperCall} are:
+ * `fold()` executes nothing, it records which constructor the source named and
+ * with what arguments. ../discovery/fold-import.ts resolves that name through
+ * the folding file's own imports and calls the real class, so a folded
+ * construction and a run construction are the same construction. An envelope
+ * must never reach a serializer — see the `new` branch of {@link fold}.
  */
 export interface FoldedResource {
   __resource: string;
@@ -298,8 +318,18 @@ export function collectConsts(sourceFile: ts.SourceFile): Map<string, ts.Express
   return consts;
 }
 
-/** A property/element key foldable without execution: identifier, string, or numeric literal. */
-function propName(node: ts.PropertyName): string {
+/**
+ * A property/element key foldable without execution: identifier, string, or
+ * numeric literal.
+ *
+ * Exported for chant #1023's composite-factory interpreter
+ * (../discovery/fold-import.ts), which walks object literals itself — a
+ * factory body may construct a resource inside one, which {@link fold} has no
+ * case for — and must reject a computed key with the identical message
+ * {@link fold} would, rather than growing a second, silently divergent copy of
+ * this rule.
+ */
+export function propName(node: ts.PropertyName): string {
   if (isLiteralPropertyName(node)) return node.text;
   throw foldError(node, computedPropertyNameMessage(node));
 }
@@ -536,7 +566,37 @@ export function fold(
       }
       throw foldError(node, `unresolved identifier: ${node.text}`);
     }
-    return fold(consts.get(node.text) as ts.Expression, consts, intrinsics, externals);
+    const initializer = consts.get(node.text) as ts.Expression;
+    // chant #1169 — a BARE reference to a same-file `const x = new T(...)` is a
+    // reference to THAT resource instance, and the ONE thing it must never
+    // become is a second one. Re-folding the initializer here would do exactly
+    // that now that the `new` branch below constructs: the consumer would get a
+    // duplicate object discovery never registered, whose `AttrRef`s could never
+    // be assigned a logical name ("Cannot serialize AttrRef …: logical name not
+    // set") and whose `Ref` would silently inline instead of referencing. A
+    // crash or wrong output, not drift.
+    //
+    // So `externals` — and ONLY `externals` — answers this one. A caller with a
+    // module graph (../discovery/fold-import.ts) pre-resolves each of this
+    // file's `new`-valued consts to ONE instance, in source order, before any
+    // declarator is folded, and puts it here; every reference in the file then
+    // reads that same object, exactly as running the module top-to-bottom
+    // would. A caller without one (`foldModule`, a unit test) has no way to
+    // construct anything, so the reference stays a rejection and the file falls
+    // back to run.
+    //
+    // `bucket.name` is a different question and keeps its answer regardless: the
+    // property-access branch below consults `consts` first, so a sibling
+    // attribute reference is still the symbolic `{__attrRef}` the serializer
+    // resolves by NAME. Nothing about the existing envelope changes.
+    if (ts.isNewExpression(initializer)) {
+      if (externals?.has(node.text)) return externals.get(node.text) as FoldedValue;
+      throw foldError(
+        node,
+        `same-file resource \`${node.text}\` used as a value is not foldable — falls back to run`,
+      );
+    }
+    return fold(initializer, consts, intrinsics, externals);
   }
 
   if (ts.isPropertyAccessExpression(node)) {
@@ -626,20 +686,40 @@ export function fold(
   }
 
   if (ts.isNewExpression(node)) {
-    // A nested `new Type({...})` used as a property VALUE is not leaf-foldable.
-    // fold can only produce the {__resource, props} envelope, and — unlike a
-    // TOP-LEVEL resource, which fold-import constructs into a real Declarable —
-    // a nested one is never constructed, so the envelope leaks into serialization
-    // as the wrong value (real fold-vs-run drift; the #1025 differential caught
-    // this on gitlab/multi-stage-deploy, where `new Image({...})` as a job's
-    // `image:` must serialize as `{ name }`, not `{ __resource, props }`).
-    // Reject so the file falls back to run, which constructs and serializes it
-    // correctly. EVL permits this statically — it's a documented fold/EVL
-    // divergence, like identifier resolution and spread runtime type.
-    throw foldError(
-      node,
-      `nested \`new ${briefNodeText(node.expression)}(...)\` as a value is not foldable — falls back to run`,
-    );
+    // chant #1169 — a nested `new Type({...})` used as a property VALUE folds
+    // to the SAME {@link FoldedResource} envelope a top-level resource
+    // declaration does, and is constructed for real by the same bridge.
+    //
+    // This used to be an unconditional rejection, and the reason it was is
+    // worth keeping in view: `fold()` alone can only produce the envelope, and
+    // an envelope that reaches serialization is the wrong value — the #1025
+    // differential caught exactly that on gitlab/multi-stage-deploy, where
+    // `new Image({...})` as a job's `image:` must serialize as the constructed
+    // Image's own shape, not as `{__resource, props}`. What changed is not the
+    // envelope's safety but who consumes it: ../discovery/fold-import.ts's
+    // `reviveFoldedValue` now REVIVES a `{__resource}` node into a real
+    // instance, built by the class the file's own `import` names, resolved
+    // through the same provenance-checked machinery that already constructs a
+    // top-level resource (and that #1023's factory interpreter already uses to
+    // construct a nested `new` inside a factory body — the asymmetry that
+    // motivated this change). Nothing symbolic survives into the serializer:
+    // the value the outer constructor receives is the same object the run path
+    // would have handed it, with the same prototype, the same `props`, and the
+    // same `toJSON`/`kind` the serializer's walker dispatches on.
+    //
+    // Only a PLAIN IDENTIFIER constructor is admissible. `new ns.Type(...)`
+    // cannot be resolved to a live class through the file's named imports, so
+    // it stays a rejection rather than folding to an envelope nothing can
+    // revive — the same bare-identifier rule #1023's `checkFactoryExpression`
+    // applies to a body-level construction, and the same one `fold()` applies
+    // to an intrinsic call and an authoring helper.
+    if (!ts.isIdentifier(node.expression)) {
+      throw foldError(
+        node,
+        `nested \`new ${briefNodeText(node.expression)}(...)\` as a value needs a plain imported constructor — falls back to run`,
+      );
+    }
+    return foldResource(node, consts, intrinsics, externals);
   }
 
   if (ts.isCallExpression(node)) {

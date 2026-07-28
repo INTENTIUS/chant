@@ -59,6 +59,12 @@ jobs:
       - name: Typecheck
         run: npx tsc --noEmit -p packages/core/tsconfig.json
 
+      # The k8s API client (#1074) is its own package, so `just build`'s
+      # core-only typecheck does not cover it. It is not a lexicon either, so
+      # check-lexicons below does not reach it.
+      - name: Typecheck the Kubernetes API client (#1074)
+        run: npx tsc --noEmit -p packages/k8s-client/tsconfig.build.json
+
       - name: Lexicon completeness contract (#1067)
         run: npx tsx scripts/check-lexicons.ts
 

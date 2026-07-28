@@ -17,7 +17,7 @@ describe("buildChangeSet (#118)", () => {
     });
     const e = cs.entries.find((x) => x.name === "bucket")!;
     expect(e.action).toBe("create");
-    expect(e.evidence).toEqual({ declared: true, inSnapshot: false, live: false });
+    expect(e.evidence).toEqual({ declared: true, inSnapshot: false, live: false, observed: true });
     expect(e.ownership).toBe("unknown");
   });
 
@@ -106,6 +106,77 @@ describe("buildChangeSet (#118)", () => {
     expect(cs.entries.filter((e) => e.action === "adopt").map((e) => e.name)).toEqual(["b", "c"]);
   });
 
+  // ── Owner-reference chain classification (#1077) ──────────────────────────
+
+  test("undeclared, owner chain reaches a declared entity → runtime, never delete or adopt", () => {
+    const cs = buildChangeSet("prod", {
+      declared: new Set(["web"]),
+      observedNow: {
+        web: meta({ type: "K8s::Apps::Deployment" }),
+        "prod/web-abc": meta({ type: "K8s::Core::Pod", ownerChain: { root: "declared", entity: "web" } }),
+      },
+      observedThen: undefined,
+    });
+    const e = cs.entries.find((x) => x.name === "prod/web-abc")!;
+    expect(e.action).toBe("runtime");
+    expect(e.runtimeOwner).toBe("web");
+  });
+
+  test("a runtime child that also carries chant's own ownership marker is still `runtime`, never `delete`", () => {
+    // Guards the ordering in buildChangeSet: runtimeOwner must be checked
+    // before the ownership marker, in case a runtime child ever inherits the
+    // marker (e.g. label propagation from its owner's pod template).
+    const cs = buildChangeSet("prod", {
+      declared: new Set(),
+      observedNow: {
+        "prod/web-abc": meta({ ownership: "owned", ownerChain: { root: "declared", entity: "web" } }),
+      },
+      observedThen: undefined,
+    });
+    const e = cs.entries.find((x) => x.name === "prod/web-abc")!;
+    expect(e.action).toBe("runtime");
+  });
+
+  test("undeclared, unowned → orphan/adopt, not runtime", () => {
+    const cs = buildChangeSet("prod", {
+      declared: new Set(),
+      observedNow: { "prod/standalone": meta({ ownerChain: { root: "unowned" } }) },
+      observedThen: undefined,
+    });
+    const e = cs.entries.find((x) => x.name === "prod/standalone")!;
+    expect(e.action).toBe("adopt");
+    expect(e.runtimeOwner).toBeUndefined();
+  });
+
+  test("undeclared, foreign root → orphan/adopt, not runtime", () => {
+    const cs = buildChangeSet("prod", {
+      declared: new Set(),
+      observedNow: { "prod/other": meta({ ownerChain: { root: "foreign" } }) },
+      observedThen: undefined,
+    });
+    expect(cs.entries.find((x) => x.name === "prod/other")!.action).toBe("adopt");
+  });
+
+  test("undeclared, unresolved chain (unreadable/cycle/depth) → conservative adopt, not runtime", () => {
+    const cs = buildChangeSet("prod", {
+      declared: new Set(),
+      observedNow: { "prod/mystery": meta({ ownerChain: { root: "unknown" } }) },
+      observedThen: undefined,
+    });
+    const e = cs.entries.find((x) => x.name === "prod/mystery")!;
+    expect(e.action).toBe("adopt");
+    expect(e.runtimeOwner).toBeUndefined();
+  });
+
+  test("a lexicon with no owner chain at all is unaffected — undeclared stays adopt/delete as before", () => {
+    const cs = buildChangeSet("prod", {
+      declared: new Set(),
+      observedNow: { orphan: meta({ ownership: "owned" }) },
+      observedThen: undefined,
+    });
+    expect(cs.entries.find((x) => x.name === "orphan")!.action).toBe("delete");
+  });
+
   test("only in snapshot (gone now, undeclared) → noop", () => {
     const cs = buildChangeSet("prod", {
       declared: new Set(),
@@ -148,6 +219,23 @@ describe("summarize / renderChangeSet", () => {
     expect(out).toContain("ADOPT:");
     expect(out).toContain("orphan");
   });
+
+  test("summarize and render surface the runtime action (#1077)", () => {
+    const withRuntime = buildChangeSet("prod", {
+      declared: new Set(["web"]),
+      observedNow: {
+        web: meta({ type: "K8s::Apps::Deployment" }),
+        "prod/web-abc": meta({ type: "K8s::Core::Pod", ownerChain: { root: "declared", entity: "web" } }),
+      },
+      observedThen: undefined,
+    });
+    expect(summarize(withRuntime).runtime).toBe(1);
+    expect(summarize(withRuntime).adopt).toBe(0);
+    const out = renderChangeSet(withRuntime);
+    expect(out).toContain("RUNTIME");
+    expect(out).toContain("prod/web-abc");
+    expect(out).toContain("owned by web");
+  });
 });
 
 describe("gitlabMrReport (#329)", () => {
@@ -169,6 +257,18 @@ describe("gitlabMrReport (#329)", () => {
     expect(gitlabMrReport(cs)).toEqual({ create: 1, update: 1, delete: 1 });
   });
 
+  test("a runtime child (#1077) is excluded from the widget — never counted as a change", () => {
+    const cs = buildChangeSet("prod", {
+      declared: new Set(["web"]),
+      observedNow: {
+        web: meta({ type: "K8s::Apps::Deployment" }),
+        "prod/web-abc": meta({ type: "K8s::Core::Pod", ownerChain: { root: "declared", entity: "web" } }),
+      },
+      observedThen: undefined,
+    });
+    expect(gitlabMrReport(cs)).toEqual({ create: 0, update: 0, delete: 0 });
+  });
+
   test("empty plan reports all zeros", () => {
     const cs = buildChangeSet("prod", {
       declared: new Set(),
@@ -183,6 +283,98 @@ describe("gitlabMrReport (#329)", () => {
       declared: new Set(),
       observedNow: { orphan: meta() }, // unknown ownership → adopt
       observedThen: undefined,
+    });
+    expect(gitlabMrReport(cs)).toEqual({ create: 0, update: 0, delete: 0 });
+  });
+});
+
+// ── The observation tri-state (#1089) ───────────────────────────────────────
+
+describe("buildChangeSet: not-observed is not absent (#1089)", () => {
+  test("declared and not observed → unobserved, never create", () => {
+    const cs = buildChangeSet("prod", {
+      declared: new Set(["crd-widget"]),
+      observedNow: {},
+      observedThen: undefined,
+      unobserved: {
+        "crd-widget": {
+          type: "K8s::Example::Widget",
+          reason: "unsupported-kind",
+          detail: "no kubectl mapping",
+        },
+      },
+    });
+    const e = cs.entries.find((x) => x.name === "crd-widget")!;
+    expect(e.action).toBe("unobserved");
+    expect(e.evidence).toEqual({ declared: true, inSnapshot: false, live: false, observed: false });
+    expect(e.unobservedReason).toBe("unsupported-kind");
+    expect(e.type).toBe("K8s::Example::Widget");
+  });
+
+  test("the same entity, confirmed absent, still classifies as create", () => {
+    const cs = buildChangeSet("prod", {
+      declared: new Set(["crd-widget"]),
+      observedNow: {},
+      observedThen: undefined,
+    });
+    expect(cs.entries.find((x) => x.name === "crd-widget")!.action).toBe("create");
+  });
+
+  test("a returned resource wins over an unobserved claim for the same name", () => {
+    const cs = buildChangeSet("prod", {
+      declared: new Set(["queue"]),
+      observedNow: { queue: meta() },
+      observedThen: undefined,
+      unobserved: { queue: { reason: "read-failed" } },
+    });
+    const e = cs.entries.find((x) => x.name === "queue")!;
+    expect(e.action).toBe("noop");
+    expect(e.evidence.observed).toBe(true);
+  });
+
+  test("an unobserved entity that is in the snapshot is not read as gone", () => {
+    const cs = buildChangeSet("prod", {
+      declared: new Set(["queue"]),
+      observedNow: {},
+      observedThen: { queue: meta() },
+      unobserved: { queue: { reason: "no-credentials" } },
+    });
+    const e = cs.entries.find((x) => x.name === "queue")!;
+    expect(e.action).toBe("unobserved");
+    expect(e.evidence.inSnapshot).toBe(true);
+  });
+
+  test("an unobserved entity is never a delete, even with an owned marker in the snapshot", () => {
+    const cs = buildChangeSet("prod", {
+      declared: new Set(),
+      observedNow: {},
+      observedThen: { legacy: meta({ ownership: "owned" }) },
+      unobserved: { legacy: { reason: "read-failed" } },
+    });
+    expect(cs.entries.find((x) => x.name === "legacy")!.action).toBe("unobserved");
+  });
+
+  test("summarize and render surface the hole", () => {
+    const cs = buildChangeSet("prod", {
+      declared: new Set(["a"]),
+      observedNow: {},
+      observedThen: undefined,
+      unobserved: { a: { reason: "no-binding", detail: "no kubectl context for prod" } },
+    });
+    expect(summarize(cs).unobserved).toBe(1);
+    expect(summarize(cs).create).toBe(0);
+    const out = renderChangeSet(cs);
+    expect(out).toContain("UNOBSERVED");
+    expect(out).toContain("no binding for this environment");
+    expect(out).toContain("no kubectl context for prod");
+  });
+
+  test("the GitLab widget excludes unobserved — its three columns cannot express a hole", () => {
+    const cs = buildChangeSet("prod", {
+      declared: new Set(["a"]),
+      observedNow: {},
+      observedThen: undefined,
+      unobserved: { a: { reason: "read-failed" } },
     });
     expect(gitlabMrReport(cs)).toEqual({ create: 0, update: 0, delete: 0 });
   });

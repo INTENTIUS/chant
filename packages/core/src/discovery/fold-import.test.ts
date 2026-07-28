@@ -3,7 +3,7 @@ import { mkdir, writeFile, rm } from "node:fs/promises";
 import { join, dirname, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
-import { tryFoldFile, createFoldSession } from "./fold-import";
+import { tryFoldFile, createFoldSession, planFoldTaint } from "./fold-import";
 import { isDeclarable } from "../declarable";
 import { isCompositeInstance } from "../composite";
 import { isAttrRefLike } from "../utils";
@@ -1921,5 +1921,376 @@ describe("tryFoldFile — active lexicon package exports (#1063)", () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.reason).toContain(`ambient "process" read is not foldable`);
+  });
+});
+
+/**
+ * chant #1169 — a `new Type(...)` used as a VALUE.
+ *
+ * The largest measured gate on the example corpus (64 files, the sole blocker
+ * in 22 entries) and the one the original #1022-era rejection was most
+ * deliberate about: `fold()` alone can only produce a `{__resource, props}`
+ * envelope, and an envelope that reaches a serializer is not the value the run
+ * path produced — `image: new Image({ name })` has to serialize as the
+ * constructed Image's own shape, not as the envelope.
+ *
+ * The answer is not to normalize the envelope; it is to construct. These tests
+ * are about proving that what gets constructed is INDISTINGUISHABLE from what
+ * running the file would have built:
+ *
+ *  - a real instance of the class the file's own `import` names, with its
+ *    prototype and `kind`/`entityType` intact (not a plain-object copy);
+ *  - built ONCE per source construction, so a resource named by a `const` and
+ *    referenced three times is one object — the same object discovery
+ *    registers, which is the only reason a reference to it can resolve to a
+ *    logical name at all;
+ *  - behind the same #1093 gate as every other construction, so `--sandbox`
+ *    still executes nothing project-owned in this process.
+ */
+describe("tryFoldFile — constructions as values (chant #1169)", () => {
+  let testDir: string;
+
+  beforeEach(async () => {
+    testDir = join(tmpdir(), `chant-fold-import-1169-test-${Date.now()}-${Math.random()}`);
+    await mkdir(testDir, { recursive: true });
+  });
+
+  afterEach(async () => {
+    await rm(testDir, { recursive: true, force: true });
+  });
+
+  /** A resource class and two property-kind classes, from chant's real runtime factories — the exact shapes every lexicon's generated barrel produces. */
+  async function writeDefs(): Promise<void> {
+    await writeFile(
+      join(testDir, "resources.ts"),
+      `
+        import { createResource, createProperty } from ${JSON.stringify(runtimePath)};
+        export const Job = createResource("Test::Job", "gitlab", { Id: "Id" });
+        export const Image = createProperty("Test::Image", "gitlab");
+        export const Rule = createProperty("Test::Rule", "gitlab");
+      `,
+    );
+  }
+
+  /** The `props` of a folded entity, without the `as unknown as` dance at every call site. */
+  function propsOf(entity: unknown): Record<string, unknown> {
+    return (entity as { props: Record<string, unknown> }).props;
+  }
+
+  test("an INLINE nested construction becomes a real instance, not a `{__resource}` envelope", async () => {
+    await writeDefs();
+    const file = join(testDir, "main.ts");
+    await writeFile(
+      file,
+      `
+        import { Job, Image } from "./resources";
+        throw new Error("must never execute — sentinel for #1169 fold verification");
+        export const build = new Job({ stage: "build", image: new Image({ name: "node:22-alpine" }) });
+      `,
+    );
+
+    const result = await tryFoldFile(file);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const [, entity] = result.entities[0];
+    const image = propsOf(entity).image;
+    // The whole point: a live Declarable with its prototype, `kind` and
+    // `entityType`, which is what the serializer's walker dispatches on. An
+    // envelope would be a plain object with a `__resource` key and would
+    // serialize as `{ __resource, props }`.
+    expect(isDeclarable(image)).toBe(true);
+    expect((image as unknown as { entityType: string }).entityType).toBe("Test::Image");
+    expect((image as unknown as { kind: string }).kind).toBe("property");
+    expect(propsOf(image)).toEqual({ name: "node:22-alpine" });
+    expect(image).not.toHaveProperty("__resource");
+  });
+
+  test("constructions nest in every value position — an array element, a deeper object, a second level", async () => {
+    await writeDefs();
+    const file = join(testDir, "main.ts");
+    await writeFile(
+      file,
+      `
+        import { Job, Image, Rule } from "./resources";
+        export const deploy = new Job({
+          image: new Image({ name: "alpine" }),
+          rules: [new Rule({ if: "$CI_COMMIT_BRANCH" }), new Rule({ when: "manual" })],
+          nested: { inner: new Rule({ if: "always" }) },
+        });
+      `,
+    );
+
+    const result = await tryFoldFile(file);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const props = propsOf(result.entities[0][1]);
+    const rules = props.rules as unknown[];
+    expect(rules).toHaveLength(2);
+    expect(rules.every((r) => isDeclarable(r))).toBe(true);
+    expect(propsOf(rules[0])).toEqual({ if: "$CI_COMMIT_BRANCH" });
+    expect(isDeclarable((props.nested as { inner: unknown }).inner)).toBe(true);
+  });
+
+  test("the constructor's second argument (CFN-style attributes) folds a nested construction too", async () => {
+    await writeDefs();
+    const file = join(testDir, "main.ts");
+    await writeFile(
+      file,
+      `
+        import { Job, Rule } from "./resources";
+        export const job = new Job({ stage: "test" }, { Metadata: new Rule({ note: "attr" }) });
+      `,
+    );
+
+    const result = await tryFoldFile(file);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const attributes = (result.entities[0][1] as unknown as { attributes: Record<string, unknown> }).attributes;
+    expect(isDeclarable(attributes.Metadata)).toBe(true);
+    expect(propsOf(attributes.Metadata)).toEqual({ note: "attr" });
+  });
+
+  test("a NAMED same-file resource is built ONCE — every reference is the same object", async () => {
+    await writeDefs();
+    const file = join(testDir, "main.ts");
+    await writeFile(
+      file,
+      `
+        import { Job, Image } from "./resources";
+        const nodeImage = new Image({ name: "node:22-alpine" });
+        export const build = new Job({ stage: "build", image: nodeImage });
+        export const check = new Job({ stage: "test", image: nodeImage });
+      `,
+    );
+
+    const result = await tryFoldFile(file);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const buildImage = propsOf(result.exportedValues.get("build")).image;
+    const checkImage = propsOf(result.exportedValues.get("check")).image;
+    expect(isDeclarable(buildImage)).toBe(true);
+    // Identity, not equality. Running the module evaluates `const nodeImage`
+    // once and both jobs close over that one object; two instances here would
+    // be a different program.
+    expect(buildImage).toBe(checkImage);
+  });
+
+  test("a named resource referenced by another resource IS the entity discovery registers — no duplicate", async () => {
+    await writeDefs();
+    const file = join(testDir, "main.ts");
+    await writeFile(
+      file,
+      `
+        import { Job } from "./resources";
+        export const first = new Job({ stage: "first" });
+        export const second = new Job({ stage: "second", needs: [first] });
+      `,
+    );
+
+    const result = await tryFoldFile(file);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const first = result.exportedValues.get("first");
+    const needs = propsOf(result.exportedValues.get("second")).needs as unknown[];
+    // THE assertion this whole design turns on. `entities` is what discovery
+    // assigns logical names to; if the reference held a second instance, the
+    // serializer would find it absent from that table and inline its props
+    // where the run path emits a reference — or throw "logical name not set".
+    expect(needs[0]).toBe(first);
+    expect(result.entities.map(([name]) => name)).toEqual(["first", "second"]);
+  });
+
+  test("`export { x }` of a same-file resource exports that same instance", async () => {
+    await writeDefs();
+    const file = join(testDir, "main.ts");
+    await writeFile(
+      file,
+      `
+        import { Job, Image } from "./resources";
+        const shared = new Image({ name: "alpine" });
+        const job = new Job({ image: shared });
+        export { job };
+      `,
+    );
+
+    const result = await tryFoldFile(file);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.entities.map(([name]) => name)).toEqual(["job"]);
+    expect(isDeclarable(propsOf(result.exportedValues.get("job")).image)).toBe(true);
+  });
+
+  test("an attribute reference to a same-file resource still folds to the `{__attrRef}` envelope, unchanged", async () => {
+    await writeDefs();
+    const file = join(testDir, "main.ts");
+    await writeFile(
+      file,
+      `
+        import { Job } from "./resources";
+        export const first = new Job({ stage: "first" });
+        export const second = new Job({ upstream: first.Id });
+      `,
+    );
+
+    const result = await tryFoldFile(file);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // #1169 deliberately leaves this path alone: a sibling ATTRIBUTE reference
+    // is resolved by the serializer's own walker from the envelope's entity
+    // NAME, and nothing about that had to change for a construction to fold.
+    expect(propsOf(result.exportedValues.get("second")).upstream).toEqual({
+      __attrRef: { entity: "first", attribute: "Id" },
+    });
+  });
+
+  test("a nested construction whose class isn't a resolvable import falls the file back to run", async () => {
+    await writeDefs();
+    const file = join(testDir, "main.ts");
+    await writeFile(
+      file,
+      `
+        import { Job } from "./resources";
+        export const job = new Job({ image: new Unimported({ name: "x" }) });
+      `,
+    );
+
+    const result = await tryFoldFile(file);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toContain(`constructor "Unimported" is not a resolvable import`);
+  });
+
+  test("a nested `new ns.Type(...)` through a namespace import stays rejected", async () => {
+    await writeDefs();
+    const file = join(testDir, "main.ts");
+    await writeFile(
+      file,
+      `
+        import { Job } from "./resources";
+        import * as res from "./resources";
+        export const job = new Job({ image: new res.Image({ name: "x" }) });
+      `,
+    );
+
+    const result = await tryFoldFile(file);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    // Shape-level: a dotted callee cannot be resolved to a live class through
+    // the file's named imports, so it never folds to an envelope nothing could
+    // revive. Same bare-identifier rule as an intrinsic call and #1023's
+    // factory-body construction.
+    expect(result.reason).toContain("needs a plain imported constructor");
+  });
+
+  test("a same-file resource used as a value rejects when no construction is available", async () => {
+    // The divergence #1169 adds, in the one direction that is safe. When the
+    // class can't be resolved there is no instance to point at, and re-folding
+    // the initializer would build a duplicate — so the reference rejects and
+    // the file falls back to run, where both references are the same object by
+    // construction.
+    const file = join(testDir, "main.ts");
+    await writeFile(
+      file,
+      `
+        import { Job } from "./missing-module";
+        const shared = new Job({ stage: "a" });
+        export const job = new Job({ needs: [shared] });
+      `,
+    );
+
+    const result = await tryFoldFile(file);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toContain("same-file resource `shared` used as a value is not foldable");
+  });
+
+  test("a construction whose class is a PROJECT file folds under plain --fold and REFUSES under --sandbox", async () => {
+    // chant #1093 — a nested construction reaches its class through exactly the
+    // same binding gate every other construction does, so it cannot widen the
+    // boundary. `./resources.ts` is project source: trusted enough to import
+    // under plain `--fold` (the run path imports it too), never under
+    // `--sandbox`, where the file demotes to the child instead.
+    await writeDefs();
+    const file = join(testDir, "main.ts");
+    await writeFile(
+      file,
+      `
+        import { Job, Image } from "./resources";
+        export const job = new Job({ image: new Image({ name: "alpine" }) });
+      `,
+    );
+
+    const plain = await tryFoldFile(file, [], createFoldSession([], undefined, [], false));
+    expect(plain.ok).toBe(true);
+
+    const sandboxed = await tryFoldFile(file, [], createFoldSession([], undefined, [], true));
+    expect(sandboxed.ok).toBe(false);
+    if (sandboxed.ok) return;
+    expect(sandboxed.reason).toContain("--sandbox");
+    expect(sandboxed.reason).toContain(`constructor "Image"`);
+  });
+
+  test("a nested instance reaches another file only through an exported object, and that edge is already recorded", async () => {
+    // chant #1097's question, answered for #1169. A nested instance is an
+    // inline value: it is never an export of its own, so no other file can name
+    // it. The one way another file CAN observe it is by importing the object
+    // that holds it — and that is an ordinary cross-file object edge, already
+    // recorded in `liveSources` and already reverse-taint-propagated by
+    // `planFoldTaint` (#1044). Nothing new to track.
+    await writeDefs();
+    await writeFile(
+      join(testDir, "shared.ts"),
+      `
+        import { Image } from "./resources";
+        export const cfg = { image: new Image({ name: "alpine" }) };
+      `,
+    );
+    const file = join(testDir, "main.ts");
+    await writeFile(
+      file,
+      `
+        import { Job } from "./resources";
+        import { cfg } from "./shared";
+        export const job = new Job({ image: cfg.image });
+      `,
+    );
+
+    const session = createFoldSession();
+    const sharedPath = join(testDir, "shared.ts");
+    const sharedResult = await tryFoldFile(sharedPath, [], session);
+    const result = await tryFoldFile(file, [], session);
+
+    expect(result.ok).toBe(true);
+    expect(sharedResult.ok).toBe(true);
+    if (!result.ok || !sharedResult.ok) return;
+
+    const sharedImage = (sharedResult.exportedValues.get("cfg") as { image: unknown }).image;
+    // Identity across the file boundary — one instance, shared, exactly as
+    // Node's module cache would give the run path.
+    expect(propsOf(result.exportedValues.get("job")).image).toBe(sharedImage);
+    // And the edge that makes it safe: main.ts is on record as having consumed
+    // shared.ts's objects, so if shared.ts is ever forced back to run, main.ts
+    // is forced with it rather than left holding a stale instance.
+    expect([...result.liveSources]).toContain(sharedPath);
+
+    const tainted = await planFoldTaint(
+      [file, sharedPath],
+      new Map([
+        [file, false],
+        [sharedPath, true],
+      ]),
+      new Map([[file, result.liveSources]]),
+    );
+    expect(tainted.has(sharedPath)).toBe(true);
   });
 });

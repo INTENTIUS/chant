@@ -5,13 +5,14 @@ import { dirname, basename, join, sep, isAbsolute, resolve as resolvePath } from
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import { isDeclarable, type Declarable } from "../declarable";
-import { isCompositeInstance, type CompositeInstance } from "../composite";
+import { Composite, isCompositeInstance, type CompositeInstance, type CompositeMembers } from "../composite";
 import { isAttrRefLike } from "../utils";
 import { isIntrinsic } from "../intrinsic";
 import {
   collectConsts,
   foldResource,
   fold,
+  propName,
   FoldError,
   locate,
   type FoldedResource,
@@ -21,7 +22,18 @@ import {
   type SymbolicValue,
 } from "../fold/fold";
 import { isChantOwnedSpecifier, isFoldableHelperName } from "../fold/foldable-helpers";
-import { briefNodeText, callExpressionMessage } from "../fold/subset";
+import {
+  briefNodeText,
+  callExpressionMessage,
+  computedPropertyNameMessage,
+  isLiteralElementKey,
+  unsupportedBinaryMessage,
+  unsupportedExpressionMessage,
+  UNSUPPORTED_OBJECT_MEMBER_MESSAGE,
+  UNSUPPORTED_UNARY_MESSAGE,
+  SUPPORTED_BINARY_OPERATORS,
+  SUPPORTED_UNARY_OPERATORS,
+} from "../fold/subset";
 import { importModule } from "./import";
 import type { IntrinsicDef } from "../lexicon";
 import type { BuildParamValue } from "../build-params";
@@ -44,28 +56,37 @@ import type { BuildParamValue } from "../build-params";
  * class/function; the only thing skipped here is executing the file's *own*
  * statements.
  *
- * chant #1023 (epic #1019 Phase 5) extends this from leaf resources
- * (`new Type(...)`) to composite factory calls — `SomeComposite({...})`,
+ * chant #1022 extends this from leaf resources (`new Type(...)`) to composite
+ * factory calls — `SomeComposite({...})`,
  * `propagate(SomeComposite({...}), {...})`, member access on the result
  * (`web.deployment`), and destructuring (`const { a, b } = SomeComposite(...)`
  * or `export const { a, b } = SomeComposite(...)`). A composite factory is a
  * pure function of its props (EVL009/EVL010 guarantee its body only
  * references props, sibling members, and imports), so — exactly like a
- * resource constructor — it's safe to resolve through the file's imports and
- * actually invoke with statically-folded props: no need to pre-verify "is
- * this specifically a registered composite" via a shared registry (which
- * would be unreliable across separately-loaded module instances of
- * `@intentius/chant` anyway) — {@link resolveCallExpression} just resolves,
- * invokes, and lets the RESULT speak. If it satisfies
- * {@link isCompositeInstance} (or, for a plain resource-returning helper,
- * {@link isDeclarable}), it's used. Nested composites and `propagate()`'d
- * shared props need no special-casing: a nested composite is just another
- * member the real factory call already produced (real JS execution inside a
- * trusted module), and `propagate` is just another resolvable imported
- * function that receives a live `CompositeInstance` plus folded shared props
- * and returns it — `expandComposite()` (invoked downstream by
- * `collectEntities`, unchanged) does the recursive expansion and the shared-
- * prop merge exactly as it does for the run path.
+ * resource constructor — it is resolved through the file's imports and
+ * INVOKED with statically-folded props, and the RESULT is what matters: if it
+ * satisfies {@link isCompositeInstance} (or, for a plain resource-returning
+ * helper, {@link isDeclarable}), it's used. Nested composites and
+ * `propagate()`'d shared props need no special-casing there: a nested
+ * composite is just another member the real factory call already produced,
+ * and `propagate` is just another resolvable imported function that receives a
+ * live `CompositeInstance` plus folded shared props and returns it —
+ * `expandComposite()` (invoked downstream by `collectEntities`, unchanged)
+ * does the recursive expansion and the shared-prop merge exactly as it does
+ * for the run path.
+ *
+ * chant #1023 (epic #1019 Phase 5) removes that invocation where it can. When
+ * the callee is a composite defined in a PROJECT file as
+ * `Composite(<fn>, "<name>")` and `<fn>`'s body stays inside a closed,
+ * documented subset, its body is INTERPRETED instead — the defining module is
+ * never imported, and the members are built here, by the lexicon's own
+ * constructors, from the same folded props. That closes the last place a file
+ * reported as `[fold:fold]` could still execute project-authored code in the
+ * CLI's process (#1093), and lets such a file fold under `--sandbox` rather
+ * than being demoted to the child (#1111). A factory outside the subset keeps
+ * invoking, unchanged. See the contract block above
+ * {@link resolveInterpretableFactory} for the five admissibility rules and
+ * what interpretation preserves.
  */
 
 /** One exported `const` name folded to a real, constructed `Declarable` or `CompositeInstance`. */
@@ -217,6 +238,25 @@ export interface FoldSession {
    * only the fold half would buy nothing there.
    */
   readonly sandbox: boolean;
+  /**
+   * chant #1023 — per-build memo for {@link readFactoryModule}, keyed by the
+   * resolved absolute path of a module that DEFINES a composite. A composite
+   * defined once and called from a dozen sibling files is parsed, and its
+   * imports resolved, exactly once per build — the same reason
+   * {@link FoldSession.cache} exists for the files discovery folds directly.
+   *
+   * Separate from `cache` because the two ask different questions of the same
+   * file: `cache` asks "what are this module's exported VALUES" (and fails
+   * outright for a module that exports a function declaration, which a
+   * composite-defining module very often does); this asks "what is this
+   * module's static SCOPE" — its consts, its imports, and those imports'
+   * already-resolved values — which is well-defined even when the module as a
+   * whole doesn't fold. `lexicons/aws/examples/lambda-api/src/lambda-api.ts`
+   * is exactly that case: it exports two plain functions alongside its
+   * `Composite`, so it never folds, and its `LambdaApi` is interpretable
+   * regardless.
+   */
+  readonly factoryModules: Map<string, Promise<FactoryModuleScope | undefined>>;
 }
 
 /**
@@ -256,6 +296,7 @@ export function createFoldSession(
     buildParams,
     lexiconPackages: new Set(lexicons.map(lexiconPackageName)),
     sandbox,
+    factoryModules: new Map(),
   };
 }
 
@@ -390,6 +431,60 @@ function importModuleMemoized(
 /** True when `node` carries the `export` modifier. */
 function hasExportModifier(node: { modifiers?: ts.NodeArray<ts.ModifierLike> }): boolean {
   return node.modifiers?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword) ?? false;
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Execution accounting (chant #1023).
+// ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * What the fold pass actually EXECUTED, and what it interpreted instead — the
+ * number chant #1023 is measured by, and the one the #1093/#1111
+ * execution-boundary report could not state before: `--sandbox` proves
+ * *nothing project-owned ran in this process*, but plain `--fold` still
+ * invoked composite factories in-process, and nothing counted them.
+ *
+ * Purely observational. Two integer increments on paths that were already
+ * about to perform a dynamic `import()` or parse a module, so it costs
+ * nothing measurable and changes no decision.
+ */
+export interface FoldExecutionCounts {
+  /**
+   * Composite-factory / wrapper calls {@link resolveCallExpression} resolved
+   * by importing the defining module and CALLING it in this process.
+   */
+  factoryInvocations: number;
+  /**
+   * Of {@link factoryInvocations}, the ones whose callee came from a PROJECT
+   * FILE (a relative/absolute specifier) rather than a lexicon package or
+   * chant's own — i.e. the ones that execute project-authored code here. Text
+   * only ({@link isProjectFileSpecifier}); no resolution is performed to
+   * classify.
+   */
+  projectFactoryInvocations: number;
+  /**
+   * Composite factory bodies {@link interpretCompositeFactory} evaluated
+   * statically instead — each one an invocation that did NOT happen.
+   */
+  factoryInterpretations: number;
+}
+
+const executionCounts: FoldExecutionCounts = {
+  factoryInvocations: 0,
+  projectFactoryInvocations: 0,
+  factoryInterpretations: 0,
+};
+
+/** A snapshot of {@link FoldExecutionCounts}. Process-wide and monotonic — a caller wanting a per-build figure calls {@link resetFoldExecutionCounts} first. */
+export function foldExecutionCounts(): Readonly<FoldExecutionCounts> {
+  return { ...executionCounts };
+}
+
+/** Zero {@link foldExecutionCounts}, for a caller measuring one build. */
+export function resetFoldExecutionCounts(): void {
+  executionCounts.factoryInvocations = 0;
+  executionCounts.projectFactoryInvocations = 0;
+  executionCounts.factoryInterpretations = 0;
 }
 
 /**
@@ -1049,6 +1144,23 @@ interface ResolveCtx {
   lexiconPackages: ReadonlySet<string>;
   /** chant #1093 — see {@link FoldSession.sandbox}. */
   sandbox: boolean;
+  /**
+   * chant #1023 — the whole build session, for the two things composite-factory
+   * interpretation needs that a per-file context cannot carry: the
+   * {@link FoldSession.factoryModules} memo (a composite's defining module is
+   * parsed once per BUILD, not once per calling file) and
+   * {@link FoldSession.stack} (so a factory whose module is already being
+   * resolved further up the same chain is a detected cycle, not a hang).
+   */
+  session: FoldSession;
+  /**
+   * chant #1023 — how many composite factory bodies are being interpreted
+   * around this context, 0 at a file's own top level. A composite that
+   * (directly or through its members) calls itself has no fixpoint and no file
+   * boundary for {@link FoldSession.stack} to notice, so this is what
+   * terminates it — see {@link MAX_INTERPRETATION_DEPTH}.
+   */
+  interpretDepth: number;
 }
 
 /** `{ value }` when `node`'s shape was recognized and resolved (value may itself be `undefined`/`null` — e.g. an optional composite member that wasn't created); `undefined` when the shape isn't one the live resolver understands (a plain literal, etc.) — callers fall back to the original, unchanged handling for that shape. */
@@ -1127,7 +1239,7 @@ async function resolveLiveValue(node: ts.Expression, ctx: ResolveCtx): Promise<L
 }
 
 /**
- * Resolve and invoke a bare call expression — a composite factory call
+ * Resolve a bare call expression — a composite factory call
  * (`SomeComposite({...})`) or a wrapper that takes a composite instance and
  * returns one (`propagate(SomeComposite({...}), {...})`). The callee must be
  * a plain identifier bound by this file's own `import` (a namespace-import
@@ -1135,13 +1247,25 @@ async function resolveLiveValue(node: ts.Expression, ctx: ResolveCtx): Promise<L
  * same file, can't be resolved without running the file — falls back, same
  * as an unresolvable resource constructor).
  *
- * No pre-check verifies the resolved callee is "really" a composite: each
- * argument is resolved (recursively, for a nested composite-call/member-
- * access argument like `propagate`'s first one) or folded (for a plain props
- * object literal via {@link fold}), the real function is invoked, and the
- * RESULT is what matters to the caller — {@link resolveLiveValue}'s callers
- * decide what shape they need (a `CompositeInstance` for member access, an
- * `isDeclarable`/`isCompositeInstance` value for a top-level export).
+ * Two ways to get the value, tried in that order:
+ *
+ * 1. **Interpretation** (chant #1023) — the callee is an interpretable
+ *    registered `Composite` defined in a PROJECT file, so its body is
+ *    evaluated statically and nothing is imported or run. See
+ *    {@link resolveInterpretableFactory} for the exact admissible subset.
+ * 2. **Invocation** (chant #1022) — everything else. Each argument is
+ *    resolved (recursively, for a nested composite-call/member-access
+ *    argument like `propagate`'s first one) or folded (for a plain props
+ *    object literal via {@link fold}), the real function is imported and
+ *    invoked, and the RESULT is what matters to the caller —
+ *    {@link resolveLiveValue}'s callers decide what shape they need (a
+ *    `CompositeInstance` for member access, an
+ *    `isDeclarable`/`isCompositeInstance` value for a top-level export).
+ *    No pre-check verifies the resolved callee is "really" a composite.
+ *
+ * Arm 2 is untouched by #1023, including for a factory arm 1 STARTED and then
+ * declined on: interpretation is all-or-nothing per call, and a decline is not
+ * a fold failure — it lands exactly where the code landed before this existed.
  */
 async function resolveCallExpression(node: ts.CallExpression, ctx: ResolveCtx): Promise<unknown> {
   // chant #1054 — reuses ../fold/subset's `callExpressionMessage` (the SAME
@@ -1158,6 +1282,43 @@ async function resolveCallExpression(node: ts.CallExpression, ctx: ResolveCtx): 
     throw cheapError(callExpressionMessage(node));
   }
 
+  // chant #1023 — is this callee a composite whose body can be INTERPRETED
+  // rather than run? Purely a static question (does the defining module parse,
+  // does it declare this export as `Composite(<fn>, "<name>")`, is `<fn>`'s
+  // body inside the admissible subset) — no argument has been evaluated yet
+  // and nothing has been imported, so a `undefined` here has cost nothing and
+  // changed nothing.
+  const factory = await resolveInterpretableFactory(binding, ctx);
+
+  if (factory) {
+    const args = await resolveCallArguments(node, calleeName, ctx);
+    const interpreted = await interpretCompositeFactory(factory, args, ctx);
+    if (interpreted) return interpreted.value;
+    // Declined — the body's shape passed but something in it did not resolve
+    // (an identifier the module's own imports don't reach, a constructor
+    // --sandbox refuses). Fall through to arm 2 with the arguments ALREADY
+    // evaluated, so a nested composite-call argument is not built twice.
+    return invokeImportedCallee(node, calleeName, binding, ctx, args);
+  }
+
+  return invokeImportedCallee(node, calleeName, binding, ctx);
+}
+
+/**
+ * Arm 2 — import the module the callee came from and call it, in this process.
+ * Unchanged from #1022 in both behavior and ORDER (refusal, resolve, import,
+ * callable check, arguments, call); #1023 only factored it out so the
+ * interpretation arm above can fall back into it.
+ *
+ * @param args - Already-evaluated arguments, when the caller has them.
+ */
+async function invokeImportedCallee(
+  node: ts.CallExpression,
+  calleeName: string,
+  binding: ImportBinding,
+  ctx: ResolveCtx,
+  args?: readonly unknown[],
+): Promise<unknown> {
   // chant #1093 — THE gap this check exists for. Invoking the callee runs
   // project code (the factory body, and its whole module's top level) in the
   // CLI's own process; under --sandbox that has to happen in the child
@@ -1202,21 +1363,43 @@ async function resolveCallExpression(node: ts.CallExpression, ctx: ResolveCtx): 
     throw cheapError(`"${binding.imported}" from "${binding.specifier}" is not a function`);
   }
 
-  // chant #1112 — ONE rule for a registered authoring helper's arguments,
-  // applied at BOTH sites that can invoke one. `reviveHelperCall` (the
-  // nested-value site, #1082) already revives a helper's arguments with
-  // `requireLiveRefs`, because a helper reads THROUGH its ref (`output()`
-  // derefs the `WeakRef` parent) and a look-alike `{__attrRef}` envelope
-  // makes it produce a wrong result rather than none. This site — a
-  // top-level `export const oArn = output(bucket.Arn, "oArn")` — took the
-  // composite-factory rule (`false`) instead, which is right for a factory
-  // (its props keep the envelope, and the serializer's own walker resolves
-  // it) and wrong for a helper. It went unnoticed while the resulting
-  // `LexiconOutput` was being discarded anyway; with the export namespace
-  // now collected in full, a same-file `output(...)` would reach the
-  // serializer holding an inert envelope where the run path has a real
-  // reference. Rejected here instead, which falls the file back to run —
-  // absent output, never a wrong one.
+  const callArgs = args ?? (await resolveCallArguments(node, calleeName, ctx));
+
+  executionCounts.factoryInvocations += 1;
+  if (isProjectFileSpecifier(binding.specifier)) executionCounts.projectFactoryInvocations += 1;
+
+  return (Fn as (...fnArgs: unknown[]) => unknown)(...callArgs);
+}
+
+/**
+ * Resolve a call's arguments to the real values the callee would receive —
+ * factored out of {@link resolveCallExpression} (chant #1023) so the
+ * interpretation and invocation arms consume ONE evaluation of them. Anything
+ * else would evaluate a nested composite-call argument twice and hand the
+ * callee the second instance while the first was already wired into an
+ * `AttrRef`.
+ *
+ * chant #1112 — ONE rule for a registered authoring helper's arguments,
+ * applied at BOTH sites that can invoke one. `reviveHelperCall` (the
+ * nested-value site, #1082) already revives a helper's arguments with
+ * `requireLiveRefs`, because a helper reads THROUGH its ref (`output()`
+ * derefs the `WeakRef` parent) and a look-alike `{__attrRef}` envelope
+ * makes it produce a wrong result rather than none. This site — a
+ * top-level `export const oArn = output(bucket.Arn, "oArn")` — took the
+ * composite-factory rule (`false`) instead, which is right for a factory
+ * (its props keep the envelope, and the serializer's own walker resolves
+ * it) and wrong for a helper. It went unnoticed while the resulting
+ * `LexiconOutput` was being discarded anyway; with the export namespace
+ * now collected in full, a same-file `output(...)` would reach the
+ * serializer holding an inert envelope where the run path has a real
+ * reference. Rejected here instead, which falls the file back to run —
+ * absent output, never a wrong one.
+ */
+async function resolveCallArguments(
+  node: ts.CallExpression,
+  calleeName: string,
+  ctx: ResolveCtx,
+): Promise<unknown[]> {
   const helperArgs = isFoldableHelperName(calleeName);
   const args: unknown[] = [];
   for (const argNode of node.arguments) {
@@ -1231,8 +1414,773 @@ async function resolveCallExpression(node: ts.CallExpression, ctx: ResolveCtx): 
         : await reviveFoldedValue(fold(argNode, ctx.consts, ctx.intrinsics, ctx.externals), ctx, helperArgs),
     );
   }
+  return args;
+}
 
-  return (Fn as (...fnArgs: unknown[]) => unknown)(...args);
+// ─────────────────────────────────────────────────────────────────────────
+// Composite factory interpretation (chant #1023, epic #1019 Phase 5).
+//
+// THE CONTRACT — the admissible factory subset, in ../fold/subset.ts's style.
+//
+// A composite is a factory function, and #1022 got its value the only way it
+// could: by importing the defining module and CALLING it. That is the last
+// place `chant build --fold` executes project-authored code in the CLI's own
+// process (chant #1093), and the reason `--sandbox` has to demote such a file
+// to the sandboxed child instead of folding it (chant #1111). This section
+// removes the call for the factories whose bodies can be evaluated instead.
+//
+// A call is interpreted when ALL of the following hold. Every one of them is
+// checked BEFORE any argument is evaluated or anything is constructed, so a
+// factory outside the subset costs a parse and nothing else:
+//
+//  1. **The callee is bound by an `import` from a PROJECT FILE** (a
+//     relative/absolute specifier). A lexicon-package composite is
+//     deliberately NOT interpreted, for two independent reasons: an installed
+//     lexicon ships compiled JS, so whether its factory bodies were
+//     interpretable would depend on whether the package happened to ship
+//     `.ts` — fold coverage must not vary with a dependency's build shape —
+//     and a lexicon package is on {@link isTrustedExecutableBinding}'s
+//     allowlist already, so calling it is exactly as safe under `--sandbox` as
+//     the `loadPlugins` import the CLI performed before discovery began. There
+//     is nothing to buy and a build-shape dependency to lose.
+//  2. **The defining module declares that export as `Composite(<fn>, "<name>")`**
+//     — a top-level `export const <name> = Composite(...)`, where `Composite`
+//     is bound in THAT module to an import of chant's own
+//     ({@link isChantOwnedHelperBinding}, the same provenance question #1082
+//     asks of an authoring helper, and the same answer). This is #1023's
+//     "recognize the callee is a registered Composite": a bare call to
+//     anything else — a project helper function, a `withDefaults(...)`
+//     wrapper, a re-exported binding — is not recognized and is not
+//     interpreted.
+//  3. **`<fn>` is an arrow/function expression taking at most one parameter**,
+//     bound as a plain identifier or a simple object binding pattern (no
+//     default, rest, or nested pattern).
+//  4. **Its body is a single expression, or a block of `const` declarations
+//     followed by one `return`** — and nothing else. No `if`, no `throw`, no
+//     loop, no `let`/`var`, no nested function declaration, no bare expression
+//     statement. This is the line loomster's `composites/*.ts` fall outside
+//     (module-level `buildXxx()` helpers with `if`/`throw` and `.map()`), and
+//     they are meant to: they keep invoking, exactly as before.
+//  5. **Every expression in it is inside the fold subset, extended with the
+//     two things a factory body exists to do**: `new Type(...)` in ANY value
+//     position (a member, a nested property object, an array element), and a
+//     call through a bare identifier. Both are shape-admissible here and
+//     resolution-checked at evaluation, the same permissive-shape /
+//     strict-evaluation split ../fold/subset.ts documents for identifier
+//     binding and helper provenance.
+//
+// Everything else is out: a computed key, a method call (`naming.name(...)` —
+// the callee is a property access, not an identifier), an array method, an
+// operator `fold()` doesn't implement, `await`, a class expression, a template
+// with a computed tag.
+//
+// WHY THIS IS NOT IN ../fold/subset.ts. That module is the shared, shape-only
+// predicate `fold()` and EVL both read, and its own contract is that it may
+// only ever be PERMISSIVE relative to `fold()`, never stricter. Admissibility
+// here is not a shape question at all: rules 1 and 2 need the module graph —
+// which file a name came from, and what that file declares — exactly like
+// #1082's authoring-helper provenance, which subset.ts documents (point 2b)
+// as deliberately out for the same reason. Putting rules 3-5 there alone would
+// describe a subset no caller could act on without also answering 1 and 2, and
+// putting all five there would mean teaching a syntax-only lint rule to
+// resolve imports. The shape half stays checkable by anything that wants it —
+// {@link findFactorySubsetViolation} takes a lone `ts` node — but the shared
+// predicate is not made stricter, or wider, by this issue.
+//
+// WHAT IS PRESERVED. Interpretation is not a second construction path:
+//
+//  - **The instances are real, and made by the lexicon's own constructors.**
+//    A `new Role({...})` in the body resolves `Role` through the DEFINING
+//    module's imports and calls that class, the same class the run path would
+//    have called from the same resolved module path.
+//  - **Sibling references are live, not symbolic.** `role.Arn` reads the
+//    attribute off the `Role` instance this interpretation just built, so it
+//    is a genuine `AttrRef` wired to a genuine parent — identical to running
+//    the factory, and strictly better than a top-level fold's `{__attrRef}`
+//    envelope (an intrinsic that inspects its argument, `Sub`/`Ref`, gets what
+//    it expects here).
+//  - **The instance is assembled by `Composite()` itself.** The members go
+//    back through chant's own {@link Composite} (../composite.ts) rather than
+//    through a hand-built look-alike, so member validation, the non-enumerable
+//    `members`/`_definition` layout `propagate()` and `expandComposite()`
+//    depend on, and provenance stamping are the run path's, by construction
+//    and not by resemblance.
+//  - **`propagate()` still works, untouched.** It is a chant-owned import, so
+//    `propagate(SomeComposite({...}), {...})` invokes the real `propagate` on
+//    the interpreted instance and mutates it in place exactly as it does a run
+//    one — which is why instance identity has to be a real `CompositeInstance`
+//    and not a copy (chant #1097).
+// ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * A backstop for a composite that calls itself, directly or through a member.
+ * {@link FoldSession.stack} cannot see it — the recursion happens entirely
+ * inside one module's source, crossing no file boundary — so this is what
+ * terminates it. Deliberately small: real composite nesting is 2-3 deep, and a
+ * chain past this is a bug, not a design.
+ */
+const MAX_INTERPRETATION_DEPTH = 16;
+
+/**
+ * The static scope of a module that DEFINES composites — everything
+ * interpreting one of its factory bodies needs, computed once per module per
+ * build (see {@link FoldSession.factoryModules}).
+ *
+ * Note what is NOT here: the module's exported VALUES. Interpreting a factory
+ * never needs them, which is the whole point — a module can define a perfectly
+ * interpretable composite and still be unfoldable as a module (an exported
+ * function declaration alongside it, say), and those two facts are
+ * independent.
+ */
+interface FactoryModuleScope {
+  file: string;
+  sourceFile: ts.SourceFile;
+  /**
+   * The module's top-level `const`s, MINUS every one that resolves to a
+   * `new Type(...)` resource.
+   *
+   * The exclusion is the load-bearing part. `fold()` turns a property access
+   * on a resource-valued const into a symbolic `{__attrRef, entity: "<the
+   * const's name>"}` — a name resolved much later, against the entity table of
+   * the file being COLLECTED, which is the calling file and not this one. A
+   * module-level resource shared by every call of a factory is also a
+   * singleton whose identity the run path shares and interpretation would not.
+   * Dropping those consts makes any reference to one an ordinary "unresolved
+   * identifier" failure, which declines the interpretation and invokes
+   * instead — the answer that is right on both counts.
+   */
+  consts: Map<string, ts.Expression>;
+  imports: Map<string, ImportBinding>;
+  namespaceImports: Map<string, NamespaceImportBinding>;
+  /**
+   * This module's own imports, resolved to their real cross-file values (see
+   * {@link ResolveCtx.externals}) — LAZILY, and memoized here once built.
+   *
+   * Laziness is not an optimization detail, it is what keeps this issue from
+   * paying #1020's cost all over again. `resolveCallExpression` reaches
+   * {@link resolveInterpretableFactory} for EVERY call through a project-file
+   * import, the overwhelming majority of which are not composites at all. Only
+   * the parse is spent finding that out; resolving a module's whole import
+   * graph — which recursively folds every project file it names — is spent
+   * only by a call that is actually about to be interpreted.
+   */
+  resolved?: Promise<{ externals: Map<string, unknown>; failures: Map<string, string> }>;
+}
+
+/** An admissible composite factory: where it lives, what it is called, and the function to interpret. */
+interface InterpretableFactory {
+  scope: FactoryModuleScope;
+  fn: ts.ArrowFunction | ts.FunctionExpression;
+  /** `Composite()`'s second argument, or `"anonymous"` when it has none — matching {@link Composite}'s own default. */
+  compositeName: string;
+}
+
+/**
+ * Parse a composite-defining module into its static scope, memoized per build.
+ * Returns `undefined` when the file can't be read or parsed — a decline, never
+ * a throw: the caller falls through to the invocation arm, which will produce
+ * its own (identical, pre-#1023) error if the module is genuinely broken.
+ *
+ * Reads and parses only. Nothing is imported, nothing is executed, and the
+ * module's own imports are not resolved yet — see
+ * {@link FactoryModuleScope.resolved}.
+ */
+function readFactoryModule(modulePath: string, session: FoldSession): Promise<FactoryModuleScope | undefined> {
+  const cached = session.factoryModules.get(modulePath);
+  if (cached) return cached;
+  const promise = readFactoryModuleCore(modulePath);
+  session.factoryModules.set(modulePath, promise);
+  return promise;
+}
+
+async function readFactoryModuleCore(modulePath: string): Promise<FactoryModuleScope | undefined> {
+  let sourceFile: ts.SourceFile;
+  try {
+    const source = await readFile(modulePath, "utf-8");
+    sourceFile = ts.createSourceFile(modulePath, source, ts.ScriptTarget.Latest, /* setParentNodes */ true);
+  } catch {
+    // Not a readable TypeScript source — an installed package's compiled
+    // entry point reached through a path specifier, a missing file. Decline.
+    return undefined;
+  }
+
+  const collected = collectImports(sourceFile);
+  const consts = collectConsts(sourceFile);
+  for (const [name] of [...consts]) {
+    if (constResolvesToResource(consts, name, new Set())) consts.delete(name);
+  }
+
+  return {
+    file: modulePath,
+    sourceFile,
+    consts,
+    imports: collected.named,
+    namespaceImports: collected.namespaces,
+  };
+}
+
+/**
+ * Resolve a composite-defining module's own imports, once per module per
+ * build. Guarded by {@link FoldSession.stack}, exactly like
+ * {@link foldFileMemoized}: a module already being resolved further up the
+ * same chain is a genuine cycle, and gets an empty scope (every identifier
+ * then reads as unresolved, which declines the interpretation) rather than a
+ * re-entry.
+ */
+function factoryModuleScopeResolved(
+  scope: FactoryModuleScope,
+  session: FoldSession,
+): Promise<{ externals: Map<string, unknown>; failures: Map<string, string> }> {
+  if (scope.resolved) return scope.resolved;
+  if (session.stack.includes(scope.file) || session.stack.length >= MAX_RESOLUTION_DEPTH) {
+    return Promise.resolve({ externals: new Map(), failures: new Map() });
+  }
+  session.stack.push(scope.file);
+  scope.resolved = buildExternals(scope.file, scope.imports, scope.namespaceImports, session).finally(() => {
+    const idx = session.stack.lastIndexOf(scope.file);
+    if (idx !== -1) session.stack.splice(idx, 1);
+  });
+  return scope.resolved;
+}
+
+/**
+ * True when a module-level `const` is (transitively) bound to a
+ * `new Type(...)`. Mirrors `fold()`'s own `resolvesToResource`, but follows an
+ * identifier chain (`const a = new T(); const b = a;`) so aliasing can't smuggle
+ * a module-level resource into a factory body — see
+ * {@link FactoryModuleScope.consts}.
+ */
+function constResolvesToResource(
+  consts: Map<string, ts.Expression>,
+  name: string,
+  seen: Set<string>,
+): boolean {
+  if (seen.has(name)) return false;
+  seen.add(name);
+  const init = consts.get(name);
+  if (init === undefined) return false;
+  if (ts.isNewExpression(init)) return true;
+  if (ts.isIdentifier(init)) return constResolvesToResource(consts, init.text, seen);
+  return false;
+}
+
+/**
+ * Find `export const <exportName> = Composite(<fn>, "<name>")` at the top level
+ * of `scope`'s module, verifying that `Composite` really is chant's own in that
+ * module. Returns `undefined` for every other shape — see rule 2 of the
+ * contract above.
+ */
+function findCompositeDefinition(
+  scope: FactoryModuleScope,
+  exportName: string,
+  ctx: ResolveCtx,
+): { fn: ts.ArrowFunction | ts.FunctionExpression; compositeName: string } | undefined {
+  for (const statement of scope.sourceFile.statements) {
+    if (!ts.isVariableStatement(statement)) continue;
+    if (!hasExportModifier(statement)) continue;
+    if ((statement.declarationList.flags & ts.NodeFlags.Const) === 0) continue;
+
+    for (const decl of statement.declarationList.declarations) {
+      if (!ts.isIdentifier(decl.name) || decl.name.text !== exportName) continue;
+      const init = decl.initializer;
+      if (!init || !ts.isCallExpression(init) || !ts.isIdentifier(init.expression)) return undefined;
+
+      // `Composite` must be bound, in THIS module, to an import of chant's
+      // own — the identical provenance question #1082 asks of an authoring
+      // helper, answered by the identical predicate. A project-local
+      // `function Composite(...)` shadowing the name is not chant's, and a
+      // call to it is not a registered composite.
+      const compositeBinding = scope.imports.get(init.expression.text);
+      if (!compositeBinding || compositeBinding.imported !== "Composite") return undefined;
+      if (!isChantOwnedHelperBinding(compositeBinding, { ...ctx, file: scope.file })) return undefined;
+
+      const [fnArg, nameArg] = init.arguments;
+      if (!fnArg || (!ts.isArrowFunction(fnArg) && !ts.isFunctionExpression(fnArg))) return undefined;
+      // `Composite()`'s own default when the name is omitted (../composite.ts).
+      // COR017 requires the literal in practice; anything that is not a plain
+      // string literal is not something to guess at.
+      if (nameArg !== undefined && !ts.isStringLiteral(nameArg)) return undefined;
+      return { fn: fnArg, compositeName: nameArg ? nameArg.text : "anonymous" };
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Decide whether `binding`'s callee is an interpretable composite — rules 1-5
+ * of the contract above, in that order, with no evaluation and no import.
+ * `undefined` means "not interpretable", never "broken".
+ */
+async function resolveInterpretableFactory(
+  binding: ImportBinding,
+  ctx: ResolveCtx,
+): Promise<InterpretableFactory | undefined> {
+  // Rule 1 — project files only. A text check; no resolution performed for a
+  // bare specifier, so this costs nothing for the (common) lexicon case.
+  if (!isProjectFileSpecifier(binding.specifier)) return undefined;
+  if (ctx.interpretDepth >= MAX_INTERPRETATION_DEPTH) return undefined;
+
+  let modulePath: string;
+  try {
+    modulePath = resolveModulePathMemoized(binding.specifier, ctx.file, ctx.resolvePathCache);
+  } catch {
+    return undefined;
+  }
+
+  const scope = await readFactoryModule(modulePath, ctx.session);
+  if (!scope) return undefined;
+
+  // Rule 2.
+  const definition = findCompositeDefinition(scope, binding.imported, ctx);
+  if (!definition) return undefined;
+
+  // Rules 3-5.
+  if (findFactorySubsetViolation(definition.fn) !== undefined) return undefined;
+
+  return { scope, fn: definition.fn, compositeName: definition.compositeName };
+}
+
+/**
+ * The SHAPE half of the contract (rules 3-5) — a lone `ts` node in, a reason
+ * string out, or `undefined` when the factory is admissible. Deliberately
+ * takes nothing but the node: it is the half a caller with no module graph
+ * could evaluate, and keeping it separable is what lets the doc above claim
+ * the shape rules are checkable without the provenance ones.
+ */
+export function findFactorySubsetViolation(fn: ts.ArrowFunction | ts.FunctionExpression): string | undefined {
+  // Rule 3 — at most one parameter, bound plainly.
+  if (fn.parameters.length > 1) return "a composite factory takes a single props parameter";
+  const param = fn.parameters[0];
+  if (param) {
+    if (param.dotDotDotToken) return "a rest parameter is not interpretable";
+    if (param.initializer) return "a defaulted parameter is not interpretable";
+    if (ts.isObjectBindingPattern(param.name)) {
+      for (const el of param.name.elements) {
+        if (bindingElementPropKey(el) === undefined) {
+          return "a destructured props parameter with a rest, default, or nested element is not interpretable";
+        }
+      }
+    } else if (!ts.isIdentifier(param.name)) {
+      return "an array-destructured props parameter is not interpretable";
+    }
+  }
+
+  // Rule 4 — a concise expression body, or `const`s then one `return`.
+  if (!ts.isBlock(fn.body)) return checkFactoryExpression(fn.body);
+
+  const statements = fn.body.statements;
+  if (statements.length === 0) return "an empty composite factory body has no members to interpret";
+  for (let i = 0; i < statements.length; i += 1) {
+    const statement = statements[i];
+    const last = i === statements.length - 1;
+
+    if (ts.isReturnStatement(statement)) {
+      if (!last) return "an early `return` is not interpretable";
+      if (!statement.expression) return "a composite factory must return its members";
+      const violation = checkFactoryExpression(statement.expression);
+      if (violation) return violation;
+      continue;
+    }
+    if (last) return "a composite factory body must end in `return`";
+
+    if (!ts.isVariableStatement(statement)) {
+      return `\`${ts.SyntaxKind[statement.kind]}\` in a composite factory body is not interpretable`;
+    }
+    if ((statement.declarationList.flags & ts.NodeFlags.Const) === 0) {
+      return "`let`/`var` in a composite factory body is not interpretable";
+    }
+    for (const decl of statement.declarationList.declarations) {
+      if (!decl.initializer) return "an uninitialized `const` in a composite factory body is not interpretable";
+      if (ts.isObjectBindingPattern(decl.name)) {
+        for (const el of decl.name.elements) {
+          if (bindingElementPropKey(el) === undefined) {
+            return "a destructured `const` with a rest, default, or nested element is not interpretable";
+          }
+        }
+      } else if (!ts.isIdentifier(decl.name)) {
+        return "an array-destructured `const` is not interpretable";
+      }
+      const violation = checkFactoryExpression(decl.initializer);
+      if (violation) return violation;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Rule 5 — the fold subset, extended with `new Type(...)` in any value
+ * position and a call through a bare identifier.
+ *
+ * Shape only, in ../fold/subset.ts's sense: whether a `new`'s constructor or a
+ * call's callee actually resolves to something invocable is settled at
+ * evaluation, where the module graph is available. Every operator/key/member
+ * rule is read from ../fold/subset.ts's own exported sets rather than
+ * re-listed, so widening `fold()` widens this in the same commit.
+ */
+function checkFactoryExpression(node: ts.Expression): string | undefined {
+  if (
+    ts.isParenthesizedExpression(node) ||
+    ts.isAsExpression(node) ||
+    ts.isSatisfiesExpression(node) ||
+    ts.isNonNullExpression(node) ||
+    ts.isTypeAssertionExpression(node)
+  ) {
+    return checkFactoryExpression(node.expression);
+  }
+
+  if (
+    ts.isStringLiteral(node) ||
+    ts.isNoSubstitutionTemplateLiteral(node) ||
+    ts.isNumericLiteral(node) ||
+    ts.isIdentifier(node) ||
+    node.kind === ts.SyntaxKind.TrueKeyword ||
+    node.kind === ts.SyntaxKind.FalseKeyword ||
+    node.kind === ts.SyntaxKind.NullKeyword
+  ) {
+    return undefined;
+  }
+
+  if (ts.isNewExpression(node) || ts.isCallExpression(node)) {
+    // A bare-identifier callee only — `ns.Foo(...)`, `arr.map(...)` and
+    // `props.factory(...)` are all property accesses and all stay out, which
+    // is what keeps a data transform (chant EVL010) from sneaking in.
+    if (!ts.isIdentifier(node.expression)) {
+      return ts.isNewExpression(node)
+        ? `\`new ${briefNodeText(node.expression)}(...)\` needs a plain imported constructor to interpret`
+        : callExpressionMessage(node);
+    }
+    for (const arg of node.arguments ?? []) {
+      const violation = checkFactoryExpression(arg);
+      if (violation) return violation;
+    }
+    return undefined;
+  }
+
+  if (ts.isTaggedTemplateExpression(node)) {
+    if (!ts.isIdentifier(node.tag)) return unsupportedExpressionMessage(node);
+    if (ts.isNoSubstitutionTemplateLiteral(node.template)) return undefined;
+    for (const span of node.template.templateSpans) {
+      const violation = checkFactoryExpression(span.expression);
+      if (violation) return violation;
+    }
+    return undefined;
+  }
+
+  if (ts.isTemplateExpression(node)) {
+    for (const span of node.templateSpans) {
+      const violation = checkFactoryExpression(span.expression);
+      if (violation) return violation;
+    }
+    return undefined;
+  }
+
+  if (ts.isObjectLiteralExpression(node)) {
+    for (const prop of node.properties) {
+      if (ts.isPropertyAssignment(prop)) {
+        if (!isLiteralPropertyNameNode(prop.name)) return computedPropertyNameMessage(prop.name);
+        const violation = checkFactoryExpression(prop.initializer);
+        if (violation) return violation;
+      } else if (ts.isShorthandPropertyAssignment(prop)) {
+        if (prop.objectAssignmentInitializer) return UNSUPPORTED_OBJECT_MEMBER_MESSAGE;
+      } else if (ts.isSpreadAssignment(prop)) {
+        const violation = checkFactoryExpression(prop.expression);
+        if (violation) return violation;
+      } else {
+        return UNSUPPORTED_OBJECT_MEMBER_MESSAGE;
+      }
+    }
+    return undefined;
+  }
+
+  if (ts.isArrayLiteralExpression(node)) {
+    for (const el of node.elements) {
+      const violation = checkFactoryExpression(ts.isSpreadElement(el) ? el.expression : el);
+      if (violation) return violation;
+    }
+    return undefined;
+  }
+
+  if (ts.isPropertyAccessExpression(node)) return checkFactoryExpression(node.expression);
+
+  if (ts.isElementAccessExpression(node)) {
+    if (!isLiteralElementKey(node.argumentExpression)) {
+      return `dynamic element access [${briefNodeText(node.argumentExpression)}] is not interpretable`;
+    }
+    return checkFactoryExpression(node.expression);
+  }
+
+  if (ts.isPrefixUnaryExpression(node)) {
+    if (!SUPPORTED_UNARY_OPERATORS.has(node.operator)) return UNSUPPORTED_UNARY_MESSAGE;
+    return checkFactoryExpression(node.operand);
+  }
+
+  if (ts.isBinaryExpression(node)) {
+    if (!SUPPORTED_BINARY_OPERATORS.has(node.operatorToken.kind)) {
+      return unsupportedBinaryMessage(node.operatorToken.kind);
+    }
+    return checkFactoryExpression(node.left) ?? checkFactoryExpression(node.right);
+  }
+
+  if (ts.isConditionalExpression(node)) {
+    return (
+      checkFactoryExpression(node.condition) ??
+      checkFactoryExpression(node.whenTrue) ??
+      checkFactoryExpression(node.whenFalse)
+    );
+  }
+
+  return unsupportedExpressionMessage(node);
+}
+
+/** `isLiteralPropertyName` narrowed to the node type {@link propName} accepts, without importing the type predicate's generic form twice. */
+function isLiteralPropertyNameNode(node: ts.PropertyName): boolean {
+  return ts.isIdentifier(node) || ts.isStringLiteral(node) || ts.isNumericLiteral(node);
+}
+
+/**
+ * Interpret an admissible factory's body against `args`, and assemble the
+ * result through chant's own {@link Composite}.
+ *
+ * Returns `undefined` — a DECLINE, not a failure — when anything in the body
+ * fails to resolve (an identifier the defining module's imports don't reach, a
+ * constructor `--sandbox` refuses, a nested call that isn't a composite). The
+ * caller then invokes for real, landing exactly where it landed before #1023.
+ * That asymmetry is deliberate: interpretation may only ever REMOVE an
+ * execution, never introduce a fold failure that wasn't there.
+ */
+async function interpretCompositeFactory(
+  factory: InterpretableFactory,
+  args: readonly unknown[],
+  ctx: ResolveCtx,
+): Promise<{ value: unknown } | undefined> {
+  // A `Composite()` factory takes exactly one props argument. Anything else at
+  // the call site means the callee is being used as something this doesn't
+  // model.
+  if (args.length > 1) return undefined;
+
+  const { scope, fn } = factory;
+  const resolved = await factoryModuleScopeResolved(scope, ctx.session);
+  // The defining module's own scope, with the factory's locals layered on top.
+  // `locals` is deliberately EMPTY: `resolveLiveValue`'s local-binding branch
+  // exists to re-navigate a file's own top-level composite spine, which is not
+  // what a name inside a factory body means. Body bindings live in `externals`
+  // instead, where an identifier resolves to the value already computed for it
+  // — which is what makes `role.Arn` a live `AttrRef` on the real instance.
+  const consts = new Map(scope.consts);
+  const externals = new Map(resolved.externals);
+  const bodyCtx: ResolveCtx = {
+    file: scope.file,
+    consts,
+    locals: new Map(),
+    imports: scope.imports,
+    namespaceImports: scope.namespaceImports,
+    memo: new Map(),
+    intrinsics: ctx.intrinsics,
+    externals,
+    crossFileFailures: resolved.failures,
+    importCache: ctx.importCache,
+    resolvePathCache: ctx.resolvePathCache,
+    lexiconPackages: ctx.lexiconPackages,
+    sandbox: ctx.sandbox,
+    session: ctx.session,
+    interpretDepth: ctx.interpretDepth + 1,
+  };
+
+  const bind = (name: string, value: unknown): void => {
+    // A body binding SHADOWS a module-level const of the same name, so the
+    // const has to go — `fold()` consults `consts` before `externals`.
+    consts.delete(name);
+    externals.set(name, value);
+  };
+
+  try {
+    const param = fn.parameters[0];
+    if (param) {
+      const props = args[0];
+      if (ts.isIdentifier(param.name)) {
+        bind(param.name.text, props);
+      } else if (ts.isObjectBindingPattern(param.name)) {
+        if (!isIndexableObject(props)) return undefined;
+        for (const el of param.name.elements) {
+          const key = bindingElementPropKey(el);
+          if (key === undefined) return undefined;
+          bind(el.name.getText(), (props as Record<string, unknown>)[key]);
+        }
+      }
+    }
+
+    const members = await interpretFactoryBody(fn, bodyCtx, bind);
+    if (!isIndexableObject(members)) return undefined;
+
+    // Assembled by chant's own `Composite()` — see the contract's "what is
+    // preserved" note. One definition object per interpreted call (rather than
+    // one per module, as the run path has) is the single visible difference:
+    // `_id` is a fresh symbol, which nothing outside `CompositeRegistry` — used
+    // only by tests — reads.
+    const definition = Composite<void, CompositeMembers>(() => members as CompositeMembers, factory.compositeName);
+    const instance = definition();
+    executionCounts.factoryInterpretations += 1;
+    return { value: instance };
+  } catch {
+    return undefined;
+  }
+}
+
+/** Evaluate an admissible factory body's statements in order, binding each `const`, and return the `return` expression's value. */
+async function interpretFactoryBody(
+  fn: ts.ArrowFunction | ts.FunctionExpression,
+  ctx: ResolveCtx,
+  bind: (name: string, value: unknown) => void,
+): Promise<unknown> {
+  if (!ts.isBlock(fn.body)) return interpretExpression(fn.body, ctx);
+
+  for (const statement of fn.body.statements) {
+    if (ts.isReturnStatement(statement)) {
+      // `findFactorySubsetViolation` has already established this is the last
+      // statement and has an expression.
+      return interpretExpression(statement.expression as ts.Expression, ctx);
+    }
+    const declarations = (statement as ts.VariableStatement).declarationList.declarations;
+    for (const decl of declarations) {
+      const value = await interpretExpression(decl.initializer as ts.Expression, ctx);
+      if (ts.isIdentifier(decl.name)) {
+        bind(decl.name.text, value);
+        continue;
+      }
+      if (!isIndexableObject(value)) {
+        throw cheapError(`destructured \`const\` source in "${briefNodeText(decl.name)}" is not an object`);
+      }
+      for (const el of (decl.name as ts.ObjectBindingPattern).elements) {
+        bind(el.name.getText(), (value as Record<string, unknown>)[bindingElementPropKey(el) as string]);
+      }
+    }
+  }
+  // Unreachable: rule 4 requires a trailing `return`.
+  throw cheapError("composite factory body did not return");
+}
+
+/**
+ * Evaluate one expression of a factory body.
+ *
+ * Only the cases that can CONTAIN a construction or a composite call are
+ * handled here; everything else delegates to {@link resolveDeclaratorValue},
+ * which is the same `resolveLiveValue` -> `fold()` -> revive pipeline every
+ * other value in a fold takes. That split is the point: the interpreter owns
+ * as little evaluation semantics as it possibly can, so `fold()` stays the one
+ * definition of what an expression means, and the operators/short-circuiting
+ * duplicated below are duplicated because they must not evaluate a branch
+ * `fold()` would not have evaluated.
+ */
+async function interpretExpression(node: ts.Expression, ctx: ResolveCtx): Promise<unknown> {
+  if (
+    ts.isParenthesizedExpression(node) ||
+    ts.isAsExpression(node) ||
+    ts.isSatisfiesExpression(node) ||
+    ts.isNonNullExpression(node)
+  ) {
+    return interpretExpression(node.expression, ctx);
+  }
+
+  if (ts.isNewExpression(node)) return interpretNewExpression(node, ctx);
+
+  if (ts.isObjectLiteralExpression(node)) {
+    const obj: Record<string, unknown> = {};
+    for (const prop of node.properties) {
+      if (ts.isPropertyAssignment(prop)) {
+        obj[propName(prop.name)] = await interpretExpression(prop.initializer, ctx);
+      } else if (ts.isShorthandPropertyAssignment(prop)) {
+        obj[prop.name.text] = await interpretExpression(prop.name, ctx);
+      } else {
+        const src = await interpretExpression((prop as ts.SpreadAssignment).expression, ctx);
+        if (src === null || typeof src !== "object") throw cheapError("spread source not an object");
+        Object.assign(obj, src);
+      }
+    }
+    return obj;
+  }
+
+  if (ts.isArrayLiteralExpression(node)) {
+    const arr: unknown[] = [];
+    for (const el of node.elements) {
+      if (ts.isSpreadElement(el)) {
+        const src = await interpretExpression(el.expression, ctx);
+        if (!Array.isArray(src)) throw cheapError("spread source not an array");
+        arr.push(...src);
+      } else {
+        arr.push(await interpretExpression(el, ctx));
+      }
+    }
+    return arr;
+  }
+
+  if (ts.isConditionalExpression(node)) {
+    return (await interpretExpression(node.condition, ctx))
+      ? interpretExpression(node.whenTrue, ctx)
+      : interpretExpression(node.whenFalse, ctx);
+  }
+
+  if (ts.isBinaryExpression(node)) {
+    const S = ts.SyntaxKind;
+    const opKind = node.operatorToken.kind;
+    if (opKind === S.AmpersandAmpersandToken) {
+      const left = await interpretExpression(node.left, ctx);
+      return left ? interpretExpression(node.right, ctx) : left;
+    }
+    if (opKind === S.BarBarToken) {
+      const left = await interpretExpression(node.left, ctx);
+      return left ? left : interpretExpression(node.right, ctx);
+    }
+    if (opKind === S.QuestionQuestionToken) {
+      const left = await interpretExpression(node.left, ctx);
+      return left === null || left === undefined ? interpretExpression(node.right, ctx) : left;
+    }
+  }
+
+  return (await resolveDeclaratorValue(node, ctx)).value;
+}
+
+/**
+ * Construct a real resource from a `new Type(...)` anywhere inside a factory
+ * body — a member, a nested property object, an array element.
+ *
+ * Deliberately NOT routed through {@link resolveResourceEntity}: a factory body
+ * evaluates against the DEFINING module's scope with the caller's props already
+ * bound to live values, so each argument is interpreted recursively (through
+ * {@link interpretExpression}, which can produce a live composite instance a
+ * plain `fold()` has no representation for) rather than folded and revived.
+ *
+ * chant #1169 removed the asymmetry that used to motivate this comment: a
+ * nested `new` in a TOP-LEVEL value position now constructs too, via
+ * {@link constructFoldedResource}. The two paths reach the same place — the
+ * class named by an `import`, called with the arguments the source wrote — by
+ * different routes, because a factory body and a file's own top level start
+ * from different scopes.
+ */
+async function interpretNewExpression(node: ts.NewExpression, ctx: ResolveCtx): Promise<unknown> {
+  // Guaranteed an identifier by {@link checkFactoryExpression}; re-checked so a
+  // future caller can't reach this with a dotted callee and get a silent miss.
+  if (!ts.isIdentifier(node.expression)) {
+    throw cheapError(`\`new ${briefNodeText(node.expression)}(...)\` needs a plain imported constructor`);
+  }
+  const typeName = node.expression.text;
+  const binding = ctx.imports.get(typeName);
+  if (!binding) throw cheapError(`constructor "${typeName}" is not a resolvable import`);
+
+  // chant #1093 — same gate, same reason, as every other site that imports a
+  // module in order to execute something from it.
+  const refusal = sandboxedExecutionRefusal(binding, ctx, typeName, "constructor");
+  if (refusal) throw cheapError(refusal);
+
+  const modulePath = resolveModulePathMemoized(binding.specifier, ctx.file, ctx.resolvePathCache);
+  const mod = await importModuleMemoized(modulePath, ctx.importCache);
+  const Ctor = mod[binding.imported];
+  if (typeof Ctor !== "function") {
+    throw cheapError(`"${binding.imported}" from "${binding.specifier}" is not a constructor`);
+  }
+
+  const ctorArgs: unknown[] = [];
+  for (const arg of node.arguments ?? []) ctorArgs.push(await interpretExpression(arg, ctx));
+  return new (Ctor as new (...ctorArguments: unknown[]) => unknown)(...ctorArgs);
 }
 
 /**
@@ -1293,10 +2241,16 @@ function applyResolvedValue(
 // envelope structurally (see ../serializer-walker.ts) with no revival
 // needed. But an intrinsic's OWN implementation (e.g. `SubIntrinsic`) needs
 // a genuine `AttrRef` instance internally (`instanceof` checks), which would
-// require wiring a live `WeakRef` to the sibling entity — out of scope here,
-// same call as the existing "nested `new Type(...)` as a value" rejection
-// a few lines up: reject (fall back to run) rather than risk silently wrong
-// output.
+// require wiring a live `WeakRef` to the sibling entity — out of scope here:
+// reject (fall back to run) rather than risk silently wrong output.
+//
+// chant #1169 adds the fourth envelope this walk revives, and the one that
+// closes the corpus's largest fold gate: `{__resource}`, a nested
+// `new Type(...)` used as a value. It is revived the same way and for the same
+// reason as the other three — the real class is resolved through the folding
+// file's own imports and called for real — so what the outer constructor
+// receives is the instance the run path would have handed it, not a look-alike.
+// See {@link constructFoldedResource}.
 // ─────────────────────────────────────────────────────────────────────────
 
 /** Resolve a bare name bound by this file's own `import` to its real, live export — the same two-step (resolve module path, then `importModule`) `resolveResourceEntity`/`resolveCallExpression` already use for constructors and composite factories. */
@@ -1448,9 +2402,24 @@ async function reviveFoldedValue(value: FoldedValue, ctx: ResolveCtx, requireLiv
   }
 
   if ("__resource" in value) {
-    // fold() itself already rejects a nested `new Type(...)` as a value
-    // (see its own comment) — this is defensive, not a reachable path today.
-    throw cheapError("nested resource as a value is not foldable");
+    // chant #1169 — a nested `new Type(...)` used as a value. This is the
+    // branch that makes the envelope safe: it is replaced, here, by a REAL
+    // instance of the class the source named, built by the same
+    // resolve-through-this-file's-imports machinery `resolveResourceEntity`
+    // uses for a top-level resource and `interpretNewExpression` (#1023) uses
+    // for a construction inside a factory body. Nothing symbolic reaches the
+    // serializer — see {@link fold}'s `new` branch for why that is the whole
+    // safety argument.
+    //
+    // `requireLiveRefs` is propagated rather than reset: a construction in an
+    // ordinary prop position keeps the top-level rule (a `{__attrRef}` inside
+    // it stays an envelope, which the serializer's own walker resolves by name
+    // through `propertyDeclarable` exactly as it does for a top-level
+    // resource's props), while a construction inside an intrinsic's interior
+    // keeps the stricter one and rejects — the receiving implementation
+    // inspects what it is handed, and this is the direction that falls back to
+    // run rather than emitting something wrong.
+    return constructFoldedResource(value as FoldedResource, ctx, requireLiveRefs);
   }
 
   const revived: Record<string, unknown> = {};
@@ -1638,19 +2607,194 @@ function chantCoreRoot(): string {
 async function reviveFoldedProps(
   props: { [key: string]: FoldedValue },
   ctx: ResolveCtx,
+  requireLiveRefs: boolean,
 ): Promise<Record<string, unknown>> {
   const revived: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(props)) {
-    revived[key] = await reviveFoldedValue(value, ctx, false);
+    revived[key] = await reviveFoldedValue(value, ctx, requireLiveRefs);
   }
   return revived;
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// Resource construction — unchanged from #1022 (folds the ctor call's props
-// via `fold()`, resolves the constructor through this file's imports,
-// constructs the real Declarable).
+// Resource construction — #1022's mechanism (fold the ctor call's arguments
+// via `fold()`, resolve the constructor through this file's imports,
+// construct the real Declarable), split by chant #1169 into two reusable
+// halves so a NESTED `new Type(...)` used as a value is built by exactly the
+// same code as a file's own top-level resource declaration, not by a second
+// implementation that could quietly differ.
+//
+// `resolveResourceEntity` below is the top-level entry point and keeps its
+// per-declarator reason strings verbatim; `reviveResourceCtorArgs` and
+// `instantiateFoldedResource` are the shared halves, and
+// {@link constructFoldedResource} is the one-call composition of the two that
+// `reviveFoldedValue` uses for a nested construction.
 // ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * Revive a folded constructor call's arguments into the real values the class
+ * will receive.
+ *
+ * chant #1039 — replays any folded intrinsic/symbol envelopes into their real
+ * runtime values before the entity is constructed. A no-op walk when the file
+ * used no registered intrinsics (the overwhelming majority of cases today).
+ *
+ * chant #1082 — when `spec.args` is present the constructor's argument list
+ * isn't the classic `(props)`/`(props, attributes)` shape (AWS's `Parameter` is
+ * `(type, props)`), so the whole list is revived and spread by the caller
+ * instead of `spec.props`, which in that case is only a view onto one of its
+ * entries and would be double-counted.
+ */
+async function reviveResourceCtorArgs(
+  spec: FoldedResource,
+  ctx: ResolveCtx,
+  requireLiveRefs: boolean,
+): Promise<unknown[]> {
+  if (spec.args) {
+    const revived: unknown[] = [];
+    for (const arg of spec.args) revived.push(await reviveFoldedValue(arg, ctx, requireLiveRefs));
+    return revived;
+  }
+  const props = await reviveFoldedProps(spec.props, ctx, requireLiveRefs);
+  // The runtime constructor's optional second argument (`attributes` — CFN's
+  // DependsOn/Condition/DeletionPolicy/…, see createResource in ../runtime.ts)
+  // is only present in `spec` when the source actually passed one (see
+  // foldResource in ../fold/fold.ts). Passing `undefined` when it's absent
+  // matches the run path's own default (`attributes ?? {}` inside the
+  // constructor).
+  return [props, spec.attributes ? await reviveFoldedProps(spec.attributes, ctx, requireLiveRefs) : undefined];
+}
+
+/**
+ * Resolve a folded constructor's NAME through `ctx`'s own `import`
+ * declarations and call the real class with `ctorArgs`.
+ *
+ * Throws a {@link cheapError} for every failure; `resolveResourceEntity` turns
+ * those into its per-declarator `reason` strings and the nested path lets them
+ * fall the whole file back to run. `forClause` is the ` for "<export name>"`
+ * fragment the top-level messages carry and a nested construction has no name
+ * for — the only difference between the two callers' diagnostics.
+ */
+async function instantiateFoldedResource(
+  typeName: string,
+  ctorArgs: readonly unknown[],
+  ctx: ResolveCtx,
+  forClause: string,
+): Promise<unknown> {
+  const binding = ctx.imports.get(typeName);
+  if (!binding) {
+    throw cheapError(`constructor "${typeName}"${forClause} is not a resolvable import`);
+  }
+
+  // chant #1093 — a resource class is a lexicon export in every corpus entry
+  // today, but nothing forces that: `new Thing(...)` where `Thing` comes from
+  // a project file (or an arbitrary dependency) would import and run that
+  // module here, in the CLI's process. Same refusal as the composite-factory
+  // path above, and the reason a nested construction cannot widen the #1093
+  // boundary: it reaches its class by exactly this gate.
+  const refusal = sandboxedExecutionRefusal(binding, ctx, typeName, "constructor");
+  if (refusal) throw cheapError(refusal);
+
+  let modulePath: string;
+  try {
+    modulePath = resolveModulePathMemoized(binding.specifier, ctx.file, ctx.resolvePathCache);
+  } catch (err) {
+    throw cheapError(
+      `could not resolve import "${binding.specifier}" for "${typeName}": ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+
+  // Same import mechanism as `resolveCallExpression` above — see its comment.
+  let mod: Record<string, unknown>;
+  try {
+    mod = await importModuleMemoized(modulePath, ctx.importCache);
+  } catch (err) {
+    throw cheapError(
+      `could not import "${binding.specifier}" to resolve "${typeName}": ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+
+  const Ctor = mod[binding.imported];
+  if (typeof Ctor !== "function") {
+    throw cheapError(`"${binding.imported}" from "${binding.specifier}" is not a constructor`);
+  }
+
+  // Constructed with exactly the arguments the source wrote.
+  return new (Ctor as new (...ctorArguments: unknown[]) => unknown)(...ctorArgs);
+}
+
+/**
+ * chant #1169 — build a real instance from a nested `{__resource}` envelope:
+ * revive its arguments, then resolve its class and call it. The composition
+ * {@link reviveFoldedValue} reaches for; identical in every step to what
+ * {@link resolveResourceEntity} does for a top-level declaration, which is the
+ * point — a nested `new Image({...})` and a top-level `export const image = new
+ * Image({...})` produce the same object, from the same class, from the same
+ * resolved module path.
+ */
+async function constructFoldedResource(
+  spec: FoldedResource,
+  ctx: ResolveCtx,
+  requireLiveRefs: boolean,
+): Promise<unknown> {
+  const ctorArgs = await reviveResourceCtorArgs(spec, ctx, requireLiveRefs);
+  return instantiateFoldedResource(spec.__resource, ctorArgs, ctx, "");
+}
+
+/**
+ * chant #1169 — construct every top-level `const x = new Type(...)` in the file
+ * ONCE, in source order, before any exported declarator is resolved, and put
+ * each instance in `ctx.externals` under its own name.
+ *
+ * This is what makes a same-file resource usable as a VALUE — `image:
+ * nodeImage`, `DependsOn: [dbCluster]`, `export { app }` — and it is the half
+ * of the #1169 gate the nested-`new` lift alone does not reach: the
+ * `{__resource}` envelope covers a construction written INLINE at the value
+ * position, while the far more common authoring shape names it once and refers
+ * to it. `fold()` cannot answer that reference on its own (it is synchronous,
+ * and constructing needs the module graph), so it defers to `externals` — see
+ * its identifier branch for the full argument.
+ *
+ * ONE instance, and identity is the whole point. Every reference in the file
+ * reads this map, and the exported-declarator loop reuses the same object
+ * through `prebuilt` rather than constructing a second one, so a resource
+ * referenced by name and the entity discovery registers are the same object —
+ * which is what makes the serializer's `Ref`/`DependsOn` resolution land on a
+ * logical name at all. Running the module top-to-bottom produces exactly this:
+ * every top-level `const` evaluated once, in order, later ones seeing earlier
+ * ones. Order matters and is preserved — `collectConsts` yields source order, so
+ * `const b = new Thing({ x: a })` finds `a` already built.
+ *
+ * A construction that FAILS is skipped silently rather than failing the file:
+ * the name stays absent from `externals`, so a reference to it rejects with the
+ * identical message it produced before this existed, and an EXPORTED one falls
+ * through to {@link resolveResourceEntity}, which reproduces the failure with
+ * its own located reason. Strictly additive.
+ *
+ * Under `--sandbox` every construction here goes through the same
+ * {@link sandboxedExecutionRefusal} as every other one, so a project-defined
+ * class refuses, the name stays unresolved, and the file demotes to the
+ * sandboxed child exactly as before. Under plain `--fold` this can import a
+ * constructor's module for a const that is never exported — work the RUN path
+ * performs unconditionally for the same file, and through the same
+ * already-memoized `importModule`.
+ */
+async function preresolveResourceConsts(ctx: ResolveCtx): Promise<Map<ts.Expression, unknown>> {
+  const built = new Map<ts.Expression, unknown>();
+  for (const [name, initializer] of ctx.consts) {
+    if (!ts.isNewExpression(initializer) || !ts.isIdentifier(initializer.expression)) continue;
+    try {
+      const spec = foldResource(initializer, ctx.consts, ctx.intrinsics, ctx.externals);
+      const instance = await constructFoldedResource(spec, ctx, false);
+      built.set(initializer, instance);
+      ctx.externals.set(name, instance);
+    } catch {
+      // Not constructible here (an unresolvable constructor import, a prop
+      // outside the fold subset, a --sandbox refusal). Leave the name alone.
+    }
+  }
+  return built;
+}
 
 async function resolveResourceEntity(
   name: string,
@@ -1667,31 +2811,9 @@ async function resolveResourceEntity(
     throw err;
   }
 
-  // chant #1039 — replay any folded intrinsic/symbol envelopes into their
-  // real runtime values before constructing the entity. A no-op walk when
-  // this file used no registered intrinsics (the overwhelming majority of
-  // cases today).
-  //
-  // chant #1082 — when `spec.args` is present the constructor's argument list
-  // isn't the classic `(props)`/`(props, attributes)` shape (AWS's `Parameter`
-  // is `(type, props)`), so revive the whole list and spread it below instead
-  // of reviving `spec.props`, which in that case is only a view onto one of
-  // its entries and would be double-counted.
   let ctorArgs: unknown[];
   try {
-    if (spec.args) {
-      ctorArgs = [];
-      for (const arg of spec.args) ctorArgs.push(await reviveFoldedValue(arg, ctx, false));
-    } else {
-      const props = await reviveFoldedProps(spec.props, ctx);
-      // The runtime constructor's optional second argument (`attributes` —
-      // CFN's DependsOn/Condition/DeletionPolicy/…, see createResource in
-      // ../runtime.ts) is only present in `spec` when the source actually
-      // passed one (see foldResource in ../fold/fold.ts). Passing `undefined`
-      // when it's absent matches the run path's own default
-      // (`attributes ?? {}` inside the constructor).
-      ctorArgs = [props, spec.attributes ? await reviveFoldedProps(spec.attributes, ctx) : undefined];
-    }
+    ctorArgs = await reviveResourceCtorArgs(spec, ctx, false);
   } catch (err) {
     return {
       ok: false,
@@ -1699,51 +2821,12 @@ async function resolveResourceEntity(
     };
   }
 
-  const typeName = spec.__resource;
-  const binding = ctx.imports.get(typeName);
-  if (!binding) {
-    return { ok: false, reason: `constructor "${typeName}" for "${name}" is not a resolvable import` };
-  }
-
-  // chant #1093 — a resource class is a lexicon export in every corpus entry
-  // today, but nothing forces that: `new Thing(...)` where `Thing` comes from
-  // a project file (or an arbitrary dependency) would import and run that
-  // module here, in the CLI's process. Same refusal as the composite-factory
-  // path above.
-  const refusal = sandboxedExecutionRefusal(binding, ctx, typeName, "constructor");
-  if (refusal) return { ok: false, reason: refusal };
-
-  let modulePath: string;
   try {
-    modulePath = resolveModulePathMemoized(binding.specifier, ctx.file, ctx.resolvePathCache);
+    const entity = (await instantiateFoldedResource(spec.__resource, ctorArgs, ctx, ` for "${name}"`)) as Declarable;
+    return { ok: true, entity };
   } catch (err) {
-    return {
-      ok: false,
-      reason: `could not resolve import "${binding.specifier}" for "${typeName}": ${err instanceof Error ? err.message : String(err)}`,
-    };
+    return { ok: false, reason: err instanceof Error ? err.message : String(err) };
   }
-
-  // Same import mechanism as `resolveCallExpression` above — see its comment.
-  let mod: Record<string, unknown>;
-  try {
-    mod = await importModuleMemoized(modulePath, ctx.importCache);
-  } catch (err) {
-    return {
-      ok: false,
-      reason: `could not import "${binding.specifier}" to resolve "${typeName}": ${err instanceof Error ? err.message : String(err)}`,
-    };
-  }
-
-  const Ctor = mod[binding.imported];
-  if (typeof Ctor !== "function") {
-    return { ok: false, reason: `"${binding.imported}" from "${binding.specifier}" is not a constructor` };
-  }
-
-  // Constructed with exactly the arguments the source wrote (see the revival
-  // block above for how `ctorArgs` was built for each of the two shapes).
-  const ResourceCtor = Ctor as new (...ctorArguments: unknown[]) => Declarable;
-  const entity = new ResourceCtor(...ctorArgs);
-  return { ok: true, entity };
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -2085,13 +3168,30 @@ async function tryFoldFileCore(file: string, session: FoldSession): Promise<Fold
       resolvePathCache: session.resolvePathCache,
       lexiconPackages: session.lexiconPackages,
       sandbox: session.sandbox,
+      session,
+      interpretDepth: 0,
     };
+
+    // chant #1169 — every same-file `const x = new Type(...)`, built once, in
+    // source order, before anything references one. See
+    // {@link preresolveResourceConsts}.
+    const prebuiltResources = await preresolveResourceConsts(ctx);
 
     const entities: FoldedEntity[] = [];
     const exportedValues = new Map<string, unknown>();
 
     for (const decl of scan.declarators) {
       if (decl.kind === "resource") {
+        // chant #1169 — the pre-pass already built this exact node. Reuse that
+        // instance rather than constructing a second one: a sibling prop that
+        // referenced this resource by name holds the pre-pass object, and if
+        // the entity discovery registers were a different one, the reference
+        // would have no logical name to resolve against.
+        const prebuilt = prebuiltResources.get(decl.node);
+        if (prebuilt !== undefined) {
+          applyResolvedValue(decl.name, prebuilt, entities, exportedValues);
+          continue;
+        }
         const result = await resolveResourceEntity(decl.name, decl.node, ctx);
         if (!result.ok) return result;
         applyResolvedValue(decl.name, result.entity, entities, exportedValues);

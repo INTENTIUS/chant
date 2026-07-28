@@ -9,12 +9,20 @@
  * side effects. Snapshotting keeps its own copy for now; a future refactor can
  * fold both onto this primitive.
  */
-import type { ObservationLexicon, ResourceMetadata } from "../lexicon";
+import type { ObservationLexicon } from "../lexicon";
 import type { BuildResult } from "../build";
 import { build as buildProject } from "../build";
 import { resolve as resolvePath } from "node:path";
 import type { SerializerResult } from "../serializer";
 import type { LiveObservation } from "../graph-ir";
+import {
+  mergeObservations,
+  normalizeObservation,
+  unobservedAll,
+  formatUnobserved,
+  type NormalizedObservation,
+} from "../observation";
+import { zeroResourcesWarning } from "../live-endpoint";
 
 export interface ObserveResult {
   observations: LiveObservation[];
@@ -23,12 +31,27 @@ export interface ObserveResult {
 }
 
 /**
+ * Re-key a normalized observation's entities by `${stack}::${id}` (#1162) so a
+ * bare LogicalResourceId shared across stacks (e.g. `vpc`) stays unambiguous
+ * once the per-stack results are merged. The declared canvas qualifies the same
+ * way (`buildDeclaredPerStack`), so the overlay join lines up. Applies to both
+ * the OBSERVED-PRESENT and NOT-OBSERVED maps of the tri-state (#1089).
+ */
+function qualifyObservation(obs: NormalizedObservation, stackName: string): NormalizedObservation {
+  const q = <T>(m: Record<string, T>): Record<string, T> =>
+    Object.fromEntries(Object.entries(m).map(([k, v]) => [`${stackName}::${k}`, v]));
+  return { resources: q(obs.resources), unobserved: q(obs.unobserved) };
+}
+
+/**
  * Query every plugin that implements `describeResources` for its resources in
  * `environment`. `owned` (default true for the managed-only diagram, epic #776)
  * restricts to resources carrying chant's ownership marker; a lexicon with no
  * marker channel logs and returns everything (its own contract). Plugins that
- * throw are collected into `errors` and skipped — one failing lexicon never
- * sinks the whole graph.
+ * throw are collected into `errors` — one failing lexicon never sinks the whole
+ * graph — and every entity they were asked about is recorded as NOT-OBSERVED
+ * (`read-failed`, #1089) rather than dropped, so a failed read is visibly a
+ * hole instead of a silent absence.
  *
  * `stacks` (#57) is for a multi-stack, per-component project (e.g. loomster)
  * where there is no single stack named after the environment — AWS's
@@ -36,11 +59,15 @@ export interface ObserveResult {
  * absent an explicit `stack`) queries a stack that simply doesn't exist there,
  * so the single-call path always observes zero nodes. When `stacks` is
  * present and non-empty, each observing plugin's `describeResources` is
- * called once per stack (same `environment`/`entities`/`entityNames`, only
- * `stack` varies) and the returned resource maps are unioned — a resource
- * appears under whichever stack contains its logical id. When `stacks` is
- * absent or empty, behavior is exactly the single call of before (no `stack`
- * key at all), so a single-stack project is unaffected.
+ * called once per stack and the returned observations are merged. A stack entry
+ * may be a bare name or `{ name, region?, src? }` (#1162): `src` is built
+ * SCOPED so the deployed BARE LogicalResourceIds match (the whole-project build
+ * disambiguates colliding names to `UsWest1Src…`, which the live ids never
+ * carry), and a scoped stack's observed ids are qualified `${stack}::${id}` so
+ * the same bare id in two stacks stays distinct. A bare-string stack keeps its
+ * bare ids and the tri-state merge (#57). When `stacks` is absent or empty, behavior is
+ * exactly the single call of before (no `stack` key at all), so a single-stack
+ * project is unaffected.
  */
 export async function observeResources(
   environment: string,
@@ -50,7 +77,7 @@ export async function observeResources(
 ): Promise<ObserveResult> {
   const owned = opts?.owned ?? true;
   const stacks = (opts?.stacks ?? []).map((st) => (typeof st === "string" ? { name: st } : st));
-  // A stack's `src` (multi-stack, #1162) is built SCOPED to get that stack's
+  // A stack's `src` (multi-stack, #1162) is built SCOPED to recover that stack's
   // BARE entity names — the names it actually deploys. Matching deployed bare
   // LogicalResourceIds against the whole-project build's DISAMBIGUATED names
   // (UsWest1Src…) misses every colliding resource. Cached per src.
@@ -94,9 +121,9 @@ export async function observeResources(
     }
 
     try {
-      let resources: Record<string, ResourceMetadata>;
+      let observed: NormalizedObservation;
       if (stacks.length > 0) {
-        resources = {};
+        const parts: NormalizedObservation[] = [];
         for (const stack of stacks) {
           // Use this stack's scoped build (bare entity names) when it has a src,
           // so describeResources matches the deployed bare LogicalResourceIds.
@@ -118,40 +145,89 @@ export async function observeResources(
             const raw = sb.outputs.get(plugin.name);
             stackBuildOutput = raw === undefined ? "" : typeof raw === "string" ? raw : (raw as SerializerResult).primary;
           }
-          const perStack = await plugin.describeResources({
-            environment,
-            buildOutput: stackBuildOutput,
-            entityNames: stackEntityNames,
-            entities: stackEntities,
-            owned,
-            stack: stack.name,
-            region: stack.region,
-          });
-          // Stack-qualify each logical id (#1162): the same bare LogicalResourceId
-          // (e.g. `vpc`) can appear in multiple stacks, so key observed nodes by
-          // `${stack}::${logicalId}`. The declared side qualifies identically, so
-          // the overlay join is unambiguous. A single stack qualifies too, for a
-          // stable id the declared graph can match.
-          for (const [logicalId, meta] of Object.entries(perStack)) {
-            resources[`${stack.name}::${logicalId}`] = meta;
-          }
+          const norm = normalizeObservation(
+            await plugin.describeResources({
+              environment,
+              buildOutput: stackBuildOutput,
+              entityNames: stackEntityNames,
+              entities: stackEntities,
+              owned,
+              stack: stack.name,
+              region: stack.region,
+            }),
+          );
+          // Qualify ids by stack ONLY for a scoped (`src`) stack (#1162): that
+          // is the multi-region case where the SAME bare LogicalResourceId
+          // (e.g. `vpc`) exists in every stack, so a bare union would collide.
+          // A bare-string stack (#57 loomster) has unique per-component ids and
+          // is asked the whole-project entity set, so it keeps the bare-id
+          // tri-state merge (present > not-observed > absent) that behold and
+          // other consumers read.
+          parts.push(stack.src ? qualifyObservation(norm, stack.name) : norm);
         }
+        observed = mergeObservations(parts);
       } else {
-        resources = await plugin.describeResources({
-          environment,
-          buildOutput,
-          entityNames,
-          entities,
-          owned,
-        });
+        observed = normalizeObservation(
+          await plugin.describeResources({
+            environment,
+            buildOutput,
+            entityNames,
+            entities,
+            owned,
+          }),
+        );
       }
-      if (Object.keys(resources).length > 0) {
-        observations.push({ lexicon: plugin.name, resources });
-      }
+      pushObservation(observations, warnings, plugin.name, observed, environment, entityNames.length);
     } catch (err) {
-      errors.push(`${plugin.name}: ${err instanceof Error ? err.message : String(err)}`);
+      // A thrown read is the whole-lexicon failure: every declared entity is
+      // NOT-OBSERVED, not absent (#1089). Emitting nothing here is what made a
+      // failed read look like "none of these exist" to every consumer.
+      const message = err instanceof Error ? err.message : String(err);
+      errors.push(`${plugin.name}: ${message}`);
+      pushObservation(
+        observations,
+        warnings,
+        plugin.name,
+        {
+          resources: {},
+          unobserved: unobservedAll(entityNames, "read-failed", message, entities),
+        },
+        environment,
+        entityNames.length,
+      );
     }
   }
 
   return { observations, warnings, errors };
+}
+
+/** Record one lexicon's observation, warning once per unobserved entity. */
+function pushObservation(
+  observations: LiveObservation[],
+  warnings: string[],
+  lexicon: string,
+  observed: NormalizedObservation,
+  environment: string,
+  declaredCount: number,
+): void {
+  const hasResources = Object.keys(observed.resources).length > 0;
+  const unobservedNames = Object.keys(observed.unobserved);
+  for (const name of unobservedNames) {
+    warnings.push(`${lexicon}: not observed — ${formatUnobserved(name, observed.unobserved[name])}`);
+  }
+  if (!hasResources && unobservedNames.length === 0) {
+    // #1166 — this is exactly the "wrong endpoint" shape (AWS's
+    // stackDoesNotExist branch returns an empty map with no #1089 hole): a
+    // declared entity list with nothing observed and nothing explained.
+    // Previously this fell straight through with neither an observation nor a
+    // warning — silently indistinguishable from "nothing is deployed yet".
+    const notice = zeroResourcesWarning(lexicon, environment, declaredCount, observed);
+    if (notice) warnings.push(notice);
+    return;
+  }
+  observations.push({
+    lexicon,
+    resources: observed.resources,
+    ...(unobservedNames.length > 0 ? { unobserved: observed.unobserved } : {}),
+  });
 }

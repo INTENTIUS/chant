@@ -19,10 +19,12 @@ describe("diffLive", () => {
     expect(result).toEqual({
       missing: [],
       orphan: [],
+      runtimeChildren: [],
       disappeared: [],
       newlyObserved: [],
       driftedSinceSnapshot: [],
       unchanged: [],
+      unobserved: [],
     });
   });
 
@@ -111,6 +113,131 @@ describe("diffLive", () => {
     expect(result.newlyObserved).toEqual(["d"]);
     expect(result.driftedSinceSnapshot.map((d) => d.name)).toEqual(["c"]);
     expect(result.unchanged).toEqual(["b"]);
+  });
+
+  // ── Owner-reference chain classification (#1077) ──────────────────────────
+
+  describe("runtime children vs orphans", () => {
+    test("undeclared, chain reaches a declared entity → runtimeChildren, never orphan", () => {
+      const result = diffLive({
+        declared: new Set(["web"]),
+        observedNow: {
+          web: meta({ type: "K8s::Apps::Deployment" }),
+          "prod/web-abc123": meta({ type: "K8s::Core::Pod", ownerChain: { root: "declared", entity: "web" } }),
+        },
+        observedThen: undefined,
+      });
+      expect(result.orphan).toEqual([]);
+      expect(result.runtimeChildren).toEqual([
+        { name: "prod/web-abc123", type: "K8s::Core::Pod", owner: "web" },
+      ]);
+    });
+
+    test("undeclared, no owner reference at all → orphan", () => {
+      const result = diffLive({
+        declared: new Set(),
+        observedNow: { "prod/standalone": meta({ ownerChain: { root: "unowned" } }) },
+        observedThen: undefined,
+      });
+      expect(result.orphan).toEqual(["prod/standalone"]);
+      expect(result.runtimeChildren).toEqual([]);
+    });
+
+    test("undeclared, chain resolves to a foreign (non-declared) root → orphan", () => {
+      const result = diffLive({
+        declared: new Set(),
+        observedNow: { "prod/other-app-pod": meta({ ownerChain: { root: "foreign" } }) },
+        observedThen: undefined,
+      });
+      expect(result.orphan).toEqual(["prod/other-app-pod"]);
+      expect(result.runtimeChildren).toEqual([]);
+    });
+
+    test("undeclared, chain could not be resolved (unreadable owner/cycle/depth) → conservative orphan, not runtime", () => {
+      const result = diffLive({
+        declared: new Set(),
+        observedNow: { "prod/mystery-pod": meta({ ownerChain: { root: "unknown" } }) },
+        observedThen: undefined,
+      });
+      expect(result.orphan).toEqual(["prod/mystery-pod"]);
+      expect(result.runtimeChildren).toEqual([]);
+    });
+
+    test("a lexicon that never sets ownerChain is unaffected — undeclared stays orphan", () => {
+      const result = diffLive({
+        declared: new Set(),
+        observedNow: { legacy: meta() }, // no ownerChain at all
+        observedThen: undefined,
+      });
+      expect(result.orphan).toEqual(["legacy"]);
+      expect(result.runtimeChildren).toEqual([]);
+    });
+
+    test("a runtime child rolling to a new name between snapshots is not `disappeared`", () => {
+      const result = diffLive({
+        declared: new Set(["web"]),
+        observedNow: {
+          web: meta({ type: "K8s::Apps::Deployment" }),
+          "prod/web-newname": meta({ type: "K8s::Core::Pod", ownerChain: { root: "declared", entity: "web" } }),
+        },
+        observedThen: { "prod/web-oldname": meta({ type: "K8s::Core::Pod", ownerChain: { root: "declared", entity: "web" } }) },
+      });
+      expect(result.disappeared).toEqual([]);
+      expect(result.runtimeChildren).toEqual([
+        { name: "prod/web-newname", type: "K8s::Core::Pod", owner: "web" },
+      ]);
+    });
+
+    test("a runtime child's own status change between snapshots is not driftedSinceSnapshot", () => {
+      const podThen = meta({ type: "K8s::Core::Pod", status: "PROGRESSING", ownerChain: { root: "declared", entity: "web" } });
+      const podNow = meta({ type: "K8s::Core::Pod", status: "READY", ownerChain: { root: "declared", entity: "web" } });
+      const result = diffLive({
+        declared: new Set(["web"]),
+        observedNow: { web: meta({ type: "K8s::Apps::Deployment" }), "prod/web-stable-0": podNow },
+        observedThen: { "prod/web-stable-0": podThen },
+      });
+      expect(result.driftedSinceSnapshot).toEqual([]);
+      expect(result.unchanged).not.toContain("prod/web-stable-0");
+      expect(result.runtimeChildren.map((r) => r.name)).toEqual(["prod/web-stable-0"]);
+    });
+  });
+
+  // ── The observation tri-state (#1089) ─────────────────────────────────────
+
+  test("declared and not observed → unobserved, not missing", () => {
+    const result = diffLive({
+      declared: new Set(["crd", "gone"]),
+      observedNow: {},
+      observedThen: undefined,
+      unobserved: { crd: { type: "K8s::X::Widget", reason: "unsupported-kind", detail: "no reader" } },
+    });
+    expect(result.missing).toEqual(["gone"]);
+    expect(result.unobserved).toEqual([
+      { name: "crd", type: "K8s::X::Widget", reason: "unsupported-kind", detail: "no reader" },
+    ]);
+  });
+
+  test("an unobserved entity in the last snapshot has not disappeared", () => {
+    const result = diffLive({
+      declared: new Set(["crd"]),
+      observedNow: {},
+      observedThen: { crd: meta() },
+      unobserved: { crd: { reason: "no-credentials" } },
+    });
+    expect(result.disappeared).toEqual([]);
+    expect(result.missing).toEqual([]);
+    expect(result.unobserved.map((u) => u.name)).toEqual(["crd"]);
+  });
+
+  test("a resource that was returned is never also unobserved", () => {
+    const result = diffLive({
+      declared: new Set(["a"]),
+      observedNow: { a: meta() },
+      observedThen: undefined,
+      unobserved: { a: { reason: "read-failed" } },
+    });
+    expect(result.unobserved).toEqual([]);
+    expect(result.newlyObserved).toEqual(["a"]);
   });
 });
 

@@ -22,6 +22,7 @@
 
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
+import type { UnobservedReason } from "./observation";
 
 const execAsync = promisify(exec);
 
@@ -71,8 +72,18 @@ export interface ResolvedClusterTarget {
   source: "bound" | "ambient";
 }
 
+/**
+ * How the resolver learns which context is ambient. The default shells
+ * `kubectl config current-context`; the k8s lexicon's typed API client
+ * (chant #1074) supplies one that reads the parsed kubeconfig instead, so a
+ * client that never needs the `kubectl` binary does not acquire a dependency
+ * on it just to check the binding. Both answer the same question, so the
+ * refusal semantics below are identical either way.
+ */
+export type AmbientContextReader = () => Promise<string | undefined>;
+
 /** Reads `kubectl config current-context`. Returns undefined if unset or kubectl fails. */
-async function currentAmbientContext(): Promise<string | undefined> {
+const currentAmbientContext: AmbientContextReader = async () => {
   try {
     const { stdout } = await execAsync("kubectl config current-context");
     const trimmed = stdout.trim();
@@ -80,6 +91,15 @@ async function currentAmbientContext(): Promise<string | undefined> {
   } catch {
     return undefined;
   }
+};
+
+/** Options for {@link resolveClusterTarget}. */
+export interface ResolveClusterTargetOptions {
+  /**
+   * Override how the ambient context is read. Defaults to
+   * `kubectl config current-context`.
+   */
+  ambientContext?: AmbientContextReader;
 }
 
 /**
@@ -104,6 +124,7 @@ export async function resolveClusterTarget(
   config: Record<string, unknown>,
   environment: string,
   lexiconName: string,
+  options: ResolveClusterTargetOptions = {},
 ): Promise<ResolvedClusterTarget> {
   const k8sConfig = config.k8s as K8sConfigShape | undefined;
   const bound = k8sConfig?.profiles?.[environment]?.context;
@@ -117,10 +138,90 @@ export async function resolveClusterTarget(
     return { source: "ambient" };
   }
 
-  const ambient = await currentAmbientContext();
+  const ambient = await (options.ambientContext ?? currentAmbientContext)();
   if (ambient && ambient !== bound) {
     throw new ClusterBindingMismatchError(environment, bound, ambient);
   }
 
   return { context: bound, source: "bound" };
+}
+
+// ── kubectl read outcomes (#1089) ───────────────────────────────────────────
+
+/**
+ * What a failed `kubectl get` actually proved. Shared by the k8s and gcp
+ * lexicons, which read through the same kubectl path and used to collapse every
+ * non-zero exit into "not there" — so an expired token, a downed API server, or
+ * an uninstalled CRD all classified as `create`.
+ */
+export type KubectlReadOutcome =
+  /** The API server answered and the object is not there. Safe to plan a create. */
+  | { kind: "absent" }
+  /** The read proved nothing about the object's existence. */
+  | { kind: "unobserved"; reason: UnobservedReason; detail: string };
+
+/** Pull whatever the child process actually said out of an exec rejection. */
+function execErrorText(err: unknown): string {
+  if (typeof err === "object" && err !== null) {
+    const e = err as { stderr?: unknown; message?: unknown };
+    const stderr = typeof e.stderr === "string" ? e.stderr.trim() : "";
+    if (stderr) return stderr;
+    if (typeof e.message === "string") return e.message.trim();
+  }
+  return String(err);
+}
+
+/** Collapse kubectl's noise to one line for a plan/diff entry. */
+function firstLine(text: string, max = 200): string {
+  const line = text.split("\n").find((l) => l.trim().length > 0)?.trim() ?? text.trim();
+  return line.length > max ? `${line.slice(0, max - 3)}...` : line;
+}
+
+/**
+ * Classify a `kubectl get` failure into the observation tri-state (#1089).
+ *
+ * Only a genuine `NotFound` from the API server — or a kind the server does not
+ * serve at all, where no instance can exist — establishes absence. Auth,
+ * connectivity, and unresolvable contexts establish nothing, and must reach the
+ * change set as NOT-OBSERVED rather than as an empty result.
+ */
+export function classifyKubectlFailure(err: unknown): KubectlReadOutcome {
+  const text = execErrorText(err);
+  const lower = text.toLowerCase();
+
+  // The object was looked for and is not there.
+  if (lower.includes("notfound") || /error from server \(notfound\)/.test(lower) || lower.includes("not found")) {
+    return { kind: "absent" };
+  }
+  // The cluster serves no such kind, so no instance of it can exist there. The
+  // usual cause is a CRD this same plan has not applied yet — a real absence,
+  // and the case a create is for.
+  if (
+    lower.includes("the server doesn't have a resource type") ||
+    lower.includes("the server could not find the requested resource")
+  ) {
+    return { kind: "absent" };
+  }
+  if (
+    lower.includes("unauthorized") ||
+    lower.includes("forbidden") ||
+    lower.includes("you must be logged in") ||
+    lower.includes("invalid bearer token") ||
+    lower.includes("credentials")
+  ) {
+    return { kind: "unobserved", reason: "no-credentials", detail: firstLine(text) };
+  }
+  if (
+    lower.includes("unable to connect to the server") ||
+    lower.includes("connection refused") ||
+    lower.includes("no configuration has been provided") ||
+    lower.includes("did you specify the right host or port") ||
+    lower.includes("context was not found") ||
+    /context ".*" does not exist/.test(lower) ||
+    lower.includes("no such host") ||
+    lower.includes("i/o timeout")
+  ) {
+    return { kind: "unobserved", reason: "no-binding", detail: firstLine(text) };
+  }
+  return { kind: "unobserved", reason: "read-failed", detail: firstLine(text) };
 }

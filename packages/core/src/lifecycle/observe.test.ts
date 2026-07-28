@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { observeResources } from "./observe";
+import { observation } from "../observation";
 import type { ObservationLexicon, ResourceMetadata } from "../lexicon";
 import type { BuildResult } from "../build";
 
@@ -63,13 +64,20 @@ describe("observeResources", () => {
     expect(names).toEqual(["web-vpc"]);
   });
 
-  it("collects a throwing plugin into errors instead of failing the whole graph", async () => {
+  it("collects a throwing plugin into errors instead of failing the whole graph, and reports its entities unobserved (#1089)", async () => {
     const plugins = [
       awsPlugin(() => { throw new Error("access denied"); }),
     ];
-    const { observations, errors } = await observeResources("prod", plugins, mockBuild());
-    expect(observations).toEqual([]);
+    const { observations, errors, warnings } = await observeResources("prod", plugins, mockBuild());
     expect(errors).toEqual(["aws: access denied"]);
+    // The failed read is a hole, not an empty environment: every declared
+    // entity comes back NOT-OBSERVED so nothing downstream reads it as absent.
+    expect(observations).toHaveLength(1);
+    expect(observations[0].resources).toEqual({});
+    expect(observations[0].unobserved).toEqual({
+      "web-vpc": { reason: "read-failed", type: "AWS::EC2::VPC", detail: "access denied" },
+    });
+    expect(warnings.join("\n")).toContain("web-vpc");
   });
 
   it("skips plugins with no describeResources and drops empty results", async () => {
@@ -77,6 +85,69 @@ describe("observeResources", () => {
     const noObserve = { name: "gitlab", serializer: {} } as unknown as ObservationLexicon;
     const { observations } = await observeResources("prod", [empty, noObserve], mockBuild());
     expect(observations).toEqual([]);
+  });
+
+  // #1166 — this is exactly the "wrong endpoint" shape: AWS's stackDoesNotExist
+  // branch returns an empty map (bare `{}`, no #1089 envelope) for a declared
+  // entity nobody could actually observe. Before the fix this vanished with
+  // neither an observation nor a warning; now it must say so.
+  it("warns when a lexicon with declared entities observes zero resources and nothing is unobserved either (#1166)", async () => {
+    const empty = awsPlugin(() => ({}));
+    const { observations, warnings } = await observeResources("prod", [empty], mockBuild());
+    expect(observations).toEqual([]); // still no observation pushed — nothing to graph
+    expect(warnings).toEqual([
+      'aws: 0 live resources for env "prod" (1 declared) — check the endpoint/credentials',
+    ]);
+  });
+
+  it("does not warn about zero resources when the lexicon declares no entities at all", async () => {
+    const empty = awsPlugin(() => ({}));
+    const noEntities: BuildResult = { outputs: new Map(), entities: new Map(), errors: [] } as unknown as BuildResult;
+    const { warnings } = await observeResources("prod", [empty], noEntities);
+    expect(warnings).toEqual([]);
+  });
+
+  it("does not double-warn when the emptiness is already explained by #1089 unobserved", async () => {
+    const plugin = {
+      name: "aws",
+      serializer: {} as ObservationLexicon["serializer"],
+      describeResources: async () =>
+        observation({}, { "web-vpc": { type: "AWS::EC2::VPC", reason: "no-binding" } }),
+    } as unknown as ObservationLexicon;
+    const { warnings } = await observeResources("prod", [plugin], mockBuild());
+    // Only the #1089 per-entity warning — no separate "0 live resources" line.
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain("no binding for this environment");
+  });
+
+  it("carries a plugin's own unobserved entities through (#1089)", async () => {
+    const plugin = {
+      name: "aws",
+      serializer: {} as ObservationLexicon["serializer"],
+      describeResources: async () =>
+        observation({}, { "web-vpc": { type: "AWS::EC2::VPC", reason: "unsupported-kind" } }),
+    } as unknown as ObservationLexicon;
+    const { observations, warnings, errors } = await observeResources("prod", [plugin], mockBuild());
+    expect(errors).toEqual([]);
+    expect(observations[0].unobserved).toEqual({
+      "web-vpc": { type: "AWS::EC2::VPC", reason: "unsupported-kind" },
+    });
+    expect(warnings[0]).toContain("no reader for this resource kind");
+  });
+
+  it("merges multi-stack reads with present > not-observed > absent (#1089)", async () => {
+    const stacks = ["a", "b"];
+    const plugin = {
+      name: "aws",
+      serializer: {} as ObservationLexicon["serializer"],
+      describeResources: async (opts: { stack?: string }) =>
+        opts.stack === "a"
+          ? observation({}, { "web-vpc": { reason: "read-failed", detail: "stack a unreadable" } })
+          : observation({ "web-vpc": { type: "AWS::EC2::VPC", status: "CREATE_COMPLETE" } }),
+    } as unknown as ObservationLexicon;
+    const { observations } = await observeResources("prod", [plugin], mockBuild(), { stacks });
+    expect(Object.keys(observations[0].resources)).toEqual(["web-vpc"]);
+    expect(observations[0].unobserved).toBeUndefined();
   });
 
   it("with no stacks: calls describeResources exactly once with no `stack` key (unchanged single-stack path)", async () => {
@@ -99,7 +170,11 @@ describe("observeResources", () => {
       awsPlugin((opts) => {
         const stack = (opts as { stack?: string }).stack;
         calls.push(stack);
-        // Different resources per stack — the multi-stack, per-component case.
+        // Different resources per stack — the multi-stack, per-component case
+        // (#57 loomster). Bare-string stacks keep BARE ids (no `src` scope), so
+        // the union is `db-a`+`db-b`, not stack-qualified: per-component ids are
+        // already unique and behold reads them bare. Qualification is a scoped
+        // (`src`) feature — see the per-stack src test below.
         const resources: Record<string, ResourceMetadata> =
           stack === "s1"
             ? { "db-a": { type: "AWS::RDS::DBInstance", status: "AVAILABLE" } }
@@ -111,7 +186,7 @@ describe("observeResources", () => {
     expect(calls).toEqual(["s1", "s2"]);
     expect(errors).toEqual([]);
     expect(observations).toHaveLength(1);
-    expect(Object.keys(observations[0].resources).sort()).toEqual(["s1::db-a", "s2::db-b"]);
+    expect(Object.keys(observations[0].resources).sort()).toEqual(["db-a", "db-b"]);
   });
 
   it("with per-stack src (#1162): describeResources gets each stack's SCOPED bare names, not the whole-project build's names", async () => {

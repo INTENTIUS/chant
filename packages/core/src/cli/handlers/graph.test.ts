@@ -1,4 +1,4 @@
-import { describe, test, expect, vi, beforeEach } from "vitest";
+import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";
 import type { ParsedArgs } from "../registry";
 import { DECLARABLE_MARKER, type Declarable } from "../../declarable";
 import { AttrRef } from "../../attrref";
@@ -19,8 +19,10 @@ vi.mock("../commands/lint", () => ({
 }));
 
 const componentGraphMock = vi.fn();
+const generatePipelineMock = vi.fn();
 vi.mock("../../components/cli-support", () => ({
   computeComponentGraph: () => componentGraphMock(),
+  generateComponentsPipeline: (...a: unknown[]) => generatePipelineMock(...a),
 }));
 
 // Avoid running a real layout engine in tests; the format dispatch + size/engine
@@ -52,9 +54,14 @@ const discoverComponentsMock = vi.fn();
 vi.mock("../../components/discover", () => ({
   discoverComponents: (...a: unknown[]) => discoverComponentsMock(...a),
 }));
-vi.mock("../../config", () => ({
-  loadChantConfig: () => Promise.resolve({ config: {} }),
-}));
+const loadChantConfigMock = vi.fn();
+vi.mock("../../config", async () => {
+  const actual = await vi.importActual<typeof import("../../config")>("../../config");
+  return {
+    ...actual,
+    loadChantConfig: (...a: unknown[]) => loadChantConfigMock(...a),
+  };
+});
 vi.mock("../../build", () => ({
   build: () => Promise.resolve({ errors: [] }),
   partitionByLexicon: () => ({}),
@@ -101,12 +108,15 @@ describe("runGraph", () => {
     lintMock.mockReset();
     layoutMock.mockReset();
     componentGraphMock.mockReset();
+    generatePipelineMock.mockReset();
     discoverComponentsMock.mockReset();
     // Default: no components — the single-stack --live path most tests exercise.
     discoverComponentsMock.mockResolvedValue({ components: new Map(), sourceFiles: [], errors: [] });
     observeMock.mockReset();
     loadPluginsMock.mockReset();
     resolveLexMock.mockReset();
+    loadChantConfigMock.mockReset();
+    loadChantConfigMock.mockResolvedValue({ config: {} });
   });
 
   describe("Op graph (default)", () => {
@@ -318,6 +328,89 @@ describe("runGraph", () => {
       expect(exit).toBe(1);
       expect(stderrBuf.join("\n")).toContain("cycle: a ↔ b");
     });
+
+    describe("CI/pipeline projection (--projection, #989)", () => {
+      test("rejects --projection without --components --format ir", async () => {
+        const exit = await runGraph({ args: makeArgs({ projection: "gitlab" }), plugins: [], serializers: [] });
+        expect(exit).toBe(1);
+        expect(stderrBuf.join("\n")).toMatch(/--projection needs --components --format ir/);
+        expect(componentGraphMock).not.toHaveBeenCalled();
+      });
+
+      test("rejects --projection with --components --format mermaid", async () => {
+        const exit = await runGraph({
+          args: makeArgs({ projection: "gitlab", components: true, format: "mermaid" }),
+          plugins: [],
+          serializers: [],
+        });
+        expect(exit).toBe(1);
+        expect(stderrBuf.join("\n")).toMatch(/--projection needs --components --format ir/);
+      });
+
+      test("--components --format ir --projection gitlab adds ir.pipeline, reusing generateComponentsPipeline", async () => {
+        lintMock.mockResolvedValue({ success: true });
+        componentGraphClean();
+        generatePipelineMock.mockResolvedValue({
+          success: true,
+          stages: ["wave-1", "wave-2", "wave-3"],
+          jobs: [
+            { jobName: "shared-foundation", component: "shared-foundation", stage: "wave-1", needs: [] },
+            { jobName: "loom-db", component: "loom-db", stage: "wave-2", needs: ["shared-foundation"] },
+            { jobName: "loom-backend", component: "loom-backend", stage: "wave-3", needs: ["loom-db"] },
+          ],
+          yaml: "stages: [...]\n",
+        });
+
+        const exit = await runGraph({
+          args: makeArgs({ format: "ir", components: true, projection: "gitlab" }),
+          plugins: [],
+          serializers: [],
+        });
+        expect(exit).toBe(0);
+
+        // Reuses the same generator `build --components --generate` calls —
+        // never re-derives stages/jobs/needs itself.
+        expect(generatePipelineMock).toHaveBeenCalledWith(expect.any(String), "gitlab", undefined, undefined);
+
+        const ir = JSON.parse(stdoutBuf.join("\n"));
+        // The component graph itself is untouched by the projection.
+        expect(ir.nodes.map((n: { id: string }) => n.id)).toEqual(["shared-foundation", "loom-db", "loom-backend"]);
+        expect(ir.groups.byWave["wave-2"]).toEqual(["loom-db"]);
+
+        // The CI/pipeline projection sits alongside it as first-class IR nodes/edges.
+        expect(ir.pipeline.provider).toBe("gitlab");
+        expect(ir.pipeline.stages).toEqual(["wave-1", "wave-2", "wave-3"]);
+        expect(ir.pipeline.nodes).toEqual([
+          { id: "shared-foundation", kind: "CIJob", component: "shared-foundation", stage: "wave-1" },
+          { id: "loom-db", kind: "CIJob", component: "loom-db", stage: "wave-2" },
+          { id: "loom-backend", kind: "CIJob", component: "loom-backend", stage: "wave-3" },
+        ]);
+        // `needs:` edges, consumer job → producer job (mirrors the component
+        // graph's consumer → producer convention).
+        expect(ir.pipeline.edges).toEqual([
+          { from: "loom-db", to: "shared-foundation", kind: "needs" },
+          { from: "loom-backend", to: "loom-db", kind: "needs" },
+        ]);
+      });
+
+      test("an unsupported --projection lexicon fails the whole graph command", async () => {
+        lintMock.mockResolvedValue({ success: true });
+        componentGraphClean();
+        generatePipelineMock.mockResolvedValue({
+          success: false,
+          error: 'Lexicon "bogus" does not support generate mode (no generateComponentPipeline).',
+        });
+
+        const exit = await runGraph({
+          args: makeArgs({ format: "ir", components: true, projection: "bogus" }),
+          plugins: [],
+          serializers: [],
+        });
+        expect(exit).toBe(1);
+        expect(stderrBuf.join("\n")).toContain("does not support generate mode");
+        expect(stdoutBuf.join("\n")).toBe("");
+      });
+    });
   });
 
   describe("live graph (--live)", () => {
@@ -332,6 +425,7 @@ describe("runGraph", () => {
       observeMock.mockResolvedValue({
         observations: [{ lexicon: "aws", resources: { "web-vpc": { type: "AWS::EC2::VPC", status: "OK" } } }],
         errors: [],
+        warnings: [],
       });
       const exit = await runGraph({ args: makeArgs({ format: "ir", live: true, env: "prod" }), plugins: [], serializers: [] });
       expect(exit).toBe(0);
@@ -349,7 +443,7 @@ describe("runGraph", () => {
       loadPluginsMock.mockResolvedValue([
         { name: "aws", serializer: {}, describeResources: () => Promise.resolve({}) },
       ]);
-      observeMock.mockResolvedValue({ observations: [], errors: [] });
+      observeMock.mockResolvedValue({ observations: [], errors: [], warnings: [] });
       const exit = await runGraph({ args: makeArgs({ format: "ir", live: true, env: "prod" }), plugins: [], serializers: [] });
       expect(exit).toBe(0);
       expect(observeMock).toHaveBeenCalledWith("prod", expect.anything(), expect.anything(), {
@@ -390,6 +484,7 @@ describe("runGraph", () => {
       observeMock.mockResolvedValue({
         observations: [{ lexicon: "aws", resources: { "loom-db": { type: "AWS::RDS::DBInstance", status: "OK" } } }],
         errors: [],
+        warnings: [],
       });
       const exit = await runGraph({ args: makeArgs({ format: "ir", live: true, env: "local" }), plugins: [], serializers: [] });
       expect(exit).toBe(0);
@@ -409,7 +504,7 @@ describe("runGraph", () => {
         { name: "aws", serializer: {}, describeResources: () => Promise.resolve({}) },
       ]);
       discoverComponentsMock.mockResolvedValue({ errors: [{ message: "bad component" }], sourceFiles: [], components: new Map() });
-      observeMock.mockResolvedValue({ observations: [], errors: [] });
+      observeMock.mockResolvedValue({ observations: [], errors: [], warnings: [] });
       const exit = await runGraph({ args: makeArgs({ format: "ir", live: true, env: "prod" }), plugins: [], serializers: [] });
       expect(exit).toBe(0);
       expect(observeMock).toHaveBeenCalledWith("prod", expect.anything(), expect.anything(), {
@@ -417,6 +512,60 @@ describe("runGraph", () => {
         stacks: [],
       });
       expect(stderrBuf.join("\n")).toMatch(/component discovery failed/i);
+    });
+
+    // #1166 — an environment can declare its own endpoint (a local emulator
+    // like Floci), so `--live --env floci` observes the right target even when
+    // the ambient shell never exported AWS_ENDPOINT_URL.
+    describe("declared endpoint (#1166)", () => {
+      const prevEndpoint = process.env.AWS_ENDPOINT_URL;
+
+      afterEach(() => {
+        if (prevEndpoint === undefined) delete process.env.AWS_ENDPOINT_URL;
+        else process.env.AWS_ENDPOINT_URL = prevEndpoint;
+      });
+
+      test("applies the declared endpoint to AWS_ENDPOINT_URL for the observe call, then restores it", async () => {
+        delete process.env.AWS_ENDPOINT_URL;
+        loadChantConfigMock.mockResolvedValue({
+          config: { environments: [{ name: "floci", endpoint: "http://localhost:4566" }] },
+        });
+        resolveLexMock.mockResolvedValue(["aws"]);
+        loadPluginsMock.mockResolvedValue([
+          { name: "aws", serializer: {}, describeResources: () => Promise.resolve({}) },
+        ]);
+        let seenDuringObserve: string | undefined;
+        observeMock.mockImplementation(async () => {
+          seenDuringObserve = process.env.AWS_ENDPOINT_URL;
+          return { observations: [], errors: [], warnings: [] };
+        });
+        const exit = await runGraph({ args: makeArgs({ format: "ir", live: true, env: "floci" }), plugins: [], serializers: [] });
+        expect(exit).toBe(0);
+        expect(seenDuringObserve).toBe("http://localhost:4566");
+        expect(process.env.AWS_ENDPOINT_URL).toBeUndefined(); // restored after the read
+        expect(stderrBuf.join("\n")).toMatch(/environment "floci" declares endpoint http:\/\/localhost:4566/);
+      });
+
+      test("ambient AWS_ENDPOINT_URL still wins when already set", async () => {
+        process.env.AWS_ENDPOINT_URL = "http://real-endpoint.example";
+        loadChantConfigMock.mockResolvedValue({
+          config: { environments: [{ name: "floci", endpoint: "http://localhost:4566" }] },
+        });
+        resolveLexMock.mockResolvedValue(["aws"]);
+        loadPluginsMock.mockResolvedValue([
+          { name: "aws", serializer: {}, describeResources: () => Promise.resolve({}) },
+        ]);
+        let seenDuringObserve: string | undefined;
+        observeMock.mockImplementation(async () => {
+          seenDuringObserve = process.env.AWS_ENDPOINT_URL;
+          return { observations: [], errors: [], warnings: [] };
+        });
+        const exit = await runGraph({ args: makeArgs({ format: "ir", live: true, env: "floci" }), plugins: [], serializers: [] });
+        expect(exit).toBe(0);
+        expect(seenDuringObserve).toBe("http://real-endpoint.example"); // ambient wins
+        expect(process.env.AWS_ENDPOINT_URL).toBe("http://real-endpoint.example"); // untouched
+        expect(stderrBuf.join("\n")).toMatch(/ambient AWS_ENDPOINT_URL already set/);
+      });
     });
   });
 });

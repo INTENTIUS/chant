@@ -1,5 +1,5 @@
 import { describe, test, expect, vi, beforeEach } from "vitest";
-import { createMockPlugin, staticDescribeResources, staticListArtifacts } from "@intentius/chant-test-utils";
+import { createMockPlugin, staticDescribeResources, staticObservation, staticListArtifacts } from "@intentius/chant-test-utils";
 import type { BuildResult } from "../build";
 
 const writeSnapshotMock = vi.fn();
@@ -112,6 +112,44 @@ describe("takeSnapshot", () => {
     const result = await takeSnapshot("prod", [plugin], makeBuildResult({ aws: [] }));
     expect(result.snapshots).toEqual([]);
     expect(result.errors.some((e) => e.includes("aws") && e.includes("no valid"))).toBe(true);
+  });
+
+  // #1089 — a snapshot is evidence of what was seen. An entity nobody could
+  // read must be recorded as a hole, not omitted (which the next diff would
+  // read back as "was not there").
+  test("records unobserved entities alongside the resources", async () => {
+    const plugin = createMockPlugin({
+      name: "k8s",
+      describeResources: staticObservation(
+        { web: { type: "K8s::Apps::Deployment", status: "READY" } },
+        { widget: { type: "K8s::X::Widget", reason: "unsupported-kind", detail: "no reader" } },
+      ),
+    });
+    const result = await takeSnapshot("prod", [plugin], makeBuildResult({ k8s: ["web", "widget"] }));
+    expect(result.snapshots[0].unobserved).toEqual({
+      widget: { type: "K8s::X::Widget", reason: "unsupported-kind", detail: "no reader" },
+    });
+    expect(result.warnings.some((w) => w.includes("widget") && w.includes("not observed"))).toBe(true);
+  });
+
+  test("an entirely unreadable environment is not snapshotted as empty", async () => {
+    const plugin = createMockPlugin({
+      name: "k8s",
+      describeResources: staticObservation({}, { web: { reason: "no-credentials" } }),
+    });
+    const result = await takeSnapshot("prod", [plugin], makeBuildResult({ k8s: ["web"] }));
+    expect(result.snapshots).toEqual([]);
+    expect(result.errors.some((e) => e.includes("could not be read"))).toBe(true);
+  });
+
+  test("a throwing plugin reports each declared entity as unobserved in the warnings", async () => {
+    const plugin = createMockPlugin({
+      name: "k8s",
+      describeResources: async () => { throw new Error("kubeconfig missing"); },
+    });
+    const result = await takeSnapshot("prod", [plugin], makeBuildResult({ k8s: ["web"] }));
+    expect(result.snapshots).toEqual([]);
+    expect(result.warnings.some((w) => w.includes("web") && w.includes("kubeconfig missing"))).toBe(true);
   });
 
   test("resources missing required type/status are dropped with warning", async () => {

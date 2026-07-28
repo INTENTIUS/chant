@@ -31,6 +31,8 @@ vi.mock("node:child_process", async () => {
 const { azurePlugin } = await import("./plugin");
 const { liveImportFromPlugins } = await import("@intentius/chant/cli/commands/import");
 const { buildChangeSet } = await import("@intentius/chant/lifecycle/change-set");
+const { normalizeObservation } = await import("@intentius/chant/observation");
+const { describeObservationConformance } = await import("@intentius/chant-test-utils");
 
 const liveTemplate = {
   $schema:
@@ -85,14 +87,16 @@ describe("azure lifecycle integration (#163)", () => {
         : new Error("unexpected"),
     );
 
-    const observedNow = await azurePlugin.describeResources!({
-      environment: "prod",
-      buildOutput: "",
-      entityNames: ["myStore"],
-      entities: new Map([
-        ["myStore", { entityType: "Microsoft.Storage/storageAccounts", props: { name: "mystore" } }],
-      ]),
-    });
+    const { resources: observedNow } = normalizeObservation(
+      await azurePlugin.describeResources!({
+        environment: "prod",
+        buildOutput: "",
+        entityNames: ["myStore"],
+        entities: new Map([
+          ["myStore", { entityType: "Microsoft.Storage/storageAccounts", props: { name: "mystore" } }],
+        ]),
+      }),
+    );
     expect(observedNow.myStore?.type).toBe("Microsoft.Storage/storageAccounts");
 
     const cs = buildChangeSet("prod", {
@@ -111,4 +115,47 @@ describe("azure lifecycle integration (#163)", () => {
     });
     expect(cs2.entries.find((e) => e.name === "myStore")!.action).toBe("noop");
   });
+});
+
+// The shared conformance suite (#1089).
+describeObservationConformance({
+  lexicon: "azure",
+  scenarios: [
+    {
+      name: "a nested ARM type az resource show cannot query",
+      declared: ["blobSvc", "gone"],
+      expectUnobserved: ["blobSvc"],
+      expectAbsent: ["gone"],
+      run: () => {
+        execMock.mockImplementation(() => new Error("ResourceNotFound: gone"));
+        return azurePlugin.describeResources!({
+          environment: "prod",
+          buildOutput: "",
+          entityNames: ["blobSvc", "gone"],
+          entities: new Map([
+            ["blobSvc", { entityType: "Microsoft.Storage/storageAccounts/blobServices", props: { name: "blob" } }],
+            ["gone", { entityType: "Microsoft.Storage/storageAccounts", props: { name: "gone" } }],
+          ]),
+        });
+      },
+    },
+    {
+      name: "an expired login",
+      declared: ["myStore"],
+      expectUnobserved: ["myStore"],
+      run: () => {
+        execMock.mockImplementation(() =>
+          Object.assign(new Error("az failed"), { stderr: "Please run 'az login' to setup account." }),
+        );
+        return azurePlugin.describeResources!({
+          environment: "prod",
+          buildOutput: "",
+          entityNames: ["myStore"],
+          entities: new Map([
+            ["myStore", { entityType: "Microsoft.Storage/storageAccounts", props: { name: "mystore" } }],
+          ]),
+        });
+      },
+    },
+  ],
 });

@@ -5,6 +5,9 @@ import {
   resolveAutoReleaseDisabled,
   resolveFoldEnabled,
   resolveSbomFormat,
+  environmentName,
+  environmentNames,
+  environmentEndpoint,
 } from "./config";
 import { writeFileSync, mkdirSync, rmSync } from "fs";
 import { join } from "path";
@@ -131,6 +134,78 @@ describe("loadChantConfig", () => {
 
     const result = await loadChantConfig(TEST_DIR);
     expect(result.config.sbom?.format).toBe("cyclonedx");
+  });
+});
+
+// #1166 — `environments` accepts either a bare name (unchanged) or
+// `{ name, endpoint }`, so a declared environment can be self-sufficient for
+// `--live` reads without an ambient AWS_ENDPOINT_URL export.
+describe("environments (#1166 — string or { name, endpoint })", () => {
+  test("bare string environments load exactly as before", async () => {
+    writeFileSync(
+      join(TEST_DIR, "chant.config.json"),
+      JSON.stringify({ environments: ["dev", "prod"] }),
+    );
+
+    const result = await loadChantConfig(TEST_DIR);
+    expect(result.config.environments).toEqual(["dev", "prod"]);
+  });
+
+  test("an object entry with a declared endpoint loads alongside bare strings", async () => {
+    writeFileSync(
+      join(TEST_DIR, "chant.config.json"),
+      JSON.stringify({
+        environments: ["prod", { name: "floci", endpoint: "http://localhost:4566" }],
+      }),
+    );
+
+    const result = await loadChantConfig(TEST_DIR);
+    expect(result.config.environments).toEqual([
+      "prod",
+      { name: "floci", endpoint: "http://localhost:4566" },
+    ]);
+  });
+
+  test("an object entry with no endpoint is legal (name-only, same as a bare string)", async () => {
+    writeFileSync(
+      join(TEST_DIR, "chant.config.json"),
+      JSON.stringify({ environments: [{ name: "staging" }] }),
+    );
+
+    const result = await loadChantConfig(TEST_DIR);
+    expect(result.config.environments).toEqual([{ name: "staging" }]);
+  });
+
+  test("rejects an environments entry that is neither a string nor { name }", async () => {
+    writeFileSync(
+      join(TEST_DIR, "chant.config.json"),
+      JSON.stringify({ environments: [{ endpoint: "http://localhost:4566" }] }),
+    );
+
+    await expect(loadChantConfig(TEST_DIR)).rejects.toThrow(/environments/);
+  });
+});
+
+describe("environmentName / environmentNames / environmentEndpoint (#1166)", () => {
+  test("environmentName reduces either form to its name", () => {
+    expect(environmentName("prod")).toBe("prod");
+    expect(environmentName({ name: "floci", endpoint: "http://localhost:4566" })).toBe("floci");
+    expect(environmentName({ name: "staging" })).toBe("staging");
+  });
+
+  test("environmentNames maps a mixed list, and passes undefined through", () => {
+    expect(environmentNames(["prod", { name: "floci", endpoint: "http://x" }])).toEqual(["prod", "floci"]);
+    expect(environmentNames(undefined)).toBeUndefined();
+    expect(environmentNames([])).toEqual([]);
+  });
+
+  test("environmentEndpoint resolves the declared endpoint, or undefined otherwise", () => {
+    const environments = ["prod", { name: "floci", endpoint: "http://localhost:4566" }, { name: "staging" }];
+    expect(environmentEndpoint(environments, "floci")).toBe("http://localhost:4566");
+    expect(environmentEndpoint(environments, "prod")).toBeUndefined(); // bare string, no endpoint
+    expect(environmentEndpoint(environments, "staging")).toBeUndefined(); // object, but no endpoint set
+    expect(environmentEndpoint(environments, "unknown")).toBeUndefined(); // not declared at all
+    expect(environmentEndpoint(undefined, "floci")).toBeUndefined();
   });
 });
 

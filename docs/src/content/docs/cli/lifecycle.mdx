@@ -69,18 +69,47 @@ Reports added, removed, changed, and unchanged resources at the declaration leve
 chant lifecycle diff prod --live
 ```
 
-Output is grouped into six categories per lexicon:
+Output is grouped into seven categories per lexicon:
 
 | Category | Meaning |
 |---|---|
-| **missing** | Declared in source, but not present in the cloud right now |
+| **missing** | Declared in source, and the provider reported it absent from the cloud |
 | **orphan** | Present in the cloud, but not declared in source |
 | **disappeared** | In the previous snapshot, but gone now |
 | **newly observed** | Declared and observed now, but not in any prior snapshot |
 | **drifted** | Observed in both snapshots; status, physical ID, or attributes changed |
 | **unchanged** | Observed in both snapshots; metadata identical |
+| **unobserved** | Declared, and chant could not read live state for it — status unknown |
+
+Each **unobserved** entry names a reason: `read failed`, `no credentials`, `no binding for this environment`, `no reader for this resource kind`, or `withheld by the --owned filter`. They are not counted as drift and never as missing, and when any are present the summary line says the estate is unknown rather than clean.
 
 Drifted entries include attribute-level deltas (`status`, `physicalId`, `lastUpdated`, and each `attributes.*` key).
+
+#### Property-level drift
+
+A lexicon that also implements `observeResourcesDeep()` ([coverage](/chant/lexicons/overview/#runtime-observation-coverage)) adds a second section per lexicon, comparing **property trees** rather than metadata. It reports what the categories above cannot: a property that changed, a property source never declared at all (the console edit CloudFormation's own drift detection does not see), and a declared property the cloud is not carrying.
+
+```
+aws (properties)
+1 property drift across 1 resource(s), 2 accepted, 3 unchanged, 1 unobserved
+
+PROPERTY DRIFT (declared vs live; baseline shown where one exists):
+  - Assets (AWS::S3::Bucket)
+      VersioningConfiguration.Status: Enabled → Suspended
+```
+
+The tree is normalized before it is compared — server-populated fields dropped, tags and policy statements canonicalized, provider defaults subtracted where source is silent, secret-bearing property names masked. A resource whose properties could not be read is listed as unobserved with a reason, exactly like the thin read; it is never reported as clean.
+
+#### `--update-baseline` — accept a deviation
+
+Some deviations are permanent facts of the account: a mandatory tag another team stamps on everything, a setting an org policy flips on. `--update-baseline` records every property deviation the run reported as **accepted**, into `<env>/observation-baseline.json` on the `chant/lifecycle` orphan branch.
+
+```bash
+chant lifecycle diff prod --live                     # see what's there
+chant lifecycle diff prod --live --update-baseline   # accept it, with a commit behind it
+```
+
+Acceptance is value-bound. The accepted value stops alerting; a later change *away* from it is drift again, reported with all three axes (declared, live, and the accepted baseline). The baseline is never authority for a deploy — deleting it costs noise suppression and nothing else.
 
 #### `--between <refA> <refB>` — two saved snapshots
 
@@ -96,7 +125,7 @@ Per lexicon (all declared, or the one you name), it reports a two-way delta: **a
 
 ### `lifecycle plan <env>`
 
-Promote the live diff to a typed, **read-only** change set. Where `lifecycle diff --live` reports six observation categories, `lifecycle plan` classifies each resource into one action you can act on:
+Promote the live diff to a typed, **read-only** change set. Where `lifecycle diff --live` reports seven observation categories, `lifecycle plan` classifies each resource into one action you can act on:
 
 ```bash
 chant lifecycle plan prod
@@ -105,11 +134,14 @@ chant lifecycle plan prod --json   # emit the ChangeSet as JSON
 
 | Action | Meaning |
 |---|---|
-| **create** | Declared in source, absent from the cloud |
+| **create** | Declared in source, and the provider confirmed it absent from the cloud |
 | **update** | Declared and live, but the live config drifted |
 | **delete** | A chant-owned resource that is live but no longer declared |
 | **adopt** | Live but undeclared, ownership not established — a candidate to pull back into source, never an auto-delete |
 | **noop** | Declared and live with no drift, or already reconciled |
+| **unobserved** | Declared, and chant could not read live state — no action is proposed, and the reason is printed |
+
+`unobserved` is not a proposal; it is the plan admitting a hole. A resource chant could not look at is never a `create` and never a `delete` — a plan is only as complete as the read behind it, and when entities are unobserved the command says so on stderr (including under `--json` and `--report gitlab-mr`, whose shapes have no column for it).
 
 `create` and `update` are precise from declared-vs-live. `delete` is only ever proposed for an undeclared resource whose **live ownership marker** ([ownership marking](/chant/configuration/config-file/#ownership)) confirms it is chant's; a foreign orphan is `adopt`, and an orphan with no marker data is `adopt`, never `delete`. Pass `--owned` to restrict the query to chant-owned resources.
 
@@ -119,11 +151,12 @@ The classification reads ownership from the live marker, **never from the snapsh
 
 #### Crosswalk: observation categories → plan actions
 
-The six `diff --live` categories and the five `plan` actions describe the same signal on different axes. Observation categories key on three sets — declared in source, observed now, in the last snapshot. The plan collapses the snapshot axis (it's evidence, never authority) and adds an ownership axis. The mapping:
+The `diff --live` categories and the `plan` actions describe the same signal on different axes. Observation categories key on three sets — declared in source, observed now, in the last snapshot. The plan collapses the snapshot axis (it's evidence, never authority) and adds an ownership axis. The mapping:
 
 | Observation category (`diff --live`) | Plan action (`plan`) | Why |
 |---|---|---|
-| **missing** | **create** | Declared, absent from the cloud |
+| **missing** | **create** | Declared, and the provider confirmed it absent |
+| **unobserved** | **unobserved** | Declared, and nobody looked — absence was never established |
 | **drifted** | **update** *(when declared)* | Declared and live, attributes changed since the snapshot |
 | **orphan** | **adopt**, or **delete** when the live ownership marker confirms it's chant's | The one decision the **marker** makes — never the snapshot |
 | **newly observed** | **noop** | Declared and live; no snapshot baseline to drift against yet |
@@ -177,11 +210,13 @@ Lexicons that implement neither method are warn-skipped — `--live` doesn't fai
 
 The Temporal lexicon resolves its connection via the chant config: `lifecycle snapshot <env>` (or `--live` against `<env>`) looks up `temporal.profiles.<env>` in your `chant.config.ts` and falls back to `temporal.defaultProfile`. The same profile model is used by `chant run`. With #39's entity-prop pass-through, namespaces/schedules/search-attributes are mapped back to chant entity names when the declared `props.name` (etc.) match the server-side identifier.
 
-The K8s lexicon shells out to `kubectl get <kind> <name> [-n <namespace>] -o json` per declared entity. Twenty common resource types (Deployment, Service, ConfigMap, Secret, Namespace, Pod, PVC, ServiceAccount, Job, CronJob, Ingress, NetworkPolicy, RBAC roles + bindings, ReplicaSet, StatefulSet, DaemonSet) are covered out of the box; CRDs and uncommon types are warn-skipped.
+The K8s lexicon reads through a typed API client (chant #1074, [details](/chant/lexicons/k8s/api-client/)) rather than a `kubectl` subprocess. Every generated resource type is addressable — the 165 core kinds plus every bundled CRD — because the entity-type→address table comes out of the same codegen pass as the declarable classes, and is confirmed against the cluster's own API discovery before anything is read. Reads run concurrently, so a hundred declared entities are not a hundred serial round trips, and failures carry the API server's own `code` and `reason` rather than a parsed stderr line.
 
-The cluster context comes from a `k8s.profiles.<env>.context` binding in `chant.config.ts` (chant #1100) when one is declared — mirroring `temporal.profiles.<env>` — and every kubectl call passes it explicitly via `--context`. If the ambient `kubectl config current-context` disagrees with the bound context, `describeResources` refuses with an error naming the environment, the expected context, and the ambient one, instead of silently reading the wrong cluster. An environment with no binding keeps the old behavior — whatever context is ambient — but logs a visible warning that nothing is pinned. See `K8sChantConfig` in the k8s lexicon for the config shape.
+The cluster context comes from a `k8s.profiles.<env>.context` binding in `chant.config.ts` (chant #1100) when one is declared — mirroring `temporal.profiles.<env>` — and every request is made against it explicitly. If the kubeconfig's own current-context disagrees with the bound one, `describeResources` refuses with an error naming the environment, the expected context, and the ambient one, instead of silently reading the wrong cluster. An environment with no binding keeps the old behavior — whatever context is ambient — but logs a visible warning that nothing is pinned. See `K8sChantConfig` in the k8s lexicon for the config shape.
 
-The GCP lexicon uses the same `kubectl` shell-out path against [Config Connector](https://cloud.google.com/config-connector) CRDs, and resolves the same `k8s.profiles.<env>.context` binding the same way — it is fundamentally the same kubectl context, since Config Connector CRDs and a project's K8s entities usually live on the same cluster. The entity type's GVK derivation matches the serializer (`GCP::Storage::Bucket` → `storagebucket.storage.cnrm.cloud.google.com`), so any of the ~300 chant-supported GCP resources work without per-type configuration. `Ready=True` on the resource's status is mapped to `READY`; otherwise the condition's reason is surfaced.
+On EKS, AKS and GKE, kubeconfig authentication is an exec credential plugin — `aws eks get-token`, `kubelogin`, `gke-gcloud-auth-plugin` — so the client still spawns a process there, once for a token rather than once per read. Those three (plus `kubectl`) are allowed by default and anything else the kubeconfig names is refused unless listed in `k8s.execCredentialPlugins`.
+
+The GCP lexicon still uses the `kubectl` shell-out path against [Config Connector](https://cloud.google.com/config-connector) CRDs, and resolves the same `k8s.profiles.<env>.context` binding the same way — it is fundamentally the same kubectl context, since Config Connector CRDs and a project's K8s entities usually live on the same cluster. The entity type's GVK derivation matches the serializer (`GCP::Storage::Bucket` → `storagebucket.storage.cnrm.cloud.google.com`), so any of the ~300 chant-supported GCP resources work without per-type configuration. `Ready=True` on the resource's status is mapped to `READY`; otherwise the condition's reason is surfaced.
 
 The Azure lexicon shells out to `az resource show --resource-group <env> --name <name> --resource-type <type> -o json` per declared entity. The `<env>` argument is treated as the Azure resource group name. `properties.provisioningState` becomes the `status`. Top-level resources only — nested ARM types (e.g. `Microsoft.Storage/storageAccounts/blobServices`) are warn-skipped since `az resource show` doesn't accept compound type names directly.
 

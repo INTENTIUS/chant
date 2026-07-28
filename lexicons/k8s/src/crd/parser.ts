@@ -124,6 +124,14 @@ export function parseCRDSpec(spec: CRDSpec): K8sParseResult[] {
     propertyTypes: status.propertyType ? [...propertyTypes, status.propertyType] : propertyTypes,
     enums: [],
     gvk,
+    // chant #1074 — the CRD declares its own plural and scope, so the
+    // operation surface for a custom resource comes from the same document its
+    // types do, exactly as the OpenAPI `paths` supply them for built-in kinds.
+    operation: {
+      plural: spec.names.plural,
+      scope: spec.scope ?? "Namespaced",
+      verbs: ["delete", "get", "list", "patch", "post", "put", "watch"],
+    },
   });
 
   return results;

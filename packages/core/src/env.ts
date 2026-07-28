@@ -18,6 +18,8 @@
  * pinhole renders/diffs them to show environment drift (INTENTIUS/pinhole#3).
  */
 
+import { environmentNames, type EnvironmentDeclaration } from "./config";
+
 /** The environment variable the CLI sets from `--env`. */
 export const ENV_VAR = "CHANT_ENV";
 
@@ -30,10 +32,16 @@ export function env(fallback?: string): string | undefined {
  * Validate a requested environment against the project's declared `environments`
  * (`chant.config`). Returns an error message for an unknown env, or `undefined`
  * when it's valid (or when the project declares no environments, in which case
- * any name is accepted).
+ * any name is accepted). `declared` entries may be a bare name or `{ name,
+ * endpoint }` (#1166) — {@link environmentNames} reduces either to the names
+ * this checks against.
  */
-export function unknownEnvError(requested: string | undefined, declared: string[] | undefined): string | undefined {
+export function unknownEnvError(
+  requested: string | undefined,
+  declared: EnvironmentDeclaration[] | undefined,
+): string | undefined {
   if (!requested || !declared || declared.length === 0) return undefined;
-  if (declared.includes(requested)) return undefined;
-  return `Unknown environment "${requested}". Declared environments: ${declared.join(", ")}.`;
+  const names = environmentNames(declared) ?? [];
+  if (names.includes(requested)) return undefined;
+  return `Unknown environment "${requested}". Declared environments: ${names.join(", ")}.`;
 }

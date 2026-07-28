@@ -18,8 +18,10 @@ export {
   expectNoDiagnostics,
   expectDiagnostic,
 } from "./post-synth-harness";
-export { createMockPlugin, staticDescribeResources, staticListArtifacts } from "./mock-plugin";
+export { createMockPlugin, staticDescribeResources, staticObservation, staticDeepObservation, staticListArtifacts } from "./mock-plugin";
 export type { MockPluginOptions } from "./mock-plugin";
+export { describeObservationConformance } from "./observation-conformance";
+export type { ObservationConformanceConfig, ObservationScenario } from "./observation-conformance";
 export { createMockTemporalClient } from "./mock-temporal-client";
 export type {
   MockTemporalClientOptions,

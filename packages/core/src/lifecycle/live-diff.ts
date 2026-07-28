@@ -13,6 +13,7 @@
  *                        outside chant's entity model)
  */
 import type { ResourceMetadata, ArtifactMetadata } from "../lexicon";
+import type { UnobservedEntity, UnobservedReason } from "../observation";
 
 export interface AttributeChange {
   /** Attribute path (e.g. "status", "physicalId", "attributes.tags.env"). */
@@ -27,11 +28,48 @@ export interface ResourceDrift {
   changes: AttributeChange[];
 }
 
+/** A declared entity the lexicon could not observe, as reported by the diff (#1089). */
+export interface UnobservedResource {
+  name: string;
+  type?: string;
+  reason: UnobservedReason;
+  detail?: string;
+}
+
+/**
+ * A live, undeclared resource whose owner-reference chain reaches a declared
+ * entity (#1077) — a Pod a declared Deployment's controller created, for
+ * instance. Reported separately from `orphan`: it is expected runtime, not a
+ * delete/adopt candidate, and is never counted as drift.
+ */
+export interface RuntimeChildResource {
+  name: string;
+  type: string;
+  /** The declared chant entity this resource's owner chain resolves to. */
+  owner: string;
+}
+
 export interface LiveDiffResult {
-  /** Declared in current build, but not observed in cloud right now. */
+  /**
+   * Declared in current build, and the provider reported it absent. Entities
+   * the lexicon could not observe are NOT here — they are in `unobserved`
+   * (#1089), so "missing" keeps meaning "confirmed not there".
+   */
   missing: string[];
-  /** Observed in cloud right now, but not declared. */
+  /**
+   * Observed in cloud right now, not declared, and either carries no owner
+   * chain, or the chain does not reach a declared entity (unowned, foreign,
+   * or unresolvable — #1077 never escalates an incomplete chain read to
+   * `runtimeChildren`). A resource whose chain *does* reach a declared entity
+   * is in `runtimeChildren` instead.
+   */
   orphan: string[];
+  /**
+   * Observed in cloud right now, not declared, whose owner-reference chain
+   * reaches a declared entity (#1077) — expected runtime, not drift. Never a
+   * delete/adopt candidate; excluded from `orphan` and from drift counts.
+   */
+  runtimeChildren: RuntimeChildResource[];
   /** Was in last snapshot but isn't observed now. */
   disappeared: string[];
   /** Observed now and declared, but not in the previous snapshot. */
@@ -40,6 +78,12 @@ export interface LiveDiffResult {
   driftedSinceSnapshot: ResourceDrift[];
   /** Observed both then and now; metadata identical. */
   unchanged: string[];
+  /**
+   * Declared, and the lexicon could not look (#1089) — no reader for the kind,
+   * the read failed, no credentials, no binding. Not drift, not absence: a hole
+   * in the observation. Sorted by name.
+   */
+  unobserved: UnobservedResource[];
 }
 
 export interface DiffLiveInput {
@@ -49,6 +93,12 @@ export interface DiffLiveInput {
   observedNow: Record<string, ResourceMetadata>;
   /** Resources captured by the previous snapshot, if any. */
   observedThen: Record<string, ResourceMetadata> | undefined;
+  /**
+   * Declared entities `describeResources()` reported as NOT-OBSERVED (#1089),
+   * keyed by entity name. Absent/empty means every declared entity was looked
+   * at, so absence from `observedNow` is a confirmed absence.
+   */
+  unobserved?: Record<string, UnobservedEntity>;
 }
 
 const TRACKED_FIELDS: Array<keyof ResourceMetadata> = [
@@ -135,37 +185,78 @@ export function diffLive(input: DiffLiveInput): LiveDiffResult {
   const observedThenMap = observedThen ?? {};
   const observedNowNames = new Set(Object.keys(observedNow));
   const observedThenNames = new Set(Object.keys(observedThenMap));
+  // A resource the lexicon returned is observed, whatever it also said about
+  // it — present beats not-observed.
+  const unobservedMap = input.unobserved ?? {};
+  const unobservedNames = new Set(
+    Object.keys(unobservedMap).filter((n) => !observedNowNames.has(n)),
+  );
 
   const missing: string[] = [];
   const orphan: string[] = [];
+  const runtimeChildren: RuntimeChildResource[] = [];
   const disappeared: string[] = [];
   const newlyObserved: string[] = [];
   const driftedSinceSnapshot: ResourceDrift[] = [];
   const unchanged: string[] = [];
+  const unobserved: UnobservedResource[] = [];
 
-  // Declared but not observed in cloud right now → missing
+  for (const name of unobservedNames) {
+    const entry = unobservedMap[name];
+    unobserved.push({
+      name,
+      ...(entry.type ? { type: entry.type } : {}),
+      reason: entry.reason,
+      ...(entry.detail ? { detail: entry.detail } : {}),
+    });
+  }
+
+  // Declared, looked at, and the provider said it isn't there → missing.
+  // Declared but never looked at is `unobserved`, not missing — the whole point
+  // of #1089: "we didn't check" must not read as "it isn't there".
   for (const name of declared) {
-    if (!observedNowNames.has(name)) {
+    if (!observedNowNames.has(name) && !unobservedNames.has(name)) {
       missing.push(name);
     }
   }
 
-  // In cloud right now but not declared → orphan
+  // In cloud right now but not declared → orphan, unless its owner-reference
+  // chain reaches a declared entity (#1077), in which case it is expected
+  // runtime rather than drift. An `unknown` chain (unreadable hop, cycle, or
+  // depth bound) is deliberately NOT escalated to runtime — it stays orphan,
+  // same as `unowned`/`foreign` — composing with #1168's tri-state precedent:
+  // an incomplete read never earns the more confident classification.
+  const runtimeChildNames = new Set<string>();
   for (const name of observedNowNames) {
-    if (!declared.has(name)) {
+    if (declared.has(name)) continue;
+    const chain = observedNow[name]?.ownerChain;
+    if (chain?.root === "declared") {
+      runtimeChildNames.add(name);
+      runtimeChildren.push({ name, type: observedNow[name].type, owner: chain.entity });
+    } else {
       orphan.push(name);
     }
   }
 
-  // In previous snapshot but not observed now → disappeared
+  // In previous snapshot but not observed now → disappeared. An entity nobody
+  // could look at has not disappeared; it is unobserved. A resource the
+  // *previous* snapshot recorded as a runtime child (#1077) rolling to a new
+  // name (a Pod replaced by its controller) is not disappearance either — it
+  // is the same expected churn `runtimeChildren` excludes above, and counting
+  // it here would recreate the drift noise this module exists to remove.
   for (const name of observedThenNames) {
-    if (!observedNowNames.has(name)) {
-      disappeared.push(name);
-    }
+    if (observedNowNames.has(name) || unobservedNames.has(name)) continue;
+    if (!declared.has(name) && observedThenMap[name]?.ownerChain?.root === "declared") continue;
+    disappeared.push(name);
   }
 
-  // Observed now: classify drift relative to previous snapshot
+  // Observed now: classify drift relative to previous snapshot. Runtime
+  // children (#1077) are excluded entirely — a controller-owned object's
+  // transient status is not drift chant should surface, and a snapshot that
+  // happened to record the same name (e.g. a StatefulSet's stable pod
+  // identity) must not turn its ordinary churn into `driftedSinceSnapshot`.
   for (const name of observedNowNames) {
+    if (runtimeChildNames.has(name)) continue;
     const now = observedNow[name];
     const then = observedThenMap[name];
     if (!then) {
@@ -190,10 +281,12 @@ export function diffLive(input: DiffLiveInput): LiveDiffResult {
   return {
     missing: missing.sort(),
     orphan: orphan.sort(),
+    runtimeChildren: runtimeChildren.sort((a, b) => a.name.localeCompare(b.name)),
     disappeared: disappeared.sort(),
     newlyObserved: newlyObserved.sort(),
     driftedSinceSnapshot: driftedSinceSnapshot.sort((a, b) => a.name.localeCompare(b.name)),
     unchanged: unchanged.sort(),
+    unobserved: unobserved.sort((a, b) => a.name.localeCompare(b.name)),
   };
 }
 

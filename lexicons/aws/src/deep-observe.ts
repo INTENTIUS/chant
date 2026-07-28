@@ -1,0 +1,384 @@
+/**
+ * AWS deep observation (#1015) — the reference implementation of the epic's
+ * deep-observe contract (#1014).
+ *
+ * `describeResources` reads `cloudformation describe-stack-resources`, which
+ * returns a status, a physical id and a timestamp per resource. That is
+ * CloudFormation's view of the world, and CloudFormation only compares
+ * properties it was told about. A property somebody edited in the console — an
+ * inline policy, a bucket setting, a security-group rule — is invisible to it.
+ * That gap is why go-to-k/cdk-real-drift exists, and it is what this reader
+ * closes: the live resource model comes from the **Cloud Control API**, which
+ * bypasses CloudFormation entirely and returns the resource as the service
+ * actually holds it.
+ *
+ * Correlation is unchanged: Cloud Control is addressed by the physical id that
+ * `describe-stack-resources` already reports per logical id, so the results
+ * line up with the same IR node ids `live-attrs.ts` relies on.
+ *
+ * ## Scope of the first cut
+ *
+ * Four high-signal types (S3 buckets, IAM roles and managed policies, EC2
+ * security groups) rather than all 30+. The point of the first row is to prove
+ * the contract and the noise rules; widening the type table is additive and
+ * needs no contract change. A declared resource of any other type reports
+ * NOT-OBSERVED with `unsupported-kind` — it may well exist, and saying nothing
+ * about it is the only honest answer.
+ *
+ * ## Nothing here talks to real AWS on its own terms
+ *
+ * Every call goes through the runtime adapter's `spawn` and
+ * `applyAwsEndpointArgv`, so `AWS_ENDPOINT_URL` redirects the whole reader at a
+ * local emulator exactly as the existing describe path does.
+ */
+
+import type {
+  DeepArrayElement,
+  DeepNode,
+  DeepNormalizationHooks,
+  DeepObservationResult,
+  DeepResourceObservation,
+  UnobservedEntity,
+  UnobservedReason,
+} from "@intentius/chant/lexicon";
+import { applyAwsEndpointArgv } from "./components/cloud-executor";
+import { stackDoesNotExist } from "./stack-errors";
+import { AWS_TAG_OWNERSHIP_KEYS } from "./ownership";
+
+/**
+ * CloudFormation types this reader can read live. Each is addressable in Cloud
+ * Control by the physical id CloudFormation already reports.
+ */
+export const DEEP_READABLE_TYPES: ReadonlySet<string> = new Set([
+  "AWS::S3::Bucket",
+  "AWS::IAM::Role",
+  "AWS::IAM::ManagedPolicy",
+  "AWS::EC2::SecurityGroup",
+]);
+
+/**
+ * Property names that are server-populated wherever they appear — identifiers
+ * the service mints, timestamps it stamps, counters it maintains. Matched on
+ * the final path segment, because AWS repeats these names at every nesting
+ * depth and a per-type list of full paths would be a maintenance trap.
+ *
+ * Deliberately excludes ambiguous names like `Id` and `Name`: `VpcId` and
+ * `BucketName` are declared inputs, and pruning a declared input is how a
+ * normalization pass starts hiding real drift.
+ */
+export const AWS_READ_ONLY_NAMES: ReadonlySet<string> = new Set([
+  "Arn",
+  "RoleId",
+  "PolicyId",
+  "GroupId",
+  "OwnerId",
+  "AttachmentCount",
+  "PermissionsBoundaryUsageCount",
+  "DefaultVersionId",
+  "IsAttachable",
+  "CreateDate",
+  "CreationDate",
+  "UpdateDate",
+  "LastModified",
+  "LastModifiedTime",
+  "DualStackDomainName",
+  "RegionalDomainName",
+  "WebsiteURL",
+]);
+
+/**
+ * Service defaults, per type, as index-erased property paths. A live value
+ * equal to its default is subtracted **only when source never declared that
+ * property** — cdk-real-drift's default subtraction, and the reason
+ * {@link DeepNode.counterpart} exists. Declaring the default explicitly keeps
+ * the property in the diff, so a later change to it still reports.
+ */
+export const AWS_SERVICE_DEFAULTS: Record<string, Record<string, unknown>> = {
+  "AWS::S3::Bucket": {
+    "VersioningConfiguration.Status": "Suspended",
+    "AccelerateConfiguration.AccelerationStatus": "Suspended",
+    "ObjectLockEnabled": false,
+  },
+  "AWS::IAM::Role": {
+    "Path": "/",
+    "MaxSessionDuration": 3600,
+  },
+  "AWS::IAM::ManagedPolicy": {
+    "Path": "/",
+  },
+  "AWS::EC2::SecurityGroup": {
+    "GroupDescription": "default VPC security group",
+  },
+};
+
+/** Stable JSON with sorted keys — the fallback ordering key for a set-like array. */
+function canonicalJson(value: unknown): string {
+  return JSON.stringify(value, (_k, v: unknown) =>
+    v && typeof v === "object" && !Array.isArray(v)
+      ? Object.fromEntries(Object.entries(v as Record<string, unknown>).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))
+      : v,
+  ) ?? "";
+}
+
+/** The final segment of an index-erased pattern (`Policies[].PolicyName` → `PolicyName`). */
+function lastSegment(pattern: string): string {
+  const withoutIndex = pattern.replace(/\[\]$/, "");
+  const dot = withoutIndex.lastIndexOf(".");
+  return dot === -1 ? withoutIndex : withoutIndex.slice(dot + 1);
+}
+
+/**
+ * The aws lexicon's noise rules. The three classes the epic names for AWS —
+ * server-populated fields, unstable ordering (tags, policy statements), and
+ * provider defaults — plus nothing else: a rule that is not one of those is a
+ * rule that hides drift.
+ */
+export const awsDeepNormalizationHooks: DeepNormalizationHooks = {
+  prune(node: DeepNode): boolean {
+    // Read-only / server-populated. Pruned on both sides: if source somehow
+    // declares an arn-shaped output, comparing it to the live one is still
+    // meaningless.
+    if (AWS_READ_ONLY_NAMES.has(lastSegment(node.pattern))) return true;
+
+    // Provider defaults, on the live side only, and only where source is silent
+    // about the property. `"unknown"` (a one-sided normalization) never prunes:
+    // the reader must not decide this before the declared tree is in hand.
+    if (node.side !== "live" || node.counterpart !== "absent") return false;
+    const defaults = AWS_SERVICE_DEFAULTS[node.entityType];
+    if (!defaults) return false;
+    if (!Object.prototype.hasOwnProperty.call(defaults, node.pattern)) return false;
+    return defaults[node.pattern] === node.value;
+  },
+
+  /**
+   * The key doubles as a path segment (`Tags[#env].Value`), so it is the
+   * element's own identity where AWS gives one — a tag key, a statement Sid, an
+   * action string — and canonical JSON only as a fallback.
+   */
+  orderKey(element: DeepArrayElement): string | undefined {
+    const name = lastSegment(element.pattern);
+    const el = element.element;
+
+    // Tags are a set. AWS returns them in whatever order it likes, and a
+    // reordered tag list is the single loudest false positive in a raw diff.
+    if (name === "Tags") {
+      const key = isRecord(el) ? el.Key : undefined;
+      return typeof key === "string" ? key : canonicalJson(el);
+    }
+
+    // IAM policy statements are a set, and so are the Action/Resource lists
+    // inside them. `Sid` is the natural identity when the author gave one.
+    if (name === "Statement") {
+      const sid = isRecord(el) ? el.Sid : undefined;
+      return typeof sid === "string" ? sid : canonicalJson(el);
+    }
+    if (name === "Action" || name === "NotAction" || name === "Resource" || name === "NotResource") {
+      return typeof el === "string" ? el : canonicalJson(el);
+    }
+
+    // Security-group rules are a set — the console appends, chant declares in
+    // source order, and neither order means anything to EC2.
+    if (name === "SecurityGroupIngress" || name === "SecurityGroupEgress" || name === "IpRanges") {
+      return canonicalJson(el);
+    }
+
+    return undefined;
+  },
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** One live resource as `cloudcontrol get-resource` returns it. Exported for tests. */
+export interface CloudControlResource {
+  identifier: string;
+  properties: Record<string, unknown>;
+}
+
+/**
+ * Parse a `cloudcontrol get-resource` payload. Cloud Control returns the model
+ * as a JSON *string* inside the envelope, so this unwraps twice. Returns null
+ * for anything that does not parse to an object — an unparseable body is a
+ * failed read, not an empty resource.
+ */
+export function parseCloudControlResource(stdout: string): CloudControlResource | null {
+  let envelope: unknown;
+  try {
+    envelope = JSON.parse(stdout);
+  } catch {
+    return null;
+  }
+  if (!isRecord(envelope)) return null;
+  const description = envelope.ResourceDescription;
+  if (!isRecord(description)) return null;
+  const raw = description.Properties;
+  if (typeof raw !== "string") return null;
+  let properties: unknown;
+  try {
+    properties = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!isRecord(properties)) return null;
+  return {
+    identifier: typeof description.Identifier === "string" ? description.Identifier : "",
+    properties,
+  };
+}
+
+/** Classify a failed AWS CLI call the same way the thin read does. */
+function classifyFailure(stderr: string): UnobservedReason {
+  return /credential|token|expired|AccessDenied|not authorized|UnauthorizedOperation/i.test(stderr)
+    ? "no-credentials"
+    : "read-failed";
+}
+
+/** True when the live property tree carries chant's ownership marker tag. */
+export function hasOwnershipMarker(properties: Record<string, unknown>): boolean {
+  const tags = properties.Tags;
+  if (!Array.isArray(tags)) return false;
+  return tags.some((t) => isRecord(t) && t.Key === AWS_TAG_OWNERSHIP_KEYS.managedBy);
+}
+
+export interface AwsDeepObserveOptions {
+  environment: string;
+  entityNames: string[];
+  entities?: Map<string, { entityType: string; props: Record<string, unknown> }>;
+  stack?: string;
+  owned?: boolean;
+}
+
+/**
+ * Read the live property tree for each declared entity via Cloud Control.
+ *
+ * Two reads per run plus one per readable resource: `describe-stack-resources`
+ * resolves logical id → (type, physical id), then `cloudcontrol get-resource`
+ * fetches each model. The first read's failure modes are the thin path's,
+ * verbatim — a stack that does not exist yet is a real absence (nothing is
+ * deployed, so there are no properties to drift), anything else is a hole for
+ * every declared entity.
+ */
+export async function observeResourcesDeepAws(
+  options: AwsDeepObserveOptions,
+): Promise<DeepObservationResult> {
+  const { getRuntime } = await import("@intentius/chant/runtime-adapter");
+  const { deepObservation, normalizeDeepProperties } = await import("@intentius/chant/deep-observation");
+  const { unobservedAll } = await import("@intentius/chant/observation");
+  const rt = getRuntime();
+
+  const stackName = options.stack ?? options.environment;
+  const endpoint = process.env.AWS_ENDPOINT_URL;
+
+  const listResult = await rt.spawn(applyAwsEndpointArgv([
+    "aws", "cloudformation", "describe-stack-resources",
+    "--stack-name", stackName,
+    "--output", "json",
+  ], endpoint));
+
+  if (listResult.exitCode !== 0) {
+    if (stackDoesNotExist(listResult.stderr)) return deepObservation({});
+    return deepObservation(
+      {},
+      unobservedAll(
+        options.entityNames,
+        classifyFailure(listResult.stderr),
+        `describe-stack-resources failed for stack "${stackName}": ${listResult.stderr.trim().split("\n")[0] ?? ""}`,
+      ),
+    );
+  }
+
+  let stackResources: Array<{ LogicalResourceId: string; ResourceType: string; PhysicalResourceId?: string }> = [];
+  try {
+    const parsed = JSON.parse(listResult.stdout) as {
+      StackResources?: Array<{ LogicalResourceId: string; ResourceType: string; PhysicalResourceId?: string }>;
+    };
+    stackResources = parsed.StackResources ?? [];
+  } catch {
+    return deepObservation(
+      {},
+      unobservedAll(options.entityNames, "read-failed", `unparseable describe-stack-resources output for stack "${stackName}"`),
+    );
+  }
+
+  const byLogicalId = new Map(stackResources.map((r) => [r.LogicalResourceId, r]));
+  const resources: Record<string, DeepResourceObservation> = {};
+  const unobserved: Record<string, UnobservedEntity> = {};
+
+  for (const entityName of options.entityNames) {
+    const stackResource = byLogicalId.get(entityName);
+    // Not in the stack at all. The thin read reports that absence; restating it
+    // here as a property hole would turn one finding into two.
+    if (!stackResource) continue;
+
+    const type = stackResource.ResourceType;
+    if (!DEEP_READABLE_TYPES.has(type)) {
+      unobserved[entityName] = {
+        type,
+        reason: "unsupported-kind",
+        detail: `no deep reader for ${type} — Cloud Control coverage is opt-in per type`,
+      };
+      continue;
+    }
+    const identifier = stackResource.PhysicalResourceId;
+    if (!identifier) {
+      unobserved[entityName] = {
+        type,
+        reason: "read-failed",
+        detail: "the stack reports no physical id, so the live resource cannot be addressed",
+      };
+      continue;
+    }
+
+    const getResult = await rt.spawn(applyAwsEndpointArgv([
+      "aws", "cloudcontrol", "get-resource",
+      "--type-name", type,
+      "--identifier", identifier,
+      "--output", "json",
+    ], endpoint));
+
+    if (getResult.exitCode !== 0) {
+      unobserved[entityName] = {
+        type,
+        reason: classifyFailure(getResult.stderr),
+        detail: `cloudcontrol get-resource failed for ${type} "${identifier}": ${getResult.stderr.trim().split("\n")[0] ?? ""}`,
+      };
+      continue;
+    }
+
+    const parsed = parseCloudControlResource(getResult.stdout);
+    if (!parsed) {
+      unobserved[entityName] = {
+        type,
+        reason: "read-failed",
+        detail: `unparseable cloudcontrol get-resource output for ${type} "${identifier}"`,
+      };
+      continue;
+    }
+
+    // Cloud Control *does* return tags, so unlike the thin path this one can
+    // answer the ownership question (#1015's open note). A resource withheld by
+    // the filter is `filtered`, never absent: it exists, it just isn't chant's.
+    const owned = hasOwnershipMarker(parsed.properties);
+    if (options.owned && !owned) {
+      unobserved[entityName] = {
+        type,
+        reason: "filtered",
+        detail: `live resource carries no ${AWS_TAG_OWNERSHIP_KEYS.managedBy} tag`,
+      };
+      continue;
+    }
+
+    resources[entityName] = {
+      type,
+      physicalId: identifier,
+      properties: normalizeDeepProperties(parsed.properties, {
+        entityType: type,
+        side: "live",
+        hooks: awsDeepNormalizationHooks,
+      }),
+    };
+  }
+
+  return deepObservation(resources, unobserved);
+}

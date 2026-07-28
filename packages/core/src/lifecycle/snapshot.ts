@@ -9,16 +9,12 @@ import type { LifecycleSnapshot } from "./types";
 import { computeBuildDigest } from "./digest";
 import { writeSnapshot, snapshotStorageKey, getHeadCommit, pushLifecycle } from "./git";
 import { sortedJsonReplacer } from "../utils";
-
-/** Patterns in attribute names that suggest sensitive data. */
-const SENSITIVE_PATTERNS = [
-  /password/i,
-  /secret/i,
-  /token/i,
-  /private.?key/i,
-  /credential/i,
-  /connection.?string/i,
-];
+import { formatUnobserved, normalizeObservation, unobservedAll, type UnobservedEntity } from "../observation";
+// One list of secret-bearing property names for both observation depths
+// (#1014): the thin path warns on them here, the deep path masks them before a
+// property tree is ever rendered or committed. Two lists would eventually
+// disagree about what counts as a secret.
+import { isSensitiveKey } from "../deep-observation";
 
 /**
  * Check for potential sensitive data in resource attributes and return warnings.
@@ -30,7 +26,7 @@ function checkSensitiveData(
   for (const [name, meta] of Object.entries(resources)) {
     if (!meta.attributes) continue;
     for (const attrName of Object.keys(meta.attributes)) {
-      if (SENSITIVE_PATTERNS.some((p) => p.test(attrName))) {
+      if (isSensitiveKey(attrName)) {
         warnings.push(
           `Potential sensitive data in ${name}.attributes.${attrName} — ensure it is scrubbed`,
         );
@@ -124,22 +120,32 @@ export async function takeSnapshot(
 
     let resources: Record<string, ResourceMetadata> = {};
     let artifacts: Record<string, ArtifactMetadata> = {};
+    let unobserved: Record<string, UnobservedEntity> = {};
 
     try {
       if (plugin.describeResources) {
-        const raw = await plugin.describeResources({
-          environment,
-          buildOutput,
-          entityNames,
-          entities,
-          stack,
-        });
-        const { valid, dropped, warnings: validationWarnings } = validateResources(raw);
+        const observed = normalizeObservation(
+          await plugin.describeResources({
+            environment,
+            buildOutput,
+            entityNames,
+            entities,
+            stack,
+          }),
+        );
+        const { valid, dropped, warnings: validationWarnings } = validateResources(observed.resources);
         warnings.push(...validationWarnings);
         if (dropped.length > 0) {
           warnings.push(`${plugin.name}: dropped ${dropped.length} invalid resource(s)`);
         }
         resources = valid;
+        // Record the holes (#1089). A snapshot is evidence of what was seen; an
+        // entity nobody could read must not be recorded as "was not there",
+        // because the next diff would then read it back as absent.
+        unobserved = observed.unobserved;
+        for (const [name, entry] of Object.entries(unobserved)) {
+          warnings.push(`${plugin.name}: not observed — ${formatUnobserved(name, entry)}`);
+        }
       }
 
       if (plugin.listArtifacts) {
@@ -153,7 +159,12 @@ export async function takeSnapshot(
       }
 
       if (Object.keys(resources).length === 0 && Object.keys(artifacts).length === 0) {
-        errors.push(`${plugin.name}: no valid resources or artifacts returned`);
+        const unreadable = Object.keys(unobserved).length;
+        errors.push(
+          unreadable > 0
+            ? `${plugin.name}: nothing observed — ${unreadable} declared entity(ies) could not be read (see warnings); not snapshotting an unread environment as empty`
+            : `${plugin.name}: no valid resources or artifacts returned`,
+        );
         continue;
       }
 
@@ -164,15 +175,24 @@ export async function takeSnapshot(
         commit: headCommit,
         timestamp,
         resources,
+        ...(Object.keys(unobserved).length > 0 && { unobserved }),
         ...(Object.keys(artifacts).length > 0 && { artifacts }),
         digest,
       };
 
       snapshots.push(snapshot);
     } catch (err) {
+      // A thrown read is not an empty environment — record nothing and say so
+      // (#1089). Writing a snapshot here would persist "none of this exists".
       errors.push(
         `${plugin.name}: ${err instanceof Error ? err.message : String(err)}`,
       );
+      const message = err instanceof Error ? err.message : String(err);
+      for (const [name, entry] of Object.entries(
+        unobservedAll(entityNames, "read-failed", message, entities),
+      )) {
+        warnings.push(`${plugin.name}: not observed — ${formatUnobserved(name, entry)}`);
+      }
     }
   }
 
