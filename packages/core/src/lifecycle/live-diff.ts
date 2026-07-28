@@ -13,6 +13,7 @@
  *                        outside chant's entity model)
  */
 import type { ResourceMetadata, ArtifactMetadata } from "../lexicon";
+import type { UnobservedEntity, UnobservedReason } from "../observation";
 
 export interface AttributeChange {
   /** Attribute path (e.g. "status", "physicalId", "attributes.tags.env"). */
@@ -27,8 +28,20 @@ export interface ResourceDrift {
   changes: AttributeChange[];
 }
 
+/** A declared entity the lexicon could not observe, as reported by the diff (#1089). */
+export interface UnobservedResource {
+  name: string;
+  type?: string;
+  reason: UnobservedReason;
+  detail?: string;
+}
+
 export interface LiveDiffResult {
-  /** Declared in current build, but not observed in cloud right now. */
+  /**
+   * Declared in current build, and the provider reported it absent. Entities
+   * the lexicon could not observe are NOT here — they are in `unobserved`
+   * (#1089), so "missing" keeps meaning "confirmed not there".
+   */
   missing: string[];
   /** Observed in cloud right now, but not declared. */
   orphan: string[];
@@ -40,6 +53,12 @@ export interface LiveDiffResult {
   driftedSinceSnapshot: ResourceDrift[];
   /** Observed both then and now; metadata identical. */
   unchanged: string[];
+  /**
+   * Declared, and the lexicon could not look (#1089) — no reader for the kind,
+   * the read failed, no credentials, no binding. Not drift, not absence: a hole
+   * in the observation. Sorted by name.
+   */
+  unobserved: UnobservedResource[];
 }
 
 export interface DiffLiveInput {
@@ -49,6 +68,12 @@ export interface DiffLiveInput {
   observedNow: Record<string, ResourceMetadata>;
   /** Resources captured by the previous snapshot, if any. */
   observedThen: Record<string, ResourceMetadata> | undefined;
+  /**
+   * Declared entities `describeResources()` reported as NOT-OBSERVED (#1089),
+   * keyed by entity name. Absent/empty means every declared entity was looked
+   * at, so absence from `observedNow` is a confirmed absence.
+   */
+  unobserved?: Record<string, UnobservedEntity>;
 }
 
 const TRACKED_FIELDS: Array<keyof ResourceMetadata> = [
@@ -135,6 +160,12 @@ export function diffLive(input: DiffLiveInput): LiveDiffResult {
   const observedThenMap = observedThen ?? {};
   const observedNowNames = new Set(Object.keys(observedNow));
   const observedThenNames = new Set(Object.keys(observedThenMap));
+  // A resource the lexicon returned is observed, whatever it also said about
+  // it — present beats not-observed.
+  const unobservedMap = input.unobserved ?? {};
+  const unobservedNames = new Set(
+    Object.keys(unobservedMap).filter((n) => !observedNowNames.has(n)),
+  );
 
   const missing: string[] = [];
   const orphan: string[] = [];
@@ -142,10 +173,23 @@ export function diffLive(input: DiffLiveInput): LiveDiffResult {
   const newlyObserved: string[] = [];
   const driftedSinceSnapshot: ResourceDrift[] = [];
   const unchanged: string[] = [];
+  const unobserved: UnobservedResource[] = [];
 
-  // Declared but not observed in cloud right now → missing
+  for (const name of unobservedNames) {
+    const entry = unobservedMap[name];
+    unobserved.push({
+      name,
+      ...(entry.type ? { type: entry.type } : {}),
+      reason: entry.reason,
+      ...(entry.detail ? { detail: entry.detail } : {}),
+    });
+  }
+
+  // Declared, looked at, and the provider said it isn't there → missing.
+  // Declared but never looked at is `unobserved`, not missing — the whole point
+  // of #1089: "we didn't check" must not read as "it isn't there".
   for (const name of declared) {
-    if (!observedNowNames.has(name)) {
+    if (!observedNowNames.has(name) && !unobservedNames.has(name)) {
       missing.push(name);
     }
   }
@@ -157,9 +201,10 @@ export function diffLive(input: DiffLiveInput): LiveDiffResult {
     }
   }
 
-  // In previous snapshot but not observed now → disappeared
+  // In previous snapshot but not observed now → disappeared. An entity nobody
+  // could look at has not disappeared; it is unobserved.
   for (const name of observedThenNames) {
-    if (!observedNowNames.has(name)) {
+    if (!observedNowNames.has(name) && !unobservedNames.has(name)) {
       disappeared.push(name);
     }
   }
@@ -194,6 +239,7 @@ export function diffLive(input: DiffLiveInput): LiveDiffResult {
     newlyObserved: newlyObserved.sort(),
     driftedSinceSnapshot: driftedSinceSnapshot.sort((a, b) => a.name.localeCompare(b.name)),
     unchanged: unchanged.sort(),
+    unobserved: unobserved.sort((a, b) => a.name.localeCompare(b.name)),
   };
 }
 

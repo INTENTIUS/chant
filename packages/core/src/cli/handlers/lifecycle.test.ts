@@ -1,6 +1,6 @@
 import { describe, test, expect, vi, beforeEach } from "vitest";
 import { sep } from "node:path";
-import { createMockPlugin, staticDescribeResources, staticListArtifacts } from "@intentius/chant-test-utils";
+import { createMockPlugin, staticDescribeResources, staticObservation, staticListArtifacts } from "@intentius/chant-test-utils";
 import type { LexiconPlugin, ResourceMetadata } from "../../lexicon";
 import type { BuildResult } from "../../build";
 import type { ParsedArgs } from "../registry";
@@ -126,6 +126,64 @@ describe("runLifecycleDiff --live", () => {
     expect(output).toContain("status:");
     expect(output).toContain("CREATE_COMPLETE");
     expect(output).toContain("UPDATE_COMPLETE");
+  });
+
+  // #1089 — a hole in the read is rendered as a hole, and never silently
+  // inflates the missing/drift counts that the all-clear line reads.
+  test("renders an UNOBSERVED section and qualifies the all-clear", async () => {
+    buildMock.mockResolvedValue(makeBuildResult({ k8s: ["widget"] }));
+    fetchLifecycleMock.mockResolvedValue(undefined);
+    readSnapshotMock.mockResolvedValue(null);
+
+    const plugins: LexiconPlugin[] = [
+      createMockPlugin({
+        name: "k8s",
+        describeResources: staticObservation({}, {
+          widget: { type: "K8s::X::Widget", reason: "unsupported-kind", detail: "no kubectl mapping" },
+        }),
+      }),
+    ];
+
+    const exit = await runLifecycleDiff({
+      args: makeArgs({ path: "diff", extraPositional: "prod", live: true }),
+      plugins,
+      serializers: plugins.map((p) => p.serializer),
+    });
+
+    expect(exit).toBe(0);
+    const stdout = stdoutBuf.join("\n");
+    expect(stdout).toContain("UNOBSERVED");
+    expect(stdout).toContain("widget");
+    expect(stdout).toContain("no reader for this resource kind");
+    // Not counted as missing — "declared, not in cloud" is a claim we can't make.
+    expect(stdout).toContain("0 missing");
+    expect(stderrBuf.join("\n")).toContain("could not be observed");
+  });
+
+  test("a throwing describeResources reports its entities unobserved instead of skipping the lexicon", async () => {
+    buildMock.mockResolvedValue(makeBuildResult({ aws: ["bucket"] }));
+    fetchLifecycleMock.mockResolvedValue(undefined);
+    readSnapshotMock.mockResolvedValue(null);
+
+    const plugins: LexiconPlugin[] = [
+      createMockPlugin({
+        name: "aws",
+        describeResources: async () => { throw new Error("Unable to locate credentials"); },
+      }),
+    ];
+
+    const exit = await runLifecycleDiff({
+      args: makeArgs({ path: "diff", extraPositional: "prod", live: true }),
+      plugins,
+      serializers: plugins.map((p) => p.serializer),
+    });
+
+    expect(exit).toBe(0);
+    expect(stderrBuf.join("\n")).toContain("not as absent");
+    const stdout = stdoutBuf.join("\n");
+    expect(stdout).toContain("UNOBSERVED");
+    expect(stdout).toContain("bucket");
+    expect(stdout).toContain("0 missing");
   });
 
   test("builds from config.sourceDir on a mixed-layout project", async () => {

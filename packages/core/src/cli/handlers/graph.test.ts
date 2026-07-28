@@ -332,6 +332,7 @@ describe("runGraph", () => {
       observeMock.mockResolvedValue({
         observations: [{ lexicon: "aws", resources: { "web-vpc": { type: "AWS::EC2::VPC", status: "OK" } } }],
         errors: [],
+        warnings: [],
       });
       const exit = await runGraph({ args: makeArgs({ format: "ir", live: true, env: "prod" }), plugins: [], serializers: [] });
       expect(exit).toBe(0);
@@ -349,7 +350,7 @@ describe("runGraph", () => {
       loadPluginsMock.mockResolvedValue([
         { name: "aws", serializer: {}, describeResources: () => Promise.resolve({}) },
       ]);
-      observeMock.mockResolvedValue({ observations: [], errors: [] });
+      observeMock.mockResolvedValue({ observations: [], errors: [], warnings: [] });
       const exit = await runGraph({ args: makeArgs({ format: "ir", live: true, env: "prod" }), plugins: [], serializers: [] });
       expect(exit).toBe(0);
       expect(observeMock).toHaveBeenCalledWith("prod", expect.anything(), expect.anything(), {
@@ -390,6 +391,7 @@ describe("runGraph", () => {
       observeMock.mockResolvedValue({
         observations: [{ lexicon: "aws", resources: { "loom-db": { type: "AWS::RDS::DBInstance", status: "OK" } } }],
         errors: [],
+        warnings: [],
       });
       const exit = await runGraph({ args: makeArgs({ format: "ir", live: true, env: "local" }), plugins: [], serializers: [] });
       expect(exit).toBe(0);
@@ -409,7 +411,7 @@ describe("runGraph", () => {
         { name: "aws", serializer: {}, describeResources: () => Promise.resolve({}) },
       ]);
       discoverComponentsMock.mockResolvedValue({ errors: [{ message: "bad component" }], sourceFiles: [], components: new Map() });
-      observeMock.mockResolvedValue({ observations: [], errors: [] });
+      observeMock.mockResolvedValue({ observations: [], errors: [], warnings: [] });
       const exit = await runGraph({ args: makeArgs({ format: "ir", live: true, env: "prod" }), plugins: [], serializers: [] });
       expect(exit).toBe(0);
       expect(observeMock).toHaveBeenCalledWith("prod", expect.anything(), expect.anything(), {

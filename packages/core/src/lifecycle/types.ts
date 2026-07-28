@@ -1,4 +1,5 @@
 import type { ResourceMetadata, ArtifactMetadata } from "../lexicon";
+import type { UnobservedEntity } from "../observation";
 
 export type { ResourceMetadata, ArtifactMetadata } from "../lexicon";
 
@@ -18,6 +19,13 @@ export interface LifecycleSnapshot {
   timestamp: string;
   /** Resource metadata keyed by logical name */
   resources: Record<string, ResourceMetadata>;
+  /**
+   * Declared entities this observation could not read (#1089), keyed by logical
+   * name. Additive and optional: a snapshot without it observed everything it
+   * was asked about. Present so a later diff can tell "was not there when the
+   * snapshot was taken" from "was never looked at".
+   */
+  unobserved?: Record<string, UnobservedEntity>;
   /** Artifact metadata keyed by server-side identifier (lexicon-specific). */
   artifacts?: Record<string, ArtifactMetadata>;
   /** Build digest at snapshot time — what was declared when this snapshot was taken */

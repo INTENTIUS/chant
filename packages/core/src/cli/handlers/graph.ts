@@ -2,7 +2,7 @@ import { resolve } from "node:path";
 import { discoverOps } from "../../op/discover";
 import { discover } from "../../discovery/index";
 import { partitionByLexicon, computeStackGraph, build } from "../../build";
-import { buildGraphIr, buildLiveGraphIr, overlayGraphs, sourceOverlayGraphs, type GraphIR } from "../../graph-ir";
+import { buildGraphIr, buildLiveGraphIr, collectUnobserved, overlayGraphs, sourceOverlayGraphs, type GraphIR } from "../../graph-ir";
 import { reconstructEdges, mergeCatalogs, containmentGroups, type ReferenceCatalog, type ContainmentPair } from "../../graph-refs";
 import { observeResources } from "../../lifecycle/observe";
 import { loadChantConfig } from "../../config";
@@ -121,11 +121,23 @@ async function runGraphLive(
     console.error(formatWarning({ message: "component discovery failed — observing the single-stack convention instead" }));
   }
 
-  const { observations, errors } = await observeResources(environment, observing, buildResult, {
+  const { observations, errors, warnings } = await observeResources(environment, observing, buildResult, {
     owned: true,
     stacks: [...stacks],
   });
   for (const e of errors) console.error(formatWarning({ message: e }));
+  // Unobserved entities (#1089) arrive as warnings — a node missing from the
+  // live graph because nobody looked is a different fact from one that isn't
+  // deployed, and the diagram alone cannot say which. Capped: an estate with no
+  // ownership markers can produce one per declared entity, and a wall of them
+  // buries the graph output. The full list is `lifecycle diff --live`.
+  const WARN_CAP = 5;
+  for (const w of warnings.slice(0, WARN_CAP)) console.error(formatWarning({ message: w }));
+  if (warnings.length > WARN_CAP) {
+    console.error(formatWarning({
+      message: `... and ${warnings.length - WARN_CAP} more entity(ies) not observed — run \`chant lifecycle diff ${environment} --live\` for the full list`,
+    }));
+  }
 
   let ir: GraphIR = buildLiveGraphIr(observations);
 
@@ -166,10 +178,14 @@ async function runGraphLive(
     const declared = await discover(resolve(args.src ?? config.sourceDir ?? "."));
     if (declared.errors.length === 0) {
       const declaredIr = buildGraphIr(declared.entities, projectPath);
+      // Declared nodes chant could not read are painted `neutral`, not
+      // `accent`/pending (#1089) — a wrong-cluster or unsupported-kind read
+      // must not draw the estate as "not deployed yet".
+      const overlayOpts = { unobserved: collectUnobserved(observations) };
       ir =
         args.overlayAnchor === "live"
-          ? overlayGraphs(ir, declaredIr)
-          : sourceOverlayGraphs(declaredIr, ir);
+          ? overlayGraphs(ir, declaredIr, overlayOpts)
+          : sourceOverlayGraphs(declaredIr, ir, overlayOpts);
     } else {
       console.error(formatWarning({ message: "overlay: source has discovery errors — showing the provisioned graph without the declared overlay" }));
     }

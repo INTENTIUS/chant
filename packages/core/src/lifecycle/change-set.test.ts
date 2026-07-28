@@ -17,7 +17,7 @@ describe("buildChangeSet (#118)", () => {
     });
     const e = cs.entries.find((x) => x.name === "bucket")!;
     expect(e.action).toBe("create");
-    expect(e.evidence).toEqual({ declared: true, inSnapshot: false, live: false });
+    expect(e.evidence).toEqual({ declared: true, inSnapshot: false, live: false, observed: true });
     expect(e.ownership).toBe("unknown");
   });
 
@@ -183,6 +183,98 @@ describe("gitlabMrReport (#329)", () => {
       declared: new Set(),
       observedNow: { orphan: meta() }, // unknown ownership → adopt
       observedThen: undefined,
+    });
+    expect(gitlabMrReport(cs)).toEqual({ create: 0, update: 0, delete: 0 });
+  });
+});
+
+// ── The observation tri-state (#1089) ───────────────────────────────────────
+
+describe("buildChangeSet: not-observed is not absent (#1089)", () => {
+  test("declared and not observed → unobserved, never create", () => {
+    const cs = buildChangeSet("prod", {
+      declared: new Set(["crd-widget"]),
+      observedNow: {},
+      observedThen: undefined,
+      unobserved: {
+        "crd-widget": {
+          type: "K8s::Example::Widget",
+          reason: "unsupported-kind",
+          detail: "no kubectl mapping",
+        },
+      },
+    });
+    const e = cs.entries.find((x) => x.name === "crd-widget")!;
+    expect(e.action).toBe("unobserved");
+    expect(e.evidence).toEqual({ declared: true, inSnapshot: false, live: false, observed: false });
+    expect(e.unobservedReason).toBe("unsupported-kind");
+    expect(e.type).toBe("K8s::Example::Widget");
+  });
+
+  test("the same entity, confirmed absent, still classifies as create", () => {
+    const cs = buildChangeSet("prod", {
+      declared: new Set(["crd-widget"]),
+      observedNow: {},
+      observedThen: undefined,
+    });
+    expect(cs.entries.find((x) => x.name === "crd-widget")!.action).toBe("create");
+  });
+
+  test("a returned resource wins over an unobserved claim for the same name", () => {
+    const cs = buildChangeSet("prod", {
+      declared: new Set(["queue"]),
+      observedNow: { queue: meta() },
+      observedThen: undefined,
+      unobserved: { queue: { reason: "read-failed" } },
+    });
+    const e = cs.entries.find((x) => x.name === "queue")!;
+    expect(e.action).toBe("noop");
+    expect(e.evidence.observed).toBe(true);
+  });
+
+  test("an unobserved entity that is in the snapshot is not read as gone", () => {
+    const cs = buildChangeSet("prod", {
+      declared: new Set(["queue"]),
+      observedNow: {},
+      observedThen: { queue: meta() },
+      unobserved: { queue: { reason: "no-credentials" } },
+    });
+    const e = cs.entries.find((x) => x.name === "queue")!;
+    expect(e.action).toBe("unobserved");
+    expect(e.evidence.inSnapshot).toBe(true);
+  });
+
+  test("an unobserved entity is never a delete, even with an owned marker in the snapshot", () => {
+    const cs = buildChangeSet("prod", {
+      declared: new Set(),
+      observedNow: {},
+      observedThen: { legacy: meta({ ownership: "owned" }) },
+      unobserved: { legacy: { reason: "read-failed" } },
+    });
+    expect(cs.entries.find((x) => x.name === "legacy")!.action).toBe("unobserved");
+  });
+
+  test("summarize and render surface the hole", () => {
+    const cs = buildChangeSet("prod", {
+      declared: new Set(["a"]),
+      observedNow: {},
+      observedThen: undefined,
+      unobserved: { a: { reason: "no-binding", detail: "no kubectl context for prod" } },
+    });
+    expect(summarize(cs).unobserved).toBe(1);
+    expect(summarize(cs).create).toBe(0);
+    const out = renderChangeSet(cs);
+    expect(out).toContain("UNOBSERVED");
+    expect(out).toContain("no binding for this environment");
+    expect(out).toContain("no kubectl context for prod");
+  });
+
+  test("the GitLab widget excludes unobserved — its three columns cannot express a hole", () => {
+    const cs = buildChangeSet("prod", {
+      declared: new Set(["a"]),
+      observedNow: {},
+      observedThen: undefined,
+      unobserved: { a: { reason: "read-failed" } },
     });
     expect(gitlabMrReport(cs)).toEqual({ create: 0, update: 0, delete: 0 });
   });

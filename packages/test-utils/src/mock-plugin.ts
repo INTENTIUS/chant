@@ -1,5 +1,6 @@
 import type { LexiconPlugin, ResourceMetadata, ArtifactMetadata } from "../../core/src/lexicon";
 import type { Serializer } from "../../core/src/serializer";
+import { observation, type UnobservedEntity } from "../../core/src/observation";
 import { createMockSerializer } from "./fixtures";
 
 export interface MockPluginOptions {
@@ -28,6 +29,18 @@ export function staticDescribeResources(
   resources: Record<string, ResourceMetadata>,
 ): LexiconPlugin["describeResources"] {
   return async () => resources;
+}
+
+/**
+ * A `describeResources` that reports both halves of the observation tri-state
+ * (#1089): what it read, and what it could not. Use it to drive a consumer
+ * through the NOT-OBSERVED path.
+ */
+export function staticObservation(
+  resources: Record<string, ResourceMetadata>,
+  unobserved?: Record<string, UnobservedEntity>,
+): LexiconPlugin["describeResources"] {
+  return async () => observation(resources, unobserved);
 }
 
 export function staticListArtifacts(

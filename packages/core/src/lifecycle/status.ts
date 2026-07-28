@@ -21,6 +21,9 @@
  *    lower-confidence signal rather than silently treated as "reconciled".
  *  - **reconciled** — a release record exists and live evidence (via
  *    ownership) confirms the component is present and owned by chant.
+ *  - **unknown** — live evidence was requested and could not be read (#1089),
+ *    or was not requested at all. A component chant could not observe is never
+ *    reported `stale`: "the read failed" and "it is gone" are different facts.
  *
  * This is deliberately a light-touch reconciliation: chant's lexicons report
  * resource-level status (`ResourceMetadata`), not "the digest currently
@@ -36,6 +39,7 @@
 import type { ChangeSet, ChangeAction } from "./change-set";
 import { latestPerComponent, type ReleaseRecord } from "./release-ledger";
 import type { BuildLedgerEntry, ComponentBomSummary } from "./build-ledger";
+import { unobservedReasonText, type UnobservedReason } from "../observation";
 
 /** One row of `chant components status [env]` — the per-component join of recorded vs live. */
 export interface ComponentStatusRow {
@@ -63,9 +67,18 @@ export interface ComponentStatusRow {
   /**
    * Machine-readable "observed live", when live evidence was gathered (`--live`).
    * A consumer joining this row onto a graph node should read this rather than
-   * string-matching `detail`. Absent when `--live` was not requested.
+   * string-matching `detail`. Absent when `--live` was not requested — and, since
+   * #1089, also absent when live state could not be read at all: `false` means
+   * "looked, not there", never "did not look". Read {@link unobserved} for that
+   * case; a consumer that treats absent as "unknown" already handles it.
    */
   live?: boolean;
+  /**
+   * Set when `--live` was requested and the observation could not read this
+   * component (#1089). `live` is absent alongside it and `reconciliation` is
+   * `unknown` — the row reports a hole rather than a verdict.
+   */
+  unobserved?: { reason: UnobservedReason; detail?: string };
   /**
    * The owning deploy unit's raw status, when a lexicon reported it (AWS: the
    * component's own CFN stack via `describeStackStatus`). Lets a renderer paint a
@@ -103,6 +116,12 @@ export interface ComponentStatusResult {
 export interface LiveComponentEvidence {
   /** True if this component name was observed live at all (declared+live, or orphan+live). */
   live: boolean;
+  /**
+   * Set when the observation could not read this component (#1089). `live` is
+   * `false` alongside it, but only because the boolean has nowhere else to go —
+   * every consumer must branch on this field before believing `live: false`.
+   */
+  unobserved?: { reason: UnobservedReason; detail?: string };
   /** The `ChangeSet` action chant's existing plan logic assigned, when the component maps to a tracked entity/resource name. */
   action?: ChangeAction;
   /** Ownership verdict, when known. */
@@ -132,6 +151,10 @@ export function mergeLiveEvidence(
     const b = merged.get(component);
     merged.set(component, {
       live: sup.live,
+      // A direct stack observation that succeeded answers the question the
+      // change-set axis could not — so it clears an inherited "not observed".
+      // A supplement that itself could not read keeps the hole.
+      ...(sup.unobserved ? { unobserved: sup.unobserved } : {}),
       ownership: sup.ownership ?? b?.ownership,
       action: b?.action,
       stack: sup.stack ?? b?.stack,
@@ -178,8 +201,12 @@ function mergeEvidence(entries: LiveComponentEvidence[]): LiveComponentEvidence 
   const action = entries.some((e) => e.action === "update")
     ? "update"
     : entries.find((e) => e.action !== undefined)?.action;
+  // A component whose entities were partly readable is still partly unknown, so
+  // any unobserved entity keeps the hole — unless something under it was
+  // actually seen live, which already answers "is this deployed".
+  const unobserved = live ? undefined : entries.find((e) => e.unobserved)?.unobserved;
 
-  return { live, ownership, action };
+  return { live, ownership, action, ...(unobserved ? { unobserved } : {}) };
 }
 
 /**
@@ -204,6 +231,16 @@ export function liveEvidenceFromChangeSet(
       live: entry.evidence.live,
       action: entry.action,
       ownership: entry.ownership,
+      // Carry the plan's "could not look" verdict through so the status join
+      // reports a hole instead of reading `live: false` as "gone" (#1089).
+      ...(entry.action === "unobserved" && entry.unobservedReason
+        ? {
+            unobserved: {
+              reason: entry.unobservedReason,
+              ...(entry.unobservedDetail ? { detail: entry.unobservedDetail } : {}),
+            },
+          }
+        : {}),
     });
   }
 
@@ -275,6 +312,15 @@ export function reconcileStatus(
       detail = recorded
         ? "recorded; live status not queried (pass --live to reconcile)"
         : "no release record found";
+    } else if (evidence?.unobserved) {
+      // Live evidence was requested and could not be read (#1089). Neither
+      // `stale` (which claims the component is gone) nor `reconciled` is
+      // supportable — the honest verdict is that nothing is known.
+      reconciliation = "unknown";
+      const why = `${unobservedReasonText(evidence.unobserved.reason)}${evidence.unobserved.detail ? `: ${evidence.unobserved.detail}` : ""}`;
+      detail = recorded
+        ? `recorded ${recorded.timestamp} (digest ${recorded.digest}), but live state could not be observed — ${why}`
+        : `no release record, and live state could not be observed — ${why}`;
     } else if (!recorded && evidence?.live) {
       reconciliation = "unrecorded";
       detail = `live${evidence.ownership === "owned" ? " and chant-owned" : ""}, but no release record exists — deployed outside the recorded path`;
@@ -300,7 +346,11 @@ export function reconcileStatus(
       componentBom,
       reconciliation,
       detail,
-      ...(liveEvidence ? { live: !!evidence?.live } : {}),
+      // `live` is only emitted when it is a real answer: requested AND read.
+      // An unread component leaves it absent (= unknown to every consumer)
+      // rather than reporting `false`, which would read as "not deployed".
+      ...(liveEvidence && !evidence?.unobserved ? { live: !!evidence?.live } : {}),
+      ...(evidence?.unobserved ? { unobserved: evidence.unobserved } : {}),
       ...(evidence?.stack ? { stack: evidence.stack } : {}),
     });
   }

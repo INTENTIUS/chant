@@ -11,10 +11,22 @@ import type { DriverComponent } from "./components/driver";
 import type { EmulatorCapability } from "./op/emulator-lifecycle";
 import type { RuleMeta } from "./audit/catalog";
 import type { ReferenceCatalog } from "./graph-refs";
+import type { DescribeResourcesResult } from "./observation";
 
 // Re-exported so lexicons can author a reference catalog (#778) from the same
 // `@intentius/chant/lexicon` entry they import the plugin contract from.
 export type { ReferenceCatalog, IdentityRule, RefRule } from "./graph-refs";
+
+// The observation contract (#1089), re-exported from the same entry so a
+// lexicon's `describeResources` can report NOT-OBSERVED without a second
+// import path. Runtime helpers live in `@intentius/chant/observation`.
+export type {
+  DescribeResourcesResult,
+  ObservationResult,
+  NormalizedObservation,
+  UnobservedEntity,
+  UnobservedReason,
+} from "./observation";
 
 /**
  * Manifest for a packaged lexicon — metadata embedded in the tarball.
@@ -507,6 +519,27 @@ export interface LexiconPlugin {
    * Use this when each chant entity has a 1:1 cloud equivalent — e.g. an
    * AWS CFN resource, a K8s object, an ARM resource, a Temporal namespace.
    *
+   * **The observation contract (#1089).** Returning nothing for a declared
+   * entity is a claim, and there are two different claims to make. Either the
+   * provider was asked and reported the resource absent — which is what lets
+   * the change set propose `create` — or the lexicon never looked, which must
+   * not. An implementation that has a "did not look" case (no reader for the
+   * kind, the read errored, no credentials, no cluster binding) must return the
+   * {@link ObservationResult} envelope and name those entities in `unobserved`
+   * with a total {@link UnobservedReason}. Warning on stderr is not enough: a
+   * warning is invisible to `lifecycle plan`, which is where the wrong `create`
+   * gets proposed. Returning the bare `name → ResourceMetadata` map is still
+   * valid and means "everything I was asked about, I looked at".
+   *
+   * Throwing is the whole-lexicon failure (see the k8s cluster-binding refusal,
+   * #1100): core catches it and marks every declared entity NOT-OBSERVED with
+   * `read-failed`, so a failed read is never a list of creates.
+   *
+   * Ownership verdicts are total (#1089). When `owned` is requested and the
+   * lexicon has no marker channel on this path, it must stamp
+   * `ownership: "unknown"` on what it returns rather than degrading silently —
+   * the change set never escalates `unknown` to a `delete`.
+   *
    * `entities` carries the chant-side entity declarations for this lexicon,
    * keyed by chant entity name (e.g. the export name from a `*.ts` file).
    * Implementations that need to map cloud-side names back to chant entity
@@ -536,7 +569,7 @@ export interface LexiconPlugin {
      * everything.
      */
     owned?: boolean;
-  }): Promise<Record<string, ResourceMetadata>>;
+  }): Promise<DescribeResourcesResult>;
 
   /**
    * Report the live status of one deploy unit by its deployed name. Opt-in.
@@ -683,12 +716,14 @@ export interface ResourceMetadata {
   /** Cloud-assigned output properties */
   attributes?: Record<string, unknown>;
   /**
-   * Live ownership verdict from the resource's marker (#119/#120), when the
-   * lexicon could determine it. `owned` = carries chant's marker; `foreign` =
-   * no marker. Absent = the lexicon has no marker channel here. The change set
-   * reads this — never the snapshot — to decide whether an orphan is a delete.
+   * Live ownership verdict from the resource's marker (#119/#120). `owned` =
+   * carries chant's marker; `foreign` = no marker; `unknown` = the lexicon has
+   * no marker channel on this read path and says so rather than degrading
+   * silently (#1089 — verdicts are total). Absent is read as `unknown`. The
+   * change set reads this — never the snapshot — to decide whether an orphan is
+   * a delete, and never escalates `unknown` to one.
    */
-  ownership?: "owned" | "foreign";
+  ownership?: "owned" | "foreign" | "unknown";
 }
 
 /**
