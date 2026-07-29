@@ -1,0 +1,128 @@
+---
+title: "chant search"
+description: Answer an estate question with a compact, edge-aware query instead of a graph dump
+---
+
+## Synopsis
+
+```
+chant search "<query>" [--live --env <name>] [flags]
+```
+
+## Description
+
+`chant search` answers a question about your estate with a **compact result**
+instead of the whole graph. Each match prints as one line — logical id, kind,
+physical id when known, and any attributes you asked for. Tens of tokens, not
+thousands.
+
+That compactness is the point. An agent asking "which instances sit in public
+subnets" should not ingest a multi-thousand-token IR dump and join
+instance → subnet → route table by hand — it should run one query and read a few
+rows. `chant search` is the query surface the
+[agent integration](/chant/guide/agent-integration/) leans on, and it is what
+kept chant's token footprint the lowest of any tooling configuration on
+[aws-bench](https://github.com/aws-bench/aws-bench), an infrastructure-agent
+benchmark.
+
+By default the query runs over the **declared** graph (source only, offline).
+With `--live --env <name>` chant observes the environment, overlays live
+identity and attributes onto the declared graph, and answers from that — same
+canvas as [`chant graph --overlay`](/chant/cli/graph/).
+
+## Query grammar
+
+Space-separated terms. All terms must match (AND). Quote phrases to keep them
+together.
+
+| Term | Matches |
+|------|---------|
+| `word` | case-insensitive substring over id, kind, and attribute values |
+| `kind:<substr>` | node kind contains `<substr>` (e.g. `kind:EC2::Instance`) |
+| `attr:<name>` | attribute `<name>` is present |
+| `attr:<name>=<val>` | attribute `<name>` equals/contains `<val>` |
+| `tag:<key>=<val>` | a `Tags` entry with `Key=<key>` and `Value` containing `<val>` |
+| `->kind:X`, `->attr:…`, `->tag:…` | node has an edge **to** a node matching the right side |
+| `<-kind:X`, `<-attr:…`, `<-tag:…` | node has an edge **from** a node matching the right side |
+
+The edge operators make the search **edge-aware**: a traversal becomes one
+term instead of a hand-join across results.
+
+```bash
+# instances that reference a public subnet
+chant search "kind:Instance ->attr:MapPublicIpOnLaunch=true"
+```
+
+## Derived attributes
+
+Before matching, chant folds derived reachability facts onto instance nodes
+(effective-topology enrichment), so multi-hop and launch-template joins become
+one node predicate:
+
+- `internetFacing` — the instance's subnet routes to an internet gateway
+  (resolved across the account default VPC in live mode)
+- `effectiveIngress` — normalized ingress rules from all reachable security
+  groups, attached directly or via the instance's launch template
+
+```bash
+chant search "kind:EC2::Instance attr:internetFacing=true" --live --env dev
+chant search "kind:EC2::Instance attr:internetFacing=true attr:effectiveIngress=tcp:22:0.0.0.0/0" --live --env dev --explain --show InstanceId
+```
+
+## Flags
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--live` | `boolean` | `false` | Query live state overlaid on the declared graph (requires `--env`) |
+| `--env` | `string` | — | Environment to observe (must be in `chant.config` `environments` when declared) |
+| `--src` | `string` | config `sourceDir` or `.` | Source directory to discover/build |
+| `--show` | `string` | — | Comma-separated attribute names to append to each result row |
+| `--explain` | `boolean` | `false` | Print the match-universe footer and near-miss exclusions |
+
+## `--explain`
+
+The footer gives a small model a reason to trust the result instead of
+re-deriving it with a lossy CLI sweep:
+
+- the universe count — `4 of 6 EC2::Instance matched`, a denominator the typed
+  graph knows and a live sweep does not
+- inclusion evidence for derived facts — e.g. `✓ web1 internet-facing via subnet route`
+- up to 8 near-misses with the query term each one fails
+
+```
+— 2 of 6 EC2::Instance matched  (query: kind:EC2::Instance attr:internetFacing=true)
+  ✓ BastionUsEast1 internet-facing via default-vpc
+  · excluded AppUsWest2 — fails attr:internetFacing=true
+```
+
+Everything in the footer is a property of the query over the graph, not of any
+expected answer.
+
+## Live mode
+
+`--live` builds the project first (a failing build stops the search), observes
+**owned** resources in the environment, and overlays live identity onto the
+declared graph — the declared side carries the topology so `->`/`<-` resolve,
+the live side supplies physical ids and live-only attributes.
+
+Multi-stack projects are observed per stack, and results display the bare
+logical id without the stack qualifier.
+
+## Usage
+
+```bash
+# offline, over the declared graph
+chant search "kind:Bucket"
+chant search "tag:Environment=prod"
+
+# live estate questions
+chant search "kind:EC2::Instance attr:internetFacing=true" --live --env dev
+chant search "kind:Instance ->attr:MapPublicIpOnLaunch=true" --live --env dev --explain
+```
+
+## Exit Codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | Query ran (including zero matches — prints `(no matches)`) |
+| 1 | Missing query, missing/unknown `--env`, or build failure in `--live` mode |
