@@ -211,3 +211,154 @@ export function formatUnobserved(name: string, entry: UnobservedEntity): string 
   const base = `${name}${entry.type ? ` (${entry.type})` : ""} — ${unobservedReasonText(entry.reason)}`;
   return entry.detail ? `${base}: ${entry.detail}` : base;
 }
+
+/* ------------------------------------------------------------------------- *
+ * The observer harness (#1201).
+ *
+ * Every native observer runs the same control flow: bind to the provider on
+ * the applier's own transport, read the declared entities concurrently, and
+ * turn each read into one of the tri-state outcomes above. The k8s observer
+ * (#1074) and Fly (#767) already embody it. Rather than have aws/gcp/azure each
+ * re-derive it — and re-derive it inconsistently, which is how the shell-out
+ * observers drifted apart — a lexicon supplies an {@link ObserverAdapter} and
+ * the harness owns the shape: bind-or-not-observe-all with a typed reason,
+ * bounded concurrency, per-entity tri-state routing, and a per-entity throw
+ * degrading to `read-failed` rather than a silent absence.
+ *
+ * The adapter owns transport and endpoint resolution (an emulator override is
+ * resolved inside `bind()` via the shared live-endpoint helper), so the
+ * emulator override behaves identically across lexicons by construction — the
+ * harness never touches an endpoint itself.
+ * ------------------------------------------------------------------------- */
+
+/** One declared entity handed to the harness. */
+export interface DeclaredEntity {
+  /** chant entity name — the key every outcome is filed under. */
+  name: string;
+  /** Declared entity type (e.g. `AWS::EC2::VPC`). */
+  type: string;
+  /** Declared properties, for the adapter to derive a physical address from. */
+  props: Record<string, unknown>;
+}
+
+/**
+ * The outcome of reading one entity, mapped onto the tri-state:
+ * - `present` — a key in `resources`.
+ * - `absent` — in neither map (the provider was asked and reported it missing).
+ * - `unobserved` — a typed NOT-OBSERVED (unsupported kind, filtered, read error).
+ */
+export type EntityObservation =
+  | { present: ResourceMetadata }
+  | { absent: true }
+  | { unobserved: { reason: UnobservedReason; detail?: string } };
+
+/** What a lexicon supplies to drive the harness. `Client` is its transport handle. */
+export interface ObserverAdapter<Client> {
+  /**
+   * Reach the provider on the applier's transport. Throw for a whole-lexicon
+   * failure; {@link classifyBindFailure} decides what the throw means.
+   */
+  bind(): Promise<Client>;
+  /**
+   * Map a `bind()` throw to a typed whole-lexicon reason (every entity becomes
+   * NOT-OBSERVED with it), or `"rethrow"` for a loud refusal that must not be
+   * swallowed — a context/subscription mismatch, which core turns into an
+   * honest hole per entity at a higher layer.
+   */
+  classifyBindFailure(err: unknown): { reason: UnobservedReason; detail?: string } | "rethrow";
+  /** Read one declared entity. A throw here is caught and recorded `read-failed`. */
+  read(client: Client, entity: DeclaredEntity): Promise<EntityObservation>;
+  /**
+   * Run `fn` over `items` concurrently. Supply the transport's own bounded pool
+   * (the k8s client's `concurrently`, say); when omitted the harness uses
+   * {@link boundedConcurrently}, so "N entities is not N serial spawns" holds
+   * for every lexicon whether or not its transport ships a pool.
+   */
+  concurrently?<T>(items: readonly T[], fn: (item: T) => Promise<void>): Promise<void>;
+}
+
+/** Default concurrency for {@link boundedConcurrently} when a transport ships no pool. */
+export const DEFAULT_OBSERVE_CONCURRENCY = 16;
+
+/**
+ * Run `fn` over `items` with at most `limit` in flight. A rejected `fn` rejects
+ * the whole run (the harness wraps per-entity reads so this stays for genuinely
+ * unexpected faults).
+ */
+export async function boundedConcurrently<T>(
+  items: readonly T[],
+  fn: (item: T) => Promise<void>,
+  limit: number = DEFAULT_OBSERVE_CONCURRENCY,
+): Promise<void> {
+  const queue = [...items];
+  const size = Math.max(1, Math.min(limit, queue.length || 1));
+  const workers = Array.from({ length: size }, async () => {
+    for (;;) {
+      const next = queue.shift();
+      if (next === undefined) return;
+      await fn(next);
+    }
+  });
+  await Promise.all(workers);
+}
+
+/**
+ * The shared observer control flow (#1201). Binds via the adapter, reads every
+ * declared entity concurrently, and assembles the tri-state {@link ObservationResult}.
+ *
+ * A `bind()` throw becomes NOT-OBSERVED for every entity (typed by
+ * {@link ObserverAdapter.classifyBindFailure}) unless the adapter asks to
+ * rethrow. A per-entity `read()` throw the adapter did not itself map becomes
+ * `read-failed` for that one entity — never a silent absence, which would
+ * classify as a spurious `create`.
+ */
+export async function observeEntities<Client>(
+  declared: readonly DeclaredEntity[],
+  adapter: ObserverAdapter<Client>,
+): Promise<ObservationResult> {
+  const typesByName: Record<string, string> = {};
+  for (const d of declared) typesByName[d.name] = d.type;
+
+  let client: Client;
+  try {
+    client = await adapter.bind();
+  } catch (err) {
+    const verdict = adapter.classifyBindFailure(err);
+    if (verdict === "rethrow") throw err;
+    return observation(
+      {},
+      unobservedAll(
+        declared.map((d) => d.name),
+        verdict.reason,
+        verdict.detail,
+        typesByName,
+      ),
+    );
+  }
+
+  const resources: Record<string, ResourceMetadata> = {};
+  const unobserved: Record<string, UnobservedEntity> = {};
+  const run = adapter.concurrently ?? ((items, fn) => boundedConcurrently(items, fn));
+
+  await run(declared, async (entity) => {
+    let result: EntityObservation;
+    try {
+      result = await adapter.read(client, entity);
+    } catch (err) {
+      result = {
+        unobserved: {
+          reason: "read-failed",
+          detail: err instanceof Error ? err.message : String(err),
+        },
+      };
+    }
+    if ("present" in result) {
+      resources[entity.name] = result.present;
+    } else if ("unobserved" in result) {
+      unobserved[entity.name] = { type: entity.type, ...result.unobserved };
+    }
+    // `absent`: record nothing — in neither map is how the contract spells absence.
+  });
+
+  return observation(resources, unobserved);
+}

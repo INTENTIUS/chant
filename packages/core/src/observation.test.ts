@@ -5,14 +5,19 @@
 import { describe, test, expect } from "vitest";
 import {
   UNOBSERVED_REASONS,
+  boundedConcurrently,
   formatUnobserved,
   isObservationResult,
   isUnobservedReason,
   mergeObservations,
   normalizeObservation,
   observation,
+  observeEntities,
   unobservedAll,
   unobservedReasonText,
+  type DeclaredEntity,
+  type EntityObservation,
+  type ObserverAdapter,
 } from "./observation";
 import type { ResourceMetadata } from "./lexicon";
 
@@ -92,5 +97,135 @@ describe("reason totality", () => {
     expect(
       formatUnobserved("widget", { type: "K8s::X::Widget", reason: "unsupported-kind", detail: "no mapping" }),
     ).toBe("widget (K8s::X::Widget) — no reader for this resource kind: no mapping");
+  });
+});
+
+describe("boundedConcurrently", () => {
+  test("processes every item", async () => {
+    const seen: number[] = [];
+    await boundedConcurrently([1, 2, 3, 4, 5], async (n) => {
+      seen.push(n);
+    }, 2);
+    expect([...seen].sort((a, b) => a - b)).toEqual([1, 2, 3, 4, 5]);
+  });
+
+  test("never exceeds the limit in flight", async () => {
+    let inFlight = 0;
+    let peak = 0;
+    await boundedConcurrently(Array.from({ length: 20 }, (_, i) => i), async () => {
+      inFlight += 1;
+      peak = Math.max(peak, inFlight);
+      await new Promise((r) => setTimeout(r, 1));
+      inFlight -= 1;
+    }, 4);
+    expect(peak).toBeLessThanOrEqual(4);
+    expect(peak).toBeGreaterThan(1); // it did run concurrently, not serially
+  });
+
+  test("an empty list is a no-op", async () => {
+    await expect(boundedConcurrently([], async () => {})).resolves.toBeUndefined();
+  });
+});
+
+describe("observeEntities harness (#1201)", () => {
+  const entity = (name: string, type = "Fake::Resource"): DeclaredEntity => ({ name, type, props: {} });
+
+  /** A fake adapter whose `read` is table-driven by entity name. */
+  const adapterOf = (
+    reads: Record<string, EntityObservation | (() => Promise<EntityObservation>)>,
+    over: Partial<ObserverAdapter<{ ok: true }>> = {},
+  ): ObserverAdapter<{ ok: true }> => ({
+    bind: async () => ({ ok: true }),
+    classifyBindFailure: () => ({ reason: "read-failed" }),
+    read: async (_client, e) => {
+      const r = reads[e.name];
+      if (typeof r === "function") return r();
+      if (!r) throw new Error(`no fake read for ${e.name}`);
+      return r;
+    },
+    ...over,
+  });
+
+  test("routes the tri-state: present -> resources, absent -> neither, unobserved -> unobserved", async () => {
+    const result = await observeEntities(
+      [entity("a"), entity("b"), entity("c", "Fake::Odd")],
+      adapterOf({
+        a: { present: meta({ physicalId: "id-a" }) },
+        b: { absent: true },
+        c: { unobserved: { reason: "unsupported-kind", detail: "no reader" } },
+      }),
+    );
+    expect(Object.keys(result.resources)).toEqual(["a"]);
+    expect(result.resources.a.physicalId).toBe("id-a");
+    // absent 'b' is in neither map
+    expect(result.unobserved).toEqual({
+      c: { type: "Fake::Odd", reason: "unsupported-kind", detail: "no reader" },
+    });
+  });
+
+  test("a bind failure marks every entity NOT-OBSERVED with the typed reason and declared type", async () => {
+    const result = await observeEntities(
+      [entity("a", "AWS::S3::Bucket"), entity("b", "AWS::S3::Bucket")],
+      adapterOf(
+        {},
+        {
+          bind: async () => {
+            throw new Error("no creds");
+          },
+          classifyBindFailure: () => ({ reason: "no-credentials", detail: "token expired" }),
+        },
+      ),
+    );
+    expect(result.resources).toEqual({});
+    expect(result.unobserved).toEqual({
+      a: { reason: "no-credentials", type: "AWS::S3::Bucket", detail: "token expired" },
+      b: { reason: "no-credentials", type: "AWS::S3::Bucket", detail: "token expired" },
+    });
+  });
+
+  test("a loud refusal rethrows instead of degrading to a hole", async () => {
+    await expect(
+      observeEntities(
+        [entity("a")],
+        adapterOf(
+          {},
+          {
+            bind: async () => {
+              throw new Error("context mismatch");
+            },
+            classifyBindFailure: () => "rethrow",
+          },
+        ),
+      ),
+    ).rejects.toThrow("context mismatch");
+  });
+
+  test("a per-entity read throw degrades to read-failed for that one entity, not an absence", async () => {
+    const result = await observeEntities(
+      [entity("a"), entity("b")],
+      adapterOf({
+        a: () => Promise.reject(new Error("boom")),
+        b: { present: meta() },
+      }),
+    );
+    expect(Object.keys(result.resources)).toEqual(["b"]);
+    expect(result.unobserved?.a).toEqual({ type: "Fake::Resource", reason: "read-failed", detail: "boom" });
+  });
+
+  test("uses the adapter's own concurrency pool when it supplies one", async () => {
+    let usedPool = false;
+    await observeEntities(
+      [entity("a")],
+      adapterOf(
+        { a: { present: meta() } },
+        {
+          concurrently: async (items, fn) => {
+            usedPool = true;
+            for (const it of items) await fn(it);
+          },
+        },
+      ),
+    );
+    expect(usedPool).toBe(true);
   });
 });
