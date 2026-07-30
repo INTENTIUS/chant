@@ -109,7 +109,7 @@ export const fountainPlugin: LexiconPlugin = {
     return [
       createDiffTool(
         fountainSerializer,
-        "Compare current fountain build output (fountain manifests + fountain-plan.json) against previous version",
+        "Compare current fountain build output (fountain manifest YAML) against previous version",
         "fountain",
       ),
     ];

@@ -1,28 +1,33 @@
 /**
  * fountain native applier.
  *
- * Direct-REST reconciler against fountain's API (the same surface
- * `fountain apply` uses, but API-first: create-if-new, update-if-changed
- * by name, optional owned-only prune). Input is the serializer's
- * `fountain-plan.json` sidecar — entity name → { kind, spec } — so no
- * YAML parsing happens on the apply side.
+ * Compiles the serializer's manifest YAML — the same `apiVersion:
+ * fountain.dev/v1` documents `fountain apply -f` accepts — into fountain's
+ * `POST /api/apply` bulk-apply request and sends it in one call. That
+ * endpoint (BinaryBourbon/fountain#151) does the reconciliation server-side:
+ * upsert by name, environments -> vaults -> agents, an agent's
+ * `spec.environment` name resolved against the manifest or the tenant's
+ * existing environments, secrets upserted through the encrypted envelope
+ * path. Best-effort per resource — every result is collected before this
+ * throws, so one bad resource doesn't hide failures in the rest of the
+ * manifest, and a partial apply is never silently reported as clean.
  *
- * Apply order is Environment → Vault → Agent: agents reference their
- * environment by entity name in the plan, resolved to the live id here
- * (mirroring the CLI's name→id resolution in apply.go).
+ * No id resolution happens here anymore: since the server resolves an
+ * agent's `environment` reference by name itself, the manifest's `spec`
+ * passes through unmodified except for one shape adjustment — chant's
+ * authored `secrets` is an ordered `{key, value}[]`, the wire format wants
+ * `{KEY: value}` (see `toApplyPayload`).
  *
- * Secrets: `spec.secrets` entries ({key, value}) are stripped from the
- * resource body and upserted through the secrets sub-resource. Values are
- * write-only upstream, so this is upsert-always — a changed value cannot
- * be detected, only overwritten. (BinaryBourbon/fountain#148's reference
- * model would make this a plain diff; until then, upsert-always is the
- * honest semantic.)
+ * Prune (opt-in, chant-owned only) isn't part of bulk apply, so it still
+ * lists each kind's live state and deletes what's absent from the
+ * manifest, same as before.
  *
  * Endpoint/token resolution: explicit args win, then FOUNTAIN_ENDPOINT /
  * FOUNTAIN_TOKEN, then the hosted default endpoint.
  */
 
 import { readFileSync } from "node:fs";
+import { parseYAML } from "@intentius/chant/yaml";
 
 export const DEFAULT_FOUNTAIN_BASE_URL = "https://founta.inevitable.fyi";
 
@@ -36,28 +41,29 @@ const KIND_PATHS: Record<string, string> = {
   Agent: "agents",
 };
 
-/** Environments before vaults before agents; prune runs in reverse. */
+const KINDS = new Set(Object.keys(KIND_PATHS));
+
+/** Prune-only ordering now — bulk apply reconciles create/update order itself. */
 const APPLY_ORDER = ["Environment", "Vault", "Agent"] as const;
 
-export interface PlanEntry {
+export interface ManifestResource {
   kind: string;
+  name: string;
   spec: Record<string, unknown>;
 }
-
-export type FountainPlan = Record<string, PlanEntry>;
 
 export interface FountainHttp {
   (method: string, path: string, body?: unknown): Promise<{ status: number; json: unknown }>;
 }
 
 export interface FountainApplyArgs {
-  /** Path to the serializer's fountain-plan.json. */
-  planPath?: string;
-  /** Inline plan content (takes precedence over planPath). */
-  planContent?: string;
+  /** Path to the serializer's compiled fountain manifest YAML. */
+  manifestPath?: string;
+  /** Inline manifest YAML content (takes precedence over manifestPath). */
+  manifestContent?: string;
   endpoint?: string;
   token?: string;
-  /** Delete chant-owned resources absent from the plan. Off by default. */
+  /** Delete chant-owned resources absent from the manifest. Off by default. */
   prune?: boolean;
 }
 
@@ -87,22 +93,41 @@ export function resolveToken(
   return token;
 }
 
-export function parsePlan(content: string): FountainPlan {
-  return JSON.parse(content) as FountainPlan;
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
-/** Split spec.secrets ({key, value}[]) from the resource body. Pure. */
-export function splitSecrets(spec: Record<string, unknown>): {
-  body: Record<string, unknown>;
-  secrets: Array<{ key: string; value: string }>;
-} {
-  const { secrets, ...body } = spec;
-  if (!Array.isArray(secrets)) return { body: spec, secrets: [] };
-  const valid = secrets.filter(
-    (s): s is { key: string; value: string } =>
-      !!s && typeof s === "object" && typeof (s as { key?: unknown }).key === "string",
-  );
-  return { body, secrets: valid };
+/** Parse the serializer's multi-document manifest YAML into apply resources. Pure. */
+export function parseManifest(content: string): ManifestResource[] {
+  const resources: ManifestResource[] = [];
+  for (const docText of content.split(/^---\s*$/m)) {
+    if (!docText.trim()) continue;
+    const doc = parseYAML(docText);
+    const kind = typeof doc.kind === "string" ? doc.kind : "";
+    if (!KINDS.has(kind)) continue;
+    const meta = isRecord(doc.metadata) ? doc.metadata : {};
+    const name = typeof meta.name === "string" ? meta.name : "";
+    const spec = isRecord(doc.spec) ? doc.spec : {};
+    resources.push({ kind, name, spec });
+  }
+  return resources;
+}
+
+/**
+ * Fountain's bulk-apply spec takes `secrets` as a `{KEY: value}` map;
+ * chant's authored shape is an ordered `{key, value}[]`. Convert only that
+ * one field — the rest of spec passes through untouched. Pure.
+ */
+export function toApplyPayload(spec: Record<string, unknown>): Record<string, unknown> {
+  const { secrets, ...rest } = spec;
+  if (!Array.isArray(secrets)) return spec;
+  const map: Record<string, string> = {};
+  for (const entry of secrets) {
+    if (entry && typeof entry === "object" && typeof (entry as { key?: unknown }).key === "string") {
+      map[(entry as { key: string }).key] = String((entry as { value?: unknown }).value ?? "");
+    }
+  }
+  return { ...rest, secrets: map };
 }
 
 /** Is a live resource chant-owned (by its metadata marker)? Pure. */
@@ -142,6 +167,20 @@ interface LiveResource {
   metadata?: Record<string, unknown>;
 }
 
+interface ApplyResultSecret {
+  key: string;
+  action: string;
+  errors?: Record<string, unknown> | null;
+}
+
+interface ApplyResult {
+  kind: string;
+  name: string;
+  action: string;
+  errors?: Record<string, unknown> | null;
+  secrets?: ApplyResultSecret[];
+}
+
 async function listByName(http: FountainHttp, kind: string): Promise<Map<string, LiveResource>> {
   const { status, json } = await http("GET", `/api/${KIND_PATHS[kind]}`);
   if (status !== 200) throw new Error(`fountainApply: list ${kind} failed (${status})`);
@@ -153,83 +192,46 @@ export async function fountainApply(
   args: FountainApplyArgs,
   http?: FountainHttp,
 ): Promise<FountainApplySummary> {
-  const content = args.planContent ?? readFileSync(args.planPath!, "utf-8");
-  const plan = parsePlan(content);
+  const content = args.manifestContent ?? readFileSync(args.manifestPath!, "utf-8");
+  const resources = parseManifest(content);
 
   const endpoint = resolveEndpoint(args);
   const client = http ?? defaultFountainHttp(endpoint, resolveToken(args));
 
   const summary: FountainApplySummary = { created: [], updated: [], pruned: [], secretsUpserted: 0 };
-  const idByKindAndName = new Map<string, string>();
-  const live = new Map<string, Map<string, LiveResource>>();
-  for (const kind of APPLY_ORDER) {
-    live.set(kind, await listByName(client, kind));
-  }
 
-  for (const kind of APPLY_ORDER) {
-    for (const [entityName, entry] of Object.entries(plan)) {
-      if (entry.kind !== kind) continue;
+  if (resources.length > 0) {
+    const body = {
+      resources: resources.map((r) => ({ kind: r.kind, name: r.name, spec: toApplyPayload(r.spec) })),
+    };
+    const { status, json } = await client("POST", "/api/apply", body);
+    if (status !== 200) {
+      throw new Error(`fountainApply: POST /api/apply failed (${status})`);
+    }
+    const results = (json as { data?: { results?: ApplyResult[] } })?.data?.results ?? [];
 
-      const { body, secrets } = splitSecrets(entry.spec);
-      const payload: Record<string, unknown> = { ...body };
-      // Manifest identity: the fountain resource is named after the spec's
-      // own `name` when present, else the entity name.
-      const resourceName = typeof payload.name === "string" ? (payload.name as string) : entityName;
-      payload.name = resourceName;
+    const failures: string[] = [];
+    for (const r of results) {
+      const label = `${r.kind}/${r.name}`;
+      if (r.action === "created") summary.created.push(label);
+      else if (r.action === "updated") summary.updated.push(label);
+      else failures.push(`${label}: ${JSON.stringify(r.errors)}`);
 
-      // Agent environment ref: the plan carries the referenced *entity*
-      // name; resolve through the id map (created this run) or live state.
-      if (kind === "Agent" && typeof payload.environment === "string") {
-        const refEntity = payload.environment as string;
-        const refPlanEntry = plan[refEntity];
-        const refResourceName =
-          refPlanEntry && typeof refPlanEntry.spec.name === "string"
-            ? (refPlanEntry.spec.name as string)
-            : refEntity;
-        const envId =
-          idByKindAndName.get(`Environment/${refEntity}`) ??
-          live.get("Environment")?.get(refResourceName)?.id;
-        if (!envId) throw new Error(`fountainApply: agent "${entityName}" references unknown environment "${refEntity}"`);
-        delete payload.environment;
-        payload.environment_id = envId;
+      for (const s of r.secrets ?? []) {
+        if (s.action === "upserted") summary.secretsUpserted += 1;
+        else failures.push(`${label} secret "${s.key}": ${JSON.stringify(s.errors)}`);
       }
-
-      const existing = live.get(kind)!.get(resourceName);
-      let id: string;
-      if (existing) {
-        const { status } = await client("PUT", `/api/${KIND_PATHS[kind]}/${existing.id}`, payload);
-        if (status !== 200) throw new Error(`fountainApply: update ${kind} "${resourceName}" failed (${status})`);
-        id = existing.id;
-        summary.updated.push(`${kind}/${resourceName}`);
-      } else {
-        const { status, json } = await client("POST", `/api/${KIND_PATHS[kind]}`, payload);
-        if (status !== 201 && status !== 200) {
-          throw new Error(`fountainApply: create ${kind} "${resourceName}" failed (${status})`);
-        }
-        id = (json as { data?: { id?: string } })?.data?.id ?? "";
-        summary.created.push(`${kind}/${resourceName}`);
-      }
-      idByKindAndName.set(`${kind}/${entityName}`, id);
-
-      // Secrets sub-resource: upsert-always (values are write-only upstream).
-      if (secrets.length > 0 && (kind === "Environment" || kind === "Vault")) {
-        for (const secret of secrets) {
-          const { status } = await client("POST", `/api/${KIND_PATHS[kind]}/${id}/secrets`, secret);
-          if (status !== 200 && status !== 201) {
-            throw new Error(`fountainApply: secret upsert on ${kind} "${resourceName}" failed (${status})`);
-          }
-          summary.secretsUpserted += 1;
-        }
-      }
+    }
+    if (failures.length > 0) {
+      throw new Error(`fountainApply: ${failures.length} failure(s):\n  ${failures.join("\n  ")}`);
     }
   }
 
   if (args.prune) {
-    const planned = new Set<string>();
-    for (const [entityName, entry] of Object.entries(plan)) {
-      const resourceName =
-        typeof entry.spec.name === "string" ? (entry.spec.name as string) : entityName;
-      planned.add(`${entry.kind}/${resourceName}`);
+    const planned = new Set(resources.map((r) => `${r.kind}/${r.name}`));
+    const live = new Map<string, Map<string, LiveResource>>();
+    for (const kind of APPLY_ORDER) {
+      live.set(kind, await listByName(client, kind));
     }
     // Reverse order: agents first, then vaults, then environments.
     for (const kind of [...APPLY_ORDER].reverse()) {
