@@ -2,7 +2,14 @@ name: publish
 
 on:
   push:
-    tags: ['chant-v*']
+    # chant-v*        — whole-repo release (`just release`), every package bumped.
+    # lexicon-<n>-v*  — single-lexicon patch (`just release-lexicon <n>`). That
+    #   recipe has always tagged this pattern and echoed "publish workflow
+    #   triggered", but only chant-v* was matched here, so the tag pushed and
+    #   nothing published. Either tag reaches the same publish job; the
+    #   per-package skip-if-unchanged guard below means a single-lexicon tag
+    #   publishes only the package whose version actually moved.
+    tags: ['chant-v*', 'lexicon-*-v*']
     # GATED publish-on-merge (#528): uncomment to publish, on merge to main,
     # any package whose version changed. Only version-bumped packages publish
     # (per-package skip-if-unchanged in the publish job); the `test` gate is
