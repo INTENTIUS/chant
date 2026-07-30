@@ -1,4 +1,5 @@
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
+import { propsOf } from "../../entity-props";
 
 /**
  * FTN011: `unrestricted` networking is a warning by default.
@@ -16,7 +17,7 @@ export const noUnrestrictedNetworkingCheck: PostSynthCheck = {
     const diagnostics: PostSynthDiagnostic[] = [];
     for (const [name, entity] of ctx.entities) {
       if (entity.entityType !== "Fountain::V1::Environment") continue;
-      const props = entity as unknown as Record<string, unknown>;
+      const props = propsOf(entity);
       if (props.networking_type === "unrestricted") {
         diagnostics.push({
           checkId: "FTN011",

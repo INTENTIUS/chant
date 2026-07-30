@@ -1,4 +1,5 @@
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
+import { propsOf } from "../../entity-props";
 
 /**
  * FTN015: secret-shaped MCP server env keys must use `${VAR}` references.
@@ -21,7 +22,7 @@ export const mcpSecretEnvSubstitutionCheck: PostSynthCheck = {
 
     for (const [name, entity] of ctx.entities) {
       if (entity.entityType !== "Fountain::V1::Agent") continue;
-      const servers = (entity as unknown as { mcp_servers?: Record<string, unknown> }).mcp_servers;
+      const servers = propsOf(entity).mcp_servers as Record<string, unknown> | undefined;
       if (!servers || typeof servers !== "object") continue;
 
       for (const [serverName, server] of Object.entries(servers)) {

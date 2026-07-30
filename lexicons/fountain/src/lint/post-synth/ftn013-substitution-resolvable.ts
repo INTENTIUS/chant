@@ -1,4 +1,5 @@
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
+import { propsOf } from "../../entity-props";
 
 /**
  * FTN013: `${VAR}` references in an Agent's config should resolve against
@@ -52,17 +53,17 @@ export const substitutionResolvableCheck: PostSynthCheck = {
 
     for (const [name, entity] of ctx.entities) {
       if (entity.entityType !== "Fountain::V1::Agent") continue;
-      const agent = entity as unknown as Record<string, unknown>;
+      const agent = propsOf(entity);
 
       // Resolve the referenced environment entity when it is declared here.
       const envRef = agent.environment;
       let envEntity: Record<string, unknown> | undefined;
       if (envRef && typeof envRef === "object") {
-        envEntity = envRef as Record<string, unknown>;
+        envEntity = propsOf(envRef);
       } else if (typeof envRef === "string") {
         const byName = ctx.entities.get(envRef);
         if (byName?.entityType === "Fountain::V1::Environment") {
-          envEntity = byName as unknown as Record<string, unknown>;
+          envEntity = propsOf(byName);
         }
       }
       if (!envEntity) continue; // external environment — nothing to check against

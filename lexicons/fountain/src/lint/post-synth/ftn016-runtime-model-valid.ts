@@ -1,4 +1,5 @@
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
+import { propsOf } from "../../entity-props";
 
 /**
  * FTN016: runtime and model must be valid before apply.
@@ -20,7 +21,7 @@ export const runtimeModelValidCheck: PostSynthCheck = {
 
     for (const [name, entity] of ctx.entities) {
       if (entity.entityType !== "Fountain::V1::Agent") continue;
-      const agent = entity as unknown as { runtime?: unknown; model?: unknown };
+      const agent = propsOf(entity) as { runtime?: unknown; model?: unknown };
 
       if (typeof agent.runtime === "string" && !RUNTIMES.has(agent.runtime)) {
         diagnostics.push({

@@ -1,4 +1,5 @@
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
+import { propsOf } from "../../entity-props";
 
 /**
  * FTN010: Environments must state their networking intent.
@@ -17,7 +18,7 @@ export const networkingExplicitCheck: PostSynthCheck = {
 
     for (const [name, entity] of ctx.entities) {
       if (entity.entityType !== "Fountain::V1::Environment") continue;
-      const props = entity as unknown as Record<string, unknown>;
+      const props = propsOf(entity);
       if (props.networking_type === undefined) {
         diagnostics.push({
           checkId: "FTN010",

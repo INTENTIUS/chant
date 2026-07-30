@@ -11,3 +11,7 @@ export * from "./generated/index";
 // resolvable by name via loadActivities(["fountain"]).
 export { fountainApply, fountainRun, DEFAULT_FOUNTAIN_BASE_URL } from "./op/activities";
 export type { FountainApplyArgs, FountainApplySummary, FountainRunArgs, FountainRunResult } from "./op/activities";
+
+// Composites — secure-by-construction bundles.
+export { ConciergeStack } from "./composites/concierge-stack";
+export type { ConciergeStackOpts, ConciergeStackResources } from "./composites/concierge-stack";

@@ -1,4 +1,5 @@
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
+import { propsOf } from "../../entity-props";
 
 /**
  * FTN017: resource names must be unique per kind.
@@ -18,7 +19,7 @@ export const uniqueResourceNamesCheck: PostSynthCheck = {
 
     for (const [entityName, entity] of ctx.entities) {
       if (!entity.entityType.startsWith("Fountain::V1::")) continue;
-      const props = entity as unknown as { name?: unknown };
+      const props = propsOf(entity);
       const resourceName = typeof props.name === "string" ? props.name : entityName;
       const key = `${entity.entityType}/${resourceName}`;
       const first = seen.get(key);

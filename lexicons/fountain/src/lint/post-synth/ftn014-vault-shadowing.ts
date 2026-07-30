@@ -1,4 +1,5 @@
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
+import { propsOf } from "../../entity-props";
 
 /**
  * FTN014: a Vault key that collides with a declared Environment key.
@@ -33,7 +34,7 @@ export const vaultShadowingCheck: PostSynthCheck = {
     const vaults: Array<[string, Set<string>]> = [];
 
     for (const [name, entity] of ctx.entities) {
-      const spec = entity as unknown as Record<string, unknown>;
+      const spec = propsOf(entity);
       if (entity.entityType === "Fountain::V1::Environment") environments.push([name, keysOf(spec)]);
       if (entity.entityType === "Fountain::V1::Vault") vaults.push([name, keysOf(spec)]);
     }

@@ -3,6 +3,7 @@ import type { LintRule } from "@intentius/chant/lint/rule";
 import type { PostSynthCheck } from "@intentius/chant/lint/post-synth";
 import type { CompletionContext, CompletionItem, HoverContext, HoverInfo } from "@intentius/chant/lsp/types";
 import type { McpToolContribution, McpResourceContribution } from "@intentius/chant/mcp/types";
+import { createSkillsLoader } from "@intentius/chant/lexicon-plugin-helpers";
 import { fountainSerializer } from "./serializer";
 import { rules } from "./lint/rules";
 import { postSynthChecks } from "./lint/post-synth";
@@ -64,9 +65,37 @@ export const fountainPlugin: LexiconPlugin = {
     return postSynthChecks;
   },
 
-  skills() {
-    return []; // TODO: Add skills
-  },
+  skills: createSkillsLoader(import.meta.url, [
+    {
+      file: "chant-fountain.md",
+      name: "chant-fountain",
+      description:
+        "Declare, lint, and reconcile fountain Environments, Vaults, and Agents from a chant project",
+      triggers: [
+        { type: "context" as const, value: "fountain" },
+        { type: "context" as const, value: "founta.inevitable.fyi" },
+      ],
+    },
+    {
+      file: "chant-fountain-secrets.md",
+      name: "chant-fountain-secrets",
+      description: "Handle fountain secrets, env vars, and ${VAR} substitution safely from chant",
+      triggers: [
+        { type: "context" as const, value: "fountain secrets" },
+        { type: "context" as const, value: "vault" },
+      ],
+    },
+    {
+      file: "chant-fountain-locked-sandboxes.md",
+      name: "chant-fountain-locked-sandboxes",
+      description:
+        "Declare locked-down fountain environments for untrusted agents and run conversations against them",
+      triggers: [
+        { type: "context" as const, value: "sandbox" },
+        { type: "context" as const, value: "networking_type" },
+      ],
+    },
+  ]),
 
   mcpTools() {
     return []; // TODO: Implement MCP tools

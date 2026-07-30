@@ -1,5 +1,6 @@
 import type { Serializer, SerializerResult, Declarable } from "@intentius/chant";
 import { walkValue, type SerializerVisitor } from "@intentius/chant/serializer-walker";
+import { propsOf } from "./entity-props";
 
 /**
  * Fountain serializer — emits fountain's native manifest format
@@ -40,8 +41,7 @@ export const fountainSerializer: Serializer = {
       },
       propertyDeclarable(entity, walk) {
         const props: Record<string, unknown> = {};
-        for (const [key, val] of Object.entries(entity)) {
-          if (key === "entityType" || key === "lexicon") continue;
+        for (const [key, val] of Object.entries(propsOf(entity))) {
           if (val === undefined) continue;
           props[key] = walk(val);
         }
@@ -53,8 +53,7 @@ export const fountainSerializer: Serializer = {
     const plan: Record<string, { kind: string; spec: Record<string, unknown> }> = {};
     for (const [name, entity] of entities) {
       const spec: Record<string, unknown> = {};
-      for (const [key, val] of Object.entries(entity)) {
-        if (key === "entityType" || key === "lexicon") continue;
+      for (const [key, val] of Object.entries(propsOf(entity))) {
         if (val === undefined) continue;
         spec[key] = walkValue(val, entityNames, visitor);
       }

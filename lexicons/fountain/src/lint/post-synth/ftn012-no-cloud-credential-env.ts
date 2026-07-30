@@ -1,4 +1,5 @@
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
+import { propsOf } from "../../entity-props";
 
 /**
  * FTN012: no cloud-credential-shaped values in Environment env_vars.
@@ -22,7 +23,7 @@ export const noCloudCredentialEnvCheck: PostSynthCheck = {
 
     for (const [name, entity] of ctx.entities) {
       if (entity.entityType !== "Fountain::V1::Environment") continue;
-      const envVars = (entity as unknown as { env_vars?: Record<string, unknown> }).env_vars;
+      const envVars = propsOf(entity).env_vars as Record<string, unknown> | undefined;
       if (!envVars || typeof envVars !== "object") continue;
 
       for (const [key, value] of Object.entries(envVars)) {
