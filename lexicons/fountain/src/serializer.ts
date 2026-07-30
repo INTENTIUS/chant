@@ -1,4 +1,4 @@
-import type { Serializer, Declarable } from "@intentius/chant";
+import type { Serializer, SerializerResult, Declarable } from "@intentius/chant";
 import { walkValue, type SerializerVisitor } from "@intentius/chant/serializer-walker";
 
 /**
@@ -23,7 +23,7 @@ export const fountainSerializer: Serializer = {
   name: "fountain",
   rulePrefix: "FTN",
 
-  serialize(entities: Map<string, Declarable>): string {
+  serialize(entities: Map<string, Declarable>): string | SerializerResult {
     // Reverse map for reference resolution: Declarable instance → name.
     const entityNames = new Map<Declarable, string>();
     for (const [name, entity] of entities) {
@@ -50,6 +50,7 @@ export const fountainSerializer: Serializer = {
     };
 
     const docs: string[] = [];
+    const plan: Record<string, { kind: string; spec: Record<string, unknown> }> = {};
     for (const [name, entity] of entities) {
       const spec: Record<string, unknown> = {};
       for (const [key, val] of Object.entries(entity)) {
@@ -65,9 +66,16 @@ export const fountainSerializer: Serializer = {
         spec,
       };
       docs.push(toYaml(manifest));
+      plan[name] = { kind: manifest.kind, spec };
     }
 
-    return docs.join("---\n");
+    const yaml = docs.join("---\n");
+    if (docs.length === 0) return yaml;
+
+    // Primary output is the ejectable `fountain apply -f` YAML; the JSON
+    // sidecar is the fountainApply op's input (same data, no YAML parser
+    // needed on the apply side — the fly plan.json pattern).
+    return { primary: yaml, files: { "fountain-plan.json": JSON.stringify(plan, null, 2) } };
   },
 };
 

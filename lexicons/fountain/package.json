@@ -25,7 +25,12 @@
     },
     "./manifest": "./dist/manifest.json",
     "./meta": "./dist/meta.json",
-    "./types": "./dist/types/index.d.ts"
+    "./types": "./dist/types/index.d.ts",
+    "./op/activities": {
+      "development": "./src/op/activities/index.ts",
+      "types": "./dist/op/activities/index.d.ts",
+      "default": "./src/op/activities/index.ts"
+    }
   },
   "scripts": {
     "generate": "npx tsx src/codegen/generate-cli.ts",

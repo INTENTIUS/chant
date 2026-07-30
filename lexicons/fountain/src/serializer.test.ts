@@ -2,6 +2,10 @@ import { describe, expect, it } from "vitest";
 import { fountainSerializer } from "./serializer";
 import type { Declarable } from "@intentius/chant";
 
+function primary(result: unknown): string {
+  return typeof result === "string" ? result : (result as { primary: string }).primary;
+}
+
 function entity(entityType: string, props: Record<string, unknown>): Declarable {
   return { entityType, lexicon: "fountain", ...props } as unknown as Declarable;
 }
@@ -16,6 +20,15 @@ describe("fountain serializer", () => {
     expect(fountainSerializer.serialize(new Map())).toBe("");
   });
 
+  it("emits the fountain-plan.json sidecar for the applier", () => {
+    const env = entity("Fountain::V1::Environment", { name: "e" });
+    const result = fountainSerializer.serialize(new Map([["e", env]]));
+    expect(typeof result).toBe("object");
+    const files = (result as { files: Record<string, string> }).files;
+    const plan = JSON.parse(files["fountain-plan.json"]);
+    expect(plan.e.kind).toBe("Environment");
+  });
+
   it("emits a fountain manifest per entity", () => {
     const env = entity("Fountain::V1::Environment", {
       name: "concierge-env",
@@ -23,7 +36,7 @@ describe("fountain serializer", () => {
       networking_config: { allowed_hosts: ["github.com"] },
     });
 
-    const out = fountainSerializer.serialize(new Map([["conciergeEnv", env]])) as string;
+    const out = primary(fountainSerializer.serialize(new Map([["conciergeEnv", env]])));
 
     expect(out).toContain("apiVersion: fountain.dev/v1");
     expect(out).toContain("kind: Environment");
@@ -37,12 +50,14 @@ describe("fountain serializer", () => {
     const env = entity("Fountain::V1::Environment", { name: "e" });
     const vault = entity("Fountain::V1::Vault", { name: "v" });
 
-    const out = fountainSerializer.serialize(
-      new Map([
-        ["env", env],
-        ["vault", vault],
-      ]),
-    ) as string;
+    const out = primary(
+      fountainSerializer.serialize(
+        new Map([
+          ["env", env],
+          ["vault", vault],
+        ]),
+      ),
+    );
 
     expect(out).toContain("---\n");
     expect(out).toContain("kind: Environment");
@@ -58,12 +73,14 @@ describe("fountain serializer", () => {
       environment: env,
     });
 
-    const out = fountainSerializer.serialize(
-      new Map([
-        ["conciergeEnv", env],
-        ["researcher", agent],
-      ]),
-    ) as string;
+    const out = primary(
+      fountainSerializer.serialize(
+        new Map([
+          ["conciergeEnv", env],
+          ["researcher", agent],
+        ]),
+      ),
+    );
 
     expect(out).toContain("environment: conciergeEnv");
   });
@@ -74,7 +91,7 @@ describe("fountain serializer", () => {
       description: "true",
     });
 
-    const out = fountainSerializer.serialize(new Map([["v", vault]])) as string;
+    const out = primary(fountainSerializer.serialize(new Map([["v", vault]])));
     expect(out).toContain('description: "true"');
   });
 
@@ -86,7 +103,7 @@ describe("fountain serializer", () => {
       mcp_servers: { github: { env: { GITHUB_PERSONAL_ACCESS_TOKEN: "${GITHUB_PAT}" } } },
     });
 
-    const out = fountainSerializer.serialize(new Map([["a", agent]])) as string;
+    const out = primary(fountainSerializer.serialize(new Map([["a", agent]])));
     expect(out).toContain('GITHUB_PERSONAL_ACCESS_TOKEN: "${GITHUB_PAT}"');
   });
 });
