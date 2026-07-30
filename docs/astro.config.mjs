@@ -132,6 +132,7 @@ export default defineConfig({
 						{ label: 'Azure ARM', link: '/lexicons/azure/' },
 						{ label: 'GCP Config Connector', link: '/lexicons/gcp/' },
 						{ label: 'Fly Machines', link: '/lexicons/fly/' },
+						{ label: 'Fountain', link: '/lexicons/fountain/' },
 						{
 						label: 'Kubernetes',
 						items: [

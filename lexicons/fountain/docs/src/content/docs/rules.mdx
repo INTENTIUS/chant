@@ -1,0 +1,21 @@
+---
+title: "Lint Rules"
+description: "Lint rules and post-synth checks provided by the Fountain lexicon"
+---
+
+The Fountain lexicon provides **3** rules: 1 lint rules and 2 post-synth checks.
+
+## Lint Rules
+
+| ID | Severity | Category | Description |
+|----|----------|----------|-------------|
+| `FTN001` | error | security | no secret literals in fountain resource declarations. |
+
+## Post-Synth Checks
+
+Post-synth checks validate the serialized output after the build pipeline completes.
+
+| ID | Description |
+|----|-------------|
+| `FTN010` | Environment declarations must set networking_type explicitly |
+| `FTN012` | Environment env_vars must not carry cloud-credential-shaped keys or values |
