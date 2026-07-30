@@ -1,6 +1,6 @@
 {
   "name": "@intentius/chant-lexicon-fly",
-  "version": "0.33.0",
+  "version": "0.33.1",
   "type": "module",
   "files": [
     "src/",
