@@ -1,7 +1,7 @@
 import { describe, test, expect, vi } from "vitest";
 import { __searchInternals } from "./search";
 
-const { parseQuery, matchTerm, formatRow, explain, describeTerm } = __searchInternals;
+const { parseQuery, matchTerm, formatRow, explain, describeTerm, derivedSurface, availableAttrs } = __searchInternals;
 
 function node(id: string, kind: string, attrs: Record<string, unknown> = {}) {
   return { id, kind, lexicon: "aws", attrs } as never;
@@ -109,5 +109,51 @@ describe("search edge traversal", () => {
   test("describeTerm renders an edge term with direction and no-such-edge reason", () => {
     expect(describeTerm({ kind: "edge", a: "", dir: "out", sub: { kind: "attr", a: "MapPublicIpOnLaunch", b: "true" } } as never))
       .toBe("→attr:MapPublicIpOnLaunch=true (no such edge)");
+  });
+});
+
+describe("search surfaces what the graph derived", () => {
+  const insts = [
+    node("webServer", "AWS::EC2::Instance", { internetFacing: true, internetFacingVia: "rtb-1 → igw-1", effectiveIngress: ["tcp:22:0.0.0.0/0"] }),
+    node("privServer", "AWS::EC2::Instance", { internetFacing: false, effectiveIngress: [] }),
+  ];
+  const derivedIr = { nodes: insts, edges: [], groups: {}, derivedAttrs: { Instance: ["internetFacing", "effectiveIngress"] } } as never;
+
+  function capture(fn: () => void): string {
+    const lines: string[] = [];
+    const spy = vi.spyOn(console, "log").mockImplementation((s: string) => { lines.push(s); });
+    fn();
+    spy.mockRestore();
+    return lines.join("\n");
+  }
+
+  test("names derived facts the query did not use, and omits the ones it did", () => {
+    const out = capture(() => derivedSurface(parseQuery("kind:EC2::Instance attr:internetFacing=true") as never, insts as never, derivedIr));
+    expect(out).toContain("effectiveIngress");
+    expect(out).not.toContain("internetFacing");
+  });
+
+  test("says nothing when the query already used every derived fact", () => {
+    const q = "kind:EC2::Instance attr:internetFacing=true attr:effectiveIngress=tcp:22:0.0.0.0/0";
+    expect(capture(() => derivedSurface(parseQuery(q) as never, insts as never, derivedIr))).toBe("");
+  });
+
+  test("says nothing for a graph with no derived facts recorded", () => {
+    const plain = { nodes: insts, edges: [], groups: {} } as never;
+    expect(capture(() => derivedSurface(parseQuery("kind:EC2::Instance") as never, insts as never, plain))).toBe("");
+  });
+
+  test("a miss lists the attributes the queried kind actually carries", () => {
+    const out = capture(() => availableAttrs(parseQuery("kind:EC2::Instance attr:nosuchattr=1") as never, derivedIr));
+    expect(out).toContain("effectiveIngress");
+    expect(out).toContain("internetFacing");
+    expect(out).not.toContain("nosuchattr");
+  });
+
+  test("inclusion evidence is keyed off <attr>Via provenance, not a fixed attribute name", () => {
+    const byId = new Map(insts.map((n: { id: string }) => [n.id, n]));
+    const q = "attr:internetFacing=true";
+    const out = capture(() => explain(parseQuery(q) as never, [insts[0]] as never, derivedIr, byId as never, q));
+    expect(out).toContain("webServer internetFacing via rtb-1 → igw-1");
   });
 });

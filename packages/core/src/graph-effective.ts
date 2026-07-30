@@ -106,5 +106,11 @@ export function enrichEffectiveTopology(ir: GraphIR): GraphIR {
       attrs: { ...attrs, effectiveIngress, internetFacing: liveFacing || !!declaredVia, ...(via ? { internetFacingVia: via } : {}) },
     };
   });
-  return { ...ir, nodes };
+  // Record what this pass computed, so a caller can report the graph's derived surface
+  // without hardcoding attribute names. Only kinds actually enriched are listed.
+  const enriched = nodes.some((n) => isKind(n, "Instance"));
+  const derivedAttrs = enriched
+    ? { ...(ir.derivedAttrs ?? {}), Instance: ["internetFacing", "effectiveIngress"] }
+    : ir.derivedAttrs;
+  return { ...ir, nodes, ...(derivedAttrs ? { derivedAttrs } : {}) };
 }

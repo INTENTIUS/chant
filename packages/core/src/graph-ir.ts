@@ -191,6 +191,13 @@ export interface GraphIR {
   imports?: IRImport[];
   /** The CI/pipeline projection alongside the component graph (#989) — see {@link IRPipeline}. */
   pipeline?: IRPipeline;
+  /**
+   * Attributes chant computed rather than read back from the provider, keyed by the kind
+   * they were folded onto. An enrichment pass records what it derived here so callers can
+   * report the graph's own surface without knowing any attribute name — the set is whatever
+   * the passes produced, not a list maintained by hand.
+   */
+  derivedAttrs?: Record<string, string[]>;
 }
 
 /** A node is anything that serializes to a resource — not a property or output. */

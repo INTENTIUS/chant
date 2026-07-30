@@ -114,14 +114,43 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
   const matches = ir.nodes.filter((n) => terms.every((t) => matchTerm(n, t, ir, nodeById)));
   if (matches.length === 0) {
     console.log("(no matches)");
+    availableAttrs(terms, ir);
     if (args.explain) explain(terms, matches, ir, nodeById, query);
     return 0;
   }
   for (const n of matches) {
     console.log(formatRow(n, show));
   }
+  derivedSurface(terms, matches, ir);
   if (args.explain) explain(terms, matches, ir, nodeById, query);
   return 0;
+}
+
+/**
+ * Name the facts chant computed for the kinds in this result that the query did not use.
+ *
+ * A provider API can only return what it stores; chant additionally folds multi-hop topology
+ * onto a node, and a caller has no way to know that surface exists. Reporting it turns a
+ * one-shot query into a conversation with the graph — ask something, learn what else is
+ * knowable about the same resources, refine.
+ *
+ * The names come from {@link GraphIR.derivedAttrs}, recorded by whichever enrichment pass
+ * produced them. Nothing here knows what any attribute means or which question it answers;
+ * add a pass and its facts appear, remove one and they stop.
+ */
+function derivedSurface(terms: Term[], matches: IRNode[], ir: GraphIR): void {
+  const derived = ir.derivedAttrs;
+  if (!derived || matches.length === 0) return;
+  const used = new Set(terms.filter((t) => t.kind === "attr").map((t) => t.a));
+  const unused = new Set<string>();
+  for (const n of matches) {
+    for (const [kind, names] of Object.entries(derived)) {
+      if (!n.kind?.includes(kind)) continue;
+      for (const name of names) if (!used.has(name)) unused.add(name);
+    }
+  }
+  if (unused.size === 0) return;
+  console.log(`— also derived for these resources: ${[...unused].sort().join(", ")}`);
 }
 
 /**
@@ -143,11 +172,12 @@ function explain(terms: Term[], matches: IRNode[], ir: GraphIR, byId: Map<string
   // Inclusion evidence: for a derived fact a CLI can't easily re-verify
   // (internetFacing, resolved across the default VPC's routing), name WHY each
   // match qualifies, so the agent trusts the result instead of dropping it.
-  if (terms.some((t) => t.kind === "attr" && t.a === "internetFacing")) {
+  for (const t of terms) {
+    if (t.kind !== "attr") continue;
     for (const n of matches) {
-      const via = (n.attrs as Record<string, unknown> | undefined)?.["internetFacingVia"];
+      const via = (n.attrs as Record<string, unknown> | undefined)?.[`${t.a}Via`];
       const id = n.id.includes("::") ? n.id.slice(n.id.lastIndexOf("::") + 2) : n.id;
-      if (typeof via === "string") console.log(`  ✓ ${id} internet-facing via ${via}`);
+      if (typeof via === "string") console.log(`  ✓ ${id} ${t.a} via ${via}`);
     }
   }
   const shown = excluded.slice(0, 8);
@@ -157,6 +187,27 @@ function explain(terms: Term[], matches: IRNode[], ir: GraphIR, byId: Map<string
     console.log(`  · excluded ${id} — fails ${failing ? describeTerm(failing) : "(query)"}`);
   }
   if (excluded.length > shown.length) console.log(`  · …and ${excluded.length - shown.length} more excluded`);
+}
+
+/**
+ * On a miss, name the attributes the queried kind actually carries. A graph knows
+ * its own schema, so a caller who guessed an attribute name — or did not know a
+ * derived one existed — can see what is queryable instead of falling back to a
+ * lossy CLI sweep. Read off the nodes present, so it stays a property of the
+ * graph rather than of any expected answer: whatever the estate holds is what
+ * this lists, and it says nothing about which attribute answers a question.
+ */
+function availableAttrs(terms: Term[], ir: GraphIR): void {
+  const kindTerm = terms.find((t) => t.kind === "kind");
+  if (!kindTerm) return;
+  const of = ir.nodes.filter((n) => n.kind?.includes(kindTerm.a));
+  if (of.length === 0) return;
+  const names = new Set<string>();
+  for (const n of of) for (const k of Object.keys((n.attrs as Record<string, unknown>) ?? {})) names.add(k);
+  const queried = new Set(terms.filter((t) => t.kind === "attr").map((t) => t.a));
+  const unused = [...names].filter((k) => !queried.has(k)).sort();
+  if (unused.length === 0) return;
+  console.log(`  · ${of.length} ${kindTerm.a} node(s) carry: ${unused.join(", ")}`);
 }
 
 function describeTerm(t: Term): string {
@@ -260,4 +311,4 @@ function formatRow(n: IRNode, show: string[]): string {
 }
 
 /** Internals exposed for unit tests. */
-export const __searchInternals = { parseQuery, matchTerm, formatRow, explain, describeTerm };
+export const __searchInternals = { parseQuery, matchTerm, formatRow, explain, describeTerm, derivedSurface, availableAttrs };
