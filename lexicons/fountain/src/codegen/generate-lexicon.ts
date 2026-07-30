@@ -13,7 +13,13 @@ export interface FountainLexiconEntry {
   resourceType: string;
   kind: "resource" | "property";
   lexicon: "fountain";
-  constraints?: Record<string, PropertyConstraints>;
+  /**
+   * Per-property constraints. Named to match core's `LexiconEntry`
+   * contract (and the aws/azure peers) — core reserves bare `constraints`
+   * for the extension-constraint array, and the LSP providers read
+   * property names off this key.
+   */
+  propertyConstraints?: Record<string, PropertyConstraints>;
 }
 
 /**
@@ -37,7 +43,7 @@ export function generateLexiconJSON(results: FountainParseResult[], naming: Nami
         lexicon: "fountain",
       };
       if (propConstraints && Object.keys(propConstraints).length > 0) {
-        entry.constraints = propConstraints;
+        entry.propertyConstraints = propConstraints;
       }
       return entry;
     },

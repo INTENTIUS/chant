@@ -1,8 +1,7 @@
 ---
-title: Resources
-description: The three fountain workload kinds the lexicon declares.
+title: "Resources"
+description: "The three fountain workload kinds the lexicon declares."
 ---
-
 The lexicon types the three kinds `fountain apply` reconciles — the workload
 layer of [fountain](https://github.com/BinaryBourbon/fountain). Types are
 generated from fountain's served OpenAPI spec, so they track the real API.
@@ -14,14 +13,17 @@ status lifecycle, modeled as ops.
 A reusable sandbox baseline: packages, repos, setup script, env vars,
 encrypted secrets, and the networking policy. `networking_type` is
 `"unrestricted" | "limited"`; under `limited`, egress is restricted to
-`networking_config.allowed_hosts`. FTN010 requires the networking intent
-to be explicit.
+`networking_config.allowed_hosts`, and with no hosts (or an empty list) the
+sandbox denies all egress — a deny-all, not an allow-all. FTN010 requires the
+networking intent to be explicit.
 
 ## Vault
 
 A bag of env-var overrides selected at conversation create. Vault values
 win on key collision with the environment — which is why agents can carry
-a vault allowlist upstream (fountain#136).
+a vault allowlist upstream (fountain#136). `allowed_vault_ids` on an Agent is
+three-state: `null` allows any tenant vault, `[]` forbids all, a list is an
+allowlist.
 
 ## Agent
 

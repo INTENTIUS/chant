@@ -1,0 +1,178 @@
+/**
+ * Coverage analysis for the fountain lexicon.
+ *
+ * The shared `computeCoverage` measures CloudFormation-shaped dimensions
+ * (lifecycle flags, return attributes, extension constraints) that a
+ * three-kind OpenAPI lexicon has no analog for — it would report 0% on
+ * everything and mean nothing. What fountain actually needs to know is
+ * whether its generated surface still matches upstream, because the spec
+ * is a rolling endpoint with no release tag to pin (see spec/fetch.ts):
+ *
+ *   1. Property coverage — request-schema properties per modeled kind vs
+ *      what the committed surface baseline exposes. A gap means upstream
+ *      added a field and `just generate` has not been rerun.
+ *   2. Kind coverage — which request-shaped schemas are modeled as
+ *      declarables, and which are deliberately not (with the reason), so
+ *      an unmodeled kind is a decision on record rather than an omission.
+ */
+
+import { readFileSync } from "fs";
+import { join, dirname } from "path";
+import { fileURLToPath } from "url";
+import { fetchSchemas } from "./spec/fetch";
+import { parseFountainOpenAPI, fountainShortName } from "./spec/parse";
+
+/** Request schemas with no typed resource, and why. */
+export const EXCLUDED_KINDS: Record<string, string> = {
+  ConversationCreateRequest: "conversations are runs, not declarables — started by the fountainRun op",
+  PromptRequest: "turn-level input inside a conversation run",
+  SecretRequest: "secrets are a write-only sub-resource — upserted by fountainApply",
+  VaultSecretRequest: "secrets are a write-only sub-resource — upserted by fountainApply",
+};
+
+export interface KindCoverage {
+  kind: string;
+  specProps: number;
+  modeledProps: number;
+  /** In the upstream request schema, absent from the generated surface. */
+  missing: string[];
+  /** In the generated surface, absent from the upstream request schema. */
+  stale: string[];
+}
+
+export interface FountainCoverageReport {
+  kinds: KindCoverage[];
+  /** Request schemas modeled as declarables. */
+  modeledKinds: string[];
+  /** Request schemas deliberately not modeled → reason. */
+  excludedKinds: Record<string, string>;
+  /** Request schemas neither modeled nor on the exclusion list. */
+  unaccountedKinds: string[];
+  /** Modeled properties as a percentage of upstream request properties. */
+  overallPct: number;
+}
+
+interface SurfaceSnapshot {
+  entries: Record<string, { kind: string; props?: string[] }>;
+}
+
+/** Strip the `name:required` encoding the surface baseline uses. */
+function surfaceProps(entry: { props?: string[] }): string[] {
+  return (entry.props ?? []).map((p) => p.split(":")[0]);
+}
+
+export function computeFountainCoverage(
+  specJSON: string | Buffer,
+  surface: SurfaceSnapshot,
+): FountainCoverageReport {
+  const parsed = parseFountainOpenAPI(specJSON);
+
+  const kinds: KindCoverage[] = [];
+  const modeledKinds: string[] = [];
+
+  for (const result of parsed) {
+    if (result.isProperty) continue;
+    const kind = fountainShortName(result.resource.typeName);
+    modeledKinds.push(kind);
+
+    const specNames = result.resource.properties.map((p) => p.name);
+    const entry = surface.entries[kind];
+    const modeledNames = entry ? surfaceProps(entry) : [];
+
+    const modeled = new Set(modeledNames);
+    const spec = new Set(specNames);
+
+    kinds.push({
+      kind,
+      specProps: specNames.length,
+      modeledProps: specNames.filter((n) => modeled.has(n)).length,
+      missing: specNames.filter((n) => !modeled.has(n)),
+      stale: modeledNames.filter((n) => !spec.has(n)),
+    });
+  }
+
+  // Which upstream request schemas are neither modeled nor excluded?
+  const schemas = Object.keys(
+    (JSON.parse(typeof specJSON === "string" ? specJSON : specJSON.toString("utf-8")) as {
+      components?: { schemas?: Record<string, unknown> };
+    }).components?.schemas ?? {},
+  );
+  const modeledRequests = new Set(modeledKinds.map((k) => `${k}Request`));
+  const unaccountedKinds = schemas.filter(
+    (name) =>
+      name.endsWith("Request") && !modeledRequests.has(name) && !(name in EXCLUDED_KINDS),
+  );
+
+  const totalSpec = kinds.reduce((n, k) => n + k.specProps, 0);
+  const totalModeled = kinds.reduce((n, k) => n + k.modeledProps, 0);
+
+  return {
+    kinds,
+    modeledKinds,
+    excludedKinds: EXCLUDED_KINDS,
+    unaccountedKinds,
+    overallPct: totalSpec === 0 ? 0 : Math.round((totalModeled / totalSpec) * 100),
+  };
+}
+
+export function formatSummary(report: FountainCoverageReport): string {
+  const parts = report.kinds.map((k) => `${k.kind} ${k.modeledProps}/${k.specProps}`);
+  return `Coverage: ${report.overallPct}% of upstream request properties (${parts.join(", ")}).`;
+}
+
+export function formatVerbose(report: FountainCoverageReport): string {
+  const lines = [formatSummary(report), ""];
+
+  for (const k of report.kinds) {
+    lines.push(`${k.kind}: ${k.modeledProps}/${k.specProps} properties`);
+    if (k.missing.length > 0) {
+      lines.push(`  missing (upstream has, lexicon does not): ${k.missing.join(", ")}`);
+    }
+    if (k.stale.length > 0) {
+      lines.push(`  stale (lexicon has, upstream does not): ${k.stale.join(", ")}`);
+    }
+  }
+
+  lines.push("", "Not modeled as declarables:");
+  for (const [name, reason] of Object.entries(report.excludedKinds)) {
+    lines.push(`  ${name} — ${reason}`);
+  }
+
+  if (report.unaccountedKinds.length > 0) {
+    lines.push(
+      "",
+      `Unaccounted request schemas (model them or add to EXCLUDED_KINDS): ${report.unaccountedKinds.join(", ")}`,
+    );
+  }
+
+  return lines.join("\n");
+}
+
+/** Run coverage analysis for the fountain lexicon. */
+export async function analyzeFountainCoverage(opts?: {
+  basePath?: string;
+  verbose?: boolean;
+  minOverall?: number;
+}): Promise<FountainCoverageReport> {
+  const basePath = opts?.basePath ?? dirname(dirname(fileURLToPath(import.meta.url)));
+
+  const specs = await fetchSchemas();
+  const specJSON = specs.get("fountain-openapi.json");
+  if (!specJSON) throw new Error("fountain coverage: no spec returned by fetchSchemas");
+
+  const surface = JSON.parse(
+    readFileSync(join(basePath, "surface.snapshot.json"), "utf-8"),
+  ) as SurfaceSnapshot;
+
+  const report = computeFountainCoverage(specJSON, surface);
+
+  console.error(opts?.verbose ? formatVerbose(report) : formatSummary(report));
+
+  if (typeof opts?.minOverall === "number" && report.overallPct < opts.minOverall) {
+    throw new Error(
+      `Coverage ${report.overallPct}% is below the ${opts.minOverall}% threshold`,
+    );
+  }
+
+  return report;
+}

@@ -1,14 +1,14 @@
 import { describe, expect, it } from "vitest";
 import type { PostSynthContext } from "@intentius/chant/lint/post-synth";
 import type { Declarable } from "@intentius/chant";
-import {
-  noUnrestrictedNetworkingCheck,
-  substitutionResolvableCheck,
-  vaultShadowingCheck,
-  mcpSecretEnvSubstitutionCheck,
-  runtimeModelValidCheck,
-  uniqueResourceNamesCheck,
-} from "./index";
+// From the check modules, not the barrel — the barrel is generated and
+// exports only the `postSynthChecks` array.
+import { noUnrestrictedNetworkingCheck } from "./ftn011-no-unrestricted-networking";
+import { substitutionResolvableCheck } from "./ftn013-substitution-resolvable";
+import { vaultShadowingCheck } from "./ftn014-vault-shadowing";
+import { mcpSecretEnvSubstitutionCheck } from "./ftn015-mcp-secret-env-substitution";
+import { runtimeModelValidCheck } from "./ftn016-runtime-model-valid";
+import { uniqueResourceNamesCheck } from "./ftn017-unique-resource-names";
 
 function ctx(entities: Record<string, Record<string, unknown>>): PostSynthContext {
   const map = new Map<string, Declarable>();

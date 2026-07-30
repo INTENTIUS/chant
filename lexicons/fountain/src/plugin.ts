@@ -3,12 +3,18 @@ import type { LintRule } from "@intentius/chant/lint/rule";
 import type { PostSynthCheck } from "@intentius/chant/lint/post-synth";
 import type { CompletionContext, CompletionItem, HoverContext, HoverInfo } from "@intentius/chant/lsp/types";
 import type { McpToolContribution, McpResourceContribution } from "@intentius/chant/mcp/types";
-import { createSkillsLoader } from "@intentius/chant/lexicon-plugin-helpers";
+import {
+  createSkillsLoader,
+  createDiffTool,
+  createCatalogResource,
+} from "@intentius/chant/lexicon-plugin-helpers";
 import { fountainSerializer } from "./serializer";
 import { rules } from "./lint/rules";
 import { postSynthChecks } from "./lint/post-synth";
+import { fountainAuditCatalog } from "./lint/audit-catalog";
 import { fountainReferenceCatalog } from "./reference-catalog";
 import { detectFountainTemplate } from "./detect";
+import { fountainInitTemplates } from "./init-templates";
 import { FountainParser } from "./import/parser";
 import { FountainGenerator } from "./import/generator";
 import { completions } from "./lsp/completions";
@@ -38,8 +44,8 @@ export const fountainPlugin: LexiconPlugin = {
   },
 
   async coverage(options?: { verbose?: boolean; minOverall?: number }): Promise<void> {
-    // TODO: Implement coverage analysis
-    console.error("Coverage analysis not yet implemented");
+    const { analyzeFountainCoverage } = await import("./coverage");
+    await analyzeFountainCoverage(options);
   },
 
   async package(options?: { verbose?: boolean; force?: boolean }): Promise<void> {
@@ -64,6 +70,8 @@ export const fountainPlugin: LexiconPlugin = {
   postSynthChecks() {
     return postSynthChecks;
   },
+
+  auditCatalog: () => fountainAuditCatalog,
 
   skills: createSkillsLoader(import.meta.url, [
     {
@@ -97,12 +105,30 @@ export const fountainPlugin: LexiconPlugin = {
     },
   ]),
 
-  mcpTools() {
-    return []; // TODO: Implement MCP tools
+  mcpTools(): McpToolContribution[] {
+    return [
+      createDiffTool(
+        fountainSerializer,
+        "Compare current fountain build output (fountain manifests + fountain-plan.json) against previous version",
+        "fountain",
+      ),
+    ];
   },
 
-  mcpResources() {
-    return []; // TODO: Implement MCP resources
+  mcpResources(): McpResourceContribution[] {
+    return [
+      createCatalogResource(
+        import.meta.url,
+        "Fountain Resource Types",
+        "The three fountain workload kinds declarable from chant: Environment, Vault, Agent (conversations are runs, started by the fountainRun op)",
+        "lexicon-fountain.json",
+        "fountain",
+      ),
+    ];
+  },
+
+  initTemplates(template?: string) {
+    return fountainInitTemplates(template);
   },
 
   detectTemplate(data: unknown) {

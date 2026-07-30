@@ -4,17 +4,41 @@ import starlight from '@astrojs/starlight';
 import rehypeBaseUrl from './src/rehype-base-url.mjs';
 
 export default defineConfig({
+  base: '/chant/lexicons/fountain/',
+  markdown: {
+    rehypePlugins: [[rehypeBaseUrl, { base: '/chant/lexicons/fountain/', projectBase: '/chant' }]],
+  },
   integrations: [
     starlight({
       title: 'Fountain',
       sidebar: [
             {
                   "label": "← chant docs",
-                  "link": "/"
+                  "link": "../../"
             },
             {
                   "label": "Overview",
                   "slug": "index"
+            },
+            {
+                  "label": "Resources",
+                  "slug": "resources"
+            },
+            {
+                  "label": "Composites",
+                  "slug": "composites"
+            },
+            {
+                  "label": "Ops",
+                  "slug": "ops"
+            },
+            {
+                  "label": "Drift and Adoption",
+                  "slug": "adoption"
+            },
+            {
+                  "label": "Skills",
+                  "slug": "skills"
             },
             {
                   "label": "Lint Rules",

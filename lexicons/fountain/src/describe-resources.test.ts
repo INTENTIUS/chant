@@ -25,6 +25,55 @@ function opts(
   };
 }
 
+describe("list caching under the observer harness", () => {
+  it("lists each kind once no matter how many entities of it are declared", async () => {
+    const calls: string[] = [];
+    const counting: FountainHttp = async (method, path) => {
+      calls.push(`${method} ${path}`);
+      return { status: 200, json: { data: [] } };
+    };
+
+    await describeResources(
+      opts(
+        entities({
+          a: { entityType: "Fountain::V1::Environment" },
+          b: { entityType: "Fountain::V1::Environment" },
+          c: { entityType: "Fountain::V1::Environment" },
+          d: { entityType: "Fountain::V1::Agent" },
+        }),
+      ),
+      counting,
+    );
+
+    // The harness reads entities concurrently, so the cache must hold the
+    // in-flight promise — caching the settled result would let three
+    // simultaneous reads each fire their own list.
+    expect(calls.filter((c) => c === "GET /api/environments")).toHaveLength(1);
+    expect(calls.filter((c) => c === "GET /api/agents")).toHaveLength(1);
+  });
+
+  it("marks only the failed kind read-failed", async () => {
+    const partial: FountainHttp = async (_method, path) =>
+      path === "/api/agents" ? { status: 500, json: null } : { status: 200, json: { data: [] } };
+
+    const result = await describeResources(
+      opts(
+        entities({
+          env: { entityType: "Fountain::V1::Environment" },
+          agent: { entityType: "Fountain::V1::Agent" },
+        }),
+      ),
+      partial,
+    );
+
+    expect(result.unobserved?.agent?.reason).toBe("read-failed");
+    // The environment was genuinely asked about and reported missing —
+    // absent, not unobserved, so it stays eligible for `create`.
+    expect(result.unobserved?.env).toBeUndefined();
+    expect(result.resources?.env).toBeUndefined();
+  });
+});
+
 function routedHttp(routes: Record<string, { status: number; json?: unknown }>): FountainHttp {
   return async (method, path) => {
     const hit = routes[`${method} ${path}`];

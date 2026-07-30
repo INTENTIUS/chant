@@ -1,14 +1,21 @@
+import { createRequire } from "module";
 import type { CompletionContext, CompletionItem } from "@intentius/chant/lsp/types";
-// import { LexiconIndex, lexiconCompletions } from "@intentius/chant/lsp/lexicon-providers";
+import { LexiconIndex, lexiconCompletions, type LexiconEntry } from "@intentius/chant/lsp/lexicon-providers";
+const require = createRequire(import.meta.url);
+
+let cachedIndex: LexiconIndex | null = null;
+
+function getIndex(): LexiconIndex {
+  if (cachedIndex) return cachedIndex;
+  const data = require("../generated/lexicon-fountain.json") as Record<string, LexiconEntry>;
+  cachedIndex = new LexiconIndex(data);
+  return cachedIndex;
+}
 
 /**
- * Provide LSP completions for fountain resources.
- *
- * TODO: Build a LexiconIndex from your generated lexicon data
- * and delegate to lexiconCompletions().
+ * Provide LSP completions for fountain resources — class names after
+ * `new `, property names inside a constructor.
  */
 export function completions(ctx: CompletionContext): CompletionItem[] {
-  // const index = new LexiconIndex(lexiconData);
-  // return lexiconCompletions(ctx, index, "fountain resource");
-  return [];
+  return lexiconCompletions(ctx, getIndex(), "fountain resource");
 }
