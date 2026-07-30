@@ -1,8 +1,29 @@
-export { networkingExplicitCheck } from "./ftn010-networking-explicit";
-export { noCloudCredentialEnvCheck } from "./ftn012-no-cloud-credential-env";
-
-import { networkingExplicitCheck } from "./ftn010-networking-explicit";
-import { noCloudCredentialEnvCheck } from "./ftn012-no-cloud-credential-env";
 import type { PostSynthCheck } from "@intentius/chant/lint/post-synth";
+import { networkingExplicitCheck } from "./ftn010-networking-explicit";
+import { noUnrestrictedNetworkingCheck } from "./ftn011-no-unrestricted-networking";
+import { noCloudCredentialEnvCheck } from "./ftn012-no-cloud-credential-env";
+import { substitutionResolvableCheck } from "./ftn013-substitution-resolvable";
+import { vaultShadowingCheck } from "./ftn014-vault-shadowing";
+import { mcpSecretEnvSubstitutionCheck } from "./ftn015-mcp-secret-env-substitution";
+import { runtimeModelValidCheck } from "./ftn016-runtime-model-valid";
+import { uniqueResourceNamesCheck } from "./ftn017-unique-resource-names";
 
-export const postSynthChecks: PostSynthCheck[] = [networkingExplicitCheck, noCloudCredentialEnvCheck];
+export { networkingExplicitCheck } from "./ftn010-networking-explicit";
+export { noUnrestrictedNetworkingCheck } from "./ftn011-no-unrestricted-networking";
+export { noCloudCredentialEnvCheck } from "./ftn012-no-cloud-credential-env";
+export { substitutionResolvableCheck } from "./ftn013-substitution-resolvable";
+export { vaultShadowingCheck } from "./ftn014-vault-shadowing";
+export { mcpSecretEnvSubstitutionCheck } from "./ftn015-mcp-secret-env-substitution";
+export { runtimeModelValidCheck } from "./ftn016-runtime-model-valid";
+export { uniqueResourceNamesCheck } from "./ftn017-unique-resource-names";
+
+export const postSynthChecks: PostSynthCheck[] = [
+  networkingExplicitCheck,
+  noUnrestrictedNetworkingCheck,
+  noCloudCredentialEnvCheck,
+  substitutionResolvableCheck,
+  vaultShadowingCheck,
+  mcpSecretEnvSubstitutionCheck,
+  runtimeModelValidCheck,
+  uniqueResourceNamesCheck,
+];
