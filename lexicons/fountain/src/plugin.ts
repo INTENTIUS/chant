@@ -81,7 +81,7 @@ export const fountainPlugin: LexiconPlugin = {
         "Declare, lint, and reconcile fountain Environments, Vaults, and Agents from a chant project",
       triggers: [
         { type: "context" as const, value: "fountain" },
-        { type: "context" as const, value: "founta.inevitable.fyi" },
+        { type: "context" as const, value: "fountain.inevitable.fyi" },
       ],
     },
     {
