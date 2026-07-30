@@ -7,6 +7,9 @@ import { fountainSerializer } from "./serializer";
 import { rules } from "./lint/rules";
 import { postSynthChecks } from "./lint/post-synth";
 import { fountainReferenceCatalog } from "./reference-catalog";
+import { detectFountainTemplate } from "./detect";
+import { FountainParser } from "./import/parser";
+import { FountainGenerator } from "./import/generator";
 import { completions } from "./lsp/completions";
 import { hover } from "./lsp/hover";
 
@@ -74,7 +77,20 @@ export const fountainPlugin: LexiconPlugin = {
   },
 
   detectTemplate(data: unknown) {
-    return false; // TODO: Detect if a template belongs to this lexicon
+    return detectFountainTemplate(data);
+  },
+
+  templateParser() {
+    return new FountainParser();
+  },
+
+  templateGenerator() {
+    return new FountainGenerator();
+  },
+
+  async exportResources(options) {
+    const { exportResources } = await import("./export-resources");
+    return exportResources(options);
   },
 
   async describeResources(options) {
