@@ -46,7 +46,7 @@ function kebabToCamel(s: string): string {
   return s.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase());
 }
 
-/** The 7 in-scope lexicons. helm / temporal / forgejo are excluded. */
+/** The in-scope lexicons. helm / temporal / forgejo are excluded (no upstream spec). */
 export const IN_SCOPE_LEXICONS: readonly SupportedLexicon[] = [
   "k8s",
   "gcp",
@@ -55,6 +55,7 @@ export const IN_SCOPE_LEXICONS: readonly SupportedLexicon[] = [
   "aws",
   "azure",
   "github",
+  "fly",
 ] as const;
 
 export interface LexiconUpgradeOpConfig {
