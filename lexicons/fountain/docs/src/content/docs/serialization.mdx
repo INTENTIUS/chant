@@ -1,0 +1,36 @@
+---
+title: "Serialization"
+description: "Output format for the Fountain lexicon"
+---
+
+The fountain lexicon serializes to fountain's own manifest YAML plus a `fountain-plan.json` sidecar.
+
+## Manifests
+
+Each declared resource becomes a manifest document with `apiVersion: fountain.dev/v1`:
+
+```yaml
+apiVersion: fountain.dev/v1
+kind: Environment
+metadata:
+  name: team-env
+spec:
+  networking_type: limited
+  networking_config:
+    allowed_hosts:
+      - github.com
+```
+
+The output is ejectable — `fountain apply -f` accepts it verbatim, so adopting chant here does not trap the manifests behind chant.
+
+## The plan sidecar
+
+`fountain-plan.json` is entity name → `{ kind, spec }`. The `fountainApply` activity reconciles from it directly against the REST API, so nothing on the apply side parses YAML. Apply order is Environment → Vault → Agent; an agent's `environment` reference carries the entity name and is resolved to the live id at apply.
+
+## Ownership
+
+Resources carrying `metadata."managed-by": chant` are chant-owned. That marker gates the opt-in prune (`fountainApply` deletes only owned resources absent from the plan) and the `--owned` filter on drift and live export. Set it on every declaration you want reconciled.
+
+## Secrets
+
+`spec.secrets` entries are split out of the resource body and upserted through the secrets sub-resource. Values are write-only upstream, so this is upsert-always — a changed value cannot be detected, only overwritten.

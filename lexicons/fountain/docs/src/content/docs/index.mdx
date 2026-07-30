@@ -1,0 +1,67 @@
+---
+title: "Fountain"
+description: "Fountain workload primitives (Environment, Vault, Agent) as typed estate."
+---
+
+The **fountain** lexicon declares [fountain](https://github.com/BinaryBourbon/fountain)'s workload layer as typed chant resources. fountain runs coding agents in sandboxed VMs; its three declarable kinds are `Environment` (sandbox baseline), `Vault` (env-var overrides), and `Agent` (a runnable agent config).
+
+Types are generated from fountain's served OpenAPI spec, so they track the real API.
+
+Install it with:
+
+```bash
+npm install --save-dev @intentius/chant-lexicon-fountain
+```
+
+## Quick Start
+
+```typescript
+import { Environment, Agent } from "@intentius/chant-lexicon-fountain";
+
+export const env = new Environment({
+  name: "team-env",
+  networking_type: "limited",                    // FTN010 requires explicit intent
+  networking_config: { allowed_hosts: ["github.com"] },
+  metadata: { "managed-by": "chant" },           // enables owned-only reconcile/prune
+});
+
+export const helper = new Agent({
+  name: "helper",
+  model: "anthropic/claude-sonnet-4-6",
+  runtime: "claude",
+  environment: env,                              // typed ref — dangling name = build error
+});
+```
+
+## The loop
+
+1. `chant build` — synthesize and lint. The FTN rules catch open networking, credential literals, and unresolvable `${VAR}` references before review.
+2. `chant run <apply op>` or call `fountainApply` — reconcile against the API. Idempotent by name.
+3. `chant lifecycle diff --live` — drift. A UI edit to an owned Environment shows up here.
+4. `chant import --from` — adopt UI-built resources into typed files.
+
+## Endpoint and auth
+
+`FOUNTAIN_ENDPOINT` (defaults to the hosted instance) and `FOUNTAIN_TOKEN`. Mint a token via `POST /api/auth/token` with email and password, or from the account UI. The same code applies to a local `mix phx.server` fountain by pointing `FOUNTAIN_ENDPOINT` at it — registration and token mint work headless, so CI needs no browser.
+
+## At a Glance
+
+| Metric | Count |
+|--------|-------|
+| Resources | 3 |
+| Property types | 1 |
+| Services | 1 |
+| Intrinsic functions | 0 |
+| Pseudo-parameters | 0 |
+| Lint rules | 9 |
+
+**Lexicon version:** 0.0.1  
+**Namespace:** `Fountain`
+
+- [Resources](./resources)
+- [Composites](./composites)
+- [Ops](./ops)
+- [Drift and Adoption](./adoption)
+- [Skills](./skills)
+- [Lint Rules](./rules) — 9 rules
+- [Serialization](./serialization) — output format details

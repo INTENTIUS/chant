@@ -1,0 +1,61 @@
+{
+  "name": "@intentius/chant-lexicon-fountain",
+  "version": "0.33.0",
+  "type": "module",
+  "description": "Fountain lexicon for chant — sandboxed agent environments, vaults, and agents as typed estate",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/INTENTIUS/chant.git",
+    "directory": "lexicons/fountain"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "src/",
+    "dist/"
+  ],
+  "exports": {
+    ".": {
+      "development": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./src/index.ts"
+    },
+    "./*": {
+      "development": "./src/*.ts",
+      "types": "./dist/*.d.ts",
+      "default": "./src/*.ts"
+    },
+    "./lint/post-synth": {
+      "development": "./src/lint/post-synth/index.ts",
+      "types": "./dist/lint/post-synth/index.d.ts",
+      "default": "./src/lint/post-synth/index.ts"
+    },
+    "./manifest": "./dist/manifest.json",
+    "./meta": "./dist/meta.json",
+    "./types": "./dist/types/index.d.ts",
+    "./op/activities": {
+      "development": "./src/op/activities/index.ts",
+      "types": "./dist/op/activities/index.d.ts",
+      "default": "./src/op/activities/index.ts"
+    }
+  },
+  "scripts": {
+    "generate": "npx tsx src/codegen/generate-cli.ts",
+    "validate": "npx tsx src/validate-cli.ts",
+    "docs": "npx tsx src/codegen/docs-cli.ts",
+    "build": "tsc -p tsconfig.build.json && tsc-alias -p tsconfig.build.json && find dist -type f \\( -name \"*.js\" -o -name \"*.js.map\" \\) -delete",
+    "prepack": "npm run generate && npm run bundle && npm run validate && npm run build",
+    "bundle": "tsx src/package-cli.ts"
+  },
+  "peerDependencies": {
+    "@intentius/chant": "^0.33.0",
+    "typescript": "^5.9.3"
+  },
+  "devDependencies": {
+    "@intentius/chant": "*",
+    "tsc-alias": "^1.8.17",
+    "typescript": "^5.9.3"
+  }
+}

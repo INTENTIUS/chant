@@ -1,0 +1,27 @@
+---
+title: "Composites"
+description: "ConciergeStack — a locked-down Environment and Agent pair."
+---
+## ConciergeStack
+
+An Environment + Agent pair with the secure-by-construction defaults for agents that touch anything sensitive:
+
+```typescript
+import { ConciergeStack } from "@intentius/chant-lexicon-fountain";
+
+export const { environment, agent } = ConciergeStack({
+  name: "concierge",
+  model: "anthropic/claude-sonnet-4-6",
+  allowedHosts: ["registry.npmjs.org", "github.com"],
+});
+```
+
+| Default | Effect |
+|---|---|
+| `networking_type: limited` with an empty allowlist | deny-all egress — fountain's isolation mode |
+| `allowed_vault_ids: []` | no conversation may override the reviewed environment at spawn |
+| `managed-by: chant` on both | owned-only reconcile, prune, and drift filtering see them |
+
+Every default is the closed one, so loosening any of it is a visible, reviewable act: pass an allowlist, pass vault ids, or drop to the raw classes.
+
+Give such a sandbox **no cloud credentials of any kind** — anything readable inside it is exfiltratable by prompt injection. Services the agent needs live outside the sandbox behind their own auth; the sandbox gets at most a conversation-scoped token.

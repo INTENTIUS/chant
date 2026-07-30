@@ -69,7 +69,7 @@ verify_tarball_contains /tarballs/core.tgz "package/bin/chant" "core tarball con
 verify_tarball_contains /tarballs/core.tgz "package/src/cli/main.ts" "core tarball contains CLI entrypoint"
 verify_tarball_contains /tarballs/core.tgz "package/src/index.ts" "core tarball contains main export"
 
-for lex in aws azure gcp gitlab k8s docker fly; do
+for lex in aws azure gcp gitlab k8s docker fly fountain; do
   verify_tarball_contains "/tarballs/lexicon-$lex.tgz" "package/dist/manifest.json" "$lex tarball contains dist/manifest.json"
   verify_tarball_contains "/tarballs/lexicon-$lex.tgz" "package/dist/meta.json" "$lex tarball contains dist/meta.json"
   verify_tarball_contains "/tarballs/lexicon-$lex.tgz" "package/dist/types/index.d.ts" "$lex tarball contains dist/types/index.d.ts"

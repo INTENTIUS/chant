@@ -1,0 +1,9 @@
+{
+  "name": "@intentius/chant-lexicon-fountain-example-getting-started",
+  "version": "0.0.1",
+  "private": true,
+  "dependencies": {
+    "@intentius/chant-lexicon-fountain": "workspace:*",
+    "@intentius/chant": "workspace:*"
+  }
+}

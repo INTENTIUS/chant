@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-07-30T05:02:31.958Z",
+  "entries": {
+    "Agent": {
+      "kind": "resource",
+      "resourceType": "Fountain::V1::Agent",
+      "props": [
+        "allowed_vault_ids:false",
+        "description:false",
+        "environment_id:false",
+        "mcp_servers:false",
+        "metadata:false",
+        "model:true",
+        "name:true",
+        "runtime:true",
+        "skills:false",
+        "system:false"
+      ]
+    },
+    "Environment": {
+      "kind": "resource",
+      "resourceType": "Fountain::V1::Environment",
+      "props": [
+        "env_vars:false",
+        "metadata:false",
+        "name:true",
+        "networking_config:false",
+        "networking_type:false",
+        "packages:false",
+        "repositories:false",
+        "setup_script:false"
+      ]
+    },
+    "Repository": {
+      "kind": "property",
+      "resourceType": "Fountain::V1::Repository"
+    },
+    "Vault": {
+      "kind": "resource",
+      "resourceType": "Fountain::V1::Vault",
+      "props": [
+        "description:false",
+        "metadata:false",
+        "name:true"
+      ]
+    }
+  }
+}

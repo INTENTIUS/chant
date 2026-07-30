@@ -20,5 +20,7 @@ const force = process.argv.includes("--force");
 const { spec, stats } = await packageLexicon({ verbose, force });
 writeBundleSpec(spec, distDir);
 
-console.error(`Packaged ${stats.resources} resources, ${stats.ruleCount} rules`);
+console.error(
+  `Packaged ${stats.resources} resources, ${stats.ruleCount} rules, ${stats.skillCount} skills`,
+);
 console.error(`dist/ written to ${distDir}`);

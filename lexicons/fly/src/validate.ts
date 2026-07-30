@@ -11,8 +11,19 @@ import { validateLexiconArtifacts, type ValidateResult } from "@intentius/chant/
 
 export type { ValidateCheck, ValidateResult } from "@intentius/chant/codegen/validate";
 
-// TODO: Add names of required entities for your lexicon
-const REQUIRED_NAMES: string[] = [];
+/**
+ * The curated top-level Machines API resources (#741). A regeneration that
+ * loses one — an upstream rename, a spec fetch that returned a partial
+ * document — must fail validation rather than ship a lexicon missing a kind.
+ */
+const REQUIRED_NAMES: string[] = [
+  "App",
+  "Machine",
+  "Volume",
+  "IPAddress",
+  "Certificate",
+  "Secret",
+];
 
 /**
  * Validate the generated lexicon-fly artifacts.

@@ -1,0 +1,27 @@
+---
+title: "Lint Rules"
+description: "Lint rules and post-synth checks provided by the Fountain lexicon"
+---
+
+The Fountain lexicon provides **9** rules: 1 lint rules and 8 post-synth checks.
+
+## Lint Rules
+
+| ID | Severity | Category | Description |
+|----|----------|----------|-------------|
+| `FTN001` | error | security | no secret literals in fountain resource declarations. |
+
+## Post-Synth Checks
+
+Post-synth checks validate the serialized output after the build pipeline completes.
+
+| ID | Description |
+|----|-------------|
+| `FTN010` | Environment declarations must set networking_type explicitly |
+| `FTN011` | Environments should prefer networking_type: limited over unrestricted |
+| `FTN012` | Environment env_vars must not carry cloud-credential-shaped keys or values |
+| `FTN013` | Agent $\{VAR\} references should resolve against the environment's declared keys |
+| `FTN014` | Vault keys shadowing a declared Environment key should be visible in review |
+| `FTN015` | Secret-shaped MCP env keys must be $\{VAR\} references, not literals |
+| `FTN016` | Agent runtime must be a known runtime and model canonical provider/model_id |
+| `FTN017` | Two declarations of the same kind must not resolve to the same fountain name |

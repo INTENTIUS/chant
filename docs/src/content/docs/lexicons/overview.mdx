@@ -19,6 +19,8 @@ A **lexicon** is a collection of types and semantic lint rules for an operationa
 | Forgejo Actions (Codeberg / Gitea) | `@intentius/chant-lexicon-forgejo` | thin github dialect (reuses github entities) | [Reference](/chant/lexicons/forgejo/) — ships GitHub Actions migration + `forgejo:compare` |
 | Docker | `@intentius/chant-lexicon-docker` | 6 resources (Compose + Dockerfile) | [Reference](/chant/lexicons/docker/) |
 | Temporal | `@intentius/chant-lexicon-temporal` | 4 resources + Op workflow engine | [Reference](/chant/lexicons/temporal/) |
+| Fly Machines | `@intentius/chant-lexicon-fly` | 6 resources (Machines API) | [Reference](/chant/lexicons/fly/) — ships the mudflaps emulator for offline round-trips |
+| Fountain | `@intentius/chant-lexicon-fountain` | 3 resources (Environment, Vault, Agent) | [Reference](/chant/lexicons/fountain/) — sandboxed agent workloads; conversations are ops, not resources |
 
 ## Runtime observation coverage
 
@@ -33,6 +35,8 @@ A third, optional method goes one level deeper. `observeResourcesDeep()` reads t
 | GCP (Config Connector) | ✅ |  |  | Labels | `kubectl get <gvk>` against the GKE management cluster; cluster resolved from `k8s.profiles.<env>.context` when bound (chant #1100), else ambient — visibly |
 | Kubernetes | ✅ |  |  | Labels | Typed API client ([`@intentius/chant-k8s-client`](/chant/lexicons/k8s/api-client/)) — concurrent reads, any kind the cluster's discovery reports including CRDs, typed errors; cluster resolved from `k8s.profiles.<env>.context` when bound (chant #1100) — a mismatched ambient context refuses loudly rather than reading the wrong cluster |
 | Temporal | ✅ |  |  | — | Temporal client — namespaces, search attributes, schedules |
+| Fly Machines | ✅ |  |  | Metadata | Machines API (flaps) reads, or the mudflaps emulator offline. Two-tier ownership: machines carry `managed-by: chant` in `config.metadata`; volumes, IPs and certificates have no per-resource marker, so ownership is inferred at the app boundary and says so |
+| Fountain | ✅ |  |  | Metadata | REST reads against the fountain API, one list per declared kind; `--owned` reads the `managed-by: chant` metadata marker, which all three kinds carry |
 | Helm |  |  | ✅ | — | `helm list -A -o json` — releases as artifacts |
 | Docker |  |  | ✅ | — | `docker ps`, `docker image ls`, `docker network ls` (NDJSON) |
 | GitHub Actions |  |  |  | — | N/A — workflow definitions are git-tracked; drift is `git diff` ([rationale](https://github.com/INTENTIUS/chant/blob/main/lexicons/github/README.md#runtime-observation-na)) |

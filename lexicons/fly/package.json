@@ -60,7 +60,7 @@
     "@intentius/chant": "^0.33.0",
     "typescript": "^5.9.3"
   },
-  "description": "Google Cloud lexicon for chant — declarative IaC in TypeScript",
+  "description": "Fly.io Machines lexicon for chant — declarative IaC in TypeScript",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
@@ -75,7 +75,7 @@
     "infrastructure-as-code",
     "iac",
     "typescript",
-    "google-cloud",
+    "fly-io",
     "chant"
   ]
 }
