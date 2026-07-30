@@ -6,6 +6,7 @@ import type { McpToolContribution, McpResourceContribution } from "@intentius/ch
 import { fountainSerializer } from "./serializer";
 import { rules } from "./lint/rules";
 import { postSynthChecks } from "./lint/post-synth";
+import { fountainReferenceCatalog } from "./reference-catalog";
 import { completions } from "./lsp/completions";
 import { hover } from "./lsp/hover";
 
@@ -75,6 +76,13 @@ export const fountainPlugin: LexiconPlugin = {
   detectTemplate(data: unknown) {
     return false; // TODO: Detect if a template belongs to this lexicon
   },
+
+  async describeResources(options) {
+    const { describeResources } = await import("./describe-resources");
+    return describeResources(options);
+  },
+
+  referenceCatalog: fountainReferenceCatalog,
 
   completionProvider(ctx: CompletionContext) {
     return completions(ctx);
