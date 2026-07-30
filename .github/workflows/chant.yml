@@ -55,6 +55,7 @@ jobs:
           npm run --prefix lexicons/docker prepack
           npm run --prefix lexicons/temporal prepack
           npm run --prefix lexicons/fly prepack
+          npm run --prefix lexicons/fountain prepack
 
       - name: Typecheck
         run: npx tsc --noEmit -p packages/core/tsconfig.json
@@ -136,6 +137,7 @@ jobs:
           npm run --prefix lexicons/docker prepack
           npm run --prefix lexicons/temporal prepack
           npm run --prefix lexicons/fly prepack
+          npm run --prefix lexicons/fountain prepack
 
       # Includes examples/fold-differential.test.ts (#1025, epic #1019) — the
       # fold-vs-run zero-drift gate over examples/* + every lexicon's own
@@ -196,6 +198,12 @@ jobs:
 
       - name: Generate and validate Temporal lexicon
         run: npm run --prefix lexicons/temporal prepack
+
+      - name: Generate and validate Fly lexicon
+        run: npm run --prefix lexicons/fly prepack
+
+      - name: Generate and validate Fountain lexicon
+        run: npm run --prefix lexicons/fountain prepack
 
   smoke-npm:
     if: false  # disabled — Docker smoke tests are for local/release validation, not every push
