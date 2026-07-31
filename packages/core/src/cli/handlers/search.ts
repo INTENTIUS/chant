@@ -210,6 +210,7 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
       : undefined;
   provenance(matches, source, recorded);
   ambientHint(matches, ambientKinds, args.ambient === true, replayAmbient);
+  showMiss(matches, show);
   regionSpread(terms, matches, show);
   derivedSurface(terms, matches, ir, backed);
   if (args.explain) explain(terms, matches, ir, nodeById, query);
@@ -225,6 +226,25 @@ type AnswerSource =
 
 
 
+
+/**
+ * Name the `--show` columns nothing carries (#1279).
+ *
+ * A requested column that no matched resource has simply did not appear, so the
+ * result looked like a resource with no such value rather than a name that was
+ * never going to match. Combined with case sensitivity that made `--show
+ * Region` an invisible no-op on an estate where every resource carries
+ * `region`.
+ */
+function showMiss(matches: IRNode[], show: string[]): void {
+  if (show.length === 0 || matches.length === 0) return;
+  const present = new Set(
+    matches.flatMap((n) => Object.keys((n.attrs ?? {}) as object).map((k) => k.toLowerCase())),
+  );
+  const missing = show.filter((k) => !present.has(k.toLowerCase()));
+  if (missing.length === 0) return;
+  console.log(`— no matched resource carries ${missing.join(", ")}`);
+}
 
 /**
  * Say when the answer spans more than one region (#1279).
@@ -625,7 +645,13 @@ function formatRow(n: IRNode, show: string[]): string {
   const physical = (n as { physicalId?: unknown }).physicalId ?? attrs["physicalId"] ?? attrs["InstanceId"] ?? attrs["Id"];
   if (physical != null && typeof physical !== "object") parts.push(String(physical));
   for (const key of show) {
-    const v = attrs[key];
+    // Match the name case-insensitively, and report what was actually found.
+    // AWS attribute names are PascalCase and chant's derived ones are not, so a
+    // caller mixing them is normal: `--show region` and `--show Region` are the
+    // same request, and one of them silently printed nothing. Seven of the
+    // `--show` names in one benchmark run missed on case alone.
+    const actual = key in attrs ? key : Object.keys(attrs).find((k) => k.toLowerCase() === key.toLowerCase());
+    const v = actual == null ? undefined : attrs[actual];
     if (v == null) continue;
     // A column the caller explicitly asked for is shown whatever shape it is.
     // Skipping non-scalars silently meant `--show effectiveIngress` — the
@@ -633,10 +659,10 @@ function formatRow(n: IRNode, show: string[]): string {
     // printed a blank column, because it is a list. The agent read that as
     // "chant does not have this" and hand-rolled the answer from raw
     // security-group rows, which is exactly the work the fold exists to avoid.
-    parts.push(`${key}=${typeof v === "object" ? JSON.stringify(v) : attrString(v)}`);
+    parts.push(`${actual}=${typeof v === "object" ? JSON.stringify(v) : attrString(v)}`);
   }
   return parts.filter(Boolean).join("  ");
 }
 
 /** Internals exposed for unit tests. */
-export const __searchInternals = { parseQuery, matchTerm, formatRow, explain, describeTerm, derivedSurface, availableAttrs, ambientHint, regionSpread };
+export const __searchInternals = { parseQuery, matchTerm, formatRow, explain, describeTerm, derivedSurface, availableAttrs, ambientHint, regionSpread, showMiss };

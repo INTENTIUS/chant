@@ -1,7 +1,7 @@
 import { describe, test, expect, vi } from "vitest";
 import { __searchInternals } from "./search";
 
-const { parseQuery, matchTerm, formatRow, explain, describeTerm, derivedSurface, availableAttrs, ambientHint, regionSpread } = __searchInternals;
+const { parseQuery, matchTerm, formatRow, explain, describeTerm, derivedSurface, availableAttrs, ambientHint, regionSpread, showMiss } = __searchInternals;
 
 function node(id: string, kind: string, attrs: Record<string, unknown> = {}) {
   return { id, kind, lexicon: "aws", attrs } as never;
@@ -319,5 +319,37 @@ describe("the region spread of an answer", () => {
 
   test("says nothing when the resources carry no region", () => {
     expect(spread([inst("a"), inst("b")])).toBe("");
+  });
+});
+
+// #1279 — seven `--show` names in one benchmark run missed on case alone, and
+// a missed name printed nothing at all rather than saying it had missed.
+describe("--show name matching", () => {
+  const n = node("web", "AWS::EC2::Instance", { physicalId: "i-1", region: "us-east-1" });
+  const capture = (fn: () => void): string => {
+    const lines: string[] = [];
+    const spy = vi.spyOn(console, "log").mockImplementation((s: string) => { lines.push(s); });
+    fn();
+    spy.mockRestore();
+    return lines.join("\n");
+  };
+
+  test("matches a column name whatever case the caller used", () => {
+    // AWS names are PascalCase and chant's derived ones are not, so a caller
+    // mixing them is normal. Both are the same request.
+    expect(formatRow(n, ["Region"])).toContain("region=us-east-1");
+    expect(formatRow(n, ["region"])).toContain("region=us-east-1");
+  });
+
+  test("prints the name the resource actually uses, not the one asked for", () => {
+    expect(formatRow(n, ["REGION"])).toContain("region=us-east-1");
+  });
+
+  test("says when nothing carries a requested column", () => {
+    expect(capture(() => showMiss([n] as never, ["VpcId"]))).toContain("VpcId");
+  });
+
+  test("says nothing when every requested column is present", () => {
+    expect(capture(() => showMiss([n] as never, ["Region"]))).toBe("");
   });
 });
