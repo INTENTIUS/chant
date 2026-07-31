@@ -86,124 +86,20 @@ jobs:
           # publish token via the trusted-publisher record.
       - run: npm install
 
-      # Each package publishes independently: `if: !cancelled()` so one package's
-      # publish failure (e.g. a missing trusted-publisher record) does not SKIP
-      # every package after it — before this, a single failure left the release
-      # half-published (core bumped, lexicons stranded a version behind). The
-      # per-step `[ "$V" = "$P" ] && skip` guard makes a re-run idempotent, so a
-      # partial release is recovered by re-running or dispatching this workflow.
-      - name: Publish @intentius/chant
-        if: ${{ !cancelled() }}
-        working-directory: packages/core
-        run: |
-          V=$(node -e "process.stdout.write(require('./package.json').version)")
-          P=$(npm view @intentius/chant version 2>/dev/null || echo "none")
-          [ "$V" = "$P" ] && echo "Already at $V, skipping" || npm publish --access public --provenance
-
-      # The k8s lexicon declares this as an optional dependency (#1074). npm
-      # tolerates an optional dependency that fails to resolve, so publishing it
-      # ahead of the lexicon is what keeps `chant lifecycle diff --live` working
-      # for a registry install rather than silently degrading to holes.
-      - name: Publish @intentius/chant-k8s-client
-        if: ${{ !cancelled() }}
-        working-directory: packages/k8s-client
-        run: |
-          V=$(node -e "process.stdout.write(require('./package.json').version)")
-          P=$(npm view @intentius/chant-k8s-client version 2>/dev/null || echo "none")
-          [ "$V" = "$P" ] && echo "Already at $V, skipping" || npm publish --access public --provenance
-
-      - name: Publish @intentius/chant-lexicon-gitlab
-        if: ${{ !cancelled() }}
-        working-directory: lexicons/gitlab
-        run: |
-          V=$(node -e "process.stdout.write(require('./package.json').version)")
-          P=$(npm view @intentius/chant-lexicon-gitlab version 2>/dev/null || echo "none")
-          [ "$V" = "$P" ] && echo "Already at $V, skipping" || npm publish --access public --provenance
-
-      - name: Publish @intentius/chant-lexicon-aws
-        if: ${{ !cancelled() }}
-        working-directory: lexicons/aws
-        run: |
-          V=$(node -e "process.stdout.write(require('./package.json').version)")
-          P=$(npm view @intentius/chant-lexicon-aws version 2>/dev/null || echo "none")
-          [ "$V" = "$P" ] && echo "Already at $V, skipping" || npm publish --access public --provenance
-
-      - name: Publish @intentius/chant-lexicon-github
-        if: ${{ !cancelled() }}
-        working-directory: lexicons/github
-        run: |
-          V=$(node -e "process.stdout.write(require('./package.json').version)")
-          P=$(npm view @intentius/chant-lexicon-github version 2>/dev/null || echo "none")
-          [ "$V" = "$P" ] && echo "Already at $V, skipping" || npm publish --access public --provenance
-
-      - name: Publish @intentius/chant-lexicon-forgejo
-        if: ${{ !cancelled() }}
-        working-directory: lexicons/forgejo
-        run: |
-          V=$(node -e "process.stdout.write(require('./package.json').version)")
-          P=$(npm view @intentius/chant-lexicon-forgejo version 2>/dev/null || echo "none")
-          [ "$V" = "$P" ] && echo "Already at $V, skipping" || npm publish --access public --provenance
-
-      - name: Publish @intentius/chant-lexicon-k8s
-        if: ${{ !cancelled() }}
-        working-directory: lexicons/k8s
-        run: |
-          V=$(node -e "process.stdout.write(require('./package.json').version)")
-          P=$(npm view @intentius/chant-lexicon-k8s version 2>/dev/null || echo "none")
-          [ "$V" = "$P" ] && echo "Already at $V, skipping" || npm publish --access public --provenance
-
-      - name: Publish @intentius/chant-lexicon-gcp
-        if: ${{ !cancelled() }}
-        working-directory: lexicons/gcp
-        run: |
-          V=$(node -e "process.stdout.write(require('./package.json').version)")
-          P=$(npm view @intentius/chant-lexicon-gcp version 2>/dev/null || echo "none")
-          [ "$V" = "$P" ] && echo "Already at $V, skipping" || npm publish --access public --provenance
-
-      - name: Publish @intentius/chant-lexicon-helm
-        if: ${{ !cancelled() }}
-        working-directory: lexicons/helm
-        run: |
-          V=$(node -e "process.stdout.write(require('./package.json').version)")
-          P=$(npm view @intentius/chant-lexicon-helm version 2>/dev/null || echo "none")
-          [ "$V" = "$P" ] && echo "Already at $V, skipping" || npm publish --access public --provenance
-
-      - name: Publish @intentius/chant-lexicon-azure
-        if: ${{ !cancelled() }}
-        working-directory: lexicons/azure
-        run: |
-          V=$(node -e "process.stdout.write(require('./package.json').version)")
-          P=$(npm view @intentius/chant-lexicon-azure version 2>/dev/null || echo "none")
-          [ "$V" = "$P" ] && echo "Already at $V, skipping" || npm publish --access public --provenance
-
-      - name: Publish @intentius/chant-lexicon-docker
-        if: ${{ !cancelled() }}
-        working-directory: lexicons/docker
-        run: |
-          V=$(node -e "process.stdout.write(require('./package.json').version)")
-          P=$(npm view @intentius/chant-lexicon-docker version 2>/dev/null || echo "none")
-          [ "$V" = "$P" ] && echo "Already at $V, skipping" || npm publish --access public --provenance
-
-      - name: Publish @intentius/chant-lexicon-temporal
-        if: ${{ !cancelled() }}
-        working-directory: lexicons/temporal
-        run: |
-          V=$(node -e "process.stdout.write(require('./package.json').version)")
-          P=$(npm view @intentius/chant-lexicon-temporal version 2>/dev/null || echo "none")
-          [ "$V" = "$P" ] && echo "Already at $V, skipping" || npm publish --access public --provenance
-
-      - name: Publish @intentius/chant-lexicon-fly
-        if: ${{ !cancelled() }}
-        working-directory: lexicons/fly
-        run: |
-          V=$(node -e "process.stdout.write(require('./package.json').version)")
-          P=$(npm view @intentius/chant-lexicon-fly version 2>/dev/null || echo "none")
-          [ "$V" = "$P" ] && echo "Already at $V, skipping" || npm publish --access public --provenance
-
-      - name: Publish @intentius/chant-lexicon-fountain
-        if: ${{ !cancelled() }}
-        working-directory: lexicons/fountain
-        run: |
-          V=$(node -e "process.stdout.write(require('./package.json').version)")
-          P=$(npm view @intentius/chant-lexicon-fountain version 2>/dev/null || echo "none")
-          [ "$V" = "$P" ] && echo "Already at $V, skipping" || npm publish --access public --provenance
+      # One script publishes every non-private workspace package, in
+      # dependency-safe order, continuing past a failure so one bad package
+      # cannot strand the rest of the release (it exits non-zero at the end
+      # if any failed). It enumerates the workspace rather than naming
+      # packages here: #1177 (k8s-client) and #1253 (fountain) each added a
+      # package whose publish step was wrong, and every release since
+      # chant-v0.33.0 went red. The skip-if-unchanged check makes re-running
+      # idempotent, so a partial release is recovered by re-running or
+      # dispatching this workflow.
+      - name: Publish workspace packages
+        env:
+          # Fallback only. Packages with an npm trusted-publisher record
+          # publish over OIDC and never touch this; a package that has no
+          # record yet (a newly added one) uses it instead of failing the
+          # release. See scripts/publish-packages.sh.
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: bash scripts/publish-packages.sh

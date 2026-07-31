@@ -49,6 +49,15 @@ jobs:
           TITLE: 'chore: Fly emulator image pin(s) behind latest release'
           BODY: ${{ steps.freshness.outputs.body }}
         run: |
+          # The repo has no `chore` label by default, and `gh issue create
+          # --label chore` hard-fails ("could not add label: 'chore' not
+          # found") WITHOUT opening the issue — so every run since the pins
+          # went stale died here and the advisory issue was never filed.
+          # Create it up front; --force makes this idempotent.
+          gh label create chore \
+            --description "Routine maintenance — pin bumps, chores" \
+            --color ededed --force
+
           existing=$(gh issue list --state open --search "in:title $TITLE" --json number --jq '.[0].number // empty')
           if [ -n "$existing" ]; then
             gh issue edit "$existing" --body "$BODY"

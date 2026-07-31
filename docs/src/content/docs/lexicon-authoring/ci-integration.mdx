@@ -19,7 +19,7 @@ This patches 5 files:
 |------|-------------|
 | `package.json` (root) | `@intentius/chant-lexicon-<name>: "workspace:*"` dependency |
 | `.github/workflows/chant.yml` | Prepack lines in check/test jobs + validate step |
-| `.github/workflows/publish.yml` | Prepack line in test job + publish step |
+| `.github/workflows/publish.yml` | Prepack line in test job (no publish step needed — `scripts/publish-packages.sh` enumerates the workspace) |
 | `test/Dockerfile.smoke` | Prepack validation line for workspace smoke test |
 | `test/Dockerfile.smoke-npm` | Prepack validation line for npm tarball smoke test |
 
