@@ -437,7 +437,6 @@ function describeTerm(t: Term): string {
     x.kind === "kind" ? `kind:${x.a}` : x.kind === "attr" ? `attr:${x.a}${x.b !== undefined ? "=" + x.b : ""}`
       : x.kind === "tag" ? `tag:${x.a}${x.b !== undefined ? "=" + x.b : ""}` : `"${x.a}"`;
   if (t.kind === "edge" && t.sub) return `${t.dir === "out" ? "→" : "←"}${leaf(t.sub)} (no such edge)`;
-  if (t.kind === "edge") return `${t.dir === "out" ? "→" : "←"}any (no such edge)`;
   return leaf(t);
 }
 
@@ -512,16 +511,26 @@ function parseQuery(query: string): Term[] {
     // "referenced by nothing at all" and "referenced by no Instance" are
     // different questions, and on any estate whose declared graph carries
     // references they give different answers.
-    // A bare `->`/`<-` constrains only that an edge exists in that direction.
-    // It used to parse to an empty leaf and match arbitrarily, and refusing it
-    // was the first fix — but "nothing references this at all" is a precise
-    // question, not an ambiguous one, and it is the one agents reach for when
-    // asked what is unused. `!<-kind:X` remains the narrower "referenced by no
-    // X"; they are different questions and both are now sayable.
+    // A bare edge term is refused, and the refusal names the correction.
+    //
+    // It first parsed to an empty leaf and matched arbitrarily. The fix was to
+    // refuse it; then, because agents kept writing `!<-` for "what is unused",
+    // it was made to mean "no edge in this direction" — which is a coherent
+    // query and still the wrong one to answer that question with. It counts
+    // every reference in the project, and a stack output that publishes a
+    // resource's id is one, so `kind:EC2::SecurityGroup !<-` omits precisely
+    // the unattached group the question was about.
+    //
+    // Measured both ways: refusing it, agents wrote `!<-kind:EC2::Instance` and
+    // got the right answer 3/3; accepting it, they wrote `!<-` and got a wrong
+    // one 2 runs out of 3. A query whose plain reading is reliably not what the
+    // caller means is worth refusing, and the correction below is what makes
+    // the refusal useful rather than merely strict.
     if (/^(->|<-)\s*$/.test(tok)) {
-      const dir = tok.startsWith("->") ? ("out" as const) : ("in" as const);
-      const term: Term = { kind: "edge", a: "", dir };
-      return negated ? { ...term, negated: true } : term;
+      throw new QueryError(
+        `"${negated ? "!" : ""}${tok}" needs a target`,
+        `say what the edge reaches: ${negated ? "!" : ""}${tok}kind:EC2::Instance, or ${negated ? "!" : ""}${tok}attr:Name=web`,
+      );
     }
     const term = tok.startsWith("->")
       ? { kind: "edge" as const, a: "", dir: "out" as const, sub: parseLeaf(tok.slice(2)) }
@@ -549,15 +558,13 @@ function matchTerm(n: IRNode, t: Term, ir?: GraphIR, byId?: Map<string, IRNode>)
   if (t.negated) return !matchTerm(n, { ...t, negated: false }, ir, byId);
   const attrs = n.attrs ?? {};
   if (t.kind === "edge") {
-    if (!ir || !byId) return false;
-    // A node matches if it has an edge (out or in) to a node satisfying `sub` —
-    // or, with no `sub`, to anything at all.
+    if (!ir || !byId || !t.sub) return false;
+    // A node matches if it has an edge (out or in) to a node satisfying `sub`.
     const edges = ir.edges ?? [];
     const neighbors = edges
       .filter((e) => (t.dir === "out" ? e.from === n.id : e.to === n.id))
       .map((e) => byId.get(t.dir === "out" ? e.to : e.from))
       .filter((x): x is IRNode => !!x);
-    if (!t.sub) return neighbors.length > 0;
     return neighbors.some((m) => matchTerm(m, t.sub!, ir, byId));
   }
   if (t.kind === "kind") return (n.kind ?? "").toLowerCase().includes(t.a.toLowerCase());
