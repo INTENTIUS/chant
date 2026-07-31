@@ -138,8 +138,10 @@ export async function observeAwsAmbient(options: {
       continue;
     }
   }
-  // Same region stamp the managed path applies, so one query shape works
-  // across both (#1279).
+  // Same stamps the managed path applies, so one query shape works across both
+  // (#1279). Defaults matter most here: a default VPC or security group is
+  // ambient by definition — nobody declared it.
   const { stampRegion } = await import("./properties");
-  return stampRegion(ambient, options.region);
+  const { stampProviderDefaults } = await import("./defaults");
+  return stampProviderDefaults(stampRegion(ambient, options.region));
 }
