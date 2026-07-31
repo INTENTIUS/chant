@@ -90,8 +90,10 @@ oidc_reason() {
   status=$(curl -sS -o "$body_file" -w '%{http_code}' -X POST \
     -H "Authorization: Bearer $idtok" \
     "$REGISTRY/-/npm/v1/oidc/token/exchange/package/$escaped" 2>/dev/null)
-  if [ "$status" = "200" ]; then
-    echo "  registry ACCEPTED the OIDC exchange (HTTP 200) — the auth failure is not the record"
+  # A successful exchange answers 201 Created, not 200 — checking for 200
+  # alone reports a perfectly good trusted-publisher record as refused.
+  if [ "${status:0:1}" = "2" ]; then
+    echo "  registry ACCEPTED the OIDC exchange (HTTP $status) — the auth failure is not the record"
   else
     echo "  registry REFUSED the OIDC exchange: HTTP $status — $(jq -r '.message // .error // "no message"' "$body_file" 2>/dev/null || echo "unreadable body")"
   fi
