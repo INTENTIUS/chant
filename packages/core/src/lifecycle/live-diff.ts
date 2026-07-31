@@ -227,8 +227,20 @@ export function diffLive(input: DiffLiveInput): LiveDiffResult {
   // same as `unowned`/`foreign` — composing with #1168's tri-state precedent:
   // an incomplete read never earns the more confident classification.
   const runtimeChildNames = new Set<string>();
+  const dependencyNames = new Set<string>();
   for (const name of observedNowNames) {
     if (declared.has(name)) continue;
+    // A referenced dependency (#1273) is observed only because something
+    // declared points at it — an account's default VPC route table, a shared
+    // subnet. Offering it as a delete/adopt candidate is wrong: it is not
+    // yours, and it changes on its own, so counting it as drift is noise.
+    // Same treatment as a runtime child, for the same reason, arrived at from
+    // the other direction — a child is something declared created, a
+    // dependency is something declared relies on.
+    if ((observedNow[name]?.referencedBy?.length ?? 0) > 0) {
+      dependencyNames.add(name);
+      continue;
+    }
     const chain = observedNow[name]?.ownerChain;
     if (chain?.root === "declared") {
       runtimeChildNames.add(name);
@@ -256,7 +268,10 @@ export function diffLive(input: DiffLiveInput): LiveDiffResult {
   // happened to record the same name (e.g. a StatefulSet's stable pod
   // identity) must not turn its ordinary churn into `driftedSinceSnapshot`.
   for (const name of observedNowNames) {
-    if (runtimeChildNames.has(name)) continue;
+    // Referenced dependencies (#1273) are excluded for the same reason runtime
+    // children are: they are observed to complete the picture, not to be
+    // governed, and their ordinary churn is somebody else's.
+    if (runtimeChildNames.has(name) || dependencyNames.has(name)) continue;
     const now = observedNow[name];
     const then = observedThenMap[name];
     if (!then) {

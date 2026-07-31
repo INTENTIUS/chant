@@ -14,7 +14,8 @@ import type { BuildResult } from "../build";
 import { build as buildProject } from "../build";
 import { resolve as resolvePath } from "node:path";
 import type { SerializerResult } from "../serializer";
-import type { LiveObservation } from "../graph-ir";
+import type { LiveObservation, IREdge } from "../graph-ir";
+import type { ResourceMetadata } from "../lexicon";
 import {
   mergeObservations,
   normalizeObservation,
@@ -177,7 +178,25 @@ export async function observeResources(
           }),
         );
       }
-      pushObservation(observations, warnings, plugin.name, observed, environment, entityNames.length);
+      // What the estate depends on but does not declare (#1273). Read after the
+      // managed resources, because the declared observation is the closure's
+      // roots — there is nothing to reference out from until it exists.
+      const dependencies = await collectDependencies(plugin, {
+        environment,
+        entities,
+        observed: observed.resources,
+        stacks,
+      });
+      for (const message of dependencies.warnings) warnings.push(message);
+      pushObservation(
+        observations,
+        warnings,
+        plugin.name,
+        observed,
+        environment,
+        entityNames.length,
+        dependencies,
+      );
     } catch (err) {
       // A thrown read is the whole-lexicon failure: every declared entity is
       // NOT-OBSERVED, not absent (#1089). Emitting nothing here is what made a
@@ -201,6 +220,74 @@ export async function observeResources(
   return { observations, warnings, errors };
 }
 
+/** Dependencies collected across a lexicon's stacks, plus anything to report. */
+interface CollectedDependencies {
+  resources: Record<string, ResourceMetadata>;
+  edges: IREdge[];
+  warnings: string[];
+}
+
+const NO_DEPENDENCIES: CollectedDependencies = { resources: {}, edges: [], warnings: [] };
+
+/**
+ * Ask a lexicon what its declared estate references but does not manage (#1273).
+ *
+ * Called once per stack, because the closure roots and the region differ per
+ * stack, and merged by key. Dependencies are keyed by physical id and are
+ * deliberately NOT stack-qualified: the account's default VPC route table is the
+ * same resource whichever stack routes through it, and qualifying it would
+ * produce one node per referrer and an edge to each.
+ *
+ * Best-effort. A lexicon that does not implement the hook, or one whose read
+ * fails, contributes nothing — the managed observation is already complete and
+ * useful on its own, and failing it because an ambient dependency could not be
+ * read would trade a whole answer for a partial one.
+ */
+async function collectDependencies(
+  plugin: ObservationLexicon,
+  opts: {
+    environment: string;
+    entities: Map<string, { entityType: string; props: Record<string, unknown> }>;
+    observed: Record<string, ResourceMetadata>;
+    stacks: Array<{ name: string; region?: string; src?: string }>;
+  },
+): Promise<CollectedDependencies> {
+  if (!plugin.observeDependencies) return NO_DEPENDENCIES;
+
+  const resources: Record<string, ResourceMetadata> = {};
+  const edges: IREdge[] = [];
+  const warnings: string[] = [];
+  const refs = opts.stacks.length > 0 ? opts.stacks : [{ name: undefined, region: undefined }];
+
+  for (const ref of refs) {
+    try {
+      const found = await plugin.observeDependencies({
+        environment: opts.environment,
+        entities: opts.entities,
+        observed: opts.observed,
+        ...(ref.name ? { stack: ref.name } : {}),
+        ...(ref.region ? { region: ref.region } : {}),
+      });
+      for (const [id, meta] of Object.entries(found.resources)) {
+        // Merge referrers rather than overwrite: two stacks routing through the
+        // same table is one node reached twice, and the reason it is here is
+        // both of them.
+        const existing = resources[id];
+        resources[id] = existing
+          ? { ...existing, referencedBy: [...new Set([...(existing.referencedBy ?? []), ...(meta.referencedBy ?? [])])] }
+          : meta;
+      }
+      edges.push(...(found.edges ?? []));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      warnings.push(
+        `${plugin.name}: dependencies not read${ref.name ? ` for stack "${ref.name}"` : ""} — ${message}`,
+      );
+    }
+  }
+  return { resources, edges, warnings };
+}
+
 /** Record one lexicon's observation, warning once per unobserved entity. */
 function pushObservation(
   observations: LiveObservation[],
@@ -209,6 +296,7 @@ function pushObservation(
   observed: NormalizedObservation,
   environment: string,
   declaredCount: number,
+  dependencies: CollectedDependencies = NO_DEPENDENCIES,
 ): void {
   const hasResources = Object.keys(observed.resources).length > 0;
   const unobservedNames = Object.keys(observed.unobserved);
@@ -225,9 +313,15 @@ function pushObservation(
     if (notice) warnings.push(notice);
     return;
   }
+  // Dependencies ride alongside the managed resources so they become nodes, and
+  // carry `referencedBy` so every consumer can still tell the two apart.
+  const hasDependencies = Object.keys(dependencies.resources).length > 0;
   observations.push({
     lexicon,
-    resources: observed.resources,
+    resources: hasDependencies
+      ? { ...observed.resources, ...dependencies.resources }
+      : observed.resources,
     ...(unobservedNames.length > 0 ? { unobserved: observed.unobserved } : {}),
+    ...(dependencies.edges.length > 0 ? { edges: dependencies.edges } : {}),
   });
 }
