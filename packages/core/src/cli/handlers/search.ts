@@ -210,6 +210,7 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
       : undefined;
   provenance(matches, source, recorded);
   ambientHint(matches, ambientKinds, args.ambient === true, replayAmbient);
+  regionSpread(terms, matches, show);
   derivedSurface(terms, matches, ir, backed);
   if (args.explain) explain(terms, matches, ir, nodeById, query);
   return 0;
@@ -223,6 +224,34 @@ type AnswerSource =
   | { kind: "snapshot"; commit: string; timestamp: string };
 
 
+
+
+/**
+ * Say when the answer spans more than one region (#1279).
+ *
+ * A result is a list of resources with no shape to it, and region is the one
+ * dimension of this estate that is invisible in a row unless asked for. Asked
+ * to list instances "in all regions", an agent printed six correct ids with no
+ * region against any of them — a complete answer to a question about regions
+ * that never mentions one, and it was judged wrong.
+ *
+ * Stated only when the matched set actually spans several and the caller has
+ * not already asked: a fact about the result, in the same family as the
+ * provenance line. It names the regions and no resource, so it cannot stand in
+ * for the answer — it says the answer has a dimension, not what to say about it.
+ */
+function regionSpread(terms: Term[], matches: IRNode[], show: string[]): void {
+  if (show.includes("region") || terms.some((t) => t.a === "region")) return;
+  const regions = [
+    ...new Set(
+      matches
+        .map((n) => (n.attrs as Record<string, unknown>)?.region)
+        .filter((r): r is string => typeof r === "string" && r.length > 0),
+    ),
+  ].sort();
+  if (regions.length < 2) return;
+  console.log(`— these span ${regions.length} regions: ${regions.join(", ")} · add --show region to see which`);
+}
 
 /**
  * Point out that `--ambient` is relevant to the kind just queried (#1278).
@@ -610,4 +639,4 @@ function formatRow(n: IRNode, show: string[]): string {
 }
 
 /** Internals exposed for unit tests. */
-export const __searchInternals = { parseQuery, matchTerm, formatRow, explain, describeTerm, derivedSurface, availableAttrs, ambientHint };
+export const __searchInternals = { parseQuery, matchTerm, formatRow, explain, describeTerm, derivedSurface, availableAttrs, ambientHint, regionSpread };

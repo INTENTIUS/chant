@@ -1,7 +1,7 @@
 import { describe, test, expect, vi } from "vitest";
 import { __searchInternals } from "./search";
 
-const { parseQuery, matchTerm, formatRow, explain, describeTerm, derivedSurface, availableAttrs, ambientHint } = __searchInternals;
+const { parseQuery, matchTerm, formatRow, explain, describeTerm, derivedSurface, availableAttrs, ambientHint, regionSpread } = __searchInternals;
 
 function node(id: string, kind: string, attrs: Record<string, unknown> = {}) {
   return { id, kind, lexicon: "aws", attrs } as never;
@@ -287,4 +287,37 @@ describe("the --ambient hint", () => {
   });
 });
 
+// #1279 — asked to list instances "in all regions", an agent printed six
+// correct ids with no region against any of them, and was judged wrong.
+describe("the region spread of an answer", () => {
+  const inst = (id: string, region?: string) =>
+    node(id, "AWS::EC2::Instance", region ? { region } : {});
+  const capture = (fn: () => void): string => {
+    const lines: string[] = [];
+    const spy = vi.spyOn(console, "log").mockImplementation((s: string) => { lines.push(s); });
+    fn();
+    spy.mockRestore();
+    return lines.join("\n");
+  };
+  const spread = (ns: unknown[], show: string[] = [], q = "kind:EC2::Instance") =>
+    capture(() => regionSpread(parseQuery(q) as never, ns as never, show));
 
+  test("names the regions when the answer spans several", () => {
+    const out = spread([inst("a", "us-east-1"), inst("b", "us-west-2")]);
+    expect(out).toContain("us-east-1, us-west-2");
+    expect(out).toContain("2 regions");
+  });
+
+  test("says nothing when everything is in one region", () => {
+    expect(spread([inst("a", "us-east-1"), inst("b", "us-east-1")])).toBe("");
+  });
+
+  test("says nothing when the caller already asked for region", () => {
+    expect(spread([inst("a", "us-east-1"), inst("b", "us-west-2")], ["region"])).toBe("");
+    expect(spread([inst("a", "us-east-1"), inst("b", "us-west-2")], [], "attr:region=us-east-1")).toBe("");
+  });
+
+  test("says nothing when the resources carry no region", () => {
+    expect(spread([inst("a"), inst("b")])).toBe("");
+  });
+});
