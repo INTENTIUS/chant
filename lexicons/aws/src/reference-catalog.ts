@@ -20,6 +20,7 @@ export const awsReferenceCatalog: ReferenceCatalog = {
     { kind: "AWS::EC2::InternetGateway", ids: ["InternetGatewayId"] },
     { kind: "AWS::EC2::NatGateway", ids: ["NatGatewayId"] },
     { kind: "AWS::EC2::RouteTable", ids: ["RouteTableId"] },
+    { kind: "AWS::EC2::LaunchTemplate", ids: ["LaunchTemplateId", "LaunchTemplateName"] },
     { kind: "AWS::ElasticLoadBalancingV2::LoadBalancer", ids: ["LoadBalancerArn", "DNSName"] },
     { kind: "AWS::ElasticLoadBalancingV2::TargetGroup", ids: ["TargetGroupArn"] },
     { kind: "AWS::ECS::Cluster", ids: ["ClusterArn", "ClusterName"] },
@@ -32,7 +33,7 @@ export const awsReferenceCatalog: ReferenceCatalog = {
     { from: "AWS::EC2::Subnet", path: "VpcId", targetKind: "AWS::EC2::VPC", relation: "containment", label: "in VPC" },
     { from: "AWS::EC2::SecurityGroup", path: "VpcId", targetKind: "AWS::EC2::VPC", relation: "containment", label: "in VPC" },
     { from: "AWS::EC2::RouteTable", path: "VpcId", targetKind: "AWS::EC2::VPC", relation: "containment", label: "in VPC" },
-    { from: "AWS::EC2::Instance", path: "SubnetId", targetKind: "AWS::EC2::Subnet", relation: "containment", label: "in subnet" },
+    { from: "AWS::EC2::Instance", path: "SubnetId", targetKind: "AWS::EC2::Subnet", relation: "containment", label: "in subnet", viaAttr: "SubnetId" },
     { from: "AWS::EC2::NatGateway", path: "SubnetId", targetKind: "AWS::EC2::Subnet", relation: "containment", label: "in subnet" },
     { from: "AWS::ElasticLoadBalancingV2::LoadBalancer", path: "AvailabilityZones[].SubnetId", targetKind: "AWS::EC2::Subnet", relation: "containment", label: "in subnet" },
     { from: "AWS::ElasticLoadBalancingV2::TargetGroup", path: "VpcId", targetKind: "AWS::EC2::VPC", relation: "containment", label: "in VPC" },
@@ -40,9 +41,22 @@ export const awsReferenceCatalog: ReferenceCatalog = {
     { from: "AWS::RDS::DBInstance", path: "DBSubnetGroup.Subnets[].SubnetIdentifier", targetKind: "AWS::EC2::Subnet", relation: "containment", label: "in subnet" },
 
     // ── references (→ edges) ──
-    { from: "AWS::EC2::Instance", path: "SecurityGroups[].GroupId", targetKind: "AWS::EC2::SecurityGroup", relation: "reference", label: "sg" },
+    { from: "AWS::EC2::Instance", path: "SecurityGroups[].GroupId", targetKind: "AWS::EC2::SecurityGroup", relation: "reference", label: "sg", viaAttr: "SecurityGroupIds" },
+    { from: "AWS::EC2::Instance", path: "SecurityGroupIds[]", targetKind: "AWS::EC2::SecurityGroup", relation: "reference", label: "sg", viaAttr: "SecurityGroupIds" },
+    // Security groups reached indirectly, through a launch template — the hop a
+    // flat describe-instances sweep misses, and the reason `effectiveIngress`
+    // exists as a fold rather than a passthrough.
+    { from: "AWS::EC2::Instance", path: "LaunchTemplate.LaunchTemplateId", targetKind: "AWS::EC2::LaunchTemplate", relation: "reference", label: "from template", viaAttr: "LaunchTemplateId" },
+    { from: "AWS::EC2::Instance", path: "LaunchTemplateId", targetKind: "AWS::EC2::LaunchTemplate", relation: "reference", label: "from template", viaAttr: "LaunchTemplateId" },
+    { from: "AWS::EC2::LaunchTemplate", path: "LaunchTemplateData.SecurityGroupIds[]", targetKind: "AWS::EC2::SecurityGroup", relation: "reference", label: "sg", viaAttr: "SecurityGroupIds" },
+    { from: "AWS::EC2::LaunchTemplate", path: "SecurityGroupIds[]", targetKind: "AWS::EC2::SecurityGroup", relation: "reference", label: "sg", viaAttr: "SecurityGroupIds" },
+    // The routing chain `internetFacing` walks. Route and association carry no
+    // physical id of their own, so they are only ever the `from` side.
+    { from: "AWS::EC2::Route", path: "RouteTableId", targetKind: "AWS::EC2::RouteTable", relation: "reference", label: "in table", viaAttr: "RouteTableId" },
+    { from: "AWS::EC2::SubnetRouteTableAssociation", path: "SubnetId", targetKind: "AWS::EC2::Subnet", relation: "reference", label: "associates", viaAttr: "SubnetId" },
+    { from: "AWS::EC2::SubnetRouteTableAssociation", path: "RouteTableId", targetKind: "AWS::EC2::RouteTable", relation: "reference", label: "to table", viaAttr: "RouteTableId" },
     { from: "AWS::EC2::SecurityGroup", path: "IpPermissions[].UserIdGroupPairs[].GroupId", targetKind: "AWS::EC2::SecurityGroup", relation: "reference", label: "allows" },
-    { from: "AWS::EC2::Route", path: "GatewayId", targetKind: "AWS::EC2::InternetGateway", relation: "reference", label: "via" },
+    { from: "AWS::EC2::Route", path: "GatewayId", targetKind: "AWS::EC2::InternetGateway", relation: "reference", label: "via", viaAttr: "GatewayId" },
     { from: "AWS::EC2::Route", path: "NatGatewayId", targetKind: "AWS::EC2::NatGateway", relation: "reference", label: "via" },
     { from: "AWS::ElasticLoadBalancingV2::LoadBalancer", path: "SecurityGroups[]", targetKind: "AWS::EC2::SecurityGroup", relation: "reference", label: "sg" },
     { from: "AWS::ElasticLoadBalancingV2::Listener", path: "LoadBalancerArn", targetKind: "AWS::ElasticLoadBalancingV2::LoadBalancer", relation: "reference", label: "on" },
