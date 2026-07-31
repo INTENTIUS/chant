@@ -98,7 +98,11 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
       observations = replay.observations;
       source = { kind: "snapshot", commit: replay.commit, timestamp: replay.timestamp };
     } else {
-      const observed = await observeResources(environment, observing, buildResult, { owned: true, stacks });
+      const observed = await observeResources(environment, observing, buildResult, {
+        owned: true,
+        stacks,
+        ambient: args.ambient === true,
+      });
       for (const e of observed.errors) console.error(formatWarning({ message: e }));
       observations = observed.observations;
       source = { kind: "live" };

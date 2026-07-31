@@ -138,6 +138,16 @@ export interface ParsedArgs {
    * should win.
    */
   at?: string;
+  /**
+   * `chant search "<q>" --ambient --live --env <name>` (#1278) — also report
+   * resources of a kind this estate manages that exist in the account without
+   * being declared or referenced. What "which of my security groups are
+   * unused" is asking about, and unreachable from a state file.
+   *
+   * Opt-in: it asks the provider what exists rather than resolving out from
+   * what is declared, which is a broader read and a different claim.
+   */
+  ambient?: boolean;
 
   /** `chant dev surface-diff --run-examples` — also run the example build harness */
   runExamples?: boolean;

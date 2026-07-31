@@ -683,6 +683,23 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
     return observeAwsDependencies({ observed: options.observed, region: options.region });
   },
 
+  /**
+   * Resources of a managed kind that exist without being declared or
+   * referenced (#1278) — the account's default security groups, an unattached
+   * one someone left behind. Nothing else in the observation can see them,
+   * because everything else resolves outward from what is declared.
+   */
+  async observeAmbient(options: {
+    environment: string;
+    kinds: string[];
+    observed: Record<string, ResourceMetadata>;
+    stack?: string;
+    region?: string;
+  }): Promise<Record<string, ResourceMetadata>> {
+    const { observeAwsAmbient } = await import("./ambient");
+    return observeAwsAmbient({ kinds: options.kinds, observed: options.observed, region: options.region });
+  },
+
   async observeResourcesDeep(options: {
     environment: string;
     buildOutput: string;

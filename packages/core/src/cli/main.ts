@@ -275,6 +275,8 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.updateBaseline = true;
     } else if (arg === "--at") {
       result.at = args[++i];
+    } else if (arg === "--ambient") {
+      result.ambient = true;
     } else if (arg === "--run-examples") {
       result.runExamples = true;
     } else if (arg === "--pinned-digest") {

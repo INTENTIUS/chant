@@ -241,6 +241,14 @@ export function diffLive(input: DiffLiveInput): LiveDiffResult {
       dependencyNames.add(name);
       continue;
     }
+    // Ambient (#1278): observed because it exists, not because anything points
+    // at it. Reported so a caller can ask about it — "which of these are
+    // unused" is the whole point — but never counted as drift, since chant
+    // neither created it nor tracks its changes.
+    if (observedNow[name]?.ambient) {
+      dependencyNames.add(name);
+      continue;
+    }
     const chain = observedNow[name]?.ownerChain;
     if (chain?.root === "declared") {
       runtimeChildNames.add(name);
