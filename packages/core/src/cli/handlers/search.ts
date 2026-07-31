@@ -7,6 +7,9 @@ import { reconstructEdges, mergeCatalogs, type ReferenceCatalog } from "../../gr
 import { discover } from "../../discovery/index";
 
 import { observeResources } from "../../lifecycle/observe";
+import { readEnvironmentSnapshots } from "../../lifecycle/git";
+import type { LifecycleSnapshot } from "../../lifecycle/types";
+import type { LiveObservation } from "../../graph-ir";
 import { loadChantConfig } from "../../config";
 import { loadPlugins, resolveProjectLexicons } from "../plugins";
 import { formatError, formatWarning } from "../format";
@@ -49,10 +52,21 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
   const { config } = await loadChantConfig(projectPath);
 
   let ir: GraphIR;
-  if (args.live) {
+  let source: AnswerSource = { kind: "declared" };
+  if (args.live || args.at) {
     const environment = args.env;
     if (!environment) {
-      console.error(formatError({ message: "chant search --live needs an environment: --live --env <name>" }));
+      const flag = args.at ? "--at" : "--live";
+      console.error(formatError({ message: `chant search ${flag} needs an environment: ${flag} --env <name>` }));
+      return 1;
+    }
+    if (args.live && args.at) {
+      // Two different observations of the same estate, and no rule for which
+      // wins. Comparing them is a real question (#1268) but it is not this one.
+      console.error(formatError({
+        message: "chant search takes --live or --at, not both",
+        hint: "--live reads the estate now; --at answers from a recorded snapshot",
+      }));
       return 1;
     }
     if (config.environments && !config.environments.includes(environment)) {
@@ -67,21 +81,41 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
     }
     const observing = plugins.filter((p) => p.describeResources);
     const stacks = (config.stacks ?? []).map((s) => ({ name: s.name, region: s.region, src: s.src }));
-    const { observations, errors } = await observeResources(environment, observing, buildResult, {
-      owned: true,
-      stacks,
-    });
-    for (const e of errors) console.error(formatWarning({ message: e }));
-    let live = buildLiveGraphIr(observations);
+
+    let observations: LiveObservation[];
     const liveAttrs: Record<string, Record<string, unknown>> = {};
-    for (const p of observing) {
-      if (!p.enrichLiveAttrs) continue;
-      try {
-        const enriched = await p.enrichLiveAttrs({ environment, owned: true, stacks });
-        for (const [id, a] of Object.entries(enriched)) liveAttrs[id] = { ...liveAttrs[id], ...a };
-        live = { ...live, nodes: live.nodes.map((n) => (enriched[n.id] ? { ...n, attrs: { ...n.attrs, ...enriched[n.id] } } : n)) };
-      } catch {
-        /* enrichment is best-effort; search still works on describe attrs */
+    if (args.at) {
+      // Answer from a recorded observation (#1266). Everything downstream is
+      // the live path's — the point is that a snapshot replays into the same
+      // shape a live read produces, so one pipeline serves both and a fold
+      // improvement reaches an old snapshot for free.
+      const scoped = new Set(stacks.filter((st) => st.src).map((st) => st.name));
+      const replay = await replaySnapshots(environment, String(args.at), scoped);
+      if ("error" in replay) {
+        console.error(formatError({ message: replay.error, ...(replay.hint ? { hint: replay.hint } : {}) }));
+        return 1;
+      }
+      observations = replay.observations;
+      source = { kind: "snapshot", commit: replay.commit, timestamp: replay.timestamp };
+    } else {
+      const observed = await observeResources(environment, observing, buildResult, { owned: true, stacks });
+      for (const e of observed.errors) console.error(formatWarning({ message: e }));
+      observations = observed.observations;
+      source = { kind: "live" };
+    }
+    let live = buildLiveGraphIr(observations);
+    // Live-only: enrichment is a provider call, so it has no place in a replay.
+    // A recorded answer that quietly reached for the API would stop being one.
+    if (!args.at) {
+      for (const p of observing) {
+        if (!p.enrichLiveAttrs) continue;
+        try {
+          const enriched = await p.enrichLiveAttrs({ environment, owned: true, stacks });
+          for (const [id, a] of Object.entries(enriched)) liveAttrs[id] = { ...liveAttrs[id], ...a };
+          live = { ...live, nodes: live.nodes.map((n) => (enriched[n.id] ? { ...n, attrs: { ...n.attrs, ...enriched[n.id] } } : n)) };
+        } catch {
+          /* enrichment is best-effort; search still works on describe attrs */
+        }
       }
     }
     // Reconstruct edges from live references (#778), the same way `graph --live`
@@ -144,11 +178,94 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
   for (const n of matches) {
     console.log(formatRow(n, show));
   }
-  const backed = args.live !== true || matches.some((n) => n.physicalId);
-  provenance(matches, args.live === true);
+  const backed = source.kind === "declared" || matches.some((n) => n.physicalId);
+  provenance(matches, source);
   derivedSurface(terms, matches, ir, backed);
   if (args.explain) explain(terms, matches, ir, nodeById, query);
   return 0;
+}
+
+
+/** Where an answer's facts came from, for the provenance line (#1266). */
+type AnswerSource =
+  | { kind: "declared" }
+  | { kind: "live" }
+  | { kind: "snapshot"; commit: string; timestamp: string };
+
+/**
+ * Rebuild observations from a recorded snapshot (#1266).
+ *
+ * A snapshot already holds what an observation is: resources with their
+ * physical ids and attributes, and — since #1266 — the relationships between
+ * them. Turning it back into `LiveObservation[]` means the replay rejoins the
+ * live path at `buildLiveGraphIr`, and every fold, overlay and query below that
+ * is shared. Nothing downstream needs to know which source it got.
+ *
+ * `latest` is the only ref for now. A specific commit is the natural extension
+ * and the storage already supports it (`readSnapshotAt`), but "answer from what
+ * is recorded" is the question worth settling first.
+ */
+async function replaySnapshots(
+  environment: string,
+  ref: string,
+  scopedStacks: Set<string>,
+): Promise<{ observations: LiveObservation[]; commit: string; timestamp: string } | { error: string; hint?: string }> {
+  if (ref !== "latest" && ref !== "true") {
+    return {
+      error: `chant search --at only accepts "latest" for now, got "${ref}"`,
+      hint: "a specific snapshot commit is not wired up yet",
+    };
+  }
+  const stored = await readEnvironmentSnapshots(environment);
+  if (stored.size === 0) {
+    return {
+      error: `No snapshots found for environment "${environment}"`,
+      hint: `Record one first: chant lifecycle snapshot ${environment}`,
+    };
+  }
+  const observations: LiveObservation[] = [];
+  let commit = "";
+  let timestamp = "";
+  for (const [key, content] of stored) {
+    const snapshot = JSON.parse(content) as LifecycleSnapshot;
+    // The storage key is `<stack>__<lexicon>` for a multi-stack project; the
+    // snapshot carries its own lexicon, which is the one to trust.
+    const lexicon = snapshot.lexicon ?? key;
+    // A scoped stack's ids are qualified `${stack}::${id}` on the live path
+    // (#1162), because the same bare LogicalResourceId exists in every region's
+    // stack. A snapshot stores them bare, so a replay has to re-apply the same
+    // rule — otherwise `server` from us-west-1 and `server` from us-west-2
+    // collide, and none of them join the declared canvas, which qualifies.
+    const stack = snapshot.stack;
+    const qualify = stack !== undefined && scopedStacks.has(stack);
+    // Dependencies (#1273) are keyed by physical id and are account-level: the
+    // default VPC's route table is one resource however many stacks route
+    // through it. Qualifying those would split it per stack and break the
+    // edges into it.
+    const managed = (id: string, meta: { referencedBy?: string[] }): string =>
+      qualify && !(meta.referencedBy && meta.referencedBy.length > 0) ? `${stack}::${id}` : id;
+    const resources = Object.fromEntries(
+      Object.entries(snapshot.resources ?? {}).map(([id, meta]) => [managed(id, meta), meta]),
+    );
+    const known = new Set(Object.keys(snapshot.resources ?? {}));
+    const requalify = (id: string): string => {
+      const meta = (snapshot.resources ?? {})[id];
+      return known.has(id) && meta ? managed(id, meta) : id;
+    };
+    const edges = (snapshot.edges ?? []).map((e) => ({ ...e, from: requalify(e.from), to: requalify(e.to) }));
+    observations.push({
+      lexicon,
+      resources,
+      ...(edges.length > 0 ? { edges } : {}),
+    });
+    commit ||= snapshot.commit ?? "";
+    // Report the OLDEST timestamp across stacks: a caller asking how stale this
+    // answer is wants the weakest link, not the freshest one.
+    if (!timestamp || (snapshot.timestamp && snapshot.timestamp < timestamp)) {
+      timestamp = snapshot.timestamp ?? timestamp;
+    }
+  }
+  return { observations, commit, timestamp };
 }
 
 /**
@@ -166,21 +283,30 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
  * already done. That is a fact about the query, printed for every query, and it
  * encodes no expected answer.
  */
-function provenance(matches: IRNode[], live: boolean): void {
-  if (!live) {
+function provenance(matches: IRNode[], source: AnswerSource): void {
+  if (source.kind === "declared") {
     console.log("— declared only · no observation · physical ids unavailable");
     return;
   }
   const bound = matches.filter((n) => n.physicalId).length;
+  const what = source.kind === "live" ? "live read" : "snapshot";
   if (bound === 0) {
     // The estate was asked for and nothing came back bound. Naming it is the
     // difference between "these do not exist" and "nobody could see them".
     console.log(
-      `— live read returned no bound resources · answered from the declared graph · physical ids unavailable`,
+      `— ${what} returned no bound resources · answered from the declared graph · physical ids unavailable`,
     );
     return;
   }
-  console.log(`— observed live · bound ${bound}/${matches.length}`);
+  if (source.kind === "live") {
+    console.log(`— observed live · bound ${bound}/${matches.length}`);
+    return;
+  }
+  // Time is the whole risk of a recorded answer, so it leads. A caller can see
+  // how old this is and decide, rather than discovering staleness later.
+  const taken = source.timestamp ? ` taken ${source.timestamp}` : "";
+  const at = source.commit ? ` ${source.commit.slice(0, 7)}` : "";
+  console.log(`— observed from snapshot${at}${taken} · bound ${bound}/${matches.length}`);
 }
 
 /**

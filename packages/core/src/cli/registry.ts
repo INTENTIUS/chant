@@ -130,6 +130,15 @@ export interface ParsedArgs {
    * orphan branch; never touches the cloud.
    */
   updateBaseline?: boolean;
+  /**
+   * `chant search "<q>" --at <ref> --env <name>` (#1266) — answer from a
+   * recorded observation instead of reading the estate now. `latest` uses the
+   * most recent snapshot. Mutually exclusive with `--live`: they are two
+   * different observations of the same estate, and there is no rule for which
+   * should win.
+   */
+  at?: string;
+
   /** `chant dev surface-diff --run-examples` — also run the example build harness */
   runExamples?: boolean;
   /** `chant dev surface-diff --pinned-digest <file>` — path to SHA-256 digest file for supply-chain verification */

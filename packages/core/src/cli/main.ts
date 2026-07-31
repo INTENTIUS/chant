@@ -273,6 +273,8 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.updateSnapshot = true;
     } else if (arg === "--update-baseline") {
       result.updateBaseline = true;
+    } else if (arg === "--at") {
+      result.at = args[++i];
     } else if (arg === "--run-examples") {
       result.runExamples = true;
     } else if (arg === "--pinned-digest") {

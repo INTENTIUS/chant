@@ -244,7 +244,7 @@ function scopeToStack(
 }
 
 /** Dependencies collected across a lexicon's stacks, plus anything to report. */
-interface CollectedDependencies {
+export interface CollectedDependencies {
   resources: Record<string, ResourceMetadata>;
   edges: IREdge[];
   warnings: string[];
@@ -266,7 +266,7 @@ const NO_DEPENDENCIES: CollectedDependencies = { resources: {}, edges: [], warni
  * useful on its own, and failing it because an ambient dependency could not be
  * read would trade a whole answer for a partial one.
  */
-async function collectDependencies(
+export async function collectDependencies(
   plugin: ObservationLexicon,
   opts: {
     environment: string;

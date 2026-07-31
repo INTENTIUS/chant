@@ -7,6 +7,7 @@ import type { BuildResult } from "../build";
 import type { SerializerResult } from "../serializer";
 import type { LifecycleSnapshot } from "./types";
 import { computeBuildDigest } from "./digest";
+import { collectDependencies } from "./observe";
 import { writeSnapshot, snapshotStorageKey, getHeadCommit, pushLifecycle } from "./git";
 import { sortedJsonReplacer } from "../utils";
 import { formatUnobserved, normalizeObservation, unobservedAll, type UnobservedEntity } from "../observation";
@@ -176,13 +177,28 @@ export async function takeSnapshot(
         continue;
       }
 
+      // What this estate depends on but does not manage (#1273), recorded so a
+      // replayed snapshot can answer the same questions a live read can (#1266).
+      // Without them a snapshot holds the managed resources and no route to the
+      // account's default VPC, so `internetFacing` is unanswerable from it —
+      // which would make `search --at` quietly weaker than `search --live`.
+      const dependencies = await collectDependencies(plugin, {
+        environment,
+        entities,
+        observed: resources,
+        stacks: stack ? [{ name: stack, ...(region ? { region } : {}) }] : [],
+      });
+      for (const message of dependencies.warnings) warnings.push(message);
+      const withDependencies = { ...resources, ...dependencies.resources };
+
       const snapshot: LifecycleSnapshot = {
         lexicon: plugin.name,
         environment,
         ...(stack ? { stack } : {}),
         commit: headCommit,
         timestamp,
-        resources,
+        resources: withDependencies,
+        ...(dependencies.edges.length > 0 ? { edges: dependencies.edges } : {}),
         ...(Object.keys(unobserved).length > 0 && { unobserved }),
         ...(Object.keys(artifacts).length > 0 && { artifacts }),
         digest,
