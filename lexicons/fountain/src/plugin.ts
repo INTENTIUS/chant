@@ -81,7 +81,7 @@ export const fountainPlugin: LexiconPlugin = {
         "Declare, lint, and reconcile fountain Environments, Vaults, and Agents from a chant project",
       triggers: [
         { type: "context" as const, value: "fountain" },
-        { type: "context" as const, value: "founta.inevitable.fyi" },
+        { type: "context" as const, value: "fountain.inevitable.fyi" },
       ],
     },
     {
@@ -109,7 +109,7 @@ export const fountainPlugin: LexiconPlugin = {
     return [
       createDiffTool(
         fountainSerializer,
-        "Compare current fountain build output (fountain manifests + fountain-plan.json) against previous version",
+        "Compare current fountain build output (fountain manifest YAML) against previous version",
         "fountain",
       ),
     ];

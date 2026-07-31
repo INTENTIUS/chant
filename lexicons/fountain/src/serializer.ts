@@ -1,4 +1,4 @@
-import type { Serializer, SerializerResult, Declarable } from "@intentius/chant";
+import type { Serializer, Declarable } from "@intentius/chant";
 import { walkValue, type SerializerVisitor } from "@intentius/chant/serializer-walker";
 import { propsOf } from "./entity-props";
 
@@ -8,8 +8,13 @@ import { propsOf } from "./entity-props";
  * single multi-document stream. The output stays `fountain apply -f`
  * compatible, so anyone can eject from chant and keep the artifacts.
  *
+ * This is also `fountainApply`'s own input now: since fountain's bulk
+ * `POST /api/apply` (BinaryBourbon/fountain#151) resolves name references
+ * server-side, there's no separate sidecar to keep in sync — the manifest
+ * YAML is the only artifact.
+ *
  * Cross-resource references (e.g. `agent.environment`) serialize to the
- * referenced entity's name — fountain's CLI resolves names to ids at apply.
+ * referenced entity's name — fountain resolves names to ids at apply.
  */
 
 const API_VERSION = "fountain.dev/v1";
@@ -24,7 +29,7 @@ export const fountainSerializer: Serializer = {
   name: "fountain",
   rulePrefix: "FTN",
 
-  serialize(entities: Map<string, Declarable>): string | SerializerResult {
+  serialize(entities: Map<string, Declarable>): string {
     // Reverse map for reference resolution: Declarable instance → name.
     const entityNames = new Map<Declarable, string>();
     for (const [name, entity] of entities) {
@@ -50,7 +55,6 @@ export const fountainSerializer: Serializer = {
     };
 
     const docs: string[] = [];
-    const plan: Record<string, { kind: string; spec: Record<string, unknown> }> = {};
     for (const [name, entity] of entities) {
       const spec: Record<string, unknown> = {};
       for (const [key, val] of Object.entries(propsOf(entity))) {
@@ -65,16 +69,9 @@ export const fountainSerializer: Serializer = {
         spec,
       };
       docs.push(toYaml(manifest));
-      plan[name] = { kind: manifest.kind, spec };
     }
 
-    const yaml = docs.join("---\n");
-    if (docs.length === 0) return yaml;
-
-    // Primary output is the ejectable `fountain apply -f` YAML; the JSON
-    // sidecar is the fountainApply op's input (same data, no YAML parser
-    // needed on the apply side — the fly plan.json pattern).
-    return { primary: yaml, files: { "fountain-plan.json": JSON.stringify(plan, null, 2) } };
+    return docs.join("---\n");
   },
 };
 

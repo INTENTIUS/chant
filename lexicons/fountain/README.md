@@ -9,8 +9,8 @@ resources: `Environment` (sandbox baseline), `Vault` (env-var overrides),
 start them with the `fountainRun` op.
 
 `chant build` serializes to fountain's own manifest YAML (`fountain apply -f`
-accepts it verbatim) plus a `fountain-plan.json` sidecar that `fountainApply`
-reconciles against the API directly.
+accepts it verbatim) — the same YAML `fountainApply` sends to fountain's bulk
+`POST /api/apply` endpoint in one request.
 
 ```ts
 import { Environment, Agent } from "@intentius/chant-lexicon-fountain";
@@ -52,7 +52,7 @@ added, plus the request schemas deliberately left unmodeled.
 ## Project structure
 
 - `src/plugin.ts` — LexiconPlugin with all lifecycle methods
-- `src/serializer.ts` — manifest YAML + `fountain-plan.json` output
+- `src/serializer.ts` — manifest YAML output
 - `src/codegen/`, `src/spec/` — generation pipeline and spec fetch/parse
 - `src/lint/rules/`, `src/lint/post-synth/` — FTN001 (AST) and FTN010–017
 - `src/op/activities/` — `fountainApply` (reconciler) and `fountainRun`

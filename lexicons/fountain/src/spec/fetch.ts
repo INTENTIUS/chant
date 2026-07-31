@@ -23,7 +23,7 @@ import { readFileSync } from "fs";
 import { fileURLToPath } from "url";
 import { fetchWithCache } from "@intentius/chant/codegen/fetch";
 
-const SCHEMA_URL = "https://founta.inevitable.fyi/api/openapi.json";
+const SCHEMA_URL = "https://fountain.inevitable.fyi/api/openapi.json";
 
 const CACHE_FILE = join(homedir(), ".chant", "fountain-openapi.json");
 

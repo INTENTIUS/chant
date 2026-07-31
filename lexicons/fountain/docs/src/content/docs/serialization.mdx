@@ -3,7 +3,7 @@ title: "Serialization"
 description: "Output format for the Fountain lexicon"
 ---
 
-The fountain lexicon serializes to fountain's own manifest YAML plus a `fountain-plan.json` sidecar.
+The fountain lexicon serializes to fountain's own manifest YAML — nothing else. `fountainApply` reads that same YAML, so there is no sidecar to keep in sync with it.
 
 ## Manifests
 
@@ -23,14 +23,14 @@ spec:
 
 The output is ejectable — `fountain apply -f` accepts it verbatim, so adopting chant here does not trap the manifests behind chant.
 
-## The plan sidecar
+## Applying the manifest
 
-`fountain-plan.json` is entity name → `{ kind, spec }`. The `fountainApply` activity reconciles from it directly against the REST API, so nothing on the apply side parses YAML. Apply order is Environment → Vault → Agent; an agent's `environment` reference carries the entity name and is resolved to the live id at apply.
+`fountainApply` parses this same YAML and sends it to fountain's bulk `POST /api/apply` endpoint in one request — the server reconciles by name, Environment → Vault → Agent, and resolves an agent's `environment` reference itself, against the manifest or the tenant's existing environments. See the Ops page for the activity's own behavior (prune, secrets, failure reporting).
 
 ## Ownership
 
-Resources carrying `metadata."managed-by": chant` are chant-owned. That marker gates the opt-in prune (`fountainApply` deletes only owned resources absent from the plan) and the `--owned` filter on drift and live export. Set it on every declaration you want reconciled.
+Resources carrying `metadata."managed-by": chant` are chant-owned. That marker gates the opt-in prune (`fountainApply` deletes only owned resources absent from the manifest) and the `--owned` filter on drift and live export. Set it on every declaration you want reconciled.
 
 ## Secrets
 
-`spec.secrets` entries are split out of the resource body and upserted through the secrets sub-resource. Values are write-only upstream, so this is upsert-always — a changed value cannot be detected, only overwritten.
+`spec.secrets` is authored as an ordered `{key, value}[]`, same as any other typed prop. `fountainApply` converts it to the `{KEY: value}` map fountain's bulk apply expects on the wire; the server upserts it through the encrypted envelope path. Values are write-only upstream, so this is upsert-always — a changed value cannot be detected, only overwritten.
