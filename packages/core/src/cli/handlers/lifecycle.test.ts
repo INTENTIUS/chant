@@ -734,6 +734,63 @@ describe("runLifecycleSnapshot", () => {
     expect(takeSnapshotMock).toHaveBeenCalledTimes(1);
   });
 
+  // #1261 — each stack declares the region it deploys to. Dropping it here
+  // observed every stack against the ambient region, so a multi-region estate
+  // snapshotted only the stacks that shared it and reported the rest as
+  // "no valid resources or artifacts returned".
+  test("multi-stack: each stack's declared region reaches takeSnapshot", async () => {
+    buildMock.mockResolvedValue(makeBuildResult({ aws: ["bucket"] }));
+    takeSnapshotMock.mockResolvedValue({
+      snapshots: [{ lexicon: "aws", environment: "prod", resources: { bucket: meta() } }],
+      commit: "sha",
+      warnings: [],
+      errors: [],
+    });
+    loadChantConfigMock.mockResolvedValue({ config: { environments: ["prod"], stacks: [
+      { name: "app-us-east-1", src: "src/us-east-1", region: "us-east-1" },
+      { name: "app-us-west-2", src: "src/us-west-2", region: "us-west-2" },
+    ] } });
+    const plugins: LexiconPlugin[] = [
+      createMockPlugin({ name: "aws", describeResources: staticDescribeResources({ bucket: meta() }) }),
+    ];
+
+    const exit = await runLifecycleSnapshot({
+      args: makeArgs({ command: "state", path: "snapshot", extraPositional: "prod" }),
+      plugins,
+      serializers: plugins.map((p) => p.serializer),
+    });
+
+    expect(exit).toBe(0);
+    expect(takeSnapshotMock.mock.calls.map((c) => c[3])).toEqual([
+      { stack: "app-us-east-1", region: "us-east-1" },
+      { stack: "app-us-west-2", region: "us-west-2" },
+    ]);
+  });
+
+  test("stack without a declared region: region stays undefined", async () => {
+    buildMock.mockResolvedValue(makeBuildResult({ aws: ["bucket"] }));
+    takeSnapshotMock.mockResolvedValue({
+      snapshots: [{ lexicon: "aws", environment: "prod", resources: { bucket: meta() } }],
+      commit: "sha",
+      warnings: [],
+      errors: [],
+    });
+    loadChantConfigMock.mockResolvedValue({ config: { environments: ["prod"], stacks: [
+      { name: "app", src: "src/app" },
+    ] } });
+    const plugins: LexiconPlugin[] = [
+      createMockPlugin({ name: "aws", describeResources: staticDescribeResources({ bucket: meta() }) }),
+    ];
+
+    await runLifecycleSnapshot({
+      args: makeArgs({ command: "state", path: "snapshot", extraPositional: "prod" }),
+      plugins,
+      serializers: plugins.map((p) => p.serializer),
+    });
+
+    expect(takeSnapshotMock.mock.calls[0][3]).toEqual({ stack: "app", region: undefined });
+  });
+
   // #1166 — a snapshot is always a live read, so a declared environment
   // endpoint applies here too, unless the ambient shell already set it.
   describe("declared endpoint (#1166)", () => {
