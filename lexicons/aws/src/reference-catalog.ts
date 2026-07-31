@@ -16,6 +16,7 @@ export const awsReferenceCatalog: ReferenceCatalog = {
     { kind: "AWS::EC2::VPC", ids: ["VpcId"] },
     { kind: "AWS::EC2::Subnet", ids: ["SubnetId"] },
     { kind: "AWS::EC2::SecurityGroup", ids: ["GroupId"] },
+    { kind: "AWS::EC2::NetworkInterface", ids: ["NetworkInterfaceId"] },
     { kind: "AWS::EC2::Instance", ids: ["InstanceId"] },
     { kind: "AWS::EC2::InternetGateway", ids: ["InternetGatewayId"] },
     { kind: "AWS::EC2::NatGateway", ids: ["NatGatewayId"] },
@@ -56,6 +57,12 @@ export const awsReferenceCatalog: ReferenceCatalog = {
     { from: "AWS::EC2::SubnetRouteTableAssociation", path: "SubnetId", targetKind: "AWS::EC2::Subnet", relation: "reference", label: "associates", viaAttr: "SubnetId" },
     { from: "AWS::EC2::SubnetRouteTableAssociation", path: "RouteTableId", targetKind: "AWS::EC2::RouteTable", relation: "reference", label: "to table", viaAttr: "RouteTableId" },
     { from: "AWS::EC2::SecurityGroup", path: "IpPermissions[].UserIdGroupPairs[].GroupId", targetKind: "AWS::EC2::SecurityGroup", relation: "reference", label: "allows" },
+    // An ENI is where a security group is attached and where an instance's
+    // networking actually lives, so both edges are what make "unused" and
+    // "reachable" answerable from the graph rather than from a provider sweep.
+    { from: "AWS::EC2::NetworkInterface", path: "Groups[].GroupId", targetKind: "AWS::EC2::SecurityGroup", relation: "reference", label: "sg", viaAttr: "Groups" },
+    { from: "AWS::EC2::NetworkInterface", path: "Attachment.InstanceId", targetKind: "AWS::EC2::Instance", relation: "reference", label: "attached to", viaAttr: "Attachment" },
+    { from: "AWS::EC2::NetworkInterface", path: "SubnetId", targetKind: "AWS::EC2::Subnet", relation: "containment", label: "in subnet" },
     { from: "AWS::EC2::Route", path: "GatewayId", targetKind: "AWS::EC2::InternetGateway", relation: "reference", label: "via", viaAttr: "GatewayId" },
     { from: "AWS::EC2::Route", path: "NatGatewayId", targetKind: "AWS::EC2::NatGateway", relation: "reference", label: "via" },
     { from: "AWS::ElasticLoadBalancingV2::LoadBalancer", path: "SecurityGroups[]", targetKind: "AWS::EC2::SecurityGroup", relation: "reference", label: "sg" },

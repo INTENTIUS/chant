@@ -33,7 +33,42 @@ const ENUMERABLE: Record<string, { argv: string[]; key: string; id: string; name
     key: "Vpcs",
     id: "VpcId",
   },
+  // Nobody writes a network interface: EC2 creates one per instance. But the
+  // ENI is where a security group is actually attached, so "which of my
+  // security groups are unused" is an ENI question and cannot be answered
+  // without them. Asked exactly that, an agent queried
+  // `kind:EC2::NetworkInterface`, got nothing, and rebuilt the attachment map
+  // by hand from twenty-nine raw provider calls.
+  "AWS::EC2::NetworkInterface": {
+    argv: ["ec2", "describe-network-interfaces"],
+    key: "NetworkInterfaces",
+    id: "NetworkInterfaceId",
+  },
 };
+
+/**
+ * Kinds a declared kind implies, though nobody writes them.
+ *
+ * The scan is bounded by what the project declares — a project managing
+ * security groups is asked about security groups, not about the account. That
+ * bound is right, and it excluded exactly the resource that answers the
+ * question: EC2 creates a network interface per instance, and the ENI is where
+ * a security group is actually attached. So an estate full of instances had no
+ * ENIs recorded, and "which of my security groups are unused" — definitionally
+ * an ENI question — could not be answered from the snapshot at all.
+ *
+ * Declaring an instance is declaring its network interface. This widens the
+ * bound by implication rather than abandoning it: still nothing about the
+ * account at large.
+ */
+const IMPLIED: Record<string, string[]> = {
+  "AWS::EC2::Instance": ["AWS::EC2::NetworkInterface"],
+};
+
+/** The requested kinds, plus the ones they imply. */
+export function withImplied(kinds: string[]): string[] {
+  return [...new Set(kinds.flatMap((k) => [k, ...(IMPLIED[k] ?? [])]))];
+}
 
 /** The kinds this reader can enumerate. Declared so a caller can mention
  * `--ambient` without paying for a scan to discover it is relevant. */
@@ -59,7 +94,7 @@ export async function observeAwsAmbient(options: {
   observed: Record<string, ResourceMetadata>;
   region?: string;
 }): Promise<Record<string, ResourceMetadata>> {
-  const kinds = [...new Set(options.kinds)].filter(canEnumerate);
+  const kinds = withImplied(options.kinds).filter(canEnumerate);
   if (kinds.length === 0) return {};
 
   const { getRuntime } = await import("@intentius/chant/runtime-adapter");
