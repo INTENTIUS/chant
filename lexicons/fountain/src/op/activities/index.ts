@@ -8,8 +8,8 @@ export {
   fountainApply,
   resolveEndpoint,
   resolveToken,
-  parsePlan,
-  splitSecrets,
+  parseManifest,
+  toApplyPayload,
   isChantOwned,
   defaultFountainHttp,
   DEFAULT_FOUNTAIN_BASE_URL,
@@ -19,8 +19,7 @@ export {
 export type {
   FountainApplyArgs,
   FountainApplySummary,
-  FountainPlan,
-  PlanEntry,
+  ManifestResource,
   FountainHttp,
 } from "./fountain-apply";
 
