@@ -83,6 +83,37 @@ describe("takeSnapshot", () => {
     expect(writeSnapshotMock.mock.calls[0][1]).toBe("loom-backend__aws");
   });
 
+  test("region option: the stack's own region reaches describeResources (#1261)", async () => {
+    let observedRegion: string | undefined = "unset";
+    const plugin = createMockPlugin({
+      name: "aws",
+      describeResources: async (options: { region?: string }) => {
+        observedRegion = options.region;
+        return { bucket: { type: "AWS::S3::Bucket", status: "CREATE_COMPLETE", physicalId: "b" } };
+      },
+    });
+    await takeSnapshot("prod", [plugin], makeBuildResult({ aws: ["bucket"] }), {
+      stack: "loom-us-west-2",
+      region: "us-west-2",
+    });
+    // Without this the reader falls back to the ambient region, and every stack
+    // outside it snapshots as "no valid resources or artifacts returned".
+    expect(observedRegion).toBe("us-west-2");
+  });
+
+  test("no region declared: describeResources keeps its ambient-region default", async () => {
+    let observedRegion: string | undefined = "unset";
+    const plugin = createMockPlugin({
+      name: "aws",
+      describeResources: async (options: { region?: string }) => {
+        observedRegion = options.region;
+        return { bucket: { type: "AWS::S3::Bucket", status: "CREATE_COMPLETE", physicalId: "b" } };
+      },
+    });
+    await takeSnapshot("prod", [plugin], makeBuildResult({ aws: ["bucket"] }));
+    expect(observedRegion).toBeUndefined();
+  });
+
   test("plugin without describeResources is skipped", async () => {
     const plugin = createMockPlugin({ name: "aws" });
     const result = await takeSnapshot("prod", [plugin], makeBuildResult({ aws: ["x"] }));

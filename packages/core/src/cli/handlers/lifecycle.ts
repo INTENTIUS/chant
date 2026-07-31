@@ -62,6 +62,11 @@ interface StackTarget {
   /** Build root to synthesize this stack from, scoped so its logical ids match
    * what the stack actually deploys. */
   root: string;
+  /** Region the stack is deployed in, from `stacks[].region` (#1261). Without
+   * it every stack is observed against the ambient region, so a multi-region
+   * estate snapshots only the stacks that happen to share it and reports the
+   * rest as "no valid resources or artifacts returned". */
+  region?: string;
 }
 
 /**
@@ -75,7 +80,7 @@ interface StackTarget {
 function resolveStackTargets(args: ParsedArgs, config: ChantConfig): StackTarget[] {
   if (args.src) return [{ root: resolve(args.src) }];
   if (config.stacks && config.stacks.length > 0) {
-    return config.stacks.map((s) => ({ stack: s.name, root: resolve(s.src) }));
+    return config.stacks.map((s) => ({ stack: s.name, root: resolve(s.src), region: s.region }));
   }
   return [{ root: resolveBuildRoot(args, config) }];
 }
@@ -145,7 +150,10 @@ export async function runLifecycleSnapshot(ctx: CommandContext): Promise<number>
 
       let result;
       try {
-        result = await takeSnapshot(environment, observingPlugins, buildResult, { stack: target.stack });
+        result = await takeSnapshot(environment, observingPlugins, buildResult, {
+          stack: target.stack,
+          region: target.region,
+        });
       } catch (err) {
         if (err instanceof StaleLifecycleBranchError) {
           console.error(formatError({
