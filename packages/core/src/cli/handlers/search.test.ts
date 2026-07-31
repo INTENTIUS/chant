@@ -208,12 +208,14 @@ describe("negated terms (#1280)", () => {
     ).toEqual(["b"]);
   });
 
-  test("a bare edge term is refused rather than matching something arbitrary", () => {
-    // An agent wrote `kind:EC2::SecurityGroup !<-` meaning "referenced by
-    // nothing" and got a silently wrong set. It is also a different question
-    // from "referenced by no Instance", so guessing which was meant is wrong.
-    expect(() => parseQuery("kind:Foo !<-")).toThrow(/needs a target/);
-    expect(() => parseQuery("kind:Foo ->")).toThrow(/needs a target/);
+  test("a bare edge term means 'any edge in that direction'", () => {
+    // It used to parse to an empty leaf and match arbitrarily; refusing it was
+    // the first fix. But "referenced by nothing at all" is a precise question,
+    // and the one agents reach for when asked what is unused — two of them
+    // wrote `!<-` meaning exactly that. `!<-kind:X` is the narrower "referenced
+    // by no X"; both are sayable now.
+    expect(parseQuery("kind:Foo !<-")[1]).toEqual({ kind: "edge", a: "", dir: "in", negated: true });
+    expect(parseQuery("kind:Foo ->")[1]).toEqual({ kind: "edge", a: "", dir: "out" });
   });
 
   test("a made-up prefix is refused, and names the correction", () => {
@@ -282,5 +284,35 @@ describe("the --ambient hint", () => {
     const out = capture(() => ambientHint([sg] as never, kinds, false, { recordedAmbient: false }));
     expect(out).toContain("lifecycle snapshot");
     expect(out).not.toContain("--ambient includes those");
+  });
+});
+
+describe("unreferenced nodes (#1280)", () => {
+  const ir = {
+    nodes: [
+      node("attached", "AWS::EC2::SecurityGroup"),
+      node("stray", "AWS::EC2::SecurityGroup"),
+      node("web", "AWS::EC2::Instance"),
+    ],
+    edges: [{ from: "web", to: "attached", kind: "ref", viaAttr: "SecurityGroupIds" }],
+  } as never;
+  const byId = new Map((ir as { nodes: { id: string }[] }).nodes.map((n) => [n.id, n]));
+  const run = (q: string) =>
+    (ir as { nodes: never[] }).nodes
+      .filter((n) => parseQuery(q).every((t) => matchTerm(n as never, t, ir, byId as never)))
+      .map((n: { id: string }) => n.id);
+
+  test("!<- selects what nothing points at", () => {
+    expect(run("kind:EC2::SecurityGroup !<-")).toEqual(["stray"]);
+  });
+
+  test("<- selects what something points at", () => {
+    expect(run("kind:EC2::SecurityGroup <-")).toEqual(["attached"]);
+  });
+
+  test("!<-kind:X stays the narrower question", () => {
+    // Nothing of kind Subnet references either group, so both match — which is
+    // a different answer from "nothing references it at all".
+    expect(run("kind:EC2::SecurityGroup !<-kind:EC2::Subnet")).toEqual(["attached", "stray"]);
   });
 });

@@ -437,6 +437,7 @@ function describeTerm(t: Term): string {
     x.kind === "kind" ? `kind:${x.a}` : x.kind === "attr" ? `attr:${x.a}${x.b !== undefined ? "=" + x.b : ""}`
       : x.kind === "tag" ? `tag:${x.a}${x.b !== undefined ? "=" + x.b : ""}` : `"${x.a}"`;
   if (t.kind === "edge" && t.sub) return `${t.dir === "out" ? "→" : "←"}${leaf(t.sub)} (no such edge)`;
+  if (t.kind === "edge") return `${t.dir === "out" ? "→" : "←"}any (no such edge)`;
   return leaf(t);
 }
 
@@ -511,11 +512,16 @@ function parseQuery(query: string): Term[] {
     // "referenced by nothing at all" and "referenced by no Instance" are
     // different questions, and on any estate whose declared graph carries
     // references they give different answers.
-    if ((tok === "->" || tok === "<-") || /^(->|<-)\s*$/.test(tok)) {
-      throw new QueryError(
-        `"${negated ? "!" : ""}${tok}" needs a target`,
-        `say what the edge reaches: ${negated ? "!" : ""}${tok}kind:EC2::Instance, or ${negated ? "!" : ""}${tok}attr:Name=web`,
-      );
+    // A bare `->`/`<-` constrains only that an edge exists in that direction.
+    // It used to parse to an empty leaf and match arbitrarily, and refusing it
+    // was the first fix — but "nothing references this at all" is a precise
+    // question, not an ambiguous one, and it is the one agents reach for when
+    // asked what is unused. `!<-kind:X` remains the narrower "referenced by no
+    // X"; they are different questions and both are now sayable.
+    if (/^(->|<-)\s*$/.test(tok)) {
+      const dir = tok.startsWith("->") ? ("out" as const) : ("in" as const);
+      const term: Term = { kind: "edge", a: "", dir };
+      return negated ? { ...term, negated: true } : term;
     }
     const term = tok.startsWith("->")
       ? { kind: "edge" as const, a: "", dir: "out" as const, sub: parseLeaf(tok.slice(2)) }
@@ -543,13 +549,15 @@ function matchTerm(n: IRNode, t: Term, ir?: GraphIR, byId?: Map<string, IRNode>)
   if (t.negated) return !matchTerm(n, { ...t, negated: false }, ir, byId);
   const attrs = n.attrs ?? {};
   if (t.kind === "edge") {
-    if (!ir || !byId || !t.sub) return false;
-    // A node matches if it has an edge (out or in) to a node satisfying `sub`.
+    if (!ir || !byId) return false;
+    // A node matches if it has an edge (out or in) to a node satisfying `sub` —
+    // or, with no `sub`, to anything at all.
     const edges = ir.edges ?? [];
     const neighbors = edges
       .filter((e) => (t.dir === "out" ? e.from === n.id : e.to === n.id))
       .map((e) => byId.get(t.dir === "out" ? e.to : e.from))
       .filter((x): x is IRNode => !!x);
+    if (!t.sub) return neighbors.length > 0;
     return neighbors.some((m) => matchTerm(m, t.sub!, ir, byId));
   }
   if (t.kind === "kind") return (n.kind ?? "").toLowerCase().includes(t.a.toLowerCase());
