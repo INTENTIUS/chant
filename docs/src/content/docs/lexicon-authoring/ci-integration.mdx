@@ -103,14 +103,48 @@ The command is idempotent — running it twice skips already-configured files.
 
 ## First npm publish
 
-All packages are published together via the publish workflow, triggered by pushing a `v*` tag:
+<Aside type="danger" title="Do this before the first release, or the release breaks">
+A new package needs an npm **trusted publisher** record, and nothing in the
+repo can create one for you. Without it the publish workflow authenticates
+over OIDC, the registry has no record to match, and `npm publish` reports a
+bare `ENEEDAUTH` — indistinguishable from having no credentials at all.
+
+On [npmjs.com](https://www.npmjs.com), open the package, then Settings →
+Trusted Publisher, and add:
+
+| Field | Value |
+|------|-------|
+| Organization / repository | `INTENTIUS/chant` |
+| Workflow filename | `publish.yml` |
+| Environment | *leave empty* — the publish job declares none, and a value here will not match |
+
+The record is per package. It is not inherited from the org and not shared
+with the other packages, so every new lexicon needs its own. This step was
+missing from these docs, and both `@intentius/chant-k8s-client` and
+`@intentius/chant-lexicon-fountain` shipped without a record and could not be
+published at all until it was added.
+</Aside>
+
+Releases go out through `just release`, which bumps every package in lockstep,
+commits, and pushes the tag the workflow actually listens for:
 
 ```bash
-git tag v<version>
-git push origin v<version>
+just release patch    # or: minor / major
 ```
 
-The workflow runs `npm publish --access public` for each package with `--tolerate-republish` so existing packages are a no-op.
+To move a single lexicon without a full release:
+
+```bash
+just release-lexicon <name> patch
+```
+
+The workflow triggers on `chant-v*` and `lexicon-*-v*` tags. A bare `v<version>`
+tag matches neither and silently does nothing.
+
+Publishing itself is `scripts/publish-packages.sh`. It enumerates every
+non-private workspace package, so a new lexicon is picked up with no workflow
+edit. A package already at its version on the registry is skipped, which makes
+re-running the workflow a safe way to recover a partial release.
 
 <Aside type="caution" title="First-time scoped packages">
 `npm publish --access public` may land as **private** on the first publish of a scoped package. After the workflow completes, check [npmjs.com/org/intentius](https://www.npmjs.com/org/intentius) and toggle the package to public if needed. Subsequent publishes will stay public.
