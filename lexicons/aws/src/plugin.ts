@@ -19,6 +19,9 @@ import { applyAwsEndpointArgv } from "./components/cloud-executor";
 import { stackDoesNotExist } from "./stack-errors";
 import { awsDeepNormalizationHooks, observeResourcesDeepAws } from "./deep-observe";
 import { awsReferenceCatalog } from "./reference-catalog";
+import { AMBIENT_KINDS } from "./ambient";
+import { describeOwnProperties, stampRegion } from "./properties";
+import { stampProviderDefaults } from "./defaults";
 import { resolveTemplateAttrs } from "./live-attrs";
 import { CFParser } from "./import/parser";
 import { CFGenerator } from "./import/generator";
@@ -36,6 +39,9 @@ export { stackDoesNotExist } from "./stack-errors";
  * Provides serializer, lint rules, template detection,
  * import parsing, and code generation for AWS CloudFormation.
  */
+/** #1265 — the ownership notice is about the environment, so it is said once. */
+let warnedOwnership = false;
+
 export const awsPlugin: LexiconPlugin = {
   name: "aws",
   serializer: awsSerializer,
@@ -545,10 +551,17 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
     if (options.owned) {
       // describe-stack-resources does not return tags, so ownership cannot be
       // determined here. Degrade to detect-only rather than silently filtering.
-      // eslint-disable-next-line no-console
-      console.warn(
+      //
+      // Once per process, not once per stack (#1265). It is a property of the
+      // environment, not of each stack, and a four-stack project printed four
+      // identical copies ahead of every answer — enough that an agent piping
+      // `graph --format ir` with `2>&1` had to skip lines to find the JSON.
+      warnedOwnership ||
+        // eslint-disable-next-line no-console
+        console.warn(
         "[aws] ownership filter unavailable on describeResources (no tags from describe-stack-resources) — returning all, each with an explicit `unknown` verdict; use `chant import --from <env> --owned` for ownership-filtered export",
-      );
+        );
+      warnedOwnership = true;
     }
 
     // Derive stack name. A multi-stack project passes the explicit CloudFormation
@@ -655,10 +668,17 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
       };
     }
 
+    // Each resource's OWN properties, on top of the stack outputs above (#1279).
+    // Until this, a node's `attrs` were the stack's exports replicated onto
+    // every member, so no instance carried its own `VpcId`.
+    const withProperties = stampProviderDefaults(
+      stampRegion(await describeOwnProperties(resources, options.region), options.region),
+    );
+
     // Every entity the stack answered for was answered for: an entity the
     // template doesn't carry is genuinely not in this stack, which is an
     // absence, not a hole.
-    return observation(resources);
+    return observation(withProperties);
   },
 
   /**
@@ -681,6 +701,28 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
   }): Promise<DependencyObservation> {
     const { observeAwsDependencies } = await import("./dependencies");
     return observeAwsDependencies({ observed: options.observed, region: options.region });
+  },
+
+  /**
+   * Resources of a managed kind that exist without being declared or
+   * referenced (#1278) — the account's default security groups, an unattached
+   * one someone left behind. Nothing else in the observation can see them,
+   * because everything else resolves outward from what is declared.
+   */
+  /** #1278 — the kinds `observeAmbient` can enumerate, from the same source. */
+  ambientKinds(): string[] {
+    return AMBIENT_KINDS;
+  },
+
+  async observeAmbient(options: {
+    environment: string;
+    kinds: string[];
+    observed: Record<string, ResourceMetadata>;
+    stack?: string;
+    region?: string;
+  }): Promise<Record<string, ResourceMetadata>> {
+    const { observeAwsAmbient } = await import("./ambient");
+    return observeAwsAmbient({ kinds: options.kinds, observed: options.observed, region: options.region });
   },
 
   async observeResourcesDeep(options: {

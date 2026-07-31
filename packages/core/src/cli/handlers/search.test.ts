@@ -1,7 +1,7 @@
 import { describe, test, expect, vi } from "vitest";
 import { __searchInternals } from "./search";
 
-const { parseQuery, matchTerm, formatRow, explain, describeTerm, derivedSurface, availableAttrs } = __searchInternals;
+const { parseQuery, matchTerm, formatRow, explain, describeTerm, derivedSurface, availableAttrs, ambientHint, regionSpread, showMiss } = __searchInternals;
 
 function node(id: string, kind: string, attrs: Record<string, unknown> = {}) {
   return { id, kind, lexicon: "aws", attrs } as never;
@@ -57,9 +57,23 @@ describe("search formatting", () => {
     expect(formatRow(src, [])).toBe("webServer  AWS::EC2::Instance");
   });
 
-  test("--show adds named primitive attributes only", () => {
-    const n = node("web", "AWS::EC2::Instance", { physicalId: "i-1", InstanceType: "t3.micro", Tags: [{}] });
-    expect(formatRow(n, ["InstanceType", "Tags"])).toBe("web  AWS::EC2::Instance  i-1  InstanceType=t3.micro");
+  test("--show renders a named column whatever shape the value is", () => {
+    // A list used to be dropped silently, so `--show effectiveIngress` — the
+    // derived reachability fact — printed a blank column and read as "chant
+    // does not have this". A column the caller named is a column they get.
+    const n = node("web", "AWS::EC2::Instance", {
+      physicalId: "i-1",
+      InstanceType: "t3.micro",
+      effectiveIngress: ["tcp:22:0.0.0.0/0"],
+    });
+    expect(formatRow(n, ["InstanceType", "effectiveIngress"])).toBe(
+      'web  AWS::EC2::Instance  i-1  InstanceType=t3.micro  effectiveIngress=["tcp:22:0.0.0.0/0"]',
+    );
+  });
+
+  test("--show omits a column the node does not carry", () => {
+    const n = node("web", "AWS::EC2::Instance", { physicalId: "i-1" });
+    expect(formatRow(n, ["VpcId"])).toBe("web  AWS::EC2::Instance  i-1");
   });
 });
 
@@ -155,5 +169,187 @@ describe("search surfaces what the graph derived", () => {
     const q = "attr:internetFacing=true";
     const out = capture(() => explain(parseQuery(q) as never, [insts[0]] as never, derivedIr, byId as never, q));
     expect(out).toContain("webServer internetFacing via rtb-1 → igw-1");
+  });
+});
+
+// #1280 — absence is a real estate question ("what does nothing reference"),
+// and the grammar could only express presence.
+describe("negated terms (#1280)", () => {
+  const ir = {
+    nodes: [
+      { id: "used", kind: "AWS::EC2::SecurityGroup", lexicon: "aws", attrs: {} },
+      { id: "spare", kind: "AWS::EC2::SecurityGroup", lexicon: "aws", attrs: {} },
+      { id: "web", kind: "AWS::EC2::Instance", lexicon: "aws", attrs: {} },
+    ],
+    edges: [{ from: "web", to: "used", kind: "ref" as const, viaAttr: "SecurityGroupIds" }],
+    groups: {},
+  };
+  const byId = new Map(ir.nodes.map((n) => [n.id, n]));
+  const match = (q: string) =>
+    ir.nodes.filter((n) => parseQuery(q).every((t) => matchTerm(n, t, ir, byId))).map((n) => n.id);
+
+  test("selects what nothing references — the complement of an edge term", () => {
+    expect(match("kind:SecurityGroup !<-kind:EC2::Instance")).toEqual(["spare"]);
+  });
+
+  test("the un-negated query still selects what IS referenced", () => {
+    expect(match("kind:SecurityGroup <-kind:EC2::Instance")).toEqual(["used"]);
+  });
+
+  test("negates a plain attribute term too", () => {
+    const nodes = [
+      { id: "a", kind: "K", lexicon: "x", attrs: { env: "prod" } },
+      { id: "b", kind: "K", lexicon: "x", attrs: { env: "dev" } },
+    ];
+    const g = { nodes, edges: [], groups: {} };
+    const m = new Map(nodes.map((n) => [n.id, n]));
+    expect(
+      nodes.filter((n) => parseQuery("!attr:env=prod").every((t) => matchTerm(n, t, g, m))).map((n) => n.id),
+    ).toEqual(["b"]);
+  });
+
+  test("a bare edge term is refused, and the refusal names the correction", () => {
+    // Accepting it as "no edge in this direction" is coherent and still the
+    // wrong query for "what is unused": it counts every reference, including a
+    // stack output that merely publishes a resource's id, so it omits the very
+    // group the question is about. Measured — refused: 3/3 right; accepted:
+    // wrong in 2 runs of 3.
+    expect(() => parseQuery("kind:Foo !<-")).toThrow(/needs a target/);
+    expect(() => parseQuery("kind:Foo ->")).toThrow(/needs a target/);
+  });
+
+  test("a made-up prefix is refused, and names the correction", () => {
+    // An agent looking for SSH reachability wrote
+    // `effectiveIngress:tcp:22:0.0.0.0/0` — right idea, right attribute, wrong
+    // spelling — and this parsed as a free-text word that matched nothing. It
+    // read the clean empty result as "chant does not hold this fact" and
+    // rebuilt the answer by hand from security-group rows.
+    expect(() => parseQuery("kind:EC2::Instance effectiveIngress:tcp:22")).toThrow(
+      /there is no "effectiveIngress:" prefix/,
+    );
+    try {
+      parseQuery("effectiveIngress:tcp:22");
+    } catch (e) {
+      expect((e as { hint: string }).hint).toContain("attr:effectiveIngress=tcp:22");
+    }
+  });
+
+  test("still accepts a word that merely contains colons", () => {
+    // `AWS::EC2::Instance` and a URL are words, not malformed terms — a real
+    // prefix is one colon, not two.
+    expect(parseQuery("AWS::EC2::Instance")).toEqual([{ kind: "word", a: "AWS::EC2::Instance" }]);
+    expect(parseQuery("https://example.com")).toEqual([{ kind: "word", a: "https://example.com" }]);
+  });
+
+  test("an edge term WITH a target still parses", () => {
+    expect(() => parseQuery("kind:Foo !<-kind:Bar")).not.toThrow();
+  });
+
+  test("--explain says the term was negated, or an exclusion reads inverted", () => {
+    expect(describeTerm(parseQuery("!kind:Foo")[0])).toBe("!kind:Foo");
+  });
+});
+
+// #1278/#1279 — `--ambient` changes what a LIVE read goes and looks for. On a
+// replay it changes nothing: what is ambient in a recording was fixed when the
+// recording was taken.
+describe("the --ambient hint", () => {
+  const sg = node("sg-1", "AWS::EC2::SecurityGroup");
+  const kinds = ["AWS::EC2::SecurityGroup"];
+  const capture = (fn: () => void): string => {
+    const lines: string[] = [];
+    const spy = vi.spyOn(console, "log").mockImplementation((s: string) => { lines.push(s); });
+    fn();
+    spy.mockRestore();
+    return lines.join("\n");
+  };
+
+  test("names the flag on a live read that did not use it", () => {
+    expect(capture(() => ambientHint([sg] as never, kinds, false))).toContain("--ambient");
+  });
+
+  test("says nothing when the caller already asked for it", () => {
+    expect(capture(() => ambientHint([sg] as never, kinds, true))).toBe("");
+  });
+
+  test("says nothing on a replay whose snapshot already holds ambient resources", () => {
+    // The answer is complete. Saying the flag would add something is worse than
+    // silence: an agent read "6 of 6 matched" next to this hint, went looking
+    // for a seventh group, and hand-built a wrong answer from the raw graph.
+    expect(capture(() => ambientHint([sg] as never, kinds, false, { recordedAmbient: true }))).toBe("");
+  });
+
+  test("on a replay without them, points at the recording rather than the query", () => {
+    // `--at --ambient` cannot go and look; only a new snapshot can.
+    const out = capture(() => ambientHint([sg] as never, kinds, false, { recordedAmbient: false }));
+    expect(out).toContain("lifecycle snapshot");
+    expect(out).not.toContain("--ambient includes those");
+  });
+});
+
+// #1279 — asked to list instances "in all regions", an agent printed six
+// correct ids with no region against any of them, and was judged wrong.
+describe("the region spread of an answer", () => {
+  const inst = (id: string, region?: string) =>
+    node(id, "AWS::EC2::Instance", region ? { region } : {});
+  const capture = (fn: () => void): string => {
+    const lines: string[] = [];
+    const spy = vi.spyOn(console, "log").mockImplementation((s: string) => { lines.push(s); });
+    fn();
+    spy.mockRestore();
+    return lines.join("\n");
+  };
+  const spread = (ns: unknown[], show: string[] = [], q = "kind:EC2::Instance") =>
+    capture(() => regionSpread(parseQuery(q) as never, ns as never, show));
+
+  test("names the regions when the answer spans several", () => {
+    const out = spread([inst("a", "us-east-1"), inst("b", "us-west-2")]);
+    expect(out).toContain("us-east-1, us-west-2");
+    expect(out).toContain("2 regions");
+  });
+
+  test("says nothing when everything is in one region", () => {
+    expect(spread([inst("a", "us-east-1"), inst("b", "us-east-1")])).toBe("");
+  });
+
+  test("says nothing when the caller already asked for region", () => {
+    expect(spread([inst("a", "us-east-1"), inst("b", "us-west-2")], ["region"])).toBe("");
+    expect(spread([inst("a", "us-east-1"), inst("b", "us-west-2")], [], "attr:region=us-east-1")).toBe("");
+  });
+
+  test("says nothing when the resources carry no region", () => {
+    expect(spread([inst("a"), inst("b")])).toBe("");
+  });
+});
+
+// #1279 — seven `--show` names in one benchmark run missed on case alone, and
+// a missed name printed nothing at all rather than saying it had missed.
+describe("--show name matching", () => {
+  const n = node("web", "AWS::EC2::Instance", { physicalId: "i-1", region: "us-east-1" });
+  const capture = (fn: () => void): string => {
+    const lines: string[] = [];
+    const spy = vi.spyOn(console, "log").mockImplementation((s: string) => { lines.push(s); });
+    fn();
+    spy.mockRestore();
+    return lines.join("\n");
+  };
+
+  test("matches a column name whatever case the caller used", () => {
+    // AWS names are PascalCase and chant's derived ones are not, so a caller
+    // mixing them is normal. Both are the same request.
+    expect(formatRow(n, ["Region"])).toContain("region=us-east-1");
+    expect(formatRow(n, ["region"])).toContain("region=us-east-1");
+  });
+
+  test("prints the name the resource actually uses, not the one asked for", () => {
+    expect(formatRow(n, ["REGION"])).toContain("region=us-east-1");
+  });
+
+  test("says when nothing carries a requested column", () => {
+    expect(capture(() => showMiss([n] as never, ["VpcId"]))).toContain("VpcId");
+  });
+
+  test("says nothing when every requested column is present", () => {
+    expect(capture(() => showMiss([n] as never, ["Region"]))).toBe("");
   });
 });

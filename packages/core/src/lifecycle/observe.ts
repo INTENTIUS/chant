@@ -74,10 +74,18 @@ export async function observeResources(
   environment: string,
   plugins: ObservationLexicon[],
   buildResult: BuildResult,
-  opts?: { owned?: boolean; stacks?: Array<string | { name: string; region?: string; src?: string }> },
+  opts?: {
+    owned?: boolean;
+    stacks?: Array<string | { name: string; region?: string; src?: string }>;
+    /** Also report resources of a managed kind that nothing declares or
+     * references (#1278). Opt-in: it asks the provider what exists rather than
+     * resolving out from what is declared. */
+    ambient?: boolean;
+  },
 ): Promise<ObserveResult> {
   const owned = opts?.owned ?? true;
   const stacks = (opts?.stacks ?? []).map((st) => (typeof st === "string" ? { name: st } : st));
+  const includeAmbient = opts?.ambient ?? false;
   // A stack's `src` (multi-stack, #1162) is built SCOPED to recover that stack's
   // BARE entity names — the names it actually deploys. Matching deployed bare
   // LogicalResourceIds against the whole-project build's DISAMBIGUATED names
@@ -188,6 +196,19 @@ export async function observeResources(
         stacks,
       });
       for (const message of dependencies.warnings) warnings.push(message);
+      // Resources of a managed kind that nothing declares or references (#1278).
+      // Bounded by what this lexicon's declared entities actually are, so a
+      // project managing security groups is not made to enumerate the account.
+      const ambient = includeAmbient
+        ? await collectAmbient(plugin, {
+            environment,
+            kinds: [...new Set([...entities.values()].map((e) => e.entityType))],
+            observed: observed.resources,
+            stacks,
+            warnings,
+          })
+        : {};
+      for (const [id, meta] of Object.entries(ambient)) dependencies.resources[id] ??= meta;
       pushObservation(
         observations,
         warnings,
@@ -243,8 +264,45 @@ function scopeToStack(
   return Object.keys(scoped).length > 0 ? scoped : resources;
 }
 
+/**
+ * Ask a lexicon what exists of the kinds it manages, beyond what is declared
+ * (#1278). Once per stack for the region, merged by physical id — the same
+ * ambient resource seen from two stacks is one resource.
+ */
+export async function collectAmbient(
+  plugin: ObservationLexicon,
+  opts: {
+    environment: string;
+    kinds: string[];
+    observed: Record<string, ResourceMetadata>;
+    stacks: Array<{ name: string; region?: string; src?: string }>;
+    warnings: string[];
+  },
+): Promise<Record<string, ResourceMetadata>> {
+  if (!plugin.observeAmbient || opts.kinds.length === 0) return {};
+  const found: Record<string, ResourceMetadata> = {};
+  const refs = opts.stacks.length > 0 ? opts.stacks : [{ name: undefined, region: undefined }];
+  for (const ref of refs) {
+    try {
+      const part = await plugin.observeAmbient({
+        environment: opts.environment,
+        kinds: opts.kinds,
+        observed: opts.observed,
+        ...(ref.name ? { stack: ref.name } : {}),
+        ...(ref.region ? { region: ref.region } : {}),
+      });
+      for (const [id, meta] of Object.entries(part)) found[id] ??= meta;
+    } catch (err) {
+      opts.warnings.push(
+        `${plugin.name}: ambient resources not read${ref.name ? ` for stack "${ref.name}"` : ""} — ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+  return found;
+}
+
 /** Dependencies collected across a lexicon's stacks, plus anything to report. */
-interface CollectedDependencies {
+export interface CollectedDependencies {
   resources: Record<string, ResourceMetadata>;
   edges: IREdge[];
   warnings: string[];
@@ -266,7 +324,7 @@ const NO_DEPENDENCIES: CollectedDependencies = { resources: {}, edges: [], warni
  * useful on its own, and failing it because an ambient dependency could not be
  * read would trade a whole answer for a partial one.
  */
-async function collectDependencies(
+export async function collectDependencies(
   plugin: ObservationLexicon,
   opts: {
     environment: string;

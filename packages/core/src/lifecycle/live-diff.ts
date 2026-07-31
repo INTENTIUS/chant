@@ -133,11 +133,31 @@ function compareMetadata(
   return changes;
 }
 
+/**
+ * Value equality that does not care what order a provider listed the keys in.
+ *
+ * This compared with `JSON.stringify`, which is key-order sensitive. That held
+ * while observed attributes were flat strings, and broke the moment they carried
+ * nested objects (#1279): a provider returning `{AvailabilityZone, Tenancy}` on
+ * one read and `{Tenancy, AvailabilityZone}` on the next made an unchanged
+ * instance drift on every single run. Order is not a fact about the resource,
+ * and reporting it as drift is exactly the noise this module exists to remove.
+ *
+ * Arrays stay order-sensitive — for a list, order is part of the value.
+ */
 function shallowEqual(a: unknown, b: unknown): boolean {
   if (a === b) return true;
   if (a == null || b == null) return false;
   if (typeof a !== "object" || typeof b !== "object") return false;
-  return JSON.stringify(a) === JSON.stringify(b);
+  return canonical(a) === canonical(b);
+}
+
+/** JSON with object keys sorted at every depth, so equal values stringify equally. */
+function canonical(value: unknown): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null";
+  if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
+  const entries = Object.entries(value as Record<string, unknown>).sort(([x], [y]) => (x < y ? -1 : x > y ? 1 : 0));
+  return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${canonical(v)}`).join(",")}}`;
 }
 
 /** The delta between two saved snapshots (#822): a two-way observed diff. */
@@ -238,6 +258,14 @@ export function diffLive(input: DiffLiveInput): LiveDiffResult {
     // the other direction — a child is something declared created, a
     // dependency is something declared relies on.
     if ((observedNow[name]?.referencedBy?.length ?? 0) > 0) {
+      dependencyNames.add(name);
+      continue;
+    }
+    // Ambient (#1278): observed because it exists, not because anything points
+    // at it. Reported so a caller can ask about it — "which of these are
+    // unused" is the whole point — but never counted as drift, since chant
+    // neither created it nor tracks its changes.
+    if (observedNow[name]?.ambient) {
       dependencyNames.add(name);
       continue;
     }

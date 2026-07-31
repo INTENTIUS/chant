@@ -680,6 +680,50 @@ export interface LexiconPlugin {
     region?: string;
   }): Promise<DependencyObservation>;
 
+  /**
+   * Report resources of a kind this estate manages that exist in the account
+   * without being declared or referenced (#1278).
+   *
+   * `describeResources` answers "what do I manage" and `observeDependencies`
+   * answers "what do I rely on". Neither can see a resource that is simply
+   * *there* — an unattached security group, an orphaned volume — because both
+   * resolve outward from the declared estate and an unused resource is reached
+   * by nothing.
+   *
+   * That is a real question with no other answer: "which of my security groups
+   * are unused" cannot be resolved from a state file at all, because a state
+   * file knows only what it created. A lexicon that can enumerate a kind can
+   * answer it.
+   *
+   * `kinds` bounds the scan to types the project actually declares, so a
+   * project managing security groups is not made to enumerate the account. A
+   * lexicon returns resources marked {@link ResourceMetadata.ambient}, and must
+   * exclude anything already in `observed` — those are managed, not ambient.
+   *
+   * Optional and opt-in. A lexicon that does not implement it, or a caller that
+   * does not ask, sees exactly what it saw before.
+   */
+  /**
+   * Kinds this lexicon can enumerate beyond the declared estate (#1278).
+   *
+   * Declared separately from {@link observeAmbient} so a caller can say that
+   * ambient resources of a kind are POSSIBLE without paying for a scan to find
+   * out. `chant search` uses it to point out that `--ambient` is relevant to
+   * the kind just queried — an agent asking which security groups are unused
+   * has no way to know that some are not in the answer at all.
+   */
+  ambientKinds?(): string[];
+
+  observeAmbient?(options: {
+    environment: string;
+    /** Entity types the project declares — the bound on what to enumerate. */
+    kinds: string[];
+    /** Already-observed managed resources, to exclude. */
+    observed: Record<string, ResourceMetadata>;
+    stack?: string;
+    region?: string;
+  }): Promise<Record<string, ResourceMetadata>>;
+
   observeResourcesDeep?(options: {
     environment: string;
     buildOutput: string;
@@ -914,6 +958,21 @@ export interface ResourceMetadata {
    * entity that justified it.
    */
   referencedBy?: string[];
+  /**
+   * Observed in the account, of a kind this estate manages, but neither
+   * declared nor referenced by anything declared (#1278).
+   *
+   * The third and last category of observed-but-undeclared resource, after
+   * {@link ownerChain}'s runtime children and {@link referencedBy}'s
+   * dependencies. A default security group AWS creates per VPC is the type
+   * case: nothing declares it, nothing points at it, and it is exactly what
+   * "which of my security groups are unused" is asking about.
+   *
+   * Opt-in, because finding these means asking the provider what exists rather
+   * than resolving out from what is declared, which is a broader read and a
+   * different claim about what an observation is.
+   */
+  ambient?: boolean;
 }
 
 /**

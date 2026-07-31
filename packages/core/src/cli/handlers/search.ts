@@ -7,6 +7,8 @@ import { reconstructEdges, mergeCatalogs, type ReferenceCatalog } from "../../gr
 import { discover } from "../../discovery/index";
 
 import { observeResources } from "../../lifecycle/observe";
+import { replaySnapshots, hasSnapshot } from "../../lifecycle/replay";
+import type { LiveObservation } from "../../graph-ir";
 import { loadChantConfig } from "../../config";
 import { loadPlugins, resolveProjectLexicons } from "../plugins";
 import { formatError, formatWarning } from "../format";
@@ -42,17 +44,42 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
     console.error(formatError({ message: "chant search needs a query: chant search \"<terms>\" [--live --env <name>]" }));
     return 1;
   }
-  const terms = parseQuery(query);
+  let terms: Term[];
+  try {
+    terms = parseQuery(query);
+  } catch (err) {
+    if (err instanceof QueryError) {
+      console.error(formatError({ message: err.message, hint: err.hint }));
+      return 1;
+    }
+    throw err;
+  }
   const show = parseShow(args);
 
   const projectPath = resolve(".");
   const { config } = await loadChantConfig(projectPath);
 
   let ir: GraphIR;
-  if (args.live) {
+  let source: AnswerSource = { kind: "declared" };
+  // Kinds that can exist in the account without being declared (#1278). Known
+  // without a scan, so it costs nothing to mention.
+  let ambientKinds: string[] = [];
+  // Set only on a replay: whether the recording itself holds ambient resources.
+  let replayAmbient: { recordedAmbient: boolean } | undefined;
+  if (args.live || args.at) {
     const environment = args.env;
     if (!environment) {
-      console.error(formatError({ message: "chant search --live needs an environment: --live --env <name>" }));
+      const flag = args.at ? "--at" : "--live";
+      console.error(formatError({ message: `chant search ${flag} needs an environment: ${flag} --env <name>` }));
+      return 1;
+    }
+    if (args.live && args.at) {
+      // Two different observations of the same estate, and no rule for which
+      // wins. Comparing them is a real question (#1268) but it is not this one.
+      console.error(formatError({
+        message: "chant search takes --live or --at, not both",
+        hint: "--live reads the estate now; --at answers from a recorded snapshot",
+      }));
       return 1;
     }
     if (config.environments && !config.environments.includes(environment)) {
@@ -66,22 +93,52 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
       return 1;
     }
     const observing = plugins.filter((p) => p.describeResources);
+    ambientKinds = observing.flatMap((p) => p.ambientKinds?.() ?? []);
     const stacks = (config.stacks ?? []).map((s) => ({ name: s.name, region: s.region, src: s.src }));
-    const { observations, errors } = await observeResources(environment, observing, buildResult, {
-      owned: true,
-      stacks,
-    });
-    for (const e of errors) console.error(formatWarning({ message: e }));
-    let live = buildLiveGraphIr(observations);
+
+    let observations: LiveObservation[];
     const liveAttrs: Record<string, Record<string, unknown>> = {};
-    for (const p of observing) {
-      if (!p.enrichLiveAttrs) continue;
-      try {
-        const enriched = await p.enrichLiveAttrs({ environment, owned: true, stacks });
-        for (const [id, a] of Object.entries(enriched)) liveAttrs[id] = { ...liveAttrs[id], ...a };
-        live = { ...live, nodes: live.nodes.map((n) => (enriched[n.id] ? { ...n, attrs: { ...n.attrs, ...enriched[n.id] } } : n)) };
-      } catch {
-        /* enrichment is best-effort; search still works on describe attrs */
+    if (args.at) {
+      // Answer from a recorded observation (#1266). Everything downstream is
+      // the live path's — the point is that a snapshot replays into the same
+      // shape a live read produces, so one pipeline serves both and a fold
+      // improvement reaches an old snapshot for free.
+      const scoped = new Set(stacks.filter((st) => st.src).map((st) => st.name));
+      const replay = await replaySnapshots(environment, String(args.at), scoped);
+      if ("error" in replay) {
+        console.error(formatError({ message: replay.error, ...(replay.hint ? { hint: replay.hint } : {}) }));
+        return 1;
+      }
+      observations = replay.observations;
+      replayAmbient = {
+        recordedAmbient: replay.observations.some((o) =>
+          Object.values(o.resources).some((m) => m.ambient === true),
+        ),
+      };
+      source = { kind: "snapshot", commit: replay.commit, timestamp: replay.timestamp };
+    } else {
+      const observed = await observeResources(environment, observing, buildResult, {
+        owned: true,
+        stacks,
+        ambient: args.ambient === true,
+      });
+      for (const e of observed.errors) console.error(formatWarning({ message: e }));
+      observations = observed.observations;
+      source = { kind: "live" };
+    }
+    let live = buildLiveGraphIr(observations);
+    // Live-only: enrichment is a provider call, so it has no place in a replay.
+    // A recorded answer that quietly reached for the API would stop being one.
+    if (!args.at) {
+      for (const p of observing) {
+        if (!p.enrichLiveAttrs) continue;
+        try {
+          const enriched = await p.enrichLiveAttrs({ environment, owned: true, stacks });
+          for (const [id, a] of Object.entries(enriched)) liveAttrs[id] = { ...liveAttrs[id], ...a };
+          live = { ...live, nodes: live.nodes.map((n) => (enriched[n.id] ? { ...n, attrs: { ...n.attrs, ...enriched[n.id] } } : n)) };
+        } catch {
+          /* enrichment is best-effort; search still works on describe attrs */
+        }
       }
     }
     // Reconstruct edges from live references (#778), the same way `graph --live`
@@ -144,11 +201,121 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
   for (const n of matches) {
     console.log(formatRow(n, show));
   }
-  const backed = args.live !== true || matches.some((n) => n.physicalId);
-  provenance(matches, args.live === true);
+  const backed = source.kind === "declared" || matches.some((n) => n.physicalId);
+  // Only worth asking when the live read came back empty — that is the one case
+  // where a recording changes what the caller should do next.
+  const recorded =
+    source.kind === "live" && !matches.some((n) => n.physicalId) && args.env
+      ? (await hasSnapshot(String(args.env))) ? "yes" : undefined
+      : undefined;
+  provenance(matches, source, recorded);
+  ambientHint(matches, ambientKinds, args.ambient === true, replayAmbient);
+  showMiss(matches, show);
+  regionSpread(terms, matches, show);
   derivedSurface(terms, matches, ir, backed);
   if (args.explain) explain(terms, matches, ir, nodeById, query);
   return 0;
+}
+
+
+/** Where an answer's facts came from, for the provenance line (#1266). */
+type AnswerSource =
+  | { kind: "declared" }
+  | { kind: "live" }
+  | { kind: "snapshot"; commit: string; timestamp: string };
+
+
+
+
+/**
+ * Name the `--show` columns nothing carries (#1279).
+ *
+ * A requested column that no matched resource has simply did not appear, so the
+ * result looked like a resource with no such value rather than a name that was
+ * never going to match. Combined with case sensitivity that made `--show
+ * Region` an invisible no-op on an estate where every resource carries
+ * `region`.
+ */
+function showMiss(matches: IRNode[], show: string[]): void {
+  if (show.length === 0 || matches.length === 0) return;
+  const present = new Set(
+    matches.flatMap((n) => Object.keys((n.attrs ?? {}) as object).map((k) => k.toLowerCase())),
+  );
+  const missing = show.filter((k) => !present.has(k.toLowerCase()));
+  if (missing.length === 0) return;
+  console.log(`— no matched resource carries ${missing.join(", ")}`);
+}
+
+/**
+ * Say when the answer spans more than one region (#1279).
+ *
+ * A result is a list of resources with no shape to it, and region is the one
+ * dimension of this estate that is invisible in a row unless asked for. Asked
+ * to list instances "in all regions", an agent printed six correct ids with no
+ * region against any of them — a complete answer to a question about regions
+ * that never mentions one, and it was judged wrong.
+ *
+ * Stated only when the matched set actually spans several and the caller has
+ * not already asked: a fact about the result, in the same family as the
+ * provenance line. It names the regions and no resource, so it cannot stand in
+ * for the answer — it says the answer has a dimension, not what to say about it.
+ */
+function regionSpread(terms: Term[], matches: IRNode[], show: string[]): void {
+  if (show.includes("region") || terms.some((t) => t.a === "region")) return;
+  const regions = [
+    ...new Set(
+      matches
+        .map((n) => (n.attrs as Record<string, unknown>)?.region)
+        .filter((r): r is string => typeof r === "string" && r.length > 0),
+    ),
+  ].sort();
+  if (regions.length < 2) return;
+  console.log(`— these span ${regions.length} regions: ${regions.join(", ")} · add --show region to see which`);
+}
+
+/**
+ * Point out that `--ambient` is relevant to the kind just queried (#1278).
+ *
+ * A resource nothing declares and nothing references is invisible to every
+ * other observation path, so an answer about "my security groups" can be
+ * complete for the declared estate and still not be the answer the question
+ * wanted. The caller cannot know that from the result — it looks like the whole
+ * set. An agent asked which groups were unused queried the three declared ones,
+ * never learned three more existed, and spent twenty-five turns trying to
+ * reconcile the shortfall from the graph.
+ *
+ * Says only that the flag applies to this kind, which is knowable without a
+ * scan. It reports no count and names no resource, so it cannot stand in for
+ * the answer.
+ */
+function ambientHint(
+  matches: IRNode[],
+  ambientKinds: string[],
+  asked: boolean,
+  replay?: { recordedAmbient: boolean },
+): void {
+  if (asked || ambientKinds.length === 0 || matches.length === 0) return;
+  // On a replay the flag cannot change the answer: what is ambient in a
+  // recording was fixed when it was recorded. Telling a caller to add
+  // `--ambient` to `--at` is advice that does nothing — and when the snapshot
+  // already holds ambient resources it is worse than nothing, because the
+  // answer is complete and the hint says it is not. An agent read "6 of 6
+  // matched" alongside it, went looking for a seventh, and hand-built a wrong
+  // answer from the raw graph over twelve turns.
+  if (replay) {
+    if (!replay.recordedAmbient) {
+      console.log(
+        `— this snapshot recorded no ambient resources · re-record with \`chant lifecycle snapshot <env> --ambient\` to include them`,
+      );
+    }
+    return;
+  }
+  const relevant = [...new Set(ambientKinds.filter((k) => matches.some((n) => n.kind === k)))];
+  if (relevant.length === 0) return;
+  const label = relevant.map((k) => k.split("::").slice(-1)[0]).join(", ");
+  console.log(
+    `— ${label} can also exist in the account without being declared or referenced; --ambient includes those`,
+  );
 }
 
 /**
@@ -166,21 +333,40 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
  * already done. That is a fact about the query, printed for every query, and it
  * encodes no expected answer.
  */
-function provenance(matches: IRNode[], live: boolean): void {
-  if (!live) {
+function provenance(matches: IRNode[], source: AnswerSource, recorded?: string): void {
+  if (source.kind === "declared") {
     console.log("— declared only · no observation · physical ids unavailable");
     return;
   }
   const bound = matches.filter((n) => n.physicalId).length;
+  const what = source.kind === "live" ? "live read" : "snapshot";
   if (bound === 0) {
     // The estate was asked for and nothing came back bound. Naming it is the
     // difference between "these do not exist" and "nobody could see them".
+    // A snapshot sitting unused is the actionable half of this. Denied network,
+    // agents read six declared rows as a live answer and spent their turns
+    // retrying `--live` — the tool knew the estate was unreachable AND that a
+    // recording of it was on disk, and said only the first half.
+    if (recorded) {
+      console.log(
+        `— ${what} returned no bound resources · a snapshot of this environment is recorded — answer from it with --at latest`,
+      );
+      return;
+    }
     console.log(
-      `— live read returned no bound resources · answered from the declared graph · physical ids unavailable`,
+      `— ${what} returned no bound resources · answered from the declared graph · physical ids unavailable`,
     );
     return;
   }
-  console.log(`— observed live · bound ${bound}/${matches.length}`);
+  if (source.kind === "live") {
+    console.log(`— observed live · bound ${bound}/${matches.length}`);
+    return;
+  }
+  // Time is the whole risk of a recorded answer, so it leads. A caller can see
+  // how old this is and decide, rather than discovering staleness later.
+  const taken = source.timestamp ? ` taken ${source.timestamp}` : "";
+  const at = source.commit ? ` ${source.commit.slice(0, 7)}` : "";
+  console.log(`— observed from snapshot${at}${taken} · bound ${bound}/${matches.length}`);
 }
 
 /**
@@ -266,11 +452,36 @@ function availableAttrs(terms: Term[], ir: GraphIR): void {
   for (const n of of) for (const k of Object.keys((n.attrs as Record<string, unknown>) ?? {})) names.add(k);
   const queried = new Set(terms.filter((t) => t.kind === "attr").map((t) => t.a));
   const unused = [...names].filter((k) => !queried.has(k)).sort();
-  if (unused.length === 0) return;
-  console.log(`  · ${of.length} ${kindTerm.a} node(s) carry: ${unused.join(", ")}`);
+  if (unused.length > 0) {
+    console.log(`  · ${of.length} ${kindTerm.a} node(s) carry: ${unused.join(", ")}`);
+  }
+
+  // A queried attribute that EXISTS but matched nothing is the more useful
+  // miss to explain, and it was the one left silent: the list above omits
+  // anything the caller asked about, so querying a real attribute with an
+  // unmatchable value taught nothing at all. A caller reaching for a wildcard —
+  // `attr:effectiveIngress=*tcp:22:0.0.0.0/0`, which this grammar has no
+  // operator for — got "(no matches)" and concluded the tool had nothing.
+  for (const term of terms) {
+    if (term.kind !== "attr" || term.b === undefined || !names.has(term.a)) continue;
+    const values = new Set<string>();
+    for (const n of of) {
+      const v = (n.attrs as Record<string, unknown> | undefined)?.[term.a];
+      for (const one of Array.isArray(v) ? v : [v]) {
+        if (one !== undefined && one !== null) values.add(String(one));
+      }
+    }
+    if (values.size === 0) continue;
+    const sample = [...values].sort().slice(0, 8);
+    const more = values.size > sample.length ? `, … ${values.size - sample.length} more` : "";
+    console.log(`  · ${term.a} is present but no value matched "${term.b}" — values seen: ${sample.join(", ")}${more}`);
+  }
 }
 
 function describeTerm(t: Term): string {
+  // `--explain` has to say a negated term was negated, or an exclusion reads as
+  // the opposite of what it is.
+  if (t.negated) return `!${describeTerm({ ...t, negated: false })}`;
   const leaf = (x: Term): string =>
     x.kind === "kind" ? `kind:${x.a}` : x.kind === "attr" ? `attr:${x.a}${x.b !== undefined ? "=" + x.b : ""}`
       : x.kind === "tag" ? `tag:${x.a}${x.b !== undefined ? "=" + x.b : ""}` : `"${x.a}"`;
@@ -280,6 +491,8 @@ function describeTerm(t: Term): string {
 
 interface Term {
   kind: "word" | "kind" | "tag" | "attr" | "edge";
+  /** `!term` — the node must NOT satisfy this (#1280). */
+  negated?: boolean;
   a: string;
   b?: string;
   /** For edge terms: the direction and the sub-predicate matched at the far end. */
@@ -296,17 +509,84 @@ function parseLeaf(tok: string): Term {
     if (eq >= 0) return { kind: key, a: rest.slice(0, eq), b: rest.slice(eq + 1) };
     return { kind: key, a: rest };
   }
+  // `name:value` with a prefix the grammar does not have. This parsed as a
+  // free-text word and matched nothing, which is the worst available outcome:
+  // an agent looking for SSH reachability wrote
+  // `effectiveIngress:tcp:22:0.0.0.0/0` — the right idea, the right attribute,
+  // the wrong spelling — got a clean empty result, concluded chant did not hold
+  // the fact, and rebuilt the answer by hand from security-group rows. An empty
+  // result must never be the reply to a question the grammar could not read.
+  //
+  // `::` and `://` are excluded so a genuine word search for `AWS::EC2::Instance`
+  // or a URL still works — a real prefix is one colon, not two.
+  const bad = /^([A-Za-z][A-Za-z0-9_]*):(?![:/])/.exec(tok);
+  if (bad) {
+    const name = bad[1];
+    const value = tok.slice(name.length + 1);
+    throw new QueryError(
+      `"${tok}" is not a term — there is no "${name}:" prefix`,
+      `for an attribute, say attr:${name}=${value || "<value>"}; the prefixes are kind:, attr:, tag:, and ->/<- for edges`,
+    );
+  }
   return { kind: "word", a: tok };
+}
+
+/** A query the grammar cannot accept, carrying the correction to print. */
+class QueryError extends Error {
+  constructor(
+    message: string,
+    readonly hint: string,
+  ) {
+    super(message);
+  }
 }
 
 function parseQuery(query: string): Term[] {
   // Split on whitespace but keep quoted phrases together.
   const tokens = query.match(/"[^"]*"|\S+/g) ?? [];
   return tokens.map((raw) => {
-    const tok = raw.replace(/^"|"$/g, "");
-    if (tok.startsWith("->")) return { kind: "edge", a: "", dir: "out", sub: parseLeaf(tok.slice(2)) };
-    if (tok.startsWith("<-")) return { kind: "edge", a: "", dir: "in", sub: parseLeaf(tok.slice(2)) };
-    return parseLeaf(tok);
+    let tok = raw.replace(/^"|"$/g, "");
+    // A leading `!` negates the term (#1280). Absence is a real estate
+    // question — "which security groups does nothing reference", "which
+    // subnets hold no instances" — and the grammar could only express
+    // presence, so the one question a graph is uniquely good at needed a
+    // provider sweep and a hand-built set difference.
+    const negated = tok.startsWith("!");
+    if (negated) tok = tok.slice(1);
+    // An edge term needs a target. A bare `<-` used to parse to an empty leaf
+    // and quietly match something arbitrary — an agent wrote
+    // `kind:EC2::SecurityGroup !<-` meaning "referenced by nothing" and got a
+    // silently wrong set. Refusing it is right beyond the parse bug too:
+    // "referenced by nothing at all" and "referenced by no Instance" are
+    // different questions, and on any estate whose declared graph carries
+    // references they give different answers.
+    // A bare edge term is refused, and the refusal names the correction.
+    //
+    // It first parsed to an empty leaf and matched arbitrarily. The fix was to
+    // refuse it; then, because agents kept writing `!<-` for "what is unused",
+    // it was made to mean "no edge in this direction" — which is a coherent
+    // query and still the wrong one to answer that question with. It counts
+    // every reference in the project, and a stack output that publishes a
+    // resource's id is one, so `kind:EC2::SecurityGroup !<-` omits precisely
+    // the unattached group the question was about.
+    //
+    // Measured both ways: refusing it, agents wrote `!<-kind:EC2::Instance` and
+    // got the right answer 3/3; accepting it, they wrote `!<-` and got a wrong
+    // one 2 runs out of 3. A query whose plain reading is reliably not what the
+    // caller means is worth refusing, and the correction below is what makes
+    // the refusal useful rather than merely strict.
+    if (/^(->|<-)\s*$/.test(tok)) {
+      throw new QueryError(
+        `"${negated ? "!" : ""}${tok}" needs a target`,
+        `say what the edge reaches: ${negated ? "!" : ""}${tok}kind:EC2::Instance, or ${negated ? "!" : ""}${tok}attr:Name=web`,
+      );
+    }
+    const term = tok.startsWith("->")
+      ? { kind: "edge" as const, a: "", dir: "out" as const, sub: parseLeaf(tok.slice(2)) }
+      : tok.startsWith("<-")
+        ? { kind: "edge" as const, a: "", dir: "in" as const, sub: parseLeaf(tok.slice(2)) }
+        : parseLeaf(tok);
+    return negated ? { ...term, negated: true } : term;
   });
 }
 
@@ -324,6 +604,7 @@ function attrString(v: unknown): string {
 }
 
 function matchTerm(n: IRNode, t: Term, ir?: GraphIR, byId?: Map<string, IRNode>): boolean {
+  if (t.negated) return !matchTerm(n, { ...t, negated: false }, ir, byId);
   const attrs = n.attrs ?? {};
   if (t.kind === "edge") {
     if (!ir || !byId || !t.sub) return false;
@@ -364,11 +645,24 @@ function formatRow(n: IRNode, show: string[]): string {
   const physical = (n as { physicalId?: unknown }).physicalId ?? attrs["physicalId"] ?? attrs["InstanceId"] ?? attrs["Id"];
   if (physical != null && typeof physical !== "object") parts.push(String(physical));
   for (const key of show) {
-    const v = attrs[key];
-    if (v != null && typeof v !== "object") parts.push(`${key}=${attrString(v)}`);
+    // Match the name case-insensitively, and report what was actually found.
+    // AWS attribute names are PascalCase and chant's derived ones are not, so a
+    // caller mixing them is normal: `--show region` and `--show Region` are the
+    // same request, and one of them silently printed nothing. Seven of the
+    // `--show` names in one benchmark run missed on case alone.
+    const actual = key in attrs ? key : Object.keys(attrs).find((k) => k.toLowerCase() === key.toLowerCase());
+    const v = actual == null ? undefined : attrs[actual];
+    if (v == null) continue;
+    // A column the caller explicitly asked for is shown whatever shape it is.
+    // Skipping non-scalars silently meant `--show effectiveIngress` — the
+    // derived reachability fact, and the reason to reach for chant at all —
+    // printed a blank column, because it is a list. The agent read that as
+    // "chant does not have this" and hand-rolled the answer from raw
+    // security-group rows, which is exactly the work the fold exists to avoid.
+    parts.push(`${actual}=${typeof v === "object" ? JSON.stringify(v) : attrString(v)}`);
   }
   return parts.filter(Boolean).join("  ");
 }
 
 /** Internals exposed for unit tests. */
-export const __searchInternals = { parseQuery, matchTerm, formatRow, explain, describeTerm, derivedSurface, availableAttrs };
+export const __searchInternals = { parseQuery, matchTerm, formatRow, explain, describeTerm, derivedSurface, availableAttrs, ambientHint, regionSpread, showMiss };

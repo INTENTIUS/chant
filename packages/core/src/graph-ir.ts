@@ -685,6 +685,18 @@ export function sourceOverlayGraphs(declared: GraphIR, live: GraphIR, opts?: Ove
     const merged: IRNode = { ...n }; // managed — carry the observed identity
     if (obs.physicalId) merged.physicalId = obs.physicalId;
     if (obs.ownership) merged.ownership = obs.ownership;
+    // ...and what was observed ABOUT it (#1279). The declared canvas holds what
+    // the source says; the observation holds what the account says, and a fact
+    // like `VpcId` exists only on the second. Dropping it here made every
+    // observed property invisible to anything reading the overlaid graph —
+    // `search --show VpcId` printed six blank columns, which reads as an estate
+    // with no VPCs rather than a read that never happened.
+    //
+    // Observed wins a collision. The declared value for something like `VpcId`
+    // is an unresolved reference to another entity, not an id — the account has
+    // the id. Same precedence `enrichLiveAttrs` already uses when it folds live
+    // facts onto this graph, so both paths agree on what a name means.
+    if (obs.attrs && Object.keys(obs.attrs).length > 0) merged.attrs = { ...n.attrs, ...obs.attrs };
     return tagStatus(merged, "good");
   });
   for (const n of live.nodes) {
