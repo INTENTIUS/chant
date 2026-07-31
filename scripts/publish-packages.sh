@@ -58,6 +58,13 @@ publishable_dirs() {
   done
 }
 
+# npm's own error lines, with the `npm notice` narration stripped. Deciding
+# what a failure was from the full output misreads the notices — they mention
+# provenance on every single run, successful or not.
+npm_errors() {
+  printf '%s' "$1" | grep '^npm error' || true
+}
+
 pkg_field() {
   node -e "
     const p = require('./$1/package.json');
@@ -102,13 +109,26 @@ publish_one() {
   # Attestation is signed against the trusted-publisher identity, so a token
   # publish can be rejected for provenance alone. A package that ships without
   # an attestation beats a release that strands a package a version behind —
-  # publish it unattested and say so loudly.
-  if [ $rc -ne 0 ] && printf '%s' "$out" | grep -qiE 'provenance|attestation'; then
+  # publish it unattested and say so loudly. Match only npm's *error* lines:
+  # `npm notice` narrates provenance on every run, so scanning the whole
+  # output retries pointlessly on unrelated failures.
+  if [ $rc -ne 0 ] && npm_errors "$out" | grep -qiE 'provenance|attestation'; then
     echo "::warning::$name: provenance rejected on the token path — publishing without an attestation"
-    (cd "$dir" && NPM_CONFIG_USERCONFIG="$npmrc" npm publish --access public)
+    out=$(cd "$dir" && NPM_CONFIG_USERCONFIG="$npmrc" npm publish --access public 2>&1)
     rc=$?
+    printf '%s\n' "$out"
   fi
   rm -f "$npmrc"
+
+  # An automation token bypasses 2FA; a classic publish or granular token does
+  # not, and npm asks for an OTP no human is there to type. Name that
+  # precisely — it is otherwise indistinguishable from a permissions problem.
+  if [ $rc -ne 0 ] && npm_errors "$out" | grep -q 'EOTP'; then
+    echo "::error::$name: NPM_TOKEN requires a one-time password, so it cannot publish from CI."
+    echo "  Fix either side: add a trusted publisher for $name (INTENTIUS/chant, publish.yml)"
+    echo "  at https://www.npmjs.com/package/$name/access, or replace the NPM_TOKEN secret"
+    echo "  with an npm *automation* token, which bypasses 2FA."
+  fi
 
   if [ $rc -eq 0 ]; then
     echo "  $name published with NPM_TOKEN. Add a trusted publisher for it at"
