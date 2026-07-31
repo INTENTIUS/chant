@@ -56,6 +56,31 @@ const DESCRIBE: Record<
   },
 };
 
+/**
+ * Stamp the region each resource was observed in (#1279).
+ *
+ * The observation is already scoped per stack and each stack declares its
+ * region, so the reader knows this and was throwing it away. Without it the
+ * only route to "which region is this in" was parsing
+ * `Placement.AvailabilityZone` and trimming the last character — a trick that
+ * happens to work for EC2 and for nothing else. Region is a dimension of the
+ * estate, not a substring of an availability zone.
+ */
+export function stampRegion(
+  resources: Record<string, ResourceMetadata>,
+  region?: string,
+): Record<string, ResourceMetadata> {
+  // Fall back to the region the call would actually have used, so a
+  // single-region project gets the same attribute a multi-region one does.
+  const value = region ?? process.env.AWS_REGION ?? process.env.AWS_DEFAULT_REGION;
+  if (!value) return resources;
+  const stamped: Record<string, ResourceMetadata> = {};
+  for (const [name, meta] of Object.entries(resources)) {
+    stamped[name] = { ...meta, attributes: { ...(meta.attributes ?? {}), region: value } };
+  }
+  return stamped;
+}
+
 /** True when this lexicon can read the kind's own properties. */
 export function canDescribe(kind: string): boolean {
   return kind in DESCRIBE;

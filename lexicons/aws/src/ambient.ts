@@ -103,5 +103,8 @@ export async function observeAwsAmbient(options: {
       continue;
     }
   }
-  return ambient;
+  // Same region stamp the managed path applies, so one query shape works
+  // across both (#1279).
+  const { stampRegion } = await import("./properties");
+  return stampRegion(ambient, options.region);
 }

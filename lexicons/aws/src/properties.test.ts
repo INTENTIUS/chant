@@ -6,7 +6,7 @@ vi.mock("@intentius/chant/runtime-adapter", async (importOriginal) => {
   return { ...actual, getRuntime: () => ({ ...actual.getRuntime(), spawn: spawnMock }) };
 });
 
-const { describeOwnProperties, canDescribe } = await import("./properties");
+const { describeOwnProperties, canDescribe, stampRegion } = await import("./properties");
 
 const ok = (body: unknown) => ({ stdout: JSON.stringify(body), stderr: "", exitCode: 0 });
 const fail = { stdout: "", stderr: "InvalidInstanceID.NotFound", exitCode: 255 };
@@ -82,5 +82,32 @@ describe("describeOwnProperties (#1279)", () => {
     expect(spawnMock).not.toHaveBeenCalled();
     expect(merged.fn.attributes).toBeUndefined();
     expect(canDescribe("AWS::Lambda::Function")).toBe(false);
+  });
+});
+
+// #1279 — the observation is scoped per stack and each stack declares its
+// region, so the reader knew this and threw it away.
+describe("stampRegion (#1279)", () => {
+  const one = { web: { type: "AWS::EC2::Instance", status: "OK", physicalId: "i-1" } };
+
+  it("records the region the resource was observed in", () => {
+    expect(stampRegion(one, "us-west-2").web.attributes?.region).toBe("us-west-2");
+  });
+
+  it("keeps the properties already read", () => {
+    const withProps = { web: { ...one.web, attributes: { VpcId: "vpc-a" } } };
+    const out = stampRegion(withProps, "us-west-2").web.attributes;
+    expect(out).toMatchObject({ VpcId: "vpc-a", region: "us-west-2" });
+  });
+
+  it("falls back to the region the call would have used", () => {
+    const prev = process.env.AWS_REGION;
+    process.env.AWS_REGION = "eu-west-1";
+    try {
+      expect(stampRegion(one).web.attributes?.region).toBe("eu-west-1");
+    } finally {
+      if (prev === undefined) delete process.env.AWS_REGION;
+      else process.env.AWS_REGION = prev;
+    }
   });
 });
