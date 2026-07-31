@@ -7,6 +7,13 @@ import { Aside, Steps } from '@astrojs/starlight/components';
 
 After building your lexicon (see [Package & Publish](/chant/lexicon-authoring/package/)), you need to wire it into the monorepo's CI pipeline, smoke tests, and publish workflow. The `chant dev onboard` command automates most of this.
 
+:::tip[Working with an AI agent? Point it at the onboarding skill.]
+This page explains what each patched file does and why. If you just need the ordered
+checklist — scaffold through first npm publish, including the npm trusted-publisher
+record that nothing here can create for you — hand your agent
+[Lexicon Onboarding Skill](/chant/lexicon-authoring/onboarding-skill/) instead.
+:::
+
 ## Quick start
 
 ```bash
@@ -19,7 +26,7 @@ This patches 5 files:
 |------|-------------|
 | `package.json` (root) | `@intentius/chant-lexicon-<name>: "workspace:*"` dependency |
 | `.github/workflows/chant.yml` | Prepack lines in check/test jobs + validate step |
-| `.github/workflows/publish.yml` | Prepack line in test job + publish step |
+| `.github/workflows/publish.yml` | Prepack line in test job (no publish step needed — `scripts/publish-packages.sh` enumerates the workspace) |
 | `test/Dockerfile.smoke` | Prepack validation line for workspace smoke test |
 | `test/Dockerfile.smoke-npm` | Prepack validation line for npm tarball smoke test |
 
@@ -103,14 +110,48 @@ The command is idempotent — running it twice skips already-configured files.
 
 ## First npm publish
 
-All packages are published together via the publish workflow, triggered by pushing a `v*` tag:
+<Aside type="danger" title="Do this before the first release, or the release breaks">
+A new package needs an npm **trusted publisher** record, and nothing in the
+repo can create one for you. Without it the publish workflow authenticates
+over OIDC, the registry has no record to match, and `npm publish` reports a
+bare `ENEEDAUTH` — indistinguishable from having no credentials at all.
+
+On [npmjs.com](https://www.npmjs.com), open the package, then Settings →
+Trusted Publisher, and add:
+
+| Field | Value |
+|------|-------|
+| Organization / repository | `INTENTIUS/chant` |
+| Workflow filename | `publish.yml` |
+| Environment | *leave empty* — the publish job declares none, and a value here will not match |
+
+The record is per package. It is not inherited from the org and not shared
+with the other packages, so every new lexicon needs its own. This step was
+missing from these docs, and both `@intentius/chant-k8s-client` and
+`@intentius/chant-lexicon-fountain` shipped without a record and could not be
+published at all until it was added.
+</Aside>
+
+Releases go out through `just release`, which bumps every package in lockstep,
+commits, and pushes the tag the workflow actually listens for:
 
 ```bash
-git tag v<version>
-git push origin v<version>
+just release patch    # or: minor / major
 ```
 
-The workflow runs `npm publish --access public` for each package with `--tolerate-republish` so existing packages are a no-op.
+To move a single lexicon without a full release:
+
+```bash
+just release-lexicon <name> patch
+```
+
+The workflow triggers on `chant-v*` and `lexicon-*-v*` tags. A bare `v<version>`
+tag matches neither and silently does nothing.
+
+Publishing itself is `scripts/publish-packages.sh`. It enumerates every
+non-private workspace package, so a new lexicon is picked up with no workflow
+edit. A package already at its version on the registry is skipped, which makes
+re-running the workflow a safe way to recover a partial release.
 
 <Aside type="caution" title="First-time scoped packages">
 `npm publish --access public` may land as **private** on the first publish of a scoped package. After the workflow completes, check [npmjs.com/org/intentius](https://www.npmjs.com/org/intentius) and toggle the package to public if needed. Subsequent publishes will stay public.
@@ -126,15 +167,25 @@ The workflow runs `npm publish --access public` for each package with `--tolerat
 
 With 0.x semver, `^0.0.13` pins to **exactly** `0.0.13` (not `>=0.0.13 <0.1.0`). This means your lexicon version must match the core version at publish time. All packages in the monorepo are versioned together — bump them in lockstep before tagging.
 
-## Why the root dependency matters
+## Why the root dependency exists
 
-npm workspace resolution only installs packages that have at least one dependent in the workspace graph. The root `package.json` dependency ensures that `packages/core` can dynamically import your lexicon via:
+`chant dev onboard` adds your lexicon to the root `package.json` dependencies so
+that `packages/core` can dynamically import it:
 
 ```typescript
 import(`@intentius/chant-lexicon-${name}`)
 ```
 
-Without this, the lexicon resolves fine during its own tests but fails when loaded by the CLI.
+Resolution does not actually depend on that entry. The root
+`workspaces: ["lexicons/*"]` glob symlinks every lexicon into `node_modules`
+whether or not it is listed, which is why three lexicons sat unlisted for
+months without anything breaking. The entry is an explicit declaration of what
+core may import, not the mechanism that makes the import work.
+
+It is kept complete anyway, and
+`packages/core/src/codegen/lexicon-wiring.test.ts` fails if a lexicon is
+missing from it — a hand-maintained list with no gate is how this drifted in
+the first place.
 
 ## Why prepack steps are needed in Docker
 

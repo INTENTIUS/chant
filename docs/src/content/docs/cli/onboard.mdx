@@ -19,7 +19,7 @@ The command modifies 5 files:
 |------|--------|
 | `package.json` (root) | Adds `@intentius/chant-lexicon-<name>: "workspace:*"` to dependencies |
 | `.github/workflows/chant.yml` | Adds prepack lines to check/test jobs + a validate step |
-| `.github/workflows/publish.yml` | Adds prepack line to test job + a publish step |
+| `.github/workflows/publish.yml` | Adds prepack line to test job (publishing needs no per-lexicon step — `scripts/publish-packages.sh` enumerates the workspace) |
 | `test/Dockerfile.smoke` | Adds `RUN npm run --prefix lexicons/<name> prepack` |
 | `test/Dockerfile.smoke-node` | Same prepack line for Node.js smoke test |
 
