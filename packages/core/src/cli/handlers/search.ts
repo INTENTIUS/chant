@@ -230,6 +230,23 @@ async function replaySnapshots(
   const observations: LiveObservation[] = [];
   let commit = "";
   let timestamp = "";
+  // Ambient and dependency resources are keyed by physical id and are
+  // account-level: the default security group three stacks each recorded is one
+  // group, not three. Managed resources are stack-qualified below and cannot
+  // collide, so only the unqualified ones need this.
+  const seenUnqualified = new Set<string>();
+  // A stack's snapshot could only exclude what THAT stack manages, so a stack
+  // declaring no security groups reported the neighbouring stack's as ambient.
+  // The union is only knowable here, with every snapshot in hand.
+  const managedPhysicalIds = new Set<string>();
+  for (const content of stored.values()) {
+    const snap = JSON.parse(content) as LifecycleSnapshot;
+    for (const meta of Object.values(snap.resources ?? {})) {
+      if (!meta.ambient && !meta.referencedBy?.length && meta.physicalId) {
+        managedPhysicalIds.add(meta.physicalId);
+      }
+    }
+  }
   for (const [key, content] of stored) {
     const snapshot = JSON.parse(content) as LifecycleSnapshot;
     // The storage key is `<stack>__<lexicon>` for a multi-stack project; the
@@ -246,11 +263,24 @@ async function replaySnapshots(
     // default VPC's route table is one resource however many stacks route
     // through it. Qualifying those would split it per stack and break the
     // edges into it.
-    const managed = (id: string, meta: { referencedBy?: string[] }): string =>
-      qualify && !(meta.referencedBy && meta.referencedBy.length > 0) ? `${stack}::${id}` : id;
-    const resources = Object.fromEntries(
-      Object.entries(snapshot.resources ?? {}).map(([id, meta]) => [managed(id, meta), meta]),
-    );
+    const managed = (id: string, meta: { referencedBy?: string[]; ambient?: boolean }): string =>
+      qualify && !meta.ambient && !(meta.referencedBy && meta.referencedBy.length > 0)
+        ? `${stack}::${id}`
+        : id;
+    const resources: Record<string, (typeof snapshot.resources)[string]> = {};
+    for (const [id, meta] of Object.entries(snapshot.resources ?? {})) {
+      const key = managed(id, meta);
+      if (key === id) {
+        // Ambient means "nothing manages this". Another stack managing it makes
+        // that false, and reporting it twice would inflate any count over it.
+        if (meta.ambient && meta.physicalId && managedPhysicalIds.has(meta.physicalId)) continue;
+        // Unqualified: account-level, so first sighting wins and the rest are
+        // the same resource seen again from another stack's snapshot.
+        if (seenUnqualified.has(id)) continue;
+        seenUnqualified.add(id);
+      }
+      resources[key] = meta;
+    }
     const known = new Set(Object.keys(snapshot.resources ?? {}));
     const requalify = (id: string): string => {
       const meta = (snapshot.resources ?? {})[id];

@@ -269,7 +269,7 @@ function scopeToStack(
  * (#1278). Once per stack for the region, merged by physical id — the same
  * ambient resource seen from two stacks is one resource.
  */
-async function collectAmbient(
+export async function collectAmbient(
   plugin: ObservationLexicon,
   opts: {
     environment: string;

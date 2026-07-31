@@ -7,7 +7,7 @@ import type { BuildResult } from "../build";
 import type { SerializerResult } from "../serializer";
 import type { LifecycleSnapshot } from "./types";
 import { computeBuildDigest } from "./digest";
-import { collectDependencies } from "./observe";
+import { collectDependencies, collectAmbient } from "./observe";
 import { writeSnapshot, snapshotStorageKey, getHeadCommit, pushLifecycle } from "./git";
 import { sortedJsonReplacer } from "../utils";
 import { formatUnobserved, normalizeObservation, unobservedAll, type UnobservedEntity } from "../observation";
@@ -81,7 +81,15 @@ export async function takeSnapshot(
   environment: string,
   plugins: ObservationLexicon[],
   buildResult: BuildResult,
-  opts?: { cwd?: string; stack?: string; region?: string },
+  opts?: {
+    cwd?: string;
+    stack?: string;
+    region?: string;
+    ambient?: boolean;
+    /** Kinds the PROJECT manages, not just this stack — a region whose stack
+     * declares no security group still has a default one (#1278). */
+    ambientKinds?: string[];
+  },
 ): Promise<TakeSnapshotResult> {
   const stack = opts?.stack;
   // A stack declares the region it deploys to (#1261). Passing it through is
@@ -189,7 +197,20 @@ export async function takeSnapshot(
         stacks: stack ? [{ name: stack, ...(region ? { region } : {}) }] : [],
       });
       for (const message of dependencies.warnings) warnings.push(message);
-      const withDependencies = { ...resources, ...dependencies.resources };
+      // Ambient resources (#1278) are recorded too when asked for, so a replayed
+      // snapshot can answer "which of these are unused" without a live read.
+      // Without this `search --at --ambient` filters a set that was never
+      // recorded and silently returns nothing.
+      const ambient = opts?.ambient
+        ? await collectAmbient(plugin, {
+            environment,
+            kinds: opts?.ambientKinds ?? [...new Set([...entities.values()].map((e) => e.entityType))],
+            observed: resources,
+            stacks: stack ? [{ name: stack, ...(region ? { region } : {}) }] : [],
+            warnings,
+          })
+        : {};
+      const withDependencies = { ...resources, ...dependencies.resources, ...ambient };
 
       const snapshot: LifecycleSnapshot = {
         lexicon: plugin.name,
