@@ -21,6 +21,24 @@ on:
   workflow_dispatch:
 
 jobs:
+  # Which packages can actually publish over OIDC, answered in seconds. No
+  # `needs:`, so it does not wait on the test gate — dispatch this workflow and
+  # the coverage table is in the run summary before the suite finishes.
+  #
+  # It lives here rather than in its own workflow because npm matches a
+  # trusted-publisher record against the workflow FILENAME: probing from
+  # anywhere else reports every package as missing and proves nothing.
+  #
+  # Informational, never gating. The publish job is what fails a bad release.
+  audit:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+      - run: bash scripts/audit-trusted-publishers.sh
+
   test:
     # Full validation gate for tag releases and manual dispatch. Skipped on the
     # publish-on-merge (branch) path: that code already passed PR CI, and each
