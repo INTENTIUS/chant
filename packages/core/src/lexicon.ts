@@ -731,6 +731,10 @@ export interface LexiconPlugin {
     entities: Map<string, { entityType: string; props: Record<string, unknown> }>;
     /** Deployed stack to observe, for a multi-stack project (see `stacks` in {@link ChantConfig}). */
     stack?: string;
+    /** Region the stack is deployed in (#1267), mirroring the thin path's
+     * `describeResources` (#1261). When omitted, an implementation keeps its
+     * ambient-region default. */
+    region?: string;
     /** Restrict to chant-owned resources (#119). A lexicon with no marker channel on this path says so. */
     owned?: boolean;
   }): Promise<DeepObservationResult>;

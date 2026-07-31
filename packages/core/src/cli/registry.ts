@@ -131,6 +131,14 @@ export interface ParsedArgs {
    */
   updateBaseline?: boolean;
   /**
+   * `chant lifecycle snapshot <env> --deep` (#1267) — also record each
+   * resource's normalized property tree, not just its identity. What a fold
+   * over topology needs, and what a snapshot-backed query needs to answer a
+   * property question at all. Costs more provider calls and a larger record,
+   * so it is opt-in.
+   */
+  deep?: boolean;
+  /**
    * `chant search "<q>" --at <ref> --env <name>` (#1266) — answer from a
    * recorded observation instead of reading the estate now. `latest` uses the
    * most recent snapshot. Mutually exclusive with `--live`: they are two

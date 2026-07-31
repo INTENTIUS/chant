@@ -769,6 +769,33 @@ describe("runLifecycleSnapshot", () => {
     expect(opts[1]).toMatchObject({ stack: "app-us-west-2", region: "us-west-2" });
   });
 
+  // #1267 — --deep is opt-in and reaches takeSnapshot; without it the snapshot
+  // stays thin, which is what every pre-#1267 snapshot was.
+  test("--deep reaches takeSnapshot; absent means identity", async () => {
+    buildMock.mockResolvedValue(makeBuildResult({ aws: ["bucket"] }));
+    takeSnapshotMock.mockResolvedValue({
+      snapshots: [{ lexicon: "aws", environment: "prod", resources: { bucket: meta() } }],
+      commit: "sha",
+      warnings: [],
+      errors: [],
+    });
+    const plugins: LexiconPlugin[] = [
+      createMockPlugin({ name: "aws", describeResources: staticDescribeResources({ bucket: meta() }) }),
+    ];
+    const ctx = (deep?: boolean) => ({
+      args: makeArgs({ command: "state", path: "snapshot", extraPositional: "prod", ...(deep ? { deep: true } : {}) }),
+      plugins,
+      serializers: plugins.map((p) => p.serializer),
+    });
+
+    await runLifecycleSnapshot(ctx(true));
+    expect(takeSnapshotMock.mock.calls[0][3]).toMatchObject({ deep: true });
+
+    takeSnapshotMock.mockClear();
+    await runLifecycleSnapshot(ctx());
+    expect(takeSnapshotMock.mock.calls[0][3]).toMatchObject({ deep: undefined });
+  });
+
   test("stack without a declared region: region stays undefined", async () => {
     buildMock.mockResolvedValue(makeBuildResult({ aws: ["bucket"] }));
     takeSnapshotMock.mockResolvedValue({

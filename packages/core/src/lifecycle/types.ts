@@ -1,8 +1,24 @@
 import type { ResourceMetadata, ArtifactMetadata } from "../lexicon";
 import type { UnobservedEntity } from "../observation";
+import type { DeepResourceObservation } from "../deep-observation";
 import type { IREdge } from "../graph-ir";
 
 export type { ResourceMetadata, ArtifactMetadata } from "../lexicon";
+
+/**
+ * How much of each resource an observation actually read (#1267).
+ *
+ * `identity` is the thin path: logical name, type, physical id, status. It is
+ * what a snapshot recorded before deep reads existed, and it stays the default
+ * because a deep read costs more provider calls and a larger record.
+ *
+ * `deep` additionally carries each resource's normalized property tree, which
+ * is what a fold over topology needs — a subnet's route-table association, a
+ * security group's rules. A consumer must branch on this rather than assume:
+ * asking an `identity` snapshot a property question has no answer, and
+ * silently returning nothing would read as "no such resources".
+ */
+export type ObservationDepth = "identity" | "deep";
 
 /**
  * State snapshot for a single lexicon in an environment.
@@ -29,6 +45,22 @@ export interface LifecycleSnapshot {
   unobserved?: Record<string, UnobservedEntity>;
   /** Artifact metadata keyed by server-side identifier (lexicon-specific). */
   artifacts?: Record<string, ArtifactMetadata>;
+  /**
+   * How much of each resource this snapshot read (#1267). Absent means
+   * `identity` — every snapshot written before deep reads existed was thin, and
+   * treating a missing field as unknown rather than as thin would invalidate
+   * them all.
+   */
+  depth?: ObservationDepth;
+  /**
+   * Normalized per-resource property trees, present only at `deep` depth and
+   * keyed by the same logical names as `resources`.
+   *
+   * Kept beside `resources` rather than merged into it so the thin record stays
+   * exactly what it always was: a reader that only wants identity does not have
+   * to learn a new shape, and an old snapshot and a new one parse the same way.
+   */
+  properties?: Record<string, DeepResourceObservation>;
   /**
    * Relationships observed between the recorded resources (#1266).
    *

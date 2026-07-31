@@ -246,6 +246,11 @@ export interface AwsDeepObserveOptions {
   entityNames: string[];
   entities?: Map<string, { entityType: string; props: Record<string, unknown> }>;
   stack?: string;
+  /** Region this stack is deployed in (#1267). Same reason the thin path takes
+   * one (#1261): without it a multi-region estate reads every stack against the
+   * ambient region, the out-of-region ones come back empty, and a deep snapshot
+   * silently records no properties for them. */
+  region?: string;
   owned?: boolean;
 }
 
@@ -270,9 +275,12 @@ export async function observeResourcesDeepAws(
   const stackName = options.stack ?? options.environment;
   const endpoint = process.env.AWS_ENDPOINT_URL;
 
+  const regionArgs = options.region ? ["--region", options.region] : [];
+
   const listResult = await rt.spawn(applyAwsEndpointArgv([
     "aws", "cloudformation", "describe-stack-resources",
     "--stack-name", stackName,
+    ...regionArgs,
     "--output", "json",
   ], endpoint));
 
@@ -334,6 +342,7 @@ export async function observeResourcesDeepAws(
       "aws", "cloudcontrol", "get-resource",
       "--type-name", type,
       "--identifier", identifier,
+      ...regionArgs,
       "--output", "json",
     ], endpoint));
 

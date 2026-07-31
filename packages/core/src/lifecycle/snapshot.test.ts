@@ -1,6 +1,8 @@
 import { describe, test, expect, vi, beforeEach } from "vitest";
 import { createMockPlugin, staticDescribeResources, staticObservation, staticListArtifacts } from "@intentius/chant-test-utils";
 import type { BuildResult } from "../build";
+import type { DeepResourceObservation } from "../deep-observation";
+import type { UnobservedEntity } from "../observation";
 
 const writeSnapshotMock = vi.fn();
 const getHeadCommitMock = vi.fn();
@@ -112,6 +114,95 @@ describe("takeSnapshot", () => {
     });
     await takeSnapshot("prod", [plugin], makeBuildResult({ aws: ["bucket"] }));
     expect(observedRegion).toBeUndefined();
+  });
+
+  // #1267 — a snapshot records identity by default; --deep also records each
+  // resource's property tree, which is what a fold over topology needs.
+  describe("deep snapshots (#1267)", () => {
+    const identity = { bucket: { type: "AWS::S3::Bucket", status: "CREATE_COMPLETE", physicalId: "b" } };
+
+    function deepPlugin(
+      resources: Record<string, DeepResourceObservation>,
+      unobserved: Record<string, UnobservedEntity> = {},
+    ) {
+      return createMockPlugin({
+        name: "aws",
+        describeResources: staticDescribeResources(identity),
+        observeResourcesDeep: async () => ({ deepObservation: "v1" as const, resources, unobserved }),
+      });
+    }
+
+    test("without --deep: identity only, and depth is not written", async () => {
+      const plugin = deepPlugin({
+        bucket: { type: "AWS::S3::Bucket", physicalId: "b", properties: { versioning: "Enabled" } },
+      });
+      const result = await takeSnapshot("prod", [plugin], makeBuildResult({ aws: ["bucket"] }));
+      // Absent, not "identity" — every snapshot written before #1267 is thin,
+      // and a reader must treat a missing field as thin rather than unknown.
+      expect(result.snapshots[0].depth).toBeUndefined();
+      expect(result.snapshots[0].properties).toBeUndefined();
+    });
+
+    test("with --deep: records the property trees alongside identity", async () => {
+      const plugin = deepPlugin({
+        bucket: { type: "AWS::S3::Bucket", physicalId: "b", properties: { versioning: "Enabled" } },
+      });
+      const result = await takeSnapshot("prod", [plugin], makeBuildResult({ aws: ["bucket"] }), { deep: true });
+      expect(result.snapshots[0].depth).toBe("deep");
+      expect(result.snapshots[0].properties?.bucket.properties).toEqual({ versioning: "Enabled" });
+      // Identity is still there — deep adds, it does not replace.
+      expect(result.snapshots[0].resources.bucket).toMatchObject({ type: "AWS::S3::Bucket" });
+    });
+
+    test("--deep against a lexicon with no deep reader: identity snapshot plus a warning", async () => {
+      const plugin = createMockPlugin({ name: "aws", describeResources: staticDescribeResources(identity) });
+      const result = await takeSnapshot("prod", [plugin], makeBuildResult({ aws: ["bucket"] }), { deep: true });
+      // Still a usable snapshot, but it must not claim a depth it does not have.
+      expect(result.snapshots).toHaveLength(1);
+      expect(result.snapshots[0].depth).toBeUndefined();
+      expect(result.warnings.join("\n")).toContain("no deep reader");
+    });
+
+    test("--deep returning nothing: downgrades to identity rather than discarding a good snapshot", async () => {
+      const plugin = deepPlugin({});
+      const result = await takeSnapshot("prod", [plugin], makeBuildResult({ aws: ["bucket"] }), { deep: true });
+      expect(result.snapshots).toHaveLength(1);
+      expect(result.snapshots[0].depth).toBeUndefined();
+      expect(result.warnings.join("\n")).toContain("deep read returned no properties");
+    });
+
+    test("--deep passes the stack's region to the deep reader (#1261 family)", async () => {
+      let seen: string | undefined = "unset";
+      const plugin = createMockPlugin({
+        name: "aws",
+        describeResources: staticDescribeResources(identity),
+        observeResourcesDeep: async (options: { region?: string }) => {
+          seen = options.region;
+          return {
+            deepObservation: "v1" as const,
+            resources: { bucket: { type: "AWS::S3::Bucket", physicalId: "b", properties: {} } },
+            unobserved: {},
+          };
+        },
+      });
+      await takeSnapshot("prod", [plugin], makeBuildResult({ aws: ["bucket"] }), {
+        stack: "app-us-west-2",
+        region: "us-west-2",
+        deep: true,
+      });
+      // Without this the deep read targets the ambient region and comes back
+      // empty, which downgrades a multi-region snapshot to identity silently.
+      expect(seen).toBe("us-west-2");
+    });
+
+    test("--deep reports entities the deep reader could not read", async () => {
+      const plugin = deepPlugin(
+        { bucket: { type: "AWS::S3::Bucket", physicalId: "b", properties: {} } },
+        { queue: { reason: "read-failed", detail: "boom" } },
+      );
+      const result = await takeSnapshot("prod", [plugin], makeBuildResult({ aws: ["bucket"] }), { deep: true });
+      expect(result.warnings.join("\n")).toContain("not observed deeply");
+    });
   });
 
   test("plugin without describeResources is skipped", async () => {

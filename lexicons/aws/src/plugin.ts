@@ -731,6 +731,7 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
     entityNames: string[];
     entities: Map<string, { entityType: string; props: Record<string, unknown> }>;
     stack?: string;
+    region?: string;
     owned?: boolean;
   }): Promise<DeepObservationResult> {
     return observeResourcesDeepAws({
@@ -738,6 +739,7 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
       entityNames: options.entityNames,
       entities: options.entities,
       stack: options.stack,
+      region: options.region,
       owned: options.owned,
     });
   },

@@ -5,7 +5,9 @@
 import type { ObservationLexicon, ResourceMetadata, ArtifactMetadata } from "../lexicon";
 import type { BuildResult } from "../build";
 import type { SerializerResult } from "../serializer";
-import type { LifecycleSnapshot } from "./types";
+import type { LifecycleSnapshot, ObservationDepth } from "./types";
+import { observeDeep } from "./deep-observe";
+import type { DeepResourceObservation } from "../deep-observation";
 import { computeBuildDigest } from "./digest";
 import { collectDependencies, collectAmbient } from "./observe";
 import { writeSnapshot, snapshotStorageKey, getHeadCommit, pushLifecycle } from "./git";
@@ -85,6 +87,7 @@ export async function takeSnapshot(
     cwd?: string;
     stack?: string;
     region?: string;
+    deep?: boolean;
     ambient?: boolean;
     /** Kinds the PROJECT manages, not just this stack — a region whose stack
      * declares no security group still has a default one (#1278). */
@@ -92,6 +95,7 @@ export async function takeSnapshot(
   },
 ): Promise<TakeSnapshotResult> {
   const stack = opts?.stack;
+  const depth: ObservationDepth = opts?.deep ? "deep" : "identity";
   // A stack declares the region it deploys to (#1261). Passing it through is
   // what lets a multi-region estate be observed at all: the reader targets the
   // stack's own region rather than whichever one the shell happens to be set
@@ -185,6 +189,39 @@ export async function takeSnapshot(
         continue;
       }
 
+      // The deep read is a second pass, after identity is known to be readable
+      // (#1267). Keeping it separate means a lexicon with no deep reader still
+      // snapshots exactly as before, and a deep read that comes back empty
+      // downgrades the record rather than discarding an identity snapshot that
+      // was already good.
+      let properties: Record<string, DeepResourceObservation> | undefined;
+      let recordedDepth: ObservationDepth = "identity";
+      if (depth === "deep") {
+        if (!plugin.observeResourcesDeep) {
+          warnings.push(
+            `${plugin.name}: no deep reader — recording an identity snapshot; property questions cannot be answered from it`,
+          );
+        } else {
+          const observed = await observeDeep(plugin, {
+            environment,
+            buildOutput,
+            entities,
+            ...(stack ? { stack } : {}),
+            ...(region ? { region } : {}),
+          });
+          for (const [name, entry] of Object.entries(observed.unobserved)) {
+            warnings.push(`${plugin.name}: not observed deeply — ${formatUnobserved(name, entry)}`);
+          }
+          if (Object.keys(observed.resources).length > 0) {
+            properties = observed.resources;
+            recordedDepth = "deep";
+          } else {
+            warnings.push(
+              `${plugin.name}: deep read returned no properties — recording an identity snapshot`,
+            );
+          }
+        }
+      }
       // What this estate depends on but does not manage (#1273), recorded so a
       // replayed snapshot can answer the same questions a live read can (#1266).
       // Without them a snapshot holds the managed resources and no route to the
@@ -222,6 +259,9 @@ export async function takeSnapshot(
         ...(dependencies.edges.length > 0 ? { edges: dependencies.edges } : {}),
         ...(Object.keys(unobserved).length > 0 && { unobserved }),
         ...(Object.keys(artifacts).length > 0 && { artifacts }),
+        // Only written when deep. An absent field means identity, which is what
+        // every snapshot taken before #1267 was.
+        ...(recordedDepth === "deep" && { depth: recordedDepth, properties }),
         digest,
       };
 
