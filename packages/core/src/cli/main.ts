@@ -273,6 +273,8 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.updateSnapshot = true;
     } else if (arg === "--update-baseline") {
       result.updateBaseline = true;
+    } else if (arg === "--deep") {
+      result.deep = true;
     } else if (arg === "--run-examples") {
       result.runExamples = true;
     } else if (arg === "--pinned-digest") {
@@ -437,6 +439,9 @@ Ops:
 
 Lifecycle (alias: lc):
   lifecycle snapshot <env>  Query API, save metadata to orphan branch
+                            --deep: also record each resource's property tree,
+                            not just its identity — what a fold over topology
+                            needs (costs more provider calls; #1267)
   lifecycle show <env>      Show latest lifecycle snapshot
   lifecycle diff <env>      Compare current build against last snapshot
                             --live: query cloud now and detect drift

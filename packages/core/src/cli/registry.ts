@@ -130,6 +130,14 @@ export interface ParsedArgs {
    * orphan branch; never touches the cloud.
    */
   updateBaseline?: boolean;
+  /**
+   * `chant lifecycle snapshot <env> --deep` (#1267) — also record each
+   * resource's normalized property tree, not just its identity. What a fold
+   * over topology needs, and what a snapshot-backed query needs to answer a
+   * property question at all. Costs more provider calls and a larger record,
+   * so it is opt-in.
+   */
+  deep?: boolean;
   /** `chant dev surface-diff --run-examples` — also run the example build harness */
   runExamples?: boolean;
   /** `chant dev surface-diff --pinned-digest <file>` — path to SHA-256 digest file for supply-chain verification */

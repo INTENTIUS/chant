@@ -39,6 +39,10 @@ export interface DeepObserveOptions {
   entities: DeclaredEntities;
   /** Deployed stack for a multi-stack project (#932). */
   stack?: string;
+  /** Region that stack is deployed in (#1267). Same contract as the thin path
+   * (#1261): a multi-region estate reads each stack in its own region, not in
+   * whichever one the shell is set to. */
+  region?: string;
   /** Component projects deploy one stack per component; read them all and merge. */
   componentStacks?: string[];
   owned?: boolean;
@@ -80,6 +84,7 @@ export async function observeDeep(
     buildOutput: opts.buildOutput,
     entityNames,
     entities: opts.entities,
+    ...(opts.region ? { region: opts.region } : {}),
     ...(opts.owned !== undefined ? { owned: opts.owned } : {}),
   };
   try {

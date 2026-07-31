@@ -153,6 +153,7 @@ export async function runLifecycleSnapshot(ctx: CommandContext): Promise<number>
         result = await takeSnapshot(environment, observingPlugins, buildResult, {
           stack: target.stack,
           region: target.region,
+          deep: args.deep,
         });
       } catch (err) {
         if (err instanceof StaleLifecycleBranchError) {
@@ -222,7 +223,15 @@ export async function runLifecycleShow(ctx: CommandContext): Promise<number> {
 
     for (const [lexicon, content] of snapshots) {
       const snapshot: LifecycleSnapshot = JSON.parse(content);
-      console.log(`\n${formatBold(`${environment}/${lexicon}`)} — ${Object.keys(snapshot.resources).length} resources — ${snapshot.timestamp}`);
+      // Depth is stated, not inferred (#1267). An identity snapshot cannot
+      // answer a property question, and a reader that assumes otherwise reads
+      // "no properties recorded" as "no such properties".
+      const depth = snapshot.depth ?? "identity";
+      const depthNote =
+        depth === "deep"
+          ? ` — deep (${Object.keys(snapshot.properties ?? {}).length} property trees)`
+          : " — identity only";
+      console.log(`\n${formatBold(`${environment}/${lexicon}`)} — ${Object.keys(snapshot.resources).length} resources${depthNote} — ${snapshot.timestamp}`);
       printSnapshotTable(snapshot);
     }
   }
