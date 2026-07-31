@@ -25,6 +25,10 @@ export type { CommandGroup, CommandGroupCommand, CommandGroupContext } from "./c
 // `@intentius/chant/lexicon` entry they import the plugin contract from.
 export type { ReferenceCatalog, IdentityRule, RefRule } from "./graph-refs";
 
+// An observation can report relationships (#1271/#1273), so a lexicon needs the
+// edge type from the same entry it imports the plugin contract from.
+export type { IREdge } from "./graph-ir";
+
 // The observation contract (#1089), re-exported from the same entry so a
 // lexicon's `describeResources` can report NOT-OBSERVED without a second
 // import path. Runtime helpers live in `@intentius/chant/observation`.

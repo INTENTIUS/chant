@@ -91,7 +91,20 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
     // already model.
     const catalogs = observing.map((p) => p.referenceCatalog).filter((c): c is ReferenceCatalog => !!c);
     if (catalogs.length > 0) {
-      live = { ...live, edges: reconstructEdges(live.nodes, mergeCatalogs(catalogs)).edges };
+      // Merge, never replace. A lexicon reports relationships a catalog cannot
+      // reconstruct (#1273) — an instance placed in a subnet it did not declare
+      // carries a template `Ref` in its attributes, not the physical subnet id,
+      // so no identity index resolves it. Overwriting here dropped exactly those
+      // edges and left the fold with a chain missing its first hop.
+      const reconstructed = reconstructEdges(live.nodes, mergeCatalogs(catalogs)).edges;
+      const seen = new Set((live.edges ?? []).map((e) => `${e.from}|${e.to}|${e.viaAttr ?? ""}`));
+      live = {
+        ...live,
+        edges: [
+          ...(live.edges ?? []),
+          ...reconstructed.filter((e) => !seen.has(`${e.from}|${e.to}|${e.viaAttr ?? ""}`)),
+        ],
+      };
     }
     // Overlay live identity onto the SOURCE graph (same as `graph --overlay`):
     // the declared graph is the canvas — its edges carry the topology so ->/<-
@@ -131,9 +144,43 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
   for (const n of matches) {
     console.log(formatRow(n, show));
   }
-  derivedSurface(terms, matches, ir);
+  const backed = args.live !== true || matches.some((n) => n.physicalId);
+  provenance(matches, args.live === true);
+  derivedSurface(terms, matches, ir, backed);
   if (args.explain) explain(terms, matches, ir, nodeById, query);
   return 0;
+}
+
+/**
+ * Say what backed this answer (#1266).
+ *
+ * Two things went wrong without it. A `--live` read that failed entirely
+ * returned the declared graph, exit 0, with no physical ids and nothing to say
+ * so — indistinguishable from a working live answer (#1263). And the derived
+ * surface below named folds like `internetFacing` whether or not the
+ * observation could support them, which is worse than saying nothing.
+ *
+ * It is also the most direct thing the tool can say to a caller deciding
+ * whether to re-check with a raw provider sweep: the API has already been read,
+ * and this many resources were bound to what it returned. A sweep repeats work
+ * already done. That is a fact about the query, printed for every query, and it
+ * encodes no expected answer.
+ */
+function provenance(matches: IRNode[], live: boolean): void {
+  if (!live) {
+    console.log("— declared only · no observation · physical ids unavailable");
+    return;
+  }
+  const bound = matches.filter((n) => n.physicalId).length;
+  if (bound === 0) {
+    // The estate was asked for and nothing came back bound. Naming it is the
+    // difference between "these do not exist" and "nobody could see them".
+    console.log(
+      `— live read returned no bound resources · answered from the declared graph · physical ids unavailable`,
+    );
+    return;
+  }
+  console.log(`— observed live · bound ${bound}/${matches.length}`);
 }
 
 /**
@@ -148,9 +195,12 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
  * produced them. Nothing here knows what any attribute means or which question it answers;
  * add a pass and its facts appear, remove one and they stop.
  */
-function derivedSurface(terms: Term[], matches: IRNode[], ir: GraphIR): void {
+function derivedSurface(terms: Term[], matches: IRNode[], ir: GraphIR, backed = true): void {
   const derived = ir.derivedAttrs;
-  if (!derived || matches.length === 0) return;
+  // A fold over live topology has nothing to report when the observation came
+  // back empty (#1263). Naming the surface anyway advertises facts this answer
+  // could not have computed, which is worse than saying nothing at all.
+  if (!derived || matches.length === 0 || !backed) return;
   const used = new Set(terms.filter((t) => t.kind === "attr").map((t) => t.a));
   const unused = new Set<string>();
   for (const n of matches) {

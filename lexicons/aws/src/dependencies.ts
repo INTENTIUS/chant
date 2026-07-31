@@ -263,8 +263,11 @@ export async function observeAwsDependencies(options: {
         }
       }
 
-      const table =
-        (where.subnetId && bySubnet.get(where.subnetId)) || (where.vpcId && mainByVpc.get(where.vpcId));
+      // Explicit subnet association first, else the VPC's main table — the two
+      // ways an instance's placement resolves to routing.
+      const table: RawRouteTable | undefined =
+        (where.subnetId ? bySubnet.get(where.subnetId) : undefined) ??
+        (where.vpcId ? mainByVpc.get(where.vpcId) : undefined);
       if (!table?.RouteTableId) continue;
 
       // Only routing that actually reaches the internet is worth reporting: an

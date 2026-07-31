@@ -220,6 +220,29 @@ export async function observeResources(
   return { observations, warnings, errors };
 }
 
+/**
+ * The subset of an observation belonging to one stack.
+ *
+ * A scoped stack's ids are qualified `${stack}::${id}` (#1162), so the prefix is
+ * the whole test. An unqualified observation — single-stack, or a bare-string
+ * stack sharing one id space — has no way to be split and is returned whole,
+ * which is what it already was.
+ */
+function scopeToStack(
+  resources: Record<string, ResourceMetadata>,
+  stack: string | undefined,
+): Record<string, ResourceMetadata> {
+  if (!stack) return resources;
+  const prefix = `${stack}::`;
+  const scoped = Object.fromEntries(
+    Object.entries(resources)
+      .filter(([id]) => id.startsWith(prefix))
+      .map(([id, meta]) => [id, meta] as const),
+  );
+  // No qualified ids at all means this observation was never stack-scoped.
+  return Object.keys(scoped).length > 0 ? scoped : resources;
+}
+
 /** Dependencies collected across a lexicon's stacks, plus anything to report. */
 interface CollectedDependencies {
   resources: Record<string, ResourceMetadata>;
@@ -260,11 +283,18 @@ async function collectDependencies(
   const refs = opts.stacks.length > 0 ? opts.stacks : [{ name: undefined, region: undefined }];
 
   for (const ref of refs) {
+    // Only this stack's resources are the closure's roots. Handing a lexicon
+    // the whole estate makes it resolve out from resources that live somewhere
+    // else — for AWS that means `describe-instances` in one region with another
+    // region's instance ids, which fails outright with InvalidInstanceID and
+    // takes the whole read down with it.
+    const roots = scopeToStack(opts.observed, ref.name);
+    if (Object.keys(roots).length === 0) continue;
     try {
       const found = await plugin.observeDependencies({
         environment: opts.environment,
         entities: opts.entities,
-        observed: opts.observed,
+        observed: roots,
         ...(ref.name ? { stack: ref.name } : {}),
         ...(ref.region ? { region: ref.region } : {}),
       });
