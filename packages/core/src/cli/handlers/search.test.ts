@@ -1,7 +1,7 @@
 import { describe, test, expect, vi } from "vitest";
 import { __searchInternals } from "./search";
 
-const { parseQuery, matchTerm, formatRow, explain, describeTerm, derivedSurface, availableAttrs } = __searchInternals;
+const { parseQuery, matchTerm, formatRow, explain, describeTerm, derivedSurface, availableAttrs, ambientHint } = __searchInternals;
 
 function node(id: string, kind: string, attrs: Record<string, unknown> = {}) {
   return { id, kind, lexicon: "aws", attrs } as never;
@@ -245,5 +245,42 @@ describe("negated terms (#1280)", () => {
 
   test("--explain says the term was negated, or an exclusion reads inverted", () => {
     expect(describeTerm(parseQuery("!kind:Foo")[0])).toBe("!kind:Foo");
+  });
+});
+
+// #1278/#1279 — `--ambient` changes what a LIVE read goes and looks for. On a
+// replay it changes nothing: what is ambient in a recording was fixed when the
+// recording was taken.
+describe("the --ambient hint", () => {
+  const sg = node("sg-1", "AWS::EC2::SecurityGroup");
+  const kinds = ["AWS::EC2::SecurityGroup"];
+  const capture = (fn: () => void): string => {
+    const lines: string[] = [];
+    const spy = vi.spyOn(console, "log").mockImplementation((s: string) => { lines.push(s); });
+    fn();
+    spy.mockRestore();
+    return lines.join("\n");
+  };
+
+  test("names the flag on a live read that did not use it", () => {
+    expect(capture(() => ambientHint([sg] as never, kinds, false))).toContain("--ambient");
+  });
+
+  test("says nothing when the caller already asked for it", () => {
+    expect(capture(() => ambientHint([sg] as never, kinds, true))).toBe("");
+  });
+
+  test("says nothing on a replay whose snapshot already holds ambient resources", () => {
+    // The answer is complete. Saying the flag would add something is worse than
+    // silence: an agent read "6 of 6 matched" next to this hint, went looking
+    // for a seventh group, and hand-built a wrong answer from the raw graph.
+    expect(capture(() => ambientHint([sg] as never, kinds, false, { recordedAmbient: true }))).toBe("");
+  });
+
+  test("on a replay without them, points at the recording rather than the query", () => {
+    // `--at --ambient` cannot go and look; only a new snapshot can.
+    const out = capture(() => ambientHint([sg] as never, kinds, false, { recordedAmbient: false }));
+    expect(out).toContain("lifecycle snapshot");
+    expect(out).not.toContain("--ambient includes those");
   });
 });

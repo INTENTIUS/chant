@@ -64,6 +64,8 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
   // Kinds that can exist in the account without being declared (#1278). Known
   // without a scan, so it costs nothing to mention.
   let ambientKinds: string[] = [];
+  // Set only on a replay: whether the recording itself holds ambient resources.
+  let replayAmbient: { recordedAmbient: boolean } | undefined;
   if (args.live || args.at) {
     const environment = args.env;
     if (!environment) {
@@ -108,6 +110,11 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
         return 1;
       }
       observations = replay.observations;
+      replayAmbient = {
+        recordedAmbient: replay.observations.some((o) =>
+          Object.values(o.resources).some((m) => m.ambient === true),
+        ),
+      };
       source = { kind: "snapshot", commit: replay.commit, timestamp: replay.timestamp };
     } else {
       const observed = await observeResources(environment, observing, buildResult, {
@@ -202,7 +209,7 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
       ? (await hasSnapshot(String(args.env))) ? "yes" : undefined
       : undefined;
   provenance(matches, source, recorded);
-  ambientHint(matches, ambientKinds, args.ambient === true);
+  ambientHint(matches, ambientKinds, args.ambient === true, replayAmbient);
   derivedSurface(terms, matches, ir, backed);
   if (args.explain) explain(terms, matches, ir, nodeById, query);
   return 0;
@@ -232,8 +239,28 @@ type AnswerSource =
  * scan. It reports no count and names no resource, so it cannot stand in for
  * the answer.
  */
-function ambientHint(matches: IRNode[], ambientKinds: string[], asked: boolean): void {
+function ambientHint(
+  matches: IRNode[],
+  ambientKinds: string[],
+  asked: boolean,
+  replay?: { recordedAmbient: boolean },
+): void {
   if (asked || ambientKinds.length === 0 || matches.length === 0) return;
+  // On a replay the flag cannot change the answer: what is ambient in a
+  // recording was fixed when it was recorded. Telling a caller to add
+  // `--ambient` to `--at` is advice that does nothing — and when the snapshot
+  // already holds ambient resources it is worse than nothing, because the
+  // answer is complete and the hint says it is not. An agent read "6 of 6
+  // matched" alongside it, went looking for a seventh, and hand-built a wrong
+  // answer from the raw graph over twelve turns.
+  if (replay) {
+    if (!replay.recordedAmbient) {
+      console.log(
+        `— this snapshot recorded no ambient resources · re-record with \`chant lifecycle snapshot <env> --ambient\` to include them`,
+      );
+    }
+    return;
+  }
   const relevant = [...new Set(ambientKinds.filter((k) => matches.some((n) => n.kind === k)))];
   if (relevant.length === 0) return;
   const label = relevant.map((k) => k.split("::").slice(-1)[0]).join(", ");
@@ -568,4 +595,4 @@ function formatRow(n: IRNode, show: string[]): string {
 }
 
 /** Internals exposed for unit tests. */
-export const __searchInternals = { parseQuery, matchTerm, formatRow, explain, describeTerm, derivedSurface, availableAttrs };
+export const __searchInternals = { parseQuery, matchTerm, formatRow, explain, describeTerm, derivedSurface, availableAttrs, ambientHint };

@@ -44,7 +44,7 @@ vi.mock("../plugins", () => ({
 }));
 const observeMock = vi.fn();
 const replayMock = vi.fn();
-const hasSnapshotMock = vi.fn(() => Promise.resolve(false));
+const hasSnapshotMock = vi.fn((..._a: unknown[]) => Promise.resolve(false));
 vi.mock("../../lifecycle/replay", () => ({
   replaySnapshots: (...a: unknown[]) => replayMock(...a),
   hasSnapshot: (...a: unknown[]) => hasSnapshotMock(...a),
