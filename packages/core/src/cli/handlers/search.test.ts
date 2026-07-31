@@ -194,6 +194,18 @@ describe("negated terms (#1280)", () => {
     ).toEqual(["b"]);
   });
 
+  test("a bare edge term is refused rather than matching something arbitrary", () => {
+    // An agent wrote `kind:EC2::SecurityGroup !<-` meaning "referenced by
+    // nothing" and got a silently wrong set. It is also a different question
+    // from "referenced by no Instance", so guessing which was meant is wrong.
+    expect(() => parseQuery("kind:Foo !<-")).toThrow(/needs a target/);
+    expect(() => parseQuery("kind:Foo ->")).toThrow(/needs a target/);
+  });
+
+  test("an edge term WITH a target still parses", () => {
+    expect(() => parseQuery("kind:Foo !<-kind:Bar")).not.toThrow();
+  });
+
   test("--explain says the term was negated, or an exclusion reads inverted", () => {
     expect(describeTerm(parseQuery("!kind:Foo")[0])).toBe("!kind:Foo");
   });

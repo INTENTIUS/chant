@@ -19,6 +19,8 @@ import { applyAwsEndpointArgv } from "./components/cloud-executor";
 import { stackDoesNotExist } from "./stack-errors";
 import { awsDeepNormalizationHooks, observeResourcesDeepAws } from "./deep-observe";
 import { awsReferenceCatalog } from "./reference-catalog";
+import { AMBIENT_KINDS } from "./ambient";
+import { describeOwnProperties } from "./properties";
 import { resolveTemplateAttrs } from "./live-attrs";
 import { CFParser } from "./import/parser";
 import { CFGenerator } from "./import/generator";
@@ -665,10 +667,15 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
       };
     }
 
+    // Each resource's OWN properties, on top of the stack outputs above (#1279).
+    // Until this, a node's `attrs` were the stack's exports replicated onto
+    // every member, so no instance carried its own `VpcId`.
+    const withProperties = await describeOwnProperties(resources, options.region);
+
     // Every entity the stack answered for was answered for: an entity the
     // template doesn't carry is genuinely not in this stack, which is an
     // absence, not a hole.
-    return observation(resources);
+    return observation(withProperties);
   },
 
   /**
@@ -699,6 +706,11 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
    * one someone left behind. Nothing else in the observation can see them,
    * because everything else resolves outward from what is declared.
    */
+  /** #1278 — the kinds `observeAmbient` can enumerate, from the same source. */
+  ambientKinds(): string[] {
+    return AMBIENT_KINDS;
+  },
+
   async observeAmbient(options: {
     environment: string;
     kinds: string[];

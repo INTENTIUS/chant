@@ -45,7 +45,16 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
     console.error(formatError({ message: "chant search needs a query: chant search \"<terms>\" [--live --env <name>]" }));
     return 1;
   }
-  const terms = parseQuery(query);
+  let terms: Term[];
+  try {
+    terms = parseQuery(query);
+  } catch (err) {
+    if (err instanceof QueryError) {
+      console.error(formatError({ message: err.message, hint: err.hint }));
+      return 1;
+    }
+    throw err;
+  }
   const show = parseShow(args);
 
   const projectPath = resolve(".");
@@ -53,6 +62,9 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
 
   let ir: GraphIR;
   let source: AnswerSource = { kind: "declared" };
+  // Kinds that can exist in the account without being declared (#1278). Known
+  // without a scan, so it costs nothing to mention.
+  let ambientKinds: string[] = [];
   if (args.live || args.at) {
     const environment = args.env;
     if (!environment) {
@@ -80,6 +92,7 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
       return 1;
     }
     const observing = plugins.filter((p) => p.describeResources);
+    ambientKinds = observing.flatMap((p) => p.ambientKinds?.() ?? []);
     const stacks = (config.stacks ?? []).map((s) => ({ name: s.name, region: s.region, src: s.src }));
 
     let observations: LiveObservation[];
@@ -184,6 +197,7 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
   }
   const backed = source.kind === "declared" || matches.some((n) => n.physicalId);
   provenance(matches, source);
+  ambientHint(matches, ambientKinds, args.ambient === true);
   derivedSurface(terms, matches, ir, backed);
   if (args.explain) explain(terms, matches, ir, nodeById, query);
   return 0;
@@ -300,6 +314,32 @@ async function replaySnapshots(
     }
   }
   return { observations, commit, timestamp };
+}
+
+
+/**
+ * Point out that `--ambient` is relevant to the kind just queried (#1278).
+ *
+ * A resource nothing declares and nothing references is invisible to every
+ * other observation path, so an answer about "my security groups" can be
+ * complete for the declared estate and still not be the answer the question
+ * wanted. The caller cannot know that from the result — it looks like the whole
+ * set. An agent asked which groups were unused queried the three declared ones,
+ * never learned three more existed, and spent twenty-five turns trying to
+ * reconcile the shortfall from the graph.
+ *
+ * Says only that the flag applies to this kind, which is knowable without a
+ * scan. It reports no count and names no resource, so it cannot stand in for
+ * the answer.
+ */
+function ambientHint(matches: IRNode[], ambientKinds: string[], asked: boolean): void {
+  if (asked || ambientKinds.length === 0 || matches.length === 0) return;
+  const relevant = [...new Set(ambientKinds.filter((k) => matches.some((n) => n.kind === k)))];
+  if (relevant.length === 0) return;
+  const label = relevant.map((k) => k.split("::").slice(-1)[0]).join(", ");
+  console.log(
+    `— ${label} can also exist in the account without being declared or referenced; --ambient includes those`,
+  );
 }
 
 /**
@@ -486,6 +526,16 @@ function parseLeaf(tok: string): Term {
   return { kind: "word", a: tok };
 }
 
+/** A query the grammar cannot accept, carrying the correction to print. */
+class QueryError extends Error {
+  constructor(
+    message: string,
+    readonly hint: string,
+  ) {
+    super(message);
+  }
+}
+
 function parseQuery(query: string): Term[] {
   // Split on whitespace but keep quoted phrases together.
   const tokens = query.match(/"[^"]*"|\S+/g) ?? [];
@@ -498,6 +548,19 @@ function parseQuery(query: string): Term[] {
     // provider sweep and a hand-built set difference.
     const negated = tok.startsWith("!");
     if (negated) tok = tok.slice(1);
+    // An edge term needs a target. A bare `<-` used to parse to an empty leaf
+    // and quietly match something arbitrary — an agent wrote
+    // `kind:EC2::SecurityGroup !<-` meaning "referenced by nothing" and got a
+    // silently wrong set. Refusing it is right beyond the parse bug too:
+    // "referenced by nothing at all" and "referenced by no Instance" are
+    // different questions, and on any estate whose declared graph carries
+    // references they give different answers.
+    if ((tok === "->" || tok === "<-") || /^(->|<-)\s*$/.test(tok)) {
+      throw new QueryError(
+        `"${negated ? "!" : ""}${tok}" needs a target`,
+        `say what the edge reaches: ${negated ? "!" : ""}${tok}kind:EC2::Instance, or ${negated ? "!" : ""}${tok}attr:Name=web`,
+      );
+    }
     const term = tok.startsWith("->")
       ? { kind: "edge" as const, a: "", dir: "out" as const, sub: parseLeaf(tok.slice(2)) }
       : tok.startsWith("<-")

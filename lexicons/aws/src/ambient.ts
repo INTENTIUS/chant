@@ -25,7 +25,19 @@ const ENUMERABLE: Record<string, { argv: string[]; key: string; id: string; name
     id: "GroupId",
     name: "GroupName",
   },
+  // The account's default VPC is the archetype: nothing declares it, nothing
+  // in the declared estate points at it, and "which instances are outside a
+  // default VPC" cannot be answered without it.
+  "AWS::EC2::VPC": {
+    argv: ["ec2", "describe-vpcs"],
+    key: "Vpcs",
+    id: "VpcId",
+  },
 };
+
+/** The kinds this reader can enumerate. Declared so a caller can mention
+ * `--ambient` without paying for a scan to discover it is relevant. */
+export const AMBIENT_KINDS: string[] = Object.keys(ENUMERABLE);
 
 /** True when this lexicon can enumerate the kind, so a caller can say what it skipped. */
 export function canEnumerate(kind: string): boolean {

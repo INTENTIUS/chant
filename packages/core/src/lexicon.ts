@@ -703,6 +703,17 @@ export interface LexiconPlugin {
    * Optional and opt-in. A lexicon that does not implement it, or a caller that
    * does not ask, sees exactly what it saw before.
    */
+  /**
+   * Kinds this lexicon can enumerate beyond the declared estate (#1278).
+   *
+   * Declared separately from {@link observeAmbient} so a caller can say that
+   * ambient resources of a kind are POSSIBLE without paying for a scan to find
+   * out. `chant search` uses it to point out that `--ambient` is relevant to
+   * the kind just queried — an agent asking which security groups are unused
+   * has no way to know that some are not in the answer at all.
+   */
+  ambientKinds?(): string[];
+
   observeAmbient?(options: {
     environment: string;
     /** Entity types the project declares — the bound on what to enumerate. */
