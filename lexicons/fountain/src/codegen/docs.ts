@@ -55,7 +55,7 @@ export const helper = new Agent({
 
 \`FOUNTAIN_ENDPOINT\` (defaults to the hosted instance) and \`FOUNTAIN_TOKEN\`. Mint a token via \`POST /api/auth/token\` with email and password, or from the account UI. The same code applies to a local \`mix phx.server\` fountain by pointing \`FOUNTAIN_ENDPOINT\` at it — registration and token mint work headless, so CI needs no browser.`;
 
-const outputFormat = `The fountain lexicon serializes to fountain's own manifest YAML plus a \`fountain-plan.json\` sidecar.
+const outputFormat = `The fountain lexicon serializes to fountain's own manifest YAML — nothing else. \`fountainApply\` reads that same YAML, so there is no sidecar to keep in sync with it.
 
 ## Manifests
 
@@ -75,17 +75,17 @@ spec:
 
 The output is ejectable — \`fountain apply -f\` accepts it verbatim, so adopting chant here does not trap the manifests behind chant.
 
-## The plan sidecar
+## Applying the manifest
 
-\`fountain-plan.json\` is entity name → \`{ kind, spec }\`. The \`fountainApply\` activity reconciles from it directly against the REST API, so nothing on the apply side parses YAML. Apply order is Environment → Vault → Agent; an agent's \`environment\` reference carries the entity name and is resolved to the live id at apply.
+\`fountainApply\` parses this same YAML and sends it to fountain's bulk \`POST /api/apply\` endpoint in one request — the server reconciles by name, Environment → Vault → Agent, and resolves an agent's \`environment\` reference itself, against the manifest or the tenant's existing environments. See the Ops page for the activity's own behavior (prune, secrets, failure reporting).
 
 ## Ownership
 
-Resources carrying \`metadata."managed-by": chant\` are chant-owned. That marker gates the opt-in prune (\`fountainApply\` deletes only owned resources absent from the plan) and the \`--owned\` filter on drift and live export. Set it on every declaration you want reconciled.
+Resources carrying \`metadata."managed-by": chant\` are chant-owned. That marker gates the opt-in prune (\`fountainApply\` deletes only owned resources absent from the manifest) and the \`--owned\` filter on drift and live export. Set it on every declaration you want reconciled.
 
 ## Secrets
 
-\`spec.secrets\` entries are split out of the resource body and upserted through the secrets sub-resource. Values are write-only upstream, so this is upsert-always — a changed value cannot be detected, only overwritten.`;
+\`spec.secrets\` is authored as an ordered \`{key, value}[]\`, same as any other typed prop. \`fountainApply\` converts it to the \`{KEY: value}\` map fountain's bulk apply expects on the wire; the server upserts it through the encrypted envelope path. Values are write-only upstream, so this is upsert-always — a changed value cannot be detected, only overwritten.`;
 
 const resourcesPage = `The lexicon types the three kinds \`fountain apply\` reconciles — the workload
 layer of [fountain](https://github.com/BinaryBourbon/fountain). Types are
@@ -166,17 +166,18 @@ const opsPage = `Two op activities ship with the lexicon, resolvable by name via
 
 ## fountainApply
 
-The native applier: a direct-REST reconciler over the serializer's \`fountain-plan.json\`.
+The native applier: compiles the serializer's manifest YAML into fountain's bulk \`POST /api/apply\` request and sends it in one call.
 
 | Behavior | Detail |
 |---|---|
-| Create / update | By name. A resource in the plan that exists live is updated; one that does not is created. |
-| Order | Environment → Vault → Agent, so an agent's environment reference resolves to a live id. |
-| Prune | Off by default. With \`prune: true\`, chant-owned resources absent from the plan are deleted, in reverse order. |
-| Secrets | Split from the body and upserted through the secrets sub-resource. Upsert-always — values are write-only upstream. |
+| Create / update | By name, reconciled server-side. An agent's \`environment\` reference resolves by name — against the manifest or the tenant's existing environments — without a client-side id lookup. |
+| Order | Environment → Vault → Agent, fixed server-side regardless of manifest order. |
+| Prune | Off by default. With \`prune: true\`, chant-owned resources absent from the manifest are deleted, in reverse order — the one thing bulk apply doesn't cover, so this still lists live state per kind. |
+| Secrets | \`spec.secrets\` converts from chant's authored \`{key, value}[]\` to the wire's \`{KEY: value}\` map; the server upserts them through the encrypted envelope path in the same request. Upsert-always — values are write-only upstream. |
+| Failure | Best-effort per resource. Every result is collected before this throws, so one bad resource doesn't hide failures elsewhere in the manifest. |
 
 \`\`\`typescript
-await fountainApply({ planPath: "build/fountain-plan.json", prune: true });
+await fountainApply({ manifestPath: "build/fountain.yaml", prune: true });
 \`\`\`
 
 Endpoint and token resolution: explicit args win, then \`FOUNTAIN_ENDPOINT\` / \`FOUNTAIN_TOKEN\`, then the hosted default.

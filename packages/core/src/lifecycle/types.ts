@@ -1,6 +1,7 @@
 import type { ResourceMetadata, ArtifactMetadata } from "../lexicon";
 import type { UnobservedEntity } from "../observation";
 import type { DeepResourceObservation } from "../deep-observation";
+import type { IREdge } from "../graph-ir";
 
 export type { ResourceMetadata, ArtifactMetadata } from "../lexicon";
 
@@ -60,6 +61,20 @@ export interface LifecycleSnapshot {
    * to learn a new shape, and an old snapshot and a new one parse the same way.
    */
   properties?: Record<string, DeepResourceObservation>;
+  /**
+   * Relationships observed between the recorded resources (#1266).
+   *
+   * `resources` says what existed; without this a snapshot cannot say how any
+   * of it connected, so a fold over topology has nothing to traverse when the
+   * snapshot is replayed. That is the difference between a snapshot answering
+   * "which instances exist" and answering "which are reachable from the
+   * internet" — and the second is the whole reason the graph is worth
+   * recording.
+   *
+   * Absent on every snapshot written before this, which is read as "no
+   * relationships recorded" rather than "no relationships existed".
+   */
+  edges?: IREdge[];
   /** Build digest at snapshot time — what was declared when this snapshot was taken */
   digest?: BuildDigest;
 }

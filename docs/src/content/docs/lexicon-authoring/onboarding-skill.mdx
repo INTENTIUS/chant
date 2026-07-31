@@ -1,0 +1,173 @@
+---
+title: Lexicon Onboarding Skill
+description: A single self-contained checklist for an AI agent adding a lexicon to the chant monorepo, from scaffold through first npm publish
+---
+
+import { Aside, Steps } from '@astrojs/starlight/components';
+
+This page is written to be handed to an AI agent on its own. Point yours at
+this URL and it has everything needed to take a lexicon from nothing to
+published, without reading the rest of the authoring section first.
+
+Every step is either a command to run or a check to make. Where a step needs
+depth, it links out. Do the steps in order: later ones assume earlier ones.
+
+<Aside type="danger" title="The step that is not automatable">
+Step 6 creates an npm trusted-publisher record by hand on npmjs.com. No
+command in this repo can do it, and skipping it produces a lexicon that
+builds, tests, and merges cleanly, then fails at release time with an error
+that looks like missing credentials. Two packages have already shipped this
+way. If you do nothing else on this page, do step 6.
+</Aside>
+
+## What you are building
+
+A lexicon is a plugin that teaches chant about one operational area. It lives
+in `lexicons/<name>/`, is published as `@intentius/chant-lexicon-<name>`, and
+is versioned in lockstep with core.
+
+<Steps>
+
+1. **Scaffold**
+
+   ```bash
+   npx tsx packages/core/src/cli/main.ts init lexicon <name>
+   npm install
+   ```
+
+   Verify it typechecks before writing anything:
+
+   ```bash
+   npx tsc --noEmit -p lexicons/<name>/tsconfig.build.json
+   ```
+
+   Detail: [Scaffold a Lexicon](/chant/lexicon-authoring/scaffold/).
+
+2. **Implement the plugin**
+
+   At minimum a serializer and the generate lifecycle. Depending on the
+   platform you may also want observation, live export, lint rules, and
+   post-synth checks.
+
+   Detail: [Implement Generate](/chant/lexicon-authoring/generate/),
+   [Create a Serializer](/chant/lexicon-authoring/serializer/),
+   [Write Lint Rules](/chant/lexicon-authoring/lint-rules/).
+
+3. **Create an example workspace**
+
+   npm workspace resolution needs at least one dependent per package, or
+   `import("@intentius/chant-lexicon-<name>")` fails from `packages/core`.
+   Create `lexicons/<name>/examples/basic-deployment/` with a `package.json`
+   depending on both `@intentius/chant` and your lexicon, then add
+   `lexicons/<name>/examples/*` to the root `workspaces` array.
+
+   Full `package.json` shape: [CI & Distribution](/chant/lexicon-authoring/ci-integration/).
+
+4. **Wire it into the monorepo**
+
+   ```bash
+   npx tsx packages/core/src/cli/main.ts dev onboard <name>
+   npm install
+   ```
+
+   This patches the root `package.json`, `.github/workflows/chant.yml`,
+   the `publish.yml` test-job prepack line, and both smoke Dockerfiles. It is
+   idempotent.
+
+   You do **not** add a publish step. `scripts/publish-packages.sh` enumerates
+   every non-private workspace package, so a new lexicon is published the
+   moment it exists.
+
+5. **Verify locally**
+
+   ```bash
+   npx vitest run lexicons/<name>     # your lexicon
+   just check                          # build, lint, full suite, lexicon contract
+   ```
+
+   `just check` runs the completeness contract, which gates on the tracked
+   allowlist in `scripts/check-lexicons.ts`. An untracked failure exits 1.
+
+6. **Create the npm trusted-publisher record**
+
+   Do this before the first release. On [npmjs.com](https://www.npmjs.com),
+   open `@intentius/chant-lexicon-<name>`, then Settings, Trusted Publisher:
+
+   | Field | Value |
+   |------|-------|
+   | Organization / repository | `INTENTIUS/chant` |
+   | Workflow filename | `publish.yml` |
+   | Environment | leave **empty** |
+
+   The environment field matters. The publish job declares no `environment:`,
+   so any value here fails to match the OIDC claims and the record silently
+   does nothing.
+
+   The record is per package. It is not inherited from the organization and
+   not shared with the other lexicons, so a new one is always needed.
+
+   A brand-new package name has to exist on the registry before npm will let
+   you attach a record, so for a first-ever publish the order is: publish once
+   by hand, create the record, and let every release after that go through CI.
+
+7. **Release**
+
+   ```bash
+   just release patch          # every package, in lockstep
+   just release-lexicon <name> patch   # this lexicon only
+   ```
+
+   Never hand-roll the tag. The workflow triggers on `chant-v*` and
+   `lexicon-*-v*` only; a bare `v0.34.0` tag matches nothing and the release
+   silently never happens.
+
+8. **Confirm it actually published**
+
+   ```bash
+   npm view @intentius/chant-lexicon-<name> version
+   npm view @intentius/chant-lexicon-<name> dist.attestations
+   ```
+
+   A version with no attestation did not go out through trusted publishing,
+   which means step 6 is incomplete even if the version number looks right.
+
+</Steps>
+
+## When the publish run goes red
+
+`scripts/publish-packages.sh` never stops at the first failure. Every package
+gets its attempt, the summary table names the ones that failed, and the run
+exits non-zero at the end. Re-running is safe: a package already at its
+version is skipped, so a partial release is recovered by dispatching the
+workflow again.
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `ENEEDAUTH` on your package while others publish | No trusted-publisher record | Step 6 |
+| `registry REFUSED the OIDC exchange: HTTP 404` | The registry saying the same thing outright | Step 6 |
+| `registry ACCEPTED the OIDC exchange` but publish still fails | The record is fine | Read the npm error; the auth path is not the problem |
+| `EOTP` on the `NPM_TOKEN` fallback | The secret is a publish or granular token, so npm wants a one-time password | Replace it with an npm **automation** token |
+| Your package sits a version behind the others | An earlier run failed on it | Fix its auth, then re-dispatch publish |
+
+### Why `ENEEDAUTH` is misleading here
+
+npm's OIDC helper is written never to throw. When the token exchange fails it
+logs at verbose level and returns undefined, so `npm publish` falls through to
+ordinary auth and reports a bare `ENEEDAUTH`. That one error covers both "no
+record at all" and "a record that does not match this workflow", and it reads
+exactly like having no credentials.
+
+`scripts/publish-packages.sh` replays the exchange and prints the registry's
+own status and message, so read that line instead of inferring. A successful
+exchange answers **201**, not 200.
+
+Because the record is matched against the workflow *filename*, a probe run
+from any workflow other than `publish.yml` returns 404 for every package and
+proves nothing.
+
+## Related pages
+
+- [Completeness Checklist](/chant/lexicon-authoring/completeness-checklist/) — what a mature lexicon covers
+- [Package & Publish](/chant/lexicon-authoring/package/) — build output and package shape
+- [CI & Distribution](/chant/lexicon-authoring/ci-integration/) — what each patched file does and why
+- [Skills](/chant/lexicon-authoring/skills/) — shipping agent skills *from* your lexicon

@@ -9,6 +9,7 @@ import type { LifecycleSnapshot, ObservationDepth } from "./types";
 import { observeDeep } from "./deep-observe";
 import type { DeepResourceObservation } from "../deep-observation";
 import { computeBuildDigest } from "./digest";
+import { collectDependencies, collectAmbient } from "./observe";
 import { writeSnapshot, snapshotStorageKey, getHeadCommit, pushLifecycle } from "./git";
 import { sortedJsonReplacer } from "../utils";
 import { formatUnobserved, normalizeObservation, unobservedAll, type UnobservedEntity } from "../observation";
@@ -82,7 +83,16 @@ export async function takeSnapshot(
   environment: string,
   plugins: ObservationLexicon[],
   buildResult: BuildResult,
-  opts?: { cwd?: string; stack?: string; region?: string; deep?: boolean },
+  opts?: {
+    cwd?: string;
+    stack?: string;
+    region?: string;
+    deep?: boolean;
+    ambient?: boolean;
+    /** Kinds the PROJECT manages, not just this stack — a region whose stack
+     * declares no security group still has a default one (#1278). */
+    ambientKinds?: string[];
+  },
 ): Promise<TakeSnapshotResult> {
   const stack = opts?.stack;
   const depth: ObservationDepth = opts?.deep ? "deep" : "identity";
@@ -212,6 +222,32 @@ export async function takeSnapshot(
           }
         }
       }
+      // What this estate depends on but does not manage (#1273), recorded so a
+      // replayed snapshot can answer the same questions a live read can (#1266).
+      // Without them a snapshot holds the managed resources and no route to the
+      // account's default VPC, so `internetFacing` is unanswerable from it —
+      // which would make `search --at` quietly weaker than `search --live`.
+      const dependencies = await collectDependencies(plugin, {
+        environment,
+        entities,
+        observed: resources,
+        stacks: stack ? [{ name: stack, ...(region ? { region } : {}) }] : [],
+      });
+      for (const message of dependencies.warnings) warnings.push(message);
+      // Ambient resources (#1278) are recorded too when asked for, so a replayed
+      // snapshot can answer "which of these are unused" without a live read.
+      // Without this `search --at --ambient` filters a set that was never
+      // recorded and silently returns nothing.
+      const ambient = opts?.ambient
+        ? await collectAmbient(plugin, {
+            environment,
+            kinds: opts?.ambientKinds ?? [...new Set([...entities.values()].map((e) => e.entityType))],
+            observed: resources,
+            stacks: stack ? [{ name: stack, ...(region ? { region } : {}) }] : [],
+            warnings,
+          })
+        : {};
+      const withDependencies = { ...resources, ...dependencies.resources, ...ambient };
 
       const snapshot: LifecycleSnapshot = {
         lexicon: plugin.name,
@@ -219,7 +255,8 @@ export async function takeSnapshot(
         ...(stack ? { stack } : {}),
         commit: headCommit,
         timestamp,
-        resources,
+        resources: withDependencies,
+        ...(dependencies.edges.length > 0 ? { edges: dependencies.edges } : {}),
         ...(Object.keys(unobserved).length > 0 && { unobserved }),
         ...(Object.keys(artifacts).length > 0 && { artifacts }),
         // Only written when deep. An absent field means identity, which is what

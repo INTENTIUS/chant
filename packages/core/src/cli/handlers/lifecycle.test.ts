@@ -761,10 +761,12 @@ describe("runLifecycleSnapshot", () => {
     });
 
     expect(exit).toBe(0);
-    expect(takeSnapshotMock.mock.calls.map((c) => c[3])).toEqual([
-      { stack: "app-us-east-1", region: "us-east-1" },
-      { stack: "app-us-west-2", region: "us-west-2" },
-    ]);
+    // toMatchObject, not toEqual: this test is about region reaching the
+    // snapshot, and pinning the whole options object makes it fail whenever an
+    // unrelated option is added.
+    const opts = takeSnapshotMock.mock.calls.map((c) => c[3]);
+    expect(opts[0]).toMatchObject({ stack: "app-us-east-1", region: "us-east-1" });
+    expect(opts[1]).toMatchObject({ stack: "app-us-west-2", region: "us-west-2" });
   });
 
   // #1267 — --deep is opt-in and reaches takeSnapshot; without it the snapshot
@@ -815,7 +817,7 @@ describe("runLifecycleSnapshot", () => {
       serializers: plugins.map((p) => p.serializer),
     });
 
-    expect(takeSnapshotMock.mock.calls[0][3]).toEqual({ stack: "app", region: undefined });
+    expect(takeSnapshotMock.mock.calls[0][3]).toMatchObject({ stack: "app", region: undefined });
   });
 
   // #1166 — a snapshot is always a live read, so a declared environment

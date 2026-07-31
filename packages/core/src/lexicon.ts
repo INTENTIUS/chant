@@ -11,6 +11,7 @@ import type { DriverComponent } from "./components/driver";
 import type { EmulatorCapability } from "./op/emulator-lifecycle";
 import type { RuleMeta } from "./audit/catalog";
 import type { ReferenceCatalog } from "./graph-refs";
+import type { IREdge } from "./graph-ir";
 import type { DescribeResourcesResult } from "./observation";
 import type { DeepNormalizationHooks, DeepObservationResult } from "./deep-observation";
 import type { OwnerChainVerdict } from "./owner-chain";
@@ -23,6 +24,10 @@ export type { CommandGroup, CommandGroupCommand, CommandGroupContext } from "./c
 // Re-exported so lexicons can author a reference catalog (#778) from the same
 // `@intentius/chant/lexicon` entry they import the plugin contract from.
 export type { ReferenceCatalog, IdentityRule, RefRule } from "./graph-refs";
+
+// An observation can report relationships (#1271/#1273), so a lexicon needs the
+// edge type from the same entry it imports the plugin contract from.
+export type { IREdge } from "./graph-ir";
 
 // The observation contract (#1089), re-exported from the same entry so a
 // lexicon's `describeResources` can report NOT-OBSERVED without a second
@@ -641,6 +646,84 @@ export interface LexiconPlugin {
    * Throwing is the whole-lexicon failure, same as the thin read: core turns it
    * into `read-failed` for every declared entity.
    */
+  /**
+   * Report the undeclared resources this estate *depends on* (#1273), as
+   * opposed to the ones it manages.
+   *
+   * `describeResources` is scoped to what the stack declares. Anything the
+   * estate references but does not declare — an account's default VPC route
+   * tables, a shared subnet, networking owned by another team — is invisible to
+   * it, so it never becomes a node, so no edge can reach it and no fold can
+   * traverse it. That is why derived facts about un-modelled topology have had
+   * to be computed inside lexicons and injected as attributes.
+   *
+   * The closure rule is depth one by reference, plus whatever chains this
+   * lexicon's {@link referenceCatalog} declares as meaningful — so AWS follows
+   * `SubnetId` → `RouteTableId` → `GatewayId` because the catalog says those
+   * references matter, not because they happen to be reachable. Without a rule
+   * a VPC transitively reaches most of an account.
+   *
+   * Every returned resource must carry {@link ResourceMetadata.referencedBy},
+   * naming the nodes that pulled it in. A dependency with no referrer is
+   * unbounded discovery, which is what the closure rule exists to prevent.
+   *
+   * Optional and additive. A lexicon that does not implement it behaves exactly
+   * as before, and a consumer that ignores dependencies sees what it always saw.
+   */
+  observeDependencies?(options: {
+    environment: string;
+    /** Declared entities, for a lexicon that resolves references from source. */
+    entities: Map<string, { entityType: string; props: Record<string, unknown> }>;
+    /** What {@link describeResources} just found — the roots of the closure. */
+    observed: Record<string, ResourceMetadata>;
+    stack?: string;
+    region?: string;
+  }): Promise<DependencyObservation>;
+
+  /**
+   * Report resources of a kind this estate manages that exist in the account
+   * without being declared or referenced (#1278).
+   *
+   * `describeResources` answers "what do I manage" and `observeDependencies`
+   * answers "what do I rely on". Neither can see a resource that is simply
+   * *there* — an unattached security group, an orphaned volume — because both
+   * resolve outward from the declared estate and an unused resource is reached
+   * by nothing.
+   *
+   * That is a real question with no other answer: "which of my security groups
+   * are unused" cannot be resolved from a state file at all, because a state
+   * file knows only what it created. A lexicon that can enumerate a kind can
+   * answer it.
+   *
+   * `kinds` bounds the scan to types the project actually declares, so a
+   * project managing security groups is not made to enumerate the account. A
+   * lexicon returns resources marked {@link ResourceMetadata.ambient}, and must
+   * exclude anything already in `observed` — those are managed, not ambient.
+   *
+   * Optional and opt-in. A lexicon that does not implement it, or a caller that
+   * does not ask, sees exactly what it saw before.
+   */
+  /**
+   * Kinds this lexicon can enumerate beyond the declared estate (#1278).
+   *
+   * Declared separately from {@link observeAmbient} so a caller can say that
+   * ambient resources of a kind are POSSIBLE without paying for a scan to find
+   * out. `chant search` uses it to point out that `--ambient` is relevant to
+   * the kind just queried — an agent asking which security groups are unused
+   * has no way to know that some are not in the answer at all.
+   */
+  ambientKinds?(): string[];
+
+  observeAmbient?(options: {
+    environment: string;
+    /** Entity types the project declares — the bound on what to enumerate. */
+    kinds: string[];
+    /** Already-observed managed resources, to exclude. */
+    observed: Record<string, ResourceMetadata>;
+    stack?: string;
+    region?: string;
+  }): Promise<Record<string, ResourceMetadata>>;
+
   observeResourcesDeep?(options: {
     environment: string;
     buildOutput: string;
@@ -803,6 +886,31 @@ export type ExportedTemplate = TemplateIR & {
 /**
  * Metadata about a deployed resource, returned by describeResources.
  */
+/**
+ * What a lexicon saw outside its declared estate (#1273): the resources
+ * something declared references, and how they connect.
+ *
+ * Kept as its own result rather than folded into `describeResources` so every
+ * consumer downstream can tell "what I manage" from "what I depend on" without
+ * disentangling them — the same reason the change set separates `orphan` from
+ * `runtimeChildren`.
+ */
+export interface DependencyObservation {
+  /**
+   * Undeclared resources, keyed by a stable id. Physical id is the natural
+   * choice: these have no logical name, and the key has to match between a live
+   * read and a snapshot replay or an overlay double-counts them.
+   */
+  resources: Record<string, ResourceMetadata>;
+  /**
+   * Relationships among the dependencies and back to the declared nodes that
+   * reached them. Reported rather than reconstructed, because a reference
+   * catalog can only resolve what it has an identity index for, and part of the
+   * point here is expressing a hop the catalog does not model.
+   */
+  edges?: IREdge[];
+}
+
 export interface ResourceMetadata {
   /** Entity type (e.g. AWS::S3::Bucket, K8s::Apps::Deployment) */
   type: string;
@@ -836,6 +944,39 @@ export interface ResourceMetadata {
    * undeclared live resource stays `orphan`.
    */
   ownerChain?: OwnerChainVerdict;
+  /**
+   * The declared node ids that reference this resource (#1273), set on an
+   * undeclared resource observed only because something declared points at it —
+   * the account's default VPC route table an instance routes through, a shared
+   * subnet, a network someone else owns.
+   *
+   * A third kind of observed-but-undeclared resource, beside {@link ownership}
+   * and {@link ownerChain}. Not an orphan: nobody is going to adopt or delete
+   * the account's default VPC, so offering it as a delete candidate is wrong.
+   * Not a runtime child either — nothing declared created it. It gets a runtime
+   * child's drift treatment for the same reason: it is not yours, it changes on
+   * its own, and alerting on it is noise.
+   *
+   * Carries the referrers rather than a bare flag so the reason a resource was
+   * pulled in is answerable, and so a closure can be walked back to the declared
+   * entity that justified it.
+   */
+  referencedBy?: string[];
+  /**
+   * Observed in the account, of a kind this estate manages, but neither
+   * declared nor referenced by anything declared (#1278).
+   *
+   * The third and last category of observed-but-undeclared resource, after
+   * {@link ownerChain}'s runtime children and {@link referencedBy}'s
+   * dependencies. A default security group AWS creates per VPC is the type
+   * case: nothing declares it, nothing points at it, and it is exactly what
+   * "which of my security groups are unused" is asking about.
+   *
+   * Opt-in, because finding these means asking the provider what exists rather
+   * than resolving out from what is declared, which is a broader read and a
+   * different claim about what an observation is.
+   */
+  ambient?: boolean;
 }
 
 /**

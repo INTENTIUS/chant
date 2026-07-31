@@ -1,6 +1,6 @@
 import { createRequire } from "module";
 import { detectTemplate } from "./detect";
-import type { LexiconPlugin, IntrinsicDef, ObservationResult, DeepObservationResult, ResourceMetadata, ExportedTemplate, ResourceSelector, InitTemplateSet, StackStatusObservation } from "@intentius/chant/lexicon";
+import type { LexiconPlugin, IntrinsicDef, ObservationResult, DeepObservationResult, DependencyObservation, ResourceMetadata, ExportedTemplate, ResourceSelector, InitTemplateSet, StackStatusObservation } from "@intentius/chant/lexicon";
 const require = createRequire(import.meta.url);
 import type { LintRule } from "@intentius/chant/lint/rule";
 import type { TemplateParser } from "@intentius/chant/import/parser";
@@ -19,6 +19,9 @@ import { applyAwsEndpointArgv } from "./components/cloud-executor";
 import { stackDoesNotExist } from "./stack-errors";
 import { awsDeepNormalizationHooks, observeResourcesDeepAws } from "./deep-observe";
 import { awsReferenceCatalog } from "./reference-catalog";
+import { AMBIENT_KINDS } from "./ambient";
+import { describeOwnProperties, stampRegion } from "./properties";
+import { stampProviderDefaults } from "./defaults";
 import { resolveTemplateAttrs } from "./live-attrs";
 import { CFParser } from "./import/parser";
 import { CFGenerator } from "./import/generator";
@@ -36,58 +39,8 @@ export { stackDoesNotExist } from "./stack-errors";
  * Provides serializer, lint rules, template detection,
  * import parsing, and code generation for AWS CloudFormation.
  */
-/**
- * Resolve `internetFacing` per instance LOGICAL id from LIVE route tables — a
- * subnet is internet-facing iff its route table (an explicit association, else
- * the VPC's main table) has a default route to an Internet Gateway. This covers
- * the account's default VPC, whose routing chant does not model declaratively
- * (the instance references it through a parameter). Best-effort: any failure
- * returns what it has, so search still works on the declared topology.
- */
-async function liveInternetFacing(regionArgs: string[], stackName: string): Promise<Record<string, string>> {
-  const { getRuntime } = await import("@intentius/chant/runtime-adapter");
-  const rt = getRuntime();
-  const run = (args: string[]) =>
-    rt.spawn(applyAwsEndpointArgv(["aws", ...args, ...regionArgs, "--output", "json"], process.env.AWS_ENDPOINT_URL));
-  const out: Record<string, string> = {};
-  try {
-    const res = await run(["cloudformation", "describe-stack-resources", "--stack-name", stackName]);
-    if (res.exitCode !== 0) return out;
-    const stackRes = (JSON.parse(res.stdout).StackResources ?? []) as Array<{ LogicalResourceId: string; ResourceType: string; PhysicalResourceId: string }>;
-    const instByLogical = new Map<string, string>();
-    for (const r of stackRes) if (r.ResourceType === "AWS::EC2::Instance") instByLogical.set(r.LogicalResourceId, r.PhysicalResourceId);
-    if (instByLogical.size === 0) return out;
-
-    const di = await run(["ec2", "describe-instances", "--instance-ids", ...instByLogical.values()]);
-    if (di.exitCode !== 0) return out;
-    const locByInst = new Map<string, { subnet?: string; vpc?: string }>();
-    for (const rsv of (JSON.parse(di.stdout).Reservations ?? []) as Array<{ Instances?: Array<{ InstanceId: string; SubnetId?: string; VpcId?: string }> }>)
-      for (const i of rsv.Instances ?? []) locByInst.set(i.InstanceId, { subnet: i.SubnetId, vpc: i.VpcId });
-
-    const rtRes = await run(["ec2", "describe-route-tables"]);
-    if (rtRes.exitCode !== 0) return out;
-    const subnetIgw = new Map<string, string>();
-    const vpcMainIgw = new Map<string, string>();
-    for (const t of (JSON.parse(rtRes.stdout).RouteTables ?? []) as Array<{ RouteTableId?: string; VpcId?: string; Routes?: Array<{ GatewayId?: string }>; Associations?: Array<{ SubnetId?: string; Main?: boolean }> }>) {
-      const igwRoute = (t.Routes ?? []).find((r) => typeof r.GatewayId === "string" && r.GatewayId.startsWith("igw-"));
-      if (!igwRoute) continue;
-      const ev = `${t.RouteTableId ?? "rtb"} → ${igwRoute.GatewayId}`;
-      for (const a of t.Associations ?? []) {
-        if (a.SubnetId) subnetIgw.set(a.SubnetId, ev);
-        if (a.Main && t.VpcId) vpcMainIgw.set(t.VpcId, ev);
-      }
-    }
-
-    for (const [logical, instId] of instByLogical) {
-      const loc = locByInst.get(instId);
-      const ev = loc ? ((loc.subnet && subnetIgw.get(loc.subnet)) || (loc.vpc && vpcMainIgw.get(loc.vpc))) : undefined;
-      if (ev) out[logical] = ev;
-    }
-  } catch {
-    /* best-effort */
-  }
-  return out;
-}
+/** #1265 — the ownership notice is about the environment, so it is said once. */
+let warnedOwnership = false;
 
 export const awsPlugin: LexiconPlugin = {
   name: "aws",
@@ -598,10 +551,17 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
     if (options.owned) {
       // describe-stack-resources does not return tags, so ownership cannot be
       // determined here. Degrade to detect-only rather than silently filtering.
-      // eslint-disable-next-line no-console
-      console.warn(
+      //
+      // Once per process, not once per stack (#1265). It is a property of the
+      // environment, not of each stack, and a four-stack project printed four
+      // identical copies ahead of every answer — enough that an agent piping
+      // `graph --format ir` with `2>&1` had to skip lines to find the JSON.
+      warnedOwnership ||
+        // eslint-disable-next-line no-console
+        console.warn(
         "[aws] ownership filter unavailable on describeResources (no tags from describe-stack-resources) — returning all, each with an explicit `unknown` verdict; use `chant import --from <env> --owned` for ownership-filtered export",
-      );
+        );
+      warnedOwnership = true;
     }
 
     // Derive stack name. A multi-stack project passes the explicit CloudFormation
@@ -708,10 +668,17 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
       };
     }
 
+    // Each resource's OWN properties, on top of the stack outputs above (#1279).
+    // Until this, a node's `attrs` were the stack's exports replicated onto
+    // every member, so no instance carried its own `VpcId`.
+    const withProperties = stampProviderDefaults(
+      stampRegion(await describeOwnProperties(resources, options.region), options.region),
+    );
+
     // Every entity the stack answered for was answered for: an entity the
     // template doesn't carry is genuinely not in this stack, which is an
     // absence, not a hole.
-    return observation(resources);
+    return observation(withProperties);
   },
 
   /**
@@ -719,6 +686,45 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
    * CloudFormation's view of the world, into the resource as the service
    * actually holds it. Implementation in ./deep-observe.ts.
    */
+  /**
+   * The routing this estate depends on but does not declare (#1273) — an
+   * instance in the account's default VPC routes through a table nobody wrote.
+   * Reporting the resources lets the graph fold derive `internetFacing`, rather
+   * than this lexicon computing it and injecting the conclusion.
+   */
+  async observeDependencies(options: {
+    environment: string;
+    entities: Map<string, { entityType: string; props: Record<string, unknown> }>;
+    observed: Record<string, ResourceMetadata>;
+    stack?: string;
+    region?: string;
+  }): Promise<DependencyObservation> {
+    const { observeAwsDependencies } = await import("./dependencies");
+    return observeAwsDependencies({ observed: options.observed, region: options.region });
+  },
+
+  /**
+   * Resources of a managed kind that exist without being declared or
+   * referenced (#1278) — the account's default security groups, an unattached
+   * one someone left behind. Nothing else in the observation can see them,
+   * because everything else resolves outward from what is declared.
+   */
+  /** #1278 — the kinds `observeAmbient` can enumerate, from the same source. */
+  ambientKinds(): string[] {
+    return AMBIENT_KINDS;
+  },
+
+  async observeAmbient(options: {
+    environment: string;
+    kinds: string[];
+    observed: Record<string, ResourceMetadata>;
+    stack?: string;
+    region?: string;
+  }): Promise<Record<string, ResourceMetadata>> {
+    const { observeAwsAmbient } = await import("./ambient");
+    return observeAwsAmbient({ kinds: options.kinds, observed: options.observed, region: options.region });
+  },
+
   async observeResourcesDeep(options: {
     environment: string;
     buildOutput: string;
@@ -828,13 +834,6 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
         // Stack-qualify keys to match the observed node ids (#1162).
         for (const [logicalId, v] of Object.entries(attrs)) {
           merged[multi ? `${ref.name}::${logicalId}` : logicalId] = v;
-        }
-        // Resolve internetFacing from live route tables (covers the default VPC),
-        // carrying the route-table → IGW evidence so search can justify the match.
-        const facing = await liveInternetFacing(ref.region ? ["--region", ref.region] : [], ref.name);
-        for (const [logicalId, via] of Object.entries(facing)) {
-          const key = multi ? `${ref.name}::${logicalId}` : logicalId;
-          merged[key] = { ...merged[key], internetFacing: true, internetFacingVia: via };
         }
       } catch {
         // A stack that isn't deployed yet contributes no live attrs — skip it.

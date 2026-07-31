@@ -15,6 +15,8 @@ export interface MockPluginOptions {
   listArtifacts?: LexiconPlugin["listArtifacts"];
   /** Deep observation (#1014) — the property-level reader. */
   observeResourcesDeep?: LexiconPlugin["observeResourcesDeep"];
+  /** #1273 — what the estate references but does not manage. */
+  observeDependencies?: LexiconPlugin["observeDependencies"];
   /** Deep observation (#1014) — the lexicon's pruning/ordering rules. */
   deepNormalizationHooks?: DeepNormalizationHooks;
 }
@@ -32,6 +34,7 @@ export function createMockPlugin(options: MockPluginOptions = {}): LexiconPlugin
     ...(options.describeResources && { describeResources: options.describeResources }),
     ...(options.listArtifacts && { listArtifacts: options.listArtifacts }),
     ...(options.observeResourcesDeep && { observeResourcesDeep: options.observeResourcesDeep }),
+    ...(options.observeDependencies && { observeDependencies: options.observeDependencies }),
     ...(options.deepNormalizationHooks && { deepNormalizationHooks: options.deepNormalizationHooks }),
   };
 }

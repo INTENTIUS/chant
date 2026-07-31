@@ -7,6 +7,14 @@ import Diagram from '../../../components/Diagram.astro';
 
 A **lexicon** is a plugin that teaches chant about a specific operational area — types, lint rules, serialization, and build validation. You can create lexicons for any infrastructure platform, internal tool, or custom domain.
 
+:::tip[Working with an AI agent? Point it at the onboarding skill.]
+[Lexicon Onboarding Skill](/chant/lexicon-authoring/onboarding-skill/) is a single
+self-contained checklist covering scaffold through first npm publish, written to be
+handed to an agent on its own. It includes the one step nothing in the repo can do
+for you: creating the npm trusted-publisher record, without which the lexicon merges
+cleanly and then fails at release time.
+:::
+
 <Diagram name="lexicon-plugin-layers" alt="LexiconPlugin entry point connected to three capability clusters: Synthesis (types, serializer), Quality (lint rules, post-synth checks), and Integration (LSP, MCP, Skills)" caption="LexiconPlugin capability layers" />
 
 ## When You Need This Section

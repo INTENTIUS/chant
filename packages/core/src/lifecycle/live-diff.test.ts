@@ -336,3 +336,41 @@ describe("diffSnapshots (#822)", () => {
     expect(d.added).toEqual(["a", "b"]);
   });
 });
+
+describe("attribute comparison is key-order insensitive (#1279)", () => {
+  const inst = (attributes: Record<string, unknown>): ResourceMetadata => ({
+    type: "AWS::EC2::Instance",
+    status: "OBSERVED",
+    physicalId: "i-1",
+    attributes,
+  });
+
+  test("does not drift when a provider reorders the keys of a nested object", () => {
+    // Exactly what AWS did between two reads of the same untouched instance.
+    const result = diffLive({
+      declared: new Set(["one"]),
+      observedNow: { one: inst({ Placement: { Tenancy: "default", AvailabilityZone: "us-east-1c" } }) },
+      observedThen: { one: inst({ Placement: { AvailabilityZone: "us-east-1c", Tenancy: "default" } }) },
+    });
+    expect(result.driftedSinceSnapshot).toEqual([]);
+    expect(result.unchanged).toEqual(["one"]);
+  });
+
+  test("still reports a real change to a nested value", () => {
+    const result = diffLive({
+      declared: new Set(["one"]),
+      observedNow: { one: inst({ Placement: { AvailabilityZone: "us-east-1d" } }) },
+      observedThen: { one: inst({ Placement: { AvailabilityZone: "us-east-1c" } }) },
+    });
+    expect(result.driftedSinceSnapshot.map((d) => d.changes[0].path)).toEqual(["attributes.Placement"]);
+  });
+
+  test("keeps array order significant — for a list, order is part of the value", () => {
+    const result = diffLive({
+      declared: new Set(["one"]),
+      observedNow: { one: inst({ Rules: [{ p: 80 }, { p: 22 }] }) },
+      observedThen: { one: inst({ Rules: [{ p: 22 }, { p: 80 }] }) },
+    });
+    expect(result.driftedSinceSnapshot).toHaveLength(1);
+  });
+});

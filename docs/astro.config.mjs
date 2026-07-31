@@ -213,6 +213,7 @@ export default defineConfig({
 					badge: { text: 'Plugin Dev', variant: 'tip' },
 					items: [
 						{ label: 'Overview', slug: 'lexicon-authoring/overview' },
+						{ label: 'Onboarding Skill (for agents)', slug: 'lexicon-authoring/onboarding-skill' },
 						{ label: 'Scaffold a Lexicon', slug: 'lexicon-authoring/scaffold' },
 						{ label: 'Implement Generate', slug: 'lexicon-authoring/generate' },
 						{ label: 'Add a Third-Party CRD', slug: 'lexicon-authoring/crd-sources' },

@@ -6,17 +6,18 @@ Two op activities ship with the lexicon, resolvable by name via `loadActivities(
 
 ## fountainApply
 
-The native applier: a direct-REST reconciler over the serializer's `fountain-plan.json`.
+The native applier: compiles the serializer's manifest YAML into fountain's bulk `POST /api/apply` request and sends it in one call.
 
 | Behavior | Detail |
 |---|---|
-| Create / update | By name. A resource in the plan that exists live is updated; one that does not is created. |
-| Order | Environment → Vault → Agent, so an agent's environment reference resolves to a live id. |
-| Prune | Off by default. With `prune: true`, chant-owned resources absent from the plan are deleted, in reverse order. |
-| Secrets | Split from the body and upserted through the secrets sub-resource. Upsert-always — values are write-only upstream. |
+| Create / update | By name, reconciled server-side. An agent's `environment` reference resolves by name — against the manifest or the tenant's existing environments — without a client-side id lookup. |
+| Order | Environment → Vault → Agent, fixed server-side regardless of manifest order. |
+| Prune | Off by default. With `prune: true`, chant-owned resources absent from the manifest are deleted, in reverse order — the one thing bulk apply doesn't cover, so this still lists live state per kind. |
+| Secrets | `spec.secrets` converts from chant's authored `{key, value}[]` to the wire's `{KEY: value}` map; the server upserts them through the encrypted envelope path in the same request. Upsert-always — values are write-only upstream. |
+| Failure | Best-effort per resource. Every result is collected before this throws, so one bad resource doesn't hide failures elsewhere in the manifest. |
 
 ```typescript
-await fountainApply({ planPath: "build/fountain-plan.json", prune: true });
+await fountainApply({ manifestPath: "build/fountain.yaml", prune: true });
 ```
 
 Endpoint and token resolution: explicit args win, then `FOUNTAIN_ENDPOINT` / `FOUNTAIN_TOKEN`, then the hosted default.

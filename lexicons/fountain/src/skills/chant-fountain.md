@@ -10,7 +10,7 @@ user-invocable: true
 
 [fountain](https://github.com/BinaryBourbon/fountain) runs coding agents in sandboxed VMs. Its workload layer is three kinds — `Environment` (sandbox baseline), `Vault` (env-var overrides), `Agent` (a runnable agent config) — and this lexicon declares them as typed chant resources. Conversations are runs, not resources: start them with the `fountainRun` op, never declare them.
 
-The source of truth is the TypeScript in `src/`. `chant build` serializes it to fountain's own manifest YAML (ejectable — `fountain apply -f` accepts it verbatim) plus a `fountain-plan.json` sidecar that `fountainApply` reconciles against the API directly: create-if-new, update-by-name, opt-in owned-only prune keyed on the `managed-by: chant` metadata marker.
+The source of truth is the TypeScript in `src/`. `chant build` serializes it to fountain's own manifest YAML (ejectable — `fountain apply -f` accepts it verbatim). `fountainApply` sends that same YAML to fountain's bulk `POST /api/apply` endpoint in one request: create-if-new, update-by-name, opt-in owned-only prune keyed on the `managed-by: chant` metadata marker.
 
 ## Authoring
 

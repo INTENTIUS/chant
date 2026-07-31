@@ -6,6 +6,7 @@ import { buildGraphIr, buildLiveGraphIr, collectUnobserved, overlayGraphs, sourc
 import { buildDeclaredPerStack } from "../../graph-declared";
 import { reconstructEdges, mergeCatalogs, containmentGroups, type ReferenceCatalog, type ContainmentPair } from "../../graph-refs";
 import { observeResources } from "../../lifecycle/observe";
+import { replaySnapshots, hasSnapshot } from "../../lifecycle/replay";
 import { loadChantConfig, environmentNames } from "../../config";
 import { applyLiveEndpoint } from "../../live-endpoint";
 import { applyDetail, type DetailLevel } from "../../graph-detail";
@@ -47,9 +48,18 @@ export async function runGraph(ctx: CommandContext): Promise<number> {
     }));
     return 1;
   }
+  // `--at` graphs a recorded observation instead of reading the estate (#1279).
+  // Two different observations with no rule for which wins, so not both.
+  if (ctx.args.at && ctx.args.live) {
+    console.error(formatError({
+      message: "chant graph takes --live or --at, not both",
+      hint: "--live reads the estate now; --at graphs a recorded snapshot",
+    }));
+    return 1;
+  }
   // `--live` graphs the provisioned (observed) infrastructure, not the declared
   // source (epic #776). It only makes sense as a view format; default to `ir`.
-  if (ctx.args.live) {
+  if (ctx.args.live || ctx.args.at) {
     return runGraphLive(ctx, isViewFormat ? (ctx.args.format as (typeof viewFormats)[number]) : "ir");
   }
   if (isViewFormat) {
@@ -136,50 +146,81 @@ async function runGraphLive(
       }
     }
   } else {
-    console.error(formatWarning({ message: "component discovery failed — observing the single-stack convention instead" }));
-  }
-  // ChantConfig.stacks (with optional per-stack region) — multi-region estates.
-  for (const declared of config.stacks ?? []) {
-    if (!seenStacks.has(declared.name)) { seenStacks.add(declared.name); stacks.push({ name: declared.name, region: declared.region, src: declared.src }); }
-  }
-
-  // #1166 — an environment can declare its own endpoint (a local emulator like
-  // Floci), so this read is self-sufficient even when the ambient shell never
-  // exported e.g. AWS_ENDPOINT_URL. Ambient always wins when it's already set.
-  // Scoped to just this describe/enrich pass — restored in `finally` so it
-  // never leaks into a later invocation in the same process.
-  const endpointResult = applyLiveEndpoint(config.environments, environment, observing.map((p) => p.name));
-  if (endpointResult.notice) console.error(formatWarning({ message: endpointResult.notice }));
-
-  let ir: GraphIR;
-  let observations: LiveObservation[];
-  try {
-    const observeResult = await observeResources(environment, observing, buildResult, {
-      owned: true,
-      stacks: [...stacks],
-    });
-    observations = observeResult.observations;
-    const { errors, warnings } = observeResult;
-    for (const e of errors) console.error(formatWarning({ message: e }));
-    // Unobserved entities (#1089) arrive as warnings — a node missing from the
-    // live graph because nobody looked is a different fact from one that isn't
-    // deployed, and the diagram alone cannot say which. Capped: an estate with no
-    // ownership markers can produce one per declared entity, and a wall of them
-    // buries the graph output. The full list is `lifecycle diff --live`.
-    const WARN_CAP = 5;
-    for (const w of warnings.slice(0, WARN_CAP)) console.error(formatWarning({ message: w }));
-    if (warnings.length > WARN_CAP) {
-      console.error(formatWarning({
-        message: `... and ${warnings.length - WARN_CAP} more entity(ies) not observed — run \`chant lifecycle diff ${environment} --live\` for the full list`,
-      }));
+      console.error(formatWarning({ message: "component discovery failed — observing the single-stack convention instead" }));
+    }
+    // ChantConfig.stacks (with optional per-stack region) — multi-region estates.
+    for (const declared of config.stacks ?? []) {
+      if (!seenStacks.has(declared.name)) { seenStacks.add(declared.name); stacks.push({ name: declared.name, region: declared.region, src: declared.src }); }
     }
 
+    // #1166 — an environment can declare its own endpoint (a local emulator like
+    // Floci), so this read is self-sufficient even when the ambient shell never
+    // exported e.g. AWS_ENDPOINT_URL. Ambient always wins when it's already set.
+    // Scoped to just this describe/enrich pass — restored in `finally` so it
+    // never leaks into a later invocation in the same process.
+    const endpointResult = applyLiveEndpoint(config.environments, environment, observing.map((p) => p.name));
+    if (endpointResult.notice) console.error(formatWarning({ message: endpointResult.notice }));
+
+    let ir: GraphIR;
+    let observations: LiveObservation[];
+    // A replay is a graph of what was recorded, so it must not reach the provider
+    // at all — not for observation and not for enrichment. Anything that quietly
+    // called out would make `--at` a live read with an older label on it.
+    const replaying = !!args.at && !args.live;
+    try {
+      if (replaying) {
+        const scoped = new Set(stacks.filter((st) => st.src).map((st) => st.name));
+        const replay = await replaySnapshots(environment, String(args.at), scoped);
+        if ("error" in replay) {
+          console.error(formatError({ message: replay.error, ...(replay.hint ? { hint: replay.hint } : {}) }));
+          return 1;
+        }
+        observations = replay.observations;
+        console.error(formatWarning({
+          message: `graphing snapshot ${replay.commit.slice(0, 7)} taken ${replay.timestamp} — the estate was not read`,
+        }));
+      } else {
+      const observeResult = await observeResources(environment, observing, buildResult, {
+        owned: true,
+        stacks: [...stacks],
+      });
+      observations = observeResult.observations;
+      const { errors, warnings } = observeResult;
+      for (const e of errors) console.error(formatWarning({ message: e }));
+      // Unobserved entities (#1089) arrive as warnings — a node missing from the
+      // live graph because nobody looked is a different fact from one that isn't
+      // deployed, and the diagram alone cannot say which. Capped: an estate with no
+      // ownership markers can produce one per declared entity, and a wall of them
+      // buries the graph output. The full list is `lifecycle diff --live`.
+      const WARN_CAP = 5;
+      for (const w of warnings.slice(0, WARN_CAP)) console.error(formatWarning({ message: w }));
+      if (warnings.length > WARN_CAP) {
+        console.error(formatWarning({
+          message: `... and ${warnings.length - WARN_CAP} more entity(ies) not observed — run \`chant lifecycle diff ${environment} --live\` for the full list`,
+        }));
+    }
+    }
+
+    // Both paths land here: a replay rejoins the live pipeline at exactly this
+    // point, which is what makes every fold and overlay below shared.
     ir = buildLiveGraphIr(observations);
+
+    // The estate was asked for and nothing came back. Say that once, and say
+    // that a recording exists — the per-entity warnings above describe the same
+    // failure N times without ever naming the thing that would answer. Agents
+    // denied the network read the empty graph as an empty estate and spent
+    // their turns retrying `--live`.
+    if (!replaying && ir.nodes.length === 0 && (await hasSnapshot(environment))) {
+      console.error(formatWarning({
+        message: `could not read the estate for "${environment}" — a snapshot of it is recorded; graph that instead with --at latest`,
+      }));
+    }
 
     // Enrich node attrs from the fuller live config (#784) so references are
     // present for edge reconstruction — describeResources metadata alone is often
     // too thin (e.g. AWS returns stack outputs, not per-resource references).
-    for (const p of observing) {
+    // Live-only: enrichment is a provider call, so a replay must skip it.
+    for (const p of replaying ? [] : observing) {
       if (!p.enrichLiveAttrs) continue;
       try {
         const enriched = await p.enrichLiveAttrs({ environment, owned: true, stacks });

@@ -138,6 +138,25 @@ export interface ParsedArgs {
    * so it is opt-in.
    */
   deep?: boolean;
+  /**
+   * `chant search "<q>" --at <ref> --env <name>` (#1266) — answer from a
+   * recorded observation instead of reading the estate now. `latest` uses the
+   * most recent snapshot. Mutually exclusive with `--live`: they are two
+   * different observations of the same estate, and there is no rule for which
+   * should win.
+   */
+  at?: string;
+  /**
+   * `chant search "<q>" --ambient --live --env <name>` (#1278) — also report
+   * resources of a kind this estate manages that exist in the account without
+   * being declared or referenced. What "which of my security groups are
+   * unused" is asking about, and unreachable from a state file.
+   *
+   * Opt-in: it asks the provider what exists rather than resolving out from
+   * what is declared, which is a broader read and a different claim.
+   */
+  ambient?: boolean;
+
   /** `chant dev surface-diff --run-examples` — also run the example build harness */
   runExamples?: boolean;
   /** `chant dev surface-diff --pinned-digest <file>` — path to SHA-256 digest file for supply-chain verification */

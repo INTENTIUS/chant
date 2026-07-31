@@ -43,6 +43,13 @@ vi.mock("../plugins", () => ({
   resolveProjectLexicons: (...a: unknown[]) => resolveLexMock(...a),
 }));
 const observeMock = vi.fn();
+const replayMock = vi.fn();
+const hasSnapshotMock = vi.fn((..._a: unknown[]) => Promise.resolve(false));
+vi.mock("../../lifecycle/replay", () => ({
+  replaySnapshots: (...a: unknown[]) => replayMock(...a),
+  hasSnapshot: (...a: unknown[]) => hasSnapshotMock(...a),
+}));
+
 vi.mock("../../lifecycle/observe", () => ({
   observeResources: (...a: unknown[]) => observeMock(...a),
 }));
@@ -433,6 +440,73 @@ describe("runGraph", () => {
       const out = stdoutBuf.join("\n");
       expect(out).not.toContain("No lexicons implement describeResources");
       expect(out).toContain("web-vpc");
+    });
+
+    // #1279 — `graph` had no `--at`, so anyone wanting the raw IR of a recorded
+    // estate had to reach for the live endpoint. A snapshot could answer most
+    // questions and never all of them.
+    test("--at graphs the recorded snapshot without reading the estate", async () => {
+      resolveLexMock.mockResolvedValue(["aws"]);
+      loadPluginsMock.mockResolvedValue([
+        { name: "aws", serializer: {}, describeResources: () => Promise.resolve({}),
+          enrichLiveAttrs: () => Promise.reject(new Error("must not be called on a replay")) },
+      ]);
+      replayMock.mockResolvedValue({
+        observations: [{ lexicon: "aws", resources: {
+          web: { type: "AWS::EC2::Instance", status: "OBSERVED", physicalId: "i-1" },
+        } }],
+        commit: "abc1234def",
+        timestamp: "2026-07-31T00:00:00.000Z",
+      });
+      const exit = await runGraph({ args: makeArgs({ format: "ir", at: "latest", env: "prod" }), plugins: [], serializers: [] });
+      expect(exit).toBe(0);
+      expect(observeMock).not.toHaveBeenCalled();
+      expect(replayMock).toHaveBeenCalled();
+      expect(stdoutBuf.join("\n")).toContain("i-1");
+    });
+
+    // Denied the network, agents read the empty graph as an empty estate and
+    // spent their turns retrying --live. The per-entity warnings describe the
+    // same failure N times and never name the thing that would answer.
+    test("an unreadable estate names the recorded snapshot", async () => {
+      observeMock.mockClear();
+      hasSnapshotMock.mockResolvedValue(true);
+      resolveLexMock.mockResolvedValue(["aws"]);
+      loadPluginsMock.mockResolvedValue([
+        { name: "aws", serializer: {}, describeResources: () => Promise.resolve({}) },
+      ]);
+      observeMock.mockResolvedValue({ observations: [], errors: ["could not connect"], warnings: [] });
+      const errs: string[] = [];
+      const spy = vi.spyOn(console, "error").mockImplementation((s: string) => { errs.push(s); });
+      await runGraph({ args: makeArgs({ format: "ir", live: true, env: "prod" }), plugins: [], serializers: [] });
+      spy.mockRestore();
+      hasSnapshotMock.mockResolvedValue(false);
+      expect(errs.join("\n")).toContain("--at latest");
+    });
+
+    test("says nothing about a snapshot when there is none to name", async () => {
+      observeMock.mockClear();
+      hasSnapshotMock.mockResolvedValue(false);
+      resolveLexMock.mockResolvedValue(["aws"]);
+      loadPluginsMock.mockResolvedValue([
+        { name: "aws", serializer: {}, describeResources: () => Promise.resolve({}) },
+      ]);
+      observeMock.mockResolvedValue({ observations: [], errors: ["could not connect"], warnings: [] });
+      const errs: string[] = [];
+      const spy = vi.spyOn(console, "error").mockImplementation((s: string) => { errs.push(s); });
+      await runGraph({ args: makeArgs({ format: "ir", live: true, env: "prod" }), plugins: [], serializers: [] });
+      spy.mockRestore();
+      expect(errs.join("\n")).not.toContain("--at latest");
+    });
+
+    test("--at and --live together is refused rather than guessed at", async () => {
+      observeMock.mockClear();
+      replayMock.mockClear();
+      resolveLexMock.mockResolvedValue(["aws"]);
+      const exit = await runGraph({ args: makeArgs({ format: "ir", at: "latest", live: true, env: "prod" }), plugins: [], serializers: [] });
+      expect(exit).toBe(1);
+      expect(observeMock).not.toHaveBeenCalled();
+      expect(replayMock).not.toHaveBeenCalled();
     });
 
     // Regression for #57: a single-stack project (no `*.component.ts` files —

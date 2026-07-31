@@ -11,7 +11,7 @@ user-invocable: true
 Everything materialized into a fountain sandbox must be presumed exfiltrated once untrusted agent code runs. Order of preference:
 
 1. **`${VAR}` substitution references** in agent config (MCP server env, system prompts). Resolved at spawn from the merged environment + vault sets. Never a value in source.
-2. **Environment secrets** (`spec.secrets`) — encrypted at rest, write-only over the API (values are never returned once stored). `fountainApply` upserts them through the sub-resource; a changed value cannot be detected, only overwritten.
+2. **Environment secrets** (`spec.secrets`) — encrypted at rest, write-only over the API (values are never returned once stored). `fountainApply` sends them inline with the rest of the resource in the bulk apply request, and the server upserts them through the encrypted envelope path; a changed value cannot be detected, only overwritten.
 3. **`env_vars`** — plaintext config only. FTN012 errors on credential-shaped keys or values here.
 
 Never put a literal credential anywhere in a declaration: FTN001 catches known shapes (AWS keys, GitHub/Slack tokens, `sk-`/`ftn_` keys, private key material) at the AST; FTN015 errors on secret-shaped MCP env keys that are not `${VAR}` references.

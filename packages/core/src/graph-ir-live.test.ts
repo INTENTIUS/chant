@@ -157,6 +157,34 @@ describe("sourceOverlayGraphs (#821 source-anchored overlay)", () => {
     expect(vpc.ownership).toBe("owned");
   });
 
+  it("carries observed attributes onto a managed declared node (#1279)", () => {
+    // Before this, the overlay copied identity but dropped everything observed
+    // ABOUT the resource, so a fact that only exists in the account — an
+    // instance's VpcId — was unreachable from the overlaid graph and
+    // `search --show VpcId` printed a blank column.
+    const observed: GraphIR = {
+      ...live,
+      nodes: live.nodes.map((x) => (x.id === "web-vpc" ? { ...x, attrs: { CidrBlock: "10.0.0.0/16" } } : x)),
+    };
+    const vpc = sourceOverlayGraphs(declared, observed).nodes.find((x) => x.id === "web-vpc")!;
+    expect(vpc.attrs.CidrBlock).toBe("10.0.0.0/16");
+  });
+
+  it("lets an observed value beat the declared one of the same name (#1279)", () => {
+    // The declared side holds an unresolved reference to another entity; the
+    // account holds the id it actually resolved to.
+    const withRef: GraphIR = {
+      ...declared,
+      nodes: declared.nodes.map((x) => (x.id === "web-vpc" ? { ...x, attrs: { VpcId: "${vpc.id}" } } : x)),
+    };
+    const observed: GraphIR = {
+      ...live,
+      nodes: live.nodes.map((x) => (x.id === "web-vpc" ? { ...x, attrs: { VpcId: "vpc-0a1b" } } : x)),
+    };
+    const vpc = sourceOverlayGraphs(withRef, observed).nodes.find((x) => x.id === "web-vpc")!;
+    expect(vpc.attrs.VpcId).toBe("vpc-0a1b");
+  });
+
   it("appends foreign nodes with their live edges, and keeps declared groups", () => {
     const ir = sourceOverlayGraphs(declared, live);
     expect(ir.nodes.map((x) => x.id)).toContain("rogue-sg");
@@ -206,5 +234,60 @@ describe("collectUnobserved (#1089)", () => {
         { lexicon: "gcp", resources: {}, unobserved: { b: { reason: "no-binding" } } },
       ]),
     ).toEqual({ a: { reason: "read-failed" }, b: { reason: "no-binding" } });
+  });
+});
+
+// #1271 — an observation can report relationships, not just existence. Without
+// these the live side of the graph has no edges, so a topology fold has nothing
+// to traverse and a lexicon has to compute derived answers itself.
+describe("observed edges (#1271)", () => {
+  const twoNodes = {
+    lexicon: "aws",
+    resources: {
+      "app-subnet": { type: "AWS::EC2::Subnet", status: "CREATE_COMPLETE", physicalId: "subnet-0c2d" },
+      "web-vpc": { type: "AWS::EC2::VPC", status: "CREATE_COMPLETE", physicalId: "vpc-0a1b" },
+    },
+  } satisfies LiveObservation;
+
+  it("projects an observed edge between two observed nodes", () => {
+    const ir = buildLiveGraphIr([
+      { ...twoNodes, edges: [{ from: "app-subnet", to: "web-vpc", kind: "ref", viaAttr: "VpcId" }] },
+    ]);
+    expect(ir.edges).toEqual([{ from: "app-subnet", to: "web-vpc", kind: "ref", viaAttr: "VpcId" }]);
+  });
+
+  it("no edges reported → no edges, unchanged from before", () => {
+    expect(buildLiveGraphIr([twoNodes]).edges).toEqual([]);
+  });
+
+  it("drops an edge whose endpoint was never observed", () => {
+    // A dangling reference would traverse to nothing during a fold, which reads
+    // as "no such relationship" rather than "the other end was not read".
+    const ir = buildLiveGraphIr([
+      { ...twoNodes, edges: [{ from: "app-subnet", to: "never-read", kind: "ref", viaAttr: "VpcId" }] },
+    ]);
+    expect(ir.edges).toEqual([]);
+  });
+
+  it("dedupes identical edges reported by more than one observation", () => {
+    const edge = { from: "app-subnet", to: "web-vpc", kind: "ref" as const, viaAttr: "VpcId" };
+    const ir = buildLiveGraphIr([
+      { ...twoNodes, edges: [edge] },
+      { ...twoNodes, edges: [edge] },
+    ]);
+    expect(ir.edges).toHaveLength(1);
+  });
+
+  it("orders edges deterministically — the IR is compared and committed", () => {
+    const ir = buildLiveGraphIr([
+      {
+        ...twoNodes,
+        edges: [
+          { from: "web-vpc", to: "app-subnet", kind: "ref", viaAttr: "Z" },
+          { from: "app-subnet", to: "web-vpc", kind: "ref", viaAttr: "A" },
+        ],
+      },
+    ]);
+    expect(ir.edges?.map((e) => e.from)).toEqual(["app-subnet", "web-vpc"]);
   });
 });

@@ -353,3 +353,60 @@ describe("takeSnapshot", () => {
     expect(result.snapshots).toEqual([]);
   });
 });
+
+// #1266 — a snapshot that records only what it manages cannot answer a fold
+// question when it is replayed: the account's default VPC routing is not in it,
+// so `internetFacing` is unanswerable and `search --at` would be quietly weaker
+// than `search --live`.
+describe("dependencies and edges in a snapshot (#1266)", () => {
+  const identity = { webServer: { type: "AWS::EC2::Instance", status: "OK", physicalId: "i-1" } };
+
+  test("records the dependencies the estate references, and the edges to them", async () => {
+    const plugin = createMockPlugin({
+      name: "aws",
+      describeResources: staticDescribeResources(identity),
+      observeDependencies: async () => ({
+        resources: {
+          "rtb-default": {
+            type: "AWS::EC2::RouteTable",
+            status: "OBSERVED",
+            physicalId: "rtb-default",
+            referencedBy: ["webServer"],
+          },
+        },
+        edges: [{ from: "webServer", to: "rtb-default", kind: "ref" as const, viaAttr: "RouteTableId" }],
+      }),
+    });
+    const result = await takeSnapshot("prod", [plugin], makeBuildResult({ aws: ["webServer"] }));
+    // Both, in one record: what exists and how it connects.
+    expect(result.snapshots[0].resources["rtb-default"]).toMatchObject({ referencedBy: ["webServer"] });
+    expect(result.snapshots[0].edges).toEqual([
+      { from: "webServer", to: "rtb-default", kind: "ref", viaAttr: "RouteTableId" },
+    ]);
+  });
+
+  test("a lexicon with no dependency reader snapshots exactly as before", async () => {
+    const plugin = createMockPlugin({ name: "aws", describeResources: staticDescribeResources(identity) });
+    const result = await takeSnapshot("prod", [plugin], makeBuildResult({ aws: ["webServer"] }));
+    expect(Object.keys(result.snapshots[0].resources)).toEqual(["webServer"]);
+    // Absent, not empty — "no relationships recorded", not "none existed".
+    expect(result.snapshots[0].edges).toBeUndefined();
+  });
+
+  test("a dependency read that fails warns and keeps the managed snapshot", async () => {
+    const plugin = createMockPlugin({
+      name: "aws",
+      describeResources: staticDescribeResources(identity),
+      observeDependencies: async () => {
+        throw new Error("route tables unreadable");
+      },
+    });
+    const result = await takeSnapshot("prod", [plugin], makeBuildResult({ aws: ["webServer"] }));
+    // The managed observation is complete and useful on its own; losing it
+    // because an ambient dependency could not be read trades a whole answer
+    // for none.
+    expect(result.snapshots).toHaveLength(1);
+    expect(result.snapshots[0].resources.webServer).toBeDefined();
+    expect(result.warnings.join("\n")).toContain("dependencies not read");
+  });
+});

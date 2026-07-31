@@ -138,15 +138,29 @@ export async function runLifecycleSnapshot(ctx: CommandContext): Promise<number>
   const endpointResult = applyLiveEndpoint(config.environments, environment, observingPlugins.map((p) => p.name));
   if (endpointResult.notice) console.error(formatWarning({ message: endpointResult.notice }));
 
+  // Build every stack first, so the ambient scan (#1278) can be bounded by the
+  // kinds the PROJECT manages rather than the ones this stack happens to
+  // declare. "Which of my security groups are unused" is a question about the
+  // estate; a region whose stack declares no security group still has a default
+  // one, and scoping the bound per stack silently drops it.
+  const built: Array<{ target: (typeof targets)[number]; buildResult: Awaited<ReturnType<typeof build>> }> = [];
+  for (const target of targets) {
+    const label = target.stack ? `stack "${target.stack}"` : "project";
+    const buildResult = await build(target.root, targetSerializers);
+    if (buildResult.errors.length > 0) {
+      console.error(formatError({ message: `Build failed for ${label} — fix errors before taking a snapshot` }));
+      anyHardError = true;
+      continue;
+    }
+    built.push({ target, buildResult });
+  }
+  const projectKinds = [
+    ...new Set(built.flatMap(({ buildResult }) => [...buildResult.entities.values()].map((e) => e.entityType))),
+  ];
+
   try {
-    for (const target of targets) {
+    for (const { target, buildResult } of built) {
       const label = target.stack ? `stack "${target.stack}"` : "project";
-      const buildResult = await build(target.root, targetSerializers);
-      if (buildResult.errors.length > 0) {
-        console.error(formatError({ message: `Build failed for ${label} — fix errors before taking a snapshot` }));
-        anyHardError = true;
-        continue;
-      }
 
       let result;
       try {
@@ -154,6 +168,8 @@ export async function runLifecycleSnapshot(ctx: CommandContext): Promise<number>
           stack: target.stack,
           region: target.region,
           deep: args.deep,
+          ambient: args.ambient,
+          ambientKinds: projectKinds,
         });
       } catch (err) {
         if (err instanceof StaleLifecycleBranchError) {
