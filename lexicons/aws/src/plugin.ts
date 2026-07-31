@@ -36,6 +36,9 @@ export { stackDoesNotExist } from "./stack-errors";
  * Provides serializer, lint rules, template detection,
  * import parsing, and code generation for AWS CloudFormation.
  */
+/** #1265 — the ownership notice is about the environment, so it is said once. */
+let warnedOwnership = false;
+
 export const awsPlugin: LexiconPlugin = {
   name: "aws",
   serializer: awsSerializer,
@@ -545,10 +548,17 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
     if (options.owned) {
       // describe-stack-resources does not return tags, so ownership cannot be
       // determined here. Degrade to detect-only rather than silently filtering.
-      // eslint-disable-next-line no-console
-      console.warn(
+      //
+      // Once per process, not once per stack (#1265). It is a property of the
+      // environment, not of each stack, and a four-stack project printed four
+      // identical copies ahead of every answer — enough that an agent piping
+      // `graph --format ir` with `2>&1` had to skip lines to find the JSON.
+      warnedOwnership ||
+        // eslint-disable-next-line no-console
+        console.warn(
         "[aws] ownership filter unavailable on describeResources (no tags from describe-stack-resources) — returning all, each with an explicit `unknown` verdict; use `chant import --from <env> --owned` for ownership-filtered export",
-      );
+        );
+      warnedOwnership = true;
     }
 
     // Derive stack name. A multi-stack project passes the explicit CloudFormation

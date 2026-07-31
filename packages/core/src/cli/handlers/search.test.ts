@@ -157,3 +157,44 @@ describe("search surfaces what the graph derived", () => {
     expect(out).toContain("webServer internetFacing via rtb-1 → igw-1");
   });
 });
+
+// #1280 — absence is a real estate question ("what does nothing reference"),
+// and the grammar could only express presence.
+describe("negated terms (#1280)", () => {
+  const ir = {
+    nodes: [
+      { id: "used", kind: "AWS::EC2::SecurityGroup", lexicon: "aws", attrs: {} },
+      { id: "spare", kind: "AWS::EC2::SecurityGroup", lexicon: "aws", attrs: {} },
+      { id: "web", kind: "AWS::EC2::Instance", lexicon: "aws", attrs: {} },
+    ],
+    edges: [{ from: "web", to: "used", kind: "ref" as const, viaAttr: "SecurityGroupIds" }],
+    groups: {},
+  };
+  const byId = new Map(ir.nodes.map((n) => [n.id, n]));
+  const match = (q: string) =>
+    ir.nodes.filter((n) => parseQuery(q).every((t) => matchTerm(n, t, ir, byId))).map((n) => n.id);
+
+  test("selects what nothing references — the complement of an edge term", () => {
+    expect(match("kind:SecurityGroup !<-kind:EC2::Instance")).toEqual(["spare"]);
+  });
+
+  test("the un-negated query still selects what IS referenced", () => {
+    expect(match("kind:SecurityGroup <-kind:EC2::Instance")).toEqual(["used"]);
+  });
+
+  test("negates a plain attribute term too", () => {
+    const nodes = [
+      { id: "a", kind: "K", lexicon: "x", attrs: { env: "prod" } },
+      { id: "b", kind: "K", lexicon: "x", attrs: { env: "dev" } },
+    ];
+    const g = { nodes, edges: [], groups: {} };
+    const m = new Map(nodes.map((n) => [n.id, n]));
+    expect(
+      nodes.filter((n) => parseQuery("!attr:env=prod").every((t) => matchTerm(n, t, g, m))).map((n) => n.id),
+    ).toEqual(["b"]);
+  });
+
+  test("--explain says the term was negated, or an exclusion reads inverted", () => {
+    expect(describeTerm(parseQuery("!kind:Foo")[0])).toBe("!kind:Foo");
+  });
+});

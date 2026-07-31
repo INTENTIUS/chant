@@ -426,11 +426,36 @@ function availableAttrs(terms: Term[], ir: GraphIR): void {
   for (const n of of) for (const k of Object.keys((n.attrs as Record<string, unknown>) ?? {})) names.add(k);
   const queried = new Set(terms.filter((t) => t.kind === "attr").map((t) => t.a));
   const unused = [...names].filter((k) => !queried.has(k)).sort();
-  if (unused.length === 0) return;
-  console.log(`  · ${of.length} ${kindTerm.a} node(s) carry: ${unused.join(", ")}`);
+  if (unused.length > 0) {
+    console.log(`  · ${of.length} ${kindTerm.a} node(s) carry: ${unused.join(", ")}`);
+  }
+
+  // A queried attribute that EXISTS but matched nothing is the more useful
+  // miss to explain, and it was the one left silent: the list above omits
+  // anything the caller asked about, so querying a real attribute with an
+  // unmatchable value taught nothing at all. A caller reaching for a wildcard —
+  // `attr:effectiveIngress=*tcp:22:0.0.0.0/0`, which this grammar has no
+  // operator for — got "(no matches)" and concluded the tool had nothing.
+  for (const term of terms) {
+    if (term.kind !== "attr" || term.b === undefined || !names.has(term.a)) continue;
+    const values = new Set<string>();
+    for (const n of of) {
+      const v = (n.attrs as Record<string, unknown> | undefined)?.[term.a];
+      for (const one of Array.isArray(v) ? v : [v]) {
+        if (one !== undefined && one !== null) values.add(String(one));
+      }
+    }
+    if (values.size === 0) continue;
+    const sample = [...values].sort().slice(0, 8);
+    const more = values.size > sample.length ? `, … ${values.size - sample.length} more` : "";
+    console.log(`  · ${term.a} is present but no value matched "${term.b}" — values seen: ${sample.join(", ")}${more}`);
+  }
 }
 
 function describeTerm(t: Term): string {
+  // `--explain` has to say a negated term was negated, or an exclusion reads as
+  // the opposite of what it is.
+  if (t.negated) return `!${describeTerm({ ...t, negated: false })}`;
   const leaf = (x: Term): string =>
     x.kind === "kind" ? `kind:${x.a}` : x.kind === "attr" ? `attr:${x.a}${x.b !== undefined ? "=" + x.b : ""}`
       : x.kind === "tag" ? `tag:${x.a}${x.b !== undefined ? "=" + x.b : ""}` : `"${x.a}"`;
@@ -440,6 +465,8 @@ function describeTerm(t: Term): string {
 
 interface Term {
   kind: "word" | "kind" | "tag" | "attr" | "edge";
+  /** `!term` — the node must NOT satisfy this (#1280). */
+  negated?: boolean;
   a: string;
   b?: string;
   /** For edge terms: the direction and the sub-predicate matched at the far end. */
@@ -463,10 +490,20 @@ function parseQuery(query: string): Term[] {
   // Split on whitespace but keep quoted phrases together.
   const tokens = query.match(/"[^"]*"|\S+/g) ?? [];
   return tokens.map((raw) => {
-    const tok = raw.replace(/^"|"$/g, "");
-    if (tok.startsWith("->")) return { kind: "edge", a: "", dir: "out", sub: parseLeaf(tok.slice(2)) };
-    if (tok.startsWith("<-")) return { kind: "edge", a: "", dir: "in", sub: parseLeaf(tok.slice(2)) };
-    return parseLeaf(tok);
+    let tok = raw.replace(/^"|"$/g, "");
+    // A leading `!` negates the term (#1280). Absence is a real estate
+    // question — "which security groups does nothing reference", "which
+    // subnets hold no instances" — and the grammar could only express
+    // presence, so the one question a graph is uniquely good at needed a
+    // provider sweep and a hand-built set difference.
+    const negated = tok.startsWith("!");
+    if (negated) tok = tok.slice(1);
+    const term = tok.startsWith("->")
+      ? { kind: "edge" as const, a: "", dir: "out" as const, sub: parseLeaf(tok.slice(2)) }
+      : tok.startsWith("<-")
+        ? { kind: "edge" as const, a: "", dir: "in" as const, sub: parseLeaf(tok.slice(2)) }
+        : parseLeaf(tok);
+    return negated ? { ...term, negated: true } : term;
   });
 }
 
@@ -484,6 +521,7 @@ function attrString(v: unknown): string {
 }
 
 function matchTerm(n: IRNode, t: Term, ir?: GraphIR, byId?: Map<string, IRNode>): boolean {
+  if (t.negated) return !matchTerm(n, { ...t, negated: false }, ir, byId);
   const attrs = n.attrs ?? {};
   if (t.kind === "edge") {
     if (!ir || !byId || !t.sub) return false;

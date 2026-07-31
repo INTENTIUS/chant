@@ -47,6 +47,17 @@ export async function runGraph(ctx: CommandContext): Promise<number> {
     }));
     return 1;
   }
+  // `--at` reads a recorded observation; `chant search` implements it, `graph`
+  // does not (#1279). It used to be accepted and ignored — with the estate
+  // unreachable it returned a graph with nothing bound, which reads as an empty
+  // estate rather than as a flag that did nothing. Refuse it instead.
+  if (ctx.args.at) {
+    console.error(formatError({
+      message: "chant graph does not support --at",
+      hint: "use --live to graph the estate now, or `chant search \"<query>\" --at latest` to query a recorded snapshot",
+    }));
+    return 1;
+  }
   // `--live` graphs the provisioned (observed) infrastructure, not the declared
   // source (epic #776). It only makes sense as a view format; default to `ir`.
   if (ctx.args.live) {

@@ -171,40 +171,25 @@ function patchCiWorkflow(root: string, name: string): { patched: boolean; reason
 }
 
 /**
- * Patch publish.yml: add prepack line in test job + publish step.
+ * Patch publish.yml: add the prepack line to the test job.
+ *
+ * No publish step is added. scripts/publish-packages.sh enumerates every
+ * non-private workspace package at run time, so a new lexicon is published
+ * the moment it exists — that is deliberate. Hand-maintained publish steps
+ * were how k8s-client (#1177) and fountain (#1253) each shipped a package
+ * the release pipeline could not publish.
  */
 function patchPublishWorkflow(root: string, name: string): { patched: boolean; reason?: string } {
   const filePath = join(root, ".github/workflows/publish.yml");
   if (!existsSync(filePath)) return { patched: false, reason: "publish.yml not found" };
 
   const content = readFileSync(filePath, "utf-8");
-  if (content.includes(`working-directory: lexicons/${name}`)) {
-    return { patched: false, reason: `publish step for ${name} already present` };
+  if (content.includes(`lexicons/${name} prepack`)) {
+    return { patched: false, reason: `prepack for ${name} already present` };
   }
 
   const lines = content.split("\n");
-
-  // Insert prepack line in test job
   insertPrepackAfterEach(lines, name);
-
-  // Add publish step after the last existing publish step
-  let lastPublishRunIdx = -1;
-  for (let i = 0; i < lines.length; i++) {
-    if (lines[i].includes("npm publish --access public")) {
-      lastPublishRunIdx = i;
-    }
-  }
-
-  if (lastPublishRunIdx > 0) {
-    const block = [
-      "",
-      `      - name: Publish @intentius/chant-lexicon-${name}`,
-      `        working-directory: lexicons/${name}`,
-      "        run: npm publish --access public",
-    ];
-    lines.splice(lastPublishRunIdx + 1, 0, ...block);
-  }
-
   writeFileSync(filePath, lines.join("\n"));
   return { patched: true };
 }
@@ -246,7 +231,7 @@ export function onboardCommand(options: OnboardOptions): OnboardResult {
 
   // 3. Publish workflow
   const pubResult = patchPublishWorkflow(root, options.name);
-  if (pubResult.patched) patched.push("publish.yml (prepack + publish step)");
+  if (pubResult.patched) patched.push("publish.yml (prepack)");
   else skipped.push(`publish.yml: ${pubResult.reason}`);
 
   // 4. Dockerfiles
