@@ -29,7 +29,7 @@
 import { readFileSync } from "node:fs";
 import { parseYAML } from "@intentius/chant/yaml";
 
-export const DEFAULT_FOUNTAIN_BASE_URL = "https://founta.inevitable.fyi";
+export const DEFAULT_FOUNTAIN_BASE_URL = "https://fountain.inevitable.fyi";
 
 /** Ownership marker checked by the owned-only prune. */
 export const OWNERSHIP_KEY = "managed-by";

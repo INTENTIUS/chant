@@ -52,7 +52,7 @@ describe("pure helpers", () => {
   it("resolveEndpoint precedence: arg > env > default", () => {
     expect(resolveEndpoint({ endpoint: "http://x/" }, {})).toBe("http://x");
     expect(resolveEndpoint({}, { FOUNTAIN_ENDPOINT: "http://env" })).toBe("http://env");
-    expect(resolveEndpoint({}, {})).toBe("https://founta.inevitable.fyi");
+    expect(resolveEndpoint({}, {})).toBe("https://fountain.inevitable.fyi");
   });
 
   it("parseManifest reads kind/name/spec from each YAML document", () => {
