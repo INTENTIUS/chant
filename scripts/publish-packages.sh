@@ -58,6 +58,46 @@ publishable_dirs() {
   done
 }
 
+# Ask the registry why it refused OIDC, and print its answer.
+#
+# npm's oidc helper is written never to throw: when the token exchange fails
+# it logs at verbose level and returns undefined, so `npm publish` falls
+# through to ordinary auth and reports a bare ENEEDAUTH. That single error
+# covers two very different situations — no trusted-publisher record at all,
+# versus a record that does not match this workflow's OIDC claims (wrong
+# workflow filename, or an environment configured on npm that the job does
+# not declare). Replaying the exchange ourselves is the only way to tell them
+# apart without editing the workflow to run verbose.
+#
+# Prints the HTTP status and the registry's message. Never prints the GitHub
+# id-token or the publish token a successful exchange returns.
+oidc_reason() {
+  local name="$1" idtok status escaped body_file
+  if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] || [ -z "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ]; then
+    echo "  OIDC was never attempted: this job has no id-token: write permission"
+    return
+  fi
+  idtok=$(curl -sS -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+    -H "Accept: application/json" \
+    "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=npm:registry.npmjs.org" 2>/dev/null \
+    | jq -r '.value // empty' 2>/dev/null)
+  if [ -z "$idtok" ]; then
+    echo "  OIDC unavailable: GitHub did not issue an id-token"
+    return
+  fi
+  escaped=${name//\//%2f}
+  body_file=$(mktemp)
+  status=$(curl -sS -o "$body_file" -w '%{http_code}' -X POST \
+    -H "Authorization: Bearer $idtok" \
+    "$REGISTRY/-/npm/v1/oidc/token/exchange/package/$escaped" 2>/dev/null)
+  if [ "$status" = "200" ]; then
+    echo "  registry ACCEPTED the OIDC exchange (HTTP 200) — the auth failure is not the record"
+  else
+    echo "  registry REFUSED the OIDC exchange: HTTP $status — $(jq -r '.message // .error // "no message"' "$body_file" 2>/dev/null || echo "unreadable body")"
+  fi
+  rm -f "$body_file"
+}
+
 # npm's own error lines, with the `npm notice` narration stripped. Deciding
 # what a failure was from the full output misreads the notices — they mention
 # provenance on every single run, successful or not.
@@ -89,8 +129,10 @@ publish_one() {
     return $rc
   fi
 
+  oidc_reason "$name"
+
   if [ -z "${NPM_TOKEN:-}" ]; then
-    echo "  $name has no trusted-publisher record and NPM_TOKEN is not set — cannot publish"
+    echo "  $name could not authenticate over OIDC and NPM_TOKEN is not set — cannot publish"
     return $rc
   fi
 
@@ -98,7 +140,7 @@ publish_one() {
   # throwaway userconfig rather than on the command line so it never lands in
   # the process table, and scope it to this one publish so the packages that
   # DO have a record keep using trusted publishing.
-  echo "  $name: no npm trusted-publisher record — retrying with NPM_TOKEN"
+  echo "  $name: OIDC unavailable — retrying with NPM_TOKEN"
   npmrc=$(mktemp)
   chmod 600 "$npmrc"
   printf '%s/:_authToken=%s\n' "${REGISTRY#https:}" "$NPM_TOKEN" > "$npmrc"
