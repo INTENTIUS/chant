@@ -3,6 +3,7 @@ import { build } from "../../build";
 import { buildGraphIr, buildLiveGraphIr, sourceOverlayGraphs, type GraphIR, type IRNode } from "../../graph-ir";
 import { buildDeclaredPerStack } from "../../graph-declared";
 import { enrichEffectiveTopology } from "../../graph-effective";
+import { reconstructEdges, mergeCatalogs, type ReferenceCatalog } from "../../graph-refs";
 import { discover } from "../../discovery/index";
 
 import { observeResources } from "../../lifecycle/observe";
@@ -82,6 +83,15 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
       } catch {
         /* enrichment is best-effort; search still works on describe attrs */
       }
+    }
+    // Reconstruct edges from live references (#778), the same way `graph --live`
+    // does (#1271). `buildLiveGraphIr` projects nodes only, so without this the
+    // live side of the graph has no relationships at all — and a fold over
+    // topology has nothing to traverse on anything the declared graph does not
+    // already model.
+    const catalogs = observing.map((p) => p.referenceCatalog).filter((c): c is ReferenceCatalog => !!c);
+    if (catalogs.length > 0) {
+      live = { ...live, edges: reconstructEdges(live.nodes, mergeCatalogs(catalogs)).edges };
     }
     // Overlay live identity onto the SOURCE graph (same as `graph --overlay`):
     // the declared graph is the canvas — its edges carry the topology so ->/<-
