@@ -523,6 +523,25 @@ function parseLeaf(tok: string): Term {
     if (eq >= 0) return { kind: key, a: rest.slice(0, eq), b: rest.slice(eq + 1) };
     return { kind: key, a: rest };
   }
+  // `name:value` with a prefix the grammar does not have. This parsed as a
+  // free-text word and matched nothing, which is the worst available outcome:
+  // an agent looking for SSH reachability wrote
+  // `effectiveIngress:tcp:22:0.0.0.0/0` — the right idea, the right attribute,
+  // the wrong spelling — got a clean empty result, concluded chant did not hold
+  // the fact, and rebuilt the answer by hand from security-group rows. An empty
+  // result must never be the reply to a question the grammar could not read.
+  //
+  // `::` and `://` are excluded so a genuine word search for `AWS::EC2::Instance`
+  // or a URL still works — a real prefix is one colon, not two.
+  const bad = /^([A-Za-z][A-Za-z0-9_]*):(?![:/])/.exec(tok);
+  if (bad) {
+    const name = bad[1];
+    const value = tok.slice(name.length + 1);
+    throw new QueryError(
+      `"${tok}" is not a term — there is no "${name}:" prefix`,
+      `for an attribute, say attr:${name}=${value || "<value>"}; the prefixes are kind:, attr:, tag:, and ->/<- for edges`,
+    );
+  }
   return { kind: "word", a: tok };
 }
 
@@ -626,7 +645,14 @@ function formatRow(n: IRNode, show: string[]): string {
   if (physical != null && typeof physical !== "object") parts.push(String(physical));
   for (const key of show) {
     const v = attrs[key];
-    if (v != null && typeof v !== "object") parts.push(`${key}=${attrString(v)}`);
+    if (v == null) continue;
+    // A column the caller explicitly asked for is shown whatever shape it is.
+    // Skipping non-scalars silently meant `--show effectiveIngress` — the
+    // derived reachability fact, and the reason to reach for chant at all —
+    // printed a blank column, because it is a list. The agent read that as
+    // "chant does not have this" and hand-rolled the answer from raw
+    // security-group rows, which is exactly the work the fold exists to avoid.
+    parts.push(`${key}=${typeof v === "object" ? JSON.stringify(v) : attrString(v)}`);
   }
   return parts.filter(Boolean).join("  ");
 }

@@ -90,17 +90,32 @@ export async function describeOwnProperties(
   const regionArgs = region ? ["--region", region] : [];
   const merged = { ...resources };
 
+  /** One describe for a set of ids. `null` when the call itself failed. */
+  const read = async (spec: (typeof DESCRIBE)[string], ids: string[]) => {
+    const result = await rt.spawn(
+      applyAwsEndpointArgv(
+        ["aws", ...spec.argv, spec.idFlag, ...ids, ...regionArgs, "--output", "json"],
+        process.env.AWS_ENDPOINT_URL,
+      ),
+    );
+    if (result.exitCode !== 0) return null;
+    return (JSON.parse(result.stdout)[spec.key] ?? []) as Array<Record<string, unknown>>;
+  };
+
   for (const [kind, byId] of wanted) {
     const spec = DESCRIBE[kind];
     try {
-      const result = await rt.spawn(
-        applyAwsEndpointArgv(
-          ["aws", ...spec.argv, spec.idFlag, ...byId.keys(), ...regionArgs, "--output", "json"],
-          process.env.AWS_ENDPOINT_URL,
-        ),
-      );
-      if (result.exitCode !== 0) continue;
-      const top = (JSON.parse(result.stdout)[spec.key] ?? []) as Array<Record<string, unknown>>;
+      const ids = [...byId.keys()];
+      let top = await read(spec, ids);
+      // AWS fails the whole call on one bad id — a snapshot naming an instance
+      // that has since been terminated takes every other instance's properties
+      // down with it, and the result is indistinguishable from "the account has
+      // nothing to say". Retry one at a time so the damage stops at the bad id.
+      if (top === null && ids.length > 1) {
+        top = [];
+        for (const id of ids) top.push(...((await read(spec, [id])) ?? []));
+      }
+      if (top === null) continue;
       // `describe-instances` buries instances one level down under reservations;
       // the others return the resources directly.
       const rows = spec.nested

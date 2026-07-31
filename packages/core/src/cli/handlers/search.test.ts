@@ -57,9 +57,23 @@ describe("search formatting", () => {
     expect(formatRow(src, [])).toBe("webServer  AWS::EC2::Instance");
   });
 
-  test("--show adds named primitive attributes only", () => {
-    const n = node("web", "AWS::EC2::Instance", { physicalId: "i-1", InstanceType: "t3.micro", Tags: [{}] });
-    expect(formatRow(n, ["InstanceType", "Tags"])).toBe("web  AWS::EC2::Instance  i-1  InstanceType=t3.micro");
+  test("--show renders a named column whatever shape the value is", () => {
+    // A list used to be dropped silently, so `--show effectiveIngress` — the
+    // derived reachability fact — printed a blank column and read as "chant
+    // does not have this". A column the caller named is a column they get.
+    const n = node("web", "AWS::EC2::Instance", {
+      physicalId: "i-1",
+      InstanceType: "t3.micro",
+      effectiveIngress: ["tcp:22:0.0.0.0/0"],
+    });
+    expect(formatRow(n, ["InstanceType", "effectiveIngress"])).toBe(
+      'web  AWS::EC2::Instance  i-1  InstanceType=t3.micro  effectiveIngress=["tcp:22:0.0.0.0/0"]',
+    );
+  });
+
+  test("--show omits a column the node does not carry", () => {
+    const n = node("web", "AWS::EC2::Instance", { physicalId: "i-1" });
+    expect(formatRow(n, ["VpcId"])).toBe("web  AWS::EC2::Instance  i-1");
   });
 });
 
@@ -200,6 +214,29 @@ describe("negated terms (#1280)", () => {
     // from "referenced by no Instance", so guessing which was meant is wrong.
     expect(() => parseQuery("kind:Foo !<-")).toThrow(/needs a target/);
     expect(() => parseQuery("kind:Foo ->")).toThrow(/needs a target/);
+  });
+
+  test("a made-up prefix is refused, and names the correction", () => {
+    // An agent looking for SSH reachability wrote
+    // `effectiveIngress:tcp:22:0.0.0.0/0` — right idea, right attribute, wrong
+    // spelling — and this parsed as a free-text word that matched nothing. It
+    // read the clean empty result as "chant does not hold this fact" and
+    // rebuilt the answer by hand from security-group rows.
+    expect(() => parseQuery("kind:EC2::Instance effectiveIngress:tcp:22")).toThrow(
+      /there is no "effectiveIngress:" prefix/,
+    );
+    try {
+      parseQuery("effectiveIngress:tcp:22");
+    } catch (e) {
+      expect((e as { hint: string }).hint).toContain("attr:effectiveIngress=tcp:22");
+    }
+  });
+
+  test("still accepts a word that merely contains colons", () => {
+    // `AWS::EC2::Instance` and a URL are words, not malformed terms — a real
+    // prefix is one colon, not two.
+    expect(parseQuery("AWS::EC2::Instance")).toEqual([{ kind: "word", a: "AWS::EC2::Instance" }]);
+    expect(parseQuery("https://example.com")).toEqual([{ kind: "word", a: "https://example.com" }]);
   });
 
   test("an edge term WITH a target still parses", () => {
