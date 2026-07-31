@@ -80,9 +80,14 @@ export async function takeSnapshot(
   environment: string,
   plugins: ObservationLexicon[],
   buildResult: BuildResult,
-  opts?: { cwd?: string; stack?: string },
+  opts?: { cwd?: string; stack?: string; region?: string },
 ): Promise<TakeSnapshotResult> {
   const stack = opts?.stack;
+  // A stack declares the region it deploys to (#1261). Passing it through is
+  // what lets a multi-region estate be observed at all: the reader targets the
+  // stack's own region rather than whichever one the shell happens to be set
+  // to, so out-of-region stacks stop coming back empty.
+  const region = opts?.region;
   const warnings: string[] = [];
   const errors: string[] = [];
   const snapshots: LifecycleSnapshot[] = [];
@@ -131,6 +136,7 @@ export async function takeSnapshot(
             entityNames,
             entities,
             stack,
+            region,
           }),
         );
         const { valid, dropped, warnings: validationWarnings } = validateResources(observed.resources);
@@ -149,6 +155,8 @@ export async function takeSnapshot(
       }
 
       if (plugin.listArtifacts) {
+        // No region: artifacts are registry/chart objects (docker, helm), not
+        // regional cloud resources, and `listArtifacts` takes no region.
         const raw = await plugin.listArtifacts({ environment, entities, stack });
         const { valid, dropped, warnings: validationWarnings } = validateResources(raw);
         warnings.push(...validationWarnings);
