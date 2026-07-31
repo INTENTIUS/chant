@@ -40,6 +40,25 @@ export interface RefRule {
   relation: "reference" | "containment";
   /** Edge / containment label (e.g. "in VPC", "sg", "targets"). */
   label?: string;
+  /**
+   * What the reconstructed edge's `viaAttr` should be, when traversal needs a
+   * different string than rendering does (#1275).
+   *
+   * `viaAttr` defaulted to `label ?? path`, which serves a renderer well and a
+   * traversal badly. The labels here are human-facing — "sg", "via", "in VPC" —
+   * while a fold like `enrichEffectiveTopology` matches provider attribute
+   * names: `SecurityGroupIds`, `SubnetId`, `LaunchTemplateId`. One field could
+   * not be both, so a rule that is traversed declares the name explicitly and
+   * keeps its label for the picture.
+   *
+   * On a `containment` rule this additionally opts the relation into producing
+   * an edge, on top of the boundary pair it already produces. Containment is
+   * not an edge by default and should not become one — but a fold's first hop
+   * is sometimes exactly a containment relation (an instance is *in* a subnet),
+   * and that hop has to be traversable without duplicating the rule as a
+   * reference and drawing the line twice.
+   */
+  viaAttr?: string;
 }
 
 /** A lexicon's reference knowledge — its identity map and reference rules. */
@@ -154,17 +173,29 @@ export function reconstructEdges(nodes: IRNode[], catalog: ReferenceCatalog): Re
           continue;
         }
         if (match.id === node.id) continue; // self-reference (e.g. an SG rule to its own group)
-        if (rule.relation === "containment") {
-          const k = `${node.id}|${match.id}`;
-          if (seenCont.has(k)) continue;
-          seenCont.add(k);
-          containment.push({ child: node.id, parent: match.id, ...(rule.label ? { label: rule.label } : {}) });
-        } else {
-          const via = rule.label ?? rule.path;
+        const pushEdge = (via: string): void => {
           const k = `${node.id}|${match.id}|${via}`;
-          if (seenEdge.has(k)) continue;
+          if (seenEdge.has(k)) return;
           seenEdge.add(k);
           edges.push({ from: node.id, to: match.id, kind: "ref", viaAttr: via });
+        };
+        if (rule.relation === "containment") {
+          const k = `${node.id}|${match.id}`;
+          if (!seenCont.has(k)) {
+            seenCont.add(k);
+            containment.push({ child: node.id, parent: match.id, ...(rule.label ? { label: rule.label } : {}) });
+          }
+          // A containment relation is a boundary hint, not an edge — unless the
+          // rule declares a traversal name (#1275). A fold's first hop is
+          // sometimes exactly a containment ("an instance is in a subnet"), and
+          // it must be traversable without duplicating the rule as a reference
+          // and drawing the line twice.
+          if (rule.viaAttr) pushEdge(rule.viaAttr);
+        } else {
+          // Traversal name wins over the rendering label: the labels are
+          // human-facing ("sg", "via"), and a fold matches provider attribute
+          // names (#1275).
+          pushEdge(rule.viaAttr ?? rule.label ?? rule.path);
         }
       }
     }
