@@ -489,6 +489,20 @@ export interface LiveObservation {
    * overlay must not paint them "pending". See {@link sourceOverlayGraphs}.
    */
   unobserved?: Record<string, UnobservedEntity>;
+  /**
+   * Relationships the lexicon observed between the resources it read (#1271).
+   *
+   * Without these an observation can only say what exists, never how it
+   * connects — so a fold over topology has nothing to traverse on the live side
+   * and a lexicon has to compute derived answers itself and inject them as
+   * attributes. Reporting the edges instead lets the one graph fold in
+   * {@link import("./graph-effective").enrichEffectiveTopology} do the work,
+   * for every lexicon, over live and recorded observations alike.
+   *
+   * `from`/`to` are node ids in the same space as {@link LiveObservation.resources}
+   * keys, so an edge can only reference something the observation also reported.
+   */
+  edges?: IREdge[];
 }
 
 /**
@@ -540,7 +554,31 @@ export function buildLiveGraphIr(observations: LiveObservation[]): GraphIR {
   if (Object.keys(byLexicon).length) groups.byLexicon = sortKeys(byLexicon);
   if (Object.keys(byStack).length) groups.byStack = sortKeys(byStack);
 
-  return { nodes, edges: [], groups };
+  // Observed relationships (#1271). An edge whose endpoints were not both
+  // observed is dropped rather than kept as a dangling reference: the fold
+  // resolves ids to nodes, and a half-edge would silently traverse to nothing.
+  // Deduped and sorted for the same reason nodes are — the IR is compared and
+  // committed, so it has to be stable across reads.
+  const observedIds = new Set(nodes.map((n) => n.id));
+  const seen = new Set<string>();
+  const edges: IREdge[] = [];
+  for (const observation of observations) {
+    for (const edge of observation.edges ?? []) {
+      if (!observedIds.has(edge.from) || !observedIds.has(edge.to)) continue;
+      const key = `${edge.from} ${edge.to} ${edge.viaAttr ?? ""} ${edge.toAttr ?? ""}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      edges.push(edge);
+    }
+  }
+  edges.sort(
+    (a, b) =>
+      a.from.localeCompare(b.from) ||
+      a.to.localeCompare(b.to) ||
+      (a.viaAttr ?? "").localeCompare(b.viaAttr ?? ""),
+  );
+
+  return { nodes, edges, groups };
 }
 
 /** How an overlay learns which declared nodes were never looked at (#1089). */
