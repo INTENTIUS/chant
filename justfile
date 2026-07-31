@@ -215,6 +215,9 @@ ext-vscode-package:
 release bump="patch":
     #!/usr/bin/env bash
     set -euo pipefail
+    # Refuse to tag a commit CI has not proven green (#1255). This recipe
+    # pushes `main` explicitly, so it also requires you to be on it.
+    bash scripts/release-preflight.sh main
     current=$(jq -r .version packages/core/package.json)
     IFS='.' read -r major minor patch <<< "$current"
     case "{{bump}}" in
@@ -250,6 +253,10 @@ release bump="patch":
 release-lexicon name bump="patch":
     #!/usr/bin/env bash
     set -euo pipefail
+    # Refuse to tag a commit CI has not proven green (#1255). No branch is
+    # required — this recipe pushes HEAD, wherever it is — but HEAD must be
+    # pushed and its chant run must have concluded success.
+    bash scripts/release-preflight.sh
     current=$(jq -r .version lexicons/{{name}}/package.json)
     IFS='.' read -r major minor patch <<< "$current"
     case "{{bump}}" in
@@ -260,9 +267,24 @@ release-lexicon name bump="patch":
     esac
     next="$major.$minor.$patch"
     echo "Bumping @intentius/chant-lexicon-{{name}} $current → $next"
-    jq --arg v "$next" '.version = $v' lexicons/{{name}}/package.json \
+    # Keep the @intentius/* peer ranges in lockstep, the way `just release`
+    # has since #411 — ranges frozen at an old version break clean installs.
+    # A single-lexicon patch does NOT move core, so the ranges track the
+    # CURRENT core / github-lexicon versions rather than this lexicon's new
+    # one (#1255). Pinning them to $next would demand a core that does not
+    # exist.
+    core=$(jq -r .version packages/core/package.json)
+    github_lexicon=$(jq -r .version lexicons/github/package.json)
+    jq --arg v "$next" --arg core "$core" --arg ghl "$github_lexicon" '
+      .version = $v
+      | if .peerDependencies["@intentius/chant"] then .peerDependencies["@intentius/chant"] = "^" + $core else . end
+      | if .peerDependencies["@intentius/chant-lexicon-github"] then .peerDependencies["@intentius/chant-lexicon-github"] = "^" + $ghl else . end
+    ' lexicons/{{name}}/package.json \
       > lexicons/{{name}}/package.json.tmp && mv lexicons/{{name}}/package.json.tmp lexicons/{{name}}/package.json
-    git add lexicons/{{name}}/package.json
+    # And keep the committed lockfile's entry for this package in step, the
+    # same reason `just release` does it (#1094).
+    npm install --package-lock-only
+    git add lexicons/{{name}}/package.json package-lock.json
     git commit -m "lexicon-{{name}}: v$next"
     git tag "lexicon-{{name}}-v$next"
     git push origin HEAD "lexicon-{{name}}-v$next"
