@@ -6,7 +6,7 @@ import { buildGraphIr, buildLiveGraphIr, collectUnobserved, overlayGraphs, sourc
 import { buildDeclaredPerStack } from "../../graph-declared";
 import { reconstructEdges, mergeCatalogs, containmentGroups, type ReferenceCatalog, type ContainmentPair } from "../../graph-refs";
 import { observeResources } from "../../lifecycle/observe";
-import { replaySnapshots } from "../../lifecycle/replay";
+import { replaySnapshots, hasSnapshot } from "../../lifecycle/replay";
 import { loadChantConfig, environmentNames } from "../../config";
 import { applyLiveEndpoint } from "../../live-endpoint";
 import { applyDetail, type DetailLevel } from "../../graph-detail";
@@ -204,6 +204,17 @@ async function runGraphLive(
     // Both paths land here: a replay rejoins the live pipeline at exactly this
     // point, which is what makes every fold and overlay below shared.
     ir = buildLiveGraphIr(observations);
+
+    // The estate was asked for and nothing came back. Say that once, and say
+    // that a recording exists — the per-entity warnings above describe the same
+    // failure N times without ever naming the thing that would answer. Agents
+    // denied the network read the empty graph as an empty estate and spent
+    // their turns retrying `--live`.
+    if (!replaying && ir.nodes.length === 0 && (await hasSnapshot(environment))) {
+      console.error(formatWarning({
+        message: `could not read the estate for "${environment}" — a snapshot of it is recorded; graph that instead with --at latest`,
+      }));
+    }
 
     // Enrich node attrs from the fuller live config (#784) so references are
     // present for edge reconstruction — describeResources metadata alone is often

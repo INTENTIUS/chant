@@ -7,7 +7,7 @@ import { reconstructEdges, mergeCatalogs, type ReferenceCatalog } from "../../gr
 import { discover } from "../../discovery/index";
 
 import { observeResources } from "../../lifecycle/observe";
-import { replaySnapshots } from "../../lifecycle/replay";
+import { replaySnapshots, hasSnapshot } from "../../lifecycle/replay";
 import type { LiveObservation } from "../../graph-ir";
 import { loadChantConfig } from "../../config";
 import { loadPlugins, resolveProjectLexicons } from "../plugins";
@@ -195,7 +195,13 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
     console.log(formatRow(n, show));
   }
   const backed = source.kind === "declared" || matches.some((n) => n.physicalId);
-  provenance(matches, source);
+  // Only worth asking when the live read came back empty — that is the one case
+  // where a recording changes what the caller should do next.
+  const recorded =
+    source.kind === "live" && !matches.some((n) => n.physicalId) && args.env
+      ? (await hasSnapshot(String(args.env))) ? "yes" : undefined
+      : undefined;
+  provenance(matches, source, recorded);
   ambientHint(matches, ambientKinds, args.ambient === true);
   derivedSurface(terms, matches, ir, backed);
   if (args.explain) explain(terms, matches, ir, nodeById, query);
@@ -251,7 +257,7 @@ function ambientHint(matches: IRNode[], ambientKinds: string[], asked: boolean):
  * already done. That is a fact about the query, printed for every query, and it
  * encodes no expected answer.
  */
-function provenance(matches: IRNode[], source: AnswerSource): void {
+function provenance(matches: IRNode[], source: AnswerSource, recorded?: string): void {
   if (source.kind === "declared") {
     console.log("— declared only · no observation · physical ids unavailable");
     return;
@@ -261,6 +267,16 @@ function provenance(matches: IRNode[], source: AnswerSource): void {
   if (bound === 0) {
     // The estate was asked for and nothing came back bound. Naming it is the
     // difference between "these do not exist" and "nobody could see them".
+    // A snapshot sitting unused is the actionable half of this. Denied network,
+    // agents read six declared rows as a live answer and spent their turns
+    // retrying `--live` — the tool knew the estate was unreachable AND that a
+    // recording of it was on disk, and said only the first half.
+    if (recorded) {
+      console.log(
+        `— ${what} returned no bound resources · a snapshot of this environment is recorded — answer from it with --at latest`,
+      );
+      return;
+    }
     console.log(
       `— ${what} returned no bound resources · answered from the declared graph · physical ids unavailable`,
     );

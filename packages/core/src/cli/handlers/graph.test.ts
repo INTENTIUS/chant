@@ -44,8 +44,10 @@ vi.mock("../plugins", () => ({
 }));
 const observeMock = vi.fn();
 const replayMock = vi.fn();
+const hasSnapshotMock = vi.fn(() => Promise.resolve(false));
 vi.mock("../../lifecycle/replay", () => ({
   replaySnapshots: (...a: unknown[]) => replayMock(...a),
+  hasSnapshot: (...a: unknown[]) => hasSnapshotMock(...a),
 }));
 
 vi.mock("../../lifecycle/observe", () => ({
@@ -461,6 +463,40 @@ describe("runGraph", () => {
       expect(observeMock).not.toHaveBeenCalled();
       expect(replayMock).toHaveBeenCalled();
       expect(stdoutBuf.join("\n")).toContain("i-1");
+    });
+
+    // Denied the network, agents read the empty graph as an empty estate and
+    // spent their turns retrying --live. The per-entity warnings describe the
+    // same failure N times and never name the thing that would answer.
+    test("an unreadable estate names the recorded snapshot", async () => {
+      observeMock.mockClear();
+      hasSnapshotMock.mockResolvedValue(true);
+      resolveLexMock.mockResolvedValue(["aws"]);
+      loadPluginsMock.mockResolvedValue([
+        { name: "aws", serializer: {}, describeResources: () => Promise.resolve({}) },
+      ]);
+      observeMock.mockResolvedValue({ observations: [], errors: ["could not connect"], warnings: [] });
+      const errs: string[] = [];
+      const spy = vi.spyOn(console, "error").mockImplementation((s: string) => { errs.push(s); });
+      await runGraph({ args: makeArgs({ format: "ir", live: true, env: "prod" }), plugins: [], serializers: [] });
+      spy.mockRestore();
+      hasSnapshotMock.mockResolvedValue(false);
+      expect(errs.join("\n")).toContain("--at latest");
+    });
+
+    test("says nothing about a snapshot when there is none to name", async () => {
+      observeMock.mockClear();
+      hasSnapshotMock.mockResolvedValue(false);
+      resolveLexMock.mockResolvedValue(["aws"]);
+      loadPluginsMock.mockResolvedValue([
+        { name: "aws", serializer: {}, describeResources: () => Promise.resolve({}) },
+      ]);
+      observeMock.mockResolvedValue({ observations: [], errors: ["could not connect"], warnings: [] });
+      const errs: string[] = [];
+      const spy = vi.spyOn(console, "error").mockImplementation((s: string) => { errs.push(s); });
+      await runGraph({ args: makeArgs({ format: "ir", live: true, env: "prod" }), plugins: [], serializers: [] });
+      spy.mockRestore();
+      expect(errs.join("\n")).not.toContain("--at latest");
     });
 
     test("--at and --live together is refused rather than guessed at", async () => {

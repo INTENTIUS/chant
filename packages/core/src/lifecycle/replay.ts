@@ -31,6 +31,22 @@ import type { LifecycleSnapshot } from "./types";
  * and the storage already supports it (`readSnapshotAt`), but "answer from what
  * is recorded" is the question worth settling first.
  */
+/**
+ * Whether this environment has a recording, without reading one.
+ *
+ * Used to turn "the estate could not be read" into "the estate could not be
+ * read, and you already have a recording of it". Cheap and best-effort: a
+ * failure here means the caller says the plain version of the message, never
+ * that the command fails.
+ */
+export async function hasSnapshot(environment: string): Promise<boolean> {
+  try {
+    return (await readEnvironmentSnapshots(environment)).size > 0;
+  } catch {
+    return false;
+  }
+}
+
 export async function replaySnapshots(
   environment: string,
   ref: string,
