@@ -86,20 +86,37 @@ export function canDescribe(kind: string): boolean {
   return kind in DESCRIBE;
 }
 
+/** What an enrichment pass managed to do, so a caller can tell a miss from a no-op. */
+export interface OwnPropertiesResult {
+  resources: Record<string, ResourceMetadata>;
+  /**
+   * True when enrichment was attempted and *every* kind's read failed — the
+   * transport is unavailable rather than the account being quiet. Callers must
+   * not present the result as a complete observation (#1089).
+   */
+  transportFailed: boolean;
+  /** Why each failed kind failed, keyed by CloudFormation type, so a caller can attribute per resource. */
+  failures: Map<string, string>;
+}
+
 /**
  * Merge each resource's own properties into an observation, in place of nothing.
  *
- * Best-effort per kind, and per kind only: an endpoint that cannot answer
- * `describe-subnets` still yields instance properties, and a total failure
- * leaves the observation exactly as it arrived. The managed observation is
- * already complete without any of this — these are additional facts about
- * resources chant has already identified, so a miss costs detail, never
- * correctness.
+ * Best-effort per kind: an endpoint that cannot answer `describe-subnets` still
+ * yields instance properties. A miss costs detail — with one exception that used
+ * to be silent and is now reported.
+ *
+ * The exception (#1206): these attributes are compared by `lifecycle diff`, so a
+ * read that fails after the resource is already identified does not degrade to
+ * "less detail", it degrades to *drift* — the snapshot has `GroupId`, the live
+ * read has nothing, and the differ reports the property as removed. A partial
+ * failure still rides the best-effort path, but a total one is a hole the caller
+ * has to declare rather than a thinner set of facts.
  */
 export async function describeOwnProperties(
   resources: Record<string, ResourceMetadata>,
   region?: string,
-): Promise<Record<string, ResourceMetadata>> {
+): Promise<OwnPropertiesResult> {
   // Group the physical ids to look up by kind, so each kind is one call.
   const wanted = new Map<string, Map<string, string[]>>();
   for (const [name, meta] of Object.entries(resources)) {
@@ -108,22 +125,25 @@ export async function describeOwnProperties(
     byId.set(meta.physicalId, [...(byId.get(meta.physicalId) ?? []), name]);
     wanted.set(meta.type, byId);
   }
-  if (wanted.size === 0) return resources;
+  if (wanted.size === 0) return { resources, transportFailed: false, failures: new Map() };
 
   const { getRuntime } = await import("@intentius/chant/runtime-adapter");
   const rt = getRuntime();
   const regionArgs = region ? ["--region", region] : [];
   const merged = { ...resources };
+  const failures = new Map<string, string>();
+  /** The last failure for a kind, phrased for a human — stderr when there is any, the exit status otherwise. */
+  let lastReason = "";
 
   /** One describe for a set of ids. `null` when the call itself failed. */
   const read = async (spec: (typeof DESCRIBE)[string], ids: string[]) => {
-    const result = await rt.spawn(
-      applyAwsEndpointArgv(
-        ["aws", ...spec.argv, spec.idFlag, ...ids, ...regionArgs, "--output", "json"],
-        process.env.AWS_ENDPOINT_URL,
-      ),
-    );
-    if (result.exitCode !== 0) return null;
+    const argv = ["aws", ...spec.argv, spec.idFlag, ...ids, ...regionArgs, "--output", "json"];
+    const result = await rt.spawn(applyAwsEndpointArgv(argv, process.env.AWS_ENDPOINT_URL));
+    if (result.exitCode !== 0) {
+      const stderr = result.stderr.trim().split("\n")[0];
+      lastReason = `${spec.argv.join(" ")} failed${stderr ? `: ${stderr}` : ` (${result.exitCode})`}`;
+      return null;
+    }
     return (JSON.parse(result.stdout)[spec.key] ?? []) as Array<Record<string, unknown>>;
   };
 
@@ -137,10 +157,15 @@ export async function describeOwnProperties(
       // down with it, and the result is indistinguishable from "the account has
       // nothing to say". Retry one at a time so the damage stops at the bad id.
       if (top === null && ids.length > 1) {
-        top = [];
-        for (const id of ids) top.push(...((await read(spec, [id])) ?? []));
+        const perId = await Promise.all(ids.map((id) => read(spec, [id])));
+        // Every retry failing is the kind failing, not the kind being empty —
+        // the distinction the old `top = []` erased.
+        top = perId.every((r) => r === null) ? null : perId.flatMap((r) => r ?? []);
       }
-      if (top === null) continue;
+      if (top === null) {
+        failures.set(kind, lastReason);
+        continue;
+      }
       // `describe-instances` buries instances one level down under reservations;
       // the others return the resources directly.
       const rows = spec.nested
@@ -158,9 +183,10 @@ export async function describeOwnProperties(
           };
         }
       }
-    } catch {
-      continue;
+    } catch (err) {
+      failures.set(kind, `${spec.argv.join(" ")} failed: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
-  return merged;
+
+  return { resources: merged, transportFailed: failures.size === wanted.size, failures };
 }

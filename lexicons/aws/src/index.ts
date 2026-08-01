@@ -30,12 +30,29 @@ export { awsPlugin } from "./plugin";
 export {
   observeResourcesDeepAws,
   awsDeepNormalizationHooks,
-  parseCloudControlResource,
   hasOwnershipMarker,
   DEEP_READABLE_TYPES,
   AWS_READ_ONLY_NAMES,
   AWS_SERVICE_DEFAULTS,
 } from "./deep-observe";
+
+// The native read transport (#1206) — the applier's own transport, pointed at
+// CloudFormation Query and Cloud Control. `parseCloudControlResource` used to
+// live in ./deep-observe and parsed AWS CLI stdout; the reader no longer speaks
+// that wire format, so `parseResourceDescription` (which takes the API's own
+// `ResourceDescription` object) replaces it.
+export {
+  describeStackResources,
+  describeStackOutputs,
+  getResource,
+  listResources,
+  parseResourceDescription,
+  AwsReadError,
+  type AwsReadHttp,
+  type AwsReadClientOptions,
+  type CloudControlDescription,
+  type StackResource,
+} from "./api/read-client";
 
 // Intrinsics
 export {

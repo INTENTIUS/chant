@@ -2,71 +2,91 @@
  * AWS deep observation (#1015) — the reference row of the deep-observe contract
  * (#1014).
  *
- * Every AWS interaction here is a mocked `spawn`. Nothing constructs a client,
- * reads ambient credentials, or reaches a network: the reader's only edge is
- * the runtime adapter, and it is replaced wholesale below.
+ * Every AWS interaction here is a faked HTTP call (#1206). Nothing spawns a
+ * CLI, reads ambient credentials, or reaches a network: the reader's only edge
+ * is its transport, which is injected as `http` where the reader is called
+ * directly and stubbed at `fetch` where the plugin builds its own.
  */
-import { describe, test, expect, vi, beforeEach } from "vitest";
-
-// Partial mock (`importOriginal`) for the same reason lifecycle-integration.test.ts
-// uses one: this module is reachable from other real exports the plugin path
-// touches, so replacing it wholesale breaks things unrelated to `spawn`.
-const spawnMock = vi.fn();
-vi.mock("@intentius/chant/runtime-adapter", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@intentius/chant/runtime-adapter")>();
-  return { ...actual, getRuntime: () => ({ ...actual.getRuntime(), spawn: spawnMock }) };
-});
+import { describe, test, expect, vi, afterEach } from "vitest";
 
 const { awsPlugin } = await import("./plugin");
 const {
   observeResourcesDeepAws,
   awsDeepNormalizationHooks,
-  parseCloudControlResource,
   hasOwnershipMarker,
 } = await import("./deep-observe");
+const { parseResourceDescription } = await import("./api/read-client");
 const { deepDiffForLexicon } = await import("@intentius/chant/lifecycle/deep-observe");
 const { normalizeDeepObservation, normalizeDeepProperties } = await import("@intentius/chant/deep-observation");
 
-const ok = (stdout: string) => ({ stdout, stderr: "", exitCode: 0 });
-const fail = (stderr: string) => ({ stdout: "", stderr, exitCode: 255 });
+const ok = (text: string) => ({ status: 200, text });
 
-/** A `cloudcontrol get-resource` envelope — the model arrives as a JSON string. */
+/** A Cloud Control `GetResource` body — the model arrives as a JSON string. */
 const cloudControl = (identifier: string, properties: Record<string, unknown>) =>
   ok(JSON.stringify({ ResourceDescription: { Identifier: identifier, Properties: JSON.stringify(properties) } }));
 
+/** A modelled service error, in the shape AWS JSON 1.0 sends it. */
+const apiError = (type: string, message: string, status = 400) =>
+  ({ status, text: JSON.stringify({ __type: type, message }) });
+
+/** A CloudFormation Query `<Error>` document. */
+const queryError = (code: string, message: string) =>
+  ({ status: 400, text: `<ErrorResponse><Error><Code>${code}</Code><Message>${message}</Message></Error></ErrorResponse>` });
+
 const stackResources = (rows: Array<[string, string, string]>) =>
   ok(
-    JSON.stringify({
-      StackResources: rows.map(([LogicalResourceId, ResourceType, PhysicalResourceId]) => ({
-        LogicalResourceId,
-        ResourceType,
-        PhysicalResourceId,
-        ResourceStatus: "CREATE_COMPLETE",
-        Timestamp: "2026-01-01T00:00:00Z",
-      })),
-    }),
+    `<DescribeStackResourcesResponse><DescribeStackResourcesResult><StackResources>${rows
+      .map(
+        ([logicalId, type, physicalId]) =>
+          `<member><LogicalResourceId>${logicalId}</LogicalResourceId><ResourceType>${type}</ResourceType>` +
+          `<PhysicalResourceId>${physicalId}</PhysicalResourceId><ResourceStatus>CREATE_COMPLETE</ResourceStatus>` +
+          `<Timestamp>2026-01-01T00:00:00Z</Timestamp></member>`,
+      )
+      .join("")}</StackResources></DescribeStackResourcesResult></DescribeStackResourcesResponse>`,
   );
+
+type FakeResponse = { status: number; text: string };
+interface FakeCall {
+  url: string;
+  target?: string;
+  body: string;
+}
+
+/**
+ * A transport fake in place of the old `spawn` fake. `route` sees the Cloud
+ * Control identifier (or `undefined` for the CloudFormation call) and returns
+ * the response; every call is recorded so a test can assert the endpoint the
+ * reader actually reached.
+ */
+function httpFake(route: (identifier: string | undefined, call: FakeCall) => FakeResponse) {
+  const calls: FakeCall[] = [];
+  const http = async (url: string, init: { headers: Record<string, string>; body: string }) => {
+    const target = init.headers["x-amz-target"];
+    const call: FakeCall = { url, ...(target ? { target } : {}), body: init.body };
+    calls.push(call);
+    const identifier = target ? (JSON.parse(init.body) as { Identifier?: string }).Identifier : undefined;
+    return route(identifier, call);
+  };
+  return { http, calls };
+}
 
 const entities = (
   record: Record<string, { entityType: string; props: Record<string, unknown> }>,
 ): Map<string, { entityType: string; props: Record<string, unknown> }> => new Map(Object.entries(record));
 
-const argvOf = (call: unknown[]): string[] => call[0] as string[];
 
-describe("parseCloudControlResource", () => {
+describe("parseResourceDescription", () => {
   test("unwraps the doubly-encoded model", () => {
-    expect(parseCloudControlResource(cloudControl("b", { BucketName: "b" }).stdout)).toEqual({
+    expect(parseResourceDescription({ Identifier: "b", Properties: JSON.stringify({ BucketName: "b" }) })).toEqual({
       identifier: "b",
       properties: { BucketName: "b" },
     });
   });
 
   test("an unparseable body is a failed read, not an empty resource", () => {
-    expect(parseCloudControlResource("not json")).toBeNull();
-    expect(parseCloudControlResource(JSON.stringify({ ResourceDescription: {} }))).toBeNull();
-    expect(
-      parseCloudControlResource(JSON.stringify({ ResourceDescription: { Properties: "{oops" } })),
-    ).toBeNull();
+    expect(parseResourceDescription("not an object")).toBeNull();
+    expect(parseResourceDescription({})).toBeNull();
+    expect(parseResourceDescription({ Properties: "{oops" })).toBeNull();
   });
 });
 
@@ -146,32 +166,24 @@ describe("hasOwnershipMarker", () => {
 });
 
 describe("observeResourcesDeepAws", () => {
-  beforeEach(() => {
-    // A bare arrow returning the mock would register the mock itself as
-    // vitest's cleanup hook, and vitest would then call it with no arguments.
-    spawnMock.mockReset();
-  });
-
-  test("reads each resource through cloudcontrol, honoring AWS_ENDPOINT_URL", async () => {
+  test("reads each resource through Cloud Control, honoring AWS_ENDPOINT_URL", async () => {
     const previous = process.env.AWS_ENDPOINT_URL;
     process.env.AWS_ENDPOINT_URL = "http://127.0.0.1:5566";
     try {
-      spawnMock.mockImplementation((argv: string[]) =>
-        Promise.resolve(
-          argv.includes("describe-stack-resources")
-            ? stackResources([["Assets", "AWS::S3::Bucket", "acme-assets"]])
-            : cloudControl("acme-assets", { BucketName: "acme-assets" }),
-        ),
+      const fake = httpFake((identifier) =>
+        identifier === undefined
+          ? stackResources([["Assets", "AWS::S3::Bucket", "acme-assets"]])
+          : cloudControl("acme-assets", { BucketName: "acme-assets" }),
       );
       const result = normalizeDeepObservation(
-        await observeResourcesDeepAws({ environment: "prod", entityNames: ["Assets"] }),
+        await observeResourcesDeepAws({ environment: "prod", entityNames: ["Assets"], http: fake.http }),
       );
       expect(result.resources.Assets.properties).toEqual({ BucketName: "acme-assets" });
       expect(result.resources.Assets.physicalId).toBe("acme-assets");
-      for (const call of spawnMock.mock.calls) {
-        expect(argvOf(call)).toContain("--endpoint-url");
-        expect(argvOf(call)).toContain("http://127.0.0.1:5566");
-      }
+      // The endpoint override reaches both APIs — no `--endpoint-url` argv to
+      // forget, because there is no argv.
+      for (const call of fake.calls) expect(call.url).toBe("http://127.0.0.1:5566/");
+      expect(fake.calls.map((c) => c.target)).toEqual([undefined, "CloudApiService.GetResource"]);
     } finally {
       if (previous === undefined) delete process.env.AWS_ENDPOINT_URL;
       else process.env.AWS_ENDPOINT_URL = previous;
@@ -179,85 +191,121 @@ describe("observeResourcesDeepAws", () => {
   });
 
   test("a type with no reader is unsupported-kind, never absent", async () => {
-    spawnMock.mockResolvedValue(stackResources([["Queue", "AWS::SQS::Queue", "q-1"]]));
+    const fake = httpFake(() => stackResources([["Queue", "AWS::SQS::Queue", "q-1"]]));
     const result = normalizeDeepObservation(
-      await observeResourcesDeepAws({ environment: "prod", entityNames: ["Queue"] }),
+      await observeResourcesDeepAws({ environment: "prod", entityNames: ["Queue"], http: fake.http }),
     );
     expect(result.resources).toEqual({});
     expect(result.unobserved.Queue.reason).toBe("unsupported-kind");
   });
 
   test("an expired token on the deep read is no-credentials, per resource", async () => {
-    spawnMock.mockImplementation((argv: string[]) =>
-      Promise.resolve(
-        argv.includes("describe-stack-resources")
-          ? stackResources([["Assets", "AWS::S3::Bucket", "acme-assets"]])
-          : fail("An error occurred (ExpiredToken) when calling GetResource: The security token expired"),
-      ),
+    const fake = httpFake((identifier) =>
+      identifier === undefined
+        ? stackResources([["Assets", "AWS::S3::Bucket", "acme-assets"]])
+        : apiError("ExpiredTokenException", "The security token included in the request is expired"),
     );
     const result = normalizeDeepObservation(
-      await observeResourcesDeepAws({ environment: "prod", entityNames: ["Assets"] }),
+      await observeResourcesDeepAws({ environment: "prod", entityNames: ["Assets"], http: fake.http }),
     );
     expect(result.unobserved.Assets.reason).toBe("no-credentials");
     expect(result.resources).toEqual({});
   });
 
-  test("a stack that does not exist yet is a real absence — no properties, no holes", async () => {
-    spawnMock.mockResolvedValue(fail("An error occurred (ValidationError): Stack with id prod does not exist"));
+  test("an unsupported operation is a hole for that resource, and says which operation", async () => {
+    // What Floci answers for GetResource today: the service is reachable and
+    // refuses the call, which is neither absence nor a credential problem.
+    const fake = httpFake((identifier) =>
+      identifier === undefined
+        ? stackResources([["Assets", "AWS::S3::Bucket", "acme-assets"]])
+        : apiError("UnsupportedOperation", "Operation GetResource is not supported."),
+    );
     const result = normalizeDeepObservation(
-      await observeResourcesDeepAws({ environment: "prod", entityNames: ["Assets"] }),
+      await observeResourcesDeepAws({ environment: "prod", entityNames: ["Assets"], http: fake.http }),
+    );
+    expect(result.unobserved.Assets.reason).toBe("read-failed");
+    expect(result.unobserved.Assets.detail).toContain("UnsupportedOperation");
+    expect(result.unobserved.Assets.detail).toContain("GetResource");
+  });
+
+  test("a stack that does not exist yet is a real absence — no properties, no holes", async () => {
+    const fake = httpFake(() => queryError("ValidationError", "Stack with id prod does not exist"));
+    const result = normalizeDeepObservation(
+      await observeResourcesDeepAws({ environment: "prod", entityNames: ["Assets"], http: fake.http }),
     );
     expect(result).toEqual({ resources: {}, unobserved: {} });
   });
 
   test("any other stack-read failure is a hole for every declared entity", async () => {
-    spawnMock.mockResolvedValue(fail("Could not connect to the endpoint URL"));
+    const fake = httpFake(() => ({ status: 503, text: "<html>service unavailable</html>" }));
     const result = normalizeDeepObservation(
-      await observeResourcesDeepAws({ environment: "prod", entityNames: ["A", "B"] }),
+      await observeResourcesDeepAws({ environment: "prod", entityNames: ["A", "B"], http: fake.http }),
     );
     expect(Object.keys(result.unobserved)).toEqual(["A", "B"]);
     expect(result.unobserved.A.reason).toBe("read-failed");
   });
 
   test("--owned withholds an unmarked resource as `filtered`, not as absent", async () => {
-    spawnMock.mockImplementation((argv: string[]) =>
-      Promise.resolve(
-        argv.includes("describe-stack-resources")
-          ? stackResources([
-              ["Ours", "AWS::S3::Bucket", "ours"],
-              ["Theirs", "AWS::S3::Bucket", "theirs"],
-            ])
-          : argv.includes("ours")
-            ? cloudControl("ours", { BucketName: "ours", Tags: [{ Key: "chant:managed-by", Value: "chant" }] })
-            : cloudControl("theirs", { BucketName: "theirs" }),
-      ),
+    const fake = httpFake((identifier) =>
+      identifier === undefined
+        ? stackResources([
+            ["Ours", "AWS::S3::Bucket", "ours"],
+            ["Theirs", "AWS::S3::Bucket", "theirs"],
+          ])
+        : identifier === "ours"
+          ? cloudControl("ours", { BucketName: "ours", Tags: [{ Key: "chant:managed-by", Value: "chant" }] })
+          : cloudControl("theirs", { BucketName: "theirs" }),
     );
     const result = normalizeDeepObservation(
-      await observeResourcesDeepAws({ environment: "prod", entityNames: ["Ours", "Theirs"], owned: true }),
+      await observeResourcesDeepAws({ environment: "prod", entityNames: ["Ours", "Theirs"], owned: true, http: fake.http }),
     );
     expect(Object.keys(result.resources)).toEqual(["Ours"]);
     expect(result.unobserved.Theirs.reason).toBe("filtered");
   });
 
   test("secret-bearing properties are masked before they reach the tree", async () => {
-    spawnMock.mockImplementation((argv: string[]) =>
-      Promise.resolve(
-        argv.includes("describe-stack-resources")
-          ? stackResources([["Role", "AWS::IAM::Role", "app-role"]])
-          : cloudControl("app-role", { RoleName: "app-role", ClientSecret: "s3cr3t" }),
-      ),
+    const fake = httpFake((identifier) =>
+      identifier === undefined
+        ? stackResources([["Role", "AWS::IAM::Role", "app-role"]])
+        : cloudControl("app-role", { RoleName: "app-role", ClientSecret: "s3cr3t" }),
     );
     const result = normalizeDeepObservation(
-      await observeResourcesDeepAws({ environment: "prod", entityNames: ["Role"] }),
+      await observeResourcesDeepAws({ environment: "prod", entityNames: ["Role"], http: fake.http }),
     );
     expect(result.resources.Role.properties.ClientSecret).toBe("[REDACTED]");
     expect(JSON.stringify(result)).not.toContain("s3cr3t");
   });
 
   test("a multi-stack project reads the stack it was handed", async () => {
-    spawnMock.mockResolvedValue(stackResources([]));
-    await observeResourcesDeepAws({ environment: "prod", entityNames: ["A"], stack: "payments-prod" });
-    expect(argvOf(spawnMock.mock.calls[0])).toContain("payments-prod");
+    const fake = httpFake(() => stackResources([]));
+    await observeResourcesDeepAws({ environment: "prod", entityNames: ["A"], stack: "payments-prod", http: fake.http });
+    expect(fake.calls[0]?.body).toContain("StackName=payments-prod");
+  });
+
+  test("the per-resource reads are concurrent, not one round trip after another", async () => {
+    let inFlight = 0;
+    let peak = 0;
+    const http = async (_url: string, init: { headers: Record<string, string>; body: string }) => {
+      const target = init.headers["x-amz-target"];
+      if (!target) {
+        return stackResources([
+          ["A", "AWS::S3::Bucket", "a"],
+          ["B", "AWS::S3::Bucket", "b"],
+          ["C", "AWS::S3::Bucket", "c"],
+        ]);
+      }
+      inFlight += 1;
+      peak = Math.max(peak, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      inFlight -= 1;
+      const identifier = (JSON.parse(init.body) as { Identifier: string }).Identifier;
+      return cloudControl(identifier, { BucketName: identifier });
+    };
+    const result = normalizeDeepObservation(
+      await observeResourcesDeepAws({ environment: "prod", entityNames: ["A", "B", "C"], http }),
+    );
+    expect(Object.keys(result.resources).sort()).toEqual(["A", "B", "C"]);
+    expect(peak).toBeGreaterThan(1);
   });
 });
 
@@ -266,10 +314,10 @@ describe("observeResourcesDeepAws", () => {
  * baseline, and exactly the genuine drift.
  */
 describe("end to end: declared + mutated live + baseline (#1015)", () => {
-  beforeEach(() => {
-    // A bare arrow returning the mock would register the mock itself as
-    // vitest's cleanup hook, and vitest would then call it with no arguments.
-    spawnMock.mockReset();
+  // This block drives the real plugin, which builds its own transport, so the
+  // seam here is `fetch` itself rather than an injected `http` (#1206).
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   const declared = entities({
@@ -306,9 +354,14 @@ describe("end to end: declared + mutated live + baseline (#1015)", () => {
   });
 
   const wireMocks = (): void => {
-    spawnMock.mockImplementation((argv: string[]) => {
-      if (argv.includes("describe-stack-resources")) {
-        return Promise.resolve(
+    vi.spyOn(globalThis, "fetch").mockImplementation((async (_url: string, init: { headers: Record<string, string>; body: string }) => {
+      const target = init.headers["x-amz-target"];
+      const identifier = target ? (JSON.parse(init.body) as { Identifier: string }).Identifier : undefined;
+      const respond = (r: { status: number; text: string }) =>
+        ({ status: r.status, text: () => Promise.resolve(r.text) });
+
+      if (identifier === undefined) {
+        return respond(
           stackResources([
             ["Assets", "AWS::S3::Bucket", "acme-assets"],
             ["AppRole", "AWS::IAM::Role", "app-role"],
@@ -317,8 +370,8 @@ describe("end to end: declared + mutated live + baseline (#1015)", () => {
           ]),
         );
       }
-      if (argv.includes("acme-assets")) {
-        return Promise.resolve(
+      if (identifier === "acme-assets") {
+        return respond(
           cloudControl("acme-assets", {
             BucketName: "acme-assets",
             // GENUINE: somebody turned versioning off in the console.
@@ -336,8 +389,8 @@ describe("end to end: declared + mutated live + baseline (#1015)", () => {
           }),
         );
       }
-      if (argv.includes("app-role")) {
-        return Promise.resolve(
+      if (identifier === "app-role") {
+        return respond(
           cloudControl("app-role", {
             RoleName: "app-role",
             // NOISE: statements and actions in a different order than source.
@@ -358,11 +411,11 @@ describe("end to end: declared + mutated live + baseline (#1015)", () => {
           }),
         );
       }
-      if (argv.includes("sg-01")) {
-        return Promise.resolve(fail("An error occurred (ThrottlingException) when calling GetResource"));
+      if (identifier === "sg-01") {
+        return respond(apiError("ThrottlingException", "Rate exceeded"));
       }
-      return Promise.resolve(fail("unexpected call"));
-    });
+      return respond(apiError("ValidationException", `unexpected call for ${identifier}`));
+    }) as unknown as typeof fetch);
   };
 
   const baseline = {
@@ -426,7 +479,7 @@ describe("end to end: declared + mutated live + baseline (#1015)", () => {
         type: "AWS::EC2::SecurityGroup",
         reason: "read-failed",
         detail:
-          'cloudcontrol get-resource failed for AWS::EC2::SecurityGroup "sg-01": An error occurred (ThrottlingException) when calling GetResource',
+          'GetResource failed for AWS::EC2::SecurityGroup "sg-01": ThrottlingException: Rate exceeded',
       },
     ]);
   });
@@ -471,7 +524,14 @@ describe("end to end: declared + mutated live + baseline (#1015)", () => {
   });
 
   test("a whole-lexicon failure is a hole for every declared entity, not a clean report", async () => {
-    spawnMock.mockResolvedValue(fail("Unable to locate credentials"));
+    // The stack read itself is refused, so nothing downstream ever runs. CFN
+    // speaks the Query protocol, so the refusal arrives as an `<Error>`
+    // document rather than the JSON one Cloud Control would send.
+    const refused = queryError("AccessDenied", "User is not authorized to perform cloudformation:DescribeStackResources");
+    vi.spyOn(globalThis, "fetch").mockImplementation((async () => ({
+      status: refused.status,
+      text: () => Promise.resolve(refused.text),
+    })) as unknown as typeof fetch);
     const result = await deepDiffForLexicon(awsPlugin, {
       environment: "prod",
       buildOutput: "",

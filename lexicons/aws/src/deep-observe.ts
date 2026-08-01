@@ -27,9 +27,10 @@
  *
  * ## Nothing here talks to real AWS on its own terms
  *
- * Every call goes through the runtime adapter's `spawn` and
- * `applyAwsEndpointArgv`, so `AWS_ENDPOINT_URL` redirects the whole reader at a
- * local emulator exactly as the existing describe path does.
+ * Every call goes through `./api/read-client.ts` — the applier's own transport,
+ * pointed at the read APIs (#1206) — so `AWS_ENDPOINT_URL` redirects the whole
+ * reader at a local emulator, with no CLI to spawn and typed failures instead of
+ * parsed stderr.
  */
 
 import type {
@@ -41,8 +42,13 @@ import type {
   UnobservedEntity,
   UnobservedReason,
 } from "@intentius/chant/lexicon";
-import { applyAwsEndpointArgv } from "./components/cloud-executor";
-import { stackDoesNotExist } from "./stack-errors";
+import {
+  AwsReadError,
+  describeStackResources,
+  getResource,
+  type AwsReadClientOptions,
+  type AwsReadHttp,
+} from "./api/read-client";
 import { AWS_TAG_OWNERSHIP_KEYS } from "./ownership";
 
 /**
@@ -190,48 +196,34 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** One live resource as `cloudcontrol get-resource` returns it. Exported for tests. */
+/** One live resource as Cloud Control returns it. Exported for tests. */
 export interface CloudControlResource {
   identifier: string;
   properties: Record<string, unknown>;
 }
 
 /**
- * Parse a `cloudcontrol get-resource` payload. Cloud Control returns the model
- * as a JSON *string* inside the envelope, so this unwraps twice. Returns null
- * for anything that does not parse to an object — an unparseable body is a
- * failed read, not an empty resource.
+ * Classify a failed read the same way the thin path does — off the API's own
+ * error code where there is one (#1206), falling back to the message for a
+ * transport-level failure that never reached the service.
  */
-export function parseCloudControlResource(stdout: string): CloudControlResource | null {
-  let envelope: unknown;
-  try {
-    envelope = JSON.parse(stdout);
-  } catch {
-    return null;
-  }
-  if (!isRecord(envelope)) return null;
-  const description = envelope.ResourceDescription;
-  if (!isRecord(description)) return null;
-  const raw = description.Properties;
-  if (typeof raw !== "string") return null;
-  let properties: unknown;
-  try {
-    properties = JSON.parse(raw);
-  } catch {
-    return null;
-  }
-  if (!isRecord(properties)) return null;
-  return {
-    identifier: typeof description.Identifier === "string" ? description.Identifier : "",
-    properties,
-  };
-}
-
-/** Classify a failed AWS CLI call the same way the thin read does. */
-function classifyFailure(stderr: string): UnobservedReason {
-  return /credential|token|expired|AccessDenied|not authorized|UnauthorizedOperation/i.test(stderr)
+function classifyFailure(err: unknown): UnobservedReason {
+  const code = err instanceof AwsReadError ? err.code ?? "" : "";
+  const message = err instanceof Error ? err.message : String(err);
+  return /credential|token|expired|AccessDenied|NotAuthorized|Unauthorized/i.test(`${code} ${message}`)
     ? "no-credentials"
     : "read-failed";
+}
+
+/** The message a failed read reports, without a stack trace or a stderr tail. */
+function failureDetail(err: unknown): string {
+  if (err instanceof AwsReadError) return err.code ? `${err.code}: ${err.message}` : err.message;
+  return err instanceof Error ? err.message : String(err);
+}
+
+/** True when a CloudFormation read failed only because the stack isn't there yet. */
+function isStackMissing(err: unknown): boolean {
+  return err instanceof AwsReadError && /does not exist/i.test(err.message);
 }
 
 /** True when the live property tree carries chant's ownership marker tag. */
@@ -252,122 +244,105 @@ export interface AwsDeepObserveOptions {
    * silently records no properties for them. */
   region?: string;
   owned?: boolean;
+  /** Injectable transport, mirroring `awsApply`'s `http` — tests reach the reader without a network. */
+  http?: AwsReadHttp;
 }
 
 /**
  * Read the live property tree for each declared entity via Cloud Control.
  *
- * Two reads per run plus one per readable resource: `describe-stack-resources`
- * resolves logical id → (type, physical id), then `cloudcontrol get-resource`
- * fetches each model. The first read's failure modes are the thin path's,
- * verbatim — a stack that does not exist yet is a real absence (nothing is
- * deployed, so there are no properties to drift), anything else is a hole for
- * every declared entity.
+ * Two reads per run plus one per readable resource: `DescribeStackResources`
+ * resolves logical id → (type, physical id), then `GetResource` fetches each
+ * model. The first read's failure modes are the thin path's, verbatim — a stack
+ * that does not exist yet is a real absence (nothing is deployed, so there are
+ * no properties to drift), anything else is a hole for every declared entity.
+ *
+ * The per-resource reads run concurrently (#1201/#1206). They were serial when
+ * each one was a process spawn, which made a deep snapshot of a large stack
+ * cost N round trips end to end.
  */
 export async function observeResourcesDeepAws(
   options: AwsDeepObserveOptions,
 ): Promise<DeepObservationResult> {
-  const { getRuntime } = await import("@intentius/chant/runtime-adapter");
   const { deepObservation, normalizeDeepProperties } = await import("@intentius/chant/deep-observation");
-  const { unobservedAll } = await import("@intentius/chant/observation");
-  const rt = getRuntime();
+  const { unobservedAll, boundedConcurrently } = await import("@intentius/chant/observation");
 
   const stackName = options.stack ?? options.environment;
-  const endpoint = process.env.AWS_ENDPOINT_URL;
+  const client: AwsReadClientOptions = {
+    ...(process.env.AWS_ENDPOINT_URL ? { endpoint: process.env.AWS_ENDPOINT_URL } : {}),
+    ...(options.region ? { region: options.region } : {}),
+    ...(options.http ? { http: options.http } : {}),
+  };
 
-  const regionArgs = options.region ? ["--region", options.region] : [];
-
-  const listResult = await rt.spawn(applyAwsEndpointArgv([
-    "aws", "cloudformation", "describe-stack-resources",
-    "--stack-name", stackName,
-    ...regionArgs,
-    "--output", "json",
-  ], endpoint));
-
-  if (listResult.exitCode !== 0) {
-    if (stackDoesNotExist(listResult.stderr)) return deepObservation({});
+  let stackResources: Awaited<ReturnType<typeof describeStackResources>>;
+  try {
+    stackResources = await describeStackResources(stackName, client);
+  } catch (err) {
+    if (isStackMissing(err)) return deepObservation({});
     return deepObservation(
       {},
       unobservedAll(
         options.entityNames,
-        classifyFailure(listResult.stderr),
-        `describe-stack-resources failed for stack "${stackName}": ${listResult.stderr.trim().split("\n")[0] ?? ""}`,
+        classifyFailure(err),
+        `DescribeStackResources failed for stack "${stackName}": ${failureDetail(err)}`,
       ),
     );
   }
 
-  let stackResources: Array<{ LogicalResourceId: string; ResourceType: string; PhysicalResourceId?: string }> = [];
-  try {
-    const parsed = JSON.parse(listResult.stdout) as {
-      StackResources?: Array<{ LogicalResourceId: string; ResourceType: string; PhysicalResourceId?: string }>;
-    };
-    stackResources = parsed.StackResources ?? [];
-  } catch {
-    return deepObservation(
-      {},
-      unobservedAll(options.entityNames, "read-failed", `unparseable describe-stack-resources output for stack "${stackName}"`),
-    );
-  }
-
-  const byLogicalId = new Map(stackResources.map((r) => [r.LogicalResourceId, r]));
+  const byLogicalId = new Map(stackResources.map((r) => [r.logicalId, r]));
   const resources: Record<string, DeepResourceObservation> = {};
   const unobserved: Record<string, UnobservedEntity> = {};
 
-  for (const entityName of options.entityNames) {
+  await boundedConcurrently(options.entityNames, async (entityName) => {
     const stackResource = byLogicalId.get(entityName);
     // Not in the stack at all. The thin read reports that absence; restating it
     // here as a property hole would turn one finding into two.
-    if (!stackResource) continue;
+    if (!stackResource) return;
 
-    const type = stackResource.ResourceType;
+    const type = stackResource.type;
     if (!DEEP_READABLE_TYPES.has(type)) {
       unobserved[entityName] = {
         type,
         reason: "unsupported-kind",
         detail: `no deep reader for ${type} — Cloud Control coverage is opt-in per type`,
       };
-      continue;
+      return;
     }
-    const identifier = stackResource.PhysicalResourceId;
+    const identifier = stackResource.physicalId;
     if (!identifier) {
       unobserved[entityName] = {
         type,
         reason: "read-failed",
         detail: "the stack reports no physical id, so the live resource cannot be addressed",
       };
-      continue;
+      return;
     }
 
-    const getResult = await rt.spawn(applyAwsEndpointArgv([
-      "aws", "cloudcontrol", "get-resource",
-      "--type-name", type,
-      "--identifier", identifier,
-      ...regionArgs,
-      "--output", "json",
-    ], endpoint));
-
-    if (getResult.exitCode !== 0) {
+    let parsed: CloudControlResource | null;
+    try {
+      parsed = await getResource(type, identifier, client);
+    } catch (err) {
       unobserved[entityName] = {
         type,
-        reason: classifyFailure(getResult.stderr),
-        detail: `cloudcontrol get-resource failed for ${type} "${identifier}": ${getResult.stderr.trim().split("\n")[0] ?? ""}`,
+        reason: classifyFailure(err),
+        detail: `GetResource failed for ${type} "${identifier}": ${failureDetail(err)}`,
       };
-      continue;
+      return;
     }
 
-    const parsed = parseCloudControlResource(getResult.stdout);
     if (!parsed) {
       unobserved[entityName] = {
         type,
         reason: "read-failed",
-        detail: `unparseable cloudcontrol get-resource output for ${type} "${identifier}"`,
+        detail: `unparseable GetResource response for ${type} "${identifier}"`,
       };
-      continue;
+      return;
     }
 
-    // Cloud Control *does* return tags, so unlike the thin path this one can
-    // answer the ownership question (#1015's open note). A resource withheld by
-    // the filter is `filtered`, never absent: it exists, it just isn't chant's.
+    // Cloud Control returns tags where the service carries them, so unlike the
+    // thin path this one can answer the ownership question (#1015's open note).
+    // A resource withheld by the filter is `filtered`, never absent: it exists,
+    // it just isn't chant's.
     const owned = hasOwnershipMarker(parsed.properties);
     if (options.owned && !owned) {
       unobserved[entityName] = {
@@ -375,7 +350,7 @@ export async function observeResourcesDeepAws(
         reason: "filtered",
         detail: `live resource carries no ${AWS_TAG_OWNERSHIP_KEYS.managedBy} tag`,
       };
-      continue;
+      return;
     }
 
     resources[entityName] = {
@@ -387,7 +362,7 @@ export async function observeResourcesDeepAws(
         hooks: awsDeepNormalizationHooks,
       }),
     };
-  }
+  });
 
   return deepObservation(resources, unobserved);
 }

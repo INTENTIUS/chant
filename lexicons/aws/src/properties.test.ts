@@ -29,7 +29,7 @@ describe("describeOwnProperties (#1279)", () => {
 
   it("joins each resource's own properties back by physical id", async () => {
     spawnMock.mockResolvedValue(ok(reservations(instance("i-1", "vpc-a"), instance("i-2", "vpc-b"))));
-    const merged = await describeOwnProperties(observed);
+    const { resources: merged } = await describeOwnProperties(observed);
     expect(merged.web.attributes?.VpcId).toBe("vpc-a");
     expect(merged.api.attributes?.VpcId).toBe("vpc-b");
   });
@@ -50,7 +50,7 @@ describe("describeOwnProperties (#1279)", () => {
       },
     };
     spawnMock.mockResolvedValue(ok(reservations(instance("i-1", "vpc-a"))));
-    const merged = await describeOwnProperties(withOutputs);
+    const { resources: merged } = await describeOwnProperties(withOutputs);
     expect(merged.web.attributes?.expVpcId).toBe("vpc-exported");
     expect(merged.web.attributes?.VpcId).toBe("vpc-a");
   });
@@ -64,19 +64,52 @@ describe("describeOwnProperties (#1279)", () => {
       .mockResolvedValueOnce(fail) // the batch, killed by i-2
       .mockResolvedValueOnce(ok(reservations(instance("i-1", "vpc-a"))))
       .mockResolvedValueOnce(fail); // i-2 really is gone
-    const merged = await describeOwnProperties(observed);
+    const { resources: merged } = await describeOwnProperties(observed);
     expect(merged.web.attributes?.VpcId).toBe("vpc-a");
     expect(merged.api.attributes).toBeUndefined();
   });
 
   it("leaves the observation untouched when the kind cannot be read at all", async () => {
     spawnMock.mockResolvedValue(fail);
-    const merged = await describeOwnProperties({ web: observed.web });
+    const { resources: merged } = await describeOwnProperties({ web: observed.web });
     expect(merged.web.attributes).toBeUndefined();
   });
 
+  // #1206: these attributes are compared by `lifecycle diff`, so a read that
+  // fails after the resource is already identified reports every recorded
+  // property as removed. The caller can only avoid that if the failure is told.
+  it("reports a total failure, so a caller can call it a hole rather than thin data", async () => {
+    spawnMock.mockResolvedValue({ stdout: "", stderr: "spawn aws ENOENT", exitCode: 127 });
+    const result = await describeOwnProperties({ web: observed.web });
+    expect(result.transportFailed).toBe(true);
+    expect(result.failures.get("AWS::EC2::Instance")).toContain("ec2 describe-instances");
+    expect(result.failures.get("AWS::EC2::Instance")).toContain("ENOENT");
+  });
+
+  it("a per-id retry that fails for every id is a failed kind, not an empty one", async () => {
+    // The batch dies, then so does every retry. Before #1206 the retry path
+    // replaced the null with `[]`, which read as "the account has nothing".
+    spawnMock.mockResolvedValue(fail);
+    const result = await describeOwnProperties(observed);
+    expect(result.transportFailed).toBe(true);
+  });
+
+  it("a kind that answers keeps the pass best-effort, even when another fails", async () => {
+    // One kind readable, one not: still detail-loss, not a hole. Only a total
+    // failure changes the caller's verdict.
+    spawnMock.mockImplementation((argv?: string[]) =>
+      Promise.resolve(argv?.includes("describe-instances") ? ok(reservations(instance("i-1", "vpc-a"))) : fail),
+    );
+    const result = await describeOwnProperties({
+      web: observed.web,
+      net: { type: "AWS::EC2::Subnet", status: "OK", physicalId: "subnet-1" },
+    });
+    expect(result.transportFailed).toBe(false);
+    expect(result.resources.web.attributes?.VpcId).toBe("vpc-a");
+  });
+
   it("does not call out for a kind it cannot describe", async () => {
-    const merged = await describeOwnProperties({
+    const { resources: merged } = await describeOwnProperties({
       fn: { type: "AWS::Lambda::Function", status: "OK", physicalId: "fn-1" },
     });
     expect(spawnMock).not.toHaveBeenCalled();
