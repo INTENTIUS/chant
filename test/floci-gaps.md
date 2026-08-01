@@ -131,6 +131,51 @@ this emulator.
 
 ---
 
+## 4. CloudFormation does not apply a security group's rules or tags
+
+**Status:** confirmed 2026-08-01, unfiled. **This is the one that blocks a lane
+— file it first.**
+
+A template that declares `SecurityGroupIngress` produces a group with no rules.
+The EC2 API is not at fault: the same rule added directly is stored and returned
+correctly, so the gap is in the CloudFormation provider's handling of
+`AWS::EC2::SecurityGroup` properties.
+
+```
+$ jq -c '.Resources.sshSecurityGroup.Properties.SecurityGroupIngress' template.json
+[{"CidrIp":"203.0.113.0/24","Description":"ssh from the office","FromPort":22,"IpProtocol":"tcp","ToPort":22}]
+
+$ aws cloudformation create-stack --stack-name local --template-body file://template.json
+$ aws ec2 describe-security-groups --group-ids <the group CFN created> --query 'SecurityGroups[0].IpPermissions'
+[]                                    # <- the declared rule is not there
+
+$ aws ec2 create-security-group --group-name direct-probe --description d
+$ aws ec2 authorize-security-group-ingress --group-id sg-… --protocol tcp --port 22 --cidr 203.0.113.0/24
+$ aws ec2 describe-security-groups --group-ids sg-… --query 'SecurityGroups[0].IpPermissions'
+[{"IpProtocol":"tcp","FromPort":22,"ToPort":22,"IpRanges":[{"CidrIp":"203.0.113.0/24"}], …}]
+```
+
+`Tags` behaves the same way: the template sets three ownership tags on the group
+and the created group returns `Tags: []`.
+
+**Blocks:** chant#1207's clean-apply half, and therefore the drift step of
+chant#1208. chant can now read a security group whole (#1269), but on this
+emulator every declared rule reads as absent and every declared tag as missing,
+so "no false drift on a clean apply" is unreachable no matter what chant does.
+Detecting an out-of-band *addition* still works; comparing against what the
+template asked for does not.
+
+**Two smaller notes for the same filing:**
+
+- An `authorize-security-group-ingress` call carrying `--description` comes back
+  without it — `IpRanges[]` has `CidrIp` and no `Description`. Templates
+  routinely describe their rules, so this shows as drift on an otherwise
+  matching rule.
+- Worth checking whether other CloudFormation resource properties are dropped
+  the same way. Only security groups were tested.
+
+---
+
 ## 3. VPC and Subnet are listable, though chant does not read them
 
 **Status:** observed 2026-08-01, not a defect. Kept so the coverage discussion

@@ -16,14 +16,24 @@
  * `describe-stack-resources` already reports per logical id, so the results
  * line up with the same IR node ids `live-attrs.ts` relies on.
  *
- * ## Scope of the first cut
+ * ## One reader, several sources (#1269)
  *
- * Four high-signal types (S3 buckets, IAM roles and managed policies, EC2
- * security groups) rather than all 30+. The point of the first row is to prove
- * the contract and the noise rules; widening the type table is additive and
- * needs no contract change. A declared resource of any other type reports
- * NOT-OBSERVED with `unsupported-kind` — it may well exist, and saying nothing
- * about it is the only honest answer.
+ * Cloud Control is the default source, not the only one. It has the property
+ * this reader wants most — it returns the *CloudFormation resource model*, so
+ * its payload lines up with the declared side without translation — but its
+ * coverage is not the same as the provider's. A security group read through
+ * Cloud Control comes back as identity and a description; read through
+ * `ec2 describe-security-groups` it comes back with every ingress and egress
+ * rule, which is the property people actually edit out of band.
+ *
+ * So each type names its source in {@link DEEP_SOURCES}, and a source that is
+ * not Cloud Control supplies a `toModel` that maps the provider's shape onto
+ * the CloudFormation one. Translation is the price of the richer read, and it
+ * belongs next to the type it translates rather than inside the diff.
+ *
+ * A declared resource of a type with no source reports NOT-OBSERVED with
+ * `unsupported-kind` — it may well exist, and saying nothing about it is the
+ * only honest answer.
  *
  * ## Nothing here talks to real AWS on its own terms
  *
@@ -50,17 +60,85 @@ import {
   type AwsReadHttp,
 } from "./api/read-client";
 import { AWS_TAG_OWNERSHIP_KEYS } from "./ownership";
+import { applyAwsEndpointArgv } from "./components/cloud-executor";
+import { toIngressRules } from "./dependencies";
 
 /**
- * CloudFormation types this reader can read live. Each is addressable in Cloud
- * Control by the physical id CloudFormation already reports.
+ * Where each type's live model comes from.
+ *
+ * `cloud-control` is addressed by the physical id `describe-stack-resources`
+ * already reports, and needs no translation. An `ec2` source names a bulk
+ * describe — one call for every id of that type, not one per resource — plus
+ * the mapping from the EC2 shape onto the CloudFormation model the declared
+ * side is written in.
  */
-export const DEEP_READABLE_TYPES: ReadonlySet<string> = new Set([
-  "AWS::S3::Bucket",
-  "AWS::IAM::Role",
-  "AWS::IAM::ManagedPolicy",
-  "AWS::EC2::SecurityGroup",
-]);
+export type DeepSource =
+  | { via: "cloud-control" }
+  | {
+      via: "ec2";
+      /** Bulk describe argv, minus the ids and the region. */
+      argv: string[];
+      /** Flag the physical ids are passed under. */
+      idFlag: string;
+      /** Top-level key of the result array. */
+      key: string;
+      /** Field on each row carrying the physical id, for the join back. */
+      id: string;
+      /** EC2 row -> CloudFormation resource model. */
+      toModel: (row: Record<string, unknown>) => Record<string, unknown>;
+    };
+
+export const DEEP_SOURCES: Record<string, DeepSource> = {
+  "AWS::S3::Bucket": { via: "cloud-control" },
+  "AWS::IAM::Role": { via: "cloud-control" },
+  "AWS::IAM::ManagedPolicy": { via: "cloud-control" },
+  // Cloud Control returns a security group's identity and description and none
+  // of its rules (#1269). The EC2 API returns the whole thing, so the drift
+  // people care about — an ingress rule edited in the console — is legible.
+  "AWS::EC2::SecurityGroup": {
+    via: "ec2",
+    argv: ["ec2", "describe-security-groups"],
+    idFlag: "--group-ids",
+    key: "SecurityGroups",
+    id: "GroupId",
+    toModel: securityGroupToModel,
+  },
+};
+
+/**
+ * Types this reader can read live. Derived from {@link DEEP_SOURCES} so the two
+ * cannot drift apart — the shape of bug #1280 is about.
+ */
+export const DEEP_READABLE_TYPES: ReadonlySet<string> = new Set(Object.keys(DEEP_SOURCES));
+
+/**
+ * `describe-security-groups` -> the `AWS::EC2::SecurityGroup` resource model.
+ *
+ * The two surfaces disagree about names and about nesting. EC2 says
+ * `Description` where the template says `GroupDescription`, and nests rule
+ * sources under `IpRanges[]` / `Ipv6Ranges[]` / `UserIdGroupPairs[]` where the
+ * template writes one flat rule per source. `toIngressRules` already resolves
+ * the nesting for the topology fold (#1273); this reuses it so there is one
+ * translation of that shape in the lexicon, not two.
+ *
+ * Rules are matched by their whole canonical value (the `orderKey` hook below),
+ * so a field the template carries and this mapping drops is not a smaller diff —
+ * it is every rule reported twice, once absent and once undeclared. That is why
+ * a range's own `Description` is carried through.
+ */
+export function securityGroupToModel(row: Record<string, unknown>): Record<string, unknown> {
+  const ingress = toIngressRules((row.IpPermissions ?? []) as never);
+  const egress = toIngressRules((row.IpPermissionsEgress ?? []) as never);
+  return {
+    ...(typeof row.Description === "string" ? { GroupDescription: row.Description } : {}),
+    ...(typeof row.GroupName === "string" ? { GroupName: row.GroupName } : {}),
+    ...(typeof row.VpcId === "string" ? { VpcId: row.VpcId } : {}),
+    ...(typeof row.GroupId === "string" ? { GroupId: row.GroupId } : {}),
+    ...(Array.isArray(row.Tags) ? { Tags: row.Tags } : {}),
+    ...(ingress.length > 0 ? { SecurityGroupIngress: ingress } : {}),
+    ...(egress.length > 0 ? { SecurityGroupEgress: egress } : {}),
+  };
+}
 
 /**
  * Property names that are server-populated wherever they appear — identifiers
@@ -114,7 +192,26 @@ export const AWS_SERVICE_DEFAULTS: Record<string, Record<string, unknown>> = {
   },
   "AWS::EC2::SecurityGroup": {
     "GroupDescription": "default VPC security group",
+    // EC2 gives every group an allow-all egress rule when the template declares
+    // none (#1269). Patterns are index-erased, so these two match the default
+    // rule wherever it lands in the set — and only while source declares no
+    // egress at all, which is what `counterpart: "absent"` checks.
+    "SecurityGroupEgress[].CidrIp": "0.0.0.0/0",
+    "SecurityGroupEgress[].IpProtocol": "-1",
   },
+};
+
+/**
+ * Names the service mints when a template does not supply one (#1269).
+ *
+ * Unlike {@link AWS_SERVICE_DEFAULTS} there is no fixed value to compare: a
+ * CloudFormation-generated security-group name is a different random string on
+ * every deploy. Pruned on the live side only, and only where source is silent —
+ * a template that names the group keeps the property in the diff, so a later
+ * rename still reports.
+ */
+export const AWS_GENERATED_NAMES: Record<string, ReadonlySet<string>> = {
+  "AWS::EC2::SecurityGroup": new Set(["GroupName"]),
 };
 
 /** Stable JSON with sorted keys — the fallback ordering key for a set-like array. */
@@ -150,6 +247,10 @@ export const awsDeepNormalizationHooks: DeepNormalizationHooks = {
     // about the property. `"unknown"` (a one-sided normalization) never prunes:
     // the reader must not decide this before the declared tree is in hand.
     if (node.side !== "live" || node.counterpart !== "absent") return false;
+
+    // A name the service generated because source did not supply one.
+    if (AWS_GENERATED_NAMES[node.entityType]?.has(node.pattern)) return true;
+
     const defaults = AWS_SERVICE_DEFAULTS[node.entityType];
     if (!defaults) return false;
     if (!Object.prototype.hasOwnProperty.call(defaults, node.pattern)) return false;
@@ -293,6 +394,17 @@ export async function observeResourcesDeepAws(
   const resources: Record<string, DeepResourceObservation> = {};
   const unobserved: Record<string, UnobservedEntity> = {};
 
+  // Types with a bulk source are read once for the whole stack, before the
+  // per-entity pass — one `describe-security-groups` for every group, not one
+  // call per group.
+  const bulk = await readBulkSources(
+    options.entityNames.flatMap((name) => {
+      const r = byLogicalId.get(name);
+      return r?.physicalId ? [{ type: r.type, id: r.physicalId }] : [];
+    }),
+    options.region,
+  );
+
   await boundedConcurrently(options.entityNames, async (entityName) => {
     const stackResource = byLogicalId.get(entityName);
     // Not in the stack at all. The thin read reports that absence; restating it
@@ -300,11 +412,12 @@ export async function observeResourcesDeepAws(
     if (!stackResource) return;
 
     const type = stackResource.type;
-    if (!DEEP_READABLE_TYPES.has(type)) {
+    const source = DEEP_SOURCES[type];
+    if (!source) {
       unobserved[entityName] = {
         type,
         reason: "unsupported-kind",
-        detail: `no deep reader for ${type} — Cloud Control coverage is opt-in per type`,
+        detail: `no deep reader for ${type} — coverage is opt-in per type`,
       };
       return;
     }
@@ -318,32 +431,51 @@ export async function observeResourcesDeepAws(
       return;
     }
 
-    let parsed: CloudControlResource | null;
-    try {
-      parsed = await getResource(type, identifier, client);
-    } catch (err) {
-      unobserved[entityName] = {
-        type,
-        reason: classifyFailure(err),
-        detail: `GetResource failed for ${type} "${identifier}": ${failureDetail(err)}`,
-      };
-      return;
+    let properties: Record<string, unknown>;
+    if (source.via === "ec2") {
+      const answer = bulk.get(type);
+      if (!answer) {
+        unobserved[entityName] = {
+          type,
+          reason: "read-failed",
+          detail: `${source.argv.join(" ")} failed, so ${type} could not be read deeply`,
+        };
+        return;
+      }
+      const row = answer.get(identifier);
+      // The describe answered, and this id was not in it. That is absence, and
+      // the thin read already reports it — same reasoning as a resource missing
+      // from the stack.
+      if (!row) return;
+      properties = source.toModel(row);
+    } else {
+      let parsed: CloudControlResource | null;
+      try {
+        parsed = await getResource(type, identifier, client);
+      } catch (err) {
+        unobserved[entityName] = {
+          type,
+          reason: classifyFailure(err),
+          detail: `GetResource failed for ${type} "${identifier}": ${failureDetail(err)}`,
+        };
+        return;
+      }
+      if (!parsed) {
+        unobserved[entityName] = {
+          type,
+          reason: "read-failed",
+          detail: `unparseable GetResource response for ${type} "${identifier}"`,
+        };
+        return;
+      }
+      properties = parsed.properties;
     }
 
-    if (!parsed) {
-      unobserved[entityName] = {
-        type,
-        reason: "read-failed",
-        detail: `unparseable GetResource response for ${type} "${identifier}"`,
-      };
-      return;
-    }
-
-    // Cloud Control returns tags where the service carries them, so unlike the
+    // Both sources return tags where the service carries them, so unlike the
     // thin path this one can answer the ownership question (#1015's open note).
     // A resource withheld by the filter is `filtered`, never absent: it exists,
     // it just isn't chant's.
-    const owned = hasOwnershipMarker(parsed.properties);
+    const owned = hasOwnershipMarker(properties);
     if (options.owned && !owned) {
       unobserved[entityName] = {
         type,
@@ -356,7 +488,7 @@ export async function observeResourcesDeepAws(
     resources[entityName] = {
       type,
       physicalId: identifier,
-      properties: normalizeDeepProperties(parsed.properties, {
+      properties: normalizeDeepProperties(properties, {
         entityType: type,
         side: "live",
         hooks: awsDeepNormalizationHooks,
@@ -365,4 +497,59 @@ export async function observeResourcesDeepAws(
   });
 
   return deepObservation(resources, unobserved);
+}
+
+/**
+ * Read every `ec2`-sourced type in bulk, keyed by physical id.
+ *
+ * A type whose describe fails is absent from the returned map, which the caller
+ * turns into a hole for each of its resources — never into an absence, because
+ * a failed read establishes nothing about what exists.
+ *
+ * These reads still shell the CLI, unlike the Cloud Control path (#1206). The
+ * EC2 API speaks the Query protocol with its own lowerCamelCase XML, so going
+ * native here is a second wire format rather than a reuse of the existing
+ * client, and it belongs with the port of `properties.ts` / `ambient.ts` /
+ * `dependencies.ts` — the modules that already read EC2 this way.
+ */
+async function readBulkSources(
+  wanted: Array<{ type: string; id: string }>,
+  region?: string,
+): Promise<Map<string, Map<string, Record<string, unknown>>>> {
+  const byType = new Map<string, string[]>();
+  for (const { type, id } of wanted) {
+    if (DEEP_SOURCES[type]?.via !== "ec2") continue;
+    byType.set(type, [...(byType.get(type) ?? []), id]);
+  }
+  const out = new Map<string, Map<string, Record<string, unknown>>>();
+  if (byType.size === 0) return out;
+
+  const { getRuntime } = await import("@intentius/chant/runtime-adapter");
+  const rt = getRuntime();
+  const regionArgs = region ? ["--region", region] : [];
+
+  for (const [type, ids] of byType) {
+    const source = DEEP_SOURCES[type];
+    if (source?.via !== "ec2") continue;
+    try {
+      const result = await rt.spawn(
+        applyAwsEndpointArgv(
+          ["aws", ...source.argv, source.idFlag, ...ids, ...regionArgs, "--output", "json"],
+          process.env.AWS_ENDPOINT_URL,
+        ),
+      );
+      if (result.exitCode !== 0) continue;
+      const rows = (JSON.parse(result.stdout)[source.key] ?? []) as Array<Record<string, unknown>>;
+      const byId = new Map<string, Record<string, unknown>>();
+      for (const row of rows) {
+        const id = row[source.id];
+        if (typeof id === "string") byId.set(id, row);
+      }
+      out.set(type, byId);
+    } catch {
+      // One type's transport failing is that type's hole, not the whole read's.
+      continue;
+    }
+  }
+  return out;
 }
