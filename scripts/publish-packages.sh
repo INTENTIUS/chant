@@ -96,6 +96,65 @@ publishable_dirs() {
   ' "${dirs[@]}"
 }
 
+# The publishable dirs that some other publishable package depends on, directly
+# or transitively — the ones whose build output another package compiles
+# against.
+#
+# Deliberately a static question about the graph rather than "does anything
+# being published right now need it": answering that needs every package's live
+# version before the first one is processed, and getting it wrong strands a
+# release. The cost of being approximate is prepacking a dependency on a rerun
+# where nothing turned out to need it. The cost of being exact and wrong is
+# another half-published release.
+depended_on_dirs() {
+  local dirs=()
+  local dir
+  for dir in packages/*/ lexicons/*/; do
+    dir="${dir%/}"
+    [ -f "$dir/package.json" ] && dirs+=("$dir")
+  done
+
+  node -e '
+    const fs = require("fs");
+    const dirs = process.argv.slice(1);
+
+    const pkg = new Map();
+    const owner = new Map();
+    for (const d of dirs) {
+      const p = JSON.parse(fs.readFileSync(d + "/package.json", "utf8"));
+      if (p.private) continue;
+      pkg.set(d, p);
+      owner.set(p.name, d);
+    }
+
+    const direct = (d) => {
+      const p = pkg.get(d);
+      return Object.keys({
+        ...p.dependencies,
+        ...p.peerDependencies,
+        ...p.optionalDependencies,
+      }).map((n) => owner.get(n)).filter((x) => x && x !== d);
+    };
+
+    const needed = new Set();
+    const walk = (d) => {
+      for (const dep of direct(d)) {
+        if (needed.has(dep)) continue;
+        needed.add(dep);
+        walk(dep);
+      }
+    };
+    for (const d of pkg.keys()) walk(d);
+    console.log([...needed].sort().join("\n"));
+  ' "${dirs[@]}"
+}
+
+DEPENDED_ON=$(depended_on_dirs)
+
+needed_by_publish() {
+  printf '%s\n' "$DEPENDED_ON" | grep -qxF "$1"
+}
+
 # Ask the registry why it refused OIDC, and print its answer.
 #
 # npm's oidc helper is written never to throw: when the token exchange fails
@@ -243,7 +302,26 @@ while read -r dir; do
 
   echo "::group::$name@$version (published: ${live:-none})"
   if [ "$live" = "$version" ]; then
-    echo "  already at $version, skipping"
+    # Skipping the publish is not the same as skipping the build. A dependent
+    # later in the order compiles against this package's *generated* output,
+    # and the only thing that produces it is a prepack — normally a side effect
+    # of publishing. So a package that is already at $version leaves nothing on
+    # disk, and the dependent fails on a module that was never built.
+    #
+    # That is not a corner case, it is every retry: chant-v0.34.0's rerun
+    # published nothing, found k8s already at 0.34.0, skipped it, and helm
+    # failed on `@intentius/chant-lexicon-k8s/generated/index` exactly as it had
+    # the first time. A single-lexicon release hits the same wall.
+    #
+    # So build it anyway, but only when something being published needs it.
+    if needed_by_publish "$dir"; then
+      echo "  already at $version — building anyway, a package after it imports its output"
+      if ! (cd "$dir" && npm run prepack >/dev/null 2>&1); then
+        echo "::warning::$name is already published but its prepack failed; a dependent may not build"
+      fi
+    else
+      echo "  already at $version, skipping"
+    fi
     skipped+=("$name@$version")
   elif publish_one "$dir" "$name"; then
     published+=("$name@$version")
