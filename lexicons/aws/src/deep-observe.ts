@@ -134,7 +134,10 @@ export function securityGroupToModel(row: Record<string, unknown>): Record<strin
     ...(typeof row.GroupName === "string" ? { GroupName: row.GroupName } : {}),
     ...(typeof row.VpcId === "string" ? { VpcId: row.VpcId } : {}),
     ...(typeof row.GroupId === "string" ? { GroupId: row.GroupId } : {}),
-    ...(Array.isArray(row.Tags) ? { Tags: row.Tags } : {}),
+    // An empty tag set is the absence of tags, not a value. EC2 always sends
+    // the key, so carrying it through reports `Tags: <undeclared> -> []` on
+    // every untagged group — agreement rendered as drift.
+    ...(Array.isArray(row.Tags) && row.Tags.length > 0 ? { Tags: row.Tags } : {}),
     ...(ingress.length > 0 ? { SecurityGroupIngress: ingress } : {}),
     ...(egress.length > 0 ? { SecurityGroupEgress: egress } : {}),
   };

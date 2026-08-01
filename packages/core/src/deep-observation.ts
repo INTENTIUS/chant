@@ -324,6 +324,20 @@ export function deepPathSet(tree: Record<string, unknown>): Set<string> {
  * on every read; array order is canonicalized only where the lexicon says the
  * array is a set, because list order often *is* semantic.
  */
+/**
+ * A container whose every member the rules pruned.
+ *
+ * The distinction it carries is between a value that was empty in the source
+ * and one this pass emptied: `{}` a lexicon actually declared is a fact worth
+ * diffing, while `{}` left behind after both of a rule's fields were subtracted
+ * as provider defaults is a husk. Reporting the husk turns a suppressed default
+ * into `SecurityGroupEgress[#{}]: <undeclared> → {}` — noise wearing the shape
+ * of drift, which is the one thing the noise rules exist to prevent.
+ *
+ * Module-private: it never leaves this function's recursion.
+ */
+const EMPTIED = Symbol("emptied-by-pruning");
+
 export function normalizeDeepProperties(
   tree: Record<string, unknown>,
   options: NormalizeDeepOptions,
@@ -357,21 +371,32 @@ export function normalizeDeepProperties(
         const elPath = joinIndex(path, i);
         const elPattern = joinPattern(pattern);
         if (prune(elPath, elPattern, String(i), value[i])) continue;
-        elements.push(normalizeValue(value[i], elPath, elPattern, String(i)));
+        const element = normalizeValue(value[i], elPath, elPattern, String(i));
+        if (element === EMPTIED) continue;
+        elements.push(element);
       }
+      // An array that had elements and has none left was emptied by pruning,
+      // not declared empty. Reporting `[]` for it is reporting the husk of a
+      // value the rules just decided was noise.
+      if (elements.length === 0 && value.length > 0) return EMPTIED;
       return orderElements(elements, path, pattern);
     }
 
     if (isPlainObject(value)) {
       const out: Record<string, unknown> = {};
+      let had = 0;
       for (const childKey of Object.keys(value).sort()) {
         const childPath = joinPath(path, childKey);
         const childPattern = joinPath(pattern, childKey);
         const childValue = value[childKey];
         if (childValue === undefined) continue;
+        had += 1;
         if (prune(childPath, childPattern, childKey, childValue)) continue;
-        out[childKey] = normalizeValue(childValue, childPath, childPattern, childKey);
+        const child = normalizeValue(childValue, childPath, childPattern, childKey);
+        if (child === EMPTIED) continue;
+        out[childKey] = child;
       }
+      if (Object.keys(out).length === 0 && had > 0) return EMPTIED;
       return out;
     }
 

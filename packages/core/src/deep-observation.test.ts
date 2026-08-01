@@ -84,6 +84,54 @@ describe("normalizeDeepProperties", () => {
     expect(out).toEqual({ Name: "n" });
   });
 
+  // A container the rules emptied is not a container the source declared empty.
+  // Keeping the husk turns a suppressed default into drift-shaped noise —
+  // `SecurityGroupEgress[#{}]: <undeclared> → {}` was the case that found this.
+  test("an object whose every field was pruned is dropped, not left as {}", () => {
+    const hooks: DeepNormalizationHooks = { prune: (n) => n.key === "CidrIp" || n.key === "IpProtocol" };
+    const out = normalizeDeepProperties(
+      { Egress: [{ CidrIp: "0.0.0.0/0", IpProtocol: "-1" }], Name: "n" },
+      { entityType: "T", side: "live", hooks },
+    );
+    expect(out).toEqual({ Name: "n" });
+  });
+
+  test("an object the source declared empty survives", () => {
+    const hooks: DeepNormalizationHooks = { prune: () => false };
+    const out = normalizeDeepProperties(
+      { Spec: {}, Items: [], Name: "n" },
+      { entityType: "T", side: "live", hooks },
+    );
+    expect(out).toEqual({ Spec: {}, Items: [], Name: "n" });
+  });
+
+  test("a partly pruned object keeps what survived", () => {
+    const hooks: DeepNormalizationHooks = { prune: (n) => n.key === "Arn" };
+    const out = normalizeDeepProperties(
+      { Role: { Arn: "arn:…", Path: "/" } },
+      { entityType: "T", side: "live", hooks },
+    );
+    expect(out).toEqual({ Role: { Path: "/" } });
+  });
+
+  test("emptiness propagates up as far as the pruning reaches", () => {
+    const hooks: DeepNormalizationHooks = { prune: (n) => n.key === "Gone" };
+    const out = normalizeDeepProperties(
+      { Outer: { Inner: { Gone: 1 } }, Name: "n" },
+      { entityType: "T", side: "live", hooks },
+    );
+    expect(out).toEqual({ Name: "n" });
+  });
+
+  test("an array keeps the elements pruning did not empty", () => {
+    const hooks: DeepNormalizationHooks = { prune: (n) => n.key === "Default" };
+    const out = normalizeDeepProperties(
+      { Rules: [{ Default: true }, { Port: 443 }] },
+      { entityType: "T", side: "live", hooks },
+    );
+    expect(out).toEqual({ Rules: [{ Port: 443 }] });
+  });
+
   test("hooks see an index-erased pattern alongside the exact path", () => {
     const seen: Array<[string, string]> = [];
     const hooks: DeepNormalizationHooks = {
