@@ -26,36 +26,74 @@ set -uo pipefail
 
 REGISTRY="https://registry.npmjs.org"
 
-# Publish order. Every lexicon peer-depends on @intentius/chant, and the k8s
-# lexicon declares @intentius/chant-k8s-client as an optional dependency
-# (#1074) — npm tolerates an optional dependency that fails to resolve, so
-# publishing the client ahead of the lexicon is what keeps `chant lifecycle
-# diff --live` working for a registry install rather than silently degrading
-# to holes. Everything else follows in directory order.
-PRIORITY_DIRS=(packages/core packages/k8s-client)
-
-is_priority() {
-  local candidate="$1" d
-  for d in "${PRIORITY_DIRS[@]}"; do
-    [ "$d" = "$candidate" ] && return 0
-  done
-  return 1
-}
-
-# Every workspace directory that npm would actually publish, priority first.
-# `private: true` packages (packages/test-utils) are skipped the same way npm
-# would skip them.
+# Every workspace directory that npm would actually publish, in an order where
+# a package always follows the workspace packages it depends on. `private: true`
+# packages (packages/test-utils) are skipped the same way npm would skip them.
+#
+# The order is derived, not listed. Each `npm publish` re-runs that package's
+# prepack, and a prepack both builds against and imports its workspace
+# dependencies' *generated* output — so publishing a dependent first fails on a
+# module that does not exist yet. Directory order used to stand in for this, and
+# it happened to be right until it was not: chant-v0.34.0 stranded
+# lexicon-forgejo (needs github's `src/generated/index`) and lexicon-helm (needs
+# k8s's `dist/generated/index.d.ts`), because `forgejo` < `github` and
+# `helm` < `k8s`. Any future lexicon that depends on an alphabetically later one
+# would have done the same.
+#
+# Edges come from dependencies, peerDependencies and optionalDependencies.
+# Optional counts: the k8s lexicon declares @intentius/chant-k8s-client optional
+# (#1074), and npm tolerates an optional dependency that fails to resolve, so
+# publishing the client after the lexicon degrades `chant lifecycle diff --live`
+# to holes on a registry install rather than failing loudly.
 publishable_dirs() {
+  local dirs=()
   local dir
-  for dir in "${PRIORITY_DIRS[@]}"; do
-    [ -f "$dir/package.json" ] && echo "$dir"
-  done
   for dir in packages/*/ lexicons/*/; do
     dir="${dir%/}"
-    [ -f "$dir/package.json" ] || continue
-    is_priority "$dir" && continue
-    echo "$dir"
+    [ -f "$dir/package.json" ] && dirs+=("$dir")
   done
+
+  node -e '
+    const fs = require("fs");
+    const dirs = process.argv.slice(1);
+
+    const pkg = new Map();   // dir -> package.json
+    const owner = new Map(); // package name -> dir
+    for (const d of dirs) {
+      const p = JSON.parse(fs.readFileSync(d + "/package.json", "utf8"));
+      if (p.private) continue;
+      pkg.set(d, p);
+      owner.set(p.name, d);
+    }
+
+    // dir -> the publishable workspace dirs it must follow.
+    const needs = new Map();
+    for (const [d, p] of pkg) {
+      const deps = Object.keys({
+        ...p.dependencies,
+        ...p.peerDependencies,
+        ...p.optionalDependencies,
+      });
+      needs.set(d, new Set(deps.map((n) => owner.get(n)).filter((x) => x && x !== d)));
+    }
+
+    // Kahn, alphabetical among whatever is ready, so the order is stable and
+    // reviewable rather than dependent on Map insertion.
+    const out = [];
+    const left = new Set(pkg.keys());
+    while (left.size) {
+      const ready = [...left].filter((d) => ![...needs.get(d)].some((n) => left.has(n))).sort();
+      if (!ready.length) {
+        // A cycle. Emit the rest in directory order rather than publishing
+        // nothing — npm will say which package could not build.
+        console.error("publish order: dependency cycle among " + [...left].sort().join(", "));
+        out.push(...[...left].sort());
+        break;
+      }
+      for (const d of ready) { out.push(d); left.delete(d); }
+    }
+    console.log(out.join("\n"));
+  ' "${dirs[@]}"
 }
 
 # Ask the registry why it refused OIDC, and print its answer.
