@@ -6,7 +6,7 @@
  * cloud edge (the runtime adapter's spawn) mocked. Proves the seam between core
  * and a real lexicon — not a `createMockPlugin` fixture.
  */
-import { describe, test, expect, vi, beforeEach } from "vitest";
+import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync, readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -40,8 +40,47 @@ const liveTemplate = {
 
 const ok = (stdout: string) => ({ stdout, stderr: "", exitCode: 0 });
 
+/* The stack reads moved off the CLI onto the CloudFormation Query protocol
+ * (#1206), so they are stubbed at `fetch` rather than at `spawn`. The paths
+ * still on the CLI — `describeStackStatus`, `exportResources`, and the
+ * per-kind property reads — keep using `spawnMock` below. */
+
+const stackResourcesXml = (rows: Array<{ logicalId: string; type: string; physicalId: string }>) =>
+  `<DescribeStackResourcesResponse><StackResources>${rows
+    .map(
+      (r) =>
+        `<member><LogicalResourceId>${r.logicalId}</LogicalResourceId><ResourceType>${r.type}</ResourceType>` +
+        `<PhysicalResourceId>${r.physicalId}</PhysicalResourceId><ResourceStatus>CREATE_COMPLETE</ResourceStatus>` +
+        `<Timestamp>2026-01-01T00:00:00Z</Timestamp></member>`,
+    )
+    .join("")}</StackResources></DescribeStackResourcesResponse>`;
+
+const stackOutputsXml = (outputs: Record<string, string> = {}) =>
+  `<DescribeStacksResponse><Outputs>${Object.entries(outputs)
+    .map(([k, v]) => `<member><OutputKey>${k}</OutputKey><OutputValue>${v}</OutputValue></member>`)
+    .join("")}</Outputs></DescribeStacksResponse>`;
+
+const queryErrorXml = (code: string, message: string) =>
+  `<ErrorResponse><Error><Code>${code}</Code><Message>${message}</Message></Error></ErrorResponse>`;
+
+/** Route a CloudFormation Query call by its `Action`, and answer as CFN would. */
+const stubCfn = (route: (action: string) => { status?: number; text: string }): void => {
+  vi.spyOn(globalThis, "fetch").mockImplementation((async (_url: string, init: { body: string }) => {
+    const action = new URLSearchParams(init.body).get("Action") ?? "";
+    const res = route(action);
+    return { status: res.status ?? 200, text: () => Promise.resolve(res.text) };
+  }) as unknown as typeof fetch);
+};
+
+/** The whole-stack refusal both the credentials and the missing-stack cases use. */
+const stubCfnError = (code: string, message: string): void =>
+  stubCfn(() => ({ status: 400, text: queryErrorXml(code, message) }));
+
 describe("aws lifecycle integration (#163)", () => {
   beforeEach(() => spawnMock.mockReset());
+  // A `fetch` stub left standing would serve the next test's stack read, which
+  // is how a credentials case can come back looking healthy.
+  afterEach(() => vi.restoreAllMocks());
 
   test("live-import driver: real exportResources → IR → generated source", async () => {
     spawnMock.mockResolvedValue(ok(JSON.stringify({ TemplateBody: liveTemplate })));
@@ -65,27 +104,11 @@ describe("aws lifecycle integration (#163)", () => {
   });
 
   test("changeset path: real describeResources → buildChangeSet verdicts", async () => {
-    // describe-stack-resources then describe-stacks.
-    spawnMock.mockImplementation((argv?: string[]) => {
-      if (argv?.includes("describe-stack-resources")) {
-        return Promise.resolve(
-          ok(
-            JSON.stringify({
-              StackResources: [
-                {
-                  LogicalResourceId: "MyBucket",
-                  ResourceType: "AWS::S3::Bucket",
-                  PhysicalResourceId: "my-bucket",
-                  ResourceStatus: "CREATE_COMPLETE",
-                  Timestamp: "2026-01-01T00:00:00Z",
-                },
-              ],
-            }),
-          ),
-        );
-      }
-      return Promise.resolve(ok(JSON.stringify({ Stacks: [{ Outputs: [] }] })));
-    });
+    stubCfn((action) =>
+      action === "DescribeStackResources"
+        ? { text: stackResourcesXml([{ logicalId: "MyBucket", type: "AWS::S3::Bucket", physicalId: "my-bucket" }]) }
+        : { text: stackOutputsXml() },
+    );
 
     const { resources: observedNow } = normalizeObservation(
       await awsPlugin.describeResources!({
@@ -96,7 +119,7 @@ describe("aws lifecycle integration (#163)", () => {
       }),
     );
     expect(observedNow.MyBucket?.type).toBe("AWS::S3::Bucket");
-    // Ownership verdicts are total (#1089): describe-stack-resources carries no
+    // Ownership verdicts are total (#1089): DescribeStackResources carries no
     // tags, so the verdict is an explicit `unknown`, not a missing field.
     expect(observedNow.MyBucket?.ownership).toBe("unknown");
 
@@ -160,7 +183,7 @@ describe("aws lifecycle integration (#163)", () => {
    * NOT-OBSERVED, and that survives describe → plan → component status.
    */
   test("tri-state chain: a failed stack read stays unobserved through describe → plan → status (#1089)", async () => {
-    spawnMock.mockResolvedValue({ stdout: "", stderr: "Unable to locate credentials", exitCode: 255 });
+    stubCfnError("AccessDenied", "Unable to locate credentials");
 
     const observed = normalizeObservation(
       await awsPlugin.describeResources!({
@@ -190,7 +213,7 @@ describe("aws lifecycle integration (#163)", () => {
   });
 
   test("a stack that does not exist is a real absence — every declared entity is a create", async () => {
-    spawnMock.mockResolvedValue({ stdout: "", stderr: "ValidationError: Stack with id prod does not exist", exitCode: 255 });
+    stubCfnError("ValidationError", "Stack with id prod does not exist");
 
     const observed = normalizeObservation(
       await awsPlugin.describeResources!({
@@ -222,7 +245,7 @@ describeObservationConformance({
       declared: ["MyBucket", "MyQueue"],
       expectUnobserved: ["MyBucket", "MyQueue"],
       run: () => {
-        spawnMock.mockResolvedValue({ stdout: "", stderr: "Unable to locate credentials", exitCode: 255 });
+        stubCfnError("AccessDenied", "Unable to locate credentials");
         return awsPlugin.describeResources!({
           environment: "prod",
           buildOutput: "",
@@ -236,7 +259,7 @@ describeObservationConformance({
       declared: ["MyBucket"],
       expectAbsent: ["MyBucket"],
       run: () => {
-        spawnMock.mockResolvedValue({ stdout: "", stderr: "ValidationError: Stack with id prod does not exist", exitCode: 255 });
+        stubCfnError("ValidationError", "Stack with id prod does not exist");
         return awsPlugin.describeResources!({
           environment: "prod",
           buildOutput: "",
@@ -250,24 +273,10 @@ describeObservationConformance({
       declared: ["MyBucket"],
       expectPresent: ["MyBucket"],
       run: () => {
-        spawnMock.mockImplementation((argv?: string[]) =>
-          Promise.resolve(
-            argv?.includes("describe-stack-resources")
-              ? ok(
-                  JSON.stringify({
-                    StackResources: [
-                      {
-                        LogicalResourceId: "MyBucket",
-                        ResourceType: "AWS::S3::Bucket",
-                        PhysicalResourceId: "my-bucket",
-                        ResourceStatus: "CREATE_COMPLETE",
-                        Timestamp: "2026-01-01T00:00:00Z",
-                      },
-                    ],
-                  }),
-                )
-              : ok(JSON.stringify({ Stacks: [{ Outputs: [] }] })),
-          ),
+        stubCfn((action) =>
+          action === "DescribeStackResources"
+            ? { text: stackResourcesXml([{ logicalId: "MyBucket", type: "AWS::S3::Bucket", physicalId: "my-bucket" }]) }
+            : { text: stackOutputsXml() },
         );
         return awsPlugin.describeResources!({
           environment: "prod",

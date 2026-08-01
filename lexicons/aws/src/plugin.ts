@@ -17,10 +17,17 @@ import { awsSerializer } from "./serializer";
 import { FLOCI_EMULATOR } from "./op/activities/floci";
 import { applyAwsEndpointArgv } from "./components/cloud-executor";
 import { stackDoesNotExist } from "./stack-errors";
+import {
+  AwsReadError,
+  describeStackOutputs,
+  describeStackResources,
+  type AwsReadClientOptions,
+  type StackResource,
+} from "./api/read-client";
 import { awsDeepNormalizationHooks, observeResourcesDeepAws } from "./deep-observe";
 import { awsReferenceCatalog } from "./reference-catalog";
 import { AMBIENT_KINDS } from "./ambient";
-import { describeOwnProperties, stampRegion } from "./properties";
+import { canDescribe, describeOwnProperties, stampRegion } from "./properties";
 import { stampProviderDefaults } from "./defaults";
 import { resolveTemplateAttrs } from "./live-attrs";
 import { CFParser } from "./import/parser";
@@ -541,12 +548,14 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
     region?: string;
     owned?: boolean;
   }): Promise<ObservationResult> {
-    const { getRuntime } = await import("@intentius/chant/runtime-adapter");
     const { observation, unobservedAll } = await import("@intentius/chant/observation");
-    const rt = getRuntime();
     const resources: Record<string, ResourceMetadata> = {};
-    // Multi-region estates: target this stack's region, not the ambient one.
-    const regionArgs = options.region ? ["--region", options.region] : [];
+    // The applier's own transport, pointed at the read APIs (#1206). Multi-region
+    // estates target this stack's region, not the ambient one.
+    const client: AwsReadClientOptions = {
+      ...(process.env.AWS_ENDPOINT_URL ? { endpoint: process.env.AWS_ENDPOINT_URL } : {}),
+      ...(options.region ? { region: options.region } : {}),
+    };
 
     if (options.owned) {
       // describe-stack-resources does not return tags, so ownership cannot be
@@ -569,29 +578,26 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
     // single-stack convention is the stack named after the environment (#932).
     const stackName = options.stack ?? `${options.environment}`;
 
-    // Describe stack resources. Inject --endpoint-url from AWS_ENDPOINT_URL so a
+    // Describe stack resources. The endpoint override rides the client, so a
     // local emulator (Floci) is observed instead of real AWS (#926) — behold
     // serve --local relies on this for the overlay.
-    const listResult = await rt.spawn(applyAwsEndpointArgv([
-      "aws", "cloudformation", "describe-stack-resources",
-      "--stack-name", stackName,
-      ...regionArgs,
-      "--output", "json",
-    ], process.env.AWS_ENDPOINT_URL));
-
-    if (listResult.exitCode !== 0) {
+    let stackResources: StackResource[];
+    try {
+      stackResources = await describeStackResources(stackName, client);
+    } catch (err) {
       // A stack that doesn't exist yet is the pre-first-apply state: nothing is
       // deployed for this env, so there are no live resources (every declared
       // resource is "pending") — not an error. That is a real absence, so the
       // empty result is the honest one and `create` is the right proposal.
-      if (stackDoesNotExist(listResult.stderr)) {
+      if (err instanceof AwsReadError && stackDoesNotExist(err.message)) {
         return observation(resources);
       }
       // Any other failure (credentials, throttling, a region that can't be
       // reached) establishes nothing about what is deployed. Reporting every
       // declared entity as NOT-OBSERVED (#1089) is what keeps a broken read
       // from arriving downstream as "none of this exists".
-      const reason = /credential|token|expired|AccessDenied|not authorized|UnauthorizedOperation/i.test(listResult.stderr)
+      const detail = err instanceof AwsReadError && err.code ? `${err.code}: ${err.message}` : String(err instanceof Error ? err.message : err);
+      const reason = /credential|token|expired|AccessDenied|not authorized|Unauthorized/i.test(detail)
         ? "no-credentials"
         : "read-failed";
       return observation(
@@ -599,45 +605,22 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
         unobservedAll(
           options.entityNames,
           reason,
-          `describe-stack-resources failed for stack "${stackName}": ${listResult.stderr.trim().split("\n")[0] ?? ""}`,
+          `DescribeStackResources failed for stack "${stackName}": ${detail}`,
         ),
       );
     }
 
-    const data = JSON.parse(listResult.stdout) as {
-      StackResources: Array<{
-        LogicalResourceId: string;
-        ResourceType: string;
-        PhysicalResourceId: string;
-        ResourceStatus: string;
-        Timestamp: string;
-      }>;
-    };
-
     // Map logical names from build to stack resources
-    const stackResourceMap = new Map<string, typeof data.StackResources[0]>();
-    for (const r of data.StackResources) {
-      stackResourceMap.set(r.LogicalResourceId, r);
-    }
+    const stackResourceMap = new Map(stackResources.map((r) => [r.logicalId, r]));
 
-    // Get stack outputs
-    const describeResult = await rt.spawn(applyAwsEndpointArgv([
-      "aws", "cloudformation", "describe-stacks",
-      "--stack-name", stackName,
-      ...regionArgs,
-      "--output", "json",
-    ], process.env.AWS_ENDPOINT_URL));
-
+    // Get stack outputs. A stack whose resources read fine but whose outputs do
+    // not is still a usable observation, so this failure is swallowed exactly as
+    // the non-zero exit code used to be.
     let stackOutputs: Record<string, string> = {};
-    if (describeResult.exitCode === 0) {
-      const stacks = JSON.parse(describeResult.stdout) as {
-        Stacks: Array<{ Outputs?: Array<{ OutputKey: string; OutputValue: string }> }>;
-      };
-      if (stacks.Stacks[0]?.Outputs) {
-        for (const o of stacks.Stacks[0].Outputs) {
-          stackOutputs[o.OutputKey] = o.OutputValue;
-        }
-      }
+    try {
+      stackOutputs = await describeStackOutputs(stackName, client);
+    } catch {
+      stackOutputs = {};
     }
 
     for (const entityName of options.entityNames) {
@@ -655,10 +638,10 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
       }
 
       resources[entityName] = {
-        type: stackResource.ResourceType,
-        physicalId: stackResource.PhysicalResourceId,
-        status: stackResource.ResourceStatus,
-        lastUpdated: stackResource.Timestamp,
+        type: stackResource.type,
+        physicalId: stackResource.physicalId ?? "",
+        status: stackResource.status ?? "",
+        lastUpdated: stackResource.timestamp ?? "",
         // Total verdict (#1089): describe-stack-resources returns no tags, so
         // this path cannot read the ownership marker. Say `unknown` explicitly
         // rather than leaving the field off and letting each consumer guess —
@@ -671,9 +654,37 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
     // Each resource's OWN properties, on top of the stack outputs above (#1279).
     // Until this, a node's `attrs` were the stack's exports replicated onto
     // every member, so no instance carried its own `VpcId`.
-    const withProperties = stampProviderDefaults(
-      stampRegion(await describeOwnProperties(resources, options.region), options.region),
-    );
+    const own = await describeOwnProperties(resources, options.region);
+    const withProperties = stampProviderDefaults(stampRegion(own.resources, options.region));
+
+    // The own-property read is still a CLI shell-out while the stack reads are
+    // not (#1206), so the two halves can now fail independently. When the
+    // enrichment could not run at all, the resources it would have described are
+    // identified but not described — and `lifecycle diff` compares these
+    // attributes, so presenting them anyway reports every previously-recorded
+    // property as removed. That is a failed read arriving as drift, which is the
+    // shape #1089 exists to prevent, so say it is a hole instead.
+    const undescribed = own.transportFailed
+      ? Object.keys(withProperties).filter((name) => canDescribe(withProperties[name].type))
+      : [];
+    if (undescribed.length > 0) {
+      const described: Record<string, ResourceMetadata> = {};
+      for (const [name, meta] of Object.entries(withProperties)) {
+        if (!undescribed.includes(name)) described[name] = meta;
+      }
+      // Attribute each hole to the call that failed for *its* kind, rather than
+      // to whichever call happened to fail first.
+      const holes: Record<string, { type: string; reason: "read-failed"; detail: string }> = {};
+      for (const name of undescribed) {
+        const type = withProperties[name].type;
+        holes[name] = {
+          type,
+          reason: "read-failed",
+          detail: `the stack was read, but this resource's own properties were not — ${own.failures.get(type) ?? "the describe call failed"}`,
+        };
+      }
+      return observation(described, holes);
+    }
 
     // Every entity the stack answered for was answered for: an entity the
     // template doesn't carry is genuinely not in this stack, which is an
