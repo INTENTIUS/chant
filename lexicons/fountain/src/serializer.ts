@@ -90,8 +90,12 @@ function toYaml(value: unknown, indent = 0): string {
       if (isScalar(item)) {
         out += `${pad}- ${scalar(item)}\n`;
       } else {
+        // Fold the item's first line onto the dash (`- key: value`) rather
+        // than emitting the dash on its own line: `- ` is exactly as wide
+        // as one indent level, so continuation lines already align, and
+        // parseYAML can't read the dash-alone form (#1286).
         const body = toYaml(item, indent + 1);
-        out += `${pad}-\n${body}`;
+        out += `${pad}- ${body.slice(pad.length + 2)}`;
       }
     }
     return out;

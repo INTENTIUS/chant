@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { fountainSerializer } from "./serializer";
+import { parseManifest } from "./op/activities/fountain-apply";
 import type { Declarable } from "@intentius/chant";
 
 function entity(entityType: string, props: Record<string, unknown>): Declarable {
@@ -83,6 +84,56 @@ describe("fountain serializer", () => {
 
     const out = fountainSerializer.serialize(new Map([["v", vault]]));
     expect(out).toContain('description: "true"');
+  });
+
+  it("folds the first line of a map list item onto the dash", () => {
+    const agent = entity("Fountain::V1::Agent", {
+      name: "a",
+      model: "anthropic/claude-sonnet-4-6",
+      runtime: "claude",
+      skills: [{ source: "anthropics/skills", name: "frontend-design" }],
+    });
+
+    const out = fountainSerializer.serialize(new Map([["a", agent]])) as string;
+    expect(out).toContain("    - source: anthropics/skills\n      name: frontend-design");
+    expect(out).not.toMatch(/^\s*-$/m);
+  });
+
+  it("round-trips its own output through parseManifest", () => {
+    // A list-of-maps field plus a spec-level `metadata` key is the shape
+    // that used to collapse in parseYAML (#1286): the list item's keys
+    // leaked to the top level and spec.metadata clobbered the document
+    // metadata, blanking every resource name.
+    const env = entity("Fountain::V1::Environment", {
+      name: "e",
+      secrets: [{ key: "GITHUB_TOKEN", value: "infisical:///dev/GITHUB_TOKEN" }],
+      metadata: { "managed-by": "chant" },
+    });
+    const agent = entity("Fountain::V1::Agent", {
+      name: "a",
+      model: "anthropic/claude-sonnet-4-6",
+      runtime: "claude",
+      environment: env,
+      skills: [{ source: "anthropics/skills", name: "frontend-design" }],
+      metadata: { "managed-by": "chant" },
+    });
+
+    const out = fountainSerializer.serialize(
+      new Map([
+        ["e", env],
+        ["a", agent],
+      ]),
+    ) as string;
+    const resources = parseManifest(out);
+
+    expect(resources.map((r) => `${r.kind}/${r.name}`)).toEqual(["Environment/e", "Agent/a"]);
+    expect(resources[0].spec.secrets).toEqual([
+      { key: "GITHUB_TOKEN", value: "infisical:///dev/GITHUB_TOKEN" },
+    ]);
+    expect(resources[1].spec.skills).toEqual([
+      { source: "anthropics/skills", name: "frontend-design" },
+    ]);
+    expect(resources[1].spec.metadata).toEqual({ "managed-by": "chant" });
   });
 
   it("does not use YAML aliases or tags for substitution references", () => {
