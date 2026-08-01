@@ -26,9 +26,9 @@ interface RawIpPermission {
   IpProtocol?: string;
   FromPort?: number;
   ToPort?: number;
-  IpRanges?: Array<{ CidrIp?: string }>;
-  Ipv6Ranges?: Array<{ CidrIpv6?: string }>;
-  UserIdGroupPairs?: Array<{ GroupId?: string }>;
+  IpRanges?: Array<{ CidrIp?: string; Description?: string }>;
+  Ipv6Ranges?: Array<{ CidrIpv6?: string; Description?: string }>;
+  UserIdGroupPairs?: Array<{ GroupId?: string; Description?: string }>;
 }
 
 /**
@@ -52,14 +52,19 @@ export function toIngressRules(permissions: RawIpPermission[]): Array<Record<str
       ...(permission.FromPort != null ? { FromPort: permission.FromPort } : {}),
       ...(permission.ToPort != null ? { ToPort: permission.ToPort } : {}),
     };
+    // A source's own `Description` rides with it. The fold ignores it, but the
+    // deep reader (#1269) matches rules by their whole value against a template
+    // that carries one, and a dropped field there reports every rule twice.
+    const described = (source: { Description?: string }) =>
+      source.Description ? { Description: source.Description } : {};
     for (const range of permission.IpRanges ?? []) {
-      if (range.CidrIp) rules.push({ ...base, CidrIp: range.CidrIp });
+      if (range.CidrIp) rules.push({ ...base, CidrIp: range.CidrIp, ...described(range) });
     }
     for (const range of permission.Ipv6Ranges ?? []) {
-      if (range.CidrIpv6) rules.push({ ...base, CidrIpv6: range.CidrIpv6 });
+      if (range.CidrIpv6) rules.push({ ...base, CidrIpv6: range.CidrIpv6, ...described(range) });
     }
     for (const pair of permission.UserIdGroupPairs ?? []) {
-      if (pair.GroupId) rules.push({ ...base, SourceSecurityGroupId: pair.GroupId });
+      if (pair.GroupId) rules.push({ ...base, SourceSecurityGroupId: pair.GroupId, ...described(pair) });
     }
   }
   return rules;

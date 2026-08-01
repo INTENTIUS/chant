@@ -7,7 +7,17 @@
  * is its transport, which is injected as `http` where the reader is called
  * directly and stubbed at `fetch` where the plugin builds its own.
  */
-import { describe, test, expect, vi, afterEach } from "vitest";
+import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";
+
+// The Cloud Control source is injected as `http`; the EC2 source still shells
+// the CLI (#1269), so that one edge is mocked here. Partial mock for the same
+// reason lifecycle-integration.test.ts uses one — this module is reachable from
+// real exports the plugin path touches.
+const spawnMock = vi.fn();
+vi.mock("@intentius/chant/runtime-adapter", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@intentius/chant/runtime-adapter")>();
+  return { ...actual, getRuntime: () => ({ ...actual.getRuntime(), spawn: spawnMock }) };
+});
 
 const { awsPlugin } = await import("./plugin");
 const {
@@ -166,6 +176,8 @@ describe("hasOwnershipMarker", () => {
 });
 
 describe("observeResourcesDeepAws", () => {
+  beforeEach(() => spawnMock.mockReset());
+
   test("reads each resource through Cloud Control, honoring AWS_ENDPOINT_URL", async () => {
     const previous = process.env.AWS_ENDPOINT_URL;
     process.env.AWS_ENDPOINT_URL = "http://127.0.0.1:5566";
@@ -282,6 +294,104 @@ describe("observeResourcesDeepAws", () => {
     expect(fake.calls[0]?.body).toContain("StackName=payments-prod");
   });
 
+  // #1269 — Cloud Control returns a security group's identity and description
+  // and none of its rules, so the type is sourced from the EC2 API instead.
+  describe("a type sourced from EC2 rather than Cloud Control", () => {
+    const sgRow = (permissions: unknown[]) => ({
+      GroupId: "sg-01",
+      GroupName: "app-sg",
+      Description: "app tier",
+      VpcId: "vpc-1",
+      Tags: [{ Key: "chant:managed-by", Value: "chant" }],
+      IpPermissions: permissions,
+      IpPermissionsEgress: [],
+    });
+    const ssh = {
+      IpProtocol: "tcp",
+      FromPort: 22,
+      ToPort: 22,
+      IpRanges: [{ CidrIp: "203.0.113.0/24", Description: "office" }],
+    };
+
+    test("reads the rules Cloud Control does not return, in the template's shape", async () => {
+      spawnMock.mockResolvedValue({
+        stdout: JSON.stringify({ SecurityGroups: [sgRow([ssh])] }),
+        stderr: "",
+        exitCode: 0,
+      });
+      const fake = httpFake(() => stackResources([["Perimeter", "AWS::EC2::SecurityGroup", "sg-01"]]));
+      const result = normalizeDeepObservation(
+        await observeResourcesDeepAws({ environment: "prod", entityNames: ["Perimeter"], http: fake.http }),
+      );
+      // EC2's `Description`/`IpPermissions` arrive as the CloudFormation model's
+      // `GroupDescription`/`SecurityGroupIngress`, one flat rule per source.
+      expect(result.resources.Perimeter.properties).toMatchObject({
+        GroupDescription: "app tier",
+        VpcId: "vpc-1",
+        SecurityGroupIngress: [
+          { IpProtocol: "tcp", FromPort: 22, ToPort: 22, CidrIp: "203.0.113.0/24", Description: "office" },
+        ],
+      });
+      // The physical id is server-populated and pruned, as on every other type.
+      expect(result.resources.Perimeter.properties.GroupId).toBeUndefined();
+    });
+
+    test("one describe for every group in the stack, not one per group", async () => {
+      spawnMock.mockResolvedValue({
+        stdout: JSON.stringify({ SecurityGroups: [sgRow([ssh]), { ...sgRow([]), GroupId: "sg-02" }] }),
+        stderr: "",
+        exitCode: 0,
+      });
+      const fake = httpFake(() =>
+        stackResources([
+          ["A", "AWS::EC2::SecurityGroup", "sg-01"],
+          ["B", "AWS::EC2::SecurityGroup", "sg-02"],
+        ]),
+      );
+      const result = normalizeDeepObservation(
+        await observeResourcesDeepAws({ environment: "prod", entityNames: ["A", "B"], http: fake.http }),
+      );
+      expect(Object.keys(result.resources).sort()).toEqual(["A", "B"]);
+      expect(spawnMock).toHaveBeenCalledTimes(1);
+      expect(spawnMock.mock.calls[0][0]).toEqual(expect.arrayContaining(["describe-security-groups", "sg-01", "sg-02"]));
+    });
+
+    test("a failed describe is a hole for that type, never an absence", async () => {
+      spawnMock.mockResolvedValue({ stdout: "", stderr: "throttled", exitCode: 255 });
+      const fake = httpFake(() => stackResources([["Perimeter", "AWS::EC2::SecurityGroup", "sg-01"]]));
+      const result = normalizeDeepObservation(
+        await observeResourcesDeepAws({ environment: "prod", entityNames: ["Perimeter"], http: fake.http }),
+      );
+      expect(result.resources).toEqual({});
+      expect(result.unobserved.Perimeter.reason).toBe("read-failed");
+    });
+
+    test("a group the describe answered for but did not return is absent, not a hole", async () => {
+      // The read succeeded and the id was not in it. The thin path reports that
+      // absence; a second report here would turn one finding into two.
+      spawnMock.mockResolvedValue({ stdout: JSON.stringify({ SecurityGroups: [] }), stderr: "", exitCode: 0 });
+      const fake = httpFake(() => stackResources([["Perimeter", "AWS::EC2::SecurityGroup", "sg-01"]]));
+      const result = normalizeDeepObservation(
+        await observeResourcesDeepAws({ environment: "prod", entityNames: ["Perimeter"], http: fake.http }),
+      );
+      expect(result.resources).toEqual({});
+      expect(result.unobserved).toEqual({});
+    });
+
+    test("--owned reads the marker off the EC2 tags", async () => {
+      spawnMock.mockResolvedValue({
+        stdout: JSON.stringify({ SecurityGroups: [{ ...sgRow([ssh]), Tags: [{ Key: "team", Value: "other" }] }] }),
+        stderr: "",
+        exitCode: 0,
+      });
+      const fake = httpFake(() => stackResources([["Perimeter", "AWS::EC2::SecurityGroup", "sg-01"]]));
+      const result = normalizeDeepObservation(
+        await observeResourcesDeepAws({ environment: "prod", entityNames: ["Perimeter"], owned: true, http: fake.http }),
+      );
+      expect(result.unobserved.Perimeter.reason).toBe("filtered");
+    });
+  });
+
   test("the per-resource reads are concurrent, not one round trip after another", async () => {
     let inFlight = 0;
     let peak = 0;
@@ -314,6 +424,9 @@ describe("observeResourcesDeepAws", () => {
  * baseline, and exactly the genuine drift.
  */
 describe("end to end: declared + mutated live + baseline (#1015)", () => {
+  // The security group in this estate is sourced from EC2 (#1269), which still
+  // shells the CLI; it stands in for a deep read that fails.
+  beforeEach(() => spawnMock.mockResolvedValue({ stdout: "", stderr: "throttled", exitCode: 255 }));
   // This block drives the real plugin, which builds its own transport, so the
   // seam here is `fetch` itself rather than an injected `http` (#1206).
   afterEach(() => {
@@ -412,7 +525,7 @@ describe("end to end: declared + mutated live + baseline (#1015)", () => {
         );
       }
       if (identifier === "sg-01") {
-        return respond(apiError("ThrottlingException", "Rate exceeded"));
+        return respond(apiError("ValidationException", "sg-01 is read through EC2, not Cloud Control"));
       }
       return respond(apiError("ValidationException", `unexpected call for ${identifier}`));
     }) as unknown as typeof fetch);
@@ -472,14 +585,14 @@ describe("end to end: declared + mutated live + baseline (#1015)", () => {
         name: "Jobs",
         type: "AWS::SQS::Queue",
         reason: "unsupported-kind",
-        detail: "no deep reader for AWS::SQS::Queue — Cloud Control coverage is opt-in per type",
+        detail: "no deep reader for AWS::SQS::Queue — coverage is opt-in per type",
       },
       {
         name: "Perimeter",
         type: "AWS::EC2::SecurityGroup",
         reason: "read-failed",
         detail:
-          'GetResource failed for AWS::EC2::SecurityGroup "sg-01": ThrottlingException: Rate exceeded',
+          "ec2 describe-security-groups failed, so AWS::EC2::SecurityGroup could not be read deeply",
       },
     ]);
   });
