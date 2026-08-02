@@ -82,7 +82,17 @@ export async function rollbackToRevision(opts: {
 
   await git(["worktree", "add", wt, "-b", branch, "HEAD"], repoRoot);
   try {
-    // Restore just the source tree to the target revision (stages the changes).
+    // Restore the source tree to the target revision (stages the changes).
+    //
+    // `git checkout <ref> -- <dir>` alone is a PER-PATH checkout, not a tree
+    // replacement: it restores the paths that exist at `ref` and leaves
+    // everything else untouched, so a file added since `ref` survives. That
+    // made rollback report "nothing to roll back" whenever the only difference
+    // was added files (#1327) — which is exactly what a reconcile produces,
+    // since `chant import --from <env>` writes NEW files rather than editing
+    // the authored ones. Clearing the directory first makes this a real
+    // restore, so the deletions show up in the delta.
+    await git(["rm", "-rq", "--ignore-unmatch", "--", sourceDir], wt);
     await git(["checkout", ref, "--", sourceDir], wt);
     const staged = (await git(["status", "--porcelain", "--", sourceDir], wt)).stdout.trim();
     if (!staged) return { noop: true };

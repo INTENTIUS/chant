@@ -74,6 +74,25 @@ describe("rollbackToRevision --dry-run", () => {
     expect(readFileSync(join(dir, "src", "main.ts"), "utf8")).toContain("a = 2");
   });
 
+  test("removes a file added since the ref — a per-path checkout leaves it, and that read as noop (#1327)", async () => {
+    // The shape a reconcile produces: `chant import --from <env>` writes NEW
+    // files rather than editing the authored ones, so the whole difference from
+    // the pre-reconcile revision is additions. `git checkout <ref> -- <dir>`
+    // never touches those, so rollback used to report "nothing to roll back".
+    const { dir, base } = await repoWithTwoCommits();
+    const { writeFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    writeFileSync(join(dir, "src", "generated.ts"), "export const added = true;\n");
+    await git(["add", "-A"], dir);
+    await git(["commit", "-qm", "reconciled: a new file"], dir);
+
+    const result = await rollbackToRevision({ ref: base, env: "local", sourceDir: "src", cwd: dir, dryRun: true });
+
+    expect(result.noop).toBe(false);
+    expect(result.diff).toContain("src/generated.ts");
+    expect(result.diff).toContain("deleted file");
+  });
+
   test("still reports noop when the source already matches the ref", async () => {
     const { dir } = await repoWithTwoCommits();
     const result = await rollbackToRevision({ ref: "HEAD", env: "local", sourceDir: "src", cwd: dir, dryRun: true });
