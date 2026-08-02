@@ -194,6 +194,15 @@ describeObservationConformance({
 
 Reference implementation: `lexicons/aws/src/deep-observe.ts`.
 
+**Five lexicons implement this seam** — aws, azure, gcp, k8s and temporal — each
+shipping a `src/deep-observe.ts` plus `deepNormalizationHooks`, both wired
+through its `plugin.ts`. That is the seam's conformance evidence: five readers
+over five very different transports (a CloudFormation describe, an ARM GET, a
+Config Connector `kubectl get`, a typed Kubernetes client, a Temporal client)
+against one unchanged interface, with **no per-lexicon branch anywhere in
+`lifecycle/deep-diff.ts` or `deep-observation.ts`**. A sixth is a reader and two
+hooks, not a core change.
+
 `describeResources()` answers whether a declared entity exists and carries a handful of scrubbed outputs. That catches a changed status, a replaced physical id, a changed stack output — and misses the drift people actually chase: a hand-edited security-group rule, an inline policy added in the console, a flipped bucket setting, a controller-mutated CRD field. Reading the full live model is what closes that gap.
 
 Opting in is a reader plus two hooks:
@@ -362,16 +371,16 @@ Use the static factories to keep diff-engine and Op-activity tests free of `chil
 
 ## Coverage today
 
-| Lexicon | `describeResources()` | `listArtifacts()` | How it queries |
-|---|---|---|---|
-| AWS | ✅ |  | `aws cloudformation describe-stack-resources` |
-| Azure | ✅ |  | `az resource show` per declared entity |
-| GCP (Config Connector) | ✅ |  | `kubectl get <gvk> <name> -o json` against the GKE cluster |
-| K8s | ✅ |  | Typed API client — concurrent `GET`s, resource resolved through the cluster's own API discovery (chant #1074) |
-| Temporal | ✅ |  | Temporal client (`workflowService.listNamespaces`, `operatorService.listSearchAttributes`, `scheduleClient.list`) |
-| Helm |  | ✅ | `helm list -A -o json` |
-| Docker |  | ✅ | `docker ps`, `docker image ls`, `docker network ls` (NDJSON) |
-| GitHub / GitLab |  |  | N/A — git-tracked authoring primitives, see [github](/lexicons/github/) and [gitlab](/lexicons/gitlab/) READMEs |
+| Lexicon | `describeResources()` | `observeResourcesDeep()` | `listArtifacts()` | How it queries |
+|---|---|---|---|---|
+| AWS | ✅ | ✅ |  | `aws cloudformation describe-stack-resources` |
+| Azure | ✅ | ✅ |  | `az resource show` per declared entity |
+| GCP (Config Connector) | ✅ | ✅ |  | `kubectl get <gvk> <name> -o json` against the GKE cluster |
+| K8s | ✅ | ✅ |  | Typed API client — concurrent `GET`s, resource resolved through the cluster's own API discovery (chant #1074) |
+| Temporal | ✅ | ✅ |  | Temporal client (`workflowService.listNamespaces`, `operatorService.listSearchAttributes`, `scheduleClient.list`) |
+| Helm |  |  | ✅ | `helm list -A -o json` |
+| Docker |  |  | ✅ | `docker ps`, `docker image ls`, `docker network ls` (NDJSON) |
+| GitHub / GitLab |  |  |  | N/A — git-tracked authoring primitives, see [github](/lexicons/github/) and [gitlab](/lexicons/gitlab/) READMEs |
 
 For the user-facing version of this matrix and how the diff output is grouped, see [`chant lifecycle`](/chant/cli/lifecycle/#coverage-today).
 
