@@ -148,8 +148,12 @@ The same applies to a diagnostic that is data but is not a diagnostic — a miss
 
 ## Fold coverage today
 
-Fold covers 55 of the corpus's 101 example directories in full; the other 46 have at least one file that falls back to run. `--sandbox` isolates that remainder — increasing fold coverage (tracked separately) is an optimization on top of that, not a precondition for it.
+{/* GENERATED:fold-coverage:start */}
+As of this measurement, **76 of 102** example projects in the corpus fold completely — every file in them reduces to a value with zero module execution. The remaining **26** have at least one file that falls back to running.
+{/* GENERATED:fold-coverage:end */}
 
-Coverage under `--sandbox` is measured separately, because the #1093 refusal can only demote: across the same 101 directories it costs **2** files and **zero** fully-folded entries, so `--sandbox` folds the same 55. It cost 3 before chant #1023, which interprets the one project-owned composite factory in the corpus rather than calling it; the 2 that remain are a different refusal — an imported project value read by name through an intrinsic, not a factory. Real chant source imports its constructors and composites from lexicon packages; a project-owned factory is rare, and where its body leaves the interpretable subset the file simply runs in the child instead. The numbers are reported by `just sandbox-differential`.
+`--sandbox` isolates the rest, so raising fold coverage is an optimization on top of it, not a precondition.
 
-`just fold-differential` reports the plain-`--fold` half of the same accounting — how many composite factories a build actually invoked in this process, how many of those were project-owned, and how many bodies were interpreted instead. Across the corpus that is 234 invocations, **1** of them project-owned (a plain wrapper function, which is not a registered composite and so is deliberately outside #1023's subset), and 1 interpretation.
+Sandboxing costs 2 more run-fallback files than plain `--fold`, and no whole entries — it folds the same set. The reason is narrow: folding a call into project-owned code would have to run that code, so under `--sandbox` those files run in the child instead. Most projects import their constructors and composites from lexicon packages and never hit it.
+
+`just fold-differential` and `just sandbox-differential` report the current numbers.

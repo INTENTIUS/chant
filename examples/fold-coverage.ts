@@ -59,3 +59,22 @@ export function replaceFoldCoverageBlock(doc: string, foldCount: number, total: 
   const current = extractFoldCoverageBlock(doc);
   return doc.replace(current, renderFoldCoverageBlock(foldCount, total));
 }
+
+/**
+ * Every doc that publishes the fold-coverage count, relative to the repo root.
+ *
+ * More than one page has reason to state it, and the second one is exactly how
+ * this drifts: `architecture/sandbox.mdx` carried a hand-typed "55 of 101" for
+ * long enough that the generated block next door had moved to 76 of 102 — a
+ * generated number and a hand-maintained copy of the same number, side by side,
+ * with only the generated one guarded.
+ *
+ * So the list is the contract: the generator refreshes every entry, and
+ * `fold-differential.test.ts` asserts every entry. Adding a page that states
+ * the count means adding it here — and forgetting to means the markers simply
+ * are not there, which `extractFoldCoverageBlock` reports rather than skips.
+ */
+export const FOLD_COVERAGE_DOCS = [
+  "docs/src/content/docs/concepts/typescript-as-data.mdx",
+  "docs/src/content/docs/architecture/sandbox.mdx",
+] as const;

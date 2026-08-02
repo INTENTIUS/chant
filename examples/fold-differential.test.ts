@@ -12,7 +12,7 @@ import {
   type CorpusEntry,
   type FoldMode,
 } from "./differential-corpus";
-import { extractFoldCoverageBlock, renderFoldCoverageBlock } from "./fold-coverage";
+import { extractFoldCoverageBlock, renderFoldCoverageBlock, FOLD_COVERAGE_DOCS } from "./fold-coverage";
 import { foldExecutionCounts, resetFoldExecutionCounts } from "../packages/core/src/discovery/fold-import";
 
 /**
@@ -363,24 +363,18 @@ describe("fold differential — fold output === run output (#1025, epic #1019)",
   // coverage moved) is expected to happen and is meant to fail loudly: run
   // `npm run generate:fold-coverage` to refresh the committed number, then
   // commit the result alongside whatever changed it.
-  test("published fold coverage count matches this run's live count", () => {
-    const docPath = join(
-      import.meta.dirname,
-      "..",
-      "docs",
-      "src",
-      "content",
-      "docs",
-      "concepts",
-      "typescript-as-data.mdx",
-    );
+  // Every doc in FOLD_COVERAGE_DOCS, not just the first: the second page is
+  // precisely how this drifted before (sandbox.mdx hand-typed "55 of 101" while
+  // the guarded block next door had moved to 76 of 102).
+  test.each([...FOLD_COVERAGE_DOCS])("published fold coverage in %s matches this run's live count", (relPath) => {
+    const docPath = join(import.meta.dirname, "..", relPath);
     const doc = readFileSync(docPath, "utf-8");
     const foldCount = report.filter((r) => r.mode === "fold").length;
     const expected = renderFoldCoverageBlock(foldCount, report.length);
     const actual = extractFoldCoverageBlock(doc);
     expect(
       actual,
-      `published fold coverage is stale (live: ${foldCount} of ${report.length}) — run \`npm run generate:fold-coverage\` and commit docs/src/content/docs/concepts/typescript-as-data.mdx`,
+      `published fold coverage is stale (live: ${foldCount} of ${report.length}) — run \`npm run generate:fold-coverage\` and commit ${relPath}`,
     ).toBe(expected);
   });
 
