@@ -244,3 +244,92 @@ describe("parseYAML block scalars (#910)", () => {
     expect(parseYAML("msg: >\n  a\n  b\n\n  c\n")).toEqual({ msg: "a b\nc\n" });
   });
 });
+
+// #1311 — a sequence item's sibling keys survive a nested block, whichever key
+// comes first. The bug was purely positional: the same keys in the other order
+// parsed correctly, so nothing about the keys themselves was at fault.
+describe("parseYAML — sibling keys after a nested block in a sequence item (#1311)", () => {
+  test("a sibling key after a nested MAPPING is not swallowed", () => {
+    expect(parseYAML("items:\n- context:\n    cluster: c1\n  name: n1\n")).toEqual({
+      items: [{ context: { cluster: "c1" }, name: "n1" }],
+    });
+  });
+
+  test("the same keys in the other order still parse — the ordering is what mattered", () => {
+    expect(parseYAML("items:\n- name: n1\n  context:\n    cluster: c1\n")).toEqual({
+      items: [{ name: "n1", context: { cluster: "c1" } }],
+    });
+  });
+
+  test("several siblings after a nested mapping", () => {
+    expect(parseYAML("items:\n- context:\n    cluster: c1\n  name: n1\n  user: u1\n")).toEqual({
+      items: [{ context: { cluster: "c1" }, name: "n1", user: "u1" }],
+    });
+  });
+
+  test("back-to-back nested mappings", () => {
+    expect(parseYAML("items:\n- a:\n    x: 1\n  b:\n    y: 2\n")).toEqual({ items: [{ a: { x: 1 }, b: { y: 2 } }] });
+  });
+
+  test("every item in a multi-item sequence keeps its siblings", () => {
+    expect(parseYAML("items:\n- context:\n    cluster: c1\n  name: n1\n- context:\n    cluster: c2\n  name: n2\n")).toEqual({
+      items: [
+        { context: { cluster: "c1" }, name: "n1" },
+        { context: { cluster: "c2" }, name: "n2" },
+      ],
+    });
+  });
+
+  test("a sibling key after a SAME-COLUMN nested sequence — valid YAML, and what kubectl emits", () => {
+    expect(parseYAML("items:\n- ports:\n  - 80\n  - 443\n  name: n1\n")).toEqual({
+      items: [{ ports: [80, 443], name: "n1" }],
+    });
+  });
+
+  test("a key with no value stays null when the next line is a sibling, not its content", () => {
+    // The reason a nested MAPPING must be indented PAST its key while a
+    // sequence may share its column: `other` here belongs to the item, not to
+    // `meta`. Reading both against the same threshold breaks one or the other.
+    expect(parseYAML("items:\n- name: a\n  meta:\n  other: b\n")).toEqual({
+      items: [{ name: "a", meta: null, other: "b" }],
+    });
+  });
+
+  test("a real Kubernetes container: same-column sequences between scalar keys", () => {
+    expect(
+      parseYAML('containers:\n- name: web\n  ports:\n  - containerPort: 80\n  env:\n  - name: X\n    value: "1"\n  image: nginx\n'),
+    ).toEqual({
+      containers: [
+        {
+          name: "web",
+          ports: [{ containerPort: 80 }],
+          env: [{ name: "X", value: "1" }],
+          image: "nginx",
+        },
+      ],
+    });
+  });
+
+  test("a real kubeconfig context block — the shape that surfaced this", () => {
+    const kubeconfig = [
+      "contexts:",
+      "- context:",
+      "    cluster: arn:aws:eks:us-east-1:000000000000:cluster/cc-eks",
+      "    user: arn:aws:eks:us-east-1:000000000000:cluster/cc-eks",
+      "  name: arn:aws:eks:us-east-1:000000000000:cluster/cc-eks",
+      "current-context: arn:aws:eks:us-east-1:000000000000:cluster/cc-eks",
+      "",
+    ].join("\n");
+    const arn = "arn:aws:eks:us-east-1:000000000000:cluster/cc-eks";
+    expect(parseYAML(kubeconfig)).toEqual({
+      contexts: [{ context: { cluster: arn, user: arn }, name: arn }],
+      "current-context": arn,
+    });
+  });
+
+  test("a GitHub Actions step with `with:` before its sibling keys", () => {
+    expect(parseYAML("steps:\n- with:\n    fetch-depth: 0\n  name: checkout\n  uses: actions/checkout@v4\n")).toEqual({
+      steps: [{ with: { "fetch-depth": 0 }, name: "checkout", uses: "actions/checkout@v4" }],
+    });
+  });
+});

@@ -133,8 +133,9 @@ this emulator.
 
 ## 4. CloudFormation does not apply a security group's rules or tags — FIXED LOCALLY
 
-**Status:** FIXED LOCALLY 2026-08-01, not yet upstream. Branch
-`fix/cfn-security-group-rules-and-tags` on the floci fork; `floci/floci:latest`
+**Status:** FIXED, pushed to the fork 2026-08-02, not yet upstream. Branch
+`fix/cfn-security-group-rules-and-tags` on lex00/floci — open the PR to
+floci-io/floci from there; `floci/floci:latest`
 rebuilt from it locally, so chant's lanes are unblocked on this machine. **Still
 the first thing to send upstream** — until it lands, anyone else running these
 lanes hits it.
