@@ -55,6 +55,19 @@ function parseK8sDocs(yaml: string) {
     });
 }
 
+// ── CC lane canonical AWS estate (epic #1198) ────────────────────────
+// VPC/subnet/EC2/SG across two source directories, one component owning all
+// ten resources. Deployed to Floci by behold's `just e2e-aws-logical`
+// (behold#100) and by #1208's round-trip; the assertions here are the offline
+// half — it synthesizes and lints like any other example.
+
+describeExample("cc-aws-canonical", {
+  lexicon: "aws",
+  serializer: awsSerializer,
+  outputKey: "aws",
+  examplesDir: import.meta.dirname,
+});
+
 // ── GitLab + AWS ALB examples ────────────────────────────────────────
 
 describeExample("gitlab-aws-alb-infra", {

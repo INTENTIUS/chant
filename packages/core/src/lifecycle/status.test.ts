@@ -458,6 +458,28 @@ describe("status", () => {
       expect(merged.get("a")!.unobserved).toBeUndefined();
       expect(merged.get("b")!.unobserved?.reason).toBe("read-failed");
     });
+
+    test("the change-set rollup survives the stack overlay (behold#100)", () => {
+      // The merge rebuilds the evidence object field by field, so a field it
+      // does not name is dropped. `describeStackStatus` reports a stack, not
+      // per-resource counts, so the supplement never carries a rollup — and
+      // dropping the base's meant AWS, the only substrate with a stack
+      // observer, was the one substrate whose rows lost the #1300 counts.
+      const rollup = { total: 10, present: 10, absent: 0, unobserved: 0 };
+      const base = new Map<string, LiveComponentEvidence>([["cc-canonical", { live: true, ownership: "owned", rollup }]]);
+      const supplement = new Map<string, LiveComponentEvidence>([
+        ["cc-canonical", { live: true, ownership: "owned", stack: { name: "cc-canonical", status: "CREATE_COMPLETE", healthy: true } }],
+      ]);
+      const merged = mergeLiveEvidence(base, supplement);
+      expect(merged.get("cc-canonical")!.rollup).toEqual(rollup);
+      expect(merged.get("cc-canonical")!.stack?.status).toBe("CREATE_COMPLETE");
+    });
+
+    test("no rollup on either side leaves the field absent rather than undefined", () => {
+      const base = new Map<string, LiveComponentEvidence>([["c", { live: true }]]);
+      const supplement = new Map<string, LiveComponentEvidence>([["c", { live: true, ownership: "owned" }]]);
+      expect(mergeLiveEvidence(base, supplement).get("c")).not.toHaveProperty("rollup");
+    });
   });
 
   // ── The observation tri-state reaches the status join (#1089) ─────────────
