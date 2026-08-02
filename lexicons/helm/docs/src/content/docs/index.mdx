@@ -3,6 +3,9 @@ title: "Helm"
 description: "Typed constructors for parameterized Helm charts"
 ---
 
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-helm` — DO NOT EDIT.
+    Edit lexicons/helm/src/codegen/docs.ts instead; changes here are overwritten. */}
+
 The **Helm** lexicon generates production-quality, parameterized Helm charts from typed TypeScript.
 
 Unlike static manifest generators, the Helm lexicon produces real `{{ .Values.x }}` directives, `values.yaml`, `values.schema.json`, conditional resources, Helm hooks, and standard `_helpers.tpl`.
@@ -78,12 +81,10 @@ helm template test dist/
 **Namespace:** `Helm`
 
 - [Getting Started](./getting-started)
-- [Intrinsics Reference](./intrinsics)
+- [Intrinsics Reference](./intrinsics-guide)
 - [Composites](./composites)
-- [Lint Rules](./rules)
 - [Security](./security)
 - [Best Practices](./best-practices)
 - [AI Skills](./skills)
 - [Intrinsic Functions](./intrinsics) — 23 built-in functions
-- [Lint Rules](./rules) — 25 rules
 - [Serialization](./serialization) — output format details

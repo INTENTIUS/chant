@@ -55,6 +55,22 @@ export default defineConfig({
             {
                   "label": "Serialization",
                   "slug": "serialization"
+            },
+            {
+                  "label": "Workflows",
+                  "slug": "workflows"
+            },
+            {
+                  "label": "Actions & Composites",
+                  "slug": "actions"
+            },
+            {
+                  "label": "Matrix Strategies",
+                  "slug": "matrix"
+            },
+            {
+                  "label": "Multiple Workflows",
+                  "slug": "multi-workflow"
             }
       ],
     }),

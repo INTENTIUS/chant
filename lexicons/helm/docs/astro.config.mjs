@@ -26,15 +26,11 @@ export default defineConfig({
             },
             {
                   "label": "Intrinsics Reference",
-                  "slug": "intrinsics"
+                  "slug": "intrinsics-guide"
             },
             {
                   "label": "Composites",
                   "slug": "composites"
-            },
-            {
-                  "label": "Lint Rules",
-                  "slug": "rules"
             },
             {
                   "label": "Security",
@@ -49,8 +45,24 @@ export default defineConfig({
                   "slug": "skills"
             },
             {
+                  "label": "Intrinsics",
+                  "slug": "intrinsics"
+            },
+            {
                   "label": "Serialization",
                   "slug": "serialization"
+            },
+            {
+                  "label": "Helm Concepts",
+                  "slug": "helm-concepts"
+            },
+            {
+                  "label": "Lint Rules",
+                  "slug": "lint-rules"
+            },
+            {
+                  "label": "Examples",
+                  "slug": "examples"
             }
       ],
     }),
