@@ -21,10 +21,9 @@ import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { build } from "@intentius/chant/build";
 import { discoverCorpus, classifyFoldMode } from "../examples/differential-corpus";
-import { replaceFoldCoverageBlock } from "../examples/fold-coverage";
+import { replaceFoldCoverageBlock, FOLD_COVERAGE_DOCS } from "../examples/fold-coverage";
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
-const docPath = join(repoRoot, "docs", "src", "content", "docs", "concepts", "typescript-as-data.mdx");
 
 const corpus = discoverCorpus();
 let foldCount = 0;
@@ -36,7 +35,11 @@ for (const entry of corpus) {
   console.error(`  ${mode.padEnd(12)} ${entry.name}`);
 }
 
-const doc = readFileSync(docPath, "utf-8");
-writeFileSync(docPath, replaceFoldCoverageBlock(doc, foldCount, corpus.length));
+for (const relPath of FOLD_COVERAGE_DOCS) {
+  const docPath = join(repoRoot, relPath);
+  const doc = readFileSync(docPath, "utf-8");
+  writeFileSync(docPath, replaceFoldCoverageBlock(doc, foldCount, corpus.length));
+  console.error(`  updated ${relPath}`);
+}
 
-console.error(`Fold coverage: ${foldCount} of ${corpus.length} — updated ${docPath.replace(repoRoot + "/", "")}`);
+console.error(`Fold coverage: ${foldCount} of ${corpus.length} — ${FOLD_COVERAGE_DOCS.length} doc(s) refreshed`);
