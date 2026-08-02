@@ -329,7 +329,7 @@ function parseArrayItemValue(
   inlineValue: string,
   lines: string[],
   currentIndex: number,
-  childIndent: number,
+  keyIndent: number,
 ): unknown {
   if (inlineValue !== "" && !inlineValue.startsWith("#")) {
     const header = blockScalarHeader(inlineValue);
@@ -349,21 +349,64 @@ function parseArrayItemValue(
     }
     return parseScalar(inlineValue);
   }
-  // Empty inline value — check for nested block
+  // Empty inline value — check for a nested block. `keyIndent` is the key's own
+  // column, and the two nested shapes do NOT share a threshold (#1311):
+  //
+  //   - a SEQUENCE may sit at the key's own column (valid YAML, and what
+  //     kubectl and Kubernetes manifests emit);
+  //   - a MAPPING must be indented past it, otherwise the next line is a
+  //     sibling key and this key's value is null:
+  //
+  //         - name: a
+  //           meta:          <- no value
+  //           other: b       <- a sibling, NOT meta's content
+  //
+  // Testing both against `>= keyIndent` would swallow that sibling; testing
+  // both against `> keyIndent` loses the same-column sequence.
   const nextIdx = currentIndex + 1;
   if (nextIdx < lines.length) {
     const nextLine = lines[nextIdx];
     if (nextLine.trim() !== "" && !nextLine.trim().startsWith("#")) {
       const ni = nextLine.search(/\S/);
-      if (ni >= childIndent) {
-        if (nextLine.trimStart().startsWith("- ")) {
-          return parseYAMLArray(lines, nextIdx, ni).value;
-        }
+      if (nextLine.trimStart().startsWith("- ")) {
+        if (ni >= keyIndent) return parseYAMLArray(lines, nextIdx, ni).value;
+      } else if (ni > keyIndent) {
         return parseYAMLLines(lines, nextIdx, ni).value;
       }
     }
   }
   return null;
+}
+
+/**
+ * Skip past the value block belonging to a key at column `keyIndent` inside a
+ * sequence item, returning the first line that is NOT part of it (#1311).
+ *
+ * Two shapes, and only the first is a matter of indentation:
+ *
+ *   - a nested MAPPING is indented past its key, so anything further right
+ *     belongs to it and anything at the key's own column is a sibling;
+ *   - a nested SEQUENCE may sit at the SAME column as its key, which is valid
+ *     YAML and what kubectl and Kubernetes manifests both emit:
+ *
+ *         - name: web
+ *           ports:
+ *           - containerPort: 80
+ *           env:                    <- a sibling, at `ports`' own column
+ *
+ *     An indent rule cannot separate those, so the sequence is re-parsed to
+ *     find where it ends. `parseYAMLArray` already reports that as `endIndex`.
+ */
+function skipValueBlock(lines: string[], startIndex: number, keyIndent: number): number {
+  let k = startIndex;
+  while (k < lines.length && (lines[k].trim() === "" || lines[k].trim().startsWith("#"))) k++;
+  if (k < lines.length) {
+    const ni = lines[k].search(/\S/);
+    if (ni >= keyIndent && lines[k].trimStart().startsWith("- ")) {
+      return parseYAMLArray(lines, k, ni).endIndex;
+    }
+  }
+  return skipNestedBlock(lines, startIndex, keyIndent + 1);
 }
 
 /**
@@ -420,7 +463,19 @@ export function parseYAMLArray(
         const nextIndent = indent + 2;
         const firstVal = kvMatch[2].trim();
         let j = firstVal === "" || firstVal.startsWith("#")
-          ? skipNestedBlock(lines, i + 1, nextIndent)
+          // The nested block belongs to THIS key and is indented past it, so
+          // skip lines indented more than the key's own column (#1311). Using
+          // the key's column itself also swallowed the item's sibling keys,
+          // which sit at exactly that column:
+          //
+          //     - context:          <- key at column 2
+          //         cluster: c1     <- its block, column 4
+          //       name: n1          <- a SIBLING at column 2, was skipped
+          //
+          // Only the item's first key was affected: the sibling loop below
+          // already skips past its own key's column, and the block-scalar
+          // branch immediately below has always used `+ 1` for this reason.
+          ? skipValueBlock(lines, i + 1, nextIndent)
           : blockScalarHeader(firstVal)
             // Block body is indented past the key (nextIndent); skip it (#910).
             ? skipNestedBlock(lines, i + 1, nextIndent + 1)
@@ -437,9 +492,11 @@ export function parseYAMLArray(
           const nextKV = nextLine.match(/^(\s*)([^\s:][^:]*?):\s*(.*)$/);
           if (nextKV) {
             const nextVal = nextKV[3].trim();
-            obj[nextKV[2].trim()] = parseArrayItemValue(nextVal, lines, j, ni + 2);
+            obj[nextKV[2].trim()] = parseArrayItemValue(nextVal, lines, j, ni);
             if (nextVal === "" || nextVal.startsWith("#")) {
-              j = skipNestedBlock(lines, j + 1, ni + 2);
+              // Same rule as the first key above: past this key's own column,
+              // or to the end of a same-column sequence (#1311).
+              j = skipValueBlock(lines, j + 1, ni);
             } else if (blockScalarHeader(nextVal)) {
               // Skip the block body (indented past this key at `ni`) (#910).
               j = skipNestedBlock(lines, j + 1, ni + 1);
