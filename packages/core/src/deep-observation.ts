@@ -338,6 +338,22 @@ export function deepPathSet(tree: Record<string, unknown>): Set<string> {
  */
 const EMPTIED = Symbol("emptied-by-pruning");
 
+/**
+ * A property-kind Declarable — a nested property authored through a lexicon's
+ * generated constructor rather than as a plain object (#1314).
+ *
+ * Duck-typed on the same three facts `declarable.ts` defines it by
+ * (`entityType`, `kind === "property"`, `props`) rather than imported, keeping
+ * this module free of a dependency on the authoring types it only ever
+ * inspects. A resource-kind Declarable deliberately does not match.
+ */
+function isPropertyDeclarableValue(value: unknown): boolean {
+  if (typeof value !== "object" || value === null) return false;
+  const v = value as { entityType?: unknown; kind?: unknown; props?: unknown };
+  return typeof v.entityType === "string" && v.kind === "property" && typeof v.props === "object" && v.props !== null;
+}
+
+
 export function normalizeDeepProperties(
   tree: Record<string, unknown>,
   options: NormalizeDeepOptions,
@@ -364,6 +380,29 @@ export function normalizeDeepProperties(
   const normalizeValue = (value: unknown, path: string, pattern: string, key: string): unknown => {
     if (isSensitiveKey(key)) return MASKED;
     if (isJsonPrimitive(value)) return value;
+
+    // A PROPERTY-kind Declarable is authored data wearing a class, not an
+    // opaque instance (#1314). The generated property constructors —
+    // `SecurityGroup_Ingress`, `Role_Policy`, `MicrovmImage_Logging` — are the
+    // typed way to write a nested property, and the serializer inlines their
+    // `.props` (serializer-walker.ts `visitor.propertyDeclarable`). The
+    // declared tree has to do the same, or the two sides disagree about a
+    // property the author did write: without this the declared side held
+    // UNRESOLVED while the live side held the real rule, so every one of its
+    // fields reported `<undeclared> → <value>` on a clean apply, and the noise
+    // scaled with how strictly a project typed its properties.
+    //
+    // Checked ahead of the array/object branches rather than in the non-JSON
+    // fallback below, so it holds whether the declarable arrives as a class
+    // instance (what a lexicon constructs) or as an equivalent plain object.
+    //
+    // Deliberately property-kind only. A RESOURCE-kind Declarable in another
+    // resource's props is a reference, which has no source-side value to
+    // compare against a live one, so UNRESOLVED stays correct for it — and a
+    // resource-kind instance falls through to that fallback unchanged.
+    if (isPropertyDeclarableValue(value)) {
+      return normalizeValue((value as { props?: unknown }).props ?? {}, path, pattern, key);
+    }
 
     if (Array.isArray(value)) {
       const elements: unknown[] = [];
