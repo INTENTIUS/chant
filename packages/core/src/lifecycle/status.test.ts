@@ -37,8 +37,18 @@ describe("status", () => {
         ],
       };
       const evidence = liveEvidenceFromChangeSet(cs);
-      expect(evidence.get("search-service")).toEqual({ live: true, action: "noop", ownership: "owned" });
-      expect(evidence.get("orphan-thing")).toEqual({ live: true, action: "adopt", ownership: "foreign" });
+      expect(evidence.get("search-service")).toEqual({
+          live: true,
+          action: "noop",
+          ownership: "owned",
+          rollup: { total: 1, present: 1, absent: 0, unobserved: 0 },
+        });
+      expect(evidence.get("orphan-thing")).toEqual({
+        live: true,
+        action: "adopt",
+        ownership: "foreign",
+        rollup: { total: 1, present: 1, absent: 0, unobserved: 0 },
+      });
     });
 
     // #598: a component's name need not equal the live entity/resource name
@@ -54,7 +64,15 @@ describe("status", () => {
         };
         const mapping: LiveNameMapping = new Map([["search-svc", ["search-service-v2"]]]);
         const evidence = liveEvidenceFromChangeSet(cs, mapping);
-        expect(evidence.get("search-svc")).toEqual({ live: true, action: "noop", ownership: "owned" });
+        // The merged verdict, plus the per-resource counts it collapsed
+        // (behold#98) — a consumer with no deploy object to read paints from
+        // those rather than from a CloudFormation stack.
+        expect(evidence.get("search-svc")).toEqual({
+          live: true,
+          action: "noop",
+          ownership: "owned",
+          rollup: { total: 1, present: 1, absent: 0, unobserved: 0 },
+        });
         // The live entity's own name is no longer a separate top-level key once
         // it's claimed by an explicit mapping's component.
       });
@@ -68,7 +86,14 @@ describe("status", () => {
         };
         const mapping: LiveNameMapping = new Map([["some-other-component", ["renamed-thing"]]]);
         const evidence = liveEvidenceFromChangeSet(cs, mapping);
-        expect(evidence.get("search-service")).toEqual({ live: true, action: "noop", ownership: "owned" });
+        // A rollup of one: the identity join still reports the shape, so a
+        // consumer never branches on whether a mapping was configured.
+        expect(evidence.get("search-service")).toEqual({
+          live: true,
+          action: "noop",
+          ownership: "owned",
+          rollup: { total: 1, present: 1, absent: 0, unobserved: 0 },
+        });
       });
 
       test("aggregates evidence across several live names owned by one component", () => {
@@ -82,7 +107,12 @@ describe("status", () => {
         const mapping: LiveNameMapping = new Map([["neo4j-cluster", ["cluster-node-1", "cluster-node-2"]]]);
         const evidence = liveEvidenceFromChangeSet(cs, mapping);
         // Drift on any owned entity surfaces as drift for the component.
-        expect(evidence.get("neo4j-cluster")).toEqual({ live: true, action: "update", ownership: "owned" });
+        expect(evidence.get("neo4j-cluster")).toEqual({
+          live: true,
+          action: "update",
+          ownership: "owned",
+          rollup: { total: 2, present: 2, absent: 0, unobserved: 0 },
+        });
       });
 
       test("a mapped component with none of its live names observed has no evidence entry", () => {
@@ -133,6 +163,39 @@ describe("status", () => {
       ]);
       const rows = reconcileStatus("prod", [record()], { liveEvidence });
       expect(rows[0].reconciliation).toBe("drifted");
+    });
+
+    // behold#98 — floci-az and floci-gcp have no deploy object, so `stack` is
+    // absent and a renderer has nothing provider-native to colour from. The
+    // rollup is the substrate-neutral source for the same job.
+    test("surfaces a resource rollup for a component with no deploy object", () => {
+      const liveEvidence = new Map<string, LiveComponentEvidence>([
+        [
+          "search-service",
+          { live: true, ownership: "owned", rollup: { total: 4, present: 3, absent: 0, unobserved: 1 } },
+        ],
+      ]);
+      const rows = reconcileStatus("prod", [record()], { liveEvidence });
+      expect(rows[0].resources).toEqual({ total: 4, present: 3, absent: 0, unobserved: 1 });
+      // No CloudFormation stack to enrich from, and the row is still paintable.
+      expect(rows[0].stack).toBeUndefined();
+    });
+
+    test("a rollup and a stack coexist — the stack stays the richer enrichment where it exists", () => {
+      const liveEvidence = new Map<string, LiveComponentEvidence>([
+        [
+          "search-service",
+          {
+            live: true,
+            ownership: "owned",
+            stack: { name: "app-prod-search", status: "CREATE_COMPLETE", healthy: true },
+            rollup: { total: 2, present: 2, absent: 0, unobserved: 0 },
+          },
+        ],
+      ]);
+      const rows = reconcileStatus("prod", [record()], { liveEvidence });
+      expect(rows[0].resources).toEqual({ total: 2, present: 2, absent: 0, unobserved: 0 });
+      expect(rows[0].stack?.healthy).toBe(true);
     });
 
     test("surfaces machine-readable live + stack status when observed (#57 hardening)", () => {
