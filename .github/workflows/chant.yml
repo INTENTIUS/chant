@@ -23,7 +23,12 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # 10 was the historical value and this job had crept to ~9m30s against it,
+    # so any upstream slowness cancelled the build rather than failing it —
+    # which reads as "your change broke CI" when it did not. Attempts are now
+    # individually bounded (packages/core/src/codegen/fetch.ts), so this is
+    # headroom rather than a licence to grow.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6

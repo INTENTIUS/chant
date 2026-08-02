@@ -182,12 +182,26 @@ describe("fetchWithRetry", () => {
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
-  test("calls fetch with no init argument when none is given", async () => {
+  test("bounds an attempt with a signal even when no init is given", async () => {
     const fetchMock = vi.fn().mockResolvedValue(ok());
     vi.stubGlobal("fetch", fetchMock);
 
     await fetchWithRetry("https://example.test/x", 4, 1);
-    expect(fetchMock).toHaveBeenCalledWith("https://example.test/x");
+    // A hung connect would otherwise wait on the OS default, which is long
+    // enough to run a CI job past its timeout.
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://example.test/x",
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+  });
+
+  test("a caller's own signal wins over the attempt bound", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(ok());
+    vi.stubGlobal("fetch", fetchMock);
+
+    const controller = new AbortController();
+    await fetchWithRetry("https://example.test/x", 4, 1, { signal: controller.signal });
+    expect(fetchMock.mock.calls[0][1].signal).toBe(controller.signal);
   });
 
   test("passes request init through to fetch", async () => {
@@ -196,7 +210,10 @@ describe("fetchWithRetry", () => {
 
     const init = { headers: { Accept: "application/vnd.github+json" } };
     await fetchWithRetry("https://example.test/x", 4, 1, init);
-    expect(fetchMock).toHaveBeenCalledWith("https://example.test/x", init);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://example.test/x",
+      expect.objectContaining({ headers: init.headers, signal: expect.any(AbortSignal) }),
+    );
   });
 
   test("preserves init across retries on a transient status", async () => {
@@ -210,8 +227,10 @@ describe("fetchWithRetry", () => {
     const resp = await fetchWithRetry("https://example.test/x", 4, 1, init);
     expect(resp.ok).toBe(true);
     expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(fetchMock).toHaveBeenNthCalledWith(1, "https://example.test/x", init);
-    expect(fetchMock).toHaveBeenNthCalledWith(2, "https://example.test/x", init);
+    for (const call of fetchMock.mock.calls) {
+      expect(call[0]).toBe("https://example.test/x");
+      expect(call[1]).toEqual(expect.objectContaining({ headers: init.headers, signal: expect.any(AbortSignal) }));
+    }
   });
 
   test("does not retry a permanent status when init is given", async () => {

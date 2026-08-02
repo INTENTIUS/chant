@@ -1,10 +1,18 @@
 /**
- * Live introspection of an Azure resource group via the az CLI.
+ * Live introspection of an Azure resource group over ARM (#1212).
  *
- * For each declared Azure entity, runs:
- *   az resource show --resource-group <env> --name <name> --resource-type <type> -o json
+ * For each declared Azure entity, GETs
+ *   {endpoint}/subscriptions/{sub}/resourceGroups/{env}/providers/{type}/{name}
  *
- * and maps the response to a ResourceMetadata entry keyed by chant entity name
+ * on the applier's own transport (`./api/read-client.ts`, which is
+ * `az-apply.ts`'s client pointed at the read side) rather than shelling
+ * `az resource show`. The payload is the same ARM JSON either way — the CLI was
+ * only ever relaying it — so this is transport, not translation: no CLI to
+ * spawn, reads that run concurrently, failures carrying ARM's own error code,
+ * and an emulator override that reaches floci-az the same way every other
+ * lexicon's does.
+ *
+ * The response maps to a ResourceMetadata entry keyed by chant entity name
  * (using props.name from #39's entity-prop pass-through). The environment
  * argument is treated as the Azure resource group name.
  *
@@ -17,24 +25,10 @@
  * are holes for the same reason.
  */
 
-import { exec } from "node:child_process";
-import { promisify } from "node:util";
 import type { ObservationResult, ResourceMetadata, UnobservedEntity, UnobservedReason } from "@intentius/chant/lexicon";
-import { observation } from "@intentius/chant/observation";
-
-const execAsync = promisify(exec);
-
-interface AzResourceShowResponse {
-  id?: string;
-  name?: string;
-  type?: string;
-  location?: string;
-  properties?: {
-    provisioningState?: string;
-    [k: string]: unknown;
-  };
-  tags?: Record<string, string>;
-}
+import { boundedConcurrently, observation } from "@intentius/chant/observation";
+import { AzureReadError, getResource, isNotFound, type AzureReadClientOptions } from "./api/read-client";
+import type { AzHttp } from "./op/activities/az-apply";
 
 function pruneUndefined<T extends Record<string, unknown>>(obj: T): Record<string, unknown> {
   const out: Record<string, unknown> = {};
@@ -99,19 +93,60 @@ export function classifyAzFailure(err: unknown): { absent: true } | { absent: fa
   return { absent: false, reason: "read-failed", detail };
 }
 
+/**
+ * Classify an ARM failure off its own error code (#1212).
+ *
+ * The CLI classifier above matched on prose because stderr was all it had.
+ * ARM sends `{ error: { code, message } }`, so the code is the signal and the
+ * message is only for the human — the same distinction the AWS read client
+ * makes. Kept beside `classifyAzFailure` rather than replacing it: the CLI
+ * path still exists for a signed read against real ARM.
+ */
+export function classifyArmFailure(err: unknown): { reason: UnobservedReason; detail: string } {
+  const code = err instanceof AzureReadError ? (err.code ?? "") : "";
+  const message = err instanceof Error ? err.message : String(err);
+  const detail = (code ? `${code}: ${message}` : message).slice(0, 200);
+  const both = `${code} ${message}`.toLowerCase();
+
+  if (
+    both.includes("authenticationfailed") ||
+    both.includes("authorizationfailed") ||
+    both.includes("expired") ||
+    both.includes("forbidden") ||
+    (err instanceof AzureReadError && (err.status === 401 || err.status === 403))
+  ) {
+    return { reason: "no-credentials", detail };
+  }
+  if (both.includes("subscriptionnotfound") || both.includes("resourcegroupnotfound")) {
+    return { reason: "no-binding", detail };
+  }
+  return { reason: "read-failed", detail };
+}
+
 export async function describeResources(options: {
   environment: string;
   buildOutput: string;
   entityNames: string[];
   entities: Map<string, { entityType: string; props: Record<string, unknown> }>;
+  /** Injectable transport, mirroring `azApply`'s — tests reach the reader with no network. */
+  http?: AzHttp;
 }): Promise<ObservationResult> {
   const result: Record<string, ResourceMetadata> = {};
   const unobserved: Record<string, UnobservedEntity> = {};
   const skippedNested: string[] = [];
+  const readable: Array<{ entityName: string; entityType: string; name: string }> = [];
+
+  // The environment is the resource group, as it has always been on this path.
+  const client: AzureReadClientOptions = {
+    resourceGroup: options.environment,
+    ...(process.env.AZURE_ENDPOINT_URL ? { endpoint: process.env.AZURE_ENDPOINT_URL } : {}),
+    ...(process.env.AZURE_SUBSCRIPTION_ID ? { subscriptionId: process.env.AZURE_SUBSCRIPTION_ID } : {}),
+    ...(options.http ? { http: options.http } : {}),
+  };
 
   for (const [entityName, { entityType, props }] of options.entities) {
     if (!entityType.startsWith("Microsoft.")) {
-      // Not an ARM resource type, so `az resource show` has nothing to ask for.
+      // Not an ARM resource type, so there is no ARM URL to GET.
       // Unobserved rather than skipped: a silent skip reads as absence (#1089).
       unobserved[entityName] = {
         type: entityType,
@@ -126,7 +161,7 @@ export async function describeResources(options: {
       unobserved[entityName] = {
         type: entityType,
         reason: "unsupported-kind",
-        detail: "az resource show does not accept a nested ARM type; chant never queried this resource",
+        detail: "a nested ARM type needs a different read path; chant never queried this resource",
       };
       continue;
     }
@@ -141,35 +176,30 @@ export async function describeResources(options: {
       continue;
     }
 
-    const cmd = [
-      "az", "resource", "show",
-      "--resource-group", options.environment,
-      "--name", name,
-      "--resource-type", entityType,
-      "-o", "json",
-    ].join(" ");
+    readable.push({ entityName, entityType, name });
+  }
 
+  // Concurrent, where the CLI path was one spawn after another (#1201/#1212).
+  await boundedConcurrently(readable, async ({ entityName, entityType, name }) => {
     try {
-      const { stdout } = await execAsync(cmd);
-      const obj: AzResourceShowResponse = JSON.parse(stdout);
+      const body = await getResource(client, entityType, name);
       result[entityName] = {
         type: entityType,
-        physicalId: obj.id,
-        status: obj.properties?.provisioningState ?? "PRESENT",
+        physicalId: body.id,
+        status: (body.properties?.provisioningState as string | undefined) ?? "PRESENT",
         attributes: pruneUndefined({
-          location: obj.location,
-          tags: obj.tags,
+          location: body.location,
+          tags: body.tags,
         }),
       };
     } catch (err) {
       // Not-found leaves the entity out (absence). Auth/binding/other failures
       // are recorded as holes so they can't become creates (#1089).
-      const outcome = classifyAzFailure(err);
-      if (!outcome.absent) {
-        unobserved[entityName] = { type: entityType, reason: outcome.reason, detail: outcome.detail };
-      }
+      if (isNotFound(err)) return;
+      const outcome = classifyArmFailure(err);
+      unobserved[entityName] = { type: entityType, reason: outcome.reason, detail: outcome.detail };
     }
-  }
+  });
 
   if (skippedNested.length > 0) {
     // eslint-disable-next-line no-console

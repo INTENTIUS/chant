@@ -30,6 +30,20 @@ const RETRYABLE_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504]);
 
 const DEFAULT_RETRIES = 4;
 const DEFAULT_BACKOFF_MS = 1000;
+/**
+ * Per-attempt ceiling, so an upstream that accepts a connection and then stops
+ * answering cannot hold a build open.
+ *
+ * Without one, a hung connect waits on the OS default — which on Linux is over
+ * a minute — and five of those plus back-off is enough to run a CI job past its
+ * timeout. That is not hypothetical: it is what pushed chant's `check` job from
+ * ~9m30s to a cancellation at 10m, twice, on two unreachable spec endpoints
+ * whose results are only ever a fallback to a committed snapshot anyway.
+ *
+ * Generous enough for a slow-but-alive endpoint; the point is a bound, not
+ * speed.
+ */
+const DEFAULT_ATTEMPT_TIMEOUT_MS = 15_000;
 /** Hard cap on Retry-After delays so a rogue header cannot stall CI indefinitely. */
 const MAX_RETRY_AFTER_MS = 60_000;
 
@@ -85,6 +99,7 @@ export async function fetchWithRetry(
   retries = DEFAULT_RETRIES,
   backoffMs = DEFAULT_BACKOFF_MS,
   init?: RequestInit,
+  attemptTimeoutMs = DEFAULT_ATTEMPT_TIMEOUT_MS,
 ): Promise<Response> {
   let lastStatus: number | undefined;
   let lastError: Error | undefined;
@@ -101,8 +116,11 @@ export async function fetchWithRetry(
     }
 
     let response: Response;
+    // A caller's own signal still wins; this only bounds an attempt that would
+    // otherwise hang with no signal at all.
+    const signal = init?.signal ?? AbortSignal.timeout(attemptTimeoutMs);
     try {
-      response = init === undefined ? await fetch(url) : await fetch(url, init);
+      response = await fetch(url, { ...(init ?? {}), signal });
     } catch (e) {
       // Network-level failure (DNS, connection reset, timeout). Transient.
       lastError = e instanceof Error ? e : new Error(String(e));
