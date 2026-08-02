@@ -280,3 +280,106 @@ describe("deepValueEqual", () => {
     expect(deepValueEqual(1, 1)).toBe(true);
   });
 });
+
+// #1314 — a nested property authored through a lexicon's generated constructor
+// is authored data, not an opaque class instance. Collapsing it to UNRESOLVED
+// left the declared side empty while the live side held the real value, so
+// every field of it reported `<undeclared>` on a clean apply.
+describe("normalizeDeepProperties — property-kind declarables (#1314)", () => {
+  /** Shaped like a generated property constructor's instance. */
+  const propertyDeclarable = (entityType: string, props: Record<string, unknown>) => ({
+    entityType,
+    kind: "property",
+    props,
+  });
+
+  test("unwraps a property-kind declarable to its authored props", () => {
+    const out = normalizeDeepProperties(
+      {
+        GroupDescription: "sg",
+        SecurityGroupIngress: [
+          propertyDeclarable("AWS::EC2::SecurityGroup.Ingress", {
+            IpProtocol: "tcp",
+            FromPort: 443,
+            ToPort: 443,
+            CidrIp: "10.42.0.0/16",
+          }),
+        ],
+      },
+      { entityType: "AWS::EC2::SecurityGroup", side: "declared" },
+    );
+    expect(out).toEqual({
+      GroupDescription: "sg",
+      SecurityGroupIngress: [{ CidrIp: "10.42.0.0/16", FromPort: 443, IpProtocol: "tcp", ToPort: 443 }],
+    });
+  });
+
+  test("produces the same tree as the equivalent plain object — the two authoring forms must not differ", () => {
+    const viaConstructor = normalizeDeepProperties(
+      { Ingress: [propertyDeclarable("T.Ingress", { IpProtocol: "tcp", FromPort: 443 })] },
+      { entityType: "T", side: "declared" },
+    );
+    const viaLiteral = normalizeDeepProperties(
+      { Ingress: [{ IpProtocol: "tcp", FromPort: 443 }] },
+      { entityType: "T", side: "declared" },
+    );
+    expect(viaConstructor).toEqual(viaLiteral);
+  });
+
+  test("unwraps nested property declarables all the way down", () => {
+    const out = normalizeDeepProperties(
+      {
+        Logging: propertyDeclarable("T.Logging", {
+          CloudWatch: propertyDeclarable("T.CloudWatch", { Enabled: true, LogGroup: "g" }),
+        }),
+      },
+      { entityType: "T", side: "declared" },
+    );
+    expect(out).toEqual({ Logging: { CloudWatch: { Enabled: true, LogGroup: "g" } } });
+  });
+
+  test("still collapses a RESOURCE-kind declarable — it is a reference with no source-side value", () => {
+    // A class instance, as a lexicon actually constructs one: a resource-kind
+    // declarable in another resource's props is a Ref, and there is nothing on
+    // the source side to compare a live value against.
+    class VpcDeclarable {
+      readonly entityType = "AWS::EC2::VPC";
+      readonly kind = "resource";
+      readonly props = { CidrBlock: "10.0.0.0/16" };
+    }
+    const out = normalizeDeepProperties(
+      { VpcId: new VpcDeclarable() },
+      { entityType: "AWS::EC2::SecurityGroup", side: "declared" },
+    );
+    expect(out).toEqual({ VpcId: UNRESOLVED });
+  });
+
+  test("unwraps a property-kind declarable that is a class instance, which is how a lexicon builds one", () => {
+    class IngressDeclarable {
+      readonly entityType = "AWS::EC2::SecurityGroup.Ingress";
+      readonly kind = "property";
+      constructor(readonly props: Record<string, unknown>) {}
+    }
+    const out = normalizeDeepProperties(
+      { Ingress: [new IngressDeclarable({ IpProtocol: "tcp", FromPort: 443 })] },
+      { entityType: "AWS::EC2::SecurityGroup", side: "declared" },
+    );
+    expect(out).toEqual({ Ingress: [{ FromPort: 443, IpProtocol: "tcp" }] });
+  });
+
+  test("still collapses a genuine class instance, which is what the branch is for", () => {
+    class Sub {
+      constructor(readonly template: string) {}
+    }
+    const out = normalizeDeepProperties({ Name: new Sub("${AWS::StackName}-x") }, { entityType: "T", side: "declared" });
+    expect(out).toEqual({ Name: UNRESOLVED });
+  });
+
+  test("masks a secret inside an unwrapped property declarable, same as in a plain object", () => {
+    const out = normalizeDeepProperties(
+      { Auth: propertyDeclarable("T.Auth", { Username: "u", Password: "hunter2" }) },
+      { entityType: "T", side: "declared" },
+    );
+    expect(out).toEqual({ Auth: { Password: MASKED, Username: "u" } });
+  });
+});
