@@ -117,6 +117,44 @@ describe("the aws noise rules", () => {
     expect(out.Tags).toEqual([{ Key: "env", Value: "a" }, { Key: "team", Value: "b" }]);
   });
 
+  // chant stamps its ownership marker onto the template, so it is live on every
+  // managed resource and absent from the declared properties the diff compares.
+  // Reporting it is chant reading its own signature back as drift.
+  test("chant's own ownership tags are not drift", () => {
+    const out = normalizeDeepProperties(
+      {
+        Tags: [
+          { Key: "chant:managed-by", Value: "chant" },
+          { Key: "chant:stack", Value: "web" },
+          { Key: "chant:env", Value: "prod" },
+          { Key: "team", Value: "payments" },
+        ],
+      },
+      {
+        entityType: "AWS::EC2::SecurityGroup",
+        side: "live",
+        hooks: awsDeepNormalizationHooks,
+        counterpartPaths: new Set<string>(),
+      },
+    );
+    expect(out.Tags).toEqual([{ Key: "team", Value: "payments" }]);
+  });
+
+  test("a template that declares the marker itself still has it compared", () => {
+    const out = normalizeDeepProperties(
+      { Tags: [{ Key: "chant:stack", Value: "renamed" }] },
+      {
+        entityType: "AWS::EC2::SecurityGroup",
+        side: "live",
+        hooks: awsDeepNormalizationHooks,
+        // Source declares the tag, so the counterpart is present and the
+        // suppression must not apply — a changed value is real drift.
+        counterpartPaths: new Set(["Tags[].Key", "Tags[].Value", "Tags[0]"]),
+      },
+    );
+    expect(out.Tags).toEqual([{ Key: "chant:stack", Value: "renamed" }]);
+  });
+
   test("canonicalizes policy statement and action order", () => {
     const out = normalizeDeepProperties(
       {

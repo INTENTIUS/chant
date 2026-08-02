@@ -251,6 +251,13 @@ export const awsDeepNormalizationHooks: DeepNormalizationHooks = {
     // the reader must not decide this before the declared tree is in hand.
     if (node.side !== "live" || node.counterpart !== "absent") return false;
 
+    // chant's own ownership marker. The serializer stamps it onto the template,
+    // so it is live on every managed resource and absent from the declared
+    // *properties* the diff compares — chant reading its own signature back as
+    // drift. Counterpart-gated, so a template that declares the tag itself is
+    // still compared against what is live.
+    if (isOwnershipTag(node.value)) return true;
+
     // A name the service generated because source did not supply one.
     if (AWS_GENERATED_NAMES[node.entityType]?.has(node.pattern)) return true;
 
@@ -328,6 +335,14 @@ function failureDetail(err: unknown): string {
 /** True when a CloudFormation read failed only because the stack isn't there yet. */
 function isStackMissing(err: unknown): boolean {
   return err instanceof AwsReadError && /does not exist/i.test(err.message);
+}
+
+/** Every tag key the serializer stamps as chant's ownership marker. */
+const OWNERSHIP_TAG_KEYS: ReadonlySet<string> = new Set(Object.values(AWS_TAG_OWNERSHIP_KEYS));
+
+/** True when `value` is a `{Key, Value}` tag whose key is one chant stamps itself. */
+function isOwnershipTag(value: unknown): boolean {
+  return isRecord(value) && typeof value.Key === "string" && OWNERSHIP_TAG_KEYS.has(value.Key);
 }
 
 /** True when the live property tree carries chant's ownership marker tag. */
