@@ -110,7 +110,13 @@ export async function generateDocs(options?: { verbose?: boolean }): Promise<voi
     // depends on. The hand-written usage guide with full worked examples
     // moves to a separate "intrinsics-guide" page below — content
     // unchanged, just no longer sharing a slug with generated data.
-    suppressPages: ["pseudo-parameters", "rules"],
+    // `rules` is NOT suppressed: the hand-written `lint-rules` page below
+    // explains 26 of the lexicon's 50 rules in depth, and the whole WAW032+
+    // hardening pass had no entry there at all (#1312). The generated table is
+    // the complete, always-current list, so both ship — the overview/reference
+    // pairing temporal uses. Duplicating 24 descriptions into the prose page
+    // would just create a third copy to drift.
+    suppressPages: ["pseudo-parameters"],
     examplesDir: join(pkgDir, "examples"),
     extraPages: [
       {
@@ -645,6 +651,12 @@ Most splitting use cases are better served by other mechanisms:
         description: "Built-in lint rules and post-synth checks for AWS CloudFormation",
         content: `The AWS lexicon ships lint rules that run during \`chant lint\` and post-synth checks that validate the serialized CloudFormation output after \`chant build\`.
 
+This page explains the most commonly hit rules in depth. For the complete list —
+every rule the lexicon registers, generated from the registration itself so it
+cannot fall behind — see [All Rules](../rules/). The security-hardening rules
+(WAW032 onward) also carry remediation guidance and upstream references in the
+[audit rules reference](/chant/lint-rules/audit-rules/).
+
 ## Lint rules
 
 Lint rules analyze your TypeScript source code before build.
@@ -1135,6 +1147,10 @@ The lexicon also provides MCP (Model Context Protocol) tools and resources that 
       },
     ],
     sidebarExtra: [
+      // buildSidebar declines to link the generated `rules` page when a
+      // `lint-rules` extraPage exists, so the complete table needs an explicit
+      // entry — under a label that distinguishes it from the prose page.
+      { label: "All Rules (generated)", slug: "rules" },
       { label: "Deploying to EKS", slug: "eks-kubernetes" },
       { label: "Nested Stacks", slug: "nested-stacks" },
     ],

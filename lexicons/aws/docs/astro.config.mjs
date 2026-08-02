@@ -57,6 +57,10 @@ export default defineConfig({
                   "slug": "serialization"
             },
             {
+                  "label": "All Rules (generated)",
+                  "slug": "rules"
+            },
+            {
                   "label": "Deploying to EKS",
                   "slug": "eks-kubernetes"
             },
