@@ -29,7 +29,7 @@ export default defineConfig({
                   "slug": "pseudo-params"
             },
             {
-                  "label": "Lint Rules",
+                  "label": "All Rules",
                   "slug": "rules"
             },
             {

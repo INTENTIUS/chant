@@ -45,6 +45,10 @@ export default defineConfig({
                   "slug": "lint-rules"
             },
             {
+                  "label": "All Rules",
+                  "slug": "rules"
+            },
+            {
                   "label": "Examples",
                   "slug": "examples"
             },

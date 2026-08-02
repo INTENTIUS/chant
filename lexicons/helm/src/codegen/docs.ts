@@ -109,7 +109,7 @@ export async function generateDocs(opts?: { verbose?: boolean }): Promise<void> 
     // `lint-rules` below is helm's rules documentation; the generated `rules`
     // table duplicated it, and helm's own declared rules page was being
     // silently overwritten by that table (#1312).
-    suppressPages: ["pseudo-parameters", "rules"],
+    suppressPages: ["pseudo-parameters"],
     // Hand-written pages under docs/src/content/docs/ that no sidebar entry
     // pointed at.
     sidebarExtra: [

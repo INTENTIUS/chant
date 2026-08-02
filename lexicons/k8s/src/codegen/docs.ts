@@ -134,7 +134,7 @@ export async function generateDocs(opts?: { verbose?: boolean }): Promise<void> 
     overview,
     outputFormat,
     serviceFromType,
-    suppressPages: ["pseudo-parameters", "rules"],
+    suppressPages: ["pseudo-parameters"],
     extraPages: [
       {
         slug: "getting-started",

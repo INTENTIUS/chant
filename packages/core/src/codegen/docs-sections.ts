@@ -64,9 +64,11 @@ export function generateOverview(
       `- [Pseudo-Parameters](./pseudo-parameters) — ${Object.keys(manifest.pseudoParameters).length} pseudo-parameters`,
     );
   }
-  const overviewExtraSlugs = new Set((config.extraPages ?? []).map((p) => p.slug));
-  if (!suppress.has("rules") && !overviewExtraSlugs.has("lint-rules") && rules.length > 0) {
-    lines.push(`- [Lint Rules](./rules) — ${rules.length} rules`);
+  // Same reasoning as the sidebar's rules entry: link the complete table on
+  // every lexicon, under the label the sidebar uses, whether or not a prose
+  // `lint-rules` page also exists.
+  if (!suppress.has("rules") && rules.length > 0) {
+    lines.push(`- [All Rules](./rules) — ${rules.length} rules`);
   }
   if (!suppress.has("serialization")) {
     lines.push(`- [Serialization](./serialization) — output format details`);

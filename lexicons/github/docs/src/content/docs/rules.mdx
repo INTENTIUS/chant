@@ -1,0 +1,79 @@
+---
+title: "All Rules"
+description: "Every lint rule and post-synth check provided by the GitHub Actions lexicon"
+---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-github` — DO NOT EDIT.
+    Edit lexicons/github/src/codegen/docs.ts instead; changes here are overwritten. */}
+
+The GitHub Actions lexicon provides **58** rules: 13 lint rules and 45 post-synth checks.
+
+## Lint Rules
+
+| ID | Severity | Category | Description |
+|----|----------|----------|-------------|
+| `GHA001` | warning | style | Use Typed Action Composites |
+| `GHA002` | warning | style | Use Condition Builders |
+| `GHA003` | error | security | No Hardcoded Secrets |
+| `GHA004` | info | style | Use Matrix Builder |
+| `GHA005` | info | style | Extract Inline Structs |
+| `GHA007` | warning | style | File Job Limit |
+| `GHA008` | info | style | No Raw Expressions |
+| `GHA010` | warning | correctness | Missing Recommended Inputs |
+| `GHA012` | warning | correctness | Deprecated Action Version |
+| `GHA014` | warning | correctness | Job Timeout |
+| `GHA015` | warning | performance | Suggest Cache |
+| `GHA016` | warning | correctness | Validate Concurrency |
+| `GHA020` | error | security | Detect Secrets |
+
+## Post-Synth Checks
+
+Post-synth checks validate the serialized output after the build pipeline completes.
+
+| ID | Description |
+|----|-------------|
+| `GHA006` | Multiple workflows share the same name |
+| `GHA009` | Matrix dimension has empty values array |
+| `GHA011` | Job needs: references non-existent job |
+| `GHA013` | Missing job-level permissions for sensitive triggers |
+| `GHA017` | Workflow without explicit permissions block |
+| `GHA018` | pull_request_target with checkout action is a security risk |
+| `GHA019` | Circular needs: chain — cycle in job dependency graph |
+| `GHA021` | actions/checkout used without pinned SHA |
+| `GHA022` | Job without timeout-minutes |
+| `GHA023` | Deprecated ::set-output command usage |
+| `GHA024` | Missing concurrency block for deploy workflow |
+| `GHA025` | Using pull_request_target without restrictions |
+| `GHA026` | Secret passed to action without environment protection |
+| `GHA027` | Missing `if: always()` on cleanup steps |
+| `GHA028` | Workflow with no `on` triggers |
+| `GHA029` | Action or reusable workflow not pinned to a commit SHA |
+| `GHA030` | Container image not pinned to an immutable digest |
+| `GHA031` | Action reference resembles a well-known action (possible impersonation) |
+| `GHA032` | Action is archived/abandoned or has a disclosed security issue |
+| `GHA033` | Blanket write-all token permissions |
+| `GHA034` | Write permissions granted workflow-wide instead of per-job |
+| `GHA035` | Elevated token scope on a trigger that can run untrusted code |
+| `GHA036` | Untrusted input interpolated into a run: shell command |
+| `GHA037` | Untrusted input written to GITHUB_ENV / GITHUB_PATH |
+| `GHA038` | workflow_run trigger with checkout runs untrusted code in a privileged context |
+| `GHA039` | Authorization gate on a spoofable commit-author identity field |
+| `GHA040` | Self-hosted runner on a trigger that can run untrusted code |
+| `GHA041` | Blanket secrets: inherit into a reusable workflow |
+| `GHA042` | Entire secrets context passed where specific secrets would do |
+| `GHA043` | Secret consumed in a job without an environment gate |
+| `GHA044` | Hardcoded registry/container credential |
+| `GHA045` | Secret interpolated directly into a run: shell command |
+| `GHA046` | Logically unsound (constant) guard condition |
+| `GHA047` | Ineffective contains() guard with reversed arguments |
+| `GHA048` | Obfuscated guard condition (operand built by indirection) |
+| `GHA049` | Persisted checkout credentials reachable by an uploaded artifact |
+| `GHA050` | Cache populated in a privileged context (poisoning risk) |
+| `GHA051` | Publish/release step using a long-lived token instead of OIDC |
+| `GHA052` | Software fetched and piped to a shell without verification |
+| `GHA053` | Re-enables unsafe set-env / add-path workflow commands |
+| `GHA054` | Use of a feature with a known security footgun |
+| `GHA055` | Runtime install of a tool already present on the runner |
+| `GHA056` | Workflow without a name |
+| `GHA057` | Dependency update allows executing untrusted external code |
+| `GHA058` | Dependency update has no cooldown window |

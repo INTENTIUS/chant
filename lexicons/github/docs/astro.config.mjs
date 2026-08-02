@@ -53,6 +53,10 @@ export default defineConfig({
                   "slug": "skills"
             },
             {
+                  "label": "All Rules",
+                  "slug": "rules"
+            },
+            {
                   "label": "Serialization",
                   "slug": "serialization"
             },

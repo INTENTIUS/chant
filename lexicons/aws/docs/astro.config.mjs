@@ -53,12 +53,12 @@ export default defineConfig({
                   "slug": "intrinsics"
             },
             {
-                  "label": "Serialization",
-                  "slug": "serialization"
+                  "label": "All Rules",
+                  "slug": "rules"
             },
             {
-                  "label": "All Rules (generated)",
-                  "slug": "rules"
+                  "label": "Serialization",
+                  "slug": "serialization"
             },
             {
                   "label": "Deploying to EKS",

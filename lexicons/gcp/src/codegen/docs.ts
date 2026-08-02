@@ -834,7 +834,6 @@ The \`chant-gcp\` skill covers:
     // table is a duplicate — and buildSidebar already declines to link it when
     // a `lint-rules` page exists, which left it emitted but unreachable
     // (#1312). aws, k8s, gitlab and github suppress it for the same reason.
-    suppressPages: ["rules"],
     sidebarExtra: [
       { label: "Deploying to GKE", slug: "gke-kubernetes" },
     ],

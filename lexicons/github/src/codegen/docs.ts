@@ -93,7 +93,7 @@ export async function generateDocs(opts?: { verbose?: boolean }): Promise<void> 
     overview,
     outputFormat,
     serviceFromType,
-    suppressPages: ["intrinsics", "rules"],
+    suppressPages: ["intrinsics"],
     examplesDir: join(pkgDir, "examples"),
     extraSections: [
       {

@@ -1147,10 +1147,6 @@ The lexicon also provides MCP (Model Context Protocol) tools and resources that 
       },
     ],
     sidebarExtra: [
-      // buildSidebar declines to link the generated `rules` page when a
-      // `lint-rules` extraPage exists, so the complete table needs an explicit
-      // entry — under a label that distinguishes it from the prose page.
-      { label: "All Rules (generated)", slug: "rules" },
       { label: "Deploying to EKS", slug: "eks-kubernetes" },
       { label: "Nested Stacks", slug: "nested-stacks" },
     ],

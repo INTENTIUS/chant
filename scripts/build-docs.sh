@@ -109,6 +109,15 @@ cd docs && npm install && npm run build && cd ../../..
 mkdir -p "$SITE/lexicons/docker"
 cp -r lexicons/docker/docs/dist/* "$SITE/lexicons/docker/"
 
+# 10b. Generate + build Forgejo lexicon docs
+echo "Building Forgejo lexicon docs..."
+cd lexicons/forgejo
+npm run prepack
+npx tsx src/codegen/docs-cli.ts
+cd docs && npm install && npm run build && cd ../../..
+mkdir -p "$SITE/lexicons/forgejo"
+cp -r lexicons/forgejo/docs/dist/* "$SITE/lexicons/forgejo/"
+
 # 11. Generate + build Temporal lexicon docs
 echo "Building Temporal lexicon docs..."
 cd lexicons/temporal

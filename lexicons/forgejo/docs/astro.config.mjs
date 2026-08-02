@@ -25,7 +25,7 @@ export default defineConfig({
                   "slug": "dialect"
             },
             {
-                  "label": "Lint Rules",
+                  "label": "All Rules",
                   "slug": "rules"
             },
             {

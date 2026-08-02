@@ -178,6 +178,25 @@ function withGeneratedMarker(config: DocsConfig, content: string): string {
 }
 
 /**
+ * Render the complete rules table for a lexicon that has no {@link docsPipeline}
+ * site of its own.
+ *
+ * The docker lexicon hand-authors its docs, which left its rule table the only
+ * one in the repo that could drift from source without anything noticing
+ * (#1312). This is the one page worth generating even when the rest of a site
+ * is hand-written; the caller writes the result to `rules.mdx` and links it.
+ * Returns null when the lexicon declares no rules.
+ */
+export function generateRulesPage(
+  config: DocsConfig,
+  srcDir: string,
+): string | null {
+  const rules = scanRules(srcDir);
+  if (rules.length === 0) return null;
+  return withGeneratedMarker(config, generateRules(config, rules));
+}
+
+/**
  * Marks a page as pipeline output. Used both to warn readers off editing the
  * file and, in {@link writeDocsSite}, to tell a page this pipeline owns from a
  * hand-written one when reaping pages it no longer emits.

@@ -106,7 +106,6 @@ export async function generateDocs(opts?: { verbose?: boolean }): Promise<void> 
     // depends on. The hand-written `reference()` usage guide moves to a
     // separate "intrinsics-guide" page below — content unchanged, just no
     // longer sharing a slug with generated data.
-    suppressPages: ["rules"],
     examplesDir: join(pkgDir, "examples"),
     extraPages: [
       {

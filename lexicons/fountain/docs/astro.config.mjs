@@ -41,7 +41,7 @@ export default defineConfig({
                   "slug": "skills"
             },
             {
-                  "label": "Lint Rules",
+                  "label": "All Rules",
                   "slug": "rules"
             },
             {

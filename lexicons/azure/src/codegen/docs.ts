@@ -75,7 +75,6 @@ const docsConfig: DocsConfig = {
   // `lint-rules` below is the rules documentation; the generated `rules` table
   // would duplicate it and land in no sidebar (#1312). aws, k8s, gitlab and
   // github already suppress it for the same reason.
-  suppressPages: ["rules"],
   // These pages are hand-written files under docs/src/content/docs/. The
   // pipeline preserves pages it did not emit, but Starlight has no
   // auto-discovery, so without an entry here they are reachable only by URL —

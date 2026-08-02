@@ -21,7 +21,7 @@ export default defineConfig({
                   "slug": "index"
             },
             {
-                  "label": "Lint Rules",
+                  "label": "All Rules",
                   "slug": "rules"
             },
             {
