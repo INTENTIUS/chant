@@ -131,10 +131,13 @@ this emulator.
 
 ---
 
-## 4. CloudFormation does not apply a security group's rules or tags
+## 4. CloudFormation does not apply a security group's rules or tags — FIXED LOCALLY
 
-**Status:** confirmed 2026-08-01, unfiled. **This is the one that blocks a lane
-— file it first.**
+**Status:** FIXED LOCALLY 2026-08-01, not yet upstream. Branch
+`fix/cfn-security-group-rules-and-tags` on the floci fork; `floci/floci:latest`
+rebuilt from it locally, so chant's lanes are unblocked on this machine. **Still
+the first thing to send upstream** — until it lands, anyone else running these
+lanes hits it.
 
 A template that declares `SecurityGroupIngress` produces a group with no rules.
 The EC2 API is not at fault: the same rule added directly is stored and returned
@@ -205,3 +208,19 @@ $ aws cloudcontrol list-resources --type-name AWS::EC2::VPC
 Floci serves EC2 kinds through Cloud Control that chant's `DEEP_READABLE_TYPES`
 allowlist excludes, so part of chant#1269's widening is achievable here — via
 `ListResources`, and only for the shallow fields in #2.
+
+### Fix, for the upstream PR
+
+`CloudFormationResourceProvisioner.provisionSecurityGroup` created the group
+from `GroupName` / `GroupDescription` / `VpcId` and returned; nothing read
+`SecurityGroupIngress`, `SecurityGroupEgress` or `Tags`. The fix translates the
+template's flat rule shape (`CidrIp` / `CidrIpv6` / `SourceSecurityGroupId` on
+the rule) into the nested `IpPermission` the EC2 API stores, one permission per
+template rule, carrying each rule's `Description` on its source; then applies
+`Tags` via `createTags`. Covered by
+`CloudFormationSecurityGroupRulesIntegrationTest`.
+
+Verified from chant's side against the rebuilt image: a stack declaring one SSH
+ingress rule now reports `0 property drift, 1 unchanged` on a clean apply, and
+an out-of-band `0.0.0.0/0` rule added afterwards surfaces as drift. That is both
+halves of chant#1207's acceptance bar, on the canonical example.
