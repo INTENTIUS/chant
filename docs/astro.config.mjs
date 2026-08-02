@@ -146,7 +146,7 @@ export default defineConfig({
 						{ label: 'Helm Charts', link: '/lexicons/helm/' },
 						{ label: 'GitHub Actions', link: '/lexicons/github/' },
 						{ label: 'GitLab CI/CD', link: '/lexicons/gitlab/' },
-						{ label: 'Forgejo Actions', slug: 'lexicons/forgejo' },
+						{ label: 'Forgejo Actions', link: '/lexicons/forgejo/' },
 						{ label: 'Docker', link: '/lexicons/docker/' },
 						{ label: 'Temporal', link: '/lexicons/temporal/' },
 					],

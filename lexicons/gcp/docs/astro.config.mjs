@@ -57,6 +57,10 @@ export default defineConfig({
                   "slug": "pseudo-parameters"
             },
             {
+                  "label": "All Rules",
+                  "slug": "rules"
+            },
+            {
                   "label": "Serialization",
                   "slug": "serialization"
             },

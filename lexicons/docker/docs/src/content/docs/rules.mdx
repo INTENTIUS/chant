@@ -1,0 +1,28 @@
+---
+title: "All Rules"
+description: "Every lint rule and post-synth check provided by the Docker lexicon"
+---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-docker` — DO NOT EDIT.
+    Edit lexicons/docker/src/codegen/docs.ts instead; changes here are overwritten. */}
+
+The Docker lexicon provides **7** rules: 1 lint rule and 6 post-synth checks.
+
+## Lint Rules
+
+| ID | Severity | Category | Description |
+|----|----------|----------|-------------|
+| `DKRS001` | warning | correctness | No Latest Tag |
+
+## Post-Synth Checks
+
+Post-synth checks validate the serialized output after the build pipeline completes.
+
+| ID | Description |
+|----|-------------|
+| `DKRD001` | Service uses :latest or untagged image — specify an explicit version tag |
+| `DKRD002` | Named volume is declared but not mounted by any service |
+| `DKRD003` | Service exposes SSH port (22) externally — this is a security risk |
+| `DKRD010` | apt-get install without --no-install-recommends adds unnecessary packages |
+| `DKRD011` | Prefer COPY over ADD when not fetching URLs or extracting archives |
+| `DKRD012` | Dockerfile has no USER instruction — container runs as root |

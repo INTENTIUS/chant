@@ -109,17 +109,26 @@ function extractDescriptionFromComment(
   return ruleId;
 }
 
+function plural(n: number, noun: string): string {
+  return `${n} ${noun}${n === 1 ? "" : "s"}`;
+}
+
 export function generateRules(config: DocsConfig, rules: RuleMeta[]): string {
   const lintRules = rules.filter((r) => r.type === "lint");
   const postSynthRules = rules.filter((r) => r.type === "post-synth");
 
   const lines: string[] = [
     "---",
-    `title: "Lint Rules"`,
-    `description: "Lint rules and post-synth checks provided by the ${config.displayName} lexicon"`,
+    // "All Rules", not "Lint Rules": most lexicons also ship a hand-written
+    // page under the latter title that covers a selected subset, and two pages
+    // with the same title reads as a duplicate rather than a complete table.
+    `title: "All Rules"`,
+    `description: "Every lint rule and post-synth check provided by the ${config.displayName} lexicon"`,
     "---",
     "",
-    `The ${config.displayName} lexicon provides **${rules.length}** rules: ${lintRules.length} lint rules and ${postSynthRules.length} post-synth checks.`,
+    `The ${config.displayName} lexicon provides **${rules.length}** rules: ` +
+      `${plural(lintRules.length, "lint rule")} and ` +
+      `${plural(postSynthRules.length, "post-synth check")}.`,
     "",
   ];
 

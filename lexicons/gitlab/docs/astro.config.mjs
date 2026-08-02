@@ -49,6 +49,10 @@ export default defineConfig({
                   "slug": "intrinsics"
             },
             {
+                  "label": "All Rules",
+                  "slug": "rules"
+            },
+            {
                   "label": "Serialization",
                   "slug": "serialization"
             },

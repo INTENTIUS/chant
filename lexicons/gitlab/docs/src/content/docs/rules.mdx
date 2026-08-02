@@ -1,0 +1,64 @@
+---
+title: "All Rules"
+description: "Every lint rule and post-synth check provided by the GitLab CI/CD lexicon"
+---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-gitlab` — DO NOT EDIT.
+    Edit lexicons/gitlab/src/codegen/docs.ts instead; changes here are overwritten. */}
+
+The GitLab CI/CD lexicon provides **43** rules: 4 lint rules and 39 post-synth checks.
+
+## Lint Rules
+
+| ID | Severity | Category | Description |
+|----|----------|----------|-------------|
+| `WGL001` | warning | style | Deprecated only/except keywords |
+| `WGL002` | error | correctness | Missing script |
+| `WGL003` | info | style | Missing stage |
+| `WGL004` | warning | performance | Artifacts without expiry |
+
+## Post-Synth Checks
+
+Post-synth checks validate the serialized output after the build pipeline completes.
+
+| ID | Description |
+|----|-------------|
+| `WGL010` | Job references a stage not in the stages list |
+| `WGL011` | Job has rules that always evaluate to never (unreachable) |
+| `WGL012` | Deprecated property usage — flags properties marked as deprecated in the GitLab CI schema |
+| `WGL013` | Invalid needs: target — dangling reference or self-reference |
+| `WGL014` | Invalid extends: target — references a template not in the pipeline |
+| `WGL015` | Circular needs: chain — cycle in job dependency graph |
+| `WGL016` | Secrets in variables — hardcoded passwords or tokens in variables blocks |
+| `WGL017` | Insecure registry — Docker push/pull to non-HTTPS registry |
+| `WGL018` | Missing timeout — jobs without explicit timeout may run too long |
+| `WGL019` | Missing retry — deploy jobs without retry strategy |
+| `WGL020` | Duplicate job names — multiple jobs resolving to same name |
+| `WGL021` | Unused variables — global variables not referenced by any job |
+| `WGL022` | Missing artifacts expiry — artifacts without expire_in cause disk bloat |
+| `WGL023` | Overly broad rules — job with only when: always rule (no conditions) |
+| `WGL024` | Manual without allow_failure — manual jobs block pipeline without allow_failure: true |
+| `WGL025` | Missing cache key — cache without key causes collisions |
+| `WGL026` | Privileged services without TLS — DinD services without DOCKER_TLS_CERTDIR |
+| `WGL027` | Empty script — jobs with empty or blank script entries |
+| `WGL028` | Redundant needs — needs listing jobs already implied by stage ordering |
+| `WGL029` | include:project / component resolved by a moving ref instead of a pinned tag or SHA |
+| `WGL030` | include:remote is insecure (HTTP) or mutable |
+| `WGL031` | Container image not pinned to an immutable digest |
+| `WGL032` | Include/component source resembles a well-known project (possible impersonation) |
+| `WGL033` | OIDC id_token without a scoped audience |
+| `WGL034` | OIDC id_token mintable from a merge-request pipeline |
+| `WGL035` | Untrusted CI variable interpolated into a script command |
+| `WGL036` | Privileged service / DinD reachable from merge-request pipelines |
+| `WGL037` | Security gate on a regex match of an untrusted ref variable |
+| `WGL038` | Secret-like variable reachable from a merge-request pipeline |
+| `WGL039` | Secret-like variable printed to job logs |
+| `WGL040` | Hardcoded credential in a registry login command |
+| `WGL041` | Logically unsound (tautological) rules:if condition |
+| `WGL042` | Unreachable rules after an unconditional match |
+| `WGL043` | Match-anything regex gate in rules:if |
+| `WGL044` | Public artifacts expose build output |
+| `WGL045` | Artifact path that may capture a credential file |
+| `WGL046` | Cache populated in a merge-request pipeline (poisoning risk) |
+| `WGL047` | Software fetched and piped to a shell without verification |
+| `WGL048` | Pipeline defines workflow: but no workflow:name |

@@ -1,0 +1,55 @@
+---
+title: "All Rules"
+description: "Every lint rule and post-synth check provided by the Kubernetes lexicon"
+---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-k8s` — DO NOT EDIT.
+    Edit lexicons/k8s/src/codegen/docs.ts instead; changes here are overwritten. */}
+
+The Kubernetes lexicon provides **34** rules: 5 lint rules and 29 post-synth checks.
+
+## Lint Rules
+
+| ID | Severity | Category | Description |
+|----|----------|----------|-------------|
+| `ARGO001` | warning | correctness | Production Application must not enable automated prune |
+| `ARGO004` | warning | correctness | ApplicationSet template must scope to a single AppProject |
+| `WK8001` | warning | correctness | Hardcoded Namespace |
+| `WK8002` | warning | security | Latest Image Tag |
+| `WK8003` | warning | correctness | Missing Resource Limits |
+
+## Post-Synth Checks
+
+Post-synth checks validate the serialized output after the build pipeline completes.
+
+| ID | Description |
+|----|-------------|
+| `ARGO002` | Application.spec.project must reference a declared AppProject (or the built-in default) |
+| `ARGO003` | Application.spec.destination must reference a registered cluster or the in-cluster target |
+| `ARGO005` | Application source.path should resolve to an existing directory under the build root |
+| `WK8005` | Hardcoded secrets in env vars — sensitive environment variables should use secretKeyRef |
+| `WK8006` | No :latest or untagged images — container images should use explicit version tags |
+| `WK8041` | Hardcoded API keys — detects well-known API key patterns in env var values |
+| `WK8042` | Private keys in ConfigMap — private keys should be stored in Secrets, not ConfigMaps |
+| `WK8101` | Deployment selector must match template labels — mismatched selectors cause runtime failures |
+| `WK8102` | Resources should have metadata labels — labels enable filtering and operational tooling |
+| `WK8103` | Containers must have name — the name field is required by the Kubernetes API |
+| `WK8104` | Ports should be named — named ports improve Service and NetworkPolicy configuration |
+| `WK8105` | ImagePullPolicy should be explicit — avoids surprising default behavior |
+| `WK8201` | Resource limits required — containers should have CPU and memory limits |
+| `WK8202` | No privileged containers — privileged mode grants full host access |
+| `WK8203` | ReadOnlyRootFilesystem recommended — prevents runtime modification of the container image |
+| `WK8204` | RunAsNonRoot recommended — running as root increases container breakout risk |
+| `WK8205` | Drop ALL capabilities — containers should drop all capabilities and add only what is needed |
+| `WK8207` | No hostNetwork — using host network bypasses network isolation |
+| `WK8208` | No hostPID — sharing host PID namespace allows visibility into all host processes |
+| `WK8209` | No hostIPC — sharing host IPC namespace can expose shared memory segments |
+| `WK8301` | Probes required — containers should have livenessProbe and readinessProbe |
+| `WK8302` | Replicas >= 2 recommended — single-replica Deployments have no high availability |
+| `WK8303` | PDB recommended for HA Deployments — ensures availability during voluntary disruptions |
+| `WK8304` | SSL redirect without certificate — ssl-redirect annotation requires a valid certificate-arn and HTTPS listen-ports |
+| `WK8305` | Ingress port not matching Service — backend port must match a declared Service port |
+| `WK8306` | Container command starts with flag — first element should be a binary, not a flag |
+| `WK8401` | shmSize must not exceed the container memory limit — pod will not schedule if it does |
+| `WK8402` | RayCluster should set spec.rayVersion so KubeRay selects the correct autoscaler image |
+| `WK8403` | spec.rayVersion should match the Ray version in the head container image tag |

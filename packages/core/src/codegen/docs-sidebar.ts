@@ -39,8 +39,14 @@ export function buildSidebar(
     items.push({ label: "Pseudo-Parameters", slug: "pseudo-parameters" });
   }
 
-  if (!suppress.has("rules") && !extraSlugs.has("rules") && !extraSlugs.has("lint-rules") && result.pages.has("rules.mdx")) {
-    items.push({ label: "Lint Rules", slug: "rules" });
+  // Every lexicon links its generated rules table, whether or not it also
+  // ships a prose `lint-rules` page. Skipping it when one existed was how gcp
+  // ended up emitting a page nothing pointed at (#1312), and it left readers
+  // with no complete list on the lexicons whose prose covers only part of the
+  // set — aws documented 26 of 50 that way. The label distinguishes the
+  // generated table from a prose page rather than competing with it.
+  if (!suppress.has("rules") && !extraSlugs.has("rules") && result.pages.has("rules.mdx")) {
+    items.push({ label: "All Rules", slug: "rules" });
   }
 
   if (!suppress.has("serialization") && !extraSlugs.has("serialization") && result.pages.has("serialization.mdx")) {

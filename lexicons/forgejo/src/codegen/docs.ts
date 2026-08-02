@@ -82,6 +82,76 @@ takes a workflow file and returns per-property fates plus summary counts —
 read-only.
 `;
 
+const OVERVIEW_CONTENT = `\`@intentius/chant-lexicon-forgejo\` targets **Forgejo Actions** — the CI behind
+[Codeberg](https://codeberg.org), self-hosted [Forgejo](https://forgejo.org),
+and [Gitea](https://about.gitea.com). Forgejo runs **GitHub-Actions-compatible**
+workflows, so the lexicon is a **thin dialect of the [github lexicon](/chant/lexicons/github/)**
+(chant #338): every entity, composite, and expression helper is the same class
+you'd import from the github package. This package supplies only what is
+genuinely Forgejo-specific — the serializer dialect and a github → forgejo
+migration path. One package covers Codeberg, self-hosted Forgejo, and Gitea.
+
+Author exactly as you would for GitHub Actions, importing from the forgejo
+package; see [The Forgejo Dialect](/chant/lexicons/forgejo/dialect/) for what
+changes on the way out.
+
+## Build
+
+Forgejo reads workflows from \`.forgejo/workflows/\` (or \`.gitea/workflows/\` for
+Gitea), so point the output there — the same way the github lexicon targets
+\`.github/workflows/\`:
+
+\`\`\`sh
+chant build src -o .forgejo/workflows/ci.yml
+\`\`\`
+
+## Configuration
+
+Override the runner-label map and the actions root in \`chant.config.ts\`:
+
+\`\`\`ts
+import type { ChantConfig } from "@intentius/chant";
+
+export default {
+  lexicons: ["forgejo"],
+  forgejo: {
+    runnerLabels: {
+      "ubuntu-latest": "docker",
+      "ubuntu-22.04": "ubuntu-lts",
+    },
+    actionsRoot: "https://code.forgejo.org",
+  },
+} satisfies ChantConfig;
+\`\`\`
+
+## Read-only context tools
+
+The forgejo lexicon ships the full \`forgejo:*\` [read-only context tools](/chant/guide/agent-integration/#read-only-context-tools)
+(\`checks\`, \`workflow\`, \`references\`, \`affected\`, \`workflow-yaml\`, \`source\`,
+\`owns\`, \`compare\`). Each builds from source and returns what chant already
+computes — without touching any live forge.
+
+## Runtime observation
+
+N/A — workflow definitions are git-tracked, so drift is a \`git diff\`, the same
+rationale as the github and gitlab lexicons. The lexicon implements neither
+\`describeResources()\` nor \`listArtifacts()\` and is warn-skipped on \`--live\`.
+
+## Validating execution
+
+A runtime E2E (\`just forgejo-runtime-e2e\`) builds a workflow and **runs** the
+generated \`.forgejo/workflows/ci.yml\` in Docker via a Forgejo runner
+(\`forgejo-runner\` / \`act_runner\` / \`act\` \`exec\`), proving Forgejo Actions
+accepts and executes chant's output. On-demand — it needs Docker and a runner
+tool, and is not part of the gating CI.
+
+## Caveats
+
+Flow-style YAML (\`branches: [main]\`) is parsed by chant's lightweight core
+parser, which keeps it as a scalar — prefer block style in sources you intend to
+migrate. This is shared with the github import path.
+`;
+
 /**
  * Generate documentation site for the Forgejo lexicon.
  */
@@ -93,8 +163,7 @@ export async function generateDocs(options?: { verbose?: boolean }): Promise<voi
     distDir: "./dist",
     outDir: "./docs",
     basePath: process.env.DOCS_BASE_PATH ?? "/chant/lexicons/forgejo/",
-    overview:
-      "Forgejo Actions is a thin dialect of the GitHub Actions lexicon (chant #338): every entity, composite, and expression helper you write for a Forgejo workflow is the same class you'd import from the github lexicon — this package supplies only what's genuinely Forgejo-specific: the serializer dialect (dropped GitHub-only keys, `uses:` action resolution, runner-label mapping) and a github → forgejo migration path.",
+    overview: OVERVIEW_CONTENT,
     outputFormat:
       "The Forgejo lexicon serializes entities into the same YAML shape as GitHub Actions, then applies the Forgejo dialect (see [The Forgejo Dialect](/chant/lexicons/forgejo/dialect/)) before writing to `.forgejo/workflows/*.yml` (or `.gitea/workflows/*.yml` for Gitea).",
     extraPages: [
