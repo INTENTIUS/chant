@@ -40,19 +40,37 @@ export interface RollbackResult {
   noop: boolean;
   branch?: string;
   prUrl?: string;
+  /**
+   * The rollback delta as a unified diff — present only for a `dryRun`, where
+   * it is the whole point: the PR body's diff is what a reviewer would act on,
+   * so producing it without a PR is what makes the delta inspectable offline.
+   */
+  diff?: string;
 }
 
 /**
  * Open a rollback PR restoring `sourceDir` to `ref`. Isolated worktree; the
  * caller's branch is untouched. Throws on an unknown ref or a git/gh failure.
+ *
+ * `dryRun` computes the same delta and returns it as a diff without pushing a
+ * branch or opening a PR, leaving the repository exactly as it found it.
+ *
+ * That mode exists because the PR path needs a GitHub remote and an
+ * authenticated `gh` — reasonable for the operator flow this was built for
+ * (#873), and impossible for a hermetic acceptance run. chant#1208's CC
+ * round-trip has to demonstrate rollback offline, on an emulator, with no
+ * remote in the picture; without this it could only assert the `noop` case,
+ * which exercises none of the interesting work.
  */
 export async function rollbackToRevision(opts: {
   ref: string;
   env: string | undefined;
   sourceDir: string;
   cwd: string;
+  /** Compute and return the delta; open no PR, push nothing, leave no branch. */
+  dryRun?: boolean;
 }): Promise<RollbackResult> {
-  const { ref, env, sourceDir, cwd } = opts;
+  const { ref, env, sourceDir, cwd, dryRun } = opts;
   const git = (args: string[], wd: string): Promise<{ stdout: string }> => execFileAsync("git", args, { cwd: wd });
 
   const repoRoot = (await git(["rev-parse", "--show-toplevel"], cwd)).stdout.trim();
@@ -69,6 +87,13 @@ export async function rollbackToRevision(opts: {
     const staged = (await git(["status", "--porcelain", "--", sourceDir], wt)).stdout.trim();
     if (!staged) return { noop: true };
 
+    // The delta, before committing: `git diff` against the index shows exactly
+    // what restoring the source to `ref` changes. A dry run stops here.
+    if (dryRun) {
+      const { stdout } = await git(["diff", "--cached", "--", sourceDir], wt);
+      return { noop: false, branch, diff: stdout };
+    }
+
     await git(["commit", "-m", rollbackTitle(env, ref)], wt);
     await git(["push", "-u", "origin", branch], wt);
     const { stdout } = await execFileAsync(
@@ -79,5 +104,9 @@ export async function rollbackToRevision(opts: {
     return { noop: false, branch, prUrl: stdout.trim() };
   } finally {
     await git(["worktree", "remove", "--force", wt], repoRoot).catch(() => {});
+    // Removing the worktree leaves its branch behind. For the PR path that is
+    // correct — the branch is the PR. A dry run must leave nothing, or a repo
+    // accumulates a `chant/rollback-*` branch per inspection.
+    if (dryRun) await git(["branch", "-D", branch], repoRoot).catch(() => {});
   }
 }
