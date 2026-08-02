@@ -181,8 +181,25 @@ function extractProperties(schema: OpenAPISchema): ParsedProperty[] {
   const topProps = schema.properties ?? {};
   const topRequired = new Set<string>(schema.required ?? []);
 
-  // Skip apiVersion, kind, status — same pattern as core parser
-  const skipProps = new Set(["apiVersion", "kind", "status"]);
+  // Skip apiVersion, kind, status — same pattern as core parser. `metadata` is
+  // skipped here too and re-added below: every custom resource carries the full
+  // ObjectMeta whatever its own schema says, and most CRD schemas say nothing.
+  const skipProps = new Set(["apiVersion", "kind", "metadata", "status"]);
+
+  // A CRD's openAPIV3Schema describes what the *controller* reads, so authors
+  // routinely declare only `spec` and `status` — the Fabric8 CRDGenerator emits
+  // exactly that, and so do most hand-written CRDs. The API server still accepts
+  // (and requires) the standard `metadata`, so deriving the constructor surface
+  // from the schema alone produced a class with no way to set a name or
+  // namespace, and every call site needed an `as any` to get one on. Emit it
+  // unconditionally, typed the same as every built-in kind's.
+  result.push({
+    name: "metadata",
+    tsType: "ObjectMeta",
+    required: false,
+    description: "Standard object's metadata.",
+    constraints: {},
+  });
 
   for (const [name, prop] of Object.entries(topProps)) {
     if (skipProps.has(name)) continue;

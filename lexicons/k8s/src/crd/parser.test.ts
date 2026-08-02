@@ -201,6 +201,63 @@ describe("parseCRDSpec", () => {
     expect(props.some((p) => p.name === "metadata")).toBe(true);
   });
 
+  test("emits metadata even when the schema declares only spec and status", () => {
+    // The shape the Fabric8 CRDGenerator produces, and what KubeMicroVM's five
+    // CRDs ship — no `metadata` in openAPIV3Schema at all. Without this the
+    // generated class had no way to set a name or a namespace.
+    const spec = {
+      group: "lambda.aws.amazon.com",
+      names: { kind: "MicroVM", plural: "microvms" },
+      scope: "Namespaced" as const,
+      versions: [
+        {
+          name: "v1alpha1",
+          served: true,
+          storage: true,
+          schema: {
+            openAPIV3Schema: {
+              type: "object",
+              properties: {
+                spec: { type: "object", properties: { imageRef: { type: "string" } } },
+                status: { type: "object", properties: { state: { type: "string" } } },
+              },
+            },
+          },
+        },
+      ],
+    };
+
+    const props = parseCRDSpec(spec)[0].resource.properties;
+    const metadata = props.find((p) => p.name === "metadata");
+    expect(metadata?.tsType).toBe("ObjectMeta");
+    expect(metadata?.required).toBe(false);
+  });
+
+  test("a schema-declared metadata does not produce a duplicate", () => {
+    const spec = {
+      group: "cert-manager.io",
+      names: { kind: "Certificate", plural: "certificates" },
+      scope: "Namespaced" as const,
+      versions: [
+        {
+          name: "v1",
+          served: true,
+          storage: true,
+          schema: {
+            openAPIV3Schema: {
+              type: "object",
+              properties: { metadata: { type: "object" }, spec: { type: "object" } },
+            },
+          },
+        },
+      ],
+    };
+
+    const metadataProps = parseCRDSpec(spec)[0].resource.properties.filter((p) => p.name === "metadata");
+    expect(metadataProps.length).toBe(1);
+    expect(metadataProps[0].tsType).toBe("ObjectMeta");
+  });
+
   test("normalizeGroupName converts cert-manager.io to CertManager", () => {
     const spec = {
       group: "cert-manager.io",
