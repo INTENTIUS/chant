@@ -273,9 +273,16 @@ export async function runLifecycleRollback(ctx: CommandContext): Promise<number>
   const { config } = await loadChantConfig(resolve("."));
   const sourceDir = config.sourceDir ?? ".";
   try {
-    const result = await rollbackToRevision({ ref, env: environment, sourceDir, cwd: resolve(".") });
+    const result = await rollbackToRevision({ ref, env: environment, sourceDir, cwd: resolve("."), dryRun: args.dryRun });
     if (result.noop) {
       console.error(formatSuccess(`${sourceDir} already matches ${ref} — nothing to roll back`));
+      return 0;
+    }
+    if (args.dryRun) {
+      // The delta on stdout, so it pipes and diffs like any other patch; the
+      // summary on stderr, matching the PR path's split.
+      process.stdout.write(result.diff ?? "");
+      console.error(formatSuccess(`Rollback delta for ${ref} computed — no PR opened, nothing pushed`));
       return 0;
     }
     console.log(result.prUrl); // the PR URL — the consumer (behold) reads this from stdout

@@ -211,6 +211,8 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.migrateTo = args[++i];
     } else if (arg === "--emit") {
       result.emit = args[++i];
+    } else if (arg === "--dry-run") {
+      result.dryRun = true;
     } else if (arg === "--strict") {
       result.strict = true;
     } else if (arg === "--validate") {

@@ -63,6 +63,8 @@ export interface ParsedArgs {
   selectName?: string;
   /** `chant import --owned` — restrict live import to chant-owned resources */
   owned?: boolean;
+  /** `chant lifecycle rollback --dry-run` — compute the rollback delta and print it; open no PR, push nothing, leave no branch. */
+  dryRun?: boolean;
   /** `chant import --verbatim` — keep server-defaulted fields in live import */
   verbatim?: boolean;
   /** `chant lifecycle … --src <dir>` — build root override for lifecycle commands */
