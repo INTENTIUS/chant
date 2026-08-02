@@ -1,0 +1,155 @@
+---
+title: "chant emulator"
+description: Boot, stop, and inspect the local cloud emulators of a project's configured lexicons
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+## Synopsis
+
+```
+chant emulator up     [--lexicon <name>] [--json]
+chant emulator down   [--lexicon <name>] [--json]
+chant emulator status [--lexicon <name>] [--json]
+```
+
+## Description
+
+`chant emulator` manages the local emulators of the lexicons your project
+configures, and reports the endpoint and environment that redirect tooling at
+them.
+
+The [Local Testing](/chant/local-testing/overview/) pages boot an emulator
+inside an Op, which tears it down again when the Op finishes. This command is
+the other shape: `up` leaves the emulator **running** so you can deploy to it,
+observe it with [`chant lifecycle diff --live`](/chant/cli/lifecycle/), graph it
+with [`chant graph --live`](/chant/cli/graph/), and come back to it across
+several commands.
+
+Every action is idempotent. `up` on an already-running emulator reports the
+existing endpoint rather than starting a second container.
+
+<Aside type="note" title="Which lexicons have one">
+An emulator is a lexicon capability, and today **aws** is the only lexicon that
+declares one — [Floci](https://github.com/floci-io/floci). Running the command
+in a project without it is not an error: it warns and exits 0, so a script that
+calls `chant emulator up` unconditionally still works.
+</Aside>
+
+## Subcommands
+
+### `emulator up`
+
+Boots each configured lexicon's emulator container and waits for it to report
+healthy, then prints the endpoint.
+
+```bash
+chant emulator up
+```
+
+```
+✓ aws: chant-floci up on http://localhost:4566
+```
+
+### `emulator down`
+
+Stops and removes the containers.
+
+```bash
+chant emulator down
+```
+
+### `emulator status`
+
+Reports whether each emulator is running, without starting or stopping
+anything. A container that is not running reports `down` with an empty
+endpoint.
+
+```bash
+chant emulator status
+```
+
+```
+aws: chant-floci — up on http://localhost:4566
+```
+
+## Flags
+
+| Flag | Description |
+|------|-------------|
+| `--lexicon <name>` | Act on one lexicon's emulator instead of all of them. A lexicon with no emulator, or one this project does not configure, warns and exits 0. |
+| `--json` | Emit the machine-readable report on stdout instead of the human summary. |
+
+## `--json`
+
+The report is the contract other tools consume — [behold](https://github.com/INTENTIUS/behold)'s
+`serve --local` uses it to point itself at a running emulator.
+
+```bash
+chant emulator up --json
+```
+
+```json
+{
+  "emulators": [
+    {
+      "lexicon": "aws",
+      "name": "chant-floci",
+      "endpoint": "http://localhost:4566",
+      "env": {
+        "AWS_ENDPOINT_URL": "http://localhost:4566",
+        "AWS_ACCESS_KEY_ID": "test",
+        "AWS_SECRET_ACCESS_KEY": "test",
+        "AWS_REGION": "us-east-1"
+      }
+    }
+  ]
+}
+```
+
+`env` is the point of the report: exporting those variables is what makes the
+AWS SDK, `chant lifecycle --live`, and a triggered Op talk to the emulator
+rather than the real account.
+
+```bash
+eval "$(chant emulator up --json | jq -r '.emulators[].env | to_entries[] | "export \(.key)=\(.value)"')"
+chant lifecycle diff local --live
+```
+
+`down` and a stopped `status` report an empty `endpoint` and an empty `env`, so
+a consumer can tell "not running" from "running here" without parsing prose.
+With `--json`, a project whose lexicons have no emulator reports
+`{"emulators":[]}`.
+
+<Aside type="tip" title="Declaring an endpoint instead">
+For an environment you use repeatedly, declaring its endpoint in
+`chant.config.ts` under [`environments`](/chant/configuration/config-file/#environments)
+means `--live --env <name>` finds the emulator without exporting anything. This
+command is for the ad-hoc case, and for tools that need the endpoint
+programmatically.
+</Aside>
+
+## The aws emulator
+
+| | |
+|---|---|
+| Container | `chant-floci` |
+| Image | `floci/floci:latest` |
+| Port | `4566` |
+| Health check | `/_localstack/health`, waiting on `cloudformation` |
+
+Requires Docker. If Docker is missing or not running, `status` reports the
+emulator as down rather than failing.
+
+## Exit Codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | The action completed, including the case where no configured lexicon has an emulator |
+| 1 | No subcommand, or one that is not `up`, `down`, or `status` |
+
+## See Also
+
+- [Local Testing](/chant/local-testing/overview/) — deploying chant's real output to an emulator, per cloud
+- [`chant lifecycle`](/chant/cli/lifecycle/) — observing a running emulator with `--live`
+- [Config File](/chant/configuration/config-file/#environments) — binding an endpoint to a named environment
