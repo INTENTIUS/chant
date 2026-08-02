@@ -218,8 +218,16 @@ release bump="patch":
     # Refuse to tag a commit CI has not proven green (#1255). This recipe
     # pushes `main` explicitly, so it also requires you to be on it.
     bash scripts/release-preflight.sh main
+    # Bump from the HIGHEST version any workspace package is on, not core's.
+    # `just release-lexicon` can push one lexicon ahead of core — k8s shipped
+    # 0.36.0 while core sat at 0.34.1 — and deriving the next version from core
+    # alone then rewrites that lexicon BACKWARDS. The publish step skips it as
+    # already-published, so the repo is left permanently behind the registry
+    # with no error anywhere. Flooring at the max makes the lockstep bump
+    # monotonic for every package (#1255).
     current=$(jq -r .version packages/core/package.json)
-    IFS='.' read -r major minor patch <<< "$current"
+    highest=$(jq -r .version packages/core/package.json packages/k8s-client/package.json lexicons/*/package.json | sort -V | tail -1)
+    IFS='.' read -r major minor patch <<< "$highest"
     case "{{bump}}" in
       major) major=$((major + 1)); minor=0; patch=0 ;;
       minor) minor=$((minor + 1)); patch=0 ;;
@@ -227,6 +235,19 @@ release bump="patch":
       *) echo "Usage: just release [major|minor|patch]"; exit 1 ;;
     esac
     next="$major.$minor.$patch"
+    if [ "$highest" != "$current" ]; then
+      echo "Floor: $highest — a package is ahead of core ($current)"
+    fi
+    # Monotonic or bust. The floor above already guarantees this; the check is
+    # here so that reverting to a core-only bump fails loudly instead of
+    # rewriting a package backwards and going quiet at publish time.
+    for f in packages/core/package.json packages/k8s-client/package.json lexicons/*/package.json; do
+      have=$(jq -r .version "$f")
+      if [ "$(printf '%s\n%s\n' "$have" "$next" | sort -V | tail -1)" != "$next" ]; then
+        echo "refusing to release: $f is at $have, ahead of the computed $next" >&2
+        exit 1
+      fi
+    done
     echo "Bumping $current → $next"
     # Bump .version everywhere, and keep the @intentius/* peer/optional
     # dependency ranges in lockstep (they were frozen at ^0.1.0, which breaks
