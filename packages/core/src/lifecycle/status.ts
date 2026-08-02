@@ -86,6 +86,19 @@ export interface ComponentStatusRow {
    * present-but-not-healthy amber (mid-deploy) / red (rollback/failed).
    */
   stack?: LiveStackInfo;
+  /**
+   * How this component's own resources answered (behold#98). Present whenever
+   * `--live` gathered evidence across a live-name mapping.
+   *
+   * `stack` above only exists where the substrate has a deploy object to read,
+   * which is AWS and nowhere else — floci-az and floci-gcp have none, so a
+   * consumer painting component status off `stack` has nothing to paint from
+   * there. These counts are the substrate-neutral source for the same job:
+   * they aggregate observations, which every lexicon produces, rather than a
+   * provider-specific grouping object. `stack` stays as the richer enrichment
+   * where it exists.
+   */
+  resources?: ComponentResourceRollup;
 }
 
 /** A component's owning deploy unit and its provider-native status. */
@@ -129,6 +142,14 @@ export interface LiveComponentEvidence {
   /** The owning deploy unit's raw status, when observed (AWS: the component's own
    * CFN stack). Surfaced onto `ComponentStatusRow.stack` for a richer palette. */
   stack?: LiveStackInfo;
+  /**
+   * How the component's own resources answered, before any merge collapsed
+   * them (behold#98). Always present when evidence exists — a component that
+   * maps to a single entity by identity gets a rollup of one, so a consumer
+   * never has to branch on whether a live-name mapping happened to be
+   * configured.
+   */
+  rollup?: ComponentResourceRollup;
 }
 
 /**
@@ -181,16 +202,56 @@ export function resolveLiveNames(component: string, mapping?: LiveNameMapping): 
 }
 
 /**
+ * How a component's own resources answered, one count per tri-state verdict.
+ *
+ * The merged verdict above is deliberately lossy — it answers "is this
+ * component deployed" and nothing else. A consumer painting component status
+ * without a deploy object to read (behold#98: floci-az and floci-gcp have no
+ * CloudFormation stack, so `stack` below is absent and there is nothing to
+ * colour from) needs the shape underneath: how many of the component's
+ * resources were seen, how many were confirmed gone, how many nobody could
+ * look at. Substrate-neutral by construction — it counts observations, not
+ * provider objects.
+ */
+export interface ComponentResourceRollup {
+  /** Resources this component owns, per the live-name mapping. */
+  total: number;
+  /** Observed present. */
+  present: number;
+  /** Looked for, reported missing. Never includes a resource nobody could read. */
+  absent: number;
+  /** NOT-OBSERVED (#1089) — a hole, never counted as absence. */
+  unobserved: number;
+}
+
+/** Count a component's entity verdicts without collapsing them (behold#98). */
+function rollUp(entries: LiveComponentEvidence[]): ComponentResourceRollup {
+  let present = 0;
+  let absent = 0;
+  let unobserved = 0;
+  for (const e of entries) {
+    if (e.unobserved) unobserved += 1;
+    else if (e.live) present += 1;
+    else absent += 1;
+  }
+  return { total: entries.length, present, absent, unobserved };
+}
+
+/**
  * Merge live evidence for several entity/resource names owned by one
  * component into a single verdict. `live` and `ownership` favor the
  * most-actionable signal (present/owned) over "nothing here"; `action`
  * favors `update` so that drift on *any* owned entity surfaces as drift for
  * the component as a whole, matching `reconcileStatus`'s single check for
  * `action === "update"`.
+ *
+ * The per-entity counts survive as {@link LiveComponentEvidence.rollup}, so a
+ * consumer that needs the shape rather than the verdict is not forced to redo
+ * this join on the far side of a CLI boundary.
  */
 function mergeEvidence(entries: LiveComponentEvidence[]): LiveComponentEvidence | undefined {
   if (entries.length === 0) return undefined;
-  if (entries.length === 1) return entries[0];
+  if (entries.length === 1) return { ...entries[0], rollup: rollUp(entries) };
 
   const live = entries.some((e) => e.live);
   const ownership = entries.some((e) => e.ownership === "owned")
@@ -206,7 +267,7 @@ function mergeEvidence(entries: LiveComponentEvidence[]): LiveComponentEvidence 
   // actually seen live, which already answers "is this deployed".
   const unobserved = live ? undefined : entries.find((e) => e.unobserved)?.unobserved;
 
-  return { live, ownership, action, ...(unobserved ? { unobserved } : {}) };
+  return { live, ownership, action, ...(unobserved ? { unobserved } : {}), rollup: rollUp(entries) };
 }
 
 /**
@@ -228,6 +289,14 @@ export function liveEvidenceFromChangeSet(
   const evidenceByName = new Map<string, LiveComponentEvidence>();
   for (const entry of cs.entries) {
     evidenceByName.set(entry.name, {
+      rollup: rollUp([
+        {
+          live: entry.evidence.live,
+          ...(entry.action === "unobserved" && entry.unobservedReason
+            ? { unobserved: { reason: entry.unobservedReason } }
+            : {}),
+        },
+      ]),
       live: entry.evidence.live,
       action: entry.action,
       ownership: entry.ownership,
@@ -352,6 +421,7 @@ export function reconcileStatus(
       ...(liveEvidence && !evidence?.unobserved ? { live: !!evidence?.live } : {}),
       ...(evidence?.unobserved ? { unobserved: evidence.unobserved } : {}),
       ...(evidence?.stack ? { stack: evidence.stack } : {}),
+      ...(evidence?.rollup ? { resources: evidence.rollup } : {}),
     });
   }
 
