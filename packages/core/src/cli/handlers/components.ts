@@ -46,7 +46,7 @@ import { discoverComponents } from "../../components/discover";
 import { formatError, formatWarning, formatSuccess, formatBold } from "../format";
 import type { CommandContext } from "../registry";
 import type { LexiconPlugin } from "../../lexicon";
-import { normalizeObservation, unobservedAll, type NormalizedObservation } from "../../observation";
+import { normalizeObservation, mergeObservations, unobservedAll, type NormalizedObservation } from "../../observation";
 import type { Phase, Component } from "../../components/component";
 
 /**
@@ -184,6 +184,22 @@ interface StatusJsonRow {
   /** Why live state could not be read for this component (#1089). Mutually exclusive with `live`. */
   unobserved?: { reason: string; detail?: string };
   stack?: { name: string; status?: string; healthy?: boolean };
+  /**
+   * How this component's own resources answered (behold#98, chant#1300).
+   *
+   * `stack` above exists only where the substrate has a deploy object to read,
+   * which is AWS; these counts are the substrate-neutral answer to the same
+   * question, and finer-grained than a single stack verdict wherever both are
+   * present. #1300 added the field to `ComponentStatusRow` but not to this
+   * projection, which is the only surface a consumer sees — so until behold#100
+   * it never left the CLI.
+   *
+   * On AWS the counts inherit `describe-stack-resources`, so they report
+   * CloudFormation's per-resource inventory rather than independently observed
+   * existence; the per-type reader registry (#1269/#1271) applied to this thin
+   * path is what would make them a live check.
+   */
+  resources?: { total: number; present: number; absent: number; unobserved: number };
 }
 
 /**
@@ -340,6 +356,28 @@ export async function runComponentsStatus(ctx: CommandContext): Promise<number> 
       try {
         const targetSerializers = serializers;
         const buildResult = await build(resolve(args.src ?? config.sourceDir ?? "."), targetSerializers);
+        // Which deployed stack(s) to read the change set from (behold#100).
+        //
+        // `describeResources` defaults to the single-stack convention — the
+        // stack named after the environment — which is wrong for exactly the
+        // projects this command exists for: a component project deploys the
+        // stack its own `cfn-deploy` names, and that is almost never the env
+        // name. Every declared resource then came back absent, so the rollup
+        // #1300 computes read `present: 0` over a healthy estate. That was
+        // invisible while nothing consumed the rollup; behold#100 paints from
+        // it, so it has to be right.
+        //
+        // The components' own `cfn-deploy` stacks are the authority (the same
+        // ones `observeComponentStacks` reads below), with `config.stacks` as
+        // the declared override for a project whose stacks aren't derivable
+        // from a deploy step. `[undefined]` keeps the old single-read
+        // behaviour for a project with neither.
+        const componentStackNames = new Set<string>();
+        for (const { component } of discovery.components.values()) {
+          for (const stack of cfnDeployStacks(component.deploy)) componentStackNames.add(stack);
+        }
+        for (const stack of config.stacks ?? []) componentStackNames.add(stack.name);
+        const readTargets: Array<string | undefined> = componentStackNames.size ? [...componentStackNames] : [undefined];
         const merged: { env: string; entries: import("../../lifecycle/change-set").ChangeSetEntry[] } = { env: environment, entries: [] };
         for (const plugin of plugins) {
           if (!plugin.describeResources) continue;
@@ -356,8 +394,20 @@ export async function runComponentsStatus(ctx: CommandContext): Promise<number> 
           }
           let observed: NormalizedObservation;
           try {
-            observed = normalizeObservation(
-              await plugin.describeResources({ environment, buildOutput: "", entityNames: Array.from(declared), entities }),
+            observed = mergeObservations(
+              await Promise.all(
+                readTargets.map(async (stack) =>
+                  normalizeObservation(
+                    await plugin.describeResources!({
+                      environment,
+                      buildOutput: "",
+                      entityNames: Array.from(declared),
+                      entities,
+                      ...(stack ? { stack } : {}),
+                    }),
+                  ),
+                ),
+              ),
             );
           } catch (err) {
             // A failed read is not an empty environment (#1089): mark every
@@ -464,6 +514,7 @@ export async function runComponentsStatus(ctx: CommandContext): Promise<number> 
         ...(row.live !== undefined ? { live: row.live } : {}),
         ...(row.unobserved ? { unobserved: row.unobserved } : {}),
         ...(row.stack ? { stack: row.stack } : {}),
+        ...(row.resources ? { resources: row.resources } : {}),
       });
     }
   }

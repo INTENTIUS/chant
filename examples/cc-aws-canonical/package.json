@@ -1,0 +1,19 @@
+{
+  "name": "cc-aws-canonical",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The CC lane's canonical AWS example (chant#1198): VPC/subnet/EC2/SG in one stack, one component owning all ten resources, deployed to Floci - the acceptance vehicle for behold#100.",
+  "devDependencies": {
+    "@intentius/chant": "*",
+    "@intentius/chant-lexicon-aws": "*",
+    "typescript": "*"
+  },
+  "scripts": {
+    "build": "chant build src -o template.json",
+    "deploy": "chant run --components cc-canonical --env local --no-release-record",
+    "status": "chant components status local --live --json --no-release-record",
+    "diff": "chant lifecycle diff local --live",
+    "teardown": "aws cloudformation delete-stack --stack-name cc-canonical"
+  }
+}

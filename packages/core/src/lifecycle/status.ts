@@ -162,6 +162,16 @@ export interface LiveComponentEvidence {
  * is authoritative for **presence** (`live`) and **ownership**; the change-set's
  * `action` is kept, since drift is still assessed from the diff. A component in
  * only one map passes through unchanged.
+ *
+ * The change-set's `rollup` is kept too (behold#100). This merge rebuilds the
+ * evidence object field by field, so anything not named here is dropped — and
+ * `describeStackStatus` reports a stack, never per-resource counts, so the
+ * supplement has no rollup to contribute. Before this, every component on a
+ * lexicon that implements `describeStackStatus` lost the counts #1300 had just
+ * computed. That is AWS and only AWS, which made the rollup absent on exactly
+ * the substrate it was meant to be verified against: behold#98 shipped its
+ * consumer against floci-az/floci-gcp rows, where no stack observer runs and
+ * the field survived.
  */
 export function mergeLiveEvidence(
   base: Map<string, LiveComponentEvidence> | undefined,
@@ -179,6 +189,9 @@ export function mergeLiveEvidence(
       ownership: sup.ownership ?? b?.ownership,
       action: b?.action,
       stack: sup.stack ?? b?.stack,
+      // Base first: the counts come from the change set, and a stack
+      // observation has none to offer.
+      ...(b?.rollup ?? sup.rollup ? { rollup: b?.rollup ?? sup.rollup } : {}),
     });
   }
   return merged;
