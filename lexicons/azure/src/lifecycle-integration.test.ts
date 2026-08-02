@@ -4,7 +4,7 @@
  * Drives the REAL azurePlugin through core's live-import driver and the
  * changeset path, with the `az` CLI edge mocked.
  */
-import { describe, test, expect, vi, beforeEach } from "vitest";
+import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync, readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -57,8 +57,17 @@ const resourceShow = {
   properties: { provisioningState: "Succeeded" },
 };
 
+/** The Azure reads speak ARM over `fetch` now (#1212), so that is the seam. */
+const stubArm = (respond: () => { status: number; text: string }): void => {
+  vi.spyOn(globalThis, "fetch").mockImplementation((async () => {
+    const r = respond();
+    return { status: r.status, text: () => Promise.resolve(r.text) };
+  }) as unknown as typeof fetch);
+};
+
 describe("azure lifecycle integration (#163)", () => {
   beforeEach(() => execMock.mockReset());
+  afterEach(() => vi.restoreAllMocks());
 
   test("live-import driver: real exportResources → IR → generated source", async () => {
     execMock.mockReturnValue({ stdout: JSON.stringify(liveTemplate), stderr: "" });
@@ -81,11 +90,7 @@ describe("azure lifecycle integration (#163)", () => {
   });
 
   test("changeset path: real describeResources → buildChangeSet verdicts", async () => {
-    execMock.mockImplementation((cmd?: string) =>
-      cmd?.includes("resource show")
-        ? { stdout: JSON.stringify(resourceShow), stderr: "" }
-        : new Error("unexpected"),
-    );
+    stubArm(() => ({ status: 200, text: JSON.stringify(resourceShow) }));
 
     const { resources: observedNow } = normalizeObservation(
       await azurePlugin.describeResources!({
@@ -122,12 +127,12 @@ describeObservationConformance({
   lexicon: "azure",
   scenarios: [
     {
-      name: "a nested ARM type az resource show cannot query",
+      name: "a nested ARM type the reader cannot address",
       declared: ["blobSvc", "gone"],
       expectUnobserved: ["blobSvc"],
       expectAbsent: ["gone"],
       run: () => {
-        execMock.mockImplementation(() => new Error("ResourceNotFound: gone"));
+        stubArm(() => ({ status: 404, text: JSON.stringify({ error: { code: "ResourceNotFound", message: "not found" } }) }));
         return azurePlugin.describeResources!({
           environment: "prod",
           buildOutput: "",
@@ -144,9 +149,10 @@ describeObservationConformance({
       declared: ["myStore"],
       expectUnobserved: ["myStore"],
       run: () => {
-        execMock.mockImplementation(() =>
-          Object.assign(new Error("az failed"), { stderr: "Please run 'az login' to setup account." }),
-        );
+        stubArm(() => ({
+          status: 401,
+          text: JSON.stringify({ error: { code: "AuthenticationFailed", message: "Authentication failed." } }),
+        }));
         return azurePlugin.describeResources!({
           environment: "prod",
           buildOutput: "",

@@ -2,40 +2,51 @@
  * Azure deep observation (#1086) — the azure row of the deep-observe
  * contract (#1014).
  *
- * `node:child_process`'s `exec` is mocked, exactly like
- * describe-resources.test.ts — no ARM SDK, no ambient `az login` session,
- * nothing reaches a network.
+ * The transport is faked, exactly like describe-resources.test.ts (#1212) — no
+ * CLI, no ARM SDK, no ambient `az login` session, nothing reaches a network.
+ * `http` is injected where the reader is called directly, and `fetch` is
+ * stubbed where the plugin builds its own client.
  */
-import { describe, test, expect, vi, beforeEach } from "vitest";
+import { describe, test, expect, vi, afterEach } from "vitest";
 
-const execMock = vi.fn();
-vi.mock("node:child_process", async () => {
-  const actual = await vi.importActual<typeof import("node:child_process")>("node:child_process");
-  return {
-    ...actual,
-    exec: (cmd: string, cb: (err: Error | null, out: { stdout: string; stderr: string }) => void) => {
-      Promise.resolve(execMock(cmd)).then(
-        (out) => cb(null, out as { stdout: string; stderr: string }),
-        (err) => cb(err as Error, { stdout: "", stderr: "" }),
-      );
-    },
-  };
-});
+/** For the paths that go through the plugin, which builds its own transport. */
+const stubArmFetch = (response: { status: number; text: string }): void => {
+  vi.spyOn(globalThis, "fetch").mockImplementation((async () => ({
+    status: response.status,
+    text: () => Promise.resolve(response.text),
+  })) as unknown as typeof fetch);
+};
 
 const { azurePlugin } = await import("./plugin");
 const { observeResourcesDeepAzure, azureDeepNormalizationHooks } = await import("./deep-observe");
 const { deepDiffForLexicon } = await import("@intentius/chant/lifecycle/deep-observe");
 const { normalizeDeepObservation, normalizeDeepProperties } = await import("@intentius/chant/deep-observation");
 
-const ok = (body: Record<string, unknown>) => Promise.resolve({ stdout: JSON.stringify(body), stderr: "" });
-const fail = (stderr: string) => Promise.reject(Object.assign(new Error("az failed"), { stderr }));
+/** An ARM 200, in place of the CLI stdout this used to fake (#1212). */
+const ok = (body: Record<string, unknown>) => ({ status: 200, text: JSON.stringify(body) });
+/** ARM's error envelope — the code is the signal, not the prose. */
+const armError = (status: number, code: string, message = code) => ({
+  status,
+  text: JSON.stringify({ error: { code, message } }),
+});
+
+/** Routes by the resource name in the ARM URL, which is where it lives now. */
+function armFake(route: (name: string) => { status: number; text: string }) {
+  const urls: string[] = [];
+  const http = async (_method: string, url: string) => {
+    urls.push(url);
+    const name = decodeURIComponent(url.split("?")[0].split("/").pop() ?? "");
+    return route(name);
+  };
+  return { http, urls };
+}
 
 const entities = (
   record: Record<string, { entityType: string; props: Record<string, unknown> }>,
 ): Map<string, { entityType: string; props: Record<string, unknown> }> => new Map(Object.entries(record));
 
-beforeEach(() => {
-  execMock.mockReset();
+afterEach(() => {
+  vi.restoreAllMocks();
 });
 
 describe("the azure noise rules", () => {
@@ -126,11 +137,9 @@ describe("the azure noise rules", () => {
 });
 
 describe("observeResourcesDeepAzure", () => {
-  test("queries az resource show with rg + name + type and flattens properties.* onto the top level", async () => {
-    let receivedCmd = "";
-    execMock.mockImplementation((cmd: string) => {
-      receivedCmd = cmd;
-      return ok({
+  test("reads the resource over ARM and flattens properties.* onto the top level", async () => {
+    const fake = armFake(() =>
+      ok({
         id: "/subscriptions/sub/resourceGroups/prod-rg/providers/Microsoft.Storage/storageAccounts/mydata",
         name: "mydata",
         type: "Microsoft.Storage/storageAccounts",
@@ -139,21 +148,20 @@ describe("observeResourcesDeepAzure", () => {
         etag: "\"abc\"",
         systemData: { createdBy: "someone@example.com" },
         properties: { provisioningState: "Succeeded", minimumTlsVersion: "TLS1_2", allowBlobPublicAccess: false },
-      });
-    });
+      }),
+    );
 
     const result = normalizeDeepObservation(
       await observeResourcesDeepAzure({
         environment: "prod-rg",
         entityNames: ["dataAccount"],
         entities: entities({ dataAccount: { entityType: "Microsoft.Storage/storageAccounts", props: { name: "mydata" } } }),
+        http: fake.http,
       }),
     );
 
-    expect(receivedCmd).toContain("az resource show");
-    expect(receivedCmd).toContain("--resource-group prod-rg");
-    expect(receivedCmd).toContain("--name mydata");
-    expect(receivedCmd).toContain("--resource-type Microsoft.Storage/storageAccounts");
+    expect(fake.urls[0]).toContain("/resourceGroups/prod-rg/");
+    expect(fake.urls[0]).toContain("/providers/Microsoft.Storage/storageAccounts/mydata");
 
     // id/type/etag/systemData/provisioningState never reach the tree at all —
     // no declared tree yet, so this is what a one-sided read looks like.
@@ -165,24 +173,26 @@ describe("observeResourcesDeepAzure", () => {
   });
 
   test("a resource not found leaves the entity out — a confirmed absence", async () => {
-    execMock.mockImplementation(() => fail("ResourceNotFound: ..."));
+    const fake = armFake(() => armError(404, "ResourceNotFound", "not found"));
     const result = normalizeDeepObservation(
       await observeResourcesDeepAzure({
         environment: "prod-rg",
         entityNames: ["missing"],
         entities: entities({ missing: { entityType: "Microsoft.Storage/storageAccounts", props: { name: "missing" } } }),
+        http: fake.http,
       }),
     );
     expect(result).toEqual({ resources: {}, unobserved: {} });
   });
 
-  test("an expired az login is a hole, not an absence", async () => {
-    execMock.mockImplementation(() => fail("Please run 'az login' to setup account."));
+  test("a refused credential is a hole, not an absence", async () => {
+    const fake = armFake(() => armError(401, "AuthenticationFailed", "Authentication failed."));
     const result = normalizeDeepObservation(
       await observeResourcesDeepAzure({
         environment: "prod-rg",
         entityNames: ["acct"],
         entities: entities({ acct: { entityType: "Microsoft.Storage/storageAccounts", props: { name: "acct" } } }),
+        http: fake.http,
       }),
     );
     expect(result.resources).toEqual({});
@@ -190,40 +200,46 @@ describe("observeResourcesDeepAzure", () => {
   });
 
   test("a nested ARM type is unsupported-kind, never absent — az resource show is never called", async () => {
+    const fake = armFake(() => ok({}));
     const result = normalizeDeepObservation(
       await observeResourcesDeepAzure({
         environment: "prod-rg",
         entityNames: ["nested"],
         entities: entities({ nested: { entityType: "Microsoft.Storage/storageAccounts/blobServices", props: { name: "default" } } }),
+        http: fake.http,
       }),
     );
     expect(result.resources).toEqual({});
     expect(result.unobserved.nested.reason).toBe("unsupported-kind");
-    expect(execMock).not.toHaveBeenCalled();
+    expect(fake.urls).toEqual([]);
   });
 
   test("a non-ARM entity type is unsupported-kind — no ARM type to query", async () => {
+    const fake = armFake(() => ok({}));
     const result = normalizeDeepObservation(
       await observeResourcesDeepAzure({
         environment: "prod-rg",
         entityNames: ["x"],
         entities: entities({ x: { entityType: "AWS::S3::Bucket", props: { name: "x" } } }),
+        http: fake.http,
       }),
     );
     expect(result.unobserved.x.reason).toBe("unsupported-kind");
-    expect(execMock).not.toHaveBeenCalled();
+    expect(fake.urls).toEqual([]);
   });
 
   test("an entity with no name is a hole — nothing was queried", async () => {
+    const fake = armFake(() => ok({}));
     const result = normalizeDeepObservation(
       await observeResourcesDeepAzure({
         environment: "prod-rg",
         entityNames: ["broken"],
         entities: entities({ broken: { entityType: "Microsoft.Storage/storageAccounts", props: {} } }),
+        http: fake.http,
       }),
     );
     expect(result.unobserved.broken.reason).toBe("read-failed");
-    expect(execMock).not.toHaveBeenCalled();
+    expect(fake.urls).toEqual([]);
   });
 });
 
@@ -251,9 +267,12 @@ describe("end to end: declared + mutated live + baseline (#1086)", () => {
   });
 
   const wireMocks = (): void => {
-    execMock.mockImplementation((cmd: string) => {
-      if (cmd.includes("--name mydata")) {
-        return ok({
+    vi.spyOn(globalThis, "fetch").mockImplementation((async (url: string) => {
+      const name = decodeURIComponent(url.split("?")[0].split("/").pop() ?? "");
+      const respond = (r: { status: number; text: string }) =>
+        ({ status: r.status, text: () => Promise.resolve(r.text) });
+      if (name === "mydata") {
+        return respond(ok({
           id: "/subscriptions/sub/resourceGroups/prod/providers/Microsoft.Storage/storageAccounts/mydata",
           name: "mydata",
           location: "eastus",
@@ -269,10 +288,10 @@ describe("end to end: declared + mutated live + baseline (#1086)", () => {
             // GENUINE: somebody flipped this in the portal.
             allowBlobPublicAccess: true,
           },
-        });
+        }));
       }
-      if (cmd.includes("--name core-vnet")) {
-        return ok({
+      if (name === "core-vnet") {
+        return respond(ok({
           id: "/subscriptions/sub/resourceGroups/prod/providers/Microsoft.Network/virtualNetworks/core-vnet",
           name: "core-vnet",
           location: "eastus",
@@ -282,13 +301,13 @@ describe("end to end: declared + mutated live + baseline (#1086)", () => {
             // NOISE: same two prefixes, different order.
             addressSpace: { addressPrefixes: ["10.1.0.0/16", "10.0.0.0/16"] },
           },
-        });
+        }));
       }
-      if (cmd.includes("--name secure-acct")) {
-        return fail("Please run 'az login' to setup account.");
+      if (name === "secure-acct") {
+        return respond(armError(401, "AuthenticationFailed", "Authentication failed."));
       }
-      return fail("unexpected call");
-    });
+      return respond(armError(400, "BadRequest", `unexpected call for ${name}`));
+    }) as unknown as typeof fetch);
   };
 
   const baseline = {
@@ -331,9 +350,9 @@ describe("end to end: declared + mutated live + baseline (#1086)", () => {
         name: "blobServices",
         type: "Microsoft.Storage/storageAccounts/blobServices",
         reason: "unsupported-kind",
-        detail: "az resource show does not accept a nested ARM type; chant never queried this resource",
+        detail: "a nested ARM type needs a different read path; chant never queried this resource",
       },
-      { name: "secureAcct", type: "Microsoft.Storage/storageAccounts", reason: "no-credentials", detail: "Please run 'az login' to setup account." },
+      { name: "secureAcct", type: "Microsoft.Storage/storageAccounts", reason: "no-credentials", detail: "AuthenticationFailed: Authentication failed." },
     ]);
   });
 
@@ -358,15 +377,19 @@ describe("end to end: declared + mutated live + baseline (#1086)", () => {
   });
 
   test("a whole-lexicon failure is a hole for every declared entity, not a clean report", async () => {
-    execMock.mockImplementation(() => fail("Unable to locate credentials"));
+    stubArmFetch(armError(401, "AuthenticationFailed", "Authentication failed."));
     const result = await deepDiffForLexicon(azurePlugin, { environment: "prod", buildOutput: "", entities: declared });
     expect(result.drifted).toEqual([]);
-    // blobServices is still unsupported-kind — az resource show is never even
-    // called for it, so a broken CLI doesn't change its verdict.
+    // blobServices is still unsupported-kind — it is never addressed at all, so
+    // a refused transport doesn't change its verdict.
     expect(result.unobserved.map((u) => u.name).sort()).toEqual(["blobServices", "dataAccount", "secureAcct", "vnet"]);
     expect(result.unobserved.find((u) => u.name === "blobServices")?.reason).toBe("unsupported-kind");
+    // `no-credentials`, not the `read-failed` the CLI path reported: ARM sends
+    // `AuthenticationFailed` as a code, where the CLI's prose ("Unable to
+    // locate credentials") matched none of the patterns and fell through to the
+    // generic verdict. The code makes the credential case legible (#1212).
     expect(
-      result.unobserved.filter((u) => u.name !== "blobServices").every((u) => u.reason === "read-failed"),
+      result.unobserved.filter((u) => u.name !== "blobServices").every((u) => u.reason === "no-credentials"),
     ).toBe(true);
   });
 });

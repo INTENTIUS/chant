@@ -42,12 +42,15 @@
  *
  * ## Nothing here talks to real Azure on its own terms
  *
- * `node:child_process` `exec`, exactly like the thin path — no ARM SDK, no
- * ambient token. Every test replaces `child_process.exec`.
+ * ARM over the applier's own transport (`./api/read-client.ts`), exactly like
+ * the thin path (#1212) — no CLI, no ARM SDK, no ambient token. The payload is
+ * the same ARM JSON `az resource show` was relaying, so the normalization below
+ * is untouched by the move.
  */
 
-import { exec } from "node:child_process";
-import { promisify } from "node:util";
+import { boundedConcurrently } from "@intentius/chant/observation";
+import { getResource, isNotFound, type AzureReadClientOptions } from "./api/read-client";
+import type { AzHttp } from "./op/activities/az-apply";
 import type {
   DeepArrayElement,
   DeepNode,
@@ -57,9 +60,8 @@ import type {
   UnobservedEntity,
 } from "@intentius/chant/lexicon";
 import { deepObservation, normalizeDeepProperties } from "@intentius/chant/deep-observation";
-import { classifyAzFailure, isTopLevelType } from "./describe-resources";
+import { classifyArmFailure, isTopLevelType } from "./describe-resources";
 
-const execAsync = promisify(exec);
 
 /** The full `az resource show -o json` shape this reader reads (a superset of the thin path's `AzResourceShowResponse`). */
 interface ArmResourceShowResponse {
@@ -227,6 +229,8 @@ export const azureDeepNormalizationHooks: DeepNormalizationHooks = {
 // ── The reader ───────────────────────────────────────────────────────────────
 
 export interface AzureDeepObserveOptions {
+  /** Injectable transport, mirroring `azApply`'s — tests reach the reader with no network. */
+  http?: AzHttp;
   environment: string;
   entityNames: string[];
   entities: Map<string, { entityType: string; props: Record<string, unknown> }>;
@@ -245,6 +249,14 @@ export async function observeResourcesDeepAzure(
 ): Promise<DeepObservationResult> {
   const resources: Record<string, DeepResourceObservation> = {};
   const unobserved: Record<string, UnobservedEntity> = {};
+  const readable: Array<{ entityName: string; entityType: string; name: string }> = [];
+
+  const client: AzureReadClientOptions = {
+    resourceGroup: options.environment,
+    ...(process.env.AZURE_ENDPOINT_URL ? { endpoint: process.env.AZURE_ENDPOINT_URL } : {}),
+    ...(process.env.AZURE_SUBSCRIPTION_ID ? { subscriptionId: process.env.AZURE_SUBSCRIPTION_ID } : {}),
+    ...(options.http ? { http: options.http } : {}),
+  };
 
   for (const [entityName, { entityType, props }] of options.entities) {
     if (!entityType.startsWith("Microsoft.")) {
@@ -260,7 +272,7 @@ export async function observeResourcesDeepAzure(
       unobserved[entityName] = {
         type: entityType,
         reason: "unsupported-kind",
-        detail: "az resource show does not accept a nested ARM type; chant never queried this resource",
+        detail: "a nested ARM type needs a different read path; chant never queried this resource",
       };
       continue;
     }
@@ -275,17 +287,12 @@ export async function observeResourcesDeepAzure(
       continue;
     }
 
-    const cmd = [
-      "az", "resource", "show",
-      "--resource-group", options.environment,
-      "--name", name,
-      "--resource-type", entityType,
-      "-o", "json",
-    ].join(" ");
+    readable.push({ entityName, entityType, name });
+  }
 
+  await boundedConcurrently(readable, async ({ entityName, entityType, name }) => {
     try {
-      const { stdout } = await execAsync(cmd);
-      const obj: ArmResourceShowResponse = JSON.parse(stdout);
+      const obj = (await getResource(client, entityType, name)) as ArmResourceShowResponse;
       resources[entityName] = {
         type: entityType,
         physicalId: obj.id,
@@ -298,12 +305,11 @@ export async function observeResourcesDeepAzure(
     } catch (err) {
       // Not-found leaves the entity out (absence, same as the thin path).
       // Auth/binding/other failures are holes so they can't become creates.
-      const outcome = classifyAzFailure(err);
-      if (!outcome.absent) {
-        unobserved[entityName] = { type: entityType, reason: outcome.reason, detail: outcome.detail };
-      }
+      if (isNotFound(err)) return;
+      const outcome = classifyArmFailure(err);
+      unobserved[entityName] = { type: entityType, reason: outcome.reason, detail: outcome.detail };
     }
-  }
+  });
 
   return deepObservation(resources, unobserved);
 }
