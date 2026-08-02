@@ -330,6 +330,25 @@ Post-synth checks run against the serialized YAML after build.
 | WGC203 | GKE node pool with overly broad cloud-platform OAuth scope |
 | WGC204 | ComputeInstance without shielded VM config |
 
+### Correctness
+
+| Rule | Description |
+|------|-------------|
+| WGC111 | Resource reference points to a name not defined in the output |
+| WGC112 | Config Connector resource has missing or invalid apiVersion |
+| WGC113 | Config Connector resource uses an alpha API version |
+
+### Schema validation
+
+Checks each Config Connector resource's \`spec\` against the CRD schema it is
+generated from.
+
+| Rule | Description |
+|------|-------------|
+| WGC401 | Config Connector resource spec contains unknown field |
+| WGC402 | Config Connector resource is missing a required spec field |
+| WGC403 | Config Connector resource spec field has wrong type or structure |
+
 ### Compliance
 
 | Rule | Description |
@@ -794,7 +813,7 @@ When you scaffold a new project with \`chant init --lexicon gcp\`, the skill is 
 The \`chant-gcp\` skill covers:
 
 - **Build** — \`chant build src/ --output manifests.yaml\`
-- **Lint** — \`chant lint src/\` + 17 post-synth checks
+- **Lint** — \`chant lint src/\` + 23 post-synth checks
 - **Apply** — \`kubectl apply -f manifests.yaml\`
 - **Status** — \`kubectl get gcp -A\`
 - **Troubleshooting** — reconciliation status, events, common error patterns

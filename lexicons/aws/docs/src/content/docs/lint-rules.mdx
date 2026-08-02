@@ -7,6 +7,12 @@ description: "Built-in lint rules and post-synth checks for AWS CloudFormation"
     Edit lexicons/aws/src/codegen/docs.ts instead; changes here are overwritten. */}
 The AWS lexicon ships lint rules that run during `chant lint` and post-synth checks that validate the serialized CloudFormation output after `chant build`.
 
+This page explains the most commonly hit rules in depth. For the complete list —
+every rule the lexicon registers, generated from the registration itself so it
+cannot fall behind — see [All Rules](../rules/). The security-hardening rules
+(WAW032 onward) also carry remediation guidance and upstream references in the
+[audit rules reference](/chant/lint-rules/audit-rules/).
+
 ## Lint rules
 
 Lint rules analyze your TypeScript source code before build.

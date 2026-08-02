@@ -1,0 +1,71 @@
+---
+title: "Lint Rules"
+description: "Lint rules and post-synth checks provided by the AWS CloudFormation lexicon"
+---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-aws` — DO NOT EDIT.
+    Edit lexicons/aws/src/codegen/docs.ts instead; changes here are overwritten. */}
+
+The AWS CloudFormation lexicon provides **50** rules: 3 lint rules and 47 post-synth checks.
+
+## Lint Rules
+
+| ID | Severity | Category | Description |
+|----|----------|----------|-------------|
+| `WAW001` | warning | security | Hardcoded AWS Region |
+| `WAW006` | warning | security | S3 Bucket Encryption |
+| `WAW009` | warning | security | IAM Wildcard Resource |
+
+## Post-Synth Checks
+
+Post-synth checks validate the serialized output after the build pipeline completes.
+
+| ID | Description |
+|----|-------------|
+| `COR020` | Circular resource dependency — detects cycles in the resource dependency graph |
+| `EXT001` | Extension constraint violation — cross-property validation from cfn-lint extension schemas |
+| `WAW010` | Redundant DependsOn — target is already referenced via Ref or Fn::GetAtt in Properties |
+| `WAW011` | Deprecated Lambda runtime — flags deprecated or approaching-EOL Lambda runtimes |
+| `WAW013` | Child project has no stackOutput() exports — parent can't reference anything |
+| `WAW014` | Nested stack outputs never referenced from parent — could just be a separate build |
+| `WAW015` | Circular dependency between nested stacks would cause infinite build recursion |
+| `WAW016` | Deprecated property usage — flags properties marked as deprecated in the CloudFormation Registry |
+| `WAW017` | Missing tags on taggable resource — suggests adding tags for cost allocation and compliance |
+| `WAW018` | S3 bucket missing public access block — all public access should be blocked |
+| `WAW019` | Security group allows unrestricted ingress on sensitive ports (SSH, RDP, database) |
+| `WAW020` | IAM policy uses wildcard Action — use specific actions following least privilege |
+| `WAW021` | RDS instance or cluster storage is not encrypted — enable encryption at rest |
+| `WAW022` | Lambda function is not configured with a VPC — consider adding VpcConfig for network isolation |
+| `WAW023` | CloudFront distribution has no WAF web ACL — consider attaching one for protection |
+| `WAW024` | Application Load Balancer does not have access logging enabled |
+| `WAW025` | SNS topic is not encrypted — add KmsMasterKeyId for encryption at rest |
+| `WAW026` | SQS queue is not encrypted — enable SqsManagedSseEnabled or set KmsMasterKeyId |
+| `WAW027` | DynamoDB table does not have point-in-time recovery enabled |
+| `WAW028` | EBS volume is not encrypted — enable encryption at rest |
+| `WAW029` | Invalid DependsOn target — dangling reference or self-reference |
+| `WAW030` | Missing DependsOn for known CloudFormation ordering patterns |
+| `WAW031` | EKS Addon missing ServiceAccountRoleArn for addons that require IRSA |
+| `WAW032` | EFS volume on Fargate task has transit encryption disabled |
+| `WAW033` | Solr SOLR_HEAP exceeds 50% of Fargate task memory |
+| `WAW034` | Fargate task running Solr has insufficient memory (< 2048MB) |
+| `WAW035` | Solr container missing nofile ulimit >= 65535 |
+| `WAW036` | Non-ASCII characters in EC2/IAM/CW string properties — rejected at changeset time |
+| `WAW037` | Null values in CFN resource properties — caused by invalid AttrRef (.PropName) usage |
+| `WAW038` | RDS instance is publicly accessible — keep databases inside the VPC |
+| `WAW039` | RDS instance or cluster has automated backups disabled — set a positive BackupRetentionPeriod |
+| `WAW040` | RDS instance or cluster does not have DeletionProtection enabled (full tier) |
+| `WAW041` | RDS Proxy does not require TLS for client connections |
+| `WAW042` | S3 bucket missing a TLS-only bucket policy — deny requests over plaintext |
+| `WAW043` | KMS customer-managed key does not have automatic key rotation enabled |
+| `WAW044` | ALB HTTP listener does not redirect to HTTPS (full tier) |
+| `WAW045` | ALB HTTPS/TLS listener does not use a modern (TLS 1.2+) SslPolicy |
+| `WAW046` | ECS container passes a secret-looking value via plaintext Environment instead of Secrets |
+| `WAW047` | ECS container runs privileged — drop elevated host access |
+| `WAW048` | ECS container does not have a LogConfiguration — enable logging for audit trails |
+| `WAW049` | Security group allows unrestricted ingress on a port other than ALB:80/443 |
+| `WAW050` | Cognito UserPool does not have advanced security (risk-based auth) enabled |
+| `WAW051` | Cognito UserPoolClient allows the deprecated implicit OAuth grant |
+| `WAW052` | Cognito UserPool does not require MFA (full tier) |
+| `WAW053` | ECR repository does not scan images on push |
+| `WAW054` | ECR repository does not have immutable image tags |
+| `WAW055` | CloudWatch Logs log group has no retention period set |

@@ -24,7 +24,24 @@ Flags Values constructors containing keys that match secret patterns (`password`
 
 Flags Deployment and container constructors with hardcoded image strings instead of `values.*` proxy references. Images should be parameterized through values.yaml for override flexibility.
 
+### WHM004 — HelmTpl expression in a Values constructor
+
+**Severity:** warning | **Category:** correctness
+
+Flags a `HelmTpl` expression inside a `Values` constructor, where it has no
+effect: `values.yaml` is plain data, so a Go template expression written there
+is emitted literally rather than evaluated. Use `runtimeSlot()` for a value
+that must resolve at deploy time.
+
 ## Post-synth Checks
+
+### WHM005 — Sub-chart wrapper with no templates
+
+**Severity:** warning
+
+Flags a chart that declares sub-chart dependencies but ships no templates of
+its own. A wrapper that adds nothing should be dropped in favour of deploying
+the upstream chart directly.
 
 ### Chart Structure (WHM1xx)
 
