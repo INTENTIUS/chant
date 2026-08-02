@@ -1136,6 +1136,7 @@ The lexicon also provides MCP (Model Context Protocol) tools and resources that 
     ],
     sidebarExtra: [
       { label: "Deploying to EKS", slug: "eks-kubernetes" },
+      { label: "Nested Stacks", slug: "nested-stacks" },
     ],
   };
 

@@ -3,7 +3,7 @@ title: TypeScript as Data
 description: How chant reads the resource objects your TypeScript exports, and the supported subset
 ---
 
-chant reads the resource objects your TypeScript exports. It supports a specific subset of the language, the part whose value is fully determined by literals, constants, and cross-resource references. `chant build` imports and runs your files to collect those objects. The subset exists so that running them has no side effects and always yields the same output. This page documents exactly which patterns are supported and which are not.
+chant reads the resource objects your TypeScript exports. It supports a specific subset of the language, the part whose value is fully determined by literals, constants, and cross-resource references. `chant build` reduces your files directly to those objects without executing them; a file that steps outside the subset is imported and run instead. The subset exists so that either path has no side effects and always yields the same output. This page documents exactly which patterns are supported and which are not.
 
 ## Supported Patterns
 
@@ -187,7 +187,7 @@ Helpers that read the environment are deliberately excluded. `env()` is a functi
 
 ## Unsupported Patterns
 
-The following patterns are caught by the evaluability lint rules (EVL). Your editor shows them as lint errors, and `chant lint` reports them in CI. By default, `chant build` does not enforce them — it imports and runs your file regardless, so a pattern below still produces whatever JavaScript produces, correct or not. Run lint, or rely on your editor, to keep source inside the supported subset.
+The following patterns are caught by the evaluability lint rules (EVL). Your editor shows them as lint errors, and `chant lint` reports them in CI. `chant build` does not fail on them — a pattern below makes fold reject that one file, which then falls back to being imported and run, producing whatever JavaScript produces, correct or not. Run lint, or rely on your editor, to keep source inside the supported subset.
 
 On the fold path (see [Folded vs Run](#folded-vs-run) below), the same subset is what a file must stay inside to fold at all: a pattern below makes fold reject that one file and fall back to running it, logged with the reason. That fallback is not a build error either — it just means the file loses the no-execution property for this run.
 
@@ -328,7 +328,7 @@ Folded files execute none of their own code, but a run-fallback file does — in
 
 ## Why These Constraints?
 
-The supported subset is the set of TypeScript patterns whose value is fully determined by literals, known constants, and symbolic cross-resource references. `chant build` imports and runs your files. The evaluability rules reject patterns that would make the result depend on anything else, so running the supported subset has no side effects.
+The supported subset is the set of TypeScript patterns whose value is fully determined by literals, known constants, and symbolic cross-resource references. `chant build` folds source inside that subset and imports and runs whatever falls outside it. The evaluability rules reject patterns that would make the result depend on anything else, so running the supported subset has no side effects either.
 
 This makes synthesis fast, deterministic for conforming source (same source, same output), and auditable (every output value traces to a specific line in the source).
 

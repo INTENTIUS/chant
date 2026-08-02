@@ -27,6 +27,34 @@ export default defineConfig({
             {
                   "label": "Serialization",
                   "slug": "serialization"
+            },
+            {
+                  "label": "Getting Started",
+                  "slug": "getting-started"
+            },
+            {
+                  "label": "Temporal Concepts",
+                  "slug": "temporal-concepts"
+            },
+            {
+                  "label": "Resources",
+                  "slug": "resources"
+            },
+            {
+                  "label": "Ops",
+                  "slug": "ops"
+            },
+            {
+                  "label": "Worker Profiles",
+                  "slug": "worker-profiles"
+            },
+            {
+                  "label": "Lint Rules",
+                  "slug": "lint-rules"
+            },
+            {
+                  "label": "AI Skills",
+                  "slug": "skills"
             }
       ],
     }),

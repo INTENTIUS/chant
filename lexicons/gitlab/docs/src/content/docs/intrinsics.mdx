@@ -3,6 +3,9 @@ title: "Intrinsic Functions"
 description: "Built-in intrinsic functions for the GitLab CI/CD lexicon"
 ---
 
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-gitlab` — DO NOT EDIT.
+    Edit lexicons/gitlab/src/codegen/docs.ts instead; changes here are overwritten. */}
+
 The GitLab CI/CD lexicon provides **1** intrinsic functions.
 
 **Tag?** shows how an intrinsic is authored: a genuine tagged template (`Sub\`...\``) or a plain function call (`Ref(...)`). **Folds?** shows whether [folding](/chant/concepts/typescript-as-data/#folded-vs-run) — the default `chant build` path — can reduce a use of this intrinsic today, without running the file — generated directly from this lexicon's registration, not restated by hand. A tagged template folds once it is registered. A plain call folds only where this lexicon has opted that intrinsic in one at a time (`foldsAsCall`), so a `No` in this column means this intrinsic has not been opted in, not that calls in general cannot fold.

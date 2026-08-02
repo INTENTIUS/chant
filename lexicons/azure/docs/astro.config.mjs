@@ -29,12 +29,48 @@ export default defineConfig({
                   "slug": "pseudo-parameters"
             },
             {
-                  "label": "Lint Rules",
-                  "slug": "rules"
-            },
-            {
                   "label": "Serialization",
                   "slug": "serialization"
+            },
+            {
+                  "label": "Getting Started",
+                  "slug": "getting-started"
+            },
+            {
+                  "label": "Resources",
+                  "slug": "resources"
+            },
+            {
+                  "label": "Parameters & Outputs",
+                  "slug": "parameters-outputs"
+            },
+            {
+                  "label": "Composites",
+                  "slug": "composites"
+            },
+            {
+                  "label": "Linked Templates",
+                  "slug": "linked-templates"
+            },
+            {
+                  "label": "Lint Rules",
+                  "slug": "lint-rules"
+            },
+            {
+                  "label": "Importing ARM Templates",
+                  "slug": "importing"
+            },
+            {
+                  "label": "Deploying to AKS",
+                  "slug": "aks-kubernetes"
+            },
+            {
+                  "label": "Examples",
+                  "slug": "examples"
+            },
+            {
+                  "label": "AI Skills",
+                  "slug": "skills"
             }
       ],
     }),

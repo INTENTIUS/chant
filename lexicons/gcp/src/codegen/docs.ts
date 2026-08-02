@@ -811,6 +811,11 @@ The \`chant-gcp\` skill covers:
 | \`examples/basic-bucket\` | Example StorageBucket code |`,
       },
     ],
+    // `lint-rules` is gcp's rules documentation, so the generated `rules`
+    // table is a duplicate — and buildSidebar already declines to link it when
+    // a `lint-rules` page exists, which left it emitted but unreachable
+    // (#1312). aws, k8s, gitlab and github suppress it for the same reason.
+    suppressPages: ["rules"],
     sidebarExtra: [
       { label: "Deploying to GKE", slug: "gke-kubernetes" },
     ],

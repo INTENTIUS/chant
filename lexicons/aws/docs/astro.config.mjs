@@ -59,6 +59,10 @@ export default defineConfig({
             {
                   "label": "Deploying to EKS",
                   "slug": "eks-kubernetes"
+            },
+            {
+                  "label": "Nested Stacks",
+                  "slug": "nested-stacks"
             }
       ],
     }),

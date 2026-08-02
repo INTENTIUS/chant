@@ -106,7 +106,17 @@ export async function generateDocs(opts?: { verbose?: boolean }): Promise<void> 
     overview,
     outputFormat,
     serviceFromType,
-    suppressPages: ["pseudo-parameters"],
+    // `lint-rules` below is helm's rules documentation; the generated `rules`
+    // table duplicated it, and helm's own declared rules page was being
+    // silently overwritten by that table (#1312).
+    suppressPages: ["pseudo-parameters", "rules"],
+    // Hand-written pages under docs/src/content/docs/ that no sidebar entry
+    // pointed at.
+    sidebarExtra: [
+      { label: "Helm Concepts", slug: "helm-concepts" },
+      { label: "Lint Rules", slug: "lint-rules" },
+      { label: "Examples", slug: "examples" },
+    ],
     extraPages: [
       {
         slug: "getting-started",
@@ -152,7 +162,7 @@ import { Deployment, Service, Ingress } from "@intentius/chant-lexicon-k8s";
 `,
       },
       {
-        slug: "intrinsics",
+        slug: "intrinsics-guide",
         title: "Intrinsics Reference",
         description: "All Helm template intrinsics and how they map to Go template expressions",
         content: `## Values proxy
@@ -260,44 +270,6 @@ const result = HelmWebApp({
 
 // result.chart, result.values, result.deployment, result.service, result.ingress, result.hpa
 \`\`\`
-`,
-      },
-      {
-        slug: "rules",
-        title: "Lint Rules",
-        description: "Pre-synth and post-synth lint rules for Helm charts",
-        content: `## Pre-synth rules (AST-level)
-
-| Rule | Severity | Description |
-|------|----------|-------------|
-| WHM001 | error | Chart must have name, version, and apiVersion |
-| WHM002 | warning | Values should not contain bare secrets (password, token, key) |
-| WHM003 | warning | Container images should use values references, not hardcoded tags |
-
-## Post-synth checks (output validation)
-
-| Check | Severity | Description |
-|-------|----------|-------------|
-| WHM101 | error | Chart.yaml has required fields and apiVersion v2 |
-| WHM102 | warning | values.schema.json present when Values type used |
-| WHM103 | error | Go template syntax valid (balanced braces) |
-| WHM104 | info | NOTES.txt exists for application charts |
-| WHM105 | warning | _helpers.tpl exists |
-| WHM201 | info | Resources have standard Helm labels |
-| WHM202 | info | Hook weights defined for multi-hook charts |
-| WHM203 | info | Values entries documented |
-| WHM204 | warning | Dependencies use semver ranges |
-| WHM301 | info | At least one test for application charts |
-| WHM302 | info | Resource limits set (via values or defaults) |
-| WHM401 | warning | Image uses :latest tag or no tag |
-| WHM402 | warning | runAsNonRoot not set in security context |
-| WHM403 | info | readOnlyRootFilesystem not set |
-| WHM404 | error | privileged: true detected |
-| WHM405 | warning | Resource spec missing cpu/memory detail |
-| WHM406 | info | CRDs in crds/ — Helm never upgrades/deletes them |
-| WHM407 | warning | Secret with inline data, no ExternalSecret/SealedSecret |
-| WHM501 | info | Values keys defined but never referenced in templates |
-| WHM502 | warning | Deprecated or invalid K8s API versions |
 `,
       },
       {

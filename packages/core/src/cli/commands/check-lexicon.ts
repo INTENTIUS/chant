@@ -2,6 +2,7 @@ import { existsSync, readdirSync, readFileSync } from "fs";
 import { join, basename } from "path";
 import { auditIntrinsics } from "./check-lexicon-intrinsics";
 import { checkExamplesBuild } from "./check-lexicon-examples";
+import { auditDocsReachability } from "./check-lexicon-docs";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -281,6 +282,20 @@ export async function checkLexicon(dir: string): Promise<CheckResult> {
     tier: 1,
     pass: mdxFiles.length > 0,
     detail: mdxFiles.length > 0 ? `${mdxFiles.length} page(s)` : undefined,
+  });
+
+  // Counting pages says nothing about whether a reader can find them.
+  // Starlight has no auto-discovery, so a page missing from the sidebar is
+  // reachable only by direct URL (#1312).
+  const docsReach = auditDocsReachability(dir);
+  items.push({
+    name: "Every doc page is reachable from the sidebar",
+    tier: 1,
+    pass: !docsReach.hasSite || docsReach.unreachable.length === 0,
+    detail:
+      docsReach.unreachable.length > 0
+        ? `${docsReach.unreachable.length} unreachable: ${docsReach.unreachable.join(", ")}`
+        : undefined,
   });
 
   // ── Tier 2: Recommended ────────────────────────────────────────

@@ -72,6 +72,26 @@ const docsConfig: DocsConfig = {
   overview,
   outputFormat,
   serviceFromType,
+  // `lint-rules` below is the rules documentation; the generated `rules` table
+  // would duplicate it and land in no sidebar (#1312). aws, k8s, gitlab and
+  // github already suppress it for the same reason.
+  suppressPages: ["rules"],
+  // These pages are hand-written files under docs/src/content/docs/. The
+  // pipeline preserves pages it did not emit, but Starlight has no
+  // auto-discovery, so without an entry here they are reachable only by URL —
+  // which is what had happened to all ten of them.
+  sidebarExtra: [
+    { label: "Getting Started", slug: "getting-started" },
+    { label: "Resources", slug: "resources" },
+    { label: "Parameters & Outputs", slug: "parameters-outputs" },
+    { label: "Composites", slug: "composites" },
+    { label: "Linked Templates", slug: "linked-templates" },
+    { label: "Lint Rules", slug: "lint-rules" },
+    { label: "Importing ARM Templates", slug: "importing" },
+    { label: "Deploying to AKS", slug: "aks-kubernetes" },
+    { label: "Examples", slug: "examples" },
+    { label: "AI Skills", slug: "skills" },
+  ],
 };
 
 /**

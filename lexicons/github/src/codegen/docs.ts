@@ -1402,6 +1402,14 @@ The \`github:*\` tools are **read-only context tools** (#327): each builds from 
       },
     ],
     basePath: "/chant/lexicons/github/",
+    // Hand-written pages under docs/src/content/docs/ that no sidebar entry
+    // pointed at (#1312).
+    sidebarExtra: [
+      { label: "Workflows", slug: "workflows" },
+      { label: "Actions & Composites", slug: "actions" },
+      { label: "Matrix Strategies", slug: "matrix" },
+      { label: "Multiple Workflows", slug: "multi-workflow" },
+    ],
   };
 
   const result = await docsPipeline(config);

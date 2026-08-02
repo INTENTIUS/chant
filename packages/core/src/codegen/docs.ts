@@ -7,7 +7,7 @@
  * (service grouping, resource type URLs, custom overview content).
  */
 
-import { copyFileSync, readFileSync, writeFileSync, mkdirSync, rmSync } from "fs";
+import { copyFileSync, existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync, rmSync } from "fs";
 import { join } from "path";
 import { fileURLToPath } from "url";
 
@@ -71,6 +71,7 @@ export function docsPipeline(config: DocsConfig): DocsResult {
   }
   pages.set("index.mdx", overviewContent);
   const suppress = new Set(config.suppressPages ?? []);
+  const extraSlugs = new Set((config.extraPages ?? []).map((p) => p.slug));
 
   // Extra pages from lexicon config
   if (config.extraPages) {
@@ -96,12 +97,28 @@ export function docsPipeline(config: DocsConfig): DocsResult {
     }
   }
 
-  if (!suppress.has("intrinsics") && manifest.intrinsics && manifest.intrinsics.length > 0) {
+  // A generated page must not overwrite one the lexicon explicitly declared.
+  // The extraPages above are written into `pages` first, so an unguarded
+  // `pages.set` below silently discards them: helm declared its own
+  // "Intrinsics Reference" and pre-synth rules pages and shipped neither for
+  // as long as both slugs collided (#1312). Explicit authorship wins, and the
+  // collision is reported rather than resolved in silence.
+  const claimed = (slug: string): boolean => {
+    if (suppress.has(slug)) return true;
+    if (!extraSlugs.has(slug)) return false;
+    console.warn(
+      `[docs:${config.name}] extraPages declares "${slug}", which is also a generated page — keeping the declared one.\n` +
+        `  Add "${slug}" to suppressPages to make that explicit, or rename the extraPage if both are wanted.`,
+    );
+    return true;
+  };
+
+  if (!claimed("intrinsics") && manifest.intrinsics && manifest.intrinsics.length > 0) {
     pages.set("intrinsics.mdx", generateIntrinsics(config, manifest));
   }
 
   if (
-    !suppress.has("pseudo-parameters") &&
+    !claimed("pseudo-parameters") &&
     manifest.pseudoParameters &&
     Object.keys(manifest.pseudoParameters).length > 0
   ) {
@@ -111,12 +128,21 @@ export function docsPipeline(config: DocsConfig): DocsResult {
     );
   }
 
-  if (!suppress.has("rules") && rules.length > 0) {
+  if (!claimed("rules") && rules.length > 0) {
     pages.set("rules.mdx", generateRules(config, rules));
   }
 
-  if (!suppress.has("serialization")) {
+  if (!claimed("serialization")) {
     pages.set("serialization.mdx", generateSerialization(config));
+  }
+
+  // Stamp every emitted page with its provenance. These files look exactly
+  // like the hand-written pages sitting beside them, and without a marker they
+  // get edited directly — the k8s "Live Cluster" sidebar group and the AWS
+  // intrinsics guide's #1044 claim were both fixed in the emitted `.mdx` and
+  // silently reverted by the next regen (#1312).
+  for (const [filename, content] of pages) {
+    pages.set(filename, withGeneratedMarker(config, content));
   }
 
   return {
@@ -129,6 +155,66 @@ export function docsPipeline(config: DocsConfig): DocsResult {
       intrinsics: manifest.intrinsics?.length ?? 0,
     },
   };
+}
+
+/**
+ * Insert a provenance comment directly after a page's frontmatter.
+ *
+ * MDX parses `<!-- -->` as JSX rather than a comment, so this uses the
+ * `{/* … *\/}` form the rest of the docs already use for generated markers.
+ */
+function withGeneratedMarker(config: DocsConfig, content: string): string {
+  const marker = `{/* ${GENERATED_MARKER_TAG} by \`npm run docs -w @intentius/chant-lexicon-${config.name}\` — DO NOT EDIT.\n    Edit lexicons/${config.name}/src/codegen/docs.ts instead; changes here are overwritten. */}`;
+  const lines = content.split("\n");
+  // Frontmatter is the leading `---` … `---` block; the marker goes after it.
+  if (lines[0] === "---") {
+    const close = lines.indexOf("---", 1);
+    if (close > 0) {
+      lines.splice(close + 1, 0, "", marker);
+      return lines.join("\n");
+    }
+  }
+  return `${marker}\n\n${content}`;
+}
+
+/**
+ * Marks a page as pipeline output. Used both to warn readers off editing the
+ * file and, in {@link writeDocsSite}, to tell a page this pipeline owns from a
+ * hand-written one when reaping pages it no longer emits.
+ */
+export const GENERATED_MARKER_TAG = "GENERATED-BY-CHANT-DOCS";
+
+/**
+ * Every slug a Starlight sidebar reaches, including nested group items.
+ */
+export function collectSidebarSlugs(items: Array<Record<string, unknown>>): Set<string> {
+  const slugs = new Set<string>();
+  const walk = (list: Array<Record<string, unknown>>): void => {
+    for (const item of list) {
+      if (typeof item.slug === "string") slugs.add(item.slug);
+      if (Array.isArray(item.items)) walk(item.items as Array<Record<string, unknown>>);
+    }
+  };
+  walk(items);
+  return slugs;
+}
+
+/**
+ * Content pages that no sidebar entry points at.
+ *
+ * `index` is always the site root and never needs an entry of its own.
+ */
+export function unreachablePages(
+  contentDir: string,
+  sidebar: Array<Record<string, unknown>>,
+): string[] {
+  if (!existsSync(contentDir)) return [];
+  const slugs = collectSidebarSlugs(sidebar);
+  return readdirSync(contentDir)
+    .filter((f) => f.endsWith(".mdx") || f.endsWith(".md"))
+    .map((f) => f.replace(/\.mdx?$/, ""))
+    .filter((slug) => slug !== "index" && !slugs.has(slug))
+    .sort();
 }
 
 /**
@@ -161,6 +247,23 @@ export function writeDocsSite(config: DocsConfig, result: DocsResult): void {
     const filePath = join(contentDir, filename);
     rmSync(filePath, { force: true });
   }
+
+  // Reap pages this pipeline used to emit and no longer does. Suppressing a
+  // page only stops it being written; the copy from the last run stayed on
+  // disk, unreferenced by the sidebar and indistinguishable from a
+  // hand-written page — which is how azure, gcp and helm each kept a `rules`
+  // page after adopting their own (#1312). The provenance marker is what makes
+  // this safe: only a file this pipeline stamped is ever removed.
+  if (existsSync(contentDir)) {
+    for (const filename of readdirSync(contentDir)) {
+      if (!filename.endsWith(".mdx") && !filename.endsWith(".md")) continue;
+      if (result.pages.has(filename)) continue;
+      const filePath = join(contentDir, filename);
+      if (readFileSync(filePath, "utf-8").includes(GENERATED_MARKER_TAG)) {
+        rmSync(filePath, { force: true });
+      }
+    }
+  }
   rmSync(join(outDir, ".astro"), { recursive: true, force: true });
   rmSync(join(outDir, "node_modules", ".astro"), { recursive: true, force: true });
 
@@ -169,6 +272,20 @@ export function writeDocsSite(config: DocsConfig, result: DocsResult): void {
 
   // Build sidebar from generated pages
   const sidebar = buildSidebar(config, result);
+
+  // Starlight does not auto-discover pages, so a page absent from the sidebar
+  // is reachable only by typing its URL. The pipeline deliberately preserves
+  // hand-written pages it did not emit (above), which makes it easy to add one
+  // and never wire it up — azure, temporal, helm and github each accumulated
+  // several that way (#1312). Report them; `chant dev check-lexicon` gates on
+  // the same condition.
+  const unreachable = unreachablePages(contentDir, sidebar);
+  if (unreachable.length > 0) {
+    console.warn(
+      `[docs:${config.name}] ${unreachable.length} page(s) in no sidebar entry — reachable only by direct URL: ${unreachable.join(", ")}.\n` +
+        `  Declare them in this lexicon's DocsConfig \`sidebarExtra\` (or \`extraPages\`) to surface them.`,
+    );
+  }
 
   // package.json
   writeFileSync(
