@@ -27,7 +27,7 @@ const {
 } = await import("./deep-observe");
 const { parseResourceDescription } = await import("./api/read-client");
 const { deepDiffForLexicon } = await import("@intentius/chant/lifecycle/deep-observe");
-const { normalizeDeepObservation, normalizeDeepProperties } = await import("@intentius/chant/deep-observation");
+const { normalizeDeepObservation, normalizeDeepProperties, flattenDeepProperties } = await import("@intentius/chant/deep-observation");
 
 const ok = (text: string) => ({ status: 200, text });
 
@@ -153,6 +153,53 @@ describe("the aws noise rules", () => {
       },
     );
     expect(out.Tags).toEqual([{ Key: "chant:stack", Value: "renamed" }]);
+  });
+
+  // A rule's canonical JSON is longer than a path segment may carry, so keying
+  // by it made the flattener compare rule sets positionally — one added rule
+  // then reported as "the first rule changed, and a new one appeared".
+  test("keys a security-group rule by protocol, ports and source", () => {
+    const out = flattenDeepProperties(
+      {
+        SecurityGroupIngress: [
+          { IpProtocol: "tcp", FromPort: 22, ToPort: 22, CidrIp: "203.0.113.0/24", Description: "ssh from the office" },
+          { IpProtocol: "tcp", FromPort: 443, ToPort: 443, CidrIp: "0.0.0.0/0" },
+        ],
+      },
+      { entityType: "AWS::EC2::SecurityGroup", side: "live", hooks: awsDeepNormalizationHooks },
+    );
+    const paths = [...out.keys()];
+    expect(paths).toContain("SecurityGroupIngress[#tcp:22:22:203.0.113.0/24].CidrIp");
+    expect(paths).toContain("SecurityGroupIngress[#tcp:443:443:0.0.0.0/0].CidrIp");
+    // Positional segments would mean the set is being compared by position.
+    expect(paths.some((p) => p.startsWith("SecurityGroupIngress[0]"))).toBe(false);
+  });
+
+  test("a rule keeps its identity when only its description changes", () => {
+    const key = (description: string) =>
+      [
+        ...flattenDeepProperties(
+          { SecurityGroupIngress: [{ IpProtocol: "tcp", FromPort: 22, ToPort: 22, CidrIp: "10.0.0.0/8", Description: description }] },
+          { entityType: "AWS::EC2::SecurityGroup", side: "live", hooks: awsDeepNormalizationHooks },
+        ).keys(),
+      ].filter((p) => p.endsWith(".CidrIp"));
+    // Editing a description is a change to that rule, not a delete plus an add.
+    expect(key("before")).toEqual(key("after"));
+  });
+
+  test("a rule with no recognisable source falls back rather than colliding", () => {
+    const out = flattenDeepProperties(
+      {
+        SecurityGroupIngress: [
+          { IpProtocol: "tcp", FromPort: 1, ToPort: 1 },
+          { IpProtocol: "udp", FromPort: 2, ToPort: 2 },
+        ],
+      },
+      { entityType: "AWS::EC2::SecurityGroup", side: "live", hooks: awsDeepNormalizationHooks },
+    );
+    // Two sourceless rules must not key to the same segment; canonical JSON
+    // still distinguishes them.
+    expect([...out.keys()].filter((p) => p.endsWith(".IpProtocol"))).toHaveLength(2);
   });
 
   test("canonicalizes policy statement and action order", () => {

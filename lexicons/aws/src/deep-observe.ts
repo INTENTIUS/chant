@@ -295,7 +295,10 @@ export const awsDeepNormalizationHooks: DeepNormalizationHooks = {
 
     // Security-group rules are a set — the console appends, chant declares in
     // source order, and neither order means anything to EC2.
-    if (name === "SecurityGroupIngress" || name === "SecurityGroupEgress" || name === "IpRanges") {
+    if (name === "SecurityGroupIngress" || name === "SecurityGroupEgress") {
+      return securityGroupRuleKey(el) ?? canonicalJson(el);
+    }
+    if (name === "IpRanges") {
       return canonicalJson(el);
     }
 
@@ -335,6 +338,39 @@ function failureDetail(err: unknown): string {
 /** True when a CloudFormation read failed only because the stack isn't there yet. */
 function isStackMissing(err: unknown): boolean {
   return err instanceof AwsReadError && /does not exist/i.test(err.message);
+}
+
+/**
+ * What identifies a security-group rule, as a path segment.
+ *
+ * `canonicalJson` of a rule runs past the length a path segment may carry
+ * (`MAX_KEYED_SEGMENT`, 60), so keying by it makes the flattener give up and
+ * compare the set positionally. A rule added at the top then shifts every rule
+ * below it, and one added rule reports as "the first rule changed, and a new
+ * one appeared at the end" — detection is right, attribution is not.
+ *
+ * Identity is protocol, port range and source, which is what EC2 itself
+ * enforces uniqueness on. `Description` is deliberately excluded: editing a
+ * rule's description is a change *to that rule*, not the removal of one rule
+ * and the addition of another.
+ */
+function securityGroupRuleKey(element: unknown): string | undefined {
+  if (!isRecord(element)) return undefined;
+  const source =
+    typeof element.CidrIp === "string"
+      ? element.CidrIp
+      : typeof element.CidrIpv6 === "string"
+        ? element.CidrIpv6
+        : typeof element.SourceSecurityGroupId === "string"
+          ? element.SourceSecurityGroupId
+          : undefined;
+  // No recognisable source is not a rule this can identify; the caller falls
+  // back rather than keying every such rule to the same segment.
+  if (source === undefined) return undefined;
+  const protocol = typeof element.IpProtocol === "string" ? element.IpProtocol : "-1";
+  const from = element.FromPort ?? "*";
+  const to = element.ToPort ?? "*";
+  return `${protocol}:${String(from)}:${String(to)}:${source}`;
 }
 
 /** Every tag key the serializer stamps as chant's ownership marker. */
