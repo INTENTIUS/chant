@@ -170,6 +170,12 @@ leftness-capture:
 components-aws-e2e:
     bash test/components-aws-e2e.sh
 
+# AWS config-controller round-trip (#1208): apply -> observe -> drift -> reconcile -> rollback
+# on the canonical mixed-substrate example, both substrates in one run
+# (on-demand, needs Docker + aws CLI + kubectl)
+aws-cc-e2e:
+    bash test/aws-cc-e2e.sh
+
 # Prove the adopt-alb-services GENERATED pipeline deploys multi-service across isolated jobs, with cross-stack outputs threaded as artifacts (Floci in Docker; on-demand, needs Docker + aws CLI)
 adopt-alb-services-e2e:
     bash test/adopt-alb-services-e2e.sh
