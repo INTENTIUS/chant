@@ -28,9 +28,14 @@ chant <command> [options] [path]
 | [`build`](/chant/cli/build/) | Synthesize and write infrastructure output |
 | [`lint`](/chant/cli/lint/) | Lint intent definitions with semantic rules |
 | [`list`](/chant/cli/list/) | List exported declarations in a project |
+| [`describe`](/chant/cli/describe/) | Show the effective, fully-resolved configuration for one component |
+| [`search`](/chant/cli/search/) | Answer an estate question with a compact, edge-aware query |
 | [`import`](/chant/cli/import/) | Import infrastructure templates and generate TypeScript |
 | [`audit`](/chant/cli/audit/) | Audit an existing repo's CI/CD pipelines for security issues |
 | [`migrate`](/chant/cli/migrate/) | Translate a workflow between lexicons (e.g. GitHub Actions → GitLab CI) |
+| [`carve advise`](/chant/cli/carve/) | Rank which Terraform resources are cheap to carve into native chant |
+| [`carve emit/bridge/apply`](/chant/cli/carve-out/) | Carve a resource out of Terraform, incrementally and reversibly |
+| [`vendor`](/chant/cli/vendor/) | Pull reusable patterns into your repo, pinned and checksummed |
 | [`update`](/chant/cli/update/) | Sync lexicon type definitions |
 | [`doctor`](/chant/cli/doctor/) | Check project health and configuration |
 
@@ -68,7 +73,7 @@ Capture and compare deployed infrastructure state. Snapshots are stored on an or
 | [`lifecycle snapshot <env>`](/chant/cli/lifecycle/) | Query lexicon plugins, save resource + artifact metadata to orphan branch |
 | [`lifecycle show <env>`](/chant/cli/lifecycle/) | Show latest lifecycle snapshot |
 | [`lifecycle diff <env>`](/chant/cli/lifecycle/) | Compare current build against last snapshot (digest mode) |
-| [`lifecycle diff <env> --live`](/chant/cli/lifecycle/) | Query cloud right now and report drift (six categories: missing, orphan, disappeared, drifted, etc.) |
+| [`lifecycle diff <env> --live`](/chant/cli/lifecycle/) | Query cloud right now and report drift (seven categories: missing, orphan, disappeared, newly observed, drifted, unchanged, unobserved) |
 | [`lifecycle log [env]`](/chant/cli/lifecycle/) | History of lifecycle snapshots |
 
 ## Component Release Ledger + Status

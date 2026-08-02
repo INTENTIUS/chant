@@ -16,7 +16,7 @@ Drift detection in chant is built from three pieces that compose:
 | Layer | Command | What it does |
 |---|---|---|
 | **Snapshot** | `chant lifecycle snapshot <env>` | Query each lexicon's `describeResources()` / `listArtifacts()`, write the result to the `chant/lifecycle` orphan branch |
-| **Live diff** | `chant lifecycle diff <env> --live` | Query the cloud right now, compare against the current build *and* the last snapshot, group results into six categories (missing / orphan / disappeared / newly observed / drifted / unchanged) |
+| **Live diff** | `chant lifecycle diff <env> --live` | Query the cloud right now, compare against the current build *and* the last snapshot, group results into seven categories (missing / orphan / disappeared / newly observed / drifted / unchanged / unobserved) |
 | **Watching** | `WatchOp({ env, schedule })` | Run the two commands above on a Temporal cron, surface drift as a per-run search attribute |
 
 Snapshots without diffs are forensic record. Diffs without scheduling are ad-hoc. The composite is what makes drift a continuous signal rather than a manual chore.

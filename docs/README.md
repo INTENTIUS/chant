@@ -34,8 +34,9 @@ docs/
 │   │       ├── lint-rules/        # Lint rule documentation
 │   │       ├── configuration/     # Configuration reference
 │   │       ├── serialization/     # Output format details
+│   │       ├── components/        # Component release model
+│   │       ├── local-testing/     # Local emulator testing
 │   │       ├── tutorials/         # Step-by-step tutorials
-│   │       ├── api/               # API documentation
 │   │       ├── guide/             # User guides
 │   │       ├── contributing/      # Contributor docs
 │   │       └── troubleshooting/   # Troubleshooting guides

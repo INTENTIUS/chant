@@ -25,7 +25,7 @@ The evaluator scans the project directory for TypeScript source files, applying 
 
 Type-checking and the evaluability rules are not part of the default `chant build`. They run in `chant lint` and in your editor. `chant build` runs under a TypeScript runtime that strips types without checking them.
 
-Run `chant lint`, or rely on the editor, to catch type errors and patterns that are valid TypeScript but not statically evaluable. See [TypeScript as Data](/chant/concepts/typescript-as-data/) for the full list. This stage is what guarantees the imported source stays inside the supported subset — for the default run path. Under the opt-in `chant build --fold`, staying inside that same subset is what lets a file skip Stage 4's import/execution entirely; see [Folded vs Run](/chant/concepts/typescript-as-data/#folded-vs-run).
+Run `chant lint`, or rely on the editor, to catch type errors and patterns that are valid TypeScript but not statically evaluable. See [TypeScript as Data](/chant/concepts/typescript-as-data/) for the full list. Staying inside that subset is what lets a file skip Stage 4's import/execution entirely on the default fold path, and it is what guarantees the imported source is safe to run when a file falls back; see [Folded vs Run](/chant/concepts/typescript-as-data/#folded-vs-run).
 
 **Related:** [Evaluability Rules](/chant/lint-rules/evaluability/)
 
@@ -41,9 +41,9 @@ The module graph determines which files depend on which, and ensures that cross-
 
 **Related:** [Module Graph](/chant/architecture/module-graph/)
 
-## Stage 4: Import and Collect Resources
+## Stage 4: Fold or Collect Resources
 
-By default, chant imports each discovered file with the TypeScript runtime and collects the resource objects it exports. Passing `--fold` to `chant build` skips this import for a file that stays inside the fold subset — the resource objects are reduced from the AST directly instead, with no module execution. This stage describes the default (run) path; see [Folded vs Run](/chant/concepts/typescript-as-data/#folded-vs-run) for the opt-in alternative.
+By default chant reduces each discovered file's AST directly to its resource objects, with no module execution. A file that steps outside the fold subset is instead imported with the TypeScript runtime and its exported resource objects collected, which is also what `--no-fold` forces for every file. This stage describes that run path; see [Folded vs Run](/chant/concepts/typescript-as-data/#folded-vs-run) for which files take which.
 
 ```typescript
 export const <name> = new <ResourceType>({...})

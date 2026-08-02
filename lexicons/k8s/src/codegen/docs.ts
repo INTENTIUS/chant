@@ -1151,6 +1151,13 @@ The lexicon also provides MCP (Model Context Protocol) tools and resources:
     ],
     basePath: "/chant/lexicons/k8s/",
     sidebarExtra: [
+      {
+        label: "Live Cluster",
+        items: [
+          { label: "The API Client", slug: "api-client" },
+          { label: "chant kube", slug: "kube" },
+        ],
+      },
       { label: "CRD-Generated Classes", slug: "crd-classes" },
       { label: "Argo CD Composites", slug: "argo-composites" },
       {

@@ -224,7 +224,7 @@ const job = new Job({
         slug: "composites",
         title: "Composites",
         description: "Pre-built Helm chart patterns",
-        content: `When a composite call like these is assigned directly to a top-level \`export const\` — or destructured into a top-level export, e.g. \`export const { chart, values, deployment } = HelmWebApp({...})\` — it's one of the patterns [\`chant build --fold\`](/chant/concepts/typescript-as-data/#folded-vs-run) can reduce with no module execution (chant #1023). It still runs like any other call if it isn't a top-level export, or if its result is only reached through a nested value inside another resource's properties.
+        content: `When a composite call like these is assigned directly to a top-level \`export const\` — or destructured into a top-level export, e.g. \`export const { chart, values, deployment } = HelmWebApp({...})\` — it's one of the patterns [folding](/chant/concepts/typescript-as-data/#folded-vs-run) can reduce with no module execution (chant #1023). It still runs like any other call if it isn't a top-level export, or if its result is only reached through a nested value inside another resource's properties.
 
 ## Available composites
 
