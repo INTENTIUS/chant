@@ -433,6 +433,7 @@ Each example directory also gets `README.md`, `package.json`, and any deploy scr
 | `test/npm-smoke.sh` | New User test harness: tarball install, init flow, examples — all 6 lexicons, both runtimes |
 | `test/e2e-smoke.sh` | E2E deployment harness: deploy, verify, teardown for AWS/GitLab, EKS, GKE, AKS |
 | `test/build-examples.sh` | Builds all root examples, copies artifacts to `/output` |
+| `test/aws-cc-e2e.sh` | AWS config-controller round-trip on Floci: apply → observe → drift → reconcile → rollback, cloud + k8s halves in one run (`just aws-cc-e2e`; see `test/aws-cc-e2e.md`) |
 
 ## Distribution Safety
 

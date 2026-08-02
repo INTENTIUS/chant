@@ -1,8 +1,13 @@
 # cc-aws-canonical — the CC lane's canonical AWS example
 
 The estate the config-controller AWS lane (epic #1198) runs its acceptance
-against: **VPC / subnet / EC2 / SG** — real network containment — synthesized by
-the AWS lexicon and released by one component, on the Floci emulator, for $0.
+against: **VPC / subnet / EC2 / SG** — real network containment — plus an **EKS
+cluster and the k8s Service on it**, synthesized by the AWS and k8s lexicons and
+released by one component, on the Floci emulator, for $0.
+
+Mixed-substrate on purpose: the CC round-trip has to show both halves observed
+in one read, and behold has to render them as one graph. Floci k3s-backs EKS, so
+the cluster is real and the Service really lands on it.
 
 - `src/cc-network/network.ts` — VPC, public + private subnet, internet gateway,
   route table and associations. No NAT gateway or EIP: they cost time on a real
@@ -10,9 +15,14 @@ the AWS lexicon and released by one component, on the Floci emulator, for $0.
 - `src/cc-app/app.ts` — a security group and the instance inside it, in the
   private subnet. The security group is the one deep-readable type in this set
   (#1269), so it is the drift target #1207 proved.
-- `src/cc.component.ts` — one component owning all ten resources via
+- `src/cc-cluster/cluster.ts` — the managed cluster the workload runs on. Its
+  apiserver port is allocated by the emulator at creation, so nothing may
+  hardcode it (behold#106).
+- `src/cc-workload/service.ts` — the k8s half, observed through the cluster's own
+  kubeconfig. behold anchors it under the cluster (behold#103).
+- `src/cc.component.ts` — one component owning every declared resource via
   `liveNames`, which is what makes `chant components status --live` report a
-  ten-resource rollup rather than the rollup-of-one an identity join produces.
+  real rollup rather than the rollup-of-one an identity join produces.
 
 ## Run it
 
@@ -22,7 +32,7 @@ export AWS_ENDPOINT_URL=http://localhost:4566
 export AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_REGION=us-east-1
 
 npm install
-npm run build      # AWS lexicon -> template.json
+npm run build      # AWS lexicon -> template.json, k8s lexicon -> k8s.yaml
 npm run deploy     # the component cfn-deploys it
 npm run status     # one row, with the resource rollup behold#100 paints from
 npm run diff       # declared vs live
@@ -50,13 +60,19 @@ Tear down with `npm run teardown`, then `docker stop floci`.
   graph`, and component discovery scans from there, so `cc.component.ts` lives
   under `src/` rather than at the project root.
 
+## The round-trip
+
+`just aws-cc-e2e` in the chant repo runs the whole config-controller loop on
+this example — apply, observe, mutate out of band, detect the drift, reconcile
+source from live, and compute the rollback delta. See `test/aws-cc-e2e.md`.
+
 ## What it is the vehicle for
 
 - **behold#100** (B·aws) — its acceptance run is behold's
   `just e2e-aws-logical`, pointed here with `BEHOLD_E2E_PROJECT`. That asserts
   component status painted from the resource rollup, the live overlay, and the
   nested `region -> VPC -> subnet ⊃ component ⊃ resource` architecture diagram.
-- **#1208** (E·aws) — the CC round-trip's cloud half.
+- **#1208** (E·aws) — the CC round-trip, both halves (`just aws-cc-e2e`).
 
 ## Known limits, verified rather than assumed
 

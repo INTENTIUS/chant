@@ -33,6 +33,7 @@ export const canonical: Component = {
     "publicRta",
     "appSecurityGroup",
     "appInstance",
+    "cluster",
   ],
   deploy: [phase("Apply", [cfnDeploy({ stack: "cc-canonical", template: "template.json" })])],
 };
