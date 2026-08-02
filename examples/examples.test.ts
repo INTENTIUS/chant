@@ -62,9 +62,9 @@ function parseK8sDocs(yaml: string) {
 // half — it synthesizes and lints like any other example.
 
 describeExample("cc-aws-canonical", {
-  lexicon: "aws",
-  serializer: awsSerializer,
-  outputKey: "aws",
+  lexicon: "aws+k8s",
+  serializer: [awsSerializer, k8sSerializer],
+  outputKey: ["aws", "k8s"],
   examplesDir: import.meta.dirname,
 });
 

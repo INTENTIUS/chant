@@ -3,14 +3,15 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "The CC lane's canonical AWS example (chant#1198): VPC/subnet/EC2/SG in one stack, one component owning all ten resources, deployed to Floci - the acceptance vehicle for behold#100.",
+  "description": "The CC lane's canonical mixed-substrate example (chant#1198/#1208): VPC/subnet/EC2/SG plus an EKS cluster and the k8s Service on it, deployed to Floci - the vehicle for the CC round-trip and behold#100.",
   "devDependencies": {
     "@intentius/chant": "*",
     "@intentius/chant-lexicon-aws": "*",
-    "typescript": "*"
+    "typescript": "*",
+    "@intentius/chant-lexicon-k8s": "*"
   },
   "scripts": {
-    "build": "chant build src -o template.json",
+    "build": "chant build src --lexicon aws -o template.json && chant build src --lexicon k8s -o k8s.yaml",
     "deploy": "chant run --components cc-canonical --env local --no-release-record",
     "status": "chant components status local --live --json --no-release-record",
     "diff": "chant lifecycle diff local --live",
