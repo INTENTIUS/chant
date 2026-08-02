@@ -111,6 +111,8 @@ export {
   VpcDefault, FargateAlb, AlbShared, FargateService, RdsInstance, RdsPostgres,
   EfsWithAccessPoint,
   Ec2InstanceRole, MinimalVpc,
+  SolrFargateService,
+  MicrovmApp,
   AgentCoreAgent,
 } from "./composites/index";
 export type {
@@ -119,6 +121,8 @@ export type {
   VpcDefaultProps, FargateAlbProps, AlbSharedProps, FargateServiceProps, RdsInstanceProps, RdsPostgresProps,
   EfsWithAccessPointProps,
   Ec2InstanceRoleProps, MinimalVpcProps,
+  SolrFargateServiceProps,
+  MicrovmAppProps, MicrovmAppResult, MicrovmAppBuildConnectorProps,
   AgentCoreAgentProps, AgentCoreAgentResult,
 } from "./composites/index";
 
