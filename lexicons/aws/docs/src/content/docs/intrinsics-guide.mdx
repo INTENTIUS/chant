@@ -2,11 +2,11 @@
 title: "Intrinsics Guide"
 description: "Worked examples for every CloudFormation intrinsic function and their chant syntax"
 ---
-See [Intrinsic Functions](../intrinsics/) for the generated reference table (name, description, output key, whether it's a tagged template, whether `chant build --fold` can fold it). This page is the worked-example companion — one `Fn::` intrinsic function per section, with real usage.
+See [Intrinsic Functions](../intrinsics/) for the generated reference table (name, description, output key, whether it's a tagged template, whether folding can fold it). This page is the worked-example companion — one `Fn::` intrinsic function per section, with real usage.
 
 CloudFormation intrinsic functions are available as imports from the lexicon. They produce the corresponding `Fn::` calls in the serialized template.
 
-Only `Sub` is a tagged template — the others below are plain function calls. Both forms fold under [`chant build --fold`](/chant/concepts/typescript-as-data/#folded-vs-run) ([#1044](https://github.com/INTENTIUS/chant/issues/1044)): every AWS intrinsic on this page is registered with its call form opted in, so using `Ref`, `GetAtt`, `If`, `Join`, `Select`, `Split`, `Base64`, or `GetAZs` in a resource's props no longer forces that file back to the run path. What folds is the call, not calls in general — the name has to be one this lexicon registered and opted in, imported from this lexicon by the file using it. A same-file resource passed to one (`Ref(bucket)` where `bucket` is declared in the same file) still falls back, since the intrinsic needs the real constructed resource.
+Only `Sub` is a tagged template — the others below are plain function calls. Both forms fold on the [default build path](/chant/concepts/typescript-as-data/#folded-vs-run) ([#1044](https://github.com/INTENTIUS/chant/issues/1044)): every AWS intrinsic on this page is registered with its call form opted in, so using `Ref`, `GetAtt`, `If`, `Join`, `Select`, `Split`, `Base64`, or `GetAZs` in a resource's props no longer forces that file back to the run path. What folds is the call, not calls in general — the name has to be one this lexicon registered and opted in, imported from this lexicon by the file using it. A same-file resource passed to one (`Ref(bucket)` where `bucket` is declared in the same file) still falls back, since the intrinsic needs the real constructed resource.
 
 Here is a complete example using all intrinsic functions:
 

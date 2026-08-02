@@ -2,11 +2,11 @@
 title: "Intrinsics Guide"
 description: "Worked examples for the GitLab reference() intrinsic and its chant syntax"
 ---
-See [Intrinsic Functions](../intrinsics/) for the generated reference table (name, description, output key, whether it's a tagged template, whether `chant build --fold` can fold it). This page is the worked-example companion.
+See [Intrinsic Functions](../intrinsics/) for the generated reference table (name, description, output key, whether it's a tagged template, whether folding can fold it). This page is the worked-example companion.
 
 The GitLab lexicon provides one intrinsic function: `reference()`, which maps to GitLab's `!reference` YAML tag.
 
-`reference()` is a plain function call, not a TypeScript tagged template — like any function call used as a value, it's outside the subset [`chant build --fold`](/chant/concepts/typescript-as-data/#folded-vs-run) can reduce. A file that calls `reference()` anywhere in a resource's properties falls back to the normal run path under `--fold`.
+`reference()` is a plain function call, not a TypeScript tagged template — like any function call used as a value, it's outside the subset [folding](/chant/concepts/typescript-as-data/#folded-vs-run) can reduce. A file that calls `reference()` anywhere in a resource's properties falls back to the normal run path.
 
 ## `reference()` — reuse job properties
 

@@ -189,7 +189,7 @@ Helpers that read the environment are deliberately excluded. `env()` is a functi
 
 The following patterns are caught by the evaluability lint rules (EVL). Your editor shows them as lint errors, and `chant lint` reports them in CI. By default, `chant build` does not enforce them — it imports and runs your file regardless, so a pattern below still produces whatever JavaScript produces, correct or not. Run lint, or rely on your editor, to keep source inside the supported subset.
 
-Under `chant build --fold` (see [Folded vs Run](#folded-vs-run) below), the same subset is what a file must stay inside to fold at all: a pattern below makes fold reject that one file and fall back to running it, logged with the reason. That fallback is not a build error either — it just means the file loses the no-execution property for this run.
+On the fold path (see [Folded vs Run](#folded-vs-run) below), the same subset is what a file must stay inside to fold at all: a pattern below makes fold reject that one file and fall back to running it, logged with the reason. That fallback is not a build error either — it just means the file loses the no-execution property for this run.
 
 ### Function calls as values
 
@@ -243,19 +243,19 @@ For the full EVL rule reference with configuration options, see [Evaluability Ru
 
 ## Folded vs Run
 
-By default, `chant build` imports and runs every source file to collect the exported resource objects. The evaluability rules (EVL, above) are what keep that run deterministic: they reject anything a running file could do besides read literals, constants, and cross-resource references, so running the supported subset has no side effects and no dependency on the environment.
+Folding is the **default build path** since #1134: instead of importing and running a file, chant reduces its AST directly to the resource spec, with zero module execution. A file that steps outside the fold subset falls back to being imported and run, on its own, and the evaluability rules (EVL, above) are what keep that fallback deterministic — they reject anything a running file could do besides read literals, constants, and cross-resource references, so running the supported subset has no side effects and no dependency on the environment.
 
-Folding is the **default build path** (#1134; opt-in via `--fold` until then): instead of importing and running a file, chant reduces its AST directly to the resource spec, with zero module execution. Nothing changes about what you write to use it — the supported subset above is the same subset that folds. What changes is how the build gets there:
+Nothing changes about what you write to get folding — the supported subset above is the same subset that folds. What changes is how the build gets there:
 
-| | Default (run) | `--fold` |
+| | Fold (default) | Run |
 |---|---|---|
-| Mechanism | Imports and executes the file | Reduces the AST to a value — no execution |
-| What keeps it deterministic | The evaluability rules (a lint-time discipline) | The fold subset itself (a build-time construction) |
-| A pattern outside the subset | Still runs; produces whatever the code produces | Rejected for that file, which falls back to running it instead |
-| Output | Resource objects | Same resource objects — [byte-identical serialized output](#byte-identical-output) |
-| Default state | Off — pass `--no-fold` or set `build.fold: false` | **On by default** (#1134) |
+| Mechanism | Reduces the AST to a value — no execution | Imports and executes the file |
+| What keeps it deterministic | The fold subset itself (a build-time construction) | The evaluability rules (a lint-time discipline) |
+| A pattern outside the subset | Rejected for that file, which falls back to running it instead | Still runs; produces whatever the code produces |
+| Output | Resource objects — [byte-identical serialized output](#byte-identical-output) | Same resource objects |
+| How you get it | On by default since #1134 | `--no-fold`, `build.fold: false`, or a per-file fallback |
 
-Folding happens per file, not per project. A file either folds entirely or falls back to running entirely — chant never partially executes a file. `chant build --fold` logs which path each file took, and why, in a real run:
+Folding happens per file, not per project. A file either folds entirely or falls back to running entirely — chant never partially executes a file. `chant build` logs which path each file took, and why, in a real run:
 
 ```
 [fold:fold] tags.ts — 1 resource(s), no module execution
@@ -276,7 +276,7 @@ Fold covers more than a single leaf resource now:
 
 What still forces a fallback to run, per file: **a function call used as a value that is neither a registered authoring helper nor an opted-in intrinsic** — your own helper, an array `.map(...)`, a method call, an intrinsic whose lexicon has not opted it in. Also: a composite call nested as a *value* inside something else rather than being the file's own top-level export, a `new ns.Type(...)` through a namespace import (the class has to be reachable through a named import to be constructed), a re-export, `export default`, `let`/`var`, and an exported function or class declaration.
 
-`process.env.X` and other environment-dependent references are rejected by the same mechanism, but not because of a gap left to close: an environment read is a value fold can only get by executing code and consulting whatever process happens to be running the build, which is exactly what folding is built to avoid. It's an unresolved identifier like any other, and it falls back to run by design, the same way it does today without `--fold` — and `--fold` reports it with a pointed message rather than the generic "unresolved identifier", naming the alternative below.
+`process.env.X` and other environment-dependent references are rejected by the same mechanism, but not because of a gap left to close: an environment read is a value fold can only get by executing code and consulting whatever process happens to be running the build, which is exactly what folding is built to avoid. It's an unresolved identifier like any other, and the file falls back to run by design — reported with a pointed message rather than the generic "unresolved identifier", naming the alternative below.
 
 If a project needs to vary a build (an environment name, a tier that changes which resources are even produced), the supported way is a **build-time parameter** (#1064), not `process.env`: declare it in `chant.config.ts`'s `buildParams` (type, optional `default`/`enum`/`env` mapping), supply it via `chant build --param name=value` / `--params-file`, and reference it in source as `params.<name>` (`import { params } from "@intentius/chant/params"`). Because the value is known at build invocation — before any file is imported or folded — `params.<name>` folds to a **literal**, exactly like a `const`, instead of falling back to run. Values are recorded on the build result (`BuildResult.buildParams`) so a build's inputs are auditable, not read invisibly from whatever environment happened to be running it. See [Build-Time Parameters](/chant/concepts/build-time-parameters/).
 
@@ -302,7 +302,7 @@ What you get is what running the factory produced. The resources are built by th
 
 ### Byte-identical output
 
-`chant build --fold` and `chant build` (run) produce byte-identical serialized output for every file that folds — same resource objects, same serialization, same lint. This is proven by a differential test across every shipped example ([#1025](https://github.com/INTENTIUS/chant/issues/1025)); run it yourself with `just fold-differential`.
+`chant build` and `chant build --no-fold` produce byte-identical serialized output for every file that folds — same resource objects, same serialization, same lint. This is proven by a differential test across every shipped example ([#1025](https://github.com/INTENTIUS/chant/issues/1025)); run it yourself with `just fold-differential`.
 
 ### Fold coverage today
 
@@ -324,7 +324,7 @@ These counts are a snapshot, not refreshed by the mechanism above; they'll drift
 
 ### Isolating the run-fallback path
 
-Folded files execute none of their own code, but a run-fallback file does — in the CLI's own process by default. `chant build --sandbox` (#1045) runs every run-fallback file for a build together, isolated, in one child process with the filesystem, process-spawn, and environment access locked down, instead of trusting the file to behave. It composes with `--fold`: folded files are unaffected (there's nothing to isolate), and the run-fallback remainder is what gets sandboxed — see [Sandboxed Execution](/chant/architecture/sandbox/) for exactly what that does and does not protect against.
+Folded files execute none of their own code, but a run-fallback file does — in the CLI's own process by default. `chant build --sandbox` (#1045) runs every run-fallback file for a build together, isolated, in one child process with the filesystem, process-spawn, and environment access locked down, instead of trusting the file to behave. It composes with folding: folded files are unaffected (there's nothing to isolate), and the run-fallback remainder is what gets sandboxed — see [Sandboxed Execution](/chant/architecture/sandbox/) for exactly what that does and does not protect against.
 
 ## Why These Constraints?
 
