@@ -330,11 +330,11 @@ Tag values support strings, \`Parameter\` references, and intrinsic functions (\
         slug: "intrinsics-guide",
         title: "Intrinsics Guide",
         description: "Worked examples for every CloudFormation intrinsic function and their chant syntax",
-        content: `See [Intrinsic Functions](../intrinsics/) for the generated reference table (name, description, output key, whether it's a tagged template, whether \`chant build --fold\` can fold it). This page is the worked-example companion — one \`Fn::\` intrinsic function per section, with real usage.
+        content: `See [Intrinsic Functions](../intrinsics/) for the generated reference table (name, description, output key, whether it's a tagged template, whether folding can reduce it). This page is the worked-example companion — one \`Fn::\` intrinsic function per section, with real usage.
 
 CloudFormation intrinsic functions are available as imports from the lexicon. They produce the corresponding \`Fn::\` calls in the serialized template.
 
-Only \`Sub\` is a tagged template — the others below are plain function calls. That distinction matters for [\`chant build --fold\`](/chant/concepts/typescript-as-data/#folded-vs-run): a registered intrinsic tagged template is one of the shapes the static folder can reduce with no module execution. A plain function call is not, today — \`chant build --fold\` has no case for a bare call used as a value yet ([#1044](https://github.com/INTENTIUS/chant/issues/1044) tracks changing that, per intrinsic). Using \`Ref\`, \`GetAtt\`, \`If\`, \`Join\`, \`Select\`, \`Split\`, \`Base64\`, or \`GetAZs\` anywhere in a resource's props forces that file back to the normal run path under \`--fold\` for now.
+Only \`Sub\` is a tagged template — the others below are plain function calls. Both forms fold on the [default build path](/chant/concepts/typescript-as-data/#folded-vs-run) ([#1044](https://github.com/INTENTIUS/chant/issues/1044)): every AWS intrinsic on this page is registered with its call form opted in, so using \`Ref\`, \`GetAtt\`, \`If\`, \`Join\`, \`Select\`, \`Split\`, \`Base64\`, or \`GetAZs\` in a resource's props no longer forces that file back to the run path. What folds is the call, not calls in general — the name has to be one this lexicon registered and opted in, imported from this lexicon by the file using it. A same-file resource passed to one (\`Ref(bucket)\` where \`bucket\` is declared in the same file) still falls back, since the intrinsic needs the real constructed resource.
 
 Here is a complete example using all intrinsic functions:
 
@@ -412,7 +412,7 @@ Instantiate and export:
 
 During build, composites expand to flat CloudFormation resources: \`healthApiRole\`, \`healthApiFunc\`, \`healthApiPermission\`.
 
-A top-level composite call assigned directly to an export — like \`healthApi\` above — is one of the patterns [\`chant build --fold\`](/chant/concepts/typescript-as-data/#folded-vs-run) can reduce with no module execution (chant #1023). Defining a composite (the \`Composite(...)\` call inside \`lambda-api.ts\` itself) doesn't fold — its factory callback is a function, which is outside the fold subset — and neither does a composite call embedded as a nested value inside another resource's own properties; only a composite call that is itself a file's top-level export (or destructured/re-exported from one) is eligible.
+A top-level composite call assigned directly to an export — like \`healthApi\` above — is one of the patterns [folding](/chant/concepts/typescript-as-data/#folded-vs-run) can reduce with no module execution (chant #1023). Defining a composite (the \`Composite(...)\` call inside \`lambda-api.ts\` itself) doesn't fold — its factory callback is a function, which is outside the fold subset — and neither does a composite call embedded as a nested value inside another resource's own properties; only a composite call that is itself a file's top-level export (or destructured/re-exported from one) is eligible.
 
 ## Built-in composites
 
