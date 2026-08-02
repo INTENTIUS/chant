@@ -58,3 +58,25 @@ describe("loadCRDs kinds allowlist", () => {
     expect(all.map((r) => r.gvk.kind).sort()).toEqual(["ExternalArtifact", "GitRepository"]);
   });
 });
+
+describe("helm CRD source", () => {
+  test("requires a chart", async () => {
+    await expect(loadCRDs({ type: "helm", version: "1.0.0" })).rejects.toThrow(
+      /requires a 'chart' property/,
+    );
+  });
+
+  // An unpinned chart makes generated output depend on the day it was
+  // generated, which is the property every other source here preserves.
+  test("requires a version", async () => {
+    await expect(loadCRDs({ type: "helm", chart: "oci://example.invalid/c" })).rejects.toThrow(
+      /requires a 'version' property/,
+    );
+  });
+
+  test("says what to do when helm is missing or the pull fails", async () => {
+    await expect(
+      loadCRDs({ type: "helm", chart: "oci://example.invalid/nope", version: "0.0.1" }),
+    ).rejects.toThrow(/helm (pull failed|not found on PATH)/);
+  });
+});

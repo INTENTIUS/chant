@@ -150,6 +150,28 @@ const FLUX_TOOLKIT_INSTALL = `https://github.com/fluxcd/flux2/releases/download/
 const FLUX_OPERATOR_VERSION = "v0.54.1";
 const FLUX_OPERATOR_INSTALL = `https://github.com/controlplaneio-fluxcd/flux-operator/releases/download/${FLUX_OPERATOR_VERSION}/install.yaml`;
 
+/**
+ * KubeMicroVM CRDs — lambda.aws.amazon.com/v1alpha1
+ *
+ * Produces (the group is mapped to the `KubeMicroVM` namespace — see
+ * GROUP_NAMESPACE_OVERRIDES in crd/parser.ts):
+ *   K8s::KubeMicroVM::MicroVM            → kind: MicroVM
+ *   K8s::KubeMicroVM::MicroVMImage       → kind: MicroVMImage
+ *   K8s::KubeMicroVM::MicroVMNetwork     → kind: MicroVMNetwork
+ *   K8s::KubeMicroVM::MicroVMClass       → kind: MicroVMClass
+ *   K8s::KubeMicroVM::MicroVMReplicaSet  → kind: MicroVMReplicaSet
+ *
+ * Sourced from the chart rather than a raw URL: the operator is built with
+ * the Java operator SDK, which generates CRDs at build time, and only
+ * `microvmclasses` is committed to their repo. All five are in the published
+ * chart.
+ *
+ * Operator install: helm install kube-microvm-operator
+ *   oci://ghcr.io/codriverlabs/helm/kube-microvm-operator --version 1.0.11
+ */
+const KUBEMICROVM_CHART = "oci://ghcr.io/codriverlabs/helm/kube-microvm-operator";
+const KUBEMICROVM_VERSION = "1.0.11";
+
 export const CRD_SOURCES: CRDSource[] = [
   { type: "url", url: `${KUBERAY_CRD_BASE}/ray.io_rayclusters.yaml` },
   { type: "url", url: `${KUBERAY_CRD_BASE}/ray.io_rayjobs.yaml` },
@@ -189,5 +211,11 @@ export const CRD_SOURCES: CRDSource[] = [
     type: "url",
     url: FLUX_OPERATOR_INSTALL,
     kinds: ["FluxInstance", "FluxReport", "ResourceSet", "ResourceSetInputProvider"],
+  },
+  {
+    type: "helm",
+    chart: KUBEMICROVM_CHART,
+    version: KUBEMICROVM_VERSION,
+    kinds: ["MicroVM", "MicroVMImage", "MicroVMNetwork", "MicroVMClass", "MicroVMReplicaSet"],
   },
 ];

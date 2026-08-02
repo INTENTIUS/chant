@@ -47,6 +47,8 @@ async function fetchCRDContent(source: CRDSource): Promise<string> {
       return loadFromURL(source);
     case "cluster":
       return loadFromCluster(source);
+    case "helm":
+      return loadFromHelmChart(source);
     default:
       throw new Error(`Unsupported CRD source type: ${(source as CRDSource).type}`);
   }
@@ -79,6 +81,87 @@ async function loadFromURL(source: CRDSource): Promise<string> {
   // status (or after exhausting retries); the returned response is `ok`.
   const response = await fetchWithRetry(source.url);
   return response.text();
+}
+
+/**
+ * Load CRDs out of a Helm chart, by pulling and unpacking it.
+ *
+ * Helm's own convention is that CRDs live in a chart's `crds/` directory and
+ * are applied before templates, so that is the default place to look. Every
+ * YAML document found there is concatenated into one multi-doc string, which
+ * the parser already handles, and the existing `kinds` allowlist then applies
+ * unchanged — a chart carrying more CRDs than a consumer wants is the same
+ * situation as Flux's install bundle.
+ *
+ * Needs the `helm` binary at generation time, the same shape of dependency
+ * that type="cluster" has on `kubectl`.
+ */
+async function loadFromHelmChart(source: CRDSource): Promise<string> {
+  if (!source.chart) {
+    throw new Error("CRD source type 'helm' requires a 'chart' property");
+  }
+  if (!source.version) {
+    throw new Error(
+      `CRD source type 'helm' requires a 'version' property (chart: ${source.chart}). ` +
+      "An unpinned chart makes generated output depend on when it was generated.",
+    );
+  }
+
+  const { execFile } = await import("child_process");
+  const { promisify } = await import("util");
+  const { mkdtempSync, rmSync, readdirSync, readFileSync: read } = await import("fs");
+  const { join } = await import("path");
+  const { tmpdir } = await import("os");
+  const execFileAsync = promisify(execFile);
+
+  const workdir = mkdtempSync(join(tmpdir(), "chant-crd-helm-"));
+  try {
+    await execFileAsync("helm", [
+      "pull", source.chart,
+      "--version", source.version,
+      "--untar",
+      "--untardir", workdir,
+    ]).catch((err: NodeJS.ErrnoException & { stderr?: string }) => {
+      if (err.code === "ENOENT") {
+        throw new Error(
+          `helm not found on PATH, needed to read CRDs from ${source.chart}. ` +
+          "Install helm, or vendor the CRDs and use a 'file' source.",
+        );
+      }
+      throw new Error(
+        `helm pull failed for ${source.chart} ${source.version}: ${err.stderr?.trim() || err.message}`,
+      );
+    });
+
+    // --untar writes a single directory named after the chart, which need not
+    // match the last segment of the reference, so read it rather than guess.
+    const unpacked = readdirSync(workdir, { withFileTypes: true }).filter((e) => e.isDirectory());
+    if (unpacked.length !== 1) {
+      throw new Error(
+        `expected one unpacked chart directory in ${workdir}, found ${unpacked.length}`,
+      );
+    }
+
+    const subdir = source.chartSubdir ?? "crds";
+    const crdDir = join(workdir, unpacked[0].name, subdir);
+
+    let entries: string[];
+    try {
+      entries = readdirSync(crdDir).filter((f) => f.endsWith(".yaml") || f.endsWith(".yml")).sort();
+    } catch {
+      throw new Error(
+        `chart ${source.chart} ${source.version} has no '${subdir}' directory. ` +
+        "Charts that template their CRDs instead of shipping them in crds/ need 'chartSubdir'.",
+      );
+    }
+    if (entries.length === 0) {
+      throw new Error(`chart ${source.chart} ${source.version} has no CRD YAML in '${subdir}'`);
+    }
+
+    return entries.map((f) => read(join(crdDir, f), "utf8")).join("\n---\n");
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
 }
 
 /**

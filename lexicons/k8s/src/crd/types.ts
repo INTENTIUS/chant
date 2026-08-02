@@ -10,11 +10,30 @@
  */
 export interface CRDSource {
   /** How to fetch the CRD */
-  type: "file" | "url" | "cluster";
+  type: "file" | "url" | "cluster" | "helm";
   /** File path for type="file" */
   path?: string;
   /** URL for type="url" */
   url?: string;
+  /**
+   * Chart reference for type="helm", e.g.
+   * "oci://ghcr.io/codriverlabs/helm/kube-microvm-operator".
+   *
+   * Exists because operators built with the Java and Go operator SDKs
+   * generate their CRDs at build time and ship them only inside the chart —
+   * KubeMicroVM commits one of its five and publishes all five. A raw URL
+   * cannot reach those, and pulling the chart is cheaper at generation time
+   * than standing up a cluster to introspect.
+   */
+  chart?: string;
+  /** Chart version for type="helm". Required: an unpinned source is not auditable. */
+  version?: string;
+  /**
+   * Directory inside the chart holding the CRDs. Defaults to Helm's own
+   * convention, "crds". Charts that instead template their CRDs need this
+   * pointed at wherever they actually live.
+   */
+  chartSubdir?: string;
   /** Kubectl context for type="cluster" */
   context?: string;
   /** Namespace to scope the CRD lookup for type="cluster" */
