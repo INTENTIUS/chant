@@ -572,6 +572,67 @@ describe("runGraph", () => {
       expect((opts as { owned: boolean }).owned).toBe(true);
     });
 
+    // #1158: a project that declares its stacks in `ChantConfig.stacks` — rather
+    // than deriving them from `*.component.ts` — must observe each declared
+    // stack, the same contract `resolveStackTargets` gives lifecycle
+    // snapshot/diff. Every other test here passes `stacks: []`, so without this
+    // the declared-stack path is implemented and unguarded.
+    test("ChantConfig.stacks: observeResources gets every declared stack, with its region and src", async () => {
+      resolveLexMock.mockResolvedValue(["aws"]);
+      loadPluginsMock.mockResolvedValue([
+        { name: "aws", serializer: {}, describeResources: () => Promise.resolve({}) },
+      ]);
+      loadChantConfigMock.mockResolvedValue({
+        config: {
+          stacks: [
+            { name: "estate-east", region: "us-east-1", src: "east/src" },
+            { name: "estate-west", region: "us-west-2", src: "west/src" },
+          ],
+        },
+      });
+      observeMock.mockResolvedValue({ observations: [], errors: [], warnings: [] });
+      const exit = await runGraph({ args: makeArgs({ format: "ir", live: true, env: "prod" }), plugins: [], serializers: [] });
+      expect(exit).toBe(0);
+      expect(observeMock).toHaveBeenCalledTimes(1);
+      const [, , , opts] = observeMock.mock.calls[0];
+      // The region/src carry through — a multi-region estate observes each
+      // stack in its own region, not all of them in the ambient default.
+      expect((opts as { stacks: Array<{ name: string; region?: string; src?: string }> }).stacks).toEqual([
+        { name: "estate-east", region: "us-east-1", src: "east/src" },
+        { name: "estate-west", region: "us-west-2", src: "west/src" },
+      ]);
+    });
+
+    // A stack can be both component-derived and declared. It must be observed
+    // once — `describeResources` is a live API call per stack, so a duplicate
+    // is a wasted round trip and a doubled node set to reconcile.
+    test("ChantConfig.stacks: a stack also derived from a component is not observed twice", async () => {
+      resolveLexMock.mockResolvedValue(["aws"]);
+      loadPluginsMock.mockResolvedValue([
+        { name: "aws", serializer: {}, describeResources: () => Promise.resolve({}) },
+      ]);
+      discoverComponentsMock.mockResolvedValue({
+        errors: [],
+        sourceFiles: [],
+        components: new Map([
+          ["loom-db", { component: { name: "loom-db", dependsOn: [], deploy: [
+            { phase: "deploy", steps: [{ kind: "cfn-deploy", stack: "shared-estate" }] },
+          ] }, exportName: "loomDb", filePath: "components/loom-db.component.ts" }],
+        ]),
+      });
+      loadChantConfigMock.mockResolvedValue({
+        config: { stacks: [{ name: "shared-estate" }, { name: "estate-west" }] },
+      });
+      observeMock.mockResolvedValue({ observations: [], errors: [], warnings: [] });
+      const exit = await runGraph({ args: makeArgs({ format: "ir", live: true, env: "prod" }), plugins: [], serializers: [] });
+      expect(exit).toBe(0);
+      const [, , , opts] = observeMock.mock.calls[0];
+      expect((opts as { stacks: Array<{ name: string }> }).stacks.map((s) => s.name)).toEqual([
+        "shared-estate",
+        "estate-west",
+      ]);
+    });
+
     test("component discovery errors: falls back to the single-stack path with a warning", async () => {
       resolveLexMock.mockResolvedValue(["aws"]);
       loadPluginsMock.mockResolvedValue([
