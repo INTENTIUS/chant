@@ -165,14 +165,30 @@ so "no false drift on a clean apply" is unreachable no matter what chant does.
 Detecting an out-of-band *addition* still works; comparing against what the
 template asked for does not.
 
+**Proof that this is the only thing standing in the way.** Adding the rule the
+template declared, through the EC2 API, makes chant go quiet — `0 property
+drift, 1 unchanged`. Adding an out-of-band rule on top then surfaces as drift.
+So the reader, the shape mapping and the noise rules are all correct on this
+emulator; only the CloudFormation path is not.
+
+```
+$ aws ec2 authorize-security-group-ingress --group-id sg-… --ip-permissions \
+    'IpProtocol=tcp,FromPort=22,ToPort=22,IpRanges=[{CidrIp=203.0.113.0/24,Description=ssh from the office}]'
+$ chant lifecycle diff local --live
+0 property drift across 0 resource(s), 0 accepted, 1 unchanged
+```
+
 **Two smaller notes for the same filing:**
 
-- An `authorize-security-group-ingress` call carrying `--description` comes back
-  without it — `IpRanges[]` has `CidrIp` and no `Description`. Templates
-  routinely describe their rules, so this shows as drift on an otherwise
-  matching rule.
+- `describe-stack-resources --logical-resource-id <id>` ignores the filter and
+  returns some other resource of the stack. Filter client-side until fixed.
 - Worth checking whether other CloudFormation resource properties are dropped
   the same way. Only security groups were tested.
+
+**Retracted:** an earlier revision of this entry claimed a rule's `Description`
+is dropped on write. It is not — passing `--ip-permissions` with a
+`Description` stores and returns it. The earlier observation came from the
+`--protocol/--port/--cidr` form, which has no description parameter at all.
 
 ---
 
