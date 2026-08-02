@@ -25,15 +25,35 @@ export const CRD_SOURCES: CRDSource[] = [
 ];
 ```
 
-A `CRDSource` is one of three shapes:
+A `CRDSource` is one of four shapes:
 
 | Shape | Fields | Use |
 |---|---|---|
 | `{ type: "url", url }` | a raw CRD YAML URL | the default — pin an operator release |
+| `{ type: "helm", chart, version, chartSubdir? }` | a chart reference | an operator that ships CRDs only in its chart |
 | `{ type: "file", path }` | a local path | a CRD vendored into the repo |
 | `{ type: "cluster", context?, namespace? }` | a kubectl context | read CRDs already installed in a cluster |
 
 Pin the operator version in a `const` next to the entry (see the `KUBERAY_VERSION` / `ARGOCD_VERSION` constants at the top of `crd-sources.ts`) so an upgrade is a one-line change and the source URL always resolves to a known revision.
+
+### When the CRDs are only in a chart
+
+Operators built with the Java and Go operator SDKs generate their CRDs at build time from the controller's types, so there is often nothing to link to. KubeMicroVM commits one of its five CRDs and publishes all five in its chart.
+
+`type: "helm"` pulls and unpacks the chart at generation time and reads every YAML document out of its `crds/` directory, which is where Helm's own convention puts them:
+
+```ts
+{
+  type: "helm",
+  chart: "oci://ghcr.io/codriverlabs/helm/kube-microvm-operator",
+  version: "1.0.11",
+  kinds: ["MicroVM", "MicroVMImage", "MicroVMNetwork", "MicroVMClass", "MicroVMReplicaSet"],
+}
+```
+
+`version` is required, because an unpinned chart makes generated output depend on the day it was generated. `chartSubdir` overrides `crds` for charts that keep them somewhere else. The `kinds` allowlist works exactly as it does for a multi-doc URL bundle.
+
+This needs the `helm` binary on PATH at generation time, the same shape of dependency `type: "cluster"` has on `kubectl`. Prefer `url` when the operator publishes its CRDs — it is one fewer tool and one fewer network shape.
 
 > The CRD YAML is fetched and baked in at generation time, not at build time. `chant build` stays offline and deterministic.
 
@@ -57,6 +77,7 @@ Each CRD kind becomes a resource type `K8s::<Namespace>::<Kind>`. The namespace 
 | `cert-manager.io` | `CertManager` | `K8s::CertManager::Certificate` |
 | `monitoring.coreos.com` | `Monitoring` | `K8s::Monitoring::ServiceMonitor` |
 | `argoproj.io` | `Argo` (override) | `K8s::Argo::Application` |
+| `lambda.aws.amazon.com` | `KubeMicroVM` (override) | `K8s::KubeMicroVM::MicroVM` |
 
 > The mapping lives in `normalizeGroupName` / `GROUP_NAMESPACE_OVERRIDES` in `lexicons/k8s/src/crd/parser.ts`. Add an override there if a group's first segment collides or reads poorly.
 

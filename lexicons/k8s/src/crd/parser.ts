@@ -23,6 +23,17 @@ import { loadAll } from "js-yaml";
  * siblings rather than scattering to Source / Kustomize / Helm / Notification /
  * Image / Fluxcd. (`helm.toolkit.fluxcd.io` → `Helm` would also collide
  * confusingly with the separate helm lexicon.)
+ *
+ * KubeMicroVM's `lambda.aws.amazon.com` would take `Lambda` by the
+ * first-segment rule, which reads as AWS Lambda proper and would sit
+ * confusingly beside the aws lexicon's real Lambda functions. These are
+ * Kubernetes CRs belonging to a community operator, so they take the
+ * operator's own name. `MicroVM` alone was the alternative and was rejected
+ * for stuttering: `K8s::MicroVM::MicroVM`.
+ *
+ * Note the official AWS controller uses a different group,
+ * `lambdamicrovms.services.k8s.aws`, so it can coexist here and will want its
+ * own entry rather than sharing this one.
  */
 const GROUP_NAMESPACE_OVERRIDES: Record<string, string> = {
   "argoproj.io": "Argo",
@@ -32,6 +43,7 @@ const GROUP_NAMESPACE_OVERRIDES: Record<string, string> = {
   "notification.toolkit.fluxcd.io": "Flux",
   "image.toolkit.fluxcd.io": "Flux",
   "fluxcd.controlplane.io": "Flux",
+  "lambda.aws.amazon.com": "KubeMicroVM",
 };
 
 /**
