@@ -1,4 +1,5 @@
 import { describe, test, expect } from "vitest";
+import { describeApplyConformance } from "@intentius/chant-test-utils";
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -37,6 +38,7 @@ import {
   withLease,
   waitForMachine,
   flyApply,
+  toApplyResult,
   DEFAULT_FLAPS_BASE_URL,
   LEASE_NONCE_HEADER,
   type FlyHttp,
@@ -572,4 +574,66 @@ describe("flyApply refuses a plan entry it cannot classify (#1457)", () => {
     }));
     expect(out.apps.map((a) => a.app)).toEqual(["solo"]);
   });
+});
+
+/**
+ * The shared apply-contract suite (#1446) against fly's own mocked transport.
+ *
+ * fly's plan axis is entity names, not kind/name pairs, so the plan is expressed
+ * in the envelope's vocabulary — which is the projection working, not a
+ * workaround: `toApplyResult` is what maps fly's six entity classes onto it.
+ */
+describeApplyConformance({
+  lexicon: "fly",
+  scenarios: [
+    {
+      name: "an app and a machine",
+      plan: [
+        { kind: "app", name: "solo" },
+        { kind: "machine", name: "web" },
+      ],
+      run: async () => {
+        const dir = mkdtempSync(join(tmpdir(), "fly-1446-"));
+        const planPath = join(dir, "plan.json");
+        writeFileSync(
+          planPath,
+          JSON.stringify({
+            app: { endpoint: "/v1/apps", method: "POST", body: { app_name: "solo" } },
+            web: {
+              endpoint: "/v1/apps/{app}/machines",
+              method: "POST",
+              body: { name: "web", config: { image: "nginx" } },
+            },
+          }),
+        );
+        try {
+          // The same mock shape the ordering test above uses — flaps responses
+          // the applier actually parses, not a bare {}.
+          const http: FlyHttp = async (method, url) => {
+            if (method === "GET" && /\/apps\/solo$/.test(url)) return { status: 404, text: "" };
+            if (method === "POST" && /\/apps$/.test(url)) return { status: 200, text: "{}" };
+            if (method === "GET" && url.endsWith("/machines")) return { status: 200, text: "[]" };
+            if (method === "POST" && url.endsWith("/machines")) {
+              return {
+                status: 200,
+                text: JSON.stringify({ id: "m1", name: "web", state: "created", instance_id: "I1", config: { image: "nginx" } }),
+              };
+            }
+            if (method === "GET" && url.includes("/wait")) return { status: 200, text: JSON.stringify({ ok: true }) };
+            return { status: 200, text: "[]" };
+          };
+          return toApplyResult(
+            await flyApply(
+              { planPath, endpoint: "http://localhost:4280", wait: { intervalMs: 0, deadlineMs: 5_000 } },
+              undefined,
+              http,
+            ),
+          );
+        } finally {
+          rmSync(dir, { recursive: true, force: true });
+        }
+      },
+      expectApplied: ["app/solo", "machine/web"],
+    },
+  ],
 });

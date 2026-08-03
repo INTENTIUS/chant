@@ -1,29 +1,40 @@
 import { readFileSync } from "node:fs";
 import { parseYAML } from "@intentius/chant/yaml";
 import { safeHeartbeat, sleep } from "@intentius/chant/op";
+import { hasOwnershipMarker, OWNERSHIP_MANAGED_BY_VALUE } from "@intentius/chant/ownership";
+import { GCP_RESOURCE_OWNERSHIP_KEYS } from "../../ownership";
 import {
   applyResult,
   type ApplyResult,
   type AppliedResource,
   type NotAttemptedResource,
-} from "@intentius/chant";
+} from "@intentius/chant/apply";
 
 const PROJECT_ID_ANNOTATION = "cnrm.cloud.google.com/project-id";
 
-// Ownership marker stamped as a GCP resource label so `prune` can identify what
-// chant created (GCP label keys can't hold the k8s `app.kubernetes.io/managed-by`
-// slash/dot form, so this is the GCP-valid equivalent).
-const OWNERSHIP_LABEL_KEY = "managed-by";
-const OWNERSHIP_LABEL_VALUE = "chant";
-
-/** The GCP labels chant stamps on resources it creates. */
+/**
+ * The GCP labels chant stamps on resources it creates.
+ *
+ * Only the managed-by marker, not stack/env: this applier has no ownership
+ * marker to hand — the serializer stamps those from project config onto the
+ * Config Connector object. Same shape the fly serializer uses when no ownership
+ * context is set.
+ */
 export function chantOwnershipLabels(): Record<string, string> {
-  return { [OWNERSHIP_LABEL_KEY]: OWNERSHIP_LABEL_VALUE };
+  return { [GCP_RESOURCE_OWNERSHIP_KEYS.managedBy]: OWNERSHIP_MANAGED_BY_VALUE };
 }
 
-/** True when a live resource's labels carry chant's ownership marker. */
+/**
+ * True when a live resource's labels carry chant's ownership marker.
+ *
+ * Resolves through core's `hasOwnershipMarker` against the lexicon's declared
+ * GCP-resource channel (#1446) rather than comparing a string literal inline,
+ * so the stamp and the prune filter cannot drift. The key itself is unchanged
+ * and deliberately GCP-valid — see `../../ownership.ts` for why this surface
+ * cannot use core's `LABEL_OWNERSHIP_KEYS`.
+ */
 export function isChantOwned(labels: Record<string, string> | null | undefined): boolean {
-  return labels?.[OWNERSHIP_LABEL_KEY] === OWNERSHIP_LABEL_VALUE;
+  return hasOwnershipMarker(labels ?? undefined, GCP_RESOURCE_OWNERSHIP_KEYS);
 }
 
 /** Merge the ownership marker into a create/update body's `labels`. */

@@ -1,6 +1,14 @@
 import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { safeHeartbeat } from "@intentius/chant/op";
+import { hasOwnershipMarker, OWNERSHIP_MANAGED_BY_VALUE } from "@intentius/chant/ownership";
+import { AZURE_TAG_OWNERSHIP_KEYS } from "../../ownership";
+import {
+  applyResult,
+  type ApplyResult,
+  type AppliedResource,
+  type NotAttemptedResource,
+} from "@intentius/chant/apply";
 
 // The floci-az default local subscription (from its ARM management-plane mock).
 const DEFAULT_SUBSCRIPTION = "00000000-0000-0000-0000-000000000001";
@@ -359,17 +367,62 @@ export async function azApply(
 // touched. Real Azure persists resource tags; note that floci-az currently drops
 // them, so owned-only prune only takes effect against real Azure (the delete
 // mechanics themselves work against either — see azDelete).
-const OWNERSHIP_TAG_KEY = "managed-by";
-const OWNERSHIP_TAG_VALUE = "chant";
 
-/** The ownership tag azApply stamps on every resource it applies. */
+/**
+ * The key this applier used before #1446, and still recognises.
+ *
+ * The lexicon declares its marker channel in `../../ownership.ts`
+ * (`chant-managed-by`) — the key the serializer stamps, the plugin registers as
+ * `ownershipChannel`, and `import/live-export.ts` filters on. This applier used
+ * a bare `managed-by` instead, so the two never agreed.
+ *
+ * That is not cosmetic. Both are ordinary ARM tag keys on the same surface, so
+ * nothing forced the difference — and it meant a resource carrying only the
+ * SERIALIZER's marker was invisible to this prune. Anything deployed by a path
+ * other than `azApply` reads as foreign and is never pruned, including
+ * everything `ApplyOp` deployed before #1448 routed it here from
+ * `az deployment --mode Complete`.
+ *
+ * (GCP has the same-looking split for a real reason: its serializer stamps a
+ * Config Connector object, where `app.kubernetes.io/managed-by` is a legal
+ * Kubernetes label, while `gcpApply` writes GCP REST labels, where it is not.
+ * Two surfaces, two key vocabularies. Azure has one surface.)
+ */
+const LEGACY_OWNERSHIP_TAG_KEY = "managed-by";
+
+/**
+ * The ownership tags azApply stamps on every resource it applies.
+ *
+ * Stamps the declared channel's key. The legacy key goes on too, so a resource
+ * applied by this chant is still recognised by an older one mid-rollout; it is
+ * transitional and can be dropped once no deployed estate predates #1446.
+ *
+ * Only the managed-by marker, not stack/env: this applier has no
+ * {@link OwnershipMarker} to hand — the serializer stamps those from project
+ * config. Same shape the fly serializer uses when no ownership context is set.
+ */
 export function chantOwnershipTags(): Record<string, string> {
-  return { [OWNERSHIP_TAG_KEY]: OWNERSHIP_TAG_VALUE };
+  return {
+    [AZURE_TAG_OWNERSHIP_KEYS.managedBy]: OWNERSHIP_MANAGED_BY_VALUE,
+    [LEGACY_OWNERSHIP_TAG_KEY]: OWNERSHIP_MANAGED_BY_VALUE,
+  };
 }
 
-/** Whether a resource's tags mark it chant-owned. */
+/**
+ * Whether a resource's tags mark it chant-owned.
+ *
+ * Resolves through core's `hasOwnershipMarker` against the lexicon's declared
+ * channel (#1446), so this predicate and the serializer's stamp can no longer
+ * drift — the arrangement the fly lexicon already had.
+ *
+ * The legacy key is accepted as well, and the union is deliberate: it is
+ * strictly more than this predicate recognised before, so nothing that was
+ * prunable stops being prunable, and resources the serializer marked become
+ * prunable for the first time.
+ */
 export function isChantOwned(tags: Record<string, string> | null | undefined): boolean {
-  return tags?.[OWNERSHIP_TAG_KEY] === OWNERSHIP_TAG_VALUE;
+  if (hasOwnershipMarker(tags ?? undefined, AZURE_TAG_OWNERSHIP_KEYS)) return true;
+  return tags?.[LEGACY_OWNERSHIP_TAG_KEY] === OWNERSHIP_MANAGED_BY_VALUE;
 }
 
 /** One resource from the ARM resource-group listing. */
@@ -406,6 +459,41 @@ export async function deleteArmResource(
   if (res.status === 404) return { type, name, deleted: false };
   if (res.status >= 300) throw new Error(`${type} ${name} delete failed (${res.status}): ${res.text}`);
   return { type, name, deleted: true };
+}
+
+/**
+ * Normalize an azApply/azDelete result into core's apply envelope (#1446).
+ *
+ * The lexicon keeps its own shape — ARM `type`, per-resource applied/pruned —
+ * and this projects it onto the shared tri-state so a caller can read any
+ * applier's result the same way.
+ */
+export function toApplyResult(result: {
+  applied?: Array<{ type: string; name: string }>;
+  pruned?: Array<{ type: string; name: string; deleted: boolean }>;
+  deleted?: Array<{ type: string; name: string; deleted: boolean }>;
+  notPrunable?: AzNotPrunable[];
+}): ApplyResult {
+  const applied: AppliedResource[] = (result.applied ?? []).map((a) => ({
+    kind: a.type,
+    name: a.name,
+    // ARM PUT is a create-or-update with no distinguishing response, so this
+    // applier cannot tell the two apart. `updated` is the honest verdict for a
+    // call that converged without claiming which it did.
+    action: "updated",
+  }));
+  const notAttempted: NotAttemptedResource[] = (result.notPrunable ?? []).map((n) => ({
+    kind: n.type,
+    name: n.name,
+    reason: "not-prunable" as const,
+    detail: n.reason,
+  }));
+  const pruned = (result.pruned ?? result.deleted ?? []).map((p) => ({
+    kind: p.type,
+    name: p.name,
+    deleted: p.deleted,
+  }));
+  return applyResult(applied, pruned, notAttempted);
 }
 
 /** A chant-owned live resource an owned-only prune could not delete, and why (#1457). */

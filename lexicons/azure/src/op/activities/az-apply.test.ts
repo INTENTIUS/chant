@@ -1,4 +1,6 @@
 import { describe, test, expect } from "vitest";
+import { writeFileSync, unlinkSync } from "node:fs";
+import { describeApplyConformance } from "@intentius/chant-test-utils";
 import {
   evalArmString,
   evalArm,
@@ -9,6 +11,7 @@ import {
   azApply,
   azDelete,
   pruneArmOrphans,
+  toApplyResult,
   deleteArmResource,
   listGroupResources,
   chantOwnershipTags,
@@ -200,10 +203,30 @@ describe("azApply flow (#707)", () => {
 });
 
 describe("ownership helpers (#azure-prune)", () => {
-  test("chantOwnershipTags / isChantOwned", () => {
-    expect(chantOwnershipTags()).toEqual({ "managed-by": "chant" });
+  // #1446: the applier used a bare `managed-by` while the lexicon's declared
+  // channel (AZURE_TAG_OWNERSHIP_KEYS, what the serializer stamps and
+  // live-export filters on) is `chant-managed-by`. Both are ordinary ARM tag
+  // keys on the same surface, so nothing forced the difference — and it meant a
+  // resource carrying only the serializer's marker read as foreign here.
+  test("stamps the lexicon's declared channel, plus the legacy key", () => {
+    expect(chantOwnershipTags()).toEqual({
+      "chant-managed-by": "chant",
+      "managed-by": "chant",
+    });
+  });
+
+  test("recognises the declared channel — the marker the serializer stamps", () => {
+    expect(isChantOwned({ "chant-managed-by": "chant" })).toBe(true);
+  });
+
+  test("still recognises the legacy key, so nothing already deployed is orphaned", () => {
     expect(isChantOwned({ "managed-by": "chant" })).toBe(true);
+  });
+
+  test("a foreign or unmarked resource is still foreign", () => {
     expect(isChantOwned({ "managed-by": "someone-else" })).toBe(false);
+    expect(isChantOwned({ "chant-managed-by": "terraform" })).toBe(false);
+    expect(isChantOwned({})).toBe(false);
     expect(isChantOwned(undefined)).toBe(false);
   });
 });
@@ -457,4 +480,90 @@ describe("pruneArmOrphans: a type that left the template (#1457)", () => {
     expect(notPrunable).toEqual([]);
     expect(deletes).toEqual([]);
   });
+});
+
+/**
+ * The shared apply-contract suite (#1446), run against azure's own mocked
+ * transport. Assertion 4 — the owned-only prune, asserted on the transport — is
+ * the one that matters most here: it is what #1448 violated, and what the
+ * two-key split found in #1446 made unreliable even after #1448.
+ */
+describeApplyConformance({
+  lexicon: "azure",
+  scenarios: [
+    {
+      name: "a template of two resources",
+      plan: [
+        { kind: "Microsoft.Storage/storageAccounts", name: "one" },
+        { kind: "Microsoft.Storage/storageAccounts", name: "two" },
+      ],
+      run: async () => {
+        const path = `/tmp/chant-1446-az-${process.pid}.json`;
+        writeFileSync(
+          path,
+          JSON.stringify({
+            resources: [
+              { type: "Microsoft.Storage/storageAccounts", apiVersion: "2023-01-01", name: "one" },
+              { type: "Microsoft.Storage/storageAccounts", apiVersion: "2023-01-01", name: "two" },
+            ],
+          }),
+        );
+        try {
+          const http: AzHttp = async () => ({ status: 200, text: "{}" });
+          return toApplyResult(
+            await azApply({ templatePath: path, resourceGroup: "rg", endpoint: "http://x" }, undefined, http),
+          );
+        } finally {
+          unlinkSync(path);
+        }
+      },
+      expectApplied: [
+        "Microsoft.Storage/storageAccounts/one",
+        "Microsoft.Storage/storageAccounts/two",
+      ],
+    },
+  ],
+  pruneScenarios: [
+    {
+      name: "an owned orphan beside a foreign resource in the same group",
+      ownedOrphan: "orphan",
+      foreign: "foreign",
+      run: async () => {
+        const deletes: string[] = [];
+        const live = {
+          value: [
+            { id: "/1", name: "keep", type: "Microsoft.Storage/storageAccounts", tags: { "chant-managed-by": "chant" } },
+            { id: "/2", name: "orphan", type: "Microsoft.Storage/storageAccounts", tags: { "chant-managed-by": "chant" } },
+            { id: "/3", name: "foreign", type: "Microsoft.Storage/storageAccounts", tags: { "managed-by": "terraform" } },
+          ],
+        };
+        const path = `/tmp/chant-1446-az-prune-${process.pid}.json`;
+        writeFileSync(
+          path,
+          JSON.stringify({
+            resources: [{ type: "Microsoft.Storage/storageAccounts", apiVersion: "2023-01-01", name: "keep" }],
+          }),
+        );
+        try {
+          const http: AzHttp = async (method, url) => {
+            if (method === "DELETE") deletes.push(url);
+            return {
+              status: 200,
+              text: method === "GET" && url.includes("/resources?") ? JSON.stringify(live) : "{}",
+            };
+          };
+          const result = toApplyResult(
+            await azApply(
+              { templatePath: path, resourceGroup: "rg", endpoint: "http://x", prune: true },
+              undefined,
+              http,
+            ),
+          );
+          return { result, deletes };
+        } finally {
+          unlinkSync(path);
+        }
+      },
+    },
+  ],
 });

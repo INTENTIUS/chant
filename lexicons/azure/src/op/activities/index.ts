@@ -23,6 +23,7 @@ export {
   azApply,
   azDelete,
   pruneArmOrphans,
+  toApplyResult,
   deleteArmResource,
   listGroupResources,
   chantOwnershipTags,
