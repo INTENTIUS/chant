@@ -3,46 +3,48 @@ title: Multi-Stack Output
 description: Splitting resources across multiple output stacks
 ---
 
-When your project grows beyond a single stack, chant supports **directory-based partitioning** to split resources into multiple stacks automatically.
+A project past one stack splits into **side-by-side stacks**: each stack its own source directory, its own `chant build`, its own output file. This page covers what that means at the serialization layer. For the project-level view, see [Multi-Stack Projects](/chant/guide/multi-stack/).
 
-## How It Works
+## What `chant build` partitions on
 
-chant determines single-stack vs. multi-stack mode based on your `src/` directory structure:
+One invocation, one output path. Within that invocation, chant partitions entities by **lexicon** — a project declaring `aws` and `k8s` yields one serialized document per lexicon, since each lexicon serializes to its own deployable artifact (a CloudFormation template, a Kubernetes manifest, a CI config).
 
-- **Single-stack:** Resources live directly in `src/` — outputs one template file
-- **Multi-stack:** Resources are organized into subdirectories — each subdirectory becomes a separate stack
+Directory structure is not a partitioning input. `chant build src` on a project whose `src/` holds subdirectories produces one build of everything under `src/`, not one output per subdirectory.
 
-## Example Layout
+So a multi-stack project runs one build per stack:
 
-```
-my-project/
-├── chant.config.ts
-├── src/
-│   ├── networking/
-│   │   ├── vpc.ts
-│   │   └── subnets.ts
-│   ├── compute/
-│   │   ├── api-function.ts
-│   │   └── worker-function.ts
-│   └── storage/
-│       ├── data-table.ts
-│       └── assets-bucket.ts
-├── dist/
-│   ├── networking.json
-│   ├── compute.json
-│   ├── storage.json
-│   └── manifest.json
+```sh
+chant build src/networking --lexicon aws -o dist/networking.json
+chant build src/compute    --lexicon aws -o dist/compute.json
+chant build src/storage    --lexicon aws -o dist/storage.json
 ```
 
-## Cross-Stack References
+Each is a complete, independent build of that directory. Each output stands alone.
 
-Resources in one stack can reference resources in another stack through direct imports. chant resolves these references and generates cross-stack outputs and imports using the appropriate provider-specific mechanism.
+## Cross-stack references
+
+A resource in one stack referencing a resource in another — through an ordinary TypeScript import — is resolved into the provider's native cross-stack mechanism: CloudFormation `Export`/`ImportValue`, and each lexicon's equivalent.
+
+The graph IR carries both sides so a consumer can reconstruct the link without parsing templates:
+
+- **`exports`** — what this stack publishes: the output `name` (the handle another stack imports by) and the node producing it.
+- **`imports`** — what this stack consumes: the parameter `name` and its node.
+
+Match an import's `name` against another stack's export `name` to draw the cross-stack edge. In-stack, the parameter's consumers are ordinary `$ref` edges.
+
+`chant graph --stacks` computes the apply-ordering graph across stacks: consumer→producer edges, plus a flat order with every producer before its consumers. chant exposes the order; it does not drive the apply.
+
+## Stack grouping in the IR
+
+When a project declares `stacks` in `chant.config.ts`, `chant graph` builds each stack's source in isolation and composes the results. Node ids are qualified `<stack>::<id>`, matching how observation keys live nodes, and `groups.byStack` maps each declared stack name to its node ids — so a renderer draws one boundary box per stack without inferring anything.
+
+For a project built from one source tree, `groups.byStack` reports the lexicon partition instead, which is the unit that tree actually deploys as.
 
 ## Child projects (lexicon-specific nested stacks)
 
-Some lexicons support **child projects** — subdirectories that build to separate output files within a single lexicon. Unlike directory-based partitioning, these are declared in code and produce child templates that the parent references.
+Some lexicons support **child projects** — subdirectories that build to separate output files, referenced from a parent that can deploy them as a unit. Unlike side-by-side stacks, these are declared in code.
 
-chant's core provides two primitives for this:
+chant's core provides two primitives:
 
 - **`stackOutput(ref)`** — marks a value for cross-stack export. When the serializer encounters a `StackOutput` entity, it emits it into the template's `Outputs` section.
 - **`ChildProjectInstance`** — a `Declarable` representing a reference to a child project directory. The build pipeline detects these, recursively builds the child, and attaches the child's `BuildResult` for the serializer.
@@ -60,8 +62,6 @@ interface SerializerResult {
 }
 ```
 
-The build pipeline writes additional files alongside the primary output. For example, the AWS lexicon's `nestedStack()` produces child CloudFormation templates with explicit cross-stack reference wiring via `stackOutput()`. See the [AWS Nested Stacks](/chant/lexicons/aws/nested-stacks) guide for details.
+The build pipeline writes additional files alongside the primary output. For example, the AWS lexicon's `nestedStack()` produces child CloudFormation templates with explicit cross-stack reference wiring via `stackOutput()`. See the [AWS Nested Stacks](/chant/lexicons/aws/nested-stacks) guide.
 
 For lexicon authors implementing child project support, see [Child Projects](/chant/lexicon-authoring/serializer/#child-projects).
-
-See [Multi-Stack Projects](/chant/guide/multi-stack/) for the high-level overview.
