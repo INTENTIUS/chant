@@ -1,6 +1,6 @@
 ---
 title: "CRD-Generated Classes"
-description: "Typed K8s::* classes generated from third-party CRDs — Gateway API, cert-manager, CloudNativePG, Traefik, the CockroachDB operator, KubeRay, Argo CD, and Flux — plus how the CRD source list works and how to add your own."
+description: "Typed K8s::* classes generated from third-party CRDs — Gateway API, cert-manager, CloudNativePG, Infisical, Traefik, the CockroachDB operator, KubeRay, Argo CD, and Flux — plus how the CRD source list works and how to add your own."
 ---
 
 import { Aside } from '@astrojs/starlight/components';
@@ -27,6 +27,7 @@ barmancloud.cnpg.io            Cnpg             K8s::Cnpg::ObjectStore
 traefik.io                     Traefik          K8s::Traefik::IngressRoute
 cert-manager.io                CertManager      K8s::CertManager::Certificate
 acme.cert-manager.io           Acme             K8s::Acme::Challenge
+secrets.infisical.com          Infisical        K8s::Infisical::InfisicalSecret
 *.toolkit.fluxcd.io            Flux             K8s::Flux::Kustomization
 fluxcd.controlplane.io         Flux             K8s::Flux::FluxInstance
 ```
@@ -188,6 +189,16 @@ export const nightly = new ScheduledBackup({
     cluster: { name: "pg" },
     method: "plugin",
     pluginConfiguration: { name: "barman-cloud.cloudnative-pg.io" },
+<Aside type="caution">
+`ScheduledBackup.schedule` takes **six** fields, leading with seconds — not the five a Kubernetes `CronJob` takes. `"0 47 2 * * *"` above is 02:47 daily.
+
+Write the five-field form out of habit — `"47 2 * * *"`, meaning 02:47 to every other cron on the cluster — and CNPG reads it as second 47 of minute 2 of *every hour*. The schema types the field as a plain string, so nothing rejects it. You get 24 base backups a day and no error anywhere.
+</Aside>
+
+<Aside type="note">
+Adding the `plugins` block to a live Cluster injects the plugin sidecar, which **rolls the Postgres pods**. At `instances: 1` that is a brief outage.
+</Aside>
+
 ## Traefik
 
 `traefik.io`, pinned to chart **v41.1.0**. Traefik's own routing surface. An `IngressRoute` is not a `networking.k8s.io` `Ingress` with annotations — it is a separate CRD with its own matcher grammar, so before this an estate fronted by Traefik had an edge chant could not express.
@@ -251,18 +262,59 @@ export const plain = new IngressRoute({
 ```
 
 <Aside type="caution">
-`ScheduledBackup.schedule` takes **six** fields, leading with seconds — not the five a Kubernetes `CronJob` takes. `"0 47 2 * * *"` above is 02:47 daily.
-
-Write the five-field form out of habit — `"47 2 * * *"`, meaning 02:47 to every other cron on the cluster — and CNPG reads it as second 47 of minute 2 of *every hour*. The schema types the field as a plain string, so nothing rejects it. You get 24 base backups a day and no error anywhere.
-</Aside>
-
-<Aside type="note">
-Adding the `plugins` block to a live Cluster injects the plugin sidecar, which **rolls the Postgres pods**. At `instances: 1` that is a brief outage.
 A `middlewares` entry with no `namespace` is looked up in the route's own namespace. Point at one that lives elsewhere and forget the qualifier, and Traefik finds nothing, applies no middleware, and serves the route anyway — so in the example above, plain HTTP would keep working instead of redirecting. Nothing errors.
 </Aside>
 
 <Aside type="note">
 The pin is the **chart** version, which is not the Traefik version: chart v41.1.0 ships Traefik v3.7.9. When bumping, check both.
+</Aside>
+
+## Infisical
+
+`secrets.infisical.com`, pinned to operator **v0.11.7**. Binds a Kubernetes Secret to an external secret provider.
+
+| Type | apiVersion / kind |
+|---|---|
+| `InfisicalSecret` | `secrets.infisical.com/v1alpha1` / `InfisicalSecret` |
+| `InfisicalPushSecret` | `secrets.infisical.com/v1alpha1` / `InfisicalPushSecret` |
+| `InfisicalDynamicSecret` | `secrets.infisical.com/v1alpha1` / `InfisicalDynamicSecret` |
+
+The group is overridden to `Infisical`. The first-segment rule would give `K8s::Secrets::InfisicalSecret`, which reads like a core Secret with `K8s::Core::Secret` right there to be confused with.
+
+```bash
+helm repo add infisical https://dl.cloudsmith.io/public/infisical/helm-charts/helm/charts/
+helm install infisical-secrets-operator infisical/secrets-operator
+```
+
+```typescript
+import { InfisicalSecret } from "@intentius/chant-lexicon-k8s";
+
+export const appSecrets = new InfisicalSecret({
+  metadata: { name: "app-secrets", namespace: "app" },
+  spec: {
+    hostAPI: "http://infisical.infisical.svc.cluster.local:8080",
+    resyncInterval: 60,
+    authentication: {
+      kubernetesAuth: {
+        identityId: "<machine identity>",
+        autoCreateServiceAccountToken: true,
+        serviceAccountRef: { name: "app-infisical", namespace: "app" },
+        secretsScope: { projectSlug: "app", envSlug: "prod", secretsPath: "/" },
+      },
+    },
+    managedSecretReference: {
+      secretName: "app-secrets",     // a Deployment envFrom's this
+      secretNamespace: "app",
+      creationPolicy: "Orphan",
+    },
+  },
+});
+```
+
+Every field there is policy: where the secret comes from, who may fetch it, what happens to the materialized Secret when the CR is deleted. None of it is a value — which is exactly why this kind is expressible in chant. Synthesis resolves nothing, so the manifest stays safe to commit. See [Where Values Come From](/chant/concepts/where-values-come-from/).
+
+<Aside type="caution">
+`creationPolicy` decides what deletion means. `Orphan` leaves the materialized Secret behind when the CR goes away; `Owner` takes it with it, so deleting the CR takes down anything reading that Secret.
 </Aside>
 
 ## CockroachDB operator

@@ -49,6 +49,9 @@ const GROUP_NAMESPACE_OVERRIDES: Record<string, string> = {
   // rule would scatter them into `Postgresql` and `Barmancloud`.
   "postgresql.cnpg.io": "Cnpg",
   "barmancloud.cnpg.io": "Cnpg",
+  // Not `Secrets`: `K8s::Secrets::InfisicalSecret` reads like a core Secret,
+  // and `K8s::Core::Secret` is right there to be confused with.
+  "secrets.infisical.com": "Infisical",
 };
 
 /**
