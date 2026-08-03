@@ -296,7 +296,13 @@ export async function azApply(
   args: AzApplyArgs,
   signal?: AbortSignal,
   http: AzHttp = defaultHttp,
-): Promise<{ applied: Array<{ type: string; name: string }>; pruned: Array<{ type: string; name: string; deleted: boolean }> }> {
+): Promise<{
+  applied: Array<{ type: string; name: string }>;
+  pruned: Array<{ type: string; name: string; deleted: boolean }>;
+  /** Owned, undeclared resources the prune could not delete (#1457). Empty when
+   * `prune` is off, and empty on a clean prune. */
+  notPrunable: AzNotPrunable[];
+}> {
   const base = (args.endpoint ?? DEFAULT_ENDPOINT).replace(/\/$/, "");
   const ctx: ArmEvalCtx = {
     subscriptionId: args.subscriptionId ?? DEFAULT_SUBSCRIPTION,
@@ -340,8 +346,10 @@ export async function azApply(
     applied.push({ type: resource.type, name });
   }
 
-  const pruned = args.prune ? await pruneArmOrphans(resources, ctx, http, signal) : [];
-  return { applied, pruned };
+  const prune = args.prune
+    ? await pruneArmOrphans(resources, ctx, http, signal)
+    : { pruned: [], notPrunable: [] };
+  return { applied, pruned: prune.pruned, notPrunable: prune.notPrunable };
 }
 
 // ── Ownership + prune + delete ────────────────────────────────────────────────
@@ -400,19 +408,57 @@ export async function deleteArmResource(
   return { type, name, deleted: true };
 }
 
+/** A chant-owned live resource an owned-only prune could not delete, and why (#1457). */
+export interface AzNotPrunable {
+  type: string;
+  name: string;
+  /**
+   * `no-api-version` — the resource is owned and undeclared, but its type is
+   * absent from the current template, which is the only place an `apiVersion`
+   * comes from. `deleteArmResource` cannot build a URL without one.
+   */
+  reason: "no-api-version";
+}
+
 /**
  * Owned-only prune: for each resource type present in the template, delete the
  * chant-owned live resources of that type whose (evaluated) name is not in the
- * template. Scoped to templated types — like the GCP applier — so a type chant
- * isn't managing this run is left alone, and the type's `apiVersion` is taken
- * from the template. Foreign (non-chant) resources are never touched.
+ * template. Foreign (non-chant) resources are never touched.
+ *
+ * ## The type-left-the-template hole (#1457)
+ *
+ * `byType` is keyed off the resources the template CURRENTLY declares, and the
+ * `!entry` guard skipped any live resource of a type the template no longer
+ * mentions — before `isChantOwned` was ever consulted.
+ *
+ * So: declare one storage account, apply, then delete it from source. The
+ * template now has zero resources of that type, `byType` has no entry, and the
+ * live account is skipped. It is owned, it is undeclared, and prune would never
+ * touch it — on that run or any future one. **Prune the last resource of a type
+ * and you created a permanent orphan.** Prune one of several and it works,
+ * which is why it survived testing.
+ *
+ * The guard cannot simply be removed: `deleteArmResource` needs an
+ * `apiVersion`, and the template is the only source of one — ARM's
+ * resource-group listing does not return it per resource. So the skip stays,
+ * and is now REPORTED rather than silent: a permanent invisible orphan becomes
+ * a permanent visible one, which is the difference between a bug and a known
+ * limitation. Resolving it properly wants a per-type apiVersion source (the
+ * provider metadata endpoint, or a lexicon-side map).
+ *
+ * This matters more since #1448, which routed `ApplyOp`'s `arm` target through
+ * `azApply` — before that, the composite reached `--mode Complete` and never
+ * came here at all.
  */
 export async function pruneArmOrphans(
   desired: ArmResource[],
   ctx: ArmEvalCtx,
   http: AzHttp = defaultHttp,
   signal?: AbortSignal,
-): Promise<Array<{ type: string; name: string; deleted: boolean }>> {
+): Promise<{
+  pruned: Array<{ type: string; name: string; deleted: boolean }>;
+  notPrunable: AzNotPrunable[];
+}> {
   const byType = new Map<string, { keep: Set<string>; apiVersion: string }>();
   for (const r of desired) {
     const name = String(await evalArmString(r.name, ctx));
@@ -422,15 +468,27 @@ export async function pruneArmOrphans(
   }
 
   const pruned: Array<{ type: string; name: string; deleted: boolean }> = [];
+  const notPrunable: AzNotPrunable[] = [];
   for (const item of await listGroupResources(ctx, http, signal)) {
+    // Ownership first, so a foreign resource never reaches the report either —
+    // it is not an orphan chant failed to prune, it is simply not chant's.
+    if (!isChantOwned(item.tags)) continue;
     const entry = byType.get(item.type);
-    if (!entry || !isChantOwned(item.tags) || entry.keep.has(item.name)) continue;
+    if (!entry) {
+      console.log(
+        `prune: ${item.type}/${item.name} is chant-owned and undeclared, but its type is absent ` +
+          `from the template so no apiVersion is available — not deleted`,
+      );
+      notPrunable.push({ type: item.type, name: item.name, reason: "no-api-version" });
+      continue;
+    }
+    if (entry.keep.has(item.name)) continue;
     safeHeartbeat({ step: "azPrune", type: item.type, name: item.name });
     const result = await deleteArmResource(item.type, item.name, entry.apiVersion, ctx, http, signal);
     console.log(`pruned: ${item.type}/${item.name} (${ctx.base})`);
     pruned.push(result);
   }
-  return pruned;
+  return { pruned, notPrunable };
 }
 
 /**

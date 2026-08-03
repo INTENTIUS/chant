@@ -511,3 +511,65 @@ describe("flyApply orders volumes before the machines that mount them", () => {
     }
   });
 });
+
+/**
+ * #1457 — a plan entry matching none of the six request predicates used to fall
+ * off the end of the classification chain. No log, no bucket, absent from all
+ * eleven arrays `flyApply` returns, and the result read as a full apply. Worse
+ * than the gcp version, which at least printed `skip:`.
+ *
+ * The trigger is serializer/applier version skew: the serializer emits a request
+ * shape the applier's predicates do not recognise, which is exactly what happens
+ * when a new Fly resource type lands on the serializer side alone.
+ *
+ * It fails rather than reporting not-attempted. The serializer produced the
+ * entry, so the applier not recognising it is a bug in one half or the other —
+ * not a resource the user chose to skip.
+ */
+describe("flyApply refuses a plan entry it cannot classify (#1457)", () => {
+  const planWith = (entry: Record<string, unknown>): string => {
+    const dir = mkdtempSync(join(tmpdir(), "fly-1457-"));
+    const planPath = join(dir, "plan.json");
+    writeFileSync(planPath, JSON.stringify(entry));
+    return planPath;
+  };
+
+  test("an unrecognised endpoint fails, naming the entity and the request", async () => {
+    const planPath = planWith({
+      widget: { endpoint: "/v1/apps/foo/widgets", method: "POST", body: {} },
+    });
+    await expect(
+      flyApply({ planPath, endpoint: "http://localhost:4280" }, undefined, async () => ({
+        status: 200,
+        text: "{}",
+      })),
+    ).rejects.toThrow(/widget.*POST \/v1\/apps\/foo\/widgets.*out of sync/s);
+  });
+
+  test("it fails before issuing any request, so nothing is half-applied", async () => {
+    const planPath = planWith({
+      app: { endpoint: "/v1/apps", method: "POST", body: { app_name: "a" } },
+      widget: { endpoint: "/v1/apps/a/widgets", method: "POST", body: {} },
+    });
+    const calls: string[] = [];
+    await expect(
+      flyApply({ planPath, endpoint: "http://localhost:4280" }, undefined, async (method, url) => {
+        calls.push(`${method} ${url}`);
+        return { status: 200, text: "{}" };
+      }),
+    ).rejects.toThrow(/out of sync/);
+    // Classification happens up front, so the app was never created either.
+    expect(calls).toEqual([]);
+  });
+
+  test("a plan of only recognised shapes is unaffected", async () => {
+    const planPath = planWith({
+      app: { endpoint: "/v1/apps", method: "POST", body: { app_name: "solo" } },
+    });
+    const out = await flyApply({ planPath, endpoint: "http://localhost:4280" }, undefined, async () => ({
+      status: 200,
+      text: "{}",
+    }));
+    expect(out.apps.map((a) => a.app)).toEqual(["solo"]);
+  });
+});
