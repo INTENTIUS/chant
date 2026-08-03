@@ -88,11 +88,20 @@ export async function replaySnapshots(
   // declaring no security groups reported the neighbouring stack's as ambient.
   // The union is only knowable here, with every snapshot in hand.
   const managedPhysicalIds = new Set<string>();
+  // Where a managed resource ends up, by physical id. A duplicate is dropped
+  // below rather than rendered twice, and anything that pointed at the
+  // duplicate has to be re-pointed at the survivor — dropping the node alone
+  // would take its edges with it, since `buildLiveGraphIr` discards an edge
+  // whose endpoints were not both observed.
+  const managedKeyOf = new Map<string, string>();
   for (const content of stored.values()) {
     const snap = JSON.parse(content) as LifecycleSnapshot;
-    for (const meta of Object.values(snap.resources ?? {})) {
+    const snapStack = snap.stack;
+    const snapQualifies = snapStack !== undefined && scopedStacks.has(snapStack);
+    for (const [id, meta] of Object.entries(snap.resources ?? {})) {
       if (!meta.ambient && !meta.referencedBy?.length && meta.physicalId) {
         managedPhysicalIds.add(meta.physicalId);
+        managedKeyOf.set(meta.physicalId, snapQualifies ? `${snapStack}::${id}` : id);
       }
     }
   }
@@ -123,12 +132,29 @@ export async function replaySnapshots(
       return qualify ? `${stack}::${id}` : id;
     };
     const resources: Record<string, (typeof snapshot.resources)[string]> = {};
+    // Duplicates dropped here, and where they went, so edges can follow.
+    const merged = new Map<string, string>();
     for (const [id, meta] of Object.entries(snapshot.resources ?? {})) {
       const key = keyOf(id, meta);
       if (!qualify || unqualifiedByNature(meta)) {
-        // Ambient means "nothing manages this". Another stack managing it makes
-        // that false, and reporting it twice would inflate any count over it.
-        if (meta.ambient && meta.physicalId && managedPhysicalIds.has(meta.physicalId)) continue;
+        // Ambient means "nothing manages this", and being referenced means "the
+        // estate reaches this" — neither stops it being managed. When a stack
+        // manages the same physical resource, this entry is that resource seen
+        // from outside, and rendering both inflates any count over it.
+        //
+        // The dependency half of that was missing, and it was not cosmetic: a
+        // subnet declared by its stack was also recorded as `subnet-9af06b90`
+        // with `referencedBy`, so an estate with 13 subnets replayed as 16 and
+        // "which subnets have no network interfaces" answered 11 where the
+        // truth was 8. The three extra were occupied subnets whose second copy
+        // had no interface pointing at it — a duplicate reads as empty, because
+        // the edges resolved to the other one.
+        const duplicate = Boolean(meta.ambient) || Boolean(meta.referencedBy && meta.referencedBy.length > 0);
+        if (duplicate && meta.physicalId && managedPhysicalIds.has(meta.physicalId)) {
+          const survivor = managedKeyOf.get(meta.physicalId);
+          if (survivor && survivor !== key) merged.set(id, survivor);
+          continue;
+        }
         // Unqualified: one resource per key, so first sighting wins and the
         // rest are the same resource seen again from another stack's snapshot.
         // The key carries the region when there is one, so "the same resource"
@@ -140,6 +166,9 @@ export async function replaySnapshots(
     }
     const known = new Set(Object.keys(snapshot.resources ?? {}));
     const requalify = (id: string): string => {
+      // A dropped duplicate's edges belong to the resource that survived it.
+      const survivor = merged.get(id);
+      if (survivor) return survivor;
       const meta = (snapshot.resources ?? {})[id];
       return known.has(id) && meta ? keyOf(id, meta) : id;
     };
