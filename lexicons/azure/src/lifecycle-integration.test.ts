@@ -125,6 +125,7 @@ describe("azure lifecycle integration (#163)", () => {
 // The shared conformance suite (#1089).
 describeObservationConformance({
   lexicon: "azure",
+  ownershipChannel: azurePlugin.ownershipChannel,
   scenarios: [
     {
       name: "a nested ARM type the reader cannot address",

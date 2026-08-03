@@ -34,6 +34,7 @@ import {
   normalizeObservation,
   type DescribeResourcesResult,
 } from "../../core/src/observation";
+import { resolvesOwnershipOn, type OwnershipChannel } from "../../core/src/ownership";
 
 /** One scenario: run the lexicon's `describeResources` under its own mocks. */
 export interface ObservationScenario {
@@ -57,12 +58,32 @@ export interface ObservationScenario {
   expectAbsent?: string[];
   /** Entity names this scenario must report as OBSERVED-PRESENT. */
   expectPresent?: string[];
+  /**
+   * This scenario ran with `owned: true` (#1348). The suite then holds the
+   * lexicon to its declared marker channel: a real verdict where it claims one,
+   * `unknown` where it does not.
+   */
+  owned?: boolean;
 }
 
 export interface ObservationConformanceConfig {
   /** Lexicon name, for test titles. */
   lexicon: string;
   scenarios: ObservationScenario[];
+  /**
+   * The lexicon's declared marker channel — pass `plugin.ownershipChannel`
+   * (#1348).
+   *
+   * Supplying it turns the ownership assertion from a shape check into a
+   * behavioral one. Without it the suite could only confirm that a verdict, if
+   * present, was one of three strings; it could not tell a lexicon that read
+   * the marker from one that quietly returned nothing. With it, a lexicon
+   * declaring `describeResources` must produce `owned`/`foreign` on an owned
+   * read, and a lexicon declaring no channel must produce `unknown` — the
+   * silent degradation `ResourceMetadata.ownership` forbids and nothing
+   * checked.
+   */
+  ownershipChannel?: OwnershipChannel;
 }
 
 /**
@@ -109,6 +130,37 @@ export function describeObservationConformance(config: ObservationConformanceCon
             ).toContain(meta.ownership);
           }
         });
+
+        if (scenario.owned) {
+          const resolves = resolvesOwnershipOn(config.ownershipChannel, "describeResources");
+          it(
+            resolves
+              ? "resolves a real verdict on an owned read, since it declares a marker channel here"
+              : "answers unknown on an owned read, since it declares no marker channel here",
+            async () => {
+              const { resources } = normalizeObservation(await scenario.run());
+              for (const [name, meta] of Object.entries(resources)) {
+                const verdict = meta.ownership ?? "unknown";
+                if (resolves) {
+                  // Declaring the channel is a claim. `unknown` here means the
+                  // claim is wrong, and an `unknown` never becomes a delete —
+                  // so the filter silently returns everything instead.
+                  expect(
+                    ["owned", "foreign"],
+                    `${name}: ${config.lexicon} declares a describeResources marker channel but answered "${verdict}"`,
+                  ).toContain(verdict);
+                } else {
+                  // The degradation the contract forbids: claiming ownership
+                  // from a path that cannot read the marker.
+                  expect(
+                    verdict,
+                    `${name}: ${config.lexicon} declares no describeResources marker channel but answered "${verdict}"`,
+                  ).toBe("unknown");
+                }
+              }
+            },
+          );
+        }
 
         if (scenario.expectPresent?.length) {
           it("reports the expected entities as observed present", async () => {

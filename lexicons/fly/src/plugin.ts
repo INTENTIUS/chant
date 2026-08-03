@@ -19,6 +19,7 @@ import { FlyParser } from "./import/parser";
 import { FlyGenerator } from "./import/generator";
 import { flyReferenceCatalog } from "./reference-catalog";
 import { flyContextTools } from "./mcp/context-tools";
+import { FLY_METADATA_OWNERSHIP_KEYS } from "./ownership";
 
 /**
  * fly lexicon plugin.
@@ -27,6 +28,7 @@ import { flyContextTools } from "./mcp/context-tools";
  */
 export const flyPlugin: LexiconPlugin = {
   name: "fly",
+  ownershipChannel: { keys: FLY_METADATA_OWNERSHIP_KEYS, reads: ["describeResources"] },
   // Two: the Machines API and Sprites (#1345).
   emulator: [MUDFLAPS_EMULATOR, SPRITZER_EMULATOR],
   auditCatalog: () => flyAuditCatalog,

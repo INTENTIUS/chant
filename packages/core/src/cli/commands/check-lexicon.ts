@@ -413,6 +413,41 @@ export async function checkLexicon(dir: string): Promise<CheckResult> {
         : `${Object.keys(auditCatalog).length} entry/entries`,
   });
 
+  // #1348 — the marker channel is a claim: declaring `reads: ["exportResources"]`
+  // while not implementing `exportResources` promises a verdict from a path
+  // that does not exist. The behavioral half lives in the observation
+  // conformance suite, which holds a declared path to a real verdict and an
+  // undeclared one to `unknown`; this is the static half.
+  const channel = plugin?.ownershipChannel;
+  const channelProblems: string[] = [];
+  if (channel) {
+    for (const path of channel.reads) {
+      if (!registers(plugin, path as keyof typeof plugin)) {
+        channelProblems.push(`declares a marker channel on ${path}, which the plugin does not implement`);
+      }
+    }
+    const keys = channel.keys as { managedBy?: unknown; stack?: unknown; env?: unknown } | undefined;
+    for (const key of ["managedBy", "stack", "env"] as const) {
+      if (typeof keys?.[key] !== "string" || (keys[key] as string).length === 0) {
+        channelProblems.push(`marker keys are missing ${key}`);
+      }
+    }
+    if (channel.reads.length === 0) {
+      channelProblems.push("declares marker keys but no read path — nothing can resolve a verdict");
+    }
+  }
+  items.push({
+    name: "Any declared ownership channel names paths the plugin implements",
+    tier: 2,
+    pass: channelProblems.length === 0,
+    detail:
+      channelProblems.length > 0
+        ? channelProblems.join("; ")
+        : channel
+          ? `marker on ${channel.reads.join(", ")}`
+          : "no marker channel — every verdict must be unknown",
+  });
+
   const compositeFiles = listTsFiles(join(dir, "src/composites"), ["index.ts"]);
   items.push({
     name: "At least 1 composite in src/composites/",

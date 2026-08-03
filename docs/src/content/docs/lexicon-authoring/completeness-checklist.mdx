@@ -55,6 +55,7 @@ Warnings — these make the lexicon useful in practice.
 | `The plugin registers detectTemplate` | Template detection active |
 | `The plugin registers initTemplates` | Init templates active |
 | `auditCatalog() covers every post-synth check` | Metadata for `chant audit` — title, tier, fix kind, category. A lexicon that omits it contributes nothing, silently (chant #1346) |
+| `Any declared ownership channel names paths the plugin implements` | A declared marker channel must name read paths the plugin actually implements, with complete keys (chant #1348) |
 | `At least 1 composite in src/composites/` | `.ts` files other than `index.ts` |
 | `At least 3 examples` | Broader usage coverage |
 | `src/lsp/completions.test.ts exists` | LSP completions tested |
@@ -91,7 +92,6 @@ them, and were previously listed as though they were verified:
 | Not checked | Where it lives instead |
 |---|---|
 | `exportResources()` implemented | [Implementing Live Export](/chant/lexicon-authoring/live-export/) |
-| Ownership marker stamped and queried on describe/export | [Observation](/chant/lexicon-authoring/observation/); the contract gap is chant #1348 |
 | `import/parser.test.ts`, `import/generator.test.ts`, `import/roundtrip.test.ts` | [Importing Templates](/chant/lexicon-authoring/importing/) |
 | `default-labels.test.ts`, `coverage.test.ts` | [Testing Your Lexicon](/chant/lexicon-authoring/testing/) |
 

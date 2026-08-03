@@ -26,9 +26,11 @@ import { k8sHover } from "./lsp/hover";
 import { K8sParser } from "./import/parser";
 import { K8sGenerator } from "./import/generator";
 import { k8sDeepNormalizationHooks } from "./deep-observe-hooks";
+import { LABEL_OWNERSHIP_KEYS } from "@intentius/chant/ownership";
 
 export const k8sPlugin: LexiconPlugin = {
   name: "k8s",
+  ownershipChannel: { keys: LABEL_OWNERSHIP_KEYS, reads: ["describeResources", "observeResourcesDeep", "exportResources"] },
   auditCatalog: () => k8sAuditCatalog,
   serializer: k8sSerializer,
   // Self-upgrade: where the pinned Kubernetes schema version lives + its upstream (#685).

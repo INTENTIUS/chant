@@ -239,6 +239,7 @@ describe("aws lifecycle integration (#163)", () => {
 // The shared conformance suite (#1089).
 describeObservationConformance({
   lexicon: "aws",
+  ownershipChannel: awsPlugin.ownershipChannel,
   scenarios: [
     {
       name: "a stack read that fails on credentials",
@@ -283,6 +284,30 @@ describeObservationConformance({
           buildOutput: "",
           entityNames: ["MyBucket"],
           entities: new Map(),
+        });
+      },
+    },
+    {
+      // aws declares a marker channel on the deep read and on live export, but
+      // not here: describe-stack-resources returns no tags, so the filter has
+      // nothing to filter on. The suite holds it to that — an `owned` verdict
+      // from this path would be a claim the transport cannot support (#1348).
+      name: "an owned read on a path with no marker channel",
+      declared: ["MyBucket"],
+      expectPresent: ["MyBucket"],
+      owned: true,
+      run: () => {
+        stubCfn((action) =>
+          action === "DescribeStackResources"
+            ? { text: stackResourcesXml([{ logicalId: "MyBucket", type: "AWS::S3::Bucket", physicalId: "my-bucket" }]) }
+            : { text: stackOutputsXml() },
+        );
+        return awsPlugin.describeResources!({
+          environment: "prod",
+          buildOutput: "",
+          entityNames: ["MyBucket"],
+          entities: new Map(),
+          owned: true,
         });
       },
     },

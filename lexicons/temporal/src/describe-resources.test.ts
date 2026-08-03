@@ -352,6 +352,8 @@ describe("describeResources", () => {
 // The shared conformance suite (#1089).
 describeObservationConformance({
   lexicon: "temporal",
+  // No marker channel: every verdict must be `unknown` (#1348).
+  ownershipChannel: undefined,
   scenarios: [
     {
       name: "a namespace whose search-attribute list fails",
