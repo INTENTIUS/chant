@@ -11,7 +11,9 @@
  * #1074 made that package's reachability from the build path a structural
  * property (`examples/k8s-client-boundary.test.ts`) rather than a lint rule —
  * so nothing this file exports may pull that package in, directly or
- * transitively. It imports nothing but the core contract's own types.
+ * transitively. It imports the core contract's own types, and one generated
+ * JSON data file (`./generated/list-map-keys.json`, chant #1441) — data, not a
+ * package, so the boundary property is unchanged.
  *
  * What lives here is deliberately the *entityType-keyed, resource-agnostic*
  * half of the rules: which fields the API server always populates regardless
@@ -39,7 +41,7 @@
  * keyed by chant's own k8s entityType catalog.
  */
 
-import type { DeepNode, DeepNormalizationHooks } from "@intentius/chant/lexicon";
+import type { DeepArrayElement, DeepNode, DeepNormalizationHooks } from "@intentius/chant/lexicon";
 import { K8S_OBJECT_ENVELOPE_PRUNE_PATTERNS, k8sListMapOrderKey } from "@intentius/chant/managed-fields";
 
 /**
@@ -96,13 +98,17 @@ function canonicalJson(value: unknown): string {
  * The k8s lexicon's static noise rules: the generic Kubernetes object
  * envelope (unconditional, by pattern, `@intentius/chant/managed-fields`) and
  * Kubernetes-defaulted fields (gated on `counterpart === "absent"`), plus the
- * array orderings the acceptance criteria name — `x-kubernetes-patch-merge-
- * key`/`list-map-keys` conventions the generated surface does not currently
- * carry (see the module doc), so these are the "else named-by-name
- * conventions" the issue calls for: containers by `name`, `env` by `name`,
- * `volumes` by `name`, container/service `ports` by `containerPort`/`port` +
- * `protocol` — the same conventions `@intentius/chant/managed-fields`'s
- * `k8sListMapOrderKey` implements, reused verbatim.
+ * array orderings.
+ *
+ * The orderings are now taken from the spec itself (chant #1441): codegen
+ * carries `x-kubernetes-list-type`/`x-kubernetes-list-map-keys` through into
+ * `./generated/list-map-keys.json`, and {@link schemaListMapOrderKey} reads
+ * it. The hand-written conventions in
+ * `@intentius/chant/managed-fields`'s `k8sListMapOrderKey` — containers by
+ * `name`, `env` by `name`, `volumes` by `name`, container/service `ports` by
+ * `containerPort`/`port` + `protocol` — remain as the fallback for lists the
+ * spec does not annotate, and for readers that have no generated table at all
+ * (GCP's Config Connector hooks).
  *
  * This is the object `k8sPlugin.deepNormalizationHooks` is. It is also what
  * `./deep-observe.ts` layers its per-resource managed-fields prune on top of,
@@ -111,6 +117,80 @@ function canonicalJson(value: unknown): string {
  * — see `packages/core/src/lifecycle/deep-observe.ts`) apply the identical
  * entityType-keyed rules either way.
  */
+/** Property name → candidate key-field sets, generated from the spec (chant #1441). */
+type ListMapKeyTable = Record<string, string[][]>;
+
+let cachedListMapKeys: ListMapKeyTable | undefined;
+
+function listMapKeyTable(): ListMapKeyTable {
+  cachedListMapKeys ??= require("./generated/list-map-keys.json") as ListMapKeyTable;
+  return cachedListMapKeys;
+}
+
+/** Last dotted segment of an index-erased path: `spec.template.spec.containers` → `containers`. */
+function lastSegment(pattern: string): string {
+  const at = pattern.lastIndexOf(".");
+  return at === -1 ? pattern : pattern.slice(at + 1);
+}
+
+/**
+ * Render one key field's value into a sort key fragment. Numbers are
+ * zero-padded so the key orders numerically rather than lexicographically —
+ * `"443"` would otherwise sort before `"80"`. Cosmetic, since either order
+ * canonicalizes the two sides identically, but a human-sensible order is free
+ * to have here (the same reasoning `k8sListMapOrderKey` applies to ports).
+ */
+function keyFragment(value: unknown): string {
+  if (typeof value === "number") return String(value).padStart(5, "0");
+  return typeof value === "string" ? value : canonicalJson(value);
+}
+
+/**
+ * Join a key set's values the way `k8sListMapOrderKey` already does: the bare
+ * values, `/`-separated, with no field names.
+ *
+ * This is not only a sort key. Core renders it as the element's ADDRESS in
+ * drift output — `spec.template.spec.containers[#app].image` — so the format
+ * is user-visible and load-bearing. Emitting `name=app` here would rewrite
+ * every existing drift path. Bare values keep the six properties that were
+ * hardcoded byte-identical, and extend to the rest for free: a container port
+ * reads `[#08080/TCP]` exactly as before, a condition reads `[#Ready]`.
+ */
+function joinKeyValues(el: Record<string, unknown>, keys: string[]): string {
+  return keys.map((k) => keyFragment(el[k])).join("/");
+}
+
+/**
+ * Order an associative list's element by the identity the SPEC declares for it
+ * (chant #1441), falling back to `@intentius/chant/managed-fields`'s hand-written
+ * conventions for anything the generated table does not cover.
+ *
+ * The fallback is not vestigial. The table is built from the properties this
+ * lexicon's codegen parsed, so it covers core Kubernetes and any CRD that
+ * declares the extensions — but a CRD that declares an associative list
+ * WITHOUT `x-kubernetes-list-map-keys`, or a Config Connector resource read
+ * through GCP's hooks, still lands on the by-name conventions. Keeping both
+ * means widening the spec-derived table can never narrow what was already
+ * identified.
+ */
+export function schemaListMapOrderKey(element: DeepArrayElement): string | undefined {
+  const candidates = listMapKeyTable()[lastSegment(element.pattern)];
+  const el = element.element;
+
+  if (candidates && isRecordLike(el)) {
+    for (const keys of candidates) {
+      if (!keys.every((k) => el[k] !== undefined)) continue;
+      return joinKeyValues(el, keys);
+    }
+  }
+
+  return k8sListMapOrderKey(element);
+}
+
+function isRecordLike(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 export const k8sDeepNormalizationHooks: DeepNormalizationHooks = {
   prune(node: DeepNode): boolean {
     if (K8S_OBJECT_ENVELOPE_PRUNE_PATTERNS.has(node.pattern)) return true;
@@ -121,5 +201,5 @@ export const k8sDeepNormalizationHooks: DeepNormalizationHooks = {
     return canonicalJson(defaults[node.pattern]) === canonicalJson(node.value);
   },
 
-  orderKey: k8sListMapOrderKey,
+  orderKey: schemaListMapOrderKey,
 };
