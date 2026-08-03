@@ -112,7 +112,7 @@ export {
   EfsWithAccessPoint,
   Ec2InstanceRole, MinimalVpc,
   SolrFargateService,
-  MicrovmApp,
+  MicrovmApp, MICROVM_LIMITS,
   AgentCoreAgent,
 } from "./composites/index";
 export type {
@@ -122,7 +122,7 @@ export type {
   EfsWithAccessPointProps,
   Ec2InstanceRoleProps, MinimalVpcProps,
   SolrFargateServiceProps,
-  MicrovmAppProps, MicrovmAppResult, MicrovmAppBuildConnectorProps,
+  MicrovmAppProps, MicrovmAppResult, MicrovmAppBuildConnectorProps, MicrovmMemoryMiB,
   AgentCoreAgentProps, AgentCoreAgentResult,
 } from "./composites/index";
 

@@ -3,7 +3,7 @@ import { expandComposite } from "@intentius/chant";
 import { AttrRef } from "@intentius/chant/attrref";
 import { resolveAttrRefs } from "@intentius/chant/discovery/resolve";
 import { awsSerializer } from "../serializer";
-import { MicrovmApp } from "./microvm-app";
+import { MicrovmApp, MICROVM_LIMITS } from "./microvm-app";
 
 const baseProps = {
   name: "worker-image",
@@ -230,5 +230,43 @@ describe("MicrovmApp", () => {
         { "Fn::GetAtt": ["workerConnector", "Arn"] },
       ]);
     });
+  });
+});
+
+describe("MICROVM_LIMITS", () => {
+  // The composite validates against these; a consumer driving the same service
+  // through a different control plane needs the same numbers, and copying them
+  // is how two sources of truth start (#1374).
+  test("is reachable from the package root", async () => {
+    const root = await import("../index");
+    expect(root.MICROVM_LIMITS).toBe(MICROVM_LIMITS);
+  });
+
+  test("is what the composite actually enforces", () => {
+    // Not a restatement of the constants — a probe through the public API, so
+    // the two cannot drift apart while both look right.
+    expect(() => MicrovmApp({ ...baseProps, memoryMiB: 3072 as never })).toThrow(
+      new RegExp(MICROVM_LIMITS.memoryMiB.join(", ")),
+    );
+    expect(() => MicrovmApp({ ...baseProps, name: "no spaces allowed" })).toThrow(/name must match/);
+    expect(() =>
+      MicrovmApp({ ...baseProps, name: "x".repeat(MICROVM_LIMITS.maxNameLength + 1) }),
+    ).toThrow(/≤64 chars/);
+    expect(() =>
+      MicrovmApp({ ...baseProps, environment: { AWS_REGION: "us-east-1" } }),
+    ).toThrow(/AWS_REGION/);
+  });
+
+  test("names every limit the composite checks", () => {
+    // A limit enforced and not named here is one a consumer cannot see.
+    expect(Object.keys(MICROVM_LIMITS).sort()).toEqual([
+      "connectorSubnets",
+      "maxEgressConnectors",
+      "maxEnvironmentVariables",
+      "maxNameLength",
+      "memoryMiB",
+      "namePattern",
+      "reservedEnvironmentKeys",
+    ]);
   });
 });
