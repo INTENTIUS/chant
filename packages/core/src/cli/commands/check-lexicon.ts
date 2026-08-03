@@ -4,6 +4,7 @@ import { auditIntrinsics } from "./check-lexicon-intrinsics";
 import { checkExamplesBuild } from "./check-lexicon-examples";
 import { auditDocsReachability } from "./check-lexicon-docs";
 import { auditMcpNames } from "./check-lexicon-mcp";
+import { loadLexiconFromDir, registers, safeList } from "./check-lexicon-plugin";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -74,45 +75,72 @@ export async function checkLexicon(dir: string): Promise<CheckResult> {
 
   // ── Tier 1: Required ───────────────────────────────────────────
 
+  // #1342 — a capability is present when the plugin exposes it, not when a file
+  // with the right name sits on disk. The checks below used to be existence
+  // assertions, which is how helm shipped `src/lsp/completions.ts` and
+  // `src/lsp/hover.ts` (with tests) while registering neither provider, and
+  // passed every tier. `cli/lsp/server.ts` dispatches through the plugin
+  // members, so those files were unreachable in an editor.
+  const loaded = await loadLexiconFromDir(dir);
+  const plugin = loaded.plugin;
+
   items.push({
-    name: "src/plugin.ts exists",
+    name: "The package exports a LexiconPlugin",
     tier: 1,
-    pass: existsSync(join(dir, "src/plugin.ts")),
+    pass: plugin !== undefined,
+    detail: loaded.error ?? (loaded.entry ? `exported by ${basename(loaded.entry)}` : undefined),
+  });
+
+  const serializer = plugin?.serializer as { name?: unknown; rulePrefix?: unknown; serialize?: unknown } | undefined;
+  const serializerOk =
+    typeof serializer?.name === "string" &&
+    typeof serializer?.rulePrefix === "string" &&
+    typeof serializer?.serialize === "function";
+  items.push({
+    name: "The plugin exposes a Serializer with a name and rule prefix",
+    tier: 1,
+    pass: serializerOk,
+    detail: serializerOk
+      ? `${String(serializer?.name)} (${String(serializer?.rulePrefix)})`
+      : plugin
+        ? "serializer is missing name, rulePrefix, or serialize"
+        : undefined,
+  });
+
+  const lintRules = safeList(plugin?.lintRules?.bind(plugin));
+  items.push({
+    name: "lintRules() returns at least 1 rule",
+    tier: 1,
+    pass: lintRules.items.length > 0,
+    detail: lintRules.error ? `threw: ${lintRules.error}` : `${lintRules.items.length} rule(s)`,
+  });
+
+  const postSynthChecks = safeList(plugin?.postSynthChecks?.bind(plugin));
+  items.push({
+    name: "postSynthChecks() returns at least 1 check",
+    tier: 1,
+    pass: postSynthChecks.items.length > 0,
+    detail: postSynthChecks.error
+      ? `threw: ${postSynthChecks.error}`
+      : `${postSynthChecks.items.length} check(s)`,
   });
 
   items.push({
-    name: "src/serializer.ts exists",
+    name: "The plugin registers completionProvider",
     tier: 1,
-    pass: existsSync(join(dir, "src/serializer.ts")),
-  });
-
-  const ruleFiles = listTsFiles(join(dir, "src/lint/rules"), ["index.ts"]);
-  items.push({
-    name: "At least 1 lint rule in src/lint/rules/",
-    tier: 1,
-    pass: ruleFiles.length > 0,
-    detail: ruleFiles.length > 0 ? `${ruleFiles.length} rule(s)` : undefined,
-  });
-
-  const postSynthFiles = listTsFiles(join(dir, "src/lint/post-synth"), ["index.ts"])
-    .filter((f) => !f.endsWith("-helpers.ts") && f !== "helpers.ts");
-  items.push({
-    name: "At least 1 post-synth check",
-    tier: 1,
-    pass: postSynthFiles.length > 0,
-    detail: postSynthFiles.length > 0 ? `${postSynthFiles.length} check(s)` : undefined,
+    pass: registers(plugin, "completionProvider"),
   });
 
   items.push({
-    name: "src/lsp/completions.ts exists",
+    name: "The plugin registers hoverProvider",
     tier: 1,
-    pass: existsSync(join(dir, "src/lsp/completions.ts")),
+    pass: registers(plugin, "hoverProvider"),
   });
 
   items.push({
-    name: "src/lsp/hover.ts exists",
+    name: "The plugin registers docs()",
     tier: 1,
-    pass: existsSync(join(dir, "src/lsp/hover.ts")),
+    pass: registers(plugin, "docs"),
   });
 
   items.push({
@@ -321,18 +349,14 @@ export async function checkLexicon(dir: string): Promise<CheckResult> {
 
   const pluginContent = readOr(join(dir, "src/plugin.ts"));
 
+  // #1342 — these were a regex over plugin.ts source text, which passed on a
+  // method declared in a form the regex happened to match and on one that
+  // throws when called. Ask the plugin instead.
   for (const method of ["mcpTools", "mcpResources", "skills", "detectTemplate", "initTemplates"] as const) {
-    // Check for uncommented method: line starts with optional whitespace, then the method name
-    // Exclude lines that start with // or * (comment blocks)
-    const lines = pluginContent.split("\n");
-    const hasUncommented = lines.some((line) => {
-      const trimmed = line.trim();
-      return trimmed.startsWith(`${method}(`) || trimmed.startsWith(`${method} (`);
-    });
     items.push({
-      name: `plugin.ts has uncommented ${method}`,
+      name: `The plugin registers ${method}`,
       tier: 2,
-      pass: hasUncommented,
+      pass: registers(plugin, method),
     });
   }
 

@@ -480,4 +480,13 @@ export const tags = defaultTags([
     const { exportResources } = await import("./export-resources");
     return exportResources(options);
   },
+
+  /**
+   * The generator has always existed in src/codegen/docs.ts; only the package
+   * script reached it, so `plugin.docs()` was a no-op for azure alone (#1342).
+   */
+  async docs(options?: { verbose?: boolean }): Promise<void> {
+    const { generateDocs } = await import("./codegen/docs");
+    await generateDocs(options);
+  },
 };

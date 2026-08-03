@@ -17,12 +17,13 @@ These must all pass for the command to exit 0. Run for real via `just check-lexi
 
 | Check | What it verifies |
 |---|---|
-| `src/plugin.ts exists` | Plugin entry point |
-| `src/serializer.ts exists` | Build output serializer |
-| `At least 1 lint rule in src/lint/rules/` | `.ts` files other than `index.ts` |
-| `At least 1 post-synth check` | `src/lint/post-synth/*.ts`, excluding `index.ts` and helpers |
-| `src/lsp/completions.ts exists` | LSP completion provider |
-| `src/lsp/hover.ts exists` | LSP hover provider |
+| `The package exports a LexiconPlugin` | The module named by `exports["."].default` exports an object satisfying the plugin contract |
+| `The plugin exposes a Serializer with a name and rule prefix` | `serializer.name`, `serializer.rulePrefix`, and `serializer.serialize` |
+| `lintRules() returns at least 1 rule` | Asked of the plugin, not counted from `src/lint/rules/` |
+| `postSynthChecks() returns at least 1 check` | Asked of the plugin, not counted from `src/lint/post-synth/` |
+| `The plugin registers completionProvider` | `chant serve lsp` dispatches through this member — a file in `src/lsp/` that nothing registers is unreachable (chant #1342) |
+| `The plugin registers hoverProvider` | As above |
+| `The plugin registers docs()` | `chant dev generate` reaches the docs generator through the plugin, not through a package script |
 | `dist/manifest.json exists` | The lexicon bundle was built |
 | `dist/manifest.json declares a chantVersion` | Present and shaped like a version — see [below](#chantversion) |
 | `package.json routes exports["."].default at ./src/index.ts and deletes emitted JS in build` | The packaging shape every consumer depends on |
@@ -47,11 +48,11 @@ Warnings — these make the lexicon useful in practice.
 
 | Check | What it verifies |
 |---|---|
-| `plugin.ts has uncommented mcpTools` | MCP tool contributions active |
-| `plugin.ts has uncommented mcpResources` | MCP resource contributions active |
-| `plugin.ts has uncommented skills` | AI skills active |
-| `plugin.ts has uncommented detectTemplate` | Template detection active |
-| `plugin.ts has uncommented initTemplates` | Init templates active |
+| `The plugin registers mcpTools` | MCP tool contributions active |
+| `The plugin registers mcpResources` | MCP resource contributions active |
+| `The plugin registers skills` | AI skills active |
+| `The plugin registers detectTemplate` | Template detection active |
+| `The plugin registers initTemplates` | Init templates active |
 | `At least 1 composite in src/composites/` | `.ts` files other than `index.ts` |
 | `At least 3 examples` | Broader usage coverage |
 | `src/lsp/completions.test.ts exists` | LSP completions tested |
@@ -92,10 +93,11 @@ them, and were previously listed as though they were verified:
 | `import/parser.test.ts`, `import/generator.test.ts`, `import/roundtrip.test.ts` | [Importing Templates](/chant/lexicon-authoring/importing/) |
 | `default-labels.test.ts`, `coverage.test.ts` | [Testing Your Lexicon](/chant/lexicon-authoring/testing/) |
 
-Most of the checks that do run assert that a **file exists**, not that the plugin
-wires it up — helm ships `src/lsp/completions.ts` with passing tests and never
-registers `completionProvider`, which passes both tiers today. Closing that is
-chant #1342.
+A capability counts as present when the plugin **exposes** it, not when a file
+with the right name exists (chant #1342). The checks above load the lexicon and
+ask it. That is what caught helm shipping `src/lsp/completions.ts` and
+`src/lsp/hover.ts` — with tests — while registering neither provider, so its
+LSP support was unreachable in an editor for as long as it has existed.
 
 ## Recommended Post-Synth Check Categories
 
