@@ -14,6 +14,7 @@ import {
   type AugmentResult,
 } from "@intentius/chant/codegen/generate";
 import { fetchSchemaZip } from "../spec/fetch";
+import { assertPinnedSpec } from "../spec/pin";
 import { parseCFNSchema, cfnShortName, type SchemaParseResult } from "../spec/parse";
 import { fetchCfnLintPatches, applyPatches } from "./patches";
 import { fetchCfnLintExtensions, loadExtensionSchemas, type ExtensionConstraint } from "./extensions";
@@ -35,7 +36,12 @@ let awsConstraints = new Map<string, ExtensionConstraint[]>();
 
 const awsPipelineConfig: GeneratePipelineConfig<SchemaParseResult> = {
   fetchSchemas: async (opts) => {
-    return fetchSchemaZip(opts.force);
+    const schemas = await fetchSchemaZip(opts.force);
+    // #1390 — the registry schema has no version in its URL and is republished
+    // constantly, so without this any prepack regenerates against whatever
+    // CloudFormation shipped that morning.
+    assertPinnedSpec(schemas);
+    return schemas;
   },
 
   parseSchema: (_typeName, data) => {
