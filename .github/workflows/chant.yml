@@ -84,6 +84,13 @@ jobs:
       - name: Lexicon completeness contract (#1067)
         run: npx tsx scripts/check-lexicons.ts
 
+      # #1388 — the two typechecks above cover packages/core and k8s-client, and
+      # check-lexicons builds each lexicon's tsconfig.build.json, which excludes
+      # tests. Nothing typechecked a lexicon test, script or example. This does,
+      # against a baseline that can only shrink.
+      - name: Repo-wide typecheck (tests, scripts, examples)
+        run: npx tsx scripts/typecheck.ts
+
       - name: Lint aws reference composites (EVL regression guard, #916/#952)
         # The lexicon's own composites must obey the evaluability rules they teach.
         run: npx tsx packages/core/src/cli/main.ts lint lexicons/aws/src/composites
