@@ -16,6 +16,13 @@
  *
  * The same shape as `KNOWN_FAILURES` in check-lexicons.ts: tracked, with a
  * reason, never silently skipped.
+ *
+ * **Regenerate the baseline only after `prepack`.** Lexicon types are generated,
+ * so a clone with stale or partial `src/generated/` reports failures that do not
+ * exist in CI, which runs every lexicon's prepack first. Writing the baseline in
+ * that state captured 33 phantom entries on the first attempt — the run went
+ * green locally and then failed in CI with "33 baselined files now typecheck
+ * cleanly", which is the ratchet working exactly as intended, on its own author.
  */
 
 import { execFileSync } from "node:child_process";
@@ -65,6 +72,12 @@ function readBaseline(): Baseline {
 
 function main(): void {
   const write = process.argv.includes("--write-baseline");
+  if (write) {
+    console.error(
+      "Regenerating the baseline. Run every lexicon's prepack first — generated\n" +
+        "types are not committed, and a stale clone records failures CI will not see.\n",
+    );
+  }
   const { files, raw } = failingFiles();
 
   if (write) {
