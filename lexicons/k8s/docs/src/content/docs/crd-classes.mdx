@@ -1,6 +1,6 @@
 ---
 title: "CRD-Generated Classes"
-description: "Typed K8s::* classes generated from third-party CRDs — Gateway API, cert-manager, the CockroachDB operator, KubeRay, Argo CD, and Flux — plus how the CRD source list works and how to add your own."
+description: "Typed K8s::* classes generated from third-party CRDs — Gateway API, cert-manager, CloudNativePG, the CockroachDB operator, KubeRay, Argo CD, and Flux — plus how the CRD source list works and how to add your own."
 ---
 
 import { Aside } from '@astrojs/starlight/components';
@@ -22,13 +22,15 @@ ray.io                         Ray              K8s::Ray::RayCluster
 argoproj.io                    Argo             K8s::Argo::Application
 gateway.networking.k8s.io      Gateway          K8s::Gateway::HTTPRoute
 crdb.cockroachlabs.com         Crdb             K8s::Crdb::CrdbCluster
+postgresql.cnpg.io             Cnpg             K8s::Cnpg::Cluster
+barmancloud.cnpg.io            Cnpg             K8s::Cnpg::ObjectStore
 cert-manager.io                CertManager      K8s::CertManager::Certificate
 acme.cert-manager.io           Acme             K8s::Acme::Challenge
 *.toolkit.fluxcd.io            Flux             K8s::Flux::Kustomization
 fluxcd.controlplane.io         Flux             K8s::Flux::FluxInstance
 ```
 
-The Flux rows show the override at work: six distinct groups all map to one `Flux` namespace (see [Flux](#flux)), rather than each group's first segment.
+The Flux and CNPG rows show the override at work: six distinct groups all map to one `Flux` namespace (see [Flux](#flux)), and CNPG's two groups both map to `Cnpg`, rather than each group's first segment.
 
 ## Gateway API
 
@@ -122,6 +124,82 @@ export const ingress = SecureIngress("api", {
   clusterIssuer: "letsencrypt-prod", // → annotation + a real Certificate
 });
 ```
+
+## CloudNativePG
+
+`postgresql.cnpg.io`, pinned to **v1.29.1**, plus the barman-cloud plugin's `barmancloud.cnpg.io`, pinned to **v0.14.0**. The Postgres operator: it runs the primary/replica topology, failover, and backups.
+
+Both groups map to the `Cnpg` namespace, because a Cluster and an ObjectStore are only useful together.
+
+| Type | apiVersion / kind |
+|---|---|
+| `Cluster` | `postgresql.cnpg.io/v1` / `Cluster` |
+| `ScheduledBackup` | `postgresql.cnpg.io/v1` / `ScheduledBackup` |
+| `Backup` | `postgresql.cnpg.io/v1` / `Backup` |
+| `Pooler` | `postgresql.cnpg.io/v1` / `Pooler` |
+| `ObjectStore` | `barmancloud.cnpg.io/v1` / `ObjectStore` |
+
+The pin is 1.29.1 rather than latest because that is the operator version a real consumer runs.
+
+```bash
+kubectl apply --server-side -f https://raw.githubusercontent.com/cloudnative-pg/cloudnative-pg/release-1.29/releases/cnpg-1.29.1.yaml
+kubectl apply -f https://github.com/cloudnative-pg/plugin-barman-cloud/releases/download/v0.14.0/manifest.yaml
+```
+
+A cluster that archives WAL to object storage, and the nightly base backup that makes point-in-time recovery possible:
+
+```typescript
+import { Cluster, ObjectStore, ScheduledBackup } from "@intentius/chant-lexicon-k8s";
+
+export const store = new ObjectStore({
+  metadata: { name: "pg-backups", namespace: "app" },
+  spec: {
+    retentionPolicy: "14d",
+    configuration: {
+      destinationPath: "s3://pg-backups/barman",
+      s3Credentials: {
+        accessKeyId: { name: "backup-s3", key: "AWS_ACCESS_KEY_ID" },
+        secretAccessKey: { name: "backup-s3", key: "AWS_SECRET_ACCESS_KEY" },
+      },
+    },
+  },
+});
+
+export const db = new Cluster({
+  metadata: { name: "pg", namespace: "app" },
+  spec: {
+    instances: 3,
+    storage: { size: "10Gi" },
+    // Names the ObjectStore above. Nothing checks this string, so a typo
+    // leaves the cluster healthy with archiving pointed at nothing.
+    plugins: [{
+      name: "barman-cloud.cloudnative-pg.io",
+      isWALArchiver: true,
+      parameters: { barmanObjectName: "pg-backups" },
+    }],
+  },
+});
+
+export const nightly = new ScheduledBackup({
+  metadata: { name: "pg-base", namespace: "app" },
+  spec: {
+    schedule: "0 47 2 * * *", // six fields, see below
+    cluster: { name: "pg" },
+    method: "plugin",
+    pluginConfiguration: { name: "barman-cloud.cloudnative-pg.io" },
+  },
+});
+```
+
+<Aside type="caution">
+`ScheduledBackup.schedule` takes **six** fields, leading with seconds — not the five a Kubernetes `CronJob` takes. `"0 47 2 * * *"` above is 02:47 daily.
+
+Write the five-field form out of habit — `"47 2 * * *"`, meaning 02:47 to every other cron on the cluster — and CNPG reads it as second 47 of minute 2 of *every hour*. The schema types the field as a plain string, so nothing rejects it. You get 24 base backups a day and no error anywhere.
+</Aside>
+
+<Aside type="note">
+Adding the `plugins` block to a live Cluster injects the plugin sidecar, which **rolls the Postgres pods**. At `instances: 1` that is a brief outage.
+</Aside>
 
 ## CockroachDB operator
 

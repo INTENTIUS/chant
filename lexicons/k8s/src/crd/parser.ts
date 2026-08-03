@@ -44,6 +44,11 @@ const GROUP_NAMESPACE_OVERRIDES: Record<string, string> = {
   "image.toolkit.fluxcd.io": "Flux",
   "fluxcd.controlplane.io": "Flux",
   "lambda.aws.amazon.com": "KubeMicroVM",
+  // CNPG and its barman-cloud plugin ship under two groups but are one thing to
+  // an author: a Cluster's `plugins[]` names an ObjectStore. The first-segment
+  // rule would scatter them into `Postgresql` and `Barmancloud`.
+  "postgresql.cnpg.io": "Cnpg",
+  "barmancloud.cnpg.io": "Cnpg",
 };
 
 /**
