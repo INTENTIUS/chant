@@ -10,7 +10,7 @@ import {
 describe("floci-gcp lifecycle commands (typed emulator, not shell)", () => {
   test("run command uses defaults and maps the port", () => {
     expect(flociGcpRunCommand({})).toBe(
-      "docker run -d --rm --name chant-floci-gcp -p 4588:4588 floci/floci-gcp:latest",
+      "docker run -d --rm --name chant-floci-gcp -p 4588:4588 floci/floci-gcp:0.5.0",
     );
   });
 

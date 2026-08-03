@@ -1,4 +1,4 @@
-import { emulatorLifecycle } from "@intentius/chant/op";
+import { emulatorLifecycle, type EmulatorCapability, type EmulatorSpec } from "@intentius/chant/op";
 import { SPRITZER_IMAGE } from "./emulator-images";
 
 export interface SpritesUpArgs {
@@ -23,12 +23,21 @@ export interface SpritesDownArgs {
 // endpoint means ready. The local target for the sprite activities; point them
 // there with SPRITES_BASE_URL. Shared lifecycle: emulatorLifecycle (the same
 // helper that boots mudflaps for fly).
-const spritzer = emulatorLifecycle({
+export const SPRITZER_SPEC: EmulatorSpec = {
   name: "chant-spritzer",
   image: SPRITZER_IMAGE,
   containerPort: 4290,
   healthPath: "/_spritzer/health",
-});
+  upstream: { repo: "intentius/spritzer" },
+};
+
+/** The Sprites half of fly's emulator capability (#1345). */
+export const SPRITZER_EMULATOR: EmulatorCapability = {
+  spec: SPRITZER_SPEC,
+  env: (endpoint) => ({ SPRITES_BASE_URL: endpoint }),
+};
+
+const spritzer = emulatorLifecycle(SPRITZER_SPEC);
 
 export const spritesExistsCommand = spritzer.existsCommand;
 export const spritesRmCommand = spritzer.rmCommand;

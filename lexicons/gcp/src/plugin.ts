@@ -13,6 +13,7 @@ import type { TypeScriptGenerator } from "@intentius/chant/import/generator";
 import type { CompletionContext, CompletionItem, HoverContext, HoverInfo } from "@intentius/chant/lsp/types";
 import { postSynthChecks as postSynthCheckList } from "./lint/post-synth";
 import { gcpAuditCatalog } from "./lint/audit-catalog";
+import { FLOCI_GCP_EMULATOR } from "./op/activities/floci-gcp";
 import { createSkillsLoader, createDiffTool, createCatalogResource } from "@intentius/chant/lexicon-plugin-helpers";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
@@ -28,6 +29,7 @@ import { gcpDeepNormalizationHooks } from "./deep-observe-hooks";
 
 export const gcpPlugin: LexiconPlugin = {
   name: "gcp",
+  emulator: FLOCI_GCP_EMULATOR,
   auditCatalog: () => gcpAuditCatalog,
   // Self-upgrade: where the pinned Config Connector (KCC) version lives + its upstream (#685).
   upstreamPin: {

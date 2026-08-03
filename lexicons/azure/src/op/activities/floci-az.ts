@@ -1,11 +1,11 @@
-import { emulatorLifecycle } from "@intentius/chant/op";
+import { emulatorLifecycle, type EmulatorCapability, type EmulatorSpec } from "@intentius/chant/op";
 
 export interface FlociAzUpArgs {
   /** Container name. Default: `chant-floci-az`. */
   name?: string;
   /** Host port mapped to the emulator's `:4577`. Default: `4577`. */
   port?: number;
-  /** Image. Default: `floci/floci-az:latest`. */
+  /** Image. Default: the pinned `floci/floci-az` tag. */
   image?: string;
   /** Readiness timeout in ms. Default: `60000`. */
   timeoutMs?: number;
@@ -20,12 +20,32 @@ export interface FlociAzDownArgs {
 
 // floci-az is a bespoke ARM fake (not LocalStack) — a plain 200 on its health
 // endpoint means ready. Shared lifecycle: emulatorLifecycle (#746).
-const az = emulatorLifecycle({
+// Pinned rather than `:latest` (#1345): an image that moves underneath a
+// passing local suite is exactly the drift a pin exists to stop.
+export const FLOCI_AZ_SPEC: EmulatorSpec = {
   name: "chant-floci-az",
-  image: "floci/floci-az:latest",
+  image: "floci/floci-az:0.10.0",
   containerPort: 4577,
   healthPath: "/_floci/health",
-});
+  upstream: { repo: "floci-io/floci-az" },
+};
+
+/**
+ * The azure plugin's emulator capability (#1345).
+ *
+ * The spec below has existed since #746; what was missing was declaring it, so
+ * `chant emulator up --all` booted Floci and nothing else even though floci-az
+ * was one line away. `AZURE_ENDPOINT_URL` is the var azure's own
+ * `describe-resources.ts` and `deep-observe.ts` already read on every live
+ * call, which is also what makes `--live --env <local>` reach the emulator
+ * instead of real Azure.
+ */
+export const FLOCI_AZ_EMULATOR: EmulatorCapability = {
+  spec: FLOCI_AZ_SPEC,
+  env: (endpoint) => ({ AZURE_ENDPOINT_URL: endpoint }),
+};
+
+const az = emulatorLifecycle(FLOCI_AZ_SPEC);
 
 export const flociAzExistsCommand = az.existsCommand;
 export const flociAzRmCommand = az.rmCommand;

@@ -9,8 +9,10 @@ export { Op, phase, activity, gate, build, kubectlApply, helmInstall, waitForSta
          spritesUp, spritesDown } from "./builders";
 export { OpResource } from "./resource";
 export { safeHeartbeat, sleep } from "./activity-runtime";
-export { emulatorLifecycle } from "./emulator-lifecycle";
-export type { EmulatorSpec, EmulatorCapability, EmulatorUpArgs, EmulatorLifecycle } from "./emulator-lifecycle";
+export { emulatorLifecycle, emulatorsOf, endpointEnvVars } from "./emulator-lifecycle";
+export type { EmulatorSpec, EmulatorCapability, EmulatorDeclaration, EmulatorUpArgs, EmulatorLifecycle } from "./emulator-lifecycle";
+export { checkFreshness, compare, formatResult, latestRelease, parseVersion, unpinned } from "./emulator-freshness";
+export type { FreshnessResult } from "./emulator-freshness";
 export type { OpConfig, PhaseDefinition, StepDefinition, ActivityStep, GateStep } from "./types";
 export { discoverOps } from "./discover";
 export type { DiscoveredOp, OpDiscoveryResult } from "./discover";

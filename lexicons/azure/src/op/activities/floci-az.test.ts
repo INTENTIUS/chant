@@ -10,7 +10,7 @@ import {
 describe("floci-az lifecycle commands (typed emulator, not shell)", () => {
   test("run command uses defaults and maps the port", () => {
     expect(flociAzRunCommand({})).toBe(
-      "docker run -d --rm --name chant-floci-az -p 4577:4577 floci/floci-az:latest",
+      "docker run -d --rm --name chant-floci-az -p 4577:4577 floci/floci-az:0.10.0",
     );
   });
 

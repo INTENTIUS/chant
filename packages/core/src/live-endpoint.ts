@@ -24,38 +24,36 @@
  * Audited (#1166) which lexicons have an ambient-env-var endpoint knob at
  * all, since that's the specific footgun — a lexicon whose environment
  * binding is resolved from `chant.config` itself (not an ambient var) has
- * nothing to inject here:
+ * nothing to inject here.
  *
- *   - **aws**  — `AWS_ENDPOINT_URL`, read directly by
- *     `lexicons/aws/src/components/cloud-executor.ts` / `plugin.ts` before
- *     every `aws …` shell-out (`applyAwsEndpoint`/`applyAwsEndpointArgv`).
- *   - **fly**  — `FLY_FLAPS_BASE_URL`, read by `resolveEndpoint()` in
- *     `lexicons/fly/src/op/activities/fly-apply.ts`, the same seam
- *     `describeResources` (`../describe-resources.ts`) calls through.
- *   - **gcp**, **k8s** — resolve their live target from `chant.config` itself
- *     (`k8s.profiles.<env>.context` via `resolveClusterTarget`,
- *     `packages/core/src/kubectl-context.ts`), not an ambient var. Nothing to
- *     inject: the config *is* the binding already.
- *   - **azure** — resolves via the `az` CLI's own logged-in
- *     subscription/session context; no ambient endpoint var exists to miss.
- *   - **temporal** — resolves its connection from `temporal.profiles.<env>`
- *     (`resolveProfile`, `lexicons/temporal/src/describe-resources.ts`), the
- *     same "config is the binding" shape as k8s/gcp.
+ * Which var that is per lexicon is no longer written down twice (#1345). It is
+ * derived from the lexicon's own {@link EmulatorCapability.env}, which already
+ * has to name the var that points tooling at a booted emulator. The map this
+ * replaced listed aws and fly, and its prose asserted azure had no ambient
+ * endpoint var — while `lexicons/azure/src/describe-resources.ts` and
+ * `deep-observe.ts` both read `AZURE_ENDPOINT_URL` on every call, so a
+ * `--live --env floci` read against azure silently went to real Azure.
  */
 
 import { environmentEndpoint, type EnvironmentDeclaration } from "./config";
+import { emulatorsOf, endpointEnvVars, type EmulatorDeclaration } from "./op/emulator-lifecycle";
 
 /**
- * Per-lexicon ambient env var a `--live` read honors for its endpoint. Only
- * lexicons with a genuine ambient-var footgun are listed — see the module doc
- * for the full audit (gcp/k8s/azure/temporal resolve their target from
- * `chant.config` instead, so they have nothing to inject).
+ * The ambient endpoint vars a lexicon honors, from its emulator capability.
+ *
+ * A lexicon with no emulator contributes nothing, which is the same answer the
+ * hand-maintained map gave for k8s, gcp and temporal — they resolve their live
+ * target from `chant.config` itself, so there is nothing to inject.
  */
-export const LEXICON_ENDPOINT_ENV_VAR: Record<string, string> = {
-  aws: "AWS_ENDPOINT_URL",
-  fly: "FLY_FLAPS_BASE_URL",
-};
+export function endpointEnvVarsFor(lexicon: EndpointLexicon): string[] {
+  return emulatorsOf(lexicon.emulator).flatMap((cap) => endpointEnvVars(cap));
+}
 
+/** What {@link applyLiveEndpoint} needs of a plugin: its name and its emulators. */
+export interface EndpointLexicon {
+  name: string;
+  emulator?: EmulatorDeclaration;
+}
 /** Result of {@link applyLiveEndpoint} — always call `restore()`, even when nothing was applied (it is then a no-op). */
 export interface AppliedEndpoint {
   /**
@@ -84,7 +82,7 @@ export interface AppliedEndpoint {
 export function applyLiveEndpoint(
   environments: EnvironmentDeclaration[] | undefined,
   environment: string,
-  lexicons: readonly string[],
+  lexicons: readonly EndpointLexicon[],
   env: NodeJS.ProcessEnv = process.env,
 ): AppliedEndpoint {
   const endpoint = environmentEndpoint(environments, environment);
@@ -94,15 +92,16 @@ export function applyLiveEndpoint(
   const overridden: string[] = [];
   const seen = new Set<string>(); // a var shared by two lexicons is only reported once
   for (const lexicon of lexicons) {
-    const varName = LEXICON_ENDPOINT_ENV_VAR[lexicon];
-    if (!varName || seen.has(varName)) continue;
-    seen.add(varName);
-    if (env[varName]) {
-      overridden.push(varName);
-      continue;
+    for (const varName of endpointEnvVarsFor(lexicon)) {
+      if (seen.has(varName)) continue;
+      seen.add(varName);
+      if (env[varName]) {
+        overridden.push(varName);
+        continue;
+      }
+      env[varName] = endpoint;
+      applied.push(varName);
     }
-    env[varName] = endpoint;
-    applied.push(varName);
   }
 
   const notices: string[] = [];

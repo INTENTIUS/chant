@@ -1,0 +1,89 @@
+---
+title: Declaring a Local Emulator
+description: How a lexicon declares the emulator chant emulator boots, and why declaring it is separate from having one
+---
+
+A lexicon that can be exercised without a cloud account declares an
+**emulator capability**: enough for chant to boot the container, wait for it to
+be healthy, and tell tooling where it is. `chant emulator up|down|status` and
+`behold serve --local` both drive it.
+
+## The declaration
+
+```typescript
+// src/op/activities/my-emulator.ts
+import { emulatorLifecycle, type EmulatorCapability, type EmulatorSpec } from "@intentius/chant/op";
+
+export const MY_EMULATOR_SPEC: EmulatorSpec = {
+  name: "chant-myfake",                    // container name
+  image: "org/myfake:1.2.0",               // pinned, not :latest
+  containerPort: 4599,
+  healthPath: "/_myfake/health",
+  upstream: { repo: "org/myfake" },        // where releases are published
+};
+
+export const MY_EMULATOR: EmulatorCapability = {
+  spec: MY_EMULATOR_SPEC,
+  env: (endpoint) => ({ MYFAKE_ENDPOINT_URL: endpoint }),
+};
+
+// src/plugin.ts
+emulator: MY_EMULATOR,
+```
+
+The same spec drives `emulatorLifecycle()`, so the wrapper your Ops already use
+and the capability chant boots are one object rather than two that can drift.
+
+## Having one is not declaring one
+
+This distinction cost the repo three of its four emulators. azure and gcp both
+built the exact spec above in `src/op/activities/` and used it from their Ops,
+and neither set `plugin.emulator` — so `chant emulator up --all` booted Floci
+and nothing else, while the local-testing docs presented all three clouds as
+equal local targets (chant #1345). The wrapper is not the declaration.
+
+## More than one
+
+`emulator` takes a capability or an array of them. fly declares two:
+
+```typescript
+emulator: [MUDFLAPS_EMULATOR, SPRITZER_EMULATOR],
+```
+
+`chant emulator` reports one line per emulator rather than per lexicon, and
+`--lexicon fly` acts on both.
+
+## `env` names the endpoint variable
+
+`env(endpoint)` returns what points tooling at the running emulator. Two things
+depend on getting it right:
+
+- **`chant emulator up --json`** hands it to a consumer verbatim, so credentials
+  and a region belong here too — Floci returns `AWS_ACCESS_KEY_ID: "test"`
+  alongside the endpoint.
+- **`--live --env <name>` endpoint injection** picks out only the variables whose
+  *value is the endpoint* and sets those, leaving the credentials alone. That
+  derivation replaced a hand-maintained map in core which listed two of the four
+  lexicons that have an endpoint variable — and asserted azure had none, while
+  azure's own `describe-resources.ts` read `AZURE_ENDPOINT_URL` on every call.
+
+Return `{}` when the emulator is reached only through an explicit argument, as
+gcp's is. That is a real answer, and a better one than naming a variable nothing
+reads.
+
+## Pin the image
+
+`image` should carry a version tag. An emulator on `:latest` cannot be behind,
+which sounds fine until a local suite that passed yesterday fails today and
+nothing in the repo records what moved.
+
+Declaring `upstream.repo` puts the pin in the weekly freshness check
+(`scripts/check-emulator-freshness.ts`), which compares each pin against the
+latest GitHub release and opens a single advisory notice. It never bumps
+anything: per the chant #808 policy a pin moves when a consuming test needs the
+newer emulator, not because a release happened.
+
+## See also
+
+- [`chant emulator`](/chant/cli/emulator/) — the command this drives
+- [Local Testing](/chant/local-testing/overview/) — the per-cloud loops

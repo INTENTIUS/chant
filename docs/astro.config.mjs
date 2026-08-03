@@ -223,6 +223,7 @@ export default defineConfig({
 						{ label: 'Create a Serializer', slug: 'lexicon-authoring/serializer' },
 						{ label: 'Implementing Observation', slug: 'lexicon-authoring/observation' },
 						{ label: 'Implementing Live Export', slug: 'lexicon-authoring/live-export' },
+						{ label: 'Declaring a Local Emulator', slug: 'lexicon-authoring/emulator' },
 						{ label: 'Write Lint Rules', slug: 'lexicon-authoring/lint-rules' },
 						{ label: 'LSP & MCP Providers', slug: 'lexicon-authoring/lsp-mcp' },
 						{ label: 'Skills', slug: 'lexicon-authoring/skills' },

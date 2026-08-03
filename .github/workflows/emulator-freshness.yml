@@ -38,7 +38,7 @@ jobs:
         id: freshness
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: npx tsx lexicons/fly/src/emulator-freshness-cli.ts
+        run: npx tsx scripts/check-emulator-freshness.ts
 
       # Open or refresh a single tracking issue when a pin is behind. Advisory —
       # a human reviews and bumps the pin per the #808 policy.

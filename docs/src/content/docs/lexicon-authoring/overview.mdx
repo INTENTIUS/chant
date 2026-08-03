@@ -80,6 +80,7 @@ Every lexicon must implement these 4 methods to support the full generation and 
 | `completionProvider()` | `CompletionItem[]` | LSP completions for resource/property names |
 | `hoverProvider()` | `HoverInfo` | LSP hover information for resource types |
 | `docs()` | `Promise<void>` | Generate documentation pages |
+| `emulator` | `EmulatorCapability` or a list of them | Local emulator(s) `chant emulator` boots — see [Declaring a Local Emulator](/chant/lexicon-authoring/emulator/) |
 | `mcpTools()` | `McpToolContribution[]` | MCP tool contributions |
 | `mcpResources()` | `McpResourceContribution[]` | MCP resource contributions |
 | `commands()` | `CommandGroup` | A CLI verb group mounted under `chant <name> <verb>` — core dispatches to it wholesale and knows nothing about what's inside |

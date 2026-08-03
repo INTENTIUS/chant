@@ -7,6 +7,7 @@ import type { CompletionContext, CompletionItem, HoverContext, HoverInfo } from 
 import type { McpToolContribution, McpResourceContribution } from "@intentius/chant/mcp/types";
 import { postSynthChecks as postSynthCheckList } from "./lint/post-synth";
 import { azureAuditCatalog } from "./lint/audit-catalog";
+import { FLOCI_AZ_EMULATOR } from "./op/activities/floci-az";
 import { createSkillsLoader } from "@intentius/chant/lexicon-plugin-helpers";
 import { readFileSync, readdirSync, existsSync } from "fs";
 import { join, dirname } from "path";
@@ -29,6 +30,7 @@ import { azureDeepNormalizationHooks, observeResourcesDeepAzure } from "./deep-o
  */
 export const azurePlugin: LexiconPlugin = {
   name: "azure",
+  emulator: FLOCI_AZ_EMULATOR,
   auditCatalog: () => azureAuditCatalog,
   serializer: azureSerializer,
 

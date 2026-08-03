@@ -191,7 +191,7 @@ async function runGraphLive(
     // exported e.g. AWS_ENDPOINT_URL. Ambient always wins when it's already set.
     // Scoped to just this describe/enrich pass — restored in `finally` so it
     // never leaks into a later invocation in the same process.
-    const endpointResult = applyLiveEndpoint(config.environments, environment, observing.map((p) => p.name));
+    const endpointResult = applyLiveEndpoint(config.environments, environment, observing);
     if (endpointResult.notice) console.error(formatWarning({ message: endpointResult.notice }));
 
     let ir: GraphIR;

@@ -19,6 +19,13 @@ export interface MockPluginOptions {
   observeDependencies?: LexiconPlugin["observeDependencies"];
   /** Deep observation (#1014) — the lexicon's pruning/ordering rules. */
   deepNormalizationHooks?: DeepNormalizationHooks;
+  /**
+   * Local emulator(s) (#1345). Needed by any test that exercises `--live`
+   * endpoint injection: the var to inject is read off the lexicon's own
+   * capability now, not a map keyed by lexicon name, so a mock without one gets
+   * no injection — exactly as a real lexicon without one would.
+   */
+  emulator?: LexiconPlugin["emulator"];
 }
 
 export function createMockPlugin(options: MockPluginOptions = {}): LexiconPlugin {
@@ -36,6 +43,7 @@ export function createMockPlugin(options: MockPluginOptions = {}): LexiconPlugin
     ...(options.observeResourcesDeep && { observeResourcesDeep: options.observeResourcesDeep }),
     ...(options.observeDependencies && { observeDependencies: options.observeDependencies }),
     ...(options.deepNormalizationHooks && { deepNormalizationHooks: options.deepNormalizationHooks }),
+    ...(options.emulator && { emulator: options.emulator }),
   };
 }
 
