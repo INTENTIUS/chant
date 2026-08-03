@@ -1,4 +1,5 @@
 import { dirname, join } from "node:path";
+import { params as currentBuildParams } from "../../params";
 
 /**
  * chant #1045 Phase 2 — generates the source of the "driver" module that runs
@@ -46,6 +47,16 @@ const CONFIG_WIRE_MODULE = join(HERE, "config-wire.ts");
 // chant #1131 — the policy driver's build-result decoding + diagnostics contract.
 const POLICY_WIRE_MODULE = join(HERE, "policy-wire.ts");
 const POST_SYNTH_MODULE = join(dirname(DISCOVERY_DIR), "lint", "post-synth.ts");
+// chant #1108 — the shared build-time params module (../params.ts). The child
+// process starts with its own, EMPTY copy of that module's `params` object;
+// without re-binding, every run-fallback file imported in the child would see
+// `params.* === undefined` while the fold path (which substitutes values in
+// the PARENT) sees the resolved values — the exact split-brain #1064 exists
+// to prevent. esbuild resolves a project file's own
+// `import { params } from "@intentius/chant/params"` to this same absolute
+// file, so the driver's `setBuildParams` call below mutates the one object
+// every bundled import observes.
+const PARAMS_MODULE = join(dirname(DISCOVERY_DIR), "params.ts");
 
 export interface GenerateDriverOptions {
   /** Absolute paths to the run-fallback files this build decided NOT to fold — see `discover()`'s fold/taint loop in `../index.ts`. */
@@ -73,8 +84,16 @@ export function generateDriverSource(options: GenerateDriverOptions): string {
     `import { encodeEntitySet } from ${lit(ENTITY_WIRE_CODEC_MODULE)};`,
     `import { classifyChildError } from ${lit(CHILD_ERRORS_MODULE)};`,
     `import { getProvenance } from ${lit(PROVENANCE_MODULE)};`,
+    `import { setBuildParams } from ${lit(PARAMS_MODULE)};`,
     ``,
     `const BUILD_ROOT = ${lit(buildRoot)};`,
+    ``,
+    // chant #1108 — a snapshot of the PARENT's resolved build-time parameter
+    // values, embedded as a literal at generation time (the parent bound them
+    // via applyBuildParams/discover() before this source was generated).
+    // Values are declared-scalar only (BuildParamValue), so JSON round-trips
+    // them exactly. Bound before any project import below.
+    `setBuildParams(${lit({ ...currentBuildParams })});`,
     ``,
     `function send(payload) {`,
     `  if (typeof process.send === "function") process.send(payload);`,
