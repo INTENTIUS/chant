@@ -224,6 +224,49 @@ So adding a check is one step: drop the file. Files that export no check (helper
 
 > Pre-synth rules (imperative and declarative) are the exception — they are **not** auto-discovered. Import them into the `lintRules()` array in your `plugin.ts`. See [Write Lint Rules](/chant/lexicon-authoring/lint-rules/).
 
+## Audit metadata — `auditCatalog()`
+
+A check's own definition says what it looks for. It does not say how severe a
+finding is, whether a fix is mechanical, what authority backs the rule, or what
+to title it in a report. `chant audit` needs all four, and gets them from the
+lexicon's `auditCatalog()` — a map from check id to `RuleMeta`, merged over
+core's small static catalog by `resolveAuditCatalog`:
+
+```typescript
+// lint/audit-catalog.ts
+import { auditRule, type RuleMeta } from "@intentius/chant/audit/catalog";
+
+export const myAuditCatalog: Record<string, RuleMeta> = {
+  XYZ010: auditRule(
+    "XYZ010",
+    "merge-worthy",              // tier: safe to fix in a PR, or report-only
+    "guidance",                  // fixKind: deterministic fix, or needs judgment
+    "Bucket allows public reads",
+    "Set `publicAccess: false` on the bucket.",
+    { authority: [CIS_BENCHMARK], category: "security" },
+  ),
+};
+
+// plugin.ts
+auditCatalog: () => myAuditCatalog,
+```
+
+Contributing nothing is not neutral. `resolveAuditCatalog` skips a lexicon that
+omits the method **silently**, so every one of its findings reaches the report
+with no title, tier, fix kind, or category — which is how fly's and temporal's
+six checks surfaced before chant #1346. `chant dev check-lexicon` warns at tier
+2 when a shipped check has no entry, and a repo-level test enumerates every
+lexicon and fails on a gap in either direction.
+
+Two details worth knowing:
+
+- **`auditRule()` hardcodes `yamlBased: true`.** A check that reads the chant
+  model (`ctx.entities`) rather than the emitted output (`ctx.outputs`) cannot
+  fire on an audit of standalone YAML, so it must be constructed directly with
+  `yamlBased: false`. fly, temporal, and fountain all do this.
+- **Cross-cutting core ids** (`COR*`, `EXT*`) belong to core's static catalog,
+  not to any lexicon, and are excluded from both the check and the test.
+
 ## Target Count
 
 A mature lexicon should have at least **15 post-synth checks** covering all four categories (security, correctness, best practices, deprecation). The K8s and Azure lexicons each have 20 checks.

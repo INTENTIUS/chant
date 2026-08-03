@@ -12,12 +12,14 @@ import { postSynthChecks as postSynthCheckList } from "./lint/post-synth";
 import { useActivityProfilesRule } from "./lint/rules/use-activity-profiles";
 import { createSkillsLoader, createDiffTool, createCatalogResource } from "@intentius/chant/lexicon-plugin-helpers";
 import { temporalSerializer } from "./serializer";
+import { temporalAuditCatalog } from "./lint/audit-catalog";
 import { temporalCompletions } from "./lsp/completions";
 import { temporalHover } from "./lsp/hover";
 import { temporalDeepNormalizationHooks, observeResourcesDeepTemporal } from "./deep-observe";
 
 export const temporalPlugin: LexiconPlugin = {
   name: "temporal",
+  auditCatalog: () => temporalAuditCatalog,
   serializer: temporalSerializer,
 
   // ── Required lifecycle methods ──────────────────────────────────────
