@@ -1,9 +1,9 @@
 ---
 title: Multi-Stack Output
-description: Splitting resources across multiple output stacks
+description: How several stacks serialize, and how their references cross
 ---
 
-A project past one stack splits into **side-by-side stacks**: each stack its own source directory, its own `chant build`, its own output file. This page covers what that means at the serialization layer. For the project-level view, see [Multi-Stack Projects](/chant/guide/multi-stack/).
+An estate past one stack splits into **side-by-side projects** — each stack its own project, its own flat `src/`, its own build. This page covers what that means at the serialization layer. For the project-level view, see [Multi-Stack Projects](/chant/guide/multi-stack/).
 
 ## What `chant build` partitions on
 
@@ -11,38 +11,54 @@ One invocation, one output path. Within that invocation, chant partitions entiti
 
 Directory structure is not a partitioning input. `chant build src` on a project whose `src/` holds subdirectories produces one build of everything under `src/`, not one output per subdirectory.
 
-So a multi-stack project runs one build per stack:
+So a side-by-side project builds exactly the way a single-stack project does, because that is what it is:
 
 ```sh
-chant build src/networking --lexicon aws -o dist/networking.json
-chant build src/compute    --lexicon aws -o dist/compute.json
-chant build src/storage    --lexicon aws -o dist/storage.json
+chant build src -o dist/template.json
 ```
 
-Each is a complete, independent build of that directory. Each output stands alone.
+There is no multi-stack build mode. Several stacks means several projects, each running that.
 
 ## Cross-stack references
 
-A resource in one stack referencing a resource in another — through an ordinary TypeScript import — is resolved into the provider's native cross-stack mechanism: CloudFormation `Export`/`ImportValue`, and each lexicon's equivalent.
+References cross by **name**, declared on both sides.
 
-The graph IR carries both sides so a consumer can reconstruct the link without parsing templates:
+The producer marks a value for export. When the serializer encounters a `StackOutput` entity it emits it into the template's outputs section:
 
-- **`exports`** — what this stack publishes: the output `name` (the handle another stack imports by) and the node producing it.
-- **`imports`** — what this stack consumes: the parameter `name` and its node.
+```typescript
+export const clusterArn = output(shared.cluster.Arn, "ClusterArn");
+```
 
-Match an import's `name` against another stack's export `name` to draw the cross-stack edge. In-stack, the parameter's consumers are ordinary `$ref` edges.
+The consumer declares a parameter that the value is fed into at deploy time — `--parameter-overrides` for CloudFormation, each lexicon's own mechanism elsewhere:
 
-`chant graph --stacks` computes the apply-ordering graph across stacks: consumer→producer edges, plus a flat order with every producer before its consumers. chant exposes the order; it does not drive the apply.
+```typescript
+export const clusterArn = new Parameter("String", { description: "ECS Cluster ARN" });
+```
+
+Nothing is resolved at build time and nothing is shared between the two builds. Each template is complete and independently valid; the handle names are the contract.
+
+### What the IR carries
+
+Both halves are surfaced so a consumer can reconstruct the link without parsing templates:
+
+- **`exports`** — the output `name` (the handle another stack imports by), the node producing it, and the producer-side attribute it reads.
+- **`imports`** — the parameter `name` and its node.
+
+Match an import's `name` against another stack's export `name` to draw the cross-stack edge. In-stack, the parameter's own consumers are ordinary `$ref` edges.
+
+Composition across projects belongs to the viewer, not to chant: chant graphs one project and emits the handles, and a tool pointed at several joins them.
 
 ## Stack grouping in the IR
 
-When a project declares `stacks` in `chant.config.ts`, `chant graph` builds each stack's source in isolation and composes the results. Node ids are qualified `<stack>::<id>`, matching how observation keys live nodes, and `groups.byStack` maps each declared stack name to its node ids — so a renderer draws one boundary box per stack without inferring anything.
+`groups.byStack` maps stack name to node ids — what a renderer reads to draw boundary boxes.
 
-For a project built from one source tree, `groups.byStack` reports the lexicon partition instead, which is the unit that tree actually deploys as.
+For a project that declares `stacks` in `chant.config.ts`, `chant graph` builds each stack's source in isolation, qualifies node ids `<stack>::<id>` to match how observation keys live nodes, and groups by the declared names.
+
+For a project built from one source tree — including every side-by-side project — `groups.byStack` reports the lexicon partition, which is the unit that tree deploys as.
 
 ## Child projects (lexicon-specific nested stacks)
 
-Some lexicons support **child projects** — subdirectories that build to separate output files, referenced from a parent that can deploy them as a unit. Unlike side-by-side stacks, these are declared in code.
+Some lexicons support **child projects** — subdirectories that build to separate output files, referenced from a parent that deploys them as a unit. Unlike side-by-side projects, these are declared in code.
 
 chant's core provides two primitives:
 
