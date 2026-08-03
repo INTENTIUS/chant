@@ -15,7 +15,7 @@ vi.mock("@intentius/chant/config", () => ({
   loadChantConfig: (...args: unknown[]) => loadChantConfigMock(...args),
 }));
 
-const { describeResources } = await import("./describe-resources");
+const { describeResources, statusFromObject } = await import("./describe-resources");
 const { fakeCluster, objectKey, ownedObject } = await import("./api/fake-cluster");
 const { defaultK8sConnector } = await import("./api/connect");
 const { fakeKubeconfig, statusBody } = await import("@intentius/chant-k8s-client/testing");
@@ -723,5 +723,67 @@ describe("k8s describeResources", () => {
       expect(Object.keys(result.resources)).toEqual(["ns"]);
       expect(cluster.layer.paths().some((p) => p.endsWith("/pods"))).toBe(false);
     });
+  });
+});
+
+// #1397 — a Pod's phase is `Running` from the moment the kubelet admits it, so
+// the phase alone reported a crashlooping Pod as `Running`, which every
+// consumer classifying that word read as healthy.
+describe("statusFromObject — the most specific failing signal (#1397)", () => {
+  test("a crashlooping Pod reports the reason, not the phase", () => {
+    expect(
+      statusFromObject({
+        status: {
+          phase: "Running",
+          containerStatuses: [{ state: { waiting: { reason: "CrashLoopBackOff", message: "back-off 5m0s" } } }],
+        },
+      } as never),
+    ).toBe("CrashLoopBackOff");
+  });
+
+  test("an image-pull failure reports the reason", () => {
+    expect(
+      statusFromObject({
+        status: { phase: "Pending", containerStatuses: [{ state: { waiting: { reason: "ImagePullBackOff" } } }] },
+      } as never),
+    ).toBe("ImagePullBackOff");
+  });
+
+  test("an unschedulable Pod reports Unschedulable, not Pending", () => {
+    expect(
+      statusFromObject({
+        status: {
+          phase: "Pending",
+          conditions: [{ type: "PodScheduled", status: "False", reason: "Unschedulable" }],
+        },
+      } as never),
+    ).toBe("Unschedulable");
+  });
+
+  test("ordinary startup is not promoted over the phase", () => {
+    // ContainerCreating and PodInitializing are not failure; surfacing them
+    // would be noise, and the phase already classifies as progressing.
+    for (const reason of ["ContainerCreating", "PodInitializing"]) {
+      expect(
+        statusFromObject({
+          status: { phase: "Pending", containerStatuses: [{ state: { waiting: { reason } } }] },
+        } as never),
+      ).toBe("Pending");
+    }
+  });
+
+  test("a terminated container does not outrank the phase — a Job container exits cleanly", () => {
+    expect(
+      statusFromObject({
+        status: { phase: "Succeeded", containerStatuses: [{ state: { terminated: { reason: "Completed", exitCode: 0 } } }] },
+      } as never),
+    ).toBe("Succeeded");
+  });
+
+  test("a healthy Pod and a ready Deployment are unchanged", () => {
+    expect(statusFromObject({ status: { phase: "Running", containerStatuses: [{ state: { running: {} } }] } } as never)).toBe("Running");
+    expect(statusFromObject({ status: { readyReplicas: 3, replicas: 3 } } as never)).toBe("READY");
+    expect(statusFromObject({ status: { readyReplicas: 1, replicas: 3 } } as never)).toBe("PROGRESSING(1/3)");
+    expect(statusFromObject({} as never)).toBe("PRESENT");
   });
 });
