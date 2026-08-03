@@ -535,7 +535,7 @@ function describeTerm(t: Term): string {
   return leaf(t);
 }
 
-interface Term {
+export interface Term {
   kind: "word" | "kind" | "tag" | "attr" | "edge";
   /** `!term` — the node must NOT satisfy this (#1280). */
   negated?: boolean;

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { resolveKindTerms } from "./search";
+import { resolveKindTerms, type Term } from "./search";
 import type { IRNode } from "../../graph-ir";
 
 const nodes = [
@@ -11,7 +11,7 @@ const nodes = [
 ] as IRNode[];
 
 const resolve = (a: string) => {
-  const t = { kind: "kind" as const, a };
+  const t: Term = { kind: "kind", a };
   resolveKindTerms([t], nodes);
   return t.kinds ? [...t.kinds].sort() : undefined;
 };
@@ -38,8 +38,8 @@ describe("a kind term means the kind, not any type containing its letters", () =
   });
 
   it("resolves inside an edge sub-term, where the negation lives", () => {
-    const t = { kind: "edge" as const, a: "", dir: "in" as const, sub: { kind: "kind" as const, a: "EC2::VPC" } };
+    const t: Term = { kind: "edge", a: "", dir: "in", sub: { kind: "kind", a: "EC2::VPC" } };
     resolveKindTerms([t], nodes);
-    expect(t.sub.kinds && [...t.sub.kinds]).toEqual(["AWS::EC2::VPC"]);
+    expect(t.sub?.kinds && [...t.sub.kinds]).toEqual(["AWS::EC2::VPC"]);
   });
 });
