@@ -47,17 +47,38 @@ import { Sub } from "../intrinsics";
 const MICROVM_SERVICE_PRINCIPAL = "lambda.amazonaws.com";
 const CONNECTOR_MANAGED_RESOURCE_OPERATOR = "network-connectors.lambda.amazonaws.com";
 
-/** Documented baseline memory tiers (MiB) — the CFN schema types it as an open int, but the service accepts only these five; vCPU auto-scales with the tier. */
-const VALID_MEMORY_MIB = [512, 1024, 2048, 4096, 8192] as const;
-type MicrovmMemoryMiB = (typeof VALID_MEMORY_MIB)[number];
+/**
+ * The Lambda MicroVMs service's real limits, verified against the upstream
+ * `ran-isenberg/lambda-microvm-cdk-python` construct and the AWS docs.
+ *
+ * Exported because a consumer driving the same service through a different
+ * control plane needs the same numbers, and copying them is how two sources of
+ * truth start (#1374). The CFN schema types most of these as open ints and
+ * strings, so nothing but this object knows them.
+ */
+export const MICROVM_LIMITS = {
+  /** Documented baseline memory tiers (MiB). The schema says int; the service accepts five values. vCPU auto-scales with the tier. */
+  memoryMiB: [512, 1024, 2048, 4096, 8192],
+  namePattern: /^[a-zA-Z0-9-_]+$/,
+  maxNameLength: 64,
+  /** Set by the service on every MicroVM; supplying it is rejected. */
+  reservedEnvironmentKeys: ["AWS_REGION"],
+  maxEnvironmentVariables: 50,
+  maxEgressConnectors: 10,
+  connectorSubnets: { min: 1, max: 16 },
+} as const;
 
-const NAME_PATTERN = /^[a-zA-Z0-9-_]+$/;
-const MAX_NAME_LENGTH = 64;
-const RESERVED_ENV_KEYS = new Set(["AWS_REGION"]);
-const MAX_ENVIRONMENT_VARIABLES = 50;
-const MAX_EGRESS_CONNECTORS = 10;
-const MIN_CONNECTOR_SUBNETS = 1;
-const MAX_CONNECTOR_SUBNETS = 16;
+/** One of the five memory tiers {@link MICROVM_LIMITS} names. */
+export type MicrovmMemoryMiB = (typeof MICROVM_LIMITS.memoryMiB)[number];
+
+const VALID_MEMORY_MIB = MICROVM_LIMITS.memoryMiB;
+const NAME_PATTERN = MICROVM_LIMITS.namePattern;
+const MAX_NAME_LENGTH = MICROVM_LIMITS.maxNameLength;
+const RESERVED_ENV_KEYS = new Set<string>(MICROVM_LIMITS.reservedEnvironmentKeys);
+const MAX_ENVIRONMENT_VARIABLES = MICROVM_LIMITS.maxEnvironmentVariables;
+const MAX_EGRESS_CONNECTORS = MICROVM_LIMITS.maxEgressConnectors;
+const MIN_CONNECTOR_SUBNETS = MICROVM_LIMITS.connectorSubnets.min;
+const MAX_CONNECTOR_SUBNETS = MICROVM_LIMITS.connectorSubnets.max;
 
 /**
  * `sts:AssumeRole` + `sts:TagSession` trust for `lambda.amazonaws.com` — the
