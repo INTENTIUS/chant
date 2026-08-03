@@ -381,6 +381,68 @@ function edgeKey(e: IREdge): string {
  * deterministic: nodes and edges are sorted, so the same source yields identical
  * IR. `projectPath` relativizes source-file paths for portable output.
  */
+/**
+ * Group nodes by the source subdirectory that becomes their stack, or
+ * `undefined` when the project is not directory-partitioned (#1433).
+ *
+ * This implements the rule chant already documents (serialization/multi-stack):
+ *
+ *   Single-stack: resources live directly in `src/` — one template file
+ *   Multi-stack:  resources are organized into subdirectories — each becomes
+ *                 a separate stack
+ *
+ * The source root is derived from the nodes themselves — the longest directory
+ * prefix every declaring file shares — so this needs no `sourceDir` argument and
+ * stays correct for a project whose root is not literally `src/`.
+ *
+ * It returns `undefined`, rather than guessing, in every case where the source
+ * does not clearly say "partitioned":
+ *
+ *  - **any node declared directly in the root.** That is the documented
+ *    single-stack tell. It also disposes of the over-partitioning worry that
+ *    blocked INTENTIUS/behold#83: a project that merely *organises* its root
+ *    into folders while still declaring resources at the top level is
+ *    single-stack and stays that way.
+ *  - **any node without provenance.** Partitioning some nodes and dropping the
+ *    rest would silently omit resources from every boundary box.
+ *  - **only one partition.** One box around everything is what no boxes already
+ *    look like, and claiming a partition from a single directory is a stronger
+ *    statement than the layout supports.
+ */
+export function directoryStacks(nodes: IRNode[]): Record<string, string[]> | undefined {
+  if (!nodes.length) return undefined;
+  const files: Array<[string, string[]]> = [];
+  for (const n of nodes) {
+    const file = n.sourceLoc?.file;
+    // Provenance is all-or-nothing here: one node without it and the partition
+    // would be incomplete, which is worse than the lexicon fallback.
+    if (!file) return undefined;
+    files.push([n.id, file.split("/")]);
+  }
+
+  // The shared root, as directory segments. `src/net/vpc.ts` + `src/app/api.ts`
+  // -> ["src"]; `src/vpc.ts` + `src/db.ts` -> ["src"] too, which is why the
+  // depth check below rather than the root itself decides the mode.
+  let root = files[0][1].slice(0, -1);
+  for (const [, segs] of files.slice(1)) {
+    const dir = segs.slice(0, -1);
+    let i = 0;
+    while (i < root.length && i < dir.length && root[i] === dir[i]) i++;
+    root = root.slice(0, i);
+  }
+
+  const byDir: Record<string, string[]> = {};
+  for (const [id, segs] of files) {
+    const rest = segs.slice(root.length);
+    // `rest` is [file] for a node declared directly in the root — the
+    // single-stack tell. One is enough to settle the whole project.
+    if (rest.length < 2) return undefined;
+    (byDir[rest[0]] ??= []).push(id);
+  }
+
+  return Object.keys(byDir).length > 1 ? byDir : undefined;
+}
+
 export function buildGraphIr(
   entities: Map<string, Declarable>,
   projectPath?: string,
@@ -415,11 +477,10 @@ export function buildGraphIr(
     nodes.push(node);
 
     (byLexicon[entity.lexicon] ??= []).push(name);
-    // A stack is a lexicon partition (each lexicon serialises to one deployable
-    // stack — a CloudFormation template, a CI config). `byStack` mirrors that
-    // today; #513 phase 2 will regroup it by nested child-project. It's a
-    // distinct axis from `byLexicon` (which is for provenance/colouring), so it's
-    // emitted separately even where the two currently coincide.
+    // The lexicon partition — each lexicon serialises to one deployable stack (a
+    // CloudFormation template, a CI config). This is the fallback shape for
+    // `byStack`; `directoryStacks` below replaces it for a project that is
+    // actually directory-partitioned. See #1433.
     (byStack[entity.lexicon] ??= []).push(name);
     if (prov?.composite) (byComposite[prov.composite] ??= []).push(name);
   }
@@ -441,7 +502,14 @@ export function buildGraphIr(
   const groups: IRGroups = {};
   if (Object.keys(byLexicon).length) groups.byLexicon = sortKeys(byLexicon);
   if (Object.keys(byComposite).length) groups.byComposite = sortKeys(byComposite);
-  if (Object.keys(byStack).length) groups.byStack = sortKeys(byStack);
+  // A directory-partitioned project's real stacks are its source subdirectories,
+  // not its lexicons (#1433). Where the source says so, that wins; where it does
+  // not — a single-stack project, or nodes without provenance — the lexicon
+  // partition above stands, which is what every consumer saw before.
+  const byDirectory = directoryStacks(nodes);
+  const stacks = byDirectory ?? byStack;
+  for (const ids of Object.values(stacks)) ids.sort();
+  if (Object.keys(stacks).length) groups.byStack = sortKeys(stacks);
 
   // Cross-stack exports: a stack's `output(ref, name)` LexiconOutputs are dropped
   // from the node set (they're not resources), but their name + producing node is

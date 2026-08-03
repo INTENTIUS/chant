@@ -1,5 +1,5 @@
 import { describe, test, expect } from "vitest";
-import { buildGraphIr } from "./graph-ir";
+import { buildGraphIr, directoryStacks, type IRNode } from "./graph-ir";
 import { DECLARABLE_MARKER, type Declarable } from "./declarable";
 import { AttrRef } from "./attrref";
 import { LexiconOutput } from "./lexicon-output";
@@ -222,5 +222,67 @@ describe("buildGraphIr", () => {
     ]);
     resolveAttrRefs(reordered);
     expect(JSON.stringify(buildGraphIr(reordered))).toEqual(JSON.stringify(ir));
+  });
+});
+
+describe("directoryStacks (#1433)", () => {
+  const n = (id: string, file?: string): IRNode =>
+    ({ id, kind: "K", lexicon: "aws", attrs: {}, ...(file ? { sourceLoc: { file } } : {}) }) as IRNode;
+
+  // Verified against examples/adopt-alb-services, whose own build script is
+  // `chant build src/shared-alb && chant build src/api && chant build src/ui` —
+  // three directories, three separately-deployed templates, exactly these keys.
+  test("partitions by source subdirectory when the project is directory-partitioned", () => {
+    expect(
+      directoryStacks([
+        n("alb", "src/shared-alb/alb.ts"),
+        n("apiSvc", "src/api/service.ts"),
+        n("uiSvc", "src/ui/service.ts"),
+      ]),
+    ).toEqual({ "shared-alb": ["alb"], api: ["apiSvc"], ui: ["uiSvc"] });
+  });
+
+  // The documented single-stack tell (serialization/multi-stack): "Resources live
+  // directly in src/". One such node settles the whole project — which is what
+  // stops a project that merely organises its root into folders from being split.
+  test("declines when any node is declared directly in the source root", () => {
+    expect(
+      directoryStacks([n("vpc", "src/vpc.ts"), n("apiSvc", "src/api/service.ts")]),
+    ).toBeUndefined();
+  });
+
+  test("declines for a flat single-stack project", () => {
+    expect(directoryStacks([n("vpc", "src/vpc.ts"), n("db", "src/db.ts")])).toBeUndefined();
+  });
+
+  // Partitioning some nodes and dropping the rest would silently omit resources
+  // from every boundary box a consumer draws.
+  test("declines when any node lacks provenance", () => {
+    expect(directoryStacks([n("a", "src/api/a.ts"), n("b")])).toBeUndefined();
+  });
+
+  test("declines for a single partition — one box around everything says nothing", () => {
+    expect(directoryStacks([n("a", "src/api/a.ts"), n("b", "src/api/b.ts")])).toBeUndefined();
+  });
+
+  test("declines for an empty graph", () => {
+    expect(directoryStacks([])).toBeUndefined();
+  });
+
+  // The root is derived from the nodes, not assumed to be `src`.
+  test("finds the shared root wherever it is", () => {
+    expect(
+      directoryStacks([n("a", "infra/stacks/net/vpc.ts"), n("b", "infra/stacks/app/svc.ts")]),
+    ).toEqual({ net: ["a"], app: ["b"] });
+  });
+
+  test("groups several files in one partition together", () => {
+    expect(
+      directoryStacks([
+        n("alb", "src/shared-alb/alb.ts"),
+        n("ecr", "src/shared-alb/ecr.ts"),
+        n("apiSvc", "src/api/service.ts"),
+      ]),
+    ).toEqual({ "shared-alb": ["alb", "ecr"], api: ["apiSvc"] });
   });
 });
