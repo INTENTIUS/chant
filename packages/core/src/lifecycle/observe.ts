@@ -24,6 +24,7 @@ import {
   type NormalizedObservation,
 } from "../observation";
 import { zeroResourcesWarning } from "../live-endpoint";
+import { unqualifiedKey } from "./identity";
 
 export interface ObserveResult {
   observations: LiveObservation[];
@@ -208,7 +209,21 @@ export async function observeResources(
             warnings,
           })
         : {};
-      for (const [id, meta] of Object.entries(ambient)) dependencies.resources[id] ??= meta;
+      // A resource can be reached as a dependency AND enumerated as ambient —
+      // the default VPC an instance sits in is both. It is one resource, and
+      // the dependency entry is the one carrying `referencedBy`, so it wins.
+      // Matched on physical id rather than on key, because ambient keys carry a
+      // region (#1416) and dependency keys do not, so the keys no longer
+      // collide even when the resource is the same one.
+      const dependedOn = new Set(
+        Object.values(dependencies.resources)
+          .map((m) => m.physicalId)
+          .filter((id): id is string => typeof id === "string"),
+      );
+      for (const [id, meta] of Object.entries(ambient)) {
+        if (meta.physicalId && dependedOn.has(meta.physicalId)) continue;
+        dependencies.resources[id] ??= meta;
+      }
       pushObservation(
         observations,
         warnings,
@@ -268,6 +283,11 @@ function scopeToStack(
  * Ask a lexicon what exists of the kinds it manages, beyond what is declared
  * (#1278). Once per stack for the region, merged by physical id — the same
  * ambient resource seen from two stacks is one resource.
+ *
+ * "The same" is per region (#1416). Two stacks in one region reporting the
+ * account's default security group is one group; two regions' default security
+ * groups are two, whatever their ids look like, so the merge key carries the
+ * region a resource records itself in.
  */
 export async function collectAmbient(
   plugin: ObservationLexicon,
@@ -282,6 +302,10 @@ export async function collectAmbient(
   if (!plugin.observeAmbient || opts.kinds.length === 0) return {};
   const found: Record<string, ResourceMetadata> = {};
   const refs = opts.stacks.length > 0 ? opts.stacks : [{ name: undefined, region: undefined }];
+  // Only a merge needs region-qualified keys, and one ref is not a merge. This
+  // is what keeps a single-region project's ids exactly what they were, and a
+  // recorded snapshot — always one stack, so always one ref — bare.
+  const merging = refs.length > 1;
   for (const ref of refs) {
     try {
       const part = await plugin.observeAmbient({
@@ -291,7 +315,9 @@ export async function collectAmbient(
         ...(ref.name ? { stack: ref.name } : {}),
         ...(ref.region ? { region: ref.region } : {}),
       });
-      for (const [id, meta] of Object.entries(part)) found[id] ??= meta;
+      for (const [id, meta] of Object.entries(part)) {
+        found[merging ? unqualifiedKey(id, meta) : id] ??= meta;
+      }
     } catch (err) {
       opts.warnings.push(
         `${plugin.name}: ambient resources not read${ref.name ? ` for stack "${ref.name}"` : ""} — ${err instanceof Error ? err.message : String(err)}`,

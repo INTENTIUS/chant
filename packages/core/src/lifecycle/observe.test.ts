@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { observeResources } from "./observe";
+import { observeResources, collectAmbient } from "./observe";
 import { observation } from "../observation";
 import type { ObservationLexicon, ResourceMetadata } from "../lexicon";
 import type { BuildResult } from "../build";
@@ -244,5 +244,79 @@ describe("observeResources", () => {
     await observeResources("prod", plugins, mockBuild(), { stacks: [] });
     expect(calls).toHaveLength(1);
     expect(calls[0]).not.toHaveProperty("stack");
+  });
+});
+
+describe("collectAmbient — one resource per region, not per account (#1416)", () => {
+  const subnets = (region: string): Record<string, ResourceMetadata> =>
+    Object.fromEntries(
+      ["subnet-default-a", "subnet-default-b"].map((id) => [
+        id,
+        {
+          type: "AWS::EC2::Subnet",
+          status: "OBSERVED",
+          physicalId: id,
+          ambient: true,
+          attributes: { region },
+        } as ResourceMetadata,
+      ]),
+    );
+
+  function ambientPlugin(): ObservationLexicon {
+    return {
+      name: "aws",
+      describeResources: async () => ({}),
+      observeAmbient: async (opts: { region?: string }) => subnets(opts.region ?? "us-east-1"),
+    } as unknown as ObservationLexicon;
+  }
+
+  it("keeps every region's copy when the ids collide across regions", async () => {
+    const found = await collectAmbient(ambientPlugin(), {
+      environment: "prod",
+      kinds: ["AWS::EC2::Subnet"],
+      observed: {},
+      stacks: [
+        { name: "east", region: "us-east-1" },
+        { name: "west1", region: "us-west-1" },
+        { name: "west2", region: "us-west-2" },
+      ],
+      warnings: [],
+    });
+    expect(Object.keys(found).sort()).toEqual([
+      "us-east-1::subnet-default-a",
+      "us-east-1::subnet-default-b",
+      "us-west-1::subnet-default-a",
+      "us-west-1::subnet-default-b",
+      "us-west-2::subnet-default-a",
+      "us-west-2::subnet-default-b",
+    ]);
+  });
+
+  it("still merges two stacks in the same region to one resource each", async () => {
+    const found = await collectAmbient(ambientPlugin(), {
+      environment: "prod",
+      kinds: ["AWS::EC2::Subnet"],
+      observed: {},
+      stacks: [
+        { name: "web", region: "us-east-1" },
+        { name: "api", region: "us-east-1" },
+      ],
+      warnings: [],
+    });
+    expect(Object.keys(found).sort()).toEqual([
+      "us-east-1::subnet-default-a",
+      "us-east-1::subnet-default-b",
+    ]);
+  });
+
+  it("leaves a single stack's ids bare — one region is not a merge", async () => {
+    const found = await collectAmbient(ambientPlugin(), {
+      environment: "prod",
+      kinds: ["AWS::EC2::Subnet"],
+      observed: {},
+      stacks: [{ name: "main", region: "us-east-1" }],
+      warnings: [],
+    });
+    expect(Object.keys(found).sort()).toEqual(["subnet-default-a", "subnet-default-b"]);
   });
 });
