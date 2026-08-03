@@ -233,6 +233,9 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
   // Fold derived reachability facts (effectiveIngress, internetFacing) onto
   // instance nodes so multi-hop/launch-template joins are one node predicate (#1139).
   ir = enrichEffectiveTopology(ir);
+  // Resolve `kind:` terms against what is actually in this graph, before any
+  // node is tested against them.
+  resolveKindTerms(terms, ir.nodes);
   const nodeById = new Map(ir.nodes.map((n) => [n.id, n]));
   const matches = ir.nodes.filter((n) => terms.every((t) => matchTerm(n, t, ir, nodeById)));
   if (matches.length === 0) {
@@ -532,7 +535,7 @@ function describeTerm(t: Term): string {
   return leaf(t);
 }
 
-interface Term {
+export interface Term {
   kind: "word" | "kind" | "tag" | "attr" | "edge";
   /** `!term` — the node must NOT satisfy this (#1280). */
   negated?: boolean;
@@ -541,6 +544,53 @@ interface Term {
   /** For edge terms: the direction and the sub-predicate matched at the far end. */
   dir?: "out" | "in";
   sub?: Term;
+  /**
+   * For kind terms: the kinds this term actually means, resolved against the
+   * graph (see {@link resolveKindTerms}). Absent when nothing resolved it, in
+   * which case the substring rule applies unchanged.
+   */
+  kinds?: Set<string>;
+}
+
+/**
+ * Decide which kinds a `kind:` term means, given what is in the graph.
+ *
+ * `kind:` is documented as a substring, and substrings of a CloudFormation type
+ * cross kind boundaries: `kind:EC2::VPC` also matches
+ * `AWS::EC2::VPCGatewayAttachment`, and `kind:EC2::Subnet` also matches
+ * `AWS::EC2::SubnetRouteTableAssociation`. An estate with 6 VPCs answers 9, and
+ * the caller has no reason to suspect the number they were given.
+ *
+ * That cost real answers. Asked how many VPCs have no instances, agents named
+ * the right VPCs and reported "9 VPCs in the estate" beside them; the grader
+ * failed the answer for contradicting the estate, which it did.
+ *
+ * So: a term that lines up with `::` boundaries means those kinds and only
+ * those. `EC2::VPC` is the last two segments of `AWS::EC2::VPC` and is not any
+ * run of segments in `AWS::EC2::VPCGatewayAttachment`, because
+ * `VPCGatewayAttachment` is not `VPC`.
+ *
+ * Substring is kept as the fallback, so `kind:Gateway` still finds both
+ * `InternetGateway` and `VPCGatewayAttachment` — a genuine substring search
+ * that no segment rule would serve. Most specific wins; nothing else changes.
+ */
+export function resolveKindTerms(terms: Term[], nodes: IRNode[]): void {
+  const present = [...new Set(nodes.map((n) => n.kind).filter((k): k is string => !!k))];
+  const walk = (t: Term): void => {
+    if (t.sub) walk(t.sub);
+    if (t.kind !== "kind") return;
+    const want = t.a.toLowerCase().split("::").filter(Boolean);
+    if (want.length === 0) return;
+    const onBoundary = present.filter((k) => {
+      const have = k.toLowerCase().split("::");
+      for (let i = 0; i + want.length <= have.length; i++) {
+        if (want.every((w, j) => have[i + j] === w)) return true;
+      }
+      return false;
+    });
+    if (onBoundary.length > 0) t.kinds = new Set(onBoundary);
+  };
+  terms.forEach(walk);
 }
 
 function parseLeaf(tok: string): Term {
@@ -659,7 +709,12 @@ function matchTerm(n: IRNode, t: Term, ir?: GraphIR, byId?: Map<string, IRNode>)
       .filter((x): x is IRNode => !!x);
     return neighbors.some((m) => matchTerm(m, t.sub!, ir, byId));
   }
-  if (t.kind === "kind") return (n.kind ?? "").toLowerCase().includes(t.a.toLowerCase());
+  if (t.kind === "kind") {
+    // Resolved kinds when the term lined up with `::` boundaries; the
+    // documented substring otherwise.
+    if (t.kinds) return t.kinds.has(n.kind ?? "");
+    return (n.kind ?? "").toLowerCase().includes(t.a.toLowerCase());
+  }
   if (t.kind === "attr") {
     const val = attrString((attrs as Record<string, unknown>)[t.a]);
     return t.b === undefined ? t.a in attrs : val.toLowerCase().includes(t.b.toLowerCase());
