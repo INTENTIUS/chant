@@ -5,7 +5,7 @@ description: Extend the Kubernetes lexicon with an operator's CRDs — typed res
 
 Most operators ship their API as Kubernetes CustomResourceDefinitions. Because a CRD carries an `openAPIV3Schema`, the k8s lexicon can generate typed resources from it the same way it generates the built-in Kubernetes types. You do not write a new lexicon for KubeRay, Argo CD, cert-manager, or Crossplane — you add their CRDs to the k8s lexicon and, optionally, author rules against the kinds they introduce.
 
-This is the path KubeRay, Argo CD, Gateway API, the CockroachDB operator, cert-manager, and the Prometheus operator all took. This page documents it.
+This is the path KubeRay, Argo CD, Gateway API, the CockroachDB operator, cert-manager, the Prometheus operator, CloudNativePG, Traefik, and Infisical all took. This page documents it.
 
 :::note[New lexicon vs. third-party CRD]
 Build a [new lexicon](/chant/lexicon-authoring/overview/) when the target is a non-Kubernetes spec (a cloud API, a CI format). Add a CRD here when the target already speaks Kubernetes — anything installed as a CRD belongs in the k8s lexicon, not a lexicon of its own.
@@ -78,6 +78,11 @@ Each CRD kind becomes a resource type `K8s::<Namespace>::<Kind>`. The namespace 
 | `monitoring.coreos.com` | `Monitoring` | `K8s::Monitoring::ServiceMonitor` |
 | `argoproj.io` | `Argo` (override) | `K8s::Argo::Application` |
 | `lambda.aws.amazon.com` | `KubeMicroVM` (override) | `K8s::KubeMicroVM::MicroVM` |
+| `secrets.infisical.com` | `Infisical` (override) | `K8s::Infisical::InfisicalSecret` |
+| `postgresql.cnpg.io` | `Cnpg` (override) | `K8s::Cnpg::Cluster` |
+| `barmancloud.cnpg.io` | `Cnpg` (override) | `K8s::Cnpg::ObjectStore` |
+
+An override earns its place for one of two reasons. Either the first segment reads badly on its own — `secrets.infisical.com` would give `K8s::Secrets::InfisicalSecret`, which looks like a core Secret when `K8s::Core::Secret` is right there — or several groups belong together. The last two rows are the second case: a CNPG `Cluster` names a barman-cloud `ObjectStore` in its `plugins[]` block, so splitting them into `Postgresql` and `Barmancloud` would scatter two kinds that are only ever used as a pair. Flux does the same with six groups.
 
 > The mapping lives in `normalizeGroupName` / `GROUP_NAMESPACE_OVERRIDES` in `lexicons/k8s/src/crd/parser.ts`. Add an override there if a group's first segment collides or reads poorly.
 
