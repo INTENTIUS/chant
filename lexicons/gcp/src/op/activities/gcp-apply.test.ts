@@ -1,4 +1,5 @@
 import { describe, test, expect } from "vitest";
+import { writeFileSync, unlinkSync } from "node:fs";
 import {
   bucketInsertBody,
   pubSubTopicBody,
@@ -12,6 +13,8 @@ import {
   referencedNames,
   orderByReferences,
   pruneOrphans,
+  gcpApply,
+  gcpDelete,
   chantOwnershipLabels,
   isChantOwned,
   pubSubSubscriptionBody,
@@ -454,11 +457,46 @@ describe("ownership + prune (#706)", () => {
       return { status: 200, text: "" }; // DELETE
     };
     const resolve = () => ({ base: "http://x", project: "p" });
-    const pruned = await pruneOrphans(desired, resolve, http);
+    const { pruned, notPrunable } = await pruneOrphans(desired, resolve, http);
     expect(pruned).toEqual([{ kind: "StorageBucket", name: "orphan", deleted: true }]);
+    expect(notPrunable).toEqual([]);
     expect(calls.filter((c) => c.method === "DELETE")).toEqual([
       { method: "DELETE", url: "http://x/storage/v1/b/orphan" },
     ]);
+  });
+
+  // #1447. A kind the prune could not consider was `continue`, so `pruned: []`
+  // came back — which reads as "there was nothing to prune", not "I did not
+  // look at this kind". Same conflation the read path fixed in #1089/#1201.
+  test("a kind with no list capability is reported, not silently skipped", async () => {
+    // IAMServiceAccount is mapped but has no `list` spec.
+    const desired: GcpResource[] = [{ kind: "IAMServiceAccount", metadata: { name: "sa" } }];
+    const calls: string[] = [];
+    const http: GcpHttp = async (method) => {
+      calls.push(method);
+      return { status: 200, text: "{}" };
+    };
+    const { pruned, notPrunable } = await pruneOrphans(desired, () => ({ base: "http://x", project: "p" }), http);
+    expect(pruned).toEqual([]);
+    expect(notPrunable).toEqual([{ kind: "IAMServiceAccount", reason: "no-list-capability" }]);
+    // Reported without touching the transport at all.
+    expect(calls).toEqual([]);
+  });
+
+  // Not in #1447's list, same class: a failed LIST was also `continue`. A 403 or
+  // a 500 meant the kind went unconsidered and the result said nothing.
+  test("a failed list is reported, with the status, not silently skipped", async () => {
+    const desired: GcpResource[] = [{ kind: "StorageBucket", metadata: { name: "keep" } }];
+    const deletes: string[] = [];
+    const http: GcpHttp = async (method, url) => {
+      if (method === "DELETE") deletes.push(url);
+      return method === "GET" ? { status: 403, text: "forbidden" } : { status: 200, text: "" };
+    };
+    const { pruned, notPrunable } = await pruneOrphans(desired, () => ({ base: "http://x", project: "p" }), http);
+    expect(pruned).toEqual([]);
+    expect(notPrunable).toEqual([{ kind: "StorageBucket", reason: "list-failed", detail: "403: forbidden" }]);
+    // And nothing was deleted on the strength of a list that failed.
+    expect(deletes).toEqual([]);
   });
 });
 
@@ -471,5 +509,90 @@ describe("parseManifest (#711)", () => {
     const yaml = "kind: StorageBucket\nmetadata:\n  name: a\n---\nkind: PubSubTopic\nmetadata:\n  name: b\n";
     const docs = parseManifest(yaml, "x.yaml");
     expect(docs.map((d) => d.kind)).toEqual(["StorageBucket", "PubSubTopic"]);
+  });
+});
+
+/**
+ * #1447 — a resource `MAPPERS` has no entry for was dropped with a
+ * `console.log`, and the return value looked exactly like a complete apply.
+ * `ApplyOp` reported success over a partial one.
+ *
+ * The GCP lexicon serializes many more kinds than the six `MAPPERS` covers, so
+ * this is not a hypothetical: anything else in the manifest was silently not
+ * applied.
+ */
+describe("gcpApply / gcpDelete report what they did not attempt (#1447)", () => {
+  /** A manifest with one kind chant can apply and one it cannot. */
+  const manifest = (): string => {
+    const path = `/tmp/chant-1447-${process.pid}-${Math.random().toString(36).slice(2)}.json`;
+    writeFileSync(
+      path,
+      JSON.stringify([
+        { kind: "StorageBucket", metadata: { name: "mapped" }, spec: { location: "US" } },
+        { kind: "SQLInstance", metadata: { name: "unmapped" }, spec: {} },
+      ]),
+    );
+    return path;
+  };
+
+  const ok: GcpHttp = async (method) =>
+    method === "GET" ? { status: 404, text: "" } : { status: 200, text: "{}" };
+
+  test("an unmapped kind lands in notAttempted, not in applied", async () => {
+    const path = manifest();
+    try {
+      const res = await gcpApply({ manifestPath: path, endpoint: "http://x", project: "p" }, undefined, ok);
+      expect(res.applied.map((a) => a.name)).toEqual(["mapped"]);
+      expect(res.notAttempted).toEqual([
+        { kind: "SQLInstance", name: "unmapped", reason: "unsupported-kind" },
+      ]);
+    } finally {
+      unlinkSync(path);
+    }
+  });
+
+  // The distinction the old shape could not express: without notAttempted, this
+  // result and one from a manifest that never declared SQLInstance are identical.
+  test("a fully-applied manifest reports notAttempted empty", async () => {
+    const path = `/tmp/chant-1447-full-${process.pid}.json`;
+    writeFileSync(path, JSON.stringify([{ kind: "StorageBucket", metadata: { name: "only" }, spec: {} }]));
+    try {
+      const res = await gcpApply({ manifestPath: path, endpoint: "http://x", project: "p" }, undefined, ok);
+      expect(res.applied).toHaveLength(1);
+      expect(res.notAttempted).toEqual([]);
+      expect(res.notPrunable).toEqual([]);
+    } finally {
+      unlinkSync(path);
+    }
+  });
+
+  // The delete side matters more: a caller reading only `deleted` would believe
+  // the manifest was fully torn down.
+  test("gcpDelete reports the resources it never attempted to delete", async () => {
+    const path = manifest();
+    try {
+      const res = await gcpDelete({ manifestPath: path, endpoint: "http://x", project: "p" }, undefined, ok);
+      expect(res.deleted.map((d) => d.name)).toEqual(["mapped"]);
+      expect(res.notAttempted).toEqual([
+        { kind: "SQLInstance", name: "unmapped", reason: "unsupported-kind" },
+      ]);
+    } finally {
+      unlinkSync(path);
+    }
+  });
+
+  // A malformed manifest is a different fact from an unsupported kind — one is a
+  // bug in the input, the other a known gap in coverage. Only the second belongs
+  // in notAttempted.
+  test("a manifest entry with no kind throws instead of being skipped", async () => {
+    const path = `/tmp/chant-1447-nokind-${process.pid}.json`;
+    writeFileSync(path, JSON.stringify([{ metadata: { name: "kindless" } }]));
+    try {
+      await expect(
+        gcpApply({ manifestPath: path, endpoint: "http://x", project: "p" }, undefined, ok),
+      ).rejects.toThrow(/no "kind".*kindless.*malformed manifest/s);
+    } finally {
+      unlinkSync(path);
+    }
   });
 });
