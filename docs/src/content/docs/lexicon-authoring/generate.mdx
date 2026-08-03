@@ -236,6 +236,41 @@ upgrade, apply it, regenerate, and revert cleanly if the regeneration fails —
 which is the reason `replace` exists rather than the tooling doing a blind
 string substitution.
 
+### When there is no version to pin to
+
+`upstreamPin` resolves a version constant against GitHub releases or tags. Some
+upstreams offer neither. The CloudFormation Registry schema is a single "latest"
+artifact on an S3-backed host, republished constantly, with no version anywhere
+in the path — so aws generated against whatever AWS shipped that morning, and a
+docs-only branch twice picked up a resource-count move with nothing in the
+commit explaining it (chant #1390).
+
+Where there is no version, pin the **content**: `lexicons/aws/src/spec/pin.ts`
+records a `sha256` over the extracted schemas — sorted `typeName` →
+`sha256(schema)` — plus the type names it covered, and generation refuses when
+upstream no longer matches:
+
+```
+The upstream CloudFormation schema has moved since the pinned one.
+
+  pinned    sha256:a2d99e08…  (1650 resources, accepted 2026-08-03)
+  upstream  sha256:1357a446…  (1651 resource types, +1 against the pin)
+  added     AWS::Fake::NewThing
+```
+
+Two details worth copying if you need the same thing:
+
+- **Digest the extracted content, not the archive.** A repackaged zip has a new
+  `ETag` and new bytes while the schemas inside are identical; a pin that fires
+  on that is noise nobody will keep.
+- **Commit the type names beside the digest.** Generated artifacts are not
+  committed, so without the list an acceptance is one opaque hash replacing
+  another. With it, the PR that moves the pin shows exactly what AWS added.
+
+Unlike the emulator image pins, which only report (chant #808), this one
+refuses. An emulator that drifts fails a test you can see; a spec that drifts
+rewrites committed artifacts in a branch about something else.
+
 ## Next Steps
 
 With generation working, the next step is to [create a serializer](/chant/lexicon-authoring/serializer/) that converts evaluated resources to your target format.
