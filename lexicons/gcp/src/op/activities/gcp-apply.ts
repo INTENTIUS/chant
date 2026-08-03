@@ -533,6 +533,25 @@ export async function waitForOperation(
   throw new Error(`operation did not complete within timeout: ${pollUrl}`);
 }
 
+/**
+ * A manifest entry with no `kind` is malformed, not unsupported (#1447).
+ *
+ * The old guard skipped it in silence, which put a hand-written or truncated
+ * manifest in the same bucket as a kind chant simply has no mapper for. One is
+ * a bug in the input and the other is a known gap in coverage; only the second
+ * belongs in `notAttempted`. Throws so the first surfaces.
+ */
+function requireKind(resource: GcpResource, manifestPath: string): boolean {
+  if (!resource.kind) {
+    const name = resource.metadata?.name;
+    throw new Error(
+      `${manifestPath}: manifest entry has no "kind"${name ? ` (metadata.name: ${name})` : ""} — ` +
+        `a CNRM resource must declare one. This is a malformed manifest, not an unsupported kind.`,
+    );
+  }
+  return true;
+}
+
 /** Parse a built manifest into CNRM resource objects — YAML (multi-doc) or JSON. Pure. */
 export function parseManifest(content: string, path: string): GcpResource[] {
   if (/\.json$/i.test(path)) {
@@ -562,16 +581,53 @@ export interface GcpApplyArgs {
 }
 
 /**
+ * A resource this run did not attempt, and why (#1447).
+ *
+ * The read path learned this in #1089/#1201: a read that never happened is not
+ * the same fact as a resource that is not there, and collapsing the two made
+ * "absent" mean both. `observation.ts` puts it as "a warn on stderr is not a
+ * signal in a change set" — and a `console.log` on stdout is not a signal in an
+ * apply result, for the same reason. So the skips ride the return value.
+ */
+export interface GcpNotAttempted {
+  kind: string;
+  name: string;
+  /** `MAPPERS` has no entry for this kind, so no REST call exists to make. */
+  reason: "unsupported-kind";
+}
+
+/** A kind an owned-only prune could not consider, and why (#1447). */
+export interface GcpNotPrunable {
+  kind: string;
+  /**
+   * - `no-list-capability` — the mapper cannot enumerate live resources of this
+   *   kind, so an owned orphan of it is never even a delete candidate.
+   * - `list-failed` — the list call itself failed. Transient or not, it means
+   *   this kind was not considered, which `pruned: []` alone would report as
+   *   "nothing to prune".
+   */
+  reason: "no-list-capability" | "list-failed";
+  /** Status and body for `list-failed`, so the caller can tell apart a 403 from a 500. */
+  detail?: string;
+}
+
+/**
  * Owned-only prune: for each manifested kind with `list` support, delete the
  * chant-owned live resources whose name is not in `desiredByKind`. Foreign
  * resources (no ownership label) are left alone.
+ *
+ * Returns what it could not consider alongside what it deleted — a kind with no
+ * `list`, or whose list call failed, is reported rather than dropped (#1447).
  */
 export async function pruneOrphans(
   desired: GcpResource[],
   resolve: (mapper: ResourceMapper, resource?: GcpResource) => { base: string; project: string },
   http: GcpHttp = defaultHttp,
   signal?: AbortSignal,
-): Promise<Array<{ kind: string; name: string; deleted: boolean }>> {
+): Promise<{
+  pruned: Array<{ kind: string; name: string; deleted: boolean }>;
+  notPrunable: GcpNotPrunable[];
+}> {
   const desiredByKind = new Map<string, Set<string>>();
   for (const r of desired) {
     if (!r.kind) continue;
@@ -581,12 +637,21 @@ export async function pruneOrphans(
   }
 
   const pruned: Array<{ kind: string; name: string; deleted: boolean }> = [];
+  const notPrunable: GcpNotPrunable[] = [];
   for (const [kind, keep] of desiredByKind) {
     const mapper = MAPPERS[kind];
-    if (!mapper?.list) continue;
+    if (!mapper?.list) {
+      console.log(`prune: cannot list kind ${kind} — owned orphans of it are not considered`);
+      notPrunable.push({ kind, reason: "no-list-capability" });
+      continue;
+    }
     const ctx = resolve(mapper, desired.find((r) => r.kind === kind));
     const res = await http("GET", mapper.list.url(ctx), undefined, signal);
-    if (res.status >= 300) continue;
+    if (res.status >= 300) {
+      console.log(`prune: listing kind ${kind} failed (${res.status}) — not considered`);
+      notPrunable.push({ kind, reason: "list-failed", detail: `${res.status}: ${res.text}` });
+      continue;
+    }
     for (const item of mapper.list.items(parseJson(res.text))) {
       if (!isChantOwned(item.labels) || keep.has(item.name)) continue;
       safeHeartbeat({ step: "prune", kind, name: item.name });
@@ -595,7 +660,7 @@ export async function pruneOrphans(
       pruned.push(result);
     }
   }
-  return pruned;
+  return { pruned, notPrunable };
 }
 
 /**
@@ -603,8 +668,13 @@ export async function pruneOrphans(
  * resource directly to its GCP REST API, targeting a local floci-gcp emulator or
  * real GCP by endpoint override. Unlike AWS/Azure/k8s, GCP has no native deploy
  * service to shell out to, so chant maps each `kind` to a REST call itself (the
- * `MAPPERS` dispatch table). Unknown kinds are skipped. Uses longInfra profile.
- * `http` is injectable for tests.
+ * `MAPPERS` dispatch table). Uses longInfra profile. `http` is injectable for
+ * tests.
+ *
+ * A kind `MAPPERS` does not cover is **reported, not dropped** — it comes back
+ * in `notAttempted` (#1447). Before that, it was a `console.log` and a
+ * populated `applied` array, so a caller could not tell a partial apply from a
+ * complete one and `ApplyOp` reported success either way.
  */
 export async function gcpApply(
   args: GcpApplyArgs,
@@ -613,6 +683,10 @@ export async function gcpApply(
 ): Promise<{
   applied: Array<{ kind: string; name: string; created: boolean; updated: boolean }>;
   pruned: Array<{ kind: string; name: string; deleted: boolean }>;
+  /** Declared resources no REST call was made for. Empty on a complete apply. */
+  notAttempted: GcpNotAttempted[];
+  /** Kinds the prune could not consider. Empty when `prune` is off. */
+  notPrunable: GcpNotPrunable[];
 }> {
   const resources = orderByReferences(parseManifest(readFileSync(args.manifestPath, "utf8"), args.manifestPath));
   const resolve = (mapper: ResourceMapper, resource?: GcpResource) => ({
@@ -621,10 +695,13 @@ export async function gcpApply(
   });
 
   const applied: Array<{ kind: string; name: string; created: boolean; updated: boolean }> = [];
+  const notAttempted: GcpNotAttempted[] = [];
   for (const r of resources) {
-    const mapper = r.kind ? MAPPERS[r.kind] : undefined;
+    const mapper = requireKind(r, args.manifestPath) ? MAPPERS[r.kind as string] : undefined;
     if (!mapper) {
-      if (r.kind) console.log(`skip: no mapper for kind ${r.kind}`);
+      const kind = r.kind as string;
+      console.log(`skip: no mapper for kind ${kind}`);
+      notAttempted.push({ kind, name: r.metadata?.name ?? "?", reason: "unsupported-kind" });
       continue;
     }
     const ctx = resolve(mapper, r);
@@ -635,8 +712,10 @@ export async function gcpApply(
     applied.push(result);
   }
 
-  const pruned = args.prune ? await pruneOrphans(resources, resolve, http, signal) : [];
-  return { applied, pruned };
+  const prune = args.prune
+    ? await pruneOrphans(resources, resolve, http, signal)
+    : { pruned: [], notPrunable: [] };
+  return { applied, pruned: prune.pruned, notAttempted, notPrunable: prune.notPrunable };
 }
 
 /**
@@ -679,15 +758,24 @@ export async function gcpDelete(
   args: GcpApplyArgs,
   signal?: AbortSignal,
   http: GcpHttp = defaultHttp,
-): Promise<{ deleted: Array<{ kind: string; name: string; deleted: boolean }> }> {
+): Promise<{
+  deleted: Array<{ kind: string; name: string; deleted: boolean }>;
+  /** Declared resources no delete was attempted for — the delete-side twin of
+   * `gcpApply`'s field, and the more consequential one: a caller reading only
+   * `deleted` would believe the manifest was fully torn down (#1447). */
+  notAttempted: GcpNotAttempted[];
+}> {
   // Delete in reverse dependency order: a referrer goes before the resource it
   // references.
   const resources = orderByReferences(parseManifest(readFileSync(args.manifestPath, "utf8"), args.manifestPath)).reverse();
   const deleted: Array<{ kind: string; name: string; deleted: boolean }> = [];
+  const notAttempted: GcpNotAttempted[] = [];
   for (const r of resources) {
-    const mapper = r.kind ? MAPPERS[r.kind] : undefined;
+    const mapper = requireKind(r, args.manifestPath) ? MAPPERS[r.kind as string] : undefined;
     if (!mapper) {
-      if (r.kind) console.log(`skip: no mapper for kind ${r.kind}`);
+      const kind = r.kind as string;
+      console.log(`skip: no mapper for kind ${kind}`);
+      notAttempted.push({ kind, name: r.metadata?.name ?? "?", reason: "unsupported-kind" });
       continue;
     }
     const base = (args.endpoint ?? mapper.defaultHost).replace(/\/$/, "");
@@ -697,5 +785,5 @@ export async function gcpDelete(
     console.log(`${result.deleted ? "deleted" : "absent"}: ${result.kind}/${result.name} (${base})`);
     deleted.push(result);
   }
-  return { deleted };
+  return { deleted, notAttempted };
 }

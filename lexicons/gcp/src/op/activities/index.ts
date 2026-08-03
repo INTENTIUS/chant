@@ -27,6 +27,8 @@ export {
   referencedNames,
   orderByReferences,
   pruneOrphans,
+  type GcpNotAttempted,
+  type GcpNotPrunable,
   chantOwnershipLabels,
   isChantOwned,
   resolveGcpProject,
