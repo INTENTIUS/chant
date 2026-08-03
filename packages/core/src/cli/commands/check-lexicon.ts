@@ -446,6 +446,8 @@ export async function checkLexicon(dir: string): Promise<CheckResult> {
         : channel
           ? `marker on ${channel.reads.join(", ")}`
           : "no marker channel — every verdict must be unknown",
+  });
+
   // #1344 — a lexicon that reads its own `chant.config.ts` namespace should
   // declare its shape, or a typo inside that namespace is accepted and silently
   // ignored: `forgejo: { runnerLabel: … }` left the dialect on its defaults with
