@@ -56,7 +56,7 @@ export interface CloudRunServiceProps {
  * });
  * ```
  */
-export const CloudRunServiceComposite = Composite<CloudRunServiceProps>((props) => {
+export const CloudRunServiceComposite = Composite((props: CloudRunServiceProps) => {
   const {
     name,
     image,

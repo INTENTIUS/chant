@@ -65,6 +65,16 @@ jobs:
       - name: Typecheck
         run: npx tsc --noEmit -p packages/core/tsconfig.json
 
+      # The whole repo, not just core (#1366). The root tsconfig includes
+      # `lexicons/**/*` — every lexicon, example and helper script — so all of
+      # it was inside the project TypeScript was configured for and outside the
+      # one CI checked. It had accumulated 91 errors unnoticed, including
+      # composites that erased their own result type and wiring props that
+      # rejected the intrinsics the docs tell you to pass. Enforced here so the
+      # number cannot grow back.
+      - name: Typecheck the whole repo (#1366)
+        run: npx tsc --noEmit
+
       # The k8s API client (#1074) is its own package, so `just build`'s
       # core-only typecheck does not cover it. It is not a lexicon either, so
       # check-lexicons below does not reach it.

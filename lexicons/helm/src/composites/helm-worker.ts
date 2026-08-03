@@ -44,7 +44,7 @@ export interface HelmWorkerResult {
   pdb?: InstanceType<typeof PDB>;
 }
 
-export const HelmWorker = Composite<HelmWorkerProps>((props) => {
+export const HelmWorker = Composite((props: HelmWorkerProps) => {
   const {
     name,
     imageRepository = "worker",

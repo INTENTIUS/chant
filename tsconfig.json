@@ -2,8 +2,14 @@
   "compilerOptions": {
     "target": "ES2020",
     "module": "ESNext",
-    "lib": ["ES2015", "ES2020", "ES2021"],
-    "types": ["node"],
+    "lib": [
+      "ES2015",
+      "ES2020",
+      "ES2021"
+    ],
+    "types": [
+      "node"
+    ],
     "moduleResolution": "node",
     "strict": true,
     "esModuleInterop": true,
@@ -16,30 +22,107 @@
     "noEmit": true,
     "baseUrl": ".",
     "paths": {
-      "@intentius/chant": ["packages/core/src/index.ts"],
-      "@intentius/chant/*": ["packages/core/src/*"],
-      "@intentius/chant-lexicon-aws": ["lexicons/aws/src/index.ts"],
-      "@intentius/chant-lexicon-aws/*": ["lexicons/aws/src/*"],
-      "@intentius/chant-lexicon-gitlab": ["lexicons/gitlab/src/index.ts"],
-      "@intentius/chant-lexicon-gitlab/*": ["lexicons/gitlab/src/*"],
-      "@intentius/chant-lexicon-helm": ["lexicons/helm/src/index.ts"],
-      "@intentius/chant-lexicon-helm/*": ["lexicons/helm/src/*"],
-      "@intentius/chant-lexicon-gcp": ["lexicons/gcp/src/index.ts"],
-      "@intentius/chant-lexicon-gcp/*": ["lexicons/gcp/src/*"],
-      "@intentius/chant-lexicon-k8s": ["lexicons/k8s/src/index.ts"],
-      "@intentius/chant-lexicon-k8s/*": ["lexicons/k8s/src/*"],
-      "@intentius/chant-lexicon-azure": ["lexicons/azure/src/index.ts"],
-      "@intentius/chant-lexicon-azure/*": ["lexicons/azure/src/*"],
-      "@intentius/chant-lexicon-github": ["lexicons/github/src/index.ts"],
-      "@intentius/chant-lexicon-github/*": ["lexicons/github/src/*"],
-      "@intentius/chant-lexicon-forgejo": ["lexicons/forgejo/src/index.ts"],
-      "@intentius/chant-lexicon-forgejo/*": ["lexicons/forgejo/src/*"],
-      "@intentius/chant-test-utils": ["packages/test-utils/src/index.ts"],
-      "@intentius/chant-test-utils/*": ["packages/test-utils/src/*"],
-      "@intentius/chant-k8s-client": ["packages/k8s-client/src/index.ts"],
-      "@intentius/chant-k8s-client/*": ["packages/k8s-client/src/*"]
+      "@intentius/chant": [
+        "packages/core/src/index.ts"
+      ],
+      "@intentius/chant/*": [
+        "packages/core/src/*"
+      ],
+      "@intentius/chant-lexicon-aws": [
+        "lexicons/aws/src/index.ts"
+      ],
+      "@intentius/chant-lexicon-aws/*": [
+        "lexicons/aws/src/*"
+      ],
+      "@intentius/chant-lexicon-gitlab": [
+        "lexicons/gitlab/src/index.ts"
+      ],
+      "@intentius/chant-lexicon-docker": [
+        "lexicons/docker/src/index.ts"
+      ],
+      "@intentius/chant-lexicon-docker/*": [
+        "lexicons/docker/src/*"
+      ],
+      "@intentius/chant-lexicon-fly": [
+        "lexicons/fly/src/index.ts"
+      ],
+      "@intentius/chant-lexicon-fly/*": [
+        "lexicons/fly/src/*"
+      ],
+      "@intentius/chant-lexicon-fountain": [
+        "lexicons/fountain/src/index.ts"
+      ],
+      "@intentius/chant-lexicon-fountain/*": [
+        "lexicons/fountain/src/*"
+      ],
+      "@intentius/chant-lexicon-temporal": [
+        "lexicons/temporal/src/index.ts"
+      ],
+      "@intentius/chant-lexicon-temporal/*": [
+        "lexicons/temporal/src/*"
+      ],
+      "@intentius/chant-lexicon-gitlab/*": [
+        "lexicons/gitlab/src/*"
+      ],
+      "@intentius/chant-lexicon-helm": [
+        "lexicons/helm/src/index.ts"
+      ],
+      "@intentius/chant-lexicon-helm/*": [
+        "lexicons/helm/src/*"
+      ],
+      "@intentius/chant-lexicon-gcp": [
+        "lexicons/gcp/src/index.ts"
+      ],
+      "@intentius/chant-lexicon-gcp/*": [
+        "lexicons/gcp/src/*"
+      ],
+      "@intentius/chant-lexicon-k8s": [
+        "lexicons/k8s/src/index.ts"
+      ],
+      "@intentius/chant-lexicon-k8s/*": [
+        "lexicons/k8s/src/*"
+      ],
+      "@intentius/chant-lexicon-azure": [
+        "lexicons/azure/src/index.ts"
+      ],
+      "@intentius/chant-lexicon-azure/*": [
+        "lexicons/azure/src/*"
+      ],
+      "@intentius/chant-lexicon-github": [
+        "lexicons/github/src/index.ts"
+      ],
+      "@intentius/chant-lexicon-github/*": [
+        "lexicons/github/src/*"
+      ],
+      "@intentius/chant-lexicon-forgejo": [
+        "lexicons/forgejo/src/index.ts"
+      ],
+      "@intentius/chant-lexicon-forgejo/*": [
+        "lexicons/forgejo/src/*"
+      ],
+      "@intentius/chant-test-utils": [
+        "packages/test-utils/src/index.ts"
+      ],
+      "@intentius/chant-test-utils/*": [
+        "packages/test-utils/src/*"
+      ],
+      "@intentius/chant-k8s-client": [
+        "packages/k8s-client/src/index.ts"
+      ],
+      "@intentius/chant-k8s-client/*": [
+        "packages/k8s-client/src/*"
+      ]
     }
   },
-  "include": ["packages/**/*", "lexicons/**/*"],
-  "exclude": ["node_modules", "**/dist/**", "**/docs/**", "**/*.test.ts"]
+  "include": [
+    "packages/**/*",
+    "lexicons/**/*",
+    "types/**/*"
+  ],
+  "exclude": [
+    "node_modules",
+    "**/dist/**",
+    "**/docs/**",
+    "**/*.test.ts"
+  ]
 }

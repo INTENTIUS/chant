@@ -1,9 +1,10 @@
-import { Composite, mergeDefaults } from "@intentius/chant";
+import { Composite, mergeDefaults, type Value } from "@intentius/chant";
 import { Topic, Subscription, Permission } from "../generated";
 import { LambdaFunction, type LambdaFunctionProps } from "./lambda-function";
 
 export interface LambdaSnsProps extends LambdaFunctionProps {
-  topicName?: string;
+  /** `Value<string>`: a name is routinely built with `Sub`/`Ref` (#1366). */
+  topicName?: Value<string>;
   defaults?: LambdaFunctionProps["defaults"] & {
     topic?: Partial<ConstructorParameters<typeof Topic>[0]>;
     subscription?: Partial<ConstructorParameters<typeof Subscription>[0]>;
@@ -11,7 +12,7 @@ export interface LambdaSnsProps extends LambdaFunctionProps {
   };
 }
 
-export const LambdaSns = Composite<LambdaSnsProps>((props) => {
+export const LambdaSns = Composite((props: LambdaSnsProps) => {
   const { defaults } = props;
   const { role, func } = LambdaFunction(props);
 

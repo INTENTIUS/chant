@@ -68,7 +68,7 @@ export interface VpcNetworkProps {
  * });
  * ```
  */
-export const VpcNetwork = Composite<VpcNetworkProps>((props) => {
+export const VpcNetwork = Composite((props: VpcNetworkProps) => {
   const {
     name,
     autoCreateSubnetworks = false,

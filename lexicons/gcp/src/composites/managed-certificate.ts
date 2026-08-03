@@ -26,7 +26,7 @@ export interface ManagedCertificateProps {
   };
 }
 
-export const ManagedCertificate = Composite<ManagedCertificateProps>((props) => {
+export const ManagedCertificate = Composite((props: ManagedCertificateProps) => {
   const {
     name,
     domains,

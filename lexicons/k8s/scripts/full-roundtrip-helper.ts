@@ -119,7 +119,11 @@ if (import.meta.main) {
  */
 async function verifySerialize(
   mod: Record<string, unknown>,
-  originalIR: { resources: Array<{ kind: string }> },
+  // `ResourceIR` carries `type`, not `kind`. Declaring `kind` here made
+  // `r.kind` compile against this local shape while the real IR has none, so
+  // every element mapped to `undefined` and the comparison below passed
+  // vacuously — it compared [undefined] to [undefined] (#1366).
+  originalIR: { resources: Array<{ type: string }> },
   file: string,
 ): Promise<number> {
   // Lazily import serializer to avoid pulling it in when not needed
@@ -141,7 +145,10 @@ async function verifySerialize(
   }
 
   // Serialize back to YAML
-  const yamlOutput = k8sSerializer.serialize(entities);
+  const yamlOutputRaw = k8sSerializer.serialize(entities);
+  // `serialize` returns `string | SerializerResult`; a multi-file result carries
+  // its main document on `primary`.
+  const yamlOutput = typeof yamlOutputRaw === "string" ? yamlOutputRaw : yamlOutputRaw.primary;
 
   if (!yamlOutput || yamlOutput.trim().length === 0) {
     if (process.env.VERBOSE) {
@@ -165,8 +172,8 @@ async function verifySerialize(
   const parser = new K8sParser();
   const roundtrippedIR = parser.parse(yamlOutput);
 
-  const originalKinds = originalIR.resources.map((r) => r.kind).sort();
-  const roundtrippedKinds = roundtrippedIR.resources.map((r) => r.kind).sort();
+  const originalKinds = originalIR.resources.map((r) => r.type).sort();
+  const roundtrippedKinds = roundtrippedIR.resources.map((r) => r.type).sort();
 
   if (originalKinds.length !== roundtrippedKinds.length) {
     if (process.env.VERBOSE) {

@@ -44,7 +44,7 @@ export interface StorageAccountSecureResult {
  * export { storageAccount };
  * ```
  */
-export const StorageAccountSecure = Composite<StorageAccountSecureProps>((props) => {
+export const StorageAccountSecure = Composite((props: StorageAccountSecureProps) => {
   const {
     name,
     location = "[resourceGroup().location]",

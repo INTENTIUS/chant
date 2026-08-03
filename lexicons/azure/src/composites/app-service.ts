@@ -48,7 +48,7 @@ export interface AppServiceResult {
  * export { plan, webApp };
  * ```
  */
-export const AppService = Composite<AppServiceProps>((props) => {
+export const AppService = Composite((props: AppServiceProps) => {
   const {
     name,
     sku = "B1",

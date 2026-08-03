@@ -34,7 +34,7 @@ export interface ContainerInstanceResult {
   containerGroup: InstanceType<typeof containerGroups>;
 }
 
-export const ContainerInstance = Composite<ContainerInstanceProps>((props) => {
+export const ContainerInstance = Composite((props: ContainerInstanceProps) => {
   const {
     name,
     location = "[resourceGroup().location]",

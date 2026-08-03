@@ -97,7 +97,7 @@ export interface WorkerPoolResult {
  * });
  * ```
  */
-export const WorkerPool = Composite<WorkerPoolProps>((props) => {
+export const WorkerPool = Composite((props: WorkerPoolProps) => {
   const {
     name,
     image,

@@ -19,7 +19,10 @@ export interface HelmDaemonSetProps {
   /** Container port (omitted if undefined). */
   port?: number;
   /** Host path volume mounts. */
-  hostPaths?: Array<{ name: string; hostPath: string; mountPath: string }>;
+  /** `readOnly` defaults to true — a host mount is read-only unless a
+   * caller says otherwise. It was hardcoded, so the composite's own example
+   * could not state it and did not typecheck (#1366). */
+  hostPaths?: Array<{ name: string; hostPath: string; mountPath: string; readOnly?: boolean }>;
   /** Include ServiceAccount. Default: true. */
   serviceAccount?: boolean;
   /** Chart appVersion. */
@@ -40,7 +43,7 @@ export interface HelmDaemonSetResult {
   serviceAccount?: InstanceType<typeof ServiceAccount>;
 }
 
-export const HelmDaemonSet = Composite<HelmDaemonSetProps>((props) => {
+export const HelmDaemonSet = Composite((props: HelmDaemonSetProps) => {
   const {
     name,
     imageRepository = "fluent/fluent-bit",
@@ -111,7 +114,7 @@ export const HelmDaemonSet = Composite<HelmDaemonSetProps>((props) => {
     containerSpec.volumeMounts = hostPaths.map((hp) => ({
       name: hp.name,
       mountPath: hp.mountPath,
-      readOnly: true,
+      readOnly: hp.readOnly ?? true,
     }));
   }
 

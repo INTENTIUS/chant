@@ -102,7 +102,7 @@ export interface RayServiceResult {
  * });
  * ```
  */
-export const RayService = Composite<RayServiceProps>((props) => {
+export const RayService = Composite((props: RayServiceProps) => {
   const {
     name,
     namespace,

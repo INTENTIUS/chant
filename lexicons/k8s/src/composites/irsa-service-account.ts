@@ -55,7 +55,7 @@ export interface IrsaServiceAccountResult {
  * });
  * ```
  */
-export const IrsaServiceAccount = Composite<IrsaServiceAccountProps>((props) => {
+export const IrsaServiceAccount = Composite((props: IrsaServiceAccountProps) => {
   const {
     name,
     iamRoleArn,

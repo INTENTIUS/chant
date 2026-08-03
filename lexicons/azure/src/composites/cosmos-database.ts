@@ -39,7 +39,7 @@ export interface CosmosDatabaseResult {
   container: InstanceType<typeof databaseAccounts_sqlDatabases_containers>;
 }
 
-export const CosmosDatabase = Composite<CosmosDatabaseProps>((props) => {
+export const CosmosDatabase = Composite((props: CosmosDatabaseProps) => {
   const {
     name,
     location = "[resourceGroup().location]",

@@ -47,7 +47,7 @@ export interface AzureFileStorageClassResult {
  * });
  * ```
  */
-export const AzureFileStorageClass = Composite<AzureFileStorageClassProps>((props) => {
+export const AzureFileStorageClass = Composite((props: AzureFileStorageClassProps) => {
   const {
     name,
     skuName = "Premium_LRS",

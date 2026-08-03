@@ -49,7 +49,7 @@ export interface AksClusterResult {
  * export { cluster };
  * ```
  */
-export const AksCluster = Composite<AksClusterProps>((props) => {
+export const AksCluster = Composite((props: AksClusterProps) => {
   const {
     name,
     nodeCount = 3,

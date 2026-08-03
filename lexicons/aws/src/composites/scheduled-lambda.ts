@@ -1,9 +1,10 @@
-import { Composite, mergeDefaults } from "@intentius/chant";
+import { Composite, mergeDefaults, type Value } from "@intentius/chant";
 import { EventRule, EventRule_Target, Permission } from "../generated";
 import { LambdaFunction, type LambdaFunctionProps } from "./lambda-function";
 
 export interface ScheduledLambdaProps extends LambdaFunctionProps {
-  ruleName?: string;
+  /** `Value<string>`: a name is routinely built with `Sub`/`Ref` (#1366). */
+  ruleName?: Value<string>;
   schedule: string;
   enabled?: boolean;
   defaults?: LambdaFunctionProps["defaults"] & {
@@ -12,7 +13,7 @@ export interface ScheduledLambdaProps extends LambdaFunctionProps {
   };
 }
 
-export const LambdaScheduled = Composite<ScheduledLambdaProps>((props) => {
+export const LambdaScheduled = Composite((props: ScheduledLambdaProps) => {
   const { defaults } = props;
   const { role, func } = LambdaFunction(props);
 

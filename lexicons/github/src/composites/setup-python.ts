@@ -10,7 +10,7 @@ export interface SetupPythonProps {
   };
 }
 
-export const SetupPython = Composite<SetupPythonProps>((props) => {
+export const SetupPython = Composite((props: SetupPythonProps) => {
   const { defaults } = props;
   const withObj: Record<string, string> = {};
   if (props.pythonVersion !== undefined) withObj["python-version"] = props.pythonVersion;

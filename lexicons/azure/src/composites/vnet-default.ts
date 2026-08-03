@@ -59,7 +59,7 @@ export interface VnetDefaultResult {
  * export { virtualNetwork, subnet1, subnet2, nsg, routeTable };
  * ```
  */
-export const VnetDefault = Composite<VnetDefaultProps>((props) => {
+export const VnetDefault = Composite((props: VnetDefaultProps) => {
   const {
     name,
     addressPrefix = "10.0.0.0/16",

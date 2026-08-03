@@ -30,7 +30,7 @@ export interface RedisCacheResult {
   redisCache: InstanceType<typeof RedisCacheResource>;
 }
 
-export const RedisCache = Composite<RedisCacheProps>((props) => {
+export const RedisCache = Composite((props: RedisCacheProps) => {
   const {
     name,
     location = "[resourceGroup().location]",

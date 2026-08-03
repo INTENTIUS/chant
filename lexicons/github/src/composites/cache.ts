@@ -10,7 +10,7 @@ export interface CacheActionProps {
   };
 }
 
-export const CacheAction = Composite<CacheActionProps>((props) => {
+export const CacheAction = Composite((props: CacheActionProps) => {
   const { defaults } = props;
   const withObj: Record<string, string> = {
     path: props.path,

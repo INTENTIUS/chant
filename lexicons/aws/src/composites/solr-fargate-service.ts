@@ -14,7 +14,13 @@ export interface SolrFargateServiceProps extends FargateServiceProps {
   gcOpts?: string;
 }
 
-export const SolrFargateService = Composite<SolrFargateServiceProps>((props) => {
+/**
+ * A pass-through composite: it returns another composite's instance rather than
+ * building a members record. `CompositeFactoryMembers` admits that explicitly
+ * (#1366) — it works at runtime because a composite instance keeps `members`
+ * and `_definition` non-enumerable, so only its member resources are visible.
+ */
+export const SolrFargateService = Composite((props: SolrFargateServiceProps) => {
   const memoryMb = parseInt(props.memory ?? "4096");
   const solrHeap = props.solrHeap ?? `${Math.floor(memoryMb * 0.45)}m`;
   const gcOpts = props.gcOpts ?? "-XX:+UseG1GC -XX:MaxGCPauseMillis=200";

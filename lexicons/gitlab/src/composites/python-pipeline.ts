@@ -21,7 +21,7 @@ export interface PythonPipelineProps {
   };
 }
 
-export const PythonPipeline = Composite<PythonPipelineProps>((props) => {
+export const PythonPipeline = Composite((props: PythonPipelineProps) => {
   const {
     pythonVersion = "3.12",
     testCommand = "pytest --junitxml=report.xml --cov",

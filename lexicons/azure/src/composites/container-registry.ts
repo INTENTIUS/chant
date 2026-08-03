@@ -44,7 +44,7 @@ export interface ContainerRegistrySecureResult {
  * export { registry };
  * ```
  */
-export const ContainerRegistrySecure = Composite<ContainerRegistrySecureProps>((props) => {
+export const ContainerRegistrySecure = Composite((props: ContainerRegistrySecureProps) => {
   const {
     name,
     sku = "Premium",

@@ -60,7 +60,7 @@ export interface KeyVaultSecureResult {
  * export { vault };
  * ```
  */
-export const KeyVaultSecure = Composite<KeyVaultSecureProps>((props) => {
+export const KeyVaultSecure = Composite((props: KeyVaultSecureProps) => {
   const {
     name,
     tenantId,

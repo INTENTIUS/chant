@@ -1,10 +1,11 @@
-import { Composite, mergeDefaults } from "@intentius/chant";
+import { Composite, mergeDefaults, type Value } from "@intentius/chant";
 import { Queue, EventSourceMapping, Role_Policy } from "../generated";
 import { SQSActions } from "../actions/sqs";
 import { LambdaFunction, type LambdaFunctionProps } from "./lambda-function";
 
 export interface LambdaSqsProps extends LambdaFunctionProps {
-  queueName?: string;
+  /** `Value<string>`: a name is routinely built with `Sub`/`Ref` (#1366). */
+  queueName?: Value<string>;
   batchSize?: number;
   maxBatchingWindow?: number;
   defaults?: LambdaFunctionProps["defaults"] & {
@@ -13,7 +14,7 @@ export interface LambdaSqsProps extends LambdaFunctionProps {
   };
 }
 
-export const LambdaSqs = Composite<LambdaSqsProps>((props) => {
+export const LambdaSqs = Composite((props: LambdaSqsProps) => {
   const { defaults } = props;
 
   const queue = new Queue(mergeDefaults({

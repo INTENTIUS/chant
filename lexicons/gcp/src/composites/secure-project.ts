@@ -41,7 +41,7 @@ export interface SecureProjectProps {
   };
 }
 
-export const SecureProject = Composite<SecureProjectProps>((props) => {
+export const SecureProject = Composite((props: SecureProjectProps) => {
   const {
     name,
     orgId,

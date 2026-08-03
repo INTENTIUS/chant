@@ -52,7 +52,7 @@ export interface CloudSqlInstanceProps {
  * });
  * ```
  */
-export const CloudSqlInstance = Composite<CloudSqlInstanceProps>((props) => {
+export const CloudSqlInstance = Composite((props: CloudSqlInstanceProps) => {
   const {
     name,
     databaseVersion = "POSTGRES_15",

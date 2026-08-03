@@ -22,7 +22,7 @@ const EC2_ASSUME_ROLE = {
   ],
 };
 
-export const Ec2InstanceRole = Composite<Ec2InstanceRoleProps>((props) => {
+export const Ec2InstanceRole = Composite((props: Ec2InstanceRoleProps) => {
   const { defaults } = props;
 
   const role = new Role(mergeDefaults({

@@ -13,7 +13,7 @@ export interface NodeCIProps {
   };
 }
 
-export const NodeCI = Composite<NodeCIProps>((props) => {
+export const NodeCI = Composite((props: NodeCIProps) => {
   const {
     nodeVersion = "22",
     packageManager = "npm",

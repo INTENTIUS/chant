@@ -110,7 +110,7 @@ export interface SidecarAppResult {
  * });
  * ```
  */
-export const SidecarApp = Composite<SidecarAppProps>((props) => {
+export const SidecarApp = Composite((props: SidecarAppProps) => {
   const {
     name,
     image,

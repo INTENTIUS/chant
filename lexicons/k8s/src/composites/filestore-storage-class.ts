@@ -47,7 +47,7 @@ export interface FilestoreStorageClassResult {
  * });
  * ```
  */
-export const FilestoreStorageClass = Composite<FilestoreStorageClassProps>((props) => {
+export const FilestoreStorageClass = Composite((props: FilestoreStorageClassProps) => {
   const {
     name,
     tier = "standard",

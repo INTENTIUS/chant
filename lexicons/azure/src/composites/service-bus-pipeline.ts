@@ -42,7 +42,7 @@ export interface ServiceBusPipelineResult {
   subscription?: InstanceType<typeof namespaces_topics_subscriptions>;
 }
 
-export const ServiceBusPipeline = Composite<ServiceBusPipelineProps>((props) => {
+export const ServiceBusPipeline = Composite((props: ServiceBusPipelineProps) => {
   const {
     name,
     location = "[resourceGroup().location]",

@@ -38,7 +38,7 @@ export interface PrivateServiceProps {
   };
 }
 
-export const PrivateService = Composite<PrivateServiceProps>((props) => {
+export const PrivateService = Composite((props: PrivateServiceProps) => {
   const {
     name,
     networkName,

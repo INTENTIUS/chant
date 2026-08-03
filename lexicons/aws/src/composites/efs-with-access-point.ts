@@ -28,7 +28,7 @@ export interface EfsWithAccessPointProps {
   throughputMode?: "bursting" | "provisioned" | "elastic";
 }
 
-export const EfsWithAccessPoint = Composite<EfsWithAccessPointProps>((props) => {
+export const EfsWithAccessPoint = Composite((props: EfsWithAccessPointProps) => {
   // Ternary (not push-inside-if) keeps the `new`s out of control flow (EVL002).
   const ingressRules: InstanceType<typeof SecurityGroup_Ingress>[] = props.sourceSecurityGroupId
     ? [new SecurityGroup_Ingress({ IpProtocol: "tcp", FromPort: 2049, ToPort: 2049, SourceSecurityGroupId: props.sourceSecurityGroupId })]

@@ -60,7 +60,7 @@ export interface GkeExternalDnsAgentResult {
  * });
  * ```
  */
-export const GkeExternalDnsAgent = Composite<GkeExternalDnsAgentProps>((props) => {
+export const GkeExternalDnsAgent = Composite((props: GkeExternalDnsAgentProps) => {
   const {
     gcpServiceAccountEmail,
     gcpProjectId,

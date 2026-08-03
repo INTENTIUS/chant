@@ -66,7 +66,7 @@ export interface AksExternalDnsAgentResult {
  * });
  * ```
  */
-export const AksExternalDnsAgent = Composite<AksExternalDnsAgentProps>((props) => {
+export const AksExternalDnsAgent = Composite((props: AksExternalDnsAgentProps) => {
   const {
     clientId,
     resourceGroup,

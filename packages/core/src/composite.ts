@@ -7,14 +7,43 @@ import { setProvenance } from "./provenance";
 export const COMPOSITE_MARKER = Symbol.for("chant.composite");
 
 /**
- * A record of named Declarable members produced by a composite factory.
+ * A record of named members produced by a composite factory.
+ *
+ * What a consumer reads off `instance.members`. Deliberately narrow: every
+ * value here is a real Declarable, so `.entityType` and friends resolve without
+ * narrowing. What a factory may RETURN is wider — see
+ * {@link CompositeFactoryMembers}.
  */
 export type CompositeMembers = Record<string, Declarable>;
 
 /**
+ * What a factory is allowed to RETURN — {@link CompositeMembers} plus
+ * `undefined`, used only as the generic constraint.
+ *
+ * A member produced by a conditional spread (`...(cond ? { policy } : {})`) is
+ * typed optional, and an optional property is not assignable to a
+ * required-value record. Widening the constraint lets such a factory typecheck;
+ * widening `CompositeMembers` itself would make every member possibly-undefined
+ * for everyone reading `instance.members`, which is a worse trade.
+ *
+ * The key is absent at runtime rather than present-and-undefined, so nothing
+ * reaches the validation in `Composite` below.
+ */
+export type CompositeFactoryMembers =
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  | Record<string, Declarable | CompositeInstance<any> | undefined>
+  // A pass-through composite returns another composite's INSTANCE rather than
+  // building a record (`return FargateService({...})`). That works at runtime
+  // because `members` and `_definition` are defined non-enumerable below
+  // precisely so an instance exposes only its member resources — but a type
+  // cannot say "non-enumerable", so the instance has to be admitted directly.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  | CompositeInstance<any>;
+
+/**
  * The result of instantiating a composite — contains the marker and expanded members.
  */
-export interface CompositeInstance<M extends CompositeMembers = CompositeMembers> {
+export interface CompositeInstance<M extends CompositeFactoryMembers = CompositeMembers> {
   readonly [COMPOSITE_MARKER]: true;
   readonly members: M;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -24,7 +53,7 @@ export interface CompositeInstance<M extends CompositeMembers = CompositeMembers
 /**
  * A composite definition: a callable that produces a CompositeInstance.
  */
-export interface CompositeDefinition<P, M extends CompositeMembers = CompositeMembers> {
+export interface CompositeDefinition<P, M extends CompositeFactoryMembers = CompositeMembers> {
   (props: P): CompositeInstance<M> & M;
   readonly compositeName: string;
   readonly _id: symbol;
@@ -78,7 +107,7 @@ export class CompositeRegistry {
  * export const storage = SecureStorage({ name: "data" });
  * ```
  */
-export function Composite<P, M extends CompositeMembers = CompositeMembers>(
+export function Composite<P, M extends CompositeFactoryMembers = CompositeMembers>(
   factory: (props: P) => M,
   name?: string,
 ): CompositeDefinition<P, M> {

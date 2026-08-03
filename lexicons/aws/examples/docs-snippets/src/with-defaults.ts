@@ -1,8 +1,10 @@
 import { Sub, AWS, Function as LambdaFunction } from "@intentius/chant-lexicon-aws";
-import { Composite, withDefaults } from "@intentius/chant";
+import { Composite, withDefaults, type Value } from "@intentius/chant";
 
 interface LambdaApiProps {
-  name: string;
+  // `Value<string>`, because the snippet below fills it with `Sub` — a prop a
+  // reader will build from an intrinsic should say so.
+  name: Value<string>;
   runtime: string;
   handler: string;
   timeout: number;

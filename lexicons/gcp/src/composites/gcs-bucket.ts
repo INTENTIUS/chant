@@ -47,7 +47,7 @@ export interface GcsBucketProps {
  * });
  * ```
  */
-export const GcsBucket = Composite<GcsBucketProps>((props) => {
+export const GcsBucket = Composite((props: GcsBucketProps) => {
   const {
     name,
     location = "US",

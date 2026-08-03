@@ -21,7 +21,7 @@ export interface PythonCIProps {
   };
 }
 
-export const PythonCI = Composite<PythonCIProps>((props) => {
+export const PythonCI = Composite((props: PythonCIProps) => {
   const {
     pythonVersion = "3.12",
     testCommand = "pytest --junitxml=report.xml --cov",

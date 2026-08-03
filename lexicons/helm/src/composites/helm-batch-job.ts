@@ -60,7 +60,7 @@ export interface HelmBatchJobResult {
   roleBinding?: InstanceType<typeof RoleBinding>;
 }
 
-export const HelmBatchJob = Composite<HelmBatchJobProps>((props) => {
+export const HelmBatchJob = Composite((props: HelmBatchJobProps) => {
   const {
     name,
     imageRepository = "busybox",

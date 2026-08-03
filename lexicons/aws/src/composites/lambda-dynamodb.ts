@@ -1,4 +1,4 @@
-import { Composite, mergeDefaults } from "@intentius/chant";
+import { Composite, mergeDefaults, type Value } from "@intentius/chant";
 import {
   Table,
   Table_AttributeDefinition,
@@ -11,7 +11,8 @@ import { dynamoDBActionsFor } from "../actions/dynamodb";
 import { LambdaFunction, type LambdaFunctionProps } from "./lambda-function";
 
 export interface LambdaDynamoDBProps extends LambdaFunctionProps {
-  tableName?: string;
+  /** `Value<string>`: a name is routinely built with `Sub`/`Ref` (#1366). */
+  tableName?: Value<string>;
   partitionKey: string;
   sortKey?: string;
   access?: "ReadOnly" | "ReadWrite" | "Full" | "None";
@@ -27,7 +28,7 @@ export interface LambdaDynamoDBProps extends LambdaFunctionProps {
   };
 }
 
-export const LambdaDynamoDB = Composite<LambdaDynamoDBProps>((props) => {
+export const LambdaDynamoDB = Composite((props: LambdaDynamoDBProps) => {
   // Conditional entries via spread keep the `new`s out of the `if` (EVL002).
   const attributeDefinitions = [
     new Table_AttributeDefinition({ AttributeName: props.partitionKey, AttributeType: "S" }),

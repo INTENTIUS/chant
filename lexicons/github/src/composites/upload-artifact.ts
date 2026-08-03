@@ -11,7 +11,7 @@ export interface UploadArtifactProps {
   };
 }
 
-export const UploadArtifact = Composite<UploadArtifactProps>((props) => {
+export const UploadArtifact = Composite((props: UploadArtifactProps) => {
   const { defaults } = props;
   const withObj: Record<string, string> = {
     name: props.name,

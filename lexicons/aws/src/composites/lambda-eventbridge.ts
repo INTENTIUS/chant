@@ -1,9 +1,10 @@
-import { Composite, mergeDefaults } from "@intentius/chant";
+import { Composite, mergeDefaults, type Value } from "@intentius/chant";
 import { EventRule, EventRule_Target, Permission } from "../generated";
 import { LambdaFunction, type LambdaFunctionProps } from "./lambda-function";
 
 export interface LambdaEventBridgeProps extends LambdaFunctionProps {
-  ruleName?: string;
+  /** `Value<string>`: a name is routinely built with `Sub`/`Ref` (#1366). */
+  ruleName?: Value<string>;
   schedule?: string;
   eventPattern?: Record<string, unknown>;
   enabled?: boolean;
@@ -13,7 +14,7 @@ export interface LambdaEventBridgeProps extends LambdaFunctionProps {
   };
 }
 
-export const LambdaEventBridge = Composite<LambdaEventBridgeProps>((props) => {
+export const LambdaEventBridge = Composite((props: LambdaEventBridgeProps) => {
   const { defaults } = props;
   const { role, func } = LambdaFunction(props);
 

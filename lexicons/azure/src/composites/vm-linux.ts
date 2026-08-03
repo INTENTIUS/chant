@@ -66,7 +66,7 @@ export interface VmLinuxResult {
  * export { virtualMachine, nic, nsg, publicIpAddress };
  * ```
  */
-export const VmLinux = Composite<VmLinuxProps>((props) => {
+export const VmLinux = Composite((props: VmLinuxProps) => {
   const {
     name,
     vmSize,

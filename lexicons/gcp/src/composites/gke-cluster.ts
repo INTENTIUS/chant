@@ -80,7 +80,7 @@ export interface GkeClusterProps {
  * });
  * ```
  */
-export const GkeCluster = Composite<GkeClusterProps>((props) => {
+export const GkeCluster = Composite((props: GkeClusterProps) => {
   const {
     name,
     projectId: rawProjectId,

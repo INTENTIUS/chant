@@ -10,7 +10,7 @@ export interface SetupGoProps {
   };
 }
 
-export const SetupGo = Composite<SetupGoProps>((props) => {
+export const SetupGo = Composite((props: SetupGoProps) => {
   const { defaults } = props;
   const withObj: Record<string, string> = {};
   if (props.goVersion !== undefined) withObj["go-version"] = props.goVersion;

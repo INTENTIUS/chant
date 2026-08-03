@@ -67,7 +67,7 @@ export interface AdotCollectorResult {
  * });
  * ```
  */
-export const AdotCollector = Composite<AdotCollectorProps>((props) => {
+export const AdotCollector = Composite((props: AdotCollectorProps) => {
   const {
     region,
     clusterName,

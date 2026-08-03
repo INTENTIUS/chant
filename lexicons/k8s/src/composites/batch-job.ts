@@ -103,7 +103,7 @@ export interface BatchJobResult {
  * });
  * ```
  */
-export const BatchJob = Composite<BatchJobProps>((props) => {
+export const BatchJob = Composite((props: BatchJobProps) => {
   const {
     name,
     image,

@@ -53,7 +53,7 @@ export interface SqlDatabaseResult {
  * export { server, database, firewallRule };
  * ```
  */
-export const SqlDatabase = Composite<SqlDatabaseProps>((props) => {
+export const SqlDatabase = Composite((props: SqlDatabaseProps) => {
   const {
     name,
     adminLogin,

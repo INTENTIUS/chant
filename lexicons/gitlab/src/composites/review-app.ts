@@ -24,7 +24,7 @@ export interface ReviewAppProps {
   };
 }
 
-export const ReviewApp = Composite<ReviewAppProps>((props) => {
+export const ReviewApp = Composite((props: ReviewAppProps) => {
   const {
     name,
     deployScript,

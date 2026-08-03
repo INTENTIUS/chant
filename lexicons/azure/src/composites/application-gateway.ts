@@ -34,7 +34,7 @@ export interface ApplicationGatewayResult {
   gateway: InstanceType<typeof ApplicationGatewayResource>;
 }
 
-export const ApplicationGateway = Composite<ApplicationGatewayProps>((props) => {
+export const ApplicationGateway = Composite((props: ApplicationGatewayProps) => {
   const {
     name,
     location = "[resourceGroup().location]",

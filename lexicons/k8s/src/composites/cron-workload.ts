@@ -74,7 +74,7 @@ export interface CronWorkloadResult {
  * });
  * ```
  */
-export const CronWorkload = Composite<CronWorkloadProps>((props) => {
+export const CronWorkload = Composite((props: CronWorkloadProps) => {
   const {
     name,
     image,

@@ -43,7 +43,7 @@ export interface HelmCRDLifecycleResult {
   clusterRoleBinding: InstanceType<typeof ClusterRoleBinding>;
 }
 
-export const HelmCRDLifecycle = Composite<HelmCRDLifecycleProps>((props) => {
+export const HelmCRDLifecycle = Composite((props: HelmCRDLifecycleProps) => {
   const {
     name,
     crdContent,

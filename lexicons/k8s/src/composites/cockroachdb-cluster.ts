@@ -133,7 +133,7 @@ export interface CockroachDbClusterResult {
  * });
  * ```
  */
-export const CockroachDbCluster = Composite<CockroachDbClusterProps>((props) => {
+export const CockroachDbCluster = Composite((props: CockroachDbClusterProps) => {
   const {
     name,
     namespace,

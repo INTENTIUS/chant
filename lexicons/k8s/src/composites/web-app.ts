@@ -93,7 +93,7 @@ export interface WebAppResult {
  * export { deployment, service, ingress };
  * ```
  */
-export const WebApp = Composite<WebAppProps>((props) => {
+export const WebApp = Composite((props: WebAppProps) => {
   const {
     name,
     image,
