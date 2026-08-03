@@ -14,6 +14,8 @@ import { createSkillsLoader, createDiffTool } from "@intentius/chant/lexicon-plu
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { helmSerializer } from "./serializer";
+import { helmCompletions } from "./lsp/completions";
+import { helmHover } from "./lsp/hover";
 
 export const helmPlugin: LexiconPlugin = {
   name: "helm",
@@ -28,6 +30,12 @@ export const helmPlugin: LexiconPlugin = {
   postSynthChecks() {
     return postSynthCheckList;
   },
+
+  // The providers themselves have lived in src/lsp/ with tests since the
+  // lexicon was written; they were never registered here, so `chant serve lsp`
+  // never reached them (#1342).
+  completionProvider: helmCompletions,
+  hoverProvider: helmHover,
 
   intrinsics(): IntrinsicDef[] {
     return [
