@@ -94,9 +94,23 @@ export interface IREdge {
 export interface IRGroups {
   byLexicon?: Record<string, string[]>;
   byComposite?: Record<string, string[]>;
-  /** Deployable-stack grouping (`stackName → nodeIds`). A stack is a lexicon
-   * partition today; #513 phase 2 regroups by nested child-project. Consumers
-   * (e.g. pinhole's boundary boxes) read this rather than inferring stacks. */
+  /**
+   * Deployable-stack grouping (`stackName → nodeIds`). Consumers (e.g. pinhole's
+   * boundary boxes) read this rather than inferring stacks — which is the point,
+   * so it should never require one.
+   *
+   * Two sources, depending on how the project is shaped:
+   *
+   *  - **side-by-side stacks**, declared in config and composed by
+   *    `buildDeclaredPerStack` — keys are the declared stack names. Nothing is
+   *    inferred; the project stated both the names and the membership.
+   *  - **one source tree** — keys are lexicon partitions, since each lexicon
+   *    serialises to one deployable stack.
+   *
+   * Formerly documented as awaiting "#513 phase 2" to regroup by nested
+   * child-project. #513 is closed and that phase was never filed; directory
+   * partitioning is the exception rather than the rule (#1433).
+   */
   byStack?: Record<string, string[]>;
   /** Live containment (#779): a container node id → the node ids directly inside
    * it (VPC → subnets/SGs, subnet → instances/service). Nested *flatly* — a
@@ -415,11 +429,21 @@ export function buildGraphIr(
     nodes.push(node);
 
     (byLexicon[entity.lexicon] ??= []).push(name);
-    // A stack is a lexicon partition (each lexicon serialises to one deployable
-    // stack — a CloudFormation template, a CI config). `byStack` mirrors that
-    // today; #513 phase 2 will regroup it by nested child-project. It's a
-    // distinct axis from `byLexicon` (which is for provenance/colouring), so it's
-    // emitted separately even where the two currently coincide.
+    // Within ONE source tree a stack is a lexicon partition — each lexicon
+    // serialises to one deployable stack (a CloudFormation template, a CI
+    // config) — so that is what `byStack` reports here. It stays a distinct axis
+    // from `byLexicon` (which is for provenance/colouring), emitted separately
+    // even where the two coincide.
+    //
+    // A project with genuinely separate, side-by-side stacks declares them in
+    // config, and `buildDeclaredPerStack` (./graph-declared.ts) groups those by
+    // their declared names — no inference, since the project already said. That
+    // is the multi-stack shape chant steers toward (#1433).
+    //
+    // This previously promised that "#513 phase 2 will regroup it by nested
+    // child-project". #513 is closed, that phase was never filed, and directory
+    // partitioning is the exception rather than the rule — so the promise is
+    // withdrawn rather than left pointing at a closed issue.
     (byStack[entity.lexicon] ??= []).push(name);
     if (prov?.composite) (byComposite[prov.composite] ??= []).push(name);
   }
