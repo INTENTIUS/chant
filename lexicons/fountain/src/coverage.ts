@@ -28,6 +28,9 @@ export const EXCLUDED_KINDS: Record<string, string> = {
   PromptRequest: "turn-level input inside a conversation run",
   SecretRequest: "secrets are a write-only sub-resource — upserted by fountainApply",
   VaultSecretRequest: "secrets are a write-only sub-resource — upserted by fountainApply",
+  ApplyRequest:
+    "the envelope fountainApply builds around a manifest, not a thing anyone declares — " +
+    "its contents are the Environment/Vault/Agent resources, which are modeled",
 };
 
 export interface KindCoverage {

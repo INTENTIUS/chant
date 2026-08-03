@@ -43,11 +43,18 @@ just validate    # check the generated artifacts
 just docs        # build and serve the docs site
 ```
 
-The spec is a rolling endpoint with no release tag to pin, so generation
-falls back to a committed snapshot (`src/spec/fountain-openapi.snapshot.json`)
-when the live endpoint is unreachable. `chant dev coverage` compares the
-generated surface against that spec and reports properties upstream has
-added, plus the request schemas deliberately left unmodeled.
+Generation is pinned to an upstream release artifact — `FOUNTAIN_SPEC_VERSION`
+in `src/spec/fetch.ts`. The same pin produces the same types on any machine,
+so a regeneration that changes the surface means upstream moved, not that
+someone's laptop was online.
+
+Without a network it reads the committed snapshot
+(`src/spec/fountain-openapi.snapshot.json`) instead. Either way it prints
+which one it used and at what version.
+
+`chant dev coverage` compares the generated surface against that spec and
+reports properties upstream has added, plus the request schemas deliberately
+left unmodeled.
 
 ## Project structure
 
