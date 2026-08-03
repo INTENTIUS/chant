@@ -15,6 +15,7 @@
  */
 
 import { readEnvironmentSnapshots } from "./git";
+import { unqualifiedKey } from "./identity";
 import type { LiveObservation } from "../graph-ir";
 import type { LifecycleSnapshot } from "./types";
 
@@ -72,7 +73,17 @@ export async function replaySnapshots(
   // account-level: the default security group three stacks each recorded is one
   // group, not three. Managed resources are stack-qualified below and cannot
   // collide, so only the unqualified ones need this.
+  //
+  // "Account-level" is the part that needed qualifying (#1416): a resource that
+  // records a region is regional, and two regions' copies are two resources
+  // however equal their ids look. `unqualifiedKey` keys those by region, so the
+  // set below still collapses one region's resource seen from two stacks and no
+  // longer collapses two regions'.
   const seenUnqualified = new Set<string>();
+  // One recorded stack is one region, so there is nothing to merge and nothing
+  // to disambiguate — its ids stay exactly what they were recorded as, which is
+  // also what `chant search --live` gives that project.
+  const merging = stored.size > 1;
   // A stack's snapshot could only exclude what THAT stack manages, so a stack
   // declaring no security groups reported the neighbouring stack's as ambient.
   // The union is only knowable here, with every snapshot in hand.
@@ -97,32 +108,40 @@ export async function replaySnapshots(
     // collide, and none of them join the declared canvas, which qualifies.
     const stack = snapshot.stack;
     const qualify = stack !== undefined && scopedStacks.has(stack);
-    // Dependencies (#1273) are keyed by physical id and are account-level: the
-    // default VPC's route table is one resource however many stacks route
-    // through it. Qualifying those would split it per stack and break the
-    // edges into it.
-    const managed = (id: string, meta: { referencedBy?: string[]; ambient?: boolean }): string =>
-      qualify && !meta.ambient && !(meta.referencedBy && meta.referencedBy.length > 0)
-        ? `${stack}::${id}`
-        : id;
+    // Dependencies (#1273) and ambient resources (#1278) are keyed by physical
+    // id and are NOT stack-qualified: the default VPC's route table is one
+    // resource however many stacks route through it, and qualifying it would
+    // split it per stack and break the edges into it.
+    const unqualifiedByNature = (meta: { referencedBy?: string[]; ambient?: boolean }): boolean =>
+      Boolean(meta.ambient) || Boolean(meta.referencedBy && meta.referencedBy.length > 0);
+    // Region qualification (#1416) applies to exactly those, and never to a
+    // managed resource: an unscoped project's declared canvas joins on bare
+    // ids, so re-keying `web` to `us-east-1::web` would unjoin it from its own
+    // declaration.
+    const keyOf = (id: string, meta: { referencedBy?: string[]; ambient?: boolean; attributes?: Record<string, unknown> }): string => {
+      if (unqualifiedByNature(meta)) return merging ? unqualifiedKey(id, meta) : id;
+      return qualify ? `${stack}::${id}` : id;
+    };
     const resources: Record<string, (typeof snapshot.resources)[string]> = {};
     for (const [id, meta] of Object.entries(snapshot.resources ?? {})) {
-      const key = managed(id, meta);
-      if (key === id) {
+      const key = keyOf(id, meta);
+      if (!qualify || unqualifiedByNature(meta)) {
         // Ambient means "nothing manages this". Another stack managing it makes
         // that false, and reporting it twice would inflate any count over it.
         if (meta.ambient && meta.physicalId && managedPhysicalIds.has(meta.physicalId)) continue;
-        // Unqualified: account-level, so first sighting wins and the rest are
-        // the same resource seen again from another stack's snapshot.
-        if (seenUnqualified.has(id)) continue;
-        seenUnqualified.add(id);
+        // Unqualified: one resource per key, so first sighting wins and the
+        // rest are the same resource seen again from another stack's snapshot.
+        // The key carries the region when there is one, so "the same resource"
+        // no longer spans regions.
+        if (seenUnqualified.has(key)) continue;
+        seenUnqualified.add(key);
       }
       resources[key] = meta;
     }
     const known = new Set(Object.keys(snapshot.resources ?? {}));
     const requalify = (id: string): string => {
       const meta = (snapshot.resources ?? {})[id];
-      return known.has(id) && meta ? managed(id, meta) : id;
+      return known.has(id) && meta ? keyOf(id, meta) : id;
     };
     const edges = (snapshot.edges ?? []).map((e) => ({ ...e, from: requalify(e.from), to: requalify(e.to) }));
     observations.push({
