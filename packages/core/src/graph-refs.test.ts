@@ -188,3 +188,59 @@ describe("traversal name vs rendering label (#1275)", () => {
     expect(edges).toEqual([]);
   });
 });
+
+describe("containment is traversable without being drawn", () => {
+  // "What is inside this" is a query, not a picture. The two had been decided
+  // by one field: a containment rule became a real edge only if it set
+  // `viaAttr`, which a renderer also reads. So making a relationship queryable
+  // meant drawing it, and the list of which ones had been remembered was the
+  // list of which questions could be asked.
+  const catalog: ReferenceCatalog = {
+    identities: [
+      { kind: "Subnet", ids: ["SubnetId"] },
+      { kind: "Vpc", ids: ["VpcId"] },
+    ],
+    refs: [
+      { from: "Eni", path: "SubnetId", targetKind: "Subnet", relation: "containment", label: "in subnet" },
+      { from: "Subnet", path: "VpcId", targetKind: "Vpc", relation: "containment", label: "in VPC" },
+    ],
+  };
+  const nodes = [
+    { id: "vpc-1", kind: "Vpc", lexicon: "x", attrs: { VpcId: "vpc-1" } },
+    { id: "sub-1", kind: "Subnet", lexicon: "x", attrs: { SubnetId: "sub-1", VpcId: "vpc-1" } },
+    { id: "sub-2", kind: "Subnet", lexicon: "x", attrs: { SubnetId: "sub-2", VpcId: "vpc-1" } },
+    { id: "eni-1", kind: "Eni", lexicon: "x", attrs: { SubnetId: "sub-1" } },
+  ];
+
+  it("still draws no containment lines — the boundary stays a boundary", () => {
+    const { edges } = reconstructEdges(nodes, catalog);
+    expect(edges).toEqual([]);
+  });
+
+  it("still reports the boundary pairs a renderer groups by", () => {
+    const { containment } = reconstructEdges(nodes, catalog);
+    expect(containment).toContainEqual({ child: "eni-1", parent: "sub-1", label: "in subnet" });
+    expect(containment).toContainEqual({ child: "sub-1", parent: "vpc-1", label: "in VPC" });
+  });
+
+  it("offers the same pairs as edges a query can walk", () => {
+    const { containmentEdges } = reconstructEdges(nodes, catalog);
+    expect(containmentEdges).toContainEqual({ from: "eni-1", to: "sub-1", kind: "ref", viaAttr: "SubnetId" });
+    expect(containmentEdges).toContainEqual({ from: "sub-1", to: "vpc-1", kind: "ref", viaAttr: "VpcId" });
+  });
+
+  it("no rule had to opt in — neither declares viaAttr", () => {
+    // The point of the change. Both rules above are plain containment; the
+    // traversal name is derived from the attribute the containment was read
+    // through, so a new kind is queryable the day its rule is written.
+    expect(catalog.refs.every((r) => r.viaAttr === undefined)).toBe(true);
+    // eni-1 -> sub-1, and both subnets -> vpc-1.
+    const { containmentEdges } = reconstructEdges(nodes, catalog);
+    expect(containmentEdges).toHaveLength(3);
+  });
+
+  it("an empty container is reached by nothing, which is the whole question", () => {
+    const { containmentEdges } = reconstructEdges(nodes, catalog);
+    expect(containmentEdges.some((e) => e.to === "sub-2")).toBe(false);
+  });
+});

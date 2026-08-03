@@ -72,3 +72,31 @@ describe("awsReferenceCatalog — golden 3-tier VPC", () => {
     expect(groups.privA).toEqual(expect.arrayContaining(["svc", "rds"]));
   });
 });
+
+describe("an instance is in a VPC (#1432 follow-up)", () => {
+  // Subnet, security group and route table all had an "in VPC" rule. The
+  // instance did not, so the one kind every estate question is about reached
+  // its VPC only through its subnet — two hops, which a one-hop `<-` cannot
+  // cross. `describe-instances` returns VpcId directly; nothing had to be
+  // inferred.
+  const nodes = [
+    { id: "vpc-1", kind: "AWS::EC2::VPC", lexicon: "aws", physicalId: "vpc-1", attrs: { VpcId: "vpc-1" } },
+    { id: "vpc-2", kind: "AWS::EC2::VPC", lexicon: "aws", physicalId: "vpc-2", attrs: { VpcId: "vpc-2" } },
+    { id: "web", kind: "AWS::EC2::Instance", lexicon: "aws", physicalId: "i-1", attrs: { VpcId: "vpc-1", SubnetId: "sub-1" } },
+  ];
+
+  it("reaches its VPC in one hop", () => {
+    const { containmentEdges } = reconstructEdges(nodes, awsReferenceCatalog);
+    expect(containmentEdges).toContainEqual({ from: "web", to: "vpc-1", kind: "ref", viaAttr: "VpcId" });
+  });
+
+  it("leaves an empty VPC reached by nothing — the question being asked", () => {
+    const { containmentEdges } = reconstructEdges(nodes, awsReferenceCatalog);
+    expect(containmentEdges.some((e) => e.to === "vpc-2")).toBe(false);
+  });
+
+  it("does not draw it — the VPC stays a boundary", () => {
+    const { edges } = reconstructEdges(nodes, awsReferenceCatalog);
+    expect(edges.some((e) => e.to === "vpc-1")).toBe(false);
+  });
+});

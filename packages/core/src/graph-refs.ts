@@ -86,6 +86,30 @@ export interface DanglingRef {
 export interface ReconstructedEdges {
   edges: IREdge[];
   containment: ContainmentPair[];
+  /**
+   * The same containment pairs, as edges a query can walk.
+   *
+   * Containment is a boundary when you are drawing it and a relationship when
+   * you are asking about it, and those two consumers had been served by one
+   * decision. `edges` is what a renderer draws as lines, so putting "is in this
+   * VPC" there would draw a line from every resource to its VPC and undo the
+   * boxes; that is why containment is kept out of it, and why it stays out.
+   *
+   * But `->`/`<-` is asking which nodes reach which, and being inside something
+   * is a way of reaching it. "Which subnets have no network interfaces in them"
+   * and "which VPCs have no instances in them" are the same question, and both
+   * are containment. With only `edges` to walk, the negation matched everything
+   * and reported an estate where nothing is anywhere.
+   *
+   * The escape hatch this replaces was per-rule: a containment rule could set
+   * `viaAttr` and become a real edge. That put the query layer's needs in a
+   * field the renderer also reads, and it had to be remembered per rule —
+   * `AWS::EC2::Instance -> Subnet` had it and `AWS::EC2::NetworkInterface ->
+   * Subnet` did not, which is the kind of gap hand-maintained lists always
+   * develop. Deriving them here means a containment rule is traversable because
+   * it is a containment rule, not because someone remembered.
+   */
+  containmentEdges: IREdge[];
   dangling: DanglingRef[];
 }
 
@@ -158,6 +182,8 @@ export function reconstructEdges(nodes: IRNode[], catalog: ReferenceCatalog): Re
 
   const edges: IREdge[] = [];
   const containment: ContainmentPair[] = [];
+  const containmentEdges: IREdge[] = [];
+  const seenContEdge = new Set<string>();
   const dangling: DanglingRef[] = [];
   const seenEdge = new Set<string>();
   const seenCont = new Set<string>();
@@ -185,6 +211,15 @@ export function reconstructEdges(nodes: IRNode[], catalog: ReferenceCatalog): Re
             seenCont.add(k);
             containment.push({ child: node.id, parent: match.id, ...(rule.label ? { label: rule.label } : {}) });
           }
+          // Traversable by construction. The attribute the containment was read
+          // through is its traversal name, so `<-attr:` can still discriminate
+          // between two ways of being inside something.
+          const via = rule.viaAttr ?? rule.path;
+          const ke = `${node.id}|${match.id}|${via}`;
+          if (!seenContEdge.has(ke)) {
+            seenContEdge.add(ke);
+            containmentEdges.push({ from: node.id, to: match.id, kind: "ref", viaAttr: via });
+          }
           // A containment relation is a boundary hint, not an edge — unless the
           // rule declares a traversal name (#1275). A fold's first hop is
           // sometimes exactly a containment ("an instance is in a subnet"), and
@@ -202,10 +237,11 @@ export function reconstructEdges(nodes: IRNode[], catalog: ReferenceCatalog): Re
   }
 
   edges.sort((a, b) => `${a.from}|${a.to}|${a.viaAttr}`.localeCompare(`${b.from}|${b.to}|${b.viaAttr}`));
+  containmentEdges.sort((a, b) => `${a.from}|${a.to}|${a.viaAttr}`.localeCompare(`${b.from}|${b.to}|${b.viaAttr}`));
   containment.sort((a, b) => `${a.child}|${a.parent}`.localeCompare(`${b.child}|${b.parent}`));
   dangling.sort((a, b) => `${a.from}|${a.path}|${a.value}`.localeCompare(`${b.from}|${b.path}|${b.value}`));
 
-  return { edges, containment, dangling };
+  return { edges, containment, containmentEdges, dangling };
 }
 
 /**

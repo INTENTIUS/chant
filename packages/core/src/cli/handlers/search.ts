@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 import { build } from "../../build";
-import { buildGraphIr, buildLiveGraphIr, sourceOverlayGraphs, type GraphIR, type IRNode } from "../../graph-ir";
+import { buildGraphIr, buildLiveGraphIr, sourceOverlayGraphs, type GraphIR, type IRNode, type IREdge } from "../../graph-ir";
 import { buildDeclaredPerStack } from "../../graph-declared";
 import { enrichEffectiveTopology } from "../../graph-effective";
 import { reconstructEdges, mergeCatalogs, type ReferenceCatalog } from "../../graph-refs";
@@ -127,6 +127,8 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
       source = { kind: "live" };
     }
     let live = buildLiveGraphIr(observations);
+    // Containment edges, kept aside until after the overlay (see below).
+    let containmentEdges: IREdge[] = [];
     // Live-only: enrichment is a provider call, so it has no place in a replay.
     // A recorded answer that quietly reached for the API would stop being one.
     if (!args.at) {
@@ -147,13 +149,24 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
     // topology has nothing to traverse on anything the declared graph does not
     // already model.
     const catalogs = observing.map((p) => p.referenceCatalog).filter((c): c is ReferenceCatalog => !!c);
+    // Held back until after the overlay — see where it is merged for why.
     if (catalogs.length > 0) {
       // Merge, never replace. A lexicon reports relationships a catalog cannot
       // reconstruct (#1273) — an instance placed in a subnet it did not declare
       // carries a template `Ref` in its attributes, not the physical subnet id,
       // so no identity index resolves it. Overwriting here dropped exactly those
       // edges and left the fold with a chain missing its first hop.
-      const reconstructed = reconstructEdges(live.nodes, mergeCatalogs(catalogs)).edges;
+      // Containment travels with the references here, and only here. `->`/`<-`
+      // asks which nodes reach which, and being inside something is a way of
+      // reaching it: "which subnets have no network interfaces IN them" and
+      // "which VPCs have no instances IN them" are containment questions, and
+      // with only peer references to walk the negation matched everything.
+      //
+      // `graph` still reads `.containment` on its own and draws boundary boxes,
+      // so nothing gains a line it did not have.
+      const rebuilt = reconstructEdges(live.nodes, mergeCatalogs(catalogs));
+      containmentEdges = rebuilt.containmentEdges;
+      const reconstructed = rebuilt.edges;
       const seen = new Set((live.edges ?? []).map((e) => `${e.from}|${e.to}|${e.viaAttr ?? ""}`));
       live = {
         ...live,
@@ -177,6 +190,36 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
         ? await buildDeclaredPerStack(stacks, projectPath)
         : buildGraphIr((await discover(resolve(args.src ?? config.sourceDir ?? "."))).entities, projectPath);
     ir = sourceOverlayGraphs(declared, live);
+    // Containment goes on AFTER the overlay, not through it.
+    //
+    // `sourceOverlayGraphs` admits a live edge only when one end is foreign,
+    // because "declared edges already cover every declared relationship". That
+    // is true of the references it was written for and false of containment:
+    // the declared canvas carries what the source *says*, and no source says
+    // "this instance is in this VPC" — the instance declares a subnet, and the
+    // VPC is implied by the account.
+    //
+    // So an instance and its VPC, both declared, had their containment dropped
+    // between them, while an instance in the account's DEFAULT VPC kept it
+    // because that VPC is foreign. "Which VPCs have no instances" answered
+    // correctly for the one VPC nobody declared and wrongly for every VPC
+    // somebody did.
+    if (containmentEdges.length > 0) {
+      const present = new Set(ir.nodes.map((n) => n.id));
+      const seen = new Set(ir.edges.map((e) => `${e.from}|${e.to}|${e.viaAttr ?? ""}`));
+      ir = {
+        ...ir,
+        edges: [
+          ...ir.edges,
+          ...containmentEdges.filter(
+            (e) =>
+              present.has(e.from) &&
+              present.has(e.to) &&
+              !seen.has(`${e.from}|${e.to}|${e.viaAttr ?? ""}`),
+          ),
+        ],
+      };
+    }
     // Carry live-derived attrs onto the declared canvas — some facts only exist
     // in live account state (e.g. `internetFacing` for an instance in the
     // account's default VPC, whose route table chant does not model). The
