@@ -69,6 +69,37 @@ export function serviceUrl(service: string, endpoint?: string, region = DEFAULT_
   return `${(endpoint ?? `https://${service}.${region}.amazonaws.com`).replace(/\/$/, "")}/`;
 }
 
+/**
+ * How the request says which region it is for.
+ *
+ * Against real AWS the region is the hostname, which is why `serviceUrl` takes
+ * it. Against an endpoint override there is only one host for every region, so
+ * the hostname carries nothing and the region has to travel in the request —
+ * and every emulator reads it where a real SDK puts it, in the credential scope
+ * of the `Authorization` header.
+ *
+ * Without this, a stack observed with `region: "us-west-1"` was read against
+ * whatever region the emulator defaults to. The result is not an error: the
+ * stack genuinely does not exist in us-east-1, so `describeResources` returned
+ * an empty observation and the snapshot recorded the region as holding nothing.
+ * A three-region estate snapshotted as one region and nothing said so.
+ *
+ * This is NOT SigV4. The signature is a placeholder and real AWS rejects it —
+ * as it already rejects every request from this module, which is unsigned by
+ * design (see the header comment). It carries the scope, nothing more, and it
+ * must not be mistaken for the signed read path that would replace it.
+ */
+function regionScope(service: string, region?: string): Record<string, string> {
+  if (!region) return {};
+  const day = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+  const key = process.env.AWS_ACCESS_KEY_ID || "chant";
+  return {
+    authorization:
+      `AWS4-HMAC-SHA256 Credential=${key}/${day}/${region}/${service}/aws4_request, ` +
+      "SignedHeaders=host, Signature=unsigned",
+  };
+}
+
 /* ── CloudFormation Query ─────────────────────────────────────────────────── */
 
 /**
@@ -128,7 +159,17 @@ export async function cfnQuery(
   const http = options.http ?? defaultHttp;
   const url = serviceUrl("cloudformation", options.endpoint, options.region);
   const body = new URLSearchParams({ Action: action, Version: CFN_API_VERSION, ...params }).toString();
-  const res = await http(url, { headers: { "content-type": "application/x-www-form-urlencoded" }, body }, options.signal);
+  const res = await http(
+    url,
+    {
+      headers: {
+        "content-type": "application/x-www-form-urlencoded",
+        ...regionScope("cloudformation", options.region),
+      },
+      body,
+    },
+    options.signal,
+  );
   const err = xmlError(res.text);
   if (err || res.status >= 400) {
     throw new AwsReadError(
@@ -203,6 +244,7 @@ async function cloudControl(
       headers: {
         "content-type": "application/x-amz-json-1.0",
         "x-amz-target": `${CLOUD_CONTROL_TARGET_PREFIX}.${operation}`,
+        ...regionScope("cloudcontrolapi", options.region),
       },
       body: JSON.stringify(payload),
     },
