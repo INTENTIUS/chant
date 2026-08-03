@@ -288,15 +288,17 @@ export default op;
 | target | delete path | what bounds it |
 |---|---|---|
 | `kubectl` | a sweep filtered by `app.kubernetes.io/managed-by=chant` (and by the stack when `ownership.stack` is set), restricted to the namespaces the apply touched | the ownership marker — an unmarked object is never touched |
+| `arm` | `pruneArmOrphans`, which lists the resource group and deletes only resources carrying chant's ownership tag | the ownership tag — an untagged resource is never touched |
 | `cloudformation` | the stack deletes resources removed from its template | the stack — a resource CloudFormation did not create is not in it |
-| `arm` | `az deployment group create --mode Complete` | the resource group, **not** the ownership marker |
 
-The first two are owned-only by construction. The ARM target is not, and the difference is destructive.
+All three are owned-only by construction.
 
-<Aside type="caution" title="`arm` deletes at resource-group scope">
-ARM Complete mode removes every resource in the resource group that the template does not declare — including resources chant never applied. `delete: "owned-only"` and `delete: "gated"` both select it, so neither is owned-only on this target.
+<Aside type="note" title="`arm` used to delete at resource-group scope">
+Before [#1448](https://github.com/INTENTIUS/chant/issues/1448), the ARM target ran `az deployment group create --mode Complete`, which removes every resource in the resource group the template does not declare — including resources chant never applied. Both `owned-only` and `gated` selected it, so neither was owned-only on that target.
 
-Until [#1448](https://github.com/INTENTIUS/chant/issues/1448) lands, either keep `delete: "never"` on `arm` targets, or give the stack a resource group it is the sole occupant of. The azure lexicon's own `azApply` activity prunes marker-scoped and can be called directly from a hand-written Op in the meantime.
+It now routes to the azure lexicon's `azApply`, which prunes through the ownership tag. If you worked around this by keeping `delete: "never"` on `arm` targets, or by giving the stack a resource group it was the sole occupant of, neither is necessary any more.
+
+One caveat that is not a chant limitation: **floci-az drops resource tags**, so nothing reads back as chant-owned there and an owned-only prune deletes nothing. It fails closed rather than open, but it means the prune can only be verified against real Azure.
 </Aside>
 
 ### Field ownership on the kubectl target
