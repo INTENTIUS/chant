@@ -189,6 +189,16 @@ export const nightly = new ScheduledBackup({
     cluster: { name: "pg" },
     method: "plugin",
     pluginConfiguration: { name: "barman-cloud.cloudnative-pg.io" },
+<Aside type="caution">
+`ScheduledBackup.schedule` takes **six** fields, leading with seconds — not the five a Kubernetes `CronJob` takes. `"0 47 2 * * *"` above is 02:47 daily.
+
+Write the five-field form out of habit — `"47 2 * * *"`, meaning 02:47 to every other cron on the cluster — and CNPG reads it as second 47 of minute 2 of *every hour*. The schema types the field as a plain string, so nothing rejects it. You get 24 base backups a day and no error anywhere.
+</Aside>
+
+<Aside type="note">
+Adding the `plugins` block to a live Cluster injects the plugin sidecar, which **rolls the Postgres pods**. At `instances: 1` that is a brief outage.
+</Aside>
+
 ## Traefik
 
 `traefik.io`, pinned to chart **v41.1.0**. Traefik's own routing surface. An `IngressRoute` is not a `networking.k8s.io` `Ingress` with annotations — it is a separate CRD with its own matcher grammar, so before this an estate fronted by Traefik had an edge chant could not express.
@@ -252,18 +262,13 @@ export const plain = new IngressRoute({
 ```
 
 <Aside type="caution">
-`ScheduledBackup.schedule` takes **six** fields, leading with seconds — not the five a Kubernetes `CronJob` takes. `"0 47 2 * * *"` above is 02:47 daily.
-
-Write the five-field form out of habit — `"47 2 * * *"`, meaning 02:47 to every other cron on the cluster — and CNPG reads it as second 47 of minute 2 of *every hour*. The schema types the field as a plain string, so nothing rejects it. You get 24 base backups a day and no error anywhere.
-</Aside>
-
-<Aside type="note">
-Adding the `plugins` block to a live Cluster injects the plugin sidecar, which **rolls the Postgres pods**. At `instances: 1` that is a brief outage.
 A `middlewares` entry with no `namespace` is looked up in the route's own namespace. Point at one that lives elsewhere and forget the qualifier, and Traefik finds nothing, applies no middleware, and serves the route anyway — so in the example above, plain HTTP would keep working instead of redirecting. Nothing errors.
 </Aside>
 
 <Aside type="note">
 The pin is the **chart** version, which is not the Traefik version: chart v41.1.0 ships Traefik v3.7.9. When bumping, check both.
+</Aside>
+
 ## Infisical
 
 `secrets.infisical.com`, pinned to operator **v0.11.7**. Binds a Kubernetes Secret to an external secret provider.
