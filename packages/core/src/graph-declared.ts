@@ -22,12 +22,24 @@ export async function buildDeclaredPerStack(
 ): Promise<GraphIR> {
   const nodes: IRNode[] = [];
   const edges: GraphIR["edges"] = [];
+  // Which nodes belong to which stack (#1433). This is not derived or guessed:
+  // the stack is declared in config and every node here is being renamed with
+  // its name on the line below. The membership was always known and thrown
+  // away, which left `byStack` — the axis consumers draw boundary boxes from —
+  // empty for the one project shape that genuinely has side-by-side stacks.
+  const byStack: Record<string, string[]> = {};
   for (const st of stacks) {
     if (!st.src) continue;
     const g = buildGraphIr((await discover(resolve(projectPath, st.src))).entities, projectPath);
     const q = (id: string) => `${st.name}::${id}`;
-    for (const n of g.nodes) nodes.push({ ...n, id: q(n.id) });
+    for (const n of g.nodes) {
+      const id = q(n.id);
+      nodes.push({ ...n, id });
+      (byStack[st.name] ??= []).push(id);
+    }
     for (const e of g.edges) edges.push({ ...e, from: q(e.from), to: q(e.to) });
   }
-  return { nodes, edges, groups: {} };
+  for (const ids of Object.values(byStack)) ids.sort();
+  const groups: GraphIR["groups"] = Object.keys(byStack).length ? { byStack } : {};
+  return { nodes, edges, groups };
 }
