@@ -17,22 +17,25 @@ These must all pass for the command to exit 0. Run for real via `just check-lexi
 
 | Check | What it verifies |
 |---|---|
-| `src/plugin.ts` exists | Plugin entry point |
-| `src/serializer.ts` exists | Build output serializer |
-| At least 1 lint rule | `src/lint/rules/*.ts` (not `index.ts`) |
-| At least 1 post-synth check | `src/lint/post-synth/*.ts` (not `index.ts`/`helpers.ts`) |
-| `src/lsp/completions.ts` exists | LSP completion provider |
-| `src/lsp/hover.ts` exists | LSP hover provider |
-| `dist/manifest.json` exists | Lexicon bundle was built |
-| `dist/manifest.json` declares a `chantVersion` | Not silently absent — see [Declaring `chantVersion`](#chantversion) below |
-| `package.json` packaging shape | `exports["."].default` is `./src/index.ts`; `build` script deletes emitted `.js`/`.js.map` from `dist/` |
-| At least 1 example | Non-empty subdirectory in `examples/` |
-| **Every shipped example builds** | Discovers and serializes each `examples/*/src/` — not just counts them (chant #1067; see [core-concepts](https://github.com/INTENTIUS/chant/issues/1067) for the defect this caught) |
-| **Registered intrinsics are exported** | Every `plugin.ts` `intrinsics()` entry's `name` resolves to a real export of `src/index.ts` (chant #1067) |
-| **Registered intrinsics' `isTag` matches how they're authored** | A tagged-template claim (`isTag: true`) must correspond to a function whose first parameter is `TemplateStringsArray`; a plain-call claim (`isTag: false`) to anything else (chant #1067 — this is exactly the check that would have caught #1039 in both directions) |
-| `plugin.test.ts` exists | Plugin unit test |
-| `serializer.test.ts` exists | Serializer unit test |
-| At least 1 `.mdx` doc page | Documentation exists |
+| `src/plugin.ts exists` | Plugin entry point |
+| `src/serializer.ts exists` | Build output serializer |
+| `At least 1 lint rule in src/lint/rules/` | `.ts` files other than `index.ts` |
+| `At least 1 post-synth check` | `src/lint/post-synth/*.ts`, excluding `index.ts` and helpers |
+| `src/lsp/completions.ts exists` | LSP completion provider |
+| `src/lsp/hover.ts exists` | LSP hover provider |
+| `dist/manifest.json exists` | The lexicon bundle was built |
+| `dist/manifest.json declares a chantVersion` | Present and shaped like a version — see [below](#chantversion) |
+| `package.json routes exports["."].default at ./src/index.ts and deletes emitted JS in build` | The packaging shape every consumer depends on |
+| `At least 1 example in examples/` | A non-empty subdirectory |
+| `Every shipped example builds` | Discovers and serializes each `examples/*/src/` rather than counting directories (chant #1067) |
+| `Registered intrinsics are exported by the package` | Every `intrinsics()` entry's `name` resolves to a real export of `src/index.ts` (chant #1067) |
+| `Registered intrinsics' isTag matches how they're authored` | `isTag: true` requires a first parameter typed `TemplateStringsArray`; `isTag: false` requires anything else (chant #1067) |
+| `Registered intrinsics' foldsAsCall opt-in is only on plain calls` | The call-form opt-in cannot be declared on a tagged template, which has no call form to fold (chant #1044) |
+| `MCP tools and resources register under one well-formed namespace` | The name an agent sees is `<lexicon>:<verb>` / `chant://<lexicon>/<path>`, not a doubled or scheme-carrying variant (chant #1341) |
+| `plugin.test.ts exists` | Plugin unit test |
+| `serializer.test.ts exists` | Serializer unit test |
+| `At least 1 .mdx doc page` | Documentation exists |
+| `Every doc page is reachable from the sidebar` | Starlight has no auto-discovery, so a page missing from the sidebar is reachable only by direct URL (chant #1312) |
 
 ### `chantVersion`
 
@@ -44,22 +47,20 @@ Warnings — these make the lexicon useful in practice.
 
 | Check | What it verifies |
 |---|---|
-| Uncommented `mcpTools` | MCP tool contributions active |
-| Uncommented `mcpResources` | MCP resource contributions active |
-| Uncommented `skills` | AI skills active |
-| Uncommented `detectTemplate` | Template detection active |
-| Uncommented `initTemplates` | Init templates active |
-| At least 1 composite | `src/composites/*.ts` (not `index.ts`) |
-| At least 3 examples | Broader usage coverage |
-| `completions.test.ts` exists | LSP completions tested |
-| `hover.test.ts` exists | LSP hover tested |
-| `default-labels.test.ts` exists | Default labels/annotations tested |
-| `coverage.test.ts` exists | Coverage analysis tested |
-| `coverage.ts` implemented | No "not yet implemented" placeholder |
-| At least 8 doc pages | Comprehensive documentation — recommended topics: overview, getting-started, resources, intrinsics, pseudo-parameters, composites, lint-rules, importing |
-| At least 15 post-synth checks | Covering security, correctness, and best practices (see [Post-Synth Check Guide](/chant/lexicon-authoring/post-synth-checks/)) |
-| At least 3 skills | Core patterns, cloud/platform-specific, advanced patterns (see [Skills Authoring Guide](/chant/lexicon-authoring/skills/)) |
-| At least 3 initTemplates | Default, domain-specific variant 1, domain-specific variant 2 |
+| `plugin.ts has uncommented mcpTools` | MCP tool contributions active |
+| `plugin.ts has uncommented mcpResources` | MCP resource contributions active |
+| `plugin.ts has uncommented skills` | AI skills active |
+| `plugin.ts has uncommented detectTemplate` | Template detection active |
+| `plugin.ts has uncommented initTemplates` | Init templates active |
+| `At least 1 composite in src/composites/` | `.ts` files other than `index.ts` |
+| `At least 3 examples` | Broader usage coverage |
+| `src/lsp/completions.test.ts exists` | LSP completions tested |
+| `src/lsp/hover.test.ts exists` | LSP hover tested |
+| `coverage.ts is implemented` | No "not yet implemented" placeholder |
+| `At least 8 doc pages` | Comprehensive documentation — recommended topics: overview, getting-started, resources, intrinsics, pseudo-parameters, composites, lint-rules, importing |
+| `At least 15 post-synth checks` | Covering security, correctness, and best practices (see [Post-Synth Check Guide](/chant/lexicon-authoring/post-synth-checks/)) |
+| `At least 3 skills` | Core patterns, cloud/platform-specific, advanced patterns (see [Skills Authoring Guide](/chant/lexicon-authoring/skills/)) |
+| `At least 3 initTemplates` | Default, domain-specific variant 1, domain-specific variant 2 |
 
 ## Tier 3 — Thoroughness
 
@@ -67,20 +68,34 @@ Informational — tracks depth of testing and feature coverage.
 
 | Check | What it verifies |
 |---|---|
-| Each lint rule has a `.test.ts` | Per-rule or consolidated test coverage (e.g. `rules.test.ts`) |
-| Each post-synth has a `.test.ts` | Per-check or consolidated test coverage (e.g. `post-synth.test.ts`) |
-| `import/parser.test.ts` exists | Import parser tested |
-| `import/generator.test.ts` exists | Import generator tested |
-| `import/roundtrip.test.ts` exists | Import round-trip tested |
-| `exportResources()` implemented | Live export for `chant import --from` ([Implementing Live Export](/chant/lexicon-authoring/live-export/)) |
-| Ownership marker + `owned` filter | Stamps the ownership marker and queries it on describe/export (degrades to detect-only where no marker channel exists) |
-| `typecheck.test.ts` exists | Type-level verification |
-| `roundtrip.test.ts` exists | Serialize/deserialize round-trip |
-| At least 5 composites | Rich composition library |
-| `src/actions/` with actions | Automation actions |
-| At least 5 examples with tests | Tested usage patterns (per-example or consolidated root test) |
-| `validate.ts` checks at least 30 required names | Deep artifact validation covering resources, property types, and bundle files |
-| Composite tests exist | `composites.test.ts` covering all composites (props, types, defaults, dependencies) |
+| `Each lint rule has a .test.ts` | Per-rule or consolidated coverage (e.g. `rules.test.ts`) |
+| `Each post-synth check has a .test.ts` | Per-check or consolidated coverage (e.g. `post-synth.test.ts`) |
+| `typecheck.test.ts exists` | Type-level verification |
+| `roundtrip.test.ts exists` | Serialize/deserialize round-trip |
+| `At least 5 composites` | Rich composition library |
+| `src/actions/ with at least 1 action` | Automation actions |
+| `validate.ts checks at least 30 required names` | Deep artifact validation across resources, property types, and bundle files |
+| `Composite test file exists` | `composites.test.ts` covering props, types, defaults, dependencies |
+| `At least 5 examples with tests` | Per-example or consolidated root test |
+
+## What the tool does not check
+
+The three tables above are the whole of `chant dev check-lexicon`, and a test
+asserts that — a row here with no matching check, or a check with no row, fails
+the build (chant #1343). Several things worth doing are consequently absent from
+them, and were previously listed as though they were verified:
+
+| Not checked | Where it lives instead |
+|---|---|
+| `exportResources()` implemented | [Implementing Live Export](/chant/lexicon-authoring/live-export/) |
+| Ownership marker stamped and queried on describe/export | [Observation](/chant/lexicon-authoring/observation/); the contract gap is chant #1348 |
+| `import/parser.test.ts`, `import/generator.test.ts`, `import/roundtrip.test.ts` | [Importing Templates](/chant/lexicon-authoring/importing/) |
+| `default-labels.test.ts`, `coverage.test.ts` | [Testing Your Lexicon](/chant/lexicon-authoring/testing/) |
+
+Most of the checks that do run assert that a **file exists**, not that the plugin
+wires it up — helm ships `src/lsp/completions.ts` with passing tests and never
+registers `completionProvider`, which passes both tiers today. Closing that is
+chant #1342.
 
 ## Recommended Post-Synth Check Categories
 
@@ -155,6 +170,6 @@ After scaffolding with `chant init lexicon`:
 
 ## Reference implementations
 
-- **K8s** — the most mature lexicon: 29 post-synth checks, 9 skills, 33 required names, full docs site
-- **Azure** — comprehensive ARM template lexicon with 20 post-synth checks, 4 skills, and 14 doc pages
-- **AWS** — full coverage across all tiers, including per-rule tests and composites
+- **K8s** — the most mature lexicon: 29 post-synth checks, 9 skills, 30 required names, full docs site
+- **Azure** — comprehensive ARM template lexicon with 20 post-synth checks, 4 skills, and 15 doc pages
+- **AWS** — the broadest surface: 47 post-synth checks, per-rule tests, and the largest composite library. Its `validate.ts` names only 6 required artifacts, so it does not pass the tier-3 required-names check
