@@ -29,8 +29,16 @@ export type CompositeMembers = Record<string, Declarable>;
  * The key is absent at runtime rather than present-and-undefined, so nothing
  * reaches the validation in `Composite` below.
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export type CompositeFactoryMembers = Record<string, Declarable | CompositeInstance<any> | undefined>;
+export type CompositeFactoryMembers =
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  | Record<string, Declarable | CompositeInstance<any> | undefined>
+  // A pass-through composite returns another composite's INSTANCE rather than
+  // building a record (`return FargateService({...})`). That works at runtime
+  // because `members` and `_definition` are defined non-enumerable below
+  // precisely so an instance exposes only its member resources — but a type
+  // cannot say "non-enumerable", so the instance has to be admitted directly.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  | CompositeInstance<any>;
 
 /**
  * The result of instantiating a composite — contains the marker and expanded members.
