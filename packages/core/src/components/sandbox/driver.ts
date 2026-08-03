@@ -1,4 +1,5 @@
 import { join, resolve } from "node:path";
+import { params as currentBuildParams } from "../../params";
 
 /**
  * chant #1051 — generates the source of the "driver" module that runs INSIDE
@@ -29,6 +30,12 @@ const COMPONENTS_DIR = join(HERE, "..");
 /** Absolute paths to chant's OWN trusted modules the generated driver imports — resolved relative to THIS file's own location on disk, exactly like `../../discovery/sandbox/driver.ts` does for the entity path (works whether chant runs from the monorepo or a consumer's `node_modules`). */
 const DISCOVER_MODULE = join(COMPONENTS_DIR, "discover.ts");
 const CHILD_ERRORS_MODULE = join(COMPONENTS_DIR, "..", "discovery", "sandbox", "child-errors.ts");
+// chant #1108 — same re-binding the entity driver does (see ../../discovery/
+// sandbox/driver.ts's PARAMS_MODULE doc): the child's copy of the shared
+// `params` object starts empty, so a `*.component.ts` file importing
+// `@intentius/chant/params` would otherwise see `{}` under sandboxed
+// discovery no matter what the parent resolved.
+const PARAMS_MODULE = join(COMPONENTS_DIR, "..", "params.ts");
 
 export interface GenerateComponentDriverOptions {
   /** Absolute paths to every discovered `*.component.ts` file for this build. */
@@ -52,6 +59,11 @@ export function generateComponentDriverSource(options: GenerateComponentDriverOp
   const lines: string[] = [
     `import { collectComponents } from ${lit(DISCOVER_MODULE)};`,
     `import { classifyChildError } from ${lit(CHILD_ERRORS_MODULE)};`,
+    `import { setBuildParams } from ${lit(PARAMS_MODULE)};`,
+    ``,
+    // chant #1108 — snapshot of the parent's resolved build-time parameter
+    // values (scalars only), bound before any component file is imported.
+    `setBuildParams(${lit({ ...currentBuildParams })});`,
     ``,
     `function send(payload) {`,
     `  if (typeof process.send === "function") process.send(payload);`,
