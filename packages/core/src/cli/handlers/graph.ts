@@ -7,7 +7,7 @@ import { buildDeclaredPerStack } from "../../graph-declared";
 import { reconstructEdges, mergeCatalogs, containmentGroups, type ReferenceCatalog, type ContainmentPair } from "../../graph-refs";
 import { observeResources } from "../../lifecycle/observe";
 import { replaySnapshots, hasSnapshot } from "../../lifecycle/replay";
-import { loadChantConfig, environmentNames } from "../../config";
+import { loadChantConfig, environmentNames, loadChantConfigUpward, type ChantConfig } from "../../config";
 import { applyLiveEndpoint } from "../../live-endpoint";
 import { applyDetail, type DetailLevel } from "../../graph-detail";
 import { applyLens, parseLens } from "../../graph-lens";
@@ -20,8 +20,41 @@ import { readFileSync } from "node:fs";
 import { formatError, formatWarning, formatBold } from "../format";
 import type { CommandContext } from "../registry";
 import { computeComponentGraph, generateComponentsPipeline } from "../../components/cli-support";
+import { resolveCliBuildParams, parseParamFlags } from "../build-params-cli";
+import type { BuildParamProvenance } from "../../provenance";
 import { discoverComponents } from "../../components/discover";
 import { cfnDeployStacks } from "./components";
+
+
+/**
+ * Resolve this invocation's declared build-time parameters, the same way
+ * `chant build` does, so `discover()` sees the values the source will read.
+ *
+ * Without this `chant graph` discovered source with `params.*` empty, so every
+ * declaration conditioned on a parameter took its default — a project whose
+ * tier is a `buildParams` entry graphed as one tier whatever `--param tier=`
+ * or the declared `env:` mapping said, while `chant build` on the same source
+ * and the same environment emitted a different resource set. Two commands
+ * disagreeing about what the source says.
+ *
+ * Returns `undefined` when resolution failed, having printed why — the caller
+ * should stop rather than graph something that will not build.
+ */
+async function graphBuildParams(
+  ctx: CommandContext,
+  projectPath: string,
+): Promise<BuildParamProvenance[] | undefined> {
+  const { config } = await loadChantConfigUpward(projectPath).catch(() => ({ config: {} as ChantConfig }));
+  const resolution = resolveCliBuildParams(config.buildParams, {
+    cli: parseParamFlags(ctx.args.param),
+    paramsFile: ctx.args.paramsFile,
+  });
+  if (!resolution.success) {
+    for (const message of resolution.errors) console.error(message);
+    return undefined;
+  }
+  return resolution.provenance;
+}
 
 /**
  * `chant graph` — the Op dependency graph by default; `--stacks` renders the
@@ -271,7 +304,10 @@ async function runGraphLive(
           ? overlayGraphs(ir, declaredIr, overlayOpts)
           : sourceOverlayGraphs(declaredIr, ir, overlayOpts);
     } else {
-      const declared = await discover(resolve(args.src ?? config.sourceDir ?? "."));
+      const declaredParams = await graphBuildParams(ctx, projectPath);
+      const declared = await discover(resolve(args.src ?? config.sourceDir ?? "."), {
+        ...(declaredParams ? { buildParams: declaredParams } : {}),
+      });
       if (declared.errors.length === 0) {
         const declaredIr = buildGraphIr(declared.entities, projectPath);
         ir =
@@ -487,7 +523,10 @@ async function runGraphView(
     return 1;
   }
 
-  const result = await discover(projectPath);
+  const buildParams = await graphBuildParams(ctx, projectPath);
+  if (!buildParams) return 1;
+
+  const result = await discover(projectPath, { buildParams });
   if (result.errors.length > 0) {
     for (const e of result.errors) console.error(formatError({ message: e.message }));
     return 1;
@@ -596,7 +635,9 @@ async function runOpGraph(): Promise<number> {
 
 async function runStackGraph(ctx: CommandContext): Promise<number> {
   const projectPath = resolve(ctx.args.path === "." ? "." : ctx.args.path);
-  const result = await discover(projectPath);
+  const buildParams = await graphBuildParams(ctx, projectPath);
+  if (!buildParams) return 1;
+  const result = await discover(projectPath, { buildParams });
   if (result.errors.length > 0) {
     for (const e of result.errors) console.error(formatError({ message: e.message }));
     return 1;

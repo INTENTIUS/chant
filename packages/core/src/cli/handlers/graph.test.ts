@@ -10,7 +10,9 @@ vi.mock("../../op/discover", () => ({
 
 const discoverMock = vi.fn();
 vi.mock("../../discovery/index", () => ({
-  discover: () => discoverMock(),
+  // Forwards its arguments so a test can assert what the handler passed —
+  // `buildParams` in particular (#1359).
+  discover: (...a: unknown[]) => discoverMock(...a),
 }));
 
 const lintMock = vi.fn();
@@ -62,11 +64,13 @@ vi.mock("../../components/discover", () => ({
   discoverComponents: (...a: unknown[]) => discoverComponentsMock(...a),
 }));
 const loadChantConfigMock = vi.fn();
+const loadChantConfigUpwardMock = vi.fn();
 vi.mock("../../config", async () => {
   const actual = await vi.importActual<typeof import("../../config")>("../../config");
   return {
     ...actual,
     loadChantConfig: (...a: unknown[]) => loadChantConfigMock(...a),
+    loadChantConfigUpward: (...a: unknown[]) => loadChantConfigUpwardMock(...a),
   };
 });
 vi.mock("../../build", () => ({
@@ -124,6 +128,8 @@ describe("runGraph", () => {
     resolveLexMock.mockReset();
     loadChantConfigMock.mockReset();
     loadChantConfigMock.mockResolvedValue({ config: {} });
+    loadChantConfigUpwardMock.mockReset();
+    loadChantConfigUpwardMock.mockResolvedValue({ config: {} });
   });
 
   describe("Op graph (default)", () => {
@@ -184,6 +190,47 @@ describe("runGraph", () => {
       const ir = JSON.parse(stdoutBuf.join("\n"));
       expect(ir.nodes.map((n: { id: string }) => n.id).sort()).toEqual(["pod", "subnet", "vpc"]);
       expect(ir.edges).toContainEqual({ from: "subnet", to: "vpc", kind: "ref", viaAttr: "network" });
+    });
+
+    // #1339 — `chant graph` discovered source with `params.*` empty, so a
+    // declaration conditioned on a build parameter always took its default:
+    // the graph showed one shape whatever `--param` or a declared `env:`
+    // mapping said, while `chant build` on the same source showed another.
+    describe("build-time parameters reach discovery (#1359)", () => {
+      const withTierParam = (): void => {
+        loadChantConfigUpwardMock.mockResolvedValue({
+          config: { buildParams: { tier: { type: "string", enum: ["light", "prod"], default: "light" } } },
+        });
+      };
+
+      test("--param is resolved and passed to discover", async () => {
+        lintClean(); discovered(); withTierParam();
+        const exit = await runGraph({
+          args: makeArgs({ format: "ir", param: ["tier=prod"] }),
+          plugins: [],
+          serializers: [],
+        });
+        expect(exit).toBe(0);
+        const [, options] = discoverMock.mock.calls[0] as [string, { buildParams?: Array<{ name: string; value: unknown }> }];
+        expect(options.buildParams).toContainEqual(expect.objectContaining({ name: "tier", value: "prod" }));
+      });
+
+      test("a declared default is passed too, so discovery never sees an empty params object", async () => {
+        lintClean(); discovered(); withTierParam();
+        await runGraph({ args: makeArgs({ format: "ir" }), plugins: [], serializers: [] });
+        const [, options] = discoverMock.mock.calls[0] as [string, { buildParams?: Array<{ name: string; value: unknown }> }];
+        expect(options.buildParams).toContainEqual(expect.objectContaining({ name: "tier", value: "light" }));
+      });
+
+      test("an unresolvable parameter stops the graph rather than emitting a default one", async () => {
+        lintClean(); discovered();
+        loadChantConfigUpwardMock.mockResolvedValue({
+          config: { buildParams: { tier: { type: "string", required: true } } },
+        });
+        const exit = await runGraph({ args: makeArgs({ format: "ir" }), plugins: [], serializers: [] });
+        expect(exit).toBe(1);
+        expect(stdoutBuf.join("\n")).toBe("");
+      });
     });
 
     test("lint gate: refuses to emit when source has lint errors", async () => {
