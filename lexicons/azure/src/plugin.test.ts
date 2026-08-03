@@ -185,7 +185,7 @@ describe("azurePlugin", () => {
 
     test("lookup-resource tool has correct structure", () => {
       const tools = azurePlugin.mcpTools!();
-      const lookupTool = tools.find((t) => t.name === "lookup-resource");
+      const lookupTool = tools.find((t) => t.name === "azure:lookup-resource");
       expect(lookupTool).toBeDefined();
       expect(lookupTool!.description.length).toBeGreaterThan(0);
       expect(lookupTool!.inputSchema.type).toBe("object");
@@ -195,7 +195,7 @@ describe("azurePlugin", () => {
 
     test("lookup-resource tool schema has query as required", () => {
       const tools = azurePlugin.mcpTools!();
-      const lookupTool = tools.find((t) => t.name === "lookup-resource")!;
+      const lookupTool = tools.find((t) => t.name === "azure:lookup-resource")!;
       expect(lookupTool.inputSchema.required).toContain("query");
     });
   });
@@ -212,7 +212,7 @@ describe("azurePlugin", () => {
 
     test("catalog has correct structure", () => {
       const resources = azurePlugin.mcpResources!();
-      const catalog = resources.find((r) => r.uri === "chant://lexicon/azure/catalog");
+      const catalog = resources.find((r) => r.uri === "resource-catalog");
       expect(catalog).toBeDefined();
       expect(catalog!.name.length).toBeGreaterThan(0);
       expect(catalog!.description.length).toBeGreaterThan(0);

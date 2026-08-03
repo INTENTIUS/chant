@@ -57,7 +57,7 @@ Lexicons can contribute MCP tools and resources for AI agent integration:
 mcpTools() {
   return [
     {
-      name: "lookup-resource",
+      name: "k8s:lookup-resource",
       description: "Look up a resource type definition",
       inputSchema: { type: "object", properties: { name: { type: "string" } } },
       handler: async (input) => {
@@ -74,7 +74,7 @@ mcpTools() {
 mcpResources() {
   return [
     {
-      uri: "chant://lexicon/k8s/catalog",
+      uri: "catalog",
       name: "K8s Resource Catalog",
       description: "All available Kubernetes resource types",
       handler: async () => {
@@ -84,6 +84,36 @@ mcpResources() {
   ];
 }
 ```
+
+### Namespacing
+
+Core registers every contribution under the lexicon's own namespace: a tool as
+`<lexicon>:<verb>`, a resource as `chant://<lexicon>/<path>`. That is what an
+agent sees and what the docs name, so `k8s:lookup-resource` above registers as
+exactly that, and `catalog` registers as `chant://k8s/catalog`.
+
+Applying the namespace is idempotent (chant #1341): writing the prefix yourself
+is accepted and does not double it, which is what the shared
+`createDiffTool`/`createCatalogResource` helpers rely on. Writing a full
+`chant://…` URI is not — a URI is a path within the namespace, not a
+replacement for it. `chant dev check-lexicon` fails a contribution whose
+registered name is not a single well-formed identifier.
+
+### Conventional names
+
+Most lexicons contribute a common pair, both from the shared helpers in
+`lexicon-plugin-helpers.ts`:
+
+| Contribution | What it does | Lexicons |
+|---|---|---|
+| `<lexicon>:diff` | Diff built output against a previous build | 9 |
+| `chant://<lexicon>/resource-catalog` | The lexicon's resource types as JSON | 9 |
+
+The CI lexicons (github, gitlab, forgejo) additionally share a read-only context
+set — `checks`, `references`, `affected`, `source`, `owns`,
+`workflow`/`pipeline`, `workflow-yaml`/`pipeline-yaml`, and `compare` — each
+answering from a local build without touching a live forge. A new CI lexicon
+should match those names rather than invent its own.
 
 ## Next Steps
 

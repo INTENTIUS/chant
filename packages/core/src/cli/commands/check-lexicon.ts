@@ -3,6 +3,7 @@ import { join, basename } from "path";
 import { auditIntrinsics } from "./check-lexicon-intrinsics";
 import { checkExamplesBuild } from "./check-lexicon-examples";
 import { auditDocsReachability } from "./check-lexicon-docs";
+import { auditMcpNames } from "./check-lexicon-mcp";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -260,6 +261,24 @@ export async function checkLexicon(dir: string): Promise<CheckResult> {
         : intrinsicAudit.length > 0
           ? `${intrinsicAudit.length} intrinsic(s) checked`
           : undefined,
+  });
+
+  // #1341 — core namespaces MCP contributions, and so do the shared helpers and
+  // most lexicons, so the names agents actually saw were `gitlab:gitlab:diff`
+  // and `chant://azure/chant://lexicon/azure/catalog`. The check is on the
+  // registered name rather than the declared one: three authored forms are in
+  // use and all of them are fine, but only one registered shape is.
+  const mcpNames = await auditMcpNames(dir);
+  items.push({
+    name: "MCP tools and resources register under one well-formed namespace",
+    tier: 1,
+    pass: mcpNames.violations.length === 0,
+    detail:
+      mcpNames.violations.length > 0
+        ? mcpNames.violations.join(" | ")
+        : mcpNames.loaded
+          ? `${mcpNames.checked} contribution(s) checked`
+          : "lexicon could not be loaded — not checked",
   });
 
   const hasPluginTest = findFiles(join(dir, "src"), (n) => n === "plugin.test.ts").length > 0;

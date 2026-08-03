@@ -14,12 +14,12 @@ describe("gitlab MCP migrate tool", () => {
     // The MCP server applies ${plugin.name}: namespacing at registration
     // time. Diff is pre-prefixed by createDiffTool; migrate is plain.
     expect(names).toContain("gitlab:diff");
-    expect(names).toContain("migrate");
+    expect(names).toContain("gitlab:migrate");
   });
 
   test("handler translates a trivial workflow", async () => {
     const tools = gitlabPlugin.mcpTools?.() ?? [];
-    const migrate = tools.find((t) => t.name === "migrate");
+    const migrate = tools.find((t) => t.name === "gitlab:migrate");
     expect(migrate).toBeDefined();
     const result = await migrate!.handler({
       content: `on: push
@@ -40,7 +40,7 @@ jobs:
 
   test("respects useComposites toggle", async () => {
     const tools = gitlabPlugin.mcpTools?.() ?? [];
-    const migrate = tools.find((t) => t.name === "migrate")!;
+    const migrate = tools.find((t) => t.name === "gitlab:migrate")!;
     const nodePipelineWorkflow = `on: push
 jobs:
   build:

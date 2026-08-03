@@ -277,7 +277,7 @@ export const test = new Job({
       // its security findings — before anything runs (#327/#328).
       ...gitlabContextTools(),
       {
-        name: "migrate",
+        name: "gitlab:migrate",
         description: "Translate a GitHub Actions workflow YAML into a GitLab CI/CD pipeline. Returns the rendered output plus diagnostic + provenance arrays.",
         inputSchema: {
           type: "object" as const,

@@ -13,6 +13,33 @@ import { createOpListTool, createOpRunTool, createOpStatusTool, createOpSignalTo
 import { buildResourcesList, handleResourcesRead } from "./resource-handlers";
 
 /**
+ * The name a lexicon's MCP tool is registered under: `<lexicon>:<verb>`,
+ * whether or not the lexicon already wrote the prefix itself (#1341).
+ */
+export function namespacedToolName(lexicon: string, name: string): string {
+  const prefix = `${lexicon}:`;
+  return name.startsWith(prefix) ? name : `${prefix}${name}`;
+}
+
+/**
+ * The URI a lexicon's MCP resource is registered under: `chant://<lexicon>/<path>`.
+ *
+ * Three authored forms reach here (#1341). The bare path is the intended one.
+ * `createCatalogResource` emits `<lexicon>:resource-catalog`, and
+ * `lexicon-authoring/lsp-mcp.mdx` taught `chant://lexicon/<lexicon>/<path>` —
+ * which azure followed, and which produced the unusable
+ * `chant://azure/chant://lexicon/azure/catalog`.
+ */
+export function namespacedResourceUri(lexicon: string, uri: string): string {
+  const base = `chant://${lexicon}/`;
+  if (uri.startsWith(base)) return uri;
+  for (const authored of [`chant://lexicon/${lexicon}/`, `${lexicon}:`]) {
+    if (uri.startsWith(authored)) return `${base}${uri.slice(authored.length)}`;
+  }
+  return `${base}${uri}`;
+}
+
+/**
  * MCP Server implementation
  */
 export class McpServer {
@@ -52,15 +79,22 @@ export class McpServer {
   }
 
   /**
-   * Register tools contributed by a plugin, namespaced as `lexicon:toolName`
+   * Register tools contributed by a plugin, namespaced as `lexicon:toolName`.
+   *
+   * Namespacing is idempotent (#1341). Core is not the only place that applies
+   * a prefix: `createDiffTool` in ../../lexicon-plugin-helpers.ts already emits
+   * `${lexiconName}:diff`, and eleven lexicons write the prefix into the name by
+   * hand. Applying it unconditionally produced `gitlab:gitlab:diff` and
+   * `aws:aws:diff` in every `chant serve mcp` session, while every doc named the
+   * single-prefixed form. A tool declared either way now registers under exactly
+   * one namespace.
    */
   private registerPluginTools(plugin: LexiconPlugin): void {
     const tools = plugin.mcpTools?.() ?? [];
     for (const tool of tools) {
-      const namespacedName = `${plugin.name}:${tool.name}`;
       this.registerTool(
         {
-          name: namespacedName,
+          name: namespacedToolName(plugin.name, tool.name),
           description: tool.description,
           inputSchema: tool.inputSchema,
         },
@@ -70,12 +104,13 @@ export class McpServer {
   }
 
   /**
-   * Register resources contributed by a plugin, namespaced as `chant://lexicon/uri`
+   * Register resources contributed by a plugin, namespaced as
+   * `chant://lexicon/uri`, idempotently — see {@link registerPluginTools}.
    */
   private registerPluginResources(plugin: LexiconPlugin): void {
     const resources = plugin.mcpResources?.() ?? [];
     for (const resource of resources) {
-      const namespacedUri = `chant://${plugin.name}/${resource.uri}`;
+      const namespacedUri = namespacedResourceUri(plugin.name, resource.uri);
       this.pluginResources.set(namespacedUri, {
         definition: {
           uri: namespacedUri,
