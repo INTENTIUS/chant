@@ -634,27 +634,6 @@ export interface LexiconPlugin {
   }): Promise<DescribeResourcesResult>;
 
   /**
-   * Read the full live *property tree* for each declared entity (#1014). Opt-in,
-   * and strictly deeper than {@link describeResources}, which reports existence
-   * plus a handful of scrubbed outputs. A lexicon that implements neither, or
-   * only the thin one, is unaffected — `lifecycle diff --live` gains
-   * property-level entries only where this exists.
-   *
-   * The result is keyed by chant entity name, exactly like the thin read, and
-   * carries the same NOT-OBSERVED map. That is the composition rule with #1089:
-   * a deep read that fails for one entity says so with a total
-   * {@link UnobservedReason}. It never returns a thin-but-clean tree, because a
-   * clean tree is a claim that nothing drifted.
-   *
-   * Properties must be normalized before they are returned — run
-   * `normalizeDeepProperties` (../deep-observation.ts) with this lexicon's own
-   * {@link deepNormalizationHooks}, so the trees a consumer sees are already
-   * free of arns, timestamps, status subtrees and unstable orderings.
-   *
-   * Throwing is the whole-lexicon failure, same as the thin read: core turns it
-   * into `read-failed` for every declared entity.
-   */
-  /**
    * Report the undeclared resources this estate *depends on* (#1273), as
    * opposed to the ones it manages.
    *
@@ -689,6 +668,17 @@ export interface LexiconPlugin {
   }): Promise<DependencyObservation>;
 
   /**
+   * Kinds this lexicon can enumerate beyond the declared estate (#1278).
+   *
+   * Declared separately from {@link observeAmbient} so a caller can say that
+   * ambient resources of a kind are POSSIBLE without paying for a scan to find
+   * out. `chant search` uses it to point out that `--ambient` is relevant to
+   * the kind just queried — an agent asking which security groups are unused
+   * has no way to know that some are not in the answer at all.
+   */
+  ambientKinds?(): string[];
+
+  /**
    * Report resources of a kind this estate manages that exist in the account
    * without being declared or referenced (#1278).
    *
@@ -711,17 +701,6 @@ export interface LexiconPlugin {
    * Optional and opt-in. A lexicon that does not implement it, or a caller that
    * does not ask, sees exactly what it saw before.
    */
-  /**
-   * Kinds this lexicon can enumerate beyond the declared estate (#1278).
-   *
-   * Declared separately from {@link observeAmbient} so a caller can say that
-   * ambient resources of a kind are POSSIBLE without paying for a scan to find
-   * out. `chant search` uses it to point out that `--ambient` is relevant to
-   * the kind just queried — an agent asking which security groups are unused
-   * has no way to know that some are not in the answer at all.
-   */
-  ambientKinds?(): string[];
-
   observeAmbient?(options: {
     environment: string;
     /** Entity types the project declares — the bound on what to enumerate. */
@@ -732,6 +711,27 @@ export interface LexiconPlugin {
     region?: string;
   }): Promise<Record<string, ResourceMetadata>>;
 
+  /**
+   * Read the full live *property tree* for each declared entity (#1014). Opt-in,
+   * and strictly deeper than {@link describeResources}, which reports existence
+   * plus a handful of scrubbed outputs. A lexicon that implements neither, or
+   * only the thin one, is unaffected — `lifecycle diff --live` gains
+   * property-level entries only where this exists.
+   *
+   * The result is keyed by chant entity name, exactly like the thin read, and
+   * carries the same NOT-OBSERVED map. That is the composition rule with #1089:
+   * a deep read that fails for one entity says so with a total
+   * {@link UnobservedReason}. It never returns a thin-but-clean tree, because a
+   * clean tree is a claim that nothing drifted.
+   *
+   * Properties must be normalized before they are returned — run
+   * `normalizeDeepProperties` (../deep-observation.ts) with this lexicon's own
+   * {@link deepNormalizationHooks}, so the trees a consumer sees are already
+   * free of arns, timestamps, status subtrees and unstable orderings.
+   *
+   * Throwing is the whole-lexicon failure, same as the thin read: core turns it
+   * into `read-failed` for every declared entity.
+   */
   observeResourcesDeep?(options: {
     environment: string;
     buildOutput: string;

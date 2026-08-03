@@ -200,6 +200,42 @@ import { buildInterpolatedString, defaultInterpolationSerializer } from "@intent
 const result = buildInterpolatedString(templateString, variables);
 ```
 
+## Pinning the upstream schema — `upstreamPin`
+
+A lexicon generated from an upstream schema should pin the version it generated
+from, so a regeneration is reproducible and a version bump is a reviewable diff
+rather than whatever upstream published that morning. aws is the cautionary
+case: its spec URL is unpinned, so any `prepack` folds in whatever CloudFormation
+shipped today, and its resource count moves without a commit saying so.
+
+`upstreamPin` tells the self-upgrade tooling where the pin lives and where to
+look for a newer one:
+
+```typescript
+// plugin.ts
+upstreamPin: {
+  file: "src/spec/fetch.ts",
+  pattern: /export const K8S_SCHEMA_VERSION\s*=\s*"([^"]+)"/,
+  replace: (v, line) =>
+    line.replace(/= "[^"]+"/, `= "${v}"`),
+  upstream: { owner: "kubernetes", repo: "kubernetes", kind: "releases" },
+},
+```
+
+| Field | What it is |
+|---|---|
+| `file` | Source file holding the pinned version constant, relative to the package root |
+| `pattern` | Regex whose **first capture group** is the current version |
+| `replace(v, line)` | Rebuild a matched line with the new version |
+| `upstream.kind` | `releases` for published releases, `tags` for every git tag |
+| `upstream.tagSuffix` | Only consider tags with this suffix — gitlab uses `-ee` |
+
+k8s, gcp, gitlab and docker declare one. `checkPinnedUpgrade`
+(`packages/core/src/codegen/pinned-upgrade.ts`) uses it to report an available
+upgrade, apply it, regenerate, and revert cleanly if the regeneration fails —
+which is the reason `replace` exists rather than the tooling doing a blind
+string substitution.
+
 ## Next Steps
 
 With generation working, the next step is to [create a serializer](/chant/lexicon-authoring/serializer/) that converts evaluated resources to your target format.
