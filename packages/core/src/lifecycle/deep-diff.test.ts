@@ -4,7 +4,7 @@ import { UNRESOLVED, type NormalizedDeepObservation } from "../deep-observation"
 import type { BaselineLexicon } from "./observation-baseline";
 
 const live = (
-  resources: Record<string, { type: string; properties: Record<string, unknown> }>,
+  resources: Record<string, { type: string; properties: Record<string, unknown>; fieldOwners?: Record<string, string> }>,
   unobserved: NormalizedDeepObservation["unobserved"] = {},
 ): NormalizedDeepObservation => ({ resources, unobserved });
 
