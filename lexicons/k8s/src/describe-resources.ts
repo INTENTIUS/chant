@@ -80,6 +80,22 @@ function pruneUndefined<T extends Record<string, unknown>>(obj: T): Record<strin
  */
 export function statusFromObject(obj: K8sObject): string {
   const status = obj.status;
+
+  // The most specific FAILING signal wins over the outermost one (#1397).
+  //
+  // A Pod's phase is `Running` from the moment the kubelet admits it and one
+  // container starts — so a crashlooping Pod reported `Running`, which every
+  // consumer classifying that word read as healthy. The failure lives one level
+  // down, in `containerStatuses[].state.waiting.reason`, and never reached the
+  // wire, so nothing downstream could recover it.
+  const waiting = failingContainerReason(status);
+  if (waiting) return waiting;
+
+  // Scheduling failure is a condition, not a phase: an unschedulable Pod is
+  // `Pending`, which is true and useless next to `Unschedulable`.
+  const blocked = failingConditionReason(status);
+  if (blocked) return blocked;
+
   const phase = status?.phase;
   if (typeof phase === "string") return phase;
   if (status && typeof status.readyReplicas === "number" && typeof status.replicas === "number") {
@@ -88,6 +104,47 @@ export function statusFromObject(obj: K8sObject): string {
       : `PROGRESSING(${status.readyReplicas}/${status.replicas})`;
   }
   return "PRESENT";
+}
+
+/**
+ * The reason a container is stuck, if one is — `CrashLoopBackOff`,
+ * `ImagePullBackOff`, `CreateContainerConfigError`.
+ *
+ * Only a WAITING container counts. A terminated one may have exited cleanly as
+ * part of a Job, and a running one is not stuck; neither should outrank the
+ * phase.
+ */
+function failingContainerReason(status: K8sObject["status"]): string | undefined {
+  const containers = (status as { containerStatuses?: unknown } | undefined)?.containerStatuses;
+  if (!Array.isArray(containers)) return undefined;
+  for (const c of containers) {
+    const reason = (c as { state?: { waiting?: { reason?: unknown } } })?.state?.waiting?.reason;
+    // `ContainerCreating` and `PodInitializing` are ordinary startup, not
+    // failure — they already classify as progressing, and promoting them over
+    // the phase would just be noisier.
+    if (typeof reason === "string" && reason.length > 0 && reason !== "ContainerCreating" && reason !== "PodInitializing") {
+      return reason;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * The reason a blocking condition is False — `Unschedulable` and the like.
+ *
+ * Only conditions whose truth means "this object is usable"; a False `Ready` on
+ * its own is already visible through the phase and the container states above.
+ */
+function failingConditionReason(status: K8sObject["status"]): string | undefined {
+  const conditions = (status as { conditions?: unknown } | undefined)?.conditions;
+  if (!Array.isArray(conditions)) return undefined;
+  for (const c of conditions) {
+    const cond = c as { type?: unknown; status?: unknown; reason?: unknown };
+    if (cond.type !== "PodScheduled") continue;
+    if (cond.status !== "False") continue;
+    if (typeof cond.reason === "string" && cond.reason.length > 0) return cond.reason;
+  }
+  return undefined;
 }
 
 interface Declared {
