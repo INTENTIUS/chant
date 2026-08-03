@@ -35,7 +35,9 @@ describe("fountain serializer", () => {
 
     expect(out).toContain("apiVersion: fountain.dev/v1");
     expect(out).toContain("kind: Environment");
-    expect(out).toContain("name: conciergeEnv");
+    // The declared name, not the export name — fountain upserts by this.
+    expect(out).toContain("name: concierge-env");
+    expect(out).not.toContain("name: conciergeEnv");
     expect(out).toContain("networking_type: limited");
     expect(out).toContain("allowed_hosts:");
     expect(out).toContain("- github.com");
@@ -73,7 +75,15 @@ describe("fountain serializer", () => {
       ]),
     );
 
-    expect(out).toContain("environment: conciergeEnv");
+    // Resolves to the referenced entity's fountain name, so the reference and
+    // the environment's own manifest agree on one identity.
+    expect(out).toContain("environment: concierge-env");
+  });
+
+  it("falls back to the export name when no name is declared", () => {
+    const vault = entity("Fountain::V1::Vault", { description: "no name here" });
+    const out = fountainSerializer.serialize(new Map([["stagingCreds", vault]]));
+    expect(out).toContain("name: stagingCreds");
   });
 
   it("quotes YAML-ambiguous strings", () => {

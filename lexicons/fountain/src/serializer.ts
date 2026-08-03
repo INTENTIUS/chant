@@ -19,6 +19,20 @@ import { propsOf } from "./entity-props";
 
 const API_VERSION = "fountain.dev/v1";
 
+/**
+ * The name fountain reconciles by.
+ *
+ * The declared `name` when there is one, the chant export name otherwise. This
+ * matters more than it looks: fountain upserts by name, so keying on the export
+ * name would mean renaming a TypeScript variable creates a second resource and
+ * orphans the first, and a declared `name` would be silently demoted to an
+ * ordinary attribute. Same rule the k8s serializer follows for `metadata.name`.
+ */
+function fountainName(exportName: string, entity: Declarable): string {
+  const declared = propsOf(entity).name;
+  return typeof declared === "string" && declared.length > 0 ? declared : exportName;
+}
+
 /** Fountain::V1::Agent → Agent */
 function kindOf(entityType: string): string {
   const parts = entityType.split("::");
@@ -30,10 +44,13 @@ export const fountainSerializer: Serializer = {
   rulePrefix: "FTN",
 
   serialize(entities: Map<string, Declarable>): string {
-    // Reverse map for reference resolution: Declarable instance → name.
+    // Reverse map for reference resolution: Declarable instance → fountain name.
+    // Keyed on the fountain name rather than the export name so an agent's
+    // `environment` reference resolves to the same identity the environment's
+    // own manifest carries.
     const entityNames = new Map<Declarable, string>();
     for (const [name, entity] of entities) {
-      entityNames.set(entity, name);
+      entityNames.set(entity, fountainName(name, entity));
     }
 
     const visitor: SerializerVisitor = {
@@ -65,7 +82,7 @@ export const fountainSerializer: Serializer = {
       const manifest = {
         apiVersion: API_VERSION,
         kind: kindOf(entity.entityType),
-        metadata: { name },
+        metadata: { name: fountainName(name, entity) },
         spec,
       };
       docs.push(toYaml(manifest));
