@@ -1,85 +1,75 @@
 /**
- * Live introspection of a GCP project via Config Connector CRDs.
+ * GCP thin observation (#1209) — presence and scrubbed outputs, read over the
+ * applier's own REST transport.
  *
- * GCP entities in chant are emitted as Config Connector custom resources
- * (apiVersion <service>.cnrm.cloud.google.com/v1beta1, kind <Service><Kind>).
- * To observe them at runtime we shell out to kubectl against a Config
- * Connector-enabled cluster — the same pattern as the K8s lexicon.
+ * chant applies GCP cluster-free over direct REST (#706). Until this, it
+ * observed through a Config Connector cluster — `kubectl get <cnrm-gvk> -o
+ * json` per entity — which is the split #1085's principle forbids: a lexicon
+ * observed on a different transport than it is applied with can disagree with
+ * itself about what a resource even is, and needs a GKE cluster to answer a
+ * question about a bucket.
  *
- *   GCP::Storage::Bucket    → kubectl get storagebucket.storage.cnrm.cloud.google.com
- *   GCP::Compute::Subnetwork → kubectl get computesubnetwork.compute.cnrm.cloud.google.com
+ * Every GET here is built by the same `ResourceMapper` the applier uses (see
+ * ./api/read-client.ts), so reader and applier cannot diverge about where a
+ * resource lives.
  *
- * Resource-not-found is an absence — `state diff --live` reports it as missing.
- * Everything else the kubectl call can fail with (auth, an unreachable API
- * server, an entity type with no derivable GVK) is NOT-OBSERVED (#1089), so a
- * read that never happened cannot become a proposed `create`.
+ * ## What changed in the answers, not just the transport
  *
- * Since this reads Config Connector CRDs through the same kubectl path as
- * the K8s lexicon, it resolves the same environment→cluster binding (chant
- * #1100) via `resolveClusterTarget` — `k8s.profiles.<env>.context` in
- * `chant.config.ts` (see `lexicons/k8s/src/config.ts`), not a separate
- * `gcp.profiles` key, because it is fundamentally the same kubectl context a
- * project's K8s entities would use against the same cluster.
+ * **Status.** Config Connector encodes state as a `Ready` condition, which a
+ * GCP REST payload has no equivalent of — a bucket simply exists. So a
+ * successful GET is `PRESENT` unless the body carries a recognisable state of
+ * its own (Cloud Run's `status.conditions`, an explicit `state`). `PRESENT` is
+ * the same sentinel the Azure reader emits for the same reason.
  *
- * `resolveGcpKubectlContext` and `execConfigConnectorGet` below are exported
- * so `./deep-observe.ts` (chant #1087) shares this exact cluster-binding
- * resolution and `kubectl get -o json` mechanics rather than restating them —
- * the two readers differ only in how much of the response each one keeps.
+ * **Ownership.** CNRM carried chant's marker as a k8s label. The REST payloads
+ * carry `labels` only on kinds that have them (a bucket does; a Pub/Sub topic
+ * does not), so ownership is `unknown` where there is nothing to read — and
+ * `--owned` degrades to detect-only rather than withholding everything it
+ * cannot prove, the same posture the AWS thin path takes when
+ * `describe-stack-resources` returns no tags.
+ *
+ * **Coverage.** kubectl could fetch any CNRM kind the cluster knew about; REST
+ * reaches the kinds the applier has a mapper for. That is narrower on paper and
+ * not in practice: a kind with no mapper cannot be applied either, so observing
+ * it produced a live tree nothing could reconcile against. Anything outside the
+ * table reports NOT-OBSERVED with `unsupported-kind` (#1089) rather than being
+ * dropped.
  */
 
-import { exec } from "node:child_process";
-import { promisify } from "node:util";
 import type { ObservationResult, ResourceMetadata, UnobservedEntity } from "@intentius/chant/lexicon";
 import { observation } from "@intentius/chant/observation";
-import { hasOwnershipMarker, classifyOwnership, LABEL_OWNERSHIP_KEYS } from "@intentius/chant/ownership";
-import { loadChantConfig } from "@intentius/chant/config";
-import { resolveClusterTarget, classifyKubectlFailure } from "@intentius/chant/kubectl-context";
-
-const execAsync = promisify(exec);
+import { hasOwnershipMarker, classifyOwnership, type ChannelKeys } from "@intentius/chant/ownership";
+import { getResource, mapperForKind, GcpReadError, isNotFound, type GcpReadClientOptions } from "./api/read-client";
+import { resolveGcpProject } from "./op/activities/gcp-apply";
 
 /**
- * Resolve this environment's cluster binding once and return the `--context`
- * argv fragment every subsequent kubectl call should append (empty when
- * unbound — ambient context, unchanged behavior). Throws on a bound-but-
- * mismatched context (chant #1100), the same loud refusal both readers rely
- * on core to turn into NOT-OBSERVED for every declared entity.
+ * chant's ownership marker as GCP labels.
+ *
+ * The applier stamps `managed-by: chant` (gcp-apply.ts) because GCP label keys
+ * cannot hold the k8s `app.kubernetes.io/managed-by` slash/dot form that
+ * `LABEL_OWNERSHIP_KEYS` uses — so the reader has to look for what the applier
+ * actually wrote, not for the CNRM label the kubectl path read. The stack/env
+ * keys follow the same flattening.
  */
-export async function resolveGcpKubectlContext(environment: string): Promise<string[]> {
-  const { config } = await loadChantConfig(process.cwd());
-  const target = await resolveClusterTarget(config as Record<string, unknown>, environment, "gcp");
-  return target.context ? ["--context", target.context] : [];
-}
+const GCP_OWNERSHIP_LABEL_KEYS: ChannelKeys = {
+  managedBy: "managed-by",
+  stack: "chant-stack",
+  env: "chant-env",
+};
 
-/**
- * `kubectl get <kind>.<group> <name> [-n <namespace>] [--context <ctx>] -o
- * json`, parsed. Throws on any kubectl failure — callers classify it with
- * `classifyKubectlFailure` exactly like today, so a NotFound and an
- * auth/connectivity failure are told apart at the call site, not here.
- */
-export async function execConfigConnectorGet(
-  gvk: { group: string; kind: string },
-  name: string,
-  namespace: string | undefined,
-  ctxArg: readonly string[],
-): Promise<Record<string, unknown>> {
-  const kubectlResource = `${gvk.kind.toLowerCase()}.${gvk.group}`;
-  const nsArg = namespace ? ["-n", namespace] : [];
-  const cmd = ["kubectl", "get", kubectlResource, name, ...nsArg, ...ctxArg, "-o", "json"].join(" ");
-  const { stdout } = await execAsync(cmd);
-  return JSON.parse(stdout) as Record<string, unknown>;
-}
-
-interface KubectlResponse {
-  metadata?: {
-    name?: string;
-    namespace?: string;
-    uid?: string;
-    creationTimestamp?: string;
-    labels?: Record<string, string>;
-    annotations?: Record<string, string>;
-  };
+/** The parts of a GCP REST payload this reader looks at. Every field is
+ * optional because they vary by kind — a bucket has `id` and `labels`, a
+ * Pub/Sub topic has neither. */
+interface GcpRestResponse {
+  id?: string;
+  name?: string;
+  selfLink?: string;
+  labels?: Record<string, string> | null;
+  updated?: string;
+  timeCreated?: string;
+  state?: string;
   status?: {
-    conditions?: Array<{ type?: string; status?: string; reason?: string; message?: string }>;
+    conditions?: Array<{ type?: string; status?: string; state?: string; reason?: string }>;
     [k: string]: unknown;
   };
 }
@@ -109,19 +99,27 @@ function pruneUndefined<T extends Record<string, unknown>>(obj: T): Record<strin
 }
 
 /**
- * Config Connector encodes deployment state as a `Ready` condition on the
- * resource's status. Fall back to listing all condition types if `Ready`
- * isn't present.
+ * Status from a REST payload.
+ *
+ * Most GCP resources have no status at all — a bucket that answers a GET simply
+ * exists — so `PRESENT` is the honest answer and the common one. Where a kind
+ * does carry state (Cloud Run's `status.conditions`, a `state` enum), that is
+ * reported instead.
+ *
+ * `PRESENT` is deliberately the same sentinel the Azure reader emits for a
+ * resource with no `provisioningState`: one word, meaning "read it back, it is
+ * there, there is nothing richer to say".
  */
-function statusFromCC(obj: KubectlResponse): string {
+export function statusFromRest(obj: GcpRestResponse): string {
+  if (typeof obj.state === "string" && obj.state.length > 0) return obj.state;
   const conditions = obj.status?.conditions ?? [];
   const ready = conditions.find((c) => c.type === "Ready");
   if (ready) {
-    if (ready.status === "True") return "READY";
+    if (ready.status === "True" || ready.state === "CONDITION_SUCCEEDED") return "READY";
     return ready.reason ?? "NOT_READY";
   }
   if (conditions.length > 0) {
-    return conditions.map((c) => `${c.type}=${c.status}`).join(",");
+    return conditions.map((c) => `${c.type}=${c.status ?? c.state}`).join(",");
   }
   return "PRESENT";
 }
@@ -136,26 +134,38 @@ export async function describeResources(options: {
   const result: Record<string, ResourceMetadata> = {};
   const unobserved: Record<string, UnobservedEntity> = {};
 
-  // Resolve the cluster identity for this environment before touching any
-  // resource — a declared-but-mismatched binding throws here, aborting the
-  // whole describe rather than letting the per-entity try/catch below
-  // absorb it as an ordinary "not found".
-  const ctxArg = await resolveGcpKubectlContext(options.environment);
+  // The endpoint override is the emulator tell (floci-gcp :4588); unset means
+  // real GCP, exactly as it does for the applier.
+  const endpoint = process.env.GCP_ENDPOINT_URL;
 
-  for (const [entityName, { entityType, props }] of options.entities) {
+  // `--owned` needs labels to filter on, and only some kinds carry them. Rather
+  // than withhold everything it cannot prove, this warns once and degrades to
+  // detect-only — the same posture the AWS thin path takes when
+  // `describe-stack-resources` returns no tags.
+  let warnedOwnership = false;
+
+  const reads = [...options.entities].map(async ([entityName, { entityType, props }]) => {
     const gvk = deriveGVK(entityType);
     if (!gvk) {
-      // Not a `GCP::Service::Kind` this lexicon can turn into a Config
-      // Connector GVK — nothing was queried, so nothing is known (#1089).
       unobserved[entityName] = {
         type: entityType,
         reason: "unsupported-kind",
-        detail: `cannot derive a Config Connector GVK from ${entityType}`,
+        detail: `cannot derive a GCP kind from ${entityType}`,
       };
-      continue;
+      return;
+    }
+    if (!mapperForKind(gvk.kind)) {
+      // Outside the applier's dispatch table: chant cannot write this kind, so
+      // it does not claim to have read it either (#1089).
+      unobserved[entityName] = {
+        type: entityType,
+        reason: "unsupported-kind",
+        detail: `no REST mapper for ${gvk.kind} — chant cannot apply this kind either`,
+      };
+      return;
     }
 
-    const metadata = props.metadata as { name?: string; namespace?: string } | undefined;
+    const metadata = props.metadata as { name?: string; annotations?: Record<string, string> } | undefined;
     const name = metadata?.name;
     if (!name) {
       unobserved[entityName] = {
@@ -163,44 +173,76 @@ export async function describeResources(options: {
         reason: "read-failed",
         detail: "declared entity has no metadata.name to query by",
       };
-      continue;
+      return;
+    }
+
+    let client: GcpReadClientOptions;
+    try {
+      client = {
+        project: resolveGcpProject({ kind: gvk.kind, metadata }),
+        ...(endpoint ? { endpoint } : {}),
+      };
+    } catch (err) {
+      // No project resolvable — nothing was queried, so nothing is known.
+      unobserved[entityName] = {
+        type: entityType,
+        reason: "no-binding",
+        detail: err instanceof Error ? err.message : String(err),
+      };
+      return;
     }
 
     try {
-      const obj = (await execConfigConnectorGet(gvk, name, metadata.namespace, ctxArg)) as KubectlResponse;
-      // owned filter: withhold resources not carrying chant's marker label.
-      // Withheld is not absent (#1089) — the CR exists, it just isn't chant's.
-      if (options.owned && !hasOwnershipMarker(obj.metadata?.labels, LABEL_OWNERSHIP_KEYS)) {
-        unobserved[entityName] = {
-          type: entityType,
-          reason: "filtered",
-          detail: "live resource carries no chant ownership marker and --owned was requested",
-        };
-        continue;
+      const obj = (await getResource(client, gvk.kind, name, props)) as GcpRestResponse;
+
+      if (options.owned) {
+        if (obj.labels == null) {
+          if (!warnedOwnership) {
+            // eslint-disable-next-line no-console
+            console.warn(
+              `[gcp] ownership filter unavailable for ${gvk.kind} (the REST payload carries no labels) — returning it with an \`unknown\` verdict rather than withholding it`,
+            );
+            warnedOwnership = true;
+          }
+        } else if (!hasOwnershipMarker(obj.labels, GCP_OWNERSHIP_LABEL_KEYS)) {
+          // Withheld is not absent (#1089) — the resource exists, it just isn't chant's.
+          unobserved[entityName] = {
+            type: entityType,
+            reason: "filtered",
+            detail: "live resource carries no chant ownership marker and --owned was requested",
+          };
+          return;
+        }
       }
+
       result[entityName] = {
         type: entityType,
-        physicalId: obj.metadata?.uid,
-        status: statusFromCC(obj),
-        lastUpdated: obj.metadata?.creationTimestamp,
-        ownership: classifyOwnership(obj.metadata?.labels, LABEL_OWNERSHIP_KEYS),
+        physicalId: obj.id ?? obj.selfLink ?? obj.name,
+        status: statusFromRest(obj),
+        lastUpdated: obj.updated ?? obj.timeCreated,
+        ownership: obj.labels == null ? "unknown" : classifyOwnership(obj.labels, GCP_OWNERSHIP_LABEL_KEYS),
         attributes: pruneUndefined({
-          namespace: obj.metadata?.namespace,
-          labels: obj.metadata?.labels,
-          annotations: obj.metadata?.annotations,
+          labels: obj.labels ?? undefined,
+          selfLink: obj.selfLink,
         }),
       };
     } catch (err) {
-      // A NotFound is a real absence (the CR isn't there, or Config Connector
-      // doesn't serve that CRD, so no instance can be). Anything else — auth,
-      // an unreachable API server, a context that doesn't resolve — proves
-      // nothing and is reported as a hole rather than an absence (#1089).
-      const outcome = classifyKubectlFailure(err);
-      if (outcome.kind === "unobserved") {
-        unobserved[entityName] = { type: entityType, reason: outcome.reason, detail: outcome.detail };
-      }
+      // A 404 is a real absence. Anything else — no credentials, an
+      // unreachable endpoint, a body that will not parse — proves nothing and
+      // is a hole rather than an absence (#1089).
+      if (isNotFound(err)) return;
+      const status = err instanceof GcpReadError ? err.status : undefined;
+      const noCreds = status === 401 || status === 403;
+      unobserved[entityName] = {
+        type: entityType,
+        reason: noCreds ? "no-credentials" : "read-failed",
+        detail: err instanceof Error ? err.message : String(err),
+      };
     }
-  }
+  });
+
+  // Concurrent, where the kubectl path was one spawn after another (#1201/#1209).
+  await Promise.all(reads);
 
   return observation(result, unobserved);
 }

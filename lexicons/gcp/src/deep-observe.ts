@@ -123,11 +123,18 @@ import type {
   UnobservedEntity,
 } from "@intentius/chant/lexicon";
 import { deepObservation, normalizeDeepProperties } from "@intentius/chant/deep-observation";
-import { hasOwnershipMarker, LABEL_OWNERSHIP_KEYS } from "@intentius/chant/ownership";
-import { classifyKubectlFailure } from "@intentius/chant/kubectl-context";
-import { buildOwnershipSets, pruneByOwnership, type OwnershipSets, type ManagedFieldsEntryLike } from "@intentius/chant/managed-fields";
-import { deriveGVK, execConfigConnectorGet, resolveGcpKubectlContext } from "./describe-resources";
+import { hasOwnershipMarker, type ChannelKeys } from "@intentius/chant/ownership";
+import { deriveGVK } from "./describe-resources";
+import { getResource, mapperForKind, GcpReadError, isNotFound, type GcpReadClientOptions } from "./api/read-client";
+import { resolveGcpProject } from "./op/activities/gcp-apply";
 import { gcpDeepNormalizationHooks } from "./deep-observe-hooks";
+
+/** The labels the applier stamps — see describe-resources.ts. */
+const GCP_OWNERSHIP_LABEL_KEYS: ChannelKeys = {
+  managedBy: "managed-by",
+  stack: "chant-stack",
+  env: "chant-env",
+};
 
 // Re-exported so a dynamic importer of this module (plugin.ts's
 // `observeResourcesDeep`, a test) can get the reader and its hooks from one
@@ -145,48 +152,44 @@ export interface GcpDeepObserveOptions {
 }
 
 /**
- * Matches chant's field-manager naming scheme (chant #1075: bare `chant`, or
- * `chant:<stack>`) — the same convention `@intentius/chant-k8s-client`'s
- * `isChantFieldManager` checks. Restated here rather than imported: gcp must
- * never depend on that package (chant #1074/#1177's structural boundary — the
- * k8s lexicon reads live cluster state through a typed client, gcp shells
- * kubectl, and the two stay independently deployable). This is a two-branch
- * string comparison with nothing to drift out of sync; the piece that
- * genuinely could — the managed-fields ownership walk — is shared through
- * `@intentius/chant/managed-fields`, not reimplemented here. See the module
- * doc for why this rarely matches anything on GCP's real deploy path today,
- * and why that's fine.
+ * Reshape a GCP REST body into the CNRM shape the declared source is written in.
+ *
+ * This is the half of the port that is not transport (#1209). chant's GCP
+ * source declares Config Connector custom resources — `{ metadata: { name },
+ * spec: { location, storageClass } }` — while the REST APIs return their own
+ * flat shape, `{ name, location, storageClass }`. Diffing one against the other
+ * makes every field drift twice: once as `spec.location: US -> <absent>` and
+ * again as `location: <undeclared> -> US`.
+ *
+ * Verified against floci-gcp before this existed: a bucket that matched its
+ * declaration exactly reported **7 property drifts**, all of them shape.
+ *
+ * chant has met this before. #1207 records it for AWS: Cloud Control returns
+ * the CloudFormation resource model and lines up for free, while the EC2 API
+ * returns the EC2 shape and needs mapping onto the declared shape before the
+ * diff can compare. GCP is the EC2 case.
+ *
+ * The mapping is CNRM's own convention rather than a per-kind table: identity
+ * and labels live under `metadata`, everything else is `spec`. That holds for
+ * every kind the applier can write, and a per-kind table would be a second
+ * place to forget a field.
  */
-function isGcpChantFieldManager(manager: string | undefined): boolean {
-  if (!manager) return false;
-  return manager === "chant" || manager.startsWith("chant:");
-}
-
-/**
- * The managed-fields prune, composed with the static rules, for one
- * resource's normalization call — the same layering k8s's `perResourceHooks`
- * uses, sharing the actual rule (`pruneByOwnership`) rather than restating it.
- */
-function perResourceHooks(sets: OwnershipSets): DeepNormalizationHooks {
+export function restToCnrmShape(body: Record<string, unknown>): Record<string, unknown> {
+  const metadata: Record<string, unknown> = {};
+  const spec: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(body)) {
+    if (key === "name" || key === "labels" || key === "annotations") metadata[key] = value;
+    else spec[key] = value;
+  }
   return {
-    prune(node) {
-      if (gcpDeepNormalizationHooks.prune?.(node)) return true;
-      return pruneByOwnership(node, sets);
-    },
-    orderKey: gcpDeepNormalizationHooks.orderKey,
+    ...(Object.keys(metadata).length ? { metadata } : {}),
+    ...(Object.keys(spec).length ? { spec } : {}),
   };
 }
 
-/** `metadata.managedFields` off a raw `kubectl get -o json` object — a plain decode, no client-side type coercion. */
-function managedFieldsOfRaw(obj: Record<string, unknown>): ManagedFieldsEntryLike[] {
-  const metadata = obj.metadata;
-  if (!metadata || typeof metadata !== "object") return [];
-  const entries = (metadata as Record<string, unknown>).managedFields;
-  if (!Array.isArray(entries)) return [];
-  return entries.filter((e): e is ManagedFieldsEntryLike => !!e && typeof e === "object");
-}
-
-/** The live object minus the envelope fields that live outside `properties` on {@link DeepResourceObservation} (mirrors k8s's `propertiesTreeOf`). */
+/** The live payload minus the fields that live outside `properties` on
+ * {@link DeepResourceObservation}. A REST body has no `apiVersion`, but `kind`
+ * shows up on some (GCS returns `storage#bucket`), so both are dropped. */
 function propertiesTreeOf(obj: Record<string, unknown>): Record<string, unknown> {
   const { apiVersion: _apiVersion, kind: _kind, ...rest } = obj;
   return rest;
@@ -204,25 +207,22 @@ export async function observeResourcesDeepGcp(options: GcpDeepObserveOptions): P
   const resources: Record<string, DeepResourceObservation> = {};
   const unobserved: Record<string, UnobservedEntity> = {};
 
-  // Resolve the cluster identity once, before touching any resource — a
-  // declared-but-mismatched binding throws here (chant #1100), aborting the
-  // whole read rather than letting the per-entity try/catch below absorb it
-  // as an ordinary "not found". Core turns the throw into NOT-OBSERVED for
-  // every declared entity.
-  const ctxArg = await resolveGcpKubectlContext(options.environment);
+  const endpoint = process.env.GCP_ENDPOINT_URL;
 
-  for (const [entityName, { entityType, props }] of options.entities) {
+  const reads = [...options.entities].map(async ([entityName, { entityType, props }]) => {
     const gvk = deriveGVK(entityType);
-    if (!gvk) {
+    if (!gvk || !mapperForKind(gvk.kind)) {
       unobserved[entityName] = {
         type: entityType,
         reason: "unsupported-kind",
-        detail: `cannot derive a Config Connector GVK from ${entityType}`,
+        detail: gvk
+          ? `no REST mapper for ${gvk.kind} — chant cannot apply this kind either`
+          : `cannot derive a GCP kind from ${entityType}`,
       };
-      continue;
+      return;
     }
 
-    const metadata = props.metadata as { name?: string; namespace?: string } | undefined;
+    const metadata = props.metadata as { name?: string; annotations?: Record<string, string> } | undefined;
     const name = metadata?.name;
     if (!name) {
       unobserved[entityName] = {
@@ -230,47 +230,67 @@ export async function observeResourcesDeepGcp(options: GcpDeepObserveOptions): P
         reason: "read-failed",
         detail: "declared entity has no metadata.name to query by",
       };
-      continue;
+      return;
+    }
+
+    let client: GcpReadClientOptions;
+    try {
+      client = {
+        project: resolveGcpProject({ kind: gvk.kind, metadata }),
+        ...(endpoint ? { endpoint } : {}),
+      };
+    } catch (err) {
+      unobserved[entityName] = {
+        type: entityType,
+        reason: "no-binding",
+        detail: err instanceof Error ? err.message : String(err),
+      };
+      return;
     }
 
     try {
-      const obj = await execConfigConnectorGet(gvk, name, metadata.namespace, ctxArg);
-      const objMetadata = obj.metadata as { labels?: Record<string, string>; uid?: string } | undefined;
+      const obj = await getResource(client, gvk.kind, name, props);
+      const labels = obj.labels as Record<string, string> | null | undefined;
 
-      // owned filter: withhold resources not carrying chant's marker label.
-      // Withheld is not absent (#1089) — the CR exists, it just isn't chant's.
-      if (options.owned && !hasOwnershipMarker(objMetadata?.labels, LABEL_OWNERSHIP_KEYS)) {
+      // owned filter: withhold what does not carry chant's marker. Withheld is
+      // not absent (#1089). Where the payload has no labels at all there is
+      // nothing to filter on, so the resource passes through — the same
+      // detect-only degradation the thin path takes.
+      if (options.owned && labels != null && !hasOwnershipMarker(labels, GCP_OWNERSHIP_LABEL_KEYS)) {
         unobserved[entityName] = {
           type: entityType,
           reason: "filtered",
           detail: "live resource carries no chant ownership marker and --owned was requested",
         };
-        continue;
+        return;
       }
-
-      const liveRoot = propertiesTreeOf(obj);
-      const sets = buildOwnershipSets(managedFieldsOfRaw(obj), liveRoot, props, isGcpChantFieldManager);
 
       resources[entityName] = {
         type: entityType,
-        physicalId: objMetadata?.uid,
-        properties: normalizeDeepProperties(liveRoot, {
+        physicalId: (obj.id as string | undefined) ?? (obj.selfLink as string | undefined),
+        properties: normalizeDeepProperties(restToCnrmShape(propertiesTreeOf(obj)), {
           entityType,
           side: "live",
-          hooks: perResourceHooks(sets),
+          // The static table is the whole prune now — there is no per-resource
+          // ownership pass, because a REST payload carries no field ownership
+          // to drive one (see ./deep-observe-hooks.ts).
+          hooks: gcpDeepNormalizationHooks,
         }),
       };
     } catch (err) {
-      // A NotFound is a real absence, same as the thin read — records
-      // nothing here, since restating it would turn one finding into two.
-      // Anything else (auth, connectivity, a mismatched context) proves
-      // nothing and is a hole rather than an absence (#1089).
-      const outcome = classifyKubectlFailure(err);
-      if (outcome.kind === "unobserved") {
-        unobserved[entityName] = { type: entityType, reason: outcome.reason, detail: outcome.detail };
-      }
+      // A 404 is a real absence, same as the thin read — recorded there, not
+      // restated here. Anything else proves nothing and is a hole (#1089).
+      if (isNotFound(err)) return;
+      const status = err instanceof GcpReadError ? err.status : undefined;
+      unobserved[entityName] = {
+        type: entityType,
+        reason: status === 401 || status === 403 ? "no-credentials" : "read-failed",
+        detail: err instanceof Error ? err.message : String(err),
+      };
     }
-  }
+  });
+
+  await Promise.all(reads);
 
   return deepObservation(resources, unobserved);
 }

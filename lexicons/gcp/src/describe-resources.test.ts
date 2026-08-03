@@ -1,243 +1,156 @@
-import { describe, test, expect, vi, beforeEach } from "vitest";
+import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";
+import { describeResources, statusFromRest } from "./describe-resources";
 
-const execMock = vi.fn();
-vi.mock("node:child_process", async () => {
-  const actual = await vi.importActual<typeof import("node:child_process")>("node:child_process");
-  return { ...actual, exec: (cmd: string, cb: (err: Error | null, out: { stdout: string; stderr: string }) => void) => {
-    Promise.resolve(execMock(cmd)).then(
-      (out) => cb(null, out),
-      (err) => cb(err as Error, { stdout: "", stderr: "" }),
-    );
-  } };
-});
+/**
+ * The transport is `fetch` now, not a kubectl spawn (#1209), so these stub the
+ * global rather than `node:child_process`. Stubbing fetch also keeps the URL
+ * under test: a reader that composed its own paths instead of reusing the
+ * applier's mapper would show up here as a changed URL.
+ */
+const fetchMock = vi.fn();
 
-const loadChantConfigMock = vi.fn();
-vi.mock("@intentius/chant/config", () => ({
-  loadChantConfig: (...args: unknown[]) => loadChantConfigMock(...args),
-}));
-
-const { describeResources } = await import("./describe-resources");
+function reply(status: number, body: unknown) {
+  return { status, text: async () => (typeof body === "string" ? body : JSON.stringify(body)) };
+}
 
 function makeEntities(records: Array<{ name: string; entityType: string; props: Record<string, unknown> }>) {
   return new Map(records.map((r) => [r.name, { entityType: r.entityType, props: r.props }]));
 }
 
-describe("gcp describeResources (Config Connector)", () => {
+const bucket = (name: string) => ({
+  name: "bucket-entity",
+  entityType: "GCP::Storage::Bucket",
+  props: { metadata: { name }, spec: { location: "US" } },
+});
+
+async function read(entities: ReturnType<typeof makeEntities>, opts: { owned?: boolean } = {}) {
+  return describeResources({
+    environment: "local",
+    buildOutput: "",
+    entityNames: [...entities.keys()],
+    entities,
+    ...opts,
+  });
+}
+
+describe("gcp describeResources — direct REST (#1209)", () => {
   beforeEach(() => {
-    execMock.mockReset();
-    loadChantConfigMock.mockReset();
-    // No binding declared by default — matches every test below except the
-    // dedicated cluster-binding tests, which override this per case.
-    loadChantConfigMock.mockResolvedValue({ config: {} });
+    fetchMock.mockReset();
+    vi.stubGlobal("fetch", fetchMock);
+    process.env.GOOGLE_CLOUD_PROJECT = "my-project";
+    process.env.GCP_ENDPOINT_URL = "http://localhost:4588";
   });
 
-  test("queries kubectl with the derived CC GVK and maps the response", async () => {
-    let receivedCmd = "";
-    execMock.mockImplementation((cmd: string) => {
-      receivedCmd = cmd;
-      return {
-        stdout: JSON.stringify({
-          metadata: { name: "data-bucket", namespace: "config-control", uid: "uid-1", creationTimestamp: "2026-05-01T00:00:00Z" },
-          status: { conditions: [{ type: "Ready", status: "True" }] },
-        }),
-        stderr: "",
-      };
-    });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    delete process.env.GCP_ENDPOINT_URL;
+    delete process.env.GOOGLE_CLOUD_PROJECT;
+  });
 
+  test("reads through the applier's mapper URL, against the endpoint override", async () => {
+    fetchMock.mockResolvedValue(reply(200, { id: "b/my-bucket", labels: { "managed-by": "chant" } }));
+    const out = await read(makeEntities([bucket("my-bucket")]));
+
+    // floci-gcp, and the storage path the applier writes to — not a URL this
+    // reader composed for itself.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][0]).toBe("http://localhost:4588/storage/v1/b/my-bucket");
+    expect(out.resources["bucket-entity"]).toMatchObject({ type: "GCP::Storage::Bucket", physicalId: "b/my-bucket" });
+  });
+
+  test("a 404 is a real absence — reported as neither present nor a hole", async () => {
+    fetchMock.mockResolvedValue(reply(404, { error: "not found" }));
+    const out = await read(makeEntities([bucket("gone")]));
+    expect(out.resources["bucket-entity"]).toBeUndefined();
+    expect(out.unobserved?.["bucket-entity"]).toBeUndefined();
+  });
+
+  test("a 403 is a hole, not an absence (#1089)", async () => {
+    fetchMock.mockResolvedValue(reply(403, { error: "denied" }));
+    const out = await read(makeEntities([bucket("secret")]));
+    expect(out.resources["bucket-entity"]).toBeUndefined();
+    expect(out.unobserved?.["bucket-entity"]?.reason).toBe("no-credentials");
+  });
+
+  test("an unreachable endpoint is a hole", async () => {
+    fetchMock.mockRejectedValue(new Error("ECONNREFUSED"));
+    const out = await read(makeEntities([bucket("x")]));
+    expect(out.unobserved?.["bucket-entity"]?.reason).toBe("read-failed");
+  });
+
+  test("a kind the applier has no mapper for is unsupported-kind, not absent", async () => {
+    const out = await read(
+      makeEntities([{ name: "e", entityType: "GCP::Compute::Address", props: { metadata: { name: "addr" } } }]),
+    );
+    expect(out.unobserved?.e?.reason).toBe("unsupported-kind");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  test("an entity with no metadata.name has nothing to query by", async () => {
+    const out = await read(makeEntities([{ name: "e", entityType: "GCP::Storage::Bucket", props: {} }]));
+    expect(out.unobserved?.e?.reason).toBe("read-failed");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  test("reads concurrently, where the kubectl path was one spawn after another", async () => {
+    fetchMock.mockResolvedValue(reply(200, {}));
     const entities = makeEntities([
-      { name: "dataBucket", entityType: "GCP::Storage::Bucket", props: { metadata: { name: "data-bucket", namespace: "config-control" } } },
+      { name: "a", entityType: "GCP::Storage::Bucket", props: { metadata: { name: "a" } } },
+      { name: "b", entityType: "GCP::Storage::Bucket", props: { metadata: { name: "b" } } },
+      { name: "c", entityType: "GCP::Storage::Bucket", props: { metadata: { name: "c" } } },
     ]);
-
-    const result = await describeResources({ environment: "prod", buildOutput: "", entityNames: ["dataBucket"], entities });
-
-    // Resource name follows: <lowerKind>.<service>.cnrm.cloud.google.com
-    expect(receivedCmd).toContain("storagebucket.storage.cnrm.cloud.google.com");
-    expect(receivedCmd).toContain("data-bucket");
-    expect(receivedCmd).toContain("-n config-control");
-
-    expect(result.resources["dataBucket"]).toMatchObject({
-      type: "GCP::Storage::Bucket",
-      physicalId: "uid-1",
-      status: "READY",
-    });
+    await read(entities);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
-  test("Compute resource derives correct GVK with service prefix", async () => {
-    let receivedCmd = "";
-    execMock.mockImplementation((cmd: string) => {
-      receivedCmd = cmd;
-      return {
-        stdout: JSON.stringify({
-          metadata: { name: "subnet-1", uid: "uid", creationTimestamp: "t" },
-          status: { conditions: [{ type: "Ready", status: "True" }] },
-        }),
-        stderr: "",
-      };
+  describe("--owned", () => {
+    test("withholds a resource whose labels carry no chant marker", async () => {
+      fetchMock.mockResolvedValue(reply(200, { id: "b/theirs", labels: { team: "other" } }));
+      const out = await read(makeEntities([bucket("theirs")]), { owned: true });
+      expect(out.unobserved?.["bucket-entity"]?.reason).toBe("filtered");
     });
 
-    const entities = makeEntities([
-      { name: "sub", entityType: "GCP::Compute::Subnetwork", props: { metadata: { name: "subnet-1" } } },
-    ]);
+    test("keeps one carrying the marker the APPLIER stamps, not the CNRM label", async () => {
+      // gcp-apply stamps `managed-by: chant` — GCP label keys cannot hold the
+      // k8s `app.kubernetes.io/managed-by` form the kubectl path looked for.
+      fetchMock.mockResolvedValue(reply(200, { id: "b/ours", labels: { "managed-by": "chant" } }));
+      const out = await read(makeEntities([bucket("ours")]), { owned: true });
+      expect(out.resources["bucket-entity"]?.ownership).toBe("owned");
+    });
 
-    await describeResources({ environment: "prod", buildOutput: "", entityNames: ["sub"], entities });
+    test("degrades to detect-only for a kind whose payload has no labels at all", async () => {
+      // A Pub/Sub topic carries none. Withholding everything it cannot prove
+      // would report a live estate as empty; the AWS thin path takes the same
+      // posture when describe-stack-resources returns no tags.
+      fetchMock.mockResolvedValue(reply(200, { name: "projects/my-project/topics/t" }));
+      const out = await read(
+        makeEntities([{ name: "t", entityType: "GCP::PubSub::Topic", props: { metadata: { name: "t" } } }]),
+        { owned: true },
+      );
+      expect(out.unobserved?.t).toBeUndefined();
+      expect(out.resources.t?.ownership).toBe("unknown");
+    });
+  });
+});
 
-    expect(receivedCmd).toContain("computesubnetwork.compute.cnrm.cloud.google.com");
+describe("statusFromRest", () => {
+  test("PRESENT when the payload carries no state — the common case", () => {
+    // A bucket that answers a GET simply exists. Same sentinel the Azure
+    // reader emits for a resource with no provisioningState.
+    expect(statusFromRest({})).toBe("PRESENT");
   });
 
-  test("Ready=False maps to the condition's reason", async () => {
-    execMock.mockResolvedValue({
-      stdout: JSON.stringify({
-        metadata: { name: "x", uid: "uid", creationTimestamp: "t" },
-        status: { conditions: [{ type: "Ready", status: "False", reason: "DependencyNotFound", message: "..." }] },
-      }),
-      stderr: "",
-    });
-
-    const entities = makeEntities([
-      { name: "x", entityType: "GCP::Storage::Bucket", props: { metadata: { name: "x" } } },
-    ]);
-
-    const result = await describeResources({ environment: "prod", buildOutput: "", entityNames: ["x"], entities });
-
-    expect(result.resources["x"].status).toBe("DependencyNotFound");
+  test("an explicit state wins", () => {
+    expect(statusFromRest({ state: "ACTIVE" })).toBe("ACTIVE");
   });
 
-  test("missing Ready condition falls back to PRESENT", async () => {
-    execMock.mockResolvedValue({
-      stdout: JSON.stringify({
-        metadata: { name: "x", uid: "uid", creationTimestamp: "t" },
-        status: {},
-      }),
-      stderr: "",
-    });
-
-    const entities = makeEntities([
-      { name: "x", entityType: "GCP::Storage::Bucket", props: { metadata: { name: "x" } } },
-    ]);
-
-    const result = await describeResources({ environment: "prod", buildOutput: "", entityNames: ["x"], entities });
-
-    expect(result.resources["x"].status).toBe("PRESENT");
+  test("a Ready condition reads like the CNRM path did", () => {
+    expect(statusFromRest({ status: { conditions: [{ type: "Ready", status: "True" }] } })).toBe("READY");
+    expect(statusFromRest({ status: { conditions: [{ type: "Ready", status: "False", reason: "Failed" }] } })).toBe("Failed");
+    expect(statusFromRest({ status: { conditions: [{ type: "Ready", status: "False" }] } })).toBe("NOT_READY");
   });
 
-  test("kubectl-not-found leaves entity out of result (a confirmed absence)", async () => {
-    execMock.mockImplementation(() => { throw new Error('Error from server (NotFound): storagebucket "x" not found'); });
-
-    const entities = makeEntities([
-      { name: "x", entityType: "GCP::Storage::Bucket", props: { metadata: { name: "x" } } },
-    ]);
-
-    const result = await describeResources({ environment: "prod", buildOutput: "", entityNames: ["x"], entities });
-
-    expect(result.resources).toEqual({});
-    expect(result.unobserved ?? {}).toEqual({});
-  });
-
-  test("an unreachable cluster is unobserved, not absent (#1089)", async () => {
-    execMock.mockImplementation(() => {
-      throw Object.assign(new Error("kubectl failed"), {
-        stderr: "Unable to connect to the server: dial tcp: i/o timeout",
-      });
-    });
-
-    const entities = makeEntities([
-      { name: "x", entityType: "GCP::Storage::Bucket", props: { metadata: { name: "x" } } },
-    ]);
-
-    const result = await describeResources({ environment: "prod", buildOutput: "", entityNames: ["x"], entities });
-
-    expect(result.resources).toEqual({});
-    expect(result.unobserved?.x?.reason).toBe("no-binding");
-  });
-
-  test("non-GCP entity types are unobserved — no GVK to query (#1089)", async () => {
-    const entities = makeEntities([
-      { name: "x", entityType: "AWS::S3::Bucket", props: { metadata: { name: "x" } } },
-    ]);
-
-    const result = await describeResources({ environment: "prod", buildOutput: "", entityNames: ["x"], entities });
-
-    expect(result.resources).toEqual({});
-    expect(result.unobserved?.x?.reason).toBe("unsupported-kind");
-    expect(execMock).not.toHaveBeenCalled();
-  });
-
-  test("entity without metadata.name is unobserved — nothing was queried", async () => {
-    const entities = makeEntities([
-      { name: "broken", entityType: "GCP::Storage::Bucket", props: {} },
-    ]);
-
-    const result = await describeResources({ environment: "prod", buildOutput: "", entityNames: ["broken"], entities });
-
-    expect(result.resources).toEqual({});
-    expect(result.unobserved?.broken?.reason).toBe("read-failed");
-    expect(execMock).not.toHaveBeenCalled();
-  });
-
-  // chant #1100 — GCP-via-CNRM resolves the same environment→cluster binding
-  // as the K8s lexicon (bound-and-matching, bound-and-mismatched loud
-  // refusal, unbound unchanged), since it observes through the same kubectl
-  // path against the same cluster.
-  describe("cluster binding (chant #1100)", () => {
-    function bucketEntities() {
-      return makeEntities([
-        { name: "dataBucket", entityType: "GCP::Storage::Bucket", props: { metadata: { name: "data-bucket" } } },
-      ]);
-    }
-
-    const bucketStdout = JSON.stringify({
-      metadata: { name: "data-bucket", uid: "uid-1", creationTimestamp: "2026-05-01T00:00:00Z" },
-      status: { conditions: [{ type: "Ready", status: "True" }] },
-    });
-
-    test("bound and ambient context matches: observes explicitly via --context", async () => {
-      loadChantConfigMock.mockResolvedValue({ config: { k8s: { profiles: { prod: { context: "prod-cnrm" } } } } });
-      let receivedCmd = "";
-      execMock.mockImplementation((cmd: string) => {
-        if (cmd.includes("current-context")) return { stdout: "prod-cnrm\n", stderr: "" };
-        receivedCmd = cmd;
-        return { stdout: bucketStdout, stderr: "" };
-      });
-
-      const result = await describeResources({ environment: "prod", buildOutput: "", entityNames: ["dataBucket"], entities: bucketEntities() });
-
-      expect(receivedCmd).toContain("--context prod-cnrm");
-      expect(result.resources["dataBucket"]).toMatchObject({ type: "GCP::Storage::Bucket", physicalId: "uid-1", status: "READY" });
-    });
-
-    test("bound and ambient context mismatches: refuses loudly instead of observing the wrong cluster", async () => {
-      loadChantConfigMock.mockResolvedValue({ config: { k8s: { profiles: { prod: { context: "prod-cnrm" } } } } });
-      execMock.mockImplementation((cmd: string) => {
-        if (cmd.includes("current-context")) return { stdout: "staging-cnrm\n", stderr: "" };
-        throw new Error(`unexpected cmd (should have refused before any kubectl get): ${cmd}`);
-      });
-
-      await expect(
-        describeResources({ environment: "prod", buildOutput: "", entityNames: ["dataBucket"], entities: bucketEntities() }),
-      ).rejects.toThrow(/environment "prod".*"prod-cnrm".*"staging-cnrm"/s);
-
-      expect(execMock).toHaveBeenCalledTimes(1);
-    });
-
-    test("unbound: ambient context is used unchanged, but the fallback is visible (not silent)", async () => {
-      loadChantConfigMock.mockResolvedValue({ config: {} });
-      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-      let receivedCmd = "";
-      execMock.mockImplementation((cmd: string) => {
-        receivedCmd = cmd;
-        return { stdout: bucketStdout, stderr: "" };
-      });
-
-      const result = await describeResources({ environment: "prod", buildOutput: "", entityNames: ["dataBucket"], entities: bucketEntities() });
-
-      expect(receivedCmd).not.toContain("--context");
-      expect(receivedCmd).not.toContain("current-context");
-      expect(result.resources["dataBucket"]).toMatchObject({ type: "GCP::Storage::Bucket", physicalId: "uid-1", status: "READY" });
-
-      const bindingWarning = warnSpy.mock.calls.find((c) => String(c[0]).includes("no cluster binding"));
-      expect(bindingWarning?.[0]).toContain('environment "prod"');
-      expect(bindingWarning?.[0]).toContain("k8s.profiles.prod.context");
-      warnSpy.mockRestore();
-    });
+  test("falls back to listing conditions when there is no Ready", () => {
+    expect(statusFromRest({ status: { conditions: [{ type: "Synced", status: "True" }] } })).toBe("Synced=True");
   });
 });
