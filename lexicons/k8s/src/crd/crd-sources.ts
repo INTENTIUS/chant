@@ -94,6 +94,56 @@ const CERT_MANAGER_VERSION = "v1.16.2";
 const CERT_MANAGER_CRD_BUNDLE = `https://github.com/cert-manager/cert-manager/releases/download/${CERT_MANAGER_VERSION}/cert-manager.crds.yaml`;
 
 /**
+ * CloudNativePG CRDs — postgresql.cnpg.io/v1
+ *
+ * The Postgres operator. Produces, under the `Cnpg` namespace (both groups are
+ * mapped there explicitly in parser.ts; the first-segment rule would otherwise
+ * split them into `Postgresql` and `Barmancloud`):
+ *   K8s::Cnpg::Cluster          → postgresql.cnpg.io/v1
+ *   K8s::Cnpg::ScheduledBackup  → postgresql.cnpg.io/v1
+ *   K8s::Cnpg::Backup           → postgresql.cnpg.io/v1
+ *   K8s::Cnpg::Pooler           → postgresql.cnpg.io/v1
+ *
+ * Pinned to 1.29.1 rather than latest (1.30.0) because that is the operator a
+ * real consumer runs — BinaryBourbon/fountain's k8s overlay.
+ *
+ * Note on ScheduledBackup.schedule: it is a **six**-field cron with leading
+ * seconds, not the five-field form Kubernetes CronJob takes. The schema types
+ * it as a plain string, so a five-field value passes every check here and
+ * silently means something else on the cluster.
+ *
+ * Database, Publication and Subscription are deliberately left out — no known
+ * consumer needs them, and pulling a whole provider is what the note at the top
+ * of this file warns against.
+ *
+ * Operator install: kubectl apply --server-side -f
+ *   https://raw.githubusercontent.com/cloudnative-pg/cloudnative-pg/release-1.29/releases/cnpg-1.29.1.yaml
+ */
+const CNPG_VERSION = "v1.29.1";
+const CNPG_CRD_BASE = `https://raw.githubusercontent.com/cloudnative-pg/cloudnative-pg/${CNPG_VERSION}/config/crd/bases`;
+
+/**
+ * barman-cloud plugin CRD — barmancloud.cnpg.io/v1
+ *
+ * CNPG's WAL archiving / object-storage backend, shipped as a separate plugin
+ * with its own release train. Produces:
+ *   K8s::Cnpg::ObjectStore  → barmancloud.cnpg.io/v1
+ *
+ * A CNPG Cluster reaches it through `spec.plugins[]` — `name:
+ * barman-cloud.cloudnative-pg.io`, `isWALArchiver: true`,
+ * `parameters.barmanObjectName` naming the ObjectStore — so the two are only
+ * ever useful together.
+ *
+ * Pinned to 0.14.0 (latest). Its ObjectStore schema is a superset of 0.7.0's:
+ * same four spec properties, more detail inside them.
+ *
+ * Plugin install: kubectl apply -f
+ *   https://github.com/cloudnative-pg/plugin-barman-cloud/releases/download/v0.14.0/manifest.yaml
+ */
+const BARMAN_PLUGIN_VERSION = "v0.14.0";
+const BARMAN_PLUGIN_CRD_BASE = `https://raw.githubusercontent.com/cloudnative-pg/plugin-barman-cloud/${BARMAN_PLUGIN_VERSION}/config/crd/bases`;
+
+/**
  * Prometheus Operator CRDs — monitoring.coreos.com/v1
  *
  * Produces (the `monitoring.coreos.com` group maps to the `Monitoring`
@@ -188,6 +238,11 @@ export const CRD_SOURCES: CRDSource[] = [
   { type: "url", url: CERT_MANAGER_CRD_BUNDLE },
   { type: "url", url: `${PROM_OPERATOR_CRD_BASE}/monitoring.coreos.com_servicemonitors.yaml` },
   { type: "url", url: `${PROM_OPERATOR_CRD_BASE}/monitoring.coreos.com_prometheusrules.yaml` },
+  { type: "url", url: `${CNPG_CRD_BASE}/postgresql.cnpg.io_clusters.yaml` },
+  { type: "url", url: `${CNPG_CRD_BASE}/postgresql.cnpg.io_scheduledbackups.yaml` },
+  { type: "url", url: `${CNPG_CRD_BASE}/postgresql.cnpg.io_backups.yaml` },
+  { type: "url", url: `${CNPG_CRD_BASE}/postgresql.cnpg.io_poolers.yaml` },
+  { type: "url", url: `${BARMAN_PLUGIN_CRD_BASE}/barmancloud.cnpg.io_objectstores.yaml` },
   {
     type: "url",
     url: FLUX_TOOLKIT_INSTALL,
