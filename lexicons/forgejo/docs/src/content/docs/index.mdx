@@ -34,7 +34,9 @@ chant build src -o .forgejo/workflows/ci.yml
 Override the runner-label map and the actions root in `chant.config.ts`:
 
 ```ts
-import type { ChantConfig } from "@intentius/chant";
+import type { ChantConfig } from "@intentius/chant/config";
+// Brings the `forgejo` key into ChantConfig (chant #1344).
+import "@intentius/chant-lexicon-forgejo";
 
 export default {
   lexicons: ["forgejo"],

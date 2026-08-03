@@ -21,12 +21,14 @@ import { generateForgejoPipeline } from "./components/generate-pipeline";
 import { forgejoLintRules } from "./lint/rules/delegate-to-github";
 import { forgejoCompletions } from "./lsp/completions";
 import { forgejoHover } from "./lsp/hover";
+import { forgejoConfigSchema } from "./config";
 
 const reuseNote =
   "forgejo reuses the github lexicon's entities — run `chant generate` in the github lexicon instead.";
 
 export const forgejoPlugin: LexiconPlugin = {
   name: "forgejo",
+  configSchema: forgejoConfigSchema,
   auditCatalog: () => forgejoAuditCatalog,
   serializer: forgejoSerializer,
 

@@ -48,3 +48,9 @@ export {
 // Reuse the entire github authoring surface: generated entities, expression
 // system, context variables, and composites.
 export * from "@intentius/chant-lexicon-github";
+
+// The `forgejo` chant.config namespace (#1344). Exported as a type and, by
+// virtue of this module being part of the program, as the `ChantConfig`
+// augmentation that makes `forgejo: { … }` typecheck in a project config.
+export { forgejoConfigSchema } from "./config";
+export type { ForgejoConfig } from "./config";

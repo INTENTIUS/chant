@@ -51,6 +51,8 @@
  * );
  * ```
  */
+import type { TemporalConfig } from "./config-schema";
+
 export interface TemporalActivityProfile {
   /** Maximum time allowed for a single activity execution attempt. */
   startToCloseTimeout: string;
@@ -184,9 +186,10 @@ export interface TemporalWorkerProfile {
   autoStart?: boolean;
 }
 
-export interface TemporalChantConfig {
-  /** Named connection profiles */
-  profiles: Record<string, TemporalWorkerProfile>;
-  /** Profile used when --profile flag is omitted from `chant run` */
-  defaultProfile?: string;
-}
+/**
+ * The `temporal` namespace, derived from the schema core validates against
+ * (#1344) rather than declared a second time here. Kept as a name because
+ * projects `satisfies TemporalChantConfig` against it; `ChantConfig` itself now
+ * carries the key, so `satisfies ChantConfig` works too.
+ */
+export type TemporalChantConfig = TemporalConfig;

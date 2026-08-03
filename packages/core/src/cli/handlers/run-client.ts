@@ -116,7 +116,9 @@ export function resolveProfile(
   config: Record<string, unknown>,
   profileName?: string,
 ): WorkerProfile {
-  const temporal = config.temporal as Record<string, unknown> | undefined;
+  // #1344 — the temporal lexicon declares this namespace and core validates it
+  // at load, so this reads a checked value rather than asserting one.
+  const temporal = (config as { temporal?: Record<string, unknown> }).temporal;
   if (!temporal?.profiles) {
     throw new Error(
       'No temporal.profiles found in chant.config.ts. Add a profile to use `chant run`.',
