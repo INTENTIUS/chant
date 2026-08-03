@@ -201,3 +201,34 @@ describe("Cloud Control", () => {
     expect(parseResourceDescription({ Properties: JSON.stringify(["not", "an", "object"]) })).toBeNull();
   });
 });
+
+describe("the region an endpoint override cannot carry in its host", () => {
+  // An override is one host for every region, so the hostname says nothing and
+  // the region has to travel in the request. It did not, and a stack declared
+  // `region: "us-west-1"` was read against the emulator's default region —
+  // where it genuinely does not exist, so the read came back empty and the
+  // snapshot recorded that region as holding nothing.
+  test("the request names the region in its credential scope", async () => {
+    const { http, calls } = recording(() => respond(stackXml));
+    await describeStackResources("web", { endpoint: "http://localhost:4566", region: "us-west-1", http });
+    expect(calls[0].headers.authorization).toContain("/us-west-1/cloudformation/aws4_request");
+  });
+
+  test("Cloud Control carries it too, scoped to its own service", async () => {
+    const { http, calls } = recording(() => respond(JSON.stringify({ ResourceDescription: {} })));
+    await getResource("AWS::EC2::VPC", "vpc-01", { endpoint: "http://localhost:4566", region: "eu-west-1", http });
+    expect(calls[0].headers.authorization).toContain("/eu-west-1/cloudcontrolapi/aws4_request");
+  });
+
+  test("no region, no header — nothing invents one", async () => {
+    const { http, calls } = recording(() => respond(stackXml));
+    await describeStackResources("web", { endpoint: "http://localhost:4566", http });
+    expect(calls[0].headers.authorization).toBeUndefined();
+  });
+
+  test("it is a scope, not a signature — the placeholder says so", async () => {
+    const { http, calls } = recording(() => respond(stackXml));
+    await describeStackResources("web", { region: "us-west-1", http });
+    expect(calls[0].headers.authorization).toContain("Signature=unsigned");
+  });
+});
