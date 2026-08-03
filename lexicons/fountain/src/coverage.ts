@@ -5,8 +5,8 @@
  * (lifecycle flags, return attributes, extension constraints) that a
  * three-kind OpenAPI lexicon has no analog for — it would report 0% on
  * everything and mean nothing. What fountain actually needs to know is
- * whether its generated surface still matches upstream, because the spec
- * is a rolling endpoint with no release tag to pin (see spec/fetch.ts):
+ * whether its generated surface still matches upstream, measured against the
+ * pinned spec release (see spec/fetch.ts):
  *
  *   1. Property coverage — request-schema properties per modeled kind vs
  *      what the committed surface baseline exposes. A gap means upstream
@@ -28,6 +28,9 @@ export const EXCLUDED_KINDS: Record<string, string> = {
   PromptRequest: "turn-level input inside a conversation run",
   SecretRequest: "secrets are a write-only sub-resource — upserted by fountainApply",
   VaultSecretRequest: "secrets are a write-only sub-resource — upserted by fountainApply",
+  ApplyRequest:
+    "the envelope fountainApply builds around a manifest, not a thing anyone declares — " +
+    "its contents are the Environment/Vault/Agent resources, which are modeled",
 };
 
 export interface KindCoverage {

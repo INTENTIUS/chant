@@ -4,6 +4,7 @@ import { fountainPlugin } from "../plugin";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
 import { readFileSync } from "fs";
+import { FOUNTAIN_SPEC_VERSION } from "../spec/fetch";
 
 /**
  * Package the fountain lexicon for distribution.
@@ -21,6 +22,9 @@ export async function packageLexicon(options?: { verbose?: boolean; force?: bool
       version: pkgJson.version ?? "0.0.0",
       chantVersion: ">=0.1.0",
       namespace: "Fountain",
+      // Which upstream API this surface was generated from. Without it a built
+      // lexicon cannot say what it was built against.
+      specVersion: FOUNTAIN_SPEC_VERSION,
     }),
     srcDir,
     collectSkills: () => collectSkills(fountainPlugin.skills?.() ?? []),
