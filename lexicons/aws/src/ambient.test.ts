@@ -42,6 +42,27 @@ describe("observeAwsAmbient (#1278)", () => {
     expect(found["sg-default"].attributes).toMatchObject({ GroupName: "default", VpcId: "vpc-1" });
   });
 
+  // The empty ones are the answer, and they were the ones being dropped: both
+  // other observers resolve outward from declarations, so a subnet is recorded
+  // only when something in it is.
+  it("reports subnets nothing occupies", async () => {
+    spawnMock.mockResolvedValue(
+      ok({
+        Subnets: [
+          { SubnetId: "subnet-used", VpcId: "vpc-1" },
+          { SubnetId: "subnet-empty-a", VpcId: "vpc-default" },
+          { SubnetId: "subnet-empty-b", VpcId: "vpc-default" },
+        ],
+      }),
+    );
+    const found = await observeAwsAmbient({
+      kinds: ["AWS::EC2::Subnet"],
+      observed: { public: { type: "AWS::EC2::Subnet", status: "OK", physicalId: "subnet-used" } },
+    });
+    expect(Object.keys(found).sort()).toEqual(["subnet-empty-a", "subnet-empty-b"]);
+    expect(found["subnet-empty-a"].attributes).toMatchObject({ VpcId: "vpc-default" });
+  });
+
   it("is bounded by the kinds the project declares", async () => {
     // A project managing security groups is not made to enumerate the account.
     const found = await observeAwsAmbient({ kinds: ["AWS::S3::Bucket"], observed: {} });

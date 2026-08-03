@@ -44,6 +44,22 @@ const ENUMERABLE: Record<string, { argv: string[]; key: string; id: string; name
     key: "NetworkInterfaces",
     id: "NetworkInterfaceId",
   },
+  // A subnet holding nothing is the same shape as an unused security group, and
+  // it was reachable by neither of the other paths. Both resolve outward from
+  // what is declared, so a subnet gets recorded only when something in it does —
+  // and the empty ones are exactly what "which of my subnets are empty" asks
+  // for.
+  //
+  // Found by measuring a snapshot rather than by reading the code: an estate
+  // with seven subnets recorded five, and the two it dropped were the two with
+  // nothing in them. The default VPC's subnets are the archetype again — nothing
+  // declares them, and the only one ever recorded was the one that happened to
+  // hold an instance.
+  "AWS::EC2::Subnet": {
+    argv: ["ec2", "describe-subnets"],
+    key: "Subnets",
+    id: "SubnetId",
+  },
 };
 
 /**
