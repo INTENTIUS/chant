@@ -268,6 +268,46 @@ describe("pruneArmOrphans (#azure-prune)", () => {
     expect(deletes).toHaveLength(1);
     expect(deletes[0]).toContain("/storageAccounts/orphan1?api-version=2023-01-01"); // apiVersion from the template
   });
+
+  // #1448 routes ApplyOp's `arm` target here, so this is now the delete scope for
+  // `delete: "owned-only"` — not `az deployment --mode Complete`, whose scope was
+  // the whole resource group. Asserted on the transport: an untagged resource
+  // must receive no DELETE at all, not merely be absent from the return value.
+  test("issues no delete against an untagged resource, even when it is an orphan", async () => {
+    const live = {
+      value: [
+        { id: "/1", name: "orphan-foreign", type: "Microsoft.Storage/storageAccounts", tags: { "managed-by": "terraform" } },
+        { id: "/2", name: "orphan-untagged", type: "Microsoft.Storage/storageAccounts" },
+      ],
+    };
+    const deletes: string[] = [];
+    const http: AzHttp = async (method, url) => {
+      if (method === "DELETE") deletes.push(url);
+      return { status: 200, text: method === "GET" ? JSON.stringify(live) : "" };
+    };
+    const pruned = await pruneArmOrphans(desired, ctx(), http);
+    expect(deletes).toEqual([]);
+    expect(pruned).toEqual([]);
+  });
+
+  // The caveat that was a comment on OWNERSHIP_TAG_KEY: floci-az drops resource
+  // tags, so nothing reads back as chant-owned there. Pinned as behaviour because
+  // the failure direction matters — it fails CLOSED (prunes nothing) rather than
+  // open, so the emulator under-deletes instead of deleting a stranger's
+  // resource. It also means an owned-only prune cannot be verified on floci-az;
+  // that verification needs real Azure.
+  test("prunes nothing when the transport drops tags, as floci-az does", async () => {
+    const live = {
+      value: [{ id: "/1", name: "orphan1", type: "Microsoft.Storage/storageAccounts" }], // tags dropped
+    };
+    const deletes: string[] = [];
+    const http: AzHttp = async (method, url) => {
+      if (method === "DELETE") deletes.push(url);
+      return { status: 200, text: method === "GET" ? JSON.stringify(live) : "" };
+    };
+    expect(await pruneArmOrphans(desired, ctx(), http)).toEqual([]);
+    expect(deletes).toEqual([]);
+  });
 });
 
 describe("azApply prune flag (#azure-prune)", () => {

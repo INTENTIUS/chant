@@ -1,6 +1,6 @@
 import { describe, test, expect } from "vitest";
 import { applyCommand, rollbackCommand, defaultOutput, applyEndpoint, nativeApply } from "./apply";
-import type { K8sApplier } from "./apply";
+import type { K8sApplier, AzureApplier } from "./apply";
 
 describe("applyCommand (#124)", () => {
   test("cloudformation deploys to the env stack", () => {
@@ -10,9 +10,18 @@ describe("applyCommand (#124)", () => {
     expect(cmd).toContain("--template-file stack.json");
   });
 
-  test("arm uses Complete mode only when deleting", () => {
-    expect(applyCommand("arm", "rg", "t.json", "owned-only")).toContain("--mode Complete");
-    expect(applyCommand("arm", "rg", "t.json", "never")).toContain("--mode Incremental");
+  // Replaces "arm uses Complete mode only when deleting" (#1448). That test
+  // asserted the bug: `az deployment group create --mode Complete` deletes every
+  // resource in the group absent from the template, chant-owned or not, while
+  // this module's docblock promised deletes were "limited to chant-owned orphans
+  // by construction". arm no longer produces a command at all.
+  test("cloudformation is the only shell target left", () => {
+    // `deleteMode` changes nothing for CFN: the stack IS the ownership boundary,
+    // so `deploy` can only remove resources chant put in it.
+    const owned = applyCommand("cloudformation", "prod", "stack.json", "owned-only");
+    const never = applyCommand("cloudformation", "prod", "stack.json", "never");
+    expect(owned).toBe(never);
+    expect(owned).not.toContain("--mode");
   });
 });
 
@@ -30,8 +39,12 @@ describe("applyEndpoint (#926)", () => {
     const cfn = applyCommand("cloudformation", "prod", "template.json", "never");
     expect(applyEndpoint(cfn, "cloudformation", undefined)).toBe(cfn);
     expect(applyEndpoint(cfn, "cloudformation", "")).toBe(cfn);
-    const arm = applyCommand("arm", "rg", "t.json", "never");
+    // A non-cloudformation target passes through untouched. Written against a
+    // literal rather than `applyCommand("arm", …)`, which since #1448 returns
+    // undefined — comparing that to itself asserted nothing.
+    const arm = "az deployment group create --resource-group rg";
     expect(applyEndpoint(arm, "arm", url)).toBe(arm);
+    expect(applyEndpoint("kubectl apply -f dist", "kubectl", url)).toBe("kubectl apply -f dist");
   });
 });
 
@@ -111,6 +124,103 @@ describe("nativeApply: kubectl dispatches to the k8s lexicon (chant #1075)", () 
     }).catch((e: unknown) => e);
     expect(String(err)).toMatch(/ENOENT|no such file/);
     expect(String(err)).not.toMatch(/could not be loaded/);
+  });
+});
+
+describe("nativeApply: arm dispatches to the azure lexicon (chant #1448)", () => {
+  /** Records what the applier was handed, and reports nothing applied. */
+  const spy = (): { calls: Array<Parameters<AzureApplier>[0]>; applier: AzureApplier } => {
+    const calls: Array<Parameters<AzureApplier>[0]> = [];
+    const applier: AzureApplier = async (args) => {
+      calls.push(args);
+      return { applied: [], pruned: [] };
+    };
+    return { calls, applier };
+  };
+
+  // The fix. `owned-only` must reach azApply's marker-scoped prune, which filters
+  // on `isChantOwned(tags)` before issuing any delete — not ARM Complete mode,
+  // whose scope is the entire resource group.
+  test("owned-only asks the azure applier to prune, and issues no shell command", async () => {
+    const { calls, applier } = spy();
+    const result = await nativeApply(
+      { target: "arm", env: "my-rg", output: "t.json", deleteMode: "owned-only" },
+      undefined,
+      undefined,
+      applier,
+    );
+    expect(calls).toHaveLength(1);
+    expect(calls[0].prune).toBe(true);
+    expect(calls[0].resourceGroup).toBe("my-rg");
+    expect(calls[0].templatePath).toBe("t.json");
+    // A command here would mean the shell path ran — the thing #1448 is about.
+    expect(result.command).toBeUndefined();
+  });
+
+  test("gated prunes too — same delete scope, the gate lives in the composite", async () => {
+    const { calls, applier } = spy();
+    await nativeApply({ target: "arm", env: "rg", deleteMode: "gated" }, undefined, undefined, applier);
+    expect(calls[0].prune).toBe(true);
+  });
+
+  test("never does not prune", async () => {
+    const { calls, applier } = spy();
+    await nativeApply({ target: "arm", env: "rg", deleteMode: "never" }, undefined, undefined, applier);
+    expect(calls[0].prune).toBe(false);
+  });
+
+  test("defaults to never when no delete mode is given", async () => {
+    const { calls, applier } = spy();
+    await nativeApply({ target: "arm", env: "rg" }, undefined, undefined, applier);
+    expect(calls[0].prune).toBe(false);
+  });
+
+  test("defaults the template path the same way the other file targets do", async () => {
+    const { calls, applier } = spy();
+    await nativeApply({ target: "arm", env: "rg" }, undefined, undefined, applier);
+    expect(calls[0].templatePath).toBe("template.json");
+  });
+
+  // Same variable azure's read path honours, so an apply lands wherever `--live`
+  // is already looking.
+  test("passes AZURE_ENDPOINT_URL through, and omits it when unset", async () => {
+    const prev = process.env.AZURE_ENDPOINT_URL;
+    try {
+      process.env.AZURE_ENDPOINT_URL = "http://localhost:4577";
+      const a = spy();
+      await nativeApply({ target: "arm", env: "rg" }, undefined, undefined, a.applier);
+      expect(a.calls[0].endpoint).toBe("http://localhost:4577");
+
+      delete process.env.AZURE_ENDPOINT_URL;
+      const b = spy();
+      await nativeApply({ target: "arm", env: "rg" }, undefined, undefined, b.applier);
+      expect(b.calls[0].endpoint).toBeUndefined();
+    } finally {
+      if (prev === undefined) delete process.env.AZURE_ENDPOINT_URL;
+      else process.env.AZURE_ENDPOINT_URL = prev;
+    }
+  });
+
+  test("reports what was applied and pruned, not a command", async () => {
+    const applier: AzureApplier = async () => ({ applied: [{}, {}], pruned: [{}] });
+    const result = await nativeApply({ target: "arm", env: "rg" }, undefined, undefined, applier);
+    expect(result).toEqual({ applied: 2, pruned: 1 });
+  });
+
+  test("with nothing injected it resolves the real azure lexicon's azApply", async () => {
+    // Same shape as the kubectl case above: point it at a closed local port so
+    // the failure comes from inside azApply's own transport — reachable only if
+    // the dynamic import found the lexicon — and never touches real Azure.
+    const prev = process.env.AZURE_ENDPOINT_URL;
+    process.env.AZURE_ENDPOINT_URL = "http://127.0.0.1:1";
+    try {
+      const err = await nativeApply({ target: "arm", env: "rg" }).catch((e: unknown) => e);
+      expect(String(err)).not.toMatch(/could not be loaded/);
+      expect(String(err)).not.toMatch(/predates chant/);
+    } finally {
+      if (prev === undefined) delete process.env.AZURE_ENDPOINT_URL;
+      else process.env.AZURE_ENDPOINT_URL = prev;
+    }
   });
 });
 

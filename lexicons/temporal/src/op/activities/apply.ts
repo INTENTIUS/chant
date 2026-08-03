@@ -35,19 +35,22 @@ const execAsync = promisify(exec);
 export type ApplyTarget = "cloudformation" | "kubectl" | "arm";
 
 /**
- * The targets that are still a shell command. `kubectl` is not one of them
- * since chant #1075 — it goes through the k8s lexicon's typed client.
+ * The targets that are still a shell command. `kubectl` left since chant #1075
+ * (the k8s lexicon's typed client) and `arm` since #1448 (the azure lexicon's
+ * per-resource applier), so CloudFormation is the last one — and the only one
+ * where the platform's own deploy unit is already the ownership boundary.
  */
-export type ShellApplyTarget = "cloudformation" | "arm";
+export type ShellApplyTarget = "cloudformation";
 
 /**
  * How apply treats resources no longer declared.
  * - `never` — additive only; never deletes.
- * - `owned-only` — enables the target's own delete path. What that path is
- *   bounded by differs per target, and only two of the three are owned-only:
- *   `kubectl` sweeps by the ownership marker, `cloudformation` is bounded by
- *   the stack, and `arm` is `--mode Complete`, which is bounded by the resource
- *   group and deletes resources chant never applied (chant #1448).
+ * - `owned-only` — enables the target's own delete path. What bounds that path
+ *   differs per target, and since chant #1448 all three are genuinely
+ *   owned-only: `kubectl` sweeps by the ownership marker, `arm` prunes by the
+ *   ownership tag (`isChantOwned`, via the azure lexicon's `azApply`), and
+ *   `cloudformation` is bounded by the stack — which holds, because a resource
+ *   CFN did not create is not in the stack.
  * - `gated` — same delete scope as `owned-only`, but the workflow pauses for
  *   approval before the destructive apply (the gate lives in the composite).
  */
@@ -99,40 +102,52 @@ export type K8sApplier = (
 ) => Promise<{ applied: unknown[]; pruned: unknown[]; fieldManager: string }>;
 
 /**
+ * The azure lexicon's per-resource ARM applier, as this module needs to call it.
+ * Structural, so nothing here imports the azure lexicon's types — same shape as
+ * {@link K8sApplier}.
+ */
+export type AzureApplier = (
+  args: {
+    templatePath: string;
+    resourceGroup: string;
+    endpoint?: string;
+    prune?: boolean;
+  },
+  signal?: AbortSignal,
+) => Promise<{ applied: unknown[]; pruned: unknown[] }>;
+
+/**
  * Build the native apply command for the shell targets. Pure — exported for
  * testing.
  *
- * Authority stays with the platform: the CloudFormation stack, the ARM
- * resource group. chant hosts no state file. Deletes ride the native delete
- * path, and its scope is the platform's, not chant's:
- * - CloudFormation: the stack is the boundary; `deploy` deletes resources
- *   removed from the template within it. A resource CFN did not create is not
- *   in the stack, so owned-only holds.
- * - ARM: `--mode Complete` removes resources not in the template from the RG —
- *   ALL of them, marked or not. Owned-only does NOT hold here; the ownership
- *   marker is not consulted (chant #1448). The azure lexicon's own `azApply`
- *   prunes marker-scoped via `pruneArmOrphans`; this shell path does not reach
- *   it (chant #1449).
+ * Only CloudFormation is left here. Authority stays with the platform — the
+ * stack — and chant hosts no state file. Owned-only needs no extra scoping on
+ * this target because the stack IS the boundary: `deploy` deletes resources
+ * removed from the template, and a resource CFN did not create is not in the
+ * stack.
  *
- * The kubectl target has no command: it is a server-side apply through the k8s
- * lexicon (chant #1075), whose marker-scoped prune replaces
- * `--prune --selector <managed-by>=chant`.
+ * The other two targets have no command:
+ * - kubectl — server-side apply through the k8s lexicon (chant #1075), whose
+ *   marker-scoped prune replaces `--prune --selector <managed-by>=chant`.
+ * - arm — per-resource PUT through the azure lexicon's `azApply` (chant #1448),
+ *   whose prune filters on the chant ownership tag before issuing any delete.
+ *   This used to be `az deployment group create --mode Complete`, whose scope is
+ *   the whole resource group: it deleted every resource in the group absent from
+ *   the template, chant-owned or not, while the docblock promised the opposite.
  */
 export function applyCommand(
   target: ShellApplyTarget,
   env: string,
   output: string,
-  deleteMode: DeleteMode,
+  _deleteMode: DeleteMode,
 ): string {
-  const deletes = deleteMode !== "never";
   switch (target) {
     case "cloudformation":
       // CFN deletes resources removed from the template within the stack itself.
+      // The stack IS the ownership boundary — a resource chant never applied is
+      // not in it — so this needs no marker scoping and `deleteMode` changes
+      // nothing about the command.
       return `aws cloudformation deploy --template-file ${output} --stack-name ${env} --capabilities CAPABILITY_NAMED_IAM`;
-    case "arm": {
-      const mode = deletes ? " --mode Complete" : " --mode Incremental";
-      return `az deployment group create --resource-group ${env} --template-file ${output}${mode}`;
-    }
   }
 }
 
@@ -159,6 +174,31 @@ async function loadK8sApplier(): Promise<K8sApplier> {
     );
   }
   return mod.applyManifest;
+}
+
+/**
+ * Load the azure lexicon's `azApply` (#1448). Same variable-specifier trick as
+ * {@link loadK8sApplier}, for the same reason.
+ */
+async function loadAzureApplier(): Promise<AzureApplier> {
+  const spec = "@intentius/chant-lexicon-azure/op/activities";
+  let mod: { azApply?: AzureApplier };
+  try {
+    mod = (await import(spec)) as { azApply?: AzureApplier };
+  } catch (err) {
+    throw new Error(
+      `apply target "arm" needs @intentius/chant-lexicon-azure, which could not be loaded ` +
+        `(${err instanceof Error ? err.message : String(err)}). ARM applies go through the azure ` +
+        `lexicon's per-resource applier since chant #1448; install the azure lexicon and list it ` +
+        `in chant.config.ts.`,
+    );
+  }
+  if (typeof mod.azApply !== "function") {
+    throw new Error(
+      "the installed @intentius/chant-lexicon-azure exports no azApply — it predates chant #707",
+    );
+  }
+  return mod.azApply;
 }
 
 /**
@@ -196,6 +236,7 @@ export async function nativeApply(
   args: NativeApplyArgs,
   signal?: AbortSignal,
   applier?: K8sApplier,
+  azureApplier?: AzureApplier,
 ): Promise<NativeApplyResult> {
   const output = args.output ?? defaultOutput(args.target);
   const deleteMode = args.deleteMode ?? "never";
@@ -220,6 +261,27 @@ export async function nativeApply(
       pruned: result.pruned.length,
       fieldManager: result.fieldManager,
     };
+  }
+
+  if (args.target === "arm") {
+    const apply = azureApplier ?? (await loadAzureApplier());
+    const result = await apply(
+      {
+        templatePath: output,
+        resourceGroup: args.env,
+        // The same variable azure's read path honours, so an ARM apply lands
+        // wherever `--live` is already looking (floci-az, or real Azure when
+        // unset).
+        ...(process.env.AZURE_ENDPOINT_URL ? { endpoint: process.env.AZURE_ENDPOINT_URL } : {}),
+        prune: deleteMode !== "never",
+      },
+      signal,
+    );
+    console.log(
+      `applied ${result.applied.length} resource(s)` +
+        (result.pruned.length > 0 ? `; pruned ${result.pruned.length}` : ""),
+    );
+    return { applied: result.applied.length, pruned: result.pruned.length };
   }
 
   const command = applyEndpoint(
