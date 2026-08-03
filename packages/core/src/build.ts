@@ -186,6 +186,14 @@ export interface BuildOptions {
   lexicons?: readonly string[];
 
   /**
+   * chant #1442 — lexicon name → the version of the plugin that served it.
+   * Recorded on {@link BuildResult.lexiconVersions} so a build digest can say
+   * WHAT interpreted the declarations, not only what was declared. The CLI
+   * populates this from `options.plugins`; `build()` only carries it.
+   */
+  lexiconVersions?: Readonly<Record<string, string>>;
+
+  /**
    * chant #1045 Phase 2 — opt-in: run-fallback files (or, when {@link fold}
    * isn't set, every file) execute together, isolated, in one sandboxed
    * child process instead of in-process. Passed straight through to
@@ -229,6 +237,21 @@ export interface BuildResult {
    * {@link BuildOptions.fold} was set.
    */
   foldDecisions: FoldDecision[];
+
+  /**
+   * chant #1442 — lexicon name → the version of the plugin that served this
+   * build, passed through verbatim from {@link BuildOptions.lexiconVersions}.
+   *
+   * The other half of what a build digest needs. `hashProps` fingerprints the
+   * declaration; this records what turned it into output. A lexicon is a
+   * generated artifact pinned to an upstream spec, so a bump can change
+   * emitted output with no source change at all — and without this the two
+   * builds are indistinguishable.
+   *
+   * Empty when the caller supplied no plugins (`build()` used as a library,
+   * and most tests).
+   */
+  lexiconVersions: Record<string, string>;
 
   /**
    * This build's resolved build-time parameters (#1064) — the build
@@ -717,6 +740,7 @@ async function buildFromDiscoveryResult(
     manifest,
     sourceFileCount: discoveryResult.sourceFiles.length,
     foldDecisions: discoveryResult.foldDecisions,
+    lexiconVersions: { ...(options?.lexiconVersions ?? {}) },
     buildParams: options?.buildParams ?? [],
   };
 }

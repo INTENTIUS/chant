@@ -97,6 +97,18 @@ export interface ResourceDigest {
 export interface BuildDigest {
   /** Per-resource digest keyed by logical name */
   resources: Record<string, ResourceDigest>;
+  /**
+   * chant #1442 — lexicon name → version that produced this build.
+   *
+   * Recorded once per lexicon rather than on every {@link ResourceDigest},
+   * which would repeat one string across every resource of a stack for no
+   * added information.
+   *
+   * Optional because a digest read back from an older snapshot will not have
+   * it. Absent and empty are different: absent means "recorded before this
+   * existed", empty means "recorded, and no plugins were loaded".
+   */
+  lexiconVersions?: Record<string, string>;
   /** Resource-level dependency graph */
   dependencies: Record<string, string[]>;
   /** Cross-lexicon output bridges from BuildManifest */
@@ -117,4 +129,18 @@ export interface DigestDiff {
   changed: string[];
   /** Resources where propsHash matches */
   unchanged: string[];
+  /**
+   * chant #1442 — lexicons whose VERSION moved between the two digests, even
+   * where every resource is unchanged.
+   *
+   * A build whose only difference is the lexicon that emitted it is a real
+   * difference: the lexicon is a generated artifact pinned to an upstream
+   * spec, so a bump can change output with no source change. Reported
+   * separately from `changed` because no resource's declaration moved — the
+   * interpreter did.
+   *
+   * Empty when neither digest recorded versions, so a comparison against a
+   * pre-#1442 snapshot reports nothing rather than inventing a change.
+   */
+  lexiconVersionChanges: Array<{ lexicon: string; previous?: string; current?: string }>;
 }
