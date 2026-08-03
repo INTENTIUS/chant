@@ -1,0 +1,36 @@
+{
+  "//": [
+    "Repo-wide typecheck, including tests, scripts and examples (chant #1388).",
+    "",
+    "CI typechecks packages/core and packages/k8s-client, and check-lexicons builds each",
+    "lexicon's tsconfig.build.json \u2014 which excludes **/*.test.ts, correctly, since a",
+    "published lexicon should not ship its tests. The consequence was that nothing",
+    "typechecked a lexicon test at all: `tsc -p lexicons/forgejo/tsconfig.build.json",
+    "--listFiles | grep -c '.test.ts'` returns 0, while packages/core typechecks its 266.",
+    "A type-level assertion written in a lexicon test was evaluated by nothing, which is",
+    "why #1344's ChantConfig augmentation proofs had to live in compiled source.",
+    "",
+    "moduleResolution is bundler here, unlike the root config's node. That is deliberate:",
+    "this config covers tests and examples, which run under vitest and tsx \u2014 both of which",
+    "resolve like a bundler. Shipped code keeps its node-resolution build configs, so the",
+    "stricter resolution story for published packages is unchanged."
+  ],
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "moduleResolution": "bundler",
+    "module": "esnext"
+  },
+  "include": [
+    "packages/**/*",
+    "lexicons/**/*",
+    "scripts/**/*",
+    "examples/**/*"
+  ],
+  "exclude": [
+    "node_modules",
+    "**/node_modules/**",
+    "**/dist/**",
+    "**/docs/**",
+    "packages/core/src/cli/commands/__fixtures__/**"
+  ]
+}
