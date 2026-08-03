@@ -43,8 +43,11 @@ export type ShellApplyTarget = "cloudformation" | "arm";
 /**
  * How apply treats resources no longer declared.
  * - `never` — additive only; never deletes.
- * - `owned-only` — deletes only chant-owned orphans, via the target's native
- *   prune/complete mechanism scoped to the ownership marker.
+ * - `owned-only` — enables the target's own delete path. What that path is
+ *   bounded by differs per target, and only two of the three are owned-only:
+ *   `kubectl` sweeps by the ownership marker, `cloudformation` is bounded by
+ *   the stack, and `arm` is `--mode Complete`, which is bounded by the resource
+ *   group and deletes resources chant never applied (chant #1448).
  * - `gated` — same delete scope as `owned-only`, but the workflow pauses for
  *   approval before the destructive apply (the gate lives in the composite).
  */
@@ -100,11 +103,16 @@ export type K8sApplier = (
  * testing.
  *
  * Authority stays with the platform: the CloudFormation stack, the ARM
- * resource group. chant hosts no state file. Owned-only deletes ride the
- * native delete path so a foreign resource is never touched:
+ * resource group. chant hosts no state file. Deletes ride the native delete
+ * path, and its scope is the platform's, not chant's:
  * - CloudFormation: the stack is the boundary; `deploy` deletes resources
- *   removed from the template within it.
- * - ARM: `--mode Complete` removes resources not in the template from the RG.
+ *   removed from the template within it. A resource CFN did not create is not
+ *   in the stack, so owned-only holds.
+ * - ARM: `--mode Complete` removes resources not in the template from the RG —
+ *   ALL of them, marked or not. Owned-only does NOT hold here; the ownership
+ *   marker is not consulted (chant #1448). The azure lexicon's own `azApply`
+ *   prunes marker-scoped via `pruneArmOrphans`; this shell path does not reach
+ *   it (chant #1449).
  *
  * The kubectl target has no command: it is a server-side apply through the k8s
  * lexicon (chant #1075), whose marker-scoped prune replaces
@@ -177,8 +185,9 @@ export function defaultOutput(target: ApplyTarget): string {
 
 /**
  * Apply declared source to the cloud via the target's native mechanism.
- * Deletes (when enabled) are limited to chant-owned orphans by construction —
- * every delete path is scoped to the ownership marker.
+ * Deletes (when enabled) ride that mechanism's own delete path — marker-scoped
+ * on `kubectl`, stack-scoped on `cloudformation`, and resource-group-scoped on
+ * `arm`, which is NOT owned-only (chant #1448). See {@link DeleteMode}.
  *
  * `applier` is injectable so this dispatcher can be tested without the k8s
  * lexicon present; production resolves it through {@link loadK8sApplier}.

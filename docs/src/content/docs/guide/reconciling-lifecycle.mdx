@@ -36,7 +36,7 @@ Reconcile never mutates the cloud. It only changes source — the safest reconci
 
 ## Apply — `code → cloud`
 
-When source is the intended truth and the cloud should follow, [`ApplyOp`](/chant/guide/ops/#apply-code--cloud) pushes declared source into the live system via the target's native mechanism — `kubectl apply`, CloudFormation `deploy`, or an ARM deployment:
+When source is the intended truth and the cloud should follow, [`ApplyOp`](/chant/guide/ops/#apply-code--cloud) pushes declared source into the live system — a Kubernetes server-side apply, a CloudFormation `deploy`, or an ARM deployment, selected by `target`:
 
 ```typescript
 import { ApplyOp } from "@intentius/chant-lexicon-temporal";
@@ -52,7 +52,7 @@ const { op } = ApplyOp({
 export default op;
 ```
 
-Authority stays with the platform — chant hosts no state file. Deletes ride the native delete path scoped to the ownership marker, so they only ever touch **chant-owned** orphans. A destructive apply gets an approval gate and saga-style rollback; see [Gates and compensation](/chant/guide/ops/#gates-and-compensation--where-temporal-is-load-bearing) for why that half is Temporal-bound.
+Authority stays with the platform — chant hosts no state file. Deletes ride the target's own delete path, which is marker-scoped on `kubectl` and stack-scoped on `cloudformation`; on `arm` it is `--mode Complete`, which deletes at **resource-group** scope and is not owned-only ([#1448](https://github.com/INTENTIUS/chant/issues/1448)). See [`delete` and what bounds it](/chant/guide/ops/#apply-code--cloud) before turning deletes on. A destructive apply gets an approval gate and saga-style rollback; see [Gates and compensation](/chant/guide/ops/#gates-and-compensation--where-temporal-is-load-bearing) for why that half is Temporal-bound.
 
 ## The dial as configuration
 

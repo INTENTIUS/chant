@@ -5,9 +5,11 @@
  * stays with the platform (the CloudFormation stack, the Kubernetes API
  * server, the ARM resource group) — chant never hosts a state file.
  *
- * Phases: build → plan → [approve] → apply. Deletes are limited to chant-owned
- * orphans, ridden on the native prune/complete path scoped to the ownership
- * marker, so a foreign resource is never touched.
+ * Phases: build → plan → [approve] → apply. Deletes ride the native
+ * prune/complete path, whose scope is per target: marker-scoped on `kubectl`,
+ * stack-scoped on `cloudformation`, and resource-group-scoped on `arm`, where
+ * `--mode Complete` also removes resources chant never applied (chant #1448).
+ * See {@link DeleteMode}.
  *
  * An ungated apply may run on the local Op executor; a gated apply needs
  * Temporal for the durable approval wait (added in #125).
