@@ -18,11 +18,14 @@ kind: Environment
 metadata:
   name: team-env
 spec:
+  name: team-env
   networking_type: limited
   networking_config:
     allowed_hosts:
       - github.com
 ```
+
+`metadata.name` is the resource's declared `name`, not the name of the variable you exported it as. fountain reconciles by that name, so renaming the variable does not orphan the resource. An entity declared without a `name` falls back to the export name.
 
 The output is ejectable — `fountain apply -f` accepts it verbatim, so adopting chant here does not trap the manifests behind chant.
 
