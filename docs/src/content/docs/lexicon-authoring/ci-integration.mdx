@@ -191,6 +191,31 @@ the first place.
 
 Generated files (`lexicons/<name>/src/generated/`) are gitignored. When Docker builds from a clean checkout, these files don't exist. The `prepack` script runs the generation pipeline to produce them before any tests or builds.
 
+## Generating a pipeline from the component graph
+
+A CI-provider lexicon — gitlab, github, forgejo — can turn a discovered
+component graph into pipeline YAML, behind
+`chant build --components --generate <name>`. Core owns the generic half
+(discovery, dependency waves, job ordering) and dispatches to the lexicon for
+the emit:
+
+```typescript
+// plugin.ts
+generateComponentPipeline: (components, options) => generateGitlabPipeline(components, options),
+```
+
+You receive the components and options (`env`, `runCommand`, `image`,
+`variables`, `beforeScript`), and return the YAML plus the stages and jobs you
+produced, so core can report what it generated without re-parsing it.
+
+Each job is a **thin trigger**: it runs the component's deploy command. The
+deploy logic stays in the component, not in the generated YAML — the whole point
+is that a cross-cutting change is one edit to the generator rather than an edit
+per pipeline file.
+
+Omit this member entirely unless your lexicon *is* a CI provider. It is the only
+member with a hard "this kind of lexicon only" rule.
+
 ## CLI reference
 
 ```

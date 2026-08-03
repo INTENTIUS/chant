@@ -63,27 +63,71 @@ Every lexicon must implement these 4 methods to support the full generation and 
 | `coverage` | `(options?) => Promise<void>` | Analyze spec coverage across resource dimensions |
 | `package` | `(options?) => Promise<void>` | Package lexicon into a distributable bundle |
 
-### Optional methods
+### Optional members
 
-| Method | Returns | Description |
+Every optional member of `LexiconPlugin`. A test asserts this table lists all of
+them, so a member added to the interface without a row here fails the build
+(chant #1347) — the table had drifted to 16 of ~30, and the entire observation
+family beyond the two best-known readers was missing from it.
+
+**Lint and audit**
+
+| Member | Returns | Description |
 |--------|---------|-------------|
 | `lintRules()` | `LintRule[]` | Imperative lint rules |
 | `declarativeRules()` | `RuleSpec[]` | Declarative lint rules (compiled via `rule()`). No shipped lexicon uses this — see [Write Lint Rules](/chant/lexicon-authoring/lint-rules/) |
 | `postSynthChecks()` | `PostSynthCheck[]` | Post-build validation checks |
+| `auditCatalog()` | `Record<string, RuleMeta>` | Title, tier, fix kind and authority for this lexicon's checks, for `chant audit` — see [Post-Synth Checks](/chant/lexicon-authoring/post-synth-checks/) |
+
+**Language surface**
+
+| Member | Returns | Description |
+|--------|---------|-------------|
 | `intrinsics()` | `IntrinsicDef[]` | Lexicon-specific intrinsic functions |
 | `pseudoParameters()` | `string[]` | Pseudo-parameter names |
+| `completionProvider()` | `CompletionItem[]` | LSP completions for resource/property names |
+| `hoverProvider()` | `HoverInfo` | LSP hover information for resource types |
+| `codeActionProvider()` | `CodeAction[]` | LSP code actions. No shipped lexicon uses this |
+
+**Import and migration**
+
+| Member | Returns | Description |
+|--------|---------|-------------|
 | `detectTemplate()` | `boolean` | Detect if a template belongs to this lexicon |
 | `templateParser()` | `TemplateParser` | Parser for importing external templates |
 | `templateGenerator()` | `TypeScriptGenerator` | Generator for converting IR to TypeScript |
-| `initTemplates(template?)` | `InitTemplateSet` | Source file templates for `chant init` scaffolding (accepts optional template name) |
+| `migrationSource(from)` | `MigrationSource \| undefined` | Translate another lexicon's format into this one — gitlab and forgejo implement `migrationSource("github")` |
+
+**Observation** — see [Implementing Observation](/chant/lexicon-authoring/observation/)
+
+| Member | Returns | Description |
+|--------|---------|-------------|
+| `describeResources()` | `DescribeResourcesResult` | What this estate manages, keyed by chant entity name. The thin read |
+| `observeResourcesDeep()` | `DeepObservationResult` | The full live property tree per entity, for property-level drift |
+| `deepNormalizationHooks` | `DeepNormalizationHooks` | Which fields are server-populated or order-insensitive, applied to both the live and declared trees |
+| `observeDependencies()` | `DependencyObservation` | What the estate *relies on* but does not declare — a shared subnet, another team's network |
+| `ambientKinds()` | `string[]` | Kinds this lexicon can enumerate beyond the declared estate, so a caller knows `--ambient` is relevant without paying for a scan |
+| `observeAmbient()` | `Record<string, ResourceMetadata>` | Resources of a managed kind that exist while being neither declared nor referenced — the unattached security group |
+| `describeStackStatus()` | `StackStatusObservation \| null` | Whether one deploy unit is present and healthy, by deployed name. For multi-stack component projects |
+| `listArtifacts()` | `Record<string, ArtifactMetadata>` | Runtime artifacts rather than 1:1 resources — Helm releases, Docker containers |
+| `referenceCatalog` | `ReferenceCatalog` | How observed resources reference each other, so `chant graph --live` can rebuild edges from a bag of nodes |
+| `enrichLiveAttrs()` | `Record<string, Record<string, unknown>>` | Extra node attributes when `describeResources` metadata is too thin to carry references |
+| `exportResources()` | `ExportedTemplate` | Full-fidelity config read from a live API — see [Implementing Live Export](/chant/lexicon-authoring/live-export/) |
+
+**Project surface**
+
+| Member | Returns | Description |
+|--------|---------|-------------|
+| `initTemplates(template?)` | `InitTemplateSet` | Source file templates for `chant init` scaffolding |
 | `skills()` | `SkillDefinition[]` | AI assistant skills |
-| `completionProvider()` | `CompletionItem[]` | LSP completions for resource/property names |
-| `hoverProvider()` | `HoverInfo` | LSP hover information for resource types |
 | `docs()` | `Promise<void>` | Generate documentation pages |
-| `emulator` | `EmulatorCapability` or a list of them | Local emulator(s) `chant emulator` boots — see [Declaring a Local Emulator](/chant/lexicon-authoring/emulator/) |
-| `mcpTools()` | `McpToolContribution[]` | MCP tool contributions |
+| `mcpTools()` | `McpToolContribution[]` | MCP tool contributions — see [LSP & MCP Providers](/chant/lexicon-authoring/lsp-mcp/) |
 | `mcpResources()` | `McpResourceContribution[]` | MCP resource contributions |
 | `commands()` | `CommandGroup` | A CLI verb group mounted under `chant <name> <verb>` — core dispatches to it wholesale and knows nothing about what's inside |
+| `emulator` | `EmulatorCapability` or a list of them | Local emulator(s) `chant emulator` boots — see [Declaring a Local Emulator](/chant/lexicon-authoring/emulator/) |
+| `generateComponentPipeline()` | `ComponentPipelineResult` | Turn the component graph into CI YAML. CI-provider lexicons only (gitlab, github, forgejo) |
+| `upstreamPin` | `UpstreamPin` | How this lexicon pins its upstream schema and where to look for a newer one, for self-upgrade tooling |
+| `init()` | `void \| Promise<void>` | Called once when the plugin loads. No shipped lexicon uses this |
 
 ## Registering in chant.config.ts
 
