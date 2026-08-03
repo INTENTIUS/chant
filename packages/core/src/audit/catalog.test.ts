@@ -1,10 +1,24 @@
 import { describe, test, expect } from "vitest";
+import { readdirSync } from "fs";
+import { join } from "path";
 import { RULE_CATALOG, RULE_CATEGORY, auditRule, resolveAuditCatalog } from "./catalog";
 import { loadPlugins } from "../cli/plugins";
 
-const AUDIT_LEXICONS = ["github", "gitlab", "forgejo", "k8s", "docker", "aws", "azure", "gcp", "helm"];
+/**
+ * Every lexicon in the repo, enumerated rather than listed (#1346).
+ *
+ * This was nine hardcoded names. It missed fountain, which contributes a
+ * catalog, and could not notice fly and temporal, which did not — so their six
+ * post-synth checks reached `chant audit` with no title, tier, fix kind, or
+ * category, and the guard meant to catch exactly that was blind to them. A
+ * thirteenth lexicon would have been invisible to it on arrival.
+ */
+const AUDIT_LEXICONS = readdirSync(join(__dirname, "../../../../lexicons"), { withFileTypes: true })
+  .filter((e) => e.isDirectory())
+  .map((e) => e.name)
+  .sort();
 
-/** All post-synth check ids the audit can actually surface, from the lexicons. */
+/** Post-synth check ids — what the catalog is required to cover. */
 async function realCheckIds(): Promise<Set<string>> {
   const plugins = await loadPlugins(AUDIT_LEXICONS);
   const ids = new Set<string>();
@@ -12,6 +26,27 @@ async function realCheckIds(): Promise<Set<string>> {
     for (const check of plugin.postSynthChecks?.() ?? []) {
       ids.add(check.id);
     }
+  }
+  return ids;
+}
+
+/**
+ * Every rule id a lexicon ships, post-synth or lint — what a catalog entry is
+ * allowed to name.
+ *
+ * Wider than {@link realCheckIds} on purpose. A catalog must cover the
+ * post-synth checks, because those are what `chant audit` surfaces, but an
+ * entry for a lint rule is not stale: fountain documents FTN001, a lint rule,
+ * because a reader hitting it wants the same metadata. Requiring the reverse —
+ * an entry for every lint rule in every lexicon — would be a much larger claim
+ * than the audit makes.
+ */
+async function shippedRuleIds(): Promise<Set<string>> {
+  const plugins = await loadPlugins(AUDIT_LEXICONS);
+  const ids = new Set<string>();
+  for (const plugin of plugins) {
+    for (const check of plugin.postSynthChecks?.() ?? []) ids.add(check.id);
+    for (const rule of plugin.lintRules?.() ?? []) ids.add(rule.id);
   }
   return ids;
 }
@@ -26,10 +61,27 @@ describe("RULE_CATALOG (aggregated: core static + lexicon-contributed, #687)", (
     expect(missing).toEqual([]);
   });
 
-  test("has no stale entries that aren't real checks", async () => {
-    const [real, catalog] = [await realCheckIds(), await aggregate()];
-    const stale = Object.keys(catalog).filter((id) => !real.has(id)).sort();
+  test("has no stale entries that aren't real rules", async () => {
+    const [shipped, catalog] = [await shippedRuleIds(), await aggregate()];
+    const stale = Object.keys(catalog)
+      .filter((id) => !shipped.has(id))
+      // Core's own cross-cutting ids are not any one lexicon's to ship.
+      .filter((id) => !(id in RULE_CATALOG))
+      .sort();
     expect(stale).toEqual([]);
+  });
+
+  test("every lexicon that ships post-synth checks contributes a catalog for them", async () => {
+    const plugins = await loadPlugins(AUDIT_LEXICONS);
+    const uncatalogued = plugins
+      .map((plugin) => {
+        const checks = (plugin.postSynthChecks?.() ?? []).map((c) => c.id);
+        const catalog = plugin.auditCatalog?.() ?? {};
+        const missing = checks.filter((id) => !(id in catalog) && !(id in RULE_CATALOG));
+        return missing.length > 0 ? `${plugin.name}: ${missing.join(", ")}` : undefined;
+      })
+      .filter((entry): entry is string => entry !== undefined);
+    expect(uncatalogued).toEqual([]);
   });
 
   test("every entry has a title, remediation, and valid tier/fixKind/category", async () => {

@@ -4,6 +4,7 @@ import type { PostSynthCheck } from "@intentius/chant/lint/post-synth";
 import type { CompletionContext, CompletionItem, HoverContext, HoverInfo } from "@intentius/chant/lsp/types";
 import type { McpToolContribution, McpResourceContribution } from "@intentius/chant/mcp/types";
 import { createSkillsLoader } from "@intentius/chant/lexicon-plugin-helpers";
+import { flyAuditCatalog } from "./lint/audit-catalog";
 import type { TemplateParser } from "@intentius/chant/import/parser";
 import type { TypeScriptGenerator } from "@intentius/chant/import/generator";
 import { flySerializer } from "./serializer";
@@ -24,6 +25,7 @@ import { flyContextTools } from "./mcp/context-tools";
  */
 export const flyPlugin: LexiconPlugin = {
   name: "fly",
+  auditCatalog: () => flyAuditCatalog,
   serializer: flySerializer,
 
   // ── Required lifecycle methods ────────────────────────────────

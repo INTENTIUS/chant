@@ -5,6 +5,7 @@ import { checkExamplesBuild } from "./check-lexicon-examples";
 import { auditDocsReachability } from "./check-lexicon-docs";
 import { auditMcpNames } from "./check-lexicon-mcp";
 import { loadLexiconFromDir, registers, safeList } from "./check-lexicon-plugin";
+import { RULE_CATALOG } from "../../audit/catalog";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -359,6 +360,30 @@ export async function checkLexicon(dir: string): Promise<CheckResult> {
       pass: registers(plugin, method),
     });
   }
+
+  // #1346 — `resolveAuditCatalog` contributes nothing for a lexicon that omits
+  // the method, silently, so its checks surface in `chant audit` with no title,
+  // tier, fix kind, or category. Tier 2 rather than tier 1: the lexicon builds
+  // and lints correctly without it; what suffers is one command's output.
+  const auditCatalog = (() => {
+    try {
+      return plugin?.auditCatalog?.() ?? {};
+    } catch {
+      return {};
+    }
+  })();
+  const uncatalogued = postSynthChecks.items
+    .map((c) => (c as { id?: string }).id)
+    .filter((id): id is string => typeof id === "string" && !(id in auditCatalog) && !(id in RULE_CATALOG));
+  items.push({
+    name: "auditCatalog() covers every post-synth check",
+    tier: 2,
+    pass: uncatalogued.length === 0,
+    detail:
+      uncatalogued.length > 0
+        ? `${uncatalogued.length} without metadata: ${uncatalogued.slice(0, 6).join(", ")}`
+        : `${Object.keys(auditCatalog).length} entry/entries`,
+  });
 
   const compositeFiles = listTsFiles(join(dir, "src/composites"), ["index.ts"]);
   items.push({
