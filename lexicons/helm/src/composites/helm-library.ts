@@ -34,7 +34,7 @@ export interface HelmLibraryResult {
   helpers: InstanceType<typeof Values>;
 }
 
-export const HelmLibrary = Composite<HelmLibraryProps>((props) => {
+export const HelmLibrary = Composite((props: HelmLibraryProps) => {
   const {
     name,
     version = "0.1.0",

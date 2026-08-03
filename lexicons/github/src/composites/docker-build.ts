@@ -28,7 +28,7 @@ export interface DockerBuildProps {
   };
 }
 
-export const DockerBuild = Composite<DockerBuildProps>((props) => {
+export const DockerBuild = Composite((props: DockerBuildProps) => {
   const {
     tag = "${{ github.sha }}",
     dockerfile = "Dockerfile",

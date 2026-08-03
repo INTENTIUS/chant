@@ -38,7 +38,7 @@ export interface FunctionAppResult {
   storageAccount: InstanceType<typeof StorageAccount>;
 }
 
-export const FunctionApp = Composite<FunctionAppProps>((props) => {
+export const FunctionApp = Composite((props: FunctionAppProps) => {
   const {
     name,
     location = "[resourceGroup().location]",

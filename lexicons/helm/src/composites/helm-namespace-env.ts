@@ -45,7 +45,7 @@ export interface HelmNamespaceEnvResult {
   networkPolicy?: InstanceType<typeof NetworkPolicyRes>;
 }
 
-export const HelmNamespaceEnv = Composite<HelmNamespaceEnvProps>((props) => {
+export const HelmNamespaceEnv = Composite((props: HelmNamespaceEnvProps) => {
   const {
     name,
     resourceQuota = true,

@@ -75,7 +75,7 @@ export interface AgicIngressResult {
  * });
  * ```
  */
-export const AgicIngress = Composite<AgicIngressProps>((props) => {
+export const AgicIngress = Composite((props: AgicIngressProps) => {
   const {
     name,
     hosts,

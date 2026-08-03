@@ -65,7 +65,7 @@ export interface GkeOtelCollectorResult {
  * });
  * ```
  */
-export const GkeOtelCollector = Composite<GkeOtelCollectorProps>((props) => {
+export const GkeOtelCollector = Composite((props: GkeOtelCollectorProps) => {
   const {
     clusterName,
     projectId,

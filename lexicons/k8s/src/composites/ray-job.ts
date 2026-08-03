@@ -101,7 +101,7 @@ export interface RayJobResult {
  * });
  * ```
  */
-export const RayJob = Composite<RayJobProps>((props) => {
+export const RayJob = Composite((props: RayJobProps) => {
   const {
     name,
     namespace,

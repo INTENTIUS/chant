@@ -426,7 +426,7 @@ export function buildRayNetworkPolicy(
  * });
  * ```
  */
-export const RayCluster = Composite<RayClusterProps>((props) => {
+export const RayCluster = Composite((props: RayClusterProps) => {
   const {
     name,
     namespace,

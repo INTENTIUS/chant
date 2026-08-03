@@ -68,7 +68,7 @@ export interface SecureIngressResult {
  * });
  * ```
  */
-export const SecureIngress = Composite<SecureIngressProps>((props) => {
+export const SecureIngress = Composite((props: SecureIngressProps) => {
   const {
     name,
     hosts,

@@ -104,7 +104,7 @@ export interface AutoscaledServiceResult {
  * });
  * ```
  */
-export const AutoscaledService = Composite<AutoscaledServiceProps>((props) => {
+export const AutoscaledService = Composite((props: AutoscaledServiceProps) => {
   const {
     name,
     image,

@@ -1,4 +1,4 @@
-import { Composite, mergeDefaults } from "@intentius/chant";
+import { Composite, mergeDefaults, type Value } from "@intentius/chant";
 import {
   Bucket,
   Bucket_BucketEncryption,
@@ -15,7 +15,8 @@ import { s3ActionsFor } from "../actions/s3";
 import { LambdaFunction, type LambdaFunctionProps, type LambdaFunctionResult } from "./lambda-function";
 
 export interface LambdaS3Props extends LambdaFunctionProps {
-  bucketName?: string;
+  /** `Value<string>`: a name is routinely built with `Sub`/`Ref` (#1366). */
+  bucketName?: Value<string>;
   access?: "ReadOnly" | "ReadWrite" | "Full";
   trigger?: {
     events?: string[];

@@ -48,7 +48,7 @@ export interface EfsStorageClassResult {
  * });
  * ```
  */
-export const EfsStorageClass = Composite<EfsStorageClassProps>((props) => {
+export const EfsStorageClass = Composite((props: EfsStorageClassProps) => {
   const {
     name,
     fileSystemId,

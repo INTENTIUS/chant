@@ -29,7 +29,7 @@ export interface AlbSharedProps {
   };
 }
 
-export const AlbShared = Composite<AlbSharedProps>((props) => {
+export const AlbShared = Composite((props: AlbSharedProps) => {
   const listenerPort = props.listenerPort ?? 80;
   const protocol = props.protocol ?? "HTTP";
   const { defaults: defs } = props;

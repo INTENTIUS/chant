@@ -85,7 +85,7 @@ export interface NetworkIsolatedAppResult {
  * });
  * ```
  */
-export const NetworkIsolatedApp = Composite<NetworkIsolatedAppProps>((props) => {
+export const NetworkIsolatedApp = Composite((props: NetworkIsolatedAppProps) => {
   const {
     name,
     image,

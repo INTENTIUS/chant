@@ -65,7 +65,7 @@ export interface NamespaceEnvResult {
  * });
  * ```
  */
-export const NamespaceEnv = Composite<NamespaceEnvProps>((props) => {
+export const NamespaceEnv = Composite((props: NamespaceEnvProps) => {
   const {
     name,
     cpuQuota,

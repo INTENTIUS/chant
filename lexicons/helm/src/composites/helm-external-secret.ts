@@ -38,7 +38,7 @@ export interface HelmExternalSecretResult {
   externalSecret: InstanceType<typeof ExternalSecret>;
 }
 
-export const HelmExternalSecret = Composite<HelmExternalSecretProps>((props) => {
+export const HelmExternalSecret = Composite((props: HelmExternalSecretProps) => {
   const {
     name,
     secretStoreName,

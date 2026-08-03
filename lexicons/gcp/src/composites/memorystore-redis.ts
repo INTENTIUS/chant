@@ -53,7 +53,7 @@ export interface MemorystoreRedisProps {
  * });
  * ```
  */
-export const MemorystoreRedis = Composite<MemorystoreRedisProps>((props) => {
+export const MemorystoreRedis = Composite((props: MemorystoreRedisProps) => {
   const {
     name,
     purpose,

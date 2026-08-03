@@ -91,7 +91,7 @@ export interface MonitoredServiceResult {
  * });
  * ```
  */
-export const MonitoredService = Composite<MonitoredServiceProps>((props) => {
+export const MonitoredService = Composite((props: MonitoredServiceProps) => {
   const {
     name,
     image,

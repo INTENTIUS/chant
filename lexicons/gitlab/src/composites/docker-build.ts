@@ -29,7 +29,7 @@ export interface DockerBuildProps {
   };
 }
 
-export const DockerBuild = Composite<DockerBuildProps>((props) => {
+export const DockerBuild = Composite((props: DockerBuildProps) => {
   const {
     stage = "build",
     tag = CI.CommitRefSlug,

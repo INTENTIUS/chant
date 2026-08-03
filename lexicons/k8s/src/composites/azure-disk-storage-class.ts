@@ -49,7 +49,7 @@ export interface AzureDiskStorageClassResult {
  * });
  * ```
  */
-export const AzureDiskStorageClass = Composite<AzureDiskStorageClassProps>((props) => {
+export const AzureDiskStorageClass = Composite((props: AzureDiskStorageClassProps) => {
   const {
     name,
     skuName = "Premium_LRS",

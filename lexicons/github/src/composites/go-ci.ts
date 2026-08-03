@@ -20,7 +20,7 @@ export interface GoCIProps {
   };
 }
 
-export const GoCI = Composite<GoCIProps>((props) => {
+export const GoCI = Composite((props: GoCIProps) => {
   const {
     goVersion = "1.22",
     testCommand = "go test ./... -v -race",

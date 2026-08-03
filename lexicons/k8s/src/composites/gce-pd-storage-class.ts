@@ -49,7 +49,7 @@ export interface GcePdStorageClassResult {
  * });
  * ```
  */
-export const GcePdStorageClass = Composite<GcePdStorageClassProps>((props) => {
+export const GcePdStorageClass = Composite((props: GcePdStorageClassProps) => {
   const {
     name,
     type = "pd-balanced",

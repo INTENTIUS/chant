@@ -11,7 +11,7 @@ export interface SetupNodeProps {
   };
 }
 
-export const SetupNode = Composite<SetupNodeProps>((props) => {
+export const SetupNode = Composite((props: SetupNodeProps) => {
   const { defaults } = props;
   const withObj: Record<string, string> = {};
   if (props.nodeVersion !== undefined) withObj["node-version"] = props.nodeVersion;

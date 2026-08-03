@@ -31,7 +31,7 @@ export interface PubSubPipelineProps {
   };
 }
 
-export const PubSubPipeline = Composite<PubSubPipelineProps>((props) => {
+export const PubSubPipeline = Composite((props: PubSubPipelineProps) => {
   const {
     name,
     ackDeadlineSeconds = 10,

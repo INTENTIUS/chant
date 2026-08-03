@@ -42,7 +42,7 @@ export interface ConfigConnectorContextResult {
  * });
  * ```
  */
-export const ConfigConnectorContext = Composite<ConfigConnectorContextProps>((props) => {
+export const ConfigConnectorContext = Composite((props: ConfigConnectorContextProps) => {
   const {
     name = "configconnectorcontext.core.cnrm.cloud.google.com",
     googleServiceAccountEmail,

@@ -56,7 +56,7 @@ export interface EbsStorageClassResult {
  * });
  * ```
  */
-export const EbsStorageClass = Composite<EbsStorageClassProps>((props) => {
+export const EbsStorageClass = Composite((props: EbsStorageClassProps) => {
   const {
     name,
     type = "gp3",

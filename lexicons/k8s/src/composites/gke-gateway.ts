@@ -68,7 +68,7 @@ export interface GkeGatewayResult {
  * });
  * ```
  */
-export const GkeGateway = Composite<GkeGatewayProps>((props) => {
+export const GkeGateway = Composite((props: GkeGatewayProps) => {
   const {
     name,
     gatewayClassName = "gke-l7-global-external-managed",

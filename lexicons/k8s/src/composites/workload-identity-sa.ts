@@ -55,7 +55,7 @@ export interface WorkloadIdentityServiceAccountResult {
  * });
  * ```
  */
-export const WorkloadIdentityServiceAccount = Composite<WorkloadIdentityServiceAccountProps>((props) => {
+export const WorkloadIdentityServiceAccount = Composite((props: WorkloadIdentityServiceAccountProps) => {
   const {
     name,
     clientId,

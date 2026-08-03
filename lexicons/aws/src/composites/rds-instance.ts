@@ -76,7 +76,7 @@ export interface RdsInstanceProps {
   };
 }
 
-export const RdsInstance = Composite<RdsInstanceProps>((props) => {
+export const RdsInstance = Composite((props: RdsInstanceProps) => {
   const engine = props.engine ?? "postgres";
   const defaults = ENGINE_DEFAULTS.get(engine)!;
   const port = props.port ?? defaults.port;

@@ -34,7 +34,7 @@ export interface HelmSecureIngressResult {
   certificate?: InstanceType<typeof Certificate>;
 }
 
-export const HelmSecureIngress = Composite<HelmSecureIngressProps>((props) => {
+export const HelmSecureIngress = Composite((props: HelmSecureIngressProps) => {
   const {
     name,
     ingressClassName = "",

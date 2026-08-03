@@ -42,7 +42,7 @@ export interface CloudFunctionWithTriggerProps {
   };
 }
 
-export const CloudFunctionWithTrigger = Composite<CloudFunctionWithTriggerProps>((props) => {
+export const CloudFunctionWithTrigger = Composite((props: CloudFunctionWithTriggerProps) => {
   const {
     name,
     runtime,

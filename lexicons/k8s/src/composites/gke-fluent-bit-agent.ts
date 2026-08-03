@@ -65,7 +65,7 @@ export interface GkeFluentBitAgentResult {
  * });
  * ```
  */
-export const GkeFluentBitAgent = Composite<GkeFluentBitAgentProps>((props) => {
+export const GkeFluentBitAgent = Composite((props: GkeFluentBitAgentProps) => {
   const {
     clusterName,
     projectId,

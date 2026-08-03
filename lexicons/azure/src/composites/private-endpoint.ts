@@ -46,7 +46,7 @@ export interface PrivateEndpointResult {
   vnetLink: InstanceType<typeof privateDnsZones_virtualNetworkLinks>;
 }
 
-export const PrivateEndpoint = Composite<PrivateEndpointProps>((props) => {
+export const PrivateEndpoint = Composite((props: PrivateEndpointProps) => {
   const {
     name,
     location = "[resourceGroup().location]",

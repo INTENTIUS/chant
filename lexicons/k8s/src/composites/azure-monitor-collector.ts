@@ -64,7 +64,7 @@ export interface AzureMonitorCollectorResult {
  * });
  * ```
  */
-export const AzureMonitorCollector = Composite<AzureMonitorCollectorProps>((props) => {
+export const AzureMonitorCollector = Composite((props: AzureMonitorCollectorProps) => {
   const {
     workspaceId,
     clusterName,

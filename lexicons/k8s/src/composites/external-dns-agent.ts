@@ -59,7 +59,7 @@ export interface ExternalDnsAgentResult {
  * });
  * ```
  */
-export const ExternalDnsAgent = Composite<ExternalDnsAgentProps>((props) => {
+export const ExternalDnsAgent = Composite((props: ExternalDnsAgentProps) => {
   const {
     iamRoleArn,
     domainFilters,

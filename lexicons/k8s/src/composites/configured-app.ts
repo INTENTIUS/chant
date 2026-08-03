@@ -89,7 +89,7 @@ export interface ConfiguredAppResult {
  * });
  * ```
  */
-export const ConfiguredApp = Composite<ConfiguredAppProps>((props) => {
+export const ConfiguredApp = Composite((props: ConfiguredAppProps) => {
   const {
     name,
     image,

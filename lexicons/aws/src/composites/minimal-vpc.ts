@@ -21,7 +21,7 @@ export interface MinimalVpcProps {
   };
 }
 
-export const MinimalVpc = Composite<MinimalVpcProps>((props) => {
+export const MinimalVpc = Composite((props: MinimalVpcProps) => {
   const { defaults } = props;
   const cidr = props.cidr ?? "10.0.0.0/24";
   const subnetCidr = props.subnetCidr ?? "10.0.0.0/25";

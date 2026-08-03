@@ -1,9 +1,10 @@
-import { Composite, mergeDefaults } from "@intentius/chant";
+import { Composite, mergeDefaults, type Value } from "@intentius/chant";
 import { Permission } from "../generated";
 import { LambdaFunction, type LambdaFunctionProps, type LambdaFunctionResult } from "./lambda-function";
 
 export interface LambdaApiProps extends LambdaFunctionProps {
-  sourceArn?: string;
+  /** `Value<string>`: an ARN is routinely built with `Sub` from pseudo-parameters (#1366). */
+  sourceArn?: Value<string>;
   defaults?: LambdaFunctionProps["defaults"] & {
     permission?: Partial<ConstructorParameters<typeof Permission>[0]>;
   };

@@ -42,7 +42,7 @@ export interface MrPlanReportProps {
  * The plan reads the live system to classify drift, so wire cloud credentials
  * via `before` or CI variables.
  */
-export const MrPlanReport = Composite<MrPlanReportProps>((props) => {
+export const MrPlanReport = Composite((props: MrPlanReportProps) => {
   const {
     environment,
     lexicon,

@@ -85,7 +85,7 @@ export interface NodeAgentResult {
  * });
  * ```
  */
-export const NodeAgent = Composite<NodeAgentProps>((props) => {
+export const NodeAgent = Composite((props: NodeAgentProps) => {
   const {
     name,
     image,

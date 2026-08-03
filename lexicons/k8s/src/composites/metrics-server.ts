@@ -57,7 +57,7 @@ export interface MetricsServerResult {
  * const ms = MetricsServer({});
  * ```
  */
-export const MetricsServer = Composite<MetricsServerProps>((props) => {
+export const MetricsServer = Composite((props: MetricsServerProps) => {
   const {
     name = "metrics-server",
     image = "registry.k8s.io/metrics-server/metrics-server:v0.7.2",

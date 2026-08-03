@@ -14,7 +14,7 @@ export interface SolrFargateServiceProps extends FargateServiceProps {
   gcOpts?: string;
 }
 
-export const SolrFargateService = Composite<SolrFargateServiceProps>((props) => {
+export const SolrFargateService = Composite((props: SolrFargateServiceProps) => {
   const memoryMb = parseInt(props.memory ?? "4096");
   const solrHeap = props.solrHeap ?? `${Math.floor(memoryMb * 0.45)}m`;
   const gcOpts = props.gcOpts ?? "-XX:+UseG1GC -XX:MaxGCPauseMillis=200";

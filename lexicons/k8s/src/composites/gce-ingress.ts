@@ -74,7 +74,7 @@ export interface GceIngressResult {
  * });
  * ```
  */
-export const GceIngress = Composite<GceIngressProps>((props) => {
+export const GceIngress = Composite((props: GceIngressProps) => {
   const {
     name,
     hosts,

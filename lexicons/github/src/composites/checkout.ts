@@ -13,7 +13,7 @@ export interface CheckoutProps {
   };
 }
 
-export const Checkout = Composite<CheckoutProps>((props) => {
+export const Checkout = Composite((props: CheckoutProps) => {
   const { defaults } = props;
   const withObj: Record<string, string> = {};
   if (props.ref !== undefined) withObj.ref = props.ref;

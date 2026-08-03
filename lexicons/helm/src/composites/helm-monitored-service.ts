@@ -69,7 +69,7 @@ export interface HelmMonitoredServiceResult {
   prometheusRule?: InstanceType<typeof PrometheusRuleRes>;
 }
 
-export const HelmMonitoredService = Composite<HelmMonitoredServiceProps>((props) => {
+export const HelmMonitoredService = Composite((props: HelmMonitoredServiceProps) => {
   const {
     name,
     imageRepository = "nginx",

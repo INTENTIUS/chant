@@ -63,7 +63,7 @@ export interface HelmStatefulServiceResult {
   serviceAccount?: InstanceType<typeof ServiceAccount>;
 }
 
-export const HelmStatefulService = Composite<HelmStatefulServiceProps>((props) => {
+export const HelmStatefulService = Composite((props: HelmStatefulServiceProps) => {
   const {
     name,
     imageRepository = "postgres",

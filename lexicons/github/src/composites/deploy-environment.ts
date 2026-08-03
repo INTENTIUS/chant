@@ -22,7 +22,7 @@ export interface DeployEnvironmentProps {
   };
 }
 
-export const DeployEnvironment = Composite<DeployEnvironmentProps>((props) => {
+export const DeployEnvironment = Composite((props: DeployEnvironmentProps) => {
   const {
     name,
     deployScript,

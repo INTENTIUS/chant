@@ -79,7 +79,7 @@ export interface AlbIngressResult {
  * });
  * ```
  */
-export const AlbIngress = Composite<AlbIngressProps>((props) => {
+export const AlbIngress = Composite((props: AlbIngressProps) => {
   const {
     name,
     hosts,

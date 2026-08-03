@@ -10,7 +10,7 @@ export interface DownloadArtifactProps {
   };
 }
 
-export const DownloadArtifact = Composite<DownloadArtifactProps>((props) => {
+export const DownloadArtifact = Composite((props: DownloadArtifactProps) => {
   const { defaults } = props;
   const withObj: Record<string, string> = {};
   if (props.name !== undefined) withObj.name = props.name;

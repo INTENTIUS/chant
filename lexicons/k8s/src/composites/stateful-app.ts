@@ -80,7 +80,7 @@ export interface StatefulAppResult {
  * });
  * ```
  */
-export const StatefulApp = Composite<StatefulAppProps>((props) => {
+export const StatefulApp = Composite((props: StatefulAppProps) => {
   const {
     name,
     image,

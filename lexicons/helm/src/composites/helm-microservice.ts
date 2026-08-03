@@ -71,7 +71,7 @@ export interface HelmMicroserviceResult {
   pdb?: InstanceType<typeof PDB>;
 }
 
-export const HelmMicroservice = Composite<HelmMicroserviceProps>((props) => {
+export const HelmMicroservice = Composite((props: HelmMicroserviceProps) => {
   const {
     name,
     imageRepository = "nginx",

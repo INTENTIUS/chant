@@ -69,7 +69,7 @@ export interface HelmWebAppResult {
   hpa?: InstanceType<typeof HPA>;
 }
 
-export const HelmWebApp = Composite<HelmWebAppProps>((props) => {
+export const HelmWebApp = Composite((props: HelmWebAppProps) => {
   const {
     name,
     imageRepository = "nginx",

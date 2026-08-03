@@ -67,7 +67,7 @@ export interface FluentBitAgentResult {
  * });
  * ```
  */
-export const FluentBitAgent = Composite<FluentBitAgentProps>((props) => {
+export const FluentBitAgent = Composite((props: FluentBitAgentProps) => {
   const {
     name = "fluent-bit",
     image = "public.ecr.aws/aws-observability/aws-for-fluent-bit:stable",

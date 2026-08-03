@@ -1,4 +1,4 @@
-import { Composite, mergeDefaults } from "@intentius/chant";
+import { Composite, mergeDefaults, type Value } from "@intentius/chant";
 import {
   EcsService,
   EcsService_LoadBalancer,
@@ -33,11 +33,16 @@ import { Sub, Join, Select, Split } from "../intrinsics";
 import { ecsTrustPolicy } from "./ecs-trust-policy";
 
 export interface FargateServiceProps {
-  // Wiring to shared ALB
-  clusterArn: string;
-  listenerArn: string;
-  albSecurityGroupId: string;
-  executionRoleArn: string;
+  // Wiring to shared ALB.
+  //
+  // `Value<string>` rather than `string`: these are exactly the props a
+  // consuming stack fills from a cross-stack reference, and the documented way
+  // to do that is `Ref(param)` — an Intrinsic, not a literal. Typing them
+  // `string` made the composite's own examples a type error (#1366).
+  clusterArn: Value<string>;
+  listenerArn: Value<string>;
+  albSecurityGroupId: Value<string>;
+  executionRoleArn: Value<string>;
 
   // Routing — at least one required
   priority: number;
@@ -45,7 +50,7 @@ export interface FargateServiceProps {
   hostHeaders?: string[];
 
   // Container
-  image: string;
+  image: Value<string>;
   containerPort?: number;
   cpu?: string;
   memory?: string;
@@ -71,8 +76,8 @@ export interface FargateServiceProps {
   }>;
 
   // Networking
-  vpcId: string;
-  privateSubnetIds: string[];
+  vpcId: Value<string>;
+  privateSubnetIds: Array<Value<string>>;
   healthCheckPath?: string;
 
   // Ulimits (container-level)
@@ -90,7 +95,7 @@ export interface FargateServiceProps {
   };
 }
 
-export const FargateService = Composite<FargateServiceProps>((props) => {
+export const FargateService = Composite((props: FargateServiceProps) => {
   if (!props.pathPatterns && !props.hostHeaders) {
     throw new Error("FargateService requires at least one of pathPatterns or hostHeaders");
   }

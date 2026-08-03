@@ -59,7 +59,7 @@ export interface HelmCronJobResult {
   serviceAccount?: InstanceType<typeof ServiceAccount>;
 }
 
-export const HelmCronJob = Composite<HelmCronJobProps>((props) => {
+export const HelmCronJob = Composite((props: HelmCronJobProps) => {
   const {
     name,
     imageRepository = "busybox",

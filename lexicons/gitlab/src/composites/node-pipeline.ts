@@ -49,7 +49,7 @@ const cacheConfig = {
   },
 } as const;
 
-export const NodePipeline = Composite<NodePipelineProps>((props) => {
+export const NodePipeline = Composite((props: NodePipelineProps) => {
   const {
     nodeVersion = "22",
     packageManager = "npm",
