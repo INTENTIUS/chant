@@ -68,7 +68,7 @@ Every lexicon must implement these 4 methods to support the full generation and 
 | Method | Returns | Description |
 |--------|---------|-------------|
 | `lintRules()` | `LintRule[]` | Imperative lint rules |
-| `declarativeRules()` | `RuleSpec[]` | Declarative lint rules (compiled via `rule()`) |
+| `declarativeRules()` | `RuleSpec[]` | Declarative lint rules (compiled via `rule()`). No shipped lexicon uses this — see [Write Lint Rules](/chant/lexicon-authoring/lint-rules/) |
 | `postSynthChecks()` | `PostSynthCheck[]` | Post-build validation checks |
 | `intrinsics()` | `IntrinsicDef[]` | Lexicon-specific intrinsic functions |
 | `pseudoParameters()` | `string[]` | Pseudo-parameter names |

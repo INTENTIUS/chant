@@ -58,6 +58,13 @@ const spec: RuleSpec = {
 
 Return these from your plugin's `declarativeRules()` method.
 
+> **Untrodden.** No shipped lexicon uses `declarativeRules()`. All twelve write
+> imperative rules and return them from `lintRules()`. The seam is live —
+> `chant lint` compiles whatever it returns through `rule()` — and is covered by
+> contract tests (chant #1349), but you would be the first real adopter. Prefer
+> `lintRules()` unless the declarative form is a clear fit for what you're
+> checking.
+
 ## Post-synth Checks
 
 Post-synth checks validate the serialized output after the build pipeline completes:

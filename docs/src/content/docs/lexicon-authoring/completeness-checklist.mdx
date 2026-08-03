@@ -21,6 +21,7 @@ These must all pass for the command to exit 0. Run for real via `just check-lexi
 | `The plugin exposes a Serializer with a name and rule prefix` | `serializer.name`, `serializer.rulePrefix`, and `serializer.serialize` |
 | `lintRules() returns at least 1 rule` | Asked of the plugin, not counted from `src/lint/rules/` |
 | `postSynthChecks() returns at least 1 check` | Asked of the plugin, not counted from `src/lint/post-synth/` |
+| `Every rule id starts with a declared rule prefix` | Ids must fall under `serializer.rulePrefix` or a declared `extraRulePrefixes` entry, so ids do not collide when lexicons load together (chant #1349) |
 | `The plugin registers completionProvider` | `chant serve lsp` dispatches through this member — a file in `src/lsp/` that nothing registers is unreachable (chant #1342) |
 | `The plugin registers hoverProvider` | As above |
 | `The plugin registers docs()` | `chant dev generate` reaches the docs generator through the plugin, not through a package script |

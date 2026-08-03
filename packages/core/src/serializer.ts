@@ -53,6 +53,22 @@ export interface Serializer {
   rulePrefix: string;
 
   /**
+   * Further id families this lexicon owns, beyond {@link rulePrefix} (#1349).
+   *
+   * The prefix exists so ids do not collide when several lexicons are loaded
+   * together — forgejo wraps github's rules as `WFJ-GHA0xx` for exactly that
+   * reason. It was declared and checked by nothing, and k8s quietly shipped
+   * five `ARGO0xx` checks outside its own `WK8`.
+   *
+   * A second family is sometimes right: Argo CD is a distinct product surface
+   * that happens to be covered by the k8s lexicon, and renaming published ids
+   * would break every `chant-disable ARGO001` in the wild. Declaring it keeps
+   * the collision guarantee while allowing the split — an undeclared family is
+   * a tier-1 failure.
+   */
+  extraRulePrefixes?: readonly string[];
+
+  /**
    * Serializes the entities to a string representation
    * @param entities - Map of entity name to Declarable entity
    * @param outputs - Optional array of LexiconOutputs produced by this lexicon

@@ -126,6 +126,34 @@ export async function checkLexicon(dir: string): Promise<CheckResult> {
       : `${postSynthChecks.items.length} check(s)`,
   });
 
+  // #1349 — `rulePrefix` exists so ids do not collide when several lexicons are
+  // loaded together (forgejo wraps github's rules as `WFJ-GHA0xx` for exactly
+  // that reason), and it was checked by nothing. k8s shipped five `ARGO0xx`
+  // checks outside its declared `WK8`. Core's cross-cutting ids are exempt:
+  // they belong to core, not to whichever lexicon surfaces them.
+  const declaredPrefixes = [
+    typeof serializer?.rulePrefix === "string" ? serializer.rulePrefix : "",
+    ...((plugin?.serializer as { extraRulePrefixes?: readonly string[] } | undefined)?.extraRulePrefixes ?? []),
+  ].filter((p) => p.length > 0);
+  const allRuleIds = [
+    ...lintRules.items.map((r) => (r as { id?: string }).id),
+    ...postSynthChecks.items.map((c) => (c as { id?: string }).id),
+  ].filter((id): id is string => typeof id === "string");
+  const offPrefix = allRuleIds.filter(
+    (id) => !(id in RULE_CATALOG) && !declaredPrefixes.some((p) => id.startsWith(p)),
+  );
+  items.push({
+    name: "Every rule id starts with a declared rule prefix",
+    tier: 1,
+    pass: declaredPrefixes.length > 0 && offPrefix.length === 0,
+    detail:
+      offPrefix.length > 0
+        ? `${offPrefix.length} outside ${declaredPrefixes.join("/")}: ${[...new Set(offPrefix)].slice(0, 6).join(", ")}`
+        : declaredPrefixes.length > 0
+          ? `${allRuleIds.length} id(s) under ${declaredPrefixes.join("/")}`
+          : "no rule prefix declared",
+  });
+
   items.push({
     name: "The plugin registers completionProvider",
     tier: 1,
