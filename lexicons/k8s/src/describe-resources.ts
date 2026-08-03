@@ -147,6 +147,44 @@ function failingConditionReason(status: K8sObject["status"]): string | undefined
   return undefined;
 }
 
+
+/**
+ * The unhappy conditions on a live object, as `Type=Reason: message` (#1401).
+ *
+ * #1397 made the status WORD honest — a crashlooping Pod reports
+ * `CrashLoopBackOff` rather than `Running`. This carries the part that says
+ * what to do about it: `Unschedulable` is the reason, and
+ * `0/3 nodes are available: 1 node(s) had untolerated taint` is the answer, and
+ * only the first reached the wire.
+ *
+ * Only conditions that are NOT in their happy state are reported. A `Ready=True`
+ * says nothing an operator needs and would bury the one line that does — and a
+ * condition's happy polarity is per type: `Ready`/`Available`/`PodScheduled`
+ * are good when True, while `Unschedulable`-style and the standard
+ * `*Pressure`/`NetworkUnavailable` node conditions are good when False.
+ *
+ * Absent when everything is happy, so a consumer can treat presence as "this
+ * object has something to say".
+ */
+const CONDITIONS_GOOD_WHEN_FALSE = /pressure$|^networkunavailable$|^unschedulable$|failed/i;
+
+export function unhappyConditions(obj: K8sObject): string[] | undefined {
+  const conditions = (obj.status as { conditions?: unknown } | undefined)?.conditions;
+  if (!Array.isArray(conditions)) return undefined;
+  const out: string[] = [];
+  for (const c of conditions) {
+    const cond = c as { type?: unknown; status?: unknown; reason?: unknown; message?: unknown };
+    if (typeof cond.type !== "string" || typeof cond.status !== "string") continue;
+    const goodWhenFalse = CONDITIONS_GOOD_WHEN_FALSE.test(cond.type);
+    const happy = goodWhenFalse ? cond.status === "False" : cond.status === "True";
+    if (happy) continue;
+    const reason = typeof cond.reason === "string" && cond.reason ? `=${cond.reason}` : "";
+    const message = typeof cond.message === "string" && cond.message ? `: ${cond.message}` : "";
+    out.push(`${cond.type}${reason}${message}`);
+  }
+  return out.length > 0 ? out : undefined;
+}
+
 interface Declared {
   entityName: string;
   entityType: string;
@@ -268,6 +306,8 @@ export async function describeResources(
           namespace: obj.metadata?.namespace,
           labels: obj.metadata?.labels,
           resourceVersion: obj.metadata?.resourceVersion,
+          // What the object's own controller says is wrong with it (#1401).
+          conditions: unhappyConditions(obj),
         }),
       };
     } catch (err) {
@@ -346,6 +386,7 @@ async function addRuntimeChildren(
           namespace,
           labels: pod.metadata?.labels,
           resourceVersion: pod.metadata?.resourceVersion,
+          conditions: unhappyConditions(pod),
         }),
       };
     });

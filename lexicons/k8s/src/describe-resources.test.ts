@@ -15,7 +15,7 @@ vi.mock("@intentius/chant/config", () => ({
   loadChantConfig: (...args: unknown[]) => loadChantConfigMock(...args),
 }));
 
-const { describeResources, statusFromObject } = await import("./describe-resources");
+const { describeResources, statusFromObject, unhappyConditions } = await import("./describe-resources");
 const { fakeCluster, objectKey, ownedObject } = await import("./api/fake-cluster");
 const { defaultK8sConnector } = await import("./api/connect");
 const { fakeKubeconfig, statusBody } = await import("@intentius/chant-k8s-client/testing");
@@ -785,5 +785,80 @@ describe("statusFromObject — the most specific failing signal (#1397)", () => 
     expect(statusFromObject({ status: { readyReplicas: 3, replicas: 3 } } as never)).toBe("READY");
     expect(statusFromObject({ status: { readyReplicas: 1, replicas: 3 } } as never)).toBe("PROGRESSING(1/3)");
     expect(statusFromObject({} as never)).toBe("PRESENT");
+  });
+});
+
+// #1401 — #1397 made the status WORD honest; this carries the part that says
+// what to do about it. `Unschedulable` is the reason; "0/3 nodes are available"
+// is the answer.
+describe("unhappyConditions (#1401)", () => {
+  test("reports an unschedulable Pod's message, not just its reason", () => {
+    expect(
+      unhappyConditions({
+        status: {
+          conditions: [
+            {
+              type: "PodScheduled",
+              status: "False",
+              reason: "Unschedulable",
+              message: "0/3 nodes are available: 1 node(s) had untolerated taint.",
+            },
+          ],
+        },
+      } as never),
+    ).toEqual(["PodScheduled=Unschedulable: 0/3 nodes are available: 1 node(s) had untolerated taint."]);
+  });
+
+  test("is absent when every condition is happy — presence means the object has something to say", () => {
+    expect(
+      unhappyConditions({
+        status: { conditions: [{ type: "Ready", status: "True" }, { type: "PodScheduled", status: "True" }] },
+      } as never),
+    ).toBeUndefined();
+  });
+
+  test("knows the happy polarity is per condition type", () => {
+    // Ready/Available/PodScheduled are good when True; the *Pressure and
+    // NetworkUnavailable node conditions are good when False. Treating them all
+    // the same would report every healthy node as unhappy, or hide a node
+    // genuinely under disk pressure.
+    const healthyNode = {
+      status: {
+        conditions: [
+          { type: "Ready", status: "True" },
+          { type: "MemoryPressure", status: "False" },
+          { type: "DiskPressure", status: "False" },
+        ],
+      },
+    };
+    expect(unhappyConditions(healthyNode as never)).toBeUndefined();
+
+    const pressured = {
+      status: {
+        conditions: [
+          { type: "Ready", status: "True" },
+          { type: "DiskPressure", status: "True", reason: "KubeletHasDiskPressure" },
+        ],
+      },
+    };
+    expect(unhappyConditions(pressured as never)).toEqual(["DiskPressure=KubeletHasDiskPressure"]);
+  });
+
+  test("reports every unhappy condition, since a stuck Deployment has two", () => {
+    expect(
+      unhappyConditions({
+        status: {
+          conditions: [
+            { type: "Available", status: "False", reason: "MinimumReplicasUnavailable" },
+            { type: "Progressing", status: "False", reason: "ProgressDeadlineExceeded", message: "ReplicaSet has timed out." },
+          ],
+        },
+      } as never),
+    ).toHaveLength(2);
+  });
+
+  test("is absent for an object with no conditions at all", () => {
+    expect(unhappyConditions({ status: {} } as never)).toBeUndefined();
+    expect(unhappyConditions({} as never)).toBeUndefined();
   });
 });
