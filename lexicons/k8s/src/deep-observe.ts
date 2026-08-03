@@ -284,6 +284,13 @@ export async function observeResourcesDeepK8s(
           side: "live",
           hooks: perResourceHooks(sets),
         }),
+        // Who owns each surviving path (#1189). The prune above already
+        // dropped confidently-foreign undeclared noise, so what reaches the
+        // diff is chant's own fields and contested ones — and for a contested
+        // field, naming the manager is the whole question: an operator needs to
+        // tell `hpa-controller` doing its job from somebody running
+        // `kubectl edit`.
+        ...(sets.owners.size > 0 ? { fieldOwners: Object.fromEntries(sets.owners) } : {}),
       };
     } catch (err) {
       const outcome = classifyApiFailure(err);

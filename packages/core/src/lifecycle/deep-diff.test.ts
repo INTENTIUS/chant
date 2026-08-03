@@ -4,7 +4,7 @@ import { UNRESOLVED, type NormalizedDeepObservation } from "../deep-observation"
 import type { BaselineLexicon } from "./observation-baseline";
 
 const live = (
-  resources: Record<string, { type: string; properties: Record<string, unknown> }>,
+  resources: Record<string, { type: string; properties: Record<string, unknown>; fieldOwners?: Record<string, string> }>,
   unobserved: NormalizedDeepObservation["unobserved"] = {},
 ): NormalizedDeepObservation => ({ resources, unobserved });
 
@@ -153,5 +153,52 @@ describe("diffDeep with an accepted baseline", () => {
       baseline,
     });
     expect(result.drifted[0].changes.map((c) => c.path)).toEqual(["Extra"]);
+  });
+});
+
+// #1189 — `kind` says a path is undeclared or changed; `owner` says who did it.
+// The two are independent: `hpa-controller` owning `spec.replicas` and somebody
+// running `kubectl edit` are the same kind and opposite situations.
+describe("diffDeep — owning field manager (#1189)", () => {
+  const declared = { web: { type: "K8s::Apps::Deployment", properties: { spec: { replicas: 2 } } } };
+
+  test("names the manager on a drifted path", () => {
+    const result = diffDeep({
+      declared,
+      live: live({
+        web: {
+          type: "K8s::Apps::Deployment",
+          properties: { spec: { replicas: 5 } },
+          fieldOwners: { "spec.replicas": "hpa-controller" },
+        },
+      }),
+    });
+    expect(result.drifted[0].changes[0]).toMatchObject({
+      path: "spec.replicas",
+      kind: "changed",
+      owner: "hpa-controller",
+    });
+  });
+
+  test("is absent when the substrate records no per-field ownership", () => {
+    // Every substrate but k8s. The field must not appear at all rather than
+    // appear empty — a consumer branches on its presence.
+    const result = diffDeep({
+      declared,
+      live: live({ web: { type: "K8s::Apps::Deployment", properties: { spec: { replicas: 5 } } } }),
+    });
+    expect(result.drifted[0].changes[0]).not.toHaveProperty("owner");
+  });
+
+  test("is absent for a path with no live value — nobody owns a field that is not there", () => {
+    const result = diffDeep({
+      declared,
+      live: live({
+        web: { type: "K8s::Apps::Deployment", properties: {}, fieldOwners: { "spec.replicas": "someone" } },
+      }),
+    });
+    const change = result.drifted[0].changes.find((c) => c.path === "spec.replicas")!;
+    expect(change.kind).toBe("absent");
+    expect(change).not.toHaveProperty("owner");
   });
 });

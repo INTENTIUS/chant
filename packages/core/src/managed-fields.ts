@@ -144,6 +144,17 @@ export interface OwnershipSets {
   foreignOwned: ReadonlySet<string>;
   /** The subset of `foreignOwned` where the declared manifest also sets the path — drift-relevant despite foreign ownership. */
   foreignContested: ReadonlySet<string>;
+  /**
+   * Path → the name of the manager that owns it (#1189).
+   *
+   * The three sets above answer *which category* owns a path, which is all the
+   * prune rule needs. A reader needs the other question — "owned by
+   * `kubectl-client-side-apply`" and "owned by `hpa-controller`" are the same
+   * category and mean very different things to an operator. Last writer wins
+   * where several managers touch one path, matching what the API server itself
+   * reports.
+   */
+  owners: ReadonlyMap<string, string>;
 }
 
 function sameJson(a: unknown, b: unknown): boolean {
@@ -188,6 +199,9 @@ function walkOwnership(
   path: string,
   owned: Set<string>,
   contested: Set<string>,
+  /** Records path → manager as it walks (#1189); omitted by callers that only need the sets. */
+  owners?: Map<string, string>,
+  manager?: string,
 ): void {
   if (fieldsNode === null || typeof fieldsNode !== "object" || Array.isArray(fieldsNode)) return;
 
@@ -196,6 +210,7 @@ function walkOwnership(
       if (path !== "") {
         owned.add(path);
         if (declaredNode !== undefined) contested.add(path);
+        if (owners && manager) owners.set(path, manager);
       }
       continue;
     }
@@ -208,7 +223,8 @@ function walkOwnership(
       const childPath = joinField(path, name);
       owned.add(childPath);
       if (childDeclared !== undefined) contested.add(childPath);
-      walkOwnership(child, childLive, childDeclared, childPath, owned, contested);
+      if (owners && manager) owners.set(childPath, manager);
+      walkOwnership(child, childLive, childDeclared, childPath, owned, contested, owners, manager);
       continue;
     }
 
@@ -220,7 +236,8 @@ function walkOwnership(
       const childPath = joinIndex(path, idx);
       owned.add(childPath);
       if (childDeclared !== undefined) contested.add(childPath);
-      walkOwnership(child, childLive, childDeclared, childPath, owned, contested);
+      if (owners && manager) owners.set(childPath, manager);
+      walkOwnership(child, childLive, childDeclared, childPath, owned, contested, owners, manager);
       continue;
     }
 
@@ -255,7 +272,8 @@ function walkOwnership(
       const childPath = joinIndex(path, liveIdx);
       owned.add(childPath);
       if (childDeclared !== undefined) contested.add(childPath);
-      walkOwnership(child, childLive, childDeclared, childPath, owned, contested);
+      if (owners && manager) owners.set(childPath, manager);
+      walkOwnership(child, childLive, childDeclared, childPath, owned, contested, owners, manager);
       continue;
     }
     // An unrecognized prefix (a future fieldsV1 encoding) — skip.
@@ -286,6 +304,7 @@ export function buildOwnershipSets(
   const chantOwned = new Set<string>();
   const foreignOwned = new Set<string>();
   const foreignContested = new Set<string>();
+  const owners = new Map<string, string>();
 
   for (const entry of entries) {
     if (typeof entry.manager !== "string" || entry.manager.length === 0) continue;
@@ -294,13 +313,13 @@ export function buildOwnershipSets(
     if (isChantManager(entry.manager)) {
       // Chant-owned paths are always diffable, regardless of who else is
       // involved — "contested" only matters for a *foreign* owner.
-      walkOwnership(entry.fieldsV1, liveRoot, declaredRoot, "", chantOwned, new Set());
+      walkOwnership(entry.fieldsV1, liveRoot, declaredRoot, "", chantOwned, new Set(), owners, entry.manager);
     } else {
-      walkOwnership(entry.fieldsV1, liveRoot, declaredRoot, "", foreignOwned, foreignContested);
+      walkOwnership(entry.fieldsV1, liveRoot, declaredRoot, "", foreignOwned, foreignContested, owners, entry.manager);
     }
   }
 
-  return { chantOwned, foreignOwned, foreignContested };
+  return { chantOwned, foreignOwned, foreignContested, owners };
 }
 
 /**

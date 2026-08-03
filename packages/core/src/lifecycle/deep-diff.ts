@@ -59,6 +59,17 @@ export interface PropertyDrift {
    * accepted value there would lose the most useful column in the report.
    */
   baseline?: unknown;
+  /**
+   * The field manager that owns this path live, where the substrate records one
+   * (#1189) — Kubernetes' `managedFields`, and nowhere else today.
+   *
+   * `kind` says a path is `undeclared` or `changed`; this says who did it.
+   * "Owned by `kubectl-client-side-apply`" and "owned by `hpa-controller`" are
+   * the same `kind` and mean opposite things: one is somebody bypassing the
+   * pipeline, the other is a controller doing its job. Absent on a substrate
+   * with no per-field ownership, which is every substrate but k8s.
+   */
+  owner?: string;
 }
 
 /** Property-level drift for one declared entity. */
@@ -173,11 +184,16 @@ export function diffDeep(input: DiffDeepInput): DeepDiffResult {
       if (hasDeclared && hasLive && deepValueEqual(declaredValue, liveValue)) continue;
 
       const kind: PropertyDriftKind = !hasDeclared ? "undeclared" : !hasLive ? "absent" : "changed";
+      // Who owns the path live, where the substrate records it (#1189). Only
+      // meaningful for a path that exists live — an `absent` drift has no live
+      // field for anyone to own.
+      const owner = hasLive ? liveEntity.fieldOwners?.[path] : undefined;
       const drift: PropertyDrift = {
         path,
         kind,
         ...(hasDeclared ? { declared: declaredValue } : {}),
         ...(hasLive ? { live: liveValue } : {}),
+        ...(owner ? { owner } : {}),
       };
 
       const acceptedEntry = acceptedDeviation(baseline, name, path);
