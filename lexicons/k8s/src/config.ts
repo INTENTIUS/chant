@@ -39,7 +39,11 @@
  *
  * `ChantConfig` uses `.passthrough()` in its Zod schema so the `k8s` key is
  * accepted at runtime without core changes, exactly like `temporal.profiles`
- * (see `lexicons/temporal/src/config.ts`).
+ * (see `lexicons/temporal/src/config.ts`). The type side is the declaration
+ * merge at the bottom of this file — without it the snippet above compiles
+ * only until someone adds `satisfies ChantConfig`, which every example
+ * project does and which is the only thing type-checking the rest of the
+ * file (#1370).
  *
  * Deliberately out of scope here (see the issue for the full proposal):
  * deriving the binding automatically from a declared `AWS::EKS::Cluster` /
@@ -50,6 +54,8 @@
  * resolved. This also keeps the binding available for #1073/#1074's future
  * typed API client to inherit, rather than re-deriving it.
  */
+
+import type { ChantConfig } from "@intentius/chant/config";
 
 /** A single environment's cluster binding. */
 export interface K8sClusterProfile {
@@ -78,3 +84,21 @@ export interface K8sChantConfig {
    */
   execCredentialPlugins?: string[];
 }
+
+declare module "@intentius/chant/config" {
+  interface ChantConfig {
+    k8s?: K8sChantConfig;
+  }
+}
+
+/**
+ * Compile-time proof that the augmentation above reaches `ChantConfig`, the
+ * same guard the forgejo lexicon carries (#1344).
+ *
+ * Without it this line is `Property 'k8s' does not exist on type
+ * 'ChantConfig'` — which is exactly the error a project got for writing the
+ * documented snippet with `satisfies ChantConfig` (#1370). It lives here
+ * rather than in a test because the root tsconfig excludes test files from
+ * typechecking, so a compile-time claim asserted in one is checked by nothing.
+ */
+export type K8sConfigNamespace = NonNullable<ChantConfig["k8s"]>;
