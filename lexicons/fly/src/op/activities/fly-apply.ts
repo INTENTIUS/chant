@@ -26,6 +26,12 @@ import { readFileSync } from "node:fs";
 import { safeHeartbeat, sleep } from "@intentius/chant/op";
 import { hasOwnershipMarker } from "@intentius/chant/ownership";
 import { FLY_METADATA_OWNERSHIP_KEYS } from "../../ownership";
+import {
+  applyResult,
+  type ApplyResult,
+  type AppliedResource,
+  type PrunedResource,
+} from "@intentius/chant/apply";
 
 /** Default flaps host when neither an `endpoint` arg nor `FLY_FLAPS_BASE_URL` is set. */
 export const DEFAULT_FLAPS_BASE_URL = "https://api.machines.dev";
@@ -819,6 +825,58 @@ export interface FlyApplyArgs {
  * Secrets are apply-only (D7): set, never read back for a diff. `http` is
  * injectable for tests.
  */
+/**
+ * Normalize a flyApply result into core's apply envelope (#1446).
+ *
+ * fly returns eleven arrays because it applies six entity classes and prunes
+ * five. That detail is the applier's own and stays; this projects it onto the
+ * shared tri-state so a caller can read any applier's result the same way.
+ *
+ * `notAttempted` is always empty for fly, and that is not an oversight: an entry
+ * the applier cannot classify now throws (#1457) rather than being skipped,
+ * because the serializer produced it and the two being out of sync is a bug in
+ * the lexicon, not a resource the user declined.
+ */
+export function toApplyResult(result: {
+  apps: Array<{ app: string; created: boolean }>;
+  machines: Array<{ app: string; name: string; action: "created" | "updated" | "noop" }>;
+  volumes: Array<{ app: string; name: string; action: "created" | "noop" }>;
+  ips: Array<{ app: string; type: string; action: "created" | "noop" }>;
+  certs: Array<{ app: string; hostname: string; action: "created" | "noop" }>;
+  secrets: Array<{ app: string; name: string }>;
+  pruned: Array<{ app: string; name: string; id: string }>;
+  prunedVolumes: Array<{ app: string; name: string; id: string }>;
+  prunedIps: Array<{ app: string; address: string }>;
+  prunedCerts: Array<{ app: string; hostname: string }>;
+  prunedSecrets: Array<{ app: string; name: string }>;
+}): ApplyResult {
+  // fly says "noop" where the contract says "unchanged".
+  const act = (a: "created" | "updated" | "noop"): AppliedResource["action"] =>
+    a === "noop" ? "unchanged" : a;
+  const applied: AppliedResource[] = [
+    ...result.apps.map((x) => ({
+      kind: "app",
+      name: x.app,
+      action: (x.created ? "created" : "unchanged") as AppliedResource["action"],
+    })),
+    ...result.machines.map((x) => ({ kind: "machine", name: x.name, action: act(x.action) })),
+    ...result.volumes.map((x) => ({ kind: "volume", name: x.name, action: act(x.action) })),
+    ...result.ips.map((x) => ({ kind: "ip", name: x.type, action: act(x.action) })),
+    ...result.certs.map((x) => ({ kind: "cert", name: x.hostname, action: act(x.action) })),
+    // Secrets are apply-only (D7) — POSTed every run, never read back, so there
+    // is no unchanged to report.
+    ...result.secrets.map((x) => ({ kind: "secret", name: x.name, action: "updated" as const })),
+  ];
+  const pruned: PrunedResource[] = [
+    ...result.pruned.map((x) => ({ kind: "machine", name: x.name, deleted: true })),
+    ...result.prunedVolumes.map((x) => ({ kind: "volume", name: x.name, deleted: true })),
+    ...result.prunedIps.map((x) => ({ kind: "ip", name: x.address, deleted: true })),
+    ...result.prunedCerts.map((x) => ({ kind: "cert", name: x.hostname, deleted: true })),
+    ...result.prunedSecrets.map((x) => ({ kind: "secret", name: x.name, deleted: true })),
+  ];
+  return applyResult(applied, pruned, []);
+}
+
 export async function flyApply(
   args: FlyApplyArgs,
   signal?: AbortSignal,

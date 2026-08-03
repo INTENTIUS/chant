@@ -7,6 +7,7 @@
  */
 export {
   flyApply,
+  toApplyResult,
   flyDelete,
   applyApp,
   applyMachine,
