@@ -30,16 +30,31 @@ export const FLOCI_GCP_SPEC: EmulatorSpec = {
 };
 
 /**
- * The gcp plugin's emulator capability (#1345).
+ * The gcp plugin's emulator capability (#1345, corrected in #1431).
  *
- * `env` is deliberately empty: `gcpApply` reaches the emulator through an
- * explicit `endpoint` argument rather than an ambient variable, so there is no
- * var to inject and claiming one would be worse than claiming none. The
- * endpoint is still reported by `chant emulator up --json`.
+ * The apply and read paths reach the emulator differently, and the capability
+ * exists for the one that cannot be told where to look:
+ *
+ *  - **apply** — `gcpApply` takes an explicit `endpoint` argument. Nothing to
+ *    inject; the caller already holds it.
+ *  - **read** — `describeResources` and `observeResourcesDeep` take it from
+ *    `GCP_ENDPOINT_URL` and nothing else (`../../describe-resources.ts`,
+ *    `../../deep-observe.ts`). A reader given no variable talks to real GCP.
+ *
+ * `env` was empty because when #1345 declared this capability the second bullet
+ * was not yet true: GCP was observed through Config Connector over kubectl, so
+ * there genuinely was no variable to inject. #1209 moved observation onto the
+ * applier's own direct-REST transport about two hours later, and nothing
+ * re-read this comment. The result was an emulator that booted, reported its
+ * endpoint, and left every `--live` read pointed at production.
+ *
+ * Injecting it makes `chant emulator up --lexicon gcp` mean the same thing for
+ * gcp that it already means for aws and azure: the estate's reads land on the
+ * emulator you just started.
  */
 export const FLOCI_GCP_EMULATOR: EmulatorCapability = {
   spec: FLOCI_GCP_SPEC,
-  env: () => ({}),
+  env: (endpoint) => ({ GCP_ENDPOINT_URL: endpoint }),
 };
 
 const gcp = emulatorLifecycle(FLOCI_GCP_SPEC);
