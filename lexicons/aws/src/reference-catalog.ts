@@ -35,6 +35,13 @@ export const awsReferenceCatalog: ReferenceCatalog = {
     { from: "AWS::EC2::SecurityGroup", path: "VpcId", targetKind: "AWS::EC2::VPC", relation: "containment", label: "in VPC" },
     { from: "AWS::EC2::RouteTable", path: "VpcId", targetKind: "AWS::EC2::VPC", relation: "containment", label: "in VPC" },
     { from: "AWS::EC2::Instance", path: "SubnetId", targetKind: "AWS::EC2::Subnet", relation: "containment", label: "in subnet", viaAttr: "SubnetId" },
+    // An instance is in a VPC, and `describe-instances` says so directly. The
+    // other three kinds that sit in a VPC — subnet, security group, route table
+    // — all had this rule; the instance did not, so the estate's own topology
+    // was missing its most-asked-about member. Nothing derived it either: the
+    // instance reached its VPC only through its subnet, two hops, which a
+    // one-hop `<-` cannot cross.
+    { from: "AWS::EC2::Instance", path: "VpcId", targetKind: "AWS::EC2::VPC", relation: "containment", label: "in VPC" },
     { from: "AWS::EC2::NatGateway", path: "SubnetId", targetKind: "AWS::EC2::Subnet", relation: "containment", label: "in subnet" },
     { from: "AWS::ElasticLoadBalancingV2::LoadBalancer", path: "AvailabilityZones[].SubnetId", targetKind: "AWS::EC2::Subnet", relation: "containment", label: "in subnet" },
     { from: "AWS::ElasticLoadBalancingV2::TargetGroup", path: "VpcId", targetKind: "AWS::EC2::VPC", relation: "containment", label: "in VPC" },
