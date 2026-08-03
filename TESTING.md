@@ -41,12 +41,21 @@ packages/core/src/
 │   └── files.test.ts   # Tests for files.ts
 ```
 
-### Test Distribution
+### Where tests live
 
-- **core**: 19 test files - Core functionality including discovery, lint engine, and build system
-- **aws**: 11 test files - AWS CloudFormation domain and resource generation
-- **cli**: 7 test files - Command-line interface and CLI utilities
-- **test-utils**: 1 test file - Shared testing utilities
+- **`packages/core/src`** — discovery, the lint engine, the build system, and the
+  rest of the core surface. Tests sit beside the file they cover.
+- **`packages/core/src/cli`** — the command-line interface, its handlers, and the
+  LSP and MCP servers.
+- **`packages/test-utils/src`** — shared harnesses (`withTestDir`,
+  `describeExample`, the observation conformance suite).
+- **`lexicons/<name>/src`** — each lexicon's own serializer, rules, LSP and
+  observation tests.
+
+Counting them is `find packages lexicons -name '*.test.ts' -not -path '*/node_modules/*' | wc -l`
+rather than a number written here. This section used to carry per-area counts —
+19 core, 11 aws, 7 cli — which had drifted to 219, 102 and 49 without anyone
+noticing, because nothing checks a number in prose.
 
 ## Testing Patterns
 
@@ -249,7 +258,7 @@ Some tests are skipped because they require network access or external resources
 
 ### Network Integration Tests
 
-**Location**: `packages/aws/src/spec/fetch.test.ts`
+**Location**: `lexicons/aws/src/spec/fetch.test.ts`
 
 Three tests are skipped because they require network access to fetch AWS CloudFormation specs:
 
@@ -261,7 +270,7 @@ Three tests are skipped because they require network access to fetch AWS CloudFo
 
 ```bash
 # Remove .skip from the test file or run with network access
-npx vitest run packages/aws/src/spec/fetch.test.ts
+npx vitest run lexicons/aws/src/spec/fetch.test.ts
 ```
 
 These tests are skipped by default to:
@@ -356,7 +365,7 @@ Smoke tests run inside Docker containers to verify chant works in a clean enviro
 **"I npm installed chant. Does it work?"**
 
 - Installs chant + each lexicon from tarballs (simulates `npm install`)
-- Runs `chant init --lexicon <X>` for all 6 lexicons
+- Runs `chant init --lexicon <X>` for the eight lexicons the script iterates (aws, azure, gcp, gitlab, k8s, docker, fly, fountain)
 - Builds and lints scaffolded projects
 - Builds and lints hand-crafted projects
 - Builds real cross-lexicon examples from packages
@@ -367,7 +376,7 @@ Smoke tests run inside Docker containers to verify chant works in a clean enviro
 **"I cloned the repo. Does everything work?"**
 
 - Fresh checkout + `npm install` + build from workspace
-- Full CLI coverage for all 6 lexicons: build, lint, list, doctor, init
+- Full CLI coverage for the eight lexicons the script iterates: build, lint, list, doctor, init
 - MCP and LSP server startup
 - Output formats: `--output` file, `--format yaml`, `--format json`, `--format sarif`
 - `chant init lexicon` scaffold
@@ -429,8 +438,8 @@ Each example directory also gets `README.md`, `package.json`, and any deploy scr
 | `test/Dockerfile.smoke` | Developer persona — Node.js workspace image, runs `integration.sh` during build |
 | `test/Dockerfile.smoke-npm` | New User persona — 2-stage tarball image: pack, test npm |
 | `test/Dockerfile.smoke-e2e` | Release persona — E2E image with deploy tools, runs `e2e-smoke.sh` at container start |
-| `test/integration.sh` | Developer test harness: CLI, build, lint, MCP, LSP, init for all 6 lexicons + examples |
-| `test/npm-smoke.sh` | New User test harness: tarball install, init flow, examples — all 6 lexicons, both runtimes |
+| `test/integration.sh` | Developer test harness: CLI, build, lint, MCP, LSP, init for six lexicons (aws, azure, gcp, gitlab, k8s, docker) + examples |
+| `test/npm-smoke.sh` | New User test harness: tarball install, init flow, examples — eight lexicons, both runtimes |
 | `test/e2e-smoke.sh` | E2E deployment harness: deploy, verify, teardown for AWS/GitLab, EKS, GKE, AKS |
 | `test/build-examples.sh` | Builds all root examples, copies artifacts to `/output` |
 | `test/aws-cc-e2e.sh` | AWS config-controller round-trip on Floci: apply → observe → drift → reconcile → rollback, cloud + k8s halves in one run (`just aws-cc-e2e`; see `test/aws-cc-e2e.md`) |
@@ -441,9 +450,9 @@ How confident can we be that published npm packages actually work for end users?
 
 ### What's well covered
 
-- **Tarball install + CLI execution**: `npm install` from tarballs for all 6 lexicons, then `chant build` and `chant lint` via `npx`
+- **Tarball install + CLI execution**: `npm install` from tarballs for the eight lexicons `npm-smoke.sh` iterates, then `chant build` and `chant lint` via `npx`
 - **Tarball content verification**: Explicit assertions that core tarball contains `bin/chant`, `src/cli/main.ts`, `src/index.ts`, and each lexicon tarball contains `dist/manifest.json`, `dist/meta.json`, `dist/types/index.d.ts`, `src/index.ts`
-- **`chant init` flow**: Scaffolding tested for all 6 lexicons — init, install, build, lint
+- **`chant init` flow**: Scaffolding tested for those same eight — init, install, build, lint
 - **`workspace:*` resolution**: smoke Dockerfile resolves manually with jq before packing tarballs
 - **Prepack pipeline**: All lexicons run `generate → bundle → validate` with schema and artifact checks
 - **Type resolution**: `tsc --noEmit` check after tarball install (soft pass — chant targets tsx with `.ts` exports, not vanilla tsc)
