@@ -16,9 +16,11 @@ import { temporalAuditCatalog } from "./lint/audit-catalog";
 import { temporalCompletions } from "./lsp/completions";
 import { temporalHover } from "./lsp/hover";
 import { temporalDeepNormalizationHooks, observeResourcesDeepTemporal } from "./deep-observe";
+import { temporalConfigSchema } from "./config-schema";
 
 export const temporalPlugin: LexiconPlugin = {
   name: "temporal",
+  configSchema: temporalConfigSchema,
   auditCatalog: () => temporalAuditCatalog,
   serializer: temporalSerializer,
 

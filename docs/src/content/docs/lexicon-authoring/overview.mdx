@@ -127,8 +127,63 @@ family beyond the two best-known readers was missing from it.
 | `commands()` | `CommandGroup` | A CLI verb group mounted under `chant <name> <verb>` — core dispatches to it wholesale and knows nothing about what's inside |
 | `emulator` | `EmulatorCapability` or a list of them | Local emulator(s) `chant emulator` boots — see [Declaring a Local Emulator](/chant/lexicon-authoring/emulator/) |
 | `generateComponentPipeline()` | `ComponentPipelineResult` | Turn the component graph into CI YAML. CI-provider lexicons only (gitlab, github, forgejo) |
+| `configSchema` | `ZodObject` | The shape of this lexicon's own `chant.config.ts` namespace — see [Owning a config namespace](#owning-a-config-namespace) |
 | `upstreamPin` | `UpstreamPin` | How this lexicon pins its upstream schema and where to look for a newer one, for self-upgrade tooling |
 | `init()` | `void \| Promise<void>` | Called once when the plugin loads. No shipped lexicon uses this |
+
+## Owning a config namespace
+
+A lexicon may own the top-level `chant.config.ts` key named after it —
+`k8s.profiles`, `temporal.profiles`, `forgejo.runnerLabels`. Declare its shape
+and core validates the namespace at load:
+
+```typescript
+// src/config.ts
+import { z } from "zod";
+import type { ChantConfig } from "@intentius/chant/config";
+
+export const myConfigSchema = z.strictObject({
+  endpoint: z.string().optional(),
+  profiles: z.record(z.string(), z.strictObject({ region: z.string() })).optional(),
+});
+
+export type MyConfig = z.infer<typeof myConfigSchema>;
+
+declare module "@intentius/chant/config" {
+  interface ChantConfig {
+    mylexicon?: MyConfig;
+  }
+}
+
+// plugin.ts
+configSchema: myConfigSchema,
+```
+
+One schema, three consumers: core validates against it, the exported type is
+inferred from it, and that inferred type is what augments `ChantConfig`. The
+runtime rule and the compile-time one cannot disagree because there is only one
+of them.
+
+Two things this fixes, both of which had bitten (chant #1344):
+
+- **An unknown key inside a declared namespace is now an error.** The project
+  config schema is `.passthrough()`, so `forgejo: { runnerLabel: … }` — a typo
+  for `runnerLabels` — was accepted and ignored, leaving the dialect on its
+  defaults with nothing said.
+- **`satisfies ChantConfig` compiles.** `ChantConfig` is a closed interface, so
+  a config carrying a lexicon key was `error TS2353` until the lexicon augmented
+  it. The augmentation applies only when the config file has the package in its
+  program, which a bare `import "@intentius/chant-lexicon-mylexicon"` guarantees
+  — forgetting it is a compile error rather than silence, which is the safe
+  direction.
+
+Use `z.strictObject` for nested objects. Core applies `.strict()` to the top
+level of your namespace itself, but one level is all that reaches — and a typo
+in `profiles.prod.regoin` lives deeper than that.
+
+Declaring nothing keeps the old passthrough for your namespace, so this is
+opt-in. `chant dev check-lexicon` warns when a lexicon reads its own namespace
+without declaring one.
 
 ## Registering in chant.config.ts
 

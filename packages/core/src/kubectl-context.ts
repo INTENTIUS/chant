@@ -126,7 +126,10 @@ export async function resolveClusterTarget(
   lexiconName: string,
   options: ResolveClusterTargetOptions = {},
 ): Promise<ResolvedClusterTarget> {
-  const k8sConfig = config.k8s as K8sConfigShape | undefined;
+  // #1344 — the k8s lexicon declares this namespace and core validates it at
+  // load, so the shape is checked rather than asserted. `K8sConfigShape` stays
+  // as core's local description for the case where the lexicon is absent.
+  const k8sConfig = (config as { k8s?: K8sConfigShape }).k8s;
   const bound = k8sConfig?.profiles?.[environment]?.context;
 
   if (!bound) {

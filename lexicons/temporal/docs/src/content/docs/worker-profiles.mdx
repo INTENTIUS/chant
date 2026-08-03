@@ -8,7 +8,10 @@ Worker profiles define how `chant run` connects to a Temporal server. They are s
 ## Profile shape
 
 ```ts
-import type { TemporalChantConfig } from "@intentius/chant-lexicon-temporal";
+import type { ChantConfig } from "@intentius/chant/config";
+// Brings the `temporal` key into ChantConfig (chant #1344). `TemporalChantConfig`
+// is still exported, and is now derived from the same schema core validates against.
+import "@intentius/chant-lexicon-temporal";
 
 export default {
   lexicons: ["temporal"],

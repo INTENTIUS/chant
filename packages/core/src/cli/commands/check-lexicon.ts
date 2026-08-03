@@ -3,7 +3,7 @@ import { join, basename } from "path";
 import { auditIntrinsics } from "./check-lexicon-intrinsics";
 import { checkExamplesBuild } from "./check-lexicon-examples";
 import { auditDocsReachability } from "./check-lexicon-docs";
-import { auditMcpNames } from "./check-lexicon-mcp";
+import { auditMcpNames, lexiconNameFor } from "./check-lexicon-mcp";
 import { loadLexiconFromDir, registers, safeList } from "./check-lexicon-plugin";
 import { RULE_CATALOG } from "../../audit/catalog";
 
@@ -446,6 +446,25 @@ export async function checkLexicon(dir: string): Promise<CheckResult> {
         : channel
           ? `marker on ${channel.reads.join(", ")}`
           : "no marker channel — every verdict must be unknown",
+  });
+
+  // #1344 — a lexicon that reads its own `chant.config.ts` namespace should
+  // declare its shape, or a typo inside that namespace is accepted and silently
+  // ignored: `forgejo: { runnerLabel: … }` left the dialect on its defaults with
+  // nothing said. Source scan, because the read happens deep in a serializer
+  // rather than anywhere the plugin object can be asked.
+  const lexiconName = lexiconNameFor(dir);
+  const readsOwnNamespace = findFiles(join(dir, "src"), (n) => n.endsWith(".ts") && !n.endsWith(".test.ts"))
+    .some((file) => new RegExp(`config\\s*\\??\\.\\s*${lexiconName}\\b`).test(readOr(file)));
+  items.push({
+    name: "Declares a configSchema if it reads its own config namespace",
+    tier: 2,
+    pass: !readsOwnNamespace || plugin?.configSchema !== undefined,
+    detail: readsOwnNamespace
+      ? plugin?.configSchema
+        ? `config.${lexiconName} is declared and validated`
+        : `reads config.${lexiconName} but declares no schema — unknown keys there are silently ignored`
+      : "reads no config namespace of its own",
   });
 
   const compositeFiles = listTsFiles(join(dir, "src/composites"), ["index.ts"]);

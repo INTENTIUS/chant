@@ -56,6 +56,7 @@ Warnings — these make the lexicon useful in practice.
 | `The plugin registers initTemplates` | Init templates active |
 | `auditCatalog() covers every post-synth check` | Metadata for `chant audit` — title, tier, fix kind, category. A lexicon that omits it contributes nothing, silently (chant #1346) |
 | `Any declared ownership channel names paths the plugin implements` | A declared marker channel must name read paths the plugin actually implements, with complete keys (chant #1348) |
+| `Declares a configSchema if it reads its own config namespace` | A lexicon reading `config.<name>` should declare its shape, or an unknown key there is silently ignored (chant #1344) |
 | `At least 1 composite in src/composites/` | `.ts` files other than `index.ts` |
 | `At least 3 examples` | Broader usage coverage |
 | `src/lsp/completions.test.ts exists` | LSP completions tested |

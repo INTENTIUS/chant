@@ -6,6 +6,7 @@ import { formatSuccess, formatError } from "./format";
 import { loadPlugins, resolveProjectLexicons } from "./plugins";
 import { resolveCommand, type CommandDef, type ParsedArgs } from "./registry";
 import { loadChantConfigUpward } from "../config";
+import { validateLexiconConfig, formatLexiconConfigProblems } from "../lexicon-config";
 import { armSandboxConfigEvaluation } from "../config-sandbox";
 import { armSandboxPolicyExecution } from "../lint/policy-import";
 import { ENV_VAR, unknownEnvError } from "../env";
@@ -666,6 +667,26 @@ async function loadPluginsOrExit(path: string): Promise<import("../lexicon").Lex
       hint: 'Run "chant init --lexicon <name>" to initialize a project, or add a lexicon to chant.config.ts',
     }));
     process.exit(1);
+  }
+
+  // #1344 — a lexicon that declares the shape of its own `chant.config.ts`
+  // namespace gets it validated here, once, before any command runs. The
+  // config schema is `.passthrough()`, so before this an unknown key inside a
+  // namespace was accepted and silently ignored: `forgejo: { runnerLabel: … }`
+  // left the dialect on its defaults with nothing said. A namespace whose
+  // lexicon declares no schema keeps that passthrough.
+  try {
+    const { config } = await loadChantConfigUpward(resolve(path));
+    const problems = validateLexiconConfig(plugins, config);
+    if (problems.length > 0) {
+      console.error(formatError({
+        message: `Invalid lexicon configuration in chant.config:\n${formatLexiconConfigProblems(problems)}`,
+        hint: "Remove or correct the key. A lexicon's namespace accepts only the keys it declares.",
+      }));
+      process.exit(1);
+    }
+  } catch {
+    // No config, or one that failed to load — the caller's own handling stands.
   }
 
   return plugins;

@@ -10,6 +10,7 @@ import type { McpToolContribution, McpResourceContribution } from "./mcp/types";
 import type { DriverComponent } from "./components/driver";
 import type { EmulatorDeclaration } from "./op/emulator-lifecycle";
 import type { OwnershipChannel } from "./ownership";
+import type { LexiconConfigSchema } from "./lexicon-config";
 import type { RuleMeta } from "./audit/catalog";
 import type { ReferenceCatalog } from "./graph-refs";
 import type { IREdge } from "./graph-ir";
@@ -439,6 +440,25 @@ export interface LexiconPlugin {
 
   /** Package lexicon into distributable tarball */
   package(options?: { verbose?: boolean; force?: boolean }): Promise<void>;
+
+  /**
+   * The shape of this lexicon's own `chant.config.ts` namespace — the top-level
+   * key named after the lexicon (#1344).
+   *
+   * k8s reads `k8s.profiles.<env>.context`, temporal `temporal.profiles`,
+   * forgejo `forgejo.runnerLabels` and `forgejo.actionsRoot`. All were
+   * documented for users and declared nowhere: the config schema is
+   * `.passthrough()`, so a typo was accepted and silently ignored, and the
+   * `ChantConfig` interface is closed, so the documented examples did not
+   * compile.
+   *
+   * Declaring the schema makes an unknown key inside the namespace an error
+   * rather than a default, and gives the lexicon a single source to derive the
+   * type it augments `ChantConfig` with — so the runtime rule and the
+   * compile-time one cannot disagree. Omit it and the namespace keeps today's
+   * passthrough.
+   */
+  readonly configSchema?: LexiconConfigSchema;
 
   /**
    * Local emulator(s) (#920), if this lexicon has any: Floci for aws, floci-az

@@ -32,6 +32,10 @@ The environment→cluster binding is unchanged from [`k8s.profiles.<env>.context
 
 ```ts
 // chant.config.ts
+import type { ChantConfig } from "@intentius/chant/config";
+// Brings the `k8s` key into ChantConfig (chant #1344).
+import "@intentius/chant-lexicon-k8s";
+
 export default {
   lexicons: ["k8s"],
   k8s: {
@@ -40,7 +44,7 @@ export default {
       staging: { context: "staging-eks" },
     },
   },
-};
+} satisfies ChantConfig;
 ```
 
 A declared binding is passed explicitly on every request. If the kubeconfig's own current-context disagrees with it, chant refuses before touching a single resource and names both contexts — reading the wrong cluster would report every declared resource as missing, which is a confident and wrong list of creates. With no binding, the kubeconfig's current-context is used and a warning says so.
