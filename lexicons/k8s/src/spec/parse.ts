@@ -25,6 +25,10 @@ export interface ParsedProperty {
   description?: string;
   enum?: string[];
   constraints: PropertyConstraints;
+  /** `x-kubernetes-list-type` — `map`, `set` or `atomic`. Absent when the spec does not say (chant #1441). */
+  listType?: string;
+  /** `x-kubernetes-list-map-keys` — the fields that jointly identify one element. Present only alongside `listType: "map"`. */
+  listMapKeys?: string[];
 }
 
 export interface ParsedPropertyType {
@@ -104,6 +108,16 @@ interface SwaggerDefinition {
   "x-kubernetes-group-version-kind"?: GroupVersionKind[];
   "x-kubernetes-int-or-string"?: boolean;
   "x-kubernetes-preserve-unknown-fields"?: boolean;
+  /**
+   * How the API server merges this list: `map` (associative, identified by
+   * {@link SwaggerDefinition["x-kubernetes-list-map-keys"]}), `set` (unordered,
+   * elements are their own identity), or `atomic` (replaced wholesale). chant
+   * #1441 — carried through so the drift engine can identify list elements
+   * semantically instead of positionally.
+   */
+  "x-kubernetes-list-type"?: string;
+  /** The property names that jointly identify one element of an associative list. */
+  "x-kubernetes-list-map-keys"?: string[];
 }
 
 interface SwaggerProperty extends SwaggerDefinition {
@@ -227,6 +241,33 @@ export function parseK8sSwagger(data: string | Buffer): K8sParseResult[] {
 }
 
 /** Stable key for a GVK, used to join the `paths` pass onto the `definitions` pass. */
+/**
+ * Every `(property name, list-map keys)` pair the spec declares, across ALL
+ * definitions (chant #1441).
+ *
+ * Deliberately independent of {@link parseK8sSwagger}'s resource/property-type
+ * extraction. That extraction keeps 257 resources and 320 property types out
+ * of roughly a thousand definitions, so collecting merge keys from its output
+ * alone finds 18 of the 32 properties the spec annotates — and misses
+ * `ServicePort.port`, whose absence would silently demote every Service port
+ * list to the hand-written fallback. A definition is worth reading for its
+ * merge semantics whether or not chant emits a type for it.
+ */
+export function specListMapKeyPairs(data: string | Buffer): Array<[string, string[]]> {
+  const spec = JSON.parse(typeof data === "string" ? data : data.toString("utf-8")) as SwaggerSpec;
+  const pairs: Array<[string, string[]]> = [];
+
+  for (const def of Object.values(spec.definitions ?? {})) {
+    for (const [name, prop] of Object.entries(def.properties ?? {})) {
+      if (prop["x-kubernetes-list-type"] !== "map") continue;
+      const keys = prop["x-kubernetes-list-map-keys"];
+      if (keys?.length) pairs.push([name, [...keys]]);
+    }
+  }
+
+  return pairs;
+}
+
 export function gvkKey(gvk: GroupVersionKind): string {
   return `${gvk.group}|${gvk.version}|${gvk.kind}`;
 }
@@ -442,14 +483,22 @@ function parseProperties(
 
   for (const [name, prop] of Object.entries(properties)) {
     const tsType = resolvePropertyType(prop, definitions);
-    result.push({
+    const parsed: ParsedProperty = {
       name,
       tsType,
       required: requiredSet.has(name),
       description: prop.description,
       enum: prop.enum,
       constraints: coreExtractConstraints(prop as JsonSchemaProperty),
-    });
+    };
+    // chant #1441 — the merge semantics the API server itself uses. Kept only
+    // when present; a spec that says nothing leaves both fields absent rather
+    // than asserting a default the schema did not state.
+    const listType = prop["x-kubernetes-list-type"];
+    if (listType) parsed.listType = listType;
+    const listMapKeys = prop["x-kubernetes-list-map-keys"];
+    if (listMapKeys?.length) parsed.listMapKeys = [...listMapKeys];
+    result.push(parsed);
   }
 
   return result;

@@ -4,6 +4,7 @@ import {
   gvkToApiVersion,
   k8sShortName,
   k8sServiceName,
+  specListMapKeyPairs,
 } from "./parse";
 
 describe("gvkToTypeName", () => {
@@ -98,5 +99,46 @@ describe("k8sServiceName", () => {
   test("returns service name for known types", () => {
     const name = k8sServiceName("Deployment");
     expect(typeof name).toBe("string");
+  });
+});
+
+/**
+ * chant #1441 — the merge semantics the API server publishes, read off every
+ * definition rather than only the ones chant emits a type for.
+ */
+describe("specListMapKeyPairs", () => {
+  const spec = JSON.stringify({
+    definitions: {
+      "io.k8s.api.core.v1.PodSpec": {
+        properties: {
+          containers: { type: "array", "x-kubernetes-list-type": "map", "x-kubernetes-list-map-keys": ["name"] },
+          // atomic and set lists carry no identity key
+          tolerations: { type: "array", "x-kubernetes-list-type": "atomic" },
+          finalizers: { type: "array", "x-kubernetes-list-type": "set" },
+          nodeName: { type: "string" },
+        },
+      },
+      "io.k8s.api.core.v1.ServiceSpec": {
+        properties: {
+          ports: { type: "array", "x-kubernetes-list-type": "map", "x-kubernetes-list-map-keys": ["port", "protocol"] },
+        },
+      },
+      "io.k8s.api.core.v1.NoProperties": {},
+    },
+  });
+
+  test("collects only map-typed lists that name their keys", () => {
+    expect(specListMapKeyPairs(spec)).toEqual([
+      ["containers", ["name"]],
+      ["ports", ["port", "protocol"]],
+    ]);
+  });
+
+  test("accepts a Buffer, as the fetch path supplies", () => {
+    expect(specListMapKeyPairs(Buffer.from(spec, "utf-8"))).toHaveLength(2);
+  });
+
+  test("a spec with no definitions yields nothing rather than throwing", () => {
+    expect(specListMapKeyPairs(JSON.stringify({}))).toEqual([]);
   });
 });

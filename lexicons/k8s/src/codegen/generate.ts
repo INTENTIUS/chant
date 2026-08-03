@@ -12,12 +12,13 @@ import {
   type GeneratePipelineConfig,
 } from "@intentius/chant/codegen/generate";
 import { fetchSchemas } from "../spec/fetch";
-import { parseK8sSwagger, k8sShortName, type K8sParseResult } from "../spec/parse";
+import { parseK8sSwagger, specListMapKeyPairs, k8sShortName, type K8sParseResult } from "../spec/parse";
 import { loadMultipleCRDs } from "../crd/loader";
 import { CRD_SOURCES } from "../crd/crd-sources";
 import { NamingStrategy, propertyTypeName, extractDefName } from "./naming";
 import { generateLexiconJSON } from "./generate-lexicon";
 import { generateOperationsJSON } from "./generate-operations";
+import { generateListMapKeysJSON } from "./generate-list-map-keys";
 import { generateTypeScriptDeclarations } from "./generate-typescript";
 import {
   generateRuntimeIndex as coreGenerateRuntimeIndex,
@@ -38,6 +39,9 @@ export interface K8sGenerateOptions extends GenerateOptions {
 export async function generate(opts: K8sGenerateOptions = {}): Promise<GenerateResult> {
   // Pipeline state captured in closure — no module-level mutation
   let pendingResults: K8sParseResult[] = [];
+  // chant #1441 — read off the raw document in `parseSchema`, since the
+  // result set covers only the definitions chant emits types for.
+  let specPairs: Array<[string, string[]]> = [];
 
   const config: GeneratePipelineConfig<K8sParseResult> = {
     fetchSchemas: async (fetchOpts) => {
@@ -49,6 +53,7 @@ export async function generate(opts: K8sGenerateOptions = {}): Promise<GenerateR
       // The pipeline calls this once per schema entry. We return the first result
       // and use augmentResults to inject the rest.
       const results = parseK8sSwagger(data);
+      specPairs = specListMapKeyPairs(data);
       if (results.length === 0) return null;
       // Return the first result; stash the rest for augmentResults
       pendingResults = results.slice(1);
@@ -105,6 +110,9 @@ export async function generate(opts: K8sGenerateOptions = {}): Promise<GenerateR
     // differently from how the declarable surface names it.
     generateExtraArtifacts: (results) => ({
       "operations.json": generateOperationsJSON(results),
+      // chant #1441 — the spec's own associative-list keys, so drift compares
+      // list elements by identity instead of by index.
+      "list-map-keys.json": generateListMapKeysJSON(specPairs, results),
     }),
   };
 
