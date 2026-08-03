@@ -263,10 +263,16 @@ describe("pruneArmOrphans (#azure-prune)", () => {
       if (method === "DELETE") deletes.push(url);
       return { status: 200, text: method === "GET" ? JSON.stringify(live) : "" };
     };
-    const pruned = await pruneArmOrphans(desired, ctx(), http);
+    const { pruned, notPrunable } = await pruneArmOrphans(desired, ctx(), http);
     expect(pruned).toEqual([{ type: "Microsoft.Storage/storageAccounts", name: "orphan1", deleted: true }]);
     expect(deletes).toHaveLength(1);
     expect(deletes[0]).toContain("/storageAccounts/orphan1?api-version=2023-01-01"); // apiVersion from the template
+    // #1457: "othertype" is chant-owned and undeclared, and its TYPE is absent
+    // from the template — so there is no apiVersion to delete it with. It used
+    // to be dropped by the `!entry` guard in silence; now it is reported.
+    expect(notPrunable).toEqual([
+      { type: "Microsoft.Web/sites", name: "othertype", reason: "no-api-version" },
+    ]);
   });
 
   // #1448 routes ApplyOp's `arm` target here, so this is now the delete scope for
@@ -285,9 +291,12 @@ describe("pruneArmOrphans (#azure-prune)", () => {
       if (method === "DELETE") deletes.push(url);
       return { status: 200, text: method === "GET" ? JSON.stringify(live) : "" };
     };
-    const pruned = await pruneArmOrphans(desired, ctx(), http);
+    const { pruned, notPrunable } = await pruneArmOrphans(desired, ctx(), http);
     expect(deletes).toEqual([]);
     expect(pruned).toEqual([]);
+    // Foreign resources are not chant's orphans, so they are not reported as
+    // ones chant failed to prune either — ownership is checked first.
+    expect(notPrunable).toEqual([]);
   });
 
   // The caveat that was a comment on OWNERSHIP_TAG_KEY: floci-az drops resource
@@ -305,7 +314,7 @@ describe("pruneArmOrphans (#azure-prune)", () => {
       if (method === "DELETE") deletes.push(url);
       return { status: 200, text: method === "GET" ? JSON.stringify(live) : "" };
     };
-    expect(await pruneArmOrphans(desired, ctx(), http)).toEqual([]);
+    expect(await pruneArmOrphans(desired, ctx(), http)).toEqual({ pruned: [], notPrunable: [] });
     expect(deletes).toEqual([]);
   });
 });
@@ -367,5 +376,85 @@ describe("azDelete (#azure-prune)", () => {
     expect(res.deleted.map((d) => d.name)).toEqual(["site1", "plan1"]);
     expect(deletes[0]).toContain("/sites/site1");
     expect(deletes[1]).toContain("/serverfarms/plan1");
+  });
+});
+
+/**
+ * #1457 — the permanent-orphan case, stated as its own scenario rather than a
+ * clause in another test.
+ *
+ * Prune the LAST resource of a type and the template stops mentioning that type
+ * at all. `byType` then has no entry, and the `!entry` guard skipped the live
+ * resource before ownership was ever checked. It is owned, undeclared, and was
+ * unreachable by prune forever. Prune one of SEVERAL and it works, which is why
+ * this survived testing.
+ */
+describe("pruneArmOrphans: a type that left the template (#1457)", () => {
+  const ctx = (): ArmEvalCtx => ({
+    subscriptionId: "sub",
+    resourceGroup: "rg",
+    location: "eastus",
+    deployed: new Map(),
+    http: async () => ({ status: 200, text: "" }),
+    base: "http://x",
+  });
+
+  const liveHttp = (value: unknown[], deletes: string[]): AzHttp => async (method, url) => {
+    if (method === "DELETE") deletes.push(url);
+    return { status: 200, text: method === "GET" ? JSON.stringify({ value }) : "" };
+  };
+
+  test("an owned orphan whose type is gone is reported, not silently skipped", async () => {
+    // The template now declares a DIFFERENT type entirely — the storage account
+    // was the last of its kind and has been removed from source.
+    const desired: ArmResource[] = [
+      { type: "Microsoft.Web/sites", apiVersion: "2022-03-01", name: "site" },
+    ];
+    const deletes: string[] = [];
+    const http = liveHttp(
+      [{ id: "/1", name: "leftover", type: "Microsoft.Storage/storageAccounts", tags: { "managed-by": "chant" } }],
+      deletes,
+    );
+    const { pruned, notPrunable } = await pruneArmOrphans(desired, ctx(), http);
+    expect(pruned).toEqual([]);
+    expect(notPrunable).toEqual([
+      { type: "Microsoft.Storage/storageAccounts", name: "leftover", reason: "no-api-version" },
+    ]);
+    // Still not deleted — the apiVersion genuinely is not available. The fix is
+    // that it is now visible rather than that it is now deleted.
+    expect(deletes).toEqual([]);
+  });
+
+  test("pruning one of several of a type still works — the case that hid this", async () => {
+    const desired: ArmResource[] = [
+      { type: "Microsoft.Storage/storageAccounts", apiVersion: "2023-01-01", name: "keep" },
+    ];
+    const deletes: string[] = [];
+    const http = liveHttp(
+      [
+        { id: "/1", name: "keep", type: "Microsoft.Storage/storageAccounts", tags: { "managed-by": "chant" } },
+        { id: "/2", name: "gone", type: "Microsoft.Storage/storageAccounts", tags: { "managed-by": "chant" } },
+      ],
+      deletes,
+    );
+    const { pruned, notPrunable } = await pruneArmOrphans(desired, ctx(), http);
+    expect(pruned).toEqual([{ type: "Microsoft.Storage/storageAccounts", name: "gone", deleted: true }]);
+    expect(notPrunable).toEqual([]);
+    expect(deletes).toHaveLength(1);
+  });
+
+  test("a foreign resource of a departed type is not reported as chant's problem", async () => {
+    const desired: ArmResource[] = [
+      { type: "Microsoft.Web/sites", apiVersion: "2022-03-01", name: "site" },
+    ];
+    const deletes: string[] = [];
+    const http = liveHttp(
+      [{ id: "/1", name: "theirs", type: "Microsoft.Storage/storageAccounts", tags: { "managed-by": "terraform" } }],
+      deletes,
+    );
+    const { pruned, notPrunable } = await pruneArmOrphans(desired, ctx(), http);
+    expect(pruned).toEqual([]);
+    expect(notPrunable).toEqual([]);
+    expect(deletes).toEqual([]);
   });
 });

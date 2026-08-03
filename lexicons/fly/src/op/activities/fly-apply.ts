@@ -853,6 +853,22 @@ export async function flyApply(
     else if (isIpRequest(req)) ipReqs.push([entityName, req]);
     else if (isCertRequest(req)) certReqs.push([entityName, req]);
     else if (isSecretRequest(req)) secretReqs.push([entityName, req]);
+    // #1457: this used to fall off the end. An entry matching none of the six
+    // predicates was discarded — no log, no bucket, absent from all eleven
+    // arrays flyApply returns — and the result read as a full apply.
+    //
+    // Failing is right here, rather than reporting it as not-attempted. The
+    // serializer produced this entry, so the applier not recognising it is a
+    // version skew between the two halves of the same lexicon — a bug in one of
+    // them, not a resource the user chose to skip. It happens exactly when a new
+    // Fly resource type lands on the serializer side alone.
+    else {
+      throw new Error(
+        `fly plan entry "${entityName}" matches no request predicate ` +
+          `(${req.method} ${req.endpoint}). The serializer emitted a shape this applier ` +
+          `does not recognise — they are out of sync. Applying would silently skip it.`,
+      );
+    }
   }
 
   const appNames = appReqs.map(appNameFromRequest);
