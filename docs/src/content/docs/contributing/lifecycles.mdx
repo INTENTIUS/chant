@@ -23,7 +23,7 @@ The built-in lifecycle composites are themselves nothing more than Ops you could
 
 - [`WatchOp`](/chant/guide/watching-lifecycle/) — observe: snapshot + live diff on a schedule.
 - [`ReconcileOp`](/chant/guide/reconciling-lifecycle/) — `cloud → code`: open PRs when live drifts from source.
-- [`ApplyOp`](/chant/guide/reconciling-lifecycle/) — `code → cloud`: apply via the target's native mechanism, with owned-only deletes.
+- [`ApplyOp`](/chant/guide/reconciling-lifecycle/) — `code → cloud`: apply through the target's own delete path, owned-only on the `kubectl` and `cloudformation` targets ([the scope differs per target](/chant/guide/ops/#apply-code--cloud)).
 
 To contribute a lifecycle this way, compose the primitives your workflow needs:
 

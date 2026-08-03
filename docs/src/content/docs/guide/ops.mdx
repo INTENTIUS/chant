@@ -261,7 +261,11 @@ Run `chant run prod-reconcile` for a one-shot reconcile on the local executor; g
 
 ## Apply (code → cloud)
 
-The `ApplyOp` composite is the other direction: compute the plan, then apply via the target's native mechanism — a Kubernetes server-side apply, CloudFormation `deploy`, or an ARM deployment. Authority stays with the platform; chant hosts no state file.
+The `ApplyOp` composite is the other direction: compute the plan, then apply it. Authority stays with the platform; chant hosts no state file.
+
+`target` picks the mechanism, and there are three: `kubectl` is a server-side apply through the k8s lexicon's typed client, while `cloudformation` and `arm` shell out to `aws cloudformation deploy` and `az deployment group create`.
+
+chant also ships four **native per-resource appliers** that speak each provider's own API directly, with no CLI in the path and an endpoint override so the same step targets a real account or an emulator: `awsApply`, `azApply` and `gcpApply` (typed step builders, like the ones in [Phases and steps](#phases-and-steps)), and `flyApply` (an activity the fly lexicon contributes, reached by name). None of them is reachable through `ApplyOp` — `target` has no value for GCP or Fly, and the two shell targets do not route to their applier ([#1449](https://github.com/INTENTIUS/chant/issues/1449)). Until that changes, use them as steps in a hand-written Op.
 
 ```typescript
 import { ApplyOp } from "@intentius/chant-lexicon-temporal";
@@ -279,7 +283,21 @@ const { op } = ApplyOp({
 export default op;
 ```
 
-`delete` controls how apply treats resources no longer declared. Deletes ride the target's **native** delete path scoped to the ownership marker — for Kubernetes, a sweep filtered by `app.kubernetes.io/managed-by=chant` (and by the stack when `ownership.stack` is set), restricted to the namespaces the apply touched; for CloudFormation, the stack boundary; for ARM, `--mode Complete`. Because every delete path is marker-scoped, a foreign (unmarked) resource is never touched: deletes are owned-only by construction.
+`delete` controls how apply treats resources no longer declared. The delete rides the target's own delete path, and what bounds that path differs per target:
+
+| target | delete path | what bounds it |
+|---|---|---|
+| `kubectl` | a sweep filtered by `app.kubernetes.io/managed-by=chant` (and by the stack when `ownership.stack` is set), restricted to the namespaces the apply touched | the ownership marker — an unmarked object is never touched |
+| `cloudformation` | the stack deletes resources removed from its template | the stack — a resource CloudFormation did not create is not in it |
+| `arm` | `az deployment group create --mode Complete` | the resource group, **not** the ownership marker |
+
+The first two are owned-only by construction. The ARM target is not, and the difference is destructive.
+
+<Aside type="caution" title="`arm` deletes at resource-group scope">
+ARM Complete mode removes every resource in the resource group that the template does not declare — including resources chant never applied. `delete: "owned-only"` and `delete: "gated"` both select it, so neither is owned-only on this target.
+
+Until [#1448](https://github.com/INTENTIUS/chant/issues/1448) lands, either keep `delete: "never"` on `arm` targets, or give the stack a resource group it is the sole occupant of. The azure lexicon's own `azApply` activity prunes marker-scoped and can be called directly from a hand-written Op in the meantime.
+</Aside>
 
 ### Field ownership on the kubectl target
 
