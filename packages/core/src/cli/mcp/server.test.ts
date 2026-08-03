@@ -1151,3 +1151,85 @@ describe("McpServer", () => {
     });
   });
 });
+
+describe("plugin namespacing is idempotent (#1341)", () => {
+  const tool = (name: string) => ({
+    name,
+    description: "d",
+    inputSchema: { type: "object" as const, properties: {} },
+    handler: async () => "",
+  });
+  const resource = (uri: string) => ({
+    uri,
+    name: "n",
+    description: "d",
+    mimeType: "text/plain",
+    handler: async () => "",
+  });
+
+  async function registeredToolNames(plugin: LexiconPlugin): Promise<string[]> {
+    const s = new McpServer([plugin]);
+    const res = await s.handleRequest({ jsonrpc: "2.0", id: 1, method: "tools/list" });
+    return (res.result as { tools: Array<{ name: string }> }).tools.map((t) => t.name);
+  }
+
+  async function registeredResourceUris(plugin: LexiconPlugin): Promise<string[]> {
+    const s = new McpServer([plugin]);
+    const res = await s.handleRequest({ jsonrpc: "2.0", id: 1, method: "resources/list" });
+    return (res.result as { resources: Array<{ uri: string }> }).resources.map((r) => r.uri);
+  }
+
+  test("a tool declared bare registers under one namespace", async () => {
+    const names = await registeredToolNames(
+      createMockPlugin({ name: "gitlab", mcpTools: () => [tool("migrate")] }),
+    );
+    expect(names).toContain("gitlab:migrate");
+  });
+
+  test("a tool that already carries its prefix is not prefixed twice", async () => {
+    // createDiffTool emits `${lexiconName}:diff`, and eleven lexicons write the
+    // prefix by hand — this is the case that shipped as `gitlab:gitlab:diff`.
+    const names = await registeredToolNames(
+      createMockPlugin({ name: "gitlab", mcpTools: () => [tool("gitlab:diff")] }),
+    );
+    expect(names).toContain("gitlab:diff");
+    expect(names).not.toContain("gitlab:gitlab:diff");
+  });
+
+  test("a prefix that merely looks like the lexicon's is left alone", async () => {
+    const names = await registeredToolNames(
+      createMockPlugin({ name: "git", mcpTools: () => [tool("gitlab:diff")] }),
+    );
+    expect(names).toContain("git:gitlab:diff");
+  });
+
+  test("a resource declared as a bare path registers under the lexicon", async () => {
+    const uris = await registeredResourceUris(
+      createMockPlugin({ name: "aws", mcpResources: () => [resource("examples/s3")] }),
+    );
+    expect(uris).toContain("chant://aws/examples/s3");
+  });
+
+  test("a resource carrying the colon form is not doubled", async () => {
+    const uris = await registeredResourceUris(
+      createMockPlugin({ name: "aws", mcpResources: () => [resource("aws:resource-catalog")] }),
+    );
+    expect(uris).toContain("chant://aws/resource-catalog");
+  });
+
+  test("the chant://lexicon/<name>/ form the authoring docs taught is normalized", async () => {
+    // azure followed lsp-mcp.mdx and shipped `chant://azure/chant://lexicon/azure/catalog`.
+    const uris = await registeredResourceUris(
+      createMockPlugin({ name: "azure", mcpResources: () => [resource("chant://lexicon/azure/catalog")] }),
+    );
+    expect(uris).toContain("chant://azure/catalog");
+    expect(uris.every((u) => u.indexOf("chant://", 1) === -1)).toBe(true);
+  });
+
+  test("an already-registered uri passes through unchanged", async () => {
+    const uris = await registeredResourceUris(
+      createMockPlugin({ name: "aws", mcpResources: () => [resource("chant://aws/catalog")] }),
+    );
+    expect(uris).toContain("chant://aws/catalog");
+  });
+});

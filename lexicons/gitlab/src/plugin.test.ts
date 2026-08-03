@@ -241,7 +241,7 @@ describe("gitlabPlugin", () => {
     expect(tools.length).toBeGreaterThanOrEqual(2);
     const names = tools.map((t) => t.name);
     expect(names).toContain("gitlab:diff");
-    expect(names).toContain("migrate");
+    expect(names).toContain("gitlab:migrate");
     // Read-only context tools (#327/#328)
     expect(names).toContain("gitlab:checks");
     expect(names).toContain("gitlab:pipeline");

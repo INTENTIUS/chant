@@ -354,7 +354,7 @@ export const tags = defaultTags([
 
   mcpTools(): McpToolContribution[] {
     return [{
-      name: "lookup-resource",
+      name: "azure:lookup-resource",
       description: "Look up an Azure resource type by name",
       inputSchema: {
         type: "object",
@@ -384,7 +384,7 @@ export const tags = defaultTags([
   mcpResources(): McpResourceContribution[] {
     return [
       {
-        uri: "chant://lexicon/azure/catalog",
+        uri: "resource-catalog",
         name: "Azure Resource Catalog",
         description: "All available Azure resource types",
         mimeType: "application/json",
@@ -398,7 +398,7 @@ export const tags = defaultTags([
         },
       },
       {
-        uri: "chant://lexicon/azure/examples",
+        uri: "examples",
         name: "Azure Example Projects",
         description: "Example project summaries with code snippets for Azure ARM templates",
         mimeType: "application/json",
