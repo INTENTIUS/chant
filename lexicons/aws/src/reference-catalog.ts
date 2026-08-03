@@ -35,7 +35,7 @@ export const awsReferenceCatalog: ReferenceCatalog = {
     { from: "AWS::EC2::SecurityGroup", path: "VpcId", targetKind: "AWS::EC2::VPC", relation: "containment", label: "in VPC" },
     { from: "AWS::EC2::RouteTable", path: "VpcId", targetKind: "AWS::EC2::VPC", relation: "containment", label: "in VPC" },
     { from: "AWS::EC2::Instance", path: "SubnetId", targetKind: "AWS::EC2::Subnet", relation: "containment", label: "in subnet", viaAttr: "SubnetId" },
-    { from: "AWS::EC2::NatGateway", path: "SubnetId", targetKind: "AWS::EC2::Subnet", relation: "containment", label: "in subnet" },
+    { from: "AWS::EC2::NatGateway", path: "SubnetId", targetKind: "AWS::EC2::Subnet", relation: "containment", label: "in subnet", viaAttr: "SubnetId" },
     { from: "AWS::ElasticLoadBalancingV2::LoadBalancer", path: "AvailabilityZones[].SubnetId", targetKind: "AWS::EC2::Subnet", relation: "containment", label: "in subnet" },
     { from: "AWS::ElasticLoadBalancingV2::TargetGroup", path: "VpcId", targetKind: "AWS::EC2::VPC", relation: "containment", label: "in VPC" },
     { from: "AWS::ECS::Service", path: "NetworkConfiguration.AwsvpcConfiguration.Subnets[]", targetKind: "AWS::EC2::Subnet", relation: "containment", label: "in subnet" },
@@ -62,7 +62,21 @@ export const awsReferenceCatalog: ReferenceCatalog = {
     // "reachable" answerable from the graph rather than from a provider sweep.
     { from: "AWS::EC2::NetworkInterface", path: "Groups[].GroupId", targetKind: "AWS::EC2::SecurityGroup", relation: "reference", label: "sg", viaAttr: "Groups" },
     { from: "AWS::EC2::NetworkInterface", path: "Attachment.InstanceId", targetKind: "AWS::EC2::Instance", relation: "reference", label: "attached to", viaAttr: "Attachment" },
-    { from: "AWS::EC2::NetworkInterface", path: "SubnetId", targetKind: "AWS::EC2::Subnet", relation: "containment", label: "in subnet" },
+    // Containment rules carry a traversal name so `->`/`<-` can cross them
+    // (#1275). Without one `reconstructEdges` records the pair as a boundary
+    // hint and emits no edge, which reads as "nothing is in here" rather than
+    // as "this relationship is not traversable".
+    //
+    // `AWS::EC2::Instance -> Subnet` already had one; the ENI, which is the
+    // same relationship for the same reason, did not. The gap was measurable: `kind:EC2::Subnet !<-kind:EC2::NetworkInterface` —
+    // the query the grammar exists to express — matched 23 of 23 subnets on an
+    // estate where 8 of 13 are empty, because no ENI ever produced an edge. An
+    // inert negation is indistinguishable from one that found nothing.
+    //
+    // Scoped to "occupies a subnet", matching the exception that already
+    // existed. Containment INTO a VPC stays a boundary hint — a test asserts
+    // that explicitly, and widening it is a separate decision.
+    { from: "AWS::EC2::NetworkInterface", path: "SubnetId", targetKind: "AWS::EC2::Subnet", relation: "containment", label: "in subnet", viaAttr: "SubnetId" },
     { from: "AWS::EC2::Route", path: "GatewayId", targetKind: "AWS::EC2::InternetGateway", relation: "reference", label: "via", viaAttr: "GatewayId" },
     { from: "AWS::EC2::Route", path: "NatGatewayId", targetKind: "AWS::EC2::NatGateway", relation: "reference", label: "via" },
     { from: "AWS::ElasticLoadBalancingV2::LoadBalancer", path: "SecurityGroups[]", targetKind: "AWS::EC2::SecurityGroup", relation: "reference", label: "sg" },
@@ -85,7 +99,7 @@ export const awsReferenceCatalog: ReferenceCatalog = {
     { from: "AWS::EC2::RouteTable", path: "VpcId", relation: "containment", label: "in VPC" },
     { from: "AWS::EC2::Instance", path: "SubnetId", relation: "containment", label: "in subnet" },
     { from: "AWS::EC2::Instance", path: "SecurityGroupIds[]", relation: "reference", label: "sg" },
-    { from: "AWS::EC2::NatGateway", path: "SubnetId", relation: "containment", label: "in subnet" },
+    { from: "AWS::EC2::NatGateway", path: "SubnetId", relation: "containment", label: "in subnet", viaAttr: "SubnetId" },
     { from: "AWS::EC2::Route", path: "RouteTableId", relation: "reference", label: "in" },
     { from: "AWS::EC2::Route", path: "GatewayId", relation: "reference", label: "via" },
     { from: "AWS::EC2::Route", path: "NatGatewayId", relation: "reference", label: "via" },

@@ -72,3 +72,36 @@ describe("awsReferenceCatalog — golden 3-tier VPC", () => {
     expect(groups.privA).toEqual(expect.arrayContaining(["svc", "rds"]));
   });
 });
+
+describe("a subnet's occupants are traversable (#1432)", () => {
+  // "Which subnets have nothing in them" is a `<-` query, and it needs an edge
+  // to be absent-or-present. Recorded as containment only, the ENI produced no
+  // edge and the negation matched every subnet — the same answer it would give
+  // for an estate where every subnet really was empty.
+  const nodes = [
+    { id: "sub-a", kind: "AWS::EC2::Subnet", lexicon: "aws", physicalId: "subnet-a", attrs: {} },
+    { id: "sub-b", kind: "AWS::EC2::Subnet", lexicon: "aws", physicalId: "subnet-b", attrs: {} },
+    { id: "eni-1", kind: "AWS::EC2::NetworkInterface", lexicon: "aws", physicalId: "eni-1", attrs: { SubnetId: "subnet-a" } },
+    { id: "nat-1", kind: "AWS::EC2::NatGateway", lexicon: "aws", physicalId: "nat-1", attrs: { SubnetId: "subnet-a" } },
+  ];
+
+  it("an ENI reaches the subnet it is in", () => {
+    const { edges } = reconstructEdges(nodes, awsReferenceCatalog);
+    expect(edges).toContainEqual({ from: "eni-1", to: "sub-a", kind: "ref", viaAttr: "SubnetId" });
+  });
+
+  it("a NAT gateway does too — the same relationship, the same reason", () => {
+    const { edges } = reconstructEdges(nodes, awsReferenceCatalog);
+    expect(edges).toContainEqual({ from: "nat-1", to: "sub-a", kind: "ref", viaAttr: "SubnetId" });
+  });
+
+  it("an empty subnet is still reached by nothing", () => {
+    const { edges } = reconstructEdges(nodes, awsReferenceCatalog);
+    expect(edges.some((e) => e.to === "sub-b")).toBe(false);
+  });
+
+  it("it is still containment — the boundary is not lost to make it traversable", () => {
+    const { containment } = reconstructEdges(nodes, awsReferenceCatalog);
+    expect(containment).toContainEqual({ child: "eni-1", parent: "sub-a", label: "in subnet" });
+  });
+});
