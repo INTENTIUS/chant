@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
-import { computeFountainCoverage, formatVerbose, EXCLUDED_KINDS } from "./coverage";
+import { computeFountainCoverage, formatVerbose, EXCLUDED_KINDS, UNSPECIFIED_ENDPOINTS } from "./coverage";
+import { fetchSchemas } from "./spec/fetch";
 
 const srcDir = dirname(fileURLToPath(import.meta.url));
 const spec = readFileSync(join(srcDir, "spec", "fountain-openapi.snapshot.json"), "utf-8");
@@ -58,6 +59,29 @@ describe("fountain coverage", () => {
     for (const [name, reason] of Object.entries(EXCLUDED_KINDS)) {
       expect(text).toContain(name);
       expect(text).toContain(reason);
+    }
+  });
+});
+
+describe("unspecified upstream endpoints", () => {
+  it("records a decision for every endpoint the spec cannot describe", () => {
+    // The point of the list is the reasoning, not the route string. An entry
+    // with an empty or throwaway reason is the omission it exists to prevent.
+    for (const [route, reason] of Object.entries(UNSPECIFIED_ENDPOINTS)) {
+      expect(route.startsWith("/"), `${route} should be a route path`).toBe(true);
+      expect(reason.length, `${route} needs a real reason`).toBeGreaterThan(40);
+    }
+  });
+
+  it("does not duplicate anything the spec already covers", async () => {
+    // If upstream annotates one of these controllers, the endpoint becomes
+    // visible to EXCLUDED_KINDS/unaccountedKinds and this list should shrink
+    // rather than shadow it.
+    const specs = await fetchSchemas();
+    const raw = specs.get("fountain-openapi.json");
+    const paths = Object.keys(JSON.parse(raw!.toString("utf-8")).paths ?? {});
+    for (const route of Object.keys(UNSPECIFIED_ENDPOINTS)) {
+      expect(paths.some((p) => p.endsWith(route))).toBe(false);
     }
   });
 });
