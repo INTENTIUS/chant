@@ -1,88 +1,112 @@
 ---
 title: Multi-Stack Projects
-description: Splitting resources across multiple stacks
+description: Splitting an estate across several stacks
 ---
 
 import { Code } from '@astrojs/starlight/components';
 import outputsSrc from '../../../../../lexicons/aws/src/testdata/nested-stacks/network/outputs.ts?raw';
 import appSrc from '../../../../../lexicons/aws/src/testdata/nested-stacks/app.ts?raw';
 
-A real estate outgrows one stack. chant's answer is **side-by-side stacks**: each stack is its own source directory, built by its own `chant build`, deployed on its own. You declare them once in `chant.config.ts` and the lifecycle commands treat them as the units they are.
+An estate outgrows one stack. chant's answer is **side-by-side projects**: each stack is its own project, with its own `chant.config.ts` and its own flat `src/`. They sit next to each other and reference each other by name.
 
-There is a second, narrower mode — **child projects (nested stacks)** — where a parent template references a child it can deploy as a unit. That is lexicon-specific and comparatively rare. Reach for it only when you want the parent to own the child's deployment.
+Nothing about a project changes because it has siblings. Each one is an ordinary single-stack project — `chant build src -o dist/template.json`, one output, deployed on its own. There is no partition scheme, no layout convention, and nothing multi-stack-specific to learn before you can read one.
 
-## Side-by-side stacks
+That is the point. Someone opening `alb-infra/src/alb.ts` reads an ALB and can predict what ships, because the unit they opened *is* the unit that deploys. A splitting convention inside one project would put a translation step between the two.
 
-Give each stack a directory. Build each one explicitly:
+## The shape
+
+The `gitlab-aws-alb-*` examples are three siblings — shared infrastructure, plus two services on it:
 
 ```
-my-project/
-├── chant.config.ts
-├── src/
-│   ├── networking/
-│   │   ├── vpc.ts
-│   │   └── subnets.ts
-│   ├── compute/
-│   │   ├── api-function.ts
-│   │   └── worker-function.ts
-│   └── storage/
-│       ├── data-table.ts
-│       └── assets-bucket.ts
-└── dist/
-    ├── networking.json
-    ├── compute.json
-    └── storage.json
+examples/
+├── gitlab-aws-alb-infra/     ← VPC, ALB, ECS cluster, ECR
+│   ├── chant.config.ts
+│   └── src/
+│       ├── network.ts
+│       ├── alb.ts
+│       ├── ecr.ts
+│       └── outputs.ts        ← what this stack publishes
+├── gitlab-aws-alb-api/       ← API service on that ALB
+│   ├── chant.config.ts
+│   └── src/
+│       ├── params.ts         ← what this stack consumes
+│       └── service.ts
+└── gitlab-aws-alb-ui/        ← UI service on that ALB
+    ├── chant.config.ts
+    └── src/
+        ├── params.ts
+        └── service.ts
 ```
 
-```json
-{
-  "scripts": {
-    "build:networking": "chant build src/networking --lexicon aws -o dist/networking.json",
-    "build:compute": "chant build src/compute --lexicon aws -o dist/compute.json",
-    "build:storage": "chant build src/storage --lexicon aws -o dist/storage.json"
-  }
-}
+Every `src/` is flat. Every project builds with the same plain command it would use alone.
+
+## Referencing another stack
+
+The producer publishes named handles with `output()`:
+
+```typescript
+// gitlab-aws-alb-infra/src/outputs.ts
+import { output } from "@intentius/chant-lexicon-aws";
+import { network } from "./network";
+import { shared } from "./alb";
+
+// ALB outputs — service stacks reference these
+export const clusterArn = output(shared.cluster.Arn, "ClusterArn");
+export const listenerArn = output(shared.listener.ListenerArn, "ListenerArn");
+export const vpcId = output(network.vpc.VpcId, "VpcId");
 ```
 
-One `chant build` per stack, one output per stack. Nothing is inferred from the directory layout — the commands say what to build and where to put it, which is what makes each stack independently deployable and independently rebuildable.
+The consumer declares matching parameters:
 
-### Declare them
+```typescript
+// gitlab-aws-alb-api/src/params.ts
+import { Parameter } from "@intentius/chant-lexicon-aws";
 
-Tell chant the set, so the lifecycle commands stop assuming one stack per environment:
+// Shared ALB stack outputs — passed via --parameter-overrides at deploy time
+export const clusterArn = new Parameter("String", { description: "ECS Cluster ARN" });
+export const listenerArn = new Parameter("String", { description: "ALB Listener ARN" });
+export const vpcId = new Parameter("String", { description: "VPC ID" });
+```
+
+The join key is the **name**. `"ClusterArn"` published by one stack is `clusterArn` consumed by another, and the value crosses at deploy time — for CloudFormation, `--parameter-overrides`; each lexicon uses its own provider-native mechanism.
+
+Deploy order follows the reference: the producer first, then the consumers. Each project's README states its dependency, and consumers read their inputs as ordinary declared parameters — no chant-specific wiring, no shared state.
+
+### Seeing it as one graph
+
+Each project graphs on its own, and the IR carries both halves of the link:
+
+- **`exports`** — what this stack publishes: the output `name` and the node producing it.
+- **`imports`** — what it consumes: the parameter `name` and its node.
+
+Matching an import's `name` to another stack's export `name` reconstructs the cross-stack edge. Composition is a viewer's job rather than chant's — chant emits the handles, and a tool pointed at several projects joins them. [behold](https://github.com/INTENTIUS/behold) does this: point it at N project directories and it draws one boundary box per project with the cross-stack edges between them.
+
+## Several stacks inside one project
+
+A project can also declare several stacks itself, each built from its own directory. Use this when the pieces genuinely belong to one project and you want them versioned and reviewed together — not as the default way to split an estate.
 
 ```typescript
 // chant.config.ts
-import type { ChantConfig } from "@intentius/chant";
-
 export default {
   lexicons: ["aws"],
   stacks: [
     { name: "networking", src: "src/networking" },
     { name: "compute", src: "src/compute" },
-    { name: "storage", src: "src/storage" },
   ],
 } satisfies ChantConfig;
 ```
 
-Each entry names the deployed stack and the source it is built from. `region` is available too, for an estate spread across several.
+Each entry names the deployed stack and the source built for it; `region` is available for an estate spread across several. Build each explicitly — one `chant build <dir> -o <out>` per stack.
 
-With `stacks` set, `chant lifecycle snapshot` and `chant lifecycle diff` iterate every stack — building each `src` scoped so its logical ids match what that stack actually deploys, and observing each against its own live stack name. Without it, chant assumes a single stack named after the environment.
+With `stacks` set, `chant lifecycle snapshot` and `chant lifecycle diff` iterate every stack, building each `src` scoped so its logical ids match what that stack deploys, and observing each against its own live stack name. Without it, chant assumes a single stack named after the environment. `chant graph` uses the same declaration: it qualifies node ids `<stack>::<id>` to line up with observation, and groups them under `groups.byStack`.
 
-`chant graph` uses the same declaration: it builds each stack's source in isolation, qualifies node ids as `<stack>::<id>` so they line up with what observation reports, and groups them under `groups.byStack` so a viewer can draw one boundary box per stack.
-
-### Cross-stack references
-
-A resource in one stack refers to a resource in another through an ordinary TypeScript import. chant resolves it into the provider's own cross-stack mechanism — CloudFormation `Export`/`ImportValue`, and each lexicon's equivalent elsewhere.
-
-The graph IR surfaces both halves so a viewer can draw the edge: `exports` carries what a stack publishes (name plus producing node), `imports` carries what it consumes. Match an import's `name` to another stack's export `name`.
-
-For apply ordering, `chant graph --stacks` computes the dependency graph between stacks — every producer before its consumers.
+The cost is the one side-by-side projects avoid: a reader has to consult `chant.config.ts` to learn which directories are deploy units before they can predict anything.
 
 ## Child projects (nested stacks)
 
-A **child project** is a subdirectory that builds to a separately-valid template and is referenced explicitly from a parent file. Unlike side-by-side stacks, the parent is aware of the child: it uses a lexicon-specific function like `nestedStack()`, passes parameters in, and reads outputs back. Cross-stack values are declared explicitly with `stackOutput()`.
+A **child project** is a subdirectory that builds to a separately-valid template and is referenced explicitly from a parent file. The parent is aware of the child — it uses a lexicon-specific function like `nestedStack()`, passes parameters in, and reads outputs back, with cross-stack values declared via `stackOutput()`.
 
-Use this when you want one deployable unit that carries its children — not when you want independent stacks. For independent stacks, use side-by-side.
+Use it when you want one deployable unit that carries its children. For independent stacks, use side-by-side projects.
 
 ```
 my-project/
@@ -107,8 +131,8 @@ The child can be built independently (`chant build src/network/`), and the paren
 
 Earlier versions of this guide described a mode where a single `chant build src` detected subdirectories and emitted one stack per directory automatically, plus a `manifest.json`.
 
-**`chant build` does not do that.** It partitions by *lexicon* — a project declaring `aws` and `k8s` produces one output per lexicon — and writes to the single path you give it with `-o`. Subdirectories carry no meaning to it. Every multi-stack example in this repository builds side by side, one explicit `chant build <dir>` per stack, which is why the guide now leads with that.
+**`chant build` does not do that.** It partitions by *lexicon* — a project declaring `aws` and `k8s` produces one output per lexicon — and writes to the single path you give it with `-o`. Subdirectories carry no meaning to it.
 
-If you have a project written against the old description, nothing has changed underneath you: it was never auto-partitioning. Give each stack its own build command and add a `stacks` entry.
+If you have a project written against the old description, nothing has changed underneath you: it was never auto-partitioning. Give each stack its own project, or its own `stacks[]` entry and build command.
 
 See [Multi-Stack Output](/chant/serialization/multi-stack/) for the serialization-level detail.
