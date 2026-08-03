@@ -4,6 +4,7 @@
  * Converts intermediate representation to idiomatic chant TypeScript.
  */
 
+import { loadLexiconRegistry } from "@intentius/chant/codegen/registry";
 import { createRequire } from "module";
 import type { TemplateIR, ResourceIR, ParameterIR } from "@intentius/chant/import/parser";
 const require = createRequire(import.meta.url);
@@ -18,16 +19,15 @@ export class ArmGenerator implements TypeScriptGenerator {
 
   constructor() {
     this.typeToClass = new Map();
-    try {
-      const metaPath = join(import.meta.dirname, "../../dist/meta.json");
-      const meta: Record<string, { resourceType: string; kind: string }> = require(metaPath);
-      for (const [className, entry] of Object.entries(meta)) {
-        if (entry.kind === "resource" && !className.includes("_")) {
-          this.typeToClass.set(entry.resourceType, className);
-        }
+    // Was a silent catch, which left this map empty and made the import emit
+    // `// Unknown resource type: Microsoft.…` — indistinguishable from a
+    // genuine coverage gap in the lexicon. A missing registry now says so
+    // (#1367).
+    const meta = loadLexiconRegistry(join(import.meta.dirname, "../.."), "azure");
+    for (const [className, entry] of Object.entries(meta)) {
+      if (entry.kind === "resource" && !className.includes("_")) {
+        this.typeToClass.set(entry.resourceType, className);
       }
-    } catch {
-      // Meta not available
     }
   }
 

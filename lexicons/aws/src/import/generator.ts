@@ -1,3 +1,4 @@
+import { loadLexiconRegistry } from "@intentius/chant/codegen/registry";
 import { createRequire } from "module";
 import type { TemplateIR, ResourceIR, ParameterIR } from "@intentius/chant/import/parser";
 const require = createRequire(import.meta.url);
@@ -14,10 +15,10 @@ export class CFGenerator implements TypeScriptGenerator {
   private allClassNames: Set<string>;
 
   constructor() {
-    // Build reverse lookup from dist/meta.json: resourceType → className
-    const metaPath = join(import.meta.dirname, "../../dist/meta.json");
-    const meta: Record<string, { resourceType: string; kind: string }> =
-      require(metaPath);
+    // Reverse lookup from the generated registry: resourceType → className.
+    // Loaded through core so a missing registry says what to run rather than
+    // "Cannot find module .../dist/meta.json" (#1367).
+    const meta = loadLexiconRegistry(join(import.meta.dirname, "../.."), "aws");
     this.typeToClass = new Map();
     this.allClassNames = new Set();
     for (const [className, entry] of Object.entries(meta)) {
