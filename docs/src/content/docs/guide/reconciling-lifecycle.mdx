@@ -52,7 +52,7 @@ const { op } = ApplyOp({
 export default op;
 ```
 
-Authority stays with the platform — chant hosts no state file. Deletes ride the target's own delete path, which is marker-scoped on `kubectl` and stack-scoped on `cloudformation`; on `arm` it is `--mode Complete`, which deletes at **resource-group** scope and is not owned-only ([#1448](https://github.com/INTENTIUS/chant/issues/1448)). See [`delete` and what bounds it](/chant/guide/ops/#apply-code--cloud) before turning deletes on. A destructive apply gets an approval gate and saga-style rollback; see [Gates and compensation](/chant/guide/ops/#gates-and-compensation--where-temporal-is-load-bearing) for why that half is Temporal-bound.
+Authority stays with the platform — chant hosts no state file. Deletes ride the target's own delete path and are owned-only on every target: marker-scoped on `kubectl`, tag-scoped on `arm`, and bounded by the stack on `cloudformation`. See [`delete` and what bounds it](/chant/guide/ops/#apply-code--cloud) for the mechanism in each case. A destructive apply gets an approval gate and saga-style rollback; see [Gates and compensation](/chant/guide/ops/#gates-and-compensation--where-temporal-is-load-bearing) for why that half is Temporal-bound.
 
 ## The dial as configuration
 

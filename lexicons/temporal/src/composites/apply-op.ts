@@ -6,10 +6,11 @@
  * server, the ARM resource group) — chant never hosts a state file.
  *
  * Phases: build → plan → [approve] → apply. Deletes ride the native
- * prune/complete path, whose scope is per target: marker-scoped on `kubectl`,
- * stack-scoped on `cloudformation`, and resource-group-scoped on `arm`, where
- * `--mode Complete` also removes resources chant never applied (chant #1448).
- * See {@link DeleteMode}.
+ * prune path, whose bound is per target: the ownership marker on `kubectl`,
+ * the ownership tag on `arm` (chant #1448 — previously `--mode Complete`, which
+ * removed resources chant never applied), and the stack itself on
+ * `cloudformation`, which a resource CFN did not create is not in. All three
+ * are owned-only. See {@link DeleteMode}.
  *
  * An ungated apply may run on the local Op executor; a gated apply needs
  * Temporal for the durable approval wait (added in #125).
