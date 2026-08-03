@@ -155,6 +155,11 @@ describe("pruneByOwnership — the shared three-question rule", () => {
     chantOwned: new Set(["metadata.labels.tier"]),
     foreignOwned: new Set(["spec.replicas", "metadata.annotations.noise"]),
     foreignContested: new Set(["spec.replicas"]),
+    owners: new Map([
+      ["metadata.labels.tier", "chant"],
+      ["spec.replicas", "hpa-controller"],
+      ["metadata.annotations.noise", "kube-controller-manager"],
+    ]),
   };
 
   test("never prunes the declared side", () => {
@@ -175,5 +180,50 @@ describe("pruneByOwnership — the shared three-question rule", () => {
 
   test("leaves a path with no ownership information alone (never pruned by this rule)", () => {
     expect(pruneByOwnership(node({ path: "spec.selector", pattern: "spec.selector" }), sets)).toBe(false);
+  });
+});
+
+// #1189 — the three sets answer "which category owns this path". A reader needs
+// the other question: `hpa-controller` and `kubectl-client-side-apply` are the
+// same category and mean opposite things to an operator.
+describe("buildOwnershipSets — owning manager per path (#1189)", () => {
+  const entries = [
+    { manager: "chant", operation: "Apply", fieldsV1: { "f:metadata": { "f:labels": { "f:tier": {} } } } },
+    { manager: "hpa-controller", operation: "Apply", fieldsV1: { "f:spec": { "f:replicas": {} } } },
+    {
+      manager: "kubectl-client-side-apply",
+      operation: "Update",
+      fieldsV1: { "f:spec": { "f:template": { "f:spec": { "f:containers": {} } } } },
+    },
+  ];
+
+  test("records which manager owns each path", () => {
+    const sets = buildOwnershipSets(
+      entries,
+      { metadata: { labels: { tier: "web" } }, spec: { replicas: 3, template: { spec: { containers: [] } } } },
+      { metadata: { labels: { tier: "web" } }, spec: { replicas: 2 } },
+      (m) => m === "chant",
+    );
+    expect(sets.owners.get("metadata.labels.tier")).toBe("chant");
+    expect(sets.owners.get("spec.replicas")).toBe("hpa-controller");
+    expect(sets.owners.get("spec.template.spec.containers")).toBe("kubectl-client-side-apply");
+  });
+
+  test("the categories are unchanged by recording owners", () => {
+    const sets = buildOwnershipSets(
+      entries,
+      { metadata: { labels: { tier: "web" } }, spec: { replicas: 3, template: { spec: { containers: [] } } } },
+      { metadata: { labels: { tier: "web" } }, spec: { replicas: 2 } },
+      (m) => m === "chant",
+    );
+    expect(sets.chantOwned.has("metadata.labels.tier")).toBe(true);
+    expect(sets.foreignOwned.has("spec.replicas")).toBe(true);
+    // Declared AND foreign-owned — contested, so still diffable.
+    expect(sets.foreignContested.has("spec.replicas")).toBe(true);
+  });
+
+  test("is empty when the object carries no managedFields at all", () => {
+    const sets = buildOwnershipSets([], { spec: {} }, { spec: {} }, (m) => m === "chant");
+    expect(sets.owners.size).toBe(0);
   });
 });

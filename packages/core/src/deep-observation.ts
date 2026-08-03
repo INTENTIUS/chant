@@ -56,6 +56,17 @@ export interface DeepResourceObservation {
   physicalId?: string;
   /** The normalized live property tree. JSON-safe. */
   properties: Record<string, unknown>;
+  /**
+   * Path → the field manager that owns it, where the substrate records one
+   * (#1189). Additive to the v1 envelope: a lexicon with no per-field ownership
+   * omits it, and every consumer behaves exactly as before.
+   *
+   * Only Kubernetes has this — the API server maintains `managedFields`
+   * server-side. It is the difference between "this field is foreign" and
+   * "`hpa-controller` owns `spec.replicas`", which are the same category and
+   * very different answers to an operator.
+   */
+  fieldOwners?: Record<string, string>;
 }
 
 /**
