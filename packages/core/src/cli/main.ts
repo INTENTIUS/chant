@@ -560,16 +560,17 @@ Options:
                         project source; network egress is NOT blocked (see
                         docs). Default: off (also settable via
                         chant.config.ts's build.sandbox: true; #1045)
-  --param <name=value>  (build) Bind a declared build-time parameter
-                        (chant.config.ts's buildParams) to a value, for
-                        source to read as params.<name> (#1064) instead of
-                        process.env — repeatable. Distinct from the AWS
-                        lexicon's deploy-time Parameter(): this resolves
-                        before synthesis, so it can change which resources
-                        are produced at all. Highest precedence.
-  --params-file <path>  (build) JSON file of { "name": value } build-time
-                        parameter values (#1064). Second precedence, after
-                        --param.
+  --param <name=value>  (build, graph, run --components) Bind a declared
+                        build-time parameter (chant.config.ts's buildParams)
+                        to a value, for source to read as params.<name>
+                        (#1064) instead of process.env — repeatable.
+                        Distinct from the AWS lexicon's deploy-time
+                        Parameter(): this resolves before synthesis, so it
+                        can change which resources are produced at all.
+                        Highest precedence.
+  --params-file <path>  (build, graph, run --components) JSON file of
+                        { "name": value } build-time parameter values
+                        (#1064). Second precedence, after --param.
 
 Examples:
   chant build ./infra/
