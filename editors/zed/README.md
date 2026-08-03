@@ -7,7 +7,10 @@ Infrastructure-as-code toolkit — LSP integration for [chant](https://github.co
 - **Completions** — resource types, properties, and intrinsics
 - **Hover** — inline documentation for resources and properties
 - **Diagnostics** — lint rules and type errors
-- **Code actions** — quick fixes from chant lint rules
+
+Code actions are not among them. The language server has a `codeActionProvider`
+seam and dispatches through it, but no shipped lexicon implements one, so the
+server never advertises the capability (chant #1349).
 
 ## Requirements
 

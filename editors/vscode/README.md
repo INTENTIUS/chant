@@ -9,7 +9,10 @@ Also works in [Cursor](https://cursor.sh) (VS Code fork).
 - **Completions** — resource types, properties, and intrinsics
 - **Hover** — inline documentation for resources and properties
 - **Diagnostics** — lint rules and type errors
-- **Code actions** — quick fixes from chant lint rules
+
+Code actions are not among them. The language server has a `codeActionProvider`
+seam and dispatches through it, but no shipped lexicon implements one, so the
+server never advertises the capability (chant #1349).
 - **MCP registration** — auto-configures `.vscode/mcp.json` for AI agent integration
 
 ## Requirements

@@ -2,7 +2,11 @@
 
 Internal testing utilities for the [chant](https://intentius.io/chant/) monorepo. Not published to npm.
 
-Provides shared helpers used across all chant packages: temporary directory management (`withTestDir`), mock factories for declarables, serializers, lint rules and contexts, typed error assertions (`expectToThrow`), and the **example test harness**. Designed for Bun's test runner.
+Provides shared helpers used across all chant packages: temporary directory
+management (`withTestDir`), mock factories for plugins, serializers, lint rules
+and contexts, typed error assertions (`expectToThrow`), the **example test
+harness**, and the **observation conformance suite**. Written for vitest, which
+is what the repo runs (`npx vitest run`).
 
 ## Example Test Harness
 
@@ -73,7 +77,7 @@ Registers a `describe()` block for a single example with lint + build tests.
 | `lexicon` | `string` | Label used in describe block names |
 | `serializer` | `Serializer \| Serializer[]` | Serializer(s) to build with |
 | `outputKey` | `string \| string[]` | Key(s) in `result.outputs` map to assert |
-| `examplesDir` | `string` | Directory to scan (use `import.meta.dirname|
+| `examplesDir` | `string` | Directory to scan (use `import.meta.dirname`) |
 
 #### `ExampleOpts`
 
@@ -82,6 +86,48 @@ Registers a `describe()` block for a single example with lint + build tests.
 | `checks` | `(output: string) => void` | Custom assertions on the primary output |
 | `skipLint` | `boolean` | Skip the lint test |
 | `skipBuild` | `boolean` | Skip the build test |
+
+## Observation conformance suite
+
+`describeObservationConformance` is the enforcement half of the observation
+contract (chant #1089): a shared suite each observing lexicon runs against its
+own mocked transport. Seven lexicons run it today. It checks that a result
+normalizes, that every unobserved entity carries a total reason, that ownership
+verdicts match the lexicon's declared marker channel (chant #1348), and — the
+point of the thing — that an unreadable entity classifies as `unobserved` rather
+than `create` through core's real change set.
+
+```typescript
+import { describeObservationConformance } from "@intentius/chant-test-utils";
+import { myPlugin } from "./plugin";
+
+describeObservationConformance({
+  lexicon: "my-lexicon",
+  ownershipChannel: myPlugin.ownershipChannel,
+  scenarios: [
+    {
+      name: "a read that fails on credentials",
+      declared: ["myEntity"],
+      expectUnobserved: ["myEntity"],
+      run: () => { /* invoke describeResources with the transport mocked */ },
+    },
+  ],
+});
+```
+
+See [Implementing Observation](https://intentius.io/chant/lexicon-authoring/observation/)
+for what each scenario field means.
+
+## Other helpers
+
+| Export | What it is |
+|--------|------------|
+| `withTestDir` / `createTestDir` / `cleanupTestDir` | Temporary directories, created and cleaned up around a test |
+| `expectToThrow` | Typed error assertion |
+| `createMockPlugin` | A minimal `LexiconPlugin`, with optional describe/observe/emulator members |
+| `staticDescribeResources` / `staticObservation` / `staticDeepObservation` / `staticListArtifacts` | Canned observation results for a mock plugin |
+| `createMockTemporalClient` | Stands in for a Temporal connection |
+| `FIXTURE` | Shared fixture constants |
 
 ### Adding a new example
 
