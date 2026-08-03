@@ -3,6 +3,7 @@ import { loadChantConfigUpward, resolveOwnershipMarker, resolveFoldEnabled, reso
 import { resolveCliBuildParams } from "../build-params-cli";
 import type { Serializer, SerializerResult } from "../../serializer";
 import type { LexiconPlugin } from "../../lexicon";
+import { resolveLexiconVersions } from "../plugins";
 import { runPostSynthChecks } from "../../lint/post-synth";
 import { applyConfiguredSeverity } from "../../lint/config";
 import { loadPolicyChecks } from "../../lint/policy";
@@ -242,6 +243,14 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
   // ../plugins.ts and fold-import.ts's `lexiconPackageName`.
   const lexicons = options.plugins?.map((plugin) => plugin.name) ?? [];
 
+  // chant #1442 — which lexicon VERSION interpreted each declaration. The
+  // declaration is fingerprinted by `hashProps`; the thing that turned it into
+  // output was not recorded at all, so a lexicon bump that changed emitted
+  // output left the build digest identical. Captured here because this is the
+  // layer that knows which lexicons were loaded — `build()` is given only
+  // their names.
+  const lexiconVersions = resolveLexiconVersions(lexicons);
+
   // Run the build
   const result = await build(infraPath, options.serializers, undefined, {
     ownership,
@@ -250,6 +259,7 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
     sandbox,
     intrinsics,
     lexicons,
+    lexiconVersions,
     buildParams: paramsResolution.provenance,
   });
 

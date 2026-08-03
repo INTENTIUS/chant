@@ -1,3 +1,6 @@
+import { createRequire } from "node:module";
+import { dirname, join } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
 import { isLexiconPlugin, type LexiconPlugin } from "../lexicon";
 import { loadChantConfigUpward } from "../config";
 import { findInfraFiles, detectLexicons } from "../index";
@@ -38,6 +41,58 @@ export async function loadPlugin(lexiconName: string): Promise<LexiconPlugin> {
   }
 
   throw new Error(`Package ${packageName} does not export a LexiconPlugin or Serializer`);
+}
+
+/**
+ * The installed version of each named lexicon package (chant #1442).
+ *
+ * A `LexiconPlugin` does not carry its own version — `LexiconManifest` does,
+ * but that is an artifact type describing generated output, not something the
+ * plugin object exposes. The version wanted here is a property of the
+ * *installed package*, so it is read from the package's own `package.json`.
+ *
+ * Resolved by walking up from the package's entry point rather than resolving
+ * `<pkg>/package.json` directly: lexicon packages declare an `exports` map
+ * that does not include `./package.json`, so the direct specifier is blocked
+ * by Node. `./manifest` (→ `dist/manifest.json`) is not used either — it is a
+ * `prepack` build artifact, absent in a monorepo dev tree, and its absence
+ * once read as four unrelated bugs (#1367).
+ *
+ * A lexicon whose version cannot be determined is omitted rather than
+ * recorded as `"unknown"`: a digest that says nothing is honest, one that
+ * says `unknown` compares unequal to itself across builds.
+ */
+export function resolveLexiconVersions(lexiconNames: readonly string[]): Record<string, string> {
+  const require_ = createRequire(import.meta.url);
+  const versions: Record<string, string> = {};
+
+  for (const name of lexiconNames) {
+    const packageName = `@intentius/chant-lexicon-${name}`;
+    try {
+      let dir = dirname(require_.resolve(packageName));
+      // Bounded walk — a resolved entry point is never deeply nested inside
+      // its own package, and an unbounded loop here would climb to `/`.
+      for (let depth = 0; depth < 10; depth++) {
+        const candidate = join(dir, "package.json");
+        if (existsSync(candidate)) {
+          const pkg = JSON.parse(readFileSync(candidate, "utf-8")) as { name?: string; version?: string };
+          // Only the lexicon's OWN package.json — a nested dependency's
+          // manifest would otherwise be read as the lexicon's version.
+          if (pkg.name === packageName && pkg.version) {
+            versions[name] = pkg.version;
+            break;
+          }
+        }
+        const parent = dirname(dir);
+        if (parent === dir) break;
+        dir = parent;
+      }
+    } catch {
+      // Not installed, or not resolvable from here — omit it.
+    }
+  }
+
+  return versions;
 }
 
 /**

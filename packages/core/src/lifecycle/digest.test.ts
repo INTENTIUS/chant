@@ -115,3 +115,84 @@ describe("diffDigests", () => {
     expect(result.removed.sort()).toEqual(["c"]);
   });
 });
+
+/**
+ * chant #1442 — a digest records what interpreted the declarations, not only
+ * what was declared.
+ */
+function withVersions(versions: Record<string, string> | undefined): BuildResult {
+  const result = makeBuildResult({ k8s: [{ name: "app", type: "K8s::Apps::Deployment", props: { replicas: 2 } }] });
+  return { ...result, lexiconVersions: versions } as unknown as BuildResult;
+}
+
+describe("computeBuildDigest — lexicon versions (#1442)", () => {
+  test("records the version of each lexicon that served the build", () => {
+    expect(computeBuildDigest(withVersions({ k8s: "0.38.0" })).lexiconVersions).toEqual({ k8s: "0.38.0" });
+  });
+
+  test("records once per lexicon, not once per resource", () => {
+    const many = makeBuildResult({
+      k8s: [
+        { name: "a", type: "K8s::Apps::Deployment", props: {} },
+        { name: "b", type: "K8s::Core::Service", props: {} },
+      ],
+    });
+    const digest = computeBuildDigest({ ...many, lexiconVersions: { k8s: "0.38.0" } } as unknown as BuildResult);
+    expect(Object.keys(digest.resources)).toHaveLength(2);
+    expect(digest.lexiconVersions).toEqual({ k8s: "0.38.0" });
+  });
+
+  test("a build with no plugins records an empty map, not absence", () => {
+    // Absent and empty mean different things when read back: absent is
+    // "recorded before #1442", empty is "recorded, nothing loaded".
+    expect(computeBuildDigest(withVersions(undefined)).lexiconVersions).toEqual({});
+  });
+
+  test("the recorded map is a copy, so later mutation cannot rewrite history", () => {
+    const versions = { k8s: "0.38.0" };
+    const digest = computeBuildDigest(withVersions(versions));
+    versions.k8s = "0.39.0";
+    expect(digest.lexiconVersions).toEqual({ k8s: "0.38.0" });
+  });
+});
+
+describe("diffDigests — lexicon version changes (#1442)", () => {
+  const resources = { app: { type: "K8s::Apps::Deployment", lexicon: "k8s", propsHash: "same" } };
+  const digest = (lexiconVersions?: Record<string, string>): BuildDigest =>
+    ({ resources, dependencies: {}, outputs: {}, deployOrder: ["k8s"], lexiconVersions }) as BuildDigest;
+
+  test("reports a bump even when every resource is unchanged", () => {
+    const diff = diffDigests(digest({ k8s: "0.39.0" }), digest({ k8s: "0.38.0" }));
+    expect(diff.changed).toEqual([]);
+    expect(diff.unchanged).toEqual(["app"]);
+    expect(diff.lexiconVersionChanges).toEqual([{ lexicon: "k8s", previous: "0.38.0", current: "0.39.0" }]);
+  });
+
+  test("reports nothing when versions match", () => {
+    expect(diffDigests(digest({ k8s: "0.38.0" }), digest({ k8s: "0.38.0" })).lexiconVersionChanges).toEqual([]);
+  });
+
+  test("reports a lexicon added to or dropped from the build", () => {
+    const added = diffDigests(digest({ k8s: "0.38.0", aws: "0.38.0" }), digest({ k8s: "0.38.0" }));
+    expect(added.lexiconVersionChanges).toEqual([{ lexicon: "aws", previous: undefined, current: "0.38.0" }]);
+
+    const dropped = diffDigests(digest({ k8s: "0.38.0" }), digest({ k8s: "0.38.0", aws: "0.38.0" }));
+    expect(dropped.lexiconVersionChanges).toEqual([{ lexicon: "aws", previous: "0.38.0", current: undefined }]);
+  });
+
+  test("a pre-#1442 snapshot reports no change rather than inventing one", () => {
+    // The older digest never recorded versions. Every lexicon would otherwise
+    // look newly-added on the first comparison after upgrading chant.
+    expect(diffDigests(digest({ k8s: "0.38.0" }), digest(undefined)).lexiconVersionChanges).toEqual([]);
+    expect(diffDigests(digest(undefined), digest({ k8s: "0.38.0" })).lexiconVersionChanges).toEqual([]);
+  });
+
+  test("with no previous digest at all, there is no version change", () => {
+    expect(diffDigests(digest({ k8s: "0.38.0" }), undefined).lexiconVersionChanges).toEqual([]);
+  });
+
+  test("changes are ordered by lexicon name, so output is stable", () => {
+    const diff = diffDigests(digest({ k8s: "2", aws: "2", gcp: "2" }), digest({ k8s: "1", aws: "1", gcp: "1" }));
+    expect(diff.lexiconVersionChanges.map((c) => c.lexicon)).toEqual(["aws", "gcp", "k8s"]);
+  });
+});

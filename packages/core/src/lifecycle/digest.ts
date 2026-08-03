@@ -41,6 +41,10 @@ export function computeBuildDigest(buildResult: BuildResult): BuildDigest {
 
   return {
     resources,
+    // chant #1442 — what interpreted the declarations, alongside what was
+    // declared. Always present on a freshly computed digest, so "absent"
+    // unambiguously means "recorded before #1442".
+    lexiconVersions: { ...buildResult.lexiconVersions },
     dependencies,
     outputs: buildResult.manifest.outputs,
     deployOrder: buildResult.manifest.deployOrder,
@@ -60,9 +64,10 @@ export function diffDigests(
   const unchanged: string[] = [];
 
   if (!previous) {
-    // No previous digest — everything is added
+    // No previous digest — everything is added, and there is no version to
+    // have moved away from.
     added.push(...Object.keys(current.resources));
-    return { added, removed, changed, unchanged };
+    return { added, removed, changed, unchanged, lexiconVersionChanges: [] };
   }
 
   // Check current resources against previous
@@ -84,5 +89,31 @@ export function diffDigests(
     }
   }
 
-  return { added, removed, changed, unchanged };
+  return { added, removed, changed, unchanged, lexiconVersionChanges: diffLexiconVersions(current, previous) };
+}
+
+/**
+ * Lexicons whose version moved between two digests (chant #1442).
+ *
+ * A digest recorded before this existed has no `lexiconVersions` at all. That
+ * is reported as no change rather than as every lexicon appearing — comparing
+ * against an older snapshot must not manufacture a difference that the older
+ * build simply never recorded.
+ */
+function diffLexiconVersions(
+  current: BuildDigest,
+  previous: BuildDigest,
+): Array<{ lexicon: string; previous?: string; current?: string }> {
+  if (!current.lexiconVersions || !previous.lexiconVersions) return [];
+
+  const changes: Array<{ lexicon: string; previous?: string; current?: string }> = [];
+  for (const lexicon of new Set([
+    ...Object.keys(current.lexiconVersions),
+    ...Object.keys(previous.lexiconVersions),
+  ])) {
+    const now = current.lexiconVersions[lexicon];
+    const before = previous.lexiconVersions[lexicon];
+    if (now !== before) changes.push({ lexicon, previous: before, current: now });
+  }
+  return changes.sort((a, b) => a.lexicon.localeCompare(b.lexicon));
 }

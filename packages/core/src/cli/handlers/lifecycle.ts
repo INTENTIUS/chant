@@ -597,6 +597,16 @@ async function runLifecycleDiffDigest(args: DigestDiffArgs): Promise<number> {
     for (const name of diff.unchanged) {
       console.log(name.padEnd(20) + "unchanged".padEnd(12) + (currentDigest.resources[name]?.type ?? ""));
     }
+
+    // chant #1442 — a lexicon bump can change emitted output with no source
+    // change, so every resource above can read "unchanged" while the build is
+    // not the same build. Printed under the table rather than as a row: no
+    // resource's declaration moved, the thing that interpreted them did.
+    for (const change of diff.lexiconVersionChanges) {
+      const from = change.previous ?? "(absent)";
+      const to = change.current ?? "(absent)";
+      console.log(`\nlexicon ${change.lexicon}: ${from} → ${to}`);
+    }
   }
 
   return 0;
