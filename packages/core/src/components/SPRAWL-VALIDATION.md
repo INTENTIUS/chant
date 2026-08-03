@@ -16,7 +16,7 @@ generic `runInterpretDriver` (#556, [`../driver.ts`](./driver.ts)), unchanged.
 ## Before / after: the ALB/ECS pipeline glue this replaces
 
 The component model's whole reason for existing is visible in one concrete
-diff. [`examples/gitlab-aws-alb-api/src/pipeline.ts`](../../../../../examples/gitlab-aws-alb-api/src/pipeline.ts)
+diff. [`examples/gitlab-aws-alb-api/src/pipeline.ts`](../../../../examples/gitlab-aws-alb-api/src/pipeline.ts)
 hand-rolls a `deployService` job that shells out to CloudFormation and greps
 its own infra stack's outputs before it can deploy:
 
@@ -49,7 +49,7 @@ No `describe-stacks`, no `jq`, no shell string-building. `dependsOn:
 ["shared-alb"]` plus three `stackOutput()` references replace the whole glue
 block; `docker build`/`docker push` become the `docker-build`/`publish-image`
 capabilities the driver dispatches to. [`driver.test.ts`](./driver.test.ts)
-and [`pilots/pilots-e2e.test.ts`](./pilots/pilots-e2e.test.ts) exercise this
+and [`pilots/pilots.test.ts`](./pilots/pilots.test.ts) exercise this
 exact wiring end to end against a mock `CloudExecutor` — `cfn-deploy`
 resolves the `stackOutput` reference itself; no orchestrator code parses a
 CloudFormation output.
@@ -59,7 +59,7 @@ CloudFormation output.
 [`driver.test.ts`](./driver.test.ts)'s `"runs the three pilots through one
 driver instance with zero per-component driver code (sprawl metric)"` test
 (pre-existing from #556/#557, still green) and
-[`pilots-e2e.test.ts`](./pilots/pilots-e2e.test.ts)'s first `describe` block
+[`pilots.test.ts`](./pilots/pilots.test.ts)'s first `describe` block
 run Neo4j fan-out, DynamoDB (sticky apply), and ALB/ECS (cross-stack, build)
 through the same `runInterpretDriver` call, dispatching to the real,
 `MockCloudExecutor`-backed capability implementations from #557
@@ -103,7 +103,7 @@ uses carries the image reference into the apply step.
 
 ### The one new capability: `lambda-deploy`
 
-[`verbs/apply.ts`](./verbs/apply.ts)'s `createLambdaDeployCapability` is the
+[`lexicons/aws/src/components/apply.ts`](../../../../lexicons/aws/src/components/apply.ts)'s `createLambdaDeployCapability` is the
 only new leaf this component required, built the same way #557 built the
 other real leaves: typed input/output, an injectable `CloudExecutor`
 (extended with a `lambda` client — [`verbs/cloud-executor.ts`](./verbs/cloud-executor.ts)),
@@ -121,7 +121,7 @@ No other verb was touched or added. `driver.ts` was not edited.
 
 [`driver.test.ts`](./driver.test.ts)'s `"runs all four components ... through
 one driver instance with zero per-component driver code (sprawl metric,
-extended)"` test and [`pilots-e2e.test.ts`](./pilots/pilots-e2e.test.ts)'s
+extended)"` test and [`pilots.test.ts`](./pilots/pilots.test.ts)'s
 second `describe`-block test run all five components (`shared-alb`,
 `orders-table`, `neo4j-cluster`, `search-service`, `image-processor-lambda`)
 through one `runInterpretDriver` call, dispatching `image-processor-lambda`'s
