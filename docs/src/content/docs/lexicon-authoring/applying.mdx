@@ -1,0 +1,103 @@
+---
+title: Implementing Apply
+description: What an applier's result is allowed to mean, and the suite that enforces it.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+An applier writes declared source to a provider. This page is the write-side peer of [Implementing Observation](/chant/lexicon-authoring/observation/), and it exists for the same reason: a result that cannot say what it did *not* do is a result a caller cannot trust.
+
+## The tri-state
+
+Per resource in the plan, an applier returns exactly one verdict:
+
+| verdict | means |
+|---|---|
+| **APPLIED** | the provider was called and the resource converged — `created`, `updated` or `unchanged` |
+| **PRUNED** | owned, no longer declared, deleted |
+| **NOT-ATTEMPTED** | no provider call was made, carrying a total reason |
+
+The three are **disjoint and total**. Every resource handed to the applier appears in exactly one of them. A resource that appears in none was silently dropped, which is the failure this contract exists to prevent.
+
+## Why NOT-ATTEMPTED
+
+The read path had two ways to return nothing for a declared entity and no way to tell them apart — the provider said it is absent, versus the lexicon never looked — and the second was classifying as `create`. That is what [`observation.ts`](/chant/lexicon-authoring/observation/) fixed.
+
+The write path had the identical hole:
+
+```typescript
+const mapper = MAPPERS[r.kind];
+if (!mapper) {
+  console.log(`skip: no mapper for kind ${r.kind}`);
+  continue;                    // never appears in `applied`, or anywhere
+}
+```
+
+A caller receiving `{ applied: [...] }` could not distinguish a complete apply from one that dropped half the manifest, and `ApplyOp` had nothing to gate on. A `console.log` on stdout is not a signal in a result, the same way a warn on stderr was not a signal in a change set.
+
+## The reasons are total
+
+```typescript
+type NotAttemptedReason =
+  | "unsupported-kind"    // no mapper/writer for this type
+  | "no-credentials"      // no usable authorization for the target
+  | "no-binding"          // no concrete target resolved
+  | "dependency-failed"   // an upstream in the same run failed
+  | "filtered"            // withheld by a caller-requested scope
+  | "not-prunable";       // an owned orphan of a kind that cannot be enumerated
+```
+
+Pick one. Consumers switch exhaustively, so a free-form string is not an option — which is deliberate, because a free-form string is what a `console.log` already was.
+
+`not-prunable` is the prune-side shape and worth calling out: it is the difference between *"there was nothing to prune"* and *"I could not look for anything to prune here."* An applier that cannot enumerate a kind cannot know whether an owned orphan of it exists.
+
+## The envelope
+
+```typescript
+import { applyResult } from "@intentius/chant";
+
+return applyResult(applied, pruned, notAttempted);
+```
+
+Versioned and self-discriminating (`apply: "v1"`), so an un-migrated applier may keep returning its own shape — that normalizes to "everything I was handed, I attempted", which is exactly the claim it is implicitly making.
+
+Reporting NOT-ATTEMPTED requires the envelope. You cannot claim the guarantee without adopting the shape that can express its absence.
+
+<Aside type="tip" title="Keep your own result too">
+The envelope is an interface, not a replacement. A lexicon's applier knows more than the shared vocabulary can hold — the CNRM `kind`, the ARM type, per-resource `created`/`updated`. Keep returning that, and project onto the envelope with a small `toApplyResult`. `gcpApply` is the reference.
+</Aside>
+
+## Run the conformance suite
+
+From your lexicon's own test file, where your transport mocks live:
+
+```typescript
+import { describeApplyConformance } from "@intentius/chant-test-utils";
+
+describeApplyConformance({
+  lexicon: "gcp",
+  scenarios: [{
+    name: "a manifest with one mapped and one unmapped kind",
+    plan: [{ kind: "StorageBucket", name: "mapped" }, { kind: "SQLInstance", name: "unmapped" }],
+    run: () => gcpApply(args, undefined, mockHttp).then(toApplyResult),
+    expectApplied: ["StorageBucket/mapped"],
+    expectNotAttempted: ["SQLInstance/unmapped"],
+  }],
+});
+```
+
+What it proves:
+
+1. **Shape** — the buckets are disjoint. A resource cannot be both written and skipped.
+2. **Total reasons** — every not-attempted entry names a legal reason, every applied entry a legal action.
+3. **Nothing is dropped** — every resource in the plan is accounted for. *This is the suite's reason to exist.*
+4. **Owned-only prune** — given a foreign resource and an owned orphan in the same scope, exactly one delete is issued, against the orphan. **Asserted on the transport**, not the return value.
+5. **Idempotence** — the same plan applied twice creates nothing the second time.
+
+Assertion 4 is on the transport deliberately. An applier that returns a tidy result while issuing a delete against a stranger's resource passes every other check — which is precisely what the ARM target did when `owned-only` ran `az deployment --mode Complete`.
+
+## Ownership
+
+Prune deletes only what chant owns. The marker channel differs per provider — tags on Azure, labels on GCP, metadata on Fly, the field manager on Kubernetes — but the rule does not: **read the marker before issuing a delete, and never delete a resource that does not carry it.**
+
+Assertion 4 is what holds you to it. A comment saying prune is owned-only is not enforcement, and every applier that got this wrong had the comment.

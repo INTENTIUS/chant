@@ -222,6 +222,7 @@ export default defineConfig({
 						{ label: 'Add a Third-Party CRD', slug: 'lexicon-authoring/crd-sources' },
 						{ label: 'Create a Serializer', slug: 'lexicon-authoring/serializer' },
 						{ label: 'Implementing Observation', slug: 'lexicon-authoring/observation' },
+						{ label: 'Implementing Apply', slug: 'lexicon-authoring/applying' },
 						{ label: 'Implementing Live Export', slug: 'lexicon-authoring/live-export' },
 						{ label: 'Declaring a Local Emulator', slug: 'lexicon-authoring/emulator' },
 						{ label: 'Write Lint Rules', slug: 'lexicon-authoring/lint-rules' },
