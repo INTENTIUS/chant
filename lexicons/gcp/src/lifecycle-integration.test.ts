@@ -2,7 +2,10 @@
  * Cross-lexicon lifecycle integration (#163) — GCP row.
  *
  * Drives the REAL gcpPlugin through core's live-import driver and the changeset
- * path, with the `kubectl` (Config Connector) edge mocked.
+ * path. Two edges are mocked, because since #1209 the plugin has two
+ * transports: `describeResources` reads GCP REST (stubbed `fetch`), while
+ * `exportResources` and the deep reader still go through Config Connector
+ * (stubbed `exec`).
  */
 import { describe, test, expect, vi, beforeEach } from "vitest";
 import { mkdtempSync, rmSync, readdirSync, readFileSync } from "node:fs";
@@ -28,6 +31,17 @@ vi.mock("node:child_process", async () => {
   };
 });
 
+const fetchMock = vi.fn();
+vi.stubGlobal("fetch", fetchMock);
+// The REST reader resolves a project before it can build a URL; without one it
+// correctly reports a hole rather than reading anything.
+process.env.GOOGLE_CLOUD_PROJECT = "test-project";
+
+/** A GCP REST reply, as the read client consumes it. */
+function restReply(status: number, body: unknown) {
+  return { status, text: async () => JSON.stringify(body) };
+}
+
 const { gcpPlugin } = await import("./plugin");
 const { liveImportFromPlugins } = await import("@intentius/chant/cli/commands/import");
 const { buildChangeSet } = await import("@intentius/chant/lifecycle/change-set");
@@ -42,7 +56,10 @@ const liveBucket = {
 };
 
 describe("gcp lifecycle integration (#163)", () => {
-  beforeEach(() => execMock.mockReset());
+  beforeEach(() => {
+    execMock.mockReset();
+    fetchMock.mockReset();
+  });
 
   test("live-import driver: real exportResources → IR → generated source", async () => {
     execMock.mockImplementation((cmd?: string) => {
@@ -74,16 +91,14 @@ describe("gcp lifecycle integration (#163)", () => {
   });
 
   test("changeset path: real describeResources → buildChangeSet verdicts", async () => {
-    execMock.mockImplementation((cmd?: string) =>
-      cmd?.includes("data-bucket")
-        ? {
-            stdout: JSON.stringify({
-              metadata: { name: "data-bucket", namespace: "config-control", uid: "uid-1" },
-              status: { conditions: [{ type: "Ready", status: "True" }] },
-            }),
-            stderr: "",
-          }
-        : new Error("not found"),
+    fetchMock.mockImplementation((url: string) =>
+      Promise.resolve(
+        String(url).includes("data-bucket")
+          // No chant marker: live but not chant's, which is what makes the
+          // changeset propose `adopt` rather than `delete`.
+          ? restReply(200, { id: "b/data-bucket", labels: { team: "data" } })
+          : restReply(404, { error: "not found" }),
+      ),
     );
 
     const { resources: observedNow } = normalizeObservation(
@@ -127,12 +142,12 @@ describeObservationConformance({
   lexicon: "gcp",
   scenarios: [
     {
-      name: "an entity type with no derivable Config Connector GVK",
+      name: "an entity type this lexicon cannot map to a GCP kind",
       declared: ["notGcp", "gone"],
       expectUnobserved: ["notGcp"],
       expectAbsent: ["gone"],
       run: () => {
-        execMock.mockImplementation(() => new Error('Error from server (NotFound): storagebucket "gone" not found'));
+        fetchMock.mockResolvedValue(restReply(404, { error: "not found" }));
         return gcpPlugin.describeResources!({
           environment: "prod",
           buildOutput: "",
@@ -145,13 +160,11 @@ describeObservationConformance({
       },
     },
     {
-      name: "an unreachable Config Connector cluster",
+      name: "an unreachable GCP endpoint",
       declared: ["dataBucket"],
       expectUnobserved: ["dataBucket"],
       run: () => {
-        execMock.mockImplementation(() =>
-          Object.assign(new Error("kubectl failed"), { stderr: "Unable to connect to the server: dial tcp: i/o timeout" }),
-        );
+        fetchMock.mockRejectedValue(new Error("dial tcp: i/o timeout"));
         return gcpPlugin.describeResources!({
           environment: "prod",
           buildOutput: "",
