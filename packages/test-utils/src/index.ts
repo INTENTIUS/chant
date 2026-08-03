@@ -21,7 +21,14 @@ export {
 export { createMockPlugin, staticDescribeResources, staticObservation, staticDeepObservation, staticListArtifacts } from "./mock-plugin";
 export type { MockPluginOptions } from "./mock-plugin";
 export { describeObservationConformance } from "./observation-conformance";
+export { describeApplyConformance } from "./apply-conformance";
 export type { ObservationConformanceConfig, ObservationScenario } from "./observation-conformance";
+export type {
+  ApplyConformanceConfig,
+  ApplyScenario,
+  PruneScenario,
+  IdempotenceScenario,
+} from "./apply-conformance";
 export { createMockTemporalClient } from "./mock-temporal-client";
 export type {
   MockTemporalClientOptions,

@@ -1,6 +1,12 @@
 import { readFileSync } from "node:fs";
 import { parseYAML } from "@intentius/chant/yaml";
 import { safeHeartbeat, sleep } from "@intentius/chant/op";
+import {
+  applyResult,
+  type ApplyResult,
+  type AppliedResource,
+  type NotAttemptedResource,
+} from "@intentius/chant";
 
 const PROJECT_ID_ANNOTATION = "cnrm.cloud.google.com/project-id";
 
@@ -578,6 +584,42 @@ export interface GcpApplyArgs {
    * `list` mapper are pruned; foreign (non-chant) resources are never touched.
    */
   prune?: boolean;
+}
+
+/**
+ * Normalize a gcp apply/delete result into core's apply envelope (#1446).
+ *
+ * The lexicon keeps its own richer shape — `created`/`updated` per resource,
+ * the CNRM `kind` — and this projects it onto the shared tri-state so a caller
+ * can read any applier's result the same way. Core's contract is the interface;
+ * it is not a replacement for what this applier knows.
+ */
+export function toApplyResult(result: {
+  applied?: Array<{ kind: string; name: string; created: boolean; updated: boolean }>;
+  deleted?: Array<{ kind: string; name: string; deleted: boolean }>;
+  pruned?: Array<{ kind: string; name: string; deleted: boolean }>;
+  notAttempted?: GcpNotAttempted[];
+  notPrunable?: GcpNotPrunable[];
+}): ApplyResult {
+  const applied: AppliedResource[] = (result.applied ?? []).map((a) => ({
+    kind: a.kind,
+    name: a.name,
+    action: a.created ? "created" : a.updated ? "updated" : "unchanged",
+  }));
+  const notAttempted: NotAttemptedResource[] = [
+    ...(result.notAttempted ?? []).map((n) => ({ kind: n.kind, name: n.name, reason: n.reason })),
+    // A kind the prune could not consider has no single resource name — the
+    // whole kind went unexamined, which `not-prunable` is the reason for.
+    ...(result.notPrunable ?? []).map((n) => ({
+      kind: n.kind,
+      name: "*",
+      reason: "not-prunable" as const,
+      ...(n.detail ? { detail: n.detail } : {}),
+    })),
+  ];
+  // `gcpDelete` reports deletions as `deleted`; they are prunes in the shared
+  // vocabulary — the applier removed something the plan no longer wants.
+  return applyResult(applied, result.pruned ?? result.deleted ?? [], notAttempted);
 }
 
 /**

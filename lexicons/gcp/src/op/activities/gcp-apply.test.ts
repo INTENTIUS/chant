@@ -1,5 +1,6 @@
 import { describe, test, expect } from "vitest";
 import { writeFileSync, unlinkSync } from "node:fs";
+import { describeApplyConformance } from "@intentius/chant-test-utils";
 import {
   bucketInsertBody,
   pubSubTopicBody,
@@ -15,6 +16,7 @@ import {
   pruneOrphans,
   gcpApply,
   gcpDelete,
+  toApplyResult,
   chantOwnershipLabels,
   isChantOwned,
   pubSubSubscriptionBody,
@@ -595,4 +597,112 @@ describe("gcpApply / gcpDelete report what they did not attempt (#1447)", () => 
       unlinkSync(path);
     }
   });
+});
+
+/**
+ * The shared apply-contract suite (#1446), run against gcp's own mocked
+ * transport. gcp is the reference adopter because #1447 already gave it the
+ * not-attempted facts; this proves the seam carries them.
+ *
+ * Assertion 3 ("accounts for every resource in the plan") is the one that fails
+ * on pre-#1447 gcp — an unmapped kind was in the plan and in no bucket.
+ */
+describeApplyConformance({
+  lexicon: "gcp",
+  scenarios: [
+    {
+      name: "a manifest with one mapped and one unmapped kind",
+      plan: [
+        { kind: "StorageBucket", name: "mapped" },
+        { kind: "SQLInstance", name: "unmapped" },
+      ],
+      run: async () => {
+        const path = `/tmp/chant-1446-gcp-${process.pid}.json`;
+        writeFileSync(
+          path,
+          JSON.stringify([
+            { kind: "StorageBucket", metadata: { name: "mapped" }, spec: { location: "US" } },
+            { kind: "SQLInstance", metadata: { name: "unmapped" }, spec: {} },
+          ]),
+        );
+        try {
+          const http: GcpHttp = async (method) =>
+            method === "GET" ? { status: 404, text: "" } : { status: 200, text: "{}" };
+          return toApplyResult(
+            await gcpApply({ manifestPath: path, endpoint: "http://x", project: "p" }, undefined, http),
+          );
+        } finally {
+          unlinkSync(path);
+        }
+      },
+      expectApplied: ["StorageBucket/mapped"],
+      expectNotAttempted: ["SQLInstance/unmapped"],
+    },
+  ],
+  pruneScenarios: [
+    {
+      name: "an owned orphan beside a foreign resource in the same project",
+      ownedOrphan: "orphan",
+      foreign: "foreign",
+      run: async () => {
+        const deletes: string[] = [];
+        const live = {
+          items: [
+            { name: "keep", labels: { "managed-by": "chant" } },
+            { name: "orphan", labels: { "managed-by": "chant" } },
+            { name: "foreign", labels: { "managed-by": "terraform" } },
+          ],
+        };
+        const path = `/tmp/chant-1446-gcp-prune-${process.pid}.json`;
+        writeFileSync(
+          path,
+          JSON.stringify([{ kind: "StorageBucket", metadata: { name: "keep" }, spec: {} }]),
+        );
+        try {
+          const http: GcpHttp = async (method, url) => {
+            if (method === "DELETE") deletes.push(url);
+            if (method === "GET" && url.includes("/b?")) return { status: 200, text: JSON.stringify(live) };
+            if (method === "GET") return { status: 200, text: "{}" }; // `keep` already exists
+            return { status: 200, text: "{}" };
+          };
+          const result = toApplyResult(
+            await gcpApply(
+              { manifestPath: path, endpoint: "http://x", project: "p", prune: true },
+              undefined,
+              http,
+            ),
+          );
+          return { result, deletes };
+        } finally {
+          unlinkSync(path);
+        }
+      },
+    },
+  ],
+  idempotenceScenarios: [
+    {
+      name: "the same manifest applied twice",
+      run: async () => {
+        const path = `/tmp/chant-1446-gcp-idem-${process.pid}.json`;
+        writeFileSync(
+          path,
+          JSON.stringify([{ kind: "StorageBucket", metadata: { name: "b" }, spec: { location: "US" } }]),
+        );
+        try {
+          let exists = false;
+          const http: GcpHttp = async (method) => {
+            if (method === "GET") return exists ? { status: 200, text: "{}" } : { status: 404, text: "" };
+            exists = true;
+            return { status: 200, text: "{}" };
+          };
+          const args = { manifestPath: path, endpoint: "http://x", project: "p" };
+          const first = toApplyResult(await gcpApply(args, undefined, http));
+          const second = toApplyResult(await gcpApply(args, undefined, http));
+          return { first, second };
+        } finally {
+          unlinkSync(path);
+        }
+      },
+    },
+  ],
 });
