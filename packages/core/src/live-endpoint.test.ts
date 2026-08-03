@@ -60,7 +60,7 @@ describe("applyLiveEndpoint (#1166)", () => {
 
   test("a bare-string environment entry has no endpoint to apply", () => {
     const env: NodeJS.ProcessEnv = {};
-    const result = applyLiveEndpoint(["floci"], "floci", ["aws"], env);
+    const result = applyLiveEndpoint(["floci"], "floci", [lexicon("aws", "AWS_ENDPOINT_URL")], env);
     expect(result.notice).toBeUndefined();
     expect(env.AWS_ENDPOINT_URL).toBeUndefined();
   });
@@ -69,7 +69,7 @@ describe("applyLiveEndpoint (#1166)", () => {
     const environments: EnvironmentDeclaration[] = [{ name: "floci", endpoint: "http://localhost:4566" }];
     const env: NodeJS.ProcessEnv = {};
     // k8s has no ambient-var knob (config-resolved instead) — nothing to set.
-    const result = applyLiveEndpoint(environments, "floci", ["k8s"], env);
+    const result = applyLiveEndpoint(environments, "floci", [lexicon("k8s")], env);
     expect(env.AWS_ENDPOINT_URL).toBeUndefined();
     expect(result.notice).toBeUndefined();
   });
