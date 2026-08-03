@@ -192,3 +192,60 @@ describe("replaySnapshots — ambient identity across regions (#1416)", () => {
     }
   });
 });
+
+describe("a resource recorded twice is one node (#1432 follow-up)", () => {
+  // A subnet its stack declares, ALSO recorded as a dependency because
+  // instances reference it. Same physical subnet, two entries.
+  function snap(stack: string): string {
+    return JSON.stringify({
+      lexicon: "aws", environment: "prod", stack,
+      commit: "abc", timestamp: "2026-08-03T00:00:00.000Z",
+      resources: {
+        publicSubnet: { type: "AWS::EC2::Subnet", status: "OBSERVED", physicalId: "subnet-9af06b90" },
+        "subnet-9af06b90": {
+          type: "AWS::EC2::Subnet", status: "OBSERVED", physicalId: "subnet-9af06b90",
+          referencedBy: ["webServer"],
+        },
+        webServer: { type: "AWS::EC2::Instance", status: "OBSERVED", physicalId: "i-1" },
+      },
+      edges: [{ from: "webServer", to: "subnet-9af06b90", kind: "ref", viaAttr: "SubnetId" }],
+    });
+  }
+
+  it("drops the duplicate rather than counting the subnet twice", async () => {
+    stored.set("main__aws", snap("main"));
+    const result = await replaySnapshots("prod", "latest", new Set());
+    if ("error" in result) throw new Error(result.error);
+    expect(keys(result.observations)).toEqual(["publicSubnet", "webServer"]);
+  });
+
+  it("re-points the dropped duplicate's edges at the survivor", async () => {
+    // Dropping the node alone would take this edge with it: buildLiveGraphIr
+    // discards an edge whose endpoints were not both observed, so the instance
+    // would stop being in any subnet at all.
+    stored.set("main__aws", snap("main"));
+    const result = await replaySnapshots("prod", "latest", new Set());
+    if ("error" in result) throw new Error(result.error);
+    expect(result.observations.flatMap((o) => o.edges ?? [])).toEqual([
+      { from: "webServer", to: "publicSubnet", kind: "ref", viaAttr: "SubnetId" },
+    ]);
+  });
+
+  it("keeps a dependency nothing manages", async () => {
+    // The account's default route table: referenced, managed by nobody. It is
+    // not a duplicate and must survive.
+    stored.set("main__aws", JSON.stringify({
+      lexicon: "aws", environment: "prod", stack: "main",
+      commit: "abc", timestamp: "2026-08-03T00:00:00.000Z",
+      resources: {
+        "rtb-default": {
+          type: "AWS::EC2::RouteTable", status: "OBSERVED", physicalId: "rtb-default",
+          referencedBy: ["webServer"],
+        },
+      },
+    }));
+    const result = await replaySnapshots("prod", "latest", new Set());
+    if ("error" in result) throw new Error(result.error);
+    expect(keys(result.observations)).toEqual(["rtb-default"]);
+  });
+});
