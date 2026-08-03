@@ -9,6 +9,7 @@ import type { CompletionContext, CompletionItem, HoverContext, HoverInfo, CodeAc
 import type { McpToolContribution, McpResourceContribution } from "./mcp/types";
 import type { DriverComponent } from "./components/driver";
 import type { EmulatorDeclaration } from "./op/emulator-lifecycle";
+import type { OwnershipChannel } from "./ownership";
 import type { RuleMeta } from "./audit/catalog";
 import type { ReferenceCatalog } from "./graph-refs";
 import type { IREdge } from "./graph-ir";
@@ -774,6 +775,27 @@ export interface LexiconPlugin {
    * unit returns `{ present: false }`.
    */
   describeStackStatus?(options: { environment: string; stack: string }): Promise<StackStatusObservation | null>;
+
+  /**
+   * Where this lexicon can stamp and read chant's ownership marker (#1348).
+   * Data, not a method.
+   *
+   * {@link ResourceMetadata.ownership} says a lexicon with no marker channel on
+   * a read path must return `unknown` rather than degrade silently. That was an
+   * obligation with no declaration behind it: a caller could not learn whether
+   * `owned: true` was answerable except by asking and reading a warning on
+   * stderr afterwards — and a warning is invisible to `lifecycle plan`, which is
+   * where the wrong delete gets proposed.
+   *
+   * Declared per read path, because the answer differs by path. aws stamps tags
+   * at synthesis and reads them on the deep observation and on live export,
+   * while its `describeResources` is sourced from `describe-stack-resources`,
+   * which returns no tags — so an `owned: true` thin read against aws can only
+   * answer `unknown`, and does.
+   *
+   * Absent means no channel anywhere: every verdict must be `unknown`.
+   */
+  readonly ownershipChannel?: OwnershipChannel;
 
   /**
    * Reference catalog for live edge reconstruction (#778). Declares how this

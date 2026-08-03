@@ -171,6 +171,45 @@ Better still, arrange for the gap not to exist. The K8s lexicon's coverage went 
 
 If your read path can't determine ownership (AWS's `describe-stack-resources` returns no tags), stamp `ownership: "unknown"` on what you return rather than leaving the field off and degrading silently. `unknown` is a legitimate verdict — the change set never escalates it to a delete.
 
+### Declare where you can read the marker
+
+`ownership` on a returned resource is one of `owned`, `foreign`, or `unknown`,
+and the verdict is **total** — a lexicon that cannot read the marker on a path
+must say `unknown` rather than return everything as if it had checked, because
+the change set never escalates `unknown` to a delete.
+
+Which paths those are is declared on the plugin (chant #1348):
+
+```typescript
+// plugin.ts
+ownershipChannel: {
+  keys: AWS_TAG_OWNERSHIP_KEYS,
+  reads: ["observeResourcesDeep", "exportResources"],
+},
+```
+
+Per read path, because the answer genuinely differs by path. aws stamps tags at
+synthesis and reads them on the deep observation and on live export — but its
+`describeResources` is sourced from `describe-stack-resources`, which returns no
+tags at all, so an `owned: true` thin read against aws can only answer `unknown`.
+It always did; what was missing was any way for a caller to know that before
+asking. A warning on stderr afterwards is invisible to `lifecycle plan`, which is
+exactly where the wrong delete gets proposed.
+
+Omit the field entirely if you have no marker channel anywhere. That is a real
+answer, and the suite will hold you to it: every verdict must then be `unknown`.
+
+| Lexicon | Keys | Resolves on |
+|---|---|---|
+| aws | `chant:managed-by` tags | `observeResourcesDeep`, `exportResources` |
+| azure | `chant-managed-by` tags | `exportResources` |
+| gcp | `app.kubernetes.io/managed-by` labels | all three |
+| k8s | `app.kubernetes.io/managed-by` labels | all three |
+| fly | `managed-by` machine metadata | `describeResources` |
+
+`chant dev check-lexicon` fails a declaration that names a path the plugin does
+not implement, or whose keys are incomplete.
+
 ### Prove it with the conformance suite
 
 `describeObservationConformance` in `@intentius/chant-test-utils` is the shared suite every observing lexicon runs. Give it scenarios driven by your own transport mocks; it checks the result shape, reason totality, ownership totality, and — through core's real `buildChangeSet` — that an unreadable entity never classifies as `create`:

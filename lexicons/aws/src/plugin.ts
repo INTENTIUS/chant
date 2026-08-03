@@ -35,6 +35,7 @@ import { CFGenerator } from "./import/generator";
 import { parseStackTemplate } from "./import/live-export";
 import { awsCompletions } from "./lsp/completions";
 import { awsHover } from "./lsp/hover";
+import { AWS_TAG_OWNERSHIP_KEYS } from "./ownership";
 
 /** Re-exported from ./stack-errors so the long-standing import path (and its
  * tests) keep working now that the deep reader shares the classifier. */
@@ -51,6 +52,9 @@ let warnedOwnership = false;
 
 export const awsPlugin: LexiconPlugin = {
   name: "aws",
+  // The thin read is sourced from describe-stack-resources, which returns no
+  // tags — so `owned` on that path can only answer `unknown`, and does (#1348).
+  ownershipChannel: { keys: AWS_TAG_OWNERSHIP_KEYS, reads: ["observeResourcesDeep", "exportResources"] },
   serializer: awsSerializer,
   // Local emulator (#920): Floci + the AWS env that redirects the SDK / observe.
   emulator: FLOCI_EMULATOR,

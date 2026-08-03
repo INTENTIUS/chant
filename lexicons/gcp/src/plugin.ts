@@ -7,6 +7,7 @@
 
 import type { LexiconPlugin, InitTemplateSet, ResourceMetadata } from "@intentius/chant/lexicon";
 import { detectTemplate } from "./detect";
+import { LABEL_OWNERSHIP_KEYS } from "@intentius/chant/ownership";
 import type { LintRule } from "@intentius/chant/lint/rule";
 import type { TemplateParser } from "@intentius/chant/import/parser";
 import type { TypeScriptGenerator } from "@intentius/chant/import/generator";
@@ -29,6 +30,7 @@ import { gcpDeepNormalizationHooks } from "./deep-observe-hooks";
 
 export const gcpPlugin: LexiconPlugin = {
   name: "gcp",
+  ownershipChannel: { keys: LABEL_OWNERSHIP_KEYS, reads: ["describeResources", "observeResourcesDeep", "exportResources"] },
   emulator: FLOCI_GCP_EMULATOR,
   auditCatalog: () => gcpAuditCatalog,
   // Self-upgrade: where the pinned Config Connector (KCC) version lives + its upstream (#685).

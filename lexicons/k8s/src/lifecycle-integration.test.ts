@@ -211,6 +211,7 @@ describe("k8s lifecycle integration (#163)", () => {
 // The shared conformance suite (#1089) — every observing lexicon runs it.
 describeObservationConformance({
   lexicon: "k8s",
+  ownershipChannel: k8sPlugin.ownershipChannel,
   scenarios: [
     {
       name: "an RBAC-denied read alongside a confirmed absence",

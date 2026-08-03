@@ -125,6 +125,7 @@ describe("gcp lifecycle integration (#163)", () => {
 // The shared conformance suite (#1089).
 describeObservationConformance({
   lexicon: "gcp",
+  ownershipChannel: gcpPlugin.ownershipChannel,
   scenarios: [
     {
       name: "an entity type with no derivable Config Connector GVK",

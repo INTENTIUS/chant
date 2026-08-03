@@ -21,6 +21,7 @@ import { ArmGenerator } from "./import/generator";
 import { azureCompletions } from "./lsp/completions";
 import { azureHover } from "./lsp/hover";
 import { azureDeepNormalizationHooks, observeResourcesDeepAzure } from "./deep-observe";
+import { AZURE_TAG_OWNERSHIP_KEYS } from "./ownership";
 
 /**
  * Azure Resource Manager lexicon plugin.
@@ -30,6 +31,7 @@ import { azureDeepNormalizationHooks, observeResourcesDeepAzure } from "./deep-o
  */
 export const azurePlugin: LexiconPlugin = {
   name: "azure",
+  ownershipChannel: { keys: AZURE_TAG_OWNERSHIP_KEYS, reads: ["exportResources"] },
   emulator: FLOCI_AZ_EMULATOR,
   auditCatalog: () => azureAuditCatalog,
   serializer: azureSerializer,

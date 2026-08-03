@@ -128,3 +128,44 @@ export function readOwnership(
     env: typeof env === "string" ? env : undefined,
   };
 }
+
+/**
+ * A read path that can resolve an ownership verdict from the marker (#1348).
+ *
+ * Per-path rather than per-lexicon because the answer genuinely differs by
+ * path: aws stamps tags at synthesis and reads them on the deep observation and
+ * on live export, but `describeResources` is sourced from
+ * `describe-stack-resources`, which returns no tags at all — so an `owned: true`
+ * thin read against aws can only answer `unknown`.
+ */
+export type OwnershipReadPath = "describeResources" | "observeResourcesDeep" | "exportResources";
+
+/**
+ * Where a lexicon can stamp and read chant's ownership marker (#1348).
+ *
+ * `ResourceMetadata.ownership` documents an obligation — a lexicon with no
+ * marker channel on a path must stamp `unknown` rather than degrade silently,
+ * because the change set never escalates `unknown` to a delete — and that
+ * obligation had no type, no declaration, and no check. A caller could not
+ * learn whether `owned: true` was answerable except by asking and reading a
+ * warning on stderr afterwards, which is invisible to `lifecycle plan`, which
+ * is where the wrong delete gets proposed.
+ *
+ * Absent means the lexicon has no marker channel at all: every verdict it
+ * returns must be `unknown`. Declaring one is a claim the conformance suite
+ * checks — on a declared path, verdicts must be `owned` or `foreign`.
+ */
+export interface OwnershipChannel {
+  /** The provider-native keys this lexicon stamps into. */
+  readonly keys: ChannelKeys;
+  /** The read paths that resolve a verdict from the marker. */
+  readonly reads: readonly OwnershipReadPath[];
+}
+
+/** Whether this lexicon resolves a real verdict on `path`, or can only say `unknown`. */
+export function resolvesOwnershipOn(
+  channel: OwnershipChannel | undefined,
+  path: OwnershipReadPath,
+): boolean {
+  return channel?.reads.includes(path) ?? false;
+}

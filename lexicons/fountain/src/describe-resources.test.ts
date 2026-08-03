@@ -157,6 +157,8 @@ describe("fountain describeResources", () => {
 
 describeObservationConformance({
   lexicon: "fountain",
+  // No marker channel: every verdict must be `unknown` (#1348).
+  ownershipChannel: undefined,
   scenarios: [
     {
       name: "mixed present/absent/foreign against a live listing",

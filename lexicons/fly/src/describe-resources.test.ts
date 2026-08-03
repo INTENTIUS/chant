@@ -2,6 +2,7 @@ import { describe, test, expect } from "vitest";
 import { describeObservationConformance } from "@intentius/chant-test-utils";
 import { describeResources, flyPlan } from "./describe-resources";
 import type { FlyHttp } from "./op/activities/fly-apply";
+import { FLY_METADATA_OWNERSHIP_KEYS } from "./ownership";
 
 // Injected-HTTP unit tests, mirroring fly-apply.test.ts: a scripted flaps answers
 // list/get reads, and describeResources maps them to ResourceMetadata with the
@@ -219,6 +220,7 @@ describe("flyPlan: declared-vs-live change set (create/noop/delete/adopt)", () =
 // The shared conformance suite (#1089).
 describeObservationConformance({
   lexicon: "fly",
+  ownershipChannel: { keys: FLY_METADATA_OWNERSHIP_KEYS, reads: ["describeResources"] },
   scenarios: [
     {
       name: "a build output that is not a readable fly plan",
