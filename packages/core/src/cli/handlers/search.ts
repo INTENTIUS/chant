@@ -153,7 +153,16 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
       // carries a template `Ref` in its attributes, not the physical subnet id,
       // so no identity index resolves it. Overwriting here dropped exactly those
       // edges and left the fold with a chain missing its first hop.
-      const reconstructed = reconstructEdges(live.nodes, mergeCatalogs(catalogs)).edges;
+      // Containment travels with the references here, and only here. `->`/`<-`
+      // asks which nodes reach which, and being inside something is a way of
+      // reaching it: "which subnets have no network interfaces IN them" and
+      // "which VPCs have no instances IN them" are containment questions, and
+      // with only peer references to walk the negation matched everything.
+      //
+      // `graph` still reads `.containment` on its own and draws boundary boxes,
+      // so nothing gains a line it did not have.
+      const rebuilt = reconstructEdges(live.nodes, mergeCatalogs(catalogs));
+      const reconstructed = [...rebuilt.edges, ...rebuilt.containmentEdges];
       const seen = new Set((live.edges ?? []).map((e) => `${e.from}|${e.to}|${e.viaAttr ?? ""}`));
       live = {
         ...live,
