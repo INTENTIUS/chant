@@ -71,5 +71,5 @@ chant run agent-task
 The offline, Docker-free version of the emulator used by CI is
 `createSpritesFake()` in the fly lexicon
 (`lexicons/fly/src/op/activities/sprites-fake.ts`); the sprite activities and
-their tests live alongside it in `sprites.ts` / `sprites-fs.ts` /
+their tests live alongside it in `sprites.ts` / `sprite-fs.ts` /
 `sprites.integration.test.ts`.

@@ -16,14 +16,6 @@ The lexicon packages ship skills for agent-guided deployment. After `chant init 
 > Deploy the lambda-dynamodb example to my AWS account.
 > ```
 
-## Spell
-
-This example has a corresponding spell for AI-driven deployment:
-
-```bash
-chant spell cast lambda-dynamodb
-```
-
 ## Quick Start
 
 ```bash
