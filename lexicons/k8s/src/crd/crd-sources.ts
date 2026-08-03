@@ -170,6 +170,33 @@ const BARMAN_PLUGIN_CRD_BASE = `https://raw.githubusercontent.com/cloudnative-pg
  */
 const TRAEFIK_CHART_VERSION = "v41.1.0";
 const TRAEFIK_CRD_BASE = `https://raw.githubusercontent.com/traefik/traefik-helm-chart/${TRAEFIK_CHART_VERSION}/traefik/crds`;
+/**
+ * Infisical operator CRDs — secrets.infisical.com/v1alpha1
+ *
+ * The declarative form of chant's own secrets boundary. An `InfisicalSecret`
+ * says where a secret comes from and who may fetch it; it never carries a
+ * value. Without it an estate can declare the Deployment that consumes a
+ * Secret but not the thing that makes the Secret exist. Produces, under the
+ * `Infisical` namespace:
+ *   K8s::Infisical::InfisicalSecret
+ *   K8s::Infisical::InfisicalPushSecret
+ *   K8s::Infisical::InfisicalDynamicSecret
+ *
+ * The group is overridden to `Infisical` in parser.ts. The first-segment rule
+ * would give `K8s::Secrets::InfisicalSecret`, which reads like a core Secret
+ * next to the `K8s::Core::Secret` that already exists.
+ *
+ * Two things about the URL, both easy to lose an hour to:
+ *   - The operator lives in its own repo, `Infisical/kubernetes-operator`.
+ *     The path under the `Infisical/infisical` monorepo 404s.
+ *   - The tag is path-shaped — `infisical-k8-operator/v0.11.7`. Not a typo,
+ *     and not a directory.
+ *
+ * Operator install: helm repo add infisical https://dl.cloudsmith.io/public/infisical/helm-charts/helm/charts/
+ *   && helm install infisical-secrets-operator infisical/secrets-operator
+ */
+const INFISICAL_OPERATOR_VERSION = "infisical-k8-operator/v0.11.7";
+const INFISICAL_CRD_BASE = `https://raw.githubusercontent.com/Infisical/kubernetes-operator/${INFISICAL_OPERATOR_VERSION}/config/crd/bases`;
 
 /**
  * Prometheus Operator CRDs — monitoring.coreos.com/v1
@@ -281,6 +308,9 @@ export const CRD_SOURCES: CRDSource[] = [
   { type: "url", url: `${TRAEFIK_CRD_BASE}/traefik.io_tlsoptions.yaml` },
   { type: "url", url: `${TRAEFIK_CRD_BASE}/traefik.io_tlsstores.yaml` },
   { type: "url", url: `${TRAEFIK_CRD_BASE}/traefik.io_traefikservices.yaml` },
+  { type: "url", url: `${INFISICAL_CRD_BASE}/secrets.infisical.com_infisicalsecrets.yaml` },
+  { type: "url", url: `${INFISICAL_CRD_BASE}/secrets.infisical.com_infisicalpushsecrets.yaml` },
+  { type: "url", url: `${INFISICAL_CRD_BASE}/secrets.infisical.com_infisicaldynamicsecrets.yaml` },
   {
     type: "url",
     url: FLUX_TOOLKIT_INSTALL,
