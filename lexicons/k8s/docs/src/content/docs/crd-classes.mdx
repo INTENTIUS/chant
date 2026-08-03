@@ -1,6 +1,6 @@
 ---
 title: "CRD-Generated Classes"
-description: "Typed K8s::* classes generated from third-party CRDs — Gateway API, cert-manager, CloudNativePG, the CockroachDB operator, KubeRay, Argo CD, and Flux — plus how the CRD source list works and how to add your own."
+description: "Typed K8s::* classes generated from third-party CRDs — Gateway API, cert-manager, CloudNativePG, Traefik, the CockroachDB operator, KubeRay, Argo CD, and Flux — plus how the CRD source list works and how to add your own."
 ---
 
 import { Aside } from '@astrojs/starlight/components';
@@ -24,6 +24,7 @@ gateway.networking.k8s.io      Gateway          K8s::Gateway::HTTPRoute
 crdb.cockroachlabs.com         Crdb             K8s::Crdb::CrdbCluster
 postgresql.cnpg.io             Cnpg             K8s::Cnpg::Cluster
 barmancloud.cnpg.io            Cnpg             K8s::Cnpg::ObjectStore
+traefik.io                     Traefik          K8s::Traefik::IngressRoute
 cert-manager.io                CertManager      K8s::CertManager::Certificate
 acme.cert-manager.io           Acme             K8s::Acme::Challenge
 *.toolkit.fluxcd.io            Flux             K8s::Flux::Kustomization
@@ -187,6 +188,64 @@ export const nightly = new ScheduledBackup({
     cluster: { name: "pg" },
     method: "plugin",
     pluginConfiguration: { name: "barman-cloud.cloudnative-pg.io" },
+## Traefik
+
+`traefik.io`, pinned to chart **v41.1.0**. Traefik's own routing surface. An `IngressRoute` is not a `networking.k8s.io` `Ingress` with annotations — it is a separate CRD with its own matcher grammar, so before this an estate fronted by Traefik had an edge chant could not express.
+
+| Type | apiVersion / kind |
+|---|---|
+| `IngressRoute` | `traefik.io/v1alpha1` / `IngressRoute` |
+| `IngressRouteTCP` | `traefik.io/v1alpha1` / `IngressRouteTCP` |
+| `IngressRouteUDP` | `traefik.io/v1alpha1` / `IngressRouteUDP` |
+| `Middleware` | `traefik.io/v1alpha1` / `Middleware` |
+| `MiddlewareTCP` | `traefik.io/v1alpha1` / `MiddlewareTCP` |
+| `ServersTransport` | `traefik.io/v1alpha1` / `ServersTransport` |
+| `ServersTransportTCP` | `traefik.io/v1alpha1` / `ServersTransportTCP` |
+| `TLSOption` | `traefik.io/v1alpha1` / `TLSOption` |
+| `TLSStore` | `traefik.io/v1alpha1` / `TLSStore` |
+| `TraefikService` | `traefik.io/v1alpha1` / `TraefikService` |
+
+Only the `traefik.io` group. The chart also ships `hub.traefik.io_*` — Traefik Hub, a different commercial product — and a vendored copy of the Gateway API, which is already generated here from its own upstream and would collide.
+
+```bash
+helm repo add traefik https://traefik.github.io/charts
+helm install traefik traefik/traefik --version 41.1.0
+```
+
+An HTTPS route plus the HTTP one that redirects to it:
+
+```typescript
+import { IngressRoute, Middleware } from "@intentius/chant-lexicon-k8s";
+
+export const redirect = new Middleware({
+  metadata: { name: "redirect-https", namespace: "default" },
+  spec: { redirectScheme: { scheme: "https", permanent: true } },
+});
+
+export const secure = new IngressRoute({
+  metadata: { name: "app", namespace: "app" },
+  spec: {
+    entryPoints: ["websecure"],
+    routes: [{
+      match: "Host(`app.example.com`)",
+      kind: "Rule",
+      services: [{ name: "app", port: 80 }],
+    }],
+    tls: { secretName: "app-tls" },
+  },
+});
+
+export const plain = new IngressRoute({
+  metadata: { name: "app-http", namespace: "app" },
+  spec: {
+    entryPoints: ["web"],
+    routes: [{
+      match: "Host(`app.example.com`)",
+      kind: "Rule",
+      // The middleware is in `default`, this route is in `app`.
+      middlewares: [{ name: "redirect-https", namespace: "default" }],
+      services: [{ name: "app", port: 80 }],
+    }],
   },
 });
 ```
@@ -199,6 +258,11 @@ Write the five-field form out of habit — `"47 2 * * *"`, meaning 02:47 to ever
 
 <Aside type="note">
 Adding the `plugins` block to a live Cluster injects the plugin sidecar, which **rolls the Postgres pods**. At `instances: 1` that is a brief outage.
+A `middlewares` entry with no `namespace` is looked up in the route's own namespace. Point at one that lives elsewhere and forget the qualifier, and Traefik finds nothing, applies no middleware, and serves the route anyway — so in the example above, plain HTTP would keep working instead of redirecting. Nothing errors.
+</Aside>
+
+<Aside type="note">
+The pin is the **chart** version, which is not the Traefik version: chart v41.1.0 ships Traefik v3.7.9. When bumping, check both.
 </Aside>
 
 ## CockroachDB operator

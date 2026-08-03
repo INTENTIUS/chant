@@ -142,6 +142,34 @@ const CNPG_CRD_BASE = `https://raw.githubusercontent.com/cloudnative-pg/cloudnat
  */
 const BARMAN_PLUGIN_VERSION = "v0.14.0";
 const BARMAN_PLUGIN_CRD_BASE = `https://raw.githubusercontent.com/cloudnative-pg/plugin-barman-cloud/${BARMAN_PLUGIN_VERSION}/config/crd/bases`;
+/**
+ * Traefik proxy CRDs — traefik.io/v1alpha1
+ *
+ * Traefik's own routing surface. An `IngressRoute` is not a
+ * `networking.k8s.io` Ingress with annotations — it is a distinct CRD with its
+ * own matcher grammar, so an estate fronted by Traefik has no expressible edge
+ * without these. Produces, under the `Traefik` namespace (first-segment rule,
+ * no override needed):
+ *   K8s::Traefik::IngressRoute          K8s::Traefik::Middleware
+ *   K8s::Traefik::IngressRouteTCP       K8s::Traefik::MiddlewareTCP
+ *   K8s::Traefik::IngressRouteUDP       K8s::Traefik::ServersTransport
+ *   K8s::Traefik::TLSOption             K8s::Traefik::ServersTransportTCP
+ *   K8s::Traefik::TLSStore              K8s::Traefik::TraefikService
+ *
+ * Only the `traefik.io` group. The chart's crds/ directory also ships
+ * `hub.traefik.io_*` (Traefik Hub, a different commercial product, ~12 kinds,
+ * no known consumer) and a vendored copy of the Gateway API, which is already
+ * generated here from its upstream repo and would collide.
+ *
+ * Version footgun: the pin below is the **chart** version, and the chart
+ * version is not the Traefik version. Chart v41.1.0 ships Traefik v3.7.9.
+ * When bumping, record both.
+ *
+ * Controller install: helm repo add traefik https://traefik.github.io/charts
+ *   && helm install traefik traefik/traefik --version 41.1.0
+ */
+const TRAEFIK_CHART_VERSION = "v41.1.0";
+const TRAEFIK_CRD_BASE = `https://raw.githubusercontent.com/traefik/traefik-helm-chart/${TRAEFIK_CHART_VERSION}/traefik/crds`;
 
 /**
  * Prometheus Operator CRDs — monitoring.coreos.com/v1
@@ -243,6 +271,16 @@ export const CRD_SOURCES: CRDSource[] = [
   { type: "url", url: `${CNPG_CRD_BASE}/postgresql.cnpg.io_backups.yaml` },
   { type: "url", url: `${CNPG_CRD_BASE}/postgresql.cnpg.io_poolers.yaml` },
   { type: "url", url: `${BARMAN_PLUGIN_CRD_BASE}/barmancloud.cnpg.io_objectstores.yaml` },
+  { type: "url", url: `${TRAEFIK_CRD_BASE}/traefik.io_ingressroutes.yaml` },
+  { type: "url", url: `${TRAEFIK_CRD_BASE}/traefik.io_ingressroutetcps.yaml` },
+  { type: "url", url: `${TRAEFIK_CRD_BASE}/traefik.io_ingressrouteudps.yaml` },
+  { type: "url", url: `${TRAEFIK_CRD_BASE}/traefik.io_middlewares.yaml` },
+  { type: "url", url: `${TRAEFIK_CRD_BASE}/traefik.io_middlewaretcps.yaml` },
+  { type: "url", url: `${TRAEFIK_CRD_BASE}/traefik.io_serverstransports.yaml` },
+  { type: "url", url: `${TRAEFIK_CRD_BASE}/traefik.io_serverstransporttcps.yaml` },
+  { type: "url", url: `${TRAEFIK_CRD_BASE}/traefik.io_tlsoptions.yaml` },
+  { type: "url", url: `${TRAEFIK_CRD_BASE}/traefik.io_tlsstores.yaml` },
+  { type: "url", url: `${TRAEFIK_CRD_BASE}/traefik.io_traefikservices.yaml` },
   {
     type: "url",
     url: FLUX_TOOLKIT_INSTALL,
