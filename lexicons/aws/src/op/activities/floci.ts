@@ -2,7 +2,11 @@ import { emulatorLifecycle, type EmulatorSpec, type EmulatorCapability } from "@
 
 const DEFAULT_NAME = "chant-floci";
 const DEFAULT_PORT = 4566;
-const DEFAULT_IMAGE = "floci/floci:latest";
+// Pinned, not `:latest` (#1345). An image that moves underneath a passing
+// local suite is the drift a pin exists to stop, and the freshness check in
+// core reports how far behind this is rather than bumping it — the tag moves
+// when a consuming test needs the newer emulator (#808).
+const DEFAULT_IMAGE = "floci/floci:1.5.34";
 const DEFAULT_REGION = "us-east-1";
 const DEFAULT_READY_SERVICE = "cloudformation";
 const DOCKER_SOCK = ["-v", "/var/run/docker.sock:/var/run/docker.sock"] as const;
@@ -55,6 +59,7 @@ const flociSpecFor = (readyService: string): EmulatorSpec => ({
   containerPort: DEFAULT_PORT,
   healthPath: "/_localstack/health",
   ready: (body) => isFlociReady(body, readyService),
+  upstream: { repo: "floci-io/floci" },
 });
 
 /** The Floci emulator spec — the aws plugin's `emulator` capability (#920). */

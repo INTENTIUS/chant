@@ -8,7 +8,7 @@ import type { ArtifactIntegrity } from "./lexicon-integrity";
 import type { CompletionContext, CompletionItem, HoverContext, HoverInfo, CodeActionContext, CodeAction } from "./lsp/types";
 import type { McpToolContribution, McpResourceContribution } from "./mcp/types";
 import type { DriverComponent } from "./components/driver";
-import type { EmulatorCapability } from "./op/emulator-lifecycle";
+import type { EmulatorDeclaration } from "./op/emulator-lifecycle";
 import type { RuleMeta } from "./audit/catalog";
 import type { ReferenceCatalog } from "./graph-refs";
 import type { IREdge } from "./graph-ir";
@@ -439,11 +439,19 @@ export interface LexiconPlugin {
   /** Package lexicon into distributable tarball */
   package(options?: { verbose?: boolean; force?: boolean }): Promise<void>;
 
-  /** Local emulator (#920), if this lexicon has one (Floci for aws, floci-az/gcp,
-   * mudflaps/spritzer for fly). Drives `chant emulator up|down|status` and lets a
-   * consumer (behold `--local`) boot it + point apply/observe at it — no cloud
-   * account. Absent when the lexicon has no local emulator. */
-  readonly emulator?: EmulatorCapability;
+  /**
+   * Local emulator(s) (#920), if this lexicon has any: Floci for aws, floci-az
+   * for azure, floci-gcp for gcp, mudflaps and spritzer for fly. Drives
+   * `chant emulator up|down|status` and lets a consumer (behold `--local`) boot
+   * one and point apply/observe at it — no cloud account. Absent when the
+   * lexicon has no local emulator.
+   *
+   * One capability or several (#1345). fly ships two, and while this field held
+   * exactly one, three of the repo's four emulators went undeclared and
+   * `chant emulator up --all` booted only Floci — even though azure's and gcp's
+   * wrappers already built the same spec this needs.
+   */
+  readonly emulator?: EmulatorDeclaration;
 
   /**
    * A CLI verb group this lexicon contributes, mounted under `chant <name>

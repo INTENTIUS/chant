@@ -5,6 +5,18 @@ import type { LexiconPlugin, ResourceMetadata } from "../../lexicon";
 import type { BuildResult } from "../../build";
 import type { ParsedArgs } from "../registry";
 
+/**
+ * The aws emulator capability, as the real plugin declares it. `--live`
+ * endpoint injection reads the endpoint var off this rather than off a map
+ * keyed by lexicon name (#1345), so a mock that omits it gets no injection —
+ * the same thing that would happen in production.
+ */
+const awsEmulatorStub = {
+  spec: { name: "chant-floci", image: "floci/floci:1.5.34", containerPort: 4566, healthPath: "/_localstack/health" },
+  env: (endpoint: string) => ({ AWS_ENDPOINT_URL: endpoint, AWS_ACCESS_KEY_ID: "test" }),
+};
+
+
 const buildMock = vi.fn();
 const fetchLifecycleMock = vi.fn();
 const readSnapshotMock = vi.fn();
@@ -123,6 +135,7 @@ describe("runLifecycleDiff --live", () => {
     const plugins: LexiconPlugin[] = [
       createMockPlugin({
         name: "aws",
+        emulator: awsEmulatorStub,
         describeResources: staticDescribeResources({
           bucket: meta({ status: "UPDATE_COMPLETE" }),
         }),
@@ -186,6 +199,7 @@ describe("runLifecycleDiff --live", () => {
     const plugins: LexiconPlugin[] = [
       createMockPlugin({
         name: "aws",
+        emulator: awsEmulatorStub,
         describeResources: async () => { throw new Error("Unable to locate credentials"); },
       }),
     ];
@@ -211,7 +225,7 @@ describe("runLifecycleDiff --live", () => {
     loadChantConfigMock.mockResolvedValue({ config: { sourceDir: "src" } });
 
     const plugins: LexiconPlugin[] = [
-      createMockPlugin({ name: "aws", describeResources: staticDescribeResources({}) }),
+      createMockPlugin({ name: "aws", emulator: awsEmulatorStub, describeResources: staticDescribeResources({}) }),
     ];
     const exit = await runLifecycleDiff({
       args: makeArgs({ path: "diff", extraPositional: "prod", extraPositional2: "aws", live: true }),
@@ -231,7 +245,7 @@ describe("runLifecycleDiff --live", () => {
     loadChantConfigMock.mockResolvedValue({ config: { sourceDir: "src" } });
 
     const plugins: LexiconPlugin[] = [
-      createMockPlugin({ name: "aws", describeResources: staticDescribeResources({}) }),
+      createMockPlugin({ name: "aws", emulator: awsEmulatorStub, describeResources: staticDescribeResources({}) }),
     ];
     const exit = await runLifecycleDiff({
       args: makeArgs({ path: "diff", extraPositional: "prod", extraPositional2: "aws", live: true, src: "infra" }),
@@ -259,6 +273,7 @@ describe("runLifecycleDiff --live", () => {
     const plugins: LexiconPlugin[] = [
       createMockPlugin({
         name: "aws",
+        emulator: awsEmulatorStub,
         describeResources: async (options: { stack?: string }) => {
           observedStacks.push(options.stack);
           return {};
@@ -371,6 +386,7 @@ describe("runLifecycleDiff --live", () => {
     const withDeep = (over: Parameters<typeof createMockPlugin>[0] = {}) =>
       createMockPlugin({
         name: "aws",
+        emulator: awsEmulatorStub,
         describeResources: staticObservation({ bucket: meta() }),
         observeResourcesDeep: staticDeepObservation({
           bucket: {
@@ -501,6 +517,7 @@ describe("runLifecycleDiff --live", () => {
       const plugins: LexiconPlugin[] = [
         createMockPlugin({
           name: "aws",
+          emulator: awsEmulatorStub,
           describeResources: async () => {
             seenDuringDescribe = process.env.AWS_ENDPOINT_URL;
             return {};
@@ -533,6 +550,7 @@ describe("runLifecycleDiff --live", () => {
       const plugins: LexiconPlugin[] = [
         createMockPlugin({
           name: "aws",
+          emulator: awsEmulatorStub,
           describeResources: async () => {
             seenDuringDescribe = process.env.AWS_ENDPOINT_URL;
             return {};
@@ -575,7 +593,7 @@ describe("runLifecyclePlan", () => {
   test("happy path: proposes a create for a declared, unobserved-nowhere-else entity", async () => {
     buildMock.mockResolvedValue(makeBuildResult({ aws: ["bucket"] }));
     const plugins: LexiconPlugin[] = [
-      createMockPlugin({ name: "aws", describeResources: staticDescribeResources({}) }),
+      createMockPlugin({ name: "aws", emulator: awsEmulatorStub, describeResources: staticDescribeResources({}) }),
     ];
     const exit = await runLifecyclePlan({
       args: makeArgs({ path: "plan", extraPositional: "prod" }),
@@ -608,6 +626,7 @@ describe("runLifecyclePlan", () => {
       const plugins: LexiconPlugin[] = [
         createMockPlugin({
           name: "aws",
+          emulator: awsEmulatorStub,
           describeResources: async () => {
             seenDuringDescribe = process.env.AWS_ENDPOINT_URL;
             return {};
@@ -638,6 +657,7 @@ describe("runLifecyclePlan", () => {
       const plugins: LexiconPlugin[] = [
         createMockPlugin({
           name: "aws",
+          emulator: awsEmulatorStub,
           describeResources: async () => {
             seenDuringDescribe = process.env.AWS_ENDPOINT_URL;
             return {};
@@ -720,6 +740,7 @@ describe("runLifecycleSnapshot", () => {
     const plugins: LexiconPlugin[] = [
       createMockPlugin({
         name: "aws",
+        emulator: awsEmulatorStub,
         describeResources: staticDescribeResources({ bucket: meta() }),
       }),
     ];
@@ -842,7 +863,7 @@ describe("runLifecycleSnapshot", () => {
         return { snapshots: [], commit: "sha", warnings: [], errors: [] };
       });
       const plugins: LexiconPlugin[] = [
-        createMockPlugin({ name: "aws", describeResources: staticDescribeResources({}) }),
+        createMockPlugin({ name: "aws", emulator: awsEmulatorStub, describeResources: staticDescribeResources({}) }),
       ];
       const exit = await runLifecycleSnapshot({
         args: makeArgs({ command: "state", path: "snapshot", extraPositional: "floci" }),

@@ -4,6 +4,18 @@ import type { LexiconPlugin, ResourceMetadata } from "../../lexicon";
 import type { BuildResult } from "../../build";
 import type { ParsedArgs } from "../registry";
 
+/**
+ * The aws emulator capability, as the real plugin declares it. `--live`
+ * endpoint injection reads the endpoint var off this rather than off a map
+ * keyed by lexicon name (#1345), so a mock that omits it gets no injection —
+ * the same thing that would happen in production.
+ */
+const awsEmulatorStub = {
+  spec: { name: "chant-floci", image: "floci/floci:1.5.34", containerPort: 4566, healthPath: "/_localstack/health" },
+  env: (endpoint: string) => ({ AWS_ENDPOINT_URL: endpoint, AWS_ACCESS_KEY_ID: "test" }),
+};
+
+
 const getHeadCommitMock = vi.fn();
 const fetchLifecycleMock = vi.fn();
 const pushLifecycleMock = vi.fn();
@@ -256,6 +268,7 @@ describe("components handlers", () => {
       const plugins: LexiconPlugin[] = [
         createMockPlugin({
           name: "aws",
+          emulator: awsEmulatorStub,
           describeResources: staticDescribeResources({ svc: meta() }),
         }),
       ];
@@ -306,6 +319,7 @@ describe("components handlers", () => {
         const plugins: LexiconPlugin[] = [
           createMockPlugin({
             name: "aws",
+            emulator: awsEmulatorStub,
             describeResources: async () => {
               seenDuringDescribe = process.env.AWS_ENDPOINT_URL;
               return { svc: meta() };
@@ -339,6 +353,7 @@ describe("components handlers", () => {
       const plugins: LexiconPlugin[] = [
         createMockPlugin({
           name: "aws",
+          emulator: awsEmulatorStub,
           describeResources: staticDescribeResources({ mystery: meta() }),
         }),
       ];
@@ -391,6 +406,7 @@ describe("components handlers", () => {
       const plugins: LexiconPlugin[] = [
         createMockPlugin({
           name: "aws",
+          emulator: awsEmulatorStub,
           describeResources: staticDescribeResources({ "search-service-v2": meta() }),
         }),
       ];
@@ -434,6 +450,7 @@ describe("components handlers", () => {
       const plugins: LexiconPlugin[] = [
         createMockPlugin({
           name: "aws",
+          emulator: awsEmulatorStub,
           describeResources: staticDescribeResources({ svc: meta() }),
         }),
       ];

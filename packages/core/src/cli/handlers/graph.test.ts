@@ -3,6 +3,18 @@ import type { ParsedArgs } from "../registry";
 import { DECLARABLE_MARKER, type Declarable } from "../../declarable";
 import { AttrRef } from "../../attrref";
 
+/**
+ * The aws emulator capability, as the real plugin declares it. `--live`
+ * endpoint injection reads the endpoint var off this rather than off a map
+ * keyed by lexicon name (#1345), so a mock that omits it gets no injection —
+ * which is the same thing that would happen in production.
+ */
+const awsEmulatorStub = {
+  spec: { name: "chant-floci", image: "floci/floci:1.5.34", containerPort: 4566, healthPath: "/_localstack/health" },
+  env: (endpoint: string) => ({ AWS_ENDPOINT_URL: endpoint, AWS_ACCESS_KEY_ID: "test" }),
+};
+
+
 const discoverOpsMock = vi.fn();
 vi.mock("../../op/discover", () => ({
   discoverOps: () => discoverOpsMock(),
@@ -474,7 +486,7 @@ describe("runGraph", () => {
     test("loads plugins for --live when ctx.plugins is empty", async () => {
       resolveLexMock.mockResolvedValue(["aws"]);
       loadPluginsMock.mockResolvedValue([
-        { name: "aws", serializer: {}, describeResources: () => Promise.resolve({}) },
+        { name: "aws", serializer: {}, emulator: awsEmulatorStub, describeResources: () => Promise.resolve({}) },
       ]);
       observeMock.mockResolvedValue({
         observations: [{ lexicon: "aws", resources: { "web-vpc": { type: "AWS::EC2::VPC", status: "OK" } } }],
@@ -495,7 +507,7 @@ describe("runGraph", () => {
     test("--at graphs the recorded snapshot without reading the estate", async () => {
       resolveLexMock.mockResolvedValue(["aws"]);
       loadPluginsMock.mockResolvedValue([
-        { name: "aws", serializer: {}, describeResources: () => Promise.resolve({}),
+        { name: "aws", serializer: {}, emulator: awsEmulatorStub, describeResources: () => Promise.resolve({}),
           enrichLiveAttrs: () => Promise.reject(new Error("must not be called on a replay")) },
       ]);
       replayMock.mockResolvedValue({
@@ -520,7 +532,7 @@ describe("runGraph", () => {
       hasSnapshotMock.mockResolvedValue(true);
       resolveLexMock.mockResolvedValue(["aws"]);
       loadPluginsMock.mockResolvedValue([
-        { name: "aws", serializer: {}, describeResources: () => Promise.resolve({}) },
+        { name: "aws", serializer: {}, emulator: awsEmulatorStub, describeResources: () => Promise.resolve({}) },
       ]);
       observeMock.mockResolvedValue({ observations: [], errors: ["could not connect"], warnings: [] });
       const errs: string[] = [];
@@ -536,7 +548,7 @@ describe("runGraph", () => {
       hasSnapshotMock.mockResolvedValue(false);
       resolveLexMock.mockResolvedValue(["aws"]);
       loadPluginsMock.mockResolvedValue([
-        { name: "aws", serializer: {}, describeResources: () => Promise.resolve({}) },
+        { name: "aws", serializer: {}, emulator: awsEmulatorStub, describeResources: () => Promise.resolve({}) },
       ]);
       observeMock.mockResolvedValue({ observations: [], errors: ["could not connect"], warnings: [] });
       const errs: string[] = [];
@@ -562,7 +574,7 @@ describe("runGraph", () => {
     test("single-stack project (no components): observeResources gets an empty stacks list", async () => {
       resolveLexMock.mockResolvedValue(["aws"]);
       loadPluginsMock.mockResolvedValue([
-        { name: "aws", serializer: {}, describeResources: () => Promise.resolve({}) },
+        { name: "aws", serializer: {}, emulator: awsEmulatorStub, describeResources: () => Promise.resolve({}) },
       ]);
       observeMock.mockResolvedValue({ observations: [], errors: [], warnings: [] });
       const exit = await runGraph({ args: makeArgs({ format: "ir", live: true, env: "prod" }), plugins: [], serializers: [] });
@@ -580,7 +592,7 @@ describe("runGraph", () => {
     test("multi-stack component project: resolves each component's cfn-deploy stack(s) and passes them to observeResources", async () => {
       resolveLexMock.mockResolvedValue(["aws"]);
       loadPluginsMock.mockResolvedValue([
-        { name: "aws", serializer: {}, describeResources: () => Promise.resolve({}) },
+        { name: "aws", serializer: {}, emulator: awsEmulatorStub, describeResources: () => Promise.resolve({}) },
       ]);
       discoverComponentsMock.mockResolvedValue({
         errors: [],
@@ -627,7 +639,7 @@ describe("runGraph", () => {
     test("ChantConfig.stacks: observeResources gets every declared stack, with its region and src", async () => {
       resolveLexMock.mockResolvedValue(["aws"]);
       loadPluginsMock.mockResolvedValue([
-        { name: "aws", serializer: {}, describeResources: () => Promise.resolve({}) },
+        { name: "aws", serializer: {}, emulator: awsEmulatorStub, describeResources: () => Promise.resolve({}) },
       ]);
       loadChantConfigMock.mockResolvedValue({
         config: {
@@ -656,7 +668,7 @@ describe("runGraph", () => {
     test("ChantConfig.stacks: a stack also derived from a component is not observed twice", async () => {
       resolveLexMock.mockResolvedValue(["aws"]);
       loadPluginsMock.mockResolvedValue([
-        { name: "aws", serializer: {}, describeResources: () => Promise.resolve({}) },
+        { name: "aws", serializer: {}, emulator: awsEmulatorStub, describeResources: () => Promise.resolve({}) },
       ]);
       discoverComponentsMock.mockResolvedValue({
         errors: [],
@@ -683,7 +695,7 @@ describe("runGraph", () => {
     test("component discovery errors: falls back to the single-stack path with a warning", async () => {
       resolveLexMock.mockResolvedValue(["aws"]);
       loadPluginsMock.mockResolvedValue([
-        { name: "aws", serializer: {}, describeResources: () => Promise.resolve({}) },
+        { name: "aws", serializer: {}, emulator: awsEmulatorStub, describeResources: () => Promise.resolve({}) },
       ]);
       discoverComponentsMock.mockResolvedValue({ errors: [{ message: "bad component" }], sourceFiles: [], components: new Map() });
       observeMock.mockResolvedValue({ observations: [], errors: [], warnings: [] });
@@ -714,7 +726,7 @@ describe("runGraph", () => {
         });
         resolveLexMock.mockResolvedValue(["aws"]);
         loadPluginsMock.mockResolvedValue([
-          { name: "aws", serializer: {}, describeResources: () => Promise.resolve({}) },
+          { name: "aws", serializer: {}, emulator: awsEmulatorStub, describeResources: () => Promise.resolve({}) },
         ]);
         let seenDuringObserve: string | undefined;
         observeMock.mockImplementation(async () => {
@@ -735,7 +747,7 @@ describe("runGraph", () => {
         });
         resolveLexMock.mockResolvedValue(["aws"]);
         loadPluginsMock.mockResolvedValue([
-          { name: "aws", serializer: {}, describeResources: () => Promise.resolve({}) },
+          { name: "aws", serializer: {}, emulator: awsEmulatorStub, describeResources: () => Promise.resolve({}) },
         ]);
         let seenDuringObserve: string | undefined;
         observeMock.mockImplementation(async () => {

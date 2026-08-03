@@ -4,6 +4,8 @@ import type { PostSynthCheck } from "@intentius/chant/lint/post-synth";
 import type { CompletionContext, CompletionItem, HoverContext, HoverInfo } from "@intentius/chant/lsp/types";
 import type { McpToolContribution, McpResourceContribution } from "@intentius/chant/mcp/types";
 import { createSkillsLoader } from "@intentius/chant/lexicon-plugin-helpers";
+import { MUDFLAPS_EMULATOR } from "./op/activities/flaps";
+import { SPRITZER_EMULATOR } from "./op/activities/sprites-emulator";
 import { flyAuditCatalog } from "./lint/audit-catalog";
 import type { TemplateParser } from "@intentius/chant/import/parser";
 import type { TypeScriptGenerator } from "@intentius/chant/import/generator";
@@ -25,6 +27,8 @@ import { flyContextTools } from "./mcp/context-tools";
  */
 export const flyPlugin: LexiconPlugin = {
   name: "fly",
+  // Two: the Machines API and Sprites (#1345).
+  emulator: [MUDFLAPS_EMULATOR, SPRITZER_EMULATOR],
   auditCatalog: () => flyAuditCatalog,
   serializer: flySerializer,
 

@@ -22,6 +22,20 @@ export interface EmulatorSpec {
   ready?: (healthBody: string) => boolean;
   /** Extra `docker run` args inserted before the image (e.g. a socket mount). */
   runArgs?: readonly string[];
+  /**
+   * Where {@link image} is published, so how far behind the pin is can be
+   * answered (#1345).
+   *
+   * fly pinned its two emulators and tracked their freshness; aws, azure and gcp
+   * ran `floci/*:latest`, which is the drift a pin exists to stop — a local test
+   * suite that passes today and fails tomorrow because an image moved underneath
+   * it, with nothing in the repo recording what changed. Declaring the upstream
+   * makes the check general instead of one lexicon's private tooling.
+   */
+  upstream?: {
+    /** `owner/repo` whose latest GitHub release names the current version. */
+    repo: string;
+  };
 }
 
 /**
@@ -34,6 +48,41 @@ export interface EmulatorSpec {
 export interface EmulatorCapability {
   spec: EmulatorSpec;
   env(endpoint: string): Record<string, string>;
+}
+
+/**
+ * What a plugin declares: one emulator, or several (#1345).
+ *
+ * fly ships two — mudflaps for the Machines API and spritzer for Sprites — and
+ * a single-spec field could describe only one of them, so both stayed
+ * unreachable from `chant emulator` while the repo's docs presented them as
+ * first-class local targets.
+ */
+export type EmulatorDeclaration = EmulatorCapability | readonly EmulatorCapability[];
+
+/** Every emulator a plugin declares, normalized to a list. */
+export function emulatorsOf(declaration: EmulatorDeclaration | undefined): readonly EmulatorCapability[] {
+  if (!declaration) return [];
+  return Array.isArray(declaration) ? declaration : [declaration as EmulatorCapability];
+}
+
+/** Sentinel that cannot collide with a real endpoint or a credential value. */
+const ENDPOINT_PROBE = "chant-endpoint-probe://0";
+
+/**
+ * The env vars whose value *is* the endpoint, as opposed to the credentials and
+ * region an emulator also needs (#1345).
+ *
+ * Derived by asking `env()` for a sentinel and keeping the keys that carry it,
+ * so a lexicon states the mapping once in the place it already states it. The
+ * alternative — `LEXICON_ENDPOINT_ENV_VAR`, a hand-maintained map in core — held
+ * two of the four lexicons that have one, and its module doc asserted azure had
+ * none while `describe-resources.ts` read `AZURE_ENDPOINT_URL` on every call.
+ */
+export function endpointEnvVars(capability: EmulatorCapability): string[] {
+  return Object.entries(capability.env(ENDPOINT_PROBE))
+    .filter(([, value]) => value === ENDPOINT_PROBE)
+    .map(([key]) => key);
 }
 
 /** Per-call overrides for {@link EmulatorLifecycle.up} / `runCommand`. */

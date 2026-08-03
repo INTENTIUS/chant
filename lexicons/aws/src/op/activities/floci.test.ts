@@ -13,7 +13,7 @@ import {
 describe("flociRunCommand (#704)", () => {
   test("minimal — defaults name/port/image, no docker socket", () => {
     expect(flociRunCommand({})).toBe(
-      "docker run -d --rm --name chant-floci -p 4566:4566 floci/floci:latest",
+      "docker run -d --rm --name chant-floci -p 4566:4566 floci/floci:1.5.34",
     );
   });
 
@@ -60,7 +60,7 @@ describe("flociHealthUrl / flociEnv (#704)", () => {
 describe("FLOCI_SPEC / FLOCI_EMULATOR — the aws plugin's emulator capability (#920)", () => {
   test("spec pins the Floci container identity the shared lifecycle boots", () => {
     expect(FLOCI_SPEC.name).toBe("chant-floci");
-    expect(FLOCI_SPEC.image).toBe("floci/floci:latest");
+    expect(FLOCI_SPEC.image).toBe("floci/floci:1.5.34");
     expect(FLOCI_SPEC.containerPort).toBe(4566);
     expect(FLOCI_SPEC.healthPath).toBe("/_localstack/health");
   });

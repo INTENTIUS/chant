@@ -1,4 +1,4 @@
-import { emulatorLifecycle } from "@intentius/chant/op";
+import { emulatorLifecycle, type EmulatorCapability, type EmulatorSpec } from "@intentius/chant/op";
 import { MUDFLAPS_IMAGE } from "./emulator-images";
 
 export interface FlapsUpArgs {
@@ -22,12 +22,27 @@ export interface FlapsDownArgs {
 // mudflaps is a stateful fake of the Fly Machines API (flaps) — a plain 200 on
 // its health endpoint means ready. The local target for flyApply; point it there
 // with FLY_FLAPS_BASE_URL. Shared lifecycle: emulatorLifecycle (#746).
-const flaps = emulatorLifecycle({
+export const MUDFLAPS_SPEC: EmulatorSpec = {
   name: "chant-mudflaps",
   image: MUDFLAPS_IMAGE,
   containerPort: 4280,
   healthPath: "/_mudflaps/health",
-});
+  upstream: { repo: "intentius/mudflaps" },
+};
+
+/**
+ * The Machines half of fly's emulator capability (#1345).
+ *
+ * fly ships two emulators, and `LexiconPlugin.emulator` held exactly one until
+ * #1345 widened it — so neither was declared and `chant emulator` reported fly
+ * as having none, while the tutorials booted mudflaps through `chant run`.
+ */
+export const MUDFLAPS_EMULATOR: EmulatorCapability = {
+  spec: MUDFLAPS_SPEC,
+  env: (endpoint) => ({ FLY_FLAPS_BASE_URL: endpoint }),
+};
+
+const flaps = emulatorLifecycle(MUDFLAPS_SPEC);
 
 export const flapsExistsCommand = flaps.existsCommand;
 export const flapsRmCommand = flaps.rmCommand;

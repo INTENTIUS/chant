@@ -350,7 +350,7 @@ export async function runComponentsStatus(ctx: CommandContext): Promise<number> 
       const endpointResult = applyLiveEndpoint(
         config.environments,
         environment,
-        plugins.filter((p) => p.describeResources || p.describeStackStatus).map((p) => p.name),
+        plugins.filter((p) => p.describeResources || p.describeStackStatus),
       );
       if (endpointResult.notice) console.error(formatWarning({ message: endpointResult.notice }));
       try {

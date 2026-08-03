@@ -1,6 +1,6 @@
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
-import { emulatorLifecycle } from "../../op";
+import { emulatorLifecycle, emulatorsOf } from "../../op";
 import { formatError, formatWarning, formatSuccess } from "../format";
 import type { CommandContext } from "../registry";
 
@@ -48,8 +48,13 @@ export async function runEmulator(ctx: CommandContext): Promise<number> {
     return 1;
   }
 
-  const withEmulator = plugins.filter((p) => p.emulator && (!args.lexicon || p.name === args.lexicon));
-  if (withEmulator.length === 0) {
+  // One entry per emulator, not per lexicon (#1345): fly ships two — mudflaps
+  // for the Machines API and spritzer for Sprites — and reporting a lexicon
+  // would have to pick one of them.
+  const targets = plugins
+    .filter((p) => !args.lexicon || p.name === args.lexicon)
+    .flatMap((p) => emulatorsOf(p.emulator).map((cap) => ({ lexicon: p.name, cap })));
+  if (targets.length === 0) {
     if (args.json) {
       console.log(JSON.stringify({ emulators: [] }));
       return 0;
@@ -63,19 +68,18 @@ export async function runEmulator(ctx: CommandContext): Promise<number> {
   }
 
   const reports: EmulatorReport[] = [];
-  for (const p of withEmulator) {
-    const cap = p.emulator!;
+  for (const { lexicon, cap } of targets) {
     const lc = emulatorLifecycle(cap.spec);
     if (action === "up") {
       const { endpoint } = await lc.up();
-      reports.push({ lexicon: p.name, name: cap.spec.name, endpoint, env: cap.env(endpoint) });
+      reports.push({ lexicon, name: cap.spec.name, endpoint, env: cap.env(endpoint) });
     } else if (action === "down") {
       await lc.down();
-      reports.push({ lexicon: p.name, name: cap.spec.name, endpoint: "", env: {} });
+      reports.push({ lexicon, name: cap.spec.name, endpoint: "", env: {} });
     } else {
       const running = await isRunning(cap.spec.name);
       const endpoint = running ? lc.endpoint(cap.spec.containerPort) : "";
-      reports.push({ lexicon: p.name, name: cap.spec.name, endpoint, env: endpoint ? cap.env(endpoint) : {} });
+      reports.push({ lexicon, name: cap.spec.name, endpoint, env: endpoint ? cap.env(endpoint) : {} });
     }
   }
 

@@ -135,7 +135,7 @@ export async function runLifecycleSnapshot(ctx: CommandContext): Promise<number>
   // #1166 — same self-sufficiency as `chant graph --live`: a snapshot is
   // always a live read, so an environment's declared endpoint applies here
   // too, unless the ambient shell already set it.
-  const endpointResult = applyLiveEndpoint(config.environments, environment, observingPlugins.map((p) => p.name));
+  const endpointResult = applyLiveEndpoint(config.environments, environment, observingPlugins);
   if (endpointResult.notice) console.error(formatWarning({ message: endpointResult.notice }));
 
   // Build every stack first, so the ambient scan (#1278) can be bounded by the
@@ -349,7 +349,7 @@ export async function runLifecycleDiff(ctx: CommandContext): Promise<number> {
   // Floci), so `--live` is self-sufficient even when the ambient shell never
   // exported e.g. AWS_ENDPOINT_URL. Ambient always wins when it's already set.
   // Scoped to just the live reads below — restored in `finally`.
-  const liveLexicons = args.live ? plugins.filter((p) => p.describeResources || p.listArtifacts).map((p) => p.name) : [];
+  const liveLexicons = args.live ? plugins.filter((p) => p.describeResources || p.listArtifacts) : [];
   const endpointResult = applyLiveEndpoint(config.environments, environment, liveLexicons);
   if (endpointResult.notice) console.error(formatWarning({ message: endpointResult.notice }));
 
@@ -1043,7 +1043,13 @@ export async function runLifecyclePlan(ctx: CommandContext): Promise<number> {
   // declare its own endpoint, applied here unless the ambient shell already
   // set it. `chant lifecycle plan` is always a live read (no `--live` flag of
   // its own), so this applies unconditionally.
-  const endpointResult = applyLiveEndpoint(config.environments, environment, lexicons);
+  // Names here, plugins there: the endpoint vars come from each lexicon's own
+  // emulator capability (#1345), so this needs the loaded plugin, not the name.
+  const endpointResult = applyLiveEndpoint(
+    config.environments,
+    environment,
+    lexicons.map((name) => plugins.find((p) => p.name === name)).filter((p) => p !== undefined),
+  );
   if (endpointResult.notice) console.error(formatWarning({ message: endpointResult.notice }));
 
   try {
