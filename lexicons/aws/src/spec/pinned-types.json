@@ -1273,6 +1273,7 @@
   "AWS::Redshift::EventSubscription",
   "AWS::Redshift::Integration",
   "AWS::Redshift::ScheduledAction",
+  "AWS::Redshift::SnapshotSchedule",
   "AWS::RedshiftServerless::Namespace",
   "AWS::RedshiftServerless::Snapshot",
   "AWS::RedshiftServerless::Workgroup",

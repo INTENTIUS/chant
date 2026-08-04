@@ -125,9 +125,16 @@ describe("assertPinnedSpec", () => {
     expect(() => assertPinnedSpec(pinned, { pin, pinnedNames: names, env: {} })).not.toThrow();
   });
 
-  test("refuses a drifted archive — generation does not proceed", () => {
-    expect(() => assertPinnedSpec(archive("AWS::A::One", "AWS::B::Two"), { pin, pinnedNames: names, env: {} }))
-      .toThrow(/upstream CloudFormation schema has moved/);
+  test("reports a drifted archive — generation proceeds (#1473)", () => {
+    // Was a throw. Enforcement moved to the release-time surface gate, so a
+    // moving upstream can no longer redden an unrelated PR.
+    const warnings: string[] = [];
+    expect(() =>
+      assertPinnedSpec(archive("AWS::A::One", "AWS::B::Two"), {
+        pin, pinnedNames: names, env: {}, warn: (m) => warnings.push(m),
+      }),
+    ).not.toThrow();
+    expect(warnings[0]).toMatch(/upstream CloudFormation schema has moved/);
   });
 
   test("the accept env proceeds and reports instead", () => {
@@ -196,16 +203,26 @@ describe("byte churn vs a moved resource set (#1473)", () => {
     expect(warnings[0]).toContain("surface.snapshot.json");
   });
 
-  test("a type removed — still refuses", () => {
-    const { threw } = capture(archive("AWS::S3::Bucket"));
-    expect(threw?.message).toContain("Generation refuses");
-    expect(threw?.message).toContain("removed");
+  test("a type removed — reports loudly, does not throw", () => {
+    // Enforcement is the release-time surface gate; a removed type always
+    // shows up there. Throwing here made every aws PR hostage to upstream.
+    const { warnings, threw } = capture(archive("AWS::S3::Bucket"));
+    expect(threw).toBeUndefined();
+    expect(warnings[0]).toContain("removed");
+    expect(warnings[0]).toContain("Generation refuses");
   });
 
-  test("a type added — still refuses", () => {
-    const { threw } = capture(archive("AWS::S3::Bucket", "AWS::IAM::Role", "AWS::SQS::Queue"));
-    expect(threw?.message).toContain("Generation refuses");
-    expect(threw?.message).toContain("added");
+  test("a type added — reports loudly, does not throw", () => {
+    const { warnings, threw } = capture(archive("AWS::S3::Bucket", "AWS::IAM::Role", "AWS::SQS::Queue"));
+    expect(threw).toBeUndefined();
+    expect(warnings[0]).toContain("added");
+  });
+
+  test("a moved type set is reported more urgently than byte churn", () => {
+    const edited = new Map(pinned);
+    edited.set("AWS::S3::Bucket", schema("AWS::S3::Bucket", "reworded"));
+    expect(capture(edited).warnings[0]).toContain("resource set is unchanged");
+    expect(capture(archive("AWS::S3::Bucket")).warnings[0]).not.toContain("resource set is unchanged");
   });
 
   test("an unchanged archive neither warns nor throws", () => {
@@ -214,15 +231,13 @@ describe("byte churn vs a moved resource set (#1473)", () => {
     expect(warnings).toEqual([]);
   });
 
-  test("with no previous type set to compare, a mismatch stays fatal", () => {
-    // `specDrift` reports empty added/removed when it cannot compare, which
-    // would otherwise read as "no type moved" and downgrade every mismatch.
+  test("generation is never blocked by the pin, whatever moved", () => {
+    // The invariant that matters now: `generate` always completes. Whether the
+    // result may SHIP is decided by the surface gate in validate.
     const edited = new Map(pinned);
     edited.set("AWS::S3::Bucket", schema("AWS::S3::Bucket", "reworded"));
-
-    expect(() =>
-      assertPinnedSpec(edited, { pin, pinnedNames: new Set(), env: {}, warn: () => {} }),
-    ).toThrow(/Generation refuses/);
+    expect(() => assertPinnedSpec(edited, { pin, pinnedNames: new Set(), env: {}, warn: () => {} })).not.toThrow();
+    expect(() => assertPinnedSpec(archive("AWS::X::Y"), { pin, pinnedNames: names, env: {}, warn: () => {} })).not.toThrow();
   });
 
   test("the accept env still short-circuits both cases", () => {

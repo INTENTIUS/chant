@@ -56,8 +56,8 @@ export interface SpecPin {
  * want, and paste the printed pin here in its own commit.
  */
 export const AWS_SPEC_PIN: SpecPin = {
-  digest: "sha256:f2a0f4f2c0685116fa928a01d889b2aa2a03e4f02cd3257b124cbb184f7e533b",
-  resources: 1650,
+  digest: "sha256:30bca5721afaaa891d17f528af4bc9b2fc5f707e34e5c6c78d3afeb6f0f259b8",
+  resources: 1651,
   accepted: "2026-08-04",
 };
 
@@ -235,13 +235,20 @@ export function assertPinnedSpec(
   // Guarded on actually HAVING a previous type set: `specDrift` reports empty
   // added/removed when it has nothing to compare against, which would
   // otherwise read as "no type moved" and downgrade every mismatch.
-  const typeSetKnown = pinnedNames !== undefined && pinnedNames.size > 0;
-  const typeSetMoved = drift.added.length > 0 || drift.removed.length > 0;
-
-  if (typeSetKnown && !typeSetMoved) {
-    warn(driftMessage(drift, pin, { fatal: false }));
-    return;
-  }
-
-  throw new Error(driftMessage(drift, pin));
+  // chant #1473 — the pin reports, it does not gate.
+  //
+  // Refusing here made every aws PR hostage to CloudFormation: the archive
+  // gains and edits types through the day, and `generate` runs on every CI
+  // job, so an unrelated change goes red the moment upstream moves. Both the
+  // 0.39.0 and 0.40.1 releases died this way, and a PR *accepting* the drift
+  // was itself refused by a newer drift that arrived while its CI queued.
+  //
+  // Enforcement lives where the consequence is: core's
+  // `validateLexiconArtifacts` compares the generated API against the reviewed
+  // `surface.snapshot.json` and, armed by CHANT_RELEASE_GATE, refuses to
+  // publish a surface nobody reviewed. A new or removed type always shows up
+  // there, so nothing is lost by reporting rather than throwing here — while a
+  // description edit, which changes the digest and no declaration, stops
+  // costing a red build.
+  warn(driftMessage(drift, pin, { fatal: drift.added.length > 0 || drift.removed.length > 0 }));
 }
