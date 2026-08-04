@@ -5,8 +5,11 @@
  * for extracting names from AWS CloudFormation types are defined here.
  */
 
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   NamingStrategy as CoreNamingStrategy,
+  reservedNamesFromSnapshot,
   type NamingConfig,
   type NamingInput,
 } from "@intentius/chant/codegen/naming";
@@ -110,11 +113,37 @@ const awsNamingConfig: NamingConfig = {
  * AWS-specific NamingStrategy — wraps the core algorithm with AWS data tables.
  */
 export class NamingStrategy extends CoreNamingStrategy {
-  constructor(results: SchemaParseResult[]) {
+  /**
+   * @param reservedNames chant #1459 — spec type → already-published TS name,
+   *   normally {@link publishedNames}. Passed in rather than read here on
+   *   purpose: a fixture-driven codegen run (`./snapshot.test.ts`) must not
+   *   inherit the repo's real 1600-entry surface, or its output would depend on
+   *   whatever the lexicon last shipped instead of on its fixtures.
+   */
+  constructor(results: SchemaParseResult[], reservedNames: Record<string, string> = {}) {
     const inputs: NamingInput[] = results.map((r) => ({
       typeName: r.resource.typeName,
       propertyTypes: r.propertyTypes,
     }));
-    super(inputs, awsNamingConfig);
+    super(inputs, { ...awsNamingConfig, reservedNames });
+  }
+}
+
+/**
+ * Reserved names from the committed surface snapshot, or none when it cannot
+ * be read.
+ *
+ * Defensive: codegen must still run for a lexicon with no snapshot yet, and a
+ * missing or malformed snapshot should degrade to the previous naming
+ * behaviour rather than fail generation outright. `surface-diff` makes the
+ * consequence visible either way.
+ */
+export function publishedNames(): Record<string, string> {
+  try {
+    const snapshotPath = join(import.meta.dirname, "..", "..", "surface.snapshot.json");
+    if (!existsSync(snapshotPath)) return {};
+    return reservedNamesFromSnapshot(JSON.parse(readFileSync(snapshotPath, "utf-8")));
+  } catch {
+    return {};
   }
 }

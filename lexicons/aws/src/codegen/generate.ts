@@ -20,7 +20,7 @@ import { fetchCfnLintPatches, applyPatches } from "./patches";
 import { fetchCfnLintExtensions, loadExtensionSchemas, type ExtensionConstraint } from "./extensions";
 import { samResources } from "./sam";
 import { fallbackResources } from "./fallback";
-import { NamingStrategy, propertyTypeName, extractDefName } from "./naming";
+import { NamingStrategy, publishedNames, propertyTypeName, extractDefName } from "./naming";
 import { generateLexiconJSON, lambdaRuntimeDeprecations } from "./generate-lexicon";
 import { generateTypeScriptDeclarations } from "./generate-typescript";
 import {
@@ -33,6 +33,8 @@ export type { GenerateOptions, GenerateResult };
 
 // AWS-specific state shared between pipeline callbacks
 let awsConstraints = new Map<string, ExtensionConstraint[]>();
+/** chant #1459 — spec type → already-published TS name, reset per `generate()` call. */
+let awsReservedNames: Record<string, string> = {};
 
 const awsPipelineConfig: GeneratePipelineConfig<SchemaParseResult> = {
   fetchSchemas: async (opts) => {
@@ -50,7 +52,7 @@ const awsPipelineConfig: GeneratePipelineConfig<SchemaParseResult> = {
     return result;
   },
 
-  createNaming: (results) => new NamingStrategy(results),
+  createNaming: (results) => new NamingStrategy(results, awsReservedNames),
 
   augmentSchemas: async (schemas, opts, log) => {
     const warnings: Array<{ file: string; error: string }> = [];
@@ -137,6 +139,12 @@ const awsPipelineConfig: GeneratePipelineConfig<SchemaParseResult> = {
 export async function generate(opts: GenerateOptions = {}): Promise<GenerateResult> {
   // Reset shared state
   awsConstraints = new Map();
+  // chant #1459 — names already published keep pointing at the types that
+  // published them. Skipped for a caller-supplied schema set, exactly as
+  // `augmentSchemas` is (see the pipeline's `opts.schemaSource` guard): a
+  // fixture run must depend on its fixtures, not on what the lexicon last
+  // shipped.
+  awsReservedNames = opts.schemaSource ? {} : publishedNames();
   return generatePipeline(awsPipelineConfig, opts);
 }
 

@@ -1,12 +1,32 @@
 /**
  * Collision-free naming strategy for TypeScript class names.
  *
- * 5-phase algorithm:
+ * 6-phase algorithm:
  * 1. Priority names (backward compatibility)
+ * 1a. Reserved names — names this lexicon has already published (chant #1459)
  * 2. Priority aliases (additional short names)
  * 3. Short names (last segment of type)
  * 4. Collision resolution (service-prefixed)
  * 5. Property type aliases (globally unique defs)
+ *
+ * ## Why phase 1a exists
+ *
+ * Phases 3 and 4 assign a short name to whoever asks first and service-qualify
+ * everyone after. Membership of that contest is the whole input set, so a
+ * resource's name was a function of its NEIGHBOURS: removing
+ * `AWS::Athena::Session` upstream freed `Session`, and `AWS::Macie::Session`
+ * silently changed from `MacieSession` to `Session` — a breaking rename for a
+ * resource whose schema had not moved. Adding a resource does the same in
+ * reverse: `AWS::QuickSight::Space` appearing renamed `AWS::SageMaker::Space`
+ * from `Space` to `SageMakerSpace`.
+ *
+ * Worse, it is reversible. These are read-only registry types that come and go,
+ * so a name could flip back on the next upgrade and break consumers again.
+ *
+ * Reserved names invert the bias: a name that has already shipped belongs to
+ * the type that shipped it, and a newcomer colliding with it gets qualified
+ * instead. A published name then changes only when its own type disappears,
+ * which is a genuine breaking change rather than an incidental one.
  */
 
 /**
@@ -35,6 +55,40 @@ export interface NamingConfig {
   shortName: (typeName: string) => string;
   /** Extract the service name from a type name (e.g. "Vendor::Service::Resource" → "Service"). */
   serviceName: (typeName: string) => string;
+  /**
+   * chant #1459 — spec type name → the TypeScript name this lexicon has
+   * already published for it, normally read from the committed
+   * `surface.snapshot.json` via {@link reservedNamesFromSnapshot}.
+   *
+   * Claimed before short names are contested, so a shipped name is not taken
+   * away from its owner by an unrelated upstream change. Omit for a lexicon
+   * with no published surface yet; an entry for a type that is no longer in
+   * the input is ignored, so a removed type frees its name for reuse.
+   */
+  reservedNames?: Record<string, string>;
+}
+
+/**
+ * The names a lexicon has already published, read from a committed surface
+ * snapshot (chant #1459).
+ *
+ * The snapshot is keyed by TypeScript name with the spec type inside, which is
+ * exactly the mapping phase 1a needs, inverted. Only `resource` entries are
+ * reserved: property-type names are derived from their owning resource's name
+ * (phase 5), so pinning the resource pins them, and reserving them separately
+ * would freeze aliases that are meant to follow their parent.
+ */
+export function reservedNamesFromSnapshot(
+  snapshot: { entries?: Record<string, { kind?: string; resourceType?: string }> } | undefined,
+): Record<string, string> {
+  const reserved: Record<string, string> = {};
+  for (const [tsName, entry] of Object.entries(snapshot?.entries ?? {})) {
+    if (entry.kind !== "resource" || !entry.resourceType) continue;
+    // First writer wins: a snapshot that somehow lists one spec type under two
+    // names keeps the earlier, rather than silently preferring iteration order.
+    reserved[entry.resourceType] ??= tsName;
+  }
+  return reserved;
 }
 
 export class NamingStrategy {
@@ -55,6 +109,23 @@ export class NamingStrategy {
       if (name) {
         this.assigned.set(t, name);
         this.usedNames.add(name);
+      }
+    }
+
+    // Phase 1a: claim previously-published names (chant #1459).
+    //
+    // After priority names, which are explicit hand-pinned decisions and still
+    // win, and before any short name is contested. A reserved name whose type
+    // is gone from the input is simply never reached, so its name is released
+    // for whoever legitimately claims it next.
+    for (const t of typeNames) {
+      if (this.assigned.has(t)) continue;
+      const published = config.reservedNames?.[t];
+      // `usedNames` guards the case where a priority name already took it —
+      // an explicit pin outranks history.
+      if (published && !this.usedNames.has(published)) {
+        this.assigned.set(t, published);
+        this.usedNames.add(published);
       }
     }
 
