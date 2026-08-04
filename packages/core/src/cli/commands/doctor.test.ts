@@ -351,3 +351,48 @@ describe("doctorCommand", () => {
     });
   });
 });
+
+/**
+ * #1421 — the sibling of the `tsconfig-paths` check. Both are project settings
+ * that silently break runtime module resolution; this one makes build
+ * parameters read as empty in project source on the run path, so declarations
+ * conditioned on them take their default branch while chant reports success.
+ */
+describe("package-type-module (#1421)", () => {
+  const withPkg = async (pkg: object | undefined, assert: (check: { status: string; message?: string } | undefined) => void): Promise<void> => {
+    await withTestDir(async (testDir) => {
+      if (pkg) writeFileSync(join(testDir, "package.json"), JSON.stringify(pkg));
+      const report = await doctorCommand(testDir);
+      assert(report.checks.find((c) => c.name === "package-type-module"));
+    });
+  };
+
+  test('passes for "type": "module"', async () => {
+    await withPkg({ name: "p", type: "module" }, (check) => {
+      expect(check?.status).toBe("pass");
+    });
+  });
+
+  test('warns for "type": "commonjs", saying what breaks', async () => {
+    await withPkg({ name: "p", type: "commonjs" }, (check) => {
+      expect(check?.status).toBe("warn");
+      expect(check?.message).toContain('"type": "commonjs"');
+      expect(check?.message).toContain("build parameters");
+      expect(check?.message).toContain('Set "type": "module"');
+    });
+  });
+
+  // The easier one to miss: no `type` field is CommonJS too.
+  test("warns when no type field is declared at all", async () => {
+    await withPkg({ name: "p" }, (check) => {
+      expect(check?.status).toBe("warn");
+      expect(check?.message).toContain("no `type` field");
+    });
+  });
+
+  test("says nothing when there is no package.json to judge", async () => {
+    await withPkg(undefined, (check) => {
+      expect(check).toBeUndefined();
+    });
+  });
+});

@@ -11,6 +11,64 @@ import { getProvenance } from "../provenance";
 import type { BuildParamProvenance } from "../provenance";
 import { buildParamValues } from "../build-params";
 import { setBuildParams } from "../params";
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, join, parse } from "node:path";
+
+/**
+ * Warn when resolved build parameters cannot reach project source (#1421).
+ *
+ * chant's core is ESM. When the project is CommonJS — `"type": "commonjs"`, or
+ * no `type` field — tsx loads project source through the CommonJS transform, so
+ * the project's `require` of `params.ts` and core's `import` of it produce two
+ * separate module records. {@link setBuildParams} mutates one object in place;
+ * project source reads the other, and sees `{}`.
+ *
+ * The failure is silence. chant prints `[param] tier = "prod" (cli)` and then
+ * emits the graph for the default branch. `chant graph` is always affected
+ * because it always takes the run path; `chant build --no-fold` likewise. Plain
+ * `chant build` usually escapes because folding substitutes parameters
+ * statically — but a file that falls back to run inside a folded build is wrong
+ * the same way, which is why this warns regardless of `fold`.
+ *
+ * Only fires when parameters were actually resolved, so a CJS project that uses
+ * none is never nagged. `chant doctor`'s `package-type-module` check is the
+ * ambient version of the same advice.
+ *
+ * Best-effort and never throws: a project whose `package.json` cannot be found
+ * or parsed gets no warning rather than a failed build.
+ */
+function warnIfParamsCannotReachProject(path: string, values: Record<string, unknown>): void {
+  if (Object.keys(values).length === 0) return;
+  try {
+    const pkgPath = findPackageJsonUpward(path);
+    if (!pkgPath) return;
+    const pkg = JSON.parse(readFileSync(pkgPath, "utf-8")) as { type?: string };
+    if (pkg.type === "module") return;
+    const found = pkg.type ? `"type": "${pkg.type}"` : "no `type` field";
+    const names = Object.keys(values).sort().join(", ");
+    console.error(
+      `warning: ${pkgPath} has ${found}, but chant is ESM — build parameters (${names}) ` +
+        `will read as empty in project source on the run path, so declarations conditioned ` +
+        `on them take their default branch. Set "type": "module". (chant #1421)`,
+    );
+  } catch {
+    // Unreadable or unparseable package.json — say nothing rather than fail.
+  }
+}
+
+/** Nearest `package.json` at or above `startDir`, or undefined. */
+function findPackageJsonUpward(startDir: string): string | undefined {
+  let dir = startDir;
+  const { root } = parse(dir);
+  for (;;) {
+    const candidate = join(dir, "package.json");
+    if (existsSync(candidate)) return candidate;
+    if (dir === root) return undefined;
+    const parent = dirname(dir);
+    if (parent === dir) return undefined;
+    dir = parent;
+  }
+}
 
 /**
  * Per-file fold-vs-run outcome (chant #1022, epic #1019), populated only
@@ -150,6 +208,7 @@ export async function discover(path: string, options?: DiscoveryOptions): Promis
   // `--watch`) never leaks into a build that supplied none.
   const buildParamValuesMap = buildParamValues(options?.buildParams ?? []);
   setBuildParams(buildParamValuesMap);
+  warnIfParamsCannotReachProject(path, buildParamValuesMap);
 
   // Step 1: Scan for TypeScript files
   const files = await findInfraFiles(path);
