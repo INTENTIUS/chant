@@ -85,8 +85,15 @@ vi.mock("../../config", async () => {
     loadChantConfigUpward: (...a: unknown[]) => loadChantConfigUpwardMock(...a),
   };
 });
+const buildMock = vi.fn();
 vi.mock("../../build", () => ({
-  build: () => Promise.resolve({ errors: [] }),
+  // Forwards its arguments so a test can assert what the live path passed —
+  // `buildParams` in particular (#1483), the same reason `discover` above
+  // forwards for #1359.
+  build: (...a: unknown[]) => {
+    buildMock(...a);
+    return Promise.resolve({ errors: [] });
+  },
   partitionByLexicon: () => ({}),
   computeStackGraph: () => ({}),
 }));
@@ -136,6 +143,7 @@ describe("runGraph", () => {
     // Default: no components — the single-stack --live path most tests exercise.
     discoverComponentsMock.mockResolvedValue({ components: new Map(), sourceFiles: [], errors: [] });
     observeMock.mockReset();
+    buildMock.mockReset();
     loadPluginsMock.mockReset();
     resolveLexMock.mockReset();
     loadChantConfigMock.mockReset();
@@ -480,6 +488,48 @@ describe("runGraph", () => {
   });
 
   describe("live graph (--live)", () => {
+    // #1483 — the live path builds the source to learn which entities to
+    // observe, and did so on default parameters while the declared overlay
+    // resolved the caller's. For a project whose parameters choose *which
+    // resources exist* — a tier, a size, a profile — that observed one estate
+    // and compared it against another, so every resource the real parameter
+    // declares read as absent and every resource the default declares read as
+    // pending. A confidently wrong overlay, not an empty one.
+    describe("build-time parameters reach the observed build (#1483)", () => {
+      const liveWithTier = async (param?: string[]) => {
+        loadChantConfigUpwardMock.mockResolvedValue({
+          config: { buildParams: { tier: { type: "string", enum: ["light", "prod"], default: "light" } } },
+        });
+        resolveLexMock.mockResolvedValue(["aws"]);
+        loadPluginsMock.mockResolvedValue([
+          { name: "aws", serializer: {}, emulator: awsEmulatorStub, describeResources: () => Promise.resolve({}) },
+        ]);
+        observeMock.mockResolvedValue({ observations: [], errors: [], warnings: [] });
+        return runGraph({
+          args: makeArgs({ format: "ir", live: true, env: "prod", ...(param ? { param } : {}) }),
+          plugins: [],
+          serializers: [],
+        });
+      };
+
+      const paramsOf = (call: unknown[]) =>
+        (call[3] as { buildParams?: Array<{ name: string; value: unknown }> } | undefined)?.buildParams;
+
+      test("--param reaches the build the observation is scoped from", async () => {
+        expect(await liveWithTier(["tier=prod"])).toBe(0);
+        expect(paramsOf(buildMock.mock.calls[0]!)).toContainEqual(
+          expect.objectContaining({ name: "tier", value: "prod" }),
+        );
+      });
+
+      test("a declared default reaches it too, rather than nothing at all", async () => {
+        expect(await liveWithTier()).toBe(0);
+        expect(paramsOf(buildMock.mock.calls[0]!)).toContainEqual(
+          expect.objectContaining({ name: "tier", value: "light" }),
+        );
+      });
+    });
+
     // Regression: `graph` is not `requiresPlugins`, so `ctx.plugins` is empty. The
     // live path must load the project's plugins itself — otherwise it wrongly
     // reports "No lexicons implement describeResources" and observes nothing.

@@ -144,7 +144,22 @@ async function runGraphLive(
 
   // Build to get each lexicon's entity names + output (the scope
   // describeResources needs), mirroring `chant lifecycle snapshot`.
-  const buildResult = await build(resolve(args.src ?? config.sourceDir ?? "."), plugins.map((p) => p.serializer));
+  //
+  // With the same build params the source graph resolves (#1483). Without
+  // them this build ran on defaults while the declared overlay below ran on
+  // the caller's, so a project whose parameters choose *which resources
+  // exist* — a tier, a size, a profile — observed one estate and compared it
+  // against another. Every resource the real parameter declares read as
+  // absent and every resource the default declares read as pending, which is
+  // a confidently wrong overlay rather than an empty one.
+  const liveBuildParams = await graphBuildParams(ctx, projectPath);
+  if (!liveBuildParams) return 1;
+  const buildResult = await build(
+    resolve(args.src ?? config.sourceDir ?? "."),
+    plugins.map((p) => p.serializer),
+    undefined,
+    { buildParams: liveBuildParams },
+  );
   if (buildResult.errors.length > 0) {
     console.error(formatError({ message: "Build failed — fix errors before graphing live state" }));
     return 1;
