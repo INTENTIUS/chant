@@ -25,6 +25,11 @@ export async function validate(opts?: { basePath?: string }): Promise<ValidateRe
     lexiconJsonFilename: "lexicon-aws.json",
     requiredNames: REQUIRED_NAMES,
     basePath,
+    // chant #1473 — this is the release gate for aws. `prepack` regenerates
+    // from a CloudFormation archive that is republished several times a day,
+    // so the spec pin cannot decide whether a build is safe to ship; what must
+    // match the reviewed baseline is the API that comes out.
+    checkSurfaceSnapshot: true,
     coverageThresholds: {
       minPropertyPct: 1,
       minLifecyclePct: 1,
