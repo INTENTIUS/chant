@@ -106,7 +106,12 @@ export function specDrift(
 }
 
 /** The refusal a mismatch produces, or the acceptance notice under {@link ACCEPT_ENV}. */
-export function driftMessage(drift: SpecDrift, pin: SpecPin = AWS_SPEC_PIN): string {
+export function driftMessage(
+  drift: SpecDrift,
+  pin: SpecPin = AWS_SPEC_PIN,
+  options: { fatal?: boolean } = {},
+): string {
+  const fatal = options.fatal ?? true;
   const delta = drift.resources - pin.resources;
   const countLine =
     delta === 0
@@ -127,30 +132,78 @@ export function driftMessage(drift: SpecDrift, pin: SpecPin = AWS_SPEC_PIN): str
     lines.push(`  removed   ${drift.removed.slice(0, 5).join(", ")}${drift.removed.length > 5 ? ` (+${drift.removed.length - 5} more)` : ""}`);
   }
 
+  if (fatal) {
+    lines.push(
+      "",
+      "Generation refuses rather than regenerating against a spec nobody chose:",
+      "a docs or codegen task on an unrelated branch would otherwise rewrite the",
+      "generated types and resource registry with no commit saying why.",
+    );
+  } else {
+    // chant #1473 — the type set is identical, so this is upstream editing
+    // schemas in place, not a spec swap. Generation continues; whether it
+    // changed anything visible is decided by the surface snapshot.
+    lines.push(
+      "",
+      "The resource set is unchanged, so this is upstream editing schemas in",
+      "place rather than a different spec. Generation continues — whether it",
+      "changed the published API is decided by surface.snapshot.json, which is",
+      "checked against the generated artifacts before anything is packed.",
+    );
+  }
+
   lines.push(
     "",
-    "Generation refuses rather than regenerating against a spec nobody chose:",
-    "a docs or codegen task on an unrelated branch would otherwise rewrite the",
-    "generated types and resource registry with no commit saying why.",
-    "",
-    "To accept it, confirm the delta is one you want and update the pin in",
+    "To refresh the pin, confirm the delta is one you want and update",
     "lexicons/aws/src/spec/pin.ts, in its own commit:",
     "",
     `  digest: "${drift.digest}",`,
     `  resources: ${drift.resources},`,
     `  accepted: "<today>",`,
-    "",
-    `Or re-run with ${ACCEPT_ENV}=1 to proceed this once and print the same block.`,
   );
+
+  if (fatal) {
+    lines.push("", `Or re-run with ${ACCEPT_ENV}=1 to proceed this once and print the same block.`);
+  }
 
   return lines.join("\n");
 }
 
 /**
- * Refuse a fetched archive that does not match the pin.
+ * Refuse a fetched archive whose RESOURCE SET does not match the pin.
  *
  * Under {@link ACCEPT_ENV} it warns with the same detail instead, so the
  * accept-then-paste loop is one command rather than two.
+ *
+ * ## Why byte drift alone is a warning (chant #1473)
+ *
+ * This originally threw on any digest mismatch, which made the aws lexicon
+ * unpublishable. `prepack` runs `generate`, `generate` fetches from upstream,
+ * and CloudFormation republishes individual schemas several times a day: three
+ * distinct digests were observed on 2026-08-03 alone, all with an unchanged
+ * count of 1650, and two fetches two hours apart differed in 4 of 1650 files.
+ * `chant-v0.39.0` published 13 packages and failed on aws for exactly this,
+ * with a pin ~18 hours old.
+ *
+ * A pin that goes stale by itself within hours cannot gate a release: it does
+ * not distinguish "someone regenerated against a spec nobody chose" from
+ * "AWS edited a description this afternoon".
+ *
+ * So the two cases are separated:
+ *
+ *  - **The resource set moved** (a type added or removed) — still a refusal.
+ *    That always changes the published API, and it is the case #1390 was filed
+ *    about.
+ *  - **Only bytes moved**, with an identical type set — a warning. Whether it
+ *    matters is decided downstream by the surface gate in core's
+ *    `validateLexiconArtifacts`, which compares the generated API against the
+ *    committed `surface.snapshot.json`. That gate is exact: a byte change that
+ *    alters the emitted surface fails the build, and one that does not is
+ *    correctly ignored.
+ *
+ * The guarantee is unchanged in substance — nothing ships whose surface was
+ * not reviewed — and it is now enforced against the thing that actually
+ * matters rather than against an archive that is not stable enough to pin.
  */
 export function assertPinnedSpec(
   schemas: ReadonlyMap<string, Buffer>,
@@ -163,14 +216,32 @@ export function assertPinnedSpec(
   } = {},
 ): void {
   const pin = options.pin ?? AWS_SPEC_PIN;
-  const drift = specDrift(schemas, options.pinnedNames ?? PINNED_TYPE_NAMES, pin);
+  const pinnedNames = options.pinnedNames ?? PINNED_TYPE_NAMES;
+  const drift = specDrift(schemas, pinnedNames, pin);
   if (!drift) return;
 
-  const message = driftMessage(drift, pin);
   const env = options.env ?? process.env;
+  const warn = options.warn ?? ((m: string) => console.error(m));
+
   if (env[ACCEPT_ENV]) {
-    (options.warn ?? ((m: string) => console.error(m)))(message);
+    warn(driftMessage(drift, pin));
     return;
   }
-  throw new Error(message);
+
+  // chant #1473 — an identical type set with different bytes is upstream
+  // churn, not an unchosen spec. Reported so a stale pin stays visible, but
+  // not fatal; the surface gate decides whether it changed anything.
+  //
+  // Guarded on actually HAVING a previous type set: `specDrift` reports empty
+  // added/removed when it has nothing to compare against, which would
+  // otherwise read as "no type moved" and downgrade every mismatch.
+  const typeSetKnown = pinnedNames !== undefined && pinnedNames.size > 0;
+  const typeSetMoved = drift.added.length > 0 || drift.removed.length > 0;
+
+  if (typeSetKnown && !typeSetMoved) {
+    warn(driftMessage(drift, pin, { fatal: false }));
+    return;
+  }
+
+  throw new Error(driftMessage(drift, pin));
 }

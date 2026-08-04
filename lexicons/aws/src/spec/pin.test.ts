@@ -161,3 +161,88 @@ describe("the committed pin", () => {
     expect(PINNED_TYPE_NAMES.has("AWS::IAM::Role")).toBe(true);
   });
 });
+
+/**
+ * chant #1473 — byte churn is a warning, a moved resource set is still a
+ * refusal. The aws lexicon became unpublishable because upstream republishes
+ * schemas several times a day and any digest mismatch was fatal.
+ */
+describe("byte churn vs a moved resource set (#1473)", () => {
+  const pinned = archive("AWS::S3::Bucket", "AWS::IAM::Role");
+  const pin = pinFor(pinned);
+  const names = new Set(pinned.keys());
+
+  function capture(schemas: Map<string, Buffer>) {
+    const warnings: string[] = [];
+    let threw: Error | undefined;
+    try {
+      assertPinnedSpec(schemas, { pin, pinnedNames: names, env: {}, warn: (m) => warnings.push(m) });
+    } catch (err) {
+      threw = err as Error;
+    }
+    return { warnings, threw };
+  }
+
+  test("same type set, different bytes — warns and proceeds", () => {
+    // AWS editing a description in place. Three digests were observed in one
+    // day this way, all with an unchanged resource count.
+    const edited = new Map(pinned);
+    edited.set("AWS::S3::Bucket", schema("AWS::S3::Bucket", "reworded"));
+
+    const { warnings, threw } = capture(edited);
+    expect(threw).toBeUndefined();
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain("resource set is unchanged");
+    expect(warnings[0]).toContain("surface.snapshot.json");
+  });
+
+  test("a type removed — still refuses", () => {
+    const { threw } = capture(archive("AWS::S3::Bucket"));
+    expect(threw?.message).toContain("Generation refuses");
+    expect(threw?.message).toContain("removed");
+  });
+
+  test("a type added — still refuses", () => {
+    const { threw } = capture(archive("AWS::S3::Bucket", "AWS::IAM::Role", "AWS::SQS::Queue"));
+    expect(threw?.message).toContain("Generation refuses");
+    expect(threw?.message).toContain("added");
+  });
+
+  test("an unchanged archive neither warns nor throws", () => {
+    const { warnings, threw } = capture(new Map(pinned));
+    expect(threw).toBeUndefined();
+    expect(warnings).toEqual([]);
+  });
+
+  test("with no previous type set to compare, a mismatch stays fatal", () => {
+    // `specDrift` reports empty added/removed when it cannot compare, which
+    // would otherwise read as "no type moved" and downgrade every mismatch.
+    const edited = new Map(pinned);
+    edited.set("AWS::S3::Bucket", schema("AWS::S3::Bucket", "reworded"));
+
+    expect(() =>
+      assertPinnedSpec(edited, { pin, pinnedNames: new Set(), env: {}, warn: () => {} }),
+    ).toThrow(/Generation refuses/);
+  });
+
+  test("the accept env still short-circuits both cases", () => {
+    const warnings: string[] = [];
+    assertPinnedSpec(archive("AWS::S3::Bucket"), {
+      pin,
+      pinnedNames: names,
+      env: { [ACCEPT_ENV]: "1" },
+      warn: (m) => warnings.push(m),
+    });
+    expect(warnings[0]).toContain(ACCEPT_ENV);
+  });
+
+  test("the non-fatal message still prints a pastable pin block", () => {
+    const edited = new Map(pinned);
+    edited.set("AWS::IAM::Role", schema("AWS::IAM::Role", "reworded"));
+    const { warnings } = capture(edited);
+    expect(warnings[0]).toContain('  digest: "sha256:');
+    expect(warnings[0]).toContain("  resources: 2,");
+    // The one-off escape hatch is meaningless when nothing is being refused.
+    expect(warnings[0]).not.toContain(ACCEPT_ENV);
+  });
+});

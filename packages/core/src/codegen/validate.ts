@@ -8,6 +8,7 @@
 import { existsSync, readFileSync } from "fs";
 import { join } from "path";
 import { computeCoverage, checkThresholds, type CoverageThresholds } from "./coverage";
+import { extractSurface, diffSurface, parseSnapshot, formatDelta } from "./surface-snapshot";
 
 export interface ValidateCheck {
   name: string;
@@ -19,6 +20,12 @@ export interface ValidateResult {
   success: boolean;
   checks: ValidateCheck[];
 }
+
+/**
+ * Set by the publish workflow to arm the release-time surface gate
+ * (chant #1473). Absent in ordinary CI, where upstream drift is expected.
+ */
+export const RELEASE_GATE_ENV = "CHANT_RELEASE_GATE";
 
 export interface LexiconValidationConfig {
   /** Filename of the lexicon JSON (e.g. "lexicon-mydom.json") */
@@ -35,6 +42,32 @@ export interface LexiconValidationConfig {
   requiredNamesMatchSubstring?: boolean;
   /** Base path of the lexicon package */
   basePath: string;
+  /**
+   * chant #1473 — this lexicon's release is gated on the generated API
+   * matching the committed `surface.snapshot.json`.
+   *
+   * Two conditions, both required. The lexicon opts in here, AND
+   * {@link RELEASE_GATE_ENV} is set — which the publish workflow does and
+   * ordinary CI does not.
+   *
+   * The env half is not caution, it is correctness. `validate` runs on every
+   * PR, and the upstream a lexicon generates from can move at any time: the
+   * CloudFormation archive republishes schemas several times a day, and some
+   * of those edits do change the surface. A hard surface check on every PR
+   * would turn any unrelated change red the moment upstream moved, which is
+   * the same trap the spec pin fell into one level down. Drift between
+   * releases is expected and is what the scheduled lexicon-upgrade job exists
+   * to report (#1423).
+   *
+   * What must never happen is *publishing* a surface nobody reviewed. That is
+   * a release-time property, so it is checked at release time.
+   *
+   * Opt-in per lexicon because k8s and azure are currently adrift from their
+   * own baselines (393 and 483 entries, #1475).
+   */
+  checkSurfaceSnapshot?: boolean;
+  /** Environment to read {@link RELEASE_GATE_ENV} from. Defaults to `process.env`; overridden in tests. */
+  env?: NodeJS.ProcessEnv;
   /** Path to the generated directory (defaults to basePath/src/generated) */
   generatedDir?: string;
   /** Coverage thresholds (optional) */
@@ -144,6 +177,47 @@ export async function validateLexiconArtifacts(config: LexiconValidationConfig):
         name: "types-compile",
         ok: false,
         error: `Type-check failed: ${err instanceof Error ? err.message : String(err)}`,
+      });
+    }
+  }
+
+  // Check: the generated API matches the reviewed one (chant #1473).
+  //
+  // This is the gate that makes a release trustworthy. `prepack` regenerates
+  // from upstream, and for aws that upstream republishes schemas several times
+  // a day, so the input can differ from the one whose delta a human accepted.
+  // What must not differ is the API that ships. Comparing the just-generated
+  // artifacts against the committed `surface.snapshot.json` says exactly that,
+  // and says nothing about byte churn that changed no declaration.
+  //
+  // Runs on the artifacts already on disk — no second generation — and is
+  // skipped for a lexicon with no committed snapshot, which is the case for a
+  // new lexicon before its first baseline.
+  const snapshotPath = join(config.basePath, "surface.snapshot.json");
+  const releaseGate = config.checkSurfaceSnapshot && (config.env ?? process.env)[RELEASE_GATE_ENV] === "1";
+  if (releaseGate && lexiconData && existsSync(snapshotPath) && existsSync(dtsPath)) {
+    try {
+      const fresh = extractSurface(readFileSync(lexiconPath, "utf-8"), readFileSync(dtsPath, "utf-8"));
+      const delta = diffSurface(parseSnapshot(readFileSync(snapshotPath, "utf-8")), fresh);
+      const moved = delta.added.length + delta.removed.length + delta.changed.length;
+      checks.push(
+        moved === 0
+          ? { name: "surface-matches-snapshot", ok: true }
+          : {
+              name: "surface-matches-snapshot",
+              ok: false,
+              error:
+                `The generated API differs from the reviewed surface.snapshot.json ` +
+                `(${delta.added.length} added, ${delta.removed.length} removed, ${delta.changed.length} changed). ` +
+                `Accept it deliberately with \`chant dev surface-diff <lexicon> --update-snapshot --bump\`, ` +
+                `never as a side effect of a release.\n${formatDelta(delta)}`,
+            },
+      );
+    } catch (err) {
+      checks.push({
+        name: "surface-matches-snapshot",
+        ok: false,
+        error: `Failed to compare against surface.snapshot.json: ${err instanceof Error ? err.message : String(err)}`,
       });
     }
   }

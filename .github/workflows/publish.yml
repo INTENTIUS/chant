@@ -120,4 +120,12 @@ jobs:
           # record yet (a newly added one) uses it instead of failing the
           # release. See scripts/publish-packages.sh.
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          # chant #1473 — arm the release-time surface gate. `prepack`
+          # regenerates from upstream, so the artifact about to be published is
+          # built from a fetch nobody reviewed; this makes a lexicon that opted
+          # in refuse to ship an API that differs from its committed
+          # surface.snapshot.json. Set here and nowhere else: on an ordinary PR
+          # upstream drift is expected and reported by the scheduled
+          # lexicon-upgrade job, not a reason to fail the build.
+          CHANT_RELEASE_GATE: "1"
         run: bash scripts/publish-packages.sh
