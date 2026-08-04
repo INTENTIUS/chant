@@ -56,8 +56,8 @@ export interface SpecPin {
  * want, and paste the printed pin here in its own commit.
  */
 export const AWS_SPEC_PIN: SpecPin = {
-  digest: "sha256:f2a0f4f2c0685116fa928a01d889b2aa2a03e4f02cd3257b124cbb184f7e533b",
-  resources: 1650,
+  digest: "sha256:30bca5721afaaa891d17f528af4bc9b2fc5f707e34e5c6c78d3afeb6f0f259b8",
+  resources: 1651,
   accepted: "2026-08-04",
 };
 

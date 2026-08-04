@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-08-04T02:29:20.497Z",
+  "generatedAt": "2026-08-04T03:44:14.820Z",
   "entries": {
     "ACL": {
       "kind": "resource",
@@ -9392,6 +9392,10 @@
       "attrs": [
         "Code_SourceLocationArn",
         "Id",
+        "Replicas_*_CanaryState",
+        "Replicas_*_LastModified",
+        "Replicas_*_ReplicationStatus",
+        "Replicas_*_VpcConfig_VpcId",
         "State"
       ],
       "props": [
@@ -9404,8 +9408,10 @@
         "ExecutionRoleArn:true",
         "FailureRetentionPeriod:false",
         "Id:false",
+        "KmsKeyArn:false",
         "Name:true",
         "ProvisionedResourceCleanup:false",
+        "Replicas:false",
         "ResourcesToReplicateTags:false",
         "RunConfig:false",
         "RuntimeVersion:true",
@@ -9446,6 +9452,14 @@
     "Canary_Dependency": {
       "kind": "property",
       "resourceType": "AWS::Synthetics::Canary.Dependency"
+    },
+    "Canary_Replica": {
+      "kind": "property",
+      "resourceType": "AWS::Synthetics::Canary.Replica"
+    },
+    "Canary_ReplicaReplicationStatus": {
+      "kind": "property",
+      "resourceType": "AWS::Synthetics::Canary.ReplicaReplicationStatus"
     },
     "Canary_RetryConfig": {
       "kind": "property",
@@ -57320,6 +57334,10 @@
       "kind": "property",
       "resourceType": "AWS::IoT::MitigationAction.ReplaceDefaultPolicyVersionParams"
     },
+    "Replica": {
+      "kind": "property",
+      "resourceType": "AWS::Synthetics::Canary.Replica"
+    },
     "ReplicaGlobalSecondaryIndexSpecification": {
       "kind": "property",
       "resourceType": "AWS::DynamoDB::GlobalTable.ReplicaGlobalSecondaryIndexSpecification"
@@ -57353,6 +57371,10 @@
     "ReplicaRegion": {
       "kind": "property",
       "resourceType": "AWS::SecretsManager::Secret.ReplicaRegion"
+    },
+    "ReplicaReplicationStatus": {
+      "kind": "property",
+      "resourceType": "AWS::Synthetics::Canary.ReplicaReplicationStatus"
     },
     "ReplicaSSESpecification": {
       "kind": "property",
@@ -65959,6 +65981,31 @@
     "SnapshotManagement": {
       "kind": "property",
       "resourceType": "AWS::S3Tables::Table.SnapshotManagement"
+    },
+    "SnapshotSchedule": {
+      "kind": "resource",
+      "resourceType": "AWS::Redshift::SnapshotSchedule",
+      "attrs": [
+        "Arn",
+        "AssociatedClusterCount"
+      ],
+      "props": [
+        "Arn:false",
+        "AssociatedClusterCount:false",
+        "ScheduleDefinitions:true",
+        "ScheduleDescription:false",
+        "ScheduleIdentifier:true",
+        "Tags:false"
+      ],
+      "createOnly": [
+        "ScheduleDescription",
+        "ScheduleIdentifier"
+      ],
+      "taggable": true
+    },
+    "SnapshotSchedule_Tag": {
+      "kind": "property",
+      "resourceType": "AWS::Redshift::SnapshotSchedule.Tag"
     },
     "SnowflakeBufferingHints": {
       "kind": "property",
