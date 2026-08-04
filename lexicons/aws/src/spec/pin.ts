@@ -235,13 +235,20 @@ export function assertPinnedSpec(
   // Guarded on actually HAVING a previous type set: `specDrift` reports empty
   // added/removed when it has nothing to compare against, which would
   // otherwise read as "no type moved" and downgrade every mismatch.
-  const typeSetKnown = pinnedNames !== undefined && pinnedNames.size > 0;
-  const typeSetMoved = drift.added.length > 0 || drift.removed.length > 0;
-
-  if (typeSetKnown && !typeSetMoved) {
-    warn(driftMessage(drift, pin, { fatal: false }));
-    return;
-  }
-
-  throw new Error(driftMessage(drift, pin));
+  // chant #1473 — the pin reports, it does not gate.
+  //
+  // Refusing here made every aws PR hostage to CloudFormation: the archive
+  // gains and edits types through the day, and `generate` runs on every CI
+  // job, so an unrelated change goes red the moment upstream moves. Both the
+  // 0.39.0 and 0.40.1 releases died this way, and a PR *accepting* the drift
+  // was itself refused by a newer drift that arrived while its CI queued.
+  //
+  // Enforcement lives where the consequence is: core's
+  // `validateLexiconArtifacts` compares the generated API against the reviewed
+  // `surface.snapshot.json` and, armed by CHANT_RELEASE_GATE, refuses to
+  // publish a surface nobody reviewed. A new or removed type always shows up
+  // there, so nothing is lost by reporting rather than throwing here — while a
+  // description edit, which changes the digest and no declaration, stops
+  // costing a red build.
+  warn(driftMessage(drift, pin, { fatal: drift.added.length > 0 || drift.removed.length > 0 }));
 }
