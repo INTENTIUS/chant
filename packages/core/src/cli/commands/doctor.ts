@@ -169,6 +169,46 @@ export async function doctorCommand(path: string): Promise<DoctorReport> {
     }
   }
 
+  // Check 8b: package.json declares "type": "module" (#1421)
+  //
+  // Sibling of the tsconfig-paths check above, and filed for the same reason:
+  // both are project settings that silently break runtime module resolution.
+  //
+  // chant's core is ESM. When the project is CJS — `"type": "commonjs"`, or no
+  // `type` field at all — tsx loads project source through the CommonJS
+  // transform, so the project's `require` of `params.ts` and core's `import` of
+  // it produce two separate module records. `setBuildParams` mutates one object
+  // in place; project source reads the other, and sees `{}`.
+  //
+  // The result is a silent wrong answer, not a failure: chant prints
+  // `[param] tier = "prod" (cli)` and then emits the graph for the default. It
+  // hits `chant graph` (always the run path) and `chant build --no-fold`; plain
+  // `chant build` escapes only because folding substitutes parameters
+  // statically and never reads the shared object.
+  const projectPkgPath = join(projectPath, "package.json");
+  if (existsSync(projectPkgPath)) {
+    try {
+      const pkg = JSON.parse(readFileSync(projectPkgPath, "utf-8")) as { type?: string };
+      if (pkg.type === "module") {
+        checks.push({ name: "package-type-module", status: "pass" });
+      } else {
+        const found = pkg.type ? `"type": "${pkg.type}"` : "no `type` field";
+        checks.push({
+          name: "package-type-module",
+          status: "warn",
+          message:
+            `package.json has ${found} — chant is ESM, and a CommonJS project reads build ` +
+            `parameters as empty on the run path (\`chant graph\`, \`chant build --no-fold\`). ` +
+            `Declarations conditioned on \`params.<name>\` silently take their default branch. ` +
+            `Set "type": "module".`,
+        });
+      }
+    } catch (e) {
+      debug("project package.json parse failed:", e);
+      checks.push({ name: "package-type-module", status: "warn", message: "Could not parse package.json" });
+    }
+  }
+
   // Check 9: .mcp.json exists and has chant entry
   const mcpPath = join(projectPath, ".mcp.json");
   if (!existsSync(mcpPath)) {
