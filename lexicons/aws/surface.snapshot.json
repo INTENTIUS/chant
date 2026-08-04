@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-07-28T03:15:11.835Z",
+  "generatedAt": "2026-08-04T02:29:20.497Z",
   "entries": {
     "ACL": {
       "kind": "resource",
@@ -1647,6 +1647,14 @@
       "kind": "property",
       "resourceType": "AWS::MediaTailor::PlaybackConfiguration.AdsInteractionLog"
     },
+    "AdsPersonalizationConcurrency": {
+      "kind": "property",
+      "resourceType": "AWS::MediaTailor::PlaybackConfiguration.AdsPersonalizationConcurrency"
+    },
+    "AdsPersonalizationTimeouts": {
+      "kind": "property",
+      "resourceType": "AWS::MediaTailor::PlaybackConfiguration.AdsPersonalizationTimeouts"
+    },
     "AdvancedBackupSettingResourceType": {
       "kind": "property",
       "resourceType": "AWS::Backup::BackupPlan.AdvancedBackupSettingResourceType"
@@ -1891,6 +1899,7 @@
         "EvaluationCriteria:false",
         "EvaluationInterval:false",
         "EvaluationPeriods:false",
+        "EvaluationWindow:false",
         "ExtendedStatistic:false",
         "InsufficientDataActions:false",
         "MetricName:false",
@@ -2021,6 +2030,10 @@
       "kind": "property",
       "resourceType": "AWS::CloudWatch::Alarm.EvaluationCriteria"
     },
+    "Alarm_EvaluationWindow": {
+      "kind": "property",
+      "resourceType": "AWS::CloudWatch::Alarm.EvaluationWindow"
+    },
     "Alarm_Metric": {
       "kind": "property",
       "resourceType": "AWS::CloudWatch::Alarm.Metric"
@@ -2036,6 +2049,10 @@
     "Alarm_Tag": {
       "kind": "property",
       "resourceType": "AWS::CloudWatch::Alarm.Tag"
+    },
+    "Alarm_WallClockWindow": {
+      "kind": "property",
+      "resourceType": "AWS::CloudWatch::Alarm.WallClockWindow"
     },
     "Algorithm": {
       "kind": "resource",
@@ -2114,108 +2131,6 @@
     "AliasRoutingConfiguration": {
       "kind": "property",
       "resourceType": "AWS::Lambda::Alias.AliasRoutingConfiguration"
-    },
-    "AllGroupMemberships": {
-      "kind": "resource",
-      "resourceType": "AWS::IdentityStore::AllGroupMemberships",
-      "attrs": [
-        "Arn",
-        "CreatedAt",
-        "CreatedBy",
-        "MembershipId",
-        "UpdatedAt",
-        "UpdatedBy"
-      ],
-      "props": [
-        "Arn:false",
-        "CreatedAt:false",
-        "CreatedBy:false",
-        "GroupId:false",
-        "IdentityStoreId:false",
-        "MemberId:false",
-        "MembershipId:false",
-        "UpdatedAt:false",
-        "UpdatedBy:false"
-      ],
-      "createOnly": [
-        "GroupId",
-        "IdentityStoreId",
-        "MemberId"
-      ]
-    },
-    "AllImageBuildVersions": {
-      "kind": "resource",
-      "resourceType": "AWS::ImageBuilder::AllImageBuildVersions",
-      "attrs": [
-        "Arn",
-        "BuildNumber",
-        "BuildType",
-        "DateCreated",
-        "EnhancedImageMetadataEnabled",
-        "ExecutionRole",
-        "ImageTestsConfiguration",
-        "ImageVersionArn",
-        "Name",
-        "OsVersion",
-        "Platform",
-        "State",
-        "Tags",
-        "Type",
-        "Version"
-      ],
-      "props": [
-        "Arn:false",
-        "BuildNumber:false",
-        "BuildType:false",
-        "DateCreated:false",
-        "EnhancedImageMetadataEnabled:false",
-        "ExecutionRole:false",
-        "ImageTestsConfiguration:false",
-        "ImageVersionArn:false",
-        "Name:false",
-        "OsVersion:false",
-        "Platform:false",
-        "State:false",
-        "Tags:false",
-        "Type:false",
-        "Version:false"
-      ],
-      "taggable": true
-    },
-    "AllWorkflowBuildVersions": {
-      "kind": "resource",
-      "resourceType": "AWS::ImageBuilder::AllWorkflowBuildVersions",
-      "attrs": [
-        "Arn",
-        "BuildNumber",
-        "ChangeDescription",
-        "Data",
-        "DateCreated",
-        "Description",
-        "Name",
-        "Owner",
-        "Parameters",
-        "Tags",
-        "Version",
-        "WorkflowType",
-        "WorkflowVersionArn"
-      ],
-      "props": [
-        "Arn:false",
-        "BuildNumber:false",
-        "ChangeDescription:false",
-        "Data:false",
-        "DateCreated:false",
-        "Description:false",
-        "Name:false",
-        "Owner:false",
-        "Parameters:false",
-        "Tags:false",
-        "Version:false",
-        "WorkflowType:false",
-        "WorkflowVersionArn:false"
-      ],
-      "taggable": true
     },
     "AllowList": {
       "kind": "resource",
@@ -5268,30 +5183,6 @@
       "kind": "property",
       "resourceType": "AWS::KinesisAnalyticsV2::Application.ApplicationMaintenanceConfiguration"
     },
-    "ApplicationProvider": {
-      "kind": "resource",
-      "resourceType": "AWS::SSO::ApplicationProvider",
-      "attrs": [
-        "ApplicationProviderArn",
-        "DisplayData",
-        "FederationProtocol",
-        "ResourceServerConfig"
-      ],
-      "props": [
-        "ApplicationProviderArn:false",
-        "DisplayData:false",
-        "FederationProtocol:false",
-        "ResourceServerConfig:false"
-      ]
-    },
-    "ApplicationProvider_DisplayData": {
-      "kind": "property",
-      "resourceType": "AWS::SSO::ApplicationProvider.DisplayData"
-    },
-    "ApplicationProvider_ResourceServerConfig": {
-      "kind": "property",
-      "resourceType": "AWS::SSO::ApplicationProvider.ResourceServerConfig"
-    },
     "ApplicationResourceLifecycleConfig": {
       "kind": "property",
       "resourceType": "AWS::ElasticBeanstalk::Application.ApplicationResourceLifecycleConfig"
@@ -5906,34 +5797,6 @@
     "AthenaParameters": {
       "kind": "property",
       "resourceType": "AWS::QuickSight::DataSource.AthenaParameters"
-    },
-    "AthenaSession": {
-      "kind": "resource",
-      "resourceType": "AWS::Athena::Session",
-      "attrs": [
-        "Arn",
-        "EngineConfiguration_AdditionalConfigs",
-        "EngineConfiguration_SparkProperties",
-        "EngineVersion",
-        "SessionId"
-      ],
-      "props": [
-        "Arn:false",
-        "EngineConfiguration:true",
-        "EngineVersion:false",
-        "ExecutionRole:false",
-        "SessionId:false",
-        "WorkGroup:true"
-      ],
-      "createOnly": [
-        "EngineConfiguration",
-        "ExecutionRole",
-        "WorkGroup"
-      ]
-    },
-    "AthenaSession_EngineConfiguration": {
-      "kind": "property",
-      "resourceType": "AWS::Athena::Session.EngineConfiguration"
     },
     "AtlassianOauth2ProviderConfigInput": {
       "kind": "property",
@@ -6972,28 +6835,6 @@
     "BCMDataExportsExport_S3Destination": {
       "kind": "property",
       "resourceType": "AWS::BCMDataExports::Export.S3Destination"
-    },
-    "BCMDataExportsTable": {
-      "kind": "resource",
-      "resourceType": "AWS::BCMDataExports::Table",
-      "attrs": [
-        "Arn",
-        "Description",
-        "Schema"
-      ],
-      "props": [
-        "Arn:false",
-        "Description:false",
-        "Schema:false",
-        "TableName:true"
-      ],
-      "createOnly": [
-        "TableName"
-      ]
-    },
-    "BCMDataExportsTable_Column": {
-      "kind": "property",
-      "resourceType": "AWS::BCMDataExports::Table.Column"
     },
     "BackendDefaults": {
       "kind": "property",
@@ -8131,7 +7972,9 @@
         "AutoBuildBotLocales:false",
         "BotFileS3Location:false",
         "BotLocales:false",
+        "BotMembers:false",
         "BotTags:false",
+        "BotType:false",
         "DataPrivacy:true",
         "Description:false",
         "ErrorLogSettings:false",
@@ -8142,6 +7985,9 @@
         "RoleArn:true",
         "TestBotAliasSettings:false",
         "TestBotAliasTags:false"
+      ],
+      "createOnly": [
+        "BotType"
       ],
       "taggable": true
     },
@@ -8183,6 +8029,10 @@
       "kind": "property",
       "resourceType": "AWS::Lex::Bot.BotLocale"
     },
+    "BotMember": {
+      "kind": "property",
+      "resourceType": "AWS::Lex::Bot.BotMember"
+    },
     "BotVersion": {
       "kind": "resource",
       "resourceType": "AWS::Lex::BotVersion",
@@ -8210,6 +8060,10 @@
     "Bot_BotLocale": {
       "kind": "property",
       "resourceType": "AWS::Lex::Bot.BotLocale"
+    },
+    "Bot_BotMember": {
+      "kind": "property",
+      "resourceType": "AWS::Lex::Bot.BotMember"
     },
     "Bot_CompositeSlotTypeSetting": {
       "kind": "property",
@@ -8580,22 +8434,6 @@
     "Broker_User": {
       "kind": "property",
       "resourceType": "AWS::AmazonMQ::Broker.User"
-    },
-    "Browser": {
-      "kind": "resource",
-      "resourceType": "AWS::BedrockAgentCore::Browser",
-      "attrs": [
-        "BrowserArn",
-        "BrowserId",
-        "Name",
-        "Status"
-      ],
-      "props": [
-        "BrowserArn:false",
-        "BrowserId:false",
-        "Name:false",
-        "Status:false"
-      ]
     },
     "BrowserConfig": {
       "kind": "property",
@@ -10492,6 +10330,69 @@
       ],
       "taggable": true
     },
+    "Channel": {
+      "kind": "resource",
+      "resourceType": "AWS::MSK::Channel",
+      "attrs": [
+        "ChannelArn",
+        "StateInfo",
+        "Status"
+      ],
+      "props": [
+        "ChannelArn:false",
+        "ChannelName:true",
+        "ClusterArn:false",
+        "EncryptionConfiguration:false",
+        "IcebergDestinationConfiguration:false",
+        "LoggingInfo:false",
+        "S3DestinationConfiguration:false",
+        "StateInfo:false",
+        "Status:false",
+        "Tags:false",
+        "TopicConfigurationList:true"
+      ],
+      "createOnly": [
+        "ChannelName",
+        "ClusterArn",
+        "EncryptionConfiguration",
+        "IcebergDestinationConfiguration/AppendOnly",
+        "IcebergDestinationConfiguration/Catalog",
+        "IcebergDestinationConfiguration/Catalog/CatalogArn",
+        "IcebergDestinationConfiguration/Catalog/WarehouseLocation",
+        "IcebergDestinationConfiguration/CompressionType",
+        "IcebergDestinationConfiguration/DeadLetterQueueS3",
+        "IcebergDestinationConfiguration/DeadLetterQueueS3/BucketArn",
+        "IcebergDestinationConfiguration/DeadLetterQueueS3/ErrorOutputPrefix",
+        "IcebergDestinationConfiguration/DeadLetterQueueS3/ExpectedBucketOwner",
+        "IcebergDestinationConfiguration/DestinationTableList",
+        "IcebergDestinationConfiguration/DestinationTableList/*/DestinationDatabaseName",
+        "IcebergDestinationConfiguration/DestinationTableList/*/DestinationTableName",
+        "IcebergDestinationConfiguration/DestinationTableList/*/PartitionSpec",
+        "IcebergDestinationConfiguration/DestinationTableList/*/PartitionSpec/PartitionStrategy",
+        "IcebergDestinationConfiguration/DestinationTableList/*/PartitionSpec/SourceList",
+        "IcebergDestinationConfiguration/DestinationTableList/*/PartitionSpec/SourceList/*/SourceName",
+        "IcebergDestinationConfiguration/SchemaEvolution",
+        "IcebergDestinationConfiguration/SchemaEvolution/EnableSchemaEvolution",
+        "IcebergDestinationConfiguration/ServiceExecutionRoleArn",
+        "IcebergDestinationConfiguration/TableCreation",
+        "IcebergDestinationConfiguration/TableCreation/EnableTableCreation",
+        "LoggingInfo",
+        "S3DestinationConfiguration/DeadLetterQueueS3",
+        "S3DestinationConfiguration/DeadLetterQueueS3/BucketArn",
+        "S3DestinationConfiguration/DeadLetterQueueS3/ErrorOutputPrefix",
+        "S3DestinationConfiguration/DeadLetterQueueS3/ExpectedBucketOwner",
+        "S3DestinationConfiguration/ServiceExecutionRoleArn",
+        "S3DestinationConfiguration/Storage",
+        "S3DestinationConfiguration/Storage/BucketArn",
+        "S3DestinationConfiguration/Storage/CompressionType",
+        "S3DestinationConfiguration/Storage/ExpectedBucketOwner",
+        "S3DestinationConfiguration/Storage/OutputKeyTemplate",
+        "S3DestinationConfiguration/Storage/OutputPrefix",
+        "S3DestinationConfiguration/Storage/StorageClass",
+        "TopicConfigurationList"
+      ],
+      "taggable": true
+    },
     "ChannelAssociation": {
       "kind": "resource",
       "resourceType": "AWS::Notifications::ChannelAssociation",
@@ -10536,6 +10437,10 @@
     "ChannelGroup_Tag": {
       "kind": "property",
       "resourceType": "AWS::MediaPackageV2::ChannelGroup.Tag"
+    },
+    "ChannelLoggingInfo": {
+      "kind": "property",
+      "resourceType": "AWS::MSK::Channel.ChannelLoggingInfo"
     },
     "ChannelNamespace": {
       "kind": "resource",
@@ -10604,6 +10509,10 @@
       "kind": "property",
       "resourceType": "AWS::SageMaker::Algorithm.ChannelSpecification"
     },
+    "ChannelStateInfo": {
+      "kind": "property",
+      "resourceType": "AWS::MSK::Channel.ChannelStateInfo"
+    },
     "ChannelStorage": {
       "kind": "property",
       "resourceType": "AWS::IoTAnalytics::Channel.ChannelStorage"
@@ -10611,6 +10520,78 @@
     "ChannelSubtypeConfig": {
       "kind": "property",
       "resourceType": "AWS::ConnectCampaignsV2::Campaign.ChannelSubtypeConfig"
+    },
+    "Channel_Catalog": {
+      "kind": "property",
+      "resourceType": "AWS::MSK::Channel.Catalog"
+    },
+    "Channel_ChannelLoggingInfo": {
+      "kind": "property",
+      "resourceType": "AWS::MSK::Channel.ChannelLoggingInfo"
+    },
+    "Channel_ChannelStateInfo": {
+      "kind": "property",
+      "resourceType": "AWS::MSK::Channel.ChannelStateInfo"
+    },
+    "Channel_CloudWatchLogsLogDestination": {
+      "kind": "property",
+      "resourceType": "AWS::MSK::Channel.CloudWatchLogsLogDestination"
+    },
+    "Channel_DeadLetterQueueS3": {
+      "kind": "property",
+      "resourceType": "AWS::MSK::Channel.DeadLetterQueueS3"
+    },
+    "Channel_DestinationTable": {
+      "kind": "property",
+      "resourceType": "AWS::MSK::Channel.DestinationTable"
+    },
+    "Channel_EncryptionConfiguration": {
+      "kind": "property",
+      "resourceType": "AWS::MSK::Channel.EncryptionConfiguration"
+    },
+    "Channel_FirehoseLogDestination": {
+      "kind": "property",
+      "resourceType": "AWS::MSK::Channel.FirehoseLogDestination"
+    },
+    "Channel_IcebergDestinationConfiguration": {
+      "kind": "property",
+      "resourceType": "AWS::MSK::Channel.IcebergDestinationConfiguration"
+    },
+    "Channel_PartitionSpec": {
+      "kind": "property",
+      "resourceType": "AWS::MSK::Channel.PartitionSpec"
+    },
+    "Channel_RecordConverter": {
+      "kind": "property",
+      "resourceType": "AWS::MSK::Channel.RecordConverter"
+    },
+    "Channel_RecordSchema": {
+      "kind": "property",
+      "resourceType": "AWS::MSK::Channel.RecordSchema"
+    },
+    "Channel_S3DestinationConfiguration": {
+      "kind": "property",
+      "resourceType": "AWS::MSK::Channel.S3DestinationConfiguration"
+    },
+    "Channel_S3LogDestination": {
+      "kind": "property",
+      "resourceType": "AWS::MSK::Channel.S3LogDestination"
+    },
+    "Channel_S3Storage": {
+      "kind": "property",
+      "resourceType": "AWS::MSK::Channel.S3Storage"
+    },
+    "Channel_SchemaEvolution": {
+      "kind": "property",
+      "resourceType": "AWS::MSK::Channel.SchemaEvolution"
+    },
+    "Channel_TableCreation": {
+      "kind": "property",
+      "resourceType": "AWS::MSK::Channel.TableCreation"
+    },
+    "Channel_TopicConfiguration": {
+      "kind": "property",
+      "resourceType": "AWS::MSK::Channel.TopicConfiguration"
     },
     "ChatChannel": {
       "kind": "property",
@@ -11577,6 +11558,10 @@
       "kind": "property",
       "resourceType": "AWS::KafkaConnect::Connector.CloudWatchLogsLogDelivery"
     },
+    "CloudWatchLogsLogDestination": {
+      "kind": "property",
+      "resourceType": "AWS::MSK::Channel.CloudWatchLogsLogDestination"
+    },
     "CloudWatchLogsLogGroup": {
       "kind": "property",
       "resourceType": "AWS::StepFunctions::StateMachine.CloudWatchLogsLogGroup"
@@ -11785,30 +11770,6 @@
     "CodeArtifactDomain_Tag": {
       "kind": "property",
       "resourceType": "AWS::CodeArtifact::Domain.Tag"
-    },
-    "CodeArtifactPackage": {
-      "kind": "resource",
-      "resourceType": "AWS::CodeArtifact::Package",
-      "attrs": [
-        "Arn",
-        "OriginConfiguration"
-      ],
-      "props": [
-        "Arn:false",
-        "DomainName:true",
-        "Format:true",
-        "Name:true",
-        "Namespace:false",
-        "OriginConfiguration:false",
-        "Repository:true"
-      ],
-      "createOnly": [
-        "DomainName",
-        "Format",
-        "Name",
-        "Namespace",
-        "Repository"
-      ]
     },
     "CodeArtifactRepository": {
       "kind": "resource",
@@ -12121,20 +12082,6 @@
     "CodeEditorAppImageConfig": {
       "kind": "property",
       "resourceType": "AWS::SageMaker::AppImageConfig.CodeEditorAppImageConfig"
-    },
-    "CodeInterpreter": {
-      "kind": "resource",
-      "resourceType": "AWS::BedrockAgentCore::CodeInterpreter",
-      "attrs": [
-        "CodeInterpreterArn",
-        "CodeInterpreterId",
-        "Status"
-      ],
-      "props": [
-        "CodeInterpreterArn:false",
-        "CodeInterpreterId:false",
-        "Status:false"
-      ]
     },
     "CodeInterpreterCustom": {
       "kind": "resource",
@@ -12482,34 +12429,6 @@
     "CognitoStreams": {
       "kind": "property",
       "resourceType": "AWS::Cognito::IdentityPool.CognitoStreams"
-    },
-    "CognitoSyncDataset": {
-      "kind": "resource",
-      "resourceType": "AWS::CognitoSync::Dataset",
-      "attrs": [
-        "Arn",
-        "CreationDate",
-        "DataStorage",
-        "LastModifiedBy",
-        "LastModifiedDate",
-        "NumRecords"
-      ],
-      "props": [
-        "Arn:false",
-        "CreationDate:false",
-        "DataStorage:false",
-        "DatasetName:false",
-        "IdentityId:false",
-        "IdentityPoolId:false",
-        "LastModifiedBy:false",
-        "LastModifiedDate:false",
-        "NumRecords:false"
-      ],
-      "createOnly": [
-        "DatasetName",
-        "IdentityId",
-        "IdentityPoolId"
-      ]
     },
     "CognitoUserPoolConfig": {
       "kind": "property",
@@ -15743,35 +15662,6 @@
       "kind": "property",
       "resourceType": "AWS::Greengrass::CoreDefinition.CoreDefinitionVersion"
     },
-    "CoreDevice": {
-      "kind": "resource",
-      "resourceType": "AWS::GreengrassV2::CoreDevice",
-      "attrs": [
-        "Architecture",
-        "Arn",
-        "CoreVersion",
-        "LastStatusUpdateTimestamp",
-        "Platform",
-        "Runtime",
-        "Status",
-        "Tags"
-      ],
-      "props": [
-        "Architecture:false",
-        "Arn:false",
-        "CoreDeviceThingName:false",
-        "CoreVersion:false",
-        "LastStatusUpdateTimestamp:false",
-        "Platform:false",
-        "Runtime:false",
-        "Status:false",
-        "Tags:false"
-      ],
-      "createOnly": [
-        "CoreDeviceThingName"
-      ],
-      "taggable": true
-    },
     "CoreNetwork": {
       "kind": "resource",
       "resourceType": "AWS::NetworkManager::CoreNetwork",
@@ -17360,8 +17250,8 @@
       "kind": "resource",
       "resourceType": "AWS::DMS::Endpoint",
       "attrs": [
-        "ExternalId",
-        "Id"
+        "EndpointArn",
+        "ExternalId"
       ],
       "props": [
         "CertificateArn:false",
@@ -17369,6 +17259,7 @@
         "DocDbSettings:false",
         "DynamoDbSettings:false",
         "ElasticsearchSettings:false",
+        "EndpointArn:false",
         "EndpointIdentifier:false",
         "EndpointType:true",
         "EngineName:true",
@@ -17376,7 +17267,6 @@
         "ExtraConnectionAttributes:false",
         "GcpMySQLSettings:false",
         "IbmDb2Settings:false",
-        "Id:false",
         "KafkaSettings:false",
         "KinesisSettings:false",
         "KmsKeyId:false",
@@ -17399,9 +17289,12 @@
         "Username:false"
       ],
       "createOnly": [
+        "ElasticsearchSettings/EndpointUri",
         "KmsKeyId",
+        "MongoDbSettings/AuthType",
         "ResourceIdentifier"
-      ]
+      ],
+      "taggable": true
     },
     "DMSEndpoint_DocDbSettings": {
       "kind": "property",
@@ -18437,36 +18330,6 @@
     "DataColorPalette": {
       "kind": "property",
       "resourceType": "AWS::QuickSight::Theme.DataColorPalette"
-    },
-    "DataDeletionJob": {
-      "kind": "resource",
-      "resourceType": "AWS::Personalize::DataDeletionJob",
-      "attrs": [
-        "CreationDateTime",
-        "DataDeletionJobArn",
-        "LastUpdatedDateTime",
-        "Status"
-      ],
-      "props": [
-        "CreationDateTime:false",
-        "DataDeletionJobArn:false",
-        "DataSource:false",
-        "DatasetGroupArn:false",
-        "JobName:false",
-        "LastUpdatedDateTime:false",
-        "RoleArn:false",
-        "Status:false"
-      ],
-      "createOnly": [
-        "DataSource",
-        "DatasetGroupArn",
-        "JobName",
-        "RoleArn"
-      ]
-    },
-    "DataDeletionJob_DataSource": {
-      "kind": "property",
-      "resourceType": "AWS::Personalize::DataDeletionJob.DataSource"
     },
     "DataDeliveryObject": {
       "kind": "property",
@@ -20393,6 +20256,10 @@
       "kind": "property",
       "resourceType": "AWS::Serverless::Function.DeadLetterQueue"
     },
+    "DeadLetterQueueS3": {
+      "kind": "property",
+      "resourceType": "AWS::MSK::Channel.DeadLetterQueueS3"
+    },
     "DeadlineFleet": {
       "kind": "resource",
       "resourceType": "AWS::Deadline::Fleet",
@@ -20582,44 +20449,6 @@
     "DefaultFormatting": {
       "kind": "property",
       "resourceType": "AWS::QuickSight::Topic.DefaultFormatting"
-    },
-    "DefaultPromptRouter": {
-      "kind": "resource",
-      "resourceType": "AWS::Bedrock::DefaultPromptRouter",
-      "attrs": [
-        "CreatedAt",
-        "Description",
-        "FallbackModel",
-        "Models",
-        "PromptRouterArn",
-        "PromptRouterId",
-        "PromptRouterName",
-        "RoutingCriteria",
-        "Status",
-        "Type",
-        "UpdatedAt"
-      ],
-      "props": [
-        "CreatedAt:false",
-        "Description:false",
-        "FallbackModel:false",
-        "Models:false",
-        "PromptRouterArn:false",
-        "PromptRouterId:false",
-        "PromptRouterName:false",
-        "RoutingCriteria:false",
-        "Status:false",
-        "Type:false",
-        "UpdatedAt:false"
-      ]
-    },
-    "DefaultPromptRouter_PromptRouterTargetModel": {
-      "kind": "property",
-      "resourceType": "AWS::Bedrock::DefaultPromptRouter.PromptRouterTargetModel"
-    },
-    "DefaultPromptRouter_RoutingCriteria": {
-      "kind": "property",
-      "resourceType": "AWS::Bedrock::DefaultPromptRouter.RoutingCriteria"
     },
     "DefaultPushNotificationTemplate": {
       "kind": "property",
@@ -21423,6 +21252,10 @@
       "kind": "property",
       "resourceType": "AWS::Logs::DeliveryDestination.DestinationPolicy"
     },
+    "DestinationTable": {
+      "kind": "property",
+      "resourceType": "AWS::MSK::Channel.DestinationTable"
+    },
     "DetailedStatusCodesMetrics": {
       "kind": "property",
       "resourceType": "AWS::S3::StorageLens.DetailedStatusCodesMetrics"
@@ -22209,10 +22042,6 @@
     "DisplayConfig": {
       "kind": "property",
       "resourceType": "AWS::BCM::Dashboard.DisplayConfig"
-    },
-    "DisplayData": {
-      "kind": "property",
-      "resourceType": "AWS::SSO::ApplicationProvider.DisplayData"
     },
     "Distribution": {
       "kind": "property",
@@ -23160,52 +22989,6 @@
     "DynamoDBConfig": {
       "kind": "property",
       "resourceType": "AWS::AppSync::DataSource.DynamoDBConfig"
-    },
-    "DynamoDBExport": {
-      "kind": "resource",
-      "resourceType": "AWS::DynamoDB::Export",
-      "attrs": [
-        "BilledSizeBytes",
-        "EndTime",
-        "ExportArn",
-        "ExportId",
-        "ExportManifest",
-        "ExportStatus",
-        "ExportTime",
-        "ItemCount",
-        "StartTime",
-        "TableId",
-        "TableName"
-      ],
-      "props": [
-        "BilledSizeBytes:false",
-        "EndTime:false",
-        "ExportArn:false",
-        "ExportFormat:false",
-        "ExportId:false",
-        "ExportManifest:false",
-        "ExportStatus:false",
-        "ExportTime:false",
-        "ExportType:false",
-        "ItemCount:false",
-        "S3Bucket:true",
-        "S3BucketOwner:false",
-        "S3Prefix:false",
-        "S3SseAlgorithm:false",
-        "StartTime:false",
-        "TableArn:true",
-        "TableId:false",
-        "TableName:false"
-      ],
-      "createOnly": [
-        "ExportFormat",
-        "ExportType",
-        "S3Bucket",
-        "S3BucketOwner",
-        "S3Prefix",
-        "S3SseAlgorithm",
-        "TableArn"
-      ]
     },
     "DynamoDBTarget": {
       "kind": "property",
@@ -25461,6 +25244,10 @@
       "kind": "property",
       "resourceType": "AWS::Shield::ProactiveEngagement.EmergencyContact"
     },
+    "EmrSettings": {
+      "kind": "property",
+      "resourceType": "AWS::SageMaker::UserProfile.EmrSettings"
+    },
     "EnaSrdUdpSpecification": {
       "kind": "property",
       "resourceType": "AWS::EC2::Instance.EnaSrdUdpSpecification"
@@ -25902,6 +25689,10 @@
     "EnforcedGuardrailConfiguration_SelectiveContentGuarding": {
       "kind": "property",
       "resourceType": "AWS::Bedrock::EnforcedGuardrailConfiguration.SelectiveContentGuarding"
+    },
+    "EngineConfiguration": {
+      "kind": "property",
+      "resourceType": "AWS::Athena::WorkGroup.EngineConfiguration"
     },
     "EngineVersion": {
       "kind": "property",
@@ -26372,6 +26163,10 @@
     "EvaluationReviewNotificationRecipientValue": {
       "kind": "property",
       "resourceType": "AWS::Connect::EvaluationForm.EvaluationReviewNotificationRecipientValue"
+    },
+    "EvaluationWindow": {
+      "kind": "property",
+      "resourceType": "AWS::CloudWatch::Alarm.EvaluationWindow"
     },
     "Evaluator": {
       "kind": "resource",
@@ -27328,41 +27123,9 @@
       "kind": "property",
       "resourceType": "AWS::ECS::Cluster.ExecuteCommandLogConfiguration"
     },
-    "Execution": {
-      "kind": "resource",
-      "resourceType": "AWS::States::Execution",
-      "attrs": [
-        "ExecutionArn",
-        "RedriveCount",
-        "RedriveStatus",
-        "StartDate",
-        "StateMachineName",
-        "Status"
-      ],
-      "props": [
-        "ExecutionArn:false",
-        "Input:false",
-        "Name:false",
-        "RedriveCount:false",
-        "RedriveStatus:false",
-        "StartDate:false",
-        "StateMachineArn:true",
-        "StateMachineName:false",
-        "Status:false"
-      ],
-      "createOnly": [
-        "Input",
-        "Name",
-        "StateMachineArn"
-      ]
-    },
     "ExecutionControls": {
       "kind": "property",
       "resourceType": "AWS::Config::RemediationConfiguration.ExecutionControls"
-    },
-    "ExecutionEngineConfig": {
-      "kind": "property",
-      "resourceType": "AWS::EMR::NotebookExecution.ExecutionEngineConfig"
     },
     "ExecutionPlan": {
       "kind": "resource",
@@ -28590,10 +28353,6 @@
       "kind": "property",
       "resourceType": "AWS::KafkaConnect::Connector.FirehoseLogDelivery"
     },
-    "FirehoseLogDestination": {
-      "kind": "property",
-      "resourceType": "AWS::Pipes::Pipe.FirehoseLogDestination"
-    },
     "Firewall": {
       "kind": "resource",
       "resourceType": "AWS::NetworkFirewall::Firewall",
@@ -29122,6 +28881,10 @@
     "FlowOutput_VpcInterfaceAttachment": {
       "kind": "property",
       "resourceType": "AWS::MediaConnect::FlowOutput.VpcInterfaceAttachment"
+    },
+    "FlowQuickConnectConfig": {
+      "kind": "property",
+      "resourceType": "AWS::Connect::QuickConnect.FlowQuickConnectConfig"
     },
     "FlowSource": {
       "kind": "resource",
@@ -31258,11 +31021,13 @@
         "SsoClientId:false",
         "StackSetName:false",
         "Status:false",
+        "Tags:false",
         "VpcConfiguration:false"
       ],
       "createOnly": [
         "ClientToken"
-      ]
+      ],
+      "taggable": true
     },
     "GrafanaWorkspace_AssertionAttributes": {
       "kind": "property",
@@ -31396,23 +31161,6 @@
     "GreengrassV2": {
       "kind": "property",
       "resourceType": "AWS::IoTSiteWise::Gateway.GreengrassV2"
-    },
-    "GreengrassV2Component": {
-      "kind": "resource",
-      "resourceType": "AWS::GreengrassV2::Component",
-      "attrs": [
-        "Arn"
-      ],
-      "props": [
-        "Arn:false",
-        "ComponentName:false",
-        "Tags:false"
-      ],
-      "createOnly": [
-        "ComponentName",
-        "Tags"
-      ],
-      "taggable": true
     },
     "GreengrassV2Deployment": {
       "kind": "resource",
@@ -32026,6 +31774,40 @@
       "kind": "property",
       "resourceType": "AWS::BedrockAgentCore::Harness.HarnessBedrockModelConfig"
     },
+    "HarnessEndpoint": {
+      "kind": "resource",
+      "resourceType": "AWS::BedrockAgentCore::HarnessEndpoint",
+      "attrs": [
+        "Arn",
+        "CreatedAt",
+        "HarnessName",
+        "LiveVersion",
+        "Status",
+        "UpdatedAt"
+      ],
+      "props": [
+        "Arn:false",
+        "CreatedAt:false",
+        "Description:false",
+        "EndpointName:true",
+        "HarnessId:true",
+        "HarnessName:false",
+        "LiveVersion:false",
+        "Status:false",
+        "Tags:false",
+        "TargetVersion:false",
+        "UpdatedAt:false"
+      ],
+      "createOnly": [
+        "EndpointName",
+        "HarnessId"
+      ],
+      "taggable": true
+    },
+    "HarnessEndpoint_Tag": {
+      "kind": "property",
+      "resourceType": "AWS::BedrockAgentCore::HarnessEndpoint.Tag"
+    },
     "HarnessEnvironmentArtifact": {
       "kind": "property",
       "resourceType": "AWS::BedrockAgentCore::Harness.HarnessEnvironmentArtifact"
@@ -32265,38 +32047,6 @@
     "Harness_Tag": {
       "kind": "property",
       "resourceType": "AWS::BedrockAgentCore::Harness.Tag"
-    },
-    "HarvestJob": {
-      "kind": "resource",
-      "resourceType": "AWS::MediaPackage::HarvestJob",
-      "attrs": [
-        "Arn",
-        "ChannelId",
-        "CreatedAt",
-        "Status"
-      ],
-      "props": [
-        "Arn:false",
-        "ChannelId:false",
-        "CreatedAt:false",
-        "EndTime:true",
-        "Id:true",
-        "OriginEndpointId:true",
-        "S3Destination:true",
-        "StartTime:true",
-        "Status:false"
-      ],
-      "createOnly": [
-        "EndTime",
-        "Id",
-        "OriginEndpointId",
-        "S3Destination",
-        "StartTime"
-      ]
-    },
-    "HarvestJob_S3Destination": {
-      "kind": "property",
-      "resourceType": "AWS::MediaPackage::HarvestJob.S3Destination"
     },
     "HeaderConfig": {
       "kind": "property",
@@ -33487,10 +33237,6 @@
     "IcebergConfiguration": {
       "kind": "property",
       "resourceType": "AWS::Glue::TableOptimizer.IcebergConfiguration"
-    },
-    "IcebergDestinationConfiguration": {
-      "kind": "property",
-      "resourceType": "AWS::KinesisFirehose::DeliveryStream.IcebergDestinationConfiguration"
     },
     "IcebergInput": {
       "kind": "property",
@@ -38685,10 +38431,6 @@
       "kind": "property",
       "resourceType": "AWS::KinesisVideo::Stream.Tag"
     },
-    "KmsConfiguration": {
-      "kind": "property",
-      "resourceType": "AWS::BedrockAgentCore::TokenVault.KmsConfiguration"
-    },
     "KmsEncryptionConfig": {
       "kind": "property",
       "resourceType": "AWS::HealthLake::FHIRDatastore.KmsEncryptionConfig"
@@ -42901,26 +42643,6 @@
         "ManagedNotificationConfigurationArn"
       ]
     },
-    "ManagedNotificationConfiguration": {
-      "kind": "resource",
-      "resourceType": "AWS::UserNotifications::ManagedNotificationConfiguration",
-      "attrs": [
-        "Arn",
-        "Description",
-        "Name"
-      ],
-      "props": [
-        "Arn:false",
-        "Category:false",
-        "Description:false",
-        "Name:false",
-        "SubCategory:false"
-      ],
-      "createOnly": [
-        "Category",
-        "SubCategory"
-      ]
-    },
     "ManagedPersistenceMonitoringConfiguration": {
       "kind": "property",
       "resourceType": "AWS::EMRServerless::Application.ManagedPersistenceMonitoringConfiguration"
@@ -43050,52 +42772,6 @@
     "MapConfiguration": {
       "kind": "property",
       "resourceType": "AWS::Location::Map.MapConfiguration"
-    },
-    "MapRun": {
-      "kind": "resource",
-      "resourceType": "AWS::StepFunctions::MapRun",
-      "attrs": [
-        "ExecutionCounts",
-        "ItemCounts",
-        "MapRunArn",
-        "MaxConcurrency",
-        "StartDate",
-        "Status",
-        "StopDate",
-        "ToleratedFailureCount",
-        "ToleratedFailurePercentage"
-      ],
-      "props": [
-        "ExecutionArn:false",
-        "ExecutionCounts:false",
-        "ItemCounts:false",
-        "MapRunArn:false",
-        "MaxConcurrency:false",
-        "StartDate:false",
-        "Status:false",
-        "StopDate:false",
-        "ToleratedFailureCount:false",
-        "ToleratedFailurePercentage:false"
-      ],
-      "createOnly": [
-        "ExecutionArn"
-      ]
-    },
-    "MapRunExecutionCounts": {
-      "kind": "property",
-      "resourceType": "AWS::StepFunctions::MapRun.MapRunExecutionCounts"
-    },
-    "MapRunItemCounts": {
-      "kind": "property",
-      "resourceType": "AWS::StepFunctions::MapRun.MapRunItemCounts"
-    },
-    "MapRun_MapRunExecutionCounts": {
-      "kind": "property",
-      "resourceType": "AWS::StepFunctions::MapRun.MapRunExecutionCounts"
-    },
-    "MapRun_MapRunItemCounts": {
-      "kind": "property",
-      "resourceType": "AWS::StepFunctions::MapRun.MapRunItemCounts"
     },
     "Map_MapConfiguration": {
       "kind": "property",
@@ -43344,10 +43020,6 @@
     "MaximumAllowedResources": {
       "kind": "property",
       "resourceType": "AWS::EMRServerless::Application.MaximumAllowedResources"
-    },
-    "Media": {
-      "kind": "property",
-      "resourceType": "AWS::Transcribe::MedicalTranscriptionJob.Media"
     },
     "MediaConcurrency": {
       "kind": "property",
@@ -44198,12 +43870,14 @@
         "InputType:false",
         "ModifiedAt:false",
         "OutputHeaderConfiguration:false",
+        "OutputLockingMode:false",
         "Tags:false"
       ],
       "createOnly": [
         "ChannelGroupName",
         "ChannelName",
-        "InputType"
+        "InputType",
+        "OutputLockingMode"
       ],
       "taggable": true
     },
@@ -44488,67 +44162,6 @@
     "MediaTailorChannel_TimeShiftConfiguration": {
       "kind": "property",
       "resourceType": "AWS::MediaTailor::Channel.TimeShiftConfiguration"
-    },
-    "MedicalTranscript": {
-      "kind": "property",
-      "resourceType": "AWS::Transcribe::MedicalTranscriptionJob.MedicalTranscript"
-    },
-    "MedicalTranscriptionJob": {
-      "kind": "resource",
-      "resourceType": "AWS::Transcribe::MedicalTranscriptionJob",
-      "attrs": [
-        "Arn",
-        "CreationTime",
-        "Transcript",
-        "TranscriptionJobStatus"
-      ],
-      "props": [
-        "Arn:false",
-        "CreationTime:false",
-        "LanguageCode:true",
-        "Media:true",
-        "MediaFormat:false",
-        "MediaSampleRateHertz:false",
-        "MedicalTranscriptionJobName:true",
-        "Settings:false",
-        "Specialty:true",
-        "Tags:false",
-        "Transcript:false",
-        "TranscriptionJobStatus:false",
-        "Type:true"
-      ],
-      "createOnly": [
-        "LanguageCode",
-        "Media",
-        "MediaFormat",
-        "MediaSampleRateHertz",
-        "MedicalTranscriptionJobName",
-        "Settings",
-        "Specialty",
-        "Tags",
-        "Type"
-      ],
-      "taggable": true
-    },
-    "MedicalTranscriptionJob_Media": {
-      "kind": "property",
-      "resourceType": "AWS::Transcribe::MedicalTranscriptionJob.Media"
-    },
-    "MedicalTranscriptionJob_MedicalTranscript": {
-      "kind": "property",
-      "resourceType": "AWS::Transcribe::MedicalTranscriptionJob.MedicalTranscript"
-    },
-    "MedicalTranscriptionJob_MedicalTranscriptionSetting": {
-      "kind": "property",
-      "resourceType": "AWS::Transcribe::MedicalTranscriptionJob.MedicalTranscriptionSetting"
-    },
-    "MedicalTranscriptionJob_Tag": {
-      "kind": "property",
-      "resourceType": "AWS::Transcribe::MedicalTranscriptionJob.Tag"
-    },
-    "MedicalTranscriptionSetting": {
-      "kind": "property",
-      "resourceType": "AWS::Transcribe::MedicalTranscriptionJob.MedicalTranscriptionSetting"
     },
     "Member": {
       "kind": "property",
@@ -45855,50 +45468,6 @@
       ],
       "taggable": true
     },
-    "ModelCardExportArtifacts": {
-      "kind": "property",
-      "resourceType": "AWS::SageMaker::ModelCardExportJob.ModelCardExportArtifacts"
-    },
-    "ModelCardExportJob": {
-      "kind": "resource",
-      "resourceType": "AWS::SageMaker::ModelCardExportJob",
-      "attrs": [
-        "CreatedAt",
-        "ExportArtifacts",
-        "LastModifiedAt",
-        "ModelCardExportJobArn",
-        "Status"
-      ],
-      "props": [
-        "CreatedAt:false",
-        "ExportArtifacts:false",
-        "LastModifiedAt:false",
-        "ModelCardExportJobArn:false",
-        "ModelCardExportJobName:true",
-        "ModelCardName:true",
-        "ModelCardVersion:false",
-        "OutputConfig:true",
-        "Status:false"
-      ],
-      "createOnly": [
-        "ModelCardExportJobName",
-        "ModelCardName",
-        "ModelCardVersion",
-        "OutputConfig"
-      ]
-    },
-    "ModelCardExportJob_ModelCardExportArtifacts": {
-      "kind": "property",
-      "resourceType": "AWS::SageMaker::ModelCardExportJob.ModelCardExportArtifacts"
-    },
-    "ModelCardExportJob_ModelCardExportOutputConfig": {
-      "kind": "property",
-      "resourceType": "AWS::SageMaker::ModelCardExportJob.ModelCardExportOutputConfig"
-    },
-    "ModelCardExportOutputConfig": {
-      "kind": "property",
-      "resourceType": "AWS::SageMaker::ModelCardExportJob.ModelCardExportOutputConfig"
-    },
     "ModelCard_AdditionalInformation": {
       "kind": "property",
       "resourceType": "AWS::SageMaker::ModelCard.AdditionalInformation"
@@ -45950,10 +45519,6 @@
     "ModelCard_UserContext": {
       "kind": "property",
       "resourceType": "AWS::SageMaker::ModelCard.UserContext"
-    },
-    "ModelDashboardIndicatorAction": {
-      "kind": "property",
-      "resourceType": "AWS::SageMaker::MonitoringScheduleAlert.ModelDashboardIndicatorAction"
     },
     "ModelDataQuality": {
       "kind": "property",
@@ -46087,81 +45652,6 @@
     "ModelInput": {
       "kind": "property",
       "resourceType": "AWS::SageMaker::Algorithm.ModelInput"
-    },
-    "ModelInvocationJob": {
-      "kind": "resource",
-      "resourceType": "AWS::Bedrock::ModelInvocationJob",
-      "attrs": [
-        "InputDataConfig",
-        "JobArn",
-        "JobExpirationTime",
-        "JobName",
-        "LastModifiedTime",
-        "ModelId",
-        "OutputDataConfig",
-        "RoleArn",
-        "Status",
-        "SubmitTime",
-        "Tags",
-        "TimeoutDurationInHours",
-        "VpcConfig"
-      ],
-      "props": [
-        "InputDataConfig:false",
-        "JobArn:false",
-        "JobExpirationTime:false",
-        "JobName:false",
-        "LastModifiedTime:false",
-        "ModelId:false",
-        "OutputDataConfig:false",
-        "RoleArn:false",
-        "Status:false",
-        "SubmitTime:false",
-        "Tags:false",
-        "TimeoutDurationInHours:false",
-        "VpcConfig:false"
-      ],
-      "taggable": true
-    },
-    "ModelInvocationJobInputDataConfig": {
-      "kind": "property",
-      "resourceType": "AWS::Bedrock::ModelInvocationJob.ModelInvocationJobInputDataConfig"
-    },
-    "ModelInvocationJobOutputDataConfig": {
-      "kind": "property",
-      "resourceType": "AWS::Bedrock::ModelInvocationJob.ModelInvocationJobOutputDataConfig"
-    },
-    "ModelInvocationJobS3InputDataConfig": {
-      "kind": "property",
-      "resourceType": "AWS::Bedrock::ModelInvocationJob.ModelInvocationJobS3InputDataConfig"
-    },
-    "ModelInvocationJobS3OutputDataConfig": {
-      "kind": "property",
-      "resourceType": "AWS::Bedrock::ModelInvocationJob.ModelInvocationJobS3OutputDataConfig"
-    },
-    "ModelInvocationJob_ModelInvocationJobInputDataConfig": {
-      "kind": "property",
-      "resourceType": "AWS::Bedrock::ModelInvocationJob.ModelInvocationJobInputDataConfig"
-    },
-    "ModelInvocationJob_ModelInvocationJobOutputDataConfig": {
-      "kind": "property",
-      "resourceType": "AWS::Bedrock::ModelInvocationJob.ModelInvocationJobOutputDataConfig"
-    },
-    "ModelInvocationJob_ModelInvocationJobS3InputDataConfig": {
-      "kind": "property",
-      "resourceType": "AWS::Bedrock::ModelInvocationJob.ModelInvocationJobS3InputDataConfig"
-    },
-    "ModelInvocationJob_ModelInvocationJobS3OutputDataConfig": {
-      "kind": "property",
-      "resourceType": "AWS::Bedrock::ModelInvocationJob.ModelInvocationJobS3OutputDataConfig"
-    },
-    "ModelInvocationJob_Tag": {
-      "kind": "property",
-      "resourceType": "AWS::Bedrock::ModelInvocationJob.Tag"
-    },
-    "ModelInvocationJob_VpcConfig": {
-      "kind": "property",
-      "resourceType": "AWS::Bedrock::ModelInvocationJob.VpcConfig"
     },
     "ModelManifest": {
       "kind": "resource",
@@ -46626,10 +46116,6 @@
       "kind": "property",
       "resourceType": "AWS::EC2::LaunchTemplate.Monitoring"
     },
-    "MonitoringAlertActions": {
-      "kind": "property",
-      "resourceType": "AWS::SageMaker::MonitoringScheduleAlert.MonitoringAlertActions"
-    },
     "MonitoringAppSpecification": {
       "kind": "property",
       "resourceType": "AWS::SageMaker::MonitoringSchedule.MonitoringAppSpecification"
@@ -46665,42 +46151,6 @@
       "createOnly": [
         "MonitoringScheduleName"
       ]
-    },
-    "MonitoringScheduleAlert": {
-      "kind": "resource",
-      "resourceType": "AWS::SageMaker::MonitoringScheduleAlert",
-      "attrs": [
-        "Actions",
-        "AlertStatus",
-        "Arn",
-        "CreationTime",
-        "LastModifiedTime"
-      ],
-      "props": [
-        "Actions:false",
-        "AlertStatus:false",
-        "Arn:false",
-        "CreationTime:false",
-        "DatapointsToAlert:true",
-        "EvaluationPeriod:true",
-        "LastModifiedTime:false",
-        "MonitoringAlertName:true",
-        "MonitoringScheduleName:true"
-      ],
-      "createOnly": [
-        "DatapointsToAlert",
-        "EvaluationPeriod",
-        "MonitoringAlertName",
-        "MonitoringScheduleName"
-      ]
-    },
-    "MonitoringScheduleAlert_ModelDashboardIndicatorAction": {
-      "kind": "property",
-      "resourceType": "AWS::SageMaker::MonitoringScheduleAlert.ModelDashboardIndicatorAction"
-    },
-    "MonitoringScheduleAlert_MonitoringAlertActions": {
-      "kind": "property",
-      "resourceType": "AWS::SageMaker::MonitoringScheduleAlert.MonitoringAlertActions"
     },
     "MonitoringScheduleConfig": {
       "kind": "property",
@@ -46917,22 +46367,6 @@
     "MultiRegionEndpoint_Details": {
       "kind": "property",
       "resourceType": "AWS::SES::MultiRegionEndpoint.Details"
-    },
-    "MultiRegionParameterGroup": {
-      "kind": "resource",
-      "resourceType": "AWS::MemoryDB::MultiRegionParameterGroup",
-      "attrs": [
-        "Arn",
-        "Description",
-        "Family",
-        "MultiRegionParameterGroupName"
-      ],
-      "props": [
-        "Arn:false",
-        "Description:false",
-        "Family:false",
-        "MultiRegionParameterGroupName:false"
-      ]
     },
     "MultiRegionTargets": {
       "kind": "property",
@@ -48433,57 +47867,6 @@
       "kind": "property",
       "resourceType": "AWS::SecurityHub::AutomationRule.NoteUpdate"
     },
-    "NotebookExecution": {
-      "kind": "resource",
-      "resourceType": "AWS::EMR::NotebookExecution",
-      "attrs": [
-        "Arn",
-        "NotebookExecutionId",
-        "StartTime",
-        "Status"
-      ],
-      "props": [
-        "Arn:false",
-        "EnvironmentVariables:false",
-        "ExecutionEngine:false",
-        "NotebookExecutionId:false",
-        "NotebookExecutionName:false",
-        "NotebookParams:false",
-        "NotebookS3Location:false",
-        "OutputNotebookFormat:false",
-        "OutputNotebookS3Location:false",
-        "StartTime:false",
-        "Status:false",
-        "Tags:false"
-      ],
-      "createOnly": [
-        "EnvironmentVariables",
-        "ExecutionEngine",
-        "NotebookExecutionName",
-        "NotebookParams",
-        "NotebookS3Location",
-        "OutputNotebookFormat",
-        "OutputNotebookS3Location",
-        "Tags"
-      ],
-      "taggable": true
-    },
-    "NotebookExecution_ExecutionEngineConfig": {
-      "kind": "property",
-      "resourceType": "AWS::EMR::NotebookExecution.ExecutionEngineConfig"
-    },
-    "NotebookExecution_NotebookS3Location": {
-      "kind": "property",
-      "resourceType": "AWS::EMR::NotebookExecution.NotebookS3Location"
-    },
-    "NotebookExecution_OutputNotebookS3Location": {
-      "kind": "property",
-      "resourceType": "AWS::EMR::NotebookExecution.OutputNotebookS3Location"
-    },
-    "NotebookExecution_Tag": {
-      "kind": "property",
-      "resourceType": "AWS::EMR::NotebookExecution.Tag"
-    },
     "NotebookInstance": {
       "kind": "resource",
       "resourceType": "AWS::SageMaker::NotebookInstance",
@@ -48549,10 +47932,6 @@
     "NotebookInstance_Tag": {
       "kind": "property",
       "resourceType": "AWS::SageMaker::NotebookInstance.Tag"
-    },
-    "NotebookS3Location": {
-      "kind": "property",
-      "resourceType": "AWS::EMR::NotebookExecution.NotebookS3Location"
     },
     "Notification": {
       "kind": "resource",
@@ -49099,28 +48478,6 @@
       "kind": "property",
       "resourceType": "AWS::CustomerProfiles::ObjectType.Tag"
     },
-    "Objective": {
-      "kind": "resource",
-      "resourceType": "AWS::ControlCatalog::Objective",
-      "attrs": [
-        "Arn",
-        "CreateTime",
-        "Description",
-        "Domain",
-        "LastUpdateTime",
-        "Name",
-        "ObjectiveId"
-      ],
-      "props": [
-        "Arn:false",
-        "CreateTime:false",
-        "Description:false",
-        "Domain:false",
-        "LastUpdateTime:false",
-        "Name:false",
-        "ObjectiveId:false"
-      ]
-    },
     "ObjectiveFunction": {
       "kind": "property",
       "resourceType": "AWS::SageMaker::ModelCard.ObjectiveFunction"
@@ -49265,40 +48622,6 @@
     "OffPeakWindowOptions": {
       "kind": "property",
       "resourceType": "AWS::OpenSearchService::Domain.OffPeakWindowOptions"
-    },
-    "Offering": {
-      "kind": "resource",
-      "resourceType": "AWS::MediaLive::Offering",
-      "attrs": [
-        "Arn",
-        "CurrencyCode",
-        "Duration",
-        "DurationUnits",
-        "FixedPrice",
-        "OfferingDescription",
-        "OfferingId",
-        "OfferingType",
-        "Region",
-        "ResourceSpecification",
-        "UsagePrice"
-      ],
-      "props": [
-        "Arn:false",
-        "CurrencyCode:false",
-        "Duration:false",
-        "DurationUnits:false",
-        "FixedPrice:false",
-        "OfferingDescription:false",
-        "OfferingId:false",
-        "OfferingType:false",
-        "Region:false",
-        "ResourceSpecification:false",
-        "UsagePrice:false"
-      ]
-    },
-    "Offering_ReservationResourceSpecification": {
-      "kind": "property",
-      "resourceType": "AWS::MediaLive::Offering.ReservationResourceSpecification"
     },
     "OidcIdentityProviderConfig": {
       "kind": "property",
@@ -49799,6 +49122,7 @@
         "DomainName:false",
         "EBSOptions:false",
         "EncryptionAtRestOptions:false",
+        "EngineMode:false",
         "EngineVersion:false",
         "IPAddressType:false",
         "Id:false",
@@ -49811,10 +49135,12 @@
         "SnapshotOptions:false",
         "SoftwareUpdateOptions:false",
         "Tags:false",
+        "UseCase:false",
         "VPCOptions:false"
       ],
       "createOnly": [
-        "DomainName"
+        "DomainName",
+        "EngineMode"
       ],
       "taggable": true
     },
@@ -50744,10 +50070,6 @@
       "kind": "property",
       "resourceType": "AWS::MediaLive::Channel.OutputLockingSettings"
     },
-    "OutputNotebookS3Location": {
-      "kind": "property",
-      "resourceType": "AWS::EMR::NotebookExecution.OutputNotebookS3Location"
-    },
     "OutputSource": {
       "kind": "property",
       "resourceType": "AWS::EntityResolution::MatchingWorkflow.OutputSource"
@@ -51268,6 +50590,10 @@
     "PartitionInput": {
       "kind": "property",
       "resourceType": "AWS::Glue::Partition.PartitionInput"
+    },
+    "PartitionSpec": {
+      "kind": "property",
+      "resourceType": "AWS::MSK::Channel.PartitionSpec"
     },
     "Partition_Column": {
       "kind": "property",
@@ -51975,34 +51301,6 @@
       "kind": "property",
       "resourceType": "AWS::Personalize::Dataset.DatasetImportJob"
     },
-    "PersonalizeRecipe": {
-      "kind": "resource",
-      "resourceType": "AWS::Personalize::Recipe",
-      "attrs": [
-        "AlgorithmArn",
-        "CreationDateTime",
-        "Description",
-        "FeatureTransformationArn",
-        "LastUpdatedDateTime",
-        "RecipeArn",
-        "RecipeType",
-        "Status"
-      ],
-      "props": [
-        "AlgorithmArn:false",
-        "CreationDateTime:false",
-        "Description:false",
-        "FeatureTransformationArn:false",
-        "LastUpdatedDateTime:false",
-        "Name:false",
-        "RecipeArn:false",
-        "RecipeType:false",
-        "Status:false"
-      ],
-      "createOnly": [
-        "Name"
-      ]
-    },
     "PersonalizeSchema": {
       "kind": "resource",
       "resourceType": "AWS::Personalize::Schema",
@@ -52695,30 +51993,6 @@
       "kind": "property",
       "resourceType": "AWS::Pipes::Pipe.Tag"
     },
-    "PipelineBlueprint": {
-      "kind": "resource",
-      "resourceType": "AWS::OSIS::PipelineBlueprint",
-      "attrs": [
-        "Arn",
-        "DisplayDescription",
-        "DisplayName",
-        "PipelineConfigurationBody",
-        "Service",
-        "UseCase"
-      ],
-      "props": [
-        "Arn:false",
-        "BlueprintName:false",
-        "DisplayDescription:false",
-        "DisplayName:false",
-        "PipelineConfigurationBody:false",
-        "Service:false",
-        "UseCase:false"
-      ],
-      "createOnly": [
-        "BlueprintName"
-      ]
-    },
     "PipelineConfig": {
       "kind": "property",
       "resourceType": "AWS::AppSync::Resolver.PipelineConfig"
@@ -52825,6 +52099,8 @@
         "AdConditioningConfiguration:false",
         "AdDecisionServerConfiguration:false",
         "AdDecisionServerUrl:true",
+        "AdsPersonalizationConcurrency:false",
+        "AdsPersonalizationTimeouts:false",
         "AvailSuppression:false",
         "Bumper:false",
         "CdnConfiguration:false",
@@ -52866,6 +52142,14 @@
     "PlaybackConfiguration_AdsInteractionLog": {
       "kind": "property",
       "resourceType": "AWS::MediaTailor::PlaybackConfiguration.AdsInteractionLog"
+    },
+    "PlaybackConfiguration_AdsPersonalizationConcurrency": {
+      "kind": "property",
+      "resourceType": "AWS::MediaTailor::PlaybackConfiguration.AdsPersonalizationConcurrency"
+    },
+    "PlaybackConfiguration_AdsPersonalizationTimeouts": {
+      "kind": "property",
+      "resourceType": "AWS::MediaTailor::PlaybackConfiguration.AdsPersonalizationTimeouts"
     },
     "PlaybackConfiguration_AvailSuppression": {
       "kind": "property",
@@ -53511,21 +52795,20 @@
       "kind": "resource",
       "resourceType": "AWS::MediaConvert::Preset",
       "attrs": [
-        "Arn",
-        "Id"
+        "Arn"
       ],
       "props": [
         "Arn:false",
         "Category:false",
         "Description:false",
-        "Id:false",
         "Name:false",
         "SettingsJson:true",
         "Tags:false"
       ],
       "createOnly": [
         "Name"
-      ]
+      ],
+      "taggable": true
     },
     "PrestoParameters": {
       "kind": "property",
@@ -54299,6 +53582,10 @@
     "PromptOverrideConfiguration": {
       "kind": "property",
       "resourceType": "AWS::Bedrock::Agent.PromptOverrideConfiguration"
+    },
+    "PromptRouterTargetModel": {
+      "kind": "property",
+      "resourceType": "AWS::Bedrock::IntelligentPromptRouter.PromptRouterTargetModel"
     },
     "PromptVersion": {
       "kind": "resource",
@@ -55271,6 +54558,10 @@
       "kind": "property",
       "resourceType": "AWS::Connect::QuickConnect.QuickConnectConfig"
     },
+    "QuickConnect_FlowQuickConnectConfig": {
+      "kind": "property",
+      "resourceType": "AWS::Connect::QuickConnect.FlowQuickConnectConfig"
+    },
     "QuickConnect_PhoneNumberQuickConnectConfig": {
       "kind": "property",
       "resourceType": "AWS::Connect::QuickConnect.PhoneNumberQuickConnectConfig"
@@ -55981,6 +55272,46 @@
     "QuickSightKnowledgeBase_VideoExtractionConfiguration": {
       "kind": "property",
       "resourceType": "AWS::QuickSight::KnowledgeBase.VideoExtractionConfiguration"
+    },
+    "QuickSightSpace": {
+      "kind": "resource",
+      "resourceType": "AWS::QuickSight::Space",
+      "attrs": [
+        "Arn",
+        "CreatedAt",
+        "CreatedBy",
+        "UpdatedAt"
+      ],
+      "props": [
+        "Arn:false",
+        "AwsAccountId:true",
+        "CreatedAt:false",
+        "CreatedBy:false",
+        "Description:false",
+        "Name:true",
+        "Permissions:false",
+        "Resources:false",
+        "SpaceId:true",
+        "Tags:false",
+        "UpdatedAt:false"
+      ],
+      "createOnly": [
+        "AwsAccountId",
+        "SpaceId"
+      ],
+      "taggable": true
+    },
+    "QuickSightSpace_ResourcePermission": {
+      "kind": "property",
+      "resourceType": "AWS::QuickSight::Space.ResourcePermission"
+    },
+    "QuickSightSpace_SpaceResource": {
+      "kind": "property",
+      "resourceType": "AWS::QuickSight::Space.SpaceResource"
+    },
+    "QuickSightSpace_Tag": {
+      "kind": "property",
+      "resourceType": "AWS::QuickSight::Space.Tag"
     },
     "QuickSightTemplate": {
       "kind": "resource",
@@ -57008,9 +56339,17 @@
       "kind": "property",
       "resourceType": "AWS::CustomerProfiles::Recommender.TrainingMetrics"
     },
+    "RecordConverter": {
+      "kind": "property",
+      "resourceType": "AWS::MSK::Channel.RecordConverter"
+    },
     "RecordExpiration": {
       "kind": "property",
       "resourceType": "AWS::S3::Bucket.RecordExpiration"
+    },
+    "RecordSchema": {
+      "kind": "property",
+      "resourceType": "AWS::MSK::Channel.RecordSchema"
     },
     "RecordSet": {
       "kind": "resource",
@@ -57204,35 +56543,6 @@
     "RecoveryOption": {
       "kind": "property",
       "resourceType": "AWS::Cognito::UserPool.RecoveryOption"
-    },
-    "RecoveryPoint": {
-      "kind": "resource",
-      "resourceType": "AWS::RedshiftServerless::RecoveryPoint",
-      "attrs": [
-        "Arn",
-        "NamespaceArn",
-        "RecoveryPointCreateTime",
-        "RecoveryPointId",
-        "Tags",
-        "TotalSizeInMegaBytes"
-      ],
-      "props": [
-        "Arn:false",
-        "NamespaceArn:false",
-        "NamespaceName:false",
-        "RecoveryPointCreateTime:false",
-        "RecoveryPointId:false",
-        "Tags:false",
-        "TotalSizeInMegaBytes:false"
-      ],
-      "createOnly": [
-        "NamespaceName"
-      ],
-      "taggable": true
-    },
-    "RecoveryPoint_Tag": {
-      "kind": "property",
-      "resourceType": "AWS::RedshiftServerless::RecoveryPoint.Tag"
     },
     "RecrawlPolicy": {
       "kind": "property",
@@ -57744,41 +57054,6 @@
       "kind": "property",
       "resourceType": "AWS::RefactorSpaces::Service.UrlEndpointInput"
     },
-    "Reference": {
-      "kind": "resource",
-      "resourceType": "AWS::Omics::Reference",
-      "attrs": [
-        "Arn",
-        "CreationJobId",
-        "CreationTime",
-        "CreationType",
-        "Id",
-        "Md5",
-        "Status",
-        "UpdateTime"
-      ],
-      "props": [
-        "Arn:false",
-        "CreationJobId:false",
-        "CreationTime:false",
-        "CreationType:false",
-        "Description:false",
-        "Id:false",
-        "Md5:false",
-        "Name:false",
-        "ReferenceStoreId:false",
-        "Status:false",
-        "Tags:false",
-        "UpdateTime:false"
-      ],
-      "createOnly": [
-        "Description",
-        "Name",
-        "ReferenceStoreId",
-        "Tags"
-      ],
-      "taggable": true
-    },
     "ReferenceSets": {
       "kind": "property",
       "resourceType": "AWS::NetworkFirewall::RuleGroup.ReferenceSets"
@@ -58044,32 +57319,6 @@
     "ReplaceDefaultPolicyVersionParams": {
       "kind": "property",
       "resourceType": "AWS::IoT::MitigationAction.ReplaceDefaultPolicyVersionParams"
-    },
-    "Replay": {
-      "kind": "resource",
-      "resourceType": "AWS::Events::Replay",
-      "attrs": [
-        "ReplayArn",
-        "ReplayStartTime",
-        "State"
-      ],
-      "props": [
-        "Destination:true",
-        "EventEndTime:true",
-        "EventSourceArn:true",
-        "EventStartTime:true",
-        "ReplayArn:false",
-        "ReplayName:true",
-        "ReplayStartTime:false",
-        "State:false"
-      ],
-      "createOnly": [
-        "Destination",
-        "EventEndTime",
-        "EventSourceArn",
-        "EventStartTime",
-        "ReplayName"
-      ]
     },
     "ReplicaGlobalSecondaryIndexSpecification": {
       "kind": "property",
@@ -58534,46 +57783,6 @@
       "kind": "property",
       "resourceType": "AWS::MSK::Replicator.TopicReplication"
     },
-    "Report": {
-      "kind": "resource",
-      "resourceType": "AWS::Artifact::Report",
-      "attrs": [
-        "AcceptanceType",
-        "Arn",
-        "Category",
-        "CompanyName",
-        "CreatedAt",
-        "Description",
-        "Name",
-        "PeriodEnd",
-        "PeriodStart",
-        "ProductName",
-        "ReportId",
-        "SequenceNumber",
-        "Series",
-        "State",
-        "TermArn",
-        "Version"
-      ],
-      "props": [
-        "AcceptanceType:false",
-        "Arn:false",
-        "Category:false",
-        "CompanyName:false",
-        "CreatedAt:false",
-        "Description:false",
-        "Name:false",
-        "PeriodEnd:false",
-        "PeriodStart:false",
-        "ProductName:false",
-        "ReportId:false",
-        "SequenceNumber:false",
-        "Series:false",
-        "State:false",
-        "TermArn:false",
-        "Version:false"
-      ]
-    },
     "ReportConfiguration": {
       "kind": "property",
       "resourceType": "AWS::ARCRegionSwitch::Plan.ReportConfiguration"
@@ -58855,99 +58064,9 @@
       "kind": "property",
       "resourceType": "AWS::Cases::Template.RequiredField"
     },
-    "ReservationResourceSpecification": {
-      "kind": "property",
-      "resourceType": "AWS::MediaLive::Offering.ReservationResourceSpecification"
-    },
-    "ReservedCacheNode": {
-      "kind": "resource",
-      "resourceType": "AWS::ElastiCache::ReservedCacheNode",
-      "attrs": [
-        "CacheNodeCount",
-        "CacheNodeType",
-        "Duration",
-        "FixedPrice",
-        "OfferingType",
-        "ProductDescription",
-        "RecurringCharges",
-        "ReservationARN",
-        "ReservedCacheNodeId",
-        "ReservedCacheNodesOfferingId",
-        "StartTime",
-        "State",
-        "Tags",
-        "UsagePrice"
-      ],
-      "props": [
-        "CacheNodeCount:false",
-        "CacheNodeType:false",
-        "Duration:false",
-        "FixedPrice:false",
-        "OfferingType:false",
-        "ProductDescription:false",
-        "RecurringCharges:false",
-        "ReservationARN:false",
-        "ReservedCacheNodeId:false",
-        "ReservedCacheNodesOfferingId:false",
-        "StartTime:false",
-        "State:false",
-        "Tags:false",
-        "UsagePrice:false"
-      ],
-      "taggable": true
-    },
-    "ReservedCacheNode_RecurringCharge": {
-      "kind": "property",
-      "resourceType": "AWS::ElastiCache::ReservedCacheNode.RecurringCharge"
-    },
-    "ReservedCacheNode_Tag": {
-      "kind": "property",
-      "resourceType": "AWS::ElastiCache::ReservedCacheNode.Tag"
-    },
     "ReservedCapacityOptionsRequest": {
       "kind": "property",
       "resourceType": "AWS::EC2::EC2Fleet.ReservedCapacityOptionsRequest"
-    },
-    "ReservedNode": {
-      "kind": "resource",
-      "resourceType": "AWS::MemoryDB::ReservedNode",
-      "attrs": [
-        "Arn",
-        "Duration",
-        "FixedPrice",
-        "NodeCount",
-        "NodeType",
-        "OfferingType",
-        "RecurringCharges",
-        "ReservationId",
-        "ReservedNodesOfferingId",
-        "StartTime",
-        "State",
-        "Tags"
-      ],
-      "props": [
-        "Arn:false",
-        "Duration:false",
-        "FixedPrice:false",
-        "NodeCount:false",
-        "NodeType:false",
-        "OfferingType:false",
-        "RecurringCharges:false",
-        "ReservationId:false",
-        "ReservedNodesOfferingId:false",
-        "StartTime:false",
-        "State:false",
-        "Tags:false"
-      ],
-      "taggable": true
-    },
-    "ReservedNode_RecurringCharge": {
-      "kind": "property",
-      "resourceType": "AWS::MemoryDB::ReservedNode.RecurringCharge"
-    },
-    "ReservedNode_Tag": {
-      "kind": "property",
-      "resourceType": "AWS::MemoryDB::ReservedNode.Tag"
     },
     "ReshardingConfiguration": {
       "kind": "property",
@@ -59774,36 +58893,6 @@
     "ResourceRetentionPolicy": {
       "kind": "property",
       "resourceType": "AWS::Batch::JobDefinition.ResourceRetentionPolicy"
-    },
-    "ResourceScan": {
-      "kind": "resource",
-      "resourceType": "AWS::CloudFormation::ResourceScan",
-      "attrs": [
-        "PercentageCompleted",
-        "ResourceScanId",
-        "ScanId",
-        "StartTime",
-        "Status"
-      ],
-      "props": [
-        "PercentageCompleted:false",
-        "ResourceScanId:false",
-        "ScanFilters:false",
-        "ScanId:false",
-        "StartTime:false",
-        "Status:false"
-      ],
-      "createOnly": [
-        "ScanFilters"
-      ]
-    },
-    "ResourceScan_ScanFilter": {
-      "kind": "property",
-      "resourceType": "AWS::CloudFormation::ResourceScan.ScanFilter"
-    },
-    "ResourceServerConfig": {
-      "kind": "property",
-      "resourceType": "AWS::SSO::ApplicationProvider.ResourceServerConfig"
     },
     "ResourceServerScopeType": {
       "kind": "property",
@@ -61221,6 +60310,10 @@
         "ControlPanelArn"
       ]
     },
+    "RoutingCriteria": {
+      "kind": "property",
+      "resourceType": "AWS::Bedrock::IntelligentPromptRouter.RoutingCriteria"
+    },
     "RoutingProfile": {
       "kind": "resource",
       "resourceType": "AWS::Connect::RoutingProfile",
@@ -61974,10 +61067,6 @@
       "kind": "property",
       "resourceType": "AWS::KafkaConnect::Connector.S3LogDelivery"
     },
-    "S3LogDestination": {
-      "kind": "property",
-      "resourceType": "AWS::Pipes::Pipe.S3LogDestination"
-    },
     "S3LoggingConfiguration": {
       "kind": "property",
       "resourceType": "AWS::Athena::WorkGroup.S3LoggingConfiguration"
@@ -62182,13 +61271,17 @@
       "kind": "property",
       "resourceType": "AWS::DMS::Endpoint.S3Settings"
     },
-    "S3SignedObject": {
+    "S3Source": {
       "kind": "property",
-      "resourceType": "AWS::Signer::SigningJob.S3SignedObject"
+      "resourceType": "AWS::BedrockAgentCore::Dataset.S3Source"
     },
     "S3SourceProperties": {
       "kind": "property",
       "resourceType": "AWS::AppFlow::Flow.S3SourceProperties"
+    },
+    "S3Storage": {
+      "kind": "property",
+      "resourceType": "AWS::MSK::Channel.S3Storage"
     },
     "S3StorageConfiguration": {
       "kind": "property",
@@ -62854,32 +61947,6 @@
         "ResourceArn"
       ]
     },
-    "SSMSession": {
-      "kind": "resource",
-      "resourceType": "AWS::SSM::Session",
-      "attrs": [
-        "AccessType",
-        "Arn",
-        "Owner",
-        "SessionId",
-        "StartDate",
-        "Status"
-      ],
-      "props": [
-        "AccessType:false",
-        "Arn:false",
-        "Owner:false",
-        "Reason:false",
-        "SessionId:false",
-        "StartDate:false",
-        "Status:false",
-        "Target:false"
-      ],
-      "createOnly": [
-        "Reason",
-        "Target"
-      ]
-    },
     "SSOApplication": {
       "kind": "resource",
       "resourceType": "AWS::SSO::Application",
@@ -62938,24 +62005,6 @@
     "SSOInstance_Tag": {
       "kind": "property",
       "resourceType": "AWS::SSO::Instance.Tag"
-    },
-    "SafetyLever": {
-      "kind": "resource",
-      "resourceType": "AWS::FIS::SafetyLever",
-      "attrs": [
-        "Arn",
-        "Reason",
-        "Status"
-      ],
-      "props": [
-        "Arn:false",
-        "Id:false",
-        "Reason:false",
-        "Status:false"
-      ],
-      "createOnly": [
-        "Id"
-      ]
     },
     "SafetyRule": {
       "kind": "resource",
@@ -63546,11 +62595,11 @@
         "DomainId",
         "SingleSignOnUserIdentifier",
         "SingleSignOnUserValue",
-        "Tags",
         "UserProfileName",
         "UserSettings/RStudioServerProAppSettings/AccessStatus",
         "UserSettings/RStudioServerProAppSettings/UserGroup"
-      ]
+      ],
+      "taggable": true
     },
     "SageMakerUserProfile_AppLifecycleManagement": {
       "kind": "property",
@@ -63587,6 +62636,10 @@
     "SageMakerUserProfile_EFSFileSystemConfig": {
       "kind": "property",
       "resourceType": "AWS::SageMaker::UserProfile.EFSFileSystemConfig"
+    },
+    "SageMakerUserProfile_EmrSettings": {
+      "kind": "property",
+      "resourceType": "AWS::SageMaker::UserProfile.EmrSettings"
     },
     "SageMakerUserProfile_FSxLustreFileSystemConfig": {
       "kind": "property",
@@ -63755,36 +62808,6 @@
       "kind": "property",
       "resourceType": "AWS::XRay::SamplingRule.SamplingRuleUpdate"
     },
-    "Sandbox": {
-      "kind": "resource",
-      "resourceType": "AWS::CodeBuild::Sandbox",
-      "attrs": [
-        "Arn",
-        "EncryptionKey",
-        "Id",
-        "QueuedTimeoutInMinutes",
-        "RequestTime",
-        "ServiceRole",
-        "StartTime",
-        "Status",
-        "TimeoutInMinutes"
-      ],
-      "props": [
-        "Arn:false",
-        "EncryptionKey:false",
-        "Id:false",
-        "ProjectName:false",
-        "QueuedTimeoutInMinutes:false",
-        "RequestTime:false",
-        "ServiceRole:false",
-        "StartTime:false",
-        "Status:false",
-        "TimeoutInMinutes:false"
-      ],
-      "createOnly": [
-        "ProjectName"
-      ]
-    },
     "Sbom": {
       "kind": "property",
       "resourceType": "AWS::IoT::SoftwarePackageVersion.Sbom"
@@ -63923,10 +62946,6 @@
     "ScanActionResourceType": {
       "kind": "property",
       "resourceType": "AWS::Backup::BackupPlan.ScanActionResourceType"
-    },
-    "ScanFilter": {
-      "kind": "property",
-      "resourceType": "AWS::CloudFormation::ResourceScan.ScanFilter"
     },
     "ScanSettingResourceType": {
       "kind": "property",
@@ -64151,6 +63170,10 @@
     "SchemaConfiguration": {
       "kind": "property",
       "resourceType": "AWS::KinesisFirehose::DeliveryStream.SchemaConfiguration"
+    },
+    "SchemaEvolution": {
+      "kind": "property",
+      "resourceType": "AWS::MSK::Channel.SchemaEvolution"
     },
     "SchemaEvolutionConfiguration": {
       "kind": "property",
@@ -64416,39 +63439,6 @@
     "SearchFilter": {
       "kind": "property",
       "resourceType": "AWS::ResourceExplorer2::View.SearchFilter"
-    },
-    "SearchJob": {
-      "kind": "resource",
-      "resourceType": "AWS::BackupSearch::SearchJob",
-      "attrs": [
-        "CreationTime",
-        "SearchJobArn",
-        "SearchJobIdentifier",
-        "Status"
-      ],
-      "props": [
-        "CreationTime:false",
-        "Name:false",
-        "SearchJobArn:false",
-        "SearchJobIdentifier:false",
-        "SearchScope:true",
-        "Status:false",
-        "Tags:false"
-      ],
-      "createOnly": [
-        "Name",
-        "SearchScope",
-        "Tags"
-      ],
-      "taggable": true
-    },
-    "SearchJob_SearchScope": {
-      "kind": "property",
-      "resourceType": "AWS::BackupSearch::SearchJob.SearchScope"
-    },
-    "SearchScope": {
-      "kind": "property",
-      "resourceType": "AWS::BackupSearch::SearchJob.SearchScope"
     },
     "Secondary": {
       "kind": "property",
@@ -66142,6 +65132,27 @@
       "kind": "property",
       "resourceType": "AWS::ResilienceHubV2::Service.ServiceReportConfiguration"
     },
+    "ServiceSetting": {
+      "kind": "resource",
+      "resourceType": "AWS::SSM::ServiceSetting",
+      "attrs": [
+        "Arn",
+        "LastModifiedDate",
+        "LastModifiedUser",
+        "Status"
+      ],
+      "props": [
+        "Arn:false",
+        "LastModifiedDate:false",
+        "LastModifiedUser:false",
+        "SettingId:true",
+        "SettingValue:true",
+        "Status:false"
+      ],
+      "createOnly": [
+        "SettingId"
+      ]
+    },
     "ServiceSoftwareOptions": {
       "kind": "property",
       "resourceType": "AWS::OpenSearchService::Domain.ServiceSoftwareOptions"
@@ -66448,10 +65459,6 @@
       "kind": "property",
       "resourceType": "AWS::Signer::SigningProfile.SignatureValidityPeriod"
     },
-    "SignedObject": {
-      "kind": "property",
-      "resourceType": "AWS::Signer::SigningJob.SignedObject"
-    },
     "SigningConfiguration": {
       "kind": "resource",
       "resourceType": "AWS::ECR::SigningConfiguration",
@@ -66470,62 +65477,6 @@
     "SigningConfiguration_Rule": {
       "kind": "property",
       "resourceType": "AWS::ECR::SigningConfiguration.Rule"
-    },
-    "SigningJob": {
-      "kind": "resource",
-      "resourceType": "AWS::Signer::SigningJob",
-      "attrs": [
-        "Arn",
-        "CompletedAt",
-        "CreatedAt",
-        "JobId",
-        "JobInvoker",
-        "JobOwner",
-        "PlatformDisplayName",
-        "PlatformId",
-        "ProfileVersion",
-        "RequestedBy",
-        "SignatureExpiresAt",
-        "SignedObject",
-        "Source",
-        "Status"
-      ],
-      "props": [
-        "Arn:false",
-        "CompletedAt:false",
-        "CreatedAt:false",
-        "JobId:false",
-        "JobInvoker:false",
-        "JobOwner:false",
-        "PlatformDisplayName:false",
-        "PlatformId:false",
-        "ProfileName:true",
-        "ProfileVersion:false",
-        "RequestedBy:false",
-        "SignatureExpiresAt:false",
-        "SignedObject:false",
-        "Source:false",
-        "Status:false"
-      ],
-      "createOnly": [
-        "ProfileName"
-      ]
-    },
-    "SigningJob_S3SignedObject": {
-      "kind": "property",
-      "resourceType": "AWS::Signer::SigningJob.S3SignedObject"
-    },
-    "SigningJob_S3Source": {
-      "kind": "property",
-      "resourceType": "AWS::Signer::SigningJob.S3Source"
-    },
-    "SigningJob_SignedObject": {
-      "kind": "property",
-      "resourceType": "AWS::Signer::SigningJob.SignedObject"
-    },
-    "SigningJob_Source": {
-      "kind": "property",
-      "resourceType": "AWS::Signer::SigningJob.Source"
     },
     "SigningProfile": {
       "kind": "resource",
@@ -67061,10 +66012,6 @@
       "kind": "property",
       "resourceType": "AWS::GroundStation::DataflowEndpointGroup.SocketAddress"
     },
-    "Software": {
-      "kind": "property",
-      "resourceType": "AWS::ThinClient::SoftwareSet.Software"
-    },
     "SoftwarePackage": {
       "kind": "resource",
       "resourceType": "AWS::IoT::SoftwarePackage",
@@ -67130,39 +66077,6 @@
     "SoftwarePackage_Tag": {
       "kind": "property",
       "resourceType": "AWS::IoT::SoftwarePackage.Tag"
-    },
-    "SoftwareSet": {
-      "kind": "resource",
-      "resourceType": "AWS::ThinClient::SoftwareSet",
-      "attrs": [
-        "Arn",
-        "Id",
-        "ReleasedAt",
-        "Software",
-        "ValidationStatus",
-        "Version"
-      ],
-      "props": [
-        "Arn:false",
-        "Id:false",
-        "ReleasedAt:false",
-        "Software:false",
-        "Tags:false",
-        "ValidationStatus:false",
-        "Version:false"
-      ],
-      "createOnly": [
-        "Tags"
-      ],
-      "taggable": true
-    },
-    "SoftwareSet_Software": {
-      "kind": "property",
-      "resourceType": "AWS::ThinClient::SoftwareSet.Software"
-    },
-    "SoftwareSet_Tag": {
-      "kind": "property",
-      "resourceType": "AWS::ThinClient::SoftwareSet.Tag"
     },
     "SoftwareUpdateOptions": {
       "kind": "property",
@@ -67423,6 +66337,10 @@
       "kind": "property",
       "resourceType": "AWS::SageMaker::Space.SpaceJupyterLabAppSettings"
     },
+    "SpaceResource": {
+      "kind": "property",
+      "resourceType": "AWS::QuickSight::Space.SpaceResource"
+    },
     "SpaceSettings": {
       "kind": "property",
       "resourceType": "AWS::SageMaker::Space.SpaceSettings"
@@ -67582,11 +66500,9 @@
         "SpotFleetRequestConfigData/InstanceInterruptionBehavior",
         "SpotFleetRequestConfigData/InstancePoolsToUseCount",
         "SpotFleetRequestConfigData/LaunchSpecifications",
-        "SpotFleetRequestConfigData/LaunchTemplateConfigs",
         "SpotFleetRequestConfigData/LoadBalancersConfig",
         "SpotFleetRequestConfigData/OnDemandAllocationStrategy",
         "SpotFleetRequestConfigData/OnDemandMaxTotalPrice",
-        "SpotFleetRequestConfigData/OnDemandTargetCapacity",
         "SpotFleetRequestConfigData/ReplaceUnhealthyInstances",
         "SpotFleetRequestConfigData/SpotMaintenanceStrategies",
         "SpotFleetRequestConfigData/SpotMaxTotalPrice",
@@ -69571,6 +68487,10 @@
       "kind": "property",
       "resourceType": "AWS::S3Tables::TableBucket.UnreferencedFileRemoval"
     },
+    "TableCreation": {
+      "kind": "property",
+      "resourceType": "AWS::MSK::Channel.TableCreation"
+    },
     "TableCreationConfiguration": {
       "kind": "property",
       "resourceType": "AWS::KinesisFirehose::DeliveryStream.TableCreationConfiguration"
@@ -71134,26 +70054,6 @@
       "kind": "property",
       "resourceType": "AWS::Cognito::UserPoolClient.TokenValidityUnits"
     },
-    "TokenVault": {
-      "kind": "resource",
-      "resourceType": "AWS::BedrockAgentCore::TokenVault",
-      "attrs": [
-        "Arn",
-        "KmsConfiguration",
-        "LastModifiedDate",
-        "TokenVaultId"
-      ],
-      "props": [
-        "Arn:false",
-        "KmsConfiguration:false",
-        "LastModifiedDate:false",
-        "TokenVaultId:false"
-      ]
-    },
-    "TokenVault_KmsConfiguration": {
-      "kind": "property",
-      "resourceType": "AWS::BedrockAgentCore::TokenVault.KmsConfiguration"
-    },
     "ToolbarConfiguration": {
       "kind": "property",
       "resourceType": "AWS::WorkSpacesWeb::UserSettings.ToolbarConfiguration"
@@ -71205,10 +70105,6 @@
     "TopicConfigOptions": {
       "kind": "property",
       "resourceType": "AWS::QuickSight::Topic.TopicConfigOptions"
-    },
-    "TopicConfiguration": {
-      "kind": "property",
-      "resourceType": "AWS::S3::Bucket.TopicConfiguration"
     },
     "TopicDateRangeFilter": {
       "kind": "property",
@@ -71954,55 +70850,6 @@
       "kind": "property",
       "resourceType": "AWS::Glue::MLTransform.TransformEncryption"
     },
-    "TransformJob": {
-      "kind": "resource",
-      "resourceType": "AWS::SageMaker::TransformJob",
-      "attrs": [
-        "CreationTime",
-        "TransformEndTime",
-        "TransformJobArn",
-        "TransformJobName",
-        "TransformJobStatus",
-        "TransformStartTime"
-      ],
-      "props": [
-        "BatchStrategy:false",
-        "CreationTime:false",
-        "DataCaptureConfig:false",
-        "DataProcessing:false",
-        "Environment:false",
-        "ExperimentConfig:false",
-        "MaxConcurrentTransforms:false",
-        "MaxPayloadInMB:false",
-        "ModelClientConfig:false",
-        "ModelName:true",
-        "Tags:false",
-        "TransformEndTime:false",
-        "TransformInput:true",
-        "TransformJobArn:false",
-        "TransformJobName:true",
-        "TransformJobStatus:false",
-        "TransformOutput:true",
-        "TransformResources:true",
-        "TransformStartTime:false"
-      ],
-      "createOnly": [
-        "BatchStrategy",
-        "DataCaptureConfig",
-        "DataProcessing",
-        "Environment",
-        "ExperimentConfig",
-        "MaxConcurrentTransforms",
-        "MaxPayloadInMB",
-        "ModelClientConfig",
-        "ModelName",
-        "Tags",
-        "TransformInput",
-        "TransformOutput",
-        "TransformResources"
-      ],
-      "taggable": true
-    },
     "TransformJobDefinition": {
       "kind": "property",
       "resourceType": "AWS::SageMaker::ModelPackage.TransformJobDefinition"
@@ -72416,6 +71263,10 @@
       "kind": "property",
       "resourceType": "AWS::NetworkManager::TransitGatewayPeering.Tag"
     },
+    "TransitGatewayPolicyRule": {
+      "kind": "property",
+      "resourceType": "AWS::EC2::TransitGatewayPolicyTableEntry.TransitGatewayPolicyRule"
+    },
     "TransitGatewayPolicyTable": {
       "kind": "resource",
       "resourceType": "AWS::EC2::TransitGatewayPolicyTable",
@@ -72451,6 +71302,28 @@
         "TransitGatewayAttachmentId",
         "TransitGatewayPolicyTableId"
       ]
+    },
+    "TransitGatewayPolicyTableEntry": {
+      "kind": "resource",
+      "resourceType": "AWS::EC2::TransitGatewayPolicyTableEntry",
+      "attrs": [
+        "State"
+      ],
+      "props": [
+        "PolicyRule:true",
+        "PolicyRuleNumber:true",
+        "State:false",
+        "TargetRouteTableId:true",
+        "TransitGatewayPolicyTableId:true"
+      ],
+      "createOnly": [
+        "PolicyRuleNumber",
+        "TransitGatewayPolicyTableId"
+      ]
+    },
+    "TransitGatewayPolicyTableEntry_TransitGatewayPolicyRule": {
+      "kind": "property",
+      "resourceType": "AWS::EC2::TransitGatewayPolicyTableEntry.TransitGatewayPolicyRule"
     },
     "TransitGatewayPolicyTable_Tag": {
       "kind": "property",
@@ -73504,6 +72377,10 @@
       "kind": "property",
       "resourceType": "AWS::Cognito::UserPoolRegionalConfigurationAttachment.EmailConfiguration"
     },
+    "UserPoolRegionalConfigurationAttachment_EumsSmsConfiguration": {
+      "kind": "property",
+      "resourceType": "AWS::Cognito::UserPoolRegionalConfigurationAttachment.EumsSmsConfiguration"
+    },
     "UserPoolRegionalConfigurationAttachment_InboundFederation": {
       "kind": "property",
       "resourceType": "AWS::Cognito::UserPoolRegionalConfigurationAttachment.InboundFederation"
@@ -73682,6 +72559,10 @@
     "UserPool_EmailConfiguration": {
       "kind": "property",
       "resourceType": "AWS::Cognito::UserPool.EmailConfiguration"
+    },
+    "UserPool_EumsSmsConfiguration": {
+      "kind": "property",
+      "resourceType": "AWS::Cognito::UserPool.EumsSmsConfiguration"
     },
     "UserPool_InboundFederation": {
       "kind": "property",
@@ -76936,6 +75817,10 @@
         "Id:false"
       ]
     },
+    "WallClockWindow": {
+      "kind": "property",
+      "resourceType": "AWS::CloudWatch::Alarm.WallClockWindow"
+    },
     "WarmPool": {
       "kind": "resource",
       "resourceType": "AWS::AutoScaling::WarmPool",
@@ -77704,40 +76589,6 @@
       "kind": "property",
       "resourceType": "AWS::Transfer::Server.WorkflowDetails"
     },
-    "WorkflowExecution": {
-      "kind": "resource",
-      "resourceType": "AWS::ImageBuilder::WorkflowExecution",
-      "attrs": [
-        "Arn",
-        "EndTime",
-        "StartTime",
-        "Status",
-        "TotalStepCount",
-        "TotalStepsFailed",
-        "TotalStepsSkipped",
-        "TotalStepsSucceeded",
-        "Type",
-        "WorkflowBuildVersionArn",
-        "WorkflowExecutionId"
-      ],
-      "props": [
-        "Arn:false",
-        "EndTime:false",
-        "ImageBuildVersionArn:false",
-        "StartTime:false",
-        "Status:false",
-        "TotalStepCount:false",
-        "TotalStepsFailed:false",
-        "TotalStepsSkipped:false",
-        "TotalStepsSucceeded:false",
-        "Type:false",
-        "WorkflowBuildVersionArn:false",
-        "WorkflowExecutionId:false"
-      ],
-      "createOnly": [
-        "ImageBuildVersionArn"
-      ]
-    },
     "WorkflowExportConfig": {
       "kind": "property",
       "resourceType": "AWS::NovaAct::WorkflowDefinition.WorkflowExportConfig"
@@ -77745,40 +76596,6 @@
     "WorkflowStep": {
       "kind": "property",
       "resourceType": "AWS::Transfer::Workflow.WorkflowStep"
-    },
-    "WorkflowStepExecution": {
-      "kind": "resource",
-      "resourceType": "AWS::ImageBuilder::WorkflowStepExecution",
-      "attrs": [
-        "Action",
-        "EndTime",
-        "ImageBuildVersionArn",
-        "Inputs",
-        "Name",
-        "OnFailure",
-        "Outputs",
-        "StartTime",
-        "Status",
-        "StepExecutionId",
-        "TimeoutSeconds",
-        "WorkflowBuildVersionArn",
-        "WorkflowExecutionId"
-      ],
-      "props": [
-        "Action:false",
-        "EndTime:false",
-        "ImageBuildVersionArn:false",
-        "Inputs:false",
-        "Name:false",
-        "OnFailure:false",
-        "Outputs:false",
-        "StartTime:false",
-        "Status:false",
-        "StepExecutionId:false",
-        "TimeoutSeconds:false",
-        "WorkflowBuildVersionArn:false",
-        "WorkflowExecutionId:false"
-      ]
     },
     "WorkflowUpdate": {
       "kind": "property",
