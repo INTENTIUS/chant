@@ -158,3 +158,31 @@ function findRefAttr(attrs: Record<string, unknown>, producer: string): string |
   visit(attrs);
   return found;
 }
+
+/**
+ * chant #1489 — the message to print when `--detail 3` changed nothing.
+ *
+ * T3's only addition over T2 is the producer attribute on `$ref`-derived
+ * edges. A graph whose resources link by name or label convention instead of
+ * attribute references (the k8s lexicon end to end) has nothing to annotate,
+ * so levels 2 and 3 come out byte-identical — which reads as a broken dial
+ * from any consumer stepping through the levels (behold#131 was filed over
+ * exactly this). Accepting a value that changes nothing without saying so is
+ * the bug; this names it.
+ *
+ * Returns the warning text, or undefined when detail 3 did add something.
+ * Callers print it through their own sink; the compare is over the two IRs
+ * the caller already holds, so this stays a pure function.
+ */
+export function detailInertNotice(base: GraphIR, detailed: GraphIR): string | undefined {
+  if (JSON.stringify(detailed) !== JSON.stringify(base)) return undefined;
+  const edges = base.edges.length;
+  const why =
+    edges === 0
+      ? "this graph has no edges at all"
+      : `none of this graph's ${edges} edge(s) reference a producer attribute — they link by name or label convention`;
+  return (
+    `--detail 3 adds the producer attribute to reference edges, but ${why}, ` +
+    `so the output is identical to --detail 2.`
+  );
+}
