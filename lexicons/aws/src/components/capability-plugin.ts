@@ -9,7 +9,7 @@
  */
 
 import type { Capability } from "@intentius/chant/components/capability";
-import type { CapabilityPlugin } from "@intentius/chant/components/capability-plugin";
+import { ownPackageVersion, type CapabilityPlugin } from "@intentius/chant/components/capability-plugin";
 
 import { publishImageCapability, loadImageOnHostCapability, publishArtifactCapability } from "./publish";
 import { extractConfigBomCapability } from "./config-bom";
@@ -67,7 +67,10 @@ function awsCapabilities(): Array<Capability<never, unknown>> {
 /** The aws lexicon's capability plugin — loaded by core when a project's `chant.config.ts` lists `lexicons: ["aws"]`. */
 export const awsCapabilityPlugin: CapabilityPlugin = {
   name: "aws",
-  version: "1.0.0",
+  // The lexicon package's own version (#1505) — the "1.0.0" this shipped with
+  // was the starter plugin's literal, copied along in the #681 extraction and
+  // never a real package version.
+  version: ownPackageVersion(import.meta.url),
   capabilities: awsCapabilities,
   families: () => AWS_VERB_FAMILIES,
 };
