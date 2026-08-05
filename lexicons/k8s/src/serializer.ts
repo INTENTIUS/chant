@@ -114,15 +114,81 @@ function deriveGVKFromType(entityType: string): { apiVersion: string; kind: stri
 }
 
 /**
+ * The name a resource gets when it does not declare one: the logical name,
+ * kebab-cased. Shared with the manifest builder below so a reference and the
+ * thing it references cannot derive different names (#1493).
+ */
+function derivedName(logicalName: string): string {
+  return logicalName.replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase();
+}
+
+/**
+ * What a cross-resource reference resolves to on this substrate (#1493).
+ *
+ * Kubernetes YAML has no deploy-time reference mechanism — no `!Ref`, no
+ * `Fn::GetAtt`. Whatever a reference is going to mean has to be resolved here,
+ * before serialization, or it means nothing at all.
+ *
+ * This used to return the *logical* name for every attribute, so
+ * `claimName: pgClaim.name` emitted `claimName: pgClaim` and the manifest
+ * named a resource that does not exist. It applied cleanly and failed on the
+ * cluster, which is the failure this whole system exists to remove. The
+ * lexicon's own plugin comment already described the intended behaviour —
+ * "resolves to metadata.name" — so this brings the code to the documentation
+ * rather than the other way round.
+ *
+ * `uid` is refused rather than resolved: a UID is assigned by the API server
+ * at admission, so no build-time value exists and any string emitted here
+ * would be a fabrication.
+ */
+function resolveK8sAttr(entity: Declarable | undefined, logicalName: string, attr: string): unknown {
+  if (attr === "uid") {
+    throw new Error(
+      `Cannot reference "${logicalName}.uid": a Kubernetes UID is assigned by the API server at ` +
+        `admission, so it has no build-time value. Reference .name, or carry the UID at runtime ` +
+        `with fieldRef: { fieldPath: "metadata.uid" }.`,
+    );
+  }
+
+  const metadata =
+    entity && isResourceDeclarable(entity) && typeof entity.props === "object" && entity.props !== null
+      ? ((entity.props as Record<string, unknown>).metadata as Record<string, unknown> | undefined)
+      : undefined;
+
+  if (attr === "name") {
+    // Same fallback the manifest builder applies, so a reference to a resource
+    // that declares no name still resolves to the name it will actually get.
+    const declared = metadata?.name;
+    return typeof declared === "string" && declared.length > 0 ? declared : derivedName(logicalName);
+  }
+
+  if (attr === "namespace") {
+    const ns = metadata?.namespace;
+    if (typeof ns === "string" && ns.length > 0) return ns;
+    throw new Error(
+      `Cannot reference "${logicalName}.namespace": it declares no metadata.namespace, and the ` +
+        `namespace a manifest lands in is decided at apply time (kubectl -n, or the context's ` +
+        `default). Set metadata.namespace on "${logicalName}" if the reference needs to be stable.`,
+    );
+  }
+
+  throw new Error(
+    `Cannot reference "${logicalName}.${attr}": the k8s lexicon resolves .name and .namespace at ` +
+      `build time, and Kubernetes YAML has no way to express any other attribute reference.`,
+  );
+}
+
+/**
  * K8s visitor for the generic serializer walker.
  */
 function k8sVisitor(entityNames: Map<Declarable, string>): SerializerVisitor {
+  // name → entity, so an AttrRef can reach the resource it points at. The
+  // walker hands the visitor a logical name, not the Declarable.
+  const byName = new Map<string, Declarable>();
+  for (const [entity, name] of entityNames) byName.set(name, entity);
+
   return {
-    attrRef: (name, attr) => {
-      // For K8s, attribute references typically resolve to metadata.name
-      if (attr === "name") return name;
-      return name;
-    },
+    attrRef: (name, attr) => resolveK8sAttr(byName.get(name), name, attr),
     resourceRef: (name) => name,
     propertyDeclarable: (entity, walk) => {
       if (!isResourceDeclarable(entity) || typeof entity.props !== "object" || entity.props === null) {
@@ -209,8 +275,7 @@ export const k8sSerializer: Serializer = {
       // Build metadata
       const metadata: Record<string, unknown> = props.metadata as Record<string, unknown> ?? {};
       if (!metadata.name) {
-        // Use the logical name as the resource name (kebab-case)
-        metadata.name = name.replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase();
+        metadata.name = derivedName(name);
       }
 
       // Merge default labels
