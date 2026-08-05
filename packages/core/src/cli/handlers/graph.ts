@@ -9,7 +9,7 @@ import { observeResources } from "../../lifecycle/observe";
 import { replaySnapshots, hasSnapshot } from "../../lifecycle/replay";
 import { loadChantConfig, environmentNames, loadChantConfigUpward, type ChantConfig } from "../../config";
 import { applyLiveEndpoint } from "../../live-endpoint";
-import { applyDetail, type DetailLevel } from "../../graph-detail";
+import { applyDetail, detailInertNotice, type DetailLevel } from "../../graph-detail";
 import { applyLens, parseLens } from "../../graph-lens";
 import { toMermaid } from "../../graph-mermaid";
 import { toDot } from "../../graph-dot";
@@ -343,7 +343,16 @@ async function runGraphLive(
       return 1;
     }
   }
-  ir = applyDetail(ir, (args.detail ?? 2) as DetailLevel);
+  {
+    const base = ir;
+    ir = applyDetail(ir, (args.detail ?? 2) as DetailLevel);
+    // #1489 — a --detail 3 that changed nothing says so instead of silently
+    // emitting the same bytes as --detail 2.
+    if (args.detail === 3) {
+      const notice = detailInertNotice(base, ir);
+      if (notice) console.error(formatWarning({ message: notice }));
+    }
+  }
 
   // Containment grouping (#779) → boundary boxes. Built after lens/detail and
   // filtered to surviving nodes, so a lens can't leave dangling group refs.
@@ -558,7 +567,15 @@ async function runGraphView(
       return 1;
     }
   }
-  ir = applyDetail(ir, level as DetailLevel);
+  {
+    const base = ir;
+    ir = applyDetail(ir, level as DetailLevel);
+    // #1489 — same say-so as the live path: an inert --detail 3 names itself.
+    if (level === 3) {
+      const notice = detailInertNotice(base, ir);
+      if (notice) console.error(formatWarning({ message: notice }));
+    }
+  }
   return emitIr(ir, ctx, format);
 }
 
