@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-08-04T03:54:29.251Z",
+  "generatedAt": "2026-08-05T22:04:40.815Z",
   "entries": {
     "ACL": {
       "kind": "resource",
@@ -16240,10 +16240,6 @@
       "kind": "property",
       "resourceType": "AWS::QuickSight::DataSet.CustomInstruction"
     },
-    "CustomInstructions": {
-      "kind": "property",
-      "resourceType": "AWS::QuickSight::Topic.CustomInstructions"
-    },
     "CustomLineItem": {
       "kind": "resource",
       "resourceType": "AWS::BillingConductor::CustomLineItem",
@@ -17385,13 +17381,9 @@
     "DMSEventSubscription": {
       "kind": "resource",
       "resourceType": "AWS::DMS::EventSubscription",
-      "attrs": [
-        "Id"
-      ],
       "props": [
         "Enabled:false",
         "EventCategories:false",
-        "Id:false",
         "SnsTopicArn:true",
         "SourceIds:false",
         "SourceType:false",
@@ -17401,7 +17393,8 @@
       "createOnly": [
         "SourceIds",
         "SubscriptionName"
-      ]
+      ],
+      "taggable": true
     },
     "DMSEventSubscription_Tag": {
       "kind": "property",
@@ -18941,6 +18934,14 @@
     "DataSetRefreshProperties": {
       "kind": "property",
       "resourceType": "AWS::QuickSight::DataSet.DataSetRefreshProperties"
+    },
+    "DataSetRelation": {
+      "kind": "property",
+      "resourceType": "AWS::QuickSight::TopicV2.DataSetRelation"
+    },
+    "DataSetRelationEndpoint": {
+      "kind": "property",
+      "resourceType": "AWS::QuickSight::TopicV2.DataSetRelationEndpoint"
     },
     "DataSetSchema": {
       "kind": "property",
@@ -21450,20 +21451,26 @@
         "AccessibleResources:false",
         "AdditionalServiceDetails:false",
         "Arn:false",
+        "ExchangeUrlPrivateConnectionName:false",
         "KmsKeyArn:false",
+        "PrivateConnectionName:false",
         "ServiceDetails:false",
         "ServiceId:false",
         "ServiceType:true",
-        "Tags:false"
+        "Tags:false",
+        "TargetUrlPrivateConnectionName:false"
       ],
       "createOnly": [
+        "ExchangeUrlPrivateConnectionName",
         "KmsKeyArn",
+        "PrivateConnectionName",
         "ServiceDetails/AzureIdentity",
         "ServiceDetails/Dynatrace",
         "ServiceDetails/MCPServerSplunk",
         "ServiceDetails/PagerDuty",
         "ServiceDetails/ServiceNow",
-        "ServiceType"
+        "ServiceType",
+        "TargetUrlPrivateConnectionName"
       ],
       "taggable": true
     },
@@ -35496,6 +35503,10 @@
       "kind": "property",
       "resourceType": "AWS::AutoScaling::WarmPool.InstanceReusePolicy"
     },
+    "InstanceRuleStatement": {
+      "kind": "property",
+      "resourceType": "AWS::LicenseManager::LicenseAssetRuleSet.InstanceRuleStatement"
+    },
     "InstanceSnapshot": {
       "kind": "resource",
       "resourceType": "AWS::Lightsail::InstanceSnapshot",
@@ -39420,6 +39431,53 @@
       ],
       "taggable": true
     },
+    "LicenseAssetRule": {
+      "kind": "property",
+      "resourceType": "AWS::LicenseManager::LicenseAssetRuleSet.LicenseAssetRule"
+    },
+    "LicenseAssetRuleSet": {
+      "kind": "resource",
+      "resourceType": "AWS::LicenseManager::LicenseAssetRuleSet",
+      "attrs": [
+        "LicenseAssetRulesetArn"
+      ],
+      "props": [
+        "Description:false",
+        "LicenseAssetRulesetArn:false",
+        "Name:true",
+        "Rules:true",
+        "Tags:false"
+      ],
+      "taggable": true
+    },
+    "LicenseAssetRuleSet_InstanceRuleStatement": {
+      "kind": "property",
+      "resourceType": "AWS::LicenseManager::LicenseAssetRuleSet.InstanceRuleStatement"
+    },
+    "LicenseAssetRuleSet_LicenseAssetRule": {
+      "kind": "property",
+      "resourceType": "AWS::LicenseManager::LicenseAssetRuleSet.LicenseAssetRule"
+    },
+    "LicenseAssetRuleSet_LicenseConfigurationRuleStatement": {
+      "kind": "property",
+      "resourceType": "AWS::LicenseManager::LicenseAssetRuleSet.LicenseConfigurationRuleStatement"
+    },
+    "LicenseAssetRuleSet_LicenseRuleStatement": {
+      "kind": "property",
+      "resourceType": "AWS::LicenseManager::LicenseAssetRuleSet.LicenseRuleStatement"
+    },
+    "LicenseAssetRuleSet_RuleStatement": {
+      "kind": "property",
+      "resourceType": "AWS::LicenseManager::LicenseAssetRuleSet.RuleStatement"
+    },
+    "LicenseAssetRuleSet_Tag": {
+      "kind": "property",
+      "resourceType": "AWS::LicenseManager::LicenseAssetRuleSet.Tag"
+    },
+    "LicenseConfigurationRuleStatement": {
+      "kind": "property",
+      "resourceType": "AWS::LicenseManager::LicenseAssetRuleSet.LicenseConfigurationRuleStatement"
+    },
     "LicenseEndpoint": {
       "kind": "resource",
       "resourceType": "AWS::Deadline::LicenseEndpoint",
@@ -39451,6 +39509,10 @@
     "LicenseEndpoint_Tag": {
       "kind": "property",
       "resourceType": "AWS::Deadline::LicenseEndpoint.Tag"
+    },
+    "LicenseRuleStatement": {
+      "kind": "property",
+      "resourceType": "AWS::LicenseManager::LicenseAssetRuleSet.LicenseRuleStatement"
     },
     "License_BorrowConfiguration": {
       "kind": "property",
@@ -42728,6 +42790,10 @@
     "ManagedStorageEncryptionConfiguration": {
       "kind": "property",
       "resourceType": "AWS::Athena::WorkGroup.ManagedStorageEncryptionConfiguration"
+    },
+    "ManagedVpcResource": {
+      "kind": "property",
+      "resourceType": "AWS::BedrockAgentCore::OAuth2CredentialProvider.ManagedVpcResource"
     },
     "ManagedWordsConfig": {
       "kind": "property",
@@ -48141,7 +48207,8 @@
         "CreatedTime",
         "CredentialProviderArn",
         "LastUpdatedTime",
-        "Oauth2ProviderConfigOutput"
+        "Oauth2ProviderConfigOutput",
+        "Status"
       ],
       "props": [
         "CallbackUrl:false",
@@ -48155,6 +48222,7 @@
         "Name:true",
         "Oauth2ProviderConfigInput:false",
         "Oauth2ProviderConfigOutput:false",
+        "Status:false",
         "Tags:false"
       ],
       "createOnly": [
@@ -48191,6 +48259,10 @@
       "kind": "property",
       "resourceType": "AWS::BedrockAgentCore::OAuth2CredentialProvider.LinkedinOauth2ProviderConfigInput"
     },
+    "OAuth2CredentialProvider_ManagedVpcResource": {
+      "kind": "property",
+      "resourceType": "AWS::BedrockAgentCore::OAuth2CredentialProvider.ManagedVpcResource"
+    },
     "OAuth2CredentialProvider_MicrosoftOauth2ProviderConfigInput": {
       "kind": "property",
       "resourceType": "AWS::BedrockAgentCore::OAuth2CredentialProvider.MicrosoftOauth2ProviderConfigInput"
@@ -48215,6 +48287,22 @@
       "kind": "property",
       "resourceType": "AWS::BedrockAgentCore::OAuth2CredentialProvider.OnBehalfOfTokenExchangeConfig"
     },
+    "OAuth2CredentialProvider_PrivateEndpoint": {
+      "kind": "property",
+      "resourceType": "AWS::BedrockAgentCore::OAuth2CredentialProvider.PrivateEndpoint"
+    },
+    "OAuth2CredentialProvider_PrivateEndpointOverride": {
+      "kind": "property",
+      "resourceType": "AWS::BedrockAgentCore::OAuth2CredentialProvider.PrivateEndpointOverride"
+    },
+    "OAuth2CredentialProvider_PrivateKeyJwtConfig": {
+      "kind": "property",
+      "resourceType": "AWS::BedrockAgentCore::OAuth2CredentialProvider.PrivateKeyJwtConfig"
+    },
+    "OAuth2CredentialProvider_PrivateKeySource": {
+      "kind": "property",
+      "resourceType": "AWS::BedrockAgentCore::OAuth2CredentialProvider.PrivateKeySource"
+    },
     "OAuth2CredentialProvider_SalesforceOauth2ProviderConfigInput": {
       "kind": "property",
       "resourceType": "AWS::BedrockAgentCore::OAuth2CredentialProvider.SalesforceOauth2ProviderConfigInput"
@@ -48222,6 +48310,10 @@
     "OAuth2CredentialProvider_SecretReference": {
       "kind": "property",
       "resourceType": "AWS::BedrockAgentCore::OAuth2CredentialProvider.SecretReference"
+    },
+    "OAuth2CredentialProvider_SelfManagedLatticeResource": {
+      "kind": "property",
+      "resourceType": "AWS::BedrockAgentCore::OAuth2CredentialProvider.SelfManagedLatticeResource"
     },
     "OAuth2CredentialProvider_SlackOauth2ProviderConfigInput": {
       "kind": "property",
@@ -53105,14 +53197,6 @@
       "kind": "property",
       "resourceType": "AWS::ServiceDiscovery::PrivateDnsNamespace.PrivateDnsPropertiesMutable"
     },
-    "PrivateEndpoint": {
-      "kind": "property",
-      "resourceType": "AWS::BedrockAgentCore::Harness.PrivateEndpoint"
-    },
-    "PrivateEndpointOverride": {
-      "kind": "property",
-      "resourceType": "AWS::BedrockAgentCore::Harness.PrivateEndpointOverride"
-    },
     "PrivateGraphEndpoint": {
       "kind": "resource",
       "resourceType": "AWS::NeptuneGraph::PrivateGraphEndpoint",
@@ -53138,6 +53222,14 @@
     "PrivateIpAdd": {
       "kind": "property",
       "resourceType": "AWS::EC2::LaunchTemplate.PrivateIpAdd"
+    },
+    "PrivateKeyJwtConfig": {
+      "kind": "property",
+      "resourceType": "AWS::BedrockAgentCore::OAuth2CredentialProvider.PrivateKeyJwtConfig"
+    },
+    "PrivateKeySource": {
+      "kind": "property",
+      "resourceType": "AWS::BedrockAgentCore::OAuth2CredentialProvider.PrivateKeySource"
     },
     "PrivateRegistryAccess": {
       "kind": "property",
@@ -60506,6 +60598,10 @@
       "kind": "property",
       "resourceType": "AWS::APS::RuleGroupsNamespace.Tag"
     },
+    "RuleStatement": {
+      "kind": "property",
+      "resourceType": "AWS::LicenseManager::LicenseAssetRuleSet.RuleStatement"
+    },
     "RuleTriggerEventSource": {
       "kind": "property",
       "resourceType": "AWS::Connect::Rule.RuleTriggerEventSource"
@@ -64078,6 +64174,10 @@
       "kind": "property",
       "resourceType": "AWS::Lambda::EventSourceMapping.SelfManagedKafkaEventSourceConfig"
     },
+    "SelfManagedLatticeResource": {
+      "kind": "property",
+      "resourceType": "AWS::BedrockAgentCore::OAuth2CredentialProvider.SelfManagedLatticeResource"
+    },
     "SemanticChunkingConfiguration": {
       "kind": "property",
       "resourceType": "AWS::Bedrock::DataSource.SemanticChunkingConfiguration"
@@ -66837,13 +66937,13 @@
     "StackFleetAssociation": {
       "kind": "resource",
       "resourceType": "AWS::AppStream::StackFleetAssociation",
+      "attrs": [
+        "Id"
+      ],
       "props": [
         "FleetName:true",
+        "Id:false",
         "StackName:true"
-      ],
-      "createOnly": [
-        "FleetName",
-        "StackName"
       ]
     },
     "StackInstances": {
@@ -70355,6 +70455,57 @@
     "TopicRule_TopicRulePayload": {
       "kind": "property",
       "resourceType": "AWS::IoT::TopicRule.TopicRulePayload"
+    },
+    "TopicV2": {
+      "kind": "resource",
+      "resourceType": "AWS::QuickSight::TopicV2",
+      "attrs": [
+        "Arn"
+      ],
+      "props": [
+        "Arn:false",
+        "AwsAccountId:false",
+        "CustomInstructions:false",
+        "DataSetRelations:false",
+        "DataSets:false",
+        "Description:false",
+        "FolderArns:false",
+        "Name:false",
+        "Permissions:false",
+        "Tags:false",
+        "TopicId:false"
+      ],
+      "createOnly": [
+        "AwsAccountId",
+        "FolderArns",
+        "Tags",
+        "TopicId"
+      ],
+      "taggable": true
+    },
+    "TopicV2_CustomInstructions": {
+      "kind": "property",
+      "resourceType": "AWS::QuickSight::TopicV2.CustomInstructions"
+    },
+    "TopicV2_DataSetReference": {
+      "kind": "property",
+      "resourceType": "AWS::QuickSight::TopicV2.DataSetReference"
+    },
+    "TopicV2_DataSetRelation": {
+      "kind": "property",
+      "resourceType": "AWS::QuickSight::TopicV2.DataSetRelation"
+    },
+    "TopicV2_DataSetRelationEndpoint": {
+      "kind": "property",
+      "resourceType": "AWS::QuickSight::TopicV2.DataSetRelationEndpoint"
+    },
+    "TopicV2_ResourcePermission": {
+      "kind": "property",
+      "resourceType": "AWS::QuickSight::TopicV2.ResourcePermission"
+    },
+    "TopicV2_Tag": {
+      "kind": "property",
+      "resourceType": "AWS::QuickSight::TopicV2.Tag"
     },
     "Topic_LoggingConfig": {
       "kind": "property",
