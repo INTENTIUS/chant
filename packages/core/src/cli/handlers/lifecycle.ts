@@ -1,4 +1,5 @@
 import { resolve } from "node:path";
+import { commandBuildParams } from "../build-params-cli";
 import { build } from "../../build";
 import { takeSnapshot } from "../../lifecycle/snapshot";
 import { readSnapshot, readSnapshotAt, readEnvironmentSnapshots, listSnapshots, fetchLifecycle, pushLifecycle, snapshotStorageKey, StaleLifecycleBranchError } from "../../lifecycle/git";
@@ -101,6 +102,10 @@ export async function runLifecycleSnapshot(ctx: CommandContext): Promise<number>
   // Validate environment against config
   const projectPath = resolve(".");
   const { config } = await loadChantConfig(projectPath);
+  // This invocation's parameters, so the declared side of the comparison is the estate
+  // the caller asked for rather than the parameter defaults (#1483).
+  const declaredParams = await commandBuildParams(config.buildParams, args);
+  if (!declaredParams) return 1;
   const declaredEnvNames = environmentNames(config.environments);
   if (declaredEnvNames && !declaredEnvNames.includes(environment)) {
     console.error(formatError({
@@ -146,7 +151,7 @@ export async function runLifecycleSnapshot(ctx: CommandContext): Promise<number>
   const built: Array<{ target: (typeof targets)[number]; buildResult: Awaited<ReturnType<typeof build>> }> = [];
   for (const target of targets) {
     const label = target.stack ? `stack "${target.stack}"` : "project";
-    const buildResult = await build(target.root, targetSerializers);
+    const buildResult = await build(target.root, targetSerializers, undefined, { buildParams: declaredParams });
     if (buildResult.errors.length > 0) {
       console.error(formatError({ message: `Build failed for ${label} — fix errors before taking a snapshot` }));
       anyHardError = true;
@@ -326,6 +331,10 @@ export async function runLifecycleDiff(ctx: CommandContext): Promise<number> {
 
   // Fetch previous snapshots once (all stacks share the orphan branch).
   const { config } = await loadChantConfig(resolve("."));
+  // This invocation's parameters, so the declared side of the comparison is the estate
+  // the caller asked for rather than the parameter defaults (#1483).
+  const declaredParams = await commandBuildParams(config.buildParams, args);
+  if (!declaredParams) return 1;
   await fetchLifecycle();
 
   // One target per stack (single-stack projects: exactly one), each built from
@@ -355,7 +364,7 @@ export async function runLifecycleDiff(ctx: CommandContext): Promise<number> {
 
   try {
     for (const target of targets) {
-      const buildResult = await build(target.root, targetSerializers);
+      const buildResult = await build(target.root, targetSerializers, undefined, { buildParams: declaredParams });
       if (buildResult.errors.length > 0) {
         const label = target.stack ? `stack "${target.stack}"` : "project";
         console.error(formatError({ message: `Build failed for ${label} — fix errors before diffing` }));
@@ -1021,7 +1030,13 @@ export async function runLifecyclePlan(ctx: CommandContext): Promise<number> {
     : serializers;
 
   const { config } = await loadChantConfig(resolve("."));
-  const buildResult = await build(resolveBuildRoot(args, config), targetSerializers);
+  // This invocation's parameters, so the declared side of the comparison is the estate
+  // the caller asked for rather than the parameter defaults (#1483).
+  const declaredParams = await commandBuildParams(config.buildParams, args);
+  if (!declaredParams) return 1;
+  const buildResult = await build(resolveBuildRoot(args, config), targetSerializers, undefined, {
+    buildParams: declaredParams,
+  });
   if (buildResult.errors.length > 0) {
     console.error(formatError({ message: "Build failed — fix errors before planning" }));
     return 1;
