@@ -510,3 +510,105 @@ describe("k8sSerializer", () => {
     expect(result).not.toMatch(/^spec:\s*\n\s+rules:/m);
   });
 });
+
+// ── Cross-resource references (#1493) ────────────────────────────────
+//
+// Kubernetes YAML has no deploy-time reference mechanism, so a reference has
+// to be resolved before serialization or it means nothing. These used to
+// serialize to the *logical* name, so a Deployment referencing its PVC emitted
+// `claimName: pgClaim` and named a resource that does not exist — it applied
+// cleanly and failed on the cluster.
+
+function mockAttrRef(attribute: string, logicalName: string): any {
+  // Shape isAttrRefLike() checks for: parent object, string attribute, and
+  // _setLogicalName. Without the last one the walker treats it as a plain
+  // object and the test silently asserts nothing.
+  return {
+    attribute,
+    parent: { deref: () => undefined },
+    _setLogicalName: () => {},
+    getLogicalName: () => logicalName,
+  };
+}
+
+describe("cross-resource references resolve at build time (#1493)", () => {
+  test(".name resolves to the referenced resource's metadata.name", () => {
+    const claim = mockResource("K8s::Core::PersistentVolumeClaim", {
+      metadata: { name: "fountain-postgres", namespace: "fountain" },
+      spec: { accessModes: ["ReadWriteOnce"] },
+    });
+    const dep = mockResource("K8s::Apps::Deployment", {
+      metadata: { name: "fountain-postgres", namespace: "fountain" },
+      spec: {
+        template: {
+          spec: {
+            volumes: [
+              { name: "data", persistentVolumeClaim: { claimName: mockAttrRef("name", "pgClaim") } },
+            ],
+          },
+        },
+      },
+    });
+    const yaml = k8sSerializer.serialize(new Map([["pgClaim", claim], ["pgDeployment", dep]]));
+    expect(yaml).toContain("claimName: fountain-postgres");
+    expect(yaml).not.toContain("claimName: pgClaim");
+  });
+
+  // A resource that declares no name gets one derived from its logical name.
+  // A reference to it has to derive the SAME one or the two silently disagree.
+  test(".name matches the derived name when the target declares none", () => {
+    const claim = mockResource("K8s::Core::PersistentVolumeClaim", {
+      spec: { accessModes: ["ReadWriteOnce"] },
+    });
+    const dep = mockResource("K8s::Apps::Deployment", {
+      spec: { template: { spec: { volumes: [{ claimName: mockAttrRef("name", "pgClaim") }] } } },
+    });
+    const yaml = k8sSerializer.serialize(new Map([["pgClaim", claim], ["dep", dep]]));
+    expect(yaml).toContain("name: pg-claim");
+    expect(yaml).toContain("claimName: pg-claim");
+  });
+
+  test(".namespace resolves to the declared namespace", () => {
+    const svc = mockResource("K8s::Core::Service", {
+      metadata: { name: "fountain", namespace: "fountain" },
+    });
+    const dep = mockResource("K8s::Apps::Deployment", {
+      metadata: { name: "app" },
+      spec: { host: mockAttrRef("namespace", "service") },
+    });
+    const yaml = k8sSerializer.serialize(new Map([["service", svc], ["dep", dep]]));
+    expect(yaml).toContain("host: fountain");
+  });
+
+  // A UID is assigned by the API server at admission, so emitting any
+  // build-time string for it would be a fabrication.
+  test(".uid is refused rather than fabricated", () => {
+    const svc = mockResource("K8s::Core::Service", { metadata: { name: "fountain" } });
+    const dep = mockResource("K8s::Apps::Deployment", {
+      spec: { ownerRef: mockAttrRef("uid", "service") },
+    });
+    expect(() => k8sSerializer.serialize(new Map([["service", svc], ["dep", dep]]))).toThrow(
+      /assigned by the API server/,
+    );
+  });
+
+  test("an unresolvable namespace says what to set rather than emitting a wrong one", () => {
+    const svc = mockResource("K8s::Core::Service", { metadata: { name: "fountain" } });
+    const dep = mockResource("K8s::Apps::Deployment", {
+      spec: { ns: mockAttrRef("namespace", "service") },
+    });
+    expect(() => k8sSerializer.serialize(new Map([["service", svc], ["dep", dep]]))).toThrow(
+      /declares no metadata.namespace/,
+    );
+  });
+
+  test("an attribute k8s cannot express is refused with the reason", () => {
+    const svc = mockResource("K8s::Core::Service", { metadata: { name: "fountain" } });
+    const dep = mockResource("K8s::Apps::Deployment", {
+      spec: { x: mockAttrRef("clusterIP", "service") },
+    });
+    expect(() => k8sSerializer.serialize(new Map([["service", svc], ["dep", dep]]))).toThrow(
+      /resolves .name and .namespace/,
+    );
+  });
+});
