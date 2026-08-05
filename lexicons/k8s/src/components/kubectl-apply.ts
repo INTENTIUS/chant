@@ -16,7 +16,43 @@
  * pairing `cfn-deploy` has with its stack.
  */
 import type { Capability, DeployContext } from "@intentius/chant/components/capability";
-import { applyManifest, type ApplyManifestResult, type KubectlApplyArgs } from "../op/activities/kubectl";
+
+/**
+ * Structural mirrors of the activity module's argument/result shapes.
+ *
+ * Deliberately NOT imported from ../op/activities/kubectl — not even as
+ * `import type`: the #1074 boundary test walks type-only imports too, and a
+ * static reference here would put the API-client chain on the build path this
+ * module is loaded from (the lexicon entry point). The applier is reached by
+ * dynamic import inside run(), the same mechanism plugin.ts and the kube verb
+ * modules use; TypeScript checks these shapes against the real ones at the
+ * call site, so drift is a compile error there, not a silent mismatch.
+ */
+interface AppliedRef {
+  apiVersion: string;
+  kind: string;
+  name: string;
+  namespace?: string;
+}
+
+/** What the apply did — the activity's own result shape. */
+export interface KubectlApplyOutcome {
+  /** The field manager every object was applied as. */
+  fieldManager: string;
+  applied: AppliedRef[];
+  /** Objects deleted because they carried chant's marker and are no longer declared. */
+  pruned: AppliedRef[];
+}
+
+interface ApplierArgs {
+  manifest: string;
+  environment?: string;
+  stack?: string;
+  context?: string;
+  deleteMode?: "never" | "owned-only" | "gated";
+}
+
+type Applier = (args: ApplierArgs) => Promise<KubectlApplyOutcome>;
 
 export interface KubectlApplyInput {
   /** Path to a manifest file, or a directory of them. */
@@ -40,18 +76,21 @@ export interface KubectlApplyInput {
 }
 
 /** Factory with an injectable applier, so tests assert the delegation without
- * a cluster — the same seam `createGenerateSbomCapability` uses. */
+ * a cluster — the same seam `createGenerateSbomCapability` uses. The default
+ * applier is resolved by dynamic import on first run, keeping the API-client
+ * chain off the build path (#1074). */
 export function createKubectlApplyCapability(
-  apply: (args: KubectlApplyArgs) => Promise<ApplyManifestResult> = applyManifest,
-): Capability<KubectlApplyInput, ApplyManifestResult> {
+  apply?: Applier,
+): Capability<KubectlApplyInput, KubectlApplyOutcome> {
   return {
     kind: "kubectl-apply",
     // A server-side apply has no native undo (the previous object state is not
     // kept by the API server), so COMP003 requires the component to acknowledge
     // the compensation gap — the same posture as s3-sync/run-migration.
     rollbackPolicy: "needs-opt-out",
-    async run(ctx: DeployContext, input: KubectlApplyInput): Promise<ApplyManifestResult> {
-      return apply({
+    async run(ctx: DeployContext, input: KubectlApplyInput): Promise<KubectlApplyOutcome> {
+      const applier: Applier = apply ?? (await import("../op/activities/kubectl")).applyManifest;
+      return applier({
         manifest: input.manifest,
         environment: ctx.env,
         ...(input.stack !== undefined ? { stack: input.stack } : {}),
