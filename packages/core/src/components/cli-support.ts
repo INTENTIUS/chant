@@ -136,6 +136,11 @@ export interface ComponentGraphResult {
    * so a renderer can deep-link a component node to source (`chant graph
    * --components --format ir` sets `sourceLoc` from this). */
   files?: Record<string, string>;
+  /** Component name → the live resource names it owns (#1491): the declared
+   * `liveNames`, or `[name]` when undeclared — the identity-join fallback the
+   * `Component` contract already specifies. This is what lets a consumer join
+   * the component DAG to the resource graph without guessing at kinds. */
+  liveNames?: Record<string, string[]>;
   error?: string;
 }
 
@@ -154,8 +159,13 @@ export async function computeComponentGraph(path: string, sandbox?: boolean): Pr
 
   // component name → its declaring file, relative to `path`, for node deep-links.
   const files: Record<string, string> = {};
+  // component name → owned live resource names (#1491), declared or the
+  // contract's identity fallback.
+  const liveNames: Record<string, string[]> = {};
   for (const [name, discovered] of result.components) {
     files[name] = relative(path, discovered.filePath);
+    const declared = discovered.component.liveNames;
+    liveNames[name] = declared && declared.length > 0 ? [...declared] : [name];
   }
 
   try {
@@ -164,7 +174,7 @@ export async function computeComponentGraph(path: string, sandbox?: boolean): Pr
     for (const c of driverComponents) {
       for (const dep of c.dependsOn ?? []) edges.push({ from: c.name, to: dep });
     }
-    return { success: true, order, waves, edges, files };
+    return { success: true, order, waves, edges, files, liveNames };
   } catch (err) {
     if (err instanceof UnknownDependencyError || err instanceof DependencyCycleError) {
       return { success: false, order: [], waves: [], edges: [], error: err.message };

@@ -461,7 +461,10 @@ async function runComponentGraphView(
       id: name,
       kind: "Component",
       lexicon: "chant",
-      attrs: { wave: waveOf.get(name) ?? null },
+      // `liveNames` (#1491): the resources this component owns — declared, or
+      // the contract's `[name]` identity fallback — so a consumer can join
+      // the component DAG to the resource graph instead of guessing at kinds.
+      attrs: { wave: waveOf.get(name) ?? null, liveNames: graph.liveNames?.[name] ?? [name] },
       // Deep-link the node to its `*.component.ts` (behold's inspect panel).
       ...(graph.files?.[name] ? { sourceLoc: { file: graph.files[name] } } : {}),
     })),
