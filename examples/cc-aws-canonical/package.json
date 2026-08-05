@@ -13,6 +13,7 @@
   "scripts": {
     "build": "chant build src --lexicon aws -o template.json && chant build src --lexicon k8s -o k8s.yaml",
     "deploy": "chant run --components cc-canonical --env local --no-release-record",
+    "deploy-workload": "chant run --components cc-workload --env local --no-release-record",
     "status": "chant components status local --live --json --no-release-record",
     "diff": "chant lifecycle diff local --live",
     "teardown": "aws cloudformation delete-stack --stack-name cc-canonical"
