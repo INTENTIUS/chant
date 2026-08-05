@@ -420,8 +420,11 @@ describe("k8s describeResources", () => {
       expect(result.resources.web).toMatchObject({ type: "K8s::Apps::Deployment", physicalId: "uid-1", status: "READY" });
     });
 
-    test("bound and ambient context mismatches: refuses loudly instead of reading the wrong cluster", async () => {
+    test("bound while a different context is ambient: the binding wins and the estate observes (#1488)", async () => {
       loadChantConfigMock.mockResolvedValue({ config: { k8s: { profiles: { prod: { context: "prod-eks" } } } } });
+      // Ambient points at staging — the state any other project's k3d cluster
+      // leaves behind. Before #1488 this refused and the whole estate read
+      // grey; the declared binding must simply be used instead.
       const ambientIsStaging = fakeKubeconfig({
         contexts: [
           { name: "prod-eks", cluster: "prod", user: "prod-user" },
@@ -429,16 +432,17 @@ describe("k8s describeResources", () => {
         ],
         currentContext: "staging-eks",
       });
-      const cluster = fakeCluster({ kubeconfig: ambientIsStaging });
+      const cluster = fakeCluster({
+        kubeconfig: ambientIsStaging,
+        objects: { [objectKey("apps/v1", "Deployment", "web", "prod")]: web },
+      });
 
-      await expect(
-        describeResources({ environment: "prod", buildOutput: "", entityNames: ["web"], entities: entities() }, (o) =>
-          defaultK8sConnector({ ...o, client: { kubeconfig: ambientIsStaging, requestLayer: cluster.layer } }),
-        ),
-      ).rejects.toThrow(/environment "prod".*"prod-eks".*"staging-eks"/s);
+      const result = await describeResources(
+        { environment: "prod", buildOutput: "", entityNames: ["web"], entities: entities() },
+        (o) => defaultK8sConnector({ ...o, client: { kubeconfig: ambientIsStaging, requestLayer: cluster.layer } }),
+      );
 
-      // Refused before a single request left the process.
-      expect(cluster.layer.requests).toHaveLength(0);
+      expect(result.resources.web).toMatchObject({ type: "K8s::Apps::Deployment", physicalId: "uid-1", status: "READY" });
     });
 
     test("unbound: the kubeconfig's own context is used, and the fallback is visible", async () => {
