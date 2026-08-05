@@ -9,7 +9,7 @@
  * components.
  */
 import type { Capability } from "@intentius/chant/components/capability";
-import type { CapabilityPlugin } from "@intentius/chant/components/capability-plugin";
+import { ownPackageVersion, type CapabilityPlugin } from "@intentius/chant/components/capability-plugin";
 import { kubectlApplyCapability } from "./kubectl-apply";
 
 export const K8S_VERB_FAMILIES = {
@@ -18,7 +18,9 @@ export const K8S_VERB_FAMILIES = {
 
 export const k8sCapabilityPlugin: CapabilityPlugin = {
   name: "k8s",
-  version: "0.41.0",
+  // The lexicon package's own version (#1505) — lockstep releases bump it, so
+  // a literal here was stale one release after it was written.
+  version: ownPackageVersion(import.meta.url),
   capabilities(): Array<Capability<never, unknown>> {
     return [kubectlApplyCapability as Capability<never, unknown>];
   },

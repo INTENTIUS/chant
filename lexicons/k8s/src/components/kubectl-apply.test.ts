@@ -9,6 +9,14 @@ describe("kubectl-apply capability (#1495 piece 2)", () => {
     expect(kinds).toContain("kubectl-apply");
   });
 
+  test("the plugin's version is the lexicon package's own, not a literal (#1505)", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { version } = JSON.parse(
+      readFileSync(new URL("../../package.json", import.meta.url), "utf-8"),
+    ) as { version: string };
+    expect(k8sCapabilityPlugin.version).toBe(version);
+  });
+
   test("run delegates to the server-side apply with the component's env and the step's stack", async () => {
     let seen: unknown;
     const cap = createKubectlApplyCapability(async (args) => {
