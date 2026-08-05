@@ -631,6 +631,18 @@ const { deployment, service, serviceMonitor, prometheusRule } = MonitoredService
     return describeResources(options);
   },
 
+  /**
+   * Deploy-unit presence + health for `chant components status --live`
+   * (#1495 piece 3): a Kubernetes deploy unit is the label selector chant's
+   * own serializer stamps, so this reads back
+   * `app.kubernetes.io/managed-by=chant, chant.intentius.io/stack=<stack>`
+   * and rolls readiness up from the matching workloads' controllers.
+   */
+  async describeStackStatus(options) {
+    const { describeStackStatus } = await import("./describe-stack-status");
+    return describeStackStatus(options);
+  },
+
   async exportResources(options) {
     const { exportResources } = await import("./export-resources");
     return exportResources(options);

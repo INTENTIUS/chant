@@ -4,6 +4,12 @@ export { k8sSerializer } from "./serializer";
 // Plugin
 export { k8sPlugin } from "./plugin";
 
+// The capability plugin core's loader discovers on this package (#1495 piece 2)
+// — the kubectl-apply leaf a component composes, the way aws contributes
+// cfn-deploy.
+export { k8sCapabilityPlugin, K8S_VERB_FAMILIES } from "./components/capability-plugin";
+export { kubectlApplyCapability, createKubectlApplyCapability, type KubectlApplyInput } from "./components/kubectl-apply";
+
 // Default labels & annotations
 export { defaultLabels, defaultAnnotations, isDefaultLabels, isDefaultAnnotations } from "./default-labels";
 export { DEFAULT_LABELS_MARKER, DEFAULT_ANNOTATIONS_MARKER } from "./default-labels";
