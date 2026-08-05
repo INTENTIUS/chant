@@ -16,7 +16,7 @@ vi.mock("node:child_process", async () => {
 
 const { resolveClusterTarget, ClusterBindingMismatchError } = await import("./kubectl-context");
 
-describe("resolveClusterTarget (chant #1100)", () => {
+describe("resolveClusterTarget (chant #1100, #1488)", () => {
   beforeEach(() => {
     execMock.mockReset();
   });
@@ -34,9 +34,7 @@ describe("resolveClusterTarget (chant #1100)", () => {
     warnSpy.mockRestore();
   });
 
-  test("bound and ambient context matches: returns the bound context", async () => {
-    execMock.mockResolvedValue({ stdout: "prod-eks\n", stderr: "" });
-
+  test("bound: returns the bound context without ever probing the ambient one (#1488)", async () => {
     const target = await resolveClusterTarget(
       { k8s: { profiles: { prod: { context: "prod-eks" } } } },
       "prod",
@@ -44,38 +42,32 @@ describe("resolveClusterTarget (chant #1100)", () => {
     );
 
     expect(target).toEqual({ context: "prod-eks", source: "bound" });
-    expect(execMock).toHaveBeenCalledWith(expect.stringContaining("current-context"));
+    expect(execMock).not.toHaveBeenCalled();
   });
 
-  test("bound and ambient context cannot be determined: proceeds with the bound context anyway", async () => {
-    execMock.mockRejectedValue(new Error("no kubeconfig"));
-
-    const target = await resolveClusterTarget(
-      { k8s: { profiles: { prod: { context: "prod-eks" } } } },
-      "prod",
-      "k8s",
-    );
-
-    expect(target).toEqual({ context: "prod-eks", source: "bound" });
-  });
-
-  test("bound and ambient context mismatches: refuses loudly, naming env/expected/ambient", async () => {
+  test("bound while a different context is ambient: the binding wins, no refusal (#1488)", async () => {
+    // Ambient says staging-eks; the declared binding must be used regardless.
+    // Before #1488 this threw ClusterBindingMismatchError, which turned a
+    // healthy estate grey the moment any other project switched the context.
     execMock.mockResolvedValue({ stdout: "staging-eks\n", stderr: "" });
 
-    const err: unknown = await resolveClusterTarget(
+    const target = await resolveClusterTarget(
       { k8s: { profiles: { prod: { context: "prod-eks" } } } },
       "prod",
       "k8s",
-    ).catch((e: unknown) => e);
+    );
 
-    expect(err).toBeInstanceOf(ClusterBindingMismatchError);
-    const mismatch = err as InstanceType<typeof ClusterBindingMismatchError>;
-    expect(mismatch.environment).toBe("prod");
-    expect(mismatch.expectedContext).toBe("prod-eks");
-    expect(mismatch.ambientContext).toBe("staging-eks");
-    expect(mismatch.message).toContain('environment "prod"');
-    expect(mismatch.message).toContain('"prod-eks"');
-    expect(mismatch.message).toContain('"staging-eks"');
+    expect(target).toEqual({ context: "prod-eks", source: "bound" });
+  });
+
+  test("ClusterBindingMismatchError still constructs and names all three parts (catchers rely on it)", () => {
+    const err = new ClusterBindingMismatchError("prod", "prod-eks", "staging-eks");
+    expect(err.environment).toBe("prod");
+    expect(err.expectedContext).toBe("prod-eks");
+    expect(err.ambientContext).toBe("staging-eks");
+    expect(err.message).toContain('environment "prod"');
+    expect(err.message).toContain('"prod-eks"');
+    expect(err.message).toContain('"staging-eks"');
   });
 
   test("bound for a different environment than the one requested: treated as unbound for this environment", async () => {
