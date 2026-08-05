@@ -49,6 +49,7 @@ import type { CommandContext } from "../registry";
 import type { LexiconPlugin } from "../../lexicon";
 import { normalizeObservation, mergeObservations, unobservedAll, type NormalizedObservation } from "../../observation";
 import type { Phase, Component } from "../../components/component";
+import { deployUnits } from "../../components/deploy-units";
 
 /**
  * chant components release <env> --component <name> --digest <sha256:...>
@@ -229,22 +230,11 @@ interface StatusJsonRow {
  * observe on a multi-stack, per-component project (`describeResources`'s
  * single-stack-named-after-the-environment convention never matches one). */
 export function cfnDeployStacks(deploy: Phase[]): string[] {
-  const stacks = new Set<string>();
-  const walkSteps = (steps: Phase["steps"]): void => {
-    for (const step of steps) {
-      // A step may itself be a nested Phase (it carries its own `steps`). Step is
-      // open-typed (capability inputs), so discriminate structurally on `steps`.
-      const nested = (step as { steps?: unknown }).steps;
-      if (Array.isArray(nested)) {
-        walkSteps(nested as Phase["steps"]);
-        continue;
-      }
-      const s = step as { kind?: string; stack?: unknown };
-      if (s.kind === "cfn-deploy" && typeof s.stack === "string") stacks.add(s.stack);
-    }
-  };
-  for (const phase of deploy) walkSteps(phase.steps);
-  return [...stacks];
+  // The CloudFormation slice of the generic deploy-unit walk (#1495) — kept
+  // because `chant graph --live`'s stack enrichment is genuinely CFN-shaped.
+  return deployUnits(deploy)
+    .filter((u) => u.lexicon === "aws")
+    .map((u) => u.unit);
 }
 
 /**
@@ -259,15 +249,22 @@ export function cfnDeployStacks(deploy: Phase[]): string[] {
  */
 async function observeComponentStacks(
   components: Map<string, { component: Component }>,
-  observer: LexiconPlugin,
+  plugins: LexiconPlugin[],
   environment: string,
 ): Promise<Map<string, LiveComponentEvidence>> {
+  // Observer per unit's own lexicon (#1495): a component's kubectl-apply unit
+  // is read by the k8s lexicon, its cfn-deploy stack by aws. A unit whose
+  // lexicon ships no describeStackStatus is skipped — the same absent-observer
+  // degradation as before, per unit instead of per project.
+  const observerFor = (lexicon: string) =>
+    plugins.find((p) => p.name === lexicon && p.describeStackStatus);
   const evidence = new Map<string, LiveComponentEvidence>();
   for (const [name, { component }] of components) {
-    const stacks = cfnDeployStacks(component.deploy);
+    const units = deployUnits(component.deploy).filter((u) => observerFor(u.lexicon));
+    const stacks = units.map((u) => u.unit);
     if (stacks.length === 0) continue;
     const observed = await Promise.all(
-      stacks.map((stack) => observer.describeStackStatus!({ environment, stack }).catch(() => null)),
+      units.map((u) => observerFor(u.lexicon)!.describeStackStatus!({ environment, stack: u.unit }).catch(() => null)),
     );
     const determinate = observed.filter((o): o is NonNullable<typeof o> => o !== null);
     if (determinate.length === 0) {
@@ -440,9 +437,9 @@ export async function runComponentsStatus(ctx: CommandContext): Promise<number> 
         // invisible to the entity-keyed, single-stack `describeResources` above —
         // observe each component's own cfn-deploy stack directly and overlay it as
         // the authoritative presence signal (#57).
-        const stackObserver = plugins.find((p) => p.describeStackStatus);
-        if (stackObserver) {
-          const stackEvidence = await observeComponentStacks(discovery.components, stackObserver, environment);
+        const anyObserver = plugins.some((p) => p.describeStackStatus);
+        if (anyObserver) {
+          const stackEvidence = await observeComponentStacks(discovery.components, plugins, environment);
           liveEvidence = mergeLiveEvidence(liveEvidence, stackEvidence);
         }
       } finally {
