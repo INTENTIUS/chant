@@ -140,8 +140,19 @@ export interface ComponentGraphResult {
 }
 
 /** Compute the components' dependency graph under `path`, for `chant graph --components`. */
-export async function computeComponentGraph(path: string, sandbox?: boolean): Promise<ComponentGraphResult> {
-  const result = await discoverComponents(path, { sandbox });
+export async function computeComponentGraph(
+  path: string,
+  sandbox?: boolean,
+  buildParams?: BuildParamProvenance[],
+): Promise<ComponentGraphResult> {
+  // #1490 — without this the component graph is always the DEFAULT-parameter
+  // graph. `discoverComponents` has honoured `buildParams` since #1108; every
+  // caller simply stopped short of passing them, so `--param backups=omit`
+  // dropped the CronJob from `chant build` and left the component that
+  // describes it in `chant graph --components`. Two commands disagreeing about
+  // what the source says, which is the thing #1064 and #1108 each fixed one
+  // layer of.
+  const result = await discoverComponents(path, { sandbox, buildParams });
   if (result.errors.length > 0) {
     return { success: false, order: [], waves: [], edges: [], error: result.errors.map((e) => e.message).join("\n") };
   }

@@ -1,4 +1,5 @@
 import { resolve, join, relative } from "path";
+import type { BuildParamProvenance } from "../../provenance";
 import { readFileSync, writeFileSync, readdirSync, statSync } from "fs";
 import { execFileSync } from "child_process";
 import { runLint, parseDisableComments } from "../../lint/engine";
@@ -152,6 +153,15 @@ async function loadAllPluginRules(
 export interface LintOptions {
   /** Path to lint */
   path: string;
+  /**
+   * This invocation's resolved build parameters (#1490).
+   *
+   * The COMP* checks import `*.component.ts`, and an ES module evaluates once
+   * per path — so the values in effect during the lint gate are the values
+   * every later reader observes. A caller that lints before it graphs must
+   * pass the same parameters to both or the later resolution has no effect.
+   */
+  buildParams?: BuildParamProvenance[];
   /** Apply auto-fixes */
   fix?: boolean;
   /** Output format */
@@ -334,6 +344,7 @@ async function resolveRegistryContext(
 async function runComponentCheckDiagnostics(
   infraPath: string,
   sandbox?: boolean,
+  buildParams?: BuildParamProvenance[],
 ): Promise<{ diagnostics: LintDiagnostic[]; suppressed: Array<LintDiagnostic & { reason?: string }> }> {
   // Discovery stays scoped to the lint arg; COMP* severity overrides come from
   // the project-root config, same as the AST-rule pass.
@@ -342,7 +353,7 @@ async function runComponentCheckDiagnostics(
   const allCheckIds = new Set(checks.map((c) => c.id));
 
   const registryContext = await resolveRegistryContext(infraPath);
-  const raw = await runComponentChecks(infraPath, checks, registryContext, sandbox);
+  const raw = await runComponentChecks(infraPath, checks, registryContext, sandbox, buildParams);
 
   const fileDirectivesCache = new Map<string, ReturnType<typeof parseDisableComments>>();
   const fileLevelDisable = (
@@ -483,7 +494,7 @@ export async function lintCommand(options: LintOptions): Promise<LintResult> {
   // structurally distinct check family (whole-project, post-discovery,
   // see ../../lint/component-checks.ts) but the same `chant lint` output and
   // the same error-severity gating as every COR/EVL diagnostic.
-  const componentResult = await runComponentCheckDiagnostics(infraPath, options.sandbox);
+  const componentResult = await runComponentCheckDiagnostics(infraPath, options.sandbox, options.buildParams);
   diagnostics.push(...componentResult.diagnostics);
   suppressed.push(...componentResult.suppressed);
 
@@ -531,7 +542,7 @@ export async function lintCommand(options: LintOptions): Promise<LintResult> {
     // `*.component.ts` file on their behalf), but a fix applied to another
     // rule could still be in the same file a component was discovered from —
     // re-run for consistency with the AST re-lint above.
-    const postComponentResult = await runComponentCheckDiagnostics(infraPath, options.sandbox);
+    const postComponentResult = await runComponentCheckDiagnostics(infraPath, options.sandbox, options.buildParams);
     diagnostics.push(...postComponentResult.diagnostics);
     suppressed.push(...postComponentResult.suppressed);
   }

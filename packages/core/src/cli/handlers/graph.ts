@@ -369,7 +369,11 @@ async function runGraphLive(
  */
 async function runComponentGraph(ctx: CommandContext): Promise<number> {
   const projectPath = resolve(ctx.args.path === "." ? "." : ctx.args.path);
-  const graph = await computeComponentGraph(projectPath, ctx.args.sandbox);
+  // #1490 — as in runComponentGraphView: the text/--json mode reads the same
+  // source and must not disagree with the --format modes about it.
+  const componentParams = await graphBuildParams(ctx, projectPath);
+  if (!componentParams) return 1;
+  const graph = await computeComponentGraph(projectPath, ctx.args.sandbox, componentParams);
 
   if (!graph.success) {
     console.error(formatError({ message: graph.error ?? "Failed to compute component graph" }));
@@ -425,7 +429,20 @@ async function runComponentGraphView(
 ): Promise<number> {
   const projectPath = resolve(ctx.args.path === "." ? "." : ctx.args.path);
 
-  const lint = await lintCommand({ path: ctx.args.path, format: "stylish", sandbox: ctx.args.sandbox });
+  // #1490 — resolved BEFORE the lint gate, not after. The COMP* checks import
+  // every `*.component.ts`, an ES module evaluates once per path, and the
+  // values in effect at that first import are the ones the graph below will
+  // read no matter what it resolves for itself. Ordering is the fix; passing
+  // them to `computeComponentGraph` alone did nothing.
+  const componentParams = await graphBuildParams(ctx, projectPath);
+  if (!componentParams) return 1;
+
+  const lint = await lintCommand({
+    path: ctx.args.path,
+    format: "stylish",
+    sandbox: ctx.args.sandbox,
+    buildParams: componentParams,
+  });
   if (!lint.success) {
     console.error(
       formatError({
@@ -435,7 +452,7 @@ async function runComponentGraphView(
     return 1;
   }
 
-  const graph = await computeComponentGraph(projectPath, ctx.args.sandbox);
+  const graph = await computeComponentGraph(projectPath, ctx.args.sandbox, componentParams);
   if (!graph.success) {
     console.error(formatError({ message: graph.error ?? "Failed to compute component graph" }));
     return 1;
@@ -526,8 +543,19 @@ async function runGraphView(
     return 1;
   }
 
+  // Resolved before the gate for the reason in runComponentGraphView: the
+  // lint pass imports project source, and the first import of a module is the
+  // one that binds its parameter-derived values (#1490).
+  const buildParams = await graphBuildParams(ctx, projectPath);
+  if (!buildParams) return 1;
+
   // Gate: only emit for lint-clean source.
-  const lint = await lintCommand({ path: ctx.args.path, format: "stylish", sandbox: ctx.args.sandbox });
+  const lint = await lintCommand({
+    path: ctx.args.path,
+    format: "stylish",
+    sandbox: ctx.args.sandbox,
+    buildParams,
+  });
   if (!lint.success) {
     console.error(
       formatError({
@@ -537,9 +565,6 @@ async function runGraphView(
     );
     return 1;
   }
-
-  const buildParams = await graphBuildParams(ctx, projectPath);
-  if (!buildParams) return 1;
 
   const result = await discover(projectPath, { buildParams });
   if (result.errors.length > 0) {
