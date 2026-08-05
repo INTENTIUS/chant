@@ -1,6 +1,7 @@
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import {
   loadChantConfig,
+  loadChantConfigUpward,
   DEFAULT_CHANT_CONFIG,
   resolveAutoReleaseDisabled,
   resolveFoldEnabled,
@@ -134,6 +135,58 @@ describe("loadChantConfig", () => {
 
     const result = await loadChantConfig(TEST_DIR);
     expect(result.config.sbom?.format).toBe("cyclonedx");
+  });
+});
+
+// #1502 — the upward walk skips lint-scoping fragments. A `src/chant.config.json`
+// holding only `extends`/`rules` (the examples/ convention) must not shadow the
+// project config above it, or `chant build src` silently loses `ownership`/
+// `buildParams` — the exact fallback #1117's walk exists to prevent.
+describe("loadChantConfigUpward (#1502 — lint fragments do not end the walk)", () => {
+  const SRC = join(TEST_DIR, "src");
+
+  test("walks past a lint-only src/chant.config.json to the project config", async () => {
+    mkdirSync(SRC, { recursive: true });
+    writeFileSync(
+      join(SRC, "chant.config.json"),
+      JSON.stringify({ extends: ["@intentius/chant/lint/presets/strict"], rules: { COR001: "off" } }),
+    );
+    writeFileSync(
+      join(TEST_DIR, "chant.config.json"),
+      JSON.stringify({ ownership: { stack: "billing", env: "prod" } }),
+    );
+
+    const result = await loadChantConfigUpward(SRC);
+    expect(result.config.ownership).toEqual({ stack: "billing", env: "prod" });
+    expect(result.configPath).toBe(join(TEST_DIR, "chant.config.json"));
+  });
+
+  test("a src/chant.config.json declaring any project-level key still wins in place", async () => {
+    mkdirSync(SRC, { recursive: true });
+    writeFileSync(
+      join(SRC, "chant.config.json"),
+      JSON.stringify({ ownership: { stack: "nested" }, rules: { COR001: "off" } }),
+    );
+    writeFileSync(
+      join(TEST_DIR, "chant.config.json"),
+      JSON.stringify({ ownership: { stack: "root" } }),
+    );
+
+    const result = await loadChantConfigUpward(SRC);
+    expect(result.config.ownership?.stack).toBe("nested");
+  });
+
+  test("a fragment-only project resolves to the default config at the boundary", async () => {
+    mkdirSync(SRC, { recursive: true });
+    writeFileSync(join(TEST_DIR, "package.json"), JSON.stringify({ name: "boundary" }));
+    writeFileSync(
+      join(SRC, "chant.config.json"),
+      JSON.stringify({ extends: ["@intentius/chant/lint/presets/strict"] }),
+    );
+
+    const result = await loadChantConfigUpward(SRC);
+    expect(result.config).toEqual(DEFAULT_CHANT_CONFIG);
+    expect(result.configPath).toBeUndefined();
   });
 });
 

@@ -1,5 +1,5 @@
-import { existsSync } from "fs";
-import { join } from "path";
+import { existsSync, readFileSync } from "fs";
+import { dirname, join } from "path";
 import { z } from "zod";
 import type { LintConfig } from "./lint/config";
 import type { OwnershipMarker } from "./ownership";
@@ -384,10 +384,48 @@ export async function loadChantConfig(dir: string): Promise<ResolvedConfig> {
  * same walk `chant lint`/`chant graph` already used ({@link findProjectConfig},
  * shared with `./lint/config.ts`'s `findProjectRoot`) — one config-discovery
  * contract for the whole CLI.
+ *
+ * chant #1502 — a lint-scoping fragment does not end the walk. The convention
+ * of a `src/chant.config.json` holding only `extends`/`rules` (cc-aws-canonical
+ * and most of examples/) sits BETWEEN the build directory and the real
+ * `chant.config.ts`, and stopping there re-introduced the exact silent
+ * fallback this walk exists to prevent: `chant build src` resolved the
+ * fragment, found no `ownership`, and built unstamped manifests that every
+ * owned-scoped live read then withheld. A fragment is skipped, not merged —
+ * lint resolution keeps its own nearest-wins walk untouched, and a JSON
+ * config declaring any project-level key still wins where it stands.
  */
 export async function loadChantConfigUpward(startDir: string): Promise<ResolvedConfig> {
-  const { dir } = findProjectConfig(startDir);
+  let { dir, configPath } = findProjectConfig(startDir);
+  while (configPath && isLintOnlyFragment(configPath)) {
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    ({ dir, configPath } = findProjectConfig(parent));
+  }
   return loadChantConfig(dir);
+}
+
+/**
+ * The top-level keys of `./lint/config.ts`'s `LintConfigSchema` (plus the
+ * `$schema` editor convention). A `chant.config.json` whose keys all come from
+ * this set is a lint-scoping fragment, not a project config — see
+ * {@link loadChantConfigUpward}. `chant.config.ts` is never a fragment: it is
+ * project-authored code, and inspecting it would mean evaluating it.
+ */
+const LINT_FRAGMENT_KEYS = new Set(["$schema", "extends", "rules", "overrides", "plugins", "policies"]);
+
+function isLintOnlyFragment(configPath: string): boolean {
+  if (!configPath.endsWith("chant.config.json")) return false;
+  try {
+    const parsed = JSON.parse(readFileSync(configPath, "utf-8")) as unknown;
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return false;
+    const keys = Object.keys(parsed);
+    return keys.length > 0 && keys.every((k) => LINT_FRAGMENT_KEYS.has(k));
+  } catch {
+    // Unreadable/unparseable JSON: let loadChantConfig surface the real error
+    // in place rather than silently walking past it.
+    return false;
+  }
 }
 
 /**
