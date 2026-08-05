@@ -20,6 +20,11 @@ the cluster is real and the Service really lands on it.
   hardcode it (behold#106).
 - `src/cc-workload/service.ts` — the k8s half, observed through the cluster's own
   kubeconfig. behold anchors it under the cluster (behold#103).
+- `src/cc-workload/deployment.ts` — the Deployment behind the Service. Its
+  controller creates Pods the cluster owns through `ownerReferences`
+  (chant#1180), which is what makes the K8S *runtime* tier — and the
+  field-manager drift an out-of-band `kubectl scale` leaves — demonstrable on
+  this estate (behold#148's runtime clause).
 - `src/cc.component.ts` — one component owning every declared resource via
   `liveNames`, which is what makes `chant components status --live` report a
   real rollup rather than the rollup-of-one an identity join produces.
