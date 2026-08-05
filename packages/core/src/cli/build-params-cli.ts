@@ -105,3 +105,38 @@ export function resolveCliBuildParams(
 
   return { success: true, provenance: resolution.provenance, errors: [] };
 }
+
+/**
+ * Resolve a command's declared build-time parameters, the same way `chant
+ * build` does, so a `build()`/`discover()` on the declared side sees the values
+ * the source will actually read.
+ *
+ * Every command that reads declared source needs this and only `chant build`
+ * had it. `chant graph` was fixed in #1483; the lifecycle family — `diff`,
+ * `snapshot`, `plan`, and `components status --live` — built the declared side
+ * on parameter *defaults* while the live side was whatever is really deployed.
+ *
+ * For a project whose parameters choose which resources *exist* that is not a
+ * near miss. `chant lifecycle diff dev --live` on kubemicrovm-ops returned
+ * byte-identical output at `KMV_TIER=minimal` and `KMV_TIER=prod-ha`, and
+ * reported the tier label itself as drift — `minimal → prod-ha`, declared
+ * against live — which is the comparison announcing it is against the wrong
+ * declaration.
+ *
+ * Returns `undefined` when resolution failed, having printed why: the caller
+ * should stop rather than compare against source that will not build.
+ */
+export async function commandBuildParams(
+  buildParamsConfig: BuildParamsConfig | undefined,
+  args: { param?: string[]; paramsFile?: string },
+): Promise<BuildParamProvenance[] | undefined> {
+  const resolution = resolveCliBuildParams(buildParamsConfig, {
+    cli: parseParamFlags(args.param),
+    paramsFile: args.paramsFile,
+  });
+  if (!resolution.success) {
+    for (const message of resolution.errors) console.error(message);
+    return undefined;
+  }
+  return resolution.provenance;
+}

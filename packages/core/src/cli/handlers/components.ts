@@ -35,6 +35,7 @@ import {
   InvalidReleaseRecordError,
 } from "../../lifecycle/release-ledger";
 import { reconcileStatus, liveEvidenceFromChangeSet, compareAcrossEnvironments, mergeLiveEvidence, type LiveComponentEvidence } from "../../lifecycle/status";
+import { commandBuildParams } from "../build-params-cli";
 import { buildChangeSet } from "../../lifecycle/change-set";
 import { buildLedgerEntries, componentBomSummary, type BuildLedgerEntry } from "../../lifecycle/build-ledger";
 import { findBuildManifestByArtifactDigest } from "../../lifecycle/build-ledger-store";
@@ -355,7 +356,15 @@ export async function runComponentsStatus(ctx: CommandContext): Promise<number> 
       if (endpointResult.notice) console.error(formatWarning({ message: endpointResult.notice }));
       try {
         const targetSerializers = serializers;
-        const buildResult = await build(resolve(args.src ?? config.sourceDir ?? "."), targetSerializers);
+        // With this invocation's parameters (#1483). Built on defaults, the
+        // declared half of the comparison is a different estate from the one
+        // deployed, and every resource the real parameter declares reads as
+        // absent.
+        const statusParams = await commandBuildParams(config.buildParams, args);
+        if (!statusParams) return 1;
+        const buildResult = await build(resolve(args.src ?? config.sourceDir ?? "."), targetSerializers, undefined, {
+          buildParams: statusParams,
+        });
         // Which deployed stack(s) to read the change set from (behold#100).
         //
         // `describeResources` defaults to the single-stack convention — the
