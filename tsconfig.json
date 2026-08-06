@@ -100,6 +100,12 @@
       "@intentius/chant-lexicon-forgejo/*": [
         "lexicons/forgejo/src/*"
       ],
+      "@intentius/chant-lexicon-k3d": [
+        "lexicons/k3d/src/index.ts"
+      ],
+      "@intentius/chant-lexicon-k3d/*": [
+        "lexicons/k3d/src/*"
+      ],
       "@intentius/chant-test-utils": [
         "packages/test-utils/src/index.ts"
       ],
