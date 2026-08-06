@@ -45,6 +45,18 @@ export interface HelmUpgradeInput {
   createNamespace?: boolean;
   /** Values files, passed as `-f` in order (later files win, Helm's rule). */
   values?: string[];
+  /**
+   * Inline value overrides, passed as `--set key=value` in sorted-key order
+   * (deterministic argv for the same input). Helm applies these after every
+   * values file — its own precedence, unchanged.
+   */
+  set?: Record<string, string>;
+  /**
+   * Chart repository URL (`--repo`), for a chart named bare rather than as a
+   * local path or OCI ref — `{ chart: "cert-manager", repo:
+   * "https://charts.jetstack.io" }` needs no prior `helm repo add`.
+   */
+  repo?: string;
   /** Chart version constraint (`--version`). Omitted takes the latest. */
   version?: string;
   /** Wait for resources to become ready before returning (`--wait`). */
@@ -87,7 +99,9 @@ function upgradeCommand(input: HelmUpgradeInput, context: string | undefined): s
   const parts = ["helm", "upgrade", "--install", q(input.release), q(input.chart), "-o", "json"];
   if (input.namespace) parts.push("-n", q(input.namespace));
   if (input.createNamespace) parts.push("--create-namespace");
+  if (input.repo) parts.push("--repo", q(input.repo));
   for (const f of input.values ?? []) parts.push("-f", q(f));
+  for (const key of Object.keys(input.set ?? {}).sort()) parts.push("--set", q(`${key}=${input.set![key]}`));
   if (input.version) parts.push("--version", q(input.version));
   if (input.wait) parts.push("--wait");
   if (context) parts.push("--kube-context", q(context));

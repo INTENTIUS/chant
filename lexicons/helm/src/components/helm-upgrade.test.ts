@@ -45,6 +45,31 @@ describe("helm-upgrade capability (#1495 piece 4)", () => {
     expect(out).toEqual({ release: "api", namespace: "prod", revision: 3, status: "deployed" });
   });
 
+  test("--repo and sorted --set ride the argv — no prior repo add, deterministic order", async () => {
+    let seen = "";
+    const cap = createHelmUpgradeCapability(async (cmd) => {
+      seen = cmd;
+      return { stdout: "{}" };
+    });
+
+    await cap.run(ctx, {
+      release: "cert-manager",
+      chart: "cert-manager",
+      repo: "https://charts.jetstack.io",
+      namespace: "cert-manager",
+      createNamespace: true,
+      set: { "app.envs.AWS_REGION": "us-east-1", "crds.enabled": "true" },
+      version: "v1.16.1",
+      context: "k3d-test",
+    });
+
+    expect(seen).toBe(
+      "helm upgrade --install 'cert-manager' 'cert-manager' -o json -n 'cert-manager' --create-namespace " +
+        "--repo 'https://charts.jetstack.io' --set 'app.envs.AWS_REGION=us-east-1' --set 'crds.enabled=true' " +
+        "--version 'v1.16.1' --kube-context 'k3d-test'",
+    );
+  });
+
   test("non-JSON helm output still reports the release — the deploy already succeeded", async () => {
     const cap = createHelmUpgradeCapability(async () => ({ stdout: "Release \"api\" has been upgraded.\n" }));
     const out = await cap.run(ctx, { release: "api", chart: "repo/api", namespace: "prod" });
