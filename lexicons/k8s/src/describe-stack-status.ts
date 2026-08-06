@@ -14,11 +14,18 @@
  * a caller observes with, and a mismatch would read a deployed unit as absent
  * — the failure mode the tri-state exists to prevent.
  *
- * The sweep is bounded to the kinds chant's own k8s surface deploys as
- * stack-scoped objects (workloads + the service/config plumbing around them).
- * A CRD-only unit is out of this bound and reports absent rather than null —
- * a real limit, stated here rather than papered over; widening the sweep to
- * discovery-driven kinds is a follow-up, not a silent claim.
+ * The sweep starts from the kinds chant's own k8s surface deploys as
+ * stack-scoped objects (workloads + the service/config plumbing around them),
+ * then widens to what the cluster itself serves: the CRDs (a unit that
+ * deploys definitions is a real unit — kubemicrovm-ops pins them
+ * `delete: never`), and every CRD-backed kind those definitions declare. A
+ * kubemicrovm workload stack is *entirely* custom resources, and under the
+ * fixed bound it read as absent while its VMs ran (#1528) — and because a
+ * component is live only when every unit is, that one false absence painted
+ * whole components dead. The CRD list is read unfiltered, since the unit
+ * under observation rarely owns the definitions its objects instantiate;
+ * each derived kind is then read with the same stack selector, so the cost
+ * is one label-filtered list per served CRD kind.
  */
 import type { StackStatusObservation } from "@intentius/chant/lexicon";
 import { LABEL_OWNERSHIP_KEYS, OWNERSHIP_MANAGED_BY_VALUE } from "@intentius/chant/ownership";
@@ -39,7 +46,42 @@ const SWEEP_KINDS: ReadonlyArray<{ apiVersion: string; kind: string }> = [
   { apiVersion: "policy/v1", kind: "PodDisruptionBudget" },
   { apiVersion: "autoscaling/v2", kind: "HorizontalPodAutoscaler" },
   { apiVersion: "batch/v1", kind: "CronJob" },
+  // The definitions themselves: a crds unit deploys these and nothing else.
+  { apiVersion: "apiextensions.k8s.io/v1", kind: "CustomResourceDefinition" },
 ];
+
+/**
+ * Every kind the cluster's CRDs declare, one served version each (storage
+ * preferred). Read unfiltered — see the module doc. Failure to read the CRD
+ * list narrows the sweep back to the fixed bound rather than failing it.
+ */
+async function crdBackedKinds(client: {
+  list(target: { apiVersion: string; kind: string }, opts?: object): Promise<K8sObject[]>;
+}): Promise<Array<{ apiVersion: string; kind: string }>> {
+  let crds: K8sObject[];
+  try {
+    crds = await client.list({ apiVersion: "apiextensions.k8s.io/v1", kind: "CustomResourceDefinition" });
+  } catch {
+    return [];
+  }
+  const kinds: Array<{ apiVersion: string; kind: string }> = [];
+  for (const crd of crds) {
+    const spec = (crd as {
+      spec?: {
+        group?: string;
+        names?: { kind?: string };
+        versions?: Array<{ name: string; served?: boolean; storage?: boolean }>;
+      };
+    }).spec;
+    const group = spec?.group;
+    const kind = spec?.names?.kind;
+    const versions = spec?.versions ?? [];
+    const version = versions.find((v) => v.storage && v.served) ?? versions.find((v) => v.served);
+    if (!group || !kind || !version) continue;
+    kinds.push({ apiVersion: `${group}/${version.name}`, kind });
+  }
+  return kinds;
+}
 
 /** A workload is healthy when its controller reports every replica ready; a
  * kind with no readiness story (a ConfigMap, a Service) asserts nothing. */
@@ -74,7 +116,8 @@ export async function describeStackStatus(
 
   const matched: K8sObject[] = [];
   let anyRead = false;
-  for (const target of SWEEP_KINDS) {
+  const targets = [...SWEEP_KINDS, ...(await crdBackedKinds(client))];
+  for (const target of targets) {
     try {
       const items = await client.list(target, { labelSelector: selector });
       anyRead = true;

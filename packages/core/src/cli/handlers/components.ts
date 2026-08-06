@@ -286,10 +286,17 @@ async function observeComponentStacks(
     // palette than the reconciliation verdict. One cfn-deploy stack per component
     // is the norm; a multi-stack component reports its representative unit.
     const repr = determinate.find((o) => o.present) ?? determinate[0];
+    // Some-but-not-all present is its own answer (#1528): `live` stays false —
+    // deployed means all of it — but the split and the missing unit names ride
+    // along, so the row can say "half up" instead of "nothing observed live"
+    // while its own `stack` field shows a healthy unit.
+    const presentCount = determinate.filter((o) => o.present).length;
+    const missing = determinate.filter((o) => !o.present).map((o) => o.stack);
     evidence.set(name, {
       live: present,
       ownership: present ? "owned" : undefined,
       stack: { name: repr.stack, status: repr.status, healthy: repr.healthy },
+      ...(presentCount > 0 && !present ? { partial: { present: presentCount, total: determinate.length, missing } } : {}),
     });
   }
   return evidence;

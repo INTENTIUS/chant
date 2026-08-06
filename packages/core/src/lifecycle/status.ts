@@ -99,6 +99,13 @@ export interface ComponentStatusRow {
    * where it exists.
    */
   resources?: ComponentResourceRollup;
+  /**
+   * Set when some but not all of this component's deploy units were observed
+   * present (#1528). `live` is `false` — deployed means all of it — but a
+   * consumer painting the row can distinguish "half up" from "gone", and the
+   * missing unit names are the actionable part.
+   */
+  partial?: { present: number; total: number; missing: string[] };
 }
 
 /** A component's owning deploy unit and its provider-native status. */
@@ -142,6 +149,15 @@ export interface LiveComponentEvidence {
   /** The owning deploy unit's raw status, when observed (AWS: the component's own
    * CFN stack). Surfaced onto `ComponentStatusRow.stack` for a richer palette. */
   stack?: LiveStackInfo;
+  /**
+   * Set when some but not all of the component's deploy units were observed
+   * present (#1528). `live` is `false` — a component is deployed when all of
+   * it is — but "nothing observed live" would be a lie, and it was one: a
+   * multi-unit component with a single absent unit reported exactly that
+   * while its Helm releases sat deployed and healthy in the same row's
+   * `stack` field. Consumers get the split and the names of what is missing.
+   */
+  partial?: { present: number; total: number; missing: string[] };
   /**
    * How the component's own resources answered, before any merge collapsed
    * them (behold#98). Always present when evidence exists — a component that
@@ -189,6 +205,9 @@ export function mergeLiveEvidence(
       ownership: sup.ownership ?? b?.ownership,
       action: b?.action,
       stack: sup.stack ?? b?.stack,
+      // The unit split rides the same direct observation `live` came from —
+      // dropping it here would resurrect the lie the field exists to fix.
+      ...(sup.partial ? { partial: sup.partial } : {}),
       // Base first: the counts come from the change set, and a stack
       // observation has none to offer.
       ...(b?.rollup ?? sup.rollup ? { rollup: b?.rollup ?? sup.rollup } : {}),
@@ -408,10 +427,16 @@ export function reconcileStatus(
       detail = `live${evidence.ownership === "owned" ? " and chant-owned" : ""}, but no release record exists — deployed outside the recorded path`;
     } else if (!recorded && !evidence?.live) {
       reconciliation = "unrecorded";
-      detail = "no release record and nothing observed live";
+      // "Nothing observed live" was a lie for a partially-present component
+      // (#1528) — say what was seen and name what was not.
+      detail = evidence?.partial
+        ? `no release record; ${evidence.partial.present} of ${evidence.partial.total} deploy units observed live (missing: ${evidence.partial.missing.join(", ")})`
+        : "no release record and nothing observed live";
     } else if (recorded && !evidence?.live) {
       reconciliation = "stale";
-      detail = `recorded ${recorded.timestamp} (digest ${recorded.digest}), but nothing observed live now`;
+      detail = evidence?.partial
+        ? `recorded ${recorded.timestamp} (digest ${recorded.digest}), but only ${evidence.partial.present} of ${evidence.partial.total} deploy units observed live now (missing: ${evidence.partial.missing.join(", ")})`
+        : `recorded ${recorded.timestamp} (digest ${recorded.digest}), but nothing observed live now`;
     } else if (recorded && evidence?.action === "update") {
       reconciliation = "drifted";
       detail = `recorded ${recorded.timestamp} (digest ${recorded.digest}), but live configuration has drifted since`;
@@ -435,6 +460,7 @@ export function reconcileStatus(
       ...(evidence?.unobserved ? { unobserved: evidence.unobserved } : {}),
       ...(evidence?.stack ? { stack: evidence.stack } : {}),
       ...(evidence?.rollup ? { resources: evidence.rollup } : {}),
+      ...(evidence?.partial ? { partial: evidence.partial } : {}),
     });
   }
 
