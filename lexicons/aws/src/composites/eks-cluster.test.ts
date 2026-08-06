@@ -52,4 +52,17 @@ describe("EksCluster", () => {
     });
     expect((c.cluster as any).props.DeletionProtection).toBe(true);
   });
+
+  test("addons become keyed members, DependsOn the cluster (the pod-identity agent case)", () => {
+    const c = EksCluster({
+      name: "kmv-real",
+      subnetIds: subnets,
+      nodegroup: {},
+      addons: [{ name: "eks-pod-identity-agent" }],
+    }) as unknown as Record<string, { props?: Record<string, unknown> }>;
+    const addon = c.addonEksPodIdentityAgent;
+    expect(addon).toBeDefined();
+    expect(addon.props?.AddonName).toBe("eks-pod-identity-agent");
+    expect(addon.props?.ClusterName).toBe("kmv-real");
+  });
 });

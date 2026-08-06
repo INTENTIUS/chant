@@ -25,7 +25,7 @@
  * emulator being honest about what a laptop can host.
  */
 import { Composite, mergeDefaults } from "@intentius/chant";
-import { EKSCluster, Nodegroup, Role } from "../generated";
+import { Addon, EKSCluster, Nodegroup, Role } from "../generated";
 import { Sub } from "../intrinsics";
 
 export interface EksClusterProps {
@@ -46,6 +46,14 @@ export interface EksClusterProps {
     /** Subnets the nodes land in. Default: the cluster's own `subnetIds`. */
     subnetIds?: string[];
   };
+  /**
+   * Managed add-ons to install, by name (e.g. "eks-pod-identity-agent" —
+   * without which an AWS::EKS::PodIdentityAssociation delivers no
+   * credentials and the workload it binds crashloops on startup, found on
+   * kubemicrovm-ops' first real deploy). Named by the caller, never guessed;
+   * versions omitted take EKS's default for the cluster version.
+   */
+  addons?: Array<{ name: string; version?: string }>;
   tags?: Array<{ Key: string; Value: string }>;
   defaults?: {
     cluster?: Partial<ConstructorParameters<typeof EKSCluster>[0]>;
@@ -82,8 +90,25 @@ export const EksCluster = Composite((props: EksClusterProps) => {
     Tags: props.tags,
   }, defaults?.cluster));
 
+  // One member per add-on, keyed from its name ("eks-pod-identity-agent" →
+  // addonEksPodIdentityAgent) — composite members are a keyed record, and a
+  // deterministic key is what keeps the logical id stable across deploys.
+  const addonMembers: Record<string, InstanceType<typeof Addon>> = {};
+  for (const a of props.addons ?? []) {
+    const key = "addon" + a.name.replace(/(^|-)([a-z0-9])/g, (_, __, c: string) => c.toUpperCase());
+    addonMembers[key] = new Addon(
+      {
+        ClusterName: props.name,
+        AddonName: a.name,
+        AddonVersion: a.version,
+        Tags: props.tags,
+      },
+      { DependsOn: [cluster] },
+    );
+  }
+
   if (!props.nodegroup) {
-    return { clusterRole, cluster };
+    return { clusterRole, cluster, ...addonMembers };
   }
 
   const nodeRole = new Role(mergeDefaults({
@@ -117,5 +142,5 @@ export const EksCluster = Composite((props: EksClusterProps) => {
     Tags: props.tags ? Object.fromEntries(props.tags.map((t) => [t.Key, t.Value])) : undefined,
   }, defaults?.nodegroup), { DependsOn: [cluster] });
 
-  return { clusterRole, cluster, nodeRole, nodegroup };
+  return { clusterRole, cluster, nodeRole, nodegroup, ...addonMembers };
 }, "EksCluster");
