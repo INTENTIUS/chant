@@ -359,6 +359,45 @@ describe("runLifecycleDiff --live", () => {
     expect(output).toContain("release/default/web");
   });
 
+  test("--live --json carries the observed artifact metadata, not just the key deltas (behold#146)", async () => {
+    buildMock.mockResolvedValue(makeBuildResult({ helm: [] }));
+    fetchLifecycleMock.mockResolvedValue(undefined);
+    // No previous snapshot at all — the first-run case where the diff is pure
+    // `added` keys and, before this, a JSON consumer had no status to read.
+    readSnapshotMock.mockResolvedValue(null);
+
+    const plugins: LexiconPlugin[] = [
+      createMockPlugin({
+        name: "helm",
+        listArtifacts: staticListArtifacts({
+          "release/default/web": {
+            type: "Helm::Release",
+            physicalId: "default/web",
+            status: "deployed",
+            attributes: { chart: "web-1.2.3", revision: "3" },
+          },
+        }),
+      }),
+    ];
+
+    const ctx = {
+      args: makeArgs({ command: "state", path: "diff", extraPositional: "prod", live: true, json: true }),
+      plugins,
+      serializers: plugins.map((p) => p.serializer),
+    };
+
+    const exit = await runLifecycleDiff(ctx);
+
+    expect(exit).toBe(0);
+    const payload = JSON.parse(stdoutBuf.join("\n")) as {
+      lexicons: Record<string, { artifacts?: { added: string[] }; observedArtifacts?: Record<string, { status?: string; attributes?: Record<string, unknown> }> }>;
+    };
+    expect(payload.lexicons.helm.artifacts?.added).toContain("release/default/web");
+    const seen = payload.lexicons.helm.observedArtifacts?.["release/default/web"];
+    expect(seen?.status).toBe("deployed");
+    expect(seen?.attributes?.chart).toBe("web-1.2.3");
+  });
+
   test("legacy digest mode still works without --live", async () => {
     buildMock.mockResolvedValue(makeBuildResult({ aws: ["bucket"] }));
     fetchLifecycleMock.mockResolvedValue(undefined);

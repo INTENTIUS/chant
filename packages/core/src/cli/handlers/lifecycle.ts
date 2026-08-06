@@ -652,6 +652,12 @@ interface LiveDiffOutcome {
       /** Property-level drift (#1014), present only for lexicons with a deep reader. */
       deep?: DeepDiffResult;
       artifacts?: LiveArtifactDiffResult;
+      /** What `listArtifacts` actually saw, keyed like `artifacts`' entries
+       * (behold#146). The diff alone is snapshot-relative key lists — on a
+       * first run everything is `added` with no metadata, so a consumer
+       * painting artifact presence (a Helm release's status) had nothing to
+       * read. Mirrors `observed` on the resources path. */
+      observedArtifacts?: Record<string, ArtifactMetadata>;
     }
   >;
   totalDrift: number;
@@ -831,8 +837,14 @@ async function runLifecycleDiffLive(args: LiveDiffArgs): Promise<LiveDiffOutcome
       const observedThen = prevSnapshot?.artifacts;
       const adiff = diffLiveArtifacts({ observedNow, observedThen });
       totalDrift += adiff.added.length + adiff.removed.length + adiff.changed.length;
-      if (args.json) (byLexicon[lexiconName] ??= {}).artifacts = adiff;
-      else renderLiveArtifactDiff(lexiconName, args.environment, adiff);
+      if (args.json) {
+        const lex = (byLexicon[lexiconName] ??= {});
+        lex.artifacts = adiff;
+        // What was actually seen, not just how it moved (behold#146): the
+        // metadata was in hand and dropped, leaving JSON consumers unable to
+        // read an artifact's own status (a Helm release's "deployed").
+        lex.observedArtifacts = observedNow;
+      } else renderLiveArtifactDiff(lexiconName, args.environment, adiff);
       lexiconChecked = true;
     }
 
