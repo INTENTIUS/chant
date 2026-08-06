@@ -60,13 +60,14 @@ describe("helm-upgrade capability (#1495 piece 4)", () => {
       createNamespace: true,
       set: { "app.envs.AWS_REGION": "us-east-1", "crds.enabled": "true" },
       version: "v1.16.1",
+      timeout: "6m",
       context: "k3d-test",
     });
 
     expect(seen).toBe(
       "helm upgrade --install 'cert-manager' 'cert-manager' -o json -n 'cert-manager' --create-namespace " +
         "--repo 'https://charts.jetstack.io' --set 'app.envs.AWS_REGION=us-east-1' --set 'crds.enabled=true' " +
-        "--version 'v1.16.1' --kube-context 'k3d-test'",
+        "--version 'v1.16.1' --timeout '6m' --kube-context 'k3d-test'",
     );
   });
 
