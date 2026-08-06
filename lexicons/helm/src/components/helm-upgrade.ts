@@ -27,7 +27,13 @@ import type { Capability, DeployContext } from "@intentius/chant/components/capa
 import { loadChantConfigUpward } from "@intentius/chant/config";
 import { resolveClusterTarget } from "@intentius/chant/kubectl-context";
 
-const execAsync = promisify(exec);
+// `-o json` returns the WHOLE release — manifest and hooks included, which
+// for a chart like cert-manager is several megabytes — so node's default 1MiB
+// exec buffer truncates and rejects ("stdout maxBuffer length exceeded", hit
+// live on kubemicrovm-ops' first component-path install).
+const execP = promisify(exec);
+const execAsync = (command: string): Promise<{ stdout: string }> =>
+  execP(command, { maxBuffer: 64 * 1024 * 1024 });
 
 export interface HelmUpgradeInput {
   /**
