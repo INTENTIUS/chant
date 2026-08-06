@@ -382,4 +382,12 @@ export const service = new Service({
     const { listArtifacts } = await import("./list-artifacts");
     return listArtifacts(options);
   },
+
+  // #1495 piece 4 — the deploy-unit observer for helm-upgrade units: a
+  // release's presence and native status, read back by the same name the
+  // capability deploys under. Dynamic import mirrors listArtifacts.
+  async describeStackStatus(options) {
+    const { describeStackStatus } = await import("./describe-stack-status");
+    return describeStackStatus(options);
+  },
 };
