@@ -451,13 +451,34 @@ export async function resolveComponentTargets(
     return { success: false, targets: [], error: result.errors.map((e) => e.message).join("\n") };
   }
 
-  const all = [...result.components.values()].map(({ component }) => toDriverComponent(component));
+  const discovered = [...result.components.values()].map(({ component }) => component);
+  const all = discovered.map((component) => toDriverComponent(component));
 
   if (selector === "all") {
-    return { success: true, targets: all };
+    // chant #1522 — a seam-gated component (`enabled: false`, computed from
+    // this run's own params) sits out of "all": the run deploys the estate
+    // the parameters describe, not the units the seams turned off. A disabled
+    // dependency is satisfied vacuously — ordering is dependsOn's only
+    // semantics — so it is also stripped from the survivors' dependsOn,
+    // rather than failing wave resolution as an unknown name.
+    const disabled = new Set(discovered.filter((c) => c.enabled === false).map((c) => c.name));
+    const targets = all
+      .filter((c) => !disabled.has(c.name))
+      .map((c) => (c.dependsOn?.some((d) => disabled.has(d)) ? { ...c, dependsOn: c.dependsOn.filter((d) => !disabled.has(d)) } : c));
+    return { success: true, targets };
   }
 
   const found = all.find((c) => c.name === selector);
+  const disabledByName = discovered.find((c) => c.name === selector && c.enabled === false);
+  if (disabledByName) {
+    // An explicit ask for a unit the parameters excluded is a mistake to
+    // surface, not to skip silently.
+    return {
+      success: false,
+      targets: [],
+      error: `Component "${selector}" is disabled under this run's parameters (enabled: false) — enable the seam it is gated on, or run without naming it.`,
+    };
+  }
   if (!found) {
     const known = all.map((c) => c.name).sort().join(", ");
     return {

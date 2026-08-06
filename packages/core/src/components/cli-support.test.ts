@@ -276,6 +276,33 @@ describe("computeComponentGraph", () => {
     expect(result.error).toMatch(/unknown component|ghost/i);
   });
 
+  test("enabled: false sits out of an \"all\" run, and its name leaves the survivors' dependsOn (#1522)", async () => {
+    await writeFile(
+      join(testDir, "gated.component.ts"),
+      `export const gated = { name: "gated", enabled: false, dependsOn: [], deploy: [{ phase: "Apply", steps: [{ kind: "shell", reason: "t" }] }] };`,
+    );
+    await writeFile(
+      join(testDir, "main.component.ts"),
+      `export const main = { name: "main", dependsOn: ["gated"], deploy: [{ phase: "Apply", steps: [{ kind: "shell", reason: "t" }] }] };`,
+    );
+
+    const resolved = await resolveComponentTargets(testDir, "all");
+    expect(resolved.success).toBe(true);
+    expect(resolved.targets.map((t) => t.name)).toEqual(["main"]);
+    expect(resolved.targets[0].dependsOn).toEqual([]);
+  });
+
+  test("running a disabled component BY NAME errors with the reason (#1522)", async () => {
+    await writeFile(
+      join(testDir, "gated.component.ts"),
+      `export const gated = { name: "gated", enabled: false, dependsOn: [], deploy: [{ phase: "Apply", steps: [{ kind: "shell", reason: "t" }] }] };`,
+    );
+
+    const resolved = await resolveComponentTargets(testDir, "gated");
+    expect(resolved.success).toBe(false);
+    expect(resolved.error).toMatch(/disabled under this run's parameters/);
+  });
+
   test("carries each component's liveNames, with the [name] identity fallback (#1491)", async () => {
     await writeFile(
       join(testDir, "pg.component.ts"),
