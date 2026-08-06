@@ -1,6 +1,6 @@
 {
   "name": "@intentius/chant-k8s-client",
-  "version": "0.41.4",
+  "version": "0.41.5",
   "description": "Typed Kubernetes API client for chant — the read/write path of the k8s lexicon, kept out of the build path",
   "license": "Apache-2.0",
   "homepage": "https://intentius.io/chant/lexicons/k8s/api-client/",
