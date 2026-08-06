@@ -51,7 +51,9 @@ export interface EksClusterProps {
    * without which an AWS::EKS::PodIdentityAssociation delivers no
    * credentials and the workload it binds crashloops on startup, found on
    * kubemicrovm-ops' first real deploy). Named by the caller, never guessed;
-   * versions omitted take EKS's default for the cluster version.
+   * versions omitted take EKS's default. Up to three (fixed member slots
+   * `addon1..addon3`, keyed by position — the statically-evaluable shape);
+   * an estate needing more declares the rest as bare Addon resources.
    */
   addons?: Array<{ name: string; version?: string }>;
   tags?: Array<{ Key: string; Value: string }>;
@@ -90,25 +92,33 @@ export const EksCluster = Composite((props: EksClusterProps) => {
     Tags: props.tags,
   }, defaults?.cluster));
 
-  // One member per add-on, keyed from its name ("eks-pod-identity-agent" →
-  // addonEksPodIdentityAgent) — composite members are a keyed record, and a
-  // deterministic key is what keeps the logical id stable across deploys.
-  const addonMembers: Record<string, InstanceType<typeof Addon>> = {};
-  for (const a of props.addons ?? []) {
-    const key = "addon" + a.name.replace(/(^|-)([a-z0-9])/g, (_, __, c: string) => c.toUpperCase());
-    addonMembers[key] = new Addon(
-      {
-        ClusterName: props.name,
-        AddonName: a.name,
-        AddonVersion: a.version,
-        Tags: props.tags,
-      },
-      { DependsOn: [cluster] },
-    );
-  }
+  // Three fixed add-on slots, the same statically-evaluable shape
+  // vpc-default uses for its optional third AZ: a ternary is an expression
+  // (EVL-clean); a loop-built member map is control flow the reference
+  // composites must not contain (EVL002/EVL003). Members are addon1..addon3
+  // in the caller's order — logical ids stay stable as long as the order
+  // does, which the caller controls.
+  const a1 = props.addons?.[0];
+  const a2 = props.addons?.[1];
+  const a3 = props.addons?.[2];
+  const addon1 = a1
+    ? new Addon({ ClusterName: props.name, AddonName: a1.name, AddonVersion: a1.version, Tags: props.tags }, { DependsOn: [cluster] })
+    : undefined;
+  const addon2 = a2
+    ? new Addon({ ClusterName: props.name, AddonName: a2.name, AddonVersion: a2.version, Tags: props.tags }, { DependsOn: [cluster] })
+    : undefined;
+  const addon3 = a3
+    ? new Addon({ ClusterName: props.name, AddonName: a3.name, AddonVersion: a3.version, Tags: props.tags }, { DependsOn: [cluster] })
+    : undefined;
 
   if (!props.nodegroup) {
-    return { clusterRole, cluster, ...addonMembers };
+    return {
+      clusterRole,
+      cluster,
+      ...(addon1 ? { addon1 } : {}),
+      ...(addon2 ? { addon2 } : {}),
+      ...(addon3 ? { addon3 } : {}),
+    };
   }
 
   const nodeRole = new Role(mergeDefaults({
@@ -142,5 +152,13 @@ export const EksCluster = Composite((props: EksClusterProps) => {
     Tags: props.tags ? Object.fromEntries(props.tags.map((t) => [t.Key, t.Value])) : undefined,
   }, defaults?.nodegroup), { DependsOn: [cluster] });
 
-  return { clusterRole, cluster, nodeRole, nodegroup, ...addonMembers };
+  return {
+    clusterRole,
+    cluster,
+    nodeRole,
+    nodegroup,
+    ...(addon1 ? { addon1 } : {}),
+    ...(addon2 ? { addon2 } : {}),
+    ...(addon3 ? { addon3 } : {}),
+  };
 }, "EksCluster");

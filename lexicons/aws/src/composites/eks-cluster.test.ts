@@ -65,7 +65,7 @@ describe("EksCluster", () => {
       nodegroup: {},
       addons: [{ name: "eks-pod-identity-agent" }],
     }) as unknown as Members;
-    const addon = c.addonEksPodIdentityAgent;
+    const addon = c.addon1;
     expect(addon).toBeDefined();
     expect(addon!.props?.AddonName).toBe("eks-pod-identity-agent");
     expect(addon!.props?.ClusterName).toBe("kmv-real");
