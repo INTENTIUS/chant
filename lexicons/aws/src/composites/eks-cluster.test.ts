@@ -9,7 +9,7 @@ describe("EksCluster", () => {
     const c = EksCluster({ name: "kmv-dev", subnetIds: subnets });
     expect(c.cluster).toBeDefined();
     expect(c.clusterRole).toBeDefined();
-    expect((c as Record<string, unknown>).nodegroup).toBeUndefined();
+    expect((c as unknown as Record<string, unknown>).nodegroup).toBeUndefined();
     const clusterProps = (c.cluster as any).props;
     expect(clusterProps.RoleArn).toBeInstanceOf(AttrRef);
     expect(clusterProps.ResourcesVpcConfig.SubnetIds).toEqual(subnets);
