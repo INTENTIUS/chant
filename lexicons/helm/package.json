@@ -44,6 +44,11 @@
       "types": "./dist/detect.d.ts",
       "default": "./src/detect.ts"
     },
+    "./components": {
+      "development": "./src/components/index.ts",
+      "types": "./dist/components/index.d.ts",
+      "default": "./src/components/index.ts"
+    },
     "./lint/post-synth": {
       "development": "./src/lint/post-synth/index.ts",
       "types": "./dist/lint/post-synth/index.d.ts",

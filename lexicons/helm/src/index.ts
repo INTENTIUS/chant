@@ -4,6 +4,12 @@ export { helmSerializer } from "./serializer";
 // Plugin
 export { helmPlugin } from "./plugin";
 
+// #1495 piece 4 — the component surface. `helmCapabilityPlugin` exported from
+// the package entry is what `loadCapabilityPluginFromLexicon` scans for, the
+// same discovery the aws and k8s plugins ride.
+export { helmCapabilityPlugin, HELM_VERB_FAMILIES } from "./components/capability-plugin";
+export { helmUpgradeCapability, createHelmUpgradeCapability, type HelmUpgradeInput, type HelmUpgradeOutcome } from "./components/helm-upgrade";
+
 // Resources
 export { Chart, Values, ValuesOverride, HelmTest, HelmNotes, HelmHook, HelmDependency, HelmMaintainer, HelmCRD } from "./resources";
 
