@@ -508,6 +508,96 @@ describe("k8s describeResources", () => {
 
   // ── Runtime children: owner-reference chain classification (chant #1077) ──
 
+  describe("runtime children of the estate's own API groups (#1517)", () => {
+    function declaredCronJob() {
+      return makeEntities([
+        { name: "backup", entityType: "K8s::Batch::CronJob", props: { metadata: { name: "backup", namespace: "prod" } } },
+      ]);
+    }
+    const cronJob = {
+      apiVersion: "batch/v1",
+      kind: "CronJob",
+      metadata: { name: "backup", namespace: "prod", uid: "cj-uid" },
+    };
+
+    test("a controller-made child in a declared non-core group surfaces with its own kind and a declared chain", async () => {
+      const job = {
+        apiVersion: "batch/v1",
+        kind: "Job",
+        metadata: {
+          name: "backup-29157",
+          namespace: "prod",
+          uid: "job-uid",
+          ownerReferences: [{ apiVersion: "batch/v1", kind: "CronJob", name: "backup", uid: "cj-uid", controller: true }],
+        },
+        status: { conditions: [{ type: "Complete", status: "True" }] },
+      };
+      const cluster = fakeCluster({
+        objects: {
+          [objectKey("batch/v1", "CronJob", "backup", "prod")]: cronJob,
+          [objectKey("batch/v1", "Job", "backup-29157", "prod")]: job,
+        },
+      });
+
+      const result = await describeResources(
+        { environment: "prod", buildOutput: "", entityNames: ["backup"], entities: declaredCronJob() },
+        cluster.connector,
+      );
+
+      const child = result.resources["prod/backup-29157"];
+      expect(child).toMatchObject({
+        type: "K8s::Batch::Job",
+        physicalId: "job-uid",
+        ownerChain: { root: "declared", entity: "backup" },
+      });
+    });
+
+    test("a loose object in a swept group with no owner chain is NOT reported — the scan is not an inventory", async () => {
+      const looseJob = {
+        apiVersion: "batch/v1",
+        kind: "Job",
+        metadata: { name: "hand-made", namespace: "prod", uid: "loose-uid" },
+      };
+      const cluster = fakeCluster({
+        objects: {
+          [objectKey("batch/v1", "CronJob", "backup", "prod")]: cronJob,
+          [objectKey("batch/v1", "Job", "hand-made", "prod")]: looseJob,
+        },
+      });
+
+      const result = await describeResources(
+        { environment: "prod", buildOutput: "", entityNames: ["backup"], entities: declaredCronJob() },
+        cluster.connector,
+      );
+
+      expect(result.resources["prod/hand-made"]).toBeUndefined();
+    });
+
+    test("a core-only estate sweeps no extra groups — Pods stay the core representative", async () => {
+      const svc = { apiVersion: "v1", kind: "Service", metadata: { name: "web", namespace: "prod", uid: "svc-uid" } };
+      const cluster = fakeCluster({
+        objects: { [objectKey("v1", "Service", "web", "prod")]: svc },
+      });
+
+      await describeResources(
+        {
+          environment: "prod",
+          buildOutput: "",
+          entityNames: ["web"],
+          entities: makeEntities([
+            { name: "web", entityType: "K8s::Core::Service", props: { metadata: { name: "web", namespace: "prod" } } },
+          ]),
+        },
+        cluster.connector,
+      );
+
+      // Discovery was consulted for no non-core groupVersion: the only list
+      // sweeps are the namespace's pods.
+      const groupDiscovery = cluster.layer.paths().filter((p) => /^\/apis\/[^/]+\/[^/]+$/.test(p) && !p.includes("namespaces"));
+      expect(groupDiscovery.filter((p) => !p.startsWith("/apis/apps"))).toEqual([]);
+    });
+  });
+
   describe("runtime children (#1077)", () => {
     function declaredDeployment() {
       return makeEntities([
