@@ -207,6 +207,14 @@ export interface K8sClient {
   delete(ref: ObjectRef, options?: DeleteOptions): Promise<void>;
   /** Run `fn` over `items` with this client's concurrency ceiling. */
   concurrently<T, R>(items: readonly T[], fn: (item: T, index: number) => Promise<R>): Promise<R[]>;
+  /**
+   * Every resource a groupVersion serves, from the cluster's own discovery
+   * (chant #1517) — what the runtime-children sweep enumerates so a custom
+   * kind's instances are reachable without a table someone maintains.
+   * Subresources (`pods/log`) are excluded. `[]` when the cluster serves no
+   * such groupVersion — an answer, not a failure. Cached like `resolve`.
+   */
+  resources(apiVersion: string, signal?: AbortSignal): Promise<ApiResourceInfo[]>;
   /** The API resource lists discovery has been asked for so far, for tests and diagnostics. */
   discoveryCacheKeys(): string[];
 }
@@ -627,6 +635,14 @@ export async function createK8sClient(options: K8sClientOptions = {}): Promise<K
     });
   }
 
+  async function resourcesOf(apiVersion: string, signal?: AbortSignal): Promise<ApiResourceInfo[]> {
+    const list = await apiResourceList(apiVersion, signal);
+    if (!list) return [];
+    return (list.resources ?? [])
+      .filter((r) => !(r.name ?? "").includes("/"))
+      .map((entry) => toInfo(apiVersion, entry));
+  }
+
   return {
     provenance,
     defaultNamespace,
@@ -638,6 +654,7 @@ export async function createK8sClient(options: K8sClientOptions = {}): Promise<K
     apply,
     delete: remove,
     concurrently: (items, fn) => mapConcurrent(items, fn, concurrency),
+    resources: resourcesOf,
     discoveryCacheKeys: () => [...discoveryCache.keys()].sort(),
   };
 }

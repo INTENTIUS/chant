@@ -65,6 +65,7 @@ import {
 } from "./api/classify";
 import { operationFor } from "./api/operation-surface";
 import { resolveK8sOwnerChain } from "./api/owner-chain";
+import { gvkToTypeName } from "./spec/parse";
 
 function pruneUndefined<T extends Record<string, unknown>>(obj: T): Record<string, unknown> {
   const out: Record<string, unknown> = {};
@@ -320,26 +321,50 @@ export async function describeResources(
     }
   });
 
-  await addRuntimeChildren(client, resources, options.owned);
+  // chant #1517 — the API groups this estate's own declarations use. A
+  // controller's children usually live in its controller's group (a
+  // MicroVMReplicaSet makes MicroVMs), so the runtime scan sweeps those
+  // groupVersions' kinds besides Pods. Core (`v1`) is excluded from the group
+  // sweep — Pods represent it; sweeping every core kind would walk endpoints
+  // and events for nothing.
+  const runtimeGroupVersions = new Set<string>();
+  for (const { entityType } of declared) {
+    const op = operationFor(entityType);
+    if (op && op.apiVersion.includes("/")) runtimeGroupVersions.add(op.apiVersion);
+  }
+
+  await addRuntimeChildren(client, resources, options.owned, runtimeGroupVersions);
 
   return observation(resources, unobserved);
 }
 
 /**
- * Scan Pods in the namespaces of entities this call just resolved, and
- * classify each one's owner-reference chain (#1077). Mutates `resources` in
- * place, adding an entry per Pod whose chain was worth reporting.
+ * Scan runtime-child candidates in the namespaces of entities this call just
+ * resolved, and classify each one's owner-reference chain (#1077). Mutates
+ * `resources` in place, adding an entry per object whose chain was worth
+ * reporting.
  *
- * Best-effort and additive: a namespace this scan cannot list (RBAC denial,
- * a transient error) is simply skipped rather than failing the observation —
- * Pods are not declared entities, so there is no NOT-OBSERVED axis for them
- * to report against, the same way an out-of-band AWS child resource has none
- * either.
+ * Two candidate pools:
+ *  - **Pods** — the built-in workload leaf, always scanned.
+ *  - **The estate's own API groups** (#1517) — every namespaced, listable
+ *    kind in each `groupVersions` entry, from the cluster's own discovery.
+ *    An operator estate's interesting children are custom resources its
+ *    controllers made (a MicroVMReplicaSet's MicroVMs), which no kind table
+ *    could anticipate — the same open-world inversion behold#74 made for
+ *    declared CRDs, applied to the runtime axis. Bounded by what the estate
+ *    declares, never a cluster-wide sweep.
+ *
+ * Best-effort and additive: a namespace or kind this scan cannot list (RBAC
+ * denial, a transient error) is simply skipped rather than failing the
+ * observation — these are not declared entities, so there is no NOT-OBSERVED
+ * axis for them to report against, the same way an out-of-band AWS child
+ * resource has none either.
  */
 async function addRuntimeChildren(
   client: K8sClient,
   resources: Record<string, ResourceMetadata>,
   owned: boolean | undefined,
+  groupVersions: ReadonlySet<string> = new Set(),
 ): Promise<void> {
   const declaredByUid = new Map<string, string>();
   for (const [entityName, meta] of Object.entries(resources)) {
@@ -353,42 +378,73 @@ async function addRuntimeChildren(
   }
   if (namespaces.size === 0) return;
 
-  await client.concurrently([...namespaces], async (namespace) => {
-    let pods: K8sObject[];
+  // The kinds to scan: Pods, plus each declared groupVersion's namespaced,
+  // listable kinds from discovery (#1517). A groupVersion the cluster does
+  // not serve contributes nothing — an answer, not a failure.
+  const kinds: Array<{ apiVersion: string; kind: string; typeName: string }> = [
+    { apiVersion: "v1", kind: "Pod", typeName: "K8s::Core::Pod" },
+  ];
+  for (const gv of [...groupVersions].sort()) {
+    let infos;
     try {
-      pods = await client.list({ apiVersion: "v1", kind: "Pod" }, { namespace });
+      infos = await client.resources(gv);
     } catch {
-      return; // best-effort — see the function doc
+      continue; // best-effort — see the function doc
     }
+    const [group, version] = [gv.slice(0, gv.indexOf("/")), gv.slice(gv.indexOf("/") + 1)];
+    for (const info of infos) {
+      if (!info.namespaced || !info.verbs.includes("list")) continue;
+      kinds.push({ apiVersion: gv, kind: info.kind, typeName: gvkToTypeName({ group, version, kind: info.kind }) });
+    }
+  }
 
-    await client.concurrently(pods, async (pod) => {
-      const uid = pod.metadata?.uid;
-      const name = pod.metadata?.name;
-      if (!uid || !name || declaredByUid.has(uid)) return; // declared directly, or unaddressable
+  await client.concurrently([...namespaces], async (namespace) => {
+    for (const { apiVersion, kind, typeName } of kinds) {
+      let objects: K8sObject[];
+      try {
+        objects = await client.list({ apiVersion, kind }, { namespace });
+      } catch {
+        continue; // best-effort — see the function doc
+      }
 
-      const ownerChain = await resolveK8sOwnerChain(pod, { declaredByUid, reader: client, namespace });
+      await client.concurrently(objects, async (obj) => {
+        const uid = obj.metadata?.uid;
+        const name = obj.metadata?.name;
+        if (!uid || !name || declaredByUid.has(uid)) return; // declared directly, or unaddressable
+        if (resources[`${namespace}/${name}`]) return; // already reported by an earlier kind
 
-      // `--owned`: withhold a Pod that is neither a runtime child of a
-      // declared entity nor carrying chant's own marker — the same rule the
-      // declared-entity read above applies, extended to the undeclared axis
-      // this scan introduces.
-      const marker = hasOwnershipMarker(pod.metadata?.labels, LABEL_OWNERSHIP_KEYS);
-      if (owned && ownerChain.root !== "declared" && !marker) return;
+        const ownerChain = await resolveK8sOwnerChain(obj, { declaredByUid, reader: client, namespace });
 
-      resources[`${namespace}/${name}`] = {
-        type: "K8s::Core::Pod",
-        physicalId: uid,
-        status: statusFromObject(pod),
-        lastUpdated: pod.metadata?.creationTimestamp,
-        ownership: classifyOwnership(pod.metadata?.labels, LABEL_OWNERSHIP_KEYS),
-        ownerChain,
-        attributes: pruneUndefined({
-          namespace,
-          labels: pod.metadata?.labels,
-          resourceVersion: pod.metadata?.resourceVersion,
-          conditions: unhappyConditions(pod),
-        }),
-      };
-    });
+        // `--owned`: withhold an object that is neither a runtime child of a
+        // declared entity nor carrying chant's own marker — the same rule the
+        // declared-entity read above applies, extended to the undeclared axis
+        // this scan introduces.
+        const marker = hasOwnershipMarker(obj.metadata?.labels, LABEL_OWNERSHIP_KEYS);
+        if (owned && ownerChain.root !== "declared" && !marker) return;
+
+        // An undeclared object with NO owner chain at all is not a runtime
+        // child — reporting every loose object a group serves would turn the
+        // scan into an inventory. Pods keep their pre-#1517 reporting (their
+        // chain verdicts, including foreign, were already part of #1077's
+        // contract); swept group kinds only report when the chain reaches a
+        // declared entity.
+        if (kind !== "Pod" && ownerChain.root !== "declared") return;
+
+        resources[`${namespace}/${name}`] = {
+          type: typeName,
+          physicalId: uid,
+          status: statusFromObject(obj),
+          lastUpdated: obj.metadata?.creationTimestamp,
+          ownership: classifyOwnership(obj.metadata?.labels, LABEL_OWNERSHIP_KEYS),
+          ownerChain,
+          attributes: pruneUndefined({
+            namespace,
+            labels: obj.metadata?.labels,
+            resourceVersion: obj.metadata?.resourceVersion,
+            conditions: unhappyConditions(obj),
+          }),
+        };
+      });
+    }
   });
 }
