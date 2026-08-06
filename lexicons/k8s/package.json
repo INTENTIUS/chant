@@ -76,7 +76,7 @@
     "@types/js-yaml": "^4.0.9"
   },
   "optionalDependencies": {
-    "@intentius/chant-k8s-client": ">=0.31.0 <1.0.0"
+    "@intentius/chant-k8s-client": "^0.41.5"
   },
   "devDependencies": {
     "@intentius/chant": "*",
