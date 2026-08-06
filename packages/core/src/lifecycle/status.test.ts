@@ -549,3 +549,47 @@ describe("status", () => {
     });
   });
 });
+
+describe("partial unit presence is said, not rounded down to nothing (#1528)", () => {
+  // The lie this fixes, verbatim from a real estate: a three-unit component
+  // (CRDs by kubectl-apply, two Helm releases) whose one absent unit produced
+  // `detail: "no release record and nothing observed live"` in the same row
+  // whose `stack` field showed a deployed, healthy release.
+  const partial = { present: 2, total: 3, missing: ["kmv-crds"] };
+
+  test("unrecorded + partial names the split and the missing units", () => {
+    const liveEvidence = new Map<string, LiveComponentEvidence>([
+      ["operator", { live: false, partial, stack: { name: "cert-manager", status: "deployed", healthy: true } }],
+    ]);
+    const rows = reconcileStatus("prod", [], { liveEvidence, allComponents: ["operator"] });
+    expect(rows[0].reconciliation).toBe("unrecorded");
+    expect(rows[0].detail).toContain("2 of 3 deploy units observed live");
+    expect(rows[0].detail).toContain("missing: kmv-crds");
+    expect(rows[0].detail).not.toContain("nothing observed live");
+    expect(rows[0].partial).toEqual(partial);
+  });
+
+  test("recorded + partial is stale, with the split instead of 'nothing'", () => {
+    const liveEvidence = new Map<string, LiveComponentEvidence>([
+      ["search-service", { live: false, partial }],
+    ]);
+    const rows = reconcileStatus("prod", [record()], { liveEvidence });
+    expect(rows[0].reconciliation).toBe("stale");
+    expect(rows[0].detail).toContain("only 2 of 3 deploy units observed live now");
+    expect(rows[0].detail).toContain("missing: kmv-crds");
+  });
+
+  test("wholly absent still reads as nothing observed live, no split invented", () => {
+    const liveEvidence = new Map<string, LiveComponentEvidence>([["gone", { live: false }]]);
+    const rows = reconcileStatus("prod", [], { liveEvidence, allComponents: ["gone"] });
+    expect(rows[0].detail).toContain("no release record and nothing observed live");
+    expect(rows[0].partial).toBeUndefined();
+  });
+
+  test("the split survives mergeLiveEvidence's field-by-field rebuild", () => {
+    const base = new Map<string, LiveComponentEvidence>([["operator", { live: false }]]);
+    const supplement = new Map<string, LiveComponentEvidence>([["operator", { live: false, partial }]]);
+    const merged = mergeLiveEvidence(base, supplement);
+    expect(merged.get("operator")!.partial).toEqual(partial);
+  });
+});
