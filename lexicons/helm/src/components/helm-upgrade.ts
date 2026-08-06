@@ -61,6 +61,8 @@ export interface HelmUpgradeInput {
   version?: string;
   /** Wait for resources to become ready before returning (`--wait`). */
   wait?: boolean;
+  /** Wait ceiling (`--timeout`), Helm duration syntax (`6m`). Helm's default is 5m. */
+  timeout?: string;
   /** Explicit kube context, overriding the environment's declared binding. */
   context?: string;
 }
@@ -104,6 +106,7 @@ function upgradeCommand(input: HelmUpgradeInput, context: string | undefined): s
   for (const key of Object.keys(input.set ?? {}).sort()) parts.push("--set", q(`${key}=${input.set![key]}`));
   if (input.version) parts.push("--version", q(input.version));
   if (input.wait) parts.push("--wait");
+  if (input.timeout) parts.push("--timeout", q(input.timeout));
   if (context) parts.push("--kube-context", q(context));
   return parts.join(" ");
 }
