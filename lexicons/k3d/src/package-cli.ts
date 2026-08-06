@@ -1,0 +1,41 @@
+#!/usr/bin/env tsx
+/**
+ * Thin entry point for `npm run bundle` in lexicon-k3d.
+ */
+import { generate, writeGeneratedFiles } from "./codegen/generate";
+import { packageLexicon } from "./codegen/package";
+import { writeFileSync, mkdirSync } from "fs";
+import { join, dirname } from "path";
+import { fileURLToPath } from "url";
+
+const pkgDir = dirname(fileURLToPath(import.meta.url));
+
+// 1. Generate src/generated/ files (writeGeneratedFiles resolves its own target)
+const genResult = await generate({ verbose: true });
+writeGeneratedFiles(genResult);
+
+// 2. Run package pipeline and write dist/
+const { spec, stats } = await packageLexicon({ verbose: true });
+
+const distDir = join(dirname(pkgDir), "dist");
+mkdirSync(join(distDir, "types"), { recursive: true });
+mkdirSync(join(distDir, "rules"), { recursive: true });
+mkdirSync(join(distDir, "skills"), { recursive: true });
+
+writeFileSync(join(distDir, "manifest.json"), JSON.stringify(spec.manifest, null, 2));
+writeFileSync(join(distDir, "meta.json"), spec.registry);
+writeFileSync(join(distDir, "types", "index.d.ts"), spec.typesDTS);
+
+for (const [name, content] of spec.rules) {
+  writeFileSync(join(distDir, "rules", name), content);
+}
+for (const [name, content] of spec.skills) {
+  writeFileSync(join(distDir, "skills", name), content);
+}
+
+if (spec.integrity) {
+  writeFileSync(join(distDir, "integrity.json"), JSON.stringify(spec.integrity, null, 2));
+}
+
+console.error(`Packaged ${stats.resources} entities, ${stats.ruleCount} rules, ${stats.skillCount} skills`);
+console.error(`dist/ written to ${distDir}`);

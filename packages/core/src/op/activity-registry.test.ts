@@ -67,7 +67,7 @@ describe("loadActivities — multi-lexicon (#706)", () => {
     expect(a.has("waitForStack")).toBe(true); // temporal base
     expect(a.has("shellCmd")).toBe(true); // temporal base
     expect(a.has("kubectlApply")).toBe(false); // relocated to k8s (#809)
-    expect(a.has("k3dUp")).toBe(false); // relocated to k8s (#809)
+    expect(a.has("k3dUp")).toBe(false); // relocated to k8s (#809), then k3d (#1410)
     expect(a.has("gcpApply")).toBe(false); // relocated to gcp
     expect(a.has("flociUp")).toBe(false); // relocated to aws
     expect(a.has("azGroupEnsure")).toBe(false); // relocated to azure
@@ -79,12 +79,19 @@ describe("loadActivities — multi-lexicon (#706)", () => {
     expect(a.has("waitForStack")).toBe(true); // base still loaded alongside
   });
 
-  test("k8s lexicon contributes kubectl / k3d / argo activities (#809)", async () => {
+  test("k8s lexicon contributes kubectl / argo activities (#809)", async () => {
     const a = await loadActivities(["k8s"]);
     expect(a.has("kubectlApply")).toBe(true);
+    expect(a.has("k3dUp")).toBe(false); // moved on to the k3d lexicon (#1410)
+    expect(a.has("k3dDown")).toBe(false); // moved on to the k3d lexicon (#1410)
+    expect(a.has("waitForArgoSync")).toBe(true);
+    expect(a.has("waitForStack")).toBe(true); // base still loaded alongside
+  });
+
+  test("k3d lexicon contributes the local-cluster lifecycle (#1410)", async () => {
+    const a = await loadActivities(["k3d"]);
     expect(a.has("k3dUp")).toBe(true);
     expect(a.has("k3dDown")).toBe(true);
-    expect(a.has("waitForArgoSync")).toBe(true);
     expect(a.has("waitForStack")).toBe(true); // base still loaded alongside
   });
 

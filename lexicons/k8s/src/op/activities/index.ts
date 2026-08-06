@@ -6,8 +6,11 @@
  *     #1075, prune chant-owned objects it no longer declares; `applyManifest`
  *     is the same work with a report of what it did, which is what the
  *     Temporal lexicon's `nativeApply` dispatcher calls for a kubectl target)
- *   - k3dUp / k3dDown — boot/tear down a local k3d cluster
  *   - waitForArgoSync — block until an Argo CD Application is Healthy && Synced
+ *
+ * k3dUp / k3dDown moved again, to the k3d lexicon (chant #1410) — a lexicon
+ * owns its own product's activities, and k3d is its own product now. Projects
+ * using them list `k3d` in `lexicons`; loadActivities(["k3d"]) provides them.
  *
  * The step builders (kubectlApply, k3dUp, k3dDown) stay in core, re-exported from
  * the temporal Op-authoring barrel like the other core builders. Each activity is
@@ -16,9 +19,6 @@
  */
 export { kubectlApply, applyManifest, readManifestDocuments } from "./kubectl";
 export type { KubectlApplyArgs, ApplyManifestResult, AppliedRef, ApplyDeleteMode } from "./kubectl";
-
-export { k3dUp, k3dDown, k3dUpCommand, k3dDownCommand, k3dExistsCommand } from "./k3d";
-export type { K3dUpArgs, K3dDownArgs } from "./k3d";
 
 export { waitForArgoSync, defaultArgoStatusFetcher, ArgoSyncFailedError } from "./argo";
 export type { WaitForArgoSyncArgs, ArgoAppStatus, ArgoStatusFetcher } from "./argo";

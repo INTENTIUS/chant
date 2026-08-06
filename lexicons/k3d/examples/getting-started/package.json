@@ -1,0 +1,9 @@
+{
+  "name": "@intentius/chant-lexicon-k3d-example-getting-started",
+  "version": "0.0.1",
+  "private": true,
+  "dependencies": {
+    "@intentius/chant-lexicon-k3d": "workspace:*",
+    "@intentius/chant": "workspace:*"
+  }
+}
