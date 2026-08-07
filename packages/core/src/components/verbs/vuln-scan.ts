@@ -9,10 +9,10 @@
  * digest) over re-scanning the image: deterministic (same SBOM -> same
  * findings), fast, and reuses work already done. Real backends shell out to
  * `grype`/`trivy` through the injectable `ProcessRunner` (./process-runner.ts),
- * exactly like ./tool-sbom-generator.ts's deep-scan backend — tests inject a
- * `MockVulnScanner` (./__tests__/mock-vuln-scanner.ts) and never invoke a real
- * scanner, network, or vuln DB. The scanner's vuln DB currency is the tool's
- * job, not chant's.
+ * exactly like ./tool-sbom-generator.ts's deep-scan backend — tests inject an
+ * inline fake `VulnScanner` (an object literal with a canned `scan()`, see
+ * ./vuln-gate.test.ts) and never invoke a real scanner, network, or vuln DB.
+ * The scanner's vuln DB currency is the tool's job, not chant's.
  */
 
 import { writeFileSync } from "node:fs";
@@ -84,8 +84,8 @@ export interface ScanInput {
  * Injectable vulnerability-scan boundary — the scan-side analogue of
  * `SbomGenerator` (./sbom-generator.ts) and `CloudExecutor`
  * (./cloud-executor.ts). A real implementation shells out to `grype`/`trivy`;
- * tests substitute `MockVulnScanner` (./__tests__/mock-vuln-scanner.ts) and
- * never touch a real tool, network, or vuln DB.
+ * tests substitute an inline fake (an object literal with a canned `scan()`)
+ * and never touch a real tool, network, or vuln DB.
  */
 export interface VulnScanner {
   /** Scan an SBOM, returning every known vulnerability it surfaces. */
