@@ -1,0 +1,315 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`docker OKF bundle > packaging emits a conformant, snapshot-stable bundle 1`] = `
+[
+  {
+    "content": "---
+okf_version: '0.2'
+---
+
+# Resource types
+
+* [DockerConfig](/types/DockerConfig.md) - Docker::Compose::Config
+* [Dockerfile](/types/Dockerfile.md) - Docker::Dockerfile
+* [DockerSecret](/types/DockerSecret.md) - Docker::Compose::Secret
+* [Network](/types/Network.md) - Docker::Compose::Network
+* [Service](/types/Service.md) - Docker::Compose::Service
+* [Volume](/types/Volume.md) - Docker::Compose::Volume
+
+# Rules
+
+* [DKRD001](/rules/DKRD001.md) - Service uses :latest or untagged image — specify an explicit version tag
+* [DKRD002](/rules/DKRD002.md) - Named volume is declared but not mounted by any service
+* [DKRD003](/rules/DKRD003.md) - Service exposes SSH port (22) externally — this is a security risk
+* [DKRD010](/rules/DKRD010.md) - apt-get install without --no-install-recommends adds unnecessary packages
+* [DKRD011](/rules/DKRD011.md) - Prefer COPY over ADD when not fetching URLs or extracting archives
+* [DKRD012](/rules/DKRD012.md) - Dockerfile has no USER instruction — container runs as root
+* [DKRS001](/rules/DKRS001.md) - No Latest Tag
+",
+    "path": "index.md",
+  },
+  {
+    "content": "---
+type: post-synth-check
+title: DKRD001
+description: Service uses :latest or untagged image — specify an explicit version tag
+id: DKRD001
+severity: error
+category: post-synth
+lexicon: docker
+docs: https://intentius.io/chant/lexicons/docker/rules/
+---
+Service uses :latest or untagged image — specify an explicit version tag
+
+## Applies to
+
+- [Service](/types/Service.md)
+",
+    "path": "rules/DKRD001.md",
+  },
+  {
+    "content": "---
+type: post-synth-check
+title: DKRD002
+description: Named volume is declared but not mounted by any service
+id: DKRD002
+severity: error
+category: post-synth
+lexicon: docker
+docs: https://intentius.io/chant/lexicons/docker/rules/
+---
+Named volume is declared but not mounted by any service
+
+## Applies to
+
+- [Volume](/types/Volume.md)
+",
+    "path": "rules/DKRD002.md",
+  },
+  {
+    "content": "---
+type: post-synth-check
+title: DKRD003
+description: Service exposes SSH port (22) externally — this is a security risk
+id: DKRD003
+severity: error
+category: post-synth
+lexicon: docker
+docs: https://intentius.io/chant/lexicons/docker/rules/
+---
+Service exposes SSH port (22) externally — this is a security risk
+
+## Applies to
+
+- [Service](/types/Service.md)
+",
+    "path": "rules/DKRD003.md",
+  },
+  {
+    "content": "---
+type: post-synth-check
+title: DKRD010
+description: apt-get install without --no-install-recommends adds unnecessary packages
+id: DKRD010
+severity: error
+category: post-synth
+lexicon: docker
+docs: https://intentius.io/chant/lexicons/docker/rules/
+---
+apt-get install without --no-install-recommends adds unnecessary packages
+",
+    "path": "rules/DKRD010.md",
+  },
+  {
+    "content": "---
+type: post-synth-check
+title: DKRD011
+description: Prefer COPY over ADD when not fetching URLs or extracting archives
+id: DKRD011
+severity: error
+category: post-synth
+lexicon: docker
+docs: https://intentius.io/chant/lexicons/docker/rules/
+---
+Prefer COPY over ADD when not fetching URLs or extracting archives
+",
+    "path": "rules/DKRD011.md",
+  },
+  {
+    "content": "---
+type: post-synth-check
+title: DKRD012
+description: Dockerfile has no USER instruction — container runs as root
+id: DKRD012
+severity: error
+category: post-synth
+lexicon: docker
+docs: https://intentius.io/chant/lexicons/docker/rules/
+---
+Dockerfile has no USER instruction — container runs as root
+
+## Applies to
+
+- [Dockerfile](/types/Dockerfile.md)
+",
+    "path": "rules/DKRD012.md",
+  },
+  {
+    "content": "---
+type: lint-rule
+title: DKRS001
+description: No Latest Tag
+id: DKRS001
+severity: warning
+category: correctness
+lexicon: docker
+docs: https://intentius.io/chant/lexicons/docker/rules/
+---
+No Latest Tag
+
+## Applies to
+
+- [Service](/types/Service.md)
+",
+    "path": "rules/DKRS001.md",
+  },
+  {
+    "content": "---
+type: resource-type
+title: DockerConfig
+description: A config definition in Docker Compose
+name: DockerConfig
+lexicon: docker
+resource_type: Docker::Compose::Config
+---
+A config definition in Docker Compose
+
+## Properties
+
+- \`file\` (\`string\`): Path to the config file
+- \`external\` (\`boolean\`): Whether the config is external
+- \`labels\` (\`Record<string, string>\`): Config labels
+- \`name\` (\`string\`): Custom config name
+",
+    "path": "types/DockerConfig.md",
+  },
+  {
+    "content": "---
+type: resource-type
+title: Dockerfile
+description: A Dockerfile definition with ordered build instructions
+name: Dockerfile
+lexicon: docker
+resource_type: Docker::Dockerfile
+---
+A Dockerfile definition with ordered build instructions
+
+## Properties
+
+- \`from\`: Base image (required first instruction)
+- \`arg\`: Build-time argument
+- \`env\`: Environment variable
+- \`run\`: Run a command during build
+- \`copy\`: Copy files from build context
+- \`add\`: Add files (supports URLs and archives)
+- \`workdir\`: Set working directory
+- \`user\`: Set user for subsequent instructions
+- \`expose\`: Document exposed ports
+- \`volume\`: Create mount points
+- \`label\`: Add metadata labels
+- \`entrypoint\`: Set the entrypoint executable
+- \`cmd\`: Default command arguments
+- \`healthcheck\`: Health check instruction
+
+## Governed by
+
+- [DKRD012](/rules/DKRD012.md): Dockerfile has no USER instruction — container runs as root
+",
+    "path": "types/Dockerfile.md",
+  },
+  {
+    "content": "---
+type: resource-type
+title: DockerSecret
+description: A secret definition in Docker Compose
+name: DockerSecret
+lexicon: docker
+resource_type: Docker::Compose::Secret
+---
+A secret definition in Docker Compose
+
+## Properties
+
+- \`file\` (\`string\`): Path to the secret file
+- \`external\` (\`boolean\`): Whether the secret is external
+- \`labels\` (\`Record<string, string>\`): Secret labels
+- \`name\` (\`string\`): Custom secret name
+",
+    "path": "types/DockerSecret.md",
+  },
+  {
+    "content": "---
+type: resource-type
+title: Network
+description: A network definition in Docker Compose
+name: Network
+lexicon: docker
+resource_type: Docker::Compose::Network
+---
+A network definition in Docker Compose
+
+## Properties
+
+- \`driver\` (\`string\`): Network driver
+- \`driver_opts\` (\`Record<string, string>\`): Driver options
+- \`external\` (\`boolean\`): Whether the network is external
+- \`labels\` (\`Record<string, string>\`): Network labels
+- \`internal\` (\`boolean\`): Restrict external access
+- \`ipam\` (\`object\`): IP address management
+",
+    "path": "types/Network.md",
+  },
+  {
+    "content": "---
+type: resource-type
+title: Service
+description: A containerized service definition in Docker Compose
+name: Service
+lexicon: docker
+resource_type: Docker::Compose::Service
+---
+A containerized service definition in Docker Compose
+
+## Properties
+
+- \`image\` (\`string\`): Container image to use
+- \`build\` (\`object\`): Build configuration
+- \`command\` (\`string | string[]\`): Override the default command
+- \`entrypoint\` (\`string | string[]\`): Override the default entrypoint
+- \`environment\` (\`Record<string, string>\`): Environment variables
+- \`ports\` (\`string[]\`): Published ports
+- \`volumes\` (\`string[]\`): Volume mounts
+- \`networks\` (\`string[]\`): Networks to attach
+- \`depends_on\` (\`string[] | Record<string, { condition: "service_started" | "service_healthy" | "service_completed_successfully"; restart?: boolean; required?: boolean }>\`): Service dependencies (short list-form, or long form with a wait condition)
+- \`restart\` (\`string\`): Restart policy
+- \`labels\` (\`Record<string, string>\`): Container labels
+- \`healthcheck\` (\`object\`): Health check configuration
+- \`deploy\` (\`object\`): Swarm deployment configuration
+- \`secrets\` (\`string[]\`): Secrets to expose
+- \`configs\` (\`string[]\`): Configs to expose
+
+## Governed by
+
+- [DKRD001](/rules/DKRD001.md): Service uses :latest or untagged image — specify an explicit version tag
+- [DKRD003](/rules/DKRD003.md): Service exposes SSH port (22) externally — this is a security risk
+- [DKRS001](/rules/DKRS001.md): No Latest Tag
+",
+    "path": "types/Service.md",
+  },
+  {
+    "content": "---
+type: resource-type
+title: Volume
+description: A named volume definition in Docker Compose
+name: Volume
+lexicon: docker
+resource_type: Docker::Compose::Volume
+---
+A named volume definition in Docker Compose
+
+## Properties
+
+- \`driver\` (\`string\`): Volume driver
+- \`driver_opts\` (\`Record<string, string>\`): Driver options
+- \`external\` (\`boolean\`): Whether the volume is external
+- \`labels\` (\`Record<string, string>\`): Volume labels
+- \`name\` (\`string\`): Custom volume name
+
+## Governed by
+
+- [DKRD002](/rules/DKRD002.md): Named volume is declared but not mounted by any service
+",
+    "path": "types/Volume.md",
+  },
+]
+`;
