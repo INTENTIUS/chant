@@ -23,7 +23,7 @@ const bucket = (name: string) => ({
   props: { metadata: { name }, spec: { location: "US" } },
 });
 
-async function read(entities: ReturnType<typeof makeEntities>, opts: { owned?: boolean } = {}) {
+async function read(entities: ReturnType<typeof makeEntities>, opts: { owned?: boolean; buildOutput?: string } = {}) {
   return describeResources({
     environment: "local",
     buildOutput: "",
@@ -89,6 +89,51 @@ describe("gcp describeResources — direct REST (#1209)", () => {
   test("an entity with no metadata.name has nothing to query by", async () => {
     const out = await read(makeEntities([{ name: "e", entityType: "GCP::Storage::Bucket", props: {} }]));
     expect(out.unobserved?.e?.reason).toBe("read-failed");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  test("kinds resolve through the serializer's GVK map, not naive recasing", async () => {
+    // The real entity type is `GCP::Pubsub::Topic` (the generated barrel's
+    // casing); a naive `${service}${shortKind}` derives `PubsubTopic`, which
+    // matches no mapper — 4 of the 6 appliable kinds were invisible this way.
+    fetchMock.mockResolvedValue(reply(200, { name: "projects/my-project/topics/t" }));
+    const out = await read(
+      makeEntities([{ name: "t", entityType: "GCP::Pubsub::Topic", props: { metadata: { name: "t" } } }]),
+    );
+    expect(out.unobserved?.t).toBeUndefined();
+    expect(out.resources.t).toBeDefined();
+    expect(fetchMock.mock.calls[0][0]).toBe("http://localhost:4588/v1/projects/my-project/topics/t");
+  });
+
+  test("the project falls back to the built manifest's merged annotation", async () => {
+    // `defaultAnnotations` is a separate declarable the serializer merges at
+    // synthesis — the entity's own props never carry it.
+    delete process.env.GOOGLE_CLOUD_PROJECT;
+    fetchMock.mockResolvedValue(reply(200, { id: "b/b" }));
+    const buildOutput = [
+      "apiVersion: storage.cnrm.cloud.google.com/v1beta1",
+      "kind: StorageBucket",
+      "metadata:",
+      "  name: b",
+      "  annotations:",
+      "    cnrm.cloud.google.com/project-id: manifest-project",
+      "spec:",
+      "  location: US",
+    ].join("\n");
+    const out = await read(
+      makeEntities([{ name: "b", entityType: "GCP::Storage::Bucket", props: { metadata: { name: "b" } } }]),
+      { buildOutput },
+    );
+    expect(out.unobserved?.b).toBeUndefined();
+    expect(out.resources.b).toBeDefined();
+  });
+
+  test("no project from any source is a no-binding hole, never a guess", async () => {
+    delete process.env.GOOGLE_CLOUD_PROJECT;
+    const out = await read(
+      makeEntities([{ name: "b", entityType: "GCP::Storage::Bucket", props: { metadata: { name: "b" } } }]),
+    );
+    expect(out.unobserved?.b?.reason).toBe("no-binding");
     expect(fetchMock).not.toHaveBeenCalled();
   });
 

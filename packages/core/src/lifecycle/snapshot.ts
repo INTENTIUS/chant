@@ -18,6 +18,7 @@ import { formatUnobserved, normalizeObservation, unobservedAll, type UnobservedE
 // property tree is ever rendered or committed. Two lists would eventually
 // disagree about what counts as a secret.
 import { isSensitiveKey } from "../deep-observation";
+import { isResourceDeclarable } from "../declarable";
 
 /**
  * Check for potential sensitive data in resource attributes and return warnings.
@@ -125,13 +126,13 @@ export async function takeSnapshot(
     const entityNames: string[] = [];
     const entities = new Map<string, { entityType: string; props: Record<string, unknown> }>();
     for (const [name, entity] of buildResult.entities) {
-      if (entity.lexicon === plugin.name) {
+      // Resource declarables only — outputs, parameters and serializer
+      // directives have no live counterpart (see lifecycle/observe.ts).
+      if (entity.lexicon === plugin.name && isResourceDeclarable(entity)) {
         entityNames.push(name);
         entities.set(name, {
           entityType: entity.entityType,
-          props: ("props" in entity && entity.props != null
-            ? entity.props
-            : {}) as Record<string, unknown>,
+          props: (entity.props != null ? entity.props : {}) as Record<string, unknown>,
         });
       }
     }

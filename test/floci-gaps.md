@@ -247,3 +247,25 @@ Confirmed against `floci/floci:1.5.34`: `/_localstack/health` lists no
 health for `"organizations"` and exits without exporting `AWS_ENDPOINT_URL`,
 so the suite self-skips (green, with a notice) until the emulator gains the
 service. Fallback for a real run: a live sandbox org in dry-run.
+
+## 6. floci-gcp: GCS bucket insert drops `iamConfiguration`
+
+**Status:** confirmed 2026-08-07 against `floci/floci-gcp:0.5.0`, unfiled
+(upstream: floci-io/floci-gcp).
+
+```
+$ docker run -d --rm -p 4588:4588 floci/floci-gcp:0.5.0
+$ curl -s -X POST 'http://localhost:4588/storage/v1/b?project=local-project' \
+    -H 'content-type: application/json' \
+    -d '{"name":"g","iamConfiguration":{"uniformBucketLevelAccess":{"enabled":true}}}'
+$ curl -s http://localhost:4588/storage/v1/b/g
+{"kind":"storage#bucket","id":"g", … "name":"g", …}     # no iamConfiguration
+```
+
+Real GCS persists `iamConfiguration` and returns it on GET. The emulator
+accepts the field and drops it, so a chant estate declaring
+`uniformBucketLevelAccess: true` reports one `absent` property drift on a
+clean apply (chant#1210's acceptance run). Detection is correct — the live
+resource genuinely does not carry the configuration — the emulator is what
+loses it. Same class as entry 4 (CloudFormation dropping SG rules), one
+emulator over.

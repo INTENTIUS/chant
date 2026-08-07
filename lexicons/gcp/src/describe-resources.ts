@@ -40,7 +40,8 @@ import type { ObservationResult, ResourceMetadata, UnobservedEntity } from "@int
 import { observation } from "@intentius/chant/observation";
 import { hasOwnershipMarker, classifyOwnership, type ChannelKeys } from "@intentius/chant/ownership";
 import { getResource, mapperForKind, GcpReadError, isNotFound, type GcpReadClientOptions } from "./api/read-client";
-import { resolveGcpProject } from "./op/activities/gcp-apply";
+import { resolveGcpProject, parseManifest } from "./op/activities/gcp-apply";
+import { resolveGVK } from "./serializer";
 
 /**
  * chant's ownership marker as GCP labels.
@@ -75,19 +76,67 @@ interface GcpRestResponse {
 }
 
 /**
- * Mirror of `lexicons/gcp/src/serializer.ts:deriveGVKFromType` — keeping the
- * derivation logic local so describeResources can compute the kubectl resource
- * name without importing serializer internals.
+ * The CNRM group/kind for an entity type, resolved through the serializer's
+ * own GVK map so the reader and the manifest agree on the kind's casing —
+ * `GCP::Pubsub::Topic` is `PubSubTopic` in CNRM and in the applier's mapper
+ * table, while a naive `${service}${shortKind}` concatenation would produce
+ * `PubsubTopic` and silently miss the mapper for 4 of the 6 appliable kinds.
  */
 export function deriveGVK(entityType: string): { group: string; kind: string } | null {
-  const parts = entityType.split("::");
-  if (parts.length !== 3 || parts[0] !== "GCP") return null;
-  const service = parts[1].toLowerCase();
-  const shortKind = parts[2];
-  return {
-    group: `${service}.cnrm.cloud.google.com`,
-    kind: `${parts[1]}${shortKind}`,
-  };
+  const resolved = resolveGVK(entityType);
+  if (!resolved) return null;
+  return { group: resolved.apiVersion.split("/")[0], kind: resolved.kind };
+}
+
+/**
+ * The `cnrm.cloud.google.com/project-id` annotations in the built manifest,
+ * keyed `kind/name`.
+ *
+ * The declared entities the observe paths receive are discovery output, and a
+ * project-wide `defaultAnnotations({"cnrm.cloud.google.com/project-id": …})`
+ * is a separate declarable the serializer merges into each document at
+ * synthesis — the entity's own props never see it. The applier resolves its
+ * project from the manifest for exactly that reason, so the readers do too:
+ * without this, every entity relying on the default annotation reports
+ * `no-binding` unless the shell happens to export GOOGLE_CLOUD_PROJECT.
+ */
+export function manifestProjectAnnotations(buildOutput: string | undefined): Map<string, string> {
+  const out = new Map<string, string>();
+  if (!buildOutput) return out;
+  try {
+    for (const doc of parseManifest(buildOutput, "<build output>")) {
+      const project = doc.metadata?.annotations?.["cnrm.cloud.google.com/project-id"];
+      if (doc.kind && doc.metadata?.name && typeof project === "string") {
+        out.set(`${doc.kind}/${doc.metadata.name}`, project);
+      }
+    }
+  } catch {
+    // An unparsable build output resolves nothing — per-entity annotations and
+    // GOOGLE_CLOUD_PROJECT still apply, and a truly unresolvable project is
+    // still reported as `no-binding` per entity.
+  }
+  return out;
+}
+
+/**
+ * The project a read should target: `GOOGLE_CLOUD_PROJECT` / the entity's own
+ * annotation (via `resolveGcpProject`, the applier's rule), then the built
+ * manifest's merged annotation. Throws the applier's own error when nothing
+ * resolves, so the `no-binding` detail names both knobs.
+ */
+export function resolveReadProject(
+  kind: string,
+  name: string,
+  metadata: { annotations?: Record<string, string> } | undefined,
+  manifestProjects: Map<string, string>,
+): string {
+  try {
+    return resolveGcpProject({ kind, metadata });
+  } catch (err) {
+    const fromManifest = manifestProjects.get(`${kind}/${name}`);
+    if (fromManifest) return fromManifest;
+    throw err;
+  }
 }
 
 function pruneUndefined<T extends Record<string, unknown>>(obj: T): Record<string, unknown> {
@@ -144,6 +193,8 @@ export async function describeResources(options: {
   // `describe-stack-resources` returns no tags.
   let warnedOwnership = false;
 
+  const manifestProjects = manifestProjectAnnotations(options.buildOutput);
+
   const reads = [...options.entities].map(async ([entityName, { entityType, props }]) => {
     const gvk = deriveGVK(entityType);
     if (!gvk) {
@@ -179,7 +230,7 @@ export async function describeResources(options: {
     let client: GcpReadClientOptions;
     try {
       client = {
-        project: resolveGcpProject({ kind: gvk.kind, metadata }),
+        project: resolveReadProject(gvk.kind, name, metadata, manifestProjects),
         ...(endpoint ? { endpoint } : {}),
       };
     } catch (err) {

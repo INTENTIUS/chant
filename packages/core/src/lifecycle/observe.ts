@@ -25,6 +25,7 @@ import {
 } from "../observation";
 import { zeroResourcesWarning } from "../live-endpoint";
 import { unqualifiedKey } from "./identity";
+import { isResourceDeclarable } from "../declarable";
 
 export interface ObserveResult {
   observations: LiveObservation[];
@@ -123,10 +124,16 @@ export async function observeResources(
     const entities = new Map<string, { entityType: string; props: Record<string, unknown> }>();
     for (const [name, entity] of buildResult.entities) {
       if (entity.lexicon !== plugin.name) continue;
+      // Only resource declarables have a live counterpart to observe. Outputs,
+      // parameters and serializer directives (gcp's `defaultAnnotations`) are
+      // build-time inputs — declared, but with nothing in any cloud to compare
+      // against, so keeping them in the universe makes every diff report a
+      // hole (or worse, a deletion) for a resource that cannot exist.
+      if (!isResourceDeclarable(entity)) continue;
       entityNames.push(name);
       entities.set(name, {
         entityType: entity.entityType,
-        props: ("props" in entity && entity.props != null ? entity.props : {}) as Record<string, unknown>,
+        props: (entity.props != null ? entity.props : {}) as Record<string, unknown>,
       });
     }
 
@@ -145,11 +152,11 @@ export async function observeResources(
             stackEntityNames = [];
             stackEntities = new Map();
             for (const [name, entity] of sb.entities) {
-              if (entity.lexicon !== plugin.name) continue;
+              if (entity.lexicon !== plugin.name || !isResourceDeclarable(entity)) continue;
               stackEntityNames.push(name);
               stackEntities.set(name, {
                 entityType: entity.entityType,
-                props: ("props" in entity && entity.props != null ? entity.props : {}) as Record<string, unknown>,
+                props: (entity.props != null ? entity.props : {}) as Record<string, unknown>,
               });
             }
             const raw = sb.outputs.get(plugin.name);

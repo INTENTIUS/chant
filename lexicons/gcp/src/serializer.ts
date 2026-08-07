@@ -43,8 +43,13 @@ function getGVKMap(): Record<string, GVKEntry> {
 
 /**
  * Resolve entityType to apiVersion and kind.
+ *
+ * Exported for the read paths (./describe-resources.ts): the CNRM kind is the
+ * key into the applier's mapper table, and the packaged map is the only place
+ * that knows `GCP::Pubsub::Topic` is `PubSubTopic` rather than the naive
+ * `PubsubTopic` the fallback derivation would produce.
  */
-function resolveGVK(entityType: string): { apiVersion: string; kind: string } | null {
+export function resolveGVK(entityType: string): { apiVersion: string; kind: string } | null {
   const gvkMap = getGVKMap();
 
   for (const entry of Object.values(gvkMap)) {
