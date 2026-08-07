@@ -104,7 +104,52 @@ export function statusFromObject(obj: K8sObject): string {
       ? "READY"
       : `PROGRESSING(${status.readyReplicas}/${status.replicas})`;
   }
+
+  // The kstatus rung (#1549): an object with NO phase and NO replica counts —
+  // a Flux Kustomization/HelmRelease, cert-manager, any conditions-first CRD —
+  // used to fall straight to PRESENT, so a wedged reconciler read exactly like
+  // a healthy one. `Ready` is the contract those objects speak: False → its
+  // reason (`BuildFailed`, `UpgradeFailed`, …), True → READY. Deliberately
+  // BELOW the phase/replica rungs so no Pod or workload word changes — for
+  // those objects a False Ready is already visible through the rungs above.
+  const ready = readyConditionWord(status);
+  if (ready) return ready;
+
+  // Argo's Application speaks health/sync, not a Ready condition (the same
+  // split the readiness registry encodes) — `Degraded` / `OutOfSync` beats
+  // PRESENT for the one object whose whole job is convergence.
+  const argo = argoStatusWord(status);
+  if (argo) return argo;
+
   return "PRESENT";
+}
+
+/** The `Ready` condition rendered as a status word: False → its reason (or
+ * NOT-READY when the controller gave none), True → READY, absent → nothing. */
+function readyConditionWord(status: K8sObject["status"]): string | undefined {
+  const conditions = (status as { conditions?: unknown } | undefined)?.conditions;
+  if (!Array.isArray(conditions)) return undefined;
+  for (const c of conditions) {
+    const cond = c as { type?: unknown; status?: unknown; reason?: unknown };
+    if (cond.type !== "Ready") continue;
+    if (cond.status === "True") return "READY";
+    if (cond.status === "False") {
+      return typeof cond.reason === "string" && cond.reason.length > 0 ? cond.reason : "NOT-READY";
+    }
+  }
+  return undefined;
+}
+
+/** Argo Application health/sync as a status word: anything but the happy pair
+ * surfaces the unhappy half; Healthy+Synced reads as READY. */
+function argoStatusWord(status: K8sObject["status"]): string | undefined {
+  const s = status as { health?: { status?: unknown }; sync?: { status?: unknown } } | undefined;
+  const health = typeof s?.health?.status === "string" ? s.health.status : undefined;
+  const sync = typeof s?.sync?.status === "string" ? s.sync.status : undefined;
+  if (!health && !sync) return undefined;
+  if (health && health !== "Healthy") return health;
+  if (sync && sync !== "Synced") return sync;
+  return "READY";
 }
 
 /**

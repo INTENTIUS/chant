@@ -49,6 +49,33 @@ describe("readiness model", () => {
     expect(isReady(obj, DEFAULT_READINESS)).toBe(true);
   });
 
+  test("Flux overrides fail fast on Ready=False wedge reasons, wait on ordinary progress (#1549)", () => {
+    // A Flux wedge (bad build, failed upgrade, unreachable source) keeps
+    // Ready=False forever — before these entries the generic poll waited out
+    // its whole timeout. The ready half is still the kstatus default.
+    const spec = readinessFor("kustomize.toolkit.fluxcd.io", "Kustomization");
+    expect(spec).not.toBe(DEFAULT_READINESS);
+    expect(isReady(ready([{ type: "Ready", status: "True" }]), spec)).toBe(true);
+
+    const wedged = ready([{ type: "Ready", status: "False", reason: "BuildFailed" } as never]);
+    expect(isReady(wedged, spec)).toBe(false);
+    expect(firstTerminal(wedged, spec)).toBeDefined();
+
+    // Ready=False with a PROGRESS reason (a reconcile in flight) is not a
+    // wedge — keep polling.
+    const progressing = ready([{ type: "Ready", status: "False", reason: "Progressing" } as never]);
+    expect(firstTerminal(progressing, spec)).toBeUndefined();
+
+    // A reason on a TRUE condition is vocabulary, never terminal.
+    const healthyWithReason = ready([{ type: "Ready", status: "True", reason: "ReconciliationSucceeded" } as never]);
+    expect(firstTerminal(healthyWithReason, spec)).toBeUndefined();
+
+    const hr = readinessFor("helm.toolkit.fluxcd.io", "HelmRelease");
+    expect(firstTerminal(ready([{ type: "Ready", status: "False", reason: "UpgradeFailed" } as never]), hr)).toBeDefined();
+    const git = readinessFor("source.toolkit.fluxcd.io", "GitRepository");
+    expect(firstTerminal(ready([{ type: "Ready", status: "False", reason: "AuthenticationFailed" } as never]), git)).toBeDefined();
+  });
+
   test("Argo override uses health/sync, not a Ready condition", () => {
     const spec = readinessFor("argoproj.io", "Application");
     expect(spec).not.toBe(DEFAULT_READINESS);
