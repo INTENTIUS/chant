@@ -1,0 +1,42 @@
+name: warden-github-e2e
+
+# Gated end-to-end suite for wardens/github against a real GitHub test org
+# (#788 — ported from the github-warden repo's e2e workflow when the warden
+# moved into the monorepo). Never runs on PRs — nightly + on demand only, so
+# it can't block contributions and only runs where the WARDEN_E2E_* secrets
+# exist. The suite self-skips if they're unset.
+on:
+  schedule:
+    - cron: '0 7 * * *' # 07:00 UTC nightly
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: 'Also run the mutating Phase 2 (teardown-guarded)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm install
+      # The warden imports the github lexicon's generated barrel.
+      - run: npm run --prefix lexicons/github prepack
+      - name: e2e
+        working-directory: wardens/github
+        env:
+          WARDEN_E2E_APP_ID: ${{ secrets.WARDEN_E2E_APP_ID }}
+          WARDEN_E2E_INSTALLATION_ID: ${{ secrets.WARDEN_E2E_INSTALLATION_ID }}
+          WARDEN_E2E_PRIVATE_KEY: ${{ secrets.WARDEN_E2E_PRIVATE_KEY }}
+          WARDEN_E2E_ORG: ${{ secrets.WARDEN_E2E_ORG }}
+          WARDEN_E2E_APPLY: ${{ inputs.apply && '1' || '' }}
+        run: npm run test:e2e

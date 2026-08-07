@@ -123,6 +123,7 @@
   "include": [
     "packages/**/*",
     "lexicons/**/*",
+    "wardens/**/*",
     "types/**/*"
   ],
   "exclude": [
