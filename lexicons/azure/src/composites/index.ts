@@ -28,3 +28,10 @@ export { RedisCache } from "./redis-cache";
 export type { RedisCacheProps, RedisCacheResult } from "./redis-cache";
 export { PrivateEndpoint } from "./private-endpoint";
 export type { PrivateEndpointProps, PrivateEndpointResult } from "./private-endpoint";
+export { GovernanceFoundation, GovernanceBaseline, LocationRestriction, ActivityLogSink } from "./landing-zone";
+export type {
+  GovernanceFoundationProps, GovernanceFoundationResult,
+  GovernanceBaselineProps, GovernanceBaselineResult,
+  LocationRestrictionProps, LocationRestrictionResult,
+  ActivityLogSinkProps, ActivityLogSinkResult,
+} from "./landing-zone";

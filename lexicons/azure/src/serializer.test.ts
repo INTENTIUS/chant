@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { azureSerializer } from "./serializer";
+import { deploymentScope } from "./deploy-scopes";
 import { DECLARABLE_MARKER } from "@intentius/chant/declarable";
 
 function makeEntity(entityType: string, props: Record<string, unknown> = {}): any {
@@ -255,6 +256,25 @@ describe("azureSerializer", () => {
     expect(template.$schema).toContain("/deploymentTemplate.json");
     const vnet = template.resources.find((r: any) => r.type === "Microsoft.Network/virtualNetworks");
     expect(vnet.location).toBe("[resourceGroup().location]");
+  });
+
+  it("deploymentScope() pins the template scope over the inferred one", () => {
+    const entities = new Map<string, any>();
+    entities.set("scope", deploymentScope("managementGroup"));
+    entities.set("denyClassic", makeEntity("Microsoft.Authorization/policyDefinitions", {
+      name: "deny-classic-resources",
+      policyType: "Custom",
+      policyRule: { if: { field: "type", like: "Microsoft.Classic*" }, then: { effect: "deny" } },
+    }));
+
+    const result = azureSerializer.serialize(entities);
+    const template = JSON.parse(result as string);
+
+    // Inference alone would pick subscription (the scope closest to a
+    // resource group that policy definitions support)
+    expect(template.$schema).toContain("managementGroupDeploymentTemplate");
+    expect(template.resources).toHaveLength(1);
+    expect(template.resources[0].location).toBeUndefined();
   });
 
   it("falls back to resource-group scope when resources share no scope", () => {

@@ -24,7 +24,7 @@ import { resolveDependsOn } from "@intentius/chant/resource-attributes";
 import { isDefaultTags, type TagEntry } from "./default-tags";
 import { loadTaggableResources } from "./taggable";
 import { findArmResourceRefs } from "./lint/post-synth/arm-refs";
-import { resolveTemplateScope, TEMPLATE_SCHEMAS } from "./deploy-scopes";
+import { isDeploymentScope, resolveTemplateScope, TEMPLATE_SCHEMAS, type DeployScope } from "./deploy-scopes";
 
 /** Check if a declarable is a CoreParameter */
 function isCoreParameter(entity: Declarable): entity is CoreParameter {
@@ -183,17 +183,24 @@ function serializeToTemplate(
   // definitions at management-group scope, ...) must carry the matching
   // $schema and must not lean on resourceGroup() expressions. Mixed sets
   // with no common scope fall back to resource-group scope and AZR030
-  // reports the resources that cannot deploy there.
+  // reports the resources that cannot deploy there. A deploymentScope()
+  // pin overrides the inference — policy definitions and assignments
+  // deploy at several scopes, so a management-group guardrail project
+  // cannot be told from a subscription one by its resource set alone
+  // (#791); AZR030 still flags resources the pinned scope cannot hold.
+  let pinnedScope: DeployScope | undefined;
   const emittedTypes: string[] = [];
   for (const [, entity] of entities) {
     if (isStackOutput(entity) || isDefaultTags(entity) || isCoreParameter(entity)) continue;
-    if (isChildProject(entity)) {
+    if (isDeploymentScope(entity)) {
+      pinnedScope ??= entity.scope;
+    } else if (isChildProject(entity)) {
       emittedTypes.push("Microsoft.Resources/deployments");
     } else if (!isPropertyDeclarable(entity)) {
       emittedTypes.push(entity.entityType);
     }
   }
-  const templateScope = resolveTemplateScope(emittedTypes);
+  const templateScope = pinnedScope ?? resolveTemplateScope(emittedTypes);
 
   const template: ArmTemplate = {
     $schema: TEMPLATE_SCHEMAS[templateScope],
@@ -224,7 +231,7 @@ function serializeToTemplate(
   // Process entities
   for (const [name, entity] of entities) {
     // Skip non-resource types
-    if (isStackOutput(entity) || isDefaultTags(entity)) continue;
+    if (isStackOutput(entity) || isDefaultTags(entity) || isDeploymentScope(entity)) continue;
 
     if (isCoreParameter(entity)) {
       if (!template.parameters) template.parameters = {};
