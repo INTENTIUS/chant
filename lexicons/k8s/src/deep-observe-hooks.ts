@@ -41,8 +41,18 @@
  * keyed by chant's own k8s entityType catalog.
  */
 
+import { createRequire } from "module";
 import type { DeepArrayElement, DeepNode, DeepNormalizationHooks } from "@intentius/chant/lexicon";
 import { K8S_OBJECT_ENVELOPE_PRUNE_PATTERNS, k8sListMapOrderKey } from "@intentius/chant/managed-fields";
+
+// This module ships as ESM (tsx strips types from src/ directly), where a bare
+// `require` is not defined — the same reason serializer.ts and the LSP modules
+// already build one. The bug only surfaced on a LIVE deep read that meets an
+// associative list (every k8s estate does: a Deployment's containers), so
+// `lifecycle diff --live` crashed with `require is not defined` on exactly the
+// estates the generated table exists for (#1441 regression, found on
+// kubemicrovm-ops).
+const require = createRequire(import.meta.url);
 
 /**
  * Kubernetes-defaulted fields, per entity type, as index-erased property
