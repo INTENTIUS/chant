@@ -90,7 +90,7 @@ describe("carve emit --state (real adoption from tfstate)", () => {
       expect(liveImport).not.toHaveBeenCalled(); // offline — no cloud
 
       // A real .ts file with the native constructor + props from real state.
-      expect(res.emittedFiles).toEqual([join(out, "assets.ts")]);
+      expect(res.emittedFiles).toEqual([join(out, "src", "assets.ts")]);
       const emitted = readFileSync(res.emittedFiles![0], "utf-8");
       expect(emitted).toContain("new Bucket({");
       expect(emitted).toContain('BucketName: "myapp-assets-prod"');
@@ -105,12 +105,45 @@ describe("carve emit --state (real adoption from tfstate)", () => {
       expect(manifest.target).toBe("aws_s3_bucket.assets");
       expect(manifest.statePath).toBe(join(dir, "terraform.tfstate"));
       expect(manifest.emit!.source).toBe("tfstate");
-      expect(manifest.emit!.files).toEqual([join(out, "assets.ts")]);
+      expect(manifest.emit!.files).toEqual([join(out, "src", "assets.ts")]);
       expect(manifest.boundary.inbound.map((e) => e.survivor)).toEqual(["aws_lambda_function.api"]);
 
       const text = formatCarveEmit(res);
       expect(text).toContain("Adopted from Terraform state (offline)");
       expect(text).toContain("State manifest");
+      expect(text).toContain("Scaffolded a buildable chant project");
+    });
+  });
+
+  test("scaffolds a buildable chant project around the emitted source, never overwriting", async () => {
+    if (!parserAvailable) return;
+    await withEstate(async (dir) => {
+      const out = join(dir, "carveout");
+      const res = await carveEmit(
+        { from: dir, select: "aws_s3_bucket.assets", statePath: join(dir, "terraform.tfstate"), output: out },
+        { plugins: [], liveImport },
+      );
+      expect(res.ok).toBe(true);
+      expect(res.scaffolded!.map((f) => f.slice(out.length + 1)).sort()).toEqual([
+        "chant.config.ts",
+        "package.json",
+        "tsconfig.json",
+      ]);
+
+      const pkg = JSON.parse(readFileSync(join(out, "package.json"), "utf-8"));
+      expect(pkg.scripts.build).toBe("chant build src --lexicon aws");
+      expect(Object.keys(pkg.dependencies)).toEqual(["@intentius/chant", "@intentius/chant-lexicon-aws"]);
+      expect(readFileSync(join(out, "chant.config.ts"), "utf-8")).toContain('lexicons: ["aws"]');
+
+      // A second emit into the same dir leaves the scaffold (and edits) alone.
+      writeFileSync(join(out, "package.json"), '{"name":"edited"}');
+      const again = await carveEmit(
+        { from: dir, select: "aws_s3_bucket.assets", statePath: join(dir, "terraform.tfstate"), output: out },
+        { plugins: [], liveImport },
+      );
+      expect(again.ok).toBe(true);
+      expect(again.scaffolded).toEqual([]);
+      expect(readFileSync(join(out, "package.json"), "utf-8")).toBe('{"name":"edited"}');
     });
   });
 
