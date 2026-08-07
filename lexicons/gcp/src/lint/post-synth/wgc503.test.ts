@@ -1,9 +1,13 @@
 import { describe, test, expect } from "vitest";
+import type { PostSynthContext } from "@intentius/chant/lint/post-synth";
 import { wgc503 } from "./wgc503";
 
-function makeCtx(yaml: string) {
+function makeCtx(yaml: string): PostSynthContext {
+  const outputs = new Map<string, string>([["gcp", yaml]]);
   return {
-    outputs: new Map([["gcp", yaml]]),
+    outputs,
+    entities: new Map(),
+    buildResult: { outputs, entities: new Map(), warnings: [], errors: [], sourceFileCount: 0 },
   };
 }
 
