@@ -4,6 +4,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { carveBridge, formatCarveBridge } from "./carve-bridge";
 import { loadHcl2json } from "../../terraform/parse";
+import { readCarveManifest, writeCarveManifest, type CarveManifest } from "../../terraform/manifest";
 
 let parserAvailable = false;
 try {
@@ -39,10 +40,52 @@ async function withEstate<T>(fn: (dir: string) => Promise<T>): Promise<T> {
   }
 }
 
+function manifestFor(target: string, dir: string): CarveManifest {
+  return {
+    version: 1,
+    target,
+    from: dir,
+    boundary: {
+      target,
+      carveSet: [{ address: target, type: target.split(".")[0] }],
+      peelability: 90,
+      inbound: [],
+      outbound: [],
+      reversible: true,
+      diagnostics: [],
+    },
+  };
+}
+
 describe("carveBridge", () => {
-  test("requires --from and --select", async () => {
+  test("requires --from; without --select it needs a carve manifest", async () => {
     expect((await carveBridge({})).error).toContain("--from");
-    expect((await carveBridge({ from: "/x" })).error).toContain("--select");
+    await withEstate(async (dir) => {
+      const res = await carveBridge({ from: dir });
+      expect(res.ok).toBe(false);
+      expect(res.error).toContain("--select");
+      expect(res.error).toContain("carve emit");
+    });
+  });
+
+  test("composes with the carve manifest: target resolved without --select, bridge recorded", async () => {
+    if (!parserAvailable) return;
+    await withEstate(async (dir) => {
+      const out = join(dir, "carveout");
+      writeCarveManifest(out, manifestFor("aws_s3_bucket.assets", dir));
+
+      const res = await carveBridge({ from: dir, output: out });
+      expect(res.ok).toBe(true);
+      expect(res.selectFromManifest).toBe(true);
+      expect(res.plan!.target).toBe("aws_s3_bucket.assets");
+      expect(formatCarveBridge(res)).toContain("target from the carve manifest");
+
+      const m = readCarveManifest(res.manifestPath!)!;
+      expect(m.bridge!.written.length).toBeGreaterThan(0);
+      expect(m.bridge!.appliedInPlace).toBe(false);
+      // The boundary is refreshed from the estate, not left as the stub.
+      expect(m.boundary.inbound.map((e) => e.survivor)).toEqual(["aws_lambda_function.api"]);
+    });
   });
 
   test("dry-run: writes runbook + data sources + proposed survivor, touches no .tf in place", async () => {

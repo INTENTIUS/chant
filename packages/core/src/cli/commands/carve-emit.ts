@@ -13,11 +13,12 @@
  */
 
 import { existsSync, statSync, writeFileSync, mkdirSync } from "fs";
-import { join } from "path";
+import { join, resolve } from "path";
 import { parseTerraformDir, Hcl2JsonNotInstalled } from "../../terraform/parse";
 import { boundaryReport, type CarveReport } from "../../terraform/carve";
 import { resolveTier } from "../../terraform/tier-map";
 import { readStateResource } from "../../terraform/state";
+import { writeCarveManifest, type CarveManifest } from "../../terraform/manifest";
 import { adoptFromState, canAdoptFromState, supportedStateAdoptionTypes } from "../../terraform/adopt-state";
 import type { LexiconPlugin, ResourceSelector } from "../../lexicon";
 import type { ImportResult, LiveImportOptions } from "./import";
@@ -61,6 +62,8 @@ export interface CarveEmitResult {
   source?: "tfstate" | "live";
   /** Emitted file path(s). */
   emittedFiles?: string[];
+  /** The persisted carve state manifest bridge/apply compose with. */
+  manifestPath?: string;
 }
 
 export async function carveEmit(opts: CarveEmitOptions, deps: CarveEmitDeps): Promise<CarveEmitResult> {
@@ -121,7 +124,8 @@ export async function carveEmit(opts: CarveEmitOptions, deps: CarveEmitDeps): Pr
     const outPath = join(outDir, adopted.fileName);
     writeFileSync(outPath, adopted.content);
 
-    return { ok: true, report, source: "tfstate", emittedFiles: [outPath] };
+    const manifestPath = persistManifest(outDir, opts, report, tfType, "tfstate", [outPath]);
+    return { ok: true, report, source: "tfstate", emittedFiles: [outPath], manifestPath };
   }
 
   // ── Adoption path 2: live import (cloud→code) ──
@@ -140,7 +144,30 @@ export async function carveEmit(opts: CarveEmitOptions, deps: CarveEmitDeps): Pr
     lexicon: tier.mapsTo.split("::")[0]?.toLowerCase() === "aws" ? "aws" : undefined,
   });
 
-  return { ok: true, report, emit, selector, source: "live", emittedFiles: emit.generatedFiles };
+  const outDir = opts.output ?? join(opts.from, "carveout");
+  const manifestPath = persistManifest(outDir, opts, report, tfType, "live", emit.generatedFiles ?? []);
+  return { ok: true, report, emit, selector, source: "live", emittedFiles: emit.generatedFiles, manifestPath };
+}
+
+/** Persist the carve state manifest so bridge/apply compose with this emit. */
+function persistManifest(
+  outDir: string,
+  opts: CarveEmitOptions,
+  report: CarveReport,
+  tfType: string | undefined,
+  source: "tfstate" | "live",
+  files: string[],
+): string {
+  const manifest: CarveManifest = {
+    version: 1,
+    target: report.target,
+    tfType,
+    from: resolve(opts.from!),
+    statePath: opts.statePath ? resolve(opts.statePath) : undefined,
+    boundary: report,
+    emit: { source, files: files.map((f) => resolve(f)), at: new Date().toISOString() },
+  };
+  return writeCarveManifest(outDir, manifest);
 }
 
 /** Human-readable emit summary: what was adopted and what boundary work remains. */
@@ -157,6 +184,9 @@ export function formatCarveEmit(result: CarveEmitResult): string {
   }
   if (result.emittedFiles?.length) {
     lines.push(`  Emitted: ${result.emittedFiles.join(", ")}`);
+  }
+  if (result.manifestPath) {
+    lines.push(`  State manifest: ${result.manifestPath} — carve bridge/apply pick the target up from here.`);
   }
   if (r.carveSet.length > 1) {
     const folded = r.carveSet.filter((m) => m.foldedInto).map((m) => m.address);

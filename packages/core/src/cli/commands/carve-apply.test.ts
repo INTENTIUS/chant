@@ -4,6 +4,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { carveApply, formatCarveApply } from "./carve-apply";
 import { loadHcl2json } from "../../terraform/parse";
+import { readCarveManifest, writeCarveManifest, type CarveManifest } from "../../terraform/manifest";
 
 let parserAvailable = false;
 try {
@@ -30,10 +31,60 @@ async function withEstate<T>(fn: (dir: string) => Promise<T>): Promise<T> {
   }
 }
 
+function manifestFor(target: string, dir: string): CarveManifest {
+  return {
+    version: 1,
+    target,
+    from: dir,
+    boundary: {
+      target,
+      carveSet: [{ address: target, type: target.split(".")[0] }],
+      peelability: 90,
+      inbound: [],
+      outbound: [],
+      reversible: true,
+      diagnostics: [],
+    },
+  };
+}
+
 describe("carveApply", () => {
-  test("requires --from and --select", async () => {
+  test("requires --from; without --select it needs a carve manifest", async () => {
     expect((await carveApply({})).error).toContain("--from");
-    expect((await carveApply({ from: "/x" })).error).toContain("--select");
+    await withEstate(async (dir) => {
+      const res = await carveApply({ from: dir });
+      expect(res.ok).toBe(false);
+      expect(res.error).toContain("--select");
+    });
+  });
+
+  test("composes with the carve manifest: target resolved without --select, graduation recorded", async () => {
+    if (!parserAvailable) return;
+    await withEstate(async (dir) => {
+      const out = join(dir, "carveout");
+      writeCarveManifest(out, manifestFor("aws_s3_bucket.assets", dir));
+
+      const res = await carveApply({ from: dir, output: out, env: "prod", stack: "assets" });
+      expect(res.ok).toBe(true);
+      expect(res.selectFromManifest).toBe(true);
+      expect(formatCarveApply(res)).toContain("target from the carve manifest");
+
+      const m = readCarveManifest(res.manifestPath!)!;
+      expect(m.apply!.marker).toEqual({ stack: "assets", env: "prod" });
+      expect(m.apply!.ownershipTags["chant:managed-by"]).toBe("chant");
+    });
+  });
+
+  test("falls back to the manifest's persisted boundary when the block is already excised", async () => {
+    if (!parserAvailable) return;
+    await withEstate(async (dir) => {
+      const out = join(dir, "carveout");
+      writeCarveManifest(out, manifestFor("aws_s3_bucket.gone", dir));
+
+      const res = await carveApply({ from: dir, output: out, env: "prod" });
+      expect(res.ok).toBe(true);
+      expect(res.plan!.target).toBe("aws_s3_bucket.gone");
+    });
   });
 
   test("plans graduation with ownership marker; writes nothing by default", async () => {
