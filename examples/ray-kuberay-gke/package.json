@@ -17,11 +17,13 @@
     "status": "kubectl -n ray-system get raycluster ray && kubectl -n ray-system get pods -l ray.io/cluster-name=ray",
     "dashboard": "kubectl -n ray-system port-forward svc/ray-head-svc 8265:8265",
     "deploy": "bash scripts/deploy.sh",
-    "teardown": "bash scripts/teardown.sh"
+    "teardown": "bash scripts/teardown.sh",
+    "build:k3d-cluster": "chant build k3d/src --lexicon k3d -o k3d/cluster.yaml"
   },
   "dependencies": {
     "@intentius/chant": "*",
     "@intentius/chant-lexicon-gcp": "*",
-    "@intentius/chant-lexicon-k8s": "*"
+    "@intentius/chant-lexicon-k8s": "*",
+    "@intentius/chant-lexicon-k3d": "*"
   }
 }
