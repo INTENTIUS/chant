@@ -880,6 +880,36 @@ describe("statusFromObject — the most specific failing signal (#1397)", () => 
     expect(statusFromObject({ status: { readyReplicas: 1, replicas: 3 } } as never)).toBe("PROGRESSING(1/3)");
     expect(statusFromObject({} as never)).toBe("PRESENT");
   });
+
+  test("a conditions-first CR reads its Ready condition, not PRESENT (#1549)", () => {
+    // A wedged Flux Kustomization/HelmRelease has no phase and no replica
+    // counts, so it fell straight to PRESENT — a wedged reconciler read
+    // exactly like a healthy one.
+    expect(
+      statusFromObject({ status: { conditions: [{ type: "Ready", status: "False", reason: "BuildFailed" }] } } as never),
+    ).toBe("BuildFailed");
+    expect(
+      statusFromObject({ status: { conditions: [{ type: "Ready", status: "False" }] } } as never),
+    ).toBe("NOT-READY");
+    expect(
+      statusFromObject({ status: { conditions: [{ type: "Ready", status: "True", reason: "ReconciliationSucceeded" }] } } as never),
+    ).toBe("READY");
+  });
+
+  test("the Ready rung never changes a Pod or workload word — phase and replicas rank above it (#1549)", () => {
+    expect(
+      statusFromObject({ status: { phase: "Running", conditions: [{ type: "Ready", status: "False" }] } } as never),
+    ).toBe("Running");
+    expect(
+      statusFromObject({ status: { readyReplicas: 1, replicas: 3, conditions: [{ type: "Ready", status: "False" }] } } as never),
+    ).toBe("PROGRESSING(1/3)");
+  });
+
+  test("an Argo Application reads health/sync (#1549)", () => {
+    expect(statusFromObject({ status: { health: { status: "Degraded" }, sync: { status: "Synced" } } } as never)).toBe("Degraded");
+    expect(statusFromObject({ status: { health: { status: "Healthy" }, sync: { status: "OutOfSync" } } } as never)).toBe("OutOfSync");
+    expect(statusFromObject({ status: { health: { status: "Healthy" }, sync: { status: "Synced" } } } as never)).toBe("READY");
+  });
 });
 
 // #1401 — #1397 made the status WORD honest; this carries the part that says
