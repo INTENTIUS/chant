@@ -1,6 +1,6 @@
 {
   "name": "@intentius/chant-lexicon-k3d",
-  "version": "0.41.16",
+  "version": "0.41.17",
   "type": "module",
   "files": [
     "src/",
@@ -52,7 +52,7 @@
     "access": "public"
   },
   "peerDependencies": {
-    "@intentius/chant": "^0.41.16",
+    "@intentius/chant": "^0.41.17",
     "typescript": "^5.9.3"
   },
   "description": "k3d lexicon for chant — a local Kubernetes cluster as declarable data",
