@@ -57,6 +57,18 @@ export interface VulnFinding {
   fixedVersion?: string;
   /** True when a fix exists (upgradeable) — the beginner-safe default gate blocks only fixable findings, since an unfixable one can't be actioned by bumping. */
   fixable: boolean;
+  /** EPSS score (0.0–1.0): probability of exploitation in the next 30 days. Absent when the scanner did not report one. */
+  epss?: number;
+  /** EPSS percentile (0.0–1.0) — rank against all scored CVEs. */
+  epssPercentile?: number;
+  /** Present in CISA's Known Exploited Vulnerabilities catalog. `undefined` means the scanner did not report KEV membership at all — NOT the same conclusion as a reported `false`. Never default this. */
+  inKev?: boolean;
+  /** When the CVE entered the KEV catalog (ISO date, as the source reports it). */
+  kevDateAdded?: string;
+  /** KEV remediation due date (ISO date). */
+  kevDueDate?: string;
+  /** Known use in a ransomware campaign, per KEV. */
+  kevRansomware?: boolean;
 }
 
 // ── injectable scanner boundary ──────────────────────────────────────────────

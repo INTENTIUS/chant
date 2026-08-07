@@ -9,7 +9,7 @@
 import { describe, test, expect } from "vitest";
 import { parseOpenVex, parseCycloneDxVex, parseVexDocument, applyVex } from "./vex";
 import { extractLicenses, evaluateLicensePolicy } from "./license-policy";
-import { createVulnGateCapability, VulnGateFailedError, type VulnGateInput } from "./vuln-gate";
+import { createVulnGateCapability, DEFAULT_VULN_POLICY, VulnGateFailedError, type VulnGateInput } from "./vuln-gate";
 import type { VulnFinding, VulnScanner } from "./vuln-scan";
 import type { SbomDocument } from "./sbom-generator";
 import { resolveVulnPolicy } from "../../config";
@@ -183,6 +183,39 @@ describe("audit hardening (#628)", () => {
     expect(warned.passed).toBe(true);
     expect(warned.warnings.map((f) => f.cveId)).toEqual(["CVE-U"]);
     await expect(gate({ sbom: SBOM_SPDX, findings: [UNKNOWN], policy: { failOnUnknownSeverity: true } })).rejects.toBeInstanceOf(VulnGateFailedError);
+  });
+});
+
+// ── exploitability shape (#1462, phase 0 of epic #1461) ──────────────────────
+
+describe("exploitability policy shape (#1462)", () => {
+  test("DEFAULT_VULN_POLICY does not gate on KEV — flipping failOnKev is a deliberate release decision (epic #1461), not a drive-by", () => {
+    expect(DEFAULT_VULN_POLICY.failOnKev).toBe(false);
+    expect(DEFAULT_VULN_POLICY.exploitabilityFixableOnly).toBe(true);
+    expect(DEFAULT_VULN_POLICY.failEpssAtOrAbove).toBeUndefined();
+    expect(DEFAULT_VULN_POLICY.warnEpssAtOrAbove).toBeUndefined();
+  });
+
+  test("a finding carrying exploitability fields passes through the gate with today's outcomes (evaluation is #1465)", async () => {
+    const kevHigh: VulnFinding = {
+      ...HIGH_FIXABLE,
+      epss: 0.42,
+      epssPercentile: 0.97,
+      inKev: true,
+      kevDateAdded: "2026-01-15",
+      kevDueDate: "2026-02-05",
+      kevRansomware: true,
+    };
+    // KEV membership changes no outcome in this phase: still a warning under the default policy.
+    const out = await gate({ sbom: SBOM_SPDX, findings: [kevHigh] });
+    expect(out.passed).toBe(true);
+    expect(out.warnings).toEqual([kevHigh]);
+  });
+
+  test("a finding constructed without exploitability fields still typechecks and gates as before", async () => {
+    await expect(gate({ sbom: SBOM_SPDX, findings: [CRIT_FIXABLE], policy: { failOnKev: false, exploitabilityFixableOnly: true } })).rejects.toBeInstanceOf(
+      VulnGateFailedError,
+    );
   });
 });
 

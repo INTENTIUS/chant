@@ -42,6 +42,14 @@ export interface VulnPolicy {
   failOnLicense: boolean;
   /** Block on an `unknown`-severity finding (a scanner that didn't report a severity chant could map). Default `false` — but such a finding is ALWAYS at least warned, never silently dropped, regardless of this flag. Set true for a strict shop that won't ship an unclassifiable finding. */
   failOnUnknownSeverity: boolean;
+  /** Block any finding in the CISA KEV catalog, regardless of severity. Default `false` — see epic #1461's open decision before flipping. */
+  failOnKev: boolean;
+  /** Block when EPSS is at or above this (0.0–1.0). Omit to ignore EPSS entirely. */
+  failEpssAtOrAbove?: number;
+  /** Warn (not block) at or above this EPSS. Omit to ignore. */
+  warnEpssAtOrAbove?: number;
+  /** Apply `fixableOnly` to exploitability blocks too — an unfixable KEV finding warns rather than blocks. Default `true`. */
+  exploitabilityFixableOnly: boolean;
 }
 
 /** Beginner-safe defaults, also encoded in `resolveVulnPolicy` (../../config.ts). */
@@ -51,6 +59,8 @@ export const DEFAULT_VULN_POLICY: VulnPolicy = {
   warnSeverity: "high",
   failOnLicense: false,
   failOnUnknownSeverity: false,
+  failOnKev: false,
+  exploitabilityFixableOnly: true,
 };
 
 export interface VulnGateInput {
@@ -69,7 +79,7 @@ export interface VulnGateInput {
 /** A finding that fails the gate, with why. */
 export interface BlockingFinding {
   finding: VulnFinding;
-  reason: "severity-threshold" | "unknown-severity";
+  reason: "severity-threshold" | "unknown-severity" | "kev" | "epss-threshold";
 }
 
 export interface VulnGateOutput {
