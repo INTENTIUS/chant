@@ -75,6 +75,47 @@ describe("carveApply", () => {
     });
   });
 
+  test("--write-source stamps the ownership marker into the emitted source and records it", async () => {
+    if (!parserAvailable) return;
+    await withEstate(async (dir) => {
+      const out = join(dir, "carveout");
+      const emitted = join(out, "assets.ts");
+      const manifest = manifestFor("aws_s3_bucket.assets", dir);
+      manifest.emit = { source: "tfstate", files: [emitted], at: "t" };
+      writeCarveManifest(out, manifest);
+      writeFileSync(emitted, 'export const assets = new Bucket({\n  BucketName: "myapp-assets-prod",\n});\n');
+
+      const res = await carveApply({ from: dir, output: out, env: "prod", stack: "assets", writeSource: true });
+      expect(res.ok).toBe(true);
+      expect(res.stamped).toEqual([emitted]);
+
+      const stamped = readFileSync(emitted, "utf-8");
+      expect(stamped).toContain('{"Key":"chant:managed-by","Value":"chant"}');
+      expect(stamped).toContain('{"Key":"chant:stack","Value":"assets"}');
+      expect(stamped).toContain('{"Key":"chant:env","Value":"prod"}');
+
+      const m = readCarveManifest(res.manifestPath!)!;
+      expect(m.apply!.stampedFiles).toEqual([emitted]);
+      expect(formatCarveApply(res)).toContain("Stamped the ownership marker into");
+
+      // Idempotent: a second graduation leaves the source stable.
+      const again = await carveApply({ from: dir, output: out, env: "prod", stack: "assets", writeSource: true });
+      expect(again.ok).toBe(true);
+      expect(readFileSync(emitted, "utf-8")).toBe(stamped);
+    });
+  });
+
+  test("--write-source without an emit record in the manifest is a clear error", async () => {
+    if (!parserAvailable) return;
+    await withEstate(async (dir) => {
+      const out = join(dir, "carveout");
+      writeCarveManifest(out, manifestFor("aws_s3_bucket.assets", dir));
+      const res = await carveApply({ from: dir, output: out, env: "prod", writeSource: true });
+      expect(res.ok).toBe(false);
+      expect(res.error).toContain("carve emit");
+    });
+  });
+
   test("falls back to the manifest's persisted boundary when the block is already excised", async () => {
     if (!parserAvailable) return;
     await withEstate(async (dir) => {

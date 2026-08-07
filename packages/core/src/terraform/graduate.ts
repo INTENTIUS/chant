@@ -76,3 +76,52 @@ export function graduationPlan(report: CarveReport, opts: GraduationOptions = {}
 
   return { target: report.target, marker, ownershipTags, steps, warnings };
 }
+
+/**
+ * Stamp the ownership tags into an emitted chant source file (`carve apply
+ * --write-source`). The emitted source is machine-generated (`adoptFromState`),
+ * so its shape is known: one prop per line, `Tags` as a single-line JSON array.
+ * Merges into an existing `Tags` prop (replacing stale chant keys) or inserts
+ * one into the constructor's props object. Returns null when the file has no
+ * recognizable constructor to stamp.
+ */
+export function stampOwnershipIntoSource(
+  content: string,
+  tags: Record<string, string>,
+): { content: string; changed: boolean } | null {
+  const entries = Object.entries(tags).map(([Key, Value]) => ({ Key, Value }));
+  const keys = new Set(Object.keys(tags));
+  const lines = content.split("\n");
+
+  // Merge into an existing Tags prop.
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(/^(\s*)Tags: (\[.*\]),$/);
+    if (!m) continue;
+    let existing: Array<{ Key: string; Value: unknown }>;
+    try {
+      existing = JSON.parse(m[2]) as Array<{ Key: string; Value: unknown }>;
+    } catch {
+      continue;
+    }
+    const merged = [...existing.filter((t) => !keys.has(t.Key)), ...entries];
+    const rendered = `${m[1]}Tags: ${JSON.stringify(merged)},`;
+    if (rendered === lines[i]) return { content, changed: false };
+    lines[i] = rendered;
+    return { content: lines.join("\n"), changed: true };
+  }
+
+  // No Tags prop yet: insert one into the constructor's props object.
+  const tagsLine = `  Tags: ${JSON.stringify(entries)},`;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (/^\}\);\s*$/.test(lines[i])) {
+      lines.splice(i, 0, tagsLine);
+      return { content: lines.join("\n"), changed: true };
+    }
+    const empty = lines[i].match(/^(export const .+ = new \w+\()\{\}(\);)\s*$/);
+    if (empty) {
+      lines[i] = `${empty[1]}{\n${tagsLine}\n}${empty[2]}`;
+      return { content: lines.join("\n"), changed: true };
+    }
+  }
+  return null;
+}

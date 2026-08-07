@@ -45,6 +45,8 @@ export interface ParsedArgs {
   carveStack?: string;
   /** `chant carve apply --write` — save the graduation doc */
   write?: boolean;
+  /** `chant carve apply --write-source` — stamp the ownership marker into the emitted source */
+  writeSource?: boolean;
   /** `chant migrate --to <name>` (default "gitlab") */
   migrateTo?: string;
   /** `chant migrate --emit yaml|ts` */

@@ -19,6 +19,7 @@ export async function runCarveApply(ctx: CommandContext): Promise<number> {
     statePath: args.statePath,
     output: args.output,
     write: args.write,
+    writeSource: args.writeSource,
   });
 
   if (!result.ok) {

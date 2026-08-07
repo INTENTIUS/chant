@@ -583,6 +583,16 @@ if [ -d "$CARVE_TF" ]; then
     else
       fail "emitted chant source did not build to the expected CloudFormation"
     fi
+
+    # --write-source stamps the ownership marker into the emitted source, and
+    # the marker flows through to the built CloudFormation template.
+    if $CHANT carve apply --from "$CARVE_TF" --output "$BUILD_OUT" --env prod --write-source >/dev/null 2>&1 \
+       && grep -q 'chant:managed-by' "$BUILD_OUT"/api.ts 2>/dev/null \
+       && STAMPED=$($CHANT build "$BUILD_OUT" --lexicon aws 2>/dev/null) && echo "$STAMPED" | grep -q '"chant:managed-by"'; then
+      pass "carve apply --write-source stamps the marker into source and template"
+    else
+      fail "carve apply --write-source did not stamp the emitted source"
+    fi
     rm -rf "$BUILD_OUT"
 
     # the carve state manifest is persisted next to the emitted source

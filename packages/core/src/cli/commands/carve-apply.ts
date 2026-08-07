@@ -9,11 +9,11 @@
  * lifecycle you brought.
  */
 
-import { existsSync, statSync, mkdirSync, writeFileSync } from "fs";
+import { existsSync, statSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { join } from "path";
 import { parseTerraformDir, Hcl2JsonNotInstalled } from "../../terraform/parse";
 import { boundaryReport } from "../../terraform/carve";
-import { graduationPlan, type GraduationPlan } from "../../terraform/graduate";
+import { graduationPlan, stampOwnershipIntoSource, type GraduationPlan } from "../../terraform/graduate";
 import { resolveCarveManifest, updateCarveManifest } from "../../terraform/manifest";
 
 export interface CarveApplyOptions {
@@ -26,6 +26,8 @@ export interface CarveApplyOptions {
   output?: string;
   /** Write the graduation doc to the output dir. */
   write?: boolean;
+  /** Stamp the ownership marker into the emitted chant source. */
+  writeSource?: boolean;
 }
 
 export interface CarveApplyResult {
@@ -33,6 +35,8 @@ export interface CarveApplyResult {
   error?: string;
   plan?: GraduationPlan;
   written?: string;
+  /** Emitted source files the ownership marker was stamped into. */
+  stamped?: string[];
   /** The carve state manifest this graduation was recorded into. */
   manifestPath?: string;
   /** True when the target came from the manifest, not --select. */
@@ -65,6 +69,28 @@ export async function carveApply(opts: CarveApplyOptions): Promise<CarveApplyRes
     return { ok: false, error: `Failed to plan graduation: ${err instanceof Error ? err.message : String(err)}` };
   }
 
+  // Stamp the marker into the emitted source (`--write-source`) — the emitted
+  // files are known from the manifest, so the tags the plan promises are the
+  // tags the source actually carries into the apply.
+  let stamped: string[] | undefined;
+  if (opts.writeSource) {
+    const files = resolved.manifest?.emit?.files ?? [];
+    if (files.length === 0) {
+      return {
+        ok: false,
+        error: "--write-source needs the emitted source recorded in the carve manifest — run `chant carve emit` first.",
+      };
+    }
+    stamped = [];
+    for (const file of files) {
+      if (!existsSync(file)) return { ok: false, error: `Emitted source not found: ${file}` };
+      const result = stampOwnershipIntoSource(readFileSync(file, "utf-8"), plan.ownershipTags);
+      if (!result) return { ok: false, error: `No constructor to stamp in ${file}.` };
+      if (result.changed) writeFileSync(file, result.content);
+      stamped.push(file);
+    }
+  }
+
   let written: string | undefined;
   if (opts.write) {
     mkdirSync(outDir, { recursive: true });
@@ -76,10 +102,10 @@ export async function carveApply(opts: CarveApplyOptions): Promise<CarveApplyRes
   // Record the graduation into an existing manifest; never create one here —
   // plan-only stays plan-only unless a carve flow is already in progress.
   const manifestPath = updateCarveManifest(outDir, select, {
-    apply: { marker: plan.marker, ownershipTags: plan.ownershipTags, at: new Date().toISOString() },
+    apply: { marker: plan.marker, ownershipTags: plan.ownershipTags, stampedFiles: stamped, at: new Date().toISOString() },
   });
 
-  return { ok: true, plan, written, manifestPath, selectFromManifest: !opts.select };
+  return { ok: true, plan, written, stamped, manifestPath, selectFromManifest: !opts.select };
 }
 
 function renderGraduationDoc(plan: GraduationPlan): string {
@@ -116,9 +142,12 @@ export function formatCarveApply(result: CarveApplyResult): string {
     for (const w of p.warnings) L.push(`  ! ${w}`);
   }
   L.push("");
+  if (result.stamped?.length) {
+    L.push(`Stamped the ownership marker into: ${result.stamped.join(", ")}`);
+  }
   if (result.written) {
     L.push(`Wrote graduation doc: ${result.written}`);
-  } else {
+  } else if (!result.stamped?.length) {
     L.push("Plan only — no cloud call, nothing written. The apply is your lifecycle (BYOL). Add --write to save this as a doc.");
   }
   if (result.manifestPath) {

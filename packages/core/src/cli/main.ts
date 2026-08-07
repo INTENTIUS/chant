@@ -213,6 +213,8 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.carveStack = args[++i];
     } else if (arg === "--write") {
       result.write = true;
+    } else if (arg === "--write-source") {
+      result.writeSource = true;
     } else if (arg === "--to") {
       result.migrateTo = args[++i];
     } else if (arg === "--emit") {
@@ -417,6 +419,8 @@ Commands:
                         --from <tf-dir>   runbook (dial-turn observe→apply). BYOL —
                         [--select <addr>] no cloud call; --write saves the doc. --select
                         --env <env>       is optional with a carve manifest present.
+                                          --write-source stamps the ownership marker
+                                          into the emitted chant source.
 
 Ops:
   run <name>            Start an Op workflow (spawns worker + submits to Temporal)

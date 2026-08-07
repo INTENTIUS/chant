@@ -44,6 +44,8 @@ export interface CarveManifest {
   apply?: {
     marker: OwnershipMarker;
     ownershipTags: Record<string, string>;
+    /** Emitted files the marker was stamped into (`--write-source`). */
+    stampedFiles?: string[];
     at: string;
   };
 }
