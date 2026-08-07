@@ -1,0 +1,46 @@
+{
+  "name": "@intentius/warden-core",
+  "version": "0.41.19",
+  "type": "module",
+  "description": "Shared CLI scaffolding for the chant wardens \u2014 flag parsing, config loading, reconcile outcome reporting (#788)",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/INTENTIUS/chant.git",
+    "directory": "wardens/core"
+  },
+  "homepage": "https://github.com/INTENTIUS/chant/tree/main/wardens/core#readme",
+  "bugs": {
+    "url": "https://github.com/INTENTIUS/chant/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "src/",
+    "dist/"
+  ],
+  "exports": {
+    ".": {
+      "development": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./src/index.ts"
+    },
+    "./*": {
+      "development": "./src/*.ts",
+      "types": "./dist/*.d.ts",
+      "default": "./src/*.ts"
+    }
+  },
+  "scripts": {
+    "tsc": "tsc --noEmit",
+    "test": "vitest run",
+    "build": "tsc -p tsconfig.build.json",
+    "prepublishOnly": "npm run build"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.9"
+  }
+}

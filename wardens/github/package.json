@@ -32,6 +32,7 @@
     "prepublishOnly": "npm run build"
   },
   "devDependencies": {
+    "@intentius/warden-core": "*",
     "@intentius/chant": "*",
     "@intentius/chant-lexicon-github": "*",
     "@types/libsodium-wrappers": "^0.7.14",
@@ -43,6 +44,7 @@
   },
   "peerDependencies": {
     "@intentius/chant": "^0.41.19",
-    "@intentius/chant-lexicon-github": "^0.41.19"
+    "@intentius/chant-lexicon-github": "^0.41.19",
+    "@intentius/warden-core": "^0.41.19"
   }
 }

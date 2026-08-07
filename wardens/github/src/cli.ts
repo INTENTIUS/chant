@@ -37,6 +37,14 @@
 
 import { readFileSync, writeFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
+import {
+  CliError,
+  type Die,
+  errMsg,
+  makeDie,
+  reportReconcileOutcome,
+  requireEnv,
+} from "@intentius/warden-core";
 import { loadGovernanceConfig } from "./config/load.js";
 import { createAppClient } from "./auth/app-client.js";
 import { runReconcile } from "./reconcile/runner.js";
@@ -62,21 +70,14 @@ export interface ReconcileArgs {
 }
 
 /**
- * Error thrown by `parseReconcileArgs` on bad input.
+ * Error thrown by the arg parsers on bad input — @intentius/warden-core's
+ * CliError, re-exported so tests keep importing it from here.
  *
- * Carries the process exit code that `main()` should use when it catches the
- * error. Keeping the parser pure (throwing instead of calling `process.exit`)
- * lets the consistency test import and exercise the real parser directly.
+ * It carries the process exit code that `main()` should use when it catches
+ * the error; the parsers stay pure (throwing instead of calling
+ * `process.exit`).
  */
-export class CliError extends Error {
-  constructor(
-    public readonly code: number,
-    message: string,
-  ) {
-    super(message);
-    this.name = "CliError";
-  }
-}
+export { CliError };
 
 /**
  * Parse reconcile argv (everything after the `reconcile` subcommand) into
@@ -603,57 +604,9 @@ async function main(argv: string[] = process.argv.slice(2)) {
   }
 
   // ── Output ────────────────────────────────────────────────────────────────
-
-  // Print plan summary for every cycle that ran.
-  for (const cr of result.cycles) {
-    process.stdout.write(`\n=== ${cr.name} @ ${cr.org} ===\n`);
-    process.stdout.write(`${cr.plan}\n`);
-
-    if (cr.guardrailBlocked) {
-      const diags = cr.guardrails.ok ? [] : cr.guardrails.diagnostics;
-      process.stdout.write(
-        `\nGUARDRAIL BLOCK: ${diags.map((d) => d.message).join("; ")}\n`,
-      );
-    }
-
-    if (args.mode === "apply" && !cr.guardrailBlocked) {
-      process.stdout.write(
-        `Applied: ${cr.applied.length}, Failed: ${cr.failed.length}\n`,
-      );
-      for (const f of cr.failed) {
-        process.stdout.write(`  FAILED [${f.entry.resourceType}] ${f.entry.key}: ${f.error}\n`);
-      }
-    }
-  }
-
-  // Errored cycles.
-  for (const ce of result.errored) {
-    process.stderr.write(`ERROR in ${ce.name} @ ${ce.org} (${ce.stage}): ${ce.error}\n`);
-  }
-
-  // Deferred work.
-  if (result.deferred.skippedCycles.length > 0) {
-    process.stderr.write(
-      `DEFERRED cycles (budget exhausted): ${result.deferred.skippedCycles.join(", ")}\n`,
-    );
-  }
-
-  // Determine exit code.
-  // Guardrail block in apply mode → exit 1 (unless override was set, in which
-  // case the apply still ran and the block flag is false).
-  const anyGuardrailBlock = result.cycles.some((cr) => cr.guardrailBlocked);
-  if (anyGuardrailBlock) {
-    process.exit(1);
-  }
-
-  // Any errored cycle or failed apply entry → exit 3.
-  const anyError =
-    result.errored.length > 0 || result.cycles.some((cr) => cr.failed.length > 0);
-  if (anyError) {
-    process.exit(3);
-  }
-
-  process.exit(0);
+  // Plan rendering + the shared exit-code policy (0 success · 1 guardrail
+  // block · 3 errored cycle or failed apply) live in @intentius/warden-core.
+  process.exit(reportReconcileOutcome(result, args.mode));
 }
 
 // ---------------------------------------------------------------------------
@@ -662,23 +615,18 @@ async function main(argv: string[] = process.argv.slice(2)) {
 
 /** Read a required env var or die with exit 2. */
 function env(name: string): string {
-  const val = process.env[name];
-  if (!val) die(2, `env var ${name} is not set or is empty`);
-  return val;
+  try {
+    return requireEnv(name);
+  } catch (err) {
+    die(err instanceof CliError ? err.code : 2, errMsg(err));
+  }
 }
 
 /**
  * Print an error message to stderr and exit with the given code.
  * Return type is `never` so callers can use `die(...)` in expression position.
  */
-function die(code: number, message: string): never {
-  process.stderr.write(`github-warden: error: ${message}\n`);
-  process.exit(code);
-}
-
-function errMsg(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
+const die: Die = makeDie("github-warden");
 
 /**
  * Parse the config file text. Supports YAML (via a hand-rolled subset adequate

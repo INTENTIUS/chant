@@ -33,6 +33,7 @@
     "prepublishOnly": "npm run build"
   },
   "devDependencies": {
+    "@intentius/warden-core": "*",
     "@intentius/chant": "*",
     "@types/node": "^22.0.0",
     "esbuild": "^0.28.0",
@@ -43,6 +44,7 @@
     "yaml": "^2.9.0"
   },
   "peerDependencies": {
-    "@intentius/chant": "^0.41.19"
+    "@intentius/chant": "^0.41.19",
+    "@intentius/warden-core": "^0.41.19"
   }
 }

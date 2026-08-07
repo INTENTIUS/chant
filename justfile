@@ -262,8 +262,7 @@ release bump="patch":
     for f in packages/core/package.json packages/k8s-client/package.json lexicons/*/package.json wardens/*/package.json; do
       jq --arg v "$next" '
         .version = $v
-        | if .peerDependencies["@intentius/chant"] then .peerDependencies["@intentius/chant"] = "^" + $v else . end
-        | if .peerDependencies["@intentius/chant-lexicon-github"] then .peerDependencies["@intentius/chant-lexicon-github"] = "^" + $v else . end
+        | if .peerDependencies then .peerDependencies |= with_entries(if (.key | startswith("@intentius/")) then .value = "^" + $v else . end) else . end
       ' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
     done
     # Keep the committed lockfile's workspace entries in step with the bump —
