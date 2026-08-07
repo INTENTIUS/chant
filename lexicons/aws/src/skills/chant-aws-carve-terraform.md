@@ -53,14 +53,17 @@ From `examples/terraform-carve-out`, with `TF=./terraform`:
    chant carve emit --from ./terraform --select aws_s3_bucket.assets \
      --state ./terraform/terraform.tfstate --output ./carveout
    ```
-   Show `./carveout/assets.ts` — a real `new Bucket({ BucketName, Tags })` with
+   Show `./carveout/src/assets.ts` — a real `new Bucket({ BucketName, Tags })` with
    CloudFormation-style properties mapped from the Terraform state attributes.
-   Explain: a Terraform-managed resource is not in any CloudFormation stack, so
-   the correct source of its live shape is the state file, not a cloud read.
+   Emit also scaffolds `./carveout` into a buildable chant project
+   (`chant.config.ts`, `package.json`), so `npm install && npm run build` works
+   there as-is. Explain: a Terraform-managed resource is not in any
+   CloudFormation stack, so the correct source of its live shape is the state
+   file, not a cloud read.
 
 3. **Lint the inherited resource — optional, offer it.**
    ```bash
-   chant lint ./carveout --lexicon aws
+   chant lint ./carveout/src --lexicon aws
    ```
    After emit, offer to lint the carved source. chant audits the resource you
    inherited from Terraform against the AWS lexicon's rules. Findings have a

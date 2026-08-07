@@ -13,13 +13,14 @@
  */
 
 import { existsSync, statSync, writeFileSync, mkdirSync } from "fs";
-import { join, resolve } from "path";
+import { basename, join, resolve } from "path";
 import { parseTerraformDir, Hcl2JsonNotInstalled } from "../../terraform/parse";
 import { boundaryReport, type CarveReport } from "../../terraform/carve";
 import { resolveTier } from "../../terraform/tier-map";
 import { readStateResource } from "../../terraform/state";
 import { writeCarveManifest, type CarveManifest } from "../../terraform/manifest";
 import { adoptFromState, canAdoptFromState, supportedStateAdoptionTypes } from "../../terraform/adopt-state";
+import { getChantVersion } from "./init";
 import type { LexiconPlugin, ResourceSelector } from "../../lexicon";
 import type { ImportResult, LiveImportOptions } from "./import";
 
@@ -62,6 +63,8 @@ export interface CarveEmitResult {
   source?: "tfstate" | "live";
   /** Emitted file path(s). */
   emittedFiles?: string[];
+  /** Project files scaffolded around the emitted source (config, package.json). */
+  scaffolded?: string[];
   /** The persisted carve state manifest bridge/apply compose with. */
   manifestPath?: string;
 }
@@ -119,13 +122,18 @@ export async function carveEmit(opts: CarveEmitOptions, deps: CarveEmitDeps): Pr
     const adopted = adoptFromState(stateResource);
     if (!adopted) return { ok: false, error: `Could not adopt ${opts.select} from state.` };
 
+    // The output dir is a buildable chant project: source in src/, plus the
+    // config + package.json scaffold (written once, never overwritten).
     const outDir = opts.output ?? join(opts.from, "carveout");
-    mkdirSync(outDir, { recursive: true });
-    const outPath = join(outDir, adopted.fileName);
+    const srcDir = join(outDir, "src");
+    mkdirSync(srcDir, { recursive: true });
+    const outPath = join(srcDir, adopted.fileName);
     writeFileSync(outPath, adopted.content);
+    const lexicon = tier.mapsTo.split("::")[0]?.toLowerCase() ?? "aws";
+    const scaffolded = scaffoldProject(outDir, lexicon);
 
     const manifestPath = persistManifest(outDir, opts, report, tfType, "tfstate", [outPath]);
-    return { ok: true, report, source: "tfstate", emittedFiles: [outPath], manifestPath };
+    return { ok: true, report, source: "tfstate", emittedFiles: [outPath], scaffolded, manifestPath };
   }
 
   // ── Adoption path 2: live import (cloud→code) ──
@@ -147,6 +155,58 @@ export async function carveEmit(opts: CarveEmitOptions, deps: CarveEmitDeps): Pr
   const outDir = opts.output ?? join(opts.from, "carveout");
   const manifestPath = persistManifest(outDir, opts, report, tfType, "live", emit.generatedFiles ?? []);
   return { ok: true, report, emit, selector, source: "live", emittedFiles: emit.generatedFiles, manifestPath };
+}
+
+/**
+ * Scaffold the emitted source into a buildable chant project: chant.config.ts,
+ * package.json, tsconfig.json — same shape `chant init` produces, so
+ * `npm install && npm run build` works in the output dir as-is. Existing files
+ * are never overwritten (re-emits and user edits survive).
+ */
+function scaffoldProject(outDir: string, lexicon: string): string[] {
+  const ver = getChantVersion();
+  const packageJson = {
+    name: "chant-carveout",
+    version: "0.1.0",
+    type: "module" as const,
+    scripts: {
+      build: `chant build src --lexicon ${lexicon}`,
+      lint: "chant lint src",
+    },
+    dependencies: {
+      "@intentius/chant": `^${ver}`,
+      [`@intentius/chant-lexicon-${lexicon}`]: `^${ver}`,
+    },
+    devDependencies: {
+      typescript: "^5.0.0",
+    },
+  };
+  const tsconfig = {
+    compilerOptions: {
+      target: "ES2022",
+      module: "NodeNext",
+      moduleResolution: "NodeNext",
+      strict: true,
+      esModuleInterop: true,
+      skipLibCheck: true,
+    },
+    include: ["src"],
+    exclude: ["node_modules"],
+  };
+  const files: Array<[string, string]> = [
+    ["package.json", JSON.stringify(packageJson, null, 2) + "\n"],
+    ["chant.config.ts", `import type { ChantConfig } from "@intentius/chant";\n\nexport default {\n  lexicons: ["${lexicon}"],\n} satisfies ChantConfig;\n`],
+    ["tsconfig.json", JSON.stringify(tsconfig, null, 2) + "\n"],
+  ];
+
+  const written: string[] = [];
+  for (const [name, content] of files) {
+    const path = join(outDir, name);
+    if (existsSync(path)) continue;
+    writeFileSync(path, content);
+    written.push(path);
+  }
+  return written;
 }
 
 /** Persist the carve state manifest so bridge/apply compose with this emit. */
@@ -184,6 +244,9 @@ export function formatCarveEmit(result: CarveEmitResult): string {
   }
   if (result.emittedFiles?.length) {
     lines.push(`  Emitted: ${result.emittedFiles.join(", ")}`);
+  }
+  if (result.scaffolded?.length) {
+    lines.push(`  Scaffolded a buildable chant project: ${result.scaffolded.map((f) => basename(f)).join(", ")} (npm install && npm run build).`);
   }
   if (result.manifestPath) {
     lines.push(`  State manifest: ${result.manifestPath} — carve bridge/apply pick the target up from here.`);

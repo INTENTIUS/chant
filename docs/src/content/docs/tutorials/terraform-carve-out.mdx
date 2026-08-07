@@ -82,7 +82,9 @@ chant carve emit --from ./terraform --select aws_s3_bucket.assets \
   --state ./terraform/terraform.tfstate --output ./carveout
 ```
 
-This writes `./carveout/assets.ts`:
+This writes `./carveout/src/assets.ts` and scaffolds `./carveout` into a
+buildable chant project (`chant.config.ts`, `package.json`, `tsconfig.json` —
+`npm install && npm run build` works there as-is):
 
 ```ts
 // Adopted from Terraform state: aws_s3_bucket.assets -> AWS::S3::Bucket

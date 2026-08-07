@@ -409,7 +409,9 @@ Commands:
                         --select <addr>   (recommended for TF-managed resources); --env
                         --state|--env     <env> adopts via live cloud import (--live-name
                                           <logical-id> narrows a multi-resource stack).
-                                          Persists a carve manifest bridge/apply compose with.
+                                          Persists a carve manifest bridge/apply compose
+                                          with; scaffolds the output dir into a buildable
+                                          chant project (src/ + config + package.json).
   carve bridge          Generate the surviving-TF patch (data sources + rewired
                         --from <tf-dir>   refs) + deferred inputs + reversible runbook.
                         [--select <addr>] Writes proposals for review; --apply-rewrites

@@ -42,10 +42,12 @@ chant carve emit --from ./terraform --select aws_s3_bucket.assets \
   --state ./terraform/terraform.tfstate --output ./carveout
 ```
 
-Writes `./carveout/assets.ts` — a real `new Bucket({ BucketName, Tags })` with
-CloudFormation-style properties mapped from the Terraform state attributes. A
-Terraform-managed resource is not in any CloudFormation stack, so the state file
-is the correct source of its live shape. (`--env <env>` adopts a
+Writes `./carveout/src/assets.ts` — a real `new Bucket({ BucketName, Tags })` with
+CloudFormation-style properties mapped from the Terraform state attributes — and
+scaffolds `./carveout` into a buildable chant project (`chant.config.ts`,
+`package.json`, `tsconfig.json`), so `npm install && npm run build` works there
+as-is. A Terraform-managed resource is not in any CloudFormation stack, so the
+state file is the correct source of its live shape. (`--env <env>` adopts a
 CloudFormation-managed resource live instead.)
 
 ## 3. Bridge the boundary

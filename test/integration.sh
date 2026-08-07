@@ -567,18 +567,27 @@ if [ -d "$CARVE_TF" ]; then
   # emit: adopt the bucket from tfstate into native chant source (offline)
   EMIT_OUT=$(mktemp -d)
   if $CHANT carve emit --from "$CARVE_TF" --select aws_s3_bucket.assets --state "$CARVE_STATE" --output "$EMIT_OUT" >/dev/null 2>&1; then
-    if grep -q 'new Bucket({' "$EMIT_OUT"/assets.ts 2>/dev/null && grep -q 'BucketName: "myapp-assets-prod"' "$EMIT_OUT"/assets.ts 2>/dev/null; then
+    if grep -q 'new Bucket({' "$EMIT_OUT"/src/assets.ts 2>/dev/null && grep -q 'BucketName: "myapp-assets-prod"' "$EMIT_OUT"/src/assets.ts 2>/dev/null; then
       pass "carve emit adopts a resource from tfstate into chant source"
     else
       fail "carve emit did not produce the expected chant source"
     fi
+
+    # emit scaffolds a buildable chant project around the source
+    if grep -q '"@intentius/chant-lexicon-aws"' "$EMIT_OUT"/package.json 2>/dev/null \
+       && grep -q 'lexicons: \["aws"\]' "$EMIT_OUT"/chant.config.ts 2>/dev/null; then
+      pass "carve emit scaffolds a buildable chant project"
+    else
+      fail "carve emit did not scaffold the chant project"
+    fi
+
     # the emitted source must actually build against the aws lexicon → valid CFN.
     # Use the log group: a carved bucket faithfully lacks chant's stricter S3
     # security posture (PublicAccessBlock / TLS policy), so `build` lints it as a
     # finding — that is expected for adopted live infra, not an emit defect.
     BUILD_OUT=$(mktemp -d)
     $CHANT carve emit --from "$CARVE_TF" --select aws_cloudwatch_log_group.api --state "$CARVE_STATE" --output "$BUILD_OUT" >/dev/null 2>&1
-    if BUILT=$($CHANT build "$BUILD_OUT" --lexicon aws 2>/dev/null) && echo "$BUILT" | grep -q '"AWS::Logs::LogGroup"' && echo "$BUILT" | grep -q '"LogGroupName": "/myapp/api"'; then
+    if BUILT=$($CHANT build "$BUILD_OUT"/src --lexicon aws 2>/dev/null) && echo "$BUILT" | grep -q '"AWS::Logs::LogGroup"' && echo "$BUILT" | grep -q '"LogGroupName": "/myapp/api"'; then
       pass "emitted chant source builds to valid CloudFormation"
     else
       fail "emitted chant source did not build to the expected CloudFormation"
@@ -587,8 +596,8 @@ if [ -d "$CARVE_TF" ]; then
     # --write-source stamps the ownership marker into the emitted source, and
     # the marker flows through to the built CloudFormation template.
     if $CHANT carve apply --from "$CARVE_TF" --output "$BUILD_OUT" --env prod --write-source >/dev/null 2>&1 \
-       && grep -q 'chant:managed-by' "$BUILD_OUT"/api.ts 2>/dev/null \
-       && STAMPED=$($CHANT build "$BUILD_OUT" --lexicon aws 2>/dev/null) && echo "$STAMPED" | grep -q '"chant:managed-by"'; then
+       && grep -q 'chant:managed-by' "$BUILD_OUT"/src/api.ts 2>/dev/null \
+       && STAMPED=$($CHANT build "$BUILD_OUT"/src --lexicon aws 2>/dev/null) && echo "$STAMPED" | grep -q '"chant:managed-by"'; then
       pass "carve apply --write-source stamps the marker into source and template"
     else
       fail "carve apply --write-source did not stamp the emitted source"
