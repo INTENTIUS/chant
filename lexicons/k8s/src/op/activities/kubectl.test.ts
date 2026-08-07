@@ -164,6 +164,76 @@ describe("kubectlApply", () => {
     expect(bodies[1].metadata?.labels?.["chant.intentius.io/env"]).toBeUndefined();
   });
 
+  test("a conflict owned entirely by chant's own managers is retaken with force — the stack-label migration path", async () => {
+    // An estate applied before its components named per-unit stacks has every
+    // object's labels owned by `chant:<ownership.stack>`. The re-stamp under
+    // the unit's manager conflicts — with chant itself. Refusing that forever
+    // would strand the estate with no non-force path (the capability exposes
+    // no force flag), so chant retakes its OWN fields, once, per document.
+    const file = join(dir, "k8s.yaml");
+    writeFileSync(file, deploymentYaml);
+    let patches = 0;
+    const cluster = fakeCluster({
+      respond: (req) => {
+        if (req.method !== "PATCH") return undefined;
+        patches++;
+        const forced = req.query.force === "true";
+        if (forced) return { body: JSON.parse(String(req.body)) };
+        return {
+          status: 409,
+          body: {
+            ...statusBody(409, "Conflict", 'Apply failed with 1 conflict: conflict with "chant:kubemicrovm-ops"'),
+            details: {
+              causes: [
+                {
+                  type: "FieldManagerConflict",
+                  message: 'conflict with "chant:kubemicrovm-ops"',
+                  field: ".metadata.labels.chant.intentius.io/stack",
+                },
+              ],
+            },
+          },
+        };
+      },
+    });
+
+    const result = await applyManifest({ manifest: file, stack: "kmv-workload" }, undefined, cluster.connector);
+    expect(result.applied).toHaveLength(2);
+    // Each of the two documents: one refused apply + one forced retake.
+    expect(patches).toBe(4);
+    const requests = cluster.layer.requests.filter((r) => r.method === "PATCH");
+    expect(requests.map((r) => r.query.force)).toEqual(["false", "true", "false", "true"]);
+  });
+
+  test("a conflict involving any FOREIGN manager still refuses — self-retake never widens", async () => {
+    const file = join(dir, "k8s.yaml");
+    writeFileSync(file, deploymentYaml);
+    const cluster = fakeCluster({
+      respond: (req) =>
+        req.method === "PATCH"
+          ? {
+              status: 409,
+              body: {
+                ...statusBody(409, "Conflict", "Apply failed with 2 conflicts"),
+                details: {
+                  causes: [
+                    { type: "FieldManagerConflict", message: 'conflict with "chant:old"', field: ".metadata.labels.chant.intentius.io/stack" },
+                    { type: "FieldManagerConflict", message: 'conflict with "helm"', field: ".spec.replicas" },
+                  ],
+                },
+              },
+            }
+          : undefined,
+    });
+
+    const err = (await applyManifest({ manifest: file, stack: "kmv-workload" }, undefined, cluster.connector).catch(
+      (e: unknown) => e,
+    )) as Error;
+    expect(err.name).toBe("FieldManagerConflictError");
+    // No forced retry was attempted.
+    expect(cluster.layer.requests.filter((r) => r.method === "PATCH" && r.query.force === "true")).toHaveLength(0);
+  });
+
   test("no resolvable stack applies the documents verbatim — no marker invented", async () => {
     const file = join(dir, "k8s.yaml");
     writeFileSync(file, deploymentYaml);

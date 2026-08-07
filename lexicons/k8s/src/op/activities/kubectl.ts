@@ -192,6 +192,31 @@ async function resolveApplyIdentity(
 }
 
 /**
+ * Structural mirror of the client's `FieldManagerConflictError` surface —
+ * matched by `name` + shape, NOT `instanceof`, because a static value import
+ * of `@intentius/chant-k8s-client` here would put the API-client chain on the
+ * build path (the #1074 boundary; same reason the applier itself is reached
+ * by dynamic import).
+ */
+interface ConflictErrorLike {
+  name: string;
+  conflicts?: Array<{ manager?: unknown }>;
+}
+
+/**
+ * Is every contested field in this conflict owned by chant itself (under any
+ * of its field managers — `chant` bare or `chant:<stack>`)? True means the
+ * conflict is a self-migration, never a dispute with another tool.
+ */
+function isChantSelfConflict(err: unknown): boolean {
+  const e = err as ConflictErrorLike;
+  if (!e || e.name !== "FieldManagerConflictError" || !Array.isArray(e.conflicts) || e.conflicts.length === 0) return false;
+  return e.conflicts.every(
+    (c) => typeof c.manager === "string" && (c.manager === "chant" || c.manager.startsWith("chant:")),
+  );
+}
+
+/**
  * Stamp the apply's own stack identity onto a document's labels.
  *
  * The serializer bakes `ownership.stack` — the *project* identity from
@@ -257,12 +282,26 @@ export async function applyManifest(
 
     const applied: AppliedRef[] = [];
     for (const document of documents) {
-      const result = await client.apply(stampOwnership(document as K8sObject, stack), {
-        fieldManager,
-        force: args.force ?? false,
-        dryRun: args.dryRun,
-        signal,
-      });
+      const stamped = stampOwnership(document as K8sObject, stack);
+      let result: K8sObject;
+      try {
+        result = await client.apply(stamped, {
+          fieldManager,
+          force: args.force ?? false,
+          dryRun: args.dryRun,
+          signal,
+        });
+      } catch (err) {
+        // "chant never forces a conflict on its own" is about taking fields
+        // from ANOTHER tool. A conflict where every contested field is owned
+        // by another `chant:*` manager is chant contesting itself — the
+        // ownership-stack → unit-stack label migration, or a renamed deploy
+        // unit — and refusing that forever would strand every estate applied
+        // before the rename with no non-force path back. Retake those fields
+        // deliberately, once, and only when no foreign manager is involved.
+        if (!isChantSelfConflict(err)) throw err;
+        result = await client.apply(stamped, { fieldManager, force: true, dryRun: args.dryRun, signal });
+      }
       const ref: AppliedRef = {
         apiVersion: String(result.apiVersion ?? document.apiVersion ?? ""),
         kind: String(result.kind ?? document.kind ?? ""),
