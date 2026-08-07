@@ -1,3 +1,10 @@
+export { OrganizationRoot, GovernanceFoundation, RegionRestriction, OrganizationTrail } from "./landing-zone";
+export type {
+  OrganizationRootProps,
+  GovernanceFoundationProps,
+  RegionRestrictionProps,
+  OrganizationTrailProps,
+} from "./landing-zone";
 export { LambdaFunction, LambdaNode, LambdaPython, NodeLambda, PythonLambda } from "./lambda-function";
 export type { LambdaFunctionProps } from "./lambda-function";
 export { LambdaApi } from "./lambda-api";

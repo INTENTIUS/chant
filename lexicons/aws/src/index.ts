@@ -114,6 +114,7 @@ export {
   SolrFargateService,
   MicrovmApp, MICROVM_LIMITS,
   AgentCoreAgent,
+  OrganizationRoot, GovernanceFoundation, RegionRestriction, OrganizationTrail,
 } from "./composites/index";
 export type {
   LambdaFunctionProps, LambdaApiProps, ScheduledLambdaProps,
@@ -124,6 +125,7 @@ export type {
   SolrFargateServiceProps,
   MicrovmAppProps, MicrovmAppResult, MicrovmAppBuildConnectorProps, MicrovmMemoryMiB,
   AgentCoreAgentProps, AgentCoreAgentResult,
+  OrganizationRootProps, GovernanceFoundationProps, RegionRestrictionProps, OrganizationTrailProps,
 } from "./composites/index";
 
 // Code generation pipeline
@@ -135,3 +137,8 @@ export type { PackageOptions, PackageResult } from "./codegen/package";
 // emr-*, code-deploy, …) contributed to core's capability-plugin seam. Core
 // loads `awsCapabilityPlugin` when a project's chant.config lists this lexicon.
 export { awsCapabilityPlugin } from "./components/capability-plugin";
+
+// AWS governance authoring (#791): the desired-state config the AWS cloud
+// warden (#792) reconciles, and the typed landing-zone authoring layer.
+export { landingZoneConfig, regionRestriction, DENY_AUDIT_TAMPER, DENY_LEAVE_ORGANIZATION, FOUNDATION_OUS } from "./governance";
+export type { AwsGovernanceConfig, LandingZoneConfigProps, OuConfig, ScpConfig, AccountConfig } from "./governance";
