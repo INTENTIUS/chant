@@ -2,7 +2,7 @@
   "name": "@intentius/aws-warden",
   "version": "0.41.20",
   "type": "module",
-  "description": "Keep your AWS organization in declared state — OUs, SCPs, audit sinks; stateless drift-correcting reconcile (epic intentius/chant#787)",
+  "description": "Keep your AWS organization in declared state — OUs, SCPs, SSO assignments, audit sinks; stateless drift-correcting reconcile (epic intentius/chant#787)",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",

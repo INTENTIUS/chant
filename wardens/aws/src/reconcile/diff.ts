@@ -10,12 +10,17 @@
  * - policy-guardrail: SCPs by name. Field-level diff over document /
  *   description / target paths; deletes gated on ownership; AWS-managed
  *   policies are never touched.
+ * - identity-assignment: SSO permission sets by name (field-level diff,
+ *   ownership-gated deletes) and account assignments keyed by
+ *   set/account/principal. Assignments carry no tags, so the delete gate is
+ *   scoping: only assignments under a config-declared permission set are
+ *   managed. The break-glass grant is implicitly desired.
  * - audit-sink: the organization trail by bucket/multi-region. Never
  *   deleted — an undeclared trail is drift worth seeing, not removing.
  */
 
-import { deepEqual, type ChangeSet, type ChangeSetEntry } from "@intentius/chant/reconcile";
-import type { AwsGovernanceConfig, OuConfig } from "../config/types.js";
+import { deepEqual, type ChangeSet, type ChangeSetEntry, type FieldChange } from "@intentius/chant/reconcile";
+import type { AssignmentConfig, AwsGovernanceConfig, OuConfig } from "../config/types.js";
 import type { LiveOrgState } from "./live.js";
 
 export interface DesiredOu {
@@ -136,6 +141,89 @@ export function diffScps(org: string, config: AwsGovernanceConfig, live: LiveOrg
   return { org, entries };
 }
 
+/** All desired grants: declared assignments plus the implicitly-desired break-glass. */
+export function desiredAssignments(config: AwsGovernanceConfig): AssignmentConfig[] {
+  const identity = config.identity;
+  if (!identity) return [];
+  return [...(identity.assignments ?? []), ...(identity.breakGlass ? [identity.breakGlass] : [])];
+}
+
+const assignmentKey = (permissionSet: string, account: string, type: string, principal: string): string =>
+  `${permissionSet}/${account}/${type}:${principal}`;
+
+export function diffIdentity(org: string, config: AwsGovernanceConfig, live: LiveOrgState): ChangeSet {
+  const entries: ChangeSetEntry[] = [];
+  const identity = config.identity;
+  const liveIdentity = live.identity;
+  // Selective-by-omission: no identity section declared → nothing managed.
+  if (!identity || !liveIdentity) return { org, entries };
+
+  const liveByName = new Map(liveIdentity.permissionSets.map((p) => [p.name, p]));
+  for (const [name, def] of Object.entries(identity.permissionSets)) {
+    const want = {
+      description: def.description ?? "",
+      sessionDuration: def.sessionDuration ?? "PT1H",
+      managedPolicies: [...(def.managedPolicies ?? [])].sort(),
+      inlinePolicy: def.inlinePolicy,
+    };
+    const livePs = liveByName.get(name);
+    if (!livePs) {
+      entries.push({ kind: "create", resourceType: "permission-set", key: name, after: want });
+      continue;
+    }
+    const have = {
+      description: livePs.description ?? "",
+      sessionDuration: livePs.sessionDuration ?? "PT1H",
+      managedPolicies: livePs.managedPolicies,
+      inlinePolicy: livePs.inlinePolicy,
+    };
+    const fields: FieldChange[] = [];
+    if (want.description !== have.description)
+      fields.push({ field: "description", before: have.description, after: want.description });
+    if (want.sessionDuration !== have.sessionDuration)
+      fields.push({ field: "sessionDuration", before: have.sessionDuration, after: want.sessionDuration });
+    if (!deepEqual(want.managedPolicies, have.managedPolicies))
+      fields.push({ field: "managedPolicies", before: have.managedPolicies, after: want.managedPolicies });
+    if (!deepEqual(want.inlinePolicy, have.inlinePolicy))
+      fields.push({ field: "inlinePolicy", before: have.inlinePolicy, after: want.inlinePolicy });
+    if (fields.length)
+      entries.push({ kind: "update", resourceType: "permission-set", key: name, before: have, after: want, fields });
+  }
+  for (const livePs of liveIdentity.permissionSets) {
+    if (Object.prototype.hasOwnProperty.call(identity.permissionSets, livePs.name)) continue;
+    if (!livePs.owned) continue; // ownership-gated delete
+    entries.push({ kind: "delete", resourceType: "permission-set", key: livePs.name, before: { arn: livePs.arn, name: livePs.name } });
+  }
+
+  const desired = new Map<string, { principal: string; principalType: "GROUP" | "USER"; permissionSet: string; account: string }>();
+  for (const a of desiredAssignments(config)) {
+    for (const account of a.accounts) {
+      desired.set(assignmentKey(a.permissionSet, account, a.principalType, a.principal), {
+        principal: a.principal,
+        principalType: a.principalType,
+        permissionSet: a.permissionSet,
+        account,
+      });
+    }
+  }
+  const liveKeys = new Set<string>();
+  for (const la of liveIdentity.assignments) {
+    liveKeys.add(assignmentKey(la.permissionSetName, la.accountName, la.principalType, la.principalName));
+  }
+  for (const [key, want] of desired) {
+    if (!liveKeys.has(key)) entries.push({ kind: "create", resourceType: "assignment", key, after: want });
+  }
+  for (const la of liveIdentity.assignments) {
+    // Only assignments under a config-declared permission set are managed
+    // (assignments carry no tags; scoping is the ownership analog).
+    if (!Object.prototype.hasOwnProperty.call(identity.permissionSets, la.permissionSetName)) continue;
+    const key = assignmentKey(la.permissionSetName, la.accountName, la.principalType, la.principalName);
+    if (!desired.has(key)) entries.push({ kind: "delete", resourceType: "assignment", key, before: la });
+  }
+
+  return { org, entries };
+}
+
 export function diffAuditSinks(org: string, config: AwsGovernanceConfig, live: LiveOrgState): ChangeSet {
   const entries: ChangeSetEntry[] = [];
   const want = config.auditSinks?.cloudtrail;
@@ -165,6 +253,7 @@ export function diff(org: string, config: AwsGovernanceConfig, live: LiveOrgStat
   const entries: ChangeSetEntry[] = [];
   if (live.ous) entries.push(...diffOrgUnits(org, config, live).entries);
   if (live.scps) entries.push(...diffScps(org, config, live).entries);
+  if (live.identity) entries.push(...diffIdentity(org, config, live).entries);
   if (live.trails) entries.push(...diffAuditSinks(org, config, live).entries);
   return { org, entries };
 }

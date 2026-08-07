@@ -30,6 +30,41 @@ export interface OuConfig {
   children?: Record<string, OuConfig>;
 }
 
+/** An IAM Identity Center permission set, keyed by name in `IdentityConfig.permissionSets`. */
+export interface PermissionSetConfig {
+  description?: string;
+  /** ISO-8601 session duration, e.g. "PT8H". Omitted → the provider default (PT1H). */
+  sessionDuration?: string;
+  /** Managed policy ARNs attached to the set. */
+  managedPolicies?: string[];
+  /** Inline policy document attached to the set. */
+  inlinePolicy?: Record<string, unknown>;
+}
+
+/** One permission-set grant to an identity-store principal on member accounts. */
+export interface AssignmentConfig {
+  /** Identity-store principal: a group's DisplayName or a user's UserName. */
+  principal: string;
+  principalType: "GROUP" | "USER";
+  /** Permission-set name from `IdentityConfig.permissionSets`. */
+  permissionSet: string;
+  /** Account names (as declared in the OU tree) the grant applies to. */
+  accounts: string[];
+}
+
+/** IAM Identity Center desired state — the `identity-assignment` verb (#792). */
+export interface IdentityConfig {
+  /** Permission-set definitions, keyed by the names assignments reference. */
+  permissionSets: Record<string, PermissionSetConfig>;
+  assignments?: AssignmentConfig[];
+  /**
+   * The named break-glass admin grant. Implicitly desired (reconcile keeps
+   * it) and protected by the break-glass-admin guardrail: no plan may remove
+   * this assignment or its permission set.
+   */
+  breakGlass?: AssignmentConfig;
+}
+
 /** The desired-state governance tree for one AWS organization. */
 export interface AwsGovernanceConfig {
   organization: {
@@ -40,6 +75,8 @@ export interface AwsGovernanceConfig {
   ous: Record<string, OuConfig>;
   /** SCP definitions, keyed by the names the tree attaches. */
   scps: Record<string, ScpConfig>;
+  /** IAM Identity Center permission sets and account assignments. */
+  identity?: IdentityConfig;
   /** Where audit evidence flows. */
   auditSinks?: {
     cloudtrail?: { bucket: string; multiRegion: boolean };
