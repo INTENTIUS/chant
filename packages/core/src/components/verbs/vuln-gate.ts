@@ -105,13 +105,32 @@ export class VulnGateFailedError extends Error {
     public readonly blocking: BlockingFinding[],
     public readonly blockingLicenses: LicenseViolation[],
   ) {
-    const cveList = blocking.map((b) => `${b.finding.cveId} (${b.finding.severity}, ${b.finding.package})`).join(", ");
     const licList = blockingLicenses.map((l) => `${l.license} in ${l.package}`).join(", ");
     const parts: string[] = [];
-    if (blocking.length) parts.push(`${blocking.length} vulnerability finding(s): ${cveList}`);
+    if (blocking.length) {
+      const lines = blocking.map((b) => `  ${b.finding.cveId} (${b.finding.severity}, ${b.finding.package}) — ${describeBlockReason(b)}`);
+      parts.push(`${blocking.length} vulnerability finding(s):\n${lines.join("\n")}`);
+    }
     if (blockingLicenses.length) parts.push(`${blockingLicenses.length} license violation(s): ${licList}`);
-    super(`vuln-gate blocked the deploy — ${parts.join("; ")}. Fix the dependency, or record a VEX statement if it is not exploitable.`);
+    super(`vuln-gate blocked the deploy — ${parts.join("\n")}\nFix the dependency, or record a VEX statement if it is not exploitable.`);
     this.name = "VulnGateFailedError";
+  }
+}
+
+/** Which rule fired, human-readably — naming the rule is the difference between a gate people tune and a gate people disable. */
+function describeBlockReason(b: BlockingFinding): string {
+  const f = b.finding;
+  switch (b.reason) {
+    case "kev": {
+      const since = f.kevDateAdded ? `in CISA KEV since ${f.kevDateAdded}` : "in CISA KEV";
+      return f.kevRansomware ? `${since}, known ransomware use` : since;
+    }
+    case "epss-threshold":
+      return `EPSS ${f.epss} at/above the fail threshold`;
+    case "unknown-severity":
+      return "severity unreported by the scanner (failOnUnknownSeverity)";
+    case "severity-threshold":
+      return `severity at/above the fail threshold${f.fixable ? ", fixable" : ""}`;
   }
 }
 
@@ -126,10 +145,13 @@ function collectVex(docs: string[] | undefined): VexStatement[] {
  * Build the `vuln-gate` capability. Scans `sbom` (or uses supplied `findings`),
  * applies VEX, evaluates the license policy, and classifies every gating
  * finding: it BLOCKS (throws `VulnGateFailedError`) any finding at/above
- * `failSeverity` that satisfies `fixableOnly`, plus license violations when
+ * `failSeverity` that satisfies `fixableOnly`, any KEV finding when
+ * `failOnKev`, any finding at/above `failEpssAtOrAbove` (exploitability
+ * blocks honor `exploitabilityFixableOnly`), plus license violations when
  * `failOnLicense`; everything at/above `warnSeverity` below the fail bar is a
- * warning. On a clean pass it returns the warnings/suppressed/license report
- * for logging.
+ * warning, as are exploitability hits kept from blocking only by fixability
+ * and findings at/above `warnEpssAtOrAbove`. On a clean pass it returns the
+ * warnings/suppressed/license report for logging.
  */
 export function createVulnGateCapability(
   scanner: VulnScanner = defaultVulnScanner(),
@@ -143,14 +165,30 @@ export function createVulnGateCapability(
       // 1. VEX suppression.
       const { gating, suppressed } = applyVex(rawFindings, collectVex(input.vex));
 
-      // 2. Classify gating findings against the severity policy.
+      // 2. Classify gating findings against the severity + exploitability
+      // policy. Exploitability (KEV, EPSS) can only ESCALATE — the rules are
+      // independent block reasons OR'd together, never a replacement scoring
+      // system that could exempt a severity block. A finding blocked for more
+      // than one reason is reported once, under the most specific reason
+      // (kev > epss-threshold > severity-threshold). VEX suppression (step 1)
+      // outranks all of it, KEV included: a VEX statement is a claim about
+      // this artifact as built, a catalog entry is about the CVE somewhere.
       const failRank = SEVERITY_RANK[policy.failSeverity];
       const warnRank = SEVERITY_RANK[policy.warnSeverity];
       const blocking: BlockingFinding[] = [];
       const warnings: VulnFinding[] = [];
       for (const f of gating) {
         const rank = SEVERITY_RANK[f.severity];
-        if (rank >= failRank && (!policy.fixableOnly || f.fixable)) {
+        // Absent EPSS is "not scored", never zero — it can't match a threshold.
+        const epssFailHit = policy.failEpssAtOrAbove !== undefined && f.epss !== undefined && f.epss >= policy.failEpssAtOrAbove;
+        const epssWarnHit = policy.warnEpssAtOrAbove !== undefined && f.epss !== undefined && f.epss >= policy.warnEpssAtOrAbove;
+        const kevHit = policy.failOnKev && f.inKev === true;
+        const exploitActionable = !policy.exploitabilityFixableOnly || f.fixable;
+        if (kevHit && exploitActionable) {
+          blocking.push({ finding: f, reason: "kev" });
+        } else if (epssFailHit && exploitActionable) {
+          blocking.push({ finding: f, reason: "epss-threshold" });
+        } else if (rank >= failRank && (!policy.fixableOnly || f.fixable)) {
           blocking.push({ finding: f, reason: "severity-threshold" });
         } else if (f.severity === "unknown") {
           // Never silently pass an unclassifiable finding — a real critical
@@ -158,7 +196,10 @@ export function createVulnGateCapability(
           // it always; block it when the policy opts in.
           if (policy.failOnUnknownSeverity) blocking.push({ finding: f, reason: "unknown-severity" });
           else warnings.push(f);
-        } else if (rank >= warnRank) {
+        } else if (rank >= warnRank || kevHit || epssFailHit || epssWarnHit) {
+          // The exploitability hits landing here were kept from blocking by
+          // exploitabilityFixableOnly (or are warn-only EPSS) — an unfixable
+          // KEV finding can't be actioned by upgrading, so it warns.
           warnings.push(f);
         }
       }
