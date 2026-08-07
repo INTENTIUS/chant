@@ -1,0 +1,31 @@
+# Throwaway Forgejo instance for the hermetic e2e suite.
+#
+# sqlite + INSTALL_LOCK=true skips the web installer; the admin user and an
+# access token are minted afterward by e2e/bootstrap.sh. Nothing here persists —
+# `docker compose down -v` removes the volume and all state.
+services:
+  forgejo:
+    image: codeberg.org/forgejo/forgejo:11
+    container_name: forgejo-warden-e2e
+    environment:
+      FORGEJO__database__DB_TYPE: sqlite3
+      FORGEJO__security__INSTALL_LOCK: "true"
+      FORGEJO__server__DOMAIN: localhost
+      FORGEJO__server__ROOT_URL: http://localhost:3000/
+      FORGEJO__server__HTTP_PORT: "3000"
+      FORGEJO__server__SSH_PORT: "0"
+      FORGEJO__service__DISABLE_REGISTRATION: "true"
+      FORGEJO__actions__ENABLED: "true"
+      FORGEJO__log__LEVEL: warn
+    ports:
+      - "3000:3000"
+    volumes:
+      - forgejo-data:/data
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/api/v1/version"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+volumes:
+  forgejo-data:

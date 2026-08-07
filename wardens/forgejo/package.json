@@ -1,0 +1,48 @@
+{
+  "name": "@intentius/forgejo-warden",
+  "version": "0.1.1",
+  "type": "module",
+  "description": "Keep your Forgejo org and repos in declared state \u2014 reconcile, guardrails, drift correction",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/INTENTIUS/chant.git",
+    "directory": "wardens/forgejo"
+  },
+  "homepage": "https://github.com/INTENTIUS/chant/tree/main/wardens/forgejo#readme",
+  "bugs": {
+    "url": "https://github.com/INTENTIUS/chant/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "bin": {
+    "forgejo-warden": "bin/forgejo-warden.js"
+  },
+  "files": [
+    "bin",
+    "dist"
+  ],
+  "scripts": {
+    "tsc": "tsc --noEmit",
+    "test": "vitest run",
+    "test:e2e:run": "vitest run --config vitest.e2e.config.ts",
+    "e2e:up": "bash e2e/bootstrap.sh",
+    "e2e:down": "docker compose -f e2e/docker-compose.yml down -v",
+    "build": "esbuild src/cli.ts --bundle --platform=node --format=esm --banner:js=\"import{createRequire as __cr}from'module';const require=__cr(import.meta.url);\" --outfile=dist/cli.js && chmod +x dist/cli.js",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "yaml": "^2.9.0"
+  },
+  "devDependencies": {
+    "@intentius/chant": "*",
+    "@types/node": "^22.0.0",
+    "esbuild": "^0.28.0",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.9"
+  },
+  "peerDependencies": {
+    "@intentius/chant": "^0.41.19"
+  }
+}
