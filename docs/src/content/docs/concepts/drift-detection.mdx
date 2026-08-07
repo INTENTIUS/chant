@@ -18,7 +18,7 @@ chant's snapshots are **observational**. They're a forensic record: "this is wha
 | Authoritative state (Terraform, Pulumi, CDK) | Observational state (chant) |
 |---|---|
 | State must be locked; concurrent writes corrupt | A stale snapshot is inconvenient, not dangerous |
-| Sensitive data leaks into state file | Snapshots record metadata only — no secrets |
+| Sensitive data leaks into state file | Thin snapshots record metadata only; deep property trees [mask secret-bearing names](#secret-masking) before anything is written |
 | Bad state breaks deploys | Bad snapshot is a record problem; deploys query live APIs |
 | `apply` knows exactly what to change | Precise change set comes from live projection (`lifecycle plan`); chant computes it but never auto-applies |
 
@@ -75,7 +75,26 @@ Those seven categories are entity-level — they answer whether a resource is th
 
 `undeclared` is the interesting one and the reason the deep read exists. CloudFormation's own drift detection compares only the properties it was told about, so a property nobody declared is invisible to it no matter who changed it.
 
-Depth is opt-in per lexicon and changes nothing for the others — see the [coverage matrix](/chant/lexicons/overview/#runtime-observation-coverage) for who reports it, and [`--update-baseline`](/chant/cli/lifecycle/#--update-baseline--accept-a-deviation) for accepting a deviation.
+A raw live model is mostly fields nobody declared and nobody changed, so both trees are normalized with the lexicon's own rules before the comparison: server-populated fields dropped, set-like arrays (tags, policy statements) canonicalized, provider defaults subtracted where source is silent. On Kubernetes, where the API server records per-field ownership (`metadata.managedFields`), each reported drift also names the manager that owns the field live — "owned by `hpa-controller`" and "owned by `kubectl-edit`" are the same drift kind and very different answers.
+
+Depth is opt-in per lexicon and changes nothing for the others. All five resource-observing lexicons implement it — see the [coverage matrix](/chant/lexicons/overview/#runtime-observation-coverage) for the mechanism each one reads through.
+
+#### The accepted baseline — `--update-baseline`
+
+Some deviations are permanent facts of the account: a mandatory tag another team stamps on everything, a bucket setting an org policy flips on, a role an operator attached by hand that everyone agreed to keep. Without somewhere to record "yes, we know, leave it", a deep diff is a report nobody reads twice.
+
+[`chant lifecycle diff <env> --live --update-baseline`](/chant/cli/lifecycle/#--update-baseline--accept-a-deviation) records every property deviation that run reported as **accepted**, into `<env>/observation-baseline.json` on the same `chant/lifecycle` orphan branch the snapshots use. Accepting is an explicit act with a git commit behind it, and it is **value-bound**: what you accept is the live value at that moment, not the path. Accept `VersioningConfiguration.Status = Enabled` and a later flip to `Suspended` is drift again, reported with all three values (declared, live, accepted) so the reader sees what moved and from what.
+
+Two boundaries keep the baseline honest:
+
+- An `absent` finding is never accepted. The cloud not carrying a declared property is something to fix in source or in the cloud, not a value to bless — only a value that is actually live can enter the baseline.
+- The baseline is not state. It never tells a deploy what to do and is never read on the write path; deleting it costs noise suppression and nothing else. Accepted deviations are also still *reported*, in their own section and count, so what is being held back stays visible.
+
+#### Secret masking
+
+A deep read pulls real property values, and some property names carry secrets. Any property whose name matches a narrow, key-name-based pattern list — `password`, `secret`, `token`, `private key`, `credential`, `connection string` — is masked to `[REDACTED]` during normalization, before the value can reach a diff line, a CI log, a snapshot, or the baseline. Both sides are masked with the same rule, so a secret-bearing property can still report (an undeclared one shows up as `[REDACTED]`), but its plaintext never does — a rotated secret does not leak into CI output.
+
+The list is deliberately narrow. Broadening it to, say, anything matching `key` would mask an AWS tag's `Key` field and every `*KeyName` reference, at which point the masking becomes its own drift signal. The same list backs the thin snapshot path, so the two paths cannot disagree about what counts as a secret.
 
 #### Resolving an `orphan`
 
