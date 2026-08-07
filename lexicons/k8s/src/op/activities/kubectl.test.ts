@@ -132,6 +132,52 @@ describe("kubectlApply", () => {
     }
   });
 
+  test("the apply stamps its resolved stack onto every document's labels — the identity the prune and the status sweep query", async () => {
+    // The serializer bakes the PROJECT stack (`ownership.stack`) into what it
+    // emits, but a component's kubectl-apply step applies under its own unit
+    // stack — and that is what both label readers select on. A manifest with
+    // the project label (or none at all: upstream CRDs) must leave the apply
+    // carrying the unit's identity, or the unit reads absent forever.
+    const file = join(dir, "k8s.yaml");
+    const labeled = deploymentYaml.replace(
+      "  name: web\n  namespace: prod\n",
+      "  name: web\n  namespace: prod\n  labels:\n    app.kubernetes.io/managed-by: chant\n    chant.intentius.io/stack: whole-project\n    chant.intentius.io/env: dev\n",
+    );
+    writeFileSync(file, labeled);
+    const cluster = fakeCluster({ respond: echoApplies });
+
+    await applyManifest({ manifest: file, stack: "kmv-workload" }, undefined, cluster.connector);
+
+    const bodies = cluster.layer.requests
+      .filter((r) => r.method === "PATCH")
+      .map((r) => JSON.parse(String(r.body)) as { metadata?: { labels?: Record<string, string> } });
+    expect(bodies).toHaveLength(2);
+    for (const body of bodies) {
+      expect(body.metadata?.labels).toMatchObject({
+        "app.kubernetes.io/managed-by": "chant",
+        "chant.intentius.io/stack": "kmv-workload",
+      });
+    }
+    // The env label is the serializer's channel — restamped never, kept as-is.
+    expect(bodies[0].metadata?.labels?.["chant.intentius.io/env"]).toBe("dev");
+    // The previously-unlabeled Service now carries the marker too.
+    expect(bodies[1].metadata?.labels?.["chant.intentius.io/env"]).toBeUndefined();
+  });
+
+  test("no resolvable stack applies the documents verbatim — no marker invented", async () => {
+    const file = join(dir, "k8s.yaml");
+    writeFileSync(file, deploymentYaml);
+    const cluster = fakeCluster({ respond: echoApplies });
+
+    // No stack arg, no project config: identity resolution yields none.
+    await applyManifest({ manifest: file, cwd: dir }, undefined, cluster.connector);
+
+    const body = JSON.parse(
+      String(cluster.layer.requests.find((r) => r.method === "PATCH")!.body),
+    ) as { metadata?: { labels?: Record<string, string> } };
+    expect(body.metadata?.labels).toBeUndefined();
+  });
+
   test("an explicit context is honored and skips the environment lookup entirely", async () => {
     const file = join(dir, "k8s.yaml");
     writeFileSync(file, deploymentYaml);

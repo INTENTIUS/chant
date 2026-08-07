@@ -192,6 +192,44 @@ async function resolveApplyIdentity(
 }
 
 /**
+ * Stamp the apply's own stack identity onto a document's labels.
+ *
+ * The serializer bakes `ownership.stack` — the *project* identity from
+ * `chant.config.ts` — into every manifest it emits. But the apply's identity
+ * is the *stack argument it resolved* (a component's `kubectl-apply` step
+ * names its own deploy unit, e.g. `kmv-workload`), and that is the value both
+ * consumers of the label query for: the owned-only prune's selector and
+ * `describeStackStatus`'s presence sweep. Applying the manifest verbatim left
+ * the label saying `kubemicrovm-ops` while both readers asked for
+ * `kmv-workload` — the prune silently matched nothing and every kubectl-apply
+ * unit read absent in `components status --live` (a green estate painted
+ * dead). A manifest chant never serialized (upstream CRDs pinned into a
+ * `crds` unit) carried no marker at all, with the same two failures.
+ *
+ * So the apply now re-stamps what it applies: `managed-by=chant` plus the
+ * resolved stack. The ownership *verdict* keys on `managed-by` alone
+ * (core/ownership.ts `hasOwnershipMarker`), so overlay classification is
+ * unchanged; the env label is the serializer's to write and is left as-is.
+ * No stack resolved (no explicit arg, no project ownership) applies verbatim,
+ * exactly as before.
+ */
+function stampOwnership(document: K8sObject, stack: string | undefined): K8sObject {
+  if (stack === undefined) return document;
+  const metadata = (document.metadata ?? {}) as { labels?: Record<string, string> };
+  return {
+    ...document,
+    metadata: {
+      ...metadata,
+      labels: {
+        ...(metadata.labels ?? {}),
+        [LABEL_OWNERSHIP_KEYS.managedBy]: OWNERSHIP_MANAGED_BY_VALUE,
+        [LABEL_OWNERSHIP_KEYS.stack]: stack,
+      },
+    },
+  } as K8sObject;
+}
+
+/**
  * Apply every document in `args.manifest`, then prune when asked.
  *
  * Returns what it did. `kubectlApply` is the registered activity and keeps its
@@ -219,7 +257,7 @@ export async function applyManifest(
 
     const applied: AppliedRef[] = [];
     for (const document of documents) {
-      const result = await client.apply(document as K8sObject, {
+      const result = await client.apply(stampOwnership(document as K8sObject, stack), {
         fieldManager,
         force: args.force ?? false,
         dryRun: args.dryRun,
