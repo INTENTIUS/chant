@@ -7,6 +7,17 @@ A hand-curated rollup of capabilities shipped recently. If you learned chant bef
 
 For the day-to-day reference docs see [Lifecycle Models](/chant/concepts/lifecycle-models/), [`chant lifecycle`](/chant/cli/lifecycle/), [Live Import](/chant/guide/live-import/), [Reconciling Lifecycle](/chant/guide/reconciling-lifecycle/), [Drift Detection](/chant/concepts/drift-detection/), and [Implementing Observation](/chant/lexicon-authoring/observation/).
 
+## Exploitability-aware vulnerability gating
+
+`vuln-gate` can now gate on whether a CVE is actually being exploited, not just how bad it would be: **KEV** catalog membership (CISA's list of vulnerabilities exploited in the wild) and the **EPSS** score (likelihood of exploitation in the next 30 days). Four new `vulnPolicy` fields — `failOnKev`, `failEpssAtOrAbove`, `warnEpssAtOrAbove`, `exploitabilityFixableOnly` — work project-wide from `chant.config.ts` or per-step. All default to off, so upgrading blocks nothing new; the one change every gate sees is that `VulnGateFailedError` now names the rule that fired per finding (`in CISA KEV since 2024-03-11, known ransomware use` instead of a bare CVE list). VEX suppression still outranks everything, KEV included. grype reports the data; trivy (v0.73) reports none of it, in which case the gate behaves exactly as before. See [Exploitability gating](/chant/components/supply-chain/#exploitability-gating-kev-and-epss).
+
+| # | Capability |
+|---|---|
+| [#1461](https://github.com/INTENTIUS/chant/issues/1461) | The epic — exploitability as an escalation layer over the severity gate, defaults off |
+| [#1462](https://github.com/INTENTIUS/chant/issues/1462)–[#1464](https://github.com/INTENTIUS/chant/issues/1464) | `VulnFinding` carries EPSS/KEV fields; grype/trivy parsers keep what the scanner reports; the data survives scan → gate on both routes |
+| [#1465](https://github.com/INTENTIUS/chant/issues/1465) | The gate evaluates the predicates — KEV/EPSS blocks OR'd with severity, most-specific reason reported, rule named in the error |
+| [#1466](https://github.com/INTENTIUS/chant/issues/1466) | `chant.config.ts` plumbing — the fields flow through `vulnPolicy` with zero thresholds and explicit `false` overrides intact |
+
 ## A Kubernetes runtime surface
 
 The k8s lexicon had chant's strongest authoring surface and its weakest runtime one: `describeResources()` shelled `kubectl get` once per declared entity, serially, through a hardcoded twenty-entry map that warn-skipped every CRD. `lifecycle diff --live`, `lifecycle plan` and behold's overlay all inherited that cap. It now reads through a typed API client in its own package — coverage from the same codegen pass that emits the declarable classes (180-odd types, CRDs included) confirmed against the cluster's own API discovery, concurrent reads, and failures carrying the API server's `code` and `reason` instead of a parsed stderr line. A Temporal worker running `kubectlApply` or `waitForReady` no longer needs a `kubectl` binary.
