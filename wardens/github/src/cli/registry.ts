@@ -1,5 +1,5 @@
 /**
- * Cycle registry for the chant-governance CLI.
+ * Cycle registry for the github-warden CLI.
  *
  * Maps well-known cycle names (the strings passed to --cycles) to their
  * Cycle implementations. Add new cycles here as they are implemented.

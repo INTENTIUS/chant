@@ -1,5 +1,5 @@
 /**
- * Tests for the chant-governance CLI.
+ * Tests for the github-warden CLI.
  *
  * All tests are pure unit tests: no network, no process.exit, no FS I/O
  * beyond what is mocked inline. We test the exported internal helpers directly
@@ -367,7 +367,7 @@ describe("runReconcile integration (mocked client)", () => {
 describe("pipeline.ts ↔ CLI flag consistency", () => {
   it("dry-run command flags from pipeline.ts parse without error", () => {
     // The emitted dry-run step in pipeline.ts runs:
-    //   npx chant-governance reconcile \
+    //   npx @intentius/github-warden reconcile \
     //     --config "<configPath>" \
     //     --token-env GH_TOKEN \
     //     --installation-id-env GOVERNANCE_INSTALLATION_ID \
@@ -395,7 +395,7 @@ describe("pipeline.ts ↔ CLI flag consistency", () => {
 
   it("apply command flags from pipeline.ts parse without error", () => {
     // The emitted apply step in pipeline.ts runs:
-    //   npx chant-governance reconcile \
+    //   npx @intentius/github-warden reconcile \
     //     --config "<configPath>" \
     //     --token-env GH_TOKEN \
     //     --installation-id-env GOVERNANCE_INSTALLATION_ID \
