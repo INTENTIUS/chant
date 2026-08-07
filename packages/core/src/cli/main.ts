@@ -402,14 +402,16 @@ Commands:
                         --select <addr>   (recommended for TF-managed resources); --env
                         --state|--env     <env> adopts via live cloud import (--live-name
                                           <logical-id> narrows a multi-resource stack).
+                                          Persists a carve manifest bridge/apply compose with.
   carve bridge          Generate the surviving-TF patch (data sources + rewired
                         --from <tf-dir>   refs) + deferred inputs + reversible runbook.
-                        --select <addr>   Writes proposals for review; --apply-rewrites
-                                          edits the .tf in place.
+                        [--select <addr>] Writes proposals for review; --apply-rewrites
+                                          edits the .tf in place. --select is optional
+                                          when the output dir holds one carve manifest.
   carve apply           Apply graduation: ownership marker + finalized apply
                         --from <tf-dir>   runbook (dial-turn observe→apply). BYOL —
-                        --select <addr>   no cloud call; --write saves the doc.
-                        --env <env>
+                        [--select <addr>] no cloud call; --write saves the doc. --select
+                        --env <env>       is optional with a carve manifest present.
 
 Ops:
   run <name>            Start an Op workflow (spawns worker + submits to Temporal)

@@ -584,6 +584,28 @@ if [ -d "$CARVE_TF" ]; then
       fail "emitted chant source did not build to the expected CloudFormation"
     fi
     rm -rf "$BUILD_OUT"
+
+    # the carve state manifest is persisted next to the emitted source
+    if grep -q '"target": "aws_s3_bucket.assets"' "$EMIT_OUT"/aws_s3_bucket-assets.carve.json 2>/dev/null; then
+      pass "carve emit persists the state manifest"
+    else
+      fail "carve emit did not persist the state manifest"
+    fi
+
+    # bridge + apply compose with the manifest: no --select needed
+    if $CHANT carve bridge --from "$CARVE_TF" --output "$EMIT_OUT" >/dev/null 2>&1 \
+       && grep -q 'data "aws_s3_bucket" "assets"' "$EMIT_OUT"/aws_s3_bucket-assets-datasources.tf 2>/dev/null; then
+      pass "carve bridge composes with the manifest (no --select)"
+    else
+      fail "carve bridge did not compose with the manifest"
+    fi
+    if COMPOSED_APPLY=$($CHANT carve apply --from "$CARVE_TF" --output "$EMIT_OUT" --env prod 2>/dev/null) \
+       && echo "$COMPOSED_APPLY" | grep -q 'target from the carve manifest' \
+       && grep -q '"apply"' "$EMIT_OUT"/aws_s3_bucket-assets.carve.json 2>/dev/null; then
+      pass "carve apply composes with the manifest (no --select)"
+    else
+      fail "carve apply did not compose with the manifest"
+    fi
   else
     EMIT_ERR=$($CHANT carve emit --from "$CARVE_TF" --select aws_s3_bucket.assets --state "$CARVE_STATE" --output "$EMIT_OUT" 2>&1 >/dev/null || true)
     echo "  stderr: $EMIT_ERR"

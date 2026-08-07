@@ -10,14 +10,16 @@
  */
 
 import { existsSync, statSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "fs";
-import { join, basename } from "path";
+import { join, basename, resolve } from "path";
 import { parseTerraformDir, Hcl2JsonNotInstalled } from "../../terraform/parse";
-import { boundaryReport } from "../../terraform/carve";
+import { boundaryReport, type CarveReport } from "../../terraform/carve";
 import { generateBridge, type BridgePlan, type CarvedIdentity } from "../../terraform/bridge";
 import { IDENTITY_ATTR } from "../../terraform/tier-map";
+import { resolveCarveManifest, writeCarveManifest, type CarveManifest } from "../../terraform/manifest";
 
 export interface CarveBridgeOptions {
   from?: string;
+  /** Optional when the output dir holds a single carve manifest from `carve emit`. */
   select?: string;
   statePath?: string;
   /** Output directory for proposed files (default `<from>/carveout`). */
@@ -34,6 +36,10 @@ export interface CarveBridgeResult {
   written?: string[];
   /** True if survivor files were edited in place. */
   appliedInPlace?: boolean;
+  /** The carve state manifest this bridge composed with / recorded into. */
+  manifestPath?: string;
+  /** True when the target came from the manifest, not --select. */
+  selectFromManifest?: boolean;
 }
 
 function listTfFiles(dir: string): string[] {
@@ -45,16 +51,25 @@ function listTfFiles(dir: string): string[] {
 
 export async function carveBridge(opts: CarveBridgeOptions): Promise<CarveBridgeResult> {
   if (!opts.from) return { ok: false, error: "chant carve bridge requires --from <terraform-dir>" };
-  if (!opts.select) return { ok: false, error: "chant carve bridge requires --select <tf-address>" };
   if (!existsSync(opts.from) || !statSync(opts.from).isDirectory()) {
     return { ok: false, error: `Not a directory: ${opts.from}` };
   }
 
+  // Compose with the carve state manifest `carve emit` persisted: without
+  // --select it supplies the target (and tfstate), with it it is updated below.
+  const outDir = opts.output ?? join(opts.from, "carveout");
+  const resolved = resolveCarveManifest(outDir, opts.select);
+  if (!opts.select && resolved.error) return { ok: false, error: resolved.error };
+  const select = opts.select ?? resolved.manifest!.target;
+  const statePath = opts.statePath ?? resolved.manifest?.statePath;
+
   let plan: BridgePlan;
+  let report: CarveReport;
   try {
-    const graph = await parseTerraformDir(opts.from, { statePath: opts.statePath });
-    const report = boundaryReport(graph, opts.select);
-    if (!report) return { ok: false, error: `${opts.select} not found in ${opts.from}` };
+    const graph = await parseTerraformDir(opts.from, { statePath });
+    const found = boundaryReport(graph, select);
+    if (!found) return { ok: false, error: `${select} not found in ${opts.from}` };
+    report = found;
 
     // Physical identities for the carved resources, for the data sources.
     const identities = new Map<string, CarvedIdentity>();
@@ -71,8 +86,7 @@ export async function carveBridge(opts: CarveBridgeOptions): Promise<CarveBridge
     return { ok: false, error: `Failed to build the bridge: ${err instanceof Error ? err.message : String(err)}` };
   }
 
-  const slug = opts.select.replace(/[^A-Za-z0-9_]+/g, "-");
-  const outDir = opts.output ?? join(opts.from, "carveout");
+  const slug = select.replace(/[^A-Za-z0-9_]+/g, "-");
   mkdirSync(outDir, { recursive: true });
   const written: string[] = [];
 
@@ -101,14 +115,35 @@ export async function carveBridge(opts: CarveBridgeOptions): Promise<CarveBridge
     }
   }
 
-  return { ok: true, plan, written, appliedInPlace: opts.applyRewrites && changed.length > 0 };
+  // Record the bridge into the manifest (create one on a standalone bridge),
+  // so `carve apply` composes with this step too.
+  const applied = Boolean(opts.applyRewrites) && changed.length > 0;
+  const manifest: CarveManifest = resolved.manifest ?? {
+    version: 1,
+    target: select,
+    from: resolve(opts.from),
+    statePath: statePath ? resolve(statePath) : undefined,
+    boundary: report,
+  };
+  manifest.boundary = report;
+  manifest.bridge = { written: written.map((w) => resolve(w)), appliedInPlace: applied, at: new Date().toISOString() };
+  const manifestPath = writeCarveManifest(outDir, manifest);
+
+  return {
+    ok: true,
+    plan,
+    written,
+    appliedInPlace: applied,
+    manifestPath,
+    selectFromManifest: !opts.select,
+  };
 }
 
 export function formatCarveBridge(result: CarveBridgeResult): string {
   if (!result.ok || !result.plan) return result.error ?? "carve bridge failed";
   const p = result.plan;
   const L: string[] = [];
-  L.push(`Boundary bridge for ${p.target}:`);
+  L.push(`Boundary bridge for ${p.target}${result.selectFromManifest ? " (target from the carve manifest)" : ""}:`);
   if (p.dataSources.length) {
     L.push(`  ${p.dataSources.length} data source(s) for survivors to read:`);
     for (const d of p.dataSources) L.push(`    data.${d.type}.${d.name}  (was ${d.address})`);
