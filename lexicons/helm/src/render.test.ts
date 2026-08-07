@@ -87,6 +87,80 @@ spec:
 `,
   );
 
+  // CRDs shipped in the chart's crds/ directory — helm template drops these
+  // unless --include-crds is passed.
+  mkdirSync(join(CHART_DIR, "crds"), { recursive: true });
+  writeFileSync(
+    join(CHART_DIR, "crds", "widgets.yaml"),
+    `apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: widgets.example.com
+spec:
+  group: example.com
+  names:
+    kind: Widget
+    listKind: WidgetList
+    plural: widgets
+    singular: widget
+  scope: Namespaced
+  versions:
+  - name: v1
+    served: true
+    storage: true
+    schema:
+      openAPIV3Schema:
+        type: object
+`,
+  );
+
+  // A subchart with its own crds/ directory — must also survive the render.
+  const SUBCHART_DIR = join(CHART_DIR, "charts", "tiny-sub");
+  mkdirSync(join(SUBCHART_DIR, "crds"), { recursive: true });
+  mkdirSync(join(SUBCHART_DIR, "templates"), { recursive: true });
+  writeFileSync(
+    join(SUBCHART_DIR, "Chart.yaml"),
+    `apiVersion: v2
+name: tiny-sub
+description: Subchart fixture with its own CRD
+type: application
+version: 0.1.0
+`,
+  );
+  writeFileSync(
+    join(SUBCHART_DIR, "crds", "gadgets.yaml"),
+    `apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: gadgets.example.com
+spec:
+  group: example.com
+  names:
+    kind: Gadget
+    listKind: GadgetList
+    plural: gadgets
+    singular: gadget
+  scope: Namespaced
+  versions:
+  - name: v1
+    served: true
+    storage: true
+    schema:
+      openAPIV3Schema:
+        type: object
+`,
+  );
+  writeFileSync(
+    join(SUBCHART_DIR, "templates", "configmap.yaml"),
+    `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-tiny-sub
+data:
+  role: subchart
+`,
+  );
+
   // Package the chart into a .tgz and create a repo index.yaml.
   execFileSync("helm", ["package", CHART_DIR, "-d", REPO_DIR], { stdio: "ignore" });
   execFileSync("helm", ["repo", "index", REPO_DIR], { stdio: "ignore" });
@@ -116,6 +190,17 @@ describe.skipIf(!fixtureAvailable)("HelmRender", () => {
     const service = keys.find((k) => k.startsWith("Service_"));
     expect(deployment).toBeDefined();
     expect(service).toBeDefined();
+  });
+
+  test("CRDs from crds/ directories are included (top level + subchart)", () => {
+    const result = HelmRender({
+      name: "rel",
+      chart: CHART_DIR,
+      noCache: true,
+    });
+    const keys = Object.keys(result.members as Record<string, unknown>);
+    expect(keys).toContain("CustomResourceDefinition_widgets_example_com");
+    expect(keys).toContain("CustomResourceDefinition_gadgets_example_com");
   });
 
   test("createNamespace adds a Namespace declarable", () => {
