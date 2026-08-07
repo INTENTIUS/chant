@@ -247,3 +247,10 @@ Confirmed against `floci/floci:1.5.34`: `/_localstack/health` lists no
 health for `"organizations"` and exits without exporting `AWS_ENDPOINT_URL`,
 so the suite self-skips (green, with a notice) until the emulator gains the
 service. Fallback for a real run: a live sandbox org in dry-run.
+
+The identity-assignment cycle (chant#792) is behind the same skip: floci's
+service catalog has neither `sso-admin` (IAM Identity Center) nor
+`identitystore` (checked in the floci source's ServiceCatalog, 2026-08-07),
+and every identity fetch starts from `ListInstances`. The in-memory
+convergence suite (`wardens/aws/src/reconcile/convergence.test.ts`) covers
+the identity loop meanwhile, like the other governance cycles.

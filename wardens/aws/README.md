@@ -1,6 +1,7 @@
 # aws-warden
 
-Keep your AWS organization in a declared state — OUs, SCPs, and audit sinks;
+Keep your AWS organization in a declared state — OUs, SCPs, SSO
+assignments, and audit sinks;
 stateless, drift-correcting reconcile from the management account. The cloud
 member of chant's warden family (epic intentius/chant#787), on the same
 reconcile seam and guarantees as github/gitlab/forgejo-warden: one binary +
@@ -49,6 +50,18 @@ scps:
         - Effect: Deny
           Action: [ "cloudtrail:StopLogging", "cloudtrail:DeleteTrail" ]
           Resource: "*"
+identity:
+  permissionSets:
+    admin:
+      description: full administrative access
+      managedPolicies: [arn:aws:iam::aws:policy/AdministratorAccess]
+    readonly:
+      sessionDuration: PT8H
+      managedPolicies: [arn:aws:iam::aws:policy/ReadOnlyAccess]
+  assignments:
+    - { principal: Platform, principalType: GROUP, permissionSet: readonly, accounts: [checkout] }
+  breakGlass:
+    { principal: BreakGlass, principalType: GROUP, permissionSet: admin, accounts: [checkout] }
 auditSinks:
   cloudtrail: { bucket: acme-org-audit, multiRegion: true }
 ```
@@ -59,10 +72,8 @@ auditSinks:
 | --- | --- | --- |
 | `org-units` | `org-unit` | The OU tree and account placements. OU create/delete (deletes gated on the `managed-by: aws-warden` tag); accounts move via `MoveAccount`; account creation/closure is deliberately manual and surfaces in the plan with instructions. |
 | `scps` | `policy-guardrail` | SCP documents, descriptions, attachments. Field-level drift; AWS-managed policies untouched; deletes ownership-gated. |
+| `identity` | `identity-assignment` | IAM Identity Center permission sets (description, session duration, managed + inline policies; deletes ownership-gated) and account assignments (create/delete, scoped to declared permission sets). Identity-store users/groups are never provisioned — a missing principal fails its entry with instructions. |
 | `audit-trail` | `audit-sink` | The organization CloudTrail (bucket, multi-region). Never deleted. |
-
-The `identity-assignment` cycle (SSO/IAM + the break-glass-admin guardrail)
-is the tracked follow-up on intentius/chant#792.
 
 ## Guardrails
 
@@ -72,6 +83,9 @@ On top of the shared removal-delta cap:
   SCP attached is blocked.
 - **OU deletion cap** — more than 2 OU deletes in one run is blocked
   (a hierarchy typo must not cascade).
+- **break-glass admin** — the grant named in `identity.breakGlass` is
+  implicitly desired and no plan may remove its assignment or the permission
+  set backing it.
 
 `--allow-guardrail-override` applies anyway, deliberately.
 
@@ -87,8 +101,9 @@ aws lexicon.
 
 `e2e/` runs the reconcile loop against a floci (AWS emulator) endpoint —
 gated, self-skipping, hermetic (`.github/workflows/warden-aws-e2e.yml`,
-nightly). The current floci build has no organizations service
-(test/floci-gaps.md entry 5), so the suite self-skips green; the in-memory
+nightly). The current floci build has no organizations service — nor SSO
+Admin / Identity Store (test/floci-gaps.md entry 5) — so the suite
+self-skips green; the in-memory
 convergence suite (`src/reconcile/convergence.test.ts`) carries the same
 dry-run → apply → empty-plan → drift-redetected assertions in the default
 test run meanwhile.
