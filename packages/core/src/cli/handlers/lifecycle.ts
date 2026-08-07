@@ -32,6 +32,7 @@ import { affectedStacks } from "../../lifecycle/affected";
 import { rollbackToRevision } from "../../lifecycle/rollback";
 import { loadChantConfig, environmentNames } from "../../config";
 import { applyLiveEndpoint } from "../../live-endpoint";
+import { isResourceDeclarable } from "../../declarable";
 import { formatError, formatWarning, formatSuccess, formatBold } from "../format";
 import type { CommandContext } from "../registry";
 import type { LifecycleSnapshot } from "../../lifecycle/types";
@@ -758,17 +759,18 @@ async function runLifecycleDiffLive(args: LiveDiffArgs): Promise<LiveDiffOutcome
       continue;
     }
 
-    // Build per-lexicon entity index
+    // Build per-lexicon entity index. Resource declarables only — outputs,
+    // parameters and serializer directives have no live counterpart, and a
+    // declared name the reader can never resolve reads as missing (see
+    // lifecycle/observe.ts).
     const declared = new Set<string>();
     const entities = new Map<string, { entityType: string; props: Record<string, unknown> }>();
     for (const [name, entity] of args.buildResult.entities) {
-      if (entity.lexicon === lexiconName) {
+      if (entity.lexicon === lexiconName && isResourceDeclarable(entity)) {
         declared.add(name);
         entities.set(name, {
           entityType: entity.entityType,
-          props: ("props" in entity && entity.props != null
-            ? entity.props
-            : {}) as Record<string, unknown>,
+          props: (entity.props != null ? entity.props : {}) as Record<string, unknown>,
         });
       }
     }
@@ -1119,11 +1121,11 @@ export async function runLifecyclePlan(ctx: CommandContext): Promise<number> {
       const declared = new Set<string>();
       const entities = new Map<string, { entityType: string; props: Record<string, unknown> }>();
       for (const [name, entity] of buildResult.entities) {
-        if (entity.lexicon === lexiconName) {
+        if (entity.lexicon === lexiconName && isResourceDeclarable(entity)) {
           declared.add(name);
           entities.set(name, {
             entityType: entity.entityType,
-            props: ("props" in entity && entity.props != null ? entity.props : {}) as Record<string, unknown>,
+            props: (entity.props != null ? entity.props : {}) as Record<string, unknown>,
           });
         }
       }

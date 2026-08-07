@@ -42,6 +42,7 @@ import { findBuildManifestByArtifactDigest } from "../../lifecycle/build-ledger-
 import type { ComponentBomSummary } from "../../lifecycle/build-ledger";
 import { loadChantConfig } from "../../config";
 import { applyLiveEndpoint } from "../../live-endpoint";
+import { isResourceDeclarable } from "../../declarable";
 import { build } from "../../build";
 import { discoverComponents } from "../../components/discover";
 import { formatError, formatWarning, formatSuccess, formatBold } from "../format";
@@ -397,11 +398,12 @@ export async function runComponentsStatus(ctx: CommandContext): Promise<number> 
           const declared = new Set<string>();
           const entities = new Map<string, { entityType: string; props: Record<string, unknown> }>();
           for (const [name, entity] of buildResult.entities) {
-            if (entity.lexicon === plugin.name) {
+            // Resource declarables only (see lifecycle/observe.ts).
+            if (entity.lexicon === plugin.name && isResourceDeclarable(entity)) {
               declared.add(name);
               entities.set(name, {
                 entityType: entity.entityType,
-                props: ("props" in entity && entity.props != null ? entity.props : {}) as Record<string, unknown>,
+                props: (entity.props != null ? entity.props : {}) as Record<string, unknown>,
               });
             }
           }

@@ -1,132 +1,60 @@
 /**
- * GCP deep observation (#1087) — the GCP row of the deep-observe contract
- * (#1014), reusing the k8s row (#1076) rather than writing a second one, per
- * the issue and #1173's own per-row checklist: "A Config Connector resource
- * *is* a Kubernetes object, so it carries managed-fields for the same
- * reason. Share the hooks rather than writing a second implementation."
+ * GCP deep observation (#1087, re-landed on direct REST by #1209/#1210) — the
+ * GCP row of the deep-observe contract (#1014).
  *
- * ## A Config Connector CR is a Kubernetes object
+ * ## The reader is the applier's transport, pointed at reads
  *
- * `kubectl get <kind>.<group> -o json` against a Config Connector-enabled
- * cluster (`./describe-resources.ts`'s own transport, reused here) returns a
- * real Kubernetes API object: `metadata.managedFields`, `status`,
- * `metadata.{uid,resourceVersion,generation,creationTimestamp}` are all
- * present for the identical reason they're present on a Deployment — the API
- * server that served the read is the same kind of API server. The epic's own
- * table lists `metadata.managedFields` under GCP's "field noise" to prune; it
- * is the opposite of noise, and it is available here for exactly the reason
- * chant #1076 reads it on the k8s row.
+ * chant applies GCP cluster-free over direct REST (#706), and since #1209 it
+ * observes the same way: every GET here is built by the same
+ * `ResourceMapper.plan().getUrl` the applier writes through (see
+ * ./api/read-client.ts), so reader and applier cannot disagree about where a
+ * resource lives. `GCP_ENDPOINT_URL` redirects the whole reader at a local
+ * floci-gcp; unset means real GCP, exactly as it does for the applier.
+ * Coverage is the applier's own dispatch table — a kind with no mapper cannot
+ * be applied either, and reports NOT-OBSERVED with `unsupported-kind` (#1089)
+ * rather than being dropped.
  *
- * So this reader reuses, unchanged, from `@intentius/chant/managed-fields`:
+ * ## Two shapes, one diff
  *
- * - `K8S_OBJECT_ENVELOPE_PRUNE_PATTERNS` — the generic Kubernetes object
- *   envelope (`status`, `metadata.{uid,resourceVersion,generation,
- *   creationTimestamp,managedFields,selfLink}`).
- * - `k8sListMapOrderKey` — Kubernetes' own list-map-key conventions, needed
- *   because some CNRM kinds embed genuinely k8s-shaped substructures (Cloud
- *   Run's `RunService` wraps a Knative pod spec with
- *   `containers`/`env`/`ports`, keyed the same way a Deployment's are).
- * - `buildOwnershipSets`/`pruneByOwnership` — the managed-fields ownership
- *   walk itself: chant #1076's actual contribution, and the piece this row
- *   exists to reuse rather than reimplement.
+ * The declared side is a CNRM spec as a declarable authors it (`{ metadata:
+ * { name }, location, storageClass }`); the REST APIs return their own shapes
+ * (`name` is usually the full resource path, a bucket's `iamConfiguration`
+ * nests what CNRM flattens, a subscription's `topic` is a path where CNRM
+ * writes `topicRef`). Diffed raw, every such field drifts twice: once as
+ * `declared -> <absent>` and once as `<undeclared> -> live`.
+ * {@link restToCnrmShape} plus the per-kind {@link CNRM_REFINERS} put the live
+ * payload into the declared vocabulary before the diff runs — the same move
+ * the AWS row makes with its per-type `toModel` (#1207/#1269), and it lives
+ * next to the read for the same reason: translation is the price of the
+ * richer read, and it does not belong inside the diff.
  *
- * These live in core, not in the k8s lexicon, specifically so this file can
- * reuse them without adding a dependency on the k8s lexicon package or (never,
- * per the issue) on `@intentius/chant-k8s-client` — this reader shells
- * `kubectl` exactly like `./describe-resources.ts` already does. Chant
- * #1177/#1180 kept GCP off the typed client deliberately ("a separate
- * lexicon and a separate decision"); this row does not revisit that.
+ * ## Noise is a static table, not an ownership walk
  *
- * ## The GCP twist: who is "chant" on this path?
- *
- * Chant #1076's rule treats a field as always-diffable when *any* chant field
- * manager (`chant`, `chant:<stack>` — chant #1075's SSA identity) owns it.
- * That identity is only ever set by the k8s lexicon's typed client, applying
- * with an explicit `--field-manager`. GCP has no equivalent apply activity:
- * every gcp example's own deploy script (e.g.
- * `examples/cockroachdb-multi-region-gke/scripts/deploy.sh`) runs plain
- * `kubectl apply -f dist/*.yaml` — classic client-side apply, no
- * `--server-side`, no `--field-manager`. kubectl's own hardcoded default
- * field manager for that command is `kubectl-client-side-apply`, identical
- * to what a human's `kubectl apply -f their-own-file.yaml` would record.
- * **There is no field-manager name on GCP's real deploy path that
- * distinguishes "chant applied this" from "a person applied this".**
- * (Config Connector's own controller is distinguishable — its reconciler
- * records itself as `cnrm-controller-manager`, per the k8s-config-connector
- * source's own `ControllerManagedFieldManager` constant — just chant isn't,
- * on this path.)
- *
- * That sounds like it breaks question 1 of the three-question rule
- * (`isChantManager`) below. It doesn't, because question 3 already covers
- * it: chant's own kubectl apply always applies the *exact* built manifest, so
- * any field chant's own most recent apply set is, by construction, also in
- * `declaredRoot` (`props`) on the very next read — chant never authors a
- * field it does not also declare. Working through what that means per field:
- *
- * - A field only chant's own applies have ever touched: not recognized as
- *   `chantOwned` (its manager is `kubectl-client-side-apply`, not `chant`),
- *   but foreign-owned *and* declared → contested → kept diffable anyway.
- *   Same outcome as being chant-owned would have been.
- * - A field CNRM's controller sets and chant never declares: foreign-owned,
- *   undeclared → pruned. Correct regardless of whether "chant" is recognized.
- * - A field a human sets by hand (`kubectl edit`, or their own `kubectl apply
- *   -f`) that chant *does* declare: foreign-owned (manager is `kubectl-edit`
- *   or `kubectl-client-side-apply`) and declared → contested → surfaces as
- *   drift. This is #1087's acceptance criterion 1.
- *
- * `isGcpChantFieldManager` below still checks the `chant`/`chant:<stack>`
- * family, so a future GCP apply path that *does* route through server-side
- * apply with an explicit chant field manager (matching the k8s lexicon's own
- * path) is recognized with no change needed here. On today's plain-apply
- * path it is inert — proven inert by this module's own test suite (the
- * "managers-specific case") — and the contested-field rule (question 3) is
- * what actually keeps GCP's drift semantics correct without it.
- *
- * ## What's genuinely GCP-specific
- *
- * - No typed operation surface (chant #1177's `operationFor` is a k8s
- *   lexicon/typed-client concept, generated from cluster discovery this
- *   reader never touches) — `./describe-resources.ts`'s `deriveGVK` stands in.
- * - CNRM's own observed-state annotations (`./deep-observe-hooks.ts`'s
- *   `gcpDeepNormalizationHooks`) — bookkeeping the controller writes into
- *   `metadata.annotations` for GCP-side properties the CRD schema has no
- *   field for. See that module's doc for why the list is narrow.
- *
- * ## Deliberately out of scope
- *
- * `status.conditions` staleness as its own signal — the issue's own
- * "Proposed" section floats this as worth *deciding*, not worth doing here.
- * `status` is pruned outright (matching k8s, and the acceptance criteria),
- * and a CNRM projection lagging real GCP state is a genuine gap, but
- * detecting it means reading the actual GCP API, not the CR — a different
- * read than this contract's "normalize what Kubernetes reports" scope.
- * Flagged, not papered over.
+ * The kubectl-era reader pruned by CNRM `metadata.managedFields`. A REST
+ * payload never says who wrote a field, so the noise rules are static
+ * (./deep-observe-hooks.ts): server-assigned names, chant's own ownership
+ * labels, CNRM-only declared fields, and per-kind provider defaults gated on
+ * "source never declared it". Core applies the same hooks to both trees.
  *
  * ## The build-path boundary
  *
- * This module imports `./describe-resources.ts` for the live kubectl
- * transport, which imports `node:child_process`. `gcpPlugin.ts` reaches this
- * file only via `await import("./deep-observe")` inside
- * `observeResourcesDeep` — never statically — the same way it already
- * dynamic-imports `describeResources`/`exportResources`, so `chant build`
- * never resolves a process-spawning module just to synthesize a template.
- * `deepNormalizationHooks` is plain data with no such dependency
- * (`./deep-observe-hooks.ts`) and is imported statically from `plugin.ts`,
- * because core normalizes the *declared* tree with it whether or not a
- * cluster read ever happens.
+ * `gcpPlugin.ts` reaches this file only via `await import("./deep-observe")`
+ * inside `observeResourcesDeep` — never statically — so `chant build` never
+ * resolves the live transport just to synthesize a template.
+ * `deepNormalizationHooks` is plain data (./deep-observe-hooks.ts) and is
+ * imported statically from `plugin.ts`, because core normalizes the
+ * *declared* tree with it whether or not a live read ever happens.
  */
 
 import type {
-  DeepNormalizationHooks,
   DeepObservationResult,
   DeepResourceObservation,
   UnobservedEntity,
 } from "@intentius/chant/lexicon";
 import { deepObservation, normalizeDeepProperties } from "@intentius/chant/deep-observation";
 import { hasOwnershipMarker, type ChannelKeys } from "@intentius/chant/ownership";
-import { deriveGVK } from "./describe-resources";
+import { deriveGVK, manifestProjectAnnotations, resolveReadProject } from "./describe-resources";
 import { getResource, mapperForKind, GcpReadError, isNotFound, type GcpReadClientOptions } from "./api/read-client";
-import { resolveGcpProject } from "./op/activities/gcp-apply";
 import { gcpDeepNormalizationHooks } from "./deep-observe-hooks";
 
 /** The labels the applier stamps — see describe-resources.ts. */
@@ -152,38 +80,24 @@ export interface GcpDeepObserveOptions {
 }
 
 /**
- * Reshape a GCP REST body into the CNRM shape the declared source is written in.
- *
- * This is the half of the port that is not transport (#1209). chant's GCP
- * source declares Config Connector custom resources — `{ metadata: { name },
- * spec: { location, storageClass } }` — while the REST APIs return their own
- * flat shape, `{ name, location, storageClass }`. Diffing one against the other
- * makes every field drift twice: once as `spec.location: US -> <absent>` and
- * again as `location: <undeclared> -> US`.
- *
- * Verified against floci-gcp before this existed: a bucket that matched its
- * declaration exactly reported **7 property drifts**, all of them shape.
- *
- * chant has met this before. #1207 records it for AWS: Cloud Control returns
- * the CloudFormation resource model and lines up for free, while the EC2 API
- * returns the EC2 shape and needs mapping onto the declared shape before the
- * diff can compare. GCP is the EC2 case.
- *
- * The mapping is CNRM's own convention rather than a per-kind table: identity
- * and labels live under `metadata`, everything else is `spec`. That holds for
- * every kind the applier can write, and a per-kind table would be a second
- * place to forget a field.
+ * Reshape a GCP REST body into the shape the declared props are written in:
+ * identity and labels under `metadata`, everything else at the root — a CNRM
+ * spec as a chant declarable authors it (`new StorageBucket({ metadata,
+ * location, storageClass })`). Kind-specific vocabulary differences on top of
+ * it are {@link CNRM_REFINERS}' job. Verified against floci-gcp: diffed raw, a
+ * bucket that matched its declaration exactly reported every field as drift
+ * twice, once per shape.
  */
 export function restToCnrmShape(body: Record<string, unknown>): Record<string, unknown> {
   const metadata: Record<string, unknown> = {};
-  const spec: Record<string, unknown> = {};
+  const rest: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(body)) {
     if (key === "name" || key === "labels" || key === "annotations") metadata[key] = value;
-    else spec[key] = value;
+    else rest[key] = value;
   }
   return {
     ...(Object.keys(metadata).length ? { metadata } : {}),
-    ...(Object.keys(spec).length ? { spec } : {}),
+    ...rest,
   };
 }
 
@@ -195,19 +109,105 @@ function propertiesTreeOf(obj: Record<string, unknown>): Record<string, unknown>
   return rest;
 }
 
+/** What a refiner may need beyond the tree: the read's project, and the REST
+ * payload's own full resource name (`projects/p/locations/l/services/s`). */
+interface RefineContext {
+  project: string;
+  restName?: string;
+}
+
+type CnrmTree = Record<string, unknown> & { metadata?: Record<string, unknown> };
+
 /**
- * Read the live property tree for each declared entity via `kubectl get
- * <kind>.<group> -o json`, pruning by `metadata.managedFields` (see the
- * module doc). Reuses `./describe-resources.ts`'s exact cluster-binding
- * resolution and kubectl mechanics — the binding check (chant #1100) still
- * refuses before any resource is touched, and a connect failure still
- * becomes NOT-OBSERVED for every declared entity rather than an empty result.
+ * Per-kind REST -> CNRM vocabulary mapping, applied after the generic
+ * {@link restToCnrmShape}. Each entry translates exactly the fields where the
+ * REST API and the CNRM schema disagree about names or nesting — kept next to
+ * the kind, like the applier's forward mapping in gcp-apply.ts, so adding a
+ * field means touching one kind in one file per direction.
+ */
+const CNRM_REFINERS: Record<string, (tree: CnrmTree, ctx: RefineContext) => void> = {
+  StorageBucket(tree) {
+    // CNRM flattens GCS's `iamConfiguration` envelope.
+    const iam = tree.iamConfiguration as
+      | { uniformBucketLevelAccess?: { enabled?: unknown }; publicAccessPrevention?: unknown }
+      | undefined;
+    if (iam) {
+      if (iam.uniformBucketLevelAccess?.enabled !== undefined) {
+        tree.uniformBucketLevelAccess = iam.uniformBucketLevelAccess.enabled;
+      }
+      if (iam.publicAccessPrevention !== undefined) tree.publicAccessPrevention = iam.publicAccessPrevention;
+      delete tree.iamConfiguration;
+    }
+    // `lifecycle.rule` -> `lifecycleRule`, the inverse of bucketInsertBody.
+    const lifecycle = tree.lifecycle as { rule?: unknown } | undefined;
+    if (lifecycle) {
+      if (lifecycle.rule !== undefined) tree.lifecycleRule = lifecycle.rule;
+      delete tree.lifecycle;
+    }
+  },
+  PubSubSubscription(tree, ctx) {
+    const topic = tree.topic;
+    if (typeof topic !== "string") return;
+    // The declared side writes a `topicRef`; a same-project path maps to the
+    // `name` form the manifest overwhelmingly uses, anything else to `external`.
+    const prefix = `projects/${ctx.project}/topics/`;
+    tree.topicRef = topic.startsWith(prefix) ? { name: topic.slice(prefix.length) } : { external: topic };
+    delete tree.topic;
+  },
+  SecretManagerSecret(tree) {
+    // CNRM spells automatic replication as a boolean; the REST API as `{}`.
+    const replication = tree.replication as { automatic?: unknown } | undefined;
+    if (replication && typeof replication.automatic === "object" && replication.automatic !== null) {
+      replication.automatic = true;
+    }
+  },
+  IAMServiceAccount(tree, ctx) {
+    // The REST identity is the derived email; the declared name is the account
+    // id it was derived from (see gcpServiceAccountMapper).
+    const name = tree.metadata?.name;
+    if (typeof name === "string" && name.endsWith(`@${ctx.project}.iam.gserviceaccount.com`)) {
+      tree.metadata!.name = name.slice(0, name.indexOf("@"));
+    }
+  },
+  RunService(tree, ctx) {
+    // The v2 payload carries no `location` field — it lives in the resource
+    // name. The declared side writes it as `location`.
+    const m = ctx.restName ? /\/locations\/([^/]+)\//.exec(ctx.restName) : null;
+    if (m) tree.location = m[1];
+  },
+};
+
+/**
+ * A REST payload as a CNRM-shaped property tree, in the declared side's
+ * vocabulary. The generic reshape runs first, then the full resource path is
+ * shortened to the declared `metadata.name` (`projects/p/topics/t` -> `t`),
+ * then the kind's own refiner translates what the two schemas name
+ * differently.
+ */
+export function toCnrmTree(kind: string, body: Record<string, unknown>, ctx: RefineContext): Record<string, unknown> {
+  const tree = restToCnrmShape(propertiesTreeOf(body)) as CnrmTree;
+  const restName = typeof body.name === "string" ? body.name : undefined;
+  const name = tree.metadata?.name;
+  if (typeof name === "string" && name.includes("/")) {
+    tree.metadata!.name = name.slice(name.lastIndexOf("/") + 1);
+  }
+  CNRM_REFINERS[kind]?.(tree, { ...ctx, restName });
+  return tree as Record<string, unknown>;
+}
+
+/**
+ * Read the live property tree for each declared entity over the applier's
+ * REST transport, normalized into the declared CNRM shape (see the module
+ * doc). A connect failure becomes NOT-OBSERVED for every declared entity
+ * rather than an empty result, and a 404 is a real absence the thin read
+ * already reports.
  */
 export async function observeResourcesDeepGcp(options: GcpDeepObserveOptions): Promise<DeepObservationResult> {
   const resources: Record<string, DeepResourceObservation> = {};
   const unobserved: Record<string, UnobservedEntity> = {};
 
   const endpoint = process.env.GCP_ENDPOINT_URL;
+  const manifestProjects = manifestProjectAnnotations(options.buildOutput);
 
   const reads = [...options.entities].map(async ([entityName, { entityType, props }]) => {
     const gvk = deriveGVK(entityType);
@@ -236,7 +236,7 @@ export async function observeResourcesDeepGcp(options: GcpDeepObserveOptions): P
     let client: GcpReadClientOptions;
     try {
       client = {
-        project: resolveGcpProject({ kind: gvk.kind, metadata }),
+        project: resolveReadProject(gvk.kind, name, metadata, manifestProjects),
         ...(endpoint ? { endpoint } : {}),
       };
     } catch (err) {
@@ -267,8 +267,9 @@ export async function observeResourcesDeepGcp(options: GcpDeepObserveOptions): P
 
       resources[entityName] = {
         type: entityType,
-        physicalId: (obj.id as string | undefined) ?? (obj.selfLink as string | undefined),
-        properties: normalizeDeepProperties(restToCnrmShape(propertiesTreeOf(obj)), {
+        physicalId:
+          (obj.id as string | undefined) ?? (obj.selfLink as string | undefined) ?? (obj.name as string | undefined),
+        properties: normalizeDeepProperties(toCnrmTree(gvk.kind, obj, { project: client.project }), {
           entityType,
           side: "live",
           // The static table is the whole prune now — there is no per-resource
