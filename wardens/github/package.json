@@ -21,13 +21,14 @@
   },
   "files": [
     "bin",
-    "dist"
+    "dist",
+    "src"
   ],
   "scripts": {
     "tsc": "tsc --noEmit",
     "test": "vitest run",
     "test:e2e": "vitest run --config vitest.e2e.config.ts",
-    "build": "esbuild src/cli.ts --bundle --platform=node --format=esm --outfile=dist/cli.js && chmod +x dist/cli.js",
+    "build": "tsc -p tsconfig.build.json && esbuild src/cli.ts --bundle --platform=node --format=esm --outfile=dist/cli.js && chmod +x dist/cli.js",
     "build:action": "esbuild src/action.ts --bundle --platform=node --format=esm --define:process.env.GITHUB_WARDEN_IS_ACTION='\"1\"' --outfile=action/index.mjs",
     "prepublishOnly": "npm run build"
   },
@@ -46,5 +47,17 @@
     "@intentius/chant": "^0.41.19",
     "@intentius/chant-lexicon-github": "^0.41.19",
     "@intentius/warden-core": "^0.41.19"
+  },
+  "exports": {
+    ".": {
+      "development": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./src/index.ts"
+    },
+    "./*": {
+      "development": "./src/*.ts",
+      "types": "./dist/*.d.ts",
+      "default": "./src/*.ts"
+    }
   }
 }

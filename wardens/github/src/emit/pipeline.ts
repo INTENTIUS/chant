@@ -120,7 +120,7 @@ function buildCycleArgs(cycles?: CycleFilter): string {
  *
  * Example:
  * ```ts
- * import { governancePipeline } from "@intentius/chant-lexicon-github-org/emit/pipeline";
+ * import { governancePipeline } from "@intentius/github-warden/emit/pipeline";
  * import { githubSerializer } from "@intentius/chant-lexicon-github";
  *
  * const { workflow } = governancePipeline({ cron: "0 6 * * 1" });
