@@ -1,0 +1,62 @@
+{
+  "name": "@intentius/aws-warden",
+  "version": "0.41.19",
+  "type": "module",
+  "description": "Keep your AWS organization in declared state \u2014 OUs, SCPs, audit sinks; stateless drift-correcting reconcile (epic intentius/chant#787)",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/INTENTIUS/chant.git",
+    "directory": "wardens/aws"
+  },
+  "homepage": "https://github.com/INTENTIUS/chant/tree/main/wardens/aws#readme",
+  "bugs": {
+    "url": "https://github.com/INTENTIUS/chant/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "bin": {
+    "aws-warden": "bin/aws-warden.js"
+  },
+  "files": [
+    "bin",
+    "dist",
+    "src"
+  ],
+  "exports": {
+    ".": {
+      "development": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./src/index.ts"
+    },
+    "./*": {
+      "development": "./src/*.ts",
+      "types": "./dist/*.d.ts",
+      "default": "./src/*.ts"
+    }
+  },
+  "scripts": {
+    "tsc": "tsc --noEmit",
+    "test": "vitest run",
+    "test:e2e": "vitest run --config vitest.e2e.config.ts",
+    "build": "tsc -p tsconfig.build.json && esbuild src/cli.ts --bundle --platform=node --format=esm --banner:js=\"import{createRequire as __cr}from'module';const require=__cr(import.meta.url);\" --outfile=dist/cli.js && chmod +x dist/cli.js",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "yaml": "^2.9.0"
+  },
+  "peerDependencies": {
+    "@intentius/chant": "^0.41.19",
+    "@intentius/warden-core": "^0.41.19"
+  },
+  "devDependencies": {
+    "@intentius/chant": "*",
+    "@intentius/warden-core": "*",
+    "@intentius/chant-lexicon-aws": "*",
+    "@types/node": "^22.0.0",
+    "esbuild": "^0.28.0",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.9"
+  }
+}

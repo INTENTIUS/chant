@@ -10,6 +10,7 @@ stateless, selective-by-omission, ownership-gated deletes, dry-run by default.
 | `@intentius/github-warden` (`wardens/github`) | `github-warden` | GitHub org + repos, App auth, audit + compliance reporting |
 | `@intentius/gitlab-warden` (`wardens/gitlab`) | `gitlab-warden` | GitLab groups + projects, token auth |
 | `@intentius/forgejo-warden` (`wardens/forgejo`) | `forgejo-warden` | Forgejo orgs + repos, token auth |
+| `@intentius/aws-warden` (`wardens/aws`) | `aws-warden` | AWS organization: OUs, SCPs, audit sinks (epic #787 C2) |
 | `@intentius/warden-core` (`wardens/core`) | — | Shared CLI scaffolding (flags, config loading, outcome rendering, exit codes) |
 
 ## Why these are not lexicons (#447, #789)

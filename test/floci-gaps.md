@@ -225,3 +225,25 @@ Verified from chant's side against the rebuilt image: a stack declaring one SSH
 ingress rule now reports `0 property drift, 1 unchanged` on a clean apply, and
 an out-of-band `0.0.0.0/0` rule added afterwards surfaces as drift. That is both
 halves of chant#1207's acceptance bar, on the canonical example.
+
+## 5. Organizations service is entirely absent
+
+**Status:** confirmed 2026-08-07, unfiled. Blocks the aws-warden e2e
+(`wardens/aws/e2e/`, epic chant#787 C2/#792): every governance cycle starts
+from `ListRoots`, so no part of the org-unit / policy-guardrail surface can be
+exercised against the emulator.
+
+```
+$ curl -s -X POST http://localhost:4599/ \
+    -H "Content-Type: application/x-amz-json-1.1" \
+    -H "X-Amz-Target: AWSOrganizationsV20161128.CreateOrganization" \
+    -d '{"FeatureSet":"ALL"}'
+{"__type":"UnknownOperationException","message":"Unknown operation: AWSOrganizationsV20161128.CreateOrganization"}
+```
+
+Confirmed against `floci/floci:1.5.34`: `/_localstack/health` lists no
+`organizations` service at all (the full service list has 70 entries;
+`cloudtrail` is present and `running`). The aws-warden e2e bootstrap probes
+health for `"organizations"` and exits without exporting `AWS_ENDPOINT_URL`,
+so the suite self-skips (green, with a notice) until the emulator gains the
+service. Fallback for a real run: a live sandbox org in dry-run.
