@@ -121,6 +121,9 @@ function renderViaHelm(props: HelmRenderProps): string {
     "template",
     props.name,
     props.chart,
+    // Without this, `helm template` silently drops manifests shipped in the
+    // chart's (or a subchart's) crds/ directory.
+    "--include-crds",
     ...fetchArgs,
     ...isolationArgs,
     ...(props.namespace ? ["--namespace", props.namespace] : []),
