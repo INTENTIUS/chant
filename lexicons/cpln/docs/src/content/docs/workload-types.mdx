@@ -1,0 +1,32 @@
+---
+title: "Workload Types"
+description: "Serverless, standard, stateful and cron — and the constraints each carries."
+---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-cpln` — DO NOT EDIT.
+    Edit lexicons/cpln/src/codegen/docs.ts instead; changes here are overwritten. */}
+Workload `type` is **immutable** — changing it means delete and recreate — and almost every other workload constraint follows from it.
+
+| | Serverless | Standard | Stateful | Cron |
+|---|:---:|:---:|:---:|:---:|
+| Ports | exactly 1 HTTP | 0 or more | 0 or more | none |
+| Scale to zero | `rps` / `concurrency` | KEDA only | KEDA only | no |
+| Persistent volumes | no | no | yes | no |
+| Multi-metric autoscaling | no | yes | yes | n/a |
+| `spec.job` | forbidden | forbidden | forbidden | required |
+
+## Resources
+
+Defaults are `cpu: 50m`, `memory: 128Mi`. CPU ≥ 25m, memory ≥ 32Mi, and **`memory(MiB) / cpu(millicores)` ≤ 8** — so `2Gi` needs at least 256m of CPU. A memory-heavy, CPU-light workload is rejected, which surprises people coming from Kubernetes where the two are independent. The `cpln/relaxMemoryToCpuRatio` tag raises the ceiling to 32.
+
+## Capacity AI
+
+On by default for serverless, standard and cron. Mutually exclusive with CPU-utilization autoscaling, multi-metric autoscaling, and GPUs — all three for the same reason: they need a stable resource baseline that Capacity AI is actively moving. These conflicts are usually reached by *adding* CPU scaling or a GPU to a workload that never opted in, which is why [CPL027](/chant/lexicons/cpln/lint-rules/) says which of the two it is.
+
+## Scale to zero
+
+`minScale: 0` is accepted on any type and only takes effect for serverless under `rps`/`concurrency`, or standard/stateful under KEDA (which must be enabled on the GVC first). Everywhere else the workload holds at one replica and the saving never arrives, with nothing reported.
+
+## Storage
+
+`ext4` and `xfs` are RWO and bind to exactly one **stateful** workload; `shared` is RWX, works with any type, and supports no snapshots. `high-throughput-ssd` has a 200 GB floor where the others have 10 GB. Both `fileSystemType` and `performanceClass` are immutable.

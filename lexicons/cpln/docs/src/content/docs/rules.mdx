@@ -1,0 +1,43 @@
+---
+title: "All Rules"
+description: "Every lint rule and post-synth check provided by the Control Plane lexicon"
+---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-cpln` — DO NOT EDIT.
+    Edit lexicons/cpln/src/codegen/docs.ts instead; changes here are overwritten. */}
+
+The Control Plane lexicon provides **22** rules: 2 lint rules and 20 post-synth checks.
+
+## Lint Rules
+
+| ID | Severity | Category | Description |
+|----|----------|----------|-------------|
+| `CPL001` | error | security | no literal credential material in a cpln declaration. |
+| `CPL002` | info | style | prefer a resource reference over a hand-written link. |
+
+## Post-Synth Checks
+
+Post-synth checks validate the serialized output after the build pipeline completes.
+
+| ID | Description |
+|----|-------------|
+| `CPL010` | Workloads should not allow outbound traffic to every address |
+| `CPL011` | Internal firewall should not be opened to the entire org |
+| `CPL012` | Credential-shaped environment variables must reference a secret, not a literal |
+| `CPL013` | Policy bindings must name identities by their GVC-qualified link |
+| `CPL014` | Secret references in environment variables must name a field |
+| `CPL020` | Serverless workloads must expose exactly one HTTP port |
+| `CPL021` | Cron workloads must declare a schedule and expose no ports |
+| `CPL022` | Container ports must not mix `port` and `ports`, and must be unique across containers |
+| `CPL023` | Container CPU and memory must clear the platform floors and the memory-to-CPU ratio |
+| `CPL024` | Each health-check probe must set exactly one of exec, grpc, tcpSocket, httpGet |
+| `CPL025` | Autoscaling `metric`, `multi` and `target` must form a valid combination |
+| `CPL026` | minScale 0 must pair with a strategy that can actually scale to zero |
+| `CPL027` | Capacity AI conflicts with CPU-utilization autoscaling, multi-metric autoscaling and GPUs |
+| `CPL028` | Volume set capacity, filesystem binding, and workload mount rules |
+| `CPL029` | Control Plane links must resolve to a declared resource of the right kind and GVC |
+| `CPL030` | Domain DNS mode, certificate challenge, and routing target must be a valid combination |
+| `CPL040` | Container images should be pinned to a specific tag or digest |
+| `CPL041` | Image references must not use docker.io/ or the registry hostname form |
+| `CPL042` | A GVC must declare where its workloads run |
+| `CPL043` | Policy target kind, scope and origin must be well formed |

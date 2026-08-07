@@ -14,6 +14,7 @@ import { helmSerializer, helmPlugin } from "@intentius/chant-lexicon-helm";
 import { dockerSerializer, dockerPlugin } from "@intentius/chant-lexicon-docker";
 import { temporalSerializer, temporalPlugin } from "@intentius/chant-lexicon-temporal";
 import { flySerializer, flyPlugin } from "@intentius/chant-lexicon-fly";
+import { cplnSerializer, cplnPlugin } from "@intentius/chant-lexicon-cpln";
 
 /**
  * chant #1025 (epic #1019) — the corpus-discovery machinery shared by every
@@ -37,6 +38,7 @@ export const ALL_SERIALIZERS: Serializer[] = [
   dockerSerializer,
   temporalSerializer,
   flySerializer,
+  cplnSerializer,
 ];
 
 /**
@@ -57,6 +59,7 @@ export const SERIALIZER_BY_LEXICON: Record<string, Serializer> = {
   docker: dockerSerializer,
   temporal: temporalSerializer,
   fly: flySerializer,
+  cpln: cplnSerializer,
 };
 
 /**
@@ -78,6 +81,7 @@ export const ALL_INTRINSICS: IntrinsicDef[] = [
   dockerPlugin,
   temporalPlugin,
   flyPlugin,
+  cplnPlugin,
 ].flatMap((plugin) => plugin.intrinsics?.() ?? []);
 
 /**
@@ -100,6 +104,7 @@ export const ALL_PLUGINS: LexiconPlugin[] = [
   dockerPlugin,
   temporalPlugin,
   flyPlugin,
+  cplnPlugin,
 ];
 
 /** One lexicon's own plugin, keyed the same way as {@link SERIALIZER_BY_LEXICON}. */
@@ -115,6 +120,7 @@ export const PLUGIN_BY_LEXICON: Record<string, LexiconPlugin> = {
   docker: dockerPlugin,
   temporal: temporalPlugin,
   fly: flyPlugin,
+  cpln: cplnPlugin,
 };
 
 /**
@@ -133,6 +139,7 @@ export const INTRINSICS_BY_LEXICON: Record<string, IntrinsicDef[]> = {
   docker: dockerPlugin.intrinsics?.() ?? [],
   temporal: temporalPlugin.intrinsics?.() ?? [],
   fly: flyPlugin.intrinsics?.() ?? [],
+  cpln: cplnPlugin.intrinsics?.() ?? [],
 };
 
 /**

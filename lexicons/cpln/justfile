@@ -1,0 +1,36 @@
+# Default recipe - list all available commands
+default:
+    @just --list
+
+# Generate types and metadata from upstream schemas
+generate:
+    npx tsx src/codegen/generate-cli.ts
+
+# Validate generated artifacts
+validate:
+    npx tsx src/validate-cli.ts
+
+# Bundle the lexicon into dist/
+bundle:
+    npx tsx src/package-cli.ts
+
+# Refresh the committed offline spec snapshot from the live API
+snapshot:
+    # Run on a networked machine, and commit the result alongside the
+    # regenerated types so the snapshot and the types describe the same API.
+    npx tsx src/spec/snapshot-cli.ts
+
+# Generate docs site, install deps, and start dev server
+docs:
+    npx tsx src/codegen/docs-cli.ts
+    npm install --prefix docs
+    npm run --prefix docs dev
+
+# Build docs site for production
+docs-build:
+    npx tsx src/codegen/docs-cli.ts
+    npm install --prefix docs
+    npm run --prefix docs build
+
+# Package the lexicon (generate + bundle + validate)
+package: generate bundle validate

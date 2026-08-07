@@ -1,0 +1,20 @@
+{
+  "name": "cpln-stateful-postgres-example",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "chant build src --lexicon cpln -o manifest.yaml",
+    "lint": "chant lint src",
+    "dev": "chant build src --lexicon cpln --watch -o manifest.yaml",
+    "deploy": "cpln apply --file manifest.yaml --ready",
+    "plan": "chant plan"
+  },
+  "dependencies": {
+    "@intentius/chant": "*",
+    "@intentius/chant-lexicon-cpln": "*"
+  },
+  "devDependencies": {
+    "typescript": "*"
+  }
+}
