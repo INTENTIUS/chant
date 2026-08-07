@@ -38,6 +38,8 @@ export interface CarveManifest {
   bridge?: {
     written: string[];
     appliedInPlace: boolean;
+    /** The git-applyable `.patch` carrying the whole survivor edit. */
+    patch?: string;
     at: string;
   };
   /** Recorded by `carve apply`. */

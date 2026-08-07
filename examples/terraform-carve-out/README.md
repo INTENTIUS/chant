@@ -57,9 +57,10 @@ chant carve bridge --from ./terraform --select aws_s3_bucket.assets --output ./c
 ```
 
 Writes the `data "aws_s3_bucket" "assets"` block the surviving Lambda will read,
-the rewritten `main.tf` (references rewired to the data source), and a reversible
-runbook. Nothing in `./terraform` changes. Add `--apply-rewrites` to edit the
-survivor `.tf` in place.
+the rewritten `main.tf` (references rewired to the data source), a reversible
+runbook, and one git-applyable `*-bridge.patch` carrying the whole edit.
+Nothing in `./terraform` changes. Add `--apply-rewrites` to edit the survivor
+`.tf` in place.
 
 ## 4. Graduate
 
