@@ -1,0 +1,47 @@
+name: warden-forgejo-e2e
+
+# Hermetic end-to-end suite for wardens/forgejo against a throwaway Docker Compose
+# stack — no secrets; CI stands the instance up, mints a token, and the suite
+# provisions + tears down its own org (#788 — ported from the forgejo-warden repo
+# when the warden moved into the monorepo). Nightly + on demand only: the old
+# repo also ran it on push to main, but that repo changed rarely and this one
+# does not, and the stack boot is too heavy for every merge.
+on:
+  schedule:
+    - cron: '0 7 * * *' # 07:00 UTC nightly
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: warden-forgejo-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: wardens/forgejo
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm install
+        working-directory: .
+
+      - name: bring up forgejo + mint token
+        run: bash e2e/bootstrap.sh
+
+      - name: run e2e (with apply phase)
+        env:
+          FORGEJO_E2E_APPLY: '1'
+        run: npm run test:e2e:run
+
+      - name: tear down
+        if: always()
+        run: docker compose -f e2e/docker-compose.yml down -v
