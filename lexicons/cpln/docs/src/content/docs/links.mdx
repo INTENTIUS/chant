@@ -1,0 +1,42 @@
+---
+title: "Links and References"
+description: "How Control Plane addresses resources, and why passing the resource beats writing the string."
+---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-cpln` — DO NOT EDIT.
+    Edit lexicons/cpln/src/codegen/docs.ts instead; changes here are overwritten. */}
+Control Plane addresses resources by **link**. Pass a declared resource where a link is expected and the serializer emits the right one for its kind:
+
+```typescript
+export const identity = new Identity({ name: "web-identity", gvc: "prod" });
+
+export const web = new Workload({
+  name: "web",
+  gvc: "prod",
+  spec: { identityLink: identity },   // → //gvc/prod/identity/web-identity
+});
+```
+
+## Why this matters more than usual
+
+The identity form is a documented silent failure. A policy binding written against `//identity/NAME` — which reads perfectly naturally, and is what most people guess — is **accepted by the API and then ignored**. The policy exists, the binding exists, and the permission is never granted. Only `//gvc/GVC/identity/NAME` works.
+
+Passing the resource means never having to remember that. [CPL013](/chant/lexicons/cpln/lint-rules/) catches it when you write the string by hand.
+
+## Link forms
+
+| Kind | Link |
+|---|---|
+| GVC | `//gvc/NAME` |
+| Workload / Identity / VolumeSet | `//gvc/GVC/<kind>/NAME` |
+| Secret / Policy / Domain / IpSet | `//<kind>/NAME` |
+| Location | `/org/ORG/location/<provider>-<region>` |
+| This org's image | `//image/NAME:TAG` |
+
+## Runtime URIs are not links
+
+`cpln://secret/NAME.FIELD` and `cpln://volumeset/NAME` are resolution URIs the container reads at runtime, not references between resources. They have no reference form, and [CPL002](/chant/lexicons/cpln/lint-rules/) leaves them alone.
+
+## Attribute references do not serialize
+
+There is no template-time reference language in a Control Plane manifest, so a value known only after apply cannot be embedded in one. Referencing an attribute is a build error with an explanation rather than a manifest that silently contains the wrong thing.
