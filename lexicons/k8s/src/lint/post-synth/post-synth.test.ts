@@ -667,6 +667,45 @@ describe("WK8204: runAsNonRoot", () => {
     expect(diags.length).toBe(0);
   });
 
+  // #1482 — the manifest arrives as real YAML, and the initContainer's args is
+  // a block scalar. The parser bug turned `- |` into the string "|" and hoisted
+  // every key after it (securityContext, the containers list itself) to the
+  // document root, so this check warned on a compliant initContainer and never
+  // saw the app container at all.
+  test("initContainer with a block-scalar arg keeps its securityContext, and the app container is still checked (#1482)", () => {
+    const yaml = [
+      "apiVersion: apps/v1",
+      "kind: Deployment",
+      "metadata:",
+      "  name: app",
+      "spec:",
+      "  template:",
+      "    spec:",
+      "      initContainers:",
+      "        - name: wait",
+      "          image: pg:16",
+      "          args:",
+      "            - |",
+      "              set -eu",
+      "              echo ready",
+      "          securityContext:",
+      "            runAsNonRoot: true",
+      "            runAsUser: 1001",
+      "      containers:",
+      "        - name: app",
+      "          image: app:1.0",
+      "          securityContext: {}",
+      "",
+    ].join("\n");
+    const ctx = makeCtx(yaml);
+    const diags = wk8204.check(ctx);
+    // The compliant initContainer produces nothing; the bare app container is
+    // the one — and the only one — that warns.
+    expect(diags.length).toBe(1);
+    expect(diags[0].message).toContain('"app"');
+    expect(diags[0].message).not.toContain("wait");
+  });
+
   test("pod-level runAsUser satisfies container-level runAsNonRoot", () => {
     const ctx = makeCtx(JSON.stringify({
       apiVersion: "apps/v1",

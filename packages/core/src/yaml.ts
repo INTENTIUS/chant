@@ -510,8 +510,22 @@ export function parseYAMLArray(
         result.push(obj);
         i = j;
       } else {
-        result.push(parseScalar(itemValue));
-        i++;
+        const header = blockScalarHeader(itemValue);
+        if (header) {
+          // A block scalar as the item itself (`- |`). Without this branch the
+          // header parsed as the literal string "|" and the body lines leaked
+          // into whatever came next — inside a container list that hoisted the
+          // sibling keys after `args:` (securityContext, even the following
+          // `containers:` key) to the document root, so post-synth checks read
+          // a manifest that had lost them (#1482). The body is indented past
+          // the dash's column.
+          const block = parseBlockScalar(lines, i + 1, indent, header);
+          result.push(block.value);
+          i = block.endIndex;
+        } else {
+          result.push(parseScalar(itemValue));
+          i++;
+        }
       }
     } else {
       break;
