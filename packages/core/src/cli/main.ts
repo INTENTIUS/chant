@@ -188,6 +188,10 @@ export function parseArgs(args: string[]): ParsedArgs {
       // Shared by `migrate --from <lexicon>` and `import --from <env>`; the
       // two commands never run together, so one field carries both.
       result.migrateFrom = args[++i];
+    } else if (arg === "--kustomize") {
+      // `chant import --kustomize <dir>` (#1548): render the overlay, import
+      // the output through the k8s template parser.
+      result.kustomize = args[++i];
     } else if (arg === "--type") {
       result.selectType = args[++i];
     } else if (arg === "--name") {

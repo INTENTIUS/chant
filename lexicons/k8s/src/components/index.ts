@@ -19,3 +19,10 @@ export {
   type KubectlApplyInput,
   type KubectlApplyOutcome,
 } from "./kubectl-apply";
+export {
+  kustomizeApplyCapability,
+  createKustomizeApplyCapability,
+  renderCommand,
+  type KustomizeApplyInput,
+  type KustomizeApplyOutcome,
+} from "./kustomize-apply";

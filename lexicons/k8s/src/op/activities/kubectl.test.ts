@@ -281,6 +281,28 @@ describe("kubectlApply", () => {
     expect(body.metadata?.labels).toBeUndefined();
   });
 
+  test("inline documents bypass the filesystem — the kustomize-apply seam (#1548)", async () => {
+    const cluster = fakeCluster({ respond: echoApplies });
+    const result = await applyManifest(
+      {
+        manifest: "kustomize:overlays/dev", // a label; nothing at this path
+        documents: [
+          { apiVersion: "v1", kind: "Namespace", metadata: { name: "web" } },
+          { apiVersion: "apps/v1", kind: "Deployment", metadata: { name: "app", namespace: "web" } },
+        ],
+        stack: "web",
+      },
+      undefined,
+      cluster.connector,
+    );
+    expect(result.applied.map((r) => r.kind)).toEqual(["Namespace", "Deployment"]);
+    // The documents were stamped like any read-from-disk manifest.
+    const body = JSON.parse(String(cluster.layer.requests.find((r) => r.method === "PATCH")!.body)) as {
+      metadata?: { labels?: Record<string, string> };
+    };
+    expect(body.metadata?.labels?.["chant.intentius.io/stack"]).toBe("web");
+  });
+
   test("an explicit context is honored and skips the environment lookup entirely", async () => {
     const file = join(dir, "k8s.yaml");
     writeFileSync(file, deploymentYaml);

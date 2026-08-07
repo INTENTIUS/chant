@@ -55,8 +55,21 @@ import { DEFAULT_IMPORT_TYPES } from "../../api/sweep-types";
 export type ApplyDeleteMode = "never" | "owned-only" | "gated";
 
 export interface KubectlApplyArgs {
-  /** Path to a manifest file, or a directory of them. */
+  /**
+   * Path to a manifest file, or a directory of them. With `documents` given,
+   * this becomes only the human-facing label the heartbeats and logs carry
+   * (e.g. `kustomize:<dir>`), and nothing is read from disk.
+   */
   manifest: string;
+  /**
+   * Already-parsed documents to apply INSTEAD of reading `manifest` (#1548):
+   * a renderer that produced the objects in memory — kustomize-apply's
+   * `kustomize build` — hands them straight in rather than round-tripping
+   * through a temp file. Everything downstream (ownership stamping, the
+   * marker-scoped prune, the self-conflict retake) is document-driven and
+   * behaves identically.
+   */
+  documents?: K8sObject[];
   /**
    * kubectl context name. Uses the ambient context if omitted. To target the
    * same cluster the read path (`describeResources`) resolved for an
@@ -285,7 +298,7 @@ export async function applyManifest(
   signal?: AbortSignal,
   connect: K8sConnector = defaultK8sConnector,
 ): Promise<ApplyManifestResult> {
-  const documents = readManifestDocuments(args.manifest);
+  const documents = args.documents ?? readManifestDocuments(args.manifest);
   const { fieldManager, stack } = await resolveApplyIdentity(args);
   const heartbeatInterval = setInterval(() => {
     safeHeartbeat({ step: "kubectl apply", manifest: args.manifest });

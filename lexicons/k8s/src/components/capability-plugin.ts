@@ -11,9 +11,10 @@
 import type { Capability } from "@intentius/chant/components/capability";
 import { ownPackageVersion, type CapabilityPlugin } from "@intentius/chant/components/capability-plugin";
 import { kubectlApplyCapability } from "./kubectl-apply";
+import { kustomizeApplyCapability } from "./kustomize-apply";
 
 export const K8S_VERB_FAMILIES = {
-  apply: ["kubectl-apply"],
+  apply: ["kubectl-apply", "kustomize-apply"],
 } as const;
 
 export const k8sCapabilityPlugin: CapabilityPlugin = {
@@ -22,7 +23,7 @@ export const k8sCapabilityPlugin: CapabilityPlugin = {
   // a literal here was stale one release after it was written.
   version: ownPackageVersion(import.meta.url),
   capabilities(): Array<Capability<never, unknown>> {
-    return [kubectlApplyCapability as Capability<never, unknown>];
+    return [kubectlApplyCapability as Capability<never, unknown>, kustomizeApplyCapability as Capability<never, unknown>];
   },
   families(): Record<string, readonly string[]> {
     return K8S_VERB_FAMILIES;

@@ -9,6 +9,7 @@ export { k8sPlugin } from "./plugin";
 // cfn-deploy.
 export { k8sCapabilityPlugin, K8S_VERB_FAMILIES } from "./components/capability-plugin";
 export { kubectlApplyCapability, createKubectlApplyCapability, type KubectlApplyInput } from "./components/kubectl-apply";
+export { kustomizeApplyCapability, createKustomizeApplyCapability, type KustomizeApplyInput } from "./components/kustomize-apply";
 
 // Default labels & annotations
 export { defaultLabels, defaultAnnotations, isDefaultLabels, isDefaultAnnotations } from "./default-labels";
