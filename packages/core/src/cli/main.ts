@@ -26,6 +26,7 @@ import { runCarveApply } from "./handlers/carve-apply";
 import { runLifecycleSnapshot, runLifecycleShow, runLifecycleDiff, runLifecycleRollback, runLifecyclePlan, runLifecycleAffected, runLifecycleLog, runLifecycleUnknown } from "./handlers/lifecycle";
 import { runComponentsStatus, runComponentsReleaseRecord, runComponentsUnknown } from "./handlers/components";
 import { runGraph } from "./handlers/graph";
+import { runExplain } from "./handlers/explain";
 import { runSearch } from "./handlers/search";
 import { runOp, runOpList, runOpStatus, runOpSignal, runOpCancel, runOpLog } from "./handlers/run";
 import { runEmulator } from "./handlers/emulator";
@@ -385,6 +386,10 @@ Commands:
   lint                  Check specifications for issues
   list                  List discovered entities
   describe              Show the effective config for one component
+  explain               Summarize discovered entities (--format markdown|json|okf;
+                        okf emits an OKF v0.2 knowledge bundle — one markdown
+                        concept per entity + index.md; -o <dir> writes the
+                        bundle tree, otherwise JSON path→content on stdout)
   vendor                Pull pinned, checksummed patterns into your repo
   import                Import external template into TypeScript
   audit [path|url]      Audit a repo's CI YAML for security issues
@@ -705,6 +710,7 @@ const registry: CommandDef[] = [
   { name: "lint", handler: runLint },
   { name: "list", handler: runList },
   { name: "describe", handler: runDescribe },
+  { name: "explain", handler: runExplain },
   { name: "search", handler: runSearch },
   { name: "import", handler: runImport },
   { name: "audit", handler: runAudit },
