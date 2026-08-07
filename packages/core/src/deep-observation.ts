@@ -253,6 +253,19 @@ export interface DeepNormalizationHooks {
    * the order the provider returned it.
    */
   orderKey?(element: DeepArrayElement): string | undefined;
+  /**
+   * Return true when this value cannot be known without deploying — it is
+   * collapsed to {@link UNRESOLVED}, and the diff skips any path whose declared
+   * value is UNRESOLVED, exactly as it already does for a non-JSON intrinsic.
+   *
+   * The pass collapses class-instance intrinsics (`Fn::Sub`, `Ref`) on its own;
+   * this hook exists for the lexicons whose unevaluated references are plain
+   * JSON data the pass cannot recognize — an ARM template's
+   * `"[resourceId(...)]"` expression string is the motivating case (#1213).
+   * Left alone, every such reference diffs against its evaluated live value and
+   * reads as permanent drift.
+   */
+  unresolved?(node: DeepNode): boolean;
 }
 
 /** Everything the pass needs besides the tree itself. */
@@ -371,25 +384,31 @@ export function normalizeDeepProperties(
 ): Record<string, unknown> {
   const { entityType, side, hooks, counterpartPaths } = options;
 
+  const nodeOf = (path: string, pattern: string, key: string, value: unknown): DeepNode => ({
+    entityType,
+    path,
+    pattern,
+    key,
+    value,
+    side,
+    counterpart: !counterpartPaths
+      ? "unknown"
+      : counterpartPaths.has(path) || counterpartPaths.has(pattern)
+        ? "present"
+        : "absent",
+  });
+
   const prune = (path: string, pattern: string, key: string, value: unknown): boolean => {
     if (!hooks?.prune) return false;
-    return hooks.prune({
-      entityType,
-      path,
-      pattern,
-      key,
-      value,
-      side,
-      counterpart: !counterpartPaths
-        ? "unknown"
-        : counterpartPaths.has(path) || counterpartPaths.has(pattern)
-          ? "present"
-          : "absent",
-    });
+    return hooks.prune(nodeOf(path, pattern, key, value));
   };
 
   const normalizeValue = (value: unknown, path: string, pattern: string, key: string): unknown => {
     if (isSensitiveKey(key)) return MASKED;
+    // A value the lexicon says cannot be known without deploying — an
+    // expression-string reference — collapses exactly like a class-instance
+    // intrinsic does below.
+    if (hooks?.unresolved?.(nodeOf(path, pattern, key, value))) return UNRESOLVED;
     if (isJsonPrimitive(value)) return value;
 
     // A PROPERTY-kind Declarable is authored data wearing a class, not an

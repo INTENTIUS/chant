@@ -176,6 +176,12 @@ components-aws-e2e:
 aws-cc-e2e:
     bash test/aws-cc-e2e.sh
 
+# Azure property-level drift acceptance (#1213): clean apply quiet, hand-edited NSG rule
+# surfaces, RG-orphan estate stays observed, emulator restart reads MISSING
+# (floci-az in Docker; on-demand, needs Docker only)
+azure-drift-e2e:
+    bash test/azure-drift-e2e.sh
+
 # Prove the adopt-alb-services GENERATED pipeline deploys multi-service across isolated jobs, with cross-stack outputs threaded as artifacts (Floci in Docker; on-demand, needs Docker + aws CLI)
 adopt-alb-services-e2e:
     bash test/adopt-alb-services-e2e.sh
