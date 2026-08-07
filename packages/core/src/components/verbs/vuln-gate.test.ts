@@ -323,4 +323,22 @@ describe("resolveVulnPolicy", () => {
       license: { deny: ["GPL-3.0"] },
     });
   });
+
+  test("passes through the exploitability fields (#1466)", () => {
+    expect(resolveVulnPolicy({ vulnPolicy: { failOnKev: true, failEpssAtOrAbove: 0.1, warnEpssAtOrAbove: 0.01, exploitabilityFixableOnly: false } })).toEqual({
+      failOnKev: true,
+      failEpssAtOrAbove: 0.1,
+      warnEpssAtOrAbove: 0.01,
+      exploitabilityFixableOnly: false,
+    });
+  });
+
+  test("failEpssAtOrAbove: 0 survives — a meaningful value, not falsy noise", () => {
+    expect(resolveVulnPolicy({ vulnPolicy: { failEpssAtOrAbove: 0, warnEpssAtOrAbove: 0 } })).toEqual({ failEpssAtOrAbove: 0, warnEpssAtOrAbove: 0 });
+  });
+
+  test("an explicit failOnKev: false is distinguishable from unset", () => {
+    expect(resolveVulnPolicy({ vulnPolicy: { failOnKev: false } })).toEqual({ failOnKev: false });
+    expect(resolveVulnPolicy({ vulnPolicy: {} })).toEqual({});
+  });
 });

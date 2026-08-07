@@ -106,6 +106,10 @@ export const ChantConfigSchema = z.object({
     warnSeverity: z.enum(["critical", "high", "medium", "low", "negligible", "unknown"]).optional(),
     failOnLicense: z.boolean().optional(),
     failOnUnknownSeverity: z.boolean().optional(),
+    failOnKev: z.boolean().optional(),
+    failEpssAtOrAbove: z.number().min(0).max(1).optional(),
+    warnEpssAtOrAbove: z.number().min(0).max(1).optional(),
+    exploitabilityFixableOnly: z.boolean().optional(),
     license: z.object({
       allow: z.array(z.string()).optional(),
       deny: z.array(z.string()).optional(),
@@ -308,6 +312,14 @@ export interface ChantConfig {
     failOnLicense?: boolean;
     /** Block on an `unknown`-severity finding (always warned regardless). Default `false`. */
     failOnUnknownSeverity?: boolean;
+    /** Block any finding in the CISA KEV catalog, regardless of severity. Default `false`. */
+    failOnKev?: boolean;
+    /** Block when EPSS is at or above this (0.0–1.0). Omit to ignore EPSS. */
+    failEpssAtOrAbove?: number;
+    /** Warn (not block) at or above this EPSS. Omit to ignore. */
+    warnEpssAtOrAbove?: number;
+    /** Apply `fixableOnly` to exploitability blocks too. Default `true`. */
+    exploitabilityFixableOnly?: boolean;
     /** License allow/deny lists evaluated against the SBOM's declared licenses. */
     license?: { allow?: string[]; deny?: string[] };
     /** Which real scanner a `ProcessRunner`-backed `vuln-gate`/`scan-vulnerabilities` shells out to. Default `"grype"`. Read where the capability/scanner is constructed. */
@@ -560,6 +572,12 @@ export function resolveVulnPolicy(config: ChantConfig): Partial<VulnPolicy> {
   if (v.warnSeverity) out.warnSeverity = v.warnSeverity;
   if (v.failOnLicense !== undefined) out.failOnLicense = v.failOnLicense;
   if (v.failOnUnknownSeverity !== undefined) out.failOnUnknownSeverity = v.failOnUnknownSeverity;
+  // `!== undefined`, never truthiness: `failEpssAtOrAbove: 0` (match any scored
+  // finding) and an explicit `failOnKev: false` override must both survive.
+  if (v.failOnKev !== undefined) out.failOnKev = v.failOnKev;
+  if (v.failEpssAtOrAbove !== undefined) out.failEpssAtOrAbove = v.failEpssAtOrAbove;
+  if (v.warnEpssAtOrAbove !== undefined) out.warnEpssAtOrAbove = v.warnEpssAtOrAbove;
+  if (v.exploitabilityFixableOnly !== undefined) out.exploitabilityFixableOnly = v.exploitabilityFixableOnly;
   if (v.license) out.license = v.license;
   return out;
 }
