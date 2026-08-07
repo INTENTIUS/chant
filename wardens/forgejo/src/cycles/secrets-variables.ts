@@ -49,6 +49,7 @@ function mapVariables(raws: GhVariable[]): LiveVariable[] {
 
 export const secretsVariablesCycle: Cycle<SecretsVariablesScope> = {
   name: "secrets-variables",
+  verb: "secret-material",
 
   async fetchLive(
     client: ForgejoClient,

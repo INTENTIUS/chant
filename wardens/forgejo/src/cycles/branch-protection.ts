@@ -66,6 +66,7 @@ export function buildBPBody(d: BranchProtectionConfig, includeName: boolean): Re
 
 export const branchProtectionCycle: Cycle<BranchProtectionScope> = {
   name: "branch-protection",
+  verb: "policy-guardrail",
 
   async fetchLive(
     client: ForgejoClient,

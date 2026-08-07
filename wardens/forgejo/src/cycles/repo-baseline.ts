@@ -27,6 +27,7 @@ interface GhRepo {
 
 export const repoBaselineCycle: Cycle<RepoBaselineScope> = {
   name: "repo-baseline",
+  verb: "org-unit",
 
   async fetchLive(
     client: ForgejoClient,

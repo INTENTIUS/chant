@@ -19,6 +19,8 @@
  * only part that drives I/O (through the provider's `Cycle` implementations).
  */
 
+import { GOVERNANCE_VERBS, type GovernanceVerb } from "./governance.js";
+
 // ---------------------------------------------------------------------------
 // Change-set model
 // ---------------------------------------------------------------------------
@@ -38,6 +40,12 @@ export interface ChangeSetEntry {
   kind: ChangeKind;
   /** High-level resource category (e.g. "team", "member", "branch-protection"). */
   resourceType: string;
+  /**
+   * Cross-provider governance category (#790). `resourceType` stays the
+   * provider-specific display string; the verb is the shared grammar SCM and
+   * cloud plans group by. Stamped by `runReconcile` from the cycle's `verb`.
+   */
+  verb?: GovernanceVerb;
   /**
    * Unique key identifying this resource within its type.
    * - For top-level resources: a single name (team slug, member login, …).
@@ -211,8 +219,17 @@ export function renderChangeSet(cs: ChangeSet): string {
 
   const ORDER: ChangeKind[] = ["create", "update", "delete"];
   for (const kind of ORDER) {
-    const group = byKind[kind];
+    let group = byKind[kind];
     if (group.length === 0) continue;
+    // Verb-aware grouping (#790): when entries carry governance verbs, order
+    // each section by verb (vocabulary order, unverbed entries last) so mixed
+    // plans read category-by-category. Stable, and line format is unchanged —
+    // a verbless change set renders exactly as before.
+    if (group.some((e) => e.verb)) {
+      const rank = (e: ChangeSetEntry): number =>
+        e.verb ? GOVERNANCE_VERBS.indexOf(e.verb) : GOVERNANCE_VERBS.length;
+      group = [...group].sort((a, b) => rank(a) - rank(b));
+    }
     lines.push(`\n${kind.toUpperCase()}:`);
     for (const e of group) {
       lines.push(`  [${e.resourceType}] ${e.key}`);
@@ -399,6 +416,12 @@ class MutableRateBudget implements RateBudget {
 export interface Cycle<TClient, TConfig, TLive, TScope = unknown> {
   /** Human-readable name, e.g. "branch-protection". */
   name: string;
+  /**
+   * Cross-provider governance category this cycle reconciles (#790). Every
+   * SCM warden cycle stamps one; cloud cycles (epic #787 C2) must. Optional
+   * only so provider-external Cycle implementations don't break.
+   */
+  verb?: GovernanceVerb;
   fetchLive(client: TClient, scopeId: string, scope: TScope, budget: RateBudget): Promise<TLive>;
   buildDesired(config: TConfig, scopeId: string, scope: TScope): TConfig;
   apply(
@@ -413,6 +436,8 @@ export interface Cycle<TClient, TConfig, TLive, TScope = unknown> {
 /** Per-cycle outcome recorded in the run result. */
 export interface CycleResult {
   name: string;
+  /** The cycle's governance verb (#790), when it stamps one. */
+  verb?: GovernanceVerb;
   /** Scope id this result is for (e.g. an org login). */
   org: string;
   counts: { create: number; update: number; delete: number };
@@ -535,6 +560,11 @@ export async function runReconcile<TClient, TConfig, TLive, TScope = unknown>(
       }
 
       const changeSet = diffFn(scopeId, desired, live, diffOptions);
+      // Stamp the cycle's governance verb (#790) onto entries that don't
+      // carry one, so provider diffs stay verb-unaware.
+      if (cycle.verb) {
+        for (const e of changeSet.entries) e.verb ??= cycle.verb;
+      }
       const guardrailResult = guardrails(changeSet, live);
 
       const counts = { create: 0, update: 0, delete: 0 };
@@ -542,6 +572,7 @@ export async function runReconcile<TClient, TConfig, TLive, TScope = unknown>(
 
       const cycleResult: CycleResult = {
         name: cycle.name,
+        verb: cycle.verb,
         org: scopeId,
         counts,
         guardrails: guardrailResult,
