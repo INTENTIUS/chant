@@ -1,6 +1,6 @@
 {
   "name": "@intentius/chant-lexicon-k3d",
-  "version": "0.41.13",
+  "version": "0.41.14",
   "type": "module",
   "files": [
     "src/",
@@ -52,7 +52,7 @@
     "access": "public"
   },
   "peerDependencies": {
-    "@intentius/chant": "^0.41.13",
+    "@intentius/chant": "^0.41.14",
     "typescript": "^5.9.3"
   }
 }
