@@ -398,6 +398,40 @@ describe("runLifecycleDiff --live", () => {
     expect(seen?.attributes?.chart).toBe("web-1.2.3");
   });
 
+  test("--live lists artifacts for a configured lexicon with NO built entities — the deploy-step estate shape", async () => {
+    // kubemicrovm-ops: helm is a configured lexicon whose releases exist only
+    // as component helm-upgrade steps, so the built manifest carries no helm
+    // key at all. Keying the walk on the manifest alone silently dropped the
+    // artifact axis — four live releases, observedArtifacts absent.
+    buildMock.mockResolvedValue(makeBuildResult({ aws: ["bucket"] }));
+    fetchLifecycleMock.mockResolvedValue(undefined);
+    readSnapshotMock.mockResolvedValue(null);
+
+    const plugins: LexiconPlugin[] = [
+      createMockPlugin({ name: "aws" }),
+      createMockPlugin({
+        name: "helm",
+        listArtifacts: staticListArtifacts({
+          "release/cert-manager/cert-manager": { type: "Helm::Release", physicalId: "cert-manager/cert-manager", status: "deployed" },
+        }),
+      }),
+    ];
+
+    const ctx = {
+      args: makeArgs({ command: "state", path: "diff", extraPositional: "prod", live: true, json: true }),
+      plugins,
+      serializers: plugins.map((p) => p.serializer),
+    };
+
+    const exit = await runLifecycleDiff(ctx);
+
+    expect(exit).toBe(0);
+    const payload = JSON.parse(stdoutBuf.join("\n")) as {
+      lexicons: Record<string, { observedArtifacts?: Record<string, { status?: string }> }>;
+    };
+    expect(payload.lexicons.helm?.observedArtifacts?.["release/cert-manager/cert-manager"]?.status).toBe("deployed");
+  });
+
   test("legacy digest mode still works without --live", async () => {
     buildMock.mockResolvedValue(makeBuildResult({ aws: ["bucket"] }));
     fetchLifecycleMock.mockResolvedValue(undefined);
