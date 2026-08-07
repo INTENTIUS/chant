@@ -1,3 +1,9 @@
+export { GovernanceFoundation, LocationRestriction, OrganizationAuditConfig } from "./landing-zone";
+export type {
+  GovernanceFoundationProps,
+  LocationRestrictionProps,
+  OrganizationAuditConfigProps,
+} from "./landing-zone";
 export { GkeCluster } from "./gke-cluster";
 export type { GkeClusterProps } from "./gke-cluster";
 export { CloudRunServiceComposite } from "./cloud-run-service";
