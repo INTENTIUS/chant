@@ -176,6 +176,12 @@ components-aws-e2e:
 aws-cc-e2e:
     bash test/aws-cc-e2e.sh
 
+# GCP config-controller round-trip (#1211): apply -> observe -> drift -> remediate -> destroy
+# on the canonical GCP estate via direct REST against floci-gcp
+# (on-demand, needs Docker)
+gcp-cc-e2e:
+    bash test/gcp-cc-e2e.sh
+
 # Prove the adopt-alb-services GENERATED pipeline deploys multi-service across isolated jobs, with cross-stack outputs threaded as artifacts (Floci in Docker; on-demand, needs Docker + aws CLI)
 adopt-alb-services-e2e:
     bash test/adopt-alb-services-e2e.sh
