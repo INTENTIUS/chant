@@ -951,7 +951,9 @@ describe("runOpComponents", () => {
       expect(runComponentsMock).toHaveBeenCalledWith(expect.any(String), "svc", expect.objectContaining({
         buildParams: [{ name: "tier", value: "light", source: "default" }],
       }));
-      expect(stderr.join("\n")).toContain("[param] tier");
+      // A parameter at its default collapses into the count line now; the
+      // provenance forwarded above is where its value is asserted.
+      expect(stderr.join("\n")).toContain("at their defaults");
     });
 
     test("--param overrides a declared default and is threaded through to runComponents", async () => {

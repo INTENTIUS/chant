@@ -56,14 +56,58 @@ describe("resolveCliBuildParams", () => {
     }
   });
 
-  test("logs every resolved parameter as '[param] name = value (source)'", () => {
+  test("a build with no overrides collapses to a single defaults count", () => {
+    // The provenance still records every value; the echo just stops naming
+    // what nobody set. One line, so silence still never means "no parameters
+    // reached us".
     const defs: BuildParamsConfig = { tier: { type: "string", default: "light" } };
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     try {
-      resolveCliBuildParams(defs, {});
+      const result = resolveCliBuildParams(defs, {});
       const logged = errorSpy.mock.calls.map((call) => String(call[0]));
-      expect(logged.some((line) => line.includes("[param] tier") && line.includes("light") && line.includes("default"))).toBe(true);
+      expect(logged.some((line) => line.includes("1 parameters at their defaults"))).toBe(true);
+      expect(logged.some((line) => line.includes("[param] tier"))).toBe(false);
+      expect(result.provenance).toEqual([{ name: "tier", value: "light", source: "default" }]);
     } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  test("names the overrides and collapses the defaults into a count", () => {
+    const defs: BuildParamsConfig = {
+      tier: { type: "string", default: "light" },
+      target: { type: "string", default: "k3d" },
+      host: { type: "string", default: "localhost:4000" },
+    };
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      resolveCliBuildParams(defs, { cli: { tier: "ha" } });
+      const logged = errorSpy.mock.calls.map((call) => String(call[0]));
+      expect(logged.some((line) => line.includes("[param] tier") && line.includes("ha") && line.includes("cli"))).toBe(true);
+      expect(logged.some((line) => line.includes("2 more at their defaults"))).toBe(true);
+      expect(logged.some((line) => line.includes("[param] target"))).toBe(false);
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  test("CHANT_PARAM_ECHO=all restores the full listing", () => {
+    const defs: BuildParamsConfig = {
+      tier: { type: "string", default: "light" },
+      target: { type: "string", default: "k3d" },
+    };
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const prev = process.env.CHANT_PARAM_ECHO;
+    process.env.CHANT_PARAM_ECHO = "all";
+    try {
+      resolveCliBuildParams(defs, { cli: { tier: "ha" } });
+      const logged = errorSpy.mock.calls.map((call) => String(call[0]));
+      expect(logged.some((line) => line.includes("[param] tier") && line.includes("ha"))).toBe(true);
+      expect(logged.some((line) => line.includes("[param] target") && line.includes("k3d") && line.includes("default"))).toBe(true);
+      expect(logged.some((line) => line.includes("more at their defaults"))).toBe(false);
+    } finally {
+      if (prev === undefined) delete process.env.CHANT_PARAM_ECHO;
+      else process.env.CHANT_PARAM_ECHO = prev;
       errorSpy.mockRestore();
     }
   });
