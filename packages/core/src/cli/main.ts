@@ -413,10 +413,12 @@ Commands:
                                           with; scaffolds the output dir into a buildable
                                           chant project (src/ + config + package.json).
   carve bridge          Generate the surviving-TF patch (data sources + rewired
-                        --from <tf-dir>   refs) + deferred inputs + reversible runbook.
-                        [--select <addr>] Writes proposals for review; --apply-rewrites
-                                          edits the .tf in place. --select is optional
-                                          when the output dir holds one carve manifest.
+                        --from <tf-dir>   refs) + deferred inputs + reversible runbook,
+                        [--select <addr>] plus one git-applyable .patch for the whole
+                                          edit. Writes proposals for review;
+                                          --apply-rewrites edits the .tf in place.
+                                          --select is optional when the output dir
+                                          holds one carve manifest.
   carve apply           Apply graduation: ownership marker + finalized apply
                         --from <tf-dir>   runbook (dial-turn observe→apply). BYOL —
                         [--select <addr>] no cloud call; --write saves the doc. --select

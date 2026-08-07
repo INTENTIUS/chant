@@ -1,4 +1,5 @@
 import { describe, test, expect } from "vitest";
+import { execFileSync } from "child_process";
 import { mkdtempSync, writeFileSync, rmSync, readFileSync, existsSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -105,6 +106,39 @@ describe("carveBridge", () => {
 
       // The ORIGINAL api.tf in the estate is untouched.
       expect(readFileSync(join(dir, "api.tf"), "utf-8")).toBe(API_TF);
+    });
+  });
+
+  test("emits one git-applyable patch carrying the whole survivor edit", async () => {
+    if (!parserAvailable) return;
+    await withEstate(async (dir) => {
+      const out = join(dir, "carveout");
+      const res = await carveBridge({ from: dir, select: "aws_s3_bucket.assets", output: out });
+      expect(res.ok).toBe(true);
+      expect(res.patchPath).toBe(join(out, "aws_s3_bucket-assets-bridge.patch"));
+      expect(res.written).toContain(res.patchPath);
+
+      const patch = readFileSync(res.patchPath!, "utf-8");
+      expect(patch).toContain("diff --git a/aws_s3_bucket-assets-datasources.tf b/aws_s3_bucket-assets-datasources.tf");
+      expect(patch).toContain("new file mode 100644");
+      expect(patch).toContain("diff --git a/api.tf b/api.tf");
+      expect(patch).toContain("-      ASSETS_BUCKET = aws_s3_bucket.assets.bucket");
+      expect(patch).toContain("+      ASSETS_BUCKET = data.aws_s3_bucket.assets.bucket");
+
+      const m = readCarveManifest(res.manifestPath!)!;
+      expect(m.bridge!.patch).toBe(res.patchPath);
+      expect(formatCarveBridge(res)).toContain("git apply");
+
+      // The patch really applies: `git apply` from the estate reproduces the
+      // rewired survivor and the new data-source file.
+      try {
+        execFileSync("git", ["apply", res.patchPath!], { cwd: dir });
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === "ENOENT") return; // no git on this machine
+        throw err;
+      }
+      expect(readFileSync(join(dir, "api.tf"), "utf-8")).toContain("data.aws_s3_bucket.assets.bucket");
+      expect(readFileSync(join(dir, "aws_s3_bucket-assets-datasources.tf"), "utf-8")).toContain('data "aws_s3_bucket" "assets"');
     });
   });
 

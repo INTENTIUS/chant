@@ -618,6 +618,16 @@ if [ -d "$CARVE_TF" ]; then
     else
       fail "carve bridge did not compose with the manifest"
     fi
+
+    # bridge emits one git-applyable patch: the data-source file as a new file
+    # plus the rewired survivor references
+    if grep -q '+++ b/aws_s3_bucket-assets-datasources.tf' "$EMIT_OUT"/aws_s3_bucket-assets-bridge.patch 2>/dev/null \
+       && grep -q 'diff --git a/main.tf b/main.tf' "$EMIT_OUT"/aws_s3_bucket-assets-bridge.patch 2>/dev/null \
+       && grep -q '^+.*data\.aws_s3_bucket\.assets' "$EMIT_OUT"/aws_s3_bucket-assets-bridge.patch 2>/dev/null; then
+      pass "carve bridge emits a git-applyable patch"
+    else
+      fail "carve bridge did not emit the bridge patch"
+    fi
     if COMPOSED_APPLY=$($CHANT carve apply --from "$CARVE_TF" --output "$EMIT_OUT" --env prod 2>/dev/null) \
        && echo "$COMPOSED_APPLY" | grep -q 'target from the carve manifest' \
        && grep -q '"apply"' "$EMIT_OUT"/aws_s3_bucket-assets.carve.json 2>/dev/null; then
