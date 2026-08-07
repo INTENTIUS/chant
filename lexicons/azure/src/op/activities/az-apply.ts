@@ -388,7 +388,7 @@ export async function azApply(
  * Kubernetes label, while `gcpApply` writes GCP REST labels, where it is not.
  * Two surfaces, two key vocabularies. Azure has one surface.)
  */
-const LEGACY_OWNERSHIP_TAG_KEY = "managed-by";
+export const LEGACY_OWNERSHIP_TAG_KEY = "managed-by";
 
 /**
  * The ownership tags azApply stamps on every resource it applies.

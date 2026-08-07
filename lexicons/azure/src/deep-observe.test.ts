@@ -20,7 +20,7 @@ const stubArmFetch = (response: { status: number; text: string }): void => {
 const { azurePlugin } = await import("./plugin");
 const { observeResourcesDeepAzure, azureDeepNormalizationHooks } = await import("./deep-observe");
 const { deepDiffForLexicon } = await import("@intentius/chant/lifecycle/deep-observe");
-const { normalizeDeepObservation, normalizeDeepProperties } = await import("@intentius/chant/deep-observation");
+const { normalizeDeepObservation, normalizeDeepProperties, UNRESOLVED } = await import("@intentius/chant/deep-observation");
 
 /** An ARM 200, in place of the CLI stdout this used to fake (#1212). */
 const ok = (body: Record<string, unknown>) => ({ status: 200, text: JSON.stringify(body) });
@@ -73,6 +73,143 @@ describe("the azure noise rules", () => {
       { entityType: "Microsoft.Network/networkSecurityGroups", side: "live", hooks: azureDeepNormalizationHooks },
     );
     expect(out).toEqual({ securityRules: [{ name: "allow-ssh", priority: 100 }] });
+  });
+
+  test("chant's own ownership marker is not drift — the azure edition of #1301", () => {
+    const live = {
+      name: "acct",
+      tags: {
+        "chant-managed-by": "chant",
+        "chant-stack": "cc-azure",
+        "chant-env": "local",
+        "managed-by": "chant",
+        team: "platform",
+      },
+    };
+    const out = normalizeDeepProperties(live, {
+      entityType: "Microsoft.Storage/storageAccounts",
+      side: "live",
+      hooks: azureDeepNormalizationHooks,
+      counterpartPaths: new Set(["name"]),
+    });
+    // The stamped marker subtracts; a genuinely foreign tag still surfaces.
+    expect(out).toEqual({ name: "acct", tags: { team: "platform" } });
+  });
+
+  test("a declared ownership tag is still compared, and a foreign managed-by is still drift", () => {
+    const declaredIt = normalizeDeepProperties(
+      { name: "acct", tags: { "chant-stack": "cc-azure" } },
+      {
+        entityType: "Microsoft.Storage/storageAccounts",
+        side: "live",
+        hooks: azureDeepNormalizationHooks,
+        counterpartPaths: new Set(["name", "tags.chant-stack"]),
+      },
+    );
+    expect(declaredIt).toEqual({ name: "acct", tags: { "chant-stack": "cc-azure" } });
+
+    const foreign = normalizeDeepProperties(
+      { name: "acct", tags: { "managed-by": "terraform" } },
+      {
+        entityType: "Microsoft.Storage/storageAccounts",
+        side: "live",
+        hooks: azureDeepNormalizationHooks,
+        counterpartPaths: new Set(["name"]),
+      },
+    );
+    expect(foreign).toEqual({ name: "acct", tags: { "managed-by": "terraform" } });
+  });
+
+  test("ARM's self-id on a nested child element subtracts; a declared element id is compared", () => {
+    const live = {
+      securityRules: [
+        {
+          name: "allow-https",
+          id: "/subscriptions/s/resourceGroups/rg/providers/Microsoft.Network/networkSecurityGroups/n/securityRules/allow-https",
+          properties: { priority: 100, provisioningState: "Succeeded" },
+        },
+      ],
+    };
+    const out = normalizeDeepProperties(live, {
+      entityType: "Microsoft.Network/networkSecurityGroups",
+      side: "live",
+      hooks: azureDeepNormalizationHooks,
+      counterpartPaths: new Set(["securityRules", "securityRules[]", "securityRules[].name", "securityRules[].properties", "securityRules[].properties.priority"]),
+    });
+    expect(out).toEqual({ securityRules: [{ name: "allow-https", properties: { priority: 100 } }] });
+
+    // A declared array of id-references (a storage account's virtualNetworkRules)
+    // has a counterpart, so the id is real content and stays.
+    const declaredRefs = normalizeDeepProperties(
+      { networkAcls: { virtualNetworkRules: [{ id: "/subscriptions/s/…/subnets/app" }] } },
+      {
+        entityType: "Microsoft.Storage/storageAccounts",
+        side: "live",
+        hooks: azureDeepNormalizationHooks,
+        counterpartPaths: new Set(["networkAcls.virtualNetworkRules[].id"]),
+      },
+    );
+    expect(declaredRefs).toEqual({ networkAcls: { virtualNetworkRules: [{ id: "/subscriptions/s/…/subnets/app" }] } });
+  });
+
+  test("a live location nobody declared is placement, not drift; a declared one is compared", () => {
+    const undeclared = normalizeDeepProperties(
+      { name: "subnet-1", location: "eastus", addressPrefix: "10.0.1.0/24" },
+      {
+        entityType: "Microsoft.Network/virtualNetworks_subnets",
+        side: "live",
+        hooks: azureDeepNormalizationHooks,
+        counterpartPaths: new Set(["name", "addressPrefix"]),
+      },
+    );
+    expect(undeclared).toEqual({ name: "subnet-1", addressPrefix: "10.0.1.0/24" });
+
+    const declared = normalizeDeepProperties(
+      { name: "acct", location: "westus" },
+      {
+        entityType: "Microsoft.Storage/storageAccounts",
+        side: "live",
+        hooks: azureDeepNormalizationHooks,
+        counterpartPaths: new Set(["name", "location"]),
+      },
+    );
+    expect(declared).toEqual({ name: "acct", location: "westus" });
+  });
+
+  test("nested etags subtract wherever ARM stamps them", () => {
+    const out = normalizeDeepProperties(
+      { securityRules: [{ name: "r", etag: "W/\"1\"", properties: { priority: 100 } }] },
+      { entityType: "Microsoft.Network/networkSecurityGroups", side: "live", hooks: azureDeepNormalizationHooks },
+    );
+    expect(out).toEqual({ securityRules: [{ name: "r", properties: { priority: 100 } }] });
+  });
+
+  test("a declared ARM expression string is UNRESOLVED, never compared to its evaluated value", () => {
+    const declared = normalizeDeepProperties(
+      {
+        subnets: [
+          {
+            name: "subnet-1",
+            properties: {
+              addressPrefix: "10.0.1.0/24",
+              networkSecurityGroup: { id: "[resourceId('Microsoft.Network/networkSecurityGroups', 'x-nsg')]" },
+            },
+          },
+        ],
+        location: "eastus",
+      },
+      { entityType: "Microsoft.Network/virtualNetworks", side: "declared", hooks: azureDeepNormalizationHooks },
+    );
+    const subnet = (declared.subnets as Array<{ properties: { networkSecurityGroup: { id: string } } }>)[0];
+    expect(subnet.properties.networkSecurityGroup.id).toBe(UNRESOLVED);
+    expect(declared.location).toBe("eastus");
+
+    // An `[[`-escaped string is ARM's literal-`[` spelling, not an expression.
+    const escaped = normalizeDeepProperties(
+      { note: "[[not-an-expression]" },
+      { entityType: "Microsoft.Storage/storageAccounts", side: "declared", hooks: azureDeepNormalizationHooks },
+    );
+    expect(escaped.note).toBe("[[not-an-expression]");
   });
 
   test("subtracts an empty tag map only where source declares no tags at all", () => {
@@ -170,6 +307,30 @@ describe("observeResourcesDeepAzure", () => {
       physicalId: "/subscriptions/sub/resourceGroups/prod-rg/providers/Microsoft.Storage/storageAccounts/mydata",
       properties: { name: "mydata", location: "eastus", tags: { env: "prod" }, minimumTlsVersion: "TLS1_2", allowBlobPublicAccess: false },
     });
+  });
+
+  test("a child resource's leaf name folds back to the declared vnet/subnet spelling", async () => {
+    // ARM answers a child GET with the leaf (`subnet-1`) while chant declares
+    // the nested name — the same identity, and the URL that returned 200 IS
+    // the declared name, so the two spellings must not diff.
+    const fake = armFake((leaf) =>
+      ok({
+        id: "/subscriptions/sub/resourceGroups/prod-rg/providers/Microsoft.Network/virtualNetworks/drift-vnet/subnets/subnet-1",
+        name: leaf,
+        properties: { addressPrefix: "10.0.1.0/24" },
+      }),
+    );
+    const result = normalizeDeepObservation(
+      await observeResourcesDeepAzure({
+        environment: "prod-rg",
+        entityNames: ["subnet1"],
+        entities: entities({
+          subnet1: { entityType: "Microsoft.Network/virtualNetworks_subnets", props: { name: "drift-vnet/subnet-1" } },
+        }),
+        http: fake.http,
+      }),
+    );
+    expect(result.resources.subnet1.properties.name).toBe("drift-vnet/subnet-1");
   });
 
   test("a resource not found leaves the entity out — a confirmed absence", async () => {

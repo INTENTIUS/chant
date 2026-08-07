@@ -443,6 +443,7 @@ Each example directory also gets `README.md`, `package.json`, and any deploy scr
 | `test/e2e-smoke.sh` | E2E deployment harness: deploy, verify, teardown for AWS/GitLab, EKS, GKE, AKS |
 | `test/build-examples.sh` | Builds all root examples, copies artifacts to `/output` |
 | `test/aws-cc-e2e.sh` | AWS config-controller round-trip on Floci: apply → observe → drift → reconcile → rollback, cloud + k8s halves in one run (`just aws-cc-e2e`; see `test/aws-cc-e2e.md`) |
+| `test/azure-drift-e2e.sh` | Azure property-level drift acceptance on floci-az: clean apply quiet, hand-edited NSG rule surfaces, RG-orphan estate stays observed, emulator restart reads MISSING (`just azure-drift-e2e`) |
 
 ## Distribution Safety
 
