@@ -54,5 +54,10 @@
   "peerDependencies": {
     "@intentius/chant": "^0.41.14",
     "typescript": "^5.9.3"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/INTENTIUS/chant.git",
+    "directory": "lexicons/k3d"
   }
 }
