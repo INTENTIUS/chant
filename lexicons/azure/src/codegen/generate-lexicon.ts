@@ -25,6 +25,11 @@ export interface LexiconEntry {
   tagging?: { taggable: boolean; tagOnCreate: boolean; tagUpdatable: boolean };
   createOnly?: string[];
   writeOnly?: string[];
+  /**
+   * ARM deployment scopes the resource can be declared at (#1545).
+   * Absent means plain resource-group scope.
+   */
+  deployScopes?: string[];
 }
 
 /**
@@ -93,6 +98,7 @@ export function generateLexiconJSON(
         }),
         ...(r.resource.tagging && { tagging: r.resource.tagging }),
         ...(createOnly && { createOnly }),
+        ...(r.resource.deployScopes && { deployScopes: r.resource.deployScopes }),
       };
     },
     buildPropertyEntry: (resourceType, propertyType) => ({

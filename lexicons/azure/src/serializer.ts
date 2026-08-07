@@ -24,6 +24,7 @@ import { resolveDependsOn } from "@intentius/chant/resource-attributes";
 import { isDefaultTags, type TagEntry } from "./default-tags";
 import { loadTaggableResources } from "./taggable";
 import { findArmResourceRefs } from "./lint/post-synth/arm-refs";
+import { resolveTemplateScope, TEMPLATE_SCHEMAS } from "./deploy-scopes";
 
 /** Check if a declarable is a CoreParameter */
 function isCoreParameter(entity: Declarable): entity is CoreParameter {
@@ -177,8 +178,25 @@ function serializeToTemplate(
   outputs?: LexiconOutput[],
   ownership?: OwnershipMarker,
 ): ArmTemplate {
+  // Resolve the deployment scope from the resource types being emitted
+  // (#1545): a template of tenant-only resources (management groups, policy
+  // definitions at management-group scope, ...) must carry the matching
+  // $schema and must not lean on resourceGroup() expressions. Mixed sets
+  // with no common scope fall back to resource-group scope and AZR030
+  // reports the resources that cannot deploy there.
+  const emittedTypes: string[] = [];
+  for (const [, entity] of entities) {
+    if (isStackOutput(entity) || isDefaultTags(entity) || isCoreParameter(entity)) continue;
+    if (isChildProject(entity)) {
+      emittedTypes.push("Microsoft.Resources/deployments");
+    } else if (!isPropertyDeclarable(entity)) {
+      emittedTypes.push(entity.entityType);
+    }
+  }
+  const templateScope = resolveTemplateScope(emittedTypes);
+
   const template: ArmTemplate = {
-    $schema: "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+    $schema: TEMPLATE_SCHEMAS[templateScope],
     contentVersion: "1.0.0.0",
     resources: [],
   };
@@ -278,8 +296,11 @@ function serializeToTemplate(
         }
       }
 
-      // Default location to resource group location if not specified
-      if (!resource.location) {
+      // Default location to resource group location if not specified.
+      // Above resource-group scope there is no resource group to read a
+      // location from, and the scoped resources (management groups, policy
+      // definitions, ...) have no location field at all (#1545).
+      if (!resource.location && templateScope === "resourceGroup") {
         resource.location = "[resourceGroup().location]";
       }
 

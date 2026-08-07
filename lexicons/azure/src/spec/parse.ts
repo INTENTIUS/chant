@@ -12,7 +12,7 @@
  * - ARM schemas lack readOnlyProperties — attributes are curated
  */
 
-import type { ArmResourceDefinition, ArmSchemaProperty, ArmSchemaDefinition } from "./fetch";
+import type { ArmResourceDefinition, ArmSchemaProperty, ArmSchemaDefinition, DeployScope } from "./fetch";
 import {
   resolvePropertyType as coreResolvePropertyType,
   extractConstraints as coreExtractConstraints,
@@ -60,6 +60,12 @@ export interface ParsedResource {
   attributes: ParsedAttribute[];
   resourceLevelFields: string[];
   tagging?: { taggable: boolean; tagOnCreate: boolean; tagUpdatable: boolean };
+  /**
+   * ARM deployment scopes the schema defines this resource at (#1545).
+   * Absent means the resource came from `resourceDefinitions` only,
+   * i.e. plain resource-group scope.
+   */
+  deployScopes?: DeployScope[];
 }
 
 export interface ArmSchemaParseResult {
@@ -206,6 +212,14 @@ export function parseArmSchema(data: string | Buffer): ArmSchemaParseResult {
   const apiVersion: string = raw.apiVersion;
   const resourceDef: ArmResourceDefinition = raw.resourceDefinition;
   const definitions: Record<string, ArmSchemaDefinition> = raw.definitions ?? {};
+  // Deployment scopes stamped by the fetch explode (#1545). Only carried
+  // through when the resource exists somewhere other than plain
+  // resource-group scope, so the common case stays field-free.
+  const rawScopes: DeployScope[] | undefined = raw.deployScopes;
+  const deployScopes =
+    rawScopes && !(rawScopes.length === 1 && rawScopes[0] === "resourceGroup")
+      ? rawScopes
+      : undefined;
 
   const shortName = armShortName(resourceType);
   const fakeSchema = { definitions } as unknown as { typeName: string; definitions?: Record<string, ArmSchemaDefinition> };
@@ -322,6 +336,7 @@ export function parseArmSchema(data: string | Buffer): ArmSchemaParseResult {
       attributes: attrs,
       resourceLevelFields,
       ...(tagging && { tagging }),
+      ...(deployScopes && { deployScopes }),
     },
     propertyTypes: boundedPropertyTypes,
     enums,

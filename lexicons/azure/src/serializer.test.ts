@@ -200,4 +200,76 @@ describe("azureSerializer", () => {
     expect(resource.type).toBe("Microsoft.Network/applicationGateways");
     expect(resource.sku).toEqual({ name: "WAF_v2", tier: "WAF_v2", capacity: 2 });
   });
+
+  // --- Deployment scope (#1545) ---
+  // These read deployScopes from the generated lexicon (built by
+  // `just _ensure-gen` before tests run).
+
+  it("emits a tenant-scope template for management groups, with no location default", () => {
+    const entities = new Map<string, any>();
+    entities.set("platformMg", makeEntity("Microsoft.Management/managementGroups", {
+      name: "platform",
+      displayName: "Platform",
+    }));
+
+    const result = azureSerializer.serialize(entities);
+    const template = JSON.parse(result as string);
+
+    expect(template.$schema).toContain("tenantDeploymentTemplate");
+    const resource = template.resources[0];
+    expect(resource.type).toBe("Microsoft.Management/managementGroups");
+    // Tenant scope has no resource group to read a location from
+    expect(resource.location).toBeUndefined();
+  });
+
+  it("emits a subscription-scope template for policy definitions", () => {
+    const entities = new Map<string, any>();
+    entities.set("denyPublicIp", makeEntity("Microsoft.Authorization/policyDefinitions", {
+      name: "deny-public-ip",
+      policyType: "Custom",
+      policyRule: { if: { field: "type", equals: "Microsoft.Network/publicIPAddresses" }, then: { effect: "deny" } },
+    }));
+
+    const result = azureSerializer.serialize(entities);
+    const template = JSON.parse(result as string);
+
+    expect(template.$schema).toContain("subscriptionDeploymentTemplate");
+    const resource = template.resources[0];
+    expect(resource.location).toBeUndefined();
+    expect(resource.properties?.policyRule).toBeDefined();
+  });
+
+  it("keeps resource-group scope for policy assignments beside plain resources", () => {
+    const entities = new Map<string, any>();
+    entities.set("myVnet", makeEntity("Microsoft.Network/virtualNetworks", {
+      name: "testvnet",
+    }));
+    entities.set("enforceTags", makeEntity("Microsoft.Authorization/policyAssignments", {
+      name: "enforce-tags",
+    }));
+
+    const result = azureSerializer.serialize(entities);
+    const template = JSON.parse(result as string);
+
+    // policyAssignments deploy at every scope, so resource group wins
+    expect(template.$schema).toContain("/deploymentTemplate.json");
+    const vnet = template.resources.find((r: any) => r.type === "Microsoft.Network/virtualNetworks");
+    expect(vnet.location).toBe("[resourceGroup().location]");
+  });
+
+  it("falls back to resource-group scope when resources share no scope", () => {
+    const entities = new Map<string, any>();
+    entities.set("platformMg", makeEntity("Microsoft.Management/managementGroups", {
+      name: "platform",
+    }));
+    entities.set("myVnet", makeEntity("Microsoft.Network/virtualNetworks", {
+      name: "testvnet",
+    }));
+
+    const result = azureSerializer.serialize(entities);
+    const template = JSON.parse(result as string);
+
+    // No single scope fits both — AZR030 flags the management group
+    expect(template.$schema).toContain("/deploymentTemplate.json");
+  });
 });
