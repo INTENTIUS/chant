@@ -72,6 +72,7 @@ export function buildHookBody(w: WebhookConfig, includeType: boolean): Record<st
 
 export const webhooksCycle: Cycle<WebhooksScope> = {
   name: "webhooks",
+  verb: "audit-sink",
 
   async fetchLive(
     client: ForgejoClient,

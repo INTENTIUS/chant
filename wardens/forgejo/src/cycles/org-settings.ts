@@ -64,6 +64,7 @@ export function buildOrgPatchBody(desired: OrgSettings): Record<string, unknown>
 
 export const orgSettingsCycle: Cycle<OrgSettingsScope> = {
   name: "org-settings",
+  verb: "org-unit",
 
   async fetchLive(
     client: ForgejoClient,

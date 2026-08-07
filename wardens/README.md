@@ -38,6 +38,16 @@ Authoring governance config from typed TS (the C1 `LandingZone` pattern of
 #787) is a build-time concern and stays in lexicons/composites; the warden
 only ever reads the emitted config.
 
+## Governance verbs (#790)
+
+Every cycle stamps a `verb` — the cross-provider category from
+`@intentius/chant/governance` (`org-unit`, `policy-guardrail`, `membership`,
+`identity-assignment`, `audit-sink`, `secret-material`). The provider-specific
+cycle name stays for display; the verb is what lets a GitHub plan and a cloud
+plan (epic #787 C2) read on one grammar. `runReconcile` stamps the cycle's
+verb onto its change-set entries, and each warden's `verbs.test.ts` fails on
+a cycle that forgot one. Cloud cycles must stamp verbs from day one.
+
 ## Packaging (#789)
 
 Every warden publishes three surfaces:

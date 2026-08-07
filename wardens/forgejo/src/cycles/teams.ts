@@ -88,6 +88,7 @@ async function resolveTeamId(
 
 export const teamsCycle: Cycle<TeamsScope> = {
   name: "teams",
+  verb: "membership",
 
   async fetchLive(
     client: ForgejoClient,

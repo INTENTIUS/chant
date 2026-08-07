@@ -74,6 +74,7 @@ export function buildRepoBody(d: RepoConfig): Record<string, unknown> {
 
 export const repoSettingsCycle: Cycle<RepoSettingsScope> = {
   name: "repo-settings",
+  verb: "org-unit",
 
   async fetchLive(
     client: ForgejoClient,

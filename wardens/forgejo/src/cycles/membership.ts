@@ -29,6 +29,7 @@ interface GhUser {
 
 export const membershipCycle: Cycle<MembershipScope> = {
   name: "membership",
+  verb: "membership",
 
   async fetchLive(
     client: ForgejoClient,
