@@ -20,6 +20,8 @@ This page is for the first time you're asked to sign an artifact and you're not 
 | **SLSA provenance** | A signed statement of where the artifact came from and how it was built — source commit, builder identity, build timestamp. Answers "who built this and from what," not "what's in it." |
 | **Signature** | Cryptographic proof that a specific identity (a person or a CI workflow) produced this exact artifact, plus a public record that the signature happened. Answers "who vouches for these exact bytes." |
 | **VEX / CVE** | A CVE is a known vulnerability in some package. VEX is a statement about whether a given CVE actually affects *this* artifact the way it's used. Answers "of everything the SBOM lists, what actually matters." |
+| **KEV** | CISA's catalog of vulnerabilities someone has actually been caught exploiting in the wild. Not "could be bad" — "is being used against people right now." |
+| **EPSS** | A 0-to-1 score estimating the chance a given CVE gets exploited in the next 30 days. A high-severity bug nobody knows how to exploit scores low. |
 
 An SBOM tells you what's inside. Provenance tells you where it came from. A signature tells you who's vouching for it. None of the three answers the other two — that's why chant attaches all three separately, to the same artifact, rather than treating any one as a stand-in for the others.
 
@@ -34,7 +36,7 @@ What each capability needs installed. The `dir`/`zip`/`jar` SBOM path is the onl
 | Capability | External tool | Tool-free? |
 |---|---|---|
 | `generate-sbom` — `dir` / `zip` / `jar` | none (pure-TypeScript lockfile backend) | Yes |
-| `generate-sbom` — `image` | `syft` or `docker buildx` ([#610](https://github.com/INTENTIUS/chant/issues/610)) | No |
+| `generate-sbom` — `image` | `syft`, via an explicitly injected `toolSbomGenerator` (shipped in [#610](https://github.com/INTENTIUS/chant/issues/610)) | No |
 | `sign` / `attest-provenance` / `verify` | `cosign` | No |
 | `vuln-gate` | `grype` or `trivy` (auto-detected at scan time) | No |
 
@@ -66,7 +68,7 @@ chant run --components my-lib --env local
 That writes `sbom.spdx.json` next to the scanned `package-lock.json` (`lockfileSbomGenerator`'s default `outDir`) and folds an `sbom`-kind entry into the component's build-archive manifest. [`examples/supply-chain`](https://github.com/INTENTIUS/chant/tree/main/examples/supply-chain) is this exact pattern, plus a second, structural BOM over a synthesized IaC template via `extract-config-bom` — clone it and run `npm install && npm run supply-chain` to see both artifacts land on disk.
 
 <Aside type="caution" title="forImage is the one exception">
-An image's dependency surface includes its base layers, which no lockfile enumerates — `generate-sbom` with `artifactType: "image"` still throws `SbomGeneratorNotImplementedError` by default. That path needs the real deep-scan tool backend (`syft`/`docker buildx --sbom`/`cyclonedx-maven`/`cdxgen`, tracked in [#610](https://github.com/INTENTIUS/chant/issues/610)) — inject `toolSbomGenerator` (`packages/core/src/components/verbs/tool-sbom-generator.ts`) explicitly once that tool is available. `dir`/`zip`/`jar` never had this problem: their dependency surface *is* the lockfile.
+An image's dependency surface includes its base layers, which no lockfile enumerates — `generate-sbom` with `artifactType: "image"` still throws `SbomGeneratorNotImplementedError` by default. The real deep-scan tool backend exists (shipped in [#610](https://github.com/INTENTIUS/chant/issues/610)): inject `toolSbomGenerator` (`packages/core/src/components/verbs/tool-sbom-generator.ts`) explicitly via `createGenerateSbomCapability(toolSbomGenerator)` and it scans the image with `syft`. It stays opt-in rather than default because it needs an external tool on `PATH`, which would break the hermetic-by-default story for everyone else. `dir`/`zip`/`jar` never had this problem: their dependency surface *is* the lockfile.
 </Aside>
 
 ## Why keyless signing
@@ -129,7 +131,7 @@ A digest (`myapp@sha256:...`) is the artifact's own content hash. It cannot be r
 One digest carries all three attestations — SBOM, provenance, and signature — and `verify` checks that digest before a deploy is allowed to proceed.
 
 <Aside type="caution" title="This walkthrough's SBOM step needs a scanner">
-The `Sbom` phase below uses `artifactType: "image"`, which throws `SbomGeneratorNotImplementedError` by default until a scanner backend is wired in ([#610](https://github.com/INTENTIUS/chant/issues/610)) — see the [Prerequisites](#prerequisites) table. For a first run that needs no external tool at all, start from [Generating an SBOM tool-free](#generating-an-sbom-tool-free) (`dir`/`zip`/`jar` artifacts), then layer on the sign/verify steps shown here once `cosign` is installed.
+The `Sbom` phase below uses `artifactType: "image"`, which throws `SbomGeneratorNotImplementedError` by default — inject the `syft`-backed `toolSbomGenerator` (shipped in [#610](https://github.com/INTENTIUS/chant/issues/610)) to wire in the real deep-scan backend; see the [Prerequisites](#prerequisites) table. For a first run that needs no external tool at all, start from [Generating an SBOM tool-free](#generating-an-sbom-tool-free) (`dir`/`zip`/`jar` artifacts), then layer on the sign/verify steps shown here once `cosign` is installed.
 </Aside>
 
 <Diagram name="supply-chain-attestations" alt="A build produces an image, publish promotes it to a registry by digest, and generate-sbom, attest-provenance, and sign all attach to that same digest. A verify step checks the signature and provenance against an identity policy before apply runs, and throws on failure." caption="SBOM, provenance, and signature all attach to one artifact digest. Verify gates apply on that digest." />
@@ -194,7 +196,7 @@ Run it: `chant run --components web-service --env prod`. Every step from `Sbom` 
 </Aside>
 
 <Aside type="caution" title="cosign must be installed">
-`sign`/`attest-provenance`/`verify` all shell out to the real `cosign` binary. If it's missing, you get a clear `ToolNotAvailableError` naming the missing tool and what was being attempted — never a silent skip or a fake pass. Install cosign from [docs.sigstore.dev/cosign/system_config/installation](https://docs.sigstore.dev/cosign/system_config/installation) and it's on `PATH` for every environment that runs these three capabilities, including CI. `generate-sbom` above needs no such install for `dir`/`zip`/`jar` artifacts (see [Generating an SBOM tool-free](#generating-an-sbom-tool-free)) — only `artifactType: "image"`, as used here, needs a real scanner backend (#610).
+`sign`/`attest-provenance`/`verify` all shell out to the real `cosign` binary. If it's missing, you get a clear `ToolNotAvailableError` naming the missing tool and what was being attempted — never a silent skip or a fake pass. Install cosign from [docs.sigstore.dev/cosign/system_config/installation](https://docs.sigstore.dev/cosign/system_config/installation) and it's on `PATH` for every environment that runs these three capabilities, including CI. `generate-sbom` above needs no such install for `dir`/`zip`/`jar` artifacts (see [Generating an SBOM tool-free](#generating-an-sbom-tool-free)) — only `artifactType: "image"`, as used here, needs the injected `syft`-backed `toolSbomGenerator` (#610).
 </Aside>
 
 <Aside type="tip" title="chant.config.ts fills these in for you (#629)">
@@ -215,10 +217,47 @@ phase("VulnGate", [
 ]),
 ```
 
-The default policy (`DEFAULT_VULN_POLICY`, `packages/core/src/components/verbs/vuln-gate.ts`) is beginner-safe: block only `critical` + fixable + not-VEX-suppressed findings; warn on `high`; license findings are report-only unless `failOnLicense: true`.
+The default policy (`DEFAULT_VULN_POLICY`, `packages/core/src/components/verbs/vuln-gate.ts`) is beginner-safe: block only `critical` + fixable + not-VEX-suppressed findings; warn on `high`; license findings are report-only unless `failOnLicense: true`. Exploitability gating (KEV/EPSS, next section) is off by default for the same reason.
 
 <Aside type="caution" title="vuln-gate needs grype or trivy installed">
 `vuln-gate` scans via an injectable `VulnScanner`. The capability `chant run --components` registers by default auto-detects a real backend at scan time — `grype` if present, else `trivy` (`autoDetectVulnScanner`, `packages/core/src/components/verbs/vuln-scan.ts`) — so the gate works the moment either tool is on `PATH`, no code wiring (#634, the vuln-side analog of the hermetic-by-default SBOM generator). When **neither** is installed it throws a `ToolNotAvailableError` naming what to install, not a silent empty scan. To pin a specific tool or inject a mock, construct your own registry with `createVulnGateCapability(createToolVulnScanner("grype"))` (see `RunComponentsOptions.registry`, `packages/core/src/components/cli-support.ts`), or supply `findings` directly from a prior `scan-vulnerabilities` step. Unlike the SBOM step there is no hermetic fallback — a scan needs a real vuln database, so a scanner is genuinely required.
+</Aside>
+
+## Exploitability gating: KEV and EPSS
+
+Severity answers "how bad is this bug if someone exploits it." It says nothing about whether anyone actually is. Two public data sources answer that second question, and `vuln-gate` can gate on both ([#1461](https://github.com/INTENTIUS/chant/issues/1461)): **KEV** membership (see the [glossary](#glossary) — the CVE is being exploited in the wild, today) and the **EPSS** score (how likely exploitation is in the next 30 days). A medium-severity CVE in the KEV catalog is usually more urgent than a critical one nobody has weaponized; these fields let the gate say so.
+
+Four `vulnPolicy` fields control it, settable project-wide in `chant.config.ts` or per-step in the `policy` field (step wins field-by-field, same as every other `vulnPolicy` field):
+
+| Field | What it does | Default |
+|---|---|---|
+| `failOnKev` | Block any finding in the CISA KEV catalog, regardless of severity. | `false` |
+| `failEpssAtOrAbove` | Block a finding whose EPSS score is at or above this (0.0–1.0). | unset — EPSS ignored |
+| `warnEpssAtOrAbove` | Warn (never block) at or above this EPSS score. | unset |
+| `exploitabilityFixableOnly` | Mirror `fixableOnly` for KEV/EPSS blocks: an unfixable KEV finding warns instead of blocking, since no upgrade can action it. | `true` |
+
+A recommended strict posture you can paste:
+
+```ts title="chant.config.ts"
+export default {
+  vulnPolicy: {
+    failOnKev: true,           // block anything actively exploited
+    failEpssAtOrAbove: 0.1,    // and anything likely to be
+    warnEpssAtOrAbove: 0.01,
+  },
+};
+```
+
+The defaults are deliberately off. Upgrading chant does not newly block anyone's deploy — a KEV finding under the default policy gates exactly as it did before these fields existed. Turning `failOnKev` on is a policy decision your team makes, in a config file a reviewer sees, not something an upgrade makes for you.
+
+Three rules govern how exploitability interacts with the rest of the gate:
+
+1. **It escalates, never de-escalates.** KEV and EPSS blocks are OR'd with the severity rules. A critical fixable finding blocks whether or not it is in KEV; a low EPSS score exempts nothing. A finding that trips several rules is reported once, under the most specific reason (`kev` over `epss-threshold` over `severity-threshold`), and `VulnGateFailedError`'s message names the rule that fired for each finding — `CVE-2024-12345 (medium, libfoo) — in CISA KEV since 2024-03-11, known ransomware use`, not "policy violation."
+2. **VEX still wins, KEV included.** A VEX `not_affected` statement suppresses a KEV finding. This is deliberate: VEX is a claim that the CVE does not apply to *this artifact as built*; the KEV catalog says the CVE is exploited *somewhere*. A specific claim about your artifact outranks a general one about the CVE — and if a team VEX-suppresses a KEV finding wrongly, that is a reviewable statement in a document, which is the whole point of VEX.
+3. **Absent data never matches.** A finding with no EPSS score is "not scored," not "scored zero" — it can never trip an EPSS threshold, even a threshold of `0`.
+
+<Aside type="caution" title="Only grype reports this data today">
+The KEV/EPSS fields on a finding come from the scanner. **grype** populates both from its vulnerability database. **trivy** (v0.73) emits neither in its JSON output, so a trivy-backed gate has every exploitability field absent — `failOnKev` and the EPSS thresholds simply never match, and the gate behaves exactly as it did before these fields existed. That is the honest reading of "the scanner reported nothing," not a bug in the gate. If you want exploitability gating, scan with grype (the auto-detection already prefers it when both are installed).
 </Aside>
 
 ## Read next
