@@ -205,6 +205,39 @@ describe("kubectlApply", () => {
     expect(requests.map((r) => r.query.force)).toEqual(["false", "true", "false", "true"]);
   });
 
+  test("a controller echoing chant's marker label is retaken too — chant owns its reserved channel", async () => {
+    // An operator that reconciles whole objects becomes SSA owner of labels it
+    // merely echoed (observed live: kubemicrovm's microvmimagereconciler
+    // owning .metadata.labels.chant.intentius.io/stack). It never chose that
+    // value; the marker namespace is chant's.
+    const file = join(dir, "k8s.yaml");
+    writeFileSync(file, deploymentYaml);
+    const cluster = fakeCluster({
+      respond: (req) => {
+        if (req.method !== "PATCH") return undefined;
+        if (req.query.force === "true") return { body: JSON.parse(String(req.body)) };
+        return {
+          status: 409,
+          body: {
+            ...statusBody(409, "Conflict", 'Apply failed with 1 conflict: conflict with "microvmimagereconciler"'),
+            details: {
+              causes: [
+                {
+                  type: "FieldManagerConflict",
+                  message: 'conflict with "microvmimagereconciler"',
+                  field: ".metadata.labels.chant.intentius.io/stack",
+                },
+              ],
+            },
+          },
+        };
+      },
+    });
+
+    const result = await applyManifest({ manifest: file, stack: "kmv-workload" }, undefined, cluster.connector);
+    expect(result.applied).toHaveLength(2);
+  });
+
   test("a conflict involving any FOREIGN manager still refuses — self-retake never widens", async () => {
     const file = join(dir, "k8s.yaml");
     writeFileSync(file, deploymentYaml);
