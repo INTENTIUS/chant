@@ -5,6 +5,8 @@
  * `scan-vulnerabilities` capability over an injected scanner.
  */
 
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, test, expect } from "vitest";
 import {
   normalizeSeverity,
@@ -21,6 +23,8 @@ import type { SbomDocument } from "./sbom-generator";
 import { createMockProcessRunner } from "./__tests__/mock-process-runner";
 
 const ctx = { env: "prod", component: "search-service" };
+
+const FIXTURES_DIR = join(import.meta.dirname, "__fixtures__");
 
 const SBOM: SbomDocument = {
   format: "spdx",
@@ -81,6 +85,96 @@ describe("parseTrivyOutput", () => {
     expect(findings[0].cveId).toBe("CVE-2024-0003");
     expect(findings[0].fixable).toBe(true);
     expect(findings[0].fixedVersion).toBe("1.1.1w");
+  });
+});
+
+// ── exploitability parsing (#1463, over real captured scanner output) ────────
+// Fixtures are unmodified `grype -o json` (v0.116.1) / `trivy sbom --format
+// json` (v0.73.0) stdout from scanning a CycloneDX SBOM containing
+// log4j-core@2.14.1 — a package with KEV-listed CVEs (Log4Shell).
+
+describe("exploitability parsing (#1463)", () => {
+  const grypeFixture = readFileSync(join(FIXTURES_DIR, "grype-with-kev-epss.json"), "utf8");
+  const trivyFixture = readFileSync(join(FIXTURES_DIR, "trivy-with-kev-epss.json"), "utf8");
+
+  test("parseGrypeOutput carries KEV membership, dates, ransomware use, and EPSS through to the finding", () => {
+    const findings = parseGrypeOutput(grypeFixture);
+    const log4shell = findings.find((f) => f.epssPercentile === 1);
+    expect(log4shell).toBeDefined();
+    expect(log4shell!.inKev).toBe(true);
+    expect(log4shell!.kevDateAdded).toBe("2021-12-10");
+    expect(log4shell!.kevDueDate).toBe("2021-12-24");
+    expect(log4shell!.kevRansomware).toBe(true);
+    expect(log4shell!.epss).toBeCloseTo(0.99999, 5);
+    // The severity-shaped fields still parse as before on the same match.
+    expect(log4shell!.severity).toBe("critical");
+    expect(log4shell!.package).toBe("log4j-core");
+    expect(log4shell!.fixable).toBe(true);
+  });
+
+  test("grype omitting the KEV annotation leaves inKev undefined — reported-absent and not-reported are different states", () => {
+    const findings = parseGrypeOutput(grypeFixture);
+    const nonKev = findings.filter((f) => f.inKev === undefined);
+    expect(nonKev.length).toBeGreaterThan(0);
+    for (const f of nonKev) {
+      // undefined !== false: grype said nothing about KEV for these, which is
+      // not the same conclusion as grype reporting "not in KEV".
+      expect(f.inKev).not.toBe(false);
+      expect(f.kevDateAdded).toBeUndefined();
+      expect(f.kevDueDate).toBeUndefined();
+      expect(f.kevRansomware).toBeUndefined();
+      // EPSS is independent of KEV — grype scores these too.
+      expect(f.epss).toBeTypeOf("number");
+    }
+  });
+
+  test("parseTrivyOutput leaves every exploitability field undefined — trivy reports none of them", () => {
+    const findings = parseTrivyOutput(trivyFixture);
+    expect(findings.length).toBeGreaterThan(0);
+    const log4shell = findings.find((f) => f.cveId === "CVE-2021-44228");
+    expect(log4shell).toBeDefined();
+    expect(log4shell!.severity).toBe("critical");
+    for (const f of findings) {
+      expect(f.epss).toBeUndefined();
+      expect(f.epssPercentile).toBeUndefined();
+      expect(f.inKev).toBeUndefined();
+      expect(f.inKev).not.toBe(false);
+      expect(f.kevDateAdded).toBeUndefined();
+      expect(f.kevDueDate).toBeUndefined();
+      expect(f.kevRansomware).toBeUndefined();
+    }
+  });
+
+  test("a grype document with no exploitability data parses to findings with all six fields undefined", () => {
+    const findings = parseGrypeOutput(GRYPE_JSON);
+    for (const f of findings) {
+      expect(f.epss).toBeUndefined();
+      expect(f.epssPercentile).toBeUndefined();
+      expect(f.inKev).toBeUndefined();
+      expect(f.kevDateAdded).toBeUndefined();
+      expect(f.kevDueDate).toBeUndefined();
+      expect(f.kevRansomware).toBeUndefined();
+    }
+  });
+
+  test("KEV ransomware 'unknown' stays undefined, not false — KEV's tri-state survives", () => {
+    const doc = JSON.stringify({
+      matches: [
+        {
+          vulnerability: {
+            id: "CVE-2024-0004",
+            severity: "High",
+            fix: { versions: ["2.0"], state: "fixed" },
+            epss: [{ cve: "CVE-2024-0004", epss: 0.5, percentile: 0.9, date: "2026-08-01" }],
+            knownExploited: [{ cve: "CVE-2024-0004", dateAdded: "2026-01-01", dueDate: "2026-01-22", knownRansomwareCampaignUse: "unknown" }],
+          },
+          artifact: { name: "widget", version: "1.0" },
+        },
+      ],
+    });
+    const [f] = parseGrypeOutput(doc);
+    expect(f.inKev).toBe(true);
+    expect(f.kevRansomware).toBeUndefined();
   });
 });
 

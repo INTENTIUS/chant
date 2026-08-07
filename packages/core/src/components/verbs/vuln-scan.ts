@@ -95,15 +95,26 @@ export interface VulnScanner {
 /** Which real CLI scanner a `ProcessRunner`-backed scanner shells out to. */
 export type ScannerTool = "grype" | "trivy";
 
-/** grype `-o json` output shape (the subset we read). */
+/** grype `-o json` output shape (the subset we read). `epss` and `knownExploited` are omitted (not empty) for a vuln grype has no data on, so absence maps to `undefined`, never `false`/`0`. grype's composite `risk` score is deliberately not read — policy gates on the inputs (EPSS, KEV), not one tool's weighting of them. */
 interface GrypeOutput {
   matches?: Array<{
-    vulnerability?: { id?: string; severity?: string; fix?: { versions?: string[]; state?: string } };
+    vulnerability?: {
+      id?: string;
+      severity?: string;
+      fix?: { versions?: string[]; state?: string };
+      epss?: Array<{ cve?: string; epss?: number; percentile?: number; date?: string }>;
+      knownExploited?: Array<{
+        cve?: string;
+        dateAdded?: string;
+        dueDate?: string;
+        knownRansomwareCampaignUse?: string;
+      }>;
+    };
     artifact?: { name?: string; version?: string };
   }>;
 }
 
-/** trivy `--format json` output shape (the subset we read). */
+/** trivy `--format json` output shape (the subset we read). Trivy (v0.73, __fixtures__/trivy-with-kev-epss.json) reports no KEV/EPSS data in its JSON output, so a trivy-backed finding carries every exploitability field as `undefined` — the honest "not reported" state, not `false`. */
 interface TrivyOutput {
   Results?: Array<{
     Vulnerabilities?: Array<{
@@ -121,6 +132,8 @@ export function parseGrypeOutput(stdout: string): VulnFinding[] {
   const doc = JSON.parse(stdout) as GrypeOutput;
   return (doc.matches ?? []).map((m) => {
     const fixVersions = m.vulnerability?.fix?.versions ?? [];
+    const epss = m.vulnerability?.epss?.[0];
+    const kev = m.vulnerability?.knownExploited?.[0];
     return {
       cveId: m.vulnerability?.id ?? "UNKNOWN",
       severity: normalizeSeverity(m.vulnerability?.severity),
@@ -128,6 +141,16 @@ export function parseGrypeOutput(stdout: string): VulnFinding[] {
       installedVersion: m.artifact?.version ?? "",
       fixedVersion: fixVersions[0],
       fixable: m.vulnerability?.fix?.state === "fixed" || fixVersions.length > 0,
+      epss: epss?.epss,
+      epssPercentile: epss?.percentile,
+      // grype omits `knownExploited` for a non-KEV vuln, so `undefined` here
+      // means "no KEV annotation reported" — never coerced to `false`.
+      inKev: kev ? true : undefined,
+      kevDateAdded: kev?.dateAdded,
+      kevDueDate: kev?.dueDate,
+      // KEV's ransomware field is "known"/"unknown" — "unknown" is not "no",
+      // so only an explicit "known" becomes `true`; everything else stays unset.
+      kevRansomware: kev?.knownRansomwareCampaignUse?.toLowerCase() === "known" ? true : undefined,
     } satisfies VulnFinding;
   });
 }
