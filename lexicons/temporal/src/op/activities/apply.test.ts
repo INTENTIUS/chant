@@ -54,6 +54,41 @@ describe("applyEndpoint (#926)", () => {
  * again, and that the arguments the composite emits reach the applier intact.
  * What the applier *does* is the k8s lexicon's own test.
  */
+describe("nativeApply: kustomize renders, then dispatches to the SAME k8s applier (#1548)", () => {
+  test("the rendered documents reach the applier inline, output as the render dir", async () => {
+    const calls: Parameters<K8sApplier>[0][] = [];
+    const k8s: K8sApplier = async (args) => {
+      calls.push(args);
+      return { applied: [{}], pruned: [], fieldManager: "chant:web" };
+    };
+    const rendered = [{ apiVersion: "v1", kind: "Namespace", metadata: { name: "web" } }];
+    const renderer = async (dir: string) => {
+      expect(dir).toBe("overlays/prod");
+      return rendered;
+    };
+
+    const result = await nativeApply(
+      { target: "kustomize", env: "prod", output: "overlays/prod", deleteMode: "owned-only" },
+      undefined,
+      k8s,
+      undefined,
+      renderer,
+    );
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].documents).toBe(rendered);
+    expect(calls[0].manifest).toBe("kustomize:overlays/prod"); // label, not a path
+    expect(calls[0].deleteMode).toBe("owned-only");
+    expect(result.applied).toBe(1);
+    expect(result.fieldManager).toBe("chant:web");
+  });
+
+  test("defaultOutput and rollback: dist directory, no native rollback", async () => {
+    expect(defaultOutput("kustomize")).toBe("dist");
+    expect(rollbackCommand("kustomize", "prod")).toBeUndefined();
+  });
+});
+
 describe("nativeApply: kubectl dispatches to the k8s lexicon (chant #1075)", () => {
   const applier = (): { fn: K8sApplier; calls: Parameters<K8sApplier>[0][] } => {
     const calls: Parameters<K8sApplier>[0][] = [];

@@ -1,7 +1,7 @@
 {
   "name": "@intentius/chant-lexicon-temporal",
   "version": "0.41.19",
-  "description": "Temporal lexicon for chant — server deployment, namespaces, search attributes, and schedules",
+  "description": "Temporal lexicon for chant \u2014 server deployment, namespaces, search attributes, and schedules",
   "license": "Apache-2.0",
   "homepage": "https://intentius.io/chant",
   "repository": {
@@ -59,7 +59,8 @@
     "typescript": "^5.9.3"
   },
   "dependencies": {
-    "@temporalio/common": "^1.17.2"
+    "@temporalio/common": "^1.17.2",
+    "js-yaml": "^4.1.1"
   },
   "devDependencies": {
     "@intentius/chant": "*",

@@ -241,20 +241,68 @@ export async function importCommand(options: ImportOptions): Promise<ImportResul
 
   const lexicon = plugin.name;
 
+  return parseAndWrite(plugin, content, outputDir, options.force, warnings, generatedFiles, lexicon);
+}
+
+/**
+ * Import from an in-memory template string through a KNOWN plugin — no
+ * detection, no JSON assumption (#1548). This is the seam
+ * `chant import --kustomize <dir>` drives with `kustomize build` output
+ * through the k8s plugin's YAML parser; `importCommand` above is the same
+ * pipeline behind file reading + JSON detection.
+ */
+export interface ContentImportOptions {
+  /** The raw template content (YAML or JSON — the plugin's parser decides). */
+  content: string;
+  /** The lexicon whose parser/generator handle it, e.g. "k8s". */
+  lexicon: string;
+  output?: string;
+  force?: boolean;
+}
+
+export async function importFromContent(options: ContentImportOptions): Promise<ImportResult> {
+  const outputDir = resolve(options.output ?? "./infra/");
+  let plugins: LexiconPlugin[];
+  try {
+    plugins = await loadPlugins([options.lexicon]);
+  } catch (err) {
+    return {
+      success: false,
+      generatedFiles: [],
+      warnings: [],
+      error: `Could not load lexicon "${options.lexicon}": ${err}`,
+    };
+  }
+  const plugin = plugins[0];
+  if (!plugin) {
+    return { success: false, generatedFiles: [], warnings: [], error: `Lexicon "${options.lexicon}" not available.` };
+  }
   if (!plugin.templateParser || !plugin.templateGenerator) {
     return {
       success: false,
       generatedFiles: [],
       warnings: [],
       error: `Lexicon "${plugin.name}" does not support template import.`,
-      lexicon,
+      lexicon: plugin.name,
     };
   }
+  return parseAndWrite(plugin, options.content, outputDir, options.force, [], [], plugin.name);
+}
 
+/** The shared tail of every template import: parse → generate → write. */
+function parseAndWrite(
+  plugin: LexiconPlugin,
+  content: string,
+  outputDir: string,
+  force: boolean | undefined,
+  warnings: string[],
+  generatedFiles: string[],
+  lexicon: string,
+): ImportResult {
   // Parse template
   let ir: TemplateIR;
   try {
-    const parser = plugin.templateParser();
+    const parser = plugin.templateParser!();
     ir = parser.parse(content);
   } catch (err) {
     return {
@@ -265,10 +313,10 @@ export async function importCommand(options: ImportOptions): Promise<ImportResul
     };
   }
 
-  const generator = plugin.templateGenerator();
+  const generator = plugin.templateGenerator!();
 
   // Check output directory
-  if (existsSync(outputDir) && !options.force) {
+  if (existsSync(outputDir) && !force) {
     const files = readdirSync(outputDir);
     if (files.length > 0) {
       warnings.push(`Output directory ${outputDir} is not empty. Use --force to overwrite.`);
@@ -293,7 +341,7 @@ export async function importCommand(options: ImportOptions): Promise<ImportResul
     }
 
     // Check for existing file
-    if (existsSync(filePath) && !options.force) {
+    if (existsSync(filePath) && !force) {
       warnings.push(`File ${file.path} already exists, skipping`);
       continue;
     }

@@ -1,6 +1,6 @@
 import { listCommand, printListResult } from "../commands/list";
 import { describeCommand, printDescribeResult } from "../commands/describe";
-import { importCommand, importFromLive, importFromLiveStacks, printImportResult } from "../commands/import";
+import { importCommand, importFromContent, importFromLive, importFromLiveStacks, printImportResult } from "../commands/import";
 import { loadChantConfig } from "../../config";
 import { resolve } from "path";
 import { auditCommand, printAuditResult, type AuditFormat, type AuditTier, type AuditFailOn } from "../commands/audit";
@@ -170,6 +170,45 @@ export async function runDescribe(ctx: CommandContext): Promise<number> {
 
 export async function runImport(ctx: CommandContext): Promise<number> {
   const { args } = ctx;
+
+  // `--kustomize <dir>` (#1548): render the overlay and import the output
+  // through the k8s template parser — the flag NAMES the lexicon, so no JSON
+  // detection. `kustomize build`, falling back to kubectl's vendored
+  // kustomize when the standalone binary is absent; a big overlay renders
+  // megabytes, hence the buffer bound.
+  if (args.kustomize) {
+    const { exec } = await import("node:child_process");
+    const { promisify } = await import("node:util");
+    const execAsync = promisify(exec);
+    const run = (cmd: string) => execAsync(cmd, { maxBuffer: 64 * 1024 * 1024 });
+    const quoted = `'${args.kustomize.replace(/'/g, "'\\''")}'`;
+    let rendered: string;
+    try {
+      ({ stdout: rendered } = await run(`kustomize build ${quoted}`));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (!/ENOENT|not found|command not found|127/.test(message)) {
+        console.error(formatError({ message: `kustomize build failed: ${message.split("\n")[0]}` }));
+        return 1;
+      }
+      try {
+        ({ stdout: rendered } = await run(`kubectl kustomize ${quoted}`));
+      } catch (err2) {
+        console.error(formatError({
+          message: `neither kustomize nor kubectl could render ${args.kustomize}: ${err2 instanceof Error ? err2.message.split("\n")[0] : String(err2)}`,
+        }));
+        return 1;
+      }
+    }
+    const result = await importFromContent({
+      content: rendered,
+      lexicon: "k8s",
+      output: args.output,
+      force: args.force,
+    });
+    printImportResult(result);
+    return result.success ? 0 : 1;
+  }
 
   // `--from <env>` switches import from a template file to a live source.
   if (args.migrateFrom) {

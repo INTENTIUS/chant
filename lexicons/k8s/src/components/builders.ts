@@ -13,5 +13,10 @@
 
 import { step } from "@intentius/chant/components";
 import type { KubectlApplyInput } from "./kubectl-apply";
+import type { KustomizeApplyInput } from "./kustomize-apply";
 
 export const kubectlApply = step<KubectlApplyInput & { noRollback?: string }>("kubectl-apply");
+
+// Same needs-opt-out posture, same sugar (#1548): a kustomize render in front
+// of the identical server-side apply.
+export const kustomizeApply = step<KustomizeApplyInput & { noRollback?: string }>("kustomize-apply");

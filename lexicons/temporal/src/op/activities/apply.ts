@@ -32,7 +32,7 @@ import { promisify } from "node:util";
 const execAsync = promisify(exec);
 
 /** The native apply mechanism for a target. */
-export type ApplyTarget = "cloudformation" | "kubectl" | "arm";
+export type ApplyTarget = "cloudformation" | "kubectl" | "arm" | "kustomize";
 
 /**
  * The targets that are still a shell command. `kubectl` left since chant #1075
@@ -94,6 +94,9 @@ export interface NativeApplyResult {
 export type K8sApplier = (
   args: {
     manifest: string;
+    /** Already-rendered documents (#1548) — the kustomize target hands the
+     * render straight in; `manifest` is then only the log label. */
+    documents?: Array<Record<string, unknown>>;
     environment?: string;
     deleteMode?: DeleteMode;
     force?: boolean;
@@ -149,6 +152,32 @@ export function applyCommand(
       // nothing about the command.
       return `aws cloudformation deploy --template-file ${output} --stack-name ${env} --capabilities CAPABILITY_NAMED_IAM`;
   }
+}
+
+/**
+ * Render a kustomization directory to parsed documents (#1548): `kustomize
+ * build`, falling back to kubectl's vendored kustomize when the standalone
+ * binary is absent. The 64MiB buffer matches the k8s/helm lexicons' bound —
+ * a big overlay renders megabytes. YAML parsing is js-yaml's multi-doc
+ * loader, the same one the k8s applier uses on files.
+ */
+async function renderKustomization(dir: string): Promise<Array<Record<string, unknown>>> {
+  const quoted = `'${dir.replace(/'/g, "'\\''")}'`;
+  const run = (cmd: string) => execAsync(cmd, { maxBuffer: 64 * 1024 * 1024 });
+  let stdout: string;
+  try {
+    ({ stdout } = await run(`kustomize build ${quoted}`));
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (!/ENOENT|not found|command not found|127/.test(message)) throw err;
+    ({ stdout } = await run(`kubectl kustomize ${quoted}`));
+  }
+  const { loadAll } = await import("js-yaml");
+  const documents: Array<Record<string, unknown>> = [];
+  for (const doc of loadAll(stdout)) {
+    if (doc && typeof doc === "object" && !Array.isArray(doc)) documents.push(doc as Record<string, unknown>);
+  }
+  return documents;
 }
 
 /**
@@ -220,7 +249,8 @@ export function applyEndpoint(command: string, target: ApplyTarget, endpoint: st
  * conventional `template.json`. Pure — exported for testing.
  */
 export function defaultOutput(target: ApplyTarget): string {
-  return target === "kubectl" ? "dist" : "template.json";
+  // kustomize's "output" is the kustomization DIRECTORY the render reads.
+  return target === "kubectl" || target === "kustomize" ? "dist" : "template.json";
 }
 
 /**
@@ -237,15 +267,23 @@ export async function nativeApply(
   signal?: AbortSignal,
   applier?: K8sApplier,
   azureApplier?: AzureApplier,
+  renderer: (dir: string) => Promise<Array<Record<string, unknown>>> = renderKustomization,
 ): Promise<NativeApplyResult> {
   const output = args.output ?? defaultOutput(args.target);
   const deleteMode = args.deleteMode ?? "never";
 
-  if (args.target === "kubectl") {
+  if (args.target === "kubectl" || args.target === "kustomize") {
     const apply = applier ?? (await loadK8sApplier());
+    // kustomize (#1548): `output` is the kustomization DIRECTORY; render it
+    // and hand the documents to the SAME k8s applier inline — stamping, the
+    // marker-scoped prune, and the conflict semantics are identical.
+    const kustomized =
+      args.target === "kustomize"
+        ? { documents: await renderer(output), manifest: `kustomize:${output}` }
+        : { manifest: output };
     const result = await apply(
       {
-        manifest: output,
+        ...kustomized,
         environment: args.env,
         deleteMode,
         ...(args.forceConflicts !== undefined ? { force: args.forceConflicts } : {}),
@@ -308,6 +346,7 @@ export function rollbackCommand(target: ApplyTarget, env: string): string | unde
     case "cloudformation":
       return `aws cloudformation rollback-stack --stack-name ${env}`;
     case "kubectl":
+    case "kustomize":
     case "arm":
       return undefined;
   }

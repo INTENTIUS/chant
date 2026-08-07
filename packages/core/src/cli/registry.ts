@@ -31,6 +31,8 @@ export interface ParsedArgs {
   live: boolean;
   /** `chant migrate --from <name>` (default "github") */
   migrateFrom?: string;
+  /** `chant import --kustomize <dir>` — render the kustomization, then import (#1548) */
+  kustomize?: string;
   /** `chant carve advise --state <path>` — opt-in .tfstate for accurate instance counts */
   statePath?: string;
   /** `chant carve emit --select <tf-address>` — the Terraform resource to carve */

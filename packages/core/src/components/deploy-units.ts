@@ -37,6 +37,9 @@ export interface DeployUnitRule {
 export const DEPLOY_UNIT_RULES: readonly DeployUnitRule[] = [
   { kind: "cfn-deploy", field: "stack", lexicon: "aws" },
   { kind: "kubectl-apply", field: "stack", lexicon: "k8s" },
+  // kustomize renders, then applies through the same stack-labelled pipeline —
+  // so its unit is observed by the identical label sweep (#1548).
+  { kind: "kustomize-apply", field: "stack", lexicon: "k8s" },
   { kind: "helm-upgrade", field: "release", lexicon: "helm" },
 ];
 
