@@ -25,8 +25,9 @@ export type { LifecycleSnapshotArgs, LifecycleDiffArgs, LifecycleDiffResult } fr
 export { chantTeardown } from "./teardown";
 export type { ChantTeardownArgs } from "./teardown";
 
-// k3d activities relocated to the k8s lexicon (#809) — loadActivities(["k8s"])
-// provides k3dUp/k3dDown. The step builders stay in core.
+// k3d activities relocated to the k8s lexicon (#809), then to their own k3d
+// lexicon (#1410) — loadActivities(["k3d"]) provides k3dUp/k3dDown. The step
+// builders stay in core.
 
 // Sprites (Fly product) moved to the fly lexicon — a lexicon owns its own
 // product's activities. `loadActivities(["fly"])` now provides the sprite

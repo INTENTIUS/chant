@@ -6,9 +6,10 @@ import { Op, phase, k3dUp, kubectlApply, waitForStack, k3dDown } from "@intentiu
  * no cloud account (issue #704).
  *
  * `chant run local-k8s` executes this in-process via the local executor. Requires
- * Docker + the `k3d` and `kubectl` CLIs on PATH. `k3dUp` merges the cluster's
- * kubeconfig and switches context, so the `kubectlApply` step targets it
- * automatically; `k3dUp` is idempotent, so re-runs reuse an existing cluster.
+ * Docker + the `k3d` and `kubectl` CLIs on PATH. By default `k3dUp` leaves your
+ * kubeconfig and current context alone (chant #1411); this op opts back into
+ * merge-and-switch so the ambient `kubectlApply` step targets the new cluster.
+ * `k3dUp` is idempotent, so re-runs reuse an existing cluster.
  */
 export default Op({
   name: "local-k8s",
@@ -16,7 +17,13 @@ export default Op({
   taskQueue: "local-k8s",
   phases: [
     phase("Cluster", [
-      k3dUp("chant-local", { ports: ["8080:80@loadbalancer"] }),
+      // Opt into merging the cluster into ~/.kube/config and switching the
+      // current context — the following kubectlApply relies on the ambient context.
+      k3dUp("chant-local", {
+        ports: ["8080:80@loadbalancer"],
+        updateDefaultKubeconfig: true,
+        switchCurrentContext: true,
+      }),
     ]),
     phase("Deploy", [
       kubectlApply("dist/app.yaml"),
