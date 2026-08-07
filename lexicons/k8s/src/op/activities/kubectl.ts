@@ -41,7 +41,6 @@ import {
   LABEL_OWNERSHIP_KEYS,
   OWNERSHIP_MANAGED_BY_VALUE,
 } from "@intentius/chant/ownership";
-import { FieldManagerConflictError } from "@intentius/chant-k8s-client";
 import type { K8sClient, K8sObject } from "@intentius/chant-k8s-client";
 import { defaultK8sConnector, type K8sConnector } from "../../api/connect";
 import { operationFor } from "../../api/operation-surface";
@@ -193,14 +192,27 @@ async function resolveApplyIdentity(
 }
 
 /**
+ * Structural mirror of the client's `FieldManagerConflictError` surface —
+ * matched by `name` + shape, NOT `instanceof`, because a static value import
+ * of `@intentius/chant-k8s-client` here would put the API-client chain on the
+ * build path (the #1074 boundary; same reason the applier itself is reached
+ * by dynamic import).
+ */
+interface ConflictErrorLike {
+  name: string;
+  conflicts?: Array<{ manager?: unknown }>;
+}
+
+/**
  * Is every contested field in this conflict owned by chant itself (under any
  * of its field managers — `chant` bare or `chant:<stack>`)? True means the
  * conflict is a self-migration, never a dispute with another tool.
  */
-function isChantSelfConflict(err: FieldManagerConflictError): boolean {
-  return (
-    err.conflicts.length > 0 &&
-    err.conflicts.every((c) => c.manager === "chant" || c.manager.startsWith("chant:"))
+function isChantSelfConflict(err: unknown): boolean {
+  const e = err as ConflictErrorLike;
+  if (!e || e.name !== "FieldManagerConflictError" || !Array.isArray(e.conflicts) || e.conflicts.length === 0) return false;
+  return e.conflicts.every(
+    (c) => typeof c.manager === "string" && (c.manager === "chant" || c.manager.startsWith("chant:")),
   );
 }
 
@@ -287,7 +299,7 @@ export async function applyManifest(
         // unit — and refusing that forever would strand every estate applied
         // before the rename with no non-force path back. Retake those fields
         // deliberately, once, and only when no foreign manager is involved.
-        if (!(err instanceof FieldManagerConflictError) || !isChantSelfConflict(err)) throw err;
+        if (!isChantSelfConflict(err)) throw err;
         result = await client.apply(stamped, { fieldManager, force: true, dryRun: args.dryRun, signal });
       }
       const ref: AppliedRef = {
