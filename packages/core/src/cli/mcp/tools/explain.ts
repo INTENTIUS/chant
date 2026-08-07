@@ -1,5 +1,6 @@
 import { resolve } from "path";
 import { discover } from "../../../discovery/index";
+import { buildOkfBundle, OKF_VERSION } from "../../../okf";
 
 /**
  * Explain tool definition for MCP
@@ -16,8 +17,8 @@ export const explainTool = {
       },
       format: {
         type: "string",
-        enum: ["markdown", "json"],
-        description: "Output format (default: markdown)",
+        enum: ["markdown", "json", "okf"],
+        description: "Output format (default: markdown). okf: an OKF v0.2 knowledge bundle — one markdown concept per entity plus an index.md (#1058)",
       },
     },
     required: ["path"],
@@ -29,10 +30,21 @@ export const explainTool = {
  */
 export async function handleExplain(params: Record<string, unknown>): Promise<unknown> {
   const path = params.path as string;
-  const format = (params.format as "markdown" | "json") ?? "markdown";
+  const format = (params.format as "markdown" | "json" | "okf") ?? "markdown";
 
   const infraPath = resolve(path);
   const result = await discover(infraPath);
+
+  // OKF knowledge bundle (#1058): one concept document per entity plus a root
+  // index.md, returned as bundle-relative path → content. The CLI path writes
+  // the same files to a directory.
+  if (format === "okf") {
+    return {
+      okf_version: OKF_VERSION,
+      files: Object.fromEntries(buildOkfBundle(result, infraPath).map((f) => [f.path, f.content])),
+      errors: result.errors.map((e) => e.message),
+    };
+  }
 
   // Group entities by lexicon and kind
   const byLexicon = new Map<string, { resources: string[]; properties: string[] }>();

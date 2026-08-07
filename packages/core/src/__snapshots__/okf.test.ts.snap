@@ -1,0 +1,381 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`buildOkfBundle over shipped examples > aws lambda-s3 emits a conformant, snapshot-stable bundle 1`] = `
+[
+  {
+    "content": "---
+type: AWS::S3::Bucket
+title: appBucket
+description: aws resource of type AWS::S3::Bucket
+name: appBucket
+lexicon: aws
+kind: resource
+source: main.ts
+composite: LambdaS3
+composite_instance: app
+---
+Declared in \`main.ts\`.
+
+## Referenced by
+
+- [appFunc](/aws/appFunc.md)
+- [appRole](/aws/appRole.md)
+",
+    "path": "aws/appBucket.md",
+  },
+  {
+    "content": "---
+type: AWS::Lambda::Function
+title: appFunc
+description: aws resource of type AWS::Lambda::Function
+name: appFunc
+lexicon: aws
+kind: resource
+source: main.ts
+composite: LambdaS3
+composite_instance: app
+---
+Declared in \`main.ts\`.
+
+## Depends on
+
+- [appBucket](/aws/appBucket.md)
+- [appRole](/aws/appRole.md)
+",
+    "path": "aws/appFunc.md",
+  },
+  {
+    "content": "---
+type: AWS::IAM::Role
+title: appRole
+description: aws resource of type AWS::IAM::Role
+name: appRole
+lexicon: aws
+kind: resource
+source: main.ts
+composite: LambdaS3
+composite_instance: app
+---
+Declared in \`main.ts\`.
+
+## Depends on
+
+- [appBucket](/aws/appBucket.md)
+
+## Referenced by
+
+- [appFunc](/aws/appFunc.md)
+",
+    "path": "aws/appRole.md",
+  },
+  {
+    "content": "---
+type: Output
+title: bucketArn
+description: aws output of type Output
+name: bucketArn
+lexicon: aws
+kind: output
+source: outputs.ts
+---
+Declared in \`outputs.ts\`.
+",
+    "path": "aws/bucketArn.md",
+  },
+  {
+    "content": "---
+type: AWS::CloudFormation::Parameter
+title: environment
+description: aws resource of type AWS::CloudFormation::Parameter
+name: environment
+lexicon: aws
+kind: resource
+source: params.ts
+---
+Declared in \`params.ts\`.
+",
+    "path": "aws/environment.md",
+  },
+  {
+    "content": "---
+type: chant:aws:defaultTags
+title: tags
+description: aws resource of type chant:aws:defaultTags
+name: tags
+lexicon: aws
+kind: resource
+source: tags.ts
+---
+Declared in \`tags.ts\`.
+",
+    "path": "aws/tags.md",
+  },
+  {
+    "content": "---
+okf_version: '0.2'
+---
+
+# Lexicon: aws
+
+* [appBucket](/aws/appBucket.md) - aws resource of type AWS::S3::Bucket
+* [appFunc](/aws/appFunc.md) - aws resource of type AWS::Lambda::Function
+* [appRole](/aws/appRole.md) - aws resource of type AWS::IAM::Role
+* [bucketArn](/aws/bucketArn.md) - aws output of type Output
+* [environment](/aws/environment.md) - aws resource of type AWS::CloudFormation::Parameter
+* [tags](/aws/tags.md) - aws resource of type chant:aws:defaultTags
+",
+    "path": "index.md",
+  },
+]
+`;
+
+exports[`buildOkfBundle over shipped examples > gitlab node-pipeline emits a conformant, snapshot-stable bundle 1`] = `
+[
+  {
+    "content": "---
+type: GitLab::CI::Job
+title: appBuild
+description: gitlab resource of type GitLab::CI::Job
+name: appBuild
+lexicon: gitlab
+kind: resource
+source: pipeline.ts
+composite: NodePipeline
+composite_instance: app
+---
+Declared in \`pipeline.ts\`.
+",
+    "path": "gitlab/appBuild.md",
+  },
+  {
+    "content": "---
+type: GitLab::CI::Default
+title: appDefaults
+description: gitlab resource of type GitLab::CI::Default
+name: appDefaults
+lexicon: gitlab
+kind: resource
+source: pipeline.ts
+composite: NodePipeline
+composite_instance: app
+---
+Declared in \`pipeline.ts\`.
+",
+    "path": "gitlab/appDefaults.md",
+  },
+  {
+    "content": "---
+type: GitLab::CI::Job
+title: appTest
+description: gitlab resource of type GitLab::CI::Job
+name: appTest
+lexicon: gitlab
+kind: resource
+source: pipeline.ts
+composite: NodePipeline
+composite_instance: app
+---
+Declared in \`pipeline.ts\`.
+",
+    "path": "gitlab/appTest.md",
+  },
+  {
+    "content": "---
+okf_version: '0.2'
+---
+
+# Lexicon: gitlab
+
+* [appBuild](/gitlab/appBuild.md) - gitlab resource of type GitLab::CI::Job
+* [appDefaults](/gitlab/appDefaults.md) - gitlab resource of type GitLab::CI::Default
+* [appTest](/gitlab/appTest.md) - gitlab resource of type GitLab::CI::Job
+",
+    "path": "index.md",
+  },
+]
+`;
+
+exports[`buildOkfBundle over shipped examples > k8s layered-config emits a conformant, snapshot-stable bundle 1`] = `
+[
+  {
+    "content": "---
+okf_version: '0.2'
+---
+
+# Lexicon: k8s
+
+* [devAppDeployment](/k8s/devAppDeployment.md) - k8s resource of type K8s::Apps::Deployment
+* [devAppService](/k8s/devAppService.md) - k8s resource of type K8s::Core::Service
+* [prodAppDeployment](/k8s/prodAppDeployment.md) - k8s resource of type K8s::Apps::Deployment
+* [prodAppIngress](/k8s/prodAppIngress.md) - k8s resource of type K8s::Networking::Ingress
+* [prodAppPdb](/k8s/prodAppPdb.md) - k8s resource of type K8s::Policy::PodDisruptionBudget
+* [prodAppService](/k8s/prodAppService.md) - k8s resource of type K8s::Core::Service
+* [stagingAppDeployment](/k8s/stagingAppDeployment.md) - k8s resource of type K8s::Apps::Deployment
+* [stagingAppIngress](/k8s/stagingAppIngress.md) - k8s resource of type K8s::Networking::Ingress
+* [stagingAppPdb](/k8s/stagingAppPdb.md) - k8s resource of type K8s::Policy::PodDisruptionBudget
+* [stagingAppService](/k8s/stagingAppService.md) - k8s resource of type K8s::Core::Service
+",
+    "path": "index.md",
+  },
+  {
+    "content": "---
+type: K8s::Apps::Deployment
+title: devAppDeployment
+description: k8s resource of type K8s::Apps::Deployment
+name: devAppDeployment
+lexicon: k8s
+kind: resource
+source: web.ts
+composite: WebApp
+composite_instance: devApp
+---
+Declared in \`web.ts\`.
+",
+    "path": "k8s/devAppDeployment.md",
+  },
+  {
+    "content": "---
+type: K8s::Core::Service
+title: devAppService
+description: k8s resource of type K8s::Core::Service
+name: devAppService
+lexicon: k8s
+kind: resource
+source: web.ts
+composite: WebApp
+composite_instance: devApp
+---
+Declared in \`web.ts\`.
+",
+    "path": "k8s/devAppService.md",
+  },
+  {
+    "content": "---
+type: K8s::Apps::Deployment
+title: prodAppDeployment
+description: k8s resource of type K8s::Apps::Deployment
+name: prodAppDeployment
+lexicon: k8s
+kind: resource
+source: web.ts
+composite: WebApp
+composite_instance: prodApp
+---
+Declared in \`web.ts\`.
+",
+    "path": "k8s/prodAppDeployment.md",
+  },
+  {
+    "content": "---
+type: K8s::Networking::Ingress
+title: prodAppIngress
+description: k8s resource of type K8s::Networking::Ingress
+name: prodAppIngress
+lexicon: k8s
+kind: resource
+source: web.ts
+composite: WebApp
+composite_instance: prodApp
+---
+Declared in \`web.ts\`.
+",
+    "path": "k8s/prodAppIngress.md",
+  },
+  {
+    "content": "---
+type: K8s::Policy::PodDisruptionBudget
+title: prodAppPdb
+description: k8s resource of type K8s::Policy::PodDisruptionBudget
+name: prodAppPdb
+lexicon: k8s
+kind: resource
+source: web.ts
+composite: WebApp
+composite_instance: prodApp
+---
+Declared in \`web.ts\`.
+",
+    "path": "k8s/prodAppPdb.md",
+  },
+  {
+    "content": "---
+type: K8s::Core::Service
+title: prodAppService
+description: k8s resource of type K8s::Core::Service
+name: prodAppService
+lexicon: k8s
+kind: resource
+source: web.ts
+composite: WebApp
+composite_instance: prodApp
+---
+Declared in \`web.ts\`.
+",
+    "path": "k8s/prodAppService.md",
+  },
+  {
+    "content": "---
+type: K8s::Apps::Deployment
+title: stagingAppDeployment
+description: k8s resource of type K8s::Apps::Deployment
+name: stagingAppDeployment
+lexicon: k8s
+kind: resource
+source: web.ts
+composite: WebApp
+composite_instance: stagingApp
+---
+Declared in \`web.ts\`.
+",
+    "path": "k8s/stagingAppDeployment.md",
+  },
+  {
+    "content": "---
+type: K8s::Networking::Ingress
+title: stagingAppIngress
+description: k8s resource of type K8s::Networking::Ingress
+name: stagingAppIngress
+lexicon: k8s
+kind: resource
+source: web.ts
+composite: WebApp
+composite_instance: stagingApp
+---
+Declared in \`web.ts\`.
+",
+    "path": "k8s/stagingAppIngress.md",
+  },
+  {
+    "content": "---
+type: K8s::Policy::PodDisruptionBudget
+title: stagingAppPdb
+description: k8s resource of type K8s::Policy::PodDisruptionBudget
+name: stagingAppPdb
+lexicon: k8s
+kind: resource
+source: web.ts
+composite: WebApp
+composite_instance: stagingApp
+---
+Declared in \`web.ts\`.
+",
+    "path": "k8s/stagingAppPdb.md",
+  },
+  {
+    "content": "---
+type: K8s::Core::Service
+title: stagingAppService
+description: k8s resource of type K8s::Core::Service
+name: stagingAppService
+lexicon: k8s
+kind: resource
+source: web.ts
+composite: WebApp
+composite_instance: stagingApp
+---
+Declared in \`web.ts\`.
+",
+    "path": "k8s/stagingAppService.md",
+  },
+]
+`;
