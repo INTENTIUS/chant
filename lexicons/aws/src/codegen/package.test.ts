@@ -1,6 +1,8 @@
 import { describe, test, expect } from "vitest";
 import { packageLexicon } from "./package";
 import { validateManifest } from "@intentius/chant/lexicon-schema";
+import { okfConformanceProblems, splitFrontmatter } from "@intentius/chant/okf";
+import { parseYAML } from "@intentius/chant/yaml";
 
 describe("packageLexicon", () => {
   test("produces valid BundleSpec with all artifacts", async () => {
@@ -45,6 +47,22 @@ describe("packageLexicon", () => {
 
     // Skills
     expect(spec.skills.size).toBeGreaterThan(0);
+
+    // OKF knowledge bundle (#1060) — the CloudFormation-derived generation
+    // path: one conformant concept per resource type, property descriptions
+    // carried from the CFN spec via the declarations, rules cross-linked.
+    expect(spec.okf).toBeDefined();
+    expect(okfConformanceProblems(spec.okf!)).toEqual([]);
+    const okfFiles = new Map(spec.okf!.map((f) => [f.path, f.content]));
+    const bucket = splitFrontmatter(okfFiles.get("types/Bucket.md")!)!;
+    const bucketFront = parseYAML(bucket.frontmatter);
+    expect(bucketFront.type).toBe("resource-type");
+    expect(bucketFront.resource_type).toBe("AWS::S3::Bucket");
+    expect(bucket.body).toContain("- `BucketName` (`string`, optional): A name for the bucket.");
+    expect(bucket.body).toContain("[WAW006](/rules/WAW006.md)");
+    const waw006 = splitFrontmatter(okfFiles.get("rules/WAW006.md")!)!;
+    expect(parseYAML(waw006.frontmatter).category).toBe("security");
+    expect(waw006.body).toContain("- [Bucket](/types/Bucket.md)");
 
     // Stats
     expect(stats.resources).toBeGreaterThan(100);

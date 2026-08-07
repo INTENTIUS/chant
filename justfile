@@ -41,9 +41,11 @@ _ensure-gen:
       if [ -f "${lex}src/generated/index.ts" ] \
          && grep -rqls 'generated/operations.json' "${lex}src/api" "${lex}src/codegen" 2>/dev/null \
          && [ ! -f "${lex}src/generated/operations.json" ]; then needs=true; fi
-      # import/audit load the bundled dist/meta.json
+      # import/audit load the bundled dist/meta.json; the OKF knowledge
+      # bundle (#1060) is part of the same bundle output — an old checkout
+      # can have meta.json but predate dist/okf/
       if grep -q '"bundle"' "${lex}package.json" 2>/dev/null \
-         && [ ! -f "${lex}dist/meta.json" ]; then needs=true; fi
+         && { [ ! -f "${lex}dist/meta.json" ] || [ ! -f "${lex}dist/okf/index.md" ]; }; then needs=true; fi
       if [ "$needs" = true ]; then
         echo "gen: $(basename "$lex")"
         npm run --prefix "$lex" generate

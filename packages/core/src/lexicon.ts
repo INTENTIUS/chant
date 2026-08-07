@@ -5,6 +5,7 @@ import type { PostSynthCheck } from "./lint/post-synth";
 import type { TemplateParser, TemplateIR } from "./import/parser";
 import type { TypeScriptGenerator } from "./import/generator";
 import type { ArtifactIntegrity } from "./lexicon-integrity";
+import type { OkfFile } from "./okf";
 import type { CompletionContext, CompletionItem, HoverContext, HoverInfo, CodeActionContext, CodeAction } from "./lsp/types";
 import type { McpToolContribution, McpResourceContribution } from "./mcp/types";
 import type { DriverComponent } from "./components/driver";
@@ -122,6 +123,8 @@ export interface BundleSpec {
   typesDTS: string;
   rules: Map<string, string>;
   skills: Map<string, string>;
+  /** OKF knowledge bundle over the registry and rules (#1060), written to dist/okf/. */
+  okf?: OkfFile[];
   integrity?: ArtifactIntegrity;
   metadata?: PackageMetadata;
 }
