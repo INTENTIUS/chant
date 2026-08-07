@@ -372,9 +372,22 @@ export async function runLifecycleDiff(ctx: CommandContext): Promise<number> {
         continue;
       }
 
+      // The lexicons the diff walks. Keyed on the BUILT manifest — which is
+      // right for the resource axis (a lexicon with no declared entities has
+      // nothing to diff) but drops the artifact axis whole: artifacts are
+      // context-keyed with no declared side at all (that is their defining
+      // property), so an estate that uses helm purely as component deploy
+      // steps builds zero helm entities and its releases were never listed —
+      // `observedArtifacts` silently absent for exactly the estates behold#146
+      // exists for (found live on kubemicrovm-ops, four releases invisible).
+      // On the live path, artifact-capable configured lexicons join the walk;
+      // their resource half stays gated on `describeResources` + declared
+      // entities as before.
+      const builtLexicons = Array.from(buildResult.manifest.lexicons);
+      const artifactLexicons = args.live ? plugins.filter((p) => p.listArtifacts).map((p) => p.name) : [];
       const lexicons = lexiconFilter
         ? [lexiconFilter]
-        : Array.from(buildResult.manifest.lexicons);
+        : [...new Set([...builtLexicons, ...artifactLexicons])];
 
       if (args.live) {
         // Multi-stack component projects: observe each component's own cfn stack
