@@ -36,6 +36,9 @@ export default defineConfig({
     include: [
       "packages/**/*.test.ts",
       "lexicons/**/*.test.ts",
+      // Wardens (#788): unit tests only — each warden's e2e/ needs live API
+      // credentials and runs per-warden via its vitest.e2e.config.ts.
+      "wardens/*/src/**/*.test.ts",
       "examples/examples.test.ts",
       // The alert-triage app ships colocated unit tests for its triage
       // activities. (examples/ is not globbed wholesale — fargate's docker

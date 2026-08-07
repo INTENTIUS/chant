@@ -232,7 +232,7 @@ release bump="patch":
     # with no error anywhere. Flooring at the max makes the lockstep bump
     # monotonic for every package (#1255).
     current=$(jq -r .version packages/core/package.json)
-    highest=$(jq -r .version packages/core/package.json packages/k8s-client/package.json lexicons/*/package.json | sort -V | tail -1)
+    highest=$(jq -r .version packages/core/package.json packages/k8s-client/package.json lexicons/*/package.json wardens/*/package.json | sort -V | tail -1)
     IFS='.' read -r major minor patch <<< "$highest"
     case "{{bump}}" in
       major) major=$((major + 1)); minor=0; patch=0 ;;
@@ -247,7 +247,7 @@ release bump="patch":
     # Monotonic or bust. The floor above already guarantees this; the check is
     # here so that reverting to a core-only bump fails loudly instead of
     # rewriting a package backwards and going quiet at publish time.
-    for f in packages/core/package.json packages/k8s-client/package.json lexicons/*/package.json; do
+    for f in packages/core/package.json packages/k8s-client/package.json lexicons/*/package.json wardens/*/package.json; do
       have=$(jq -r .version "$f")
       if [ "$(printf '%s\n%s\n' "$have" "$next" | sort -V | tail -1)" != "$next" ]; then
         echo "refusing to release: $f is at $have, ahead of the computed $next" >&2
@@ -259,7 +259,7 @@ release bump="patch":
     # dependency ranges in lockstep (they were frozen at ^0.1.0, which breaks
     # clean installs — #411). packages/k8s-client is published alongside the
     # lexicons (#1074), so it bumps with them.
-    for f in packages/core/package.json packages/k8s-client/package.json lexicons/*/package.json; do
+    for f in packages/core/package.json packages/k8s-client/package.json lexicons/*/package.json wardens/*/package.json; do
       jq --arg v "$next" '
         .version = $v
         | if .peerDependencies["@intentius/chant"] then .peerDependencies["@intentius/chant"] = "^" + $v else . end
@@ -270,7 +270,7 @@ release bump="patch":
     # without this every release leaves package-lock.json recording the
     # previous version for all 12 workspace packages (#1094).
     npm install --package-lock-only
-    git add packages/core/package.json packages/k8s-client/package.json lexicons/*/package.json package-lock.json
+    git add packages/core/package.json packages/k8s-client/package.json lexicons/*/package.json wardens/*/package.json package-lock.json
     git commit -m "chant-v$next"
     git tag "chant-v$next"
     git push origin main "chant-v$next"
