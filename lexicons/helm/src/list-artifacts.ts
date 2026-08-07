@@ -15,6 +15,8 @@
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
 import type { ArtifactMetadata } from "@intentius/chant/lexicon";
+import { loadChantConfigUpward } from "@intentius/chant/config";
+import { resolveClusterTarget } from "@intentius/chant/kubectl-context";
 
 const execAsync = promisify(exec);
 
@@ -36,15 +38,30 @@ function pruneUndefined<T extends Record<string, unknown>>(obj: T): Record<strin
   return out;
 }
 
-export async function listArtifacts(_options: {
+export async function listArtifacts(options: {
   environment: string;
   entities: Map<string, { entityType: string; props: Record<string, unknown> }>;
 }): Promise<Record<string, ArtifactMetadata>> {
   const result: Record<string, ArtifactMetadata> = {};
 
+  // The same cluster binding every other helm read resolves (chant#1488 —
+  // `k8s.profiles.<env>.context`, shared with the k8s lexicon). Listing on
+  // the AMBIENT context read whichever cluster the operator's shell last
+  // pointed at: verified live on kubemicrovm-ops, whose releases came back
+  // `{}` because the shell's current-context was an unrelated EKS cluster.
+  // Unresolvable → ambient, which is chant's own fallback when no profile is
+  // declared.
+  let context: string | undefined;
+  try {
+    const { config } = await loadChantConfigUpward(process.cwd());
+    context = (await resolveClusterTarget(config as Record<string, unknown>, options.environment, "helm")).context;
+  } catch {
+    context = undefined;
+  }
+
   let stdout: string;
   try {
-    ({ stdout } = await execAsync("helm list -A -o json"));
+    ({ stdout } = await execAsync(`helm list -A -o json${context ? ` --kube-context '${context.replace(/'/g, "'\\''")}'` : ""}`));
   } catch {
     // Binary not installed, no kubeconfig, or some other error — return
     // empty rather than blocking the whole snapshot.
