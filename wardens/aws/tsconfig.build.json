@@ -1,0 +1,20 @@
+{
+  "//": [
+    "Declaration-only build (#789): dist/ supplies the `types` condition of",
+    "the exports map; runtime consumers resolve src/ directly (development /",
+    "default), and the published bin is the esbuild bundle at dist/cli.js.",
+    "src/cli.ts (and the Action entry) stay out: they import ../package.json,",
+    "which sits outside rootDir, and the CLI shell is not library surface."
+  ],
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "declarationMap": true,
+    "outDir": "dist",
+    "rootDir": "src"
+  },
+  "include": ["src/**/*"],
+  "exclude": ["src/cli.ts", "src/action.ts", "**/*.test.ts", "e2e", "node_modules", "dist"]
+}

@@ -1,0 +1,51 @@
+name: warden-aws-e2e
+
+# Gated end-to-end suite for wardens/aws against a floci (AWS emulator)
+# container (#792). Nightly + on demand, never on PRs. The floci build
+# currently ships no organizations service (test/floci-gaps.md entry 5):
+# bootstrap detects that and the suite self-skips green, so this goes red
+# only on a real regression once the emulator gains the service.
+on:
+  schedule:
+    - cron: '0 7 * * *' # 07:00 UTC nightly
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: 'Also run the mutating Phase 2 (idempotence check)'
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: warden-aws-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: wardens/aws
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm install
+        working-directory: .
+
+      - name: bring up floci
+        run: bash e2e/bootstrap.sh
+
+      - name: run e2e
+        env:
+          AWS_WARDEN_E2E_APPLY: ${{ (github.event_name == 'schedule' || inputs.apply) && '1' || '' }}
+        run: npm run test:e2e
+
+      - name: tear down
+        if: always()
+        run: docker rm -f aws-warden-e2e-floci || true
