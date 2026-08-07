@@ -27,4 +27,5 @@ export const azureAuditCatalog: Record<string, RuleMeta> = {
   AZR027: auditRule("AZR027", "merge-worthy", "guidance", "Container Registry admin user enabled", "Disable the admin user; use Azure AD / service principals.", { authority: [AZ_SEC] }),
   AZR028: auditRule("AZR028", "report-only", "guidance", "Network interface missing NSG", "Associate an NSG to control traffic.", { category: "best-practice" }),
   AZR029: auditRule("AZR029", "merge-worthy", "guidance", "Managed disk missing encryption", "Enable encryption for data at rest.", { authority: [AZ_SEC] }),
+  AZR030: auditRule("AZR030", "merge-worthy", "guidance", "Resource at unsupported template scope", "Move the resource to a project deployed at a scope its schema supports.", { category: "correctness" }),
 };
