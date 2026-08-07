@@ -275,13 +275,26 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
     }
   }
 
-  // Format errors
+  // Format errors — grouped by message, because one refusal can surface once
+  // per resource file. A project whose params module throws (a guard like
+  // "this seam cannot back that tier") throws in EVERY file that imports it,
+  // and fourteen copies of one sentence bury the sentence
+  // (INTENTIUS/fountain-ops#62). The first file to hit it is named, the rest
+  // become a count; errors with genuinely different messages keep their own
+  // lines, and a message that appears once is printed exactly as before.
+  const byMessage = new Map<string, { first: (typeof result.errors)[number]; files: number }>();
   for (const error of result.errors) {
+    const key = `${error.name ?? ""}:${error.message}`;
+    const seen = byMessage.get(key);
+    if (seen) seen.files += 1;
+    else byMessage.set(key, { first: error, files: 1 });
+  }
+  for (const { first: error, files } of byMessage.values()) {
     const formatted = formatError({
       file: "file" in error ? (error as unknown as Record<string, unknown>).file as string | undefined : undefined,
       line: "line" in error ? (error as unknown as Record<string, unknown>).line as number | undefined : undefined,
       column: "column" in error ? (error as unknown as Record<string, unknown>).column as number | undefined : undefined,
-      message: error.message,
+      message: files > 1 ? `${error.message} (and the same from ${files - 1} more files)` : error.message,
       name: error.name,
     });
     errors.push(formatted);

@@ -732,3 +732,47 @@ describe("resolveBuildFormat", () => {
     expect(resolveBuildFormat("yaml", "template.yaml")).toEqual({ format: "yaml" });
   });
 });
+
+describe("buildCommand error grouping (fountain-ops#62)", () => {
+  let testDir: string;
+
+  beforeEach(async () => {
+    testDir = join(tmpdir(), `chant-cli-dedup-${Date.now()}-${Math.random()}`);
+    await mkdir(testDir, { recursive: true });
+  });
+
+  afterEach(async () => {
+    await rm(testDir, { recursive: true, force: true });
+  });
+
+  test("the same message from three files surfaces once, with a count of the others", async () => {
+    // The fountain-ops shape: a guard in a shared params module throws during
+    // every resource file's evaluation, so the identical sentence arrives
+    // once per file — fourteen times, in the report that named this issue.
+    for (const f of ["a", "b", "c"]) {
+      await writeFile(
+        join(testDir, `${f}.infra.ts`),
+        `throw new Error('tier "ha" cannot run on this seam — fix the seam');\n`,
+      );
+    }
+
+    const result = await buildCommand({ path: testDir, format: "json", serializers: [] });
+
+    expect(result.success).toBe(false);
+    const matching = result.errors.filter((e) => e.includes("cannot run on this seam"));
+    expect(matching).toHaveLength(1);
+    expect(matching[0]).toContain("and the same from 2 more files");
+  });
+
+  test("distinct messages keep their own lines", async () => {
+    await writeFile(join(testDir, "a.infra.ts"), `throw new Error("first failure");\n`);
+    await writeFile(join(testDir, "b.infra.ts"), `throw new Error("second failure");\n`);
+
+    const result = await buildCommand({ path: testDir, format: "json", serializers: [] });
+
+    expect(result.success).toBe(false);
+    expect(result.errors.some((e) => e.includes("first failure"))).toBe(true);
+    expect(result.errors.some((e) => e.includes("second failure"))).toBe(true);
+    expect(result.errors.some((e) => e.includes("more files"))).toBe(false);
+  });
+});
