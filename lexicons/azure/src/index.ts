@@ -6,6 +6,7 @@
 
 // --- Core ---
 export { defaultTags, type TagEntry, type DefaultTags } from "./default-tags";
+export { deploymentScope, isDeploymentScope, type DeploymentScope, type DeployScope } from "./deploy-scopes";
 export { azureSerializer } from "./serializer";
 export { azurePlugin } from "./plugin";
 export { Parameter } from "./parameter";
@@ -68,7 +69,23 @@ export {
   ContainerInstance, type ContainerInstanceProps, type ContainerInstanceResult,
   RedisCache, type RedisCacheProps, type RedisCacheResult,
   PrivateEndpoint, type PrivateEndpointProps, type PrivateEndpointResult,
+  GovernanceFoundation, type GovernanceFoundationProps, type GovernanceFoundationResult,
+  GovernanceBaseline, type GovernanceBaselineProps, type GovernanceBaselineResult,
+  LocationRestriction, type LocationRestrictionProps, type LocationRestrictionResult,
+  ActivityLogSink, type ActivityLogSinkProps, type ActivityLogSinkResult,
 } from "./composites/index";
+
+// Azure governance authoring (#791): the desired-state config the Azure
+// cloud warden reconciles, and the typed landing-zone authoring layer.
+export {
+  landingZoneConfig, locationRestriction,
+  DENY_CLASSIC_RESOURCES, DENY_UNMANAGED_DISKS,
+  ACTIVITY_LOG_TO_LOG_ANALYTICS_DEFINITION_ID, FOUNDATION_MANAGEMENT_GROUPS,
+} from "./governance";
+export type {
+  AzureGovernanceConfig, LandingZoneConfigProps,
+  ManagementGroupConfig, PolicyConfig, SubscriptionConfig,
+} from "./governance";
 
 // --- RBAC role constants ---
 export {
