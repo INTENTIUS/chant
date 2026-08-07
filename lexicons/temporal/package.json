@@ -1,7 +1,7 @@
 {
   "name": "@intentius/chant-lexicon-temporal",
-  "version": "0.41.19",
-  "description": "Temporal lexicon for chant \u2014 server deployment, namespaces, search attributes, and schedules",
+  "version": "0.41.20",
+  "description": "Temporal lexicon for chant — server deployment, namespaces, search attributes, and schedules",
   "license": "Apache-2.0",
   "homepage": "https://intentius.io/chant",
   "repository": {
@@ -55,7 +55,7 @@
   },
   "peerDependencies": {
     "zod": "^4.3.6",
-    "@intentius/chant": "^0.41.19",
+    "@intentius/chant": "^0.41.20",
     "typescript": "^5.9.3"
   },
   "dependencies": {
