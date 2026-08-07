@@ -200,20 +200,38 @@ async function resolveApplyIdentity(
  */
 interface ConflictErrorLike {
   name: string;
-  conflicts?: Array<{ manager?: unknown }>;
+  conflicts?: Array<{ manager?: unknown; field?: unknown }>;
 }
 
+/** chant's reserved label channel — the `chant.intentius.io/*` keys the
+ * ownership marker lives under, as a conflict-cause field-path prefix. */
+const MARKER_FIELD_PREFIX = `.metadata.labels.${LABEL_OWNERSHIP_KEYS.stack.split("/")[0]}/`;
+
 /**
- * Is every contested field in this conflict owned by chant itself (under any
- * of its field managers — `chant` bare or `chant:<stack>`)? True means the
- * conflict is a self-migration, never a dispute with another tool.
+ * Is this conflict one chant may retake without a human? Two shapes qualify,
+ * per contested field:
+ *
+ * - the owning manager is chant itself (`chant` bare or `chant:<stack>`) —
+ *   the ownership-stack → unit-stack migration, or a renamed deploy unit; or
+ * - the field lives in chant's OWN reserved label channel
+ *   (`chant.intentius.io/*`). A controller that reconciles whole objects
+ *   echoes existing labels and becomes their SSA owner as a side effect
+ *   (observed live: kubemicrovm's `microvmimagereconciler` owning
+ *   `.metadata.labels.chant.intentius.io/stack`) — it never chose that value,
+ *   and chant is the authority for its marker namespace no matter who last
+ *   echoed it.
+ *
+ * Any contested field outside both shapes — a spec field, an app label —
+ * keeps the presented refusal: that IS a dispute with another tool.
  */
 function isChantSelfConflict(err: unknown): boolean {
   const e = err as ConflictErrorLike;
   if (!e || e.name !== "FieldManagerConflictError" || !Array.isArray(e.conflicts) || e.conflicts.length === 0) return false;
-  return e.conflicts.every(
-    (c) => typeof c.manager === "string" && (c.manager === "chant" || c.manager.startsWith("chant:")),
-  );
+  return e.conflicts.every((c) => {
+    const chantManager = typeof c.manager === "string" && (c.manager === "chant" || c.manager.startsWith("chant:"));
+    const markerField = typeof c.field === "string" && c.field.startsWith(MARKER_FIELD_PREFIX);
+    return chantManager || markerField;
+  });
 }
 
 /**
