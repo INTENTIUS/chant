@@ -12,29 +12,37 @@
  *
  * Exit codes: 0 success · 1 guardrail block (apply) · 2 arg/config error ·
  *             3 runtime error.
+ *
+ * The shell (flag grammar, config-file loading, outcome rendering, exit
+ * policy) is @intentius/warden-core (#788); this file owns only what is
+ * GitLab-shaped: the flag set, defaults, client, and cycle registry.
  */
 
-import { readFileSync } from "node:fs";
-import { pathToFileURL } from "node:url";
 import { parse as parseYaml } from "yaml";
+import {
+  CliError,
+  type Die,
+  errMsg,
+  loadConfigFile,
+  makeDie,
+  parseFlags,
+  reportReconcileOutcome,
+  requireEnv,
+  runWhenInvoked,
+  selectCycles,
+} from "@intentius/warden-core";
 import { createClient } from "./auth/client.js";
 import { runReconcile, type Cycle } from "./reconcile/runner.js";
 import { CYCLE_REGISTRY } from "./cli/registry.js";
 import type { GovernanceConfig } from "./config/types.js";
 import pkg from "../package.json" with { type: "json" };
 
+export { CliError };
+
 /** Inlined from package.json at build time — always matches the published version. */
 const VERSION: string = pkg.version;
 
-export class CliError extends Error {
-  constructor(
-    public readonly code: number,
-    message: string,
-  ) {
-    super(message);
-    this.name = "CliError";
-  }
-}
+const die: Die = makeDie("gitlab-warden");
 
 export interface ReconcileArgs {
   config: string;
@@ -45,16 +53,6 @@ export interface ReconcileArgs {
   tokenEnv: string;
   allowGuardrailOverride: boolean;
 }
-
-const KNOWN_FLAGS = new Set([
-  "--config",
-  "--mode",
-  "--cycles",
-  "--base-url",
-  "--base-url-env",
-  "--token-env",
-  "--allow-guardrail-override",
-]);
 
 /** Parse reconcile argv. Pure: throws `CliError` (with exit code) on bad input. */
 export function parseReconcileArgs(argv: string[]): ReconcileArgs {
@@ -68,76 +66,24 @@ export function parseReconcileArgs(argv: string[]): ReconcileArgs {
     allowGuardrailOverride: false,
   };
 
-  const need = (i: number, flag: string): string => {
-    const v = argv[i];
-    if (v === undefined || v.startsWith("--")) throw new CliError(2, `${flag} requires a value`);
-    return v;
-  };
-
-  let i = 0;
-  while (i < argv.length) {
-    const flag = argv[i];
-    if (!flag.startsWith("--")) throw new CliError(2, `unexpected positional argument: ${flag}`);
-    if (!KNOWN_FLAGS.has(flag)) throw new CliError(2, `unknown flag: ${flag}`);
-    switch (flag) {
-      case "--config":
-        args.config = need(++i, flag);
-        break;
-      case "--mode": {
-        const v = argv[++i];
-        if (v !== "dry-run" && v !== "apply") throw new CliError(2, `--mode must be "dry-run" or "apply", got: ${v ?? "(missing)"}`);
+  parseFlags(argv, {
+    "--config": { kind: "value", set: (v) => (args.config = v) },
+    "--mode": {
+      kind: "value",
+      set: (v, flag) => {
+        if (v !== "dry-run" && v !== "apply") throw new CliError(2, `${flag} must be "dry-run" or "apply", got: ${v}`);
         args.mode = v;
-        break;
-      }
-      case "--cycles":
-        args.cycles = need(++i, flag).split(",").map((s) => s.trim()).filter(Boolean);
-        break;
-      case "--base-url":
-        args.baseUrl = need(++i, flag);
-        break;
-      case "--base-url-env":
-        args.baseUrlEnv = need(++i, flag);
-        break;
-      case "--token-env":
-        args.tokenEnv = need(++i, flag);
-        break;
-      case "--allow-guardrail-override":
-        args.allowGuardrailOverride = true;
-        break;
-    }
-    i++;
-  }
+      },
+    },
+    "--cycles": { kind: "value", set: (v) => (args.cycles = v.split(",").map((s) => s.trim()).filter(Boolean)) },
+    "--base-url": { kind: "value", set: (v) => (args.baseUrl = v) },
+    "--base-url-env": { kind: "value", set: (v) => (args.baseUrlEnv = v) },
+    "--token-env": { kind: "value", set: (v) => (args.tokenEnv = v) },
+    "--allow-guardrail-override": { kind: "boolean", set: () => (args.allowGuardrailOverride = true) },
+  });
 
   if (!args.config) throw new CliError(2, "--config is required");
   return args;
-}
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function env(name: string): string {
-  const v = process.env[name];
-  if (!v) die(2, `env var ${name} is not set or is empty`);
-  return v;
-}
-
-function die(code: number, message: string): never {
-  process.stderr.write(`gitlab-warden: error: ${message}\n`);
-  process.exit(code);
-}
-
-function errMsg(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
-
-function loadConfig(path: string): GovernanceConfig {
-  const text = readFileSync(path, "utf-8");
-  const raw = path.toLowerCase().endsWith(".json") ? JSON.parse(text) : parseYaml(text);
-  if (!raw || typeof raw !== "object" || typeof (raw as { nodes?: unknown }).nodes !== "object") {
-    throw new Error("config must be an object with a `nodes` map");
-  }
-  return raw as GovernanceConfig;
 }
 
 // ---------------------------------------------------------------------------
@@ -146,35 +92,30 @@ function loadConfig(path: string): GovernanceConfig {
 
 async function runReconcileCommand(argv: string[]): Promise<void> {
   let args: ReconcileArgs;
+  let config: GovernanceConfig;
+  let cycles: Cycle[];
+  let baseUrl: string | undefined;
+  let token: string;
   try {
     args = parseReconcileArgs(argv);
   } catch (err) {
     if (err instanceof CliError) die(err.code, err.message);
     throw err;
   }
-
-  let config: GovernanceConfig;
   try {
-    config = loadConfig(args.config);
+    config = loadConfigFile<GovernanceConfig>(args.config, { rootKey: "nodes", parseYaml });
   } catch (err) {
     die(2, `invalid governance config "${args.config}": ${errMsg(err)}`);
   }
-
-  const baseUrl = args.baseUrl ?? (args.baseUrlEnv ? env(args.baseUrlEnv) : undefined);
-  const token = env(args.tokenEnv);
-  const client = createClient({ baseUrl, token });
-
-  let cycles: Cycle[];
-  if (args.cycles.length === 0) {
-    cycles = Object.values(CYCLE_REGISTRY);
-  } else {
-    cycles = [];
-    for (const name of args.cycles) {
-      const cycle = CYCLE_REGISTRY[name];
-      if (!cycle) die(2, `unknown cycle: "${name}". Known cycles: ${Object.keys(CYCLE_REGISTRY).join(", ") || "(none yet)"}`);
-      cycles.push(cycle);
-    }
+  try {
+    baseUrl = args.baseUrl ?? (args.baseUrlEnv ? requireEnv(args.baseUrlEnv) : undefined);
+    token = requireEnv(args.tokenEnv);
+    cycles = selectCycles(CYCLE_REGISTRY, args.cycles);
+  } catch (err) {
+    die(err instanceof CliError ? err.code : 2, errMsg(err));
   }
+
+  const client = createClient({ baseUrl, token });
 
   let result;
   try {
@@ -183,25 +124,7 @@ async function runReconcileCommand(argv: string[]): Promise<void> {
     die(3, `reconcile failed: ${errMsg(err)}`);
   }
 
-  for (const cr of result.cycles) {
-    process.stdout.write(`\n=== ${cr.name} @ ${cr.org} ===\n${cr.plan}\n`);
-    if (cr.guardrailBlocked) {
-      const diags = cr.guardrails.ok ? [] : cr.guardrails.diagnostics;
-      process.stdout.write(`\nGUARDRAIL BLOCK: ${diags.map((d) => d.message).join("; ")}\n`);
-    }
-    if (args.mode === "apply" && !cr.guardrailBlocked) {
-      process.stdout.write(`Applied: ${cr.applied.length}, Failed: ${cr.failed.length}\n`);
-      for (const f of cr.failed) process.stdout.write(`  FAILED [${f.entry.resourceType}] ${f.entry.key}: ${f.error}\n`);
-    }
-  }
-  for (const ce of result.errored) process.stderr.write(`ERROR in ${ce.name} @ ${ce.org} (${ce.stage}): ${ce.error}\n`);
-  if (result.deferred.skippedCycles.length > 0) {
-    process.stderr.write(`DEFERRED (budget): ${result.deferred.skippedCycles.join(", ")}\n`);
-  }
-
-  if (result.cycles.some((cr) => cr.guardrailBlocked)) process.exit(1);
-  if (result.errored.length > 0 || result.cycles.some((cr) => cr.failed.length > 0)) process.exit(3);
-  process.exit(0);
+  process.exit(reportReconcileOutcome(result, args.mode));
 }
 
 function printUsage(): void {
@@ -244,10 +167,4 @@ export async function run(argv: string[]): Promise<void> {
   await main(argv);
 }
 
-const invokedPath = process.argv[1] ? pathToFileURL(process.argv[1]).href : "";
-if (import.meta.url === invokedPath) {
-  main().catch((err: unknown) => {
-    process.stderr.write(`gitlab-warden: fatal: ${errMsg(err)}\n`);
-    process.exit(3);
-  });
-}
+runWhenInvoked(import.meta.url, "gitlab-warden", main);
