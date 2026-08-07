@@ -10,6 +10,10 @@ npm install --save-dev @intentius/chant @intentius/chant-lexicon-helm
 
 **[Documentation →](https://intentius.io/chant/lexicons/helm/)**
 
+## Supported Helm versions
+
+The lexicon targets Helm 4 and CI runs against a pinned Helm 4 release. Rendering also works with a Helm 3 CLI on PATH.
+
 ## Related Packages
 
 | Package | Role |
