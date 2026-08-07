@@ -573,6 +573,135 @@ describe("k8s describeResources", () => {
       expect(result.resources["prod/hand-made"]).toBeUndefined();
     });
 
+    test("a Flux-managed Deployment is attributed to its declared Kustomization by the controller's labels (#1549)", async () => {
+      // Flux stamps managed objects with name+namespace labels instead of
+      // ownerReferences, so the chain walk reaches nothing — the label
+      // channel resolves against the DECLARED CR, exactly. The workload also
+      // lives in a namespace the estate never declares an entity in: the
+      // Kustomization's own spec.targetNamespace is what puts it in scope.
+      const kustomization = {
+        apiVersion: "kustomize.toolkit.fluxcd.io/v1",
+        kind: "Kustomization",
+        metadata: { name: "apps", namespace: "flux-system", uid: "ks-uid" },
+        status: { conditions: [{ type: "Ready", status: "True" }] },
+      };
+      const managed = {
+        apiVersion: "apps/v1",
+        kind: "Deployment",
+        metadata: {
+          name: "web",
+          namespace: "prod",
+          uid: "dep-uid",
+          labels: { "kustomize.toolkit.fluxcd.io/name": "apps", "kustomize.toolkit.fluxcd.io/namespace": "flux-system" },
+        },
+        status: { readyReplicas: 1, replicas: 1 },
+      };
+      const cluster = fakeCluster({
+        objects: {
+          [objectKey("kustomize.toolkit.fluxcd.io/v1", "Kustomization", "apps", "flux-system")]: kustomization,
+          [objectKey("apps/v1", "Deployment", "web", "prod")]: managed,
+        },
+      });
+
+      const result = await describeResources(
+        {
+          environment: "prod",
+          buildOutput: "",
+          entityNames: ["apps"],
+          entities: makeEntities([
+            {
+              name: "apps",
+              entityType: "K8s::Flux::Kustomization",
+              props: { metadata: { name: "apps", namespace: "flux-system" }, spec: { targetNamespace: "prod", sourceRef: { kind: "GitRepository", name: "infra" } } },
+            },
+          ]),
+        },
+        cluster.connector,
+      );
+
+      expect(result.resources["prod/web"]).toMatchObject({
+        type: "K8s::Apps::Deployment",
+        ownerChain: { root: "declared", entity: "apps" },
+      });
+    });
+
+    test("Argo's bare instance label claims only a UNIQUE declared Application (#1549)", async () => {
+      const app = (name: string) => ({
+        apiVersion: "argoproj.io/v1alpha1",
+        kind: "Application",
+        metadata: { name, namespace: "argocd", uid: `${name}-uid` },
+        status: { health: { status: "Healthy" }, sync: { status: "Synced" } },
+      });
+      const managed = {
+        apiVersion: "apps/v1",
+        kind: "Deployment",
+        metadata: { name: "web", namespace: "prod", uid: "dep-uid", labels: { "app.kubernetes.io/instance": "web" } },
+      };
+      const cluster = fakeCluster({
+        objects: {
+          [objectKey("argoproj.io/v1alpha1", "Application", "web", "argocd")]: app("web"),
+          [objectKey("apps/v1", "Deployment", "web", "prod")]: managed,
+        },
+      });
+
+      const result = await describeResources(
+        {
+          environment: "prod",
+          buildOutput: "",
+          entityNames: ["webApp"],
+          entities: makeEntities([
+            {
+              name: "webApp",
+              entityType: "K8s::Argo::Application",
+              props: { metadata: { name: "web", namespace: "argocd" }, spec: { destination: { namespace: "prod" } } },
+            },
+          ]),
+        },
+        cluster.connector,
+      );
+
+      expect(result.resources["prod/web"]).toMatchObject({
+        type: "K8s::Apps::Deployment",
+        ownerChain: { root: "declared", entity: "webApp" },
+      });
+    });
+
+    test("a generic instance label matching NO declared Application claims nothing — not an inventory (#1549)", async () => {
+      // `app.kubernetes.io/instance` is also what plain helm sets; on an
+      // estate declaring a Flux CR (so the widened sweep runs), a foreign
+      // helm-installed Deployment must not be attributed.
+      const kustomization = {
+        apiVersion: "kustomize.toolkit.fluxcd.io/v1",
+        kind: "Kustomization",
+        metadata: { name: "apps", namespace: "flux-system", uid: "ks-uid" },
+      };
+      const foreign = {
+        apiVersion: "apps/v1",
+        kind: "Deployment",
+        metadata: { name: "cert-manager", namespace: "flux-system", uid: "cm-uid", labels: { "app.kubernetes.io/instance": "cert-manager" } },
+      };
+      const cluster = fakeCluster({
+        objects: {
+          [objectKey("kustomize.toolkit.fluxcd.io/v1", "Kustomization", "apps", "flux-system")]: kustomization,
+          [objectKey("apps/v1", "Deployment", "cert-manager", "flux-system")]: foreign,
+        },
+      });
+
+      const result = await describeResources(
+        {
+          environment: "prod",
+          buildOutput: "",
+          entityNames: ["apps"],
+          entities: makeEntities([
+            { name: "apps", entityType: "K8s::Flux::Kustomization", props: { metadata: { name: "apps", namespace: "flux-system" } } },
+          ]),
+        },
+        cluster.connector,
+      );
+
+      expect(result.resources["flux-system/cert-manager"]).toBeUndefined();
+    });
+
     test("a core-only estate sweeps no extra groups — Pods stay the core representative", async () => {
       const svc = { apiVersion: "v1", kind: "Service", metadata: { name: "web", namespace: "prod", uid: "svc-uid" } };
       const cluster = fakeCluster({

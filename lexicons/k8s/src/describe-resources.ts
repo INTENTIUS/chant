@@ -378,7 +378,7 @@ export async function describeResources(
     if (op && op.apiVersion.includes("/")) runtimeGroupVersions.add(op.apiVersion);
   }
 
-  await addRuntimeChildren(client, resources, options.owned, runtimeGroupVersions);
+  await addRuntimeChildren(client, resources, options.owned, runtimeGroupVersions, declared);
 
   return observation(resources, unobserved);
 }
@@ -405,22 +405,99 @@ export async function describeResources(
  * axis for them to report against, the same way an out-of-band AWS child
  * resource has none either.
  */
+/** The declared GitOps CRs, indexed the way their controllers' labels can be
+ * resolved (#1549). `byRef` keys are `type\0namespace\0name` (Flux — exact);
+ * `argoByName` maps an Application's name to its declared entity, or null
+ * when two declared Applications share the name (ambiguous → no claim). */
+interface GitopsIndex {
+  present: boolean;
+  byRef: Map<string, string>;
+  argoByName: Map<string, string | null>;
+  targetNamespaces: Set<string>;
+}
+
+function gitopsIndex(declared: readonly Declared[]): GitopsIndex {
+  const byRef = new Map<string, string>();
+  const argoByName = new Map<string, string | null>();
+  const targetNamespaces = new Set<string>();
+  let present = false;
+  for (const { entityName, entityType, props } of declared) {
+    const isArgo = entityType === "K8s::Argo::Application";
+    const isFlux = entityType === "K8s::Flux::Kustomization" || entityType === "K8s::Flux::HelmRelease";
+    if (!isArgo && !isFlux) continue;
+    present = true;
+    const meta = props.metadata as { name?: string; namespace?: string } | undefined;
+    const spec = props.spec as { targetNamespace?: unknown; destination?: { namespace?: unknown } } | undefined;
+    const name = meta?.name;
+    if (!name) continue;
+    if (isFlux) {
+      byRef.set(`${entityType}\0${meta?.namespace ?? "default"}\0${name}`, entityName);
+      if (typeof spec?.targetNamespace === "string") targetNamespaces.add(spec.targetNamespace);
+    } else {
+      argoByName.set(name, argoByName.has(name) ? null : entityName);
+      if (typeof spec?.destination?.namespace === "string") targetNamespaces.add(spec.destination.namespace);
+    }
+  }
+  return { present, byRef, argoByName, targetNamespaces };
+}
+
+/** The declared GitOps CR a swept object's controller labels resolve to, or
+ * undefined. Flux's label pairs are exact; Argo's bare instance label claims
+ * only a UNIQUE declared Application. */
+function gitopsOwner(labels: Record<string, string> | undefined, gitops: GitopsIndex): string | undefined {
+  if (!labels || !gitops.present) return undefined;
+  const ksName = labels["kustomize.toolkit.fluxcd.io/name"];
+  const ksNs = labels["kustomize.toolkit.fluxcd.io/namespace"];
+  if (ksName && ksNs) {
+    const hit = gitops.byRef.get(`K8s::Flux::Kustomization\0${ksNs}\0${ksName}`);
+    if (hit) return hit;
+  }
+  const hrName = labels["helm.toolkit.fluxcd.io/name"];
+  const hrNs = labels["helm.toolkit.fluxcd.io/namespace"];
+  if (hrName && hrNs) {
+    const hit = gitops.byRef.get(`K8s::Flux::HelmRelease\0${hrNs}\0${hrName}`);
+    if (hit) return hit;
+  }
+  const instance = labels["app.kubernetes.io/instance"];
+  if (instance) {
+    const hit = gitops.argoByName.get(instance);
+    if (hit) return hit; // null (ambiguous) and undefined both decline
+  }
+  return undefined;
+}
+
 async function addRuntimeChildren(
   client: K8sClient,
   resources: Record<string, ResourceMetadata>,
   owned: boolean | undefined,
   groupVersions: ReadonlySet<string> = new Set(),
+  declared: readonly Declared[] = [],
 ): Promise<void> {
   const declaredByUid = new Map<string, string>();
   for (const [entityName, meta] of Object.entries(resources)) {
     if (meta.physicalId) declaredByUid.set(meta.physicalId, entityName);
   }
 
+  // GitOps attribution (#1549): Argo and Flux stamp their managed objects with
+  // labels, not ownerReferences, so the chain walk never reaches a declared
+  // entity for them. The label channel resolves against the DECLARED CRs by
+  // (type, namespace, name) — exact for Flux (its labels carry both halves) —
+  // and by unique name for Argo (its instance label carries no namespace, and
+  // it doubles as a generic Helm label, so anything ambiguous resolves to
+  // nothing: the module's standing conservatism).
+  const gitops = gitopsIndex(declared);
+
   const namespaces = new Set<string>();
   for (const meta of Object.values(resources)) {
     const namespace = (meta.attributes as { namespace?: string } | undefined)?.namespace;
     if (namespace) namespaces.add(namespace);
   }
+  // The namespaces a declared GitOps CR TARGETS are declared literals too
+  // (Argo `spec.destination.namespace`, Flux `spec.targetNamespace`) — the
+  // controller puts the workloads there, so the scan must look there, and
+  // reading it off the declaration keeps this bounded by the estate, never a
+  // cluster-wide sweep.
+  for (const ns of gitops.targetNamespaces) namespaces.add(ns);
   if (namespaces.size === 0) return;
 
   // The kinds to scan: Pods, plus each declared groupVersion's namespaced,
@@ -429,6 +506,18 @@ async function addRuntimeChildren(
   const kinds: Array<{ apiVersion: string; kind: string; typeName: string }> = [
     { apiVersion: "v1", kind: "Pod", typeName: "K8s::Core::Pod" },
   ];
+  // A GitOps estate's managed WORKLOADS live in groups the estate itself never
+  // declares (a pure Argo/Flux estate declares only the CRs), so without this
+  // the label channel could only ever fire on Pods (#1549).
+  if (gitops.present) {
+    kinds.push(
+      { apiVersion: "apps/v1", kind: "Deployment", typeName: "K8s::Apps::Deployment" },
+      { apiVersion: "apps/v1", kind: "StatefulSet", typeName: "K8s::Apps::StatefulSet" },
+      { apiVersion: "apps/v1", kind: "DaemonSet", typeName: "K8s::Apps::DaemonSet" },
+      { apiVersion: "v1", kind: "Service", typeName: "K8s::Core::Service" },
+      { apiVersion: "v1", kind: "ConfigMap", typeName: "K8s::Core::ConfigMap" },
+    );
+  }
   for (const gv of [...groupVersions].sort()) {
     let infos;
     try {
@@ -458,7 +547,13 @@ async function addRuntimeChildren(
         if (!uid || !name || declaredByUid.has(uid)) return; // declared directly, or unaddressable
         if (resources[`${namespace}/${name}`]) return; // already reported by an earlier kind
 
-        const ownerChain = await resolveK8sOwnerChain(obj, { declaredByUid, reader: client, namespace });
+        let ownerChain = await resolveK8sOwnerChain(obj, { declaredByUid, reader: client, namespace });
+        // The label channel (#1549) — only when the chain itself said nothing:
+        // a verdict the walk DID reach is never overridden.
+        if (ownerChain.root !== "declared") {
+          const entity = gitopsOwner(obj.metadata?.labels, gitops);
+          if (entity) ownerChain = { root: "declared", entity };
+        }
 
         // `--owned`: withhold an object that is neither a runtime child of a
         // declared entity nor carrying chant's own marker — the same rule the
