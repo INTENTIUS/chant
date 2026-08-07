@@ -23,6 +23,9 @@ import { wgc303 } from "./wgc303";
 import { wgc401 } from "./wgc401";
 import { wgc402 } from "./wgc402";
 import { wgc403 } from "./wgc403";
+import { wgc501 } from "./wgc501";
+import { wgc502 } from "./wgc502";
+import { wgc503 } from "./wgc503";
 
 export const postSynthChecks: PostSynthCheck[] = [
   wgc101,
@@ -48,4 +51,7 @@ export const postSynthChecks: PostSynthCheck[] = [
   wgc401,
   wgc402,
   wgc403,
+  wgc501,
+  wgc502,
+  wgc503,
 ];

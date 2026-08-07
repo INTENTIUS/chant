@@ -30,7 +30,7 @@ describe("gcpPlugin", () => {
 
   test("returns post-synth checks", () => {
     const checks = gcpPlugin.postSynthChecks!();
-    expect(checks).toHaveLength(23);
+    expect(checks).toHaveLength(26);
     const ids = checks.map((c) => c.id);
     expect(ids).toContain("WGC101");
     expect(ids).toContain("WGC102");
@@ -55,6 +55,9 @@ describe("gcpPlugin", () => {
     expect(ids).toContain("WGC401");
     expect(ids).toContain("WGC402");
     expect(ids).toContain("WGC403");
+    expect(ids).toContain("WGC501");
+    expect(ids).toContain("WGC502");
+    expect(ids).toContain("WGC503");
   });
 
   // ── Intrinsics / pseudo-parameters ─────────────────────────────────
