@@ -239,6 +239,27 @@ describe("environments (#1166 — string or { name, endpoint })", () => {
   });
 });
 
+describe("vulnPolicy exploitability fields (#1466)", () => {
+  test("loads the exploitability fields, zero thresholds included", async () => {
+    writeFileSync(
+      join(TEST_DIR, "chant.config.json"),
+      JSON.stringify({ vulnPolicy: { failOnKev: true, failEpssAtOrAbove: 0, warnEpssAtOrAbove: 0.01, exploitabilityFixableOnly: false } }),
+    );
+
+    const result = await loadChantConfig(TEST_DIR);
+    expect(result.config.vulnPolicy).toEqual({ failOnKev: true, failEpssAtOrAbove: 0, warnEpssAtOrAbove: 0.01, exploitabilityFixableOnly: false });
+  });
+
+  test("rejects an EPSS threshold outside 0.0–1.0", async () => {
+    writeFileSync(
+      join(TEST_DIR, "chant.config.json"),
+      JSON.stringify({ vulnPolicy: { failEpssAtOrAbove: 1.5 } }),
+    );
+
+    await expect(loadChantConfig(TEST_DIR)).rejects.toThrow(/failEpssAtOrAbove/);
+  });
+});
+
 describe("environmentName / environmentNames / environmentEndpoint (#1166)", () => {
   test("environmentName reduces either form to its name", () => {
     expect(environmentName("prod")).toBe("prod");

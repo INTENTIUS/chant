@@ -200,6 +200,36 @@ describe("applyConfigDefaults", () => {
     expect(step.policy?.warnSeverity).toBe("medium");
   });
 
+  test("vuln-gate: exploitability fields (#1466) reach a step with no per-step policy written", () => {
+    const config: ChantConfig = { vulnPolicy: { failOnKev: true, failEpssAtOrAbove: 0.1, warnEpssAtOrAbove: 0.01, exploitabilityFixableOnly: false } };
+    const comp = component([
+      { phase: "Gate", steps: [{ kind: "vuln-gate", sbom: { bytes: "", mediaType: "", packageCount: 0, generator: "x", format: "spdx" } }] },
+    ]);
+
+    const result = applyConfigDefaults(comp, config);
+    const step = result.deploy[0]!.steps[0] as { policy?: { failOnKev?: boolean; failEpssAtOrAbove?: number; warnEpssAtOrAbove?: number; exploitabilityFixableOnly?: boolean } };
+    expect(step.policy).toEqual({ failOnKev: true, failEpssAtOrAbove: 0.1, warnEpssAtOrAbove: 0.01, exploitabilityFixableOnly: false });
+  });
+
+  test("vuln-gate: a per-step failOnKev: false beats a config-level true, field-by-field", () => {
+    const config: ChantConfig = { vulnPolicy: { failOnKev: true, failEpssAtOrAbove: 0.1 } };
+    const comp = component([
+      {
+        phase: "Gate",
+        steps: [{
+          kind: "vuln-gate",
+          sbom: { bytes: "", mediaType: "", packageCount: 0, generator: "x", format: "spdx" },
+          policy: { failOnKev: false },
+        }],
+      },
+    ]);
+
+    const result = applyConfigDefaults(comp, config);
+    const step = result.deploy[0]!.steps[0] as { policy?: { failOnKev?: boolean; failEpssAtOrAbove?: number } };
+    expect(step.policy?.failOnKev).toBe(false);
+    expect(step.policy?.failEpssAtOrAbove).toBe(0.1);
+  });
+
   test("recurses into nested fan-out phases and onFailure compensation phases", () => {
     const config: ChantConfig = { sbom: { format: "cyclonedx" } };
     const comp = component([
