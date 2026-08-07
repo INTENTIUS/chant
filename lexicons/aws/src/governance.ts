@@ -39,6 +39,41 @@ export interface OuConfig {
   children?: Record<string, OuConfig>;
 }
 
+/** An IAM Identity Center permission set, keyed by name in `IdentityConfig.permissionSets`. */
+export interface PermissionSetConfig {
+  description?: string;
+  /** ISO-8601 session duration, e.g. "PT8H". Omitted → the provider default (PT1H). */
+  sessionDuration?: string;
+  /** Managed policy ARNs attached to the set. */
+  managedPolicies?: string[];
+  /** Inline policy document attached to the set. */
+  inlinePolicy?: Record<string, unknown>;
+}
+
+/** One permission-set grant to an identity-store principal on member accounts. */
+export interface AssignmentConfig {
+  /** Identity-store principal: a group's DisplayName or a user's UserName. */
+  principal: string;
+  principalType: "GROUP" | "USER";
+  /** Permission-set name from `IdentityConfig.permissionSets`. */
+  permissionSet: string;
+  /** Account names (as declared in the OU tree) the grant applies to. */
+  accounts: string[];
+}
+
+/** IAM Identity Center desired state — the `identity-assignment` verb (#792). */
+export interface IdentityConfig {
+  /** Permission-set definitions, keyed by the names assignments reference. */
+  permissionSets: Record<string, PermissionSetConfig>;
+  assignments?: AssignmentConfig[];
+  /**
+   * The named break-glass admin grant. Implicitly desired (reconcile keeps
+   * it) and protected by the warden's break-glass-admin guardrail: no plan
+   * may remove this assignment or its permission set.
+   */
+  breakGlass?: AssignmentConfig;
+}
+
 /**
  * The desired-state governance tree for one AWS organization. This is the
  * shape `wardens/aws` (#792) loads as config — the AWS counterpart of the
@@ -55,6 +90,8 @@ export interface AwsGovernanceConfig {
   ous: Record<string, OuConfig>;
   /** SCP definitions, keyed by the names the tree attaches. */
   scps: Record<string, ScpConfig>;
+  /** IAM Identity Center permission sets and account assignments. */
+  identity?: IdentityConfig;
   /** Where audit evidence flows. */
   auditSinks?: {
     cloudtrail?: { bucket: string; multiRegion: boolean };
@@ -150,6 +187,8 @@ export interface LandingZoneConfigProps {
   scps?: Record<string, ScpConfig>;
   /** Extra SCP names to attach at the organization root. */
   rootScps?: string[];
+  /** IAM Identity Center permission sets, assignments, and the break-glass admin. */
+  identity?: IdentityConfig;
   /** Declare an organization CloudTrail flowing into this bucket. */
   cloudtrailBucket?: string;
 }
@@ -187,10 +226,22 @@ export function landingZoneConfig(props: LandingZoneConfigProps = {}): AwsGovern
     if (!scps[name]) throw new Error(`landingZoneConfig: SCP "${name}" is attached but not defined in scps`);
   }
 
+  if (props.identity) {
+    const granted = [...(props.identity.assignments ?? []), ...(props.identity.breakGlass ? [props.identity.breakGlass] : [])];
+    for (const a of granted) {
+      if (!props.identity.permissionSets[a.permissionSet]) {
+        throw new Error(
+          `landingZoneConfig: assignment for "${a.principal}" references permission set "${a.permissionSet}" not defined in identity.permissionSets`,
+        );
+      }
+    }
+  }
+
   return {
     organization: rootScps.length ? { scps: rootScps } : {},
     ous,
     scps: Object.fromEntries(Object.entries(scps).filter(([n]) => attached.has(n))),
+    ...(props.identity ? { identity: props.identity } : {}),
     ...(props.cloudtrailBucket
       ? { auditSinks: { cloudtrail: { bucket: props.cloudtrailBucket, multiRegion: true } } }
       : {}),

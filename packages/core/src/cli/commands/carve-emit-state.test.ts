@@ -4,6 +4,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { carveEmit, formatCarveEmit } from "./carve-emit";
 import { loadHcl2json } from "../../terraform/parse";
+import { readCarveManifest } from "../../terraform/manifest";
 import type { ImportResult, LiveImportOptions } from "./import";
 import type { LexiconPlugin } from "../../lexicon";
 
@@ -98,8 +99,18 @@ describe("carve emit --state (real adoption from tfstate)", () => {
       // Boundary still classified (the Lambda inbound).
       expect(res.report!.inbound.map((e) => e.survivor)).toEqual(["aws_lambda_function.api"]);
 
+      // The carve state manifest persists boundary + selector for bridge/apply.
+      expect(res.manifestPath).toBe(join(out, "aws_s3_bucket-assets.carve.json"));
+      const manifest = readCarveManifest(res.manifestPath!)!;
+      expect(manifest.target).toBe("aws_s3_bucket.assets");
+      expect(manifest.statePath).toBe(join(dir, "terraform.tfstate"));
+      expect(manifest.emit!.source).toBe("tfstate");
+      expect(manifest.emit!.files).toEqual([join(out, "assets.ts")]);
+      expect(manifest.boundary.inbound.map((e) => e.survivor)).toEqual(["aws_lambda_function.api"]);
+
       const text = formatCarveEmit(res);
       expect(text).toContain("Adopted from Terraform state (offline)");
+      expect(text).toContain("State manifest");
     });
   });
 

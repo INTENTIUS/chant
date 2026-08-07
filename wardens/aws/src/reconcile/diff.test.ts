@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AwsGovernanceConfig } from "../config/types.js";
-import { diff, diffAuditSinks, diffOrgUnits, diffScps } from "./diff.js";
+import { diff, diffAuditSinks, diffIdentity, diffOrgUnits, diffScps } from "./diff.js";
 import type { LiveOrgState } from "./live.js";
 
 const DOC = { Version: "2012-10-17", Statement: [] };
@@ -16,6 +16,14 @@ const config: AwsGovernanceConfig = {
   scps: {
     "deny-leave-organization": { document: DOC, description: "root guard" },
     "deny-audit-tamper": { document: DOC },
+  },
+  identity: {
+    permissionSets: {
+      admin: { description: "full admin", managedPolicies: ["arn:aws:iam::aws:policy/AdministratorAccess"] },
+      readonly: { sessionDuration: "PT8H", managedPolicies: ["arn:aws:iam::aws:policy/ReadOnlyAccess"] },
+    },
+    assignments: [{ principal: "Platform", principalType: "GROUP", permissionSet: "readonly", accounts: ["checkout"] }],
+    breakGlass: { principal: "BreakGlass", principalType: "GROUP", permissionSet: "admin", accounts: ["checkout"] },
   },
   auditSinks: { cloudtrail: { bucket: "acme-audit", multiRegion: true } },
 };
@@ -51,6 +59,50 @@ function liveBase(): LiveOrgState {
       },
     ],
     trails: [{ name: "org-trail", bucket: "acme-audit", multiRegion: true, isOrganizationTrail: true }],
+    identity: {
+      instanceArn: "arn:aws:sso:::instance/ssoins-1",
+      identityStoreId: "d-1",
+      permissionSets: [
+        {
+          arn: "ps-admin",
+          name: "admin",
+          description: "full admin",
+          sessionDuration: undefined,
+          managedPolicies: ["arn:aws:iam::aws:policy/AdministratorAccess"],
+          inlinePolicy: undefined,
+          owned: true,
+        },
+        {
+          arn: "ps-readonly",
+          name: "readonly",
+          description: undefined,
+          sessionDuration: "PT8H",
+          managedPolicies: ["arn:aws:iam::aws:policy/ReadOnlyAccess"],
+          inlinePolicy: undefined,
+          owned: true,
+        },
+      ],
+      assignments: [
+        {
+          accountId: "111111111111",
+          accountName: "checkout",
+          permissionSetArn: "ps-readonly",
+          permissionSetName: "readonly",
+          principalId: "g-1",
+          principalType: "GROUP",
+          principalName: "Platform",
+        },
+        {
+          accountId: "111111111111",
+          accountName: "checkout",
+          permissionSetArn: "ps-admin",
+          permissionSetName: "admin",
+          principalId: "g-2",
+          principalType: "GROUP",
+          principalName: "BreakGlass",
+        },
+      ],
+    },
   };
 }
 
@@ -116,6 +168,73 @@ describe("aws warden diff", () => {
     ]);
   });
 
+  it("permission-set drift is field-level; deletes are ownership-gated", () => {
+    const live = liveBase();
+    live.identity!.permissionSets[0].managedPolicies = [];
+    live.identity!.permissionSets[1].sessionDuration = "PT1H";
+    const entries = diffIdentity("organization", config, live).entries.filter((e) => e.resourceType === "permission-set");
+    expect(entries.map((e) => [e.key, e.fields!.map((f) => f.field)])).toEqual([
+      ["admin", ["managedPolicies"]],
+      ["readonly", ["sessionDuration"]],
+    ]);
+
+    const stray = liveBase();
+    stray.identity!.permissionSets.push({
+      arn: "ps-stray",
+      name: "stray",
+      description: undefined,
+      sessionDuration: undefined,
+      managedPolicies: [],
+      inlinePolicy: undefined,
+      owned: false,
+    });
+    expect(diffIdentity("organization", config, stray).entries).toEqual([]);
+    stray.identity!.permissionSets.at(-1)!.owned = true;
+    expect(diffIdentity("organization", config, stray).entries).toEqual([
+      { kind: "delete", resourceType: "permission-set", key: "stray", before: { arn: "ps-stray", name: "stray" } },
+    ]);
+  });
+
+  it("assignments: missing grants are creates (break-glass implicitly desired); undeclared grants delete only under declared permission sets", () => {
+    const live = liveBase();
+    live.identity!.assignments = [];
+    const creates = diffIdentity("organization", config, live).entries.filter((e) => e.resourceType === "assignment");
+    expect(creates.map((e) => e.key).sort()).toEqual([
+      "admin/checkout/GROUP:BreakGlass",
+      "readonly/checkout/GROUP:Platform",
+    ]);
+    expect(creates.every((e) => e.kind === "create")).toBe(true);
+
+    const extra = liveBase();
+    extra.identity!.assignments.push({
+      accountId: "111111111111",
+      accountName: "checkout",
+      permissionSetArn: "ps-readonly",
+      permissionSetName: "readonly",
+      principalId: "u-1",
+      principalType: "USER",
+      principalName: "mallory",
+    });
+    // An assignment under an UNDECLARED permission set is out of scope.
+    extra.identity!.assignments.push({
+      accountId: "111111111111",
+      accountName: "checkout",
+      permissionSetArn: "ps-legacy",
+      permissionSetName: "legacy",
+      principalId: "g-9",
+      principalType: "GROUP",
+      principalName: "Old",
+    });
+    const entries = diffIdentity("organization", config, extra).entries;
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({ kind: "delete", resourceType: "assignment", key: "readonly/checkout/USER:mallory" });
+  });
+
+  it("no identity section declared → identity is out of scope entirely", () => {
+    const noIdentity: AwsGovernanceConfig = { ...config, identity: undefined };
+    expect(diffIdentity("organization", noIdentity, liveBase()).entries).toEqual([]);
+  });
+
   it("a missing organization trail is a create; a mismatched one is an update; none are deletes", () => {
     const live = liveBase();
     live.trails = [];
@@ -132,7 +251,7 @@ describe("aws warden diff", () => {
   });
 
   it("the dispatcher emits only fetched parts", () => {
-    const treeOnly: LiveOrgState = { ...liveBase(), scps: undefined, trails: undefined };
+    const treeOnly: LiveOrgState = { ...liveBase(), scps: undefined, trails: undefined, identity: undefined };
     const entries = diff("organization", { ...config, ous: {} }, treeOnly).entries;
     expect(entries.every((e) => e.resourceType === "ou" || e.resourceType === "account")).toBe(true);
   });

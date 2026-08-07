@@ -4,9 +4,9 @@
  * the organization itself (scope id "organization").
  *
  * Guardrails: the shared removal-delta cap plus the cloud-specific set —
- * root-SCP floor (never drop the last SCP guarding the root) and the OU
- * deletion cap. The break-glass-admin guardrail lands with the
- * identity-assignment cycle (#792 follow-up).
+ * root-SCP floor (never drop the last SCP guarding the root), the OU
+ * deletion cap, and the break-glass admin (the named break-glass grant is
+ * never removed).
  */
 
 import {
@@ -64,7 +64,7 @@ export async function runReconcile<TScope = unknown>(
     mode: opts.mode,
     diff: (scopeId, desired, live) => diff(scopeId, desired, live),
     guardrails: (changeSet, live): GuardrailResult => {
-      const aws = runAwsGuardrails(changeSet, live);
+      const aws = runAwsGuardrails(changeSet, live, opts.config);
       const shared = runGuardrailChecks(changeSet, [(resolved) => removalDeltaCap(resolved, { maxFraction })]);
       if (aws.ok && shared.ok) return { ok: true };
       return {

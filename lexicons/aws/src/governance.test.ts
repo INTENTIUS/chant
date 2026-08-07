@@ -41,6 +41,33 @@ describe("landingZoneConfig (#791)", () => {
     expect(cfg.auditSinks?.cloudtrail).toEqual({ bucket: "acme-audit", multiRegion: true });
   });
 
+  test("identity passes through; assignments must reference defined permission sets", () => {
+    const identity = {
+      permissionSets: { admin: { managedPolicies: ["arn:aws:iam::aws:policy/AdministratorAccess"] } },
+      breakGlass: { principal: "BreakGlass", principalType: "GROUP" as const, permissionSet: "admin", accounts: ["management"] },
+    };
+    const cfg = landingZoneConfig({ identity });
+    expect(cfg.identity).toEqual(identity);
+    expect(landingZoneConfig().identity).toBeUndefined();
+
+    expect(() =>
+      landingZoneConfig({
+        identity: {
+          permissionSets: {},
+          assignments: [{ principal: "Platform", principalType: "GROUP", permissionSet: "nope", accounts: ["management"] }],
+        },
+      }),
+    ).toThrowError('references permission set "nope"');
+    expect(() =>
+      landingZoneConfig({
+        identity: {
+          permissionSets: {},
+          breakGlass: { principal: "BreakGlass", principalType: "GROUP", permissionSet: "gone", accounts: ["management"] },
+        },
+      }),
+    ).toThrowError('references permission set "gone"');
+  });
+
   test("only attached SCPs are emitted; attaching an undefined SCP throws", () => {
     const cfg = landingZoneConfig({
       scps: { unused: { document: { Version: "2012-10-17", Statement: [] } } },

@@ -1,7 +1,8 @@
 /**
- * AWS API client for the governance surface: Organizations and CloudTrail.
+ * AWS API client for the governance surface: Organizations, CloudTrail,
+ * SSO Admin (IAM Identity Center), and Identity Store.
  *
- * Both are x-amz-json-1.1 RPC services: POST to the service root with an
+ * All are x-amz-json-1.1 RPC services: POST to the service root with an
  * `X-Amz-Target` action header. Signed with the local SigV4 signer; no
  * @aws-sdk/* dependency. `endpointUrl` (or AWS_ENDPOINT_URL) points the
  * client at an emulator (floci) — same override the AWS CLI honours.
@@ -24,13 +25,18 @@ export class AwsApiError extends Error {
   }
 }
 
-export type AwsService = "organizations" | "cloudtrail";
+export type AwsService = "organizations" | "cloudtrail" | "sso-admin" | "identitystore";
 
 /** JSON-RPC target prefixes per service. */
 const TARGETS: Record<AwsService, string> = {
   organizations: "AWSOrganizationsV20161128",
   cloudtrail: "com.amazonaws.cloudtrail.v20131101.CloudTrail_20131101",
+  "sso-admin": "SWBExternalService",
+  identitystore: "AWSIdentityStore",
 };
+
+/** SigV4 signing names, where they differ from the service key. */
+const SIGNING_NAMES: Partial<Record<AwsService, string>> = { "sso-admin": "sso" };
 
 export interface AwsClientOptions {
   credentials: Sigv4Credentials;
@@ -59,9 +65,14 @@ export interface AwsClient {
 
 function endpointFor(service: AwsService, region: string, override?: string): URL {
   if (override) return new URL(override);
-  // Organizations is a global service homed in us-east-1.
+  // Organizations is a global service homed in us-east-1; SSO Admin's
+  // endpoint prefix ("sso") differs from its service key.
   const host =
-    service === "organizations" ? "organizations.us-east-1.amazonaws.com" : `${service}.${region}.amazonaws.com`;
+    service === "organizations"
+      ? "organizations.us-east-1.amazonaws.com"
+      : service === "sso-admin"
+        ? `sso.${region}.amazonaws.com`
+        : `${service}.${region}.amazonaws.com`;
   return new URL(`https://${host}/`);
 }
 
@@ -80,7 +91,7 @@ export function createClient(opts: AwsClientOptions): AwsClient {
         "x-amz-target": `${TARGETS[service]}.${action}`,
       },
       body: payload,
-      service,
+      service: SIGNING_NAMES[service] ?? service,
       // Sign for the service's home region: global Organizations is us-east-1.
       region: service === "organizations" ? "us-east-1" : region,
       credentials: opts.credentials,

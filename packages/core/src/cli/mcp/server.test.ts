@@ -327,6 +327,23 @@ describe("McpServer", () => {
       expect(parsed.sourceFiles).toBeDefined();
     });
 
+    test("calls explain tool with okf format (#1058)", async () => {
+      const response = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name: "explain", arguments: { path: testDir, format: "okf" } },
+      });
+
+      expect(response.error).toBeUndefined();
+      const result = response.result as { content: Array<{ text: string }> };
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.okf_version).toBe("0.2");
+      // Even an empty project yields a bundle with a root index.md.
+      expect(Object.keys(parsed.files)).toEqual(["index.md"]);
+      expect(parsed.files["index.md"]).toContain("okf_version: '0.2'");
+    });
+
     test("calls scaffold tool with generic fallback", async () => {
       const response = await server.handleRequest({
         jsonrpc: "2.0",

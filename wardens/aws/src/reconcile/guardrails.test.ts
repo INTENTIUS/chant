@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ChangeSet } from "@intentius/chant/reconcile";
-import { ouDeletionCap, rootScpFloor, runAwsGuardrails } from "./guardrails.js";
+import type { AwsGovernanceConfig } from "../config/types.js";
+import { breakGlassAdmin, ouDeletionCap, rootScpFloor, runAwsGuardrails } from "./guardrails.js";
 import type { LiveOrgState } from "./live.js";
 
 const DOC = { Version: "2012-10-17", Statement: [] };
@@ -48,6 +49,44 @@ describe("aws guardrails (#792)", () => {
     ]);
     expect(ouDeletionCap(three)?.guardrail).toBe("ouDeletionCap");
     expect(ouDeletionCap(three, 3)).toBeNull();
+  });
+
+  it("break-glass admin: neither the named assignment nor its permission set may be removed", () => {
+    const config: AwsGovernanceConfig = {
+      organization: {},
+      ous: {},
+      scps: {},
+      identity: {
+        permissionSets: { admin: {} },
+        breakGlass: { principal: "BreakGlass", principalType: "GROUP", permissionSet: "admin", accounts: ["management"] },
+      },
+    };
+    const dropAssignment = cs([
+      {
+        kind: "delete",
+        resourceType: "assignment",
+        key: "admin/management/GROUP:BreakGlass",
+        before: { permissionSetName: "admin", principalName: "BreakGlass", principalType: "GROUP" },
+      },
+    ]);
+    expect(breakGlassAdmin(dropAssignment, config)?.guardrail).toBe("breakGlassAdmin");
+
+    const dropSet = cs([{ kind: "delete", resourceType: "permission-set", key: "admin", before: { arn: "ps-1" } }]);
+    expect(breakGlassAdmin(dropSet, config)?.guardrail).toBe("breakGlassAdmin");
+
+    // A different principal's assignment on the same set removes freely.
+    const dropOther = cs([
+      {
+        kind: "delete",
+        resourceType: "assignment",
+        key: "admin/management/GROUP:Platform",
+        before: { permissionSetName: "admin", principalName: "Platform", principalType: "GROUP" },
+      },
+    ]);
+    expect(breakGlassAdmin(dropOther, config)).toBeNull();
+    // No break-glass named → nothing to protect.
+    expect(breakGlassAdmin(dropAssignment, { ...config, identity: undefined })).toBeNull();
+    expect(breakGlassAdmin(dropAssignment, undefined)).toBeNull();
   });
 
   it("runAwsGuardrails aggregates diagnostics", () => {

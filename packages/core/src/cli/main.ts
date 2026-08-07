@@ -26,6 +26,7 @@ import { runCarveApply } from "./handlers/carve-apply";
 import { runLifecycleSnapshot, runLifecycleShow, runLifecycleDiff, runLifecycleRollback, runLifecyclePlan, runLifecycleAffected, runLifecycleLog, runLifecycleUnknown } from "./handlers/lifecycle";
 import { runComponentsStatus, runComponentsReleaseRecord, runComponentsUnknown } from "./handlers/components";
 import { runGraph } from "./handlers/graph";
+import { runExplain } from "./handlers/explain";
 import { runSearch } from "./handlers/search";
 import { runOp, runOpList, runOpStatus, runOpSignal, runOpCancel, runOpLog } from "./handlers/run";
 import { runEmulator } from "./handlers/emulator";
@@ -385,6 +386,10 @@ Commands:
   lint                  Check specifications for issues
   list                  List discovered entities
   describe              Show the effective config for one component
+  explain               Summarize discovered entities (--format markdown|json|okf;
+                        okf emits an OKF v0.2 knowledge bundle — one markdown
+                        concept per entity + index.md; -o <dir> writes the
+                        bundle tree, otherwise JSON path→content on stdout)
   vendor                Pull pinned, checksummed patterns into your repo
   import                Import external template into TypeScript
   audit [path|url]      Audit a repo's CI YAML for security issues
@@ -402,14 +407,16 @@ Commands:
                         --select <addr>   (recommended for TF-managed resources); --env
                         --state|--env     <env> adopts via live cloud import (--live-name
                                           <logical-id> narrows a multi-resource stack).
+                                          Persists a carve manifest bridge/apply compose with.
   carve bridge          Generate the surviving-TF patch (data sources + rewired
                         --from <tf-dir>   refs) + deferred inputs + reversible runbook.
-                        --select <addr>   Writes proposals for review; --apply-rewrites
-                                          edits the .tf in place.
+                        [--select <addr>] Writes proposals for review; --apply-rewrites
+                                          edits the .tf in place. --select is optional
+                                          when the output dir holds one carve manifest.
   carve apply           Apply graduation: ownership marker + finalized apply
                         --from <tf-dir>   runbook (dial-turn observe→apply). BYOL —
-                        --select <addr>   no cloud call; --write saves the doc.
-                        --env <env>
+                        [--select <addr>] no cloud call; --write saves the doc. --select
+                        --env <env>       is optional with a carve manifest present.
 
 Ops:
   run <name>            Start an Op workflow (spawns worker + submits to Temporal)
@@ -705,6 +712,7 @@ const registry: CommandDef[] = [
   { name: "lint", handler: runLint },
   { name: "list", handler: runList },
   { name: "describe", handler: runDescribe },
+  { name: "explain", handler: runExplain },
   { name: "search", handler: runSearch },
   { name: "import", handler: runImport },
   { name: "audit", handler: runAudit },

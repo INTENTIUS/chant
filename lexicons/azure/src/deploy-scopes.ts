@@ -14,8 +14,57 @@
 import { readFileSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
+import { DECLARABLE_MARKER, type Declarable } from "@intentius/chant/declarable";
 
 export type DeployScope = "resourceGroup" | "subscription" | "managementGroup" | "tenant";
+
+/** Marker symbol for deployment-scope pin identification. */
+export const DEPLOYMENT_SCOPE_MARKER = Symbol.for("chant.azure.deploymentScope");
+
+/**
+ * A deployment-scope pin — wraps a scope into a Declarable the serializer
+ * uses instead of inferring the scope from the resource set.
+ */
+export interface DeploymentScope extends Declarable {
+  readonly [DEPLOYMENT_SCOPE_MARKER]: true;
+  readonly [DECLARABLE_MARKER]: true;
+  readonly lexicon: "azure";
+  readonly entityType: "chant:azure:deploymentScope";
+  readonly scope: DeployScope;
+}
+
+/** Type guard for DeploymentScope. */
+export function isDeploymentScope(value: unknown): value is DeploymentScope {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    DEPLOYMENT_SCOPE_MARKER in value &&
+    (value as Record<symbol, unknown>)[DEPLOYMENT_SCOPE_MARKER] === true
+  );
+}
+
+/**
+ * Pin the project's deployment scope. Without a pin the serializer picks
+ * the scope every resource supports that is closest to a resource group,
+ * which cannot tell a management-group policy project from a subscription
+ * one — policy definitions and assignments deploy at both. One pin per
+ * project; AZR030 flags resources whose schema does not define the pinned
+ * scope.
+ *
+ * @example
+ * ```ts
+ * export const scope = deploymentScope("managementGroup");
+ * ```
+ */
+export function deploymentScope(scope: DeployScope): DeploymentScope {
+  return {
+    [DEPLOYMENT_SCOPE_MARKER]: true,
+    [DECLARABLE_MARKER]: true,
+    lexicon: "azure",
+    entityType: "chant:azure:deploymentScope",
+    scope,
+  };
+}
 
 /** Template $schema URL per deployment scope. */
 export const TEMPLATE_SCHEMAS: Record<DeployScope, string> = {

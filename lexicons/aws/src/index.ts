@@ -141,4 +141,13 @@ export { awsCapabilityPlugin } from "./components/capability-plugin";
 // AWS governance authoring (#791): the desired-state config the AWS cloud
 // warden (#792) reconciles, and the typed landing-zone authoring layer.
 export { landingZoneConfig, regionRestriction, DENY_AUDIT_TAMPER, DENY_LEAVE_ORGANIZATION, FOUNDATION_OUS } from "./governance";
-export type { AwsGovernanceConfig, LandingZoneConfigProps, OuConfig, ScpConfig, AccountConfig } from "./governance";
+export type {
+  AwsGovernanceConfig,
+  LandingZoneConfigProps,
+  OuConfig,
+  ScpConfig,
+  AccountConfig,
+  IdentityConfig,
+  PermissionSetConfig,
+  AssignmentConfig,
+} from "./governance";
