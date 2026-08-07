@@ -10,12 +10,13 @@
  */
 
 import { existsSync, statSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "fs";
-import { join, basename, resolve } from "path";
+import { join, basename, relative, resolve } from "path";
 import { parseTerraformDir, Hcl2JsonNotInstalled } from "../../terraform/parse";
 import { boundaryReport, type CarveReport } from "../../terraform/carve";
 import { generateBridge, type BridgePlan, type CarvedIdentity } from "../../terraform/bridge";
 import { IDENTITY_ATTR } from "../../terraform/tier-map";
 import { resolveCarveManifest, writeCarveManifest, type CarveManifest } from "../../terraform/manifest";
+import { newFileDiff, unifiedDiff } from "../../terraform/unified-diff";
 
 export interface CarveBridgeOptions {
   from?: string;
@@ -36,6 +37,8 @@ export interface CarveBridgeResult {
   written?: string[];
   /** True if survivor files were edited in place. */
   appliedInPlace?: boolean;
+  /** The git-applyable `.patch` carrying the whole survivor edit. */
+  patchPath?: string;
   /** The carve state manifest this bridge composed with / recorded into. */
   manifestPath?: string;
   /** True when the target came from the manifest, not --select. */
@@ -115,6 +118,22 @@ export async function carveBridge(opts: CarveBridgeOptions): Promise<CarveBridge
     }
   }
 
+  // The whole survivor edit as one git-applyable patch: the data-source file as
+  // a new file, plus the rewired references — `cd <from> && git apply <patch>`.
+  let patchPath: string | undefined;
+  if (plan.dataSources.length || changed.length) {
+    const chunks: string[] = [];
+    if (plan.dataSources.length) {
+      chunks.push(newFileDiff(`${slug}-datasources.tf`, plan.dataSources.map((d) => d.hcl).join("\n\n") + "\n"));
+    }
+    for (const r of changed) {
+      chunks.push(unifiedDiff(relative(opts.from, r.path), r.original, r.rewritten));
+    }
+    patchPath = join(outDir, `${slug}-bridge.patch`);
+    writeFileSync(patchPath, chunks.join(""));
+    written.push(patchPath);
+  }
+
   // Record the bridge into the manifest (create one on a standalone bridge),
   // so `carve apply` composes with this step too.
   const applied = Boolean(opts.applyRewrites) && changed.length > 0;
@@ -126,7 +145,12 @@ export async function carveBridge(opts: CarveBridgeOptions): Promise<CarveBridge
     boundary: report,
   };
   manifest.boundary = report;
-  manifest.bridge = { written: written.map((w) => resolve(w)), appliedInPlace: applied, at: new Date().toISOString() };
+  manifest.bridge = {
+    written: written.map((w) => resolve(w)),
+    appliedInPlace: applied,
+    patch: patchPath ? resolve(patchPath) : undefined,
+    at: new Date().toISOString(),
+  };
   const manifestPath = writeCarveManifest(outDir, manifest);
 
   return {
@@ -134,6 +158,7 @@ export async function carveBridge(opts: CarveBridgeOptions): Promise<CarveBridge
     plan,
     written,
     appliedInPlace: applied,
+    patchPath,
     manifestPath,
     selectFromManifest: !opts.select,
   };
@@ -159,6 +184,10 @@ export function formatCarveBridge(result: CarveBridgeResult): string {
     for (const d of p.deferredInputs) L.push(`    - ${d.note}`);
   }
   L.push("");
+  if (result.patchPath && !result.appliedInPlace) {
+    L.push(`One git-applyable patch carries the whole edit: git apply --directory=<terraform-dir> ${resolve(result.patchPath)}`);
+    L.push("  (--directory is the Terraform dir relative to your repo root; plain `git apply` from the dir works outside a repo.)");
+  }
   if (result.appliedInPlace) {
     L.push("Rewritten survivor Terraform in place. Review with `git diff`, then `terraform plan`.");
   } else {

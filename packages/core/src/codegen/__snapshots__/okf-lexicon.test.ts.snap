@@ -1,0 +1,170 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`buildLexiconOkfBundle > registry-style and dts-style bundles snapshot stably 1`] = `
+[
+  {
+    "content": "---
+okf_version: '0.2'
+---
+
+# Resource types
+
+* [Service](/types/Service.md) - Mock::Compose::Service
+* [Volume](/types/Volume.md) - Mock::Compose::Volume
+
+# Rules
+
+* [MCK001](/rules/MCK001.md) - Avoid :latest image references on a Service
+* [MCK010](/rules/MCK010.md) - A declared Volume must be mounted somewhere
+",
+    "path": "index.md",
+  },
+  {
+    "content": "---
+type: lint-rule
+title: MCK001
+description: Avoid :latest image references on a Service
+id: MCK001
+severity: warning
+category: correctness
+lexicon: mockdocker
+docs: https://intentius.io/chant/lexicons/mockdocker/rules/
+---
+Avoid :latest image references on a Service
+
+## Applies to
+
+- [Service](/types/Service.md)
+",
+    "path": "rules/MCK001.md",
+  },
+  {
+    "content": "---
+type: post-synth-check
+title: MCK010
+description: A declared Volume must be mounted somewhere
+id: MCK010
+severity: error
+category: post-synth
+lexicon: mockdocker
+docs: https://intentius.io/chant/lexicons/mockdocker/rules/
+---
+A declared Volume must be mounted somewhere
+
+## Applies to
+
+- [Volume](/types/Volume.md)
+",
+    "path": "rules/MCK010.md",
+  },
+  {
+    "content": "---
+type: resource-type
+title: Service
+description: A containerized service definition
+name: Service
+lexicon: mockdocker
+resource_type: Mock::Compose::Service
+---
+A containerized service definition
+
+## Properties
+
+- \`image\` (\`string\`): Container image to use
+- \`ports\` (\`string[]\`): Published ports
+
+## Governed by
+
+- [MCK001](/rules/MCK001.md): Avoid :latest image references on a Service
+",
+    "path": "types/Service.md",
+  },
+  {
+    "content": "---
+type: resource-type
+title: Volume
+description: A named volume
+name: Volume
+lexicon: mockdocker
+resource_type: Mock::Compose::Volume
+---
+A named volume
+
+## Properties
+
+- \`driver\` (\`string\`): Volume driver
+
+## Governed by
+
+- [MCK010](/rules/MCK010.md): A declared Volume must be mounted somewhere
+",
+    "path": "types/Volume.md",
+  },
+]
+`;
+
+exports[`buildLexiconOkfBundle > registry-style and dts-style bundles snapshot stably 2`] = `
+[
+  {
+    "content": "---
+okf_version: '0.2'
+---
+
+# Resource types
+
+* [Bucket](/types/Bucket.md) - Mock::S3::Bucket
+
+# Rules
+
+* [MAW006](/rules/MAW006.md) - Detects Bucket creation without encryption
+",
+    "path": "index.md",
+  },
+  {
+    "content": "---
+type: lint-rule
+title: MAW006
+description: Detects Bucket creation without encryption
+id: MAW006
+severity: warning
+category: security
+lexicon: mockaws
+docs: https://intentius.io/chant/lexicons/mockaws/rules/
+---
+Detects Bucket creation without encryption
+
+## Applies to
+
+- [Bucket](/types/Bucket.md)
+",
+    "path": "rules/MAW006.md",
+  },
+  {
+    "content": "---
+type: resource-type
+title: Bucket
+description: mockaws resource type Mock::S3::Bucket
+name: Bucket
+lexicon: mockaws
+resource_type: Mock::S3::Bucket
+---
+\`Mock::S3::Bucket\`, a resource type of the mockaws lexicon.
+
+## Properties
+
+- \`BucketName\` (\`string\`, optional): A name for the bucket.
+- \`VersioningConfiguration\` (\`Bucket_VersioningConfiguration\`, optional): The versioning state.
+
+## Attributes
+
+- \`Arn\`
+- \`DomainName\`
+
+## Governed by
+
+- [MAW006](/rules/MAW006.md): Detects Bucket creation without encryption
+",
+    "path": "types/Bucket.md",
+  },
+]
+`;

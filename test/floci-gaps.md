@@ -276,3 +276,37 @@ clean apply (chant#1210's acceptance run). Detection is correct — the live
 resource genuinely does not carry the configuration — the emulator is what
 loses it. Same class as entry 4 (CloudFormation dropping SG rules), one
 emulator over.
+
+## 7. floci-az: the modeled storage-account provider does not persist what was PUT
+
+**Status:** confirmed 2026-08-07 against `floci/floci-az:0.10.0`, unfiled.
+This is the azure sibling (floci-io/floci-az), not floci — recorded here
+because it is the same one-pass upstream filing.
+
+Generic ARM types (NSGs, VNets, route tables) round-trip: floci-az stores the
+PUT body and GETs return it, tags and nested collections included — which is
+what the azure drift acceptance (`test/azure-drift-e2e.sh`, chant#1213) rides.
+`Microsoft.Storage/storageAccounts` is instead a *modeled* provider, and the
+model discards the request:
+
+```
+$ curl -s -X PUT "$BASE/resourceGroups/rg/providers/Microsoft.Storage/storageAccounts/s1?api-version=2023-01-01" \
+    -H 'content-type: application/json' \
+    -d '{"location":"eastus","tags":{"environment":"e2e"},"sku":{"name":"Standard_LRS"},"kind":"StorageV2",
+         "properties":{"minimumTlsVersion":"TLS1_2","allowBlobPublicAccess":false,"supportsHttpsTrafficOnly":true,
+                       "networkAcls":{"bypass":"AzureServices","defaultAction":"Deny","ipRules":[],"virtualNetworkRules":[]}}}'
+$ curl -s "$BASE/resourceGroups/rg/providers/Microsoft.Storage/storageAccounts/s1?api-version=2023-01-01"
+```
+
+The GET drops `tags` entirely, drops `minimumTlsVersion` /
+`allowBlobPublicAccess` / `networkAcls`, returns `supportsHttpsTrafficOnly:
+false` against the requested `true`, and adds a modeled surface
+(`accessTier`, `primaryEndpoints.*`, `primaryLocation`, `statusOfPrimary`,
+`sku.tier`).
+
+What it blocks: a storage account cannot appear in a drift acceptance estate —
+every declared secure-default reads as `absent` drift and the flipped
+`supportsHttpsTrafficOnly` reads as `changed`, all of it emulator artifact.
+The drift e2e uses the VnetDefault networking estate instead; entry stands
+until the provider either echoes unknown properties like the generic path or
+models the requested values.

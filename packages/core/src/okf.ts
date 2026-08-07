@@ -3,7 +3,7 @@ import type { Declarable } from "./declarable";
 import { buildGraphIr } from "./graph-ir";
 import { isLexiconOutput, type LexiconOutput } from "./lexicon-output";
 import { getProvenance } from "./provenance";
-import { emitYAML } from "./yaml";
+import { emitYAML, parseYAML } from "./yaml";
 
 /**
  * OKF bundle emitter (#1058, epic #1057) — projects a discovered entity graph
@@ -33,7 +33,7 @@ export interface OkfBundleInput {
 }
 
 /** Make an entity or lexicon name safe as a single path segment. */
-function slug(name: string): string {
+export function slug(name: string): string {
   const cleaned = name.replace(/[^A-Za-z0-9._-]/g, "-").replace(/^\.+/, "");
   return cleaned === "" ? "unnamed" : cleaned;
 }
@@ -51,7 +51,7 @@ function relFile(file: string | undefined, projectPath?: string): string | undef
  * Render a flat frontmatter mapping as a YAML block. Keys with undefined
  * values are dropped; scalar quoting is `emitYAML`'s.
  */
-function frontmatter(fields: Record<string, string | undefined>): string {
+export function frontmatter(fields: Record<string, string | undefined>): string {
   const lines: string[] = ["---"];
   for (const [key, value] of Object.entries(fields)) {
     if (value === undefined) continue;
@@ -75,6 +75,84 @@ export function splitFrontmatter(content: string): { frontmatter: string; body: 
     frontmatter: lines.slice(1, end).join("\n"),
     body: lines.slice(end + 1).join("\n"),
   };
+}
+
+/**
+ * Check a bundle against the OKF v0.2 conformance criteria (spec §11) and
+ * return every violation found: parseable frontmatter on every non-reserved
+ * `.md`, a non-empty `type` everywhere, a well-formed root `index.md`, and
+ * generated cross-link entries that are bundle-absolute (or external URLs).
+ * Empty result means conformant. Shared by the project-bundle tests (#1058)
+ * and every lexicon's bundle tests (#1060).
+ */
+export function okfConformanceProblems(files: OkfFile[]): string[] {
+  const problems: string[] = [];
+  const reserved = new Set(["index.md", "log.md"]);
+  const linkTarget = /\]\(([^)]+)\)/g;
+  const externalOrAbsolute = (target: string): boolean =>
+    target.startsWith("/") || /^[a-z][a-z0-9+.-]*:/i.test(target);
+
+  for (const file of files) {
+    if (!file.path.endsWith(".md")) problems.push(`${file.path}: not a markdown file`);
+    if (file.path.startsWith("/") || file.path.includes("..")) {
+      problems.push(`${file.path}: path is not bundle-relative`);
+    }
+    if (reserved.has(file.path.split("/").pop()!)) continue;
+
+    const split = splitFrontmatter(file.content);
+    if (!split) {
+      problems.push(`${file.path}: no frontmatter block`);
+      continue;
+    }
+    let parsed: unknown;
+    try {
+      parsed = parseYAML(split.frontmatter);
+    } catch {
+      problems.push(`${file.path}: unparseable frontmatter`);
+      continue;
+    }
+    if (typeof parsed !== "object" || parsed === null) {
+      problems.push(`${file.path}: frontmatter is not a mapping`);
+      continue;
+    }
+    const type = (parsed as Record<string, unknown>).type;
+    if (typeof type !== "string" || type.length === 0) {
+      problems.push(`${file.path}: frontmatter has no non-empty type`);
+    }
+    // Cross-link entries (the "- [name](target)" lines the emitters generate)
+    // must point inside the bundle or at an external URL. Broken targets are
+    // permitted (not-yet-written knowledge); malformed ones are not. Free-text
+    // knowledge bodies may carry arbitrary links and are not checked.
+    for (const line of split.body.split("\n")) {
+      if (!line.trimStart().startsWith("- [")) continue;
+      for (const match of line.matchAll(linkTarget)) {
+        if (!externalOrAbsolute(match[1])) {
+          problems.push(`${file.path}: link target "${match[1]}" is neither bundle-absolute nor external`);
+        }
+      }
+    }
+  }
+
+  const index = files.find((f) => f.path === "index.md");
+  if (!index) {
+    problems.push("bundle has no root index.md");
+    return problems;
+  }
+  const split = splitFrontmatter(index.content);
+  if (!split) {
+    problems.push("index.md: no frontmatter block");
+    return problems;
+  }
+  const parsed = parseYAML(split.frontmatter);
+  for (const key of Object.keys(parsed ?? {})) {
+    if (key !== "okf_version") problems.push(`index.md: frontmatter carries "${key}" — okf_version is the only key an index is allowed`);
+  }
+  for (const line of split.body.split("\n")) {
+    if (line.startsWith("*") && !/^\* \[[^\]]+\]\([^)]+\) - .+$/.test(line)) {
+      problems.push(`index.md: malformed entry line: ${line}`);
+    }
+  }
+  return problems;
 }
 
 interface Concept {

@@ -1,7 +1,7 @@
 import { describe, test, expect } from "vitest";
-import { basename, resolve } from "node:path";
+import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { buildOkfBundle, splitFrontmatter, OKF_VERSION, type OkfFile } from "./okf";
+import { buildOkfBundle, okfConformanceProblems, splitFrontmatter, OKF_VERSION, type OkfFile } from "./okf";
 import { DECLARABLE_MARKER, type Declarable } from "./declarable";
 import { setProvenance } from "./provenance";
 import { parseYAML } from "./yaml";
@@ -16,49 +16,17 @@ function fileMap(bundle: OkfFile[]): Map<string, string> {
 }
 
 /**
- * Assert the four OKF v0.2 conformance criteria (spec §11) over a bundle:
- * parseable frontmatter everywhere, non-empty `type` everywhere, reserved
- * files well-formed when present, and nothing a consumer is required to
- * reject on.
+ * Assert the four OKF v0.2 conformance criteria (spec §11) over a bundle via
+ * the shared checker (`okfConformanceProblems`) — the same one the lexicon
+ * bundle tests (#1060) run — plus the version pin our own emitter guarantees.
  */
 function assertConformant(bundle: OkfFile[]): void {
-  const reserved = new Set(["index.md", "log.md"]);
-  for (const file of bundle) {
-    expect(file.path.endsWith(".md")).toBe(true);
-    // Bundle-relative paths, never absolute or escaping.
-    expect(file.path.startsWith("/")).toBe(false);
-    expect(file.path).not.toContain("..");
-
-    if (reserved.has(basename(file.path))) continue;
-
-    // 1. Every non-reserved .md has a parseable YAML frontmatter block.
-    const split = splitFrontmatter(file.content);
-    expect(split, `${file.path} has no frontmatter block`).toBeDefined();
-    const parsed = parseYAML(split!.frontmatter);
-    expect(typeof parsed).toBe("object");
-
-    // 2. Every frontmatter block carries a non-empty `type`.
-    expect(typeof parsed.type, `${file.path} has no type`).toBe("string");
-    expect((parsed.type as string).length).toBeGreaterThan(0);
-
-    // 4. No rejection-triggering shape: cross-links are bundle-relative
-    // markdown links (broken targets are permitted, malformed links are not).
-    for (const match of split!.body.matchAll(/\]\(([^)]+)\)/g)) {
-      expect(match[1].startsWith("/")).toBe(true);
-    }
-  }
-
-  // 3. Reserved files well-formed when present: the root index.md carries at
-  // most an `okf_version` frontmatter key (the only frontmatter an index is
-  // allowed) and section headings with link entries.
+  expect(okfConformanceProblems(bundle)).toEqual([]);
   const index = bundle.find((f) => f.path === "index.md");
   expect(index).toBeDefined();
   const split = splitFrontmatter(index!.content);
   expect(split).toBeDefined();
   expect(parseYAML(split!.frontmatter)).toEqual({ okf_version: OKF_VERSION });
-  for (const line of split!.body.split("\n")) {
-    if (line.startsWith("*")) expect(line).toMatch(/^\* \[[^\]]+\]\([^)]+\) - .+$/);
-  }
 }
 
 describe("buildOkfBundle", () => {

@@ -1193,6 +1193,30 @@ Authority: [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.
 
 Set an explicit RetentionInDays.
 
+### WAW056
+
+**SCP guardrail has no Deny statement** — merge-worthy · guidance
+
+Add a Deny statement — SCPs only filter permissions, so a Deny-less SCP guards nothing.
+
+Authority: [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.com/wellarchitected/latest/security-pillar/welcome.html)
+
+### WAW057
+
+**SCP guardrail attached to no targets** — merge-worthy · guidance
+
+Attach the SCP to the organization root or an OU via TargetIds.
+
+Authority: [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.com/wellarchitected/latest/security-pillar/welcome.html)
+
+### WAW058
+
+**Organization audit trail dropped or scoped down** — merge-worthy · guidance
+
+Keep an organization CloudTrail with IsLogging: true and IsMultiRegionTrail: true.
+
+Authority: [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.com/wellarchitected/latest/security-pillar/welcome.html)
+
 ## Azure ARM (AZR)
 
 Run against ARM deployment templates (JSON).
@@ -1336,6 +1360,30 @@ Authority: [Microsoft Cloud Security Benchmark](https://learn.microsoft.com/en-u
 **Resource at unsupported template scope** — merge-worthy · guidance
 
 Move the resource to a project deployed at a scope its schema supports.
+
+### AZR031
+
+**Policy assignment not enforced (DoNotEnforce)** — merge-worthy · guidance
+
+Set enforcementMode to Default so the assigned guardrail applies.
+
+Authority: [Microsoft Cloud Security Benchmark](https://learn.microsoft.com/en-us/security/benchmark/azure/)
+
+### AZR032
+
+**Custom policy definition assigned nowhere** — merge-worthy · guidance
+
+Pair the policy definition with a policy assignment — unassigned it enforces nothing.
+
+Authority: [Microsoft Cloud Security Benchmark](https://learn.microsoft.com/en-us/security/benchmark/azure/)
+
+### AZR033
+
+**Subscriptions may leave the tenant** — merge-worthy · guidance
+
+Set blockSubscriptionsLeavingTenant: true on the Microsoft.Subscription/policies resource.
+
+Authority: [Microsoft Cloud Security Benchmark](https://learn.microsoft.com/en-us/security/benchmark/azure/)
 
 ## GCP Config Connector (WGC)
 
@@ -1494,6 +1542,30 @@ Add the required spec field.
 **Spec field has wrong type/structure** — merge-worthy · guidance
 
 Fix the field's type/structure.
+
+### WGC501
+
+**Org Policy guardrail not enforced** — merge-worthy · guidance
+
+Enable enforce on the rule (or remove the policy deliberately) — a disabled org policy constrains nothing.
+
+Authority: [Google Cloud — Security best practices](https://cloud.google.com/security/best-practices)
+
+### WGC502
+
+**Org Policy guardrail defines no rules** — merge-worthy · guidance
+
+Add rules to the OrgPolicyPolicy — without them the constraint binds nothing.
+
+Authority: [Google Cloud — Security best practices](https://cloud.google.com/security/best-practices)
+
+### WGC503
+
+**Audit logging dropped or scoped down** — merge-worthy · guidance
+
+Keep auditLogConfigs populated and remove exemptedMembers from the IAMAuditConfig.
+
+Authority: [Google Cloud — Security best practices](https://cloud.google.com/security/best-practices)
 
 ## Helm (WHM)
 

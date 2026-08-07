@@ -11,12 +11,27 @@ import { join } from "path";
 import { escapeMdx } from "./docs-file-markers";
 import type { DocsConfig, RuleMeta } from "./docs-types";
 
+/** A scanned rule: its extracted metadata plus the source it came from. */
+export interface ScannedRule {
+  meta: RuleMeta;
+  source: string;
+}
+
 /**
  * Scan lint rule and post-synth check source files to extract metadata.
  * Uses regex to find id, severity, category, and description from source.
  */
 export function scanRules(srcDir: string): RuleMeta[] {
-  const rules: RuleMeta[] = [];
+  return scanRulesWithSources(srcDir).map((r) => r.meta);
+}
+
+/**
+ * Like {@link scanRules}, but keeps each rule's source text alongside its
+ * metadata — the OKF bundle builder (#1060) reads the source to associate a
+ * rule with the resource types it mentions.
+ */
+export function scanRulesWithSources(srcDir: string): ScannedRule[] {
+  const rules: ScannedRule[] = [];
 
   // Scan lint rules
   scanDir(join(srcDir, "lint", "rules"), "lint", rules);
@@ -27,7 +42,7 @@ export function scanRules(srcDir: string): RuleMeta[] {
   return rules;
 }
 
-function scanDir(dir: string, type: "lint" | "post-synth", out: RuleMeta[]): void {
+function scanDir(dir: string, type: "lint" | "post-synth", out: ScannedRule[]): void {
   let entries: string[];
   try {
     entries = readdirSync(dir);
@@ -62,13 +77,16 @@ function scanDir(dir: string, type: "lint" | "post-synth", out: RuleMeta[]): voi
         );
 
         out.push({
-          id: idMatch[1],
-          severity: severityMatch?.[1] ?? "warning",
-          category: categoryMatch?.[1] ?? "general",
-          description:
-            descMatch?.[1]?.trim() ??
-            extractDescriptionFromComment(content, idMatch[1]),
-          type: "lint",
+          meta: {
+            id: idMatch[1],
+            severity: severityMatch?.[1] ?? "warning",
+            category: categoryMatch?.[1] ?? "general",
+            description:
+              descMatch?.[1]?.trim() ??
+              extractDescriptionFromComment(content, idMatch[1]),
+            type: "lint",
+          },
+          source: content,
         });
       }
     } else {
@@ -78,11 +96,14 @@ function scanDir(dir: string, type: "lint" | "post-synth", out: RuleMeta[]): voi
 
       if (idMatch) {
         out.push({
-          id: idMatch[1],
-          severity: "error",
-          category: "post-synth",
-          description: descMatch?.[1] ?? idMatch[1],
-          type: "post-synth",
+          meta: {
+            id: idMatch[1],
+            severity: "error",
+            category: "post-synth",
+            description: descMatch?.[1] ?? idMatch[1],
+            type: "post-synth",
+          },
+          source: content,
         });
       }
     }

@@ -5,11 +5,13 @@
  * assemble BundleSpec → compute integrity → attach metadata.
  */
 
-import { readFileSync, readdirSync, writeFileSync, mkdirSync } from "fs";
-import { join } from "path";
+import { readFileSync, readdirSync, writeFileSync, mkdirSync, rmSync } from "fs";
+import { dirname, join } from "path";
 import type { BundleSpec, LexiconManifest } from "../lexicon";
 import { computeIntegrity } from "../lexicon-integrity";
 import type { GenerateResult } from "./generate";
+import { scanRulesWithSources } from "./docs-rule-scanning";
+import { buildLexiconOkfBundle } from "./okf-lexicon";
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -73,13 +75,24 @@ export async function packagePipeline(
   log("Collecting skills...");
   const skills = config.collectSkills();
 
-  // Step 5: Assemble BundleSpec
+  // Step 5: Assemble BundleSpec, with the OKF knowledge bundle over the same
+  // artifacts (#1060) — derived here so it cannot drift from the registry and
+  // rules it describes.
+  log("Building OKF knowledge bundle...");
+  const okf = buildLexiconOkfBundle({
+    name: manifest.name,
+    registry: result.lexiconJSON,
+    typesDTS: result.typesDTS,
+    rules: scanRulesWithSources(config.srcDir),
+  });
+
   const spec: BundleSpec = {
     manifest,
     registry: result.lexiconJSON,
     typesDTS: result.typesDTS,
     rules,
     skills,
+    okf,
   };
 
   // Step 6: Compute integrity
@@ -151,7 +164,8 @@ export function collectRules(
  * Write a BundleSpec to the given dist directory.
  *
  * Creates the directory structure and writes all artifacts:
- * manifest.json, meta.json, types/index.d.ts, rules/*, skills/*, integrity.json.
+ * manifest.json, meta.json, types/index.d.ts, rules/*, skills/*, okf/*,
+ * integrity.json.
  */
 export function writeBundleSpec(spec: BundleSpec, distDir: string): void {
   mkdirSync(join(distDir, "types"), { recursive: true });
@@ -167,6 +181,17 @@ export function writeBundleSpec(spec: BundleSpec, distDir: string): void {
   }
   for (const [name, content] of spec.skills) {
     writeFileSync(join(distDir, "skills", name), content);
+  }
+
+  if (spec.okf) {
+    // Replace rather than merge — a concept whose resource type was removed
+    // upstream must not survive as a stale file.
+    rmSync(join(distDir, "okf"), { recursive: true, force: true });
+    for (const file of spec.okf) {
+      const target = join(distDir, "okf", file.path);
+      mkdirSync(dirname(target), { recursive: true });
+      writeFileSync(target, file.content);
+    }
   }
 
   if (spec.integrity) {
