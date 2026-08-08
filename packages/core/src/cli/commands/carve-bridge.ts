@@ -149,6 +149,7 @@ export async function carveBridge(opts: CarveBridgeOptions): Promise<CarveBridge
     written: written.map((w) => resolve(w)),
     appliedInPlace: applied,
     patch: patchPath ? resolve(patchPath) : undefined,
+    excised: plan.excised.length ? plan.excised : undefined,
     at: new Date().toISOString(),
   };
   const manifestPath = writeCarveManifest(outDir, manifest);
@@ -173,7 +174,10 @@ export function formatCarveBridge(result: CarveBridgeResult): string {
     L.push(`  ${p.dataSources.length} data source(s) for survivors to read:`);
     for (const d of p.dataSources) L.push(`    data.${d.type}.${d.name}  (was ${d.address})`);
   } else {
-    L.push("  no inbound edges — no survivor patch needed.");
+    L.push("  no inbound edges — nothing reads the carved resource, no data source needed.");
+  }
+  if (p.excised.length) {
+    L.push(`  carved block(s) excised from the survivor source: ${p.excised.join(", ")}`);
   }
   const changed = p.rewrites.filter((r) => r.changed);
   if (changed.length) {

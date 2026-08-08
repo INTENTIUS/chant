@@ -71,8 +71,10 @@ chant carve bridge --from ./terraform --select aws_s3_bucket.assets --output ./c
 ```
 
 This writes to `./carveout/`: a `data "aws_s3_bucket" "assets"` block, a
-rewritten `api.tf` with the Lambda's references rewired to `data.aws_s3_bucket.assets.*`,
-a reversible runbook, and one git-applyable patch carrying the whole edit
+rewritten `main.tf` with the bucket's own `resource` block (and its folded
+versioning sub-resource) removed and the Lambda's references rewired to
+`data.aws_s3_bucket.assets.*`, a reversible runbook, and one git-applyable
+patch carrying the whole edit
 (`git apply --directory=terraform carveout/aws_s3_bucket-assets-bridge.patch`
 from the repo root — the patch's paths are relative to the Terraform dir).
 Nothing in `./terraform` changes. `--apply-rewrites` edits the survivor `.tf`

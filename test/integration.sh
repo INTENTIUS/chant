@@ -628,6 +628,26 @@ if [ -d "$CARVE_TF" ]; then
     else
       fail "carve bridge did not emit the bridge patch"
     fi
+    # auto-excise (#998): the patch also removes the carved block (and its
+    # folded versioning sub-resource) from the survivor source — without this,
+    # the next apply would re-create what `terraform state rm` released.
+    if grep -q '^-resource "aws_s3_bucket" "assets" {' "$EMIT_OUT"/aws_s3_bucket-assets-bridge.patch 2>/dev/null \
+       && grep -q '^-resource "aws_s3_bucket_versioning" "assets" {' "$EMIT_OUT"/aws_s3_bucket-assets-bridge.patch 2>/dev/null; then
+      pass "bridge patch excises the carved block and its folded sub-resource"
+    else
+      fail "bridge patch did not excise the carved block"
+    fi
+    # ...and the excised estate still parses, with the carved resource gone.
+    EXCISED_TF=$(mktemp -d)
+    cp "$CARVE_TF"/*.tf "$EXCISED_TF"/ && cp "$EMIT_OUT"/*.tf "$EXCISED_TF"/
+    if ADV2=$($CHANT carve advise --from "$EXCISED_TF" 2>/dev/null) \
+       && ! echo "$ADV2" | grep -q 'aws_s3_bucket.assets ->' \
+       && echo "$ADV2" | grep -q 'aws_lambda_function.api'; then
+      pass "the excised survivor estate parses clean without the carved resource"
+    else
+      fail "the excised survivor estate did not parse as expected"
+    fi
+    rm -rf "$EXCISED_TF"
     if COMPOSED_APPLY=$($CHANT carve apply --from "$CARVE_TF" --output "$EMIT_OUT" --env prod 2>/dev/null) \
        && echo "$COMPOSED_APPLY" | grep -q 'target from the carve manifest' \
        && grep -q '"apply"' "$EMIT_OUT"/aws_s3_bucket-assets.carve.json 2>/dev/null; then

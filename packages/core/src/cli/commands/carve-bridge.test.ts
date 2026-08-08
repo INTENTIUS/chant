@@ -154,10 +154,11 @@ describe("carveBridge", () => {
       expect(res.ok).toBe(true);
       expect(res.appliedInPlace).toBe(true);
 
-      // api.tf rewritten in place; bucket.tf (the carved declaration) untouched.
+      // api.tf rewritten in place; bucket.tf's carved declaration excised
+      // (#998 — after `terraform state rm`, the block would re-create it).
       const api = readFileSync(join(dir, "api.tf"), "utf-8");
       expect(api).toContain("data.aws_s3_bucket.assets.bucket");
-      expect(readFileSync(join(dir, "bucket.tf"), "utf-8")).toBe(BUCKET_TF);
+      expect(readFileSync(join(dir, "bucket.tf"), "utf-8")).not.toContain('resource "aws_s3_bucket" "assets"');
     });
   });
 
