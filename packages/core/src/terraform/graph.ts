@@ -1,65 +1,114 @@
 /**
  * Pure Terraform dependency-graph builder for the carve-out advisor (#214 T1).
  *
- * Input is the JSON tree `@cdktf/hcl2json` produces (`Hcl2JsonTree`). No wasm,
- * no filesystem — so the graph and its edge classification are unit-testable
- * on hand-written fixtures. `parse.ts` is the thin glue that loads the wasm
- * parser and feeds this.
+ * Input is the JSON tree `@cdktf/hcl2json` produces (`Hcl2JsonTree`) plus the
+ * traversal accessors its expression AST found per interpolated string
+ * (`ExpressionRefs`, resolved in `parse.ts` — #998). Tokenizing `${...}`
+ * expression bodies is the AST's job — a quoted address inside an expression
+ * (`var.m["aws_s3_bucket.assets.arn"]`) or an escaped `$${...}` literal is not
+ * a reference, which the regex scan this replaced could not tell. This module
+ * only classifies the accessors the AST produced: no wasm, no filesystem, so
+ * graph building stays unit-testable on hand-written fixtures.
  */
 
 import { IDENTITY_ATTR } from "./tier-map";
 import type { Hcl2JsonTree, TfEdge, TfGraph, TfNode } from "./types";
 
 /**
- * hcl2json leaves interpolations as `${...}` strings. Match each expression
- * body; reference heads are extracted from it in `refsFromExpression`.
+ * Traversal accessors per interpolated string, as the hcl2json expression AST
+ * reports them (`getReferencesInExpression`): `"${aws_s3_bucket.assets.arn}"`
+ * maps to `["aws_s3_bucket.assets.arn"]`. Keys are the raw hcl2json string
+ * values; a missing key means the expression yielded no references.
  */
-const INTERPOLATION = /\$\{([^}]+)\}/g;
+export type ExpressionRefs = ReadonlyMap<string, readonly string[]>;
 
-/** `module.<name>` reference head. */
-const MODULE_REF = /\bmodule\.([A-Za-z0-9_-]+)(?:\.([A-Za-z0-9_]+))?/g;
-
-/** `data.<type>.<name>` reference head. */
-const DATA_REF = /\bdata\.([a-z][a-z0-9_]*)\.([A-Za-z0-9_-]+)(?:\.([A-Za-z0-9_]+))?/g;
-
-/**
- * `<type>.<name>` resource reference head. Deliberately broad — it also
- * matches `var.x`, `local.y`, `each.value`, function-ish tokens. Only heads
- * whose address is a known node survive into an edge (see `buildGraph`).
- */
-const RESOURCE_REF = /\b([a-z][a-z0-9_]*)\.([A-Za-z0-9_-]+)(?:\.([A-Za-z0-9_]+))?/g;
-
-/** Non-resource reference prefixes that must never be read as a resource type. */
-const NON_RESOURCE_HEADS = new Set(["var", "local", "module", "data", "each", "count", "self", "path", "terraform"]);
+/** Non-resource reference heads that must never be read as a resource type. */
+const NON_RESOURCE_HEADS = new Set(["var", "local", "each", "count", "self", "path", "terraform"]);
 
 interface RawRef {
   address: string;
   attr?: string;
 }
 
-/** Pull every resource/module/data reference out of one interpolation body. */
-function refsFromExpression(expr: string): RawRef[] {
-  const refs: RawRef[] = [];
-
-  for (const m of expr.matchAll(MODULE_REF)) {
-    refs.push({ address: `module.${m[1]}`, attr: m[2] });
+/**
+ * Split a traversal accessor into segments. Dots inside a quoted map key
+ * (`var.m."a.b"` — how the AST renders `var.m["a.b"]`) do not split.
+ */
+function accessorSegments(accessor: string): string[] {
+  const segments: string[] = [];
+  let i = 0;
+  while (i < accessor.length) {
+    if (accessor[i] === '"') {
+      const close = accessor.indexOf('"', i + 1);
+      const end = close === -1 ? accessor.length : close + 1;
+      segments.push(accessor.slice(i, end));
+      i = end;
+    } else {
+      let j = i;
+      while (j < accessor.length && accessor[j] !== ".") j++;
+      segments.push(accessor.slice(i, j));
+      i = j;
+    }
+    if (accessor[i] === ".") i++;
   }
-  for (const m of expr.matchAll(DATA_REF)) {
-    refs.push({ address: `data.${m[1]}.${m[2]}`, attr: m[3] });
-  }
-  for (const m of expr.matchAll(RESOURCE_REF)) {
-    if (NON_RESOURCE_HEADS.has(m[1])) continue;
-    refs.push({ address: `${m[1]}.${m[2]}`, attr: m[3] });
-  }
-  return refs;
+  return segments;
 }
 
-/** Collect every `${...}` reference reachable in a block's value tree. */
-function refsInValue(value: unknown): RawRef[] {
+const NAME = /^[A-Za-z_][A-Za-z0-9_-]*$/;
+
+/**
+ * Classify one AST traversal accessor into a resource/module/data reference.
+ * `var.*`/`local.*`/`each.*`-headed accessors are not references; quoted map
+ * keys and numeric indexes never become the attribute.
+ */
+export function refFromAccessor(accessor: string): RawRef | null {
+  const parts = accessorSegments(accessor);
+  const isName = (s: string | undefined): s is string => s !== undefined && NAME.test(s);
+  const attrAfter = (idx: number): string | undefined => parts.slice(idx).find((p) => isName(p));
+
+  if (parts[0] === "module") {
+    return isName(parts[1]) ? { address: `module.${parts[1]}`, attr: attrAfter(2) } : null;
+  }
+  if (parts[0] === "data") {
+    return isName(parts[1]) && isName(parts[2])
+      ? { address: `data.${parts[1]}.${parts[2]}`, attr: attrAfter(3) }
+      : null;
+  }
+  if (NON_RESOURCE_HEADS.has(parts[0]) || !isName(parts[0]) || !isName(parts[1])) return null;
+  return { address: `${parts[0]}.${parts[1]}`, attr: attrAfter(2) };
+}
+
+/**
+ * Every string value carrying an interpolation across the tree's resource and
+ * module blocks — exactly the expressions `parse.ts` must resolve through the
+ * AST before `buildGraph` can classify them.
+ */
+export function collectExpressions(tree: Hcl2JsonTree): string[] {
+  const exprs = new Set<string>();
+  const visit = (v: unknown): void => {
+    if (typeof v === "string") {
+      if (v.includes("${")) exprs.add(v);
+    } else if (Array.isArray(v)) {
+      v.forEach(visit);
+    } else if (v && typeof v === "object") {
+      for (const inner of Object.values(v as Record<string, unknown>)) visit(inner);
+    }
+  };
+  for (const named of Object.values(tree.resource ?? {})) for (const blocks of Object.values(named)) visit(blocks);
+  for (const blocks of Object.values(tree.module ?? {})) visit(blocks);
+  return [...exprs].sort();
+}
+
+/** Collect every reference reachable in a block's value tree, via the AST-resolved accessors. */
+function refsInValue(value: unknown, exprRefs: ExpressionRefs): RawRef[] {
   const refs: RawRef[] = [];
   const visit = (v: unknown): void => {
     if (typeof v === "string") {
-      for (const m of v.matchAll(INTERPOLATION)) refs.push(...refsFromExpression(m[1]));
+      if (!v.includes("${")) return;
+      for (const accessor of exprRefs.get(v) ?? []) {
+        const ref = refFromAccessor(accessor);
+        if (ref) refs.push(ref);
+      }
     } else if (Array.isArray(v)) {
       v.forEach(visit);
     } else if (v && typeof v === "object") {
@@ -93,7 +142,7 @@ function literalIdentity(block: unknown, type: string): string | undefined {
  * resolves to a known resource/module node — references to `var`/`local`/data
  * are dropped.
  */
-export function buildGraph(tree: Hcl2JsonTree): TfGraph {
+export function buildGraph(tree: Hcl2JsonTree, exprRefs: ExpressionRefs): TfGraph {
   const nodes: TfNode[] = [];
   const dataAddresses = new Set<string>();
 
@@ -109,7 +158,7 @@ export function buildGraph(tree: Hcl2JsonTree): TfGraph {
       const address = `${type}.${name}`;
       const block = Array.isArray(blocks) ? blocks[0] : blocks;
       const dynamic = blockHasMeta(block, "count") || blockHasMeta(block, "for_each");
-      const refs = refsInValue(block);
+      const refs = refsInValue(block, exprRefs);
       const touchesData = refs.some((r) => dataAddresses.has(r.address));
       rawRefsByNode.set(address, refs);
       nodes.push({
@@ -129,7 +178,7 @@ export function buildGraph(tree: Hcl2JsonTree): TfGraph {
     const address = `module.${name}`;
     const block = Array.isArray(blocks) ? blocks[0] : blocks;
     const dynamic = blockHasMeta(block, "count") || blockHasMeta(block, "for_each");
-    const refs = refsInValue(block);
+    const refs = refsInValue(block, exprRefs);
     const touchesData = refs.some((r) => dataAddresses.has(r.address));
     rawRefsByNode.set(address, refs);
     nodes.push({
