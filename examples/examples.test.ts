@@ -68,6 +68,19 @@ describeExample("cc-aws-canonical", {
   examplesDir: import.meta.dirname,
 });
 
+// ── CC lane canonical GCP estate (epic #1199) ────────────────────────
+// Every kind the direct-REST applier can write (gcpApply's MAPPERS): bucket,
+// topic + subscription, secret, service account, Cloud Run service. Deployed
+// to floci-gcp by `just gcp-cc-e2e` (#1211); the assertions here are the
+// offline half — it synthesizes and lints like any other example.
+
+describeExample("cc-gcp-canonical", {
+  lexicon: "gcp",
+  serializer: gcpSerializer,
+  outputKey: "gcp",
+  examplesDir: import.meta.dirname,
+});
+
 // ── GitLab + AWS ALB examples ────────────────────────────────────────
 
 describeExample("gitlab-aws-alb-infra", {

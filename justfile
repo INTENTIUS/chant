@@ -178,6 +178,12 @@ components-aws-e2e:
 aws-cc-e2e:
     bash test/aws-cc-e2e.sh
 
+# GCP config-controller round-trip (#1211): apply -> observe -> drift -> remediate -> destroy
+# on the canonical GCP estate via direct REST against floci-gcp
+# (on-demand, needs Docker)
+gcp-cc-e2e:
+    bash test/gcp-cc-e2e.sh
+
 # Azure property-level drift acceptance (#1213): clean apply quiet, hand-edited NSG rule
 # surfaces, RG-orphan estate stays observed, emulator restart reads MISSING
 # (floci-az in Docker; on-demand, needs Docker only)
