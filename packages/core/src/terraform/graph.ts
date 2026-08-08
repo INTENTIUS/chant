@@ -140,11 +140,21 @@ function blockHasMeta(block: unknown, key: string): boolean {
   return !!block && typeof block === "object" && key in (block as Record<string, unknown>);
 }
 
-/** The resource's physical name, if its identity attribute is a plain literal (not interpolated). */
+/**
+ * The resource's physical name, if its identity attribute is a plain literal
+ * (not interpolated). A dotted `IDENTITY_ATTR` entry walks nested blocks —
+ * hcl2json renders a nested block as a one-element array, so arrays step
+ * through their first element (`manifest.metadata.name`).
+ */
 function literalIdentity(block: unknown, type: string): string | undefined {
   const attr = IDENTITY_ATTR[type];
   if (!attr || !block || typeof block !== "object") return undefined;
-  const value = (block as Record<string, unknown>)[attr];
+  let value: unknown = block;
+  for (const segment of attr.split(".")) {
+    if (Array.isArray(value)) value = value[0];
+    if (!value || typeof value !== "object") return undefined;
+    value = (value as Record<string, unknown>)[segment];
+  }
   if (typeof value !== "string" || value.includes("${")) return undefined;
   return value;
 }

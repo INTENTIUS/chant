@@ -140,6 +140,23 @@ describe("buildGraph", () => {
     expect(g.edges).toEqual([]);
   });
 
+  test("a dotted identity attr resolves through nested blocks (#998)", () => {
+    const tree: Hcl2JsonTree = {
+      resource: {
+        kubernetes_manifest: {
+          app_config: [{ manifest: { apiVersion: "v1", kind: "ConfigMap", metadata: { name: "app-config", namespace: "web" } } }],
+          templated: [{ manifest: { apiVersion: "v1", kind: "ConfigMap", metadata: { name: "${var.name}" } } }],
+        },
+        aws_s3_bucket: { assets: [{ bucket: "myapp-assets-prod" }] },
+      },
+    };
+    const g = buildFixtureGraph(tree);
+    const byAddr = Object.fromEntries(g.nodes.map((n) => [n.address, n]));
+    expect(byAddr["kubernetes_manifest.app_config"].identity).toBe("app-config");
+    expect(byAddr["kubernetes_manifest.templated"].identity).toBeUndefined(); // interpolated
+    expect(byAddr["aws_s3_bucket.assets"].identity).toBe("myapp-assets-prod"); // flat attr unaffected
+  });
+
   test("var / local references are not edges", () => {
     const tree: Hcl2JsonTree = {
       resource: {

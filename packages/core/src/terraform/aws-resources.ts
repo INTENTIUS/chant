@@ -120,7 +120,7 @@ export const AWS_CARVE_TYPES: AwsCarveType[] = [
     fields: { name: "AutoScalingGroupName", min_size: "MinSize", max_size: "MaxSize", desired_capacity: "DesiredCapacity", vpc_zone_identifier: "VPCZoneIdentifier", health_check_type: "HealthCheckType" } },
   { tfType: "aws_ecs_cluster", tier: 1, nativeType: "AWS::ECS::Cluster", ctor: "EcsCluster", identityAttr: "name",
     fields: { name: "ClusterName" }, tags: true },
-  { tfType: "aws_ecs_task_definition", tier: 3, nativeType: "AWS::ECS::TaskDefinition", ctor: "TaskDefinition",
+  { tfType: "aws_ecs_task_definition", tier: 3, nativeType: "AWS::ECS::TaskDefinition", ctor: "TaskDefinition", identityAttr: "family",
     fields: { family: "Family", cpu: "Cpu", memory: "Memory", network_mode: "NetworkMode", execution_role_arn: "ExecutionRoleArn", task_role_arn: "TaskRoleArn" }, tags: true },
   { tfType: "aws_ebs_volume", tier: 1, nativeType: "AWS::EC2::Volume", ctor: "EC2Volume",
     fields: { availability_zone: "AvailabilityZone", size: "Size", type: "VolumeType", encrypted: "Encrypted", iops: "Iops" }, tags: true },
@@ -140,13 +140,13 @@ export const AWS_CARVE_TYPES: AwsCarveType[] = [
     fields: { identifier: "DBInstanceIdentifier", engine: "Engine", engine_version: "EngineVersion", instance_class: "DBInstanceClass", allocated_storage: "AllocatedStorage", db_name: "DBName", multi_az: "MultiAZ", storage_encrypted: "StorageEncrypted" }, tags: true },
   { tfType: "aws_db_subnet_group", tier: 1, nativeType: "AWS::RDS::DBSubnetGroup", ctor: "RDSDBSubnetGroup", identityAttr: "name",
     fields: { name: "DBSubnetGroupName", description: "DBSubnetGroupDescription", subnet_ids: "SubnetIds" }, tags: true },
-  { tfType: "aws_elasticache_cluster", tier: 2, nativeType: "AWS::ElastiCache::CacheCluster", ctor: "CacheCluster",
-    fields: { engine: "Engine", node_type: "CacheNodeType", num_cache_nodes: "NumCacheNodes", engine_version: "EngineVersion" }, tags: true },
+  { tfType: "aws_elasticache_cluster", tier: 2, nativeType: "AWS::ElastiCache::CacheCluster", ctor: "CacheCluster", identityAttr: "cluster_id",
+    fields: { cluster_id: "ClusterName", engine: "Engine", node_type: "CacheNodeType", num_cache_nodes: "NumCacheNodes", engine_version: "EngineVersion" }, tags: true },
   { tfType: "aws_elasticache_replication_group", tier: 2, nativeType: "AWS::ElastiCache::ReplicationGroup", ctor: "ReplicationGroup", identityAttr: "replication_group_id",
     fields: { replication_group_id: "ReplicationGroupId", description: "ReplicationGroupDescription", node_type: "CacheNodeType", engine: "Engine" }, tags: true },
 
   // ── DNS, CDN & API ──
-  { tfType: "aws_route53_record", tier: 2, nativeType: "AWS::Route53::RecordSet", ctor: "RecordSet",
+  { tfType: "aws_route53_record", tier: 2, nativeType: "AWS::Route53::RecordSet", ctor: "RecordSet", identityAttr: "name",
     fields: { name: "Name", type: "Type", ttl: "TTL", zone_id: "HostedZoneId", records: "ResourceRecords" } },
   { tfType: "aws_api_gateway_rest_api", tier: 2, nativeType: "AWS::ApiGateway::RestApi", ctor: "RestApi", identityAttr: "name",
     fields: { name: "Name", description: "Description" }, tags: true },
@@ -168,6 +168,97 @@ export const AWS_CARVE_TYPES: AwsCarveType[] = [
     fields: { protocol: "Protocol", endpoint: "Endpoint", topic_arn: "TopicArn" } },
   { tfType: "aws_sfn_state_machine", tier: 3, nativeType: "AWS::StepFunctions::StateMachine", ctor: "StateMachine", identityAttr: "name",
     fields: { name: "StateMachineName", role_arn: "RoleArn", type: "StateMachineType" }, tags: true },
+  { tfType: "aws_sqs_queue_policy", tier: 2, nativeType: "AWS::SQS::QueuePolicy", ctor: "QueuePolicy",
+    fields: { policy: json("PolicyDocument"), queue_url: { prop: "Queues", transform: (v) => (v === undefined ? v : [v]) } } },
+  { tfType: "aws_sns_topic_policy", tier: 2, nativeType: "AWS::SNS::TopicPolicy", ctor: "TopicPolicy",
+    fields: { policy: json("PolicyDocument"), arn: { prop: "Topics", transform: (v) => (v === undefined ? v : [v]) } } },
+
+  // ── Streaming ──
+  { tfType: "aws_kinesis_stream", tier: 1, nativeType: "AWS::Kinesis::Stream", ctor: "KinesisStream", identityAttr: "name",
+    fields: { name: "Name", shard_count: "ShardCount", retention_period: "RetentionPeriodHours" }, tags: true },
+  { tfType: "aws_kinesis_firehose_delivery_stream", tier: 3, nativeType: "AWS::KinesisFirehose::DeliveryStream", ctor: "DeliveryStream", identityAttr: "name",
+    fields: { name: "DeliveryStreamName" }, tags: true },
+
+  // ── EKS ──
+  { tfType: "aws_eks_cluster", tier: 2, nativeType: "AWS::EKS::Cluster", ctor: "EKSCluster", identityAttr: "name",
+    fields: { name: "Name", role_arn: "RoleArn", version: "Version" }, tags: true },
+  { tfType: "aws_eks_node_group", tier: 2, nativeType: "AWS::EKS::Nodegroup", ctor: "Nodegroup", identityAttr: "node_group_name",
+    fields: { cluster_name: "ClusterName", node_group_name: "NodegroupName", node_role_arn: "NodeRole", subnet_ids: "Subnets",
+      instance_types: "InstanceTypes", ami_type: "AmiType", capacity_type: "CapacityType", disk_size: "DiskSize" } },
+
+  // ── Lambda periphery ──
+  { tfType: "aws_lambda_permission", tier: 1, nativeType: "AWS::Lambda::Permission", ctor: "Permission",
+    fields: { action: "Action", function_name: "FunctionName", principal: "Principal", source_arn: "SourceArn", source_account: "SourceAccount" } },
+  { tfType: "aws_lambda_event_source_mapping", tier: 2, nativeType: "AWS::Lambda::EventSourceMapping", ctor: "EventSourceMapping",
+    fields: { event_source_arn: "EventSourceArn", function_name: "FunctionName", batch_size: "BatchSize", enabled: "Enabled",
+      starting_position: "StartingPosition", maximum_batching_window_in_seconds: "MaximumBatchingWindowInSeconds" } },
+  { tfType: "aws_lambda_alias", tier: 1, nativeType: "AWS::Lambda::Alias", ctor: "LambdaAlias", identityAttr: "name",
+    fields: { name: "Name", function_name: "FunctionName", function_version: "FunctionVersion", description: "Description" } },
+  { tfType: "aws_lambda_layer_version", tier: 2, nativeType: "AWS::Lambda::LayerVersion", ctor: "LayerVersion", identityAttr: "layer_name",
+    fields: { layer_name: "LayerName", description: "Description", compatible_runtimes: "CompatibleRuntimes",
+      compatible_architectures: "CompatibleArchitectures", license_info: "LicenseInfo" } },
+
+  // ── Networking (endpoints, routes, peering, flow logs) ──
+  { tfType: "aws_vpc_endpoint", tier: 2, nativeType: "AWS::EC2::VPCEndpoint", ctor: "VPCEndpoint",
+    fields: { vpc_id: "VpcId", service_name: "ServiceName", vpc_endpoint_type: "VpcEndpointType", route_table_ids: "RouteTableIds",
+      subnet_ids: "SubnetIds", security_group_ids: "SecurityGroupIds", private_dns_enabled: "PrivateDnsEnabled", policy: json("PolicyDocument") }, tags: true },
+  { tfType: "aws_route_table_association", tier: 2, nativeType: "AWS::EC2::SubnetRouteTableAssociation", ctor: "SubnetRouteTableAssociation",
+    fields: { subnet_id: "SubnetId", route_table_id: "RouteTableId" } },
+  { tfType: "aws_route", tier: 2, nativeType: "AWS::EC2::Route", ctor: "EC2Route",
+    fields: { route_table_id: "RouteTableId", destination_cidr_block: "DestinationCidrBlock", destination_ipv6_cidr_block: "DestinationIpv6CidrBlock",
+      gateway_id: "GatewayId", nat_gateway_id: "NatGatewayId", transit_gateway_id: "TransitGatewayId",
+      vpc_peering_connection_id: "VpcPeeringConnectionId", network_interface_id: "NetworkInterfaceId" } },
+  { tfType: "aws_egress_only_internet_gateway", tier: 1, nativeType: "AWS::EC2::EgressOnlyInternetGateway", ctor: "EgressOnlyInternetGateway",
+    fields: { vpc_id: "VpcId" } },
+  { tfType: "aws_vpc_peering_connection", tier: 2, nativeType: "AWS::EC2::VPCPeeringConnection", ctor: "VPCPeeringConnection",
+    fields: { vpc_id: "VpcId", peer_vpc_id: "PeerVpcId", peer_owner_id: "PeerOwnerId", peer_region: "PeerRegion" }, tags: true },
+  { tfType: "aws_flow_log", tier: 2, nativeType: "AWS::EC2::FlowLog", ctor: "FlowLog",
+    fields: { traffic_type: "TrafficType", log_destination: "LogDestination", log_destination_type: "LogDestinationType",
+      iam_role_arn: "DeliverLogsPermissionArn", log_group_name: "LogGroupName", max_aggregation_interval: "MaxAggregationInterval" }, tags: true },
+  { tfType: "aws_key_pair", tier: 1, nativeType: "AWS::EC2::KeyPair", ctor: "KeyPair", identityAttr: "key_name",
+    fields: { key_name: "KeyName", public_key: "PublicKeyMaterial" }, tags: true },
+
+  // ── Audit & observability ──
+  { tfType: "aws_cloudtrail", tier: 2, nativeType: "AWS::CloudTrail::Trail", ctor: "Trail", identityAttr: "name",
+    fields: { name: "TrailName", s3_bucket_name: "S3BucketName", s3_key_prefix: "S3KeyPrefix",
+      include_global_service_events: "IncludeGlobalServiceEvents", is_multi_region_trail: "IsMultiRegionTrail",
+      enable_logging: "IsLogging", enable_log_file_validation: "EnableLogFileValidation", kms_key_id: "KMSKeyId",
+      sns_topic_name: "SnsTopicName", cloud_watch_logs_group_arn: "CloudWatchLogsLogGroupArn", cloud_watch_logs_role_arn: "CloudWatchLogsRoleArn" }, tags: true },
+  { tfType: "aws_cloudwatch_dashboard", tier: 1, nativeType: "AWS::CloudWatch::Dashboard", ctor: "CwDashboard", identityAttr: "dashboard_name",
+    fields: { dashboard_name: "DashboardName", dashboard_body: "DashboardBody" } },
+
+  // ── Databases & cache (groups, clusters) ──
+  { tfType: "aws_elasticache_subnet_group", tier: 1, nativeType: "AWS::ElastiCache::SubnetGroup", ctor: "EcSubnetGroup", identityAttr: "name",
+    fields: { name: "CacheSubnetGroupName", description: "Description", subnet_ids: "SubnetIds" }, tags: true },
+  { tfType: "aws_db_parameter_group", tier: 2, nativeType: "AWS::RDS::DBParameterGroup", ctor: "RDSDBParameterGroup", identityAttr: "name",
+    fields: { name: "DBParameterGroupName", family: "Family", description: "Description" }, tags: true },
+  { tfType: "aws_rds_cluster", tier: 2, nativeType: "AWS::RDS::DBCluster", ctor: "DbCluster", identityAttr: "cluster_identifier",
+    fields: { cluster_identifier: "DBClusterIdentifier", engine: "Engine", engine_version: "EngineVersion", database_name: "DatabaseName",
+      master_username: "MasterUsername", backup_retention_period: "BackupRetentionPeriod", preferred_backup_window: "PreferredBackupWindow",
+      storage_encrypted: "StorageEncrypted", kms_key_id: "KmsKeyId", port: "Port" }, tags: true },
+
+  // ── Load balancing & API stages ──
+  { tfType: "aws_lb_listener_rule", tier: 3, nativeType: "AWS::ElasticLoadBalancingV2::ListenerRule", ctor: "ListenerRule",
+    fields: { listener_arn: "ListenerArn", priority: "Priority" } },
+  { tfType: "aws_api_gateway_stage", tier: 2, nativeType: "AWS::ApiGateway::Stage", ctor: "ApigwStage", identityAttr: "stage_name",
+    fields: { rest_api_id: "RestApiId", stage_name: "StageName", deployment_id: "DeploymentId", description: "Description" }, tags: true },
+  { tfType: "aws_api_gateway_deployment", tier: 2, nativeType: "AWS::ApiGateway::Deployment", ctor: "ApigwDeployment",
+    fields: { rest_api_id: "RestApiId", description: "Description" } },
+  { tfType: "aws_apigatewayv2_stage", tier: 2, nativeType: "AWS::ApiGatewayV2::Stage", ctor: "Apigwv2Stage", identityAttr: "name",
+    fields: { api_id: "ApiId", name: "StageName", auto_deploy: "AutoDeploy", description: "Description" } },
+
+  // ── Identity & scaling ──
+  { tfType: "aws_cognito_user_pool", tier: 3, nativeType: "AWS::Cognito::UserPool", ctor: "UserPool", identityAttr: "name",
+    fields: { name: "UserPoolName", mfa_configuration: "MfaConfiguration", deletion_protection: "DeletionProtection" } },
+  { tfType: "aws_appautoscaling_target", tier: 2, nativeType: "AWS::ApplicationAutoScaling::ScalableTarget", ctor: "ScalableTarget",
+    fields: { max_capacity: "MaxCapacity", min_capacity: "MinCapacity", resource_id: "ResourceId",
+      scalable_dimension: "ScalableDimension", service_namespace: "ServiceNamespace", role_arn: "RoleARN" } },
+
+  // ── EFS periphery ──
+  { tfType: "aws_efs_mount_target", tier: 1, nativeType: "AWS::EFS::MountTarget", ctor: "EFSMountTarget",
+    fields: { file_system_id: "FileSystemId", subnet_id: "SubnetId", ip_address: "IpAddress", security_groups: "SecurityGroups" } },
+  { tfType: "aws_efs_access_point", tier: 2, nativeType: "AWS::EFS::AccessPoint", ctor: "EFSAccessPoint",
+    fields: { file_system_id: "FileSystemId" } },
 ];
 
 const BY_TYPE = new Map(AWS_CARVE_TYPES.map((t) => [t.tfType, t]));

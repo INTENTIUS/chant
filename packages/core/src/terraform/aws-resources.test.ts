@@ -1,6 +1,6 @@
 import { describe, test, expect } from "vitest";
 import { AWS_CARVE_TYPES, awsCarveType, applyAwsMapper } from "./aws-resources";
-import { TIER_MAP } from "./tier-map";
+import { TIER_MAP, FOLDS_INTO, IDENTITY_ATTR } from "./tier-map";
 import { canAdoptFromState } from "./adopt-state";
 
 describe("AWS carve-out table", () => {
@@ -21,10 +21,21 @@ describe("AWS carve-out table", () => {
       "aws_secretsmanager_secret", "aws_ssm_parameter", "aws_ecr_repository",
       "aws_vpc", "aws_subnet", "aws_security_group", "aws_route53_zone",
       "aws_cloudwatch_log_group",
+      // #998 coverage expansion: streaming, EKS, Lambda periphery, networking
+      // periphery, audit, DB groups/clusters, API stages, identity, EFS periphery.
+      "aws_kinesis_stream", "aws_eks_cluster", "aws_eks_node_group",
+      "aws_lambda_permission", "aws_lambda_event_source_mapping",
+      "aws_vpc_endpoint", "aws_route", "aws_route_table_association",
+      "aws_flow_log", "aws_cloudtrail", "aws_cloudwatch_dashboard",
+      "aws_rds_cluster", "aws_db_parameter_group", "aws_elasticache_subnet_group",
+      "aws_lb_listener_rule", "aws_api_gateway_stage", "aws_apigatewayv2_stage",
+      "aws_cognito_user_pool", "aws_appautoscaling_target",
+      "aws_efs_mount_target", "aws_efs_access_point",
+      "aws_sqs_queue_policy", "aws_sns_topic_policy",
     ]) {
       expect(types.has(t)).toBe(true);
     }
-    expect(AWS_CARVE_TYPES.length).toBeGreaterThanOrEqual(20);
+    expect(AWS_CARVE_TYPES.length).toBeGreaterThanOrEqual(60);
   });
 
   test("constructors are non-empty and consistent per native type", () => {
@@ -77,5 +88,44 @@ describe("applyAwsMapper", () => {
     const { props } = applyAwsMapper(awsCarveType("aws_subnet")!, { vpc_id: "vpc-1", cidr_block: "10.0.1.0/24" });
     expect(props).toEqual({ VpcId: "vpc-1", CidrBlock: "10.0.1.0/24" });
     expect(props).not.toHaveProperty("AvailabilityZone");
+  });
+
+  test("wraps a queue policy's queue_url and parses its policy document", () => {
+    const { props } = applyAwsMapper(awsCarveType("aws_sqs_queue_policy")!, {
+      queue_url: "https://sqs.us-east-1.amazonaws.com/1/q",
+      policy: '{"Version":"2012-10-17","Statement":[]}',
+    });
+    expect(props.Queues).toEqual(["https://sqs.us-east-1.amazonaws.com/1/q"]);
+    expect(props.PolicyDocument).toEqual({ Version: "2012-10-17", Statement: [] });
+  });
+});
+
+describe("tier + identity coverage maps (#998)", () => {
+  test("kubernetes provider types rank, with _v1 aliases sharing the entry", () => {
+    expect(TIER_MAP.kubernetes_manifest).toEqual({ tier: 1, mapsTo: "k8s:manifest" });
+    for (const t of ["kubernetes_deployment", "kubernetes_config_map", "kubernetes_service", "kubernetes_namespace"]) {
+      expect(TIER_MAP[t]).toMatchObject({ tier: 2 });
+      expect(TIER_MAP[`${t}_v1`]).toEqual(TIER_MAP[t]);
+    }
+    expect(TIER_MAP.kubernetes_horizontal_pod_autoscaler_v2).toEqual(TIER_MAP.kubernetes_horizontal_pod_autoscaler);
+  });
+
+  test("S3 and ECR sub-resources fold into their parent", () => {
+    for (const t of [
+      "aws_s3_bucket_website_configuration", "aws_s3_bucket_cors_configuration", "aws_s3_bucket_logging",
+      "aws_s3_bucket_ownership_controls", "aws_s3_bucket_notification",
+    ]) {
+      expect(FOLDS_INTO[t]).toBe("aws_s3_bucket");
+    }
+    expect(FOLDS_INTO.aws_ecr_lifecycle_policy).toBe("aws_ecr_repository");
+    expect(FOLDS_INTO.aws_ecr_repository_policy).toBe("aws_ecr_repository");
+  });
+
+  test("identity attrs cover the expanded types, including a dotted non-AWS path", () => {
+    expect(IDENTITY_ATTR.aws_elasticache_cluster).toBe("cluster_id");
+    expect(IDENTITY_ATTR.aws_ecs_task_definition).toBe("family");
+    expect(IDENTITY_ATTR.aws_route53_record).toBe("name");
+    expect(IDENTITY_ATTR.aws_eks_node_group).toBe("node_group_name");
+    expect(IDENTITY_ATTR.kubernetes_manifest).toBe("manifest.metadata.name");
   });
 });
