@@ -1,5 +1,5 @@
 import { describe, test, expect } from "vitest";
-import { adoptFromState, canAdoptFromState, supportedStateAdoptionTypes } from "./adopt-state";
+import { adoptFromState, canAdoptFromState, supportedStateAdoptionTypes, type DeferredParam } from "./adopt-state";
 import type { StateResource } from "./state";
 
 describe("adoptFromState", () => {
@@ -43,6 +43,39 @@ describe("adoptFromState", () => {
     expect(out.content).toContain("new LogGroup({");
     expect(out.content).toContain('LogGroupName: "/myapp/api"');
     expect(out.content).toContain("RetentionInDays: 30");
+  });
+
+  test("a deferred input renders as a params reference, not the state literal (#998)", () => {
+    const subnet: StateResource = {
+      type: "aws_subnet",
+      name: "a",
+      attributes: { id: "subnet-0aa", vpc_id: "vpc-0abc", cidr_block: "10.0.1.0/24" },
+    };
+    const params: DeferredParam[] = [
+      { name: "vpc_id", tfAttr: "vpc_id", survivor: "aws_vpc.main", attrs: ["id"], default: "vpc-0abc" },
+    ];
+    const out = adoptFromState(subnet, params)!;
+    expect(out.parameterized).toEqual(["vpc_id"]);
+    expect(out.content).toContain('import { params } from "@intentius/chant/params";');
+    expect(out.content).toContain("VpcId: params.vpc_id as string,");
+    expect(out.content).not.toContain('VpcId: "vpc-0abc"');
+    // Non-deferred props keep their state literals.
+    expect(out.content).toContain('CidrBlock: "10.0.1.0/24"');
+  });
+
+  test("a deferred input on an unmapped attribute leaves the source alone", () => {
+    const lambda: StateResource = {
+      type: "aws_lambda_function",
+      name: "api",
+      attributes: { id: "myapp-api", function_name: "myapp-api", environment: [{ variables: { B: "b" } }] },
+    };
+    const params: DeferredParam[] = [
+      { name: "environment", tfAttr: "environment", survivor: "aws_s3_bucket.assets", attrs: ["bucket"] },
+    ];
+    const out = adoptFromState(lambda, params)!;
+    expect(out.parameterized).toEqual([]);
+    expect(out.content).not.toContain("@intentius/chant/params");
+    expect(out.content).toContain('FunctionName: "myapp-api"');
   });
 
   test("canAdoptFromState gates on a known native constructor", () => {
