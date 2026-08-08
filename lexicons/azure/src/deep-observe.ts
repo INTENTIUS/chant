@@ -151,6 +151,22 @@ export const AZURE_READ_ONLY_NAMES: ReadonlySet<string> = new Set([
 const AZURE_UNCONDITIONAL_PRUNE_NAMES: ReadonlySet<string> = new Set(["defaultSecurityRules"]);
 
 /**
+ * Server-computed surfaces ARM fills in on its own (#1214, the AKS row of the
+ * CC round-trip): a managed cluster always comes back with `fqdn`,
+ * `currentKubernetesVersion` and `nodeResourceGroup` whether or not the
+ * declaration said anything about them. Unlike `AZURE_READ_ONLY_NAMES` these
+ * are counterpart-gated rather than pruned outright: `nodeResourceGroup` IS
+ * declarable at create time, so a declared value is still compared — only the
+ * purely server-filled appearance is noise. Sparse and evidence-based, like
+ * `AZURE_SERVICE_DEFAULTS`.
+ */
+export const AZURE_SERVER_COMPUTED_NAMES: ReadonlySet<string> = new Set([
+  "currentKubernetesVersion",
+  "fqdn",
+  "nodeResourceGroup",
+]);
+
+/**
  * ARM service defaults, per type, as index-erased property paths. Subtracted
  * only where source never declared the property — cdk-real-drift's default
  * subtraction, same as AWS's `AWS_SERVICE_DEFAULTS`. Sparse and evidence-based
@@ -251,6 +267,10 @@ export const azureDeepNormalizationHooks: DeepNormalizationHooks = {
     // counterpart). Resource-level only — `pattern` is the exact top-level
     // path, so a nested `.location` inside a declared property is untouched.
     if (node.pattern === "location") return true;
+
+    // A server-computed surface nobody declared is ARM doing its job, not
+    // drift (see the set's doc for why this is counterpart-gated).
+    if (AZURE_SERVER_COMPUTED_NAMES.has(name)) return true;
 
     // chant's own ownership marker is not drift (see the sets' docs).
     if (AZURE_OWNERSHIP_TAG_PATTERNS.has(node.pattern)) return true;

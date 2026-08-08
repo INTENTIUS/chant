@@ -184,6 +184,12 @@ aws-cc-e2e:
 azure-drift-e2e:
     bash test/azure-drift-e2e.sh
 
+# Azure config-controller round-trip (#1214): apply -> observe -> drift -> reconcile -> rollback
+# on the canonical mixed-substrate example — AKS backed by a real k3s, the k8s
+# Service on it included (floci-az in Docker; on-demand, needs Docker + kubectl)
+azure-cc-e2e:
+    bash test/azure-cc-e2e.sh
+
 # Prove the adopt-alb-services GENERATED pipeline deploys multi-service across isolated jobs, with cross-stack outputs threaded as artifacts (Floci in Docker; on-demand, needs Docker + aws CLI)
 adopt-alb-services-e2e:
     bash test/adopt-alb-services-e2e.sh

@@ -176,6 +176,36 @@ describe("the azure noise rules", () => {
     expect(declared).toEqual({ name: "acct", location: "westus" });
   });
 
+  test("a server-computed AKS surface nobody declared subtracts; a declared nodeResourceGroup is compared", () => {
+    const undeclared = normalizeDeepProperties(
+      {
+        name: "cc-aks",
+        kubernetesVersion: "1.31.0",
+        currentKubernetesVersion: "1.31.0",
+        fqdn: "floci-az-aks-1234:6443",
+        nodeResourceGroup: "MC_local_cc-aks_eastus",
+      },
+      {
+        entityType: "Microsoft.ContainerService/managedClusters",
+        side: "live",
+        hooks: azureDeepNormalizationHooks,
+        counterpartPaths: new Set(["name", "kubernetesVersion"]),
+      },
+    );
+    expect(undeclared).toEqual({ name: "cc-aks", kubernetesVersion: "1.31.0" });
+
+    const declared = normalizeDeepProperties(
+      { name: "cc-aks", nodeResourceGroup: "MC_custom" },
+      {
+        entityType: "Microsoft.ContainerService/managedClusters",
+        side: "live",
+        hooks: azureDeepNormalizationHooks,
+        counterpartPaths: new Set(["name", "nodeResourceGroup"]),
+      },
+    );
+    expect(declared).toEqual({ name: "cc-aks", nodeResourceGroup: "MC_custom" });
+  });
+
   test("nested etags subtract wherever ARM stamps them", () => {
     const out = normalizeDeepProperties(
       { securityRules: [{ name: "r", etag: "W/\"1\"", properties: { priority: 100 } }] },
