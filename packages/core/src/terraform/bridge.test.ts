@@ -72,15 +72,35 @@ describe("generateBridge — inbound (data-source rewrite)", () => {
     expect(rewrite.rewritten).not.toContain("data.data.aws_s3_bucket");
   });
 
-  test("does not touch the carved resource's own declaration (quoted labels)", () => {
+  test("excises the carved resource's own declaration (#998 — the data source replaces it)", () => {
     const report = boundaryReport(buildFixtureGraph(workedExample), "aws_s3_bucket.assets")!;
-    const decl = `resource "aws_s3_bucket" "assets" {\n  bucket = "myapp-assets-prod"\n}\n`;
+    const decl = `resource "aws_s3_bucket" "assets" {\n  bucket = "myapp-assets-prod"\n}\n\nresource "aws_sns_topic" "alerts" {\n  name = "a"\n}\n`;
     const plan = generateBridge(report, [{ path: "bucket.tf", content: decl }], identities);
     const rewrite = plan.rewrites.find((r) => r.path === "bucket.tf")!;
-    // `resource "aws_s3_bucket" "assets"` uses quoted labels, not the dotted
-    // token, so it is left alone.
-    expect(rewrite.rewritten).toContain('resource "aws_s3_bucket" "assets"');
-    expect(rewrite.changed).toBe(false);
+    // After `terraform state rm`, a block left behind would re-create the
+    // resource on the next apply — so the bridge removes it.
+    expect(rewrite.changed).toBe(true);
+    expect(rewrite.excised).toEqual(["aws_s3_bucket.assets"]);
+    expect(rewrite.rewritten).not.toContain('resource "aws_s3_bucket" "assets"');
+    expect(rewrite.rewritten).toContain('resource "aws_sns_topic" "alerts"');
+    expect(plan.excised).toEqual(["aws_s3_bucket.assets"]);
+    expect(plan.runbook).toContain("removes the carved block(s): aws_s3_bucket.assets");
+  });
+
+  test("a folded sub-resource's block is excised along with its parent", () => {
+    const withVersioning: Hcl2JsonTree = {
+      resource: {
+        ...workedExample.resource,
+        aws_s3_bucket_versioning: {
+          assets: [{ bucket: "${aws_s3_bucket.assets.id}", versioning_configuration: { status: "Enabled" } }],
+        },
+      },
+    };
+    const report = boundaryReport(buildFixtureGraph(withVersioning), "aws_s3_bucket.assets")!;
+    const decl = `resource "aws_s3_bucket" "assets" {\n  bucket = "b"\n}\n\nresource "aws_s3_bucket_versioning" "assets" {\n  bucket = aws_s3_bucket.assets.id\n}\n`;
+    const plan = generateBridge(report, [{ path: "bucket.tf", content: decl }], identities);
+    expect(plan.excised).toEqual(["aws_s3_bucket.assets", "aws_s3_bucket_versioning.assets"]);
+    expect(plan.rewrites[0].rewritten.trim()).toBe("");
   });
 
   test("unknown identity emits a TODO data source instead of a wrong value", () => {

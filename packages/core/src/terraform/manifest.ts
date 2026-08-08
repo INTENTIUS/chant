@@ -57,6 +57,8 @@ export interface CarveManifest {
     appliedInPlace: boolean;
     /** The git-applyable `.patch` carrying the whole survivor edit. */
     patch?: string;
+    /** Carved addresses whose own `.tf` block the rewrites remove (#998). */
+    excised?: string[];
     at: string;
   };
   /** Recorded by `carve apply`. */
