@@ -19,7 +19,7 @@
  * is reversible via `terraform import`.
  */
 
-import type { CarveReport } from "./carve";
+import { deferredParamName, type CarveReport } from "./carve";
 
 export interface CarvedIdentity {
   /** The HCL identity attribute, e.g. `bucket` or `name`. */
@@ -47,6 +47,8 @@ export interface DeferredInput {
   survivor: string;
   carved: string;
   attrs: string[];
+  /** Build-parameter name(s) the input becomes in the emitted project (#998). */
+  params: string[];
   note: string;
 }
 
@@ -108,12 +110,19 @@ export function generateBridge(
     return { path, original: content, rewritten, changed: rewritten !== content };
   });
 
-  const deferredInputs: DeferredInput[] = report.outbound.map((e) => ({
-    survivor: e.survivor,
-    carved: e.carved,
-    attrs: e.attrs,
-    note: `${e.carved} reads ${e.survivor}.${e.attrs.join(", ")} — supply this as a deploy-time input to the carved component at apply.`,
-  }));
+  const deferredInputs: DeferredInput[] = report.outbound.map((e) => {
+    const params = (e.via ?? []).map(deferredParamName);
+    const wiring = params.length
+      ? `emit declares it as build param ${params.map((p) => `\`${p}\``).join(", ")} — override with --param at build`
+      : "supply this as a deploy-time input to the carved component at apply";
+    return {
+      survivor: e.survivor,
+      carved: e.carved,
+      attrs: e.attrs,
+      params,
+      note: `${e.carved} reads ${e.survivor}.${e.attrs.join(", ")} — ${wiring}.`,
+    };
+  });
 
   return {
     target: report.target,

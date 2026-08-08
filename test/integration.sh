@@ -642,6 +642,52 @@ if [ -d "$CARVE_TF" ]; then
   fi
   rm -rf "$EMIT_OUT"
 
+  # deferred outbound inputs → real build params: the subnet reads its VPC, so
+  # emit declares vpc_id as a build parameter (defaulted from state), the source
+  # references params.vpc_id, the built template resolves the default, and
+  # --param overrides it per build.
+  PARAM_OUT=$(mktemp -d)
+  if $CHANT carve emit --from "$CARVE_TF" --select aws_subnet.a --state "$CARVE_STATE" --output "$PARAM_OUT" >/dev/null 2>&1; then
+    if grep -q 'VpcId: params.vpc_id as string' "$PARAM_OUT"/src/a.ts 2>/dev/null \
+       && grep -q 'default: "vpc-0a1b2c3d4e5f6a7b8"' "$PARAM_OUT"/chant.config.ts 2>/dev/null; then
+      pass "carve emit declares a deferred input as a build param"
+    else
+      fail "carve emit did not declare the deferred input as a build param"
+    fi
+    if PBUILT=$($CHANT build "$PARAM_OUT"/src --lexicon aws 2>/dev/null) && echo "$PBUILT" | grep -q '"VpcId": "vpc-0a1b2c3d4e5f6a7b8"'; then
+      pass "deferred-input param folds to its state default in the built template"
+    else
+      fail "deferred-input param did not fold to its state default"
+    fi
+    if POVER=$($CHANT build "$PARAM_OUT"/src --lexicon aws --param vpc_id=vpc-override 2>/dev/null) && echo "$POVER" | grep -q '"VpcId": "vpc-override"'; then
+      pass "deferred-input param is overridable with --param"
+    else
+      fail "--param did not override the deferred input"
+    fi
+  else
+    PARAM_ERR=$($CHANT carve emit --from "$CARVE_TF" --select aws_subnet.a --state "$CARVE_STATE" --output "$PARAM_OUT" 2>&1 >/dev/null || true)
+    echo "  stderr: $PARAM_ERR"
+    fail "carve emit of the subnet failed"
+  fi
+  rm -rf "$PARAM_OUT"
+
+  # expression-AST edge detection: the lambda's env carries the log group's
+  # address as a quoted map key (var.settings["aws_cloudwatch_log_group..."]).
+  # The AST knows a string literal is not a reference, so the log group has no
+  # inbound edge and needs no data source. (The regex scan this replaced would
+  # have manufactured one.)
+  AST_OUT=$(mktemp -d)
+  if AST_BRIDGE=$($CHANT carve bridge --from "$CARVE_TF" --select aws_cloudwatch_log_group.api --output "$AST_OUT" 2>/dev/null); then
+    if echo "$AST_BRIDGE" | grep -q 'no inbound edges' && [ ! -f "$AST_OUT"/aws_cloudwatch_log_group-api-datasources.tf ]; then
+      pass "expression-AST edge detection ignores a quoted address in an expression"
+    else
+      fail "a quoted address inside an expression produced a phantom edge"
+    fi
+  else
+    fail "carve bridge on the log group failed"
+  fi
+  rm -rf "$AST_OUT"
+
   # bridge: generate the survivor data source + runbook for one carve
   if $CHANT carve bridge --from "$CARVE_TF" --select aws_s3_bucket.assets --output "$CARVE_OUT" >/dev/null 2>&1; then
     if grep -q 'data "aws_s3_bucket" "assets"' "$CARVE_OUT"/aws_s3_bucket-assets-datasources.tf 2>/dev/null; then

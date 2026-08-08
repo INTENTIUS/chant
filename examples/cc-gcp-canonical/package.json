@@ -1,0 +1,19 @@
+{
+  "name": "cc-gcp-canonical",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The CC lane's canonical GCP estate (chant#1199/#1211): every kind the direct-REST applier can write - GCS, Pub/Sub, Secret Manager, IAM SA, Cloud Run - deployed to floci-gcp, the vehicle for the CC round-trip.",
+  "devDependencies": {
+    "@intentius/chant": "*",
+    "@intentius/chant-lexicon-gcp": "*",
+    "@intentius/chant-lexicon-temporal": "*",
+    "typescript": "*"
+  },
+  "scripts": {
+    "build": "chant build src --lexicon gcp -o dist/gcp.yaml",
+    "deploy": "chant run cc-gcp-deploy",
+    "diff": "chant lifecycle diff local --live",
+    "teardown": "chant run cc-gcp-destroy"
+  }
+}
