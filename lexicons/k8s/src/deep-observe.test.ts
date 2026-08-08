@@ -96,6 +96,120 @@ describe("k8sDeepNormalizationHooks — the static rules", () => {
     expect(declaredExplicit).toEqual({ spec: { strategy: strategyDefault, replicas: 3 } });
   });
 
+  test("chant's own stamped labels are not drift; a foreign managed-by and a user label still are", () => {
+    const live = {
+      metadata: {
+        name: "web",
+        labels: {
+          "app.kubernetes.io/managed-by": "chant",
+          "chant.intentius.io/stack": "cc-azure-canonical",
+          "chant.intentius.io/env": "local",
+          team: "platform",
+        },
+      },
+    };
+    const out = normalizeDeepProperties(live, {
+      entityType: "K8s::Apps::Deployment",
+      side: "live",
+      hooks: k8sDeepNormalizationHooks,
+      counterpartPaths: new Set(["metadata", "metadata.name"]),
+    });
+    expect(out).toEqual({ metadata: { name: "web", labels: { team: "platform" } } });
+
+    const foreign = normalizeDeepProperties(
+      { metadata: { name: "web", labels: { "app.kubernetes.io/managed-by": "helm" } } },
+      {
+        entityType: "K8s::Apps::Deployment",
+        side: "live",
+        hooks: k8sDeepNormalizationHooks,
+        counterpartPaths: new Set(["metadata", "metadata.name"]),
+      },
+    );
+    expect(foreign).toEqual({ metadata: { name: "web", labels: { "app.kubernetes.io/managed-by": "helm" } } });
+  });
+
+  test("a server-assigned ClusterIP nobody declared subtracts; a declared one is compared", () => {
+    const undeclared = normalizeDeepProperties(
+      { spec: { clusterIP: "10.43.201.161", clusterIPs: ["10.43.201.161"], ipFamilies: ["IPv4"], selector: { app: "web" } } },
+      {
+        entityType: "K8s::Core::Service",
+        side: "live",
+        hooks: k8sDeepNormalizationHooks,
+        counterpartPaths: new Set(["spec", "spec.selector", "spec.selector.app"]),
+      },
+    );
+    expect(undeclared).toEqual({ spec: { selector: { app: "web" } } });
+
+    const declared = normalizeDeepProperties(
+      { spec: { clusterIP: "10.43.0.10" } },
+      {
+        entityType: "K8s::Core::Service",
+        side: "live",
+        hooks: k8sDeepNormalizationHooks,
+        counterpartPaths: new Set(["spec", "spec.clusterIP"]),
+      },
+    );
+    expect(declared).toEqual({ spec: { clusterIP: "10.43.0.10" } });
+  });
+
+  test("probe and termination defaults subtract inside a declared container", () => {
+    const out = normalizeDeepProperties(
+      {
+        spec: {
+          template: {
+            spec: {
+              securityContext: {},
+              containers: [
+                {
+                  name: "api",
+                  image: "example:1",
+                  terminationMessagePath: "/dev/termination-log",
+                  terminationMessagePolicy: "File",
+                  livenessProbe: { httpGet: { path: "/", port: 8080, scheme: "HTTP" }, failureThreshold: 3, periodSeconds: 10, successThreshold: 1, timeoutSeconds: 1 },
+                  ports: [{ containerPort: 8080, name: "http", protocol: "TCP" }],
+                },
+              ],
+            },
+          },
+        },
+      },
+      {
+        entityType: "K8s::Apps::Deployment",
+        side: "live",
+        hooks: k8sDeepNormalizationHooks,
+        counterpartPaths: new Set([
+          "spec", "spec.template", "spec.template.spec",
+          "spec.template.spec.containers", "spec.template.spec.containers[]",
+          "spec.template.spec.containers[].name", "spec.template.spec.containers[].image",
+          "spec.template.spec.containers[].livenessProbe",
+          "spec.template.spec.containers[].livenessProbe.httpGet",
+          "spec.template.spec.containers[].livenessProbe.httpGet.path",
+          "spec.template.spec.containers[].livenessProbe.httpGet.port",
+          "spec.template.spec.containers[].ports",
+          "spec.template.spec.containers[].ports[]",
+          "spec.template.spec.containers[].ports[].containerPort",
+          "spec.template.spec.containers[].ports[].name",
+        ]),
+      },
+    );
+    expect(out).toEqual({
+      spec: {
+        template: {
+          spec: {
+            containers: [
+              {
+                name: "api",
+                image: "example:1",
+                livenessProbe: { httpGet: { path: "/", port: 8080 } },
+                ports: [{ containerPort: 8080, name: "http" }],
+              },
+            ],
+          },
+        },
+      },
+    });
+  });
+
   test("a one-sided pass never subtracts defaults — the reader has no declared tree yet", () => {
     const out = normalizeDeepProperties(
       { spec: { strategy: { type: "RollingUpdate", rollingUpdate: { maxSurge: "25%", maxUnavailable: "25%" } } } },

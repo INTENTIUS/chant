@@ -1,0 +1,21 @@
+{
+  "name": "cc-azure-canonical",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The CC lane's canonical mixed-substrate example (chant#1200/#1214): VNet/subnets/NSG/route table plus an AKS cluster and the k8s Service on it, deployed to floci-az - the vehicle for the Azure CC round-trip and behold#102.",
+  "devDependencies": {
+    "@intentius/chant": "*",
+    "@intentius/chant-lexicon-azure": "*",
+    "@intentius/chant-lexicon-k8s": "*",
+    "@intentius/chant-lexicon-temporal": "*",
+    "typescript": "*"
+  },
+  "scripts": {
+    "build": "chant build src --lexicon azure -o template.json && chant build src --lexicon k8s -o k8s.yaml",
+    "deploy": "chant run cc-azure-deploy",
+    "deploy-workload": "chant run --components cc-workload --env local --no-release-record",
+    "status": "chant components status local --live --json --no-release-record",
+    "diff": "chant lifecycle diff local --live"
+  }
+}

@@ -1,0 +1,170 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "resources": [
+    {
+      "apiVersion": "2023-01-01",
+      "location": "[resourceGroup().location]",
+      "name": "cc-aks",
+      "properties": {
+        "agentPoolProfiles": [
+          {
+            "count": 1,
+            "mode": "System",
+            "name": "default",
+            "osType": "Linux",
+            "vmSize": "Standard_B2s"
+          }
+        ],
+        "dnsPrefix": "cc-aks",
+        "enableRBAC": true,
+        "kubernetesVersion": "1.31.0"
+      },
+      "tags": {
+        "chant-env": "local",
+        "chant-managed-by": "chant",
+        "chant-stack": "cc-azure-canonical",
+        "environment": "cc-e2e",
+        "managed-by": "chant"
+      },
+      "type": "Microsoft.ContainerService/managedClusters"
+    },
+    {
+      "apiVersion": "2023-05-01",
+      "location": "[resourceGroup().location]",
+      "name": "cc-vnet-nsg",
+      "properties": {
+        "securityRules": [
+          {
+            "name": "allow-https",
+            "properties": {
+              "access": "Allow",
+              "destinationAddressPrefix": "*",
+              "destinationPortRange": "443",
+              "direction": "Inbound",
+              "priority": 100,
+              "protocol": "Tcp",
+              "sourceAddressPrefix": "203.0.113.0/24",
+              "sourcePortRange": "*"
+            }
+          }
+        ]
+      },
+      "tags": {
+        "chant-env": "local",
+        "chant-managed-by": "chant",
+        "chant-stack": "cc-azure-canonical",
+        "environment": "cc-e2e",
+        "managed-by": "chant"
+      },
+      "type": "Microsoft.Network/networkSecurityGroups"
+    },
+    {
+      "apiVersion": "2023-05-01",
+      "location": "[resourceGroup().location]",
+      "name": "cc-vnet-rt",
+      "properties": {
+        "disableBgpRoutePropagation": false,
+        "routes": []
+      },
+      "tags": {
+        "chant-env": "local",
+        "chant-managed-by": "chant",
+        "chant-stack": "cc-azure-canonical",
+        "environment": "cc-e2e",
+        "managed-by": "chant"
+      },
+      "type": "Microsoft.Network/routeTables"
+    },
+    {
+      "apiVersion": "2023-05-01",
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/networkSecurityGroups', 'cc-vnet-nsg')]",
+        "[resourceId('Microsoft.Network/routeTables', 'cc-vnet-rt')]",
+        "[resourceId('Microsoft.Network/virtualNetworks', 'cc-vnet')]"
+      ],
+      "location": "[resourceGroup().location]",
+      "name": "cc-vnet/subnet-1",
+      "properties": {
+        "addressPrefix": "10.0.1.0/24",
+        "networkSecurityGroup": {
+          "id": "[resourceId('Microsoft.Network/networkSecurityGroups', 'cc-vnet-nsg')]"
+        },
+        "routeTable": {
+          "id": "[resourceId('Microsoft.Network/routeTables', 'cc-vnet-rt')]"
+        }
+      },
+      "type": "Microsoft.Network/virtualNetworks_subnets"
+    },
+    {
+      "apiVersion": "2023-05-01",
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/networkSecurityGroups', 'cc-vnet-nsg')]",
+        "[resourceId('Microsoft.Network/routeTables', 'cc-vnet-rt')]",
+        "[resourceId('Microsoft.Network/virtualNetworks', 'cc-vnet')]"
+      ],
+      "location": "[resourceGroup().location]",
+      "name": "cc-vnet/subnet-2",
+      "properties": {
+        "addressPrefix": "10.0.2.0/24",
+        "networkSecurityGroup": {
+          "id": "[resourceId('Microsoft.Network/networkSecurityGroups', 'cc-vnet-nsg')]"
+        },
+        "routeTable": {
+          "id": "[resourceId('Microsoft.Network/routeTables', 'cc-vnet-rt')]"
+        }
+      },
+      "type": "Microsoft.Network/virtualNetworks_subnets"
+    },
+    {
+      "apiVersion": "2023-05-01",
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/networkSecurityGroups', 'cc-vnet-nsg')]",
+        "[resourceId('Microsoft.Network/routeTables', 'cc-vnet-rt')]"
+      ],
+      "location": "[resourceGroup().location]",
+      "name": "cc-vnet",
+      "properties": {
+        "addressSpace": {
+          "addressPrefixes": [
+            "10.0.0.0/16"
+          ]
+        },
+        "subnets": [
+          {
+            "name": "subnet-1",
+            "properties": {
+              "addressPrefix": "10.0.1.0/24",
+              "networkSecurityGroup": {
+                "id": "[resourceId('Microsoft.Network/networkSecurityGroups', 'cc-vnet-nsg')]"
+              },
+              "routeTable": {
+                "id": "[resourceId('Microsoft.Network/routeTables', 'cc-vnet-rt')]"
+              }
+            }
+          },
+          {
+            "name": "subnet-2",
+            "properties": {
+              "addressPrefix": "10.0.2.0/24",
+              "networkSecurityGroup": {
+                "id": "[resourceId('Microsoft.Network/networkSecurityGroups', 'cc-vnet-nsg')]"
+              },
+              "routeTable": {
+                "id": "[resourceId('Microsoft.Network/routeTables', 'cc-vnet-rt')]"
+              }
+            }
+          }
+        ]
+      },
+      "tags": {
+        "chant-env": "local",
+        "chant-managed-by": "chant",
+        "chant-stack": "cc-azure-canonical",
+        "environment": "cc-e2e",
+        "managed-by": "chant"
+      },
+      "type": "Microsoft.Network/virtualNetworks"
+    }
+  ]
+}

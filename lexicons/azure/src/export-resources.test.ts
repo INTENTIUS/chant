@@ -1,4 +1,4 @@
-import { describe, test, expect, vi, beforeEach } from "vitest";
+import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";
 
 // execMock returns either a {stdout,stderr} result or an Error. We deliver it
 // via the callback on a microtask — never as a rejected promise — so a failure
@@ -40,7 +40,10 @@ const liveTemplate = {
 };
 
 describe("azure exportResources I/O glue (#159 / #160)", () => {
-  beforeEach(() => execMock.mockReset());
+  beforeEach(() => {
+    execMock.mockReset();
+    delete process.env.AZURE_ENDPOINT_URL;
+  });
 
   test("runs `az group export` against the resource group and maps the body", async () => {
     execMock.mockReturnValue({ stdout: JSON.stringify(liveTemplate), stderr: "" });
@@ -86,5 +89,94 @@ describe("azure exportResources I/O glue (#159 / #160)", () => {
     execMock.mockReturnValue({ stdout: JSON.stringify(mixed), stderr: "" });
     const ir = await exportResources({ environment: "prod-rg", owned: true });
     expect(ir.resources.map((r) => r.logicalId)).toEqual(["mine"]);
+  });
+});
+
+// ── The ARM transport (#1214) ────────────────────────────────────────────────
+// With AZURE_ENDPOINT_URL ambient (the emulator lane), export never shells the
+// CLI: it lists the group's resources and GETs each one over the applier's own
+// transport, then scrubs the server-managed surface back to the declared shape.
+
+const nsgBody = {
+  id: "/subscriptions/s/resourceGroups/local/providers/Microsoft.Network/networkSecurityGroups/cc-vnet-nsg",
+  name: "cc-vnet-nsg",
+  type: "Microsoft.Network/networkSecurityGroups",
+  location: "eastus",
+  etag: 'W/"abc"',
+  tags: { "chant-managed-by": "chant" },
+  properties: {
+    provisioningState: "Succeeded",
+    resourceGuid: "1111",
+    securityRules: [
+      {
+        name: "allow-ssh",
+        id: "/subscriptions/s/…/securityRules/allow-ssh",
+        properties: { provisioningState: "Succeeded", priority: 150, sourceAddressPrefix: "0.0.0.0/0" },
+      },
+    ],
+    defaultSecurityRules: [{ name: "AllowVnetInBound" }],
+  },
+};
+
+const subnetBody = {
+  id: "/subscriptions/s/resourceGroups/local/providers/Microsoft.Network/virtualNetworks/cc-vnet/subnets/subnet-1",
+  name: "cc-vnet/subnet-1",
+  type: "Microsoft.Network/virtualNetworks/subnets",
+  properties: {
+    provisioningState: "Succeeded",
+    addressPrefix: "10.0.1.0/24",
+    routeTable: { id: "/subscriptions/s/resourceGroups/local/providers/Microsoft.Network/routeTables/cc-vnet-rt" },
+  },
+};
+
+describe("azure exportResources over ARM (#1214)", () => {
+  const fetchMock = vi.fn();
+
+  beforeEach(() => {
+    execMock.mockReset();
+    fetchMock.mockReset();
+    process.env.AZURE_ENDPOINT_URL = "http://localhost:4577";
+    vi.stubGlobal("fetch", fetchMock);
+    fetchMock.mockImplementation((url: string) => {
+      const path = url.split("?")[0];
+      const body = path.endsWith("/resources")
+        ? { value: [{ id: nsgBody.id }, { id: subnetBody.id }] }
+        : path.endsWith(nsgBody.id)
+          ? nsgBody
+          : subnetBody;
+      return Promise.resolve({ status: 200, text: () => Promise.resolve(JSON.stringify(body)) });
+    });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    delete process.env.AZURE_ENDPOINT_URL;
+  });
+
+  test("lists the group, reads each resource whole, and never shells the CLI", async () => {
+    const ir = await exportResources({ environment: "local" });
+    expect(execMock).not.toHaveBeenCalled();
+    expect(fetchMock.mock.calls[0][0]).toContain("/resourceGroups/local/resources?api-version=");
+    expect(ir.resources.map((r) => r.logicalId)).toEqual(["cc-vnet-nsg", "cc-vnet/subnet-1"]);
+  });
+
+  test("scrubs the server-managed surface, keeps declared cross-references", async () => {
+    const ir = await exportResources({ environment: "local" });
+    const nsg = ir.resources[0].properties as Record<string, unknown>;
+    expect(nsg.provisioningState).toBeUndefined();
+    expect(nsg.resourceGuid).toBeUndefined();
+    expect(nsg.etag).toBeUndefined();
+    expect(nsg.defaultSecurityRules).toBeUndefined();
+    const rule = (nsg.securityRules as Record<string, unknown>[])[0];
+    expect(rule.id).toBeUndefined();
+    expect((rule.properties as Record<string, unknown>).provisioningState).toBeUndefined();
+    expect((rule.properties as Record<string, unknown>).priority).toBe(150);
+    const subnet = ir.resources[1].properties as Record<string, unknown>;
+    expect((subnet.routeTable as Record<string, unknown>).id).toContain("cc-vnet-rt");
+  });
+
+  test("owned filtering reads the ownership marker off the live tags", async () => {
+    const ir = await exportResources({ environment: "local", owned: true });
+    expect(ir.resources.map((r) => r.logicalId)).toEqual(["cc-vnet-nsg"]);
   });
 });

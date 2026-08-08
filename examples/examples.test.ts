@@ -68,6 +68,19 @@ describeExample("cc-aws-canonical", {
   examplesDir: import.meta.dirname,
 });
 
+// ── CC lane canonical Azure estate (epic #1200) ──────────────────────
+// VnetDefault networking + an AKS managedCluster + the k8s Service on it.
+// Deployed to floci-az by #1214's round-trip (`just azure-cc-e2e`); the
+// assertions here are the offline half — it synthesizes and lints like any
+// other example.
+
+describeExample("cc-azure-canonical", {
+  lexicon: "azure+k8s",
+  serializer: [azureSerializer, k8sSerializer],
+  outputKey: ["azure", "k8s"],
+  examplesDir: import.meta.dirname,
+});
+
 // ── CC lane canonical GCP estate (epic #1199) ────────────────────────
 // Every kind the direct-REST applier can write (gcpApply's MAPPERS): bucket,
 // topic + subscription, secret, service account, Cloud Run service. Deployed

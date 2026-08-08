@@ -17,6 +17,7 @@ export {
   observeResourcesDeepAzure,
   azureDeepNormalizationHooks,
   AZURE_READ_ONLY_NAMES,
+  AZURE_SERVER_COMPUTED_NAMES,
   AZURE_SERVICE_DEFAULTS,
 } from "./deep-observe";
 
