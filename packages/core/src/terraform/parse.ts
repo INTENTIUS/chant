@@ -10,12 +10,16 @@
 
 import { readdirSync, readFileSync } from "fs";
 import { join } from "path";
-import { buildGraph } from "./graph";
+import { buildGraph, collectExpressions, type ExpressionRefs } from "./graph";
 import { readStateInstanceCounts, applyStateCounts } from "./state";
 import type { Hcl2JsonTree, TfGraph } from "./types";
 
-/** Minimal shape of the parser export we depend on. */
-type Hcl2JsonParse = (filename: string, hcl: string) => Promise<Hcl2JsonTree>;
+/** Minimal shape of the parser exports we depend on. */
+export interface Hcl2Json {
+  parse: (filename: string, hcl: string) => Promise<Hcl2JsonTree>;
+  /** Expression-AST reference extraction (#998) — one traversal accessor per reference. */
+  getReferencesInExpression: (filename: string, expression: string) => Promise<Array<{ value: string }>>;
+}
 
 export class Hcl2JsonNotInstalled extends Error {
   constructor(cause: unknown) {
@@ -32,13 +36,36 @@ export class Hcl2JsonNotInstalled extends Error {
  * Lazy-load the optional HCL parser. Throws `Hcl2JsonNotInstalled` with an
  * install hint when the package is missing, rather than a raw MODULE_NOT_FOUND.
  */
-export async function loadHcl2json(): Promise<Hcl2JsonParse> {
+export async function loadHcl2json(): Promise<Hcl2Json> {
   try {
-    const mod = (await import("@cdktf/hcl2json")) as { parse: Hcl2JsonParse };
-    return mod.parse;
+    return (await import("@cdktf/hcl2json")) as Hcl2Json;
   } catch (err) {
     throw new Hcl2JsonNotInstalled(err);
   }
+}
+
+/**
+ * Resolve every interpolated string in the merged tree through the parser's
+ * expression AST (`getReferencesInExpression`), producing the accessor map
+ * `buildGraph` classifies. The AST — not a regex over the expression body —
+ * decides what is a reference, so a quoted address used as a map key or an
+ * escaped `$${...}` literal yields none. An expression the AST cannot parse in
+ * isolation resolves to no references (fewer edges, never a phantom one).
+ */
+async function resolveExpressionRefs(hcl2json: Hcl2Json, tree: Hcl2JsonTree): Promise<ExpressionRefs> {
+  const refs = new Map<string, string[]>();
+  for (const expr of collectExpressions(tree)) {
+    try {
+      const found = await hcl2json.getReferencesInExpression("expression.tf", expr);
+      refs.set(
+        expr,
+        found.map((r) => r.value),
+      );
+    } catch {
+      refs.set(expr, []);
+    }
+  }
+  return refs;
 }
 
 /** Deep-merge hcl2json trees across files (resource/module/data namespaces). */
@@ -74,14 +101,14 @@ export interface ParseTerraformOptions {
  * instance counts become accurate (see `state.ts`).
  */
 export async function parseTerraformDir(dir: string, opts: ParseTerraformOptions = {}): Promise<TfGraph> {
-  const parse = await loadHcl2json();
+  const hcl2json = await loadHcl2json();
   const files = listTfFiles(dir);
   const merged: Hcl2JsonTree = {};
   for (const file of files) {
-    const tree = await parse(file, readFileSync(file, "utf-8"));
+    const tree = await hcl2json.parse(file, readFileSync(file, "utf-8"));
     mergeTrees(merged, tree);
   }
-  const graph = buildGraph(merged);
+  const graph = buildGraph(merged, await resolveExpressionRefs(hcl2json, merged));
   if (opts.statePath) applyStateCounts(graph, readStateInstanceCounts(opts.statePath));
   return graph;
 }

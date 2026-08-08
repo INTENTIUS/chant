@@ -28,6 +28,9 @@ resource "aws_lambda_function" "api" {
     variables = {
       ASSETS_BUCKET = aws_s3_bucket.assets.bucket
       ASSETS_ARN    = aws_s3_bucket.assets.arn
+      # A quoted address is a map key, not a reference — the expression AST
+      # knows the difference, so this is NOT an edge to the log group.
+      LOG_GROUP = var.settings["aws_cloudwatch_log_group.api.name"]
     }
   }
 }

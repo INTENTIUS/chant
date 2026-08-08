@@ -1,5 +1,5 @@
 import { describe, test, expect } from "vitest";
-import { buildGraph } from "./graph";
+import { buildFixtureGraph } from "./__fixtures__/build-graph";
 import { resolveCarveSet, boundaryReport } from "./carve";
 import type { Hcl2JsonTree } from "./types";
 
@@ -27,7 +27,7 @@ const workedExample: Hcl2JsonTree = {
 
 describe("resolveCarveSet", () => {
   test("selected node plus its folded sub-resources", () => {
-    const set = resolveCarveSet(buildGraph(workedExample), "aws_s3_bucket.assets");
+    const set = resolveCarveSet(buildFixtureGraph(workedExample), "aws_s3_bucket.assets");
     expect(set.map((m) => m.address).sort()).toEqual([
       "aws_s3_bucket.assets",
       "aws_s3_bucket_versioning.assets",
@@ -37,13 +37,13 @@ describe("resolveCarveSet", () => {
   });
 
   test("empty for an unknown address", () => {
-    expect(resolveCarveSet(buildGraph(workedExample), "aws_s3_bucket.nope")).toEqual([]);
+    expect(resolveCarveSet(buildFixtureGraph(workedExample), "aws_s3_bucket.nope")).toEqual([]);
   });
 });
 
 describe("boundaryReport", () => {
   test("classifies the Lambda inbound edge; folds the versioning internal edge away", () => {
-    const report = boundaryReport(buildGraph(workedExample), "aws_s3_bucket.assets")!;
+    const report = boundaryReport(buildFixtureGraph(workedExample), "aws_s3_bucket.assets")!;
     expect(report.target).toBe("aws_s3_bucket.assets");
     expect(report.peelability).toBe(88);
     expect(report.reversible).toBe(true);
@@ -71,7 +71,7 @@ describe("boundaryReport", () => {
       },
     };
     // Carve the queue: it depends on the topic (a survivor) → outbound/deferred.
-    const report = boundaryReport(buildGraph(tree), "aws_sqs_queue.dlq")!;
+    const report = boundaryReport(buildFixtureGraph(tree), "aws_sqs_queue.dlq")!;
     expect(report.inbound).toEqual([]);
     expect(report.outbound).toEqual([
       {
@@ -87,11 +87,11 @@ describe("boundaryReport", () => {
 
   test("unsupported type is flagged in diagnostics", () => {
     const tree: Hcl2JsonTree = { resource: { random_pet: { n: [{ length: 2 }] } } };
-    const report = boundaryReport(buildGraph(tree), "random_pet.n")!;
+    const report = boundaryReport(buildFixtureGraph(tree), "random_pet.n")!;
     expect(report.diagnostics.join(" ")).toMatch(/no known native mapping/i);
   });
 
   test("null for an unknown target", () => {
-    expect(boundaryReport(buildGraph(workedExample), "aws_s3_bucket.nope")).toBeNull();
+    expect(boundaryReport(buildFixtureGraph(workedExample), "aws_s3_bucket.nope")).toBeNull();
   });
 });

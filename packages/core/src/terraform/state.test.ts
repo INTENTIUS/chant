@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { readStateInstanceCounts, applyStateCounts } from "./state";
-import { buildGraph } from "./graph";
+import { buildFixtureGraph } from "./__fixtures__/build-graph";
 import { scoreEstate } from "./score";
 import type { Hcl2JsonTree } from "./types";
 
@@ -44,7 +44,7 @@ describe("readStateInstanceCounts", () => {
 
 describe("applyStateCounts", () => {
   test("overlays counts; nodes absent from state keep 1", () => {
-    const graph = buildGraph({
+    const graph = buildFixtureGraph({
       resource: {
         aws_instance: { web: [{ count: 3, ami: "x" }] },
         aws_sqs_queue: { orphan: [{ name: "q" }] },
@@ -61,12 +61,12 @@ describe("applyStateCounts", () => {
       resource: { aws_sqs_queue: { fan: [{ count: 5, name: "q" }] } },
     };
     // Without state: instances=1, only the -10 dynamic penalty → 90.
-    const noState = scoreEstate(buildGraph(tree))[0];
+    const noState = scoreEstate(buildFixtureGraph(tree))[0];
     expect(noState.score).toBe(90);
     expect(noState.breakdown.instances).toBe(1);
 
     // With state: 5 instances → -10 dynamic -3*(5-1)=-12 → 78, drops out of "clean leaf".
-    const withCounts = buildGraph(tree);
+    const withCounts = buildFixtureGraph(tree);
     applyStateCounts(withCounts, new Map([["aws_sqs_queue.fan", 5]]));
     const stated = scoreEstate(withCounts)[0];
     expect(stated.breakdown.instances).toBe(5);

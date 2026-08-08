@@ -53,4 +53,42 @@ describe.runIf(true)("parseTerraformDir (real wasm)", () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  test("edge detection is AST-driven: string literals and escapes are not references", async () => {
+    if (!parserAvailable) return; // optional dep absent — skip
+    const dir = mkdtempSync(join(tmpdir(), "chant-tf-ast-"));
+    try {
+      writeFileSync(
+        join(dir, "main.tf"),
+        [
+          `resource "aws_s3_bucket" "assets" {`,
+          `  bucket = "myapp-assets-prod"`,
+          `}`,
+          `resource "aws_cloudwatch_log_group" "api" {`,
+          `  name = "/myapp/api"`,
+          `}`,
+          `resource "aws_lambda_function" "api" {`,
+          `  environment {`,
+          `    variables = {`,
+          `      # a quoted address is a map key, not a reference`,
+          `      LOG_GROUP = var.settings["aws_cloudwatch_log_group.api.name"]`,
+          `      # an escaped interpolation is a literal, not a reference`,
+          `      ESCAPED = "$\${aws_s3_bucket.assets.id}"`,
+          `      # references survive function calls and conditionals`,
+          `      URL = format("s3://%s", aws_s3_bucket.assets.bucket)`,
+          `      ARN = var.on ? aws_s3_bucket.assets.arn : ""`,
+          `    }`,
+          `  }`,
+          `}`,
+        ].join("\n") + "\n",
+      );
+      const g = await parseTerraformDir(dir);
+      // No phantom edge to the log group; real refs found through format()/?: .
+      expect(g.edges).toEqual([
+        { from: "aws_lambda_function.api", to: "aws_s3_bucket.assets", attrs: ["arn", "bucket"] },
+      ]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });

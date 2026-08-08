@@ -642,6 +642,23 @@ if [ -d "$CARVE_TF" ]; then
   fi
   rm -rf "$EMIT_OUT"
 
+  # expression-AST edge detection: the lambda's env carries the log group's
+  # address as a quoted map key (var.settings["aws_cloudwatch_log_group..."]).
+  # The AST knows a string literal is not a reference, so the log group has no
+  # inbound edge and needs no data source. (The regex scan this replaced would
+  # have manufactured one.)
+  AST_OUT=$(mktemp -d)
+  if AST_BRIDGE=$($CHANT carve bridge --from "$CARVE_TF" --select aws_cloudwatch_log_group.api --output "$AST_OUT" 2>/dev/null); then
+    if echo "$AST_BRIDGE" | grep -q 'no inbound edges' && [ ! -f "$AST_OUT"/aws_cloudwatch_log_group-api-datasources.tf ]; then
+      pass "expression-AST edge detection ignores a quoted address in an expression"
+    else
+      fail "a quoted address inside an expression produced a phantom edge"
+    fi
+  else
+    fail "carve bridge on the log group failed"
+  fi
+  rm -rf "$AST_OUT"
+
   # bridge: generate the survivor data source + runbook for one carve
   if $CHANT carve bridge --from "$CARVE_TF" --select aws_s3_bucket.assets --output "$CARVE_OUT" >/dev/null 2>&1; then
     if grep -q 'data "aws_s3_bucket" "assets"' "$CARVE_OUT"/aws_s3_bucket-assets-datasources.tf 2>/dev/null; then

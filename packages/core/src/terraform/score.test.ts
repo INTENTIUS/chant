@@ -1,5 +1,5 @@
 import { describe, test, expect } from "vitest";
-import { buildGraph } from "./graph";
+import { buildFixtureGraph } from "./__fixtures__/build-graph";
 import { scoreEstate, bandFor } from "./score";
 import type { Hcl2JsonTree } from "./types";
 
@@ -28,7 +28,7 @@ describe("scoreEstate — #197 worked examples", () => {
         },
       },
     };
-    const results = scoreEstate(buildGraph(tree));
+    const results = scoreEstate(buildFixtureGraph(tree));
     const map = byAddress(results);
 
     // The folded sub-resource is not ranked on its own.
@@ -51,7 +51,7 @@ describe("scoreEstate — #197 worked examples", () => {
         },
       },
     };
-    const results = scoreEstate(buildGraph(tree));
+    const results = scoreEstate(buildFixtureGraph(tree));
     const cdn = byAddress(results)["module.cdn"];
     expect(cdn.score).toBe(61); // 100 - 12*2 - 15*(2-1)
     expect(cdn.band).toBe("carvable w/ edits");
@@ -70,7 +70,7 @@ describe("scoreEstate — #197 worked examples", () => {
         aws_subnet: consumers,
       },
     };
-    const vpc = byAddress(scoreEstate(buildGraph(tree)))["aws_vpc.main"];
+    const vpc = byAddress(scoreEstate(buildFixtureGraph(tree)))["aws_vpc.main"];
     expect(vpc.score).toBe(0);
     expect(vpc.band).toBe("leave in Terraform");
     expect(vpc.breakdown.inbound).toBe(40);
@@ -82,7 +82,7 @@ describe("scoreEstate — penalties", () => {
     const tree: Hcl2JsonTree = {
       resource: { random_pet: { name: [{ length: 2 }] } },
     };
-    const r = scoreEstate(buildGraph(tree))[0];
+    const r = scoreEstate(buildFixtureGraph(tree))[0];
     expect(r.score).toBe(0);
     expect(r.breakdown.tier).toBeNull();
     expect(r.mapsTo).toBeUndefined();
@@ -97,7 +97,7 @@ describe("scoreEstate — penalties", () => {
         },
       },
     };
-    const map = byAddress(scoreEstate(buildGraph(tree)));
+    const map = byAddress(scoreEstate(buildFixtureGraph(tree)));
     expect(map["aws_sqs_queue.plain"].score).toBe(100); // tier1, no edges, no dynamic
     expect(map["aws_sqs_queue.fanned"].score).toBe(90); // -10 dynamic
   });
@@ -110,7 +110,7 @@ describe("scoreEstate — penalties", () => {
         aws_sqs_queue: { dlq: [{ name: "d", redrive: "${aws_sns_topic.alerts.arn}" }] },
       },
     };
-    const map = byAddress(scoreEstate(buildGraph(tree)));
+    const map = byAddress(scoreEstate(buildFixtureGraph(tree)));
     expect(map["aws_sqs_queue.dlq"].score).toBe(96); // 100 - 4*1 outbound
     expect(map["aws_sns_topic.alerts"].score).toBe(88); // 100 - 12*1 inbound
   });
@@ -123,7 +123,7 @@ describe("scoreEstate — penalties", () => {
         aws_sns_topic: { t: [{ name: "t" }] },
       },
     };
-    const scores = scoreEstate(buildGraph(tree)).map((r) => r.score);
+    const scores = scoreEstate(buildFixtureGraph(tree)).map((r) => r.score);
     expect(scores).toEqual([...scores].sort((a, b) => b - a));
   });
 });
