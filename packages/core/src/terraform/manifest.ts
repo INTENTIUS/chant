@@ -32,6 +32,23 @@ export interface CarveManifest {
     source: "tfstate" | "live";
     /** Emitted chant source file path(s). */
     files: string[];
+    /**
+     * Deferred outbound inputs declared as build parameters in the emitted
+     * project (#998), keyed by parameter name.
+     */
+    params?: Record<
+      string,
+      {
+        /** The carved resource's own Terraform attribute the value enters through. */
+        tfAttr: string;
+        /** The survivor the Terraform source read, e.g. `aws_vpc.main`. */
+        survivor: string;
+        /** Survivor attribute(s) read. */
+        attrs: string[];
+        /** State-resolved default, when scalar. */
+        default?: string | number | boolean;
+      }
+    >;
     at: string;
   };
   /** Recorded by `carve bridge`. */

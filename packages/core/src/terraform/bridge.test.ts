@@ -103,6 +103,10 @@ describe("generateBridge — outbound (deferred inputs)", () => {
     expect(plan.dataSources).toEqual([]); // no inbound → no survivor patch
     expect(plan.deferredInputs).toHaveLength(1);
     expect(plan.deferredInputs[0]).toMatchObject({ survivor: "aws_sns_topic.alerts", carved: "aws_sqs_queue.dlq" });
+    // The deferred input names the build param emit declares for it (#998).
+    expect(plan.deferredInputs[0].params).toEqual(["redrive"]);
+    expect(plan.deferredInputs[0].note).toContain("build param `redrive`");
+    expect(plan.deferredInputs[0].note).toContain("--param");
   });
 });
 

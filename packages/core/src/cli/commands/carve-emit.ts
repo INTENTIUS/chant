@@ -15,11 +15,11 @@
 import { existsSync, statSync, writeFileSync, mkdirSync } from "fs";
 import { basename, join, resolve } from "path";
 import { parseTerraformDir, Hcl2JsonNotInstalled } from "../../terraform/parse";
-import { boundaryReport, type CarveReport } from "../../terraform/carve";
+import { boundaryReport, deferredParamName, type CarveReport } from "../../terraform/carve";
 import { resolveTier } from "../../terraform/tier-map";
 import { readStateResource } from "../../terraform/state";
 import { writeCarveManifest, type CarveManifest } from "../../terraform/manifest";
-import { adoptFromState, canAdoptFromState, supportedStateAdoptionTypes } from "../../terraform/adopt-state";
+import { adoptFromState, canAdoptFromState, supportedStateAdoptionTypes, type DeferredParam } from "../../terraform/adopt-state";
 import { getChantVersion } from "./init";
 import type { LexiconPlugin, ResourceSelector } from "../../lexicon";
 import type { ImportResult, LiveImportOptions } from "./import";
@@ -65,6 +65,8 @@ export interface CarveEmitResult {
   emittedFiles?: string[];
   /** Project files scaffolded around the emitted source (config, package.json). */
   scaffolded?: string[];
+  /** Deferred outbound inputs declared as build parameters in the emitted project (#998). */
+  params?: DeferredParam[];
   /** The persisted carve state manifest bridge/apply compose with. */
   manifestPath?: string;
 }
@@ -119,7 +121,11 @@ export async function carveEmit(opts: CarveEmitOptions, deps: CarveEmitDeps): Pr
     if (!stateResource) {
       return { ok: false, error: `${opts.select} not found in state ${opts.statePath} (or is a data source / module-nested).` };
     }
-    const adopted = adoptFromState(stateResource);
+    // Deferred outbound inputs → real build parameters (#998): each survivor
+    // value the carved block read enters the emitted project as a declared
+    // param, defaulted to the value the state resolved.
+    const params = deferredParams(report, stateResource.attributes);
+    const adopted = adoptFromState(stateResource, params);
     if (!adopted) return { ok: false, error: `Could not adopt ${opts.select} from state.` };
 
     // The output dir is a buildable chant project: source in src/, plus the
@@ -130,10 +136,10 @@ export async function carveEmit(opts: CarveEmitOptions, deps: CarveEmitDeps): Pr
     const outPath = join(srcDir, adopted.fileName);
     writeFileSync(outPath, adopted.content);
     const lexicon = tier.mapsTo.split("::")[0]?.toLowerCase() ?? "aws";
-    const scaffolded = scaffoldProject(outDir, lexicon);
+    const scaffolded = scaffoldProject(outDir, lexicon, params);
 
-    const manifestPath = persistManifest(outDir, opts, report, tfType, "tfstate", [outPath]);
-    return { ok: true, report, source: "tfstate", emittedFiles: [outPath], scaffolded, manifestPath };
+    const manifestPath = persistManifest(outDir, opts, report, tfType, "tfstate", [outPath], params);
+    return { ok: true, report, source: "tfstate", emittedFiles: [outPath], scaffolded, manifestPath, params };
   }
 
   // ── Adoption path 2: live import (cloud→code) ──
@@ -158,12 +164,42 @@ export async function carveEmit(opts: CarveEmitOptions, deps: CarveEmitDeps): Pr
 }
 
 /**
+ * Turn the boundary report's outbound edges into build parameters (#998): one
+ * per carved-block attribute that read a survivor (`via`), named after that
+ * attribute, defaulted to the value the state resolved for it. A non-scalar
+ * value (a nested block) is declared without a default (`required: false`) —
+ * it documents the deferred input without blocking an out-of-the-box build.
+ */
+function deferredParams(report: CarveReport, attributes: Record<string, unknown>): DeferredParam[] {
+  const byName = new Map<string, DeferredParam>();
+  for (const edge of report.outbound) {
+    for (const tfAttr of edge.via ?? []) {
+      const name = deferredParamName(tfAttr);
+      const raw = attributes[tfAttr];
+      const scalar = typeof raw === "string" || typeof raw === "number" || typeof raw === "boolean" ? raw : undefined;
+      const prev = byName.get(name);
+      byName.set(name, {
+        name,
+        tfAttr,
+        survivor: prev && prev.survivor !== edge.survivor ? `${prev.survivor}, ${edge.survivor}` : edge.survivor,
+        attrs: [...new Set([...(prev?.attrs ?? []), ...edge.attrs])].sort(),
+        default: scalar,
+      });
+    }
+  }
+  return [...byName.values()].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+}
+
+/**
  * Scaffold the emitted source into a buildable chant project: chant.config.ts,
  * package.json, tsconfig.json — same shape `chant init` produces, so
  * `npm install && npm run build` works in the output dir as-is. Existing files
- * are never overwritten (re-emits and user edits survive).
+ * are never overwritten (re-emits and user edits survive). Deferred inputs are
+ * declared as `buildParams` (#998), defaults taken from the state's resolved
+ * values, so the first build reproduces what is live while every survivor-fed
+ * value stays overridable (`--param <name>=<value>`).
  */
-function scaffoldProject(outDir: string, lexicon: string): string[] {
+function scaffoldProject(outDir: string, lexicon: string, params: DeferredParam[] = []): string[] {
   const ver = getChantVersion();
   const packageJson = {
     name: "chant-carveout",
@@ -195,7 +231,7 @@ function scaffoldProject(outDir: string, lexicon: string): string[] {
   };
   const files: Array<[string, string]> = [
     ["package.json", JSON.stringify(packageJson, null, 2) + "\n"],
-    ["chant.config.ts", `import type { ChantConfig } from "@intentius/chant";\n\nexport default {\n  lexicons: ["${lexicon}"],\n} satisfies ChantConfig;\n`],
+    ["chant.config.ts", renderConfig(lexicon, params)],
     ["tsconfig.json", JSON.stringify(tsconfig, null, 2) + "\n"],
   ];
 
@@ -209,6 +245,36 @@ function scaffoldProject(outDir: string, lexicon: string): string[] {
   return written;
 }
 
+/** Render the scaffolded `chant.config.ts`, declaring deferred inputs as `buildParams` (#998). */
+function renderConfig(lexicon: string, params: DeferredParam[]): string {
+  const L: string[] = [];
+  L.push(`import type { ChantConfig } from "@intentius/chant";`);
+  L.push("");
+  L.push("export default {");
+  L.push(`  lexicons: ["${lexicon}"],`);
+  if (params.length) {
+    L.push("  // Deferred deploy-time inputs — values the Terraform source read from");
+    L.push("  // surviving resources. Defaults are the values the tfstate resolved;");
+    L.push("  // override per build with --param <name>=<value>.");
+    L.push("  buildParams: {");
+    for (const p of params) {
+      const type = typeof p.default === "number" ? "number" : typeof p.default === "boolean" ? "boolean" : "string";
+      L.push(`    ${p.name}: {`);
+      L.push(`      type: ${JSON.stringify(type)},`);
+      if (p.default !== undefined) {
+        L.push(`      default: ${JSON.stringify(p.default)},`);
+      } else {
+        L.push(`      required: false,`);
+      }
+      L.push(`      description: ${JSON.stringify(`was ${p.survivor}.${p.attrs.join("/")} in Terraform (deferred deploy-time input)`)},`);
+      L.push("    },");
+    }
+    L.push("  },");
+  }
+  L.push("} satisfies ChantConfig;");
+  return L.join("\n") + "\n";
+}
+
 /** Persist the carve state manifest so bridge/apply compose with this emit. */
 function persistManifest(
   outDir: string,
@@ -217,6 +283,7 @@ function persistManifest(
   tfType: string | undefined,
   source: "tfstate" | "live",
   files: string[],
+  params: DeferredParam[] = [],
 ): string {
   const manifest: CarveManifest = {
     version: 1,
@@ -225,7 +292,16 @@ function persistManifest(
     from: resolve(opts.from!),
     statePath: opts.statePath ? resolve(opts.statePath) : undefined,
     boundary: report,
-    emit: { source, files: files.map((f) => resolve(f)), at: new Date().toISOString() },
+    emit: {
+      source,
+      files: files.map((f) => resolve(f)),
+      params: params.length
+        ? Object.fromEntries(
+            params.map((p) => [p.name, { tfAttr: p.tfAttr, survivor: p.survivor, attrs: p.attrs, default: p.default }]),
+          )
+        : undefined,
+      at: new Date().toISOString(),
+    },
   };
   return writeCarveManifest(outDir, manifest);
 }
@@ -247,6 +323,13 @@ export function formatCarveEmit(result: CarveEmitResult): string {
   }
   if (result.scaffolded?.length) {
     lines.push(`  Scaffolded a buildable chant project: ${result.scaffolded.map((f) => basename(f)).join(", ")} (npm install && npm run build).`);
+  }
+  if (result.params?.length) {
+    lines.push(`  Deferred input(s) declared as build params (override with --param <name>=<value>):`);
+    for (const p of result.params) {
+      const def = p.default !== undefined ? `default ${JSON.stringify(p.default)} from state` : "no default (required: false)";
+      lines.push(`    ${p.name} — was ${p.survivor}.${p.attrs.join("/")}; ${def}`);
+    }
   }
   if (result.manifestPath) {
     lines.push(`  State manifest: ${result.manifestPath} — carve bridge/apply pick the target up from here.`);

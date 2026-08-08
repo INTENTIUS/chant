@@ -28,6 +28,8 @@ const NON_RESOURCE_HEADS = new Set(["var", "local", "each", "count", "self", "pa
 interface RawRef {
   address: string;
   attr?: string;
+  /** The referring block's top-level attribute the reference sits in (#998). */
+  via?: string;
 }
 
 /**
@@ -119,6 +121,20 @@ function refsInValue(value: unknown, exprRefs: ExpressionRefs): RawRef[] {
   return refs;
 }
 
+/**
+ * References in a whole block, each tagged with the top-level attribute it
+ * came in through — `via` is what a deferred outbound input gets named after
+ * when emit turns it into a build parameter (#998).
+ */
+function refsInBlock(block: unknown, exprRefs: ExpressionRefs): RawRef[] {
+  if (!block || typeof block !== "object" || Array.isArray(block)) return refsInValue(block, exprRefs);
+  const refs: RawRef[] = [];
+  for (const [key, value] of Object.entries(block as Record<string, unknown>)) {
+    for (const ref of refsInValue(value, exprRefs)) refs.push({ ...ref, via: key });
+  }
+  return refs;
+}
+
 /** A block carries `count`/`for_each` → dynamic, single instance until state resolves it. */
 function blockHasMeta(block: unknown, key: string): boolean {
   return !!block && typeof block === "object" && key in (block as Record<string, unknown>);
@@ -158,7 +174,7 @@ export function buildGraph(tree: Hcl2JsonTree, exprRefs: ExpressionRefs): TfGrap
       const address = `${type}.${name}`;
       const block = Array.isArray(blocks) ? blocks[0] : blocks;
       const dynamic = blockHasMeta(block, "count") || blockHasMeta(block, "for_each");
-      const refs = refsInValue(block, exprRefs);
+      const refs = refsInBlock(block, exprRefs);
       const touchesData = refs.some((r) => dataAddresses.has(r.address));
       rawRefsByNode.set(address, refs);
       nodes.push({
@@ -178,7 +194,7 @@ export function buildGraph(tree: Hcl2JsonTree, exprRefs: ExpressionRefs): TfGrap
     const address = `module.${name}`;
     const block = Array.isArray(blocks) ? blocks[0] : blocks;
     const dynamic = blockHasMeta(block, "count") || blockHasMeta(block, "for_each");
-    const refs = refsInValue(block, exprRefs);
+    const refs = refsInBlock(block, exprRefs);
     const touchesData = refs.some((r) => dataAddresses.has(r.address));
     rawRefsByNode.set(address, refs);
     nodes.push({
@@ -194,14 +210,16 @@ export function buildGraph(tree: Hcl2JsonTree, exprRefs: ExpressionRefs): TfGrap
   const known = new Set(nodes.map((n) => n.address));
   const edges: TfEdge[] = [];
   for (const [from, refs] of rawRefsByNode) {
-    const byTarget = new Map<string, Set<string>>();
+    const byTarget = new Map<string, { attrs: Set<string>; via: Set<string> }>();
     for (const ref of refs) {
       if (ref.address === from || !known.has(ref.address)) continue;
-      if (!byTarget.has(ref.address)) byTarget.set(ref.address, new Set());
-      if (ref.attr) byTarget.get(ref.address)!.add(ref.attr);
+      if (!byTarget.has(ref.address)) byTarget.set(ref.address, { attrs: new Set(), via: new Set() });
+      const target = byTarget.get(ref.address)!;
+      if (ref.attr) target.attrs.add(ref.attr);
+      if (ref.via) target.via.add(ref.via);
     }
-    for (const [to, attrs] of byTarget) {
-      edges.push({ from, to, attrs: [...attrs].sort() });
+    for (const [to, { attrs, via }] of byTarget) {
+      edges.push({ from, to, attrs: [...attrs].sort(), via: [...via].sort() });
     }
   }
 

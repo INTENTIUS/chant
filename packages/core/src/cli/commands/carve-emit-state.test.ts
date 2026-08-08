@@ -147,6 +147,71 @@ describe("carve emit --state (real adoption from tfstate)", () => {
     });
   });
 
+  test("deferred outbound inputs become declared build params (#998)", async () => {
+    if (!parserAvailable) return;
+    const dir = mkdtempSync(join(tmpdir(), "chant-emit-params-"));
+    try {
+      writeFileSync(
+        join(dir, "main.tf"),
+        `
+resource "aws_vpc" "main" { cidr_block = "10.0.0.0/16" }
+resource "aws_subnet" "a" {
+  vpc_id     = aws_vpc.main.id
+  cidr_block = "10.0.1.0/24"
+}
+`,
+      );
+      writeFileSync(
+        join(dir, "terraform.tfstate"),
+        JSON.stringify({
+          version: 4,
+          resources: [
+            {
+              mode: "managed",
+              type: "aws_subnet",
+              name: "a",
+              instances: [{ attributes: { id: "subnet-0aa", vpc_id: "vpc-0abc", cidr_block: "10.0.1.0/24" } }],
+            },
+            {
+              mode: "managed",
+              type: "aws_vpc",
+              name: "main",
+              instances: [{ attributes: { id: "vpc-0abc", cidr_block: "10.0.0.0/16" } }],
+            },
+          ],
+        }),
+      );
+      const out = join(dir, "carveout");
+      const res = await carveEmit(
+        { from: dir, select: "aws_subnet.a", statePath: join(dir, "terraform.tfstate"), output: out },
+        { plugins: [], liveImport },
+      );
+      expect(res.ok).toBe(true);
+
+      // The survivor-fed prop is a params reference; the rest stay literal.
+      const emitted = readFileSync(join(out, "src", "a.ts"), "utf-8");
+      expect(emitted).toContain('import { params } from "@intentius/chant/params";');
+      expect(emitted).toContain("VpcId: params.vpc_id as string,");
+      expect(emitted).toContain('CidrBlock: "10.0.1.0/24"');
+
+      // The scaffolded config declares the param, defaulted from state.
+      const config = readFileSync(join(out, "chant.config.ts"), "utf-8");
+      expect(config).toContain("buildParams: {");
+      expect(config).toContain("vpc_id: {");
+      expect(config).toContain('default: "vpc-0abc",');
+      expect(config).toContain("was aws_vpc.main.id in Terraform");
+
+      // Recorded in the manifest, reported in the summary.
+      const manifest = readCarveManifest(res.manifestPath!)!;
+      expect(manifest.emit!.params).toEqual({
+        vpc_id: { tfAttr: "vpc_id", survivor: "aws_vpc.main", attrs: ["id"], default: "vpc-0abc" },
+      });
+      expect(formatCarveEmit(res)).toContain("vpc_id — was aws_vpc.main.id");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test("without --state or --env it explains both adoption sources", async () => {
     if (!parserAvailable) return;
     await withEstate(async (dir) => {

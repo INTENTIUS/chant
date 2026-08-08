@@ -48,6 +48,13 @@ export interface TfEdge {
   to: string;
   /** The attribute path(s) referenced, e.g. `["id", "arn"]`. */
   attrs: string[];
+  /**
+   * The referring block's own top-level attribute(s) the reference sits in,
+   * e.g. `["vpc_id"]` for a subnet reading its VPC (#998). This is what a
+   * deferred outbound input is named after when emit turns it into a build
+   * parameter. Empty when the reference came from a non-object block shape.
+   */
+  via: string[];
 }
 
 export interface TfGraph {

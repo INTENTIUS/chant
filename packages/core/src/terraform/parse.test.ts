@@ -47,7 +47,7 @@ describe.runIf(true)("parseTerraformDir (real wasm)", () => {
         "aws_s3_bucket.assets",
       ]);
       expect(g.edges).toEqual([
-        { from: "aws_lambda_function.api", to: "aws_s3_bucket.assets", attrs: ["arn", "bucket"] },
+        { from: "aws_lambda_function.api", to: "aws_s3_bucket.assets", attrs: ["arn", "bucket"], via: ["environment"] },
       ]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -85,7 +85,7 @@ describe.runIf(true)("parseTerraformDir (real wasm)", () => {
       const g = await parseTerraformDir(dir);
       // No phantom edge to the log group; real refs found through format()/?: .
       expect(g.edges).toEqual([
-        { from: "aws_lambda_function.api", to: "aws_s3_bucket.assets", attrs: ["arn", "bucket"] },
+        { from: "aws_lambda_function.api", to: "aws_s3_bucket.assets", attrs: ["arn", "bucket"], via: ["environment"] },
       ]);
     } finally {
       rmSync(dir, { recursive: true, force: true });

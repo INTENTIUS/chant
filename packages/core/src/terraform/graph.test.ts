@@ -51,8 +51,8 @@ describe("buildGraph", () => {
     const g = buildFixtureGraph(workedExample);
     // versioning → bucket (.id), lambda → bucket (.bucket, .arn)
     expect(g.edges).toEqual([
-      { from: "aws_lambda_function.api", to: "aws_s3_bucket.assets", attrs: ["arn", "bucket"] },
-      { from: "aws_s3_bucket_versioning.assets", to: "aws_s3_bucket.assets", attrs: ["id"] },
+      { from: "aws_lambda_function.api", to: "aws_s3_bucket.assets", attrs: ["arn", "bucket"], via: ["environment"] },
+      { from: "aws_s3_bucket_versioning.assets", to: "aws_s3_bucket.assets", attrs: ["id"], via: ["bucket"] },
     ]);
   });
 
@@ -87,11 +87,13 @@ describe("buildGraph", () => {
       from: "module.cdn",
       to: "aws_s3_bucket.assets",
       attrs: ["arn"],
+      via: ["bucket_arn"],
     });
     expect(g.edges).toContainEqual({
       from: "aws_route53_record.cdn",
       to: "module.cdn",
       attrs: ["domain"],
+      via: ["name"],
     });
   });
 
