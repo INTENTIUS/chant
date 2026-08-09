@@ -39,6 +39,14 @@ export interface RenderOptions {
   notes?: string[];
   /** Resolved audit catalog (core static + active lexicons' contributions, #687). Defaults to core's static catalog. */
   catalog?: Record<string, RuleMeta>;
+  /**
+   * Markdown heading text and level for the report's own title. `chant audit
+   * --agents` embeds this report under its inventory, so it renders as a
+   * level-2 "Findings" section rather than a second `# chant audit` H1 in a
+   * document that already has one.
+   */
+  title?: string;
+  headingLevel?: 1 | 2;
 }
 
 function escapeCell(s: string): string {
@@ -96,7 +104,7 @@ export function renderMarkdown(findings: AuditFinding[], opts: RenderOptions = {
   const model = buildReportModel(findings, opts);
   const { counts } = model;
 
-  const lines: string[] = ["# chant audit"];
+  const lines: string[] = [`${"#".repeat(opts.headingLevel ?? 1)} ${opts.title ?? "chant audit"}`];
   if (opts.target) lines.push("", `Target: ${opts.target}`);
   lines.push("");
   for (const note of opts.notes ?? []) lines.push(`> Note: ${note}`, "");

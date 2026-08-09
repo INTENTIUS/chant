@@ -48,6 +48,8 @@ import type { LexiconPlugin } from "../lexicon";
  */
 const BOOLEAN_FLAGS = new Set([
   "--help",
+  "--agents",
+  "--all-projects",
   "--force",
   "--fix",
   "--watch",
@@ -254,6 +256,14 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.env = args[++i];
     } else if (arg === "--tier") {
       result.tier = args[++i];
+    } else if (arg === "--agents") {
+      result.agents = true;
+    } else if (arg === "--scope") {
+      result.scope = args[++i];
+    } else if (arg === "--all-projects") {
+      result.allProjects = true;
+    } else if (arg === "--runtime") {
+      result.runtime = args[++i];
     } else if (arg === "--fail-on") {
       result.failOn = args[++i];
     } else if (arg === "--theme") {
@@ -438,10 +448,17 @@ Commands:
                         bundle tree, otherwise JSON path→content on stdout)
   vendor                Pull pinned, checksummed patterns into your repo
   import                Import external template into TypeScript
+                        (--agents re-expresses this machine's agent config as
+                         chant code instead of reading a template file)
   audit [path|url]      Audit a repo's CI YAML for security issues
                         (--format stylish|json|sarif|markdown|html, -o <file>,
                          --tier merge-worthy|all, --fail-on merge-worthy|warning|none,
                          --template <file> / --theme <file> for the html report)
+                        --agents audits this machine's agent configuration —
+                        instruction files, MCP servers, skills, plugins,
+                        permissions — instead of a repository
+                        (--scope system,user,project, --runtime claude,codex,...,
+                         --all-projects)
   migrate <file>        Translate a workflow between lexicons
                         (default: --from github --to gitlab)
   carve advise          Read-only Terraform peelability advisor: rank which
