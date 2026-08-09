@@ -47,7 +47,9 @@ export const costCenterRequired: PostSynthCheck = {
     const diags: PostSynthDiagnostic[] = [];
     for (const m of manifests(ctx)) {
       if (m.kind !== "Deployment") continue;
-      if (!m.metadata?.labels?.[COST_CENTER]) {
+      // Literal key rather than `[COST_CENTER]` — EVL003 requires computed
+      // keys to be statically evaluable literals.
+      if (!m.metadata?.labels?.["acme.io/cost-center"]) {
         diags.push({
           checkId: "ORG-COST-CENTER",
           severity: "error",
