@@ -14,9 +14,17 @@
 import { step } from "@intentius/chant/components";
 import type { KubectlApplyInput } from "./kubectl-apply";
 import type { KustomizeApplyInput } from "./kustomize-apply";
+import type { ArgoAppInput } from "./argo-app";
+import type { FluxReconcileInput } from "./flux-reconcile";
 
 export const kubectlApply = step<KubectlApplyInput & { noRollback?: string }>("kubectl-apply");
 
 // Same needs-opt-out posture, same sugar (#1548): a kustomize render in front
 // of the identical server-side apply.
 export const kustomizeApply = step<KustomizeApplyInput & { noRollback?: string }>("kustomize-apply");
+
+// GitOps verbs (#1549 piece 2): the identical server-side apply of the
+// controller's CR, then a convergence wait — Healthy+Synced for Argo, the
+// Flux readiness registry (Ready, terminal on wedge reasons) for Flux.
+export const argoApp = step<ArgoAppInput & { noRollback?: string }>("argo-app");
+export const fluxReconcile = step<FluxReconcileInput & { noRollback?: string }>("flux-reconcile");

@@ -26,3 +26,16 @@ export {
   type KustomizeApplyInput,
   type KustomizeApplyOutcome,
 } from "./kustomize-apply";
+export {
+  argoAppCapability,
+  createArgoAppCapability,
+  type ArgoAppInput,
+  type ArgoAppOutcome,
+  type ArgoAppSynced,
+} from "./argo-app";
+export {
+  fluxReconcileCapability,
+  createFluxReconcileCapability,
+  type FluxReconcileInput,
+  type FluxReconcileOutcome,
+} from "./flux-reconcile";
