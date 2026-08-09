@@ -112,6 +112,12 @@
       "@intentius/chant-lexicon-k3d/*": [
         "lexicons/k3d/src/*"
       ],
+      "@intentius/chant-lexicon-k3s": [
+        "lexicons/k3s/src/index.ts"
+      ],
+      "@intentius/chant-lexicon-k3s/*": [
+        "lexicons/k3s/src/*"
+      ],
       "@intentius/chant-test-utils": [
         "packages/test-utils/src/index.ts"
       ],
