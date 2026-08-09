@@ -96,6 +96,23 @@ export function resolveLexiconVersions(lexiconNames: readonly string[]): Record<
 }
 
 /**
+ * Bind each loaded plugin's `buildRoots` hook (#1548 piece 3) to this
+ * invocation's config and project root, producing the closures
+ * `BuildOptions.buildRoots` takes — the same extract-then-thread shape the
+ * CLI uses for `intrinsics`. Plugins without the hook contribute nothing;
+ * an empty array is the common case and `build()` treats it as absent.
+ */
+export function collectBuildRootContributors(
+  plugins: readonly LexiconPlugin[] | undefined,
+  config: Record<string, unknown>,
+  projectRoot: string,
+): Array<() => Promise<import("../lexicon").BuildRootContribution>> {
+  return (plugins ?? [])
+    .filter((plugin) => typeof plugin.buildRoots === "function")
+    .map((plugin) => () => plugin.buildRoots!({ projectRoot, config }));
+}
+
+/**
  * Load plugins for all detected lexicon names.
  * Calls `init()` on each plugin if present.
  */

@@ -31,6 +31,7 @@ import { cfnDeployStacks } from "./components";
 import { affectedStacks } from "../../lifecycle/affected";
 import { rollbackToRevision } from "../../lifecycle/rollback";
 import { loadChantConfig, environmentNames } from "../../config";
+import { collectBuildRootContributors } from "../plugins";
 import { applyLiveEndpoint } from "../../live-endpoint";
 import { isResourceDeclarable } from "../../declarable";
 import { formatError, formatWarning, formatSuccess, formatBold } from "../format";
@@ -150,9 +151,10 @@ export async function runLifecycleSnapshot(ctx: CommandContext): Promise<number>
   // estate; a region whose stack declares no security group still has a default
   // one, and scoping the bound per stack silently drops it.
   const built: Array<{ target: (typeof targets)[number]; buildResult: Awaited<ReturnType<typeof build>> }> = [];
+  const buildRoots = collectBuildRootContributors(targetPlugins, config as unknown as Record<string, unknown>, projectPath);
   for (const target of targets) {
     const label = target.stack ? `stack "${target.stack}"` : "project";
-    const buildResult = await build(target.root, targetSerializers, undefined, { buildParams: declaredParams });
+    const buildResult = await build(target.root, targetSerializers, undefined, { buildParams: declaredParams, buildRoots });
     if (buildResult.errors.length > 0) {
       console.error(formatError({ message: `Build failed for ${label} — fix errors before taking a snapshot` }));
       anyHardError = true;
@@ -363,9 +365,11 @@ export async function runLifecycleDiff(ctx: CommandContext): Promise<number> {
   const endpointResult = applyLiveEndpoint(config.environments, environment, liveLexicons);
   if (endpointResult.notice) console.error(formatWarning({ message: endpointResult.notice }));
 
+  const diffBuildRoots = collectBuildRootContributors(plugins, config as unknown as Record<string, unknown>, resolve("."));
+
   try {
     for (const target of targets) {
-      const buildResult = await build(target.root, targetSerializers, undefined, { buildParams: declaredParams });
+      const buildResult = await build(target.root, targetSerializers, undefined, { buildParams: declaredParams, buildRoots: diffBuildRoots });
       if (buildResult.errors.length > 0) {
         const label = target.stack ? `stack "${target.stack}"` : "project";
         console.error(formatError({ message: `Build failed for ${label} — fix errors before diffing` }));
@@ -1063,6 +1067,7 @@ export async function runLifecyclePlan(ctx: CommandContext): Promise<number> {
   if (!declaredParams) return 1;
   const buildResult = await build(resolveBuildRoot(args, config), targetSerializers, undefined, {
     buildParams: declaredParams,
+    buildRoots: collectBuildRootContributors(plugins, config as unknown as Record<string, unknown>, resolve(".")),
   });
   if (buildResult.errors.length > 0) {
     console.error(formatError({ message: "Build failed — fix errors before planning" }));

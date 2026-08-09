@@ -1,4 +1,5 @@
 import type { Serializer } from "./serializer";
+import type { Declarable } from "./declarable";
 import type { LintRule } from "./lint/rule";
 import type { RuleSpec } from "./lint/declarative";
 import type { PostSynthCheck } from "./lint/post-synth";
@@ -424,6 +425,31 @@ export interface StackStatusObservation {
   healthy?: boolean;
 }
 
+/**
+ * Context for a lexicon's {@link LexiconPlugin.buildRoots} hook (#1548).
+ */
+export interface BuildRootContext {
+  /**
+   * The directory the project configuration was loaded from (where
+   * `chant.config.*` lives) — relative root paths resolve against it, NOT
+   * against `sourceDir`, because a non-chant-source root (a kustomize
+   * overlay tree) usually lives beside the typed source rather than inside
+   * it.
+   */
+  projectRoot: string;
+  /** The resolved project configuration, for the lexicon's own namespace. */
+  config: Record<string, unknown>;
+}
+
+/**
+ * What a build-root render contributes to the build: entities keyed like
+ * discovered ones, plus non-fatal diagnostics.
+ */
+export interface BuildRootContribution {
+  entities: Map<string, Declarable>;
+  warnings?: string[];
+}
+
 export interface LexiconPlugin {
   // ── Required ──────────────────────────────────────────────
   /** Human-readable name (e.g. "aws", "gcp") */
@@ -556,6 +582,27 @@ export interface LexiconPlugin {
     components: DriverComponent[],
     options?: ComponentPipelineOptions,
   ): ComponentPipelineResult;
+
+  /**
+   * Render this lexicon's config-declared build roots into entities (#1548
+   * piece 3) — the seam for a build root that is NOT typed chant source. The
+   * k8s lexicon implements it for `k8s.kustomize.roots`: each named
+   * kustomization dir renders (`kustomize build`) at build time and the
+   * documents come back as entities, which the build merges into the
+   * discovered set BEFORE partitioning — so they are serialized by this
+   * lexicon's serializer (ownership stamping included), seen by post-synth
+   * checks, and observed by `describeResources` exactly like discovered
+   * entities.
+   *
+   * Called once per top-level build (never for nested child projects), only
+   * when the CLI wires it up (`collectBuildRootContributors` in
+   * ./cli/plugins.ts → {@link BuildOptions.buildRoots}). A hook that has
+   * nothing configured must return an empty map, not throw; a hook that
+   * cannot render (missing binary, missing dir) should throw with a message
+   * naming the problem — the build reports it as a build error, not a stack
+   * trace. Omit for lexicons with no non-source build-root concept.
+   */
+  buildRoots?(ctx: BuildRootContext): Promise<BuildRootContribution>;
 
   // LSP
   /** Provide completions for LSP */

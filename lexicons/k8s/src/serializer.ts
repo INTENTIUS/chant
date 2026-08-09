@@ -14,6 +14,7 @@ import type { LexiconOutput } from "@intentius/chant/lexicon-output";
 import { walkValue, type SerializerVisitor } from "@intentius/chant/serializer-walker";
 import { emitYAML } from "@intentius/chant/yaml";
 import { isDefaultLabels, isDefaultAnnotations, type DefaultLabels, type DefaultAnnotations } from "./default-labels";
+import { isRenderedManifestEntity } from "./kustomize/rendered-entity";
 
 const require = createRequire(import.meta.url);
 
@@ -254,6 +255,35 @@ export const k8sSerializer: Serializer = {
     for (const [name, entity] of entities) {
       if (isPropertyDeclarable(entity)) continue;
       if (isDefaultLabels(entity) || isDefaultAnnotations(entity)) continue;
+
+      // A kustomize build root's document (#1548 piece 3) is render-final:
+      // the overlay decided every field, so the props ARE the manifest and
+      // the spec-inference heuristics below (built for typed declarables)
+      // must not reshape it — a doc whose top-level fields aren't `spec`
+      // (webhooks, rules on a CRD instance) would otherwise be re-nested.
+      // It still gets the exact default-label/annotation merge every
+      // discovered resource gets, which is what stamps ownership on it.
+      if (isRenderedManifestEntity(entity)) {
+        const manifest = { ...entity.props };
+        const metadata = { ...((manifest.metadata as Record<string, unknown> | undefined) ?? {}) };
+        if (Object.keys(defaultLabelEntries).length > 0) {
+          metadata.labels = { ...defaultLabelEntries, ...((metadata.labels ?? {}) as Record<string, unknown>) };
+        }
+        if (Object.keys(defaultAnnotationEntries).length > 0) {
+          metadata.annotations = {
+            ...defaultAnnotationEntries,
+            ...((metadata.annotations ?? {}) as Record<string, unknown>),
+          };
+        }
+        manifest.metadata = metadata;
+        const yamlDoc = emitK8sManifest(manifest);
+        if (manifest.kind === "Namespace") {
+          namespaceDocs.push(yamlDoc);
+        } else {
+          otherDocs.push(yamlDoc);
+        }
+        continue;
+      }
 
       const entityType = (entity as unknown as Record<string, unknown>).entityType as string;
       const gvk = resolveGVK(entityType);

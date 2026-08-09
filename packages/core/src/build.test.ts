@@ -257,6 +257,101 @@ export const testEntity = {
   });
 });
 
+describe("build-root contributors (#1548 piece 3)", () => {
+  let testDir: string;
+
+  beforeEach(async () => {
+    testDir = join(tmpdir(), `chant-buildroots-test-${Date.now()}-${Math.random()}`);
+    await mkdir(testDir, { recursive: true });
+  });
+
+  afterEach(async () => {
+    await rm(testDir, { recursive: true, force: true });
+  });
+
+  const entity = (entityType: string): Declarable =>
+    ({
+      lexicon: "test",
+      entityType,
+      kind: "resource",
+      props: {},
+      [DECLARABLE_MARKER]: true,
+    }) as unknown as Declarable;
+
+  const recordingSerializer = (seen: string[][]): Serializer => ({
+    name: "test",
+    rulePrefix: "TEST",
+    serialize: (entities) => {
+      seen.push([...entities.keys()]);
+      return "out";
+    },
+  });
+
+  test("contributed entities join the entity set and reach the serializer", async () => {
+    const seen: string[][] = [];
+    const result = await build(testDir, [recordingSerializer(seen)], undefined, {
+      buildRoots: [
+        async () => ({
+          entities: new Map([["overlays/prod/deploymentApp", entity("TestEntity")]]),
+          warnings: ["rendered a stray doc"],
+        }),
+      ],
+    });
+
+    expect(result.errors).toEqual([]);
+    expect(result.entities.has("overlays/prod/deploymentApp")).toBe(true);
+    expect(seen).toEqual([["overlays/prod/deploymentApp"]]);
+    expect(result.warnings).toContain("rendered a stray doc");
+  });
+
+  test("a contributor that throws becomes a build error carrying its message, not a thrown stack", async () => {
+    const result = await build(testDir, [], undefined, {
+      buildRoots: [
+        async () => {
+          throw new Error("neither the `kustomize` binary nor `kubectl` was found on PATH");
+        },
+      ],
+    });
+
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0].message).toContain("neither the `kustomize` binary nor `kubectl`");
+  });
+
+  test("a contributed name colliding with a discovered entity is a build error, never an overwrite", async () => {
+    await writeFile(
+      join(testDir, "app.infra.ts"),
+      `
+export const discovered = {
+  lexicon: "test",
+  entityType: "Discovered",
+  props: {},
+  [Symbol.for("chant.declarable")]: true,
+};
+      `,
+    );
+
+    const result = await build(testDir, [recordingSerializer([])], undefined, {
+      buildRoots: [async () => ({ entities: new Map([["discovered", entity("Contributed")]]) })],
+    });
+
+    expect(result.errors.some((e) => e.message.includes('"discovered" collides'))).toBe(true);
+    expect(result.entities.get("discovered")?.entityType).toBe("Discovered");
+  });
+
+  test("contributors run exactly once per build", async () => {
+    let calls = 0;
+    await build(testDir, [], undefined, {
+      buildRoots: [
+        async () => {
+          calls++;
+          return { entities: new Map() };
+        },
+      ],
+    });
+    expect(calls).toBe(1);
+  });
+});
+
 describe("partitionByLexicon", () => {
   test("partitions entities by lexicon", () => {
     const entities = new Map<string, Declarable>([
