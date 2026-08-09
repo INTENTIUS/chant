@@ -51,15 +51,11 @@ docker build -t topology-service:local topology-service/ --quiet
 
 # --- 3. Create k3d cluster ---
 echo "=== Creating k3d cluster: $CLUSTER ==="
-# --no-lb: no software load balancer (NodePort used instead)
-# --port: maps localhost:8080 → k3d server node port 30080
-# --k3s-arg: disable traefik and servicelb (not needed for NodePort)
-k3d cluster create "$CLUSTER" \
-  --port "${HOST_PORT}:${NODE_PORT}@server:0" \
-  --port "${NGINX_HOST_PORT}:${NGINX_NODE_PORT}@server:0" \
-  --k3s-arg "--disable=traefik@server:*" \
-  --k3s-arg "--disable=servicelb@server:*" \
-  --wait
+# The cluster shape lives in k3d/cluster.ts as a typed declaration; this
+# builds it and hands the emitted config to k3d verbatim, so the script and
+# the declaration cannot drift the way the old CLI-flag block did.
+npm run build:k3d-cluster
+k3d cluster create --config k3d-cluster.yaml
 
 echo "=== Loading images into k3d cluster ==="
 k3d image import cell-router:local topology-service:local -c "$CLUSTER"
