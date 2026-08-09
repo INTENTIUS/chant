@@ -219,10 +219,10 @@ function toYAMLValue(value: unknown, entityNames: Map<Declarable, string>): unkn
 export const k8sSerializer: Serializer = {
   name: "k8s",
   rulePrefix: "WK8",
-  // The Argo CD checks are a distinct product surface this lexicon covers, and
-  // their ids are published — renaming them would break every `chant-disable
-  // ARGO001` already written (#1349).
-  extraRulePrefixes: ["ARGO"],
+  // The Argo CD and Flux checks are distinct product surfaces this lexicon
+  // covers, and their ids are published — renaming them would break every
+  // `chant-disable ARGO001` already written (#1349).
+  extraRulePrefixes: ["ARGO", "FLUX"],
 
   serialize(entities: Map<string, Declarable>, _outputs?: LexiconOutput[], context?: SerializeContext): string {
     // Build reverse map: entity → name
