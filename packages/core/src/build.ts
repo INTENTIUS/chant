@@ -2,7 +2,7 @@ import type { Declarable } from "./declarable";
 import type { Serializer, SerializerResult } from "./serializer";
 import type { OwnershipMarker } from "./ownership";
 import type { BuildError, DiscoveryErrorType } from "./errors";
-import type { IntrinsicDef } from "./lexicon";
+import type { IntrinsicDef, BuildRootContribution } from "./lexicon";
 import type { BuildParamProvenance } from "./provenance";
 import { DiscoveryError, BuildError as BuildErrorClass } from "./errors";
 import { LexiconOutput, isLexiconOutput } from "./lexicon-output";
@@ -215,6 +215,21 @@ export interface BuildOptions {
    * carries the already-resolved records for provenance.
    */
   buildParams?: BuildParamProvenance[];
+
+  /**
+   * chant #1548 piece 3 — lexicon-contributed build roots: closures the CLI
+   * binds from each configured plugin's `buildRoots(ctx)` hook (see
+   * `collectBuildRootContributors` in ./cli/plugins.ts), each rendering a
+   * non-chant-source root (a kustomize overlay dir) into entities. Run once,
+   * at the TOP-LEVEL build only (never repeated for nested child projects),
+   * after discovery and before partitioning — so contributed entities are
+   * serialized, ownership-stamped, post-synth-checked and observed exactly
+   * like discovered ones. A contributor that throws becomes a build error
+   * carrying its message (the k8s hook's missing-binary refusal names the
+   * binaries); a contributed name colliding with a discovered entity is a
+   * build error, never a silent overwrite.
+   */
+  buildRoots?: Array<() => Promise<BuildRootContribution>>;
 }
 
 export interface BuildResult {
@@ -653,6 +668,36 @@ async function buildFromDiscoveryResult(
         for (const err of childResult.errors) {
           errors.push(err);
         }
+      }
+    }
+  }
+
+  // Step 4b (#1548 piece 3): lexicon-contributed build roots — rendered
+  // non-source roots (kustomize dirs) joining the entity set before
+  // partitioning, so everything downstream (serialization with ownership
+  // stamping, post-synth checks, observation) treats them as declared.
+  // Top-level build only: nested child builds receive the same options
+  // object, and re-running the contributors there would duplicate every
+  // contributed entity once per child.
+  if (!parentBuildStack && options?.buildRoots) {
+    for (const contribute of options.buildRoots) {
+      try {
+        const contribution = await contribute();
+        for (const w of contribution.warnings ?? []) warnings.push(w);
+        for (const [name, entity] of contribution.entities) {
+          if (discoveryResult.entities.has(name)) {
+            errors.push(
+              new BuildErrorClass(
+                "",
+                `Build-root entity "${name}" collides with a discovered entity of the same name`,
+              ),
+            );
+            continue;
+          }
+          discoveryResult.entities.set(name, entity);
+        }
+      } catch (error) {
+        errors.push(new BuildErrorClass("", error instanceof Error ? error.message : String(error)));
       }
     }
   }

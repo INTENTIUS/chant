@@ -85,6 +85,32 @@ export interface K8sChantConfig {
    * ```
    */
   execCredentialPlugins?: string[];
+
+  /**
+   * Kustomize settings (#1548 piece 3).
+   *
+   * `roots` names kustomization directories that are build roots: each is
+   * rendered (`kustomize build`, `kubectl kustomize` fallback) at build time
+   * and the rendered documents join the manifest set — serialized into the
+   * build output, ownership-stamped, checked by post-synth rules, and
+   * observed by `lifecycle diff --live` like any declared resource. This is
+   * how an estate that keeps its overlay tree gets a declared side without
+   * converting a single manifest to typed source.
+   *
+   * Paths are relative to the project root (the directory holding
+   * `chant.config.*`), NOT `sourceDir` — the overlay tree usually lives
+   * beside the typed source, not inside it.
+   *
+   * ```ts
+   * k8s: {
+   *   kustomize: { roots: ["overlays/prod"] },
+   * } satisfies K8sChantConfig
+   * ```
+   */
+  kustomize?: {
+    /** Kustomization directories to render into the build. */
+    roots?: string[];
+  };
 }
 
 declare module "@intentius/chant/config" {

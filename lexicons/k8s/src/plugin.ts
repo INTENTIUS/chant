@@ -29,6 +29,8 @@ import { K8sGenerator } from "./import/generator";
 import { k8sDeepNormalizationHooks } from "./deep-observe-hooks";
 import { LABEL_OWNERSHIP_KEYS } from "@intentius/chant/ownership";
 import { k8sConfigSchema } from "./config-schema";
+import type { K8sChantConfig } from "./config";
+import { renderKustomizeRoots } from "./kustomize/root";
 
 export const k8sPlugin: LexiconPlugin = {
   name: "k8s",
@@ -69,6 +71,18 @@ export const k8sPlugin: LexiconPlugin = {
 
   postSynthChecks() {
     return postSynthCheckList;
+  },
+
+  // #1548 piece 3 — kustomization dirs declared as build roots. Each entry in
+  // `k8s.kustomize.roots` renders at build time (same injectable runner as
+  // the kustomize-apply capability: `kustomize build`, `kubectl kustomize`
+  // fallback) and the documents join the build as verbatim manifest entities:
+  // serialized with ownership stamping, checked post-synth, observed by
+  // `lifecycle diff --live`. See ./kustomize/root.ts.
+  async buildRoots(ctx) {
+    const roots = (ctx.config as { k8s?: K8sChantConfig }).k8s?.kustomize?.roots ?? [];
+    if (roots.length === 0) return { entities: new Map() };
+    return renderKustomizeRoots({ projectRoot: ctx.projectRoot, roots });
   },
 
   // K8s YAML has no template interpolation functions like CloudFormation's

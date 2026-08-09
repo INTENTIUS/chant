@@ -23,6 +23,11 @@ export const k8sClusterProfileSchema = z.strictObject({
 export const k8sConfigSchema = z.strictObject({
   profiles: z.record(z.string(), k8sClusterProfileSchema).optional(),
   execCredentialPlugins: z.array(z.string()).optional(),
+  kustomize: z
+    .strictObject({
+      roots: z.array(z.string()).optional(),
+    })
+    .optional(),
 });
 
 declare module "@intentius/chant/config" {

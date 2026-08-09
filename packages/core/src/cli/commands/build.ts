@@ -3,7 +3,7 @@ import { loadChantConfigUpward, resolveOwnershipMarker, resolveFoldEnabled, reso
 import { resolveCliBuildParams } from "../build-params-cli";
 import type { Serializer, SerializerResult } from "../../serializer";
 import type { LexiconPlugin } from "../../lexicon";
-import { resolveLexiconVersions } from "../plugins";
+import { resolveLexiconVersions, collectBuildRootContributors } from "../plugins";
 import { runPostSynthChecks } from "../../lint/post-synth";
 import { applyConfiguredSeverity } from "../../lint/config";
 import { loadPolicyChecks } from "../../lint/policy";
@@ -261,6 +261,14 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
     lexicons,
     lexiconVersions,
     buildParams: paramsResolution.provenance,
+    // #1548 piece 3 — config-declared build roots (kustomize dirs), rendered
+    // into entities by the owning lexicon's hook. Rooted at the config dir,
+    // not the (possibly sourceDir-scoped) infra path.
+    buildRoots: collectBuildRootContributors(
+      options.plugins,
+      config as unknown as Record<string, unknown>,
+      configDir,
+    ),
   });
 
   // #1022 — report per-file fold vs run so it's visible what still runs.
