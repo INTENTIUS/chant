@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-07-03T14:49:29.679Z",
+  "generatedAt": "2026-08-09T05:28:53.518Z",
   "entries": {
     "APIGroup": {
       "kind": "resource",
@@ -51,9 +51,21 @@
         "versions:true"
       ]
     },
+    "AddPrefix": {
+      "kind": "property",
+      "resourceType": "K8s::Traefik::Middleware.addPrefix"
+    },
     "AdditionalOutputFormat": {
       "kind": "property",
       "resourceType": "K8s::CertManager::Certificate.additionalOutputFormats"
+    },
+    "Addon": {
+      "kind": "resource",
+      "resourceType": "K8s::K3s::Addon",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
     },
     "Address": {
       "kind": "property",
@@ -63,11 +75,27 @@
       "kind": "property",
       "resourceType": "K8s::Core::Affinity"
     },
+    "Alert": {
+      "kind": "resource",
+      "resourceType": "K8s::Flux::Alert",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "Alert_EventSource": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::Alert.eventSources"
+    },
+    "Alert_ProviderRef": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::Alert.providerRef"
+    },
     "AppProject": {
       "kind": "resource",
       "resourceType": "K8s::Argo::AppProject",
       "props": [
-        "metadata:true",
+        "metadata:false",
         "spec:true"
       ]
     },
@@ -107,6 +135,10 @@
       "kind": "property",
       "resourceType": "K8s::Argo::AppProject.signatureKeys"
     },
+    "AppProject_Status": {
+      "kind": "property",
+      "resourceType": "K8s::Argo::AppProject.status"
+    },
     "AppProject_SyncWindow": {
       "kind": "property",
       "resourceType": "K8s::Argo::AppProject.syncWindows"
@@ -115,7 +147,7 @@
       "kind": "resource",
       "resourceType": "K8s::Argo::Application",
       "props": [
-        "metadata:true",
+        "metadata:false",
         "operation:false",
         "spec:true"
       ]
@@ -124,7 +156,7 @@
       "kind": "resource",
       "resourceType": "K8s::Argo::ApplicationSet",
       "props": [
-        "metadata:true",
+        "metadata:false",
         "spec:true"
       ]
     },
@@ -139,6 +171,10 @@
     "ApplicationSet_PreservedFields": {
       "kind": "property",
       "resourceType": "K8s::Argo::ApplicationSet.preservedFields"
+    },
+    "ApplicationSet_Status": {
+      "kind": "property",
+      "resourceType": "K8s::Argo::ApplicationSet.status"
     },
     "ApplicationSet_Strategy": {
       "kind": "property",
@@ -172,6 +208,10 @@
       "kind": "property",
       "resourceType": "K8s::Argo::Application.sources"
     },
+    "Application_Status": {
+      "kind": "property",
+      "resourceType": "K8s::Argo::Application.status"
+    },
     "Application_SyncPolicy": {
       "kind": "property",
       "resourceType": "K8s::Argo::Application.syncPolicy"
@@ -180,9 +220,41 @@
       "kind": "property",
       "resourceType": "K8s::Monitoring::ServiceMonitor.attachMetadata"
     },
+    "AuthSecret": {
+      "kind": "property",
+      "resourceType": "K8s::K3s::HelmChart.authSecret"
+    },
     "AutoscalerOptions": {
       "kind": "property",
       "resourceType": "K8s::Ray::RayCluster.autoscalerOptions"
+    },
+    "Backup": {
+      "kind": "resource",
+      "resourceType": "K8s::Cnpg::Backup",
+      "props": [
+        "metadata:false",
+        "spec:true"
+      ]
+    },
+    "Backup_Cluster": {
+      "kind": "property",
+      "resourceType": "K8s::Cnpg::Backup.cluster"
+    },
+    "Backup_OnlineConfiguration": {
+      "kind": "property",
+      "resourceType": "K8s::Cnpg::Backup.onlineConfiguration"
+    },
+    "Backup_PluginConfiguration": {
+      "kind": "property",
+      "resourceType": "K8s::Cnpg::Backup.pluginConfiguration"
+    },
+    "Backup_Status": {
+      "kind": "property",
+      "resourceType": "K8s::Cnpg::Backup.status"
+    },
+    "BasicAuth": {
+      "kind": "property",
+      "resourceType": "K8s::Traefik::Middleware.basicAuth"
     },
     "BatchJob": {
       "kind": "resource",
@@ -199,6 +271,42 @@
         "metadata:false",
         "target:true"
       ]
+    },
+    "Bootstrap": {
+      "kind": "property",
+      "resourceType": "K8s::Cnpg::Cluster.bootstrap"
+    },
+    "Bucket": {
+      "kind": "resource",
+      "resourceType": "K8s::Flux::Bucket",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "Bucket_CertSecretRef": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::Bucket.certSecretRef"
+    },
+    "Bucket_ProxySecretRef": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::Bucket.proxySecretRef"
+    },
+    "Bucket_SecretRef": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::Bucket.secretRef"
+    },
+    "Bucket_Status": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::Bucket.status"
+    },
+    "Bucket_Sts": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::Bucket.sts"
+    },
+    "Buffering": {
+      "kind": "property",
+      "resourceType": "K8s::Traefik::Middleware.buffering"
     },
     "CM": {
       "kind": "resource",
@@ -287,6 +395,10 @@
       "kind": "property",
       "resourceType": "K8s::CertManager::CertificateRequest.issuerRef"
     },
+    "CertificateRequest_Status": {
+      "kind": "property",
+      "resourceType": "K8s::CertManager::CertificateRequest.status"
+    },
     "CertificateSigningRequest": {
       "kind": "resource",
       "resourceType": "K8s::Certificates::CertificateSigningRequest",
@@ -331,15 +443,27 @@
       "kind": "property",
       "resourceType": "K8s::CertManager::Certificate.secretTemplate"
     },
+    "Certificate_Status": {
+      "kind": "property",
+      "resourceType": "K8s::CertManager::Certificate.status"
+    },
     "Certificate_Subject": {
       "kind": "property",
       "resourceType": "K8s::CertManager::Certificate.subject"
+    },
+    "Certificates": {
+      "kind": "property",
+      "resourceType": "K8s::Cnpg::Cluster.certificates"
+    },
+    "Chain": {
+      "kind": "property",
+      "resourceType": "K8s::Traefik::Middleware.chain"
     },
     "Challenge": {
       "kind": "resource",
       "resourceType": "K8s::Acme::Challenge",
       "props": [
-        "metadata:true",
+        "metadata:false",
         "spec:true"
       ]
     },
@@ -350,6 +474,34 @@
     "Challenge_Solver": {
       "kind": "property",
       "resourceType": "K8s::Acme::Challenge.solver"
+    },
+    "Challenge_Status": {
+      "kind": "property",
+      "resourceType": "K8s::Acme::Challenge.status"
+    },
+    "Chart": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::HelmRelease.chart"
+    },
+    "ChartRef": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::HelmRelease.chartRef"
+    },
+    "CircuitBreaker": {
+      "kind": "property",
+      "resourceType": "K8s::Traefik::Middleware.circuitBreaker"
+    },
+    "ClientAuth": {
+      "kind": "property",
+      "resourceType": "K8s::Traefik::TLSOption.clientAuth"
+    },
+    "Cluster": {
+      "kind": "resource",
+      "resourceType": "K8s::Cnpg::Cluster",
+      "props": [
+        "metadata:false",
+        "spec:true"
+      ]
     },
     "ClusterIssuer": {
       "kind": "resource",
@@ -370,6 +522,10 @@
     "ClusterIssuer_SelfSigned": {
       "kind": "property",
       "resourceType": "K8s::CertManager::ClusterIssuer.selfSigned"
+    },
+    "ClusterIssuer_Status": {
+      "kind": "property",
+      "resourceType": "K8s::CertManager::ClusterIssuer.status"
     },
     "ClusterIssuer_Vault": {
       "kind": "property",
@@ -437,6 +593,142 @@
         "metadata:false"
       ]
     },
+    "Cluster_Affinity": {
+      "kind": "property",
+      "resourceType": "K8s::Cnpg::Cluster.affinity"
+    },
+    "Cluster_Backup": {
+      "kind": "property",
+      "resourceType": "K8s::Cnpg::Cluster.backup"
+    },
+    "Cluster_Bootstrap": {
+      "kind": "property",
+      "resourceType": "K8s::Cnpg::Cluster.bootstrap"
+    },
+    "Cluster_Certificates": {
+      "kind": "property",
+      "resourceType": "K8s::Cnpg::Cluster.certificates"
+    },
+    "Cluster_Env": {
+      "kind": "property",
+      "resourceType": "K8s::Cnpg::Cluster.env"
+    },
+    "Cluster_EnvFrom": {
+      "kind": "property",
+      "resourceType": "K8s::Cnpg::Cluster.envFrom"
+    },
+    "Cluster_EphemeralVolumeSource": {
+      "kind": "property",
+      "resourceType": "K8s::Cnpg::Cluster.ephemeralVolumeSource"
+    },
+    "Cluster_EphemeralVolumesSizeLimit": {
+      "kind": "property",
+      "resourceType": "K8s::Cnpg::Cluster.ephemeralVolumesSizeLimit"
+    },
+    "Cluster_ExternalCluster": {
+      "kind": "property",
+      "resourceType": "K8s::Cnpg::Cluster.externalClusters"
+    },
+    "Cluster_ImageCatalogRef": {
+      "kind": "property",
+      "resourceType": "K8s::Cnpg::Cluster.imageCatalogRef"
+    },
+    "Cluster_ImagePullSecret": {
+      "kind": "property",
+      "resourceType": "K8s::Cnpg::Cluster.imagePullSecrets"
+    },
+    "Cluster_InheritedMetadata": {
+      "kind": "property",
+      "resourceType": "K8s::Cnpg::Cluster.inheritedMetadata"
+    },
+    "Cluster_Managed": {
+      "kind": "property",
+      "resourceType": "K8s::Cnpg::Cluster.managed"
+    },
+    "Cluster_Monitoring": {
+      "kind": "property",
+      "resourceType": "K8s::Cnpg::Cluster.monitoring"
+    },
+    "Cluster_NodeMaintenanceWindow": {
+      "kind": "property",
+      "resourceType": "K8s::Cnpg::Cluster.nodeMaintenanceWindow"
+    },
+    "Cluster_Plugin": {
+      "kind": "property",
+      "resourceType": "K8s::Cnpg::Cluster.plugins"
+    },
+    "Cluster_PodSecurityContext": {
+      "kind": "property",
+      "resourceType": "K8s::Cnpg::Cluster.podSecurityContext"
+    },
+    "Cluster_PodSelectorRef": {
+      "kind": "property",
+      "resourceType": "K8s::Cnpg::Cluster.podSelectorRefs"
+    },
+    "Cluster_Postgresql": {
+      "kind": "property",
+      "resourceType": "K8s::Cnpg::Cluster.postgresql"
+    },
+    "Cluster_Probes": {
+      "kind": "property",
+      "resourceType": "K8s::Cnpg::Cluster.probes"
+    },
+    "Cluster_ProjectedVolumeTemplate": {
+      "kind": "property",
+      "resourceType": "K8s::Cnpg::Cluster.projectedVolumeTemplate"
+    },
+    "Cluster_Replica": {
+      "kind": "property",
+      "resourceType": "K8s::Cnpg::Cluster.replica"
+    },
+    "Cluster_ReplicationSlots": {
+      "kind": "property",
+      "resourceType": "K8s::Cnpg::Cluster.replicationSlots"
+    },
+    "Cluster_Resources": {
+      "kind": "property",
+      "resourceType": "K8s::Cnpg::Cluster.resources"
+    },
+    "Cluster_SeccompProfile": {
+      "kind": "property",
+      "resourceType": "K8s::Cnpg::Cluster.seccompProfile"
+    },
+    "Cluster_SecurityContext": {
+      "kind": "property",
+      "resourceType": "K8s::Cnpg::Cluster.securityContext"
+    },
+    "Cluster_ServiceAccountTemplate": {
+      "kind": "property",
+      "resourceType": "K8s::Cnpg::Cluster.serviceAccountTemplate"
+    },
+    "Cluster_Status": {
+      "kind": "property",
+      "resourceType": "K8s::Cnpg::Cluster.status"
+    },
+    "Cluster_Storage": {
+      "kind": "property",
+      "resourceType": "K8s::Cnpg::Cluster.storage"
+    },
+    "Cluster_SuperuserSecret": {
+      "kind": "property",
+      "resourceType": "K8s::Cnpg::Cluster.superuserSecret"
+    },
+    "Cluster_Tablespace": {
+      "kind": "property",
+      "resourceType": "K8s::Cnpg::Cluster.tablespaces"
+    },
+    "Cluster_TopologySpreadConstraint": {
+      "kind": "property",
+      "resourceType": "K8s::Cnpg::Cluster.topologySpreadConstraints"
+    },
+    "Cluster_WalStorage": {
+      "kind": "property",
+      "resourceType": "K8s::Cnpg::Cluster.walStorage"
+    },
+    "Component": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::FluxReport.components"
+    },
     "ComponentStatus": {
       "kind": "resource",
       "resourceType": "K8s::Core::ComponentStatus",
@@ -452,6 +744,10 @@
         "items:true",
         "metadata:false"
       ]
+    },
+    "Compress": {
+      "kind": "property",
+      "resourceType": "K8s::Traefik::Middleware.compress"
     },
     "ConfigMap": {
       "kind": "resource",
@@ -475,6 +771,10 @@
         "metadata:false"
       ]
     },
+    "Configuration": {
+      "kind": "property",
+      "resourceType": "K8s::Cnpg::ObjectStore.configuration"
+    },
     "Container": {
       "kind": "property",
       "resourceType": "K8s::Core::Container"
@@ -482,6 +782,10 @@
     "ContainerPort": {
       "kind": "property",
       "resourceType": "K8s::Core::ContainerPort"
+    },
+    "ContentType": {
+      "kind": "property",
+      "resourceType": "K8s::Traefik::Middleware.contentType"
     },
     "ControllerRevision": {
       "kind": "resource",
@@ -539,6 +843,10 @@
     "CrdbCluster_Resources": {
       "kind": "property",
       "resourceType": "K8s::Crdb::CrdbCluster.resources"
+    },
+    "CrdbCluster_Status": {
+      "kind": "property",
+      "resourceType": "K8s::Crdb::CrdbCluster.status"
     },
     "CrdbCluster_Toleration": {
       "kind": "property",
@@ -607,6 +915,18 @@
     "DataStore": {
       "kind": "property",
       "resourceType": "K8s::Crdb::CrdbCluster.dataStore"
+    },
+    "Decryption": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::Kustomization.decryption"
+    },
+    "DefaultCertificate": {
+      "kind": "property",
+      "resourceType": "K8s::Traefik::TLSStore.defaultCertificate"
+    },
+    "DefaultGeneratedCert": {
+      "kind": "property",
+      "resourceType": "K8s::Traefik::TLSStore.defaultGeneratedCert"
     },
     "DeleteOptions": {
       "kind": "resource",
@@ -684,6 +1004,26 @@
         "metadata:false"
       ]
     },
+    "DigestAuth": {
+      "kind": "property",
+      "resourceType": "K8s::Traefik::Middleware.digestAuth"
+    },
+    "DockerRegistrySecret": {
+      "kind": "property",
+      "resourceType": "K8s::K3s::HelmChart.dockerRegistrySecret"
+    },
+    "DriftDetection": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::HelmRelease.driftDetection"
+    },
+    "DynamicSecret": {
+      "kind": "property",
+      "resourceType": "K8s::Infisical::InfisicalDynamicSecret.dynamicSecret"
+    },
+    "EncodedCharacters": {
+      "kind": "property",
+      "resourceType": "K8s::Traefik::Middleware.encodedCharacters"
+    },
     "Endpoint": {
       "kind": "property",
       "resourceType": "K8s::Monitoring::ServiceMonitor.endpoints"
@@ -722,6 +1062,14 @@
         "metadata:false"
       ]
     },
+    "Env": {
+      "kind": "property",
+      "resourceType": "K8s::Cnpg::Cluster.env"
+    },
+    "EnvFrom": {
+      "kind": "property",
+      "resourceType": "K8s::Cnpg::Cluster.envFrom"
+    },
     "EnvFromSource": {
       "kind": "property",
       "resourceType": "K8s::Core::EnvFromSource"
@@ -737,6 +1085,18 @@
     "EphemeralContainer": {
       "kind": "property",
       "resourceType": "K8s::Core::EphemeralContainer"
+    },
+    "EphemeralVolumeSource": {
+      "kind": "property",
+      "resourceType": "K8s::Cnpg::Cluster.ephemeralVolumeSource"
+    },
+    "EphemeralVolumesSizeLimit": {
+      "kind": "property",
+      "resourceType": "K8s::Cnpg::Cluster.ephemeralVolumesSizeLimit"
+    },
+    "Errors": {
+      "kind": "property",
+      "resourceType": "K8s::Traefik::Middleware.errors"
     },
     "Event": {
       "kind": "resource",
@@ -758,6 +1118,10 @@
         "source:false",
         "type:false"
       ]
+    },
+    "EventSource": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::Alert.eventSources"
     },
     "EventsEvent": {
       "kind": "resource",
@@ -800,6 +1164,22 @@
       "kind": "property",
       "resourceType": "K8s::Core::ExecAction"
     },
+    "ExternalCluster": {
+      "kind": "property",
+      "resourceType": "K8s::Cnpg::Cluster.externalClusters"
+    },
+    "Failover": {
+      "kind": "property",
+      "resourceType": "K8s::Traefik::TraefikService.failover"
+    },
+    "Filter": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::ResourceSetInputProvider.filter"
+    },
+    "FilterTags": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::ImagePolicy.filterTags"
+    },
     "FlowSchema": {
       "kind": "resource",
       "resourceType": "K8s::Flowcontrol::FlowSchema",
@@ -815,6 +1195,110 @@
         "items:true",
         "metadata:false"
       ]
+    },
+    "FluxHelmChart": {
+      "kind": "resource",
+      "resourceType": "K8s::Flux::HelmChart",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "FluxHelmChart_SourceRef": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::HelmChart.sourceRef"
+    },
+    "FluxHelmChart_Status": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::HelmChart.status"
+    },
+    "FluxHelmChart_Verify": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::HelmChart.verify"
+    },
+    "FluxInstance": {
+      "kind": "resource",
+      "resourceType": "K8s::Flux::FluxInstance",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "FluxInstance_Cluster": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::FluxInstance.cluster"
+    },
+    "FluxInstance_CommonMetadata": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::FluxInstance.commonMetadata"
+    },
+    "FluxInstance_Distribution": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::FluxInstance.distribution"
+    },
+    "FluxInstance_Kustomize": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::FluxInstance.kustomize"
+    },
+    "FluxInstance_Sharding": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::FluxInstance.sharding"
+    },
+    "FluxInstance_Status": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::FluxInstance.status"
+    },
+    "FluxInstance_Storage": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::FluxInstance.storage"
+    },
+    "FluxInstance_Sync": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::FluxInstance.sync"
+    },
+    "FluxReport": {
+      "kind": "resource",
+      "resourceType": "K8s::Flux::FluxReport",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "FluxReport_Cluster": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::FluxReport.cluster"
+    },
+    "FluxReport_Component": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::FluxReport.components"
+    },
+    "FluxReport_Distribution": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::FluxReport.distribution"
+    },
+    "FluxReport_Operator": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::FluxReport.operator"
+    },
+    "FluxReport_Reconciler": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::FluxReport.reconcilers"
+    },
+    "FluxReport_Status": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::FluxReport.status"
+    },
+    "FluxReport_Sync": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::FluxReport.sync"
+    },
+    "ForwardAuth": {
+      "kind": "property",
+      "resourceType": "K8s::Traefik::Middleware.forwardAuth"
+    },
+    "ForwardingTimeouts": {
+      "kind": "property",
+      "resourceType": "K8s::Traefik::ServersTransport.forwardingTimeouts"
     },
     "From": {
       "kind": "property",
@@ -836,6 +1320,10 @@
       "kind": "property",
       "resourceType": "K8s::Gateway::GRPCRoute.rules"
     },
+    "GRPCRoute_Status": {
+      "kind": "property",
+      "resourceType": "K8s::Gateway::GRPCRoute.status"
+    },
     "Gateway": {
       "kind": "resource",
       "resourceType": "K8s::Gateway::Gateway",
@@ -856,6 +1344,10 @@
       "kind": "property",
       "resourceType": "K8s::Gateway::GatewayClass.parametersRef"
     },
+    "GatewayClass_Status": {
+      "kind": "property",
+      "resourceType": "K8s::Gateway::GatewayClass.status"
+    },
     "Gateway_Address": {
       "kind": "property",
       "resourceType": "K8s::Gateway::Gateway.addresses"
@@ -868,6 +1360,10 @@
       "kind": "property",
       "resourceType": "K8s::Gateway::Gateway.listeners"
     },
+    "Gateway_Status": {
+      "kind": "property",
+      "resourceType": "K8s::Gateway::Gateway.status"
+    },
     "GcsFaultToleranceOptions": {
       "kind": "property",
       "resourceType": "K8s::Ray::RayCluster.gcsFaultToleranceOptions"
@@ -876,9 +1372,49 @@
       "kind": "property",
       "resourceType": "K8s::Argo::ApplicationSet.generators"
     },
+    "Git": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::ImageUpdateAutomation.git"
+    },
+    "GitRepository": {
+      "kind": "resource",
+      "resourceType": "K8s::Flux::GitRepository",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "GitRepository_Include": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::GitRepository.include"
+    },
+    "GitRepository_ProxySecretRef": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::GitRepository.proxySecretRef"
+    },
+    "GitRepository_Ref": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::GitRepository.ref"
+    },
+    "GitRepository_SecretRef": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::GitRepository.secretRef"
+    },
+    "GitRepository_Status": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::GitRepository.status"
+    },
+    "GitRepository_Verify": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::GitRepository.verify"
+    },
     "Group": {
       "kind": "property",
       "resourceType": "K8s::Monitoring::PrometheusRule.groups"
+    },
+    "GrpcWeb": {
+      "kind": "property",
+      "resourceType": "K8s::Traefik::Middleware.grpcWeb"
     },
     "HPA": {
       "kind": "resource",
@@ -912,9 +1448,133 @@
       "kind": "property",
       "resourceType": "K8s::Gateway::HTTPRoute.rules"
     },
+    "HTTPRoute_Status": {
+      "kind": "property",
+      "resourceType": "K8s::Gateway::HTTPRoute.status"
+    },
     "HeadGroupSpec": {
       "kind": "property",
       "resourceType": "K8s::Ray::RayCluster.headGroupSpec"
+    },
+    "Headers": {
+      "kind": "property",
+      "resourceType": "K8s::Traefik::Middleware.headers"
+    },
+    "HealthCheck": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::Kustomization.healthChecks"
+    },
+    "HelmChartConfig": {
+      "kind": "resource",
+      "resourceType": "K8s::K3s::HelmChartConfig",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "HelmChartConfig_ValuesSecret": {
+      "kind": "property",
+      "resourceType": "K8s::K3s::HelmChartConfig.valuesSecrets"
+    },
+    "HelmRelease": {
+      "kind": "resource",
+      "resourceType": "K8s::Flux::HelmRelease",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "HelmRelease_Chart": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::HelmRelease.chart"
+    },
+    "HelmRelease_ChartRef": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::HelmRelease.chartRef"
+    },
+    "HelmRelease_CommonMetadata": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::HelmRelease.commonMetadata"
+    },
+    "HelmRelease_DependsOn": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::HelmRelease.dependsOn"
+    },
+    "HelmRelease_DriftDetection": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::HelmRelease.driftDetection"
+    },
+    "HelmRelease_HealthCheckExpr": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::HelmRelease.healthCheckExprs"
+    },
+    "HelmRelease_Install": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::HelmRelease.install"
+    },
+    "HelmRelease_KubeConfig": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::HelmRelease.kubeConfig"
+    },
+    "HelmRelease_PostRenderer": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::HelmRelease.postRenderers"
+    },
+    "HelmRelease_Rollback": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::HelmRelease.rollback"
+    },
+    "HelmRelease_Status": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::HelmRelease.status"
+    },
+    "HelmRelease_Test": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::HelmRelease.test"
+    },
+    "HelmRelease_Uninstall": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::HelmRelease.uninstall"
+    },
+    "HelmRelease_Upgrade": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::HelmRelease.upgrade"
+    },
+    "HelmRelease_ValuesFrom": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::HelmRelease.valuesFrom"
+    },
+    "HelmRelease_WaitStrategy": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::HelmRelease.waitStrategy"
+    },
+    "HelmRepository": {
+      "kind": "resource",
+      "resourceType": "K8s::Flux::HelmRepository",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "HelmRepository_AccessFrom": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::HelmRepository.accessFrom"
+    },
+    "HelmRepository_CertSecretRef": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::HelmRepository.certSecretRef"
+    },
+    "HelmRepository_SecretRef": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::HelmRepository.secretRef"
+    },
+    "HelmRepository_Status": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::HelmRepository.status"
+    },
+    "HighestRandomWeight": {
+      "kind": "property",
+      "resourceType": "K8s::Traefik::TraefikService.highestRandomWeight"
     },
     "HorizontalPodAutoscaler": {
       "kind": "resource",
@@ -956,6 +1616,10 @@
         "metadata:false"
       ]
     },
+    "Ignore": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::Kustomization.ignore"
+    },
     "IgnoreApplicationDifference": {
       "kind": "property",
       "resourceType": "K8s::Argo::ApplicationSet.ignoreApplicationDifferences"
@@ -964,9 +1628,205 @@
       "kind": "property",
       "resourceType": "K8s::Argo::Application.ignoreDifferences"
     },
-    "Image": {
+    "ImageCatalogRef": {
       "kind": "property",
-      "resourceType": "K8s::Crdb::CrdbCluster.image"
+      "resourceType": "K8s::Cnpg::Cluster.imageCatalogRef"
+    },
+    "ImagePolicy": {
+      "kind": "resource",
+      "resourceType": "K8s::Flux::ImagePolicy",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "ImagePolicy_FilterTags": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::ImagePolicy.filterTags"
+    },
+    "ImagePolicy_ImageRepositoryRef": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::ImagePolicy.imageRepositoryRef"
+    },
+    "ImagePolicy_Policy": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::ImagePolicy.policy"
+    },
+    "ImagePolicy_Status": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::ImagePolicy.status"
+    },
+    "ImagePullSecret": {
+      "kind": "property",
+      "resourceType": "K8s::Cnpg::Cluster.imagePullSecrets"
+    },
+    "ImageRepository": {
+      "kind": "resource",
+      "resourceType": "K8s::Flux::ImageRepository",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "ImageRepositoryRef": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::ImagePolicy.imageRepositoryRef"
+    },
+    "ImageRepository_AccessFrom": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::ImageRepository.accessFrom"
+    },
+    "ImageRepository_CertSecretRef": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::ImageRepository.certSecretRef"
+    },
+    "ImageRepository_ProxySecretRef": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::ImageRepository.proxySecretRef"
+    },
+    "ImageRepository_SecretRef": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::ImageRepository.secretRef"
+    },
+    "ImageRepository_Status": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::ImageRepository.status"
+    },
+    "ImageUpdateAutomation": {
+      "kind": "resource",
+      "resourceType": "K8s::Flux::ImageUpdateAutomation",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "ImageUpdateAutomation_Git": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::ImageUpdateAutomation.git"
+    },
+    "ImageUpdateAutomation_PolicySelector": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::ImageUpdateAutomation.policySelector"
+    },
+    "ImageUpdateAutomation_SourceRef": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::ImageUpdateAutomation.sourceRef"
+    },
+    "ImageUpdateAutomation_Status": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::ImageUpdateAutomation.status"
+    },
+    "ImageUpdateAutomation_Update": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::ImageUpdateAutomation.update"
+    },
+    "InFlightConn": {
+      "kind": "property",
+      "resourceType": "K8s::Traefik::MiddlewareTCP.inFlightConn"
+    },
+    "InFlightReq": {
+      "kind": "property",
+      "resourceType": "K8s::Traefik::Middleware.inFlightReq"
+    },
+    "Include": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::GitRepository.include"
+    },
+    "InfisicalDynamicSecret": {
+      "kind": "resource",
+      "resourceType": "K8s::Infisical::InfisicalDynamicSecret",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "InfisicalDynamicSecret_Authentication": {
+      "kind": "property",
+      "resourceType": "K8s::Infisical::InfisicalDynamicSecret.authentication"
+    },
+    "InfisicalDynamicSecret_DynamicSecret": {
+      "kind": "property",
+      "resourceType": "K8s::Infisical::InfisicalDynamicSecret.dynamicSecret"
+    },
+    "InfisicalDynamicSecret_ManagedSecretReference": {
+      "kind": "property",
+      "resourceType": "K8s::Infisical::InfisicalDynamicSecret.managedSecretReference"
+    },
+    "InfisicalDynamicSecret_Status": {
+      "kind": "property",
+      "resourceType": "K8s::Infisical::InfisicalDynamicSecret.status"
+    },
+    "InfisicalDynamicSecret_Tls": {
+      "kind": "property",
+      "resourceType": "K8s::Infisical::InfisicalDynamicSecret.tls"
+    },
+    "InfisicalPushSecret": {
+      "kind": "resource",
+      "resourceType": "K8s::Infisical::InfisicalPushSecret",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "InfisicalPushSecret_Authentication": {
+      "kind": "property",
+      "resourceType": "K8s::Infisical::InfisicalPushSecret.authentication"
+    },
+    "InfisicalPushSecret_Destination": {
+      "kind": "property",
+      "resourceType": "K8s::Infisical::InfisicalPushSecret.destination"
+    },
+    "InfisicalPushSecret_Push": {
+      "kind": "property",
+      "resourceType": "K8s::Infisical::InfisicalPushSecret.push"
+    },
+    "InfisicalPushSecret_Status": {
+      "kind": "property",
+      "resourceType": "K8s::Infisical::InfisicalPushSecret.status"
+    },
+    "InfisicalPushSecret_Tls": {
+      "kind": "property",
+      "resourceType": "K8s::Infisical::InfisicalPushSecret.tls"
+    },
+    "InfisicalSecret": {
+      "kind": "resource",
+      "resourceType": "K8s::Infisical::InfisicalSecret",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "InfisicalSecret_Authentication": {
+      "kind": "property",
+      "resourceType": "K8s::Infisical::InfisicalSecret.authentication"
+    },
+    "InfisicalSecret_ManagedKubeConfigMapReference": {
+      "kind": "property",
+      "resourceType": "K8s::Infisical::InfisicalSecret.managedKubeConfigMapReferences"
+    },
+    "InfisicalSecret_ManagedKubeSecretReference": {
+      "kind": "property",
+      "resourceType": "K8s::Infisical::InfisicalSecret.managedKubeSecretReferences"
+    },
+    "InfisicalSecret_ManagedSecretReference": {
+      "kind": "property",
+      "resourceType": "K8s::Infisical::InfisicalSecret.managedSecretReference"
+    },
+    "InfisicalSecret_Status": {
+      "kind": "property",
+      "resourceType": "K8s::Infisical::InfisicalSecret.status"
+    },
+    "InfisicalSecret_SyncConfig": {
+      "kind": "property",
+      "resourceType": "K8s::Infisical::InfisicalSecret.syncConfig"
+    },
+    "InfisicalSecret_Tls": {
+      "kind": "property",
+      "resourceType": "K8s::Infisical::InfisicalSecret.tls"
+    },
+    "InfisicalSecret_TokenSecretReference": {
+      "kind": "property",
+      "resourceType": "K8s::Infisical::InfisicalSecret.tokenSecretReference"
     },
     "Info": {
       "kind": "property",
@@ -1020,6 +1880,54 @@
         "metadata:false"
       ]
     },
+    "IngressRoute": {
+      "kind": "resource",
+      "resourceType": "K8s::Traefik::IngressRoute",
+      "props": [
+        "metadata:false",
+        "spec:true"
+      ]
+    },
+    "IngressRouteTCP": {
+      "kind": "resource",
+      "resourceType": "K8s::Traefik::IngressRouteTCP",
+      "props": [
+        "metadata:false",
+        "spec:true"
+      ]
+    },
+    "IngressRouteTCP_Route": {
+      "kind": "property",
+      "resourceType": "K8s::Traefik::IngressRouteTCP.routes"
+    },
+    "IngressRouteTCP_Tls": {
+      "kind": "property",
+      "resourceType": "K8s::Traefik::IngressRouteTCP.tls"
+    },
+    "IngressRouteUDP": {
+      "kind": "resource",
+      "resourceType": "K8s::Traefik::IngressRouteUDP",
+      "props": [
+        "metadata:false",
+        "spec:true"
+      ]
+    },
+    "IngressRouteUDP_Route": {
+      "kind": "property",
+      "resourceType": "K8s::Traefik::IngressRouteUDP.routes"
+    },
+    "IngressRoute_ParentRef": {
+      "kind": "property",
+      "resourceType": "K8s::Traefik::IngressRoute.parentRefs"
+    },
+    "IngressRoute_Route": {
+      "kind": "property",
+      "resourceType": "K8s::Traefik::IngressRoute.routes"
+    },
+    "IngressRoute_Tls": {
+      "kind": "property",
+      "resourceType": "K8s::Traefik::IngressRoute.tls"
+    },
     "IngressRule": {
       "kind": "property",
       "resourceType": "K8s::Networking::IngressRule"
@@ -1031,6 +1939,26 @@
     "IngressTLS": {
       "kind": "property",
       "resourceType": "K8s::Networking::IngressTLS"
+    },
+    "InheritedMetadata": {
+      "kind": "property",
+      "resourceType": "K8s::Cnpg::Cluster.inheritedMetadata"
+    },
+    "InputStrategy": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::ResourceSet.inputStrategy"
+    },
+    "InputsFrom": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::ResourceSet.inputsFrom"
+    },
+    "Install": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::HelmRelease.install"
+    },
+    "InstanceSidecarConfiguration": {
+      "kind": "property",
+      "resourceType": "K8s::Cnpg::ObjectStore.instanceSidecarConfiguration"
     },
     "Issuer": {
       "kind": "resource",
@@ -1051,6 +1979,10 @@
     "Issuer_SelfSigned": {
       "kind": "property",
       "resourceType": "K8s::CertManager::Issuer.selfSigned"
+    },
+    "Issuer_Status": {
+      "kind": "property",
+      "resourceType": "K8s::CertManager::Issuer.status"
     },
     "Issuer_Vault": {
       "kind": "property",
@@ -1076,6 +2008,42 @@
         "metadata:false"
       ]
     },
+    "K3sHelmChart": {
+      "kind": "resource",
+      "resourceType": "K8s::K3s::HelmChart",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "K3sHelmChart_AuthSecret": {
+      "kind": "property",
+      "resourceType": "K8s::K3s::HelmChart.authSecret"
+    },
+    "K3sHelmChart_DockerRegistrySecret": {
+      "kind": "property",
+      "resourceType": "K8s::K3s::HelmChart.dockerRegistrySecret"
+    },
+    "K3sHelmChart_PodSecurityContext": {
+      "kind": "property",
+      "resourceType": "K8s::K3s::HelmChart.podSecurityContext"
+    },
+    "K3sHelmChart_RepoCAConfigMap": {
+      "kind": "property",
+      "resourceType": "K8s::K3s::HelmChart.repoCAConfigMap"
+    },
+    "K3sHelmChart_SecurityContext": {
+      "kind": "property",
+      "resourceType": "K8s::K3s::HelmChart.securityContext"
+    },
+    "K3sHelmChart_Status": {
+      "kind": "property",
+      "resourceType": "K8s::K3s::HelmChart.status"
+    },
+    "K3sHelmChart_ValuesSecret": {
+      "kind": "property",
+      "resourceType": "K8s::K3s::HelmChart.valuesSecrets"
+    },
     "KeyToPath": {
       "kind": "property",
       "resourceType": "K8s::Core::KeyToPath"
@@ -1084,6 +2052,66 @@
       "kind": "property",
       "resourceType": "K8s::CertManager::Certificate.keystores"
     },
+    "Kustomization": {
+      "kind": "resource",
+      "resourceType": "K8s::Flux::Kustomization",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "Kustomization_CommonMetadata": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::Kustomization.commonMetadata"
+    },
+    "Kustomization_Decryption": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::Kustomization.decryption"
+    },
+    "Kustomization_DependsOn": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::Kustomization.dependsOn"
+    },
+    "Kustomization_HealthCheck": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::Kustomization.healthChecks"
+    },
+    "Kustomization_HealthCheckExpr": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::Kustomization.healthCheckExprs"
+    },
+    "Kustomization_Ignore": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::Kustomization.ignore"
+    },
+    "Kustomization_Image": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::Kustomization.images"
+    },
+    "Kustomization_KubeConfig": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::Kustomization.kubeConfig"
+    },
+    "Kustomization_Patche": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::Kustomization.patches"
+    },
+    "Kustomization_PostBuild": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::Kustomization.postBuild"
+    },
+    "Kustomization_SourceRef": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::Kustomization.sourceRef"
+    },
+    "Kustomization_Status": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::Kustomization.status"
+    },
+    "Kustomize": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::FluxInstance.kustomize"
+    },
     "LabelSelector": {
       "kind": "property",
       "resourceType": "K8s::Meta::LabelSelector"
@@ -1091,6 +2119,10 @@
     "LabelSelectorRequirement": {
       "kind": "property",
       "resourceType": "K8s::Meta::LabelSelectorRequirement"
+    },
+    "LayerSelector": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::OCIRepository.layerSelector"
     },
     "Lease": {
       "kind": "resource",
@@ -1156,9 +2188,221 @@
         "spec:true"
       ]
     },
+    "Managed": {
+      "kind": "property",
+      "resourceType": "K8s::Cnpg::Cluster.managed"
+    },
+    "ManagedKubeConfigMapReference": {
+      "kind": "property",
+      "resourceType": "K8s::Infisical::InfisicalSecret.managedKubeConfigMapReferences"
+    },
+    "ManagedKubeSecretReference": {
+      "kind": "property",
+      "resourceType": "K8s::Infisical::InfisicalSecret.managedKubeSecretReferences"
+    },
     "MetricSpec": {
       "kind": "property",
       "resourceType": "K8s::Autoscaling::MetricSpec"
+    },
+    "MicroVM": {
+      "kind": "resource",
+      "resourceType": "K8s::KubeMicroVM::MicroVM",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "MicroVMClass": {
+      "kind": "resource",
+      "resourceType": "K8s::KubeMicroVM::MicroVMClass",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "MicroVMImage": {
+      "kind": "resource",
+      "resourceType": "K8s::KubeMicroVM::MicroVMImage",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "MicroVMImage_Source": {
+      "kind": "property",
+      "resourceType": "K8s::KubeMicroVM::MicroVMImage.source"
+    },
+    "MicroVMImage_Status": {
+      "kind": "property",
+      "resourceType": "K8s::KubeMicroVM::MicroVMImage.status"
+    },
+    "MicroVMNetwork": {
+      "kind": "resource",
+      "resourceType": "K8s::KubeMicroVM::MicroVMNetwork",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "MicroVMNetwork_Status": {
+      "kind": "property",
+      "resourceType": "K8s::KubeMicroVM::MicroVMNetwork.status"
+    },
+    "MicroVMReplicaSet": {
+      "kind": "resource",
+      "resourceType": "K8s::KubeMicroVM::MicroVMReplicaSet",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "MicroVMReplicaSet_ScaleDown": {
+      "kind": "property",
+      "resourceType": "K8s::KubeMicroVM::MicroVMReplicaSet.scaleDown"
+    },
+    "MicroVMReplicaSet_Status": {
+      "kind": "property",
+      "resourceType": "K8s::KubeMicroVM::MicroVMReplicaSet.status"
+    },
+    "MicroVMReplicaSet_Template": {
+      "kind": "property",
+      "resourceType": "K8s::KubeMicroVM::MicroVMReplicaSet.template"
+    },
+    "MicroVM_Status": {
+      "kind": "property",
+      "resourceType": "K8s::KubeMicroVM::MicroVM.status"
+    },
+    "Middleware": {
+      "kind": "resource",
+      "resourceType": "K8s::Traefik::Middleware",
+      "props": [
+        "metadata:false",
+        "spec:true"
+      ]
+    },
+    "MiddlewareTCP": {
+      "kind": "resource",
+      "resourceType": "K8s::Traefik::MiddlewareTCP",
+      "props": [
+        "metadata:false",
+        "spec:true"
+      ]
+    },
+    "MiddlewareTCP_InFlightConn": {
+      "kind": "property",
+      "resourceType": "K8s::Traefik::MiddlewareTCP.inFlightConn"
+    },
+    "MiddlewareTCP_IpAllowList": {
+      "kind": "property",
+      "resourceType": "K8s::Traefik::MiddlewareTCP.ipAllowList"
+    },
+    "MiddlewareTCP_IpWhiteList": {
+      "kind": "property",
+      "resourceType": "K8s::Traefik::MiddlewareTCP.ipWhiteList"
+    },
+    "Middleware_AddPrefix": {
+      "kind": "property",
+      "resourceType": "K8s::Traefik::Middleware.addPrefix"
+    },
+    "Middleware_BasicAuth": {
+      "kind": "property",
+      "resourceType": "K8s::Traefik::Middleware.basicAuth"
+    },
+    "Middleware_Buffering": {
+      "kind": "property",
+      "resourceType": "K8s::Traefik::Middleware.buffering"
+    },
+    "Middleware_Chain": {
+      "kind": "property",
+      "resourceType": "K8s::Traefik::Middleware.chain"
+    },
+    "Middleware_CircuitBreaker": {
+      "kind": "property",
+      "resourceType": "K8s::Traefik::Middleware.circuitBreaker"
+    },
+    "Middleware_Compress": {
+      "kind": "property",
+      "resourceType": "K8s::Traefik::Middleware.compress"
+    },
+    "Middleware_ContentType": {
+      "kind": "property",
+      "resourceType": "K8s::Traefik::Middleware.contentType"
+    },
+    "Middleware_DigestAuth": {
+      "kind": "property",
+      "resourceType": "K8s::Traefik::Middleware.digestAuth"
+    },
+    "Middleware_EncodedCharacters": {
+      "kind": "property",
+      "resourceType": "K8s::Traefik::Middleware.encodedCharacters"
+    },
+    "Middleware_Errors": {
+      "kind": "property",
+      "resourceType": "K8s::Traefik::Middleware.errors"
+    },
+    "Middleware_ForwardAuth": {
+      "kind": "property",
+      "resourceType": "K8s::Traefik::Middleware.forwardAuth"
+    },
+    "Middleware_GrpcWeb": {
+      "kind": "property",
+      "resourceType": "K8s::Traefik::Middleware.grpcWeb"
+    },
+    "Middleware_Headers": {
+      "kind": "property",
+      "resourceType": "K8s::Traefik::Middleware.headers"
+    },
+    "Middleware_InFlightReq": {
+      "kind": "property",
+      "resourceType": "K8s::Traefik::Middleware.inFlightReq"
+    },
+    "Middleware_IpAllowList": {
+      "kind": "property",
+      "resourceType": "K8s::Traefik::Middleware.ipAllowList"
+    },
+    "Middleware_IpWhiteList": {
+      "kind": "property",
+      "resourceType": "K8s::Traefik::Middleware.ipWhiteList"
+    },
+    "Middleware_PassTLSClientCert": {
+      "kind": "property",
+      "resourceType": "K8s::Traefik::Middleware.passTLSClientCert"
+    },
+    "Middleware_RateLimit": {
+      "kind": "property",
+      "resourceType": "K8s::Traefik::Middleware.rateLimit"
+    },
+    "Middleware_RedirectRegex": {
+      "kind": "property",
+      "resourceType": "K8s::Traefik::Middleware.redirectRegex"
+    },
+    "Middleware_RedirectScheme": {
+      "kind": "property",
+      "resourceType": "K8s::Traefik::Middleware.redirectScheme"
+    },
+    "Middleware_ReplacePath": {
+      "kind": "property",
+      "resourceType": "K8s::Traefik::Middleware.replacePath"
+    },
+    "Middleware_ReplacePathRegex": {
+      "kind": "property",
+      "resourceType": "K8s::Traefik::Middleware.replacePathRegex"
+    },
+    "Middleware_Retry": {
+      "kind": "property",
+      "resourceType": "K8s::Traefik::Middleware.retry"
+    },
+    "Middleware_StripPrefix": {
+      "kind": "property",
+      "resourceType": "K8s::Traefik::Middleware.stripPrefix"
+    },
+    "Middleware_StripPrefixRegex": {
+      "kind": "property",
+      "resourceType": "K8s::Traefik::Middleware.stripPrefixRegex"
+    },
+    "Mirroring": {
+      "kind": "property",
+      "resourceType": "K8s::Traefik::TraefikService.mirroring"
     },
     "MutatingAdmissionPolicy": {
       "kind": "resource",
@@ -1304,6 +2548,46 @@
         "metadata:false"
       ]
     },
+    "NodeMaintenanceWindow": {
+      "kind": "property",
+      "resourceType": "K8s::Cnpg::Cluster.nodeMaintenanceWindow"
+    },
+    "OCIRepository": {
+      "kind": "resource",
+      "resourceType": "K8s::Flux::OCIRepository",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "OCIRepository_CertSecretRef": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::OCIRepository.certSecretRef"
+    },
+    "OCIRepository_LayerSelector": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::OCIRepository.layerSelector"
+    },
+    "OCIRepository_ProxySecretRef": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::OCIRepository.proxySecretRef"
+    },
+    "OCIRepository_Ref": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::OCIRepository.ref"
+    },
+    "OCIRepository_SecretRef": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::OCIRepository.secretRef"
+    },
+    "OCIRepository_Status": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::OCIRepository.status"
+    },
+    "OCIRepository_Verify": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::OCIRepository.verify"
+    },
     "ObjectMeta": {
       "kind": "property",
       "resourceType": "K8s::Meta::ObjectMeta"
@@ -1312,17 +2596,49 @@
       "kind": "property",
       "resourceType": "K8s::Core::ObjectReference"
     },
+    "ObjectStore": {
+      "kind": "resource",
+      "resourceType": "K8s::Cnpg::ObjectStore",
+      "props": [
+        "metadata:false",
+        "spec:true"
+      ]
+    },
+    "ObjectStore_Configuration": {
+      "kind": "property",
+      "resourceType": "K8s::Cnpg::ObjectStore.configuration"
+    },
+    "ObjectStore_InstanceSidecarConfiguration": {
+      "kind": "property",
+      "resourceType": "K8s::Cnpg::ObjectStore.instanceSidecarConfiguration"
+    },
+    "ObjectStore_Status": {
+      "kind": "property",
+      "resourceType": "K8s::Cnpg::ObjectStore.status"
+    },
+    "OidcProvider": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::Receiver.oidcProviders"
+    },
+    "Operator": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::FluxReport.operator"
+    },
     "Order": {
       "kind": "resource",
       "resourceType": "K8s::Acme::Order",
       "props": [
-        "metadata:true",
+        "metadata:false",
         "spec:true"
       ]
     },
     "Order_IssuerRef": {
       "kind": "property",
       "resourceType": "K8s::Acme::Order.issuerRef"
+    },
+    "Order_Status": {
+      "kind": "property",
+      "resourceType": "K8s::Acme::Order.status"
     },
     "OrphanedResources": {
       "kind": "property",
@@ -1360,6 +2676,14 @@
       "kind": "property",
       "resourceType": "K8s::Gateway::GatewayClass.parametersRef"
     },
+    "PassTLSClientCert": {
+      "kind": "property",
+      "resourceType": "K8s::Traefik::Middleware.passTLSClientCert"
+    },
+    "Patche": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::Kustomization.patches"
+    },
     "PersistentVolume": {
       "kind": "resource",
       "resourceType": "K8s::Core::PersistentVolume",
@@ -1395,6 +2719,14 @@
         "items:true",
         "metadata:false"
       ]
+    },
+    "Pgbouncer": {
+      "kind": "property",
+      "resourceType": "K8s::Cnpg::Pooler.pgbouncer"
+    },
+    "Plugin": {
+      "kind": "property",
+      "resourceType": "K8s::Cnpg::Cluster.plugins"
     },
     "Pod": {
       "kind": "resource",
@@ -1456,6 +2788,10 @@
       "kind": "property",
       "resourceType": "K8s::Core::PodSecurityContext"
     },
+    "PodSelectorRef": {
+      "kind": "property",
+      "resourceType": "K8s::Cnpg::Cluster.podSelectorRefs"
+    },
     "PodSpec": {
       "kind": "property",
       "resourceType": "K8s::Core::PodSpec"
@@ -1480,9 +2816,65 @@
       "kind": "property",
       "resourceType": "K8s::Core::PodTemplateSpec"
     },
+    "Policy": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::ImagePolicy.policy"
+    },
     "PolicyRule": {
       "kind": "property",
       "resourceType": "K8s::Rbac::PolicyRule"
+    },
+    "PolicySelector": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::ImageUpdateAutomation.policySelector"
+    },
+    "Pooler": {
+      "kind": "resource",
+      "resourceType": "K8s::Cnpg::Pooler",
+      "props": [
+        "metadata:false",
+        "spec:true"
+      ]
+    },
+    "Pooler_Cluster": {
+      "kind": "property",
+      "resourceType": "K8s::Cnpg::Pooler.cluster"
+    },
+    "Pooler_DeploymentStrategy": {
+      "kind": "property",
+      "resourceType": "K8s::Cnpg::Pooler.deploymentStrategy"
+    },
+    "Pooler_Monitoring": {
+      "kind": "property",
+      "resourceType": "K8s::Cnpg::Pooler.monitoring"
+    },
+    "Pooler_Pgbouncer": {
+      "kind": "property",
+      "resourceType": "K8s::Cnpg::Pooler.pgbouncer"
+    },
+    "Pooler_ServiceTemplate": {
+      "kind": "property",
+      "resourceType": "K8s::Cnpg::Pooler.serviceTemplate"
+    },
+    "Pooler_Status": {
+      "kind": "property",
+      "resourceType": "K8s::Cnpg::Pooler.status"
+    },
+    "Pooler_Template": {
+      "kind": "property",
+      "resourceType": "K8s::Cnpg::Pooler.template"
+    },
+    "PostBuild": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::Kustomization.postBuild"
+    },
+    "PostRenderer": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::HelmRelease.postRenderers"
+    },
+    "Postgresql": {
+      "kind": "property",
+      "resourceType": "K8s::Cnpg::Cluster.postgresql"
     },
     "PreservedFields": {
       "kind": "property",
@@ -1531,6 +2923,14 @@
       "kind": "property",
       "resourceType": "K8s::Core::Probe"
     },
+    "Probes": {
+      "kind": "property",
+      "resourceType": "K8s::Cnpg::Cluster.probes"
+    },
+    "ProjectedVolumeTemplate": {
+      "kind": "property",
+      "resourceType": "K8s::Cnpg::Cluster.projectedVolumeTemplate"
+    },
     "PrometheusRule": {
       "kind": "resource",
       "resourceType": "K8s::Monitoring::PrometheusRule",
@@ -1542,6 +2942,42 @@
     "PrometheusRule_Group": {
       "kind": "property",
       "resourceType": "K8s::Monitoring::PrometheusRule.groups"
+    },
+    "Provider": {
+      "kind": "resource",
+      "resourceType": "K8s::Flux::Provider",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "ProviderRef": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::Alert.providerRef"
+    },
+    "Provider_CertSecretRef": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::Provider.certSecretRef"
+    },
+    "Provider_ProxySecretRef": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::Provider.proxySecretRef"
+    },
+    "Provider_SecretRef": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::Provider.secretRef"
+    },
+    "ProxyProtocol": {
+      "kind": "property",
+      "resourceType": "K8s::Traefik::ServersTransportTCP.proxyProtocol"
+    },
+    "Push": {
+      "kind": "property",
+      "resourceType": "K8s::Infisical::InfisicalPushSecret.push"
+    },
+    "RateLimit": {
+      "kind": "property",
+      "resourceType": "K8s::Traefik::Middleware.rateLimit"
     },
     "RayCluster": {
       "kind": "resource",
@@ -1571,6 +3007,10 @@
       "kind": "property",
       "resourceType": "K8s::Ray::RayCluster.headGroupSpec"
     },
+    "RayCluster_Status": {
+      "kind": "property",
+      "resourceType": "K8s::Ray::RayCluster.status"
+    },
     "RayCluster_WorkerGroupSpec": {
       "kind": "property",
       "resourceType": "K8s::Ray::RayCluster.workerGroupSpecs"
@@ -1586,6 +3026,10 @@
     "RayJob_RayClusterSpec": {
       "kind": "property",
       "resourceType": "K8s::Ray::RayJob.rayClusterSpec"
+    },
+    "RayJob_Status": {
+      "kind": "property",
+      "resourceType": "K8s::Ray::RayJob.status"
     },
     "RayJob_SubmitterConfig": {
       "kind": "property",
@@ -1611,9 +3055,49 @@
       "kind": "property",
       "resourceType": "K8s::Ray::RayService.serveService"
     },
+    "RayService_Status": {
+      "kind": "property",
+      "resourceType": "K8s::Ray::RayService.status"
+    },
     "RayService_UpgradeStrategy": {
       "kind": "property",
       "resourceType": "K8s::Ray::RayService.upgradeStrategy"
+    },
+    "Receiver": {
+      "kind": "resource",
+      "resourceType": "K8s::Flux::Receiver",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "Receiver_OidcProvider": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::Receiver.oidcProviders"
+    },
+    "Receiver_Resource": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::Receiver.resources"
+    },
+    "Receiver_SecretRef": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::Receiver.secretRef"
+    },
+    "Receiver_Status": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::Receiver.status"
+    },
+    "Reconciler": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::FluxReport.reconcilers"
+    },
+    "RedirectRegex": {
+      "kind": "property",
+      "resourceType": "K8s::Traefik::Middleware.redirectRegex"
+    },
+    "RedirectScheme": {
+      "kind": "property",
+      "resourceType": "K8s::Traefik::Middleware.redirectScheme"
     },
     "ReferenceGrant": {
       "kind": "resource",
@@ -1630,6 +3114,18 @@
     "ReferenceGrant_To": {
       "kind": "property",
       "resourceType": "K8s::Gateway::ReferenceGrant.to"
+    },
+    "ReplacePath": {
+      "kind": "property",
+      "resourceType": "K8s::Traefik::Middleware.replacePath"
+    },
+    "ReplacePathRegex": {
+      "kind": "property",
+      "resourceType": "K8s::Traefik::Middleware.replacePathRegex"
+    },
+    "Replica": {
+      "kind": "property",
+      "resourceType": "K8s::Cnpg::Cluster.replica"
     },
     "ReplicaSet": {
       "kind": "resource",
@@ -1662,6 +3158,18 @@
         "items:true",
         "metadata:false"
       ]
+    },
+    "ReplicationSlots": {
+      "kind": "property",
+      "resourceType": "K8s::Cnpg::Cluster.replicationSlots"
+    },
+    "RepoCAConfigMap": {
+      "kind": "property",
+      "resourceType": "K8s::K3s::HelmChart.repoCAConfigMap"
+    },
+    "Resource": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::Receiver.resources"
     },
     "ResourceClaim": {
       "kind": "resource",
@@ -1715,6 +3223,70 @@
       "kind": "property",
       "resourceType": "K8s::Core::ResourceRequirements"
     },
+    "ResourceSet": {
+      "kind": "resource",
+      "resourceType": "K8s::Flux::ResourceSet",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "ResourceSetInputProvider": {
+      "kind": "resource",
+      "resourceType": "K8s::Flux::ResourceSetInputProvider",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "ResourceSetInputProvider_CertSecretRef": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::ResourceSetInputProvider.certSecretRef"
+    },
+    "ResourceSetInputProvider_Filter": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::ResourceSetInputProvider.filter"
+    },
+    "ResourceSetInputProvider_Schedule": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::ResourceSetInputProvider.schedule"
+    },
+    "ResourceSetInputProvider_SecretRef": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::ResourceSetInputProvider.secretRef"
+    },
+    "ResourceSetInputProvider_Skip": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::ResourceSetInputProvider.skip"
+    },
+    "ResourceSetInputProvider_Status": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::ResourceSetInputProvider.status"
+    },
+    "ResourceSet_CommonMetadata": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::ResourceSet.commonMetadata"
+    },
+    "ResourceSet_DependsOn": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::ResourceSet.dependsOn"
+    },
+    "ResourceSet_InputStrategy": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::ResourceSet.inputStrategy"
+    },
+    "ResourceSet_InputsFrom": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::ResourceSet.inputsFrom"
+    },
+    "ResourceSet_Status": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::ResourceSet.status"
+    },
+    "ResourceSet_Step": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::ResourceSet.steps"
+    },
     "ResourceSlice": {
       "kind": "resource",
       "resourceType": "K8s::Resource::ResourceSlice",
@@ -1731,9 +3303,9 @@
         "metadata:false"
       ]
     },
-    "Resources": {
+    "Retry": {
       "kind": "property",
-      "resourceType": "K8s::Crdb::CrdbCluster.resources"
+      "resourceType": "K8s::Traefik::Middleware.retry"
     },
     "Role": {
       "kind": "resource",
@@ -1772,9 +3344,17 @@
       "kind": "property",
       "resourceType": "K8s::Rbac::RoleRef"
     },
+    "Rollback": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::HelmRelease.rollback"
+    },
     "RollingUpdateDeployment": {
       "kind": "property",
       "resourceType": "K8s::Apps::RollingUpdateDeployment"
+    },
+    "RootCA": {
+      "kind": "property",
+      "resourceType": "K8s::Traefik::ServersTransport.rootCAs"
     },
     "RuntimeClass": {
       "kind": "resource",
@@ -1821,6 +3401,38 @@
         "spec:false"
       ]
     },
+    "ScaleDown": {
+      "kind": "property",
+      "resourceType": "K8s::KubeMicroVM::MicroVMReplicaSet.scaleDown"
+    },
+    "Schedule": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::ResourceSetInputProvider.schedule"
+    },
+    "ScheduledBackup": {
+      "kind": "resource",
+      "resourceType": "K8s::Cnpg::ScheduledBackup",
+      "props": [
+        "metadata:false",
+        "spec:true"
+      ]
+    },
+    "ScheduledBackup_Cluster": {
+      "kind": "property",
+      "resourceType": "K8s::Cnpg::ScheduledBackup.cluster"
+    },
+    "ScheduledBackup_OnlineConfiguration": {
+      "kind": "property",
+      "resourceType": "K8s::Cnpg::ScheduledBackup.onlineConfiguration"
+    },
+    "ScheduledBackup_PluginConfiguration": {
+      "kind": "property",
+      "resourceType": "K8s::Cnpg::ScheduledBackup.pluginConfiguration"
+    },
+    "ScheduledBackup_Status": {
+      "kind": "property",
+      "resourceType": "K8s::Cnpg::ScheduledBackup.status"
+    },
     "Sec": {
       "kind": "resource",
       "resourceType": "K8s::Core::Secret",
@@ -1831,6 +3443,10 @@
         "stringData:false",
         "type:false"
       ]
+    },
+    "SeccompProfile": {
+      "kind": "property",
+      "resourceType": "K8s::Cnpg::Cluster.seccompProfile"
     },
     "Secret": {
       "kind": "resource",
@@ -1894,6 +3510,42 @@
       "kind": "property",
       "resourceType": "K8s::Ray::RayService.serveService"
     },
+    "ServersTransport": {
+      "kind": "resource",
+      "resourceType": "K8s::Traefik::ServersTransport",
+      "props": [
+        "metadata:false",
+        "spec:true"
+      ]
+    },
+    "ServersTransportTCP": {
+      "kind": "resource",
+      "resourceType": "K8s::Traefik::ServersTransportTCP",
+      "props": [
+        "metadata:false",
+        "spec:true"
+      ]
+    },
+    "ServersTransportTCP_ProxyProtocol": {
+      "kind": "property",
+      "resourceType": "K8s::Traefik::ServersTransportTCP.proxyProtocol"
+    },
+    "ServersTransportTCP_Tls": {
+      "kind": "property",
+      "resourceType": "K8s::Traefik::ServersTransportTCP.tls"
+    },
+    "ServersTransport_ForwardingTimeouts": {
+      "kind": "property",
+      "resourceType": "K8s::Traefik::ServersTransport.forwardingTimeouts"
+    },
+    "ServersTransport_RootCA": {
+      "kind": "property",
+      "resourceType": "K8s::Traefik::ServersTransport.rootCAs"
+    },
+    "ServersTransport_Spiffe": {
+      "kind": "property",
+      "resourceType": "K8s::Traefik::ServersTransport.spiffe"
+    },
     "Service": {
       "kind": "resource",
       "resourceType": "K8s::Core::Service",
@@ -1919,6 +3571,10 @@
         "items:true",
         "metadata:false"
       ]
+    },
+    "ServiceAccountTemplate": {
+      "kind": "property",
+      "resourceType": "K8s::Cnpg::Cluster.serviceAccountTemplate"
     },
     "ServiceBackendPort": {
       "kind": "property",
@@ -1976,21 +3632,33 @@
       "kind": "property",
       "resourceType": "K8s::Core::ServicePort"
     },
+    "ServiceTemplate": {
+      "kind": "property",
+      "resourceType": "K8s::Cnpg::Pooler.serviceTemplate"
+    },
+    "Sharding": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::FluxInstance.sharding"
+    },
     "SignatureKey": {
       "kind": "property",
       "resourceType": "K8s::Argo::AppProject.signatureKeys"
+    },
+    "Skip": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::ResourceSetInputProvider.skip"
     },
     "Solver": {
       "kind": "property",
       "resourceType": "K8s::Acme::Challenge.solver"
     },
-    "Source": {
-      "kind": "property",
-      "resourceType": "K8s::Argo::Application.source"
-    },
     "Sources": {
       "kind": "property",
       "resourceType": "K8s::Argo::Application.sources"
+    },
+    "Spiffe": {
+      "kind": "property",
+      "resourceType": "K8s::Traefik::ServersTransport.spiffe"
     },
     "StatefulSet": {
       "kind": "resource",
@@ -2018,6 +3686,10 @@
         "metadata:false",
         "reason:false"
       ]
+    },
+    "Step": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::ResourceSet.steps"
     },
     "StorageClass": {
       "kind": "resource",
@@ -2061,6 +3733,18 @@
       "kind": "property",
       "resourceType": "K8s::Argo::ApplicationSet.strategy"
     },
+    "StripPrefix": {
+      "kind": "property",
+      "resourceType": "K8s::Traefik::Middleware.stripPrefix"
+    },
+    "StripPrefixRegex": {
+      "kind": "property",
+      "resourceType": "K8s::Traefik::Middleware.stripPrefixRegex"
+    },
+    "Sts": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::Bucket.sts"
+    },
     "Subject": {
       "kind": "property",
       "resourceType": "K8s::Rbac::Subject"
@@ -2081,6 +3765,14 @@
       "kind": "property",
       "resourceType": "K8s::Ray::RayJob.submitterPodTemplate"
     },
+    "SuperuserSecret": {
+      "kind": "property",
+      "resourceType": "K8s::Cnpg::Cluster.superuserSecret"
+    },
+    "SyncConfig": {
+      "kind": "property",
+      "resourceType": "K8s::Infisical::InfisicalSecret.syncConfig"
+    },
     "SyncWindow": {
       "kind": "property",
       "resourceType": "K8s::Argo::AppProject.syncWindows"
@@ -2089,9 +3781,45 @@
       "kind": "property",
       "resourceType": "K8s::Core::TCPSocketAction"
     },
-    "Template": {
+    "TLSOption": {
+      "kind": "resource",
+      "resourceType": "K8s::Traefik::TLSOption",
+      "props": [
+        "metadata:false",
+        "spec:true"
+      ]
+    },
+    "TLSOption_ClientAuth": {
       "kind": "property",
-      "resourceType": "K8s::Argo::ApplicationSet.template"
+      "resourceType": "K8s::Traefik::TLSOption.clientAuth"
+    },
+    "TLSStore": {
+      "kind": "resource",
+      "resourceType": "K8s::Traefik::TLSStore",
+      "props": [
+        "metadata:false",
+        "spec:true"
+      ]
+    },
+    "TLSStore_Certificate": {
+      "kind": "property",
+      "resourceType": "K8s::Traefik::TLSStore.certificates"
+    },
+    "TLSStore_DefaultCertificate": {
+      "kind": "property",
+      "resourceType": "K8s::Traefik::TLSStore.defaultCertificate"
+    },
+    "TLSStore_DefaultGeneratedCert": {
+      "kind": "property",
+      "resourceType": "K8s::Traefik::TLSStore.defaultGeneratedCert"
+    },
+    "Tablespace": {
+      "kind": "property",
+      "resourceType": "K8s::Cnpg::Cluster.tablespaces"
+    },
+    "Test": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::HelmRelease.test"
     },
     "To": {
       "kind": "property",
@@ -2113,6 +3841,10 @@
         "spec:true"
       ]
     },
+    "TokenSecretReference": {
+      "kind": "property",
+      "resourceType": "K8s::Infisical::InfisicalSecret.tokenSecretReference"
+    },
     "Toleration": {
       "kind": "property",
       "resourceType": "K8s::Core::Toleration"
@@ -2120,6 +3852,42 @@
     "TopologySpreadConstraint": {
       "kind": "property",
       "resourceType": "K8s::Core::TopologySpreadConstraint"
+    },
+    "TraefikService": {
+      "kind": "resource",
+      "resourceType": "K8s::Traefik::TraefikService",
+      "props": [
+        "metadata:false",
+        "spec:true"
+      ]
+    },
+    "TraefikService_Failover": {
+      "kind": "property",
+      "resourceType": "K8s::Traefik::TraefikService.failover"
+    },
+    "TraefikService_HighestRandomWeight": {
+      "kind": "property",
+      "resourceType": "K8s::Traefik::TraefikService.highestRandomWeight"
+    },
+    "TraefikService_Mirroring": {
+      "kind": "property",
+      "resourceType": "K8s::Traefik::TraefikService.mirroring"
+    },
+    "TraefikService_Weighted": {
+      "kind": "property",
+      "resourceType": "K8s::Traefik::TraefikService.weighted"
+    },
+    "Uninstall": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::HelmRelease.uninstall"
+    },
+    "Update": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::ImageUpdateAutomation.update"
+    },
+    "Upgrade": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::HelmRelease.upgrade"
     },
     "UpgradeStrategy": {
       "kind": "property",
@@ -2173,6 +3941,10 @@
         "metadata:false"
       ]
     },
+    "ValuesFrom": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::HelmRelease.valuesFrom"
+    },
     "Volume": {
       "kind": "property",
       "resourceType": "K8s::Core::Volume"
@@ -2214,6 +3986,14 @@
       "kind": "property",
       "resourceType": "K8s::Core::VolumeMount"
     },
+    "WaitStrategy": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::HelmRelease.waitStrategy"
+    },
+    "WalStorage": {
+      "kind": "property",
+      "resourceType": "K8s::Cnpg::Cluster.walStorage"
+    },
     "WatchEvent": {
       "kind": "resource",
       "resourceType": "K8s::Core::WatchEvent",
@@ -2221,6 +4001,10 @@
         "object:true",
         "type:true"
       ]
+    },
+    "Weighted": {
+      "kind": "property",
+      "resourceType": "K8s::Traefik::TraefikService.weighted"
     },
     "WorkerGroupSpec": {
       "kind": "property",
