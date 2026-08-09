@@ -19,7 +19,7 @@ import { builtinModules } from "node:module";
 const BUILTINS = new Set([...builtinModules, ...builtinModules.map((m) => `node:${m}`)]);
 
 const pkgDirs = [];
-for (const base of ["packages", "lexicons", "wardens"]) {
+for (const base of ["packages", "lexicons"]) {
   for (const d of readdirSync(base)) {
     try {
       if (statSync(join(base, d, "package.json"))) pkgDirs.push(join(base, d));
