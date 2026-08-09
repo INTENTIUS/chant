@@ -1,6 +1,6 @@
 {
   "name": "@intentius/warden-core",
-  "version": "0.44.0",
+  "version": "0.44.1",
   "type": "module",
   "description": "Shared CLI scaffolding for the chant wardens — flag parsing, config loading, reconcile outcome reporting (#788)",
   "license": "Apache-2.0",

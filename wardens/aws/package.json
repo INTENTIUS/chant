@@ -1,6 +1,6 @@
 {
   "name": "@intentius/aws-warden",
-  "version": "0.44.0",
+  "version": "0.44.1",
   "type": "module",
   "description": "Keep your AWS organization in declared state — OUs, SCPs, SSO assignments, audit sinks; stateless drift-correcting reconcile (epic intentius/chant#787)",
   "license": "Apache-2.0",
@@ -47,8 +47,8 @@
     "yaml": "^2.9.0"
   },
   "peerDependencies": {
-    "@intentius/chant": "^0.44.0",
-    "@intentius/warden-core": "^0.44.0"
+    "@intentius/chant": "^0.44.1",
+    "@intentius/warden-core": "^0.44.1"
   },
   "devDependencies": {
     "@intentius/chant": "*",
