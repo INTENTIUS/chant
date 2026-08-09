@@ -93,6 +93,26 @@ describe("classifyApiFailure", () => {
     }
   });
 
+  test("the detail names the context the client read, when the failure carries it (#1488)", () => {
+    const err = status(500, "InternalError");
+    err.contextNote = 'context "k3d-kubemicrovm-local" (ambient; no k8s.profiles.local binding)';
+    const outcome = classifyApiFailure(err);
+    expect(outcome.kind).toBe("unobserved");
+    if (outcome.kind === "unobserved") {
+      expect(outcome.detail).toContain('context "k3d-kubemicrovm-local" (ambient; no k8s.profiles.local binding)');
+    }
+  });
+
+  test("the context note survives the one-line cap rather than truncating with the message (#1488)", () => {
+    const err = new K8sApiError(500, "InternalError", "x".repeat(500));
+    err.contextNote = 'context "prod-eks" (bound by k8s.profiles.prod.context)';
+    const outcome = classifyApiFailure(err);
+    expect(outcome.kind).toBe("unobserved");
+    if (outcome.kind === "unobserved") {
+      expect(outcome.detail.endsWith('context "prod-eks" (bound by k8s.profiles.prod.context)')).toBe(true);
+    }
+  });
+
   test("classification survives a duplicated copy of the client package", () => {
     // Discrimination is by `name`, not `instanceof`, so an error from a second
     // physical copy of the package in a consumer's tree still classifies.

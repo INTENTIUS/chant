@@ -29,13 +29,15 @@
  * resolves this via `@intentius/chant/kubectl-context`'s
  * `resolveClusterTarget`:
  *
- * - A declared binding is passed explicitly as `kubectl ... --context <bound>`
- *   on every invocation, and checked against the ambient context first — a
- *   mismatch refuses loudly (naming the environment, the expected context,
- *   and the ambient one) instead of silently reading the wrong cluster.
+ * - A declared binding is passed explicitly to the typed client on every
+ *   read and write, regardless of what `kubectl` is ambiently pointed at
+ *   (#1488 — the binding is a selection, not a check). A bound context the
+ *   kubeconfig does not have fails with an error naming the context and the
+ *   `k8s.profiles.<env>.context` binding — never by falling back to ambient.
  * - No binding for the environment keeps today's behavior — the ambient
  *   context — but logs a visible note that nothing is pinned, so the
- *   fallback is never silent.
+ *   fallback is never silent. Read failures name the context that was read
+ *   and the missing binding.
  *
  * `ChantConfig` uses `.passthrough()` in its Zod schema so the `k8s` key is
  * accepted at runtime without core changes, exactly like `temporal.profiles`
