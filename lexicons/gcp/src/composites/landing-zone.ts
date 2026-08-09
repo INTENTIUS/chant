@@ -1,12 +1,12 @@
 /**
- * Landing-zone bootstrap composites (#791, epic #787 C1) — the GCP slice.
+ * Landing-zone bootstrap composites — the GCP slice.
  *
  * Fixed-shape resources for greenfield creation of the recommended
  * governance foundation through a Config Connector management stack. The
  * evaluability rules (EVL002/004) require composites to declare a fixed set
  * of resources, so these carry the foundation only; arbitrary folder/project
  * trees are authored as config with `landingZoneConfig()` (../governance.ts)
- * and reconciled by the GCP cloud warden, and further folders/projects are
+ * and reconciled by an external governance reconciler, and further folders/projects are
  * declared as ordinary resources.
  *
  * The pieces compose:

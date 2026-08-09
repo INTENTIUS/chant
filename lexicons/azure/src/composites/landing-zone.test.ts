@@ -8,7 +8,7 @@ function p(member: unknown): Record<string, any> {
   return (member as any).props;
 }
 
-describe("GovernanceFoundation (#791)", () => {
+describe("GovernanceFoundation", () => {
   test("declares the foundation management groups and the subscription tenant policy", () => {
     const lz = GovernanceFoundation({});
     expect(Object.keys(lz.members)).toEqual([
@@ -47,7 +47,7 @@ describe("GovernanceFoundation (#791)", () => {
   });
 });
 
-describe("GovernanceBaseline (#791)", () => {
+describe("GovernanceBaseline", () => {
   test("defines and assigns the two baseline policies", () => {
     const gb = GovernanceBaseline({});
     expect(Object.keys(gb.members)).toEqual([
@@ -76,7 +76,7 @@ describe("GovernanceBaseline (#791)", () => {
   });
 });
 
-describe("LocationRestriction and ActivityLogSink (#791)", () => {
+describe("LocationRestriction and ActivityLogSink", () => {
   test("LocationRestriction defines and assigns the allowed-locations policy", () => {
     const lr = LocationRestriction({ locations: ["westeurope"] });
     const def = p(lr.definitionLocationRestriction);

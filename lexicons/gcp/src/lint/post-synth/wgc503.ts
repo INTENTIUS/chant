@@ -1,5 +1,5 @@
 /**
- * WGC503: Audit Logging Dropped or Scoped Down (#793, epic #787 C3)
+ * WGC503: Audit Logging Dropped or Scoped Down 
  *
  * Flags IAMAuditConfig resources that capture nothing (no auditLogConfigs)
  * or that carve identities out of the audit trail via exemptedMembers.

@@ -228,8 +228,7 @@ halves of chant#1207's acceptance bar, on the canonical example.
 
 ## 5. Organizations service is entirely absent
 
-**Status:** confirmed 2026-08-07, unfiled. Blocks the aws-warden e2e
-(`wardens/aws/e2e/`, epic chant#787 C2/#792): every governance cycle starts
+**Status:** confirmed 2026-08-07, unfiled. Blocked the archived governance-reconcile e2e (see `archive/wardens-monorepo-state`): every governance cycle starts
 from `ListRoots`, so no part of the org-unit / policy-guardrail surface can be
 exercised against the emulator.
 
@@ -243,7 +242,7 @@ $ curl -s -X POST http://localhost:4599/ \
 
 Confirmed against `floci/floci:1.5.34`: `/_localstack/health` lists no
 `organizations` service at all (the full service list has 70 entries;
-`cloudtrail` is present and `running`). The aws-warden e2e bootstrap probes
+`cloudtrail` is present and `running`). That e2e's bootstrap probes
 health for `"organizations"` and exits without exporting `AWS_ENDPOINT_URL`,
 so the suite self-skips (green, with a notice) until the emulator gains the
 service. Fallback for a real run: a live sandbox org in dry-run.
@@ -252,7 +251,7 @@ The identity-assignment cycle (chant#792) is behind the same skip: floci's
 service catalog has neither `sso-admin` (IAM Identity Center) nor
 `identitystore` (checked in the floci source's ServiceCatalog, 2026-08-07),
 and every identity fetch starts from `ListInstances`. The in-memory
-convergence suite (`wardens/aws/src/reconcile/convergence.test.ts`) covers
+convergence suite (archived with the branch above) covers
 the identity loop meanwhile, like the other governance cycles.
 
 ## 6. floci-gcp: GCS bucket insert drops `iamConfiguration`

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { landingZoneConfig, FOUNDATION_MANAGEMENT_GROUPS } from "./governance";
 
-describe("landingZoneConfig (#791)", () => {
+describe("landingZoneConfig", () => {
   test("the default is the recommended foundation", () => {
     const cfg = landingZoneConfig();
     expect(Object.keys(cfg.managementGroups)).toEqual(["Security", "Infrastructure", "Sandbox", "Workloads"]);

@@ -1,5 +1,5 @@
 /**
- * WAW058: Organization Audit Trail Dropped or Scoped Down (#793, epic #787 C3)
+ * WAW058: Organization Audit Trail Dropped or Scoped Down 
  *
  * The audit-sink posture regressions on AWS: a trail with logging switched
  * off, an organization trail narrowed to a single region, or an organization

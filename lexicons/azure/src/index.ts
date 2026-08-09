@@ -76,8 +76,8 @@ export {
   ActivityLogSink, type ActivityLogSinkProps, type ActivityLogSinkResult,
 } from "./composites/index";
 
-// Azure governance authoring (#791): the desired-state config the Azure
-// cloud warden reconciles, and the typed landing-zone authoring layer.
+// Azure governance authoring: the desired-state config the Azure
+// external governance reconciler applies, and the typed landing-zone authoring layer.
 export {
   landingZoneConfig, locationRestriction,
   DENY_CLASSIC_RESOURCES, DENY_UNMANAGED_DISKS,

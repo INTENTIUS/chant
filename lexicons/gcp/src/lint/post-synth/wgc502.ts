@@ -1,5 +1,5 @@
 /**
- * WGC502: Org Policy Guardrail Defines No Rules (#793, epic #787 C3)
+ * WGC502: Org Policy Guardrail Defines No Rules 
  *
  * Flags OrgPolicyPolicy resources with no rules (and no reset). A rule-less
  * org policy binds a constraint to nothing — the usual leftover of a

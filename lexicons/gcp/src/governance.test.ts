@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { landingZoneConfig, FOUNDATION_FOLDERS } from "./governance";
 
-describe("landingZoneConfig (#791)", () => {
+describe("landingZoneConfig", () => {
   test("the default is the recommended foundation", () => {
     const cfg = landingZoneConfig();
     expect(Object.keys(cfg.folders)).toEqual(["Security", "Infrastructure", "Sandbox", "Workloads"]);

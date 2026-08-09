@@ -1,6 +1,6 @@
 /**
- * GCP governance authoring (#791, epic #787 C1): the desired-state config
- * shape the GCP cloud warden reconciles, and `landingZoneConfig()` — the
+ * GCP governance authoring: the desired-state config
+ * shape an external governance reconciler reconciles, and `landingZoneConfig()` — the
  * typed authoring layer that emits it.
  *
  * This is deliberately NOT a composite. The evaluability rules (EVL002/004,
@@ -8,7 +8,7 @@
  * data-driven folder tree walker cannot be one. The split mirrors the AWS
  * slice (lexicons/aws/src/governance.ts): authoring emits config (this
  * module, arbitrary cardinality); resources for greenfield bootstrap are the
- * fixed-shape composites in `composites/landing-zone.ts`; the warden
+ * fixed-shape composites in `composites/landing-zone.ts`; the reconciler
  * consumes only the config.
  *
  * GCP has no OrganizationRoot analog — organizations are created through
@@ -16,7 +16,7 @@
  */
 
 // ---------------------------------------------------------------------------
-// The desired-state config shape the GCP cloud warden consumes
+// The desired-state config shape an external governance reconciler consumes
 // ---------------------------------------------------------------------------
 
 /** An org-policy definition, keyed by name in `GcpGovernanceConfig.orgPolicies`. */
@@ -45,8 +45,8 @@ export interface FolderConfig {
 
 /**
  * The desired-state governance tree for one GCP organization. This is the
- * shape the GCP cloud warden loads as config — the GCP counterpart of
- * `AwsGovernanceConfig`. Cycles map onto the governance verbs (#790): the
+ * shape an external governance reconciler loads as config — the GCP counterpart of
+ * `AwsGovernanceConfig`. Cycles map onto the governance verbs: the
  * folder/project tree is `org-unit`, org policies are `policy-guardrail`,
  * audit configuration is `audit-sink`.
  */
@@ -132,7 +132,7 @@ export interface LandingZoneConfigProps {
 }
 
 /**
- * Author the desired-state tree the GCP cloud warden reconciles. Pure.
+ * Author the desired-state tree an external governance reconciler reconciles. Pure.
  * Throws when the tree attaches an org-policy name with no definition; only
  * policies the tree actually attaches are included in the output.
  */

@@ -1,5 +1,5 @@
 /**
- * WGC501: Org Policy Guardrail Not Enforced (#793, epic #787 C3)
+ * WGC501: Org Policy Guardrail Not Enforced 
  *
  * Flags OrgPolicyPolicy resources whose rules switch enforcement off or that
  * reset the constraint to its default. A disabled org policy is the GCP

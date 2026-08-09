@@ -1,21 +1,21 @@
 /**
- * AWS governance authoring (#791, epic #787 C1): the desired-state config
- * shape the AWS cloud warden (#792) reconciles, and `landingZoneConfig()` —
+ * AWS governance authoring: the desired-state config
+ * shape an external governance reconciler applies, and `landingZoneConfig()` —
  * the typed authoring layer that emits it.
  *
  * This is deliberately NOT a composite. The evaluability rules (EVL002/004,
  * #916/#952) require composites to declare a fixed set of resources, so a
  * data-driven OU tree walker cannot be one. The split mirrors the SCM
- * wardens: authoring emits config (this module, arbitrary cardinality);
+ * reconcilers: authoring emits config (this module, arbitrary cardinality);
  * resources for greenfield bootstrap are the fixed-shape composites in
- * `composites/landing-zone.ts`; the warden consumes only the config.
+ * `composites/landing-zone.ts`; the reconciler consumes only the config.
  *
  * GCP (Folder/OrgPolicy/AuditConfig) and Azure (blocked on #1545)
- * counterparts are tracked as #791 follow-ups.
+ * counterparts followed the same shape.
  */
 
 // ---------------------------------------------------------------------------
-// The desired-state config shape the AWS cloud warden consumes (#792)
+// The desired-state config shape an external governance reconciler consumes
 // ---------------------------------------------------------------------------
 
 /** An SCP definition, keyed by name in `AwsGovernanceConfig.scps`. */
@@ -61,14 +61,14 @@ export interface AssignmentConfig {
   accounts: string[];
 }
 
-/** IAM Identity Center desired state — the `identity-assignment` verb (#792). */
+/** IAM Identity Center desired state — the `identity-assignment` verb. */
 export interface IdentityConfig {
   /** Permission-set definitions, keyed by the names assignments reference. */
   permissionSets: Record<string, PermissionSetConfig>;
   assignments?: AssignmentConfig[];
   /**
    * The named break-glass admin grant. Implicitly desired (reconcile keeps
-   * it) and protected by the warden's break-glass-admin guardrail: no plan
+   * it) and protected by the reconciler's break-glass-admin guardrail: no plan
    * may remove this assignment or its permission set.
    */
   breakGlass?: AssignmentConfig;
@@ -77,8 +77,8 @@ export interface IdentityConfig {
 /**
  * The desired-state governance tree for one AWS organization. This is the
  * shape an external governance reconciler loads as config — the AWS counterpart of the
- * SCM wardens' GovernanceConfig. Cycles map onto the governance verbs
- * (#790): the OU/account tree is `org-unit`, SCPs are `policy-guardrail`,
+ * SCM governance reconcilers' GovernanceConfig. Cycles map onto the governance verbs
+ *: the OU/account tree is `org-unit`, SCPs are `policy-guardrail`,
  * audit sinks are `audit-sink`.
  */
 export interface AwsGovernanceConfig {
@@ -194,7 +194,7 @@ export interface LandingZoneConfigProps {
 }
 
 /**
- * Author the desired-state tree the AWS cloud warden (#792) reconciles.
+ * Author the desired-state tree an external governance reconciler applies.
  * Pure. Throws when the tree attaches an SCP name with no definition; only
  * SCPs the tree actually attaches are included in the output.
  */

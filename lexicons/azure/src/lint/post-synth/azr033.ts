@@ -1,5 +1,5 @@
 /**
- * AZR033: Subscriptions May Leave the Tenant (#793, epic #787 C3)
+ * AZR033: Subscriptions May Leave the Tenant 
  *
  * Flags a Microsoft.Subscription/policies resource that sets
  * blockSubscriptionsLeavingTenant to false — the tenant-level leave-block

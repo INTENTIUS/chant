@@ -1,5 +1,5 @@
 /**
- * WAW056: SCP Guardrail Denies Nothing (#793, epic #787 C3)
+ * WAW056: SCP Guardrail Denies Nothing 
  *
  * Flags SERVICE_CONTROL_POLICY resources whose document contains no Deny
  * statement. SCPs never grant permissions — they only filter — so an SCP

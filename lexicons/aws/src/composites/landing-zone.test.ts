@@ -3,7 +3,7 @@ import { expandComposite } from "@intentius/chant";
 import { AttrRef } from "@intentius/chant/attrref";
 import { GovernanceFoundation, OrganizationRoot, OrganizationTrail, RegionRestriction } from "./landing-zone";
 
-describe("GovernanceFoundation (#791)", () => {
+describe("GovernanceFoundation", () => {
   test("declares the foundation OUs and baseline SCPs", () => {
     const lz = GovernanceFoundation({ parentRootId: "r-abc1" });
     expect(Object.keys(lz.members)).toEqual([
