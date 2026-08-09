@@ -26,6 +26,15 @@ export interface K8sStatus {
  * `reason` come from the response, not from parsing text.
  */
 export class K8sApiError extends Error {
+  /**
+   * Which cluster the failing read actually talked to, e.g.
+   * `context "k3d-fountain-local" (bound by k8s.profiles.local.context)`.
+   * Stamped by the client that issued the request (chant #1488) — a
+   * `read-failed` that does not name the cluster it read cost an afternoon on
+   * a laptop with two k3d clusters, so the failure carries it from birth.
+   */
+  contextNote?: string;
+
   constructor(
     public readonly statusCode: number,
     public readonly reason: string | undefined,
@@ -90,6 +99,9 @@ export class K8sApiError extends Error {
  * connect" and "the server said no" are different observations.
  */
 export class K8sTransportError extends Error {
+  /** Which cluster context the failed request was aimed at — see {@link K8sApiError.contextNote}. */
+  contextNote?: string;
+
   constructor(
     message: string,
     public readonly target?: string,

@@ -318,6 +318,17 @@ export async function createK8sClient(options: K8sClientOptions = {}): Promise<K
   const defaultNamespace = kc.getContextObject(kc.getCurrentContext())?.namespace || "default";
   const concurrency = options.concurrency ?? DEFAULT_CONCURRENCY;
 
+  // Which cluster this client reads, in words, stamped onto every failure it
+  // throws (chant #1488). A `read-failed` that does not say which context it
+  // read turned "the ambient context moved" into an afternoon of debugging;
+  // naming it here — at construction, once — means every read path's
+  // classification carries it without each caller remembering to.
+  const contextNote = `context "${provenance.context ?? "(unset)"}" (${options.contextLabel ?? provenance.contextSource})`;
+  function noted<T extends { contextNote?: string }>(err: T): T {
+    err.contextNote = contextNote;
+    return err;
+  }
+
   // apiVersion → its APIResourceList, or null when the cluster does not serve
   // that group/version at all. Promises are cached, not values, so N entities
   // resolved concurrently issue one discovery request between them rather
@@ -355,10 +366,10 @@ export async function createK8sClient(options: K8sClientOptions = {}): Promise<K
         .send(ctx)
         .toPromise()) as unknown as ResponseContextLike;
     } catch (err) {
-      throw new K8sTransportError(
-        err instanceof Error ? err.message : String(err),
-        opts.target ?? `${method} ${path}`,
-        { cause: err },
+      throw noted(
+        new K8sTransportError(err instanceof Error ? err.message : String(err), opts.target ?? `${method} ${path}`, {
+          cause: err,
+        }),
       );
     }
 
@@ -366,10 +377,12 @@ export async function createK8sClient(options: K8sClientOptions = {}): Promise<K
     try {
       text = await response.body.text();
     } catch (err) {
-      throw new K8sTransportError(
-        `response body could not be read: ${err instanceof Error ? err.message : String(err)}`,
-        opts.target ?? `${method} ${path}`,
-        { cause: err },
+      throw noted(
+        new K8sTransportError(
+          `response body could not be read: ${err instanceof Error ? err.message : String(err)}`,
+          opts.target ?? `${method} ${path}`,
+          { cause: err },
+        ),
       );
     }
     return { status: response.httpStatusCode, body: text };
@@ -382,15 +395,17 @@ export async function createK8sClient(options: K8sClientOptions = {}): Promise<K
   ): Promise<T> {
     const { status, body } = await send(path, method, opts);
     if (status < 200 || status > 299) {
-      throw K8sApiError.fromResponse(status, body, opts.target);
+      throw noted(K8sApiError.fromResponse(status, body, opts.target));
     }
     try {
       return JSON.parse(body) as T;
     } catch (err) {
-      throw new K8sTransportError(
-        `the API server returned HTTP ${status} with a body that is not JSON`,
-        opts.target ?? `${method} ${path}`,
-        { cause: err },
+      throw noted(
+        new K8sTransportError(
+          `the API server returned HTTP ${status} with a body that is not JSON`,
+          opts.target ?? `${method} ${path}`,
+          { cause: err },
+        ),
       );
     }
   }
@@ -657,7 +672,7 @@ export async function createK8sClient(options: K8sClientOptions = {}): Promise<K
       target,
     });
     if (status < 200 || status > 299) {
-      throw K8sApiError.fromResponse(status, body, target);
+      throw noted(K8sApiError.fromResponse(status, body, target));
     }
     return body;
   }

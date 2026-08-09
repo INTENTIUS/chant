@@ -65,6 +65,7 @@ export const defaultK8sConnector: K8sConnector = async (options) => {
     const client = await createK8sClient({
       context: options.context,
       contextSource: "bound",
+      contextLabel: "explicit --context",
       ...options.client,
     });
     return { client, target: { context: options.context, source: "bound" } };
@@ -84,10 +85,19 @@ export const defaultK8sConnector: K8sConnector = async (options) => {
   // is supplied.
   const target = await resolveClusterTarget(config as Record<string, unknown>, options.environment, "k8s");
 
+  // #1488 — every failure the client throws names the cluster it read and how
+  // that cluster was selected, so a `read-failed` against the wrong context is
+  // legible from the reason alone.
+  const contextLabel =
+    target.source === "bound"
+      ? `bound by k8s.profiles.${options.environment}.context`
+      : `ambient; no k8s.profiles.${options.environment} binding`;
+
   const client = await createK8sClient({
     ...options.client,
     ...(target.context ? { context: target.context } : {}),
     contextSource: target.source,
+    contextLabel,
     ...(execAllowlist ? { execAllowlist } : {}),
   });
   return { client, target };

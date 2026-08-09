@@ -465,6 +465,44 @@ describe("k8s describeResources", () => {
       warnSpy.mockRestore();
     });
 
+    test("a failed read names the bound context it read (#1488)", async () => {
+      loadChantConfigMock.mockResolvedValue({ config: { k8s: { profiles: { prod: { context: "prod-eks" } } } } });
+      const cluster = fakeCluster({
+        kubeconfig: twoContexts,
+        respond: (req) =>
+          req.path.endsWith("/deployments/web")
+            ? { status: 500, body: statusBody(500, "InternalError", "etcdserver: leader changed") }
+            : undefined,
+      });
+
+      const result = await describeResources(
+        { environment: "prod", buildOutput: "", entityNames: ["web"], entities: entities() },
+        (o) => defaultK8sConnector({ ...o, client: { kubeconfig: twoContexts, requestLayer: cluster.layer } }),
+      );
+
+      expect(result.unobserved?.web?.reason).toBe("read-failed");
+      expect(result.unobserved?.web?.detail).toContain('context "prod-eks" (bound by k8s.profiles.prod.context)');
+    });
+
+    test("an ambient read failure names the context that was read and the missing binding (#1488)", async () => {
+      loadChantConfigMock.mockResolvedValue({ config: {} });
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const cluster = fakeCluster({
+        kubeconfig: twoContexts,
+        respond: (req) =>
+          req.path.endsWith("/deployments/web") ? { status: 500, body: statusBody(500, "InternalError", "nope") } : undefined,
+      });
+
+      const result = await describeResources(
+        { environment: "prod", buildOutput: "", entityNames: ["web"], entities: entities() },
+        (o) => defaultK8sConnector({ ...o, client: { kubeconfig: twoContexts, requestLayer: cluster.layer } }),
+      );
+      warnSpy.mockRestore();
+
+      expect(result.unobserved?.web?.reason).toBe("read-failed");
+      expect(result.unobserved?.web?.detail).toContain('context "prod-eks" (ambient; no k8s.profiles.prod binding)');
+    });
+
     test("a bound context the kubeconfig does not have refuses with the context name", async () => {
       loadChantConfigMock.mockResolvedValue({ config: { k8s: { profiles: { prod: { context: "gone-eks" } } } } });
       const oneContext = fakeKubeconfig({ contexts: [{ name: "prod-eks" }], currentContext: "prod-eks" });

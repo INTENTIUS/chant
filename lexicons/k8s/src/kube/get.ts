@@ -3,10 +3,10 @@
  * chant verdict column the issue's acceptance criterion names.
  *
  * The cluster edge is the typed client (chant #1074/#1177), reached the same
- * way every other read does: `--env` resolves and honors the cluster
- * binding (chant #1100/#1155, refusing loudly on a mismatch), `--context` is
- * an explicit override, neither given falls back to the ambient kubeconfig
- * context. A connect failure, an RBAC-denied read, or a kind the cluster's
+ * way every other read does: `--env` resolves and uses the cluster
+ * binding (chant #1100/#1155, revised by #1488 — the declared context is
+ * used regardless of what is ambient), `--context` is an explicit override,
+ * neither given falls back to the ambient kubeconfig context. A connect failure, an RBAC-denied read, or a kind the cluster's
  * discovery has never heard of all render as an honest message rather than
  * an empty table — "No resources found." is reserved for the one case that
  * actually means it: the kind is real and there are zero live instances.

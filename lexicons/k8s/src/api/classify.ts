@@ -47,6 +47,8 @@ interface ErrorLike {
   message?: string;
   statusCode?: number;
   reason?: string;
+  /** Which cluster the failing read talked to — stamped by the typed client (chant #1488). */
+  contextNote?: string;
 }
 
 function shapeOf(err: unknown): ErrorLike {
@@ -140,5 +142,10 @@ export const MISSING_CLIENT_DETAIL =
 function detailOf(err: unknown): string {
   const text = err instanceof Error ? err.message : String(err);
   const line = text.split("\n").find((l) => l.trim().length > 0)?.trim() ?? text.trim();
-  return line.length > 200 ? `${line.slice(0, 197)}...` : line;
+  const capped = line.length > 200 ? `${line.slice(0, 197)}...` : line;
+  // #1488 — a reason that does not say which cluster was read turned an
+  // ambient-context switch into an afternoon. The client stamps the context it
+  // resolved onto every failure; append it after the cap so it never truncates.
+  const note = shapeOf(err).contextNote;
+  return note ? `${capped} — ${note}` : capped;
 }
