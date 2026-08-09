@@ -283,6 +283,7 @@ release bump="patch":
       jq --arg v "$next" '
         .version = $v
         | if .peerDependencies then .peerDependencies |= with_entries(if (.key | startswith("@intentius/")) then .value = "^" + $v else . end) else . end
+        | if .optionalDependencies then .optionalDependencies |= with_entries(if ((.key | startswith("@intentius/")) and .value != "*") then .value = "^" + $v else . end) else . end
       ' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
     done
     # Keep the committed lockfile's workspace entries in step with the bump —
