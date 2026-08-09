@@ -201,6 +201,39 @@ describe("resource resolution through the cluster's own discovery", () => {
     expect(c.discoveryCacheKeys()).toEqual(["apps/v1"]);
   });
 
+  // chant #1517 — the runtime-children sweep's enumeration unit: one version
+  // per group, so every kind is named exactly once.
+  test("preferredGroupVersions returns core v1 plus each group's own preferredVersion, once", async () => {
+    const layer = fakeRequestLayer((req) => {
+      if (req.path === "/api") return { body: { kind: "APIVersions", versions: ["v1"] } };
+      if (req.path === "/apis") {
+        return {
+          body: {
+            kind: "APIGroupList",
+            groups: [
+              {
+                name: "apps",
+                preferredVersion: { groupVersion: "apps/v1", version: "v1" },
+                versions: [{ groupVersion: "apps/v1" }, { groupVersion: "apps/v1beta1" }],
+              },
+              // A group reporting no preferredVersion falls back to its first
+              // listed version rather than being dropped.
+              { name: "widgets.example.com", versions: [{ groupVersion: "widgets.example.com/v1alpha1" }] },
+            ],
+          },
+        };
+      }
+      return { status: 404, body: statusBody(404, "NotFound", `${req.path} not found`) };
+    });
+    const c = await client(layer);
+
+    expect(await c.preferredGroupVersions()).toEqual(["v1", "apps/v1", "widgets.example.com/v1alpha1"]);
+
+    // Cached: a second call issues no further discovery requests.
+    await c.preferredGroupVersions();
+    expect(layer.paths().filter((p) => p === "/apis")).toHaveLength(1);
+  });
+
   test("kubectl-style resource strings resolve the way kubectl resolves them", async () => {
     const c = await client(cluster());
     // plural.group — how waitForReady's callers have always spelled CRDs
