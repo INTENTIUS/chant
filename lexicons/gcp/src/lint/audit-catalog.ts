@@ -31,7 +31,7 @@ export const gcpAuditCatalog: Record<string, RuleMeta> = {
   WGC402: auditRule("WGC402", "merge-worthy", "guidance", "Missing required spec field", "Add the required spec field.", { category: "correctness" }),
   WGC403: auditRule("WGC403", "merge-worthy", "guidance", "Spec field has wrong type/structure", "Fix the field's type/structure.", { category: "correctness" }),
 
-  // #793 — governance posture regressions (epic #787 C3).
+  // governance posture regressions.
   WGC501: auditRule("WGC501", "merge-worthy", "guidance", "Org Policy guardrail not enforced", "Enable enforce on the rule (or remove the policy deliberately) — a disabled org policy constrains nothing.", { authority: [GCP_SEC] }),
   WGC502: auditRule("WGC502", "merge-worthy", "guidance", "Org Policy guardrail defines no rules", "Add rules to the OrgPolicyPolicy — without them the constraint binds nothing.", { authority: [GCP_SEC] }),
   WGC503: auditRule("WGC503", "merge-worthy", "guidance", "Audit logging dropped or scoped down", "Keep auditLogConfigs populated and remove exemptedMembers from the IAMAuditConfig.", { authority: [GCP_SEC] }),

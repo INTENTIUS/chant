@@ -7,7 +7,7 @@ function p(member: unknown): Record<string, any> {
   return (member as any).props;
 }
 
-describe("GovernanceFoundation (#791)", () => {
+describe("GovernanceFoundation", () => {
   test("declares the foundation folders and baseline org policies", () => {
     const lz = GovernanceFoundation({ orgId: "123456789012" });
     expect(Object.keys(lz.members)).toEqual([

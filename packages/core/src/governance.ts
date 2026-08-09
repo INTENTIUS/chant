@@ -1,5 +1,5 @@
 /**
- * Governance verb vocabulary (#790, epic #787).
+ * Governance verb vocabulary .
  *
  * `resourceType` on a change-set entry is a free provider-specific string
  * ("team", "branch-protection", "protected-tag", …) chosen per cycle. That is

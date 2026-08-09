@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { GOVERNANCE_VERBS, isGovernanceVerb, type GovernanceVerb } from "./governance.js";
 import { renderChangeSet, runReconcile, type ChangeSet, type Cycle } from "./reconcile.js";
 
-describe("governance verbs (#790)", () => {
+describe("governance verbs", () => {
   it("the runtime list and the type stay in sync", () => {
     // Compile-time: assigning the list's element type to GovernanceVerb and
     // back fails if either side gains a member the other lacks.

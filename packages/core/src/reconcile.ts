@@ -7,7 +7,7 @@
  * the plan renderer, and the guardrail framework (rename resolution + a removal
  * cap + a pluggable check runner).
  *
- * A "warden" (e.g. github-warden) builds its provider-specific resource diffing,
+ * A consumer application (e.g. github-warden) builds its provider-specific resource diffing,
  * live-state types, and domain guardrails on top of this, and drives them with
  * the generic `runReconcile` loop + `Cycle` interface (below). It complements
  * chant's `ownership.ts` marker contract: ownership markers make a `delete`
@@ -41,7 +41,7 @@ export interface ChangeSetEntry {
   /** High-level resource category (e.g. "team", "member", "branch-protection"). */
   resourceType: string;
   /**
-   * Cross-provider governance category (#790). `resourceType` stays the
+   * Cross-provider governance category. `resourceType` stays the
    * provider-specific display string; the verb is the shared grammar SCM and
    * cloud plans group by. Stamped by `runReconcile` from the cycle's `verb`.
    */
@@ -221,7 +221,7 @@ export function renderChangeSet(cs: ChangeSet): string {
   for (const kind of ORDER) {
     let group = byKind[kind];
     if (group.length === 0) continue;
-    // Verb-aware grouping (#790): when entries carry governance verbs, order
+    // Verb-aware grouping: when entries carry governance verbs, order
     // each section by verb (vocabulary order, unverbed entries last) so mixed
     // plans read category-by-category. Stable, and line format is unchanged —
     // a verbless change set renders exactly as before.
@@ -417,8 +417,8 @@ export interface Cycle<TClient, TConfig, TLive, TScope = unknown> {
   /** Human-readable name, e.g. "branch-protection". */
   name: string;
   /**
-   * Cross-provider governance category this cycle reconciles (#790). Every
-   * SCM warden cycle stamps one; cloud cycles (epic #787 C2) must. Optional
+   * Cross-provider governance category this cycle reconciles. Every
+   * SCM reconciler cycles stamp one; cloud cycles must. Optional
    * only so provider-external Cycle implementations don't break.
    */
   verb?: GovernanceVerb;
@@ -436,7 +436,7 @@ export interface Cycle<TClient, TConfig, TLive, TScope = unknown> {
 /** Per-cycle outcome recorded in the run result. */
 export interface CycleResult {
   name: string;
-  /** The cycle's governance verb (#790), when it stamps one. */
+  /** The cycle's governance verb, when it stamps one. */
   verb?: GovernanceVerb;
   /** Scope id this result is for (e.g. an org login). */
   org: string;
@@ -560,7 +560,7 @@ export async function runReconcile<TClient, TConfig, TLive, TScope = unknown>(
       }
 
       const changeSet = diffFn(scopeId, desired, live, diffOptions);
-      // Stamp the cycle's governance verb (#790) onto entries that don't
+      // Stamp the cycle's governance verb onto entries that don't
       // carry one, so provider diffs stay verb-unaware.
       if (cycle.verb) {
         for (const e of changeSet.entries) e.verb ??= cycle.verb;

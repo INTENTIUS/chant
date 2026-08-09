@@ -25,7 +25,7 @@ const REQUIRED_NAMES = [
   "SqlServer", "SqlDatabase",
   // Security & Identity
   "KeyVault", "ManagedIdentity",
-  // Governance — org hierarchy + policy primitives (#1545). #787 once claimed
+  // Governance — org hierarchy + policy primitives (#1545).  once claimed
   // these existed when they did not; this gate keeps them from vanishing again.
   "ManagementGroup", "SubscriptionAlias", "PolicyDefinition", "PolicyAssignment",
   // DNS & Traffic

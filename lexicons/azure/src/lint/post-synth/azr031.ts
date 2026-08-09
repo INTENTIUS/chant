@@ -1,5 +1,5 @@
 /**
- * AZR031: Policy Assignment Not Enforced (#793, epic #787 C3)
+ * AZR031: Policy Assignment Not Enforced 
  *
  * Flags Microsoft.Authorization/policyAssignments with enforcementMode
  * DoNotEnforce. The assignment stays visible in the tree while denying

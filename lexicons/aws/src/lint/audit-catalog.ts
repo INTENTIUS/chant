@@ -63,7 +63,7 @@ export const awsAuditCatalog: Record<string, RuleMeta> = {
   WAW054: auditRule("WAW054", "merge-worthy", "guidance", "ECR repository allows mutable image tags", "Set ImageTagMutability: IMMUTABLE.", { authority: [AWS_SEC] }),
   WAW055: auditRule("WAW055", "report-only", "guidance", "CloudWatch Logs log group has no retention period", "Set an explicit RetentionInDays.", { category: "best-practice" }),
 
-  // #793 — governance posture regressions (epic #787 C3).
+  // governance posture regressions.
   WAW056: auditRule("WAW056", "merge-worthy", "guidance", "SCP guardrail has no Deny statement", "Add a Deny statement — SCPs only filter permissions, so a Deny-less SCP guards nothing.", { authority: [AWS_SEC] }),
   WAW057: auditRule("WAW057", "merge-worthy", "guidance", "SCP guardrail attached to no targets", "Attach the SCP to the organization root or an OU via TargetIds.", { authority: [AWS_SEC] }),
   WAW058: auditRule("WAW058", "merge-worthy", "guidance", "Organization audit trail dropped or scoped down", "Keep an organization CloudTrail with IsLogging: true and IsMultiRegionTrail: true.", { authority: [AWS_SEC] }),

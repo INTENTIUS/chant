@@ -1,6 +1,6 @@
 /**
- * Azure governance authoring (#791, epic #787 C1): the desired-state config
- * shape the Azure cloud warden reconciles, and `landingZoneConfig()` — the
+ * Azure governance authoring: the desired-state config
+ * shape an external governance reconciler reconciles, and `landingZoneConfig()` — the
  * typed authoring layer that emits it.
  *
  * This is deliberately NOT a composite. The evaluability rules (EVL002/004,
@@ -9,7 +9,7 @@
  * the AWS/GCP slices (lexicons/{aws,gcp}/src/governance.ts): authoring emits
  * config (this module, arbitrary cardinality); resources for greenfield
  * bootstrap are the fixed-shape composites in `composites/landing-zone.ts`;
- * the warden consumes only the config.
+ * the reconciler consumes only the config.
  *
  * Azure has no OrganizationRoot analog — the tenant and its root management
  * group come from Entra ID, never from the resource API. Subscriptions the
@@ -19,7 +19,7 @@
  */
 
 // ---------------------------------------------------------------------------
-// The desired-state config shape the Azure cloud warden consumes
+// The desired-state config shape an external governance reconciler consumes
 // ---------------------------------------------------------------------------
 
 /** A custom policy definition, keyed by name in `AzureGovernanceConfig.policies`. */
@@ -37,9 +37,9 @@ export interface PolicyConfig {
 /** A subscription declared inside a management group. */
 export interface SubscriptionConfig {
   name: string;
-  /** An existing subscription to place. Omitted: the warden creates one via a tenant-scope alias. */
+  /** An existing subscription to place. Omitted: the reconciler creates one via a tenant-scope alias. */
   subscriptionId?: string;
-  /** Billing scope for subscriptions the warden creates. */
+  /** Billing scope for subscriptions the reconciler creates. */
   billingScope?: string;
   workload?: "Production" | "DevTest";
 }
@@ -56,9 +56,9 @@ export interface ManagementGroupConfig {
 
 /**
  * The desired-state governance tree for one Azure tenant. This is the shape
- * the Azure cloud warden loads as config — the Azure counterpart of
+ * an external governance reconciler loads as config — the Azure counterpart of
  * `AwsGovernanceConfig`/`GcpGovernanceConfig`. Cycles map onto the
- * governance verbs (#790): the management-group/subscription tree is
+ * governance verbs: the management-group/subscription tree is
  * `org-unit`, policy assignments are `policy-guardrail`, the activity-log
  * sink is `audit-sink`.
  */
@@ -188,7 +188,7 @@ export interface LandingZoneConfigProps {
 }
 
 /**
- * Author the desired-state tree the Azure cloud warden reconciles. Pure.
+ * Author the desired-state tree an external governance reconciler reconciles. Pure.
  * Throws when the tree assigns a policy name with no definition; only
  * policies the tree actually assigns are included in the output.
  */

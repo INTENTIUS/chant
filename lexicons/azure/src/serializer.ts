@@ -187,7 +187,7 @@ function serializeToTemplate(
   // pin overrides the inference — policy definitions and assignments
   // deploy at several scopes, so a management-group guardrail project
   // cannot be told from a subscription one by its resource set alone
-  // (#791); AZR030 still flags resources the pinned scope cannot hold.
+  //; AZR030 still flags resources the pinned scope cannot hold.
   let pinnedScope: DeployScope | undefined;
   const emittedTypes: string[] = [];
   for (const [, entity] of entities) {

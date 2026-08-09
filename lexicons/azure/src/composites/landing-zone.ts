@@ -1,12 +1,12 @@
 /**
- * Landing-zone bootstrap composites (#791, epic #787 C1) — the Azure slice.
+ * Landing-zone bootstrap composites — the Azure slice.
  *
  * Fixed-shape resources for greenfield creation of the recommended
  * governance foundation. The evaluability rules (EVL002/004) require
  * composites to declare a fixed set of resources, so these carry the
  * foundation only; arbitrary management-group/subscription trees are
  * authored as config with `landingZoneConfig()` (../governance.ts) and
- * reconciled by the Azure cloud warden, and further groups/subscriptions
+ * reconciled by an external governance reconciler, and further groups/subscriptions
  * are declared as ordinary resources.
  *
  * A single ARM template cannot mix deployment scopes (AZR030, #1545), so

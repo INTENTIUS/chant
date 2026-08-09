@@ -1,5 +1,5 @@
 /**
- * WAW057: SCP Guardrail Attached to No Targets (#793, epic #787 C3)
+ * WAW057: SCP Guardrail Attached to No Targets 
  *
  * Flags SERVICE_CONTROL_POLICY resources with no TargetIds. A defined but
  * unattached SCP enforces nothing — the usual shape of a guardrail that was

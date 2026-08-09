@@ -1,5 +1,5 @@
 /**
- * AZR032: Policy Definition Assigned Nowhere (#793, epic #787 C3)
+ * AZR032: Policy Definition Assigned Nowhere 
  *
  * Flags custom Microsoft.Authorization/policyDefinitions with no
  * policyAssignments referencing them in the same template. The

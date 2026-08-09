@@ -42,8 +42,8 @@ export type {
   GovernanceFoundationProps, LocationRestrictionProps, OrganizationAuditConfigProps,
 } from "./composites/index";
 
-// GCP governance authoring (#791): the desired-state config the GCP cloud
-// warden reconciles, and the typed landing-zone authoring layer.
+// GCP governance authoring: the desired-state config an external governance
+// reconciler applies, and the typed landing-zone authoring layer.
 export {
   landingZoneConfig, resourceLocationRestriction,
   DISABLE_SA_KEY_CREATION, SKIP_DEFAULT_NETWORK, AUDIT_ALL_SERVICES, FOUNDATION_FOLDERS,
