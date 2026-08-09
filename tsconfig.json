@@ -25,12 +25,6 @@
       "@intentius/chant": [
         "packages/core/src/index.ts"
       ],
-      "@intentius/warden-core": [
-      "wardens/core/src/index.ts"
-    ],
-    "@intentius/warden-core/*": [
-      "wardens/core/src/*"
-    ],
     "@intentius/chant/*": [
         "packages/core/src/*"
       ],
@@ -135,7 +129,6 @@
   "include": [
     "packages/**/*",
     "lexicons/**/*",
-    "wardens/**/*",
     "types/**/*"
   ],
   "exclude": [

@@ -24,7 +24,7 @@ fi
 ok=()
 missing=()
 
-for dir in packages/*/ lexicons/*/ wardens/*/; do
+for dir in packages/*/ lexicons/*/; do
   [ -f "${dir}package.json" ] || continue
   name=$(node -e "
     try {

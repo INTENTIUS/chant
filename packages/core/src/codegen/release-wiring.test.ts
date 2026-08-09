@@ -118,10 +118,9 @@ function recipeBody(name: string): string {
  */
 describe("release wiring: peer ranges stay in lockstep (#1255)", () => {
   it("the whole-repo release rewrites every @intentius peer range", () => {
-    // Since #788 the rewrite is generic (`with_entries` over every
-    // `@intentius/*` peer) rather than two named keys: the wardens added
-    // `@intentius/warden-core` as a third in-repo peer, and a hand-listed
-    // rewrite goes stale the same way the hand-listed publish steps did.
+    // The rewrite is generic (`with_entries` over every `@intentius/*`
+    // peer) rather than named keys — a hand-listed rewrite goes stale the
+    // same way the hand-listed publish steps did.
     const body = recipeBody("release");
     expect(body).toMatch(/\.peerDependencies\s*\|=\s*with_entries/);
     expect(body).toMatch(/startswith\("@intentius\/"\)/);

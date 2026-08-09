@@ -48,7 +48,7 @@ describe("publish order", () => {
     // same stranding by a different route.
     const all = execFileSync(
       "bash",
-      ["-c", 'for d in packages/*/ lexicons/*/ wardens/*/; do [ -f "$d/package.json" ] && echo "${d%/}"; done'],
+      ["-c", 'for d in packages/*/ lexicons/*/; do [ -f "$d/package.json" ] && echo "${d%/}"; done'],
       { cwd: REPO, encoding: "utf8" },
     )
       .split("\n")
