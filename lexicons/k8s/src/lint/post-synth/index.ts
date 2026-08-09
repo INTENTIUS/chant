@@ -3,6 +3,8 @@ import type { PostSynthCheck } from "@intentius/chant/lint/post-synth";
 import { argo002 } from "./argo002";
 import { argo003 } from "./argo003";
 import { argo005 } from "./argo005";
+import { flux002 } from "./flux002";
+import { flux003 } from "./flux003";
 import { wk8005 } from "./wk8005";
 import { wk8006 } from "./wk8006";
 import { wk8041 } from "./wk8041";
@@ -34,6 +36,8 @@ export const postSynthChecks: PostSynthCheck[] = [
   argo002,
   argo003,
   argo005,
+  flux002,
+  flux003,
   wk8005,
   wk8006,
   wk8041,

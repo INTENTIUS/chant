@@ -39,6 +39,8 @@ describe("k8sPlugin", () => {
     const ids = checks.map((c) => c.id);
     expect(ids).toContain("WK8101");
     expect(ids).toContain("ARGO002");
+    expect(ids).toContain("FLUX002");
+    expect(ids).toContain("FLUX003");
   });
 
   test("intrinsics() returns empty array", () => {

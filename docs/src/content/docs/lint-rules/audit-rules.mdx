@@ -617,7 +617,7 @@ Use an action reference Forgejo can resolve (full URL or a mirrored action).
 
 Use a runner label your Forgejo instance provides.
 
-## Kubernetes (WK8 / ARGO)
+## Kubernetes (WK8 / ARGO / FLUX)
 
 Run against Kubernetes manifests.
 
@@ -638,6 +638,18 @@ Point spec.destination at a registered cluster or the in-cluster target.
 **Argo source.path may not resolve** — report-only · guidance
 
 Ensure the source path exists under the build root.
+
+### FLUX002
+
+**Flux Kustomization references an undeclared source** — merge-worthy · guidance
+
+Declare the GitRepository/OCIRepository/Bucket, or point sourceRef at the bootstrap flux-system repo.
+
+### FLUX003
+
+**Flux Kustomization dependsOn names an undeclared Kustomization** — report-only · guidance
+
+Fix the dependsOn name, or ignore if the dependency is declared in another repo.
 
 ### WK8005
 

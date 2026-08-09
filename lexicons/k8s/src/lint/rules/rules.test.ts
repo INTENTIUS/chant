@@ -4,6 +4,7 @@ import { latestImageTagRule } from "./latest-image-tag";
 import { missingResourceLimitsRule } from "./missing-resource-limits";
 import { argoAutomatedPruneRule } from "./argo-automated-prune";
 import { argoAppSetSingleProjectRule } from "./argo-appset-single-project";
+import { fluxSourceRefPinRule } from "./flux-source-ref-pin";
 import * as ts from "typescript";
 
 function createContext(code: string) {
@@ -366,5 +367,55 @@ describe("ARGO004: ApplicationSet single AppProject", () => {
     const diags = argoAppSetSingleProjectRule.check(ctx);
     expect(diags.length).toBe(1);
     expect(diags[0].message).toContain("placeholder");
+  });
+});
+
+describe("FLUX001: GitRepository must pin spec.ref", () => {
+  test("rule metadata", () => {
+    expect(fluxSourceRefPinRule.id).toBe("FLUX001");
+    expect(fluxSourceRefPinRule.severity).toBe("warning");
+    expect(fluxSourceRefPinRule.category).toBe("correctness");
+  });
+
+  test("flags a GitRepository with a url but no ref", () => {
+    const ctx = createContext(`
+      new GitRepository({
+        metadata: { name: "home-chant" },
+        spec: { interval: "5m", url: "https://github.com/jhgaylor/home-chant" },
+      });
+    `);
+    const diags = fluxSourceRefPinRule.check(ctx);
+    expect(diags.length).toBe(1);
+    expect(diags[0].ruleId).toBe("FLUX001");
+    expect(diags[0].message).toContain("home-chant");
+    expect(diags[0].message).toContain("master");
+  });
+
+  test("does NOT flag a branch pin", () => {
+    const ctx = createContext(`
+      new GitRepository({
+        metadata: { name: "home-chant" },
+        spec: { url: "https://github.com/jhgaylor/home-chant", ref: { branch: "main" } },
+      });
+    `);
+    expect(fluxSourceRefPinRule.check(ctx).length).toBe(0);
+  });
+
+  test("does NOT flag a tag pin", () => {
+    const ctx = createContext(`
+      new GitRepository({
+        metadata: { name: "infra" },
+        spec: { url: "https://example.com/infra", ref: { tag: "v1.2.3" } },
+      });
+    `);
+    expect(fluxSourceRefPinRule.check(ctx).length).toBe(0);
+  });
+
+  test("skips a GitRepository with no inspectable spec literal", () => {
+    const ctx = createContext(`
+      const spec = buildSpec();
+      new GitRepository({ metadata: { name: "dynamic" }, spec });
+    `);
+    expect(fluxSourceRefPinRule.check(ctx).length).toBe(0);
   });
 });

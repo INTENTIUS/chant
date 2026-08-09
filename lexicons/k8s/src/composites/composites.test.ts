@@ -9,6 +9,7 @@ function p(member: unknown): Record<string, unknown> {
 }
 import { StatefulApp } from "./stateful-app";
 import { ArgoAppFor, ArgoAppSetForRegions, registerArgoCluster } from "./argo-app";
+import { FluxGitSource, FluxAppFor } from "./flux-app";
 import { CronWorkload } from "./cron-workload";
 import { AutoscaledService } from "./autoscaled-service";
 import { WorkerPool } from "./worker-pool";
@@ -3359,11 +3360,132 @@ describe("registerArgoCluster", () => {
   });
 });
 
+describe("FluxGitSource", () => {
+  test("returns a single GitRepository", () => {
+    const result = FluxGitSource("home-chant", { url: "https://github.com/jhgaylor/home-chant" });
+    expect(result.gitRepository).toBeDefined();
+    expect((result.gitRepository as any).entityType).toBe("K8s::Flux::GitRepository");
+  });
+
+  test("defaults: 5m interval, main branch, flux-system namespace", () => {
+    const result = FluxGitSource("home-chant", { url: "https://github.com/jhgaylor/home-chant" });
+    const meta = p(result.gitRepository).metadata as any;
+    const spec = p(result.gitRepository).spec as any;
+    expect(meta.namespace).toBe("flux-system");
+    expect(meta.labels["app.kubernetes.io/managed-by"]).toBe("chant");
+    expect(spec.interval).toBe("5m");
+    expect(spec.url).toBe("https://github.com/jhgaylor/home-chant");
+    expect(spec.ref).toEqual({ branch: "main" });
+  });
+
+  test("a tag pin wins over the branch default", () => {
+    const spec = p(FluxGitSource("app", { url: "u", tag: "v1.2.3" }).gitRepository).spec as any;
+    expect(spec.ref).toEqual({ tag: "v1.2.3" });
+  });
+
+  test("secretRef renders as a name reference", () => {
+    const spec = p(FluxGitSource("app", { url: "u", secretRef: "git-creds" }).gitRepository).spec as any;
+    expect(spec.secretRef).toEqual({ name: "git-creds" });
+  });
+});
+
+describe("FluxAppFor", () => {
+  const source = () => FluxGitSource("home-chant", { url: "https://github.com/jhgaylor/home-chant" });
+
+  test("returns a single Kustomization (the source is not duplicated)", () => {
+    const result = FluxAppFor("hello-chant", { source: source(), path: "./apps/hello-chant/k8s" });
+    expect(result.kustomization).toBeDefined();
+    expect((result.kustomization as any).entityType).toBe("K8s::Flux::Kustomization");
+    expect((result as any).gitRepository).toBeUndefined();
+  });
+
+  test("defaults: 10m interval, prune, wait, flux-system namespace", () => {
+    const result = FluxAppFor("hello-chant", { source: source(), path: "./apps/hello-chant/k8s" });
+    const meta = p(result.kustomization).metadata as any;
+    const spec = p(result.kustomization).spec as any;
+    expect(meta.name).toBe("hello-chant");
+    expect(meta.namespace).toBe("flux-system");
+    expect(spec.interval).toBe("10m");
+    expect(spec.prune).toBe(true);
+    expect(spec.wait).toBe(true);
+    expect(spec.path).toBe("./apps/hello-chant/k8s");
+  });
+
+  test("derives sourceRef from a FluxGitSource result", () => {
+    const spec = p(FluxAppFor("hello", { source: source(), path: "./k8s" }).kustomization).spec as any;
+    expect(spec.sourceRef).toEqual({ kind: "GitRepository", name: "home-chant", namespace: "flux-system" });
+  });
+
+  test("many apps share one source", () => {
+    const shared = source();
+    const a = FluxAppFor("mealie", { source: shared, path: "./apps/mealie/k8s" });
+    const b = FluxAppFor("ntfy", { source: shared, path: "./apps/ntfy/k8s" });
+    expect((p(a.kustomization).spec as any).sourceRef.name).toBe("home-chant");
+    expect((p(b.kustomization).spec as any).sourceRef.name).toBe("home-chant");
+  });
+
+  test("a string source names an existing GitRepository (flux-system)", () => {
+    const spec = p(FluxAppFor("mealie", { source: "flux-system", path: "./apps/mealie/generated" }).kustomization)
+      .spec as any;
+    expect(spec.sourceRef).toEqual({ kind: "GitRepository", name: "flux-system" });
+  });
+
+  test("an explicit ref carries a non-git source kind", () => {
+    const spec = p(
+      FluxAppFor("fountain", { source: { kind: "OCIRepository", name: "fountain" }, path: "./k8s" }).kustomization,
+    ).spec as any;
+    expect(spec.sourceRef).toEqual({ kind: "OCIRepository", name: "fountain" });
+  });
+
+  test("dependsOn is a plain name list rendered to name objects", () => {
+    const spec = p(
+      FluxAppFor("hello", {
+        source: "flux-system",
+        path: "./k8s",
+        dependsOn: ["cert-manager", "traefik"],
+      }).kustomization,
+    ).spec as any;
+    expect(spec.dependsOn).toEqual([{ name: "cert-manager" }, { name: "traefik" }]);
+  });
+
+  test("omits dependsOn when the list is empty", () => {
+    const spec = p(FluxAppFor("hello", { source: "flux-system", path: "./k8s" }).kustomization).spec as any;
+    expect(spec.dependsOn).toBeUndefined();
+  });
+
+  test("maps targetNamespace and opt-outs onto the spec", () => {
+    const spec = p(
+      FluxAppFor("cloudflared", {
+        source: "flux-system",
+        path: "./apps/cloudflared/generated",
+        targetNamespace: "cloudflared",
+        wait: false,
+        prune: false,
+        suspend: true,
+        timeout: "3m",
+        serviceAccountName: "flux-applier",
+      }).kustomization,
+    ).spec as any;
+    expect(spec.targetNamespace).toBe("cloudflared");
+    expect(spec.wait).toBe(false);
+    expect(spec.prune).toBe(false);
+    expect(spec.suspend).toBe(true);
+    expect(spec.timeout).toBe("3m");
+    expect(spec.serviceAccountName).toBe("flux-applier");
+  });
+});
+
 describe("package index re-exports (regression guard)", () => {
   test("Argo composites are reachable from the package entry", async () => {
     const pkg: any = await import("../index");
     expect(typeof pkg.ArgoAppFor).toBe("function");
     expect(typeof pkg.ArgoAppSetForRegions).toBe("function");
     expect(typeof pkg.registerArgoCluster).toBe("function");
+  });
+
+  test("Flux composites are reachable from the package entry", async () => {
+    const pkg: any = await import("../index");
+    expect(typeof pkg.FluxGitSource).toBe("function");
+    expect(typeof pkg.FluxAppFor).toBe("function");
   });
 });

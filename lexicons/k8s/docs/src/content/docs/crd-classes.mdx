@@ -414,6 +414,8 @@ export const apps = new Kustomization({
 Flux is a **source-as-truth** reconciler — its controllers converge the cluster to what's in git. That is a different lifecycle model from chant's own observational one; chant only **emits** the typed Flux resources. The role split mirrors [Argo CD](/chant/lexicons/k8s/argo-composites/#the-three-layer-model-argo-vs-temporal-vs-ci): reach for Flux (or Argo) when the desired state lives in git and converges; reach for an [Op](/chant/guide/ops/) when the step is a procedure with ordering or gates.
 </Aside>
 
+The `FluxGitSource` and `FluxAppFor` composites collapse the `GitRepository` + `Kustomization` pair above into two calls with estate-tested defaults, and the FLUX001–003 [lint rules](/chant/lexicons/k8s/lint-rules/#flux) validate the source pin, `sourceRef`, and `dependsOn` edges.
+
 ## Read-only status
 
 Generated CRD classes expose a read-only `status` accessor alongside `name`, `namespace`, and `uid`. It carries the resource's server-owned runtime state — never part of the writable constructor.
