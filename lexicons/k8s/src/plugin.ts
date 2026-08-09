@@ -21,6 +21,7 @@ import { latestImageTagRule } from "./lint/rules/latest-image-tag";
 import { missingResourceLimitsRule } from "./lint/rules/missing-resource-limits";
 import { argoAutomatedPruneRule } from "./lint/rules/argo-automated-prune";
 import { argoAppSetSingleProjectRule } from "./lint/rules/argo-appset-single-project";
+import { fluxSourceRefPinRule } from "./lint/rules/flux-source-ref-pin";
 import { k8sCompletions } from "./lsp/completions";
 import { k8sHover } from "./lsp/hover";
 import { K8sParser } from "./import/parser";
@@ -62,6 +63,7 @@ export const k8sPlugin: LexiconPlugin = {
       missingResourceLimitsRule,
       argoAutomatedPruneRule,
       argoAppSetSingleProjectRule,
+      fluxSourceRefPinRule,
     ];
   },
 

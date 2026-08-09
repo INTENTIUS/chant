@@ -8,6 +8,8 @@ export const k8sAuditCatalog: Record<string, RuleMeta> = {
   ARGO002: auditRule("ARGO002", "merge-worthy", "guidance", "Argo Application references an undeclared AppProject", "Declare the named AppProject or reference an existing project.", { category: "correctness" }),
   ARGO003: auditRule("ARGO003", "merge-worthy", "guidance", "Argo Application targets an unregistered cluster", "Point spec.destination at a registered cluster or the in-cluster target.", { category: "correctness" }),
   ARGO005: auditRule("ARGO005", "report-only", "guidance", "Argo source.path may not resolve", "Ensure the source path exists under the build root.", { category: "best-practice" }),
+  FLUX002: auditRule("FLUX002", "merge-worthy", "guidance", "Flux Kustomization references an undeclared source", "Declare the GitRepository/OCIRepository/Bucket, or point sourceRef at the bootstrap flux-system repo.", { category: "correctness" }),
+  FLUX003: auditRule("FLUX003", "report-only", "guidance", "Flux Kustomization dependsOn names an undeclared Kustomization", "Fix the dependsOn name, or ignore if the dependency is declared in another repo.", { category: "correctness" }),
   WK8005: auditRule("WK8005", "merge-worthy", "guidance", "Hardcoded secret in env var", "Use a secretKeyRef instead of a literal value, and rotate the secret.", { authority: [K8S_SECRETS] }),
   WK8006: auditRule("WK8006", "merge-worthy", "guidance", "Image uses :latest or no tag", "Pin the image to an explicit version tag (ideally a digest).", { authority: [SCORECARD_PINNED] }),
   WK8041: auditRule("WK8041", "merge-worthy", "guidance", "Hardcoded API key in env var", "Move the key to a Secret and rotate it.", { authority: [K8S_SECRETS] }),
