@@ -638,6 +638,68 @@ describe("fly-deploy-rollback Ops", () => {
   });
 });
 
+// ── Flux CD on self-hosted k8s — flux-apps (#1590) ──────────────────
+// One FluxGitSource + three FluxAppFor calls reconcile a platform layer and
+// two workloads out of one repo, with dependsOn ordering (platform ← api ←
+// web). The workloads are plain Chant k8s (Traefik IngressRoute +
+// cert-manager Certificate — the self-hosted stack); Flux is opt-in via
+// src/flux. The live run needs a cluster (documented in the tutorial); CI
+// builds the whole src tree — FLUX002/003's cross-resource joins hold
+// because source and Kustomizations are declared in the same build.
+
+describeExample(
+  "flux-apps",
+  {
+    lexicon: "k8s",
+    serializer: k8sSerializer,
+    outputKey: "k8s",
+    examplesDir: import.meta.dirname,
+  },
+  {
+    checks: (output) => {
+      const docs = parseK8sDocs(output);
+      // 2 platform + 2 api + 4 web + 1 GitRepository + 3 Kustomizations = 12.
+      // The README states this count — keep them in lockstep (#1422).
+      expect(docs).toHaveLength(12);
+      const kinds = docs.map((d) => d.kind);
+      expect(kinds.filter((k) => k === "GitRepository")).toHaveLength(1);
+      expect(kinds.filter((k) => k === "Kustomization")).toHaveLength(3);
+      expect(kinds.filter((k) => k === "Deployment")).toHaveLength(2);
+      expect(kinds.filter((k) => k === "Service")).toHaveLength(2);
+      expect(kinds).toContain("Namespace");
+      expect(kinds).toContain("ClusterIssuer");
+      expect(kinds).toContain("Certificate");
+      expect(kinds).toContain("IngressRoute");
+
+      // The source pins a ref (FLUX001's default) at a 5m interval.
+      const source = docs.find((d) => d.kind === "GitRepository")!;
+      expect(source.doc).toContain("branch: main");
+      expect(source.doc).toMatch(/interval: '?5m'?/);
+
+      // Every Kustomization reconciles out of the one shared source, with
+      // estate defaults on (one source, many apps; prune + wait).
+      const kustomizations = docs.filter((d) => d.kind === "Kustomization");
+      for (const k of kustomizations) {
+        expect(k.doc).toContain("name: flux-apps");
+        expect(k.doc).toContain("kind: GitRepository");
+        expect(k.doc).toContain("prune: true");
+        expect(k.doc).toContain("wait: true");
+      }
+
+      // The dependsOn graph: platform ← api ← web (FLUX003 validates the
+      // names against this same build).
+      const web = kustomizations.find((d) => d.name === "web")!;
+      expect(web.doc).toContain("dependsOn");
+      expect(web.doc).toContain("- name: platform");
+      expect(web.doc).toContain("- name: api");
+      const api = kustomizations.find((d) => d.name === "api")!;
+      expect(api.doc).toContain("- name: platform");
+      const platform = kustomizations.find((d) => d.name === "platform")!;
+      expect(platform.doc).not.toContain("dependsOn");
+    },
+  },
+);
+
 // ── K8s + AWS EKS microservice (comprehensive) ──────────────────────
 
 describe("k8s-eks-microservice example", () => {

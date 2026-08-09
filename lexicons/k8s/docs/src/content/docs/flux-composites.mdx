@@ -1,0 +1,94 @@
+---
+title: "Flux Composites"
+description: "Flux CD support in the k8s lexicon — the toolkit CRDs, FluxGitSource / FluxAppFor composites, the one-source-many-apps shape, the FLUX00x rules, and the flux-reconcile deploy step."
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Flux's `GitRepository`, `Kustomization`, `HelmRelease`, and the rest of the GitOps Toolkit are Kubernetes CRDs. The k8s lexicon registers all six groups via codegen (see [CRD-Generated Classes](../crd-classes/#flux)) — typed `K8s::Flux::*` resources, serializer, LSP, hover, and MCP for free. The value-add ships as composites, lint rules, and the `chant-k8s-flux` skill — the Flux counterpart of the [Argo CD composites](../argo-composites/).
+
+<Aside type="note">
+The k8s lexicon stays **runtime-agnostic** — it only emits manifests. Flux is **opt-in** via the composites below; nothing here is implied unless you reach for it.
+</Aside>
+
+## The split
+
+| Layer | Owns |
+|---|---|
+| **Chant** | Authoring typed infra → manifests, committed to git |
+| **Flux** | Continuously reconciling those manifests (source-controller fetches, kustomize-controller applies) |
+| **Chant again** | Reading convergence back — the `flux-reconcile` deploy step, `chant components status --live` |
+
+Flux never learns Chant exists — it fetches a git path and applies what it finds there. Where Argo's unit is the `Application`, Flux's is the `GitRepository` + `Kustomization` pair, and the pair is the composite boundary.
+
+## The CRDs
+
+Pinned to flux2 **v2.9.1** (plus the Flux Operator **v0.54.1**), the codegen covers all six groups — `GitRepository`, `OCIRepository`, `Bucket`, `HelmRepository`, `HelmChart`, `Kustomization`, `HelmRelease`, the notification and image-automation kinds, and `FluxInstance`. See [CRD-Generated Classes — Flux](../crd-classes/#flux) for the full table.
+
+Install the controllers with:
+
+```bash
+kubectl apply -f https://github.com/fluxcd/flux2/releases/download/v2.9.1/install.yaml
+```
+
+## FluxGitSource — declare the repo once
+
+```typescript
+import { FluxGitSource } from "@intentius/chant-lexicon-k8s";
+
+export const source = FluxGitSource("infra", {
+  url: "https://github.com/acme/infra",
+  branch: "main",
+});
+```
+
+Returns `{ gitRepository }` — one `K8s::Flux::GitRepository` in `flux-system`. Defaults taken from real estates:
+
+- **`branch`** — `"main"`; **`tag`** pins a tag instead and wins over `branch`. A ref is always emitted (FLUX001).
+- **`interval`** — `"5m"`.
+- **`secretRef`** — name of the git-credentials Secret, for private repos.
+- **`fluxNamespace`** — `"flux-system"`.
+
+## FluxAppFor — one Kustomization per app
+
+```typescript
+import { FluxAppFor } from "@intentius/chant-lexicon-k8s";
+
+export const platform = FluxAppFor("platform", { source, path: "./dist/platform" });
+export const api = FluxAppFor("api", { source, path: "./dist/apps/api", dependsOn: ["platform"] });
+export const web = FluxAppFor("web", { source, path: "./dist/apps/web", dependsOn: ["platform", "api"] });
+```
+
+Returns `{ kustomization }` — one `K8s::Flux::Kustomization`. Defaults: `interval: "10m"`, `prune: true`, `wait: true`. Pass-throughs for `targetNamespace`, `timeout`, `suspend`, `serviceAccountName`.
+
+**One source, many apps** is the shape the split enforces: the common estate is a multi-app repo with one `Kustomization` per path, and a `GitRepository` per app is the mistake the composites make hard. `source` accepts a `FluxGitSource` result, the name of an existing `GitRepository` (e.g. the bootstrap-created `flux-system`), or an explicit `{ kind, name }` ref for `OCIRepository`/`Bucket` sources.
+
+`dependsOn` is a plain name list rendered to `spec.dependsOn` — Flux's reconcile-ordering edge, validated at build time by FLUX003.
+
+## Lint rules
+
+The k8s lexicon ships three Flux-specific checks (see [Lint Rules](../lint-rules/)):
+
+| Rule | Kind | What it catches |
+|---|---|---|
+| **FLUX001** | declarative | `GitRepository` with a `url` but no `spec.ref` pin — the unset default is the `master` branch, which stalls the source and everything downstream |
+| **FLUX002** | post-synth | `Kustomization.spec.sourceRef` naming a source nothing in the build declares (the bootstrap `flux-system` repo is exempt) |
+| **FLUX003** | post-synth | `dependsOn` entries naming Kustomizations nothing in the build declares, including self-references (warn — cross-repo edges are legitimate) |
+
+## flux-reconcile — the deploy step
+
+For the component model, `fluxReconcile` is the typed deploy leaf (the sibling of `argo-app`):
+
+```typescript
+import { fluxReconcile } from "@intentius/chant-lexicon-k8s/components";
+
+fluxReconcile({ manifest: "dist/flux.yaml", stack: "my-estate", noRollback: "<reason>" });
+```
+
+It applies the Flux CRs through the same server-side apply `kubectl-apply` uses (ownership stamping, marker-scoped prune, stack labels identical), then waits for every applied Flux CR to report Ready — **sources first**, so a wedged clone surfaces as the `GitRepository`'s error rather than a reconciler timeout downstream. Wedge reasons like `BuildFailed` or `UpgradeFailed` fail fast. A manifest that applies no Flux CR is refused — plain manifests belong on `kubectl-apply`, and two things applying the same resources is the failure mode worth engineering against.
+
+## See also
+
+- [flux-apps tutorial](/chant/tutorials/flux-apps/) — a self-hosted on-ramp: k3s, Traefik `IngressRoute`, cert-manager, three Kustomizations with `dependsOn`.
+- [Argo CD Composites](../argo-composites/) — the Argo counterpart, and the three-layer Argo-vs-Temporal split.
+- The `chant-k8s-flux` [skill](../skills/) — agent guidance for these patterns.

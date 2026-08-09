@@ -86,6 +86,10 @@ export default defineConfig({
                   "slug": "argo-composites"
             },
             {
+                  "label": "Flux Composites",
+                  "slug": "flux-composites"
+            },
+            {
                   "label": "Vendor Composites",
                   "items": [
                         {
