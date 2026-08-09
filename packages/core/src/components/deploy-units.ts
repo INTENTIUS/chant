@@ -40,6 +40,11 @@ export const DEPLOY_UNIT_RULES: readonly DeployUnitRule[] = [
   // kustomize renders, then applies through the same stack-labelled pipeline —
   // so its unit is observed by the identical label sweep (#1548).
   { kind: "kustomize-apply", field: "stack", lexicon: "k8s" },
+  // GitOps verbs apply the controller's CR through that same pipeline — the
+  // unit is the CR itself under its stack label, observed by the identical
+  // label sweep (#1549 piece 2).
+  { kind: "argo-app", field: "stack", lexicon: "k8s" },
+  { kind: "flux-reconcile", field: "stack", lexicon: "k8s" },
   { kind: "helm-upgrade", field: "release", lexicon: "helm" },
 ];
 

@@ -23,6 +23,19 @@ describe("deployUnits (#1495 piece 1)", () => {
     ]);
   });
 
+  test("resolves the GitOps verbs to their stack — the CR is the unit (#1549 piece 2)", () => {
+    const deploy = [
+      phase("Apply", [
+        { kind: "argo-app", manifest: "argo/app.yaml", stack: "gitops-argo" },
+        { kind: "flux-reconcile", manifest: "flux/", stack: "gitops-flux" },
+      ]),
+    ];
+    expect(deployUnits(deploy)).toEqual([
+      { unit: "gitops-argo", lexicon: "k8s" },
+      { unit: "gitops-flux", lexicon: "k8s" },
+    ]);
+  });
+
   test("walks nested phases, dedupes per lexicon, and skips unitless steps", () => {
     const deploy = [
       phase("Outer", [

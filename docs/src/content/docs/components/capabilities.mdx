@@ -38,6 +38,8 @@ The set is a plugin registry, not a closed enum. Verbs group into families. The 
 | **host / code delivery** | `code-deploy`, `copy-to-host`, `remote-exec` | aws | `code-deploy` = AWS CodeDeploy; the others are SSM host verbs (SSH transport pending) |
 | **wait / verify (cloud)** | `wait-for-stack`, `wait-steady-state`, `wait-job` | aws | CloudFormation / ECS / EMR terminal-state polls |
 | **safety / rollback** | `snapshot-before`, `rollback-previous` | aws | DynamoDB/RDS/EBS snapshot + restore |
+| **apply** | `kubectl-apply`, `kustomize-apply` | k8s | server-side apply as `chant:<stack>` with the marker-scoped prune; kustomize renders in front of the same pipeline |
+| **gitops** | `argo-app`, `flux-reconcile` | k8s | apply the controller's CR through the same stack-labelled pipeline, then wait for convergence — Healthy+Synced for Argo, `Ready` (terminal on wedge reasons) for Flux |
 
 A genuinely new apply *family* (job submission was one) is written once and then reused across every component of that shape. A new *component* is a declaration only. This is why the family count grows sub-linearly against components — see [the cloud boundary](/chant/components/cloud-boundary/) for how each family's leaf maps per cloud.
 
