@@ -28,6 +28,7 @@
     "@intentius/chant-lexicon-gitlab": "*",
     "@intentius/chant-lexicon-helm": "*",
     "@intentius/chant-lexicon-k3d": "workspace:*",
+    "@intentius/chant-lexicon-k3s": "workspace:*",
     "@intentius/chant-lexicon-k8s": "*",
     "@intentius/chant-lexicon-temporal": "*"
   },
