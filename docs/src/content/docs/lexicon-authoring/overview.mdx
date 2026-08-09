@@ -96,6 +96,7 @@ family beyond the two best-known readers was missing from it.
 | `detectTemplate()` | `boolean` | Detect if a template belongs to this lexicon |
 | `templateParser()` | `TemplateParser` | Parser for importing external templates |
 | `templateGenerator()` | `TypeScriptGenerator` | Generator for converting IR to TypeScript |
+| `agentConfigImporter()` | `AgentConfigImporter` | Re-express local agent configuration (skills, MCP servers, instruction files) discovered by `chant audit --agents` as this lexicon's resources — fountain implements it for `Agent`/`Environment` |
 | `migrationSource(from)` | `MigrationSource \| undefined` | Translate another lexicon's format into this one — gitlab and forgejo implement `migrationSource("github")` |
 
 **Observation** — see [Implementing Observation](/chant/lexicon-authoring/observation/)

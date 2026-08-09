@@ -120,6 +120,21 @@ export interface ParsedArgs {
   includeDependents?: boolean;
   /** `chant audit --tier merge-worthy|all` */
   tier?: string;
+  /**
+   * `chant audit --agents` / `chant import --agents` — switch the subject from
+   * a repo's pipeline YAML to the agent configuration installed on this
+   * machine (skills, MCP servers, instruction files, permissions).
+   */
+  agents?: boolean;
+  /** `--agents --scope system,user,project` — which scopes to scan (default all). */
+  scope?: string;
+  /** `--agents --runtime claude,codex,...` — which agent harnesses to scan (default all). */
+  runtime?: string;
+  /**
+   * `--agents --all-projects` — scan every project root the harness has
+   * registered in `~/.claude.json`, not just the path argument.
+   */
+  allProjects?: boolean;
   /** `chant audit --fail-on merge-worthy|warning|none` */
   failOn?: string;
   /** `chant audit --theme <file>` — JSON theme knobs for the HTML report */

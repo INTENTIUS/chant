@@ -82,10 +82,26 @@ function formatNested(value: unknown, indent: number, spec: Nested, imports: Set
   return `[\n${items.join("\n")}\n${closePad}]`;
 }
 
+/**
+ * A cross-resource reference in the IR: `{__ref: "<logicalId>"}` renders as the
+ * bare variable name that resource was declared under, so `agent.environment`
+ * comes out as a typed ref (`environment: userClaudeEnv`) rather than a copy of
+ * the environment's properties. Mirrors the `__intrinsic` sentinel the
+ * CloudFormation importer uses for `Ref`.
+ */
+function asRef(value: unknown): string | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const ref = (value as Record<string, unknown>).__ref;
+  return typeof ref === "string" ? ref : undefined;
+}
+
 function formatValue(value: unknown, indent: number): string {
   if (value === null || value === undefined) return "undefined";
   if (typeof value === "string") return JSON.stringify(value);
   if (typeof value === "number" || typeof value === "boolean") return String(value);
+
+  const ref = asRef(value);
+  if (ref !== undefined) return camelCase(ref);
 
   if (Array.isArray(value)) {
     if (value.length === 0) return "[]";

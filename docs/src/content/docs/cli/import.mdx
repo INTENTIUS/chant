@@ -36,10 +36,61 @@ The import process:
 | `--verbatim` | With `--from`, keep server-defaulted fields instead of stripping to declared shape |
 | `-o, --output <dir>` | Output directory (default: `./infra/`) |
 | `--force` | Overwrite existing files |
+| `--agents` | Import this machine's **agent configuration** instead of a template file (see below) |
+| `--scope <list>` | `--agents` only: comma-separated `system`, `user`, `project` (default: all) |
+| `--runtime <list>` | `--agents` only: comma-separated `claude`, `codex`, `gemini`, `opencode`, `cursor` (default: all) |
+| `--all-projects` | `--agents` only: import every project registered in `~/.claude.json`, not just the path argument |
 
 :::caution
 Live import may emit sensitive values (keys, tokens, passwords) into generated source — unlike `chant lifecycle` observation, which only reads scrubbed metadata. The command prints a warning; review generated files before committing.
+
+`--agents` is the exception: it rewrites literal credentials to `${VAR}` references rather than copying them, and reports which sites it redacted. Review the output anyway.
 :::
+
+## Importing agent configuration (`--agents`)
+
+`chant import --agents` is the other half of
+[`chant audit --agents`](/chant/cli/audit/): where the audit reports on the
+agent configuration found on a machine, this re-expresses it as chant code, so a
+setup that accumulated by hand over months becomes reviewable, version
+controlled, and reproducible.
+
+```bash
+chant import --agents                                  # → ./infra/agents/
+chant import --agents --scope user -o infra/agents/    # just the home directory
+```
+
+The default target is the [fountain](/chant/lexicons/fountain/) lexicon, whose
+`Agent` models the same four ideas the harnesses do:
+
+| local agent config | fountain |
+|---|---|
+| `CLAUDE.md` / `AGENTS.md` | `Agent.system` |
+| `mcpServers` / `mcp_servers` | `Agent.mcp_servers` |
+| `skills/*/SKILL.md` | `Agent.skills` |
+| settings `env` | `Environment.env_vars` |
+
+Three places where it deliberately does **not** transcribe:
+
+- **Secrets are not carried over.** A literal credential found in local config
+  is rewritten to a `${VAR}` reference. Generated code gets committed;
+  transcribing a live secret into it would turn a local mistake into a
+  repository one. This includes bearer tokens in MCP `headers`, not just `env`.
+- **Egress is derived, not copied.** A local agent has the machine's full
+  network access; a fountain sandbox must declare intent. The hosts the config's
+  own remote MCP servers use become the `allowed_hosts` allowlist, and
+  everything else is denied.
+- **Local skills are inlined by content.** A skill that exists only on this
+  machine has no upstream to install from, so its text is embedded — that is
+  what lets the generated code reproduce the setup somewhere else.
+
+The command reports every lossy step: a site it could not map (Cursor has no
+fountain `runtime` value), a model it had to default because the local config
+pinned none, and any site where a credential was redacted.
+
+A lexicon opts into being an `--agents` target by implementing
+`agentConfigImporter()` — see
+[lexicon authoring](/chant/lexicon-authoring/overview/).
 
 ## Usage
 

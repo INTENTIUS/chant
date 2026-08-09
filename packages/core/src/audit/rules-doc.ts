@@ -20,6 +20,12 @@ const GROUPS: Array<{ heading: string; prefixes: string[]; blurb: string }> = [
   { heading: "Azure ARM (AZR)", prefixes: ["AZR"], blurb: "Run against ARM deployment templates (JSON)." },
   { heading: "GCP Config Connector (WGC)", prefixes: ["WGC"], blurb: "Run against Config Connector (cnrm.cloud.google.com) manifests." },
   { heading: "Helm (WHM)", prefixes: ["WHM"], blurb: "Run against Helm charts (Chart.yaml + templates)." },
+  {
+    heading: "Agent configuration (AGT)",
+    prefixes: ["AGT"],
+    blurb:
+      "Run by `chant audit --agents` against the agent configuration on a machine — instruction files, MCP servers, skills, plugins, and permissions at system, user, and project scope. Unlike every other family here, these do not fire on repository YAML.",
+  },
 ];
 
 function ruleBlock(m: RuleMeta): string {
