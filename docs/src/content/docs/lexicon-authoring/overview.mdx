@@ -127,6 +127,7 @@ family beyond the two best-known readers was missing from it.
 | `commands()` | `CommandGroup` | A CLI verb group mounted under `chant <name> <verb>` — core dispatches to it wholesale and knows nothing about what's inside |
 | `emulator` | `EmulatorCapability` or a list of them | Local emulator(s) `chant emulator` boots — see [Declaring a Local Emulator](/chant/lexicon-authoring/emulator/) |
 | `generateComponentPipeline()` | `ComponentPipelineResult` | Turn the component graph into CI YAML. CI-provider lexicons only (gitlab, github, forgejo) |
+| `buildRoots()` | `Promise<BuildRootContribution>` | Render config-declared build roots that are not typed chant source into entities, merged into the build before partitioning — k8s implements it for `k8s.kustomize.roots` |
 | `configSchema` | `ZodObject` | The shape of this lexicon's own `chant.config.ts` namespace — see [Owning a config namespace](#owning-a-config-namespace) |
 | `upstreamPin` | `UpstreamPin` | How this lexicon pins its upstream schema and where to look for a newer one, for self-upgrade tooling |
 | `init()` | `void \| Promise<void>` | Called once when the plugin loads. No shipped lexicon uses this |
