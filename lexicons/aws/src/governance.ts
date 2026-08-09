@@ -76,7 +76,7 @@ export interface IdentityConfig {
 
 /**
  * The desired-state governance tree for one AWS organization. This is the
- * shape `wardens/aws` (#792) loads as config — the AWS counterpart of the
+ * shape an external governance reconciler loads as config — the AWS counterpart of the
  * SCM wardens' GovernanceConfig. Cycles map onto the governance verbs
  * (#790): the OU/account tree is `org-unit`, SCPs are `policy-guardrail`,
  * audit sinks are `audit-sink`.

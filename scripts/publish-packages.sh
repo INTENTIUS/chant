@@ -48,7 +48,7 @@ REGISTRY="https://registry.npmjs.org"
 publishable_dirs() {
   local dirs=()
   local dir
-  for dir in packages/*/ lexicons/*/ wardens/*/; do
+  for dir in packages/*/ lexicons/*/; do
     dir="${dir%/}"
     [ -f "$dir/package.json" ] && dirs+=("$dir")
   done
@@ -109,7 +109,7 @@ publishable_dirs() {
 depended_on_dirs() {
   local dirs=()
   local dir
-  for dir in packages/*/ lexicons/*/ wardens/*/; do
+  for dir in packages/*/ lexicons/*/; do
     dir="${dir%/}"
     [ -f "$dir/package.json" ] && dirs+=("$dir")
   done

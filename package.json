@@ -5,8 +5,7 @@
   "type": "module",
   "workspaces": [
     "packages/*",
-    "lexicons/*",
-    "wardens/*"
+    "lexicons/*"
   ],
   "scripts": {
     "tsc": "tsc",
