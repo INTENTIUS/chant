@@ -1,0 +1,68 @@
+{
+  "name": "@intentius/chant-lexicon-k3s",
+  "version": "0.42.1",
+  "type": "module",
+  "files": [
+    "src/",
+    "dist/"
+  ],
+  "exports": {
+    ".": {
+      "development": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./src/index.ts"
+    },
+    "./*": {
+      "development": "./src/*.ts",
+      "types": "./dist/*.d.ts",
+      "default": "./src/*.ts"
+    },
+    "./lint/post-synth": {
+      "development": "./src/lint/post-synth/index.ts",
+      "types": "./dist/lint/post-synth/index.d.ts",
+      "default": "./src/lint/post-synth/index.ts"
+    },
+    "./manifest": "./dist/manifest.json",
+    "./meta": "./dist/meta.json",
+    "./types": "./dist/types/index.d.ts"
+  },
+  "scripts": {
+    "generate": "npx tsx src/codegen/generate-cli.ts",
+    "validate": "npx tsx src/validate-cli.ts",
+    "docs": "npx tsx src/codegen/docs-cli.ts",
+    "build": "tsc -p tsconfig.build.json && tsc-alias -p tsconfig.build.json && find dist -type f \\( -name \"*.js\" -o -name \"*.js.map\" \\) -delete",
+    "prepack": "npm run generate && npm run bundle && npm run validate && npm run build",
+    "bundle": "tsx src/package-cli.ts"
+  },
+  "devDependencies": {
+    "@intentius/chant": "*",
+    "tsc-alias": "^1.8.17",
+    "typescript": "^5.9.3",
+    "js-yaml": "^4.1.0",
+    "@types/js-yaml": "^4.0.9"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "peerDependencies": {
+    "@intentius/chant": "^0.42.1",
+    "typescript": "^5.9.3"
+  },
+  "description": "k3s lexicon for chant — the k3s distro's host configuration as declarable data",
+  "license": "Apache-2.0",
+  "homepage": "https://github.com/INTENTIUS/chant#readme",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/INTENTIUS/chant.git",
+    "directory": "lexicons/k3s"
+  },
+  "bugs": {
+    "url": "https://github.com/INTENTIUS/chant/issues"
+  },
+  "keywords": [
+    "chant",
+    "k3s",
+    "kubernetes",
+    "iac"
+  ]
+}

@@ -62,6 +62,7 @@ jobs:
           npm run --prefix lexicons/fly prepack
           npm run --prefix lexicons/fountain prepack
           npm run --prefix lexicons/k3d prepack
+          npm run --prefix lexicons/k3s prepack
 
       - name: Typecheck
         run: npx tsc --noEmit -p packages/core/tsconfig.json
@@ -162,6 +163,7 @@ jobs:
           npm run --prefix lexicons/fly prepack
           npm run --prefix lexicons/fountain prepack
           npm run --prefix lexicons/k3d prepack
+          npm run --prefix lexicons/k3s prepack
 
       # The helm lexicon targets Helm 4 (epic #1228); the runner image ships
       # Helm 3. Pin the version the render tests run against.
@@ -241,6 +243,9 @@ jobs:
 
       - name: Generate and validate K3d lexicon
         run: npm run --prefix lexicons/k3d prepack
+
+      - name: Generate and validate K3s lexicon
+        run: npm run --prefix lexicons/k3s prepack
 
   smoke-npm:
     if: false  # disabled — Docker smoke tests are for local/release validation, not every push
