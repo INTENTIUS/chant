@@ -731,7 +731,7 @@ describe("k8s describeResources", () => {
       );
 
       expect(result.resources["microvm-demo/kmv-dev-a-vm-42sgf"]).toMatchObject({
-        type: "K8s::Lambda::MicroVM",
+        type: "K8s::KubeMicroVM::MicroVM",
         physicalId: "vm-uid",
         ownerChain: { root: "declared", entity: "workloadReplicaSet" },
       });

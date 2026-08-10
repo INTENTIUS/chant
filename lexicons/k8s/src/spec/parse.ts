@@ -13,6 +13,7 @@ import {
   primaryType,
   type JsonSchemaProperty,
 } from "@intentius/chant/codegen/json-schema";
+import { namespaceSegmentForGroup } from "../group-namespace";
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -343,22 +344,13 @@ export function gvkToApiVersion(gvk: GroupVersionKind): string {
 }
 
 /**
- * Normalize API group to a PascalCase segment.
- * Empty group (core API) → "Core"
- * "apps" → "Apps"
- * "batch" → "Batch"
- * "rbac.authorization.k8s.io" → "Rbac"
- * "networking.k8s.io" → "Networking"
+ * Normalize API group to a PascalCase segment — the shared rule, so the
+ * swagger-generated surface, kustomize-rendered entities and live discovery
+ * (all three reach here through `gvkToTypeName`) spell a kind exactly as CRD
+ * codegen and `chant import` do. See `../group-namespace`.
  */
 function normalizeGroup(group: string): string {
-  if (!group || group === "") return "Core";
-
-  // Take the first segment before any dots
-  const firstSegment = group.split(".")[0];
-  // Special-case RBAC
-  if (firstSegment === "rbac") return "Rbac";
-  // PascalCase the first segment
-  return firstSegment.charAt(0).toUpperCase() + firstSegment.slice(1);
+  return namespaceSegmentForGroup(group);
 }
 
 /**

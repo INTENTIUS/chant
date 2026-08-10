@@ -9,74 +9,9 @@
 
 import type { K8sParseResult, ParsedProperty, ParsedPropertyType, GroupVersionKind } from "../spec/parse";
 import type { CRDSpec } from "./types";
+import { namespaceSegmentForGroup } from "../group-namespace";
 import type { PropertyConstraints } from "@intentius/chant/codegen/json-schema";
 import { loadAll } from "js-yaml";
-
-/**
- * Group names whose first segment doesn't yield the conventional namespace.
- * "argoproj.io" → "Argo" (not "Argoproj") to match the Argo CD vocabulary
- * and the ArgoAppFor / ArgoAppSetForRegions composites.
- *
- * The Flux toolkit spreads across five `*.toolkit.fluxcd.io` groups plus the
- * Flux Operator's `fluxcd.controlplane.io`; all six collapse to a single `Flux`
- * namespace so a GitRepository and a Kustomization read as `K8s::Flux::*`
- * siblings rather than scattering to Source / Kustomize / Helm / Notification /
- * Image / Fluxcd. (`helm.toolkit.fluxcd.io` → `Helm` would also collide
- * confusingly with the separate helm lexicon.)
- *
- * KubeMicroVM's `lambda.aws.amazon.com` would take `Lambda` by the
- * first-segment rule, which reads as AWS Lambda proper and would sit
- * confusingly beside the aws lexicon's real Lambda functions. These are
- * Kubernetes CRs belonging to a community operator, so they take the
- * operator's own name. `MicroVM` alone was the alternative and was rejected
- * for stuttering: `K8s::MicroVM::MicroVM`.
- *
- * Note the official AWS controller uses a different group,
- * `lambdamicrovms.services.k8s.aws`, so it can coexist here and will want its
- * own entry rather than sharing this one.
- */
-const GROUP_NAMESPACE_OVERRIDES: Record<string, string> = {
-  "argoproj.io": "Argo",
-  "source.toolkit.fluxcd.io": "Flux",
-  "kustomize.toolkit.fluxcd.io": "Flux",
-  "helm.toolkit.fluxcd.io": "Flux",
-  "notification.toolkit.fluxcd.io": "Flux",
-  "image.toolkit.fluxcd.io": "Flux",
-  "fluxcd.controlplane.io": "Flux",
-  "lambda.aws.amazon.com": "KubeMicroVM",
-  // CNPG and its barman-cloud plugin ship under two groups but are one thing to
-  // an author: a Cluster's `plugins[]` names an ObjectStore. The first-segment
-  // rule would scatter them into `Postgresql` and `Barmancloud`.
-  "postgresql.cnpg.io": "Cnpg",
-  "barmancloud.cnpg.io": "Cnpg",
-  // Not `Secrets`: `K8s::Secrets::InfisicalSecret` reads like a core Secret,
-  // and `K8s::Core::Secret` is right there to be confused with.
-  "secrets.infisical.com": "Infisical",
-  // k3s's bundled controllers ship under two groups but are one thing to an
-  // author — the k3s auto-deploy surface. The first-segment rule would give
-  // `K8s::Helm::HelmChart`, which reads like it belongs to the helm lexicon,
-  // and would split HelmChart from the Addon that tracks its deployment.
-  "helm.cattle.io": "K3s",
-  "k3s.cattle.io": "K3s",
-};
-
-/**
- * Normalize a CRD group to a PascalCase namespace segment.
- * "cert-manager.io" → "CertManager"
- * "monitoring.coreos.com" → "Monitoring"
- * "argoproj.io" → "Argo" (override)
- */
-function normalizeGroupName(group: string): string {
-  const override = GROUP_NAMESPACE_OVERRIDES[group];
-  if (override) return override;
-  // Take the first segment before the first dot
-  const firstSegment = group.split(".")[0];
-  // Convert kebab-case to PascalCase
-  return firstSegment
-    .split("-")
-    .map((s) => s.charAt(0).toUpperCase() + s.slice(1))
-    .join("");
-}
 
 /**
  * Parse a CRD YAML document string into K8sParseResult entries.
@@ -111,7 +46,7 @@ export function parseCRD(content: string): K8sParseResult[] {
  */
 export function parseCRDSpec(spec: CRDSpec): K8sParseResult[] {
   const results: K8sParseResult[] = [];
-  const groupNs = normalizeGroupName(spec.group);
+  const groupNs = namespaceSegmentForGroup(spec.group);
 
   // Find the storage version (the canonical version)
   const storageVersion = spec.versions.find((v) => v.storage && v.served);
