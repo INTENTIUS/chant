@@ -5,6 +5,8 @@ import type { CompletionContext, CompletionItem, HoverContext, HoverInfo } from 
 import type { McpToolContribution, McpResourceContribution } from "@intentius/chant/mcp/types";
 import { cedarSerializer } from "./serializer";
 import { rules } from "./lint/rules";
+import { postSynthChecks as cedarPostSynthChecks } from "./lint/post-synth";
+import { cedarAuditCatalog } from "./lint/audit-catalog";
 import { completions } from "./lsp/completions";
 import { hover } from "./lsp/hover";
 import { cedarConfigSchema } from "./config";
@@ -69,7 +71,13 @@ export const cedarPlugin: LexiconPlugin = {
   },
 
   postSynthChecks() {
-    return []; // TODO: Add post-synth checks
+    // Auto-discovered from lint/post-synth/ and committed as a static barrel
+    // by `npm run generate:barrels` — adding a check is dropping a file.
+    return cedarPostSynthChecks;
+  },
+
+  auditCatalog() {
+    return cedarAuditCatalog;
   },
 
   skills() {

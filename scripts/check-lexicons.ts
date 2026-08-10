@@ -65,15 +65,6 @@ const lexiconsDir = join(repoRoot, "lexicons");
  * Every entry here MUST reference a filed, open issue.
  */
 const KNOWN_FAILURES: Record<string, Record<string, string>> = {
-  // cedar lands across eight sub-issues of #1645. #1650 (schema-driven
-  // generate) closed the example gap: both shipped examples now author a
-  // policy set against schema-derived action constants and entity UID types,
-  // so "Every shipped example builds" passes unallowlisted. The one below
-  // belongs to a named, open sub-issue after it.
-  cedar: {
-    "postSynthChecks() returns at least 1 check":
-      "#1651 — cedar 4/8. The checks that matter here run policies through cedar-wasm and span policies and the resources they govern. The typed classes they need landed in #1650; the checks themselves are #1651's.",
-  },
 };
 
 let untrackedFailures = 0;
