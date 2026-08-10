@@ -52,7 +52,20 @@ export {
   type AwsReadClientOptions,
   type CloudControlDescription,
   type StackResource,
+  type AwsCredentials,
+  type AwsCredentialResolver,
+  type AwsCredentialSource,
 } from "./api/read-client";
+
+// SigV4 (#1686). Exported as its own surface because it is deliberately not
+// specific to this transport: cedar's AVP client is the next caller, and the
+// point of the module is that there is one signer rather than one per lexicon.
+export {
+  signRequest,
+  resolveCredentials,
+  EMPTY_PAYLOAD_SHA256,
+  type SigV4Request,
+} from "./api/sigv4";
 
 // Intrinsics
 export {

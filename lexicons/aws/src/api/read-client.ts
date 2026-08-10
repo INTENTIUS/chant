@@ -19,12 +19,23 @@
  *
  * ## Signing
  *
- * Requests are unsigned, exactly like `awsApply`'s. That is what makes the
- * emulator-first lanes work with no credential plumbing, and it is the reason
- * this is scoped to the Floci lanes (#1198) rather than announced as a
- * real-cloud read path: real AWS rejects an unsigned request. The CLI path
- * remains available for a signed read until SigV4 lands here.
+ * Requests are signed with SigV4 (#1686) when credentials resolve — see
+ * `./sigv4.ts`, which holds the implementation so that cedar's AVP client can
+ * adopt the same one rather than growing a second. Two cases stay unsigned, and
+ * both are deliberate:
+ *
+ *   - **No credentials.** The caller's existing no-credentials path is
+ *     untouched: the request still goes out carrying only the credential scope
+ *     of {@link regionScope}, which is what the emulator lanes have always
+ *     sent.
+ *   - **An endpoint override.** Floci does not verify signatures, and signing
+ *     against it would mean every local lane suddenly needs credentials to read
+ *     what it just deployed. `signEndpointOverride` opts back in for an
+ *     override that *is* real AWS — a VPC endpoint, a signing proxy.
  */
+import { resolveCredentials, signRequest, type AwsCredentialSource } from "./sigv4";
+
+export type { AwsCredentials, AwsCredentialResolver, AwsCredentialSource } from "./sigv4";
 
 const DEFAULT_REGION = "us-east-1";
 const CFN_API_VERSION = "2010-05-15";
@@ -62,6 +73,18 @@ export interface AwsReadClientOptions {
   region?: string;
   http?: AwsReadHttp;
   signal?: AbortSignal;
+  /**
+   * What to sign with: literal credentials, or a resolver that decides. Omitted,
+   * the environment answers; when it has nothing, the request goes out unsigned
+   * exactly as it did before signing existed.
+   */
+  credentials?: AwsCredentialSource;
+  /** Environment the credential fallback reads. Defaults to `process.env`; injectable for tests. */
+  env?: Record<string, string | undefined>;
+  /** Sign even against an endpoint override — for an override that is real AWS. */
+  signEndpointOverride?: boolean;
+  /** Signing clock. Injected by tests so a signature is reproducible. */
+  now?: Date;
 }
 
 /** Service host for `service`, honouring an endpoint override. */
@@ -84,20 +107,56 @@ export function serviceUrl(service: string, endpoint?: string, region = DEFAULT_
  * an empty observation and the snapshot recorded the region as holding nothing.
  * A three-region estate snapshotted as one region and nothing said so.
  *
- * This is NOT SigV4. The signature is a placeholder and real AWS rejects it —
- * as it already rejects every request from this module, which is unsigned by
- * design (see the header comment). It carries the scope, nothing more, and it
- * must not be mistaken for the signed read path that would replace it.
+ * This is NOT SigV4. The signature is a placeholder and real AWS rejects it. It
+ * is what an unsigned request still has to carry so an emulator learns the
+ * region, and it is only ever sent when no credentials resolved — the moment
+ * they do, {@link requestHeaders} sends a real signature instead.
  */
-function regionScope(service: string, region?: string): Record<string, string> {
+function regionScope(
+  service: string,
+  region: string | undefined,
+  env: Record<string, string | undefined>,
+): Record<string, string> {
   if (!region) return {};
   const day = new Date().toISOString().slice(0, 10).replace(/-/g, "");
-  const key = process.env.AWS_ACCESS_KEY_ID || "chant";
+  const key = env.AWS_ACCESS_KEY_ID || "chant";
   return {
     authorization:
       `AWS4-HMAC-SHA256 Credential=${key}/${day}/${region}/${service}/aws4_request, ` +
       "SignedHeaders=host, Signature=unsigned",
   };
+}
+
+/**
+ * The headers one request goes out with — signed when there is something to
+ * sign with and the target is real AWS, scope-only otherwise.
+ *
+ * Signing needs a region even when the caller named none, because the scope
+ * string has a slot for one; it borrows the same `us-east-1` default that
+ * {@link serviceUrl} already used to build the host, so the signature agrees
+ * with the endpoint it is sent to.
+ */
+function requestHeaders(
+  service: string,
+  url: string,
+  body: string,
+  base: Record<string, string>,
+  options: AwsReadClientOptions,
+): Record<string, string> {
+  const env = options.env ?? process.env;
+  const credentials = resolveCredentials(options.credentials, env);
+  const signable = credentials && (!options.endpoint || options.signEndpointOverride === true);
+  if (!signable) return { ...base, ...regionScope(service, options.region, env) };
+  return signRequest({
+    method: "POST",
+    url,
+    headers: base,
+    body,
+    service,
+    region: options.region ?? DEFAULT_REGION,
+    credentials,
+    ...(options.now ? { now: options.now } : {}),
+  });
 }
 
 /* ── CloudFormation Query ─────────────────────────────────────────────────── */
@@ -162,10 +221,13 @@ export async function cfnQuery(
   const res = await http(
     url,
     {
-      headers: {
-        "content-type": "application/x-www-form-urlencoded",
-        ...regionScope("cloudformation", options.region),
-      },
+      headers: requestHeaders(
+        "cloudformation",
+        url,
+        body,
+        { "content-type": "application/x-www-form-urlencoded" },
+        options,
+      ),
       body,
     },
     options.signal,
@@ -238,15 +300,21 @@ async function cloudControl(
 ): Promise<Record<string, unknown>> {
   const http = options.http ?? defaultHttp;
   const url = serviceUrl("cloudcontrolapi", options.endpoint, options.region);
+  const payloadJson = JSON.stringify(payload);
   const res = await http(
     url,
     {
-      headers: {
-        "content-type": "application/x-amz-json-1.0",
-        "x-amz-target": `${CLOUD_CONTROL_TARGET_PREFIX}.${operation}`,
-        ...regionScope("cloudcontrolapi", options.region),
-      },
-      body: JSON.stringify(payload),
+      headers: requestHeaders(
+        "cloudcontrolapi",
+        url,
+        payloadJson,
+        {
+          "content-type": "application/x-amz-json-1.0",
+          "x-amz-target": `${CLOUD_CONTROL_TARGET_PREFIX}.${operation}`,
+        },
+        options,
+      ),
+      body: payloadJson,
     },
     options.signal,
   );

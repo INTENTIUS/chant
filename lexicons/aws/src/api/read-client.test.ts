@@ -19,6 +19,7 @@ import {
   xmlError,
   type AwsReadHttp,
 } from "./read-client";
+import { EMPTY_PAYLOAD_SHA256 } from "./sigv4";
 
 const respond = (text: string, status = 200): ReturnType<AwsReadHttp> => Promise.resolve({ status, text });
 
@@ -210,25 +211,107 @@ describe("the region an endpoint override cannot carry in its host", () => {
   // snapshot recorded that region as holding nothing.
   test("the request names the region in its credential scope", async () => {
     const { http, calls } = recording(() => respond(stackXml));
-    await describeStackResources("web", { endpoint: "http://localhost:4566", region: "us-west-1", http });
+    await describeStackResources("web", { endpoint: "http://localhost:4566", region: "us-west-1", http, env: {} });
     expect(calls[0].headers.authorization).toContain("/us-west-1/cloudformation/aws4_request");
   });
 
   test("Cloud Control carries it too, scoped to its own service", async () => {
     const { http, calls } = recording(() => respond(JSON.stringify({ ResourceDescription: {} })));
-    await getResource("AWS::EC2::VPC", "vpc-01", { endpoint: "http://localhost:4566", region: "eu-west-1", http });
+    await getResource("AWS::EC2::VPC", "vpc-01", { endpoint: "http://localhost:4566", region: "eu-west-1", http, env: {} });
     expect(calls[0].headers.authorization).toContain("/eu-west-1/cloudcontrolapi/aws4_request");
   });
 
   test("no region, no header — nothing invents one", async () => {
     const { http, calls } = recording(() => respond(stackXml));
-    await describeStackResources("web", { endpoint: "http://localhost:4566", http });
+    await describeStackResources("web", { endpoint: "http://localhost:4566", http, env: {} });
     expect(calls[0].headers.authorization).toBeUndefined();
   });
 
   test("it is a scope, not a signature — the placeholder says so", async () => {
     const { http, calls } = recording(() => respond(stackXml));
-    await describeStackResources("web", { region: "us-west-1", http });
+    await describeStackResources("web", { region: "us-west-1", http, env: {} });
     expect(calls[0].headers.authorization).toContain("Signature=unsigned");
+  });
+});
+
+/**
+ * The signing decision, as the client makes it. `./sigv4.test.ts` proves the
+ * signature is correct against AWS's own vectors; these prove the client only
+ * produces one when it should.
+ */
+describe("SigV4 on the read path", () => {
+  const credentials = { accessKeyId: "AKIDEXAMPLE", secretAccessKey: "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY" };
+  const now = new Date("2015-08-30T12:36:00Z");
+
+  test("credentials and a real host produce a signed request, not the placeholder", async () => {
+    const { http, calls } = recording(() => respond(stackXml));
+    await describeStackResources("web", { region: "us-west-1", credentials, now, http, env: {} });
+
+    const auth = calls[0].headers.authorization;
+    expect(auth).toContain("Credential=AKIDEXAMPLE/20150830/us-west-1/cloudformation/aws4_request");
+    expect(auth).not.toContain("Signature=unsigned");
+    expect(auth).toMatch(/Signature=[0-9a-f]{64}$/);
+    expect(calls[0].headers["x-amz-date"]).toBe("20150830T123600Z");
+    // The body hash, not the empty-payload constant — the Query call has a body.
+    expect(calls[0].headers["x-amz-content-sha256"]).toMatch(/^[0-9a-f]{64}$/);
+    expect(calls[0].headers["x-amz-content-sha256"]).not.toBe(EMPTY_PAYLOAD_SHA256);
+    // `host` is signed but never emitted: fetch computes it and forbids the override.
+    expect(calls[0].headers.host).toBeUndefined();
+    expect(auth).toContain("SignedHeaders=content-type;host;x-amz-content-sha256;x-amz-date");
+  });
+
+  test("an endpoint override is not signed, so the emulator lanes need no credentials", async () => {
+    const { http, calls } = recording(() => respond(stackXml));
+    await describeStackResources("web", {
+      endpoint: "http://localhost:4566",
+      region: "us-west-1",
+      credentials,
+      http,
+      env: {},
+    });
+    expect(calls[0].headers.authorization).toContain("Signature=unsigned");
+    expect(calls[0].headers["x-amz-date"]).toBeUndefined();
+  });
+
+  test("signEndpointOverride signs one anyway — for an override that is real AWS", async () => {
+    const { http, calls } = recording(() => respond(stackXml));
+    await describeStackResources("web", {
+      endpoint: "https://vpce-1234.cloudformation.us-west-1.vpce.amazonaws.com",
+      region: "us-west-1",
+      credentials,
+      signEndpointOverride: true,
+      now,
+      http,
+      env: {},
+    });
+    expect(calls[0].headers.authorization).toMatch(/Signature=[0-9a-f]{64}$/);
+  });
+
+  test("no credentials leaves the old unsigned path exactly as it was", async () => {
+    const { http, calls } = recording(() => respond(stackXml));
+    await describeStackResources("web", { region: "us-west-1", http, env: {} });
+    expect(calls[0].headers.authorization).toContain("Signature=unsigned");
+    expect(calls[0].headers["x-amz-date"]).toBeUndefined();
+    expect(calls[0].headers["x-amz-content-sha256"]).toBeUndefined();
+  });
+
+  test("the environment is the fallback source, and Cloud Control signs from it too", async () => {
+    const { http, calls } = recording(() => respond(JSON.stringify({ ResourceDescription: {} })));
+    await getResource("AWS::EC2::VPC", "vpc-01", {
+      region: "eu-west-1",
+      now,
+      http,
+      env: { AWS_ACCESS_KEY_ID: "AKIDENV", AWS_SECRET_ACCESS_KEY: "s", AWS_SESSION_TOKEN: "tok" },
+    });
+    expect(calls[0].headers.authorization).toContain("Credential=AKIDENV/20150830/eu-west-1/cloudcontrolapi/");
+    expect(calls[0].headers["x-amz-security-token"]).toBe("tok");
+    expect(calls[0].headers["x-amz-target"]).toBe("CloudApiService.GetResource");
+  });
+
+  test("signing without a named region falls back to the same default the host does", async () => {
+    const { http, calls } = recording(() => respond(stackXml));
+    await describeStackResources("web", { credentials, now, http, env: {} });
+    expect(calls[0].url).toBe("https://cloudformation.us-east-1.amazonaws.com/");
+    expect(calls[0].headers.authorization).toContain("/20150830/us-east-1/cloudformation/aws4_request");
   });
 });
