@@ -3,11 +3,12 @@ import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AwsReadError, type AwsReadHttp } from "../api/read-client";
-import { AgentCoreTraceError } from "./trace-render";
+import { AgentCoreTraceError, renderValue } from "./trace-render";
 import {
   AgentCoreTraceUnavailableError,
   awsAgentCoreFetchTrace,
   coerceFields,
+  decimalText,
   identifierFor,
   listMemoryEvents,
   normalizeMemoryEvents,
@@ -78,12 +79,40 @@ describe("coerceFields — arbitrary JSON into trace values", () => {
 
   test("a non-integer becomes a Cedar decimal rather than being rounded", () => {
     const { fields } = coerceFields({ price: 1.5 });
-    expect(fields.price).toEqual({ traceValue: "decimal", text: "1.5" });
+    expect(renderValue(fields.price!)).toBe("1.5");
   });
 
-  test("null and undefined are dropped — Cedar has no null and a sentinel would be matched", () => {
+  test("a number JS would print in exponential form still becomes a decimal literal", () => {
+    // String(1e-7) is "1e-7", which is not a decimal literal — that used to
+    // abort the whole fetch over a legitimate payload.
+    expect(decimalText(1e-7)).toBe("0.0000001");
+    expect(decimalText(1.5)).toBe("1.5");
+    expect(decimalText(-2.5e-8)).toBe("-0.000000025");
+    expect(renderValue(coerceFields({ tiny: 1e-7 }).fields.tiny!)).toBe("0.0000001");
+  });
+
+  test("a value too small to spell exactly throws instead of rounding to 0.0", () => {
+    expect(() => coerceFields({ tiny: 1e-25 })).toThrow(/at tiny/);
+    expect(() => coerceFields({ tiny: 1e-25 })).toThrow(/a number the agent never saw/);
+  });
+
+  test("null and undefined are dropped from records — Cedar has no null", () => {
     const { fields } = coerceFields({ a: null, b: undefined, c: 1 });
     expect(fields).toEqual({ c: 1 });
+  });
+
+  test("a null inside an array throws, because dropping it would shift every later index", () => {
+    expect(() => coerceFields({ args: ["a", null, "c"] })).toThrow(
+      /would shift every later element/,
+    );
+    expect(() => coerceFields({ args: ["a", null] })).toThrow(/args\[1\]/);
+  });
+
+  test("two keys that spell the same identifier throw rather than one overwriting the other", () => {
+    expect(() => coerceFields({ "tool-name": 1, "tool.name": 2 })).toThrow(
+      /both spell "tool_name"/,
+    );
+    expect(() => coerceFields({ tool_name: 1, "tool-name": 2 })).toThrow(AgentCoreTraceError);
   });
 
   test("a key the grammar cannot spell is rewritten, and the rewrite is reported", () => {
@@ -180,6 +209,16 @@ describe("normalizeMemoryEvents — ListEvents output into normalized events", (
     ]);
     expect(events.map((e) => e.eventId)).toEqual(["evt-1#0", "evt-1#1"]);
     expect(events.map((e) => e.timeMs)).toEqual([1_700_000_000_000, 1_700_000_000_000]);
+  });
+
+  test("a non-record blob group is carried under `value`, not dropped", () => {
+    // A blob is arbitrary JSON; `input: "the prompt"` is ordinary.
+    const { events } = normalizeMemoryEvents([
+      memoryEvent({
+        payload: [{ blob: { action: "Ask", kind: "request", input: "prompt text", output: ["a", "b"] } }],
+      }),
+    ]);
+    expect(events[0]).toMatchObject({ input: { value: "prompt text" }, output: { value: ["a", "b"] } });
   });
 
   test("target defaults to the memoryId and is overridable", () => {
@@ -300,6 +339,14 @@ describe("listMemoryEvents — transport", () => {
     await expect(listMemoryEvents(BASE, undefined, http)).rejects.toBeInstanceOf(AwsReadError);
   });
 
+  test("maxEvents below 1 is refused, since ListEvents bounds maxResults at 1..100", async () => {
+    const { http, calls } = mockHttp([{ body: { events: [] } }]);
+    await expect(listMemoryEvents({ ...BASE, maxEvents: 0 }, undefined, http)).rejects.toThrow(
+      /maxEvents must be a positive integer/,
+    );
+    expect(calls).toHaveLength(0);
+  });
+
   test("a missing identifier is refused before any request goes out", async () => {
     const { http, calls } = mockHttp([{ body: { events: [] } }]);
     await expect(listMemoryEvents({ ...BASE, memoryId: "" }, undefined, http)).rejects.toThrow(
@@ -362,6 +409,33 @@ describe("awsAgentCoreFetchTrace — fetch to trace text", () => {
     expect(result.fetched).toBe(3);
     expect(result.lineCount).toBe(1);
     expect(result.text).toContain('requestId: "keep"');
+  });
+
+  test("an event outside the window cannot fail the run", async () => {
+    // The window is applied before normalizing, so a payload-less record the
+    // caller deliberately excluded is not a reason to abort.
+    const { http } = mockHttp([
+      {
+        body: {
+          events: [
+            memoryEvent({ eventId: "broken", eventTimestamp: 1_000, payload: [] }),
+            memoryEvent({ eventId: "keep", eventTimestamp: 2_000 }),
+          ],
+        },
+      },
+    ]);
+    const result = await awsAgentCoreFetchTrace({ ...BASE, since: 2_000 }, undefined, http);
+    expect(result.lineCount).toBe(1);
+    expect(result.text).toContain('requestId: "keep"');
+  });
+
+  test("…but one inside the window still fails the run", async () => {
+    const { http } = mockHttp([
+      { body: { events: [memoryEvent({ eventId: "broken", eventTimestamp: 2_000, payload: [] })] } },
+    ]);
+    await expect(awsAgentCoreFetchTrace({ ...BASE, since: 2_000 }, undefined, http)).rejects.toThrow(
+      /has an empty payload/,
+    );
   });
 
   test("an ISO window bound is accepted", async () => {

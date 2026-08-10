@@ -86,6 +86,42 @@ describe("value rendering — Cedar surface forms (§6)", () => {
   test("a field name that is not an identifier throws", () => {
     expect(() => renderFields({ "not-an-ident": 1 })).toThrow(/must be an identifier/);
   });
+
+  test("an integer past 2^53 throws rather than rendering a different number", () => {
+    // String(1e21) is "1e+21", which is not a Cedar integer literal at all.
+    expect(() => renderValue(1e21)).toThrow(/outside the range a JS number represents exactly/);
+    expect(() => renderValue(Number.MAX_SAFE_INTEGER + 2)).toThrow(AgentCoreTraceError);
+    expect(renderValue(Number.MAX_SAFE_INTEGER)).toBe("9007199254740991");
+  });
+});
+
+describe("a payload cannot write its own trace", () => {
+  /**
+   * The observed agent authors the payloads this module renders. If the tagged
+   * values were recognised by shape, an agent could emit surface text straight
+   * into both bags — a forged principal, an unbalanced paren, an extra field.
+   */
+  test("a record that merely looks like a raw value is refused, not rendered", () => {
+    const forged = { traceValue: "raw", text: 'INJECTED), callerPrincipal: Ns::Admin::"root"' } as const;
+    expect(() => renderValue(forged)).toThrow(/would let the observed agent decide what its own trace says/);
+    expect(() => renderFields({ meta: forged })).toThrow(AgentCoreTraceError);
+  });
+
+  test("a look-alike entity ref is refused too, so a principal cannot be forged", () => {
+    expect(() => renderValue({ traceValue: "entity", uid: 'Ns::Admin::"root"' })).toThrow(
+      /a payload carries a "traceValue" field/,
+    );
+  });
+
+  test("the real constructors still render, because the tag is identity and not shape", () => {
+    expect(renderValue(agentCoreRaw("ip(\"10.0.0.1\")"))).toBe('ip("10.0.0.1")');
+    expect(renderValue(agentCoreEntityRef('Ns::Admin::"root"'))).toBe('Ns::Admin::"root"');
+    expect(renderValue(agentCoreDecimal("1.50"))).toBe("1.50");
+  });
+
+  test("a structurally identical copy of a real tagged value loses the tag", () => {
+    expect(() => renderValue({ ...agentCoreEntityRef('Ns::Admin::"root"') })).toThrow(AgentCoreTraceError);
+  });
 });
 
 describe("qualification — the second §6 trap", () => {

@@ -78,6 +78,27 @@ export interface AgentCoreRaw {
 /** A tagged value: one rendered specially rather than by JS type. */
 export type AgentCoreTagged = AgentCoreEntityRef | AgentCoreDecimal | AgentCoreRaw;
 
+/**
+ * Which objects are *really* tagged values.
+ *
+ * Identity, not shape. A tagged value renders as surface text — an `entity`
+ * becomes a bare uid, a `raw` becomes its `text` verbatim — so if membership
+ * were decided by a `traceValue` key, any agent that wrote
+ * `{"traceValue": "raw", "text": "…"}` into a payload could inject arbitrary
+ * unescaped text into both bags of the trace: a forged `callerPrincipal`, an
+ * unbalanced paren, a whole extra field. The payloads this module reads are
+ * written by the agent under observation, which is the last party that should
+ * get to decide what its own trace says. So only the three constructors below
+ * confer the tag, and {@link renderValue} refuses a record that merely looks
+ * tagged rather than rendering it either way.
+ */
+const TAGGED = new WeakSet<object>();
+
+function tag<T extends AgentCoreTagged>(value: T): T {
+  TAGGED.add(value);
+  return value;
+}
+
 /** Anything that can sit in a trace field, in Cedar surface forms. */
 export type AgentCoreTraceValue =
   | string
@@ -132,24 +153,30 @@ function assertIdent(value: string, what: string, index?: number): string {
 
 /** `Ns::Type::"id"`. Validated at construction, so a short name cannot slip through. */
 export function agentCoreEntityRef(uid: string): AgentCoreEntityRef {
-  return { traceValue: "entity", uid: assertUid(uid, "an entity reference") };
+  return tag({ traceValue: "entity", uid: assertUid(uid, "an entity reference") });
 }
 
-/** A Cedar decimal, written as it should appear (`"1.50"`). */
-export function agentCoreDecimal(text: string): AgentCoreDecimal {
+/**
+ * A Cedar decimal, written as it should appear (`"1.50"`).
+ *
+ * `context` names the field it came from when there is one, so a payload that
+ * cannot be represented says *where* rather than only *what*.
+ */
+export function agentCoreDecimal(text: string, context?: string): AgentCoreDecimal {
   if (!/^-?\d+\.\d+$/.test(text)) {
-    throw new AgentCoreTraceError(`agentcore trace: a decimal looks like "1.50" — got "${text}"`);
+    const where = context ? ` at ${context}` : "";
+    throw new AgentCoreTraceError(`agentcore trace: a decimal looks like "1.50" — got "${text}"${where}`);
   }
-  return { traceValue: "decimal", text };
+  return tag({ traceValue: "decimal", text });
 }
 
 /** Surface text, rendered verbatim. For values this module has no shape for. */
 export function agentCoreRaw(text: string): AgentCoreRaw {
-  return { traceValue: "raw", text };
+  return tag({ traceValue: "raw", text });
 }
 
 function isTagged(value: AgentCoreTraceValue): value is AgentCoreTagged {
-  return typeof value === "object" && value !== null && !Array.isArray(value) && "traceValue" in value;
+  return typeof value === "object" && value !== null && TAGGED.has(value);
 }
 
 /** The five escapes a Cedar string literal needs. Mirrors the cedar lexicon's. */
@@ -172,10 +199,29 @@ export function renderValue(value: AgentCoreTraceValue): string {
         `agentcore trace: ${String(value)} is not an integer — a decimal must be written with agentCoreDecimal("1.50") so its scale survives`,
       );
     }
+    // Beyond 2^53 a JS number has already lost the digits an i64 would keep,
+    // and `String(1e21)` is `"1e+21"`, which is not a Cedar integer literal at
+    // all. Either way the trace would carry a number that is not the number the
+    // agent saw.
+    if (!Number.isSafeInteger(value)) {
+      throw new AgentCoreTraceError(
+        `agentcore trace: ${String(value)} is outside the range a JS number represents exactly, so the trace would carry a different number than the history did — carry it as a string`,
+      );
+    }
     return String(value);
   }
   if (Array.isArray(value)) return `[${value.map(renderValue).join(", ")}]`;
   if (isTagged(value)) return value.traceValue === "entity" ? value.uid : value.text;
+  if ("traceValue" in value) {
+    // See TAGGED. Rendering it as a record would be a lie about what the agent
+    // wrote; rendering it as a tagged value would let the agent write its own
+    // trace. Neither is on offer.
+    throw new AgentCoreTraceError(
+      `agentcore trace: a payload carries a "traceValue" field, which is the marker this module uses for entity refs, decimals and raw surface text. ` +
+        "Rendering it either way would let the observed agent decide what its own trace says, so it is refused — rename the field at the source, " +
+        "or build the value with agentCoreEntityRef/agentCoreDecimal/agentCoreRaw.",
+    );
+  }
   return renderFields(value as AgentCoreFields);
 }
 
@@ -459,8 +505,8 @@ export function toTraceLine(
     requestContext: groups,
     record: {
       ...groups,
-      callerPrincipal: { traceValue: "entity", uid: principal },
-      callerResource: { traceValue: "entity", uid: resource },
+      callerPrincipal: agentCoreEntityRef(principal),
+      callerResource: agentCoreEntityRef(resource),
       sessionId: event.sessionId,
       requestId: event.eventId,
     },
@@ -469,7 +515,7 @@ export function toTraceLine(
 
 /** One line as the trace parser reads it. Never ends in a newline. */
 export function renderTraceLine(line: AgentCoreTraceLine): string {
-  if (!Number.isInteger(line.timestamp)) {
+  if (!Number.isSafeInteger(line.timestamp)) {
     throw new AgentCoreTraceError(`agentcore trace: a timepoint is an i64 — got ${String(line.timestamp)}`);
   }
 

@@ -216,14 +216,49 @@ export interface FieldRename {
 }
 
 /**
+ * A non-integer JS number as a decimal literal the Cedar surface accepts.
+ *
+ * `String(1e-7)` is `"1e-7"`, which is not a decimal literal, so a legitimate
+ * small payload number would otherwise abort the whole fetch. `toFixed(20)` is
+ * the widest non-exponential rendering JS offers, and the trailing zeros it
+ * pads with come back off.
+ *
+ * A value too small for even that rounds to `0.0`, and a trace that says a
+ * policy compared against zero when the agent saw something else is the whole
+ * failure class this module exists to prevent — so it throws instead, naming
+ * the field.
+ */
+export function decimalText(value: number, context?: string): string {
+  const plain = String(value);
+  if (!/e/i.test(plain)) return plain;
+
+  const fixed = value.toFixed(20).replace(/(\.\d*?)0+$/, "$1");
+  const text = fixed.endsWith(".") ? `${fixed}0` : fixed;
+  if (Number(text) !== value) {
+    const where = context ? ` at ${context}` : "";
+    throw new AgentCoreTraceError(
+      `agentcore trace: ${plain}${where} has no exact decimal spelling in the trace grammar — it would render as ${text}, and a policy comparing against that would be comparing against a number the agent never saw. Carry it as a string.`,
+    );
+  }
+  return text;
+}
+
+/**
  * Coerce arbitrary JSON into trace values.
  *
- * Three decisions worth naming. A non-integer number becomes a Cedar decimal
- * rather than being rounded, because the scale is the thing a policy compares
- * against. `null` and `undefined` are dropped, because Cedar has no null and an
+ * A non-integer number becomes a Cedar decimal rather than being rounded,
+ * because the scale is the thing a policy compares against. `null` and
+ * `undefined` are dropped from *records*, because Cedar has no null and an
  * invented sentinel would be matched by a predicate that meant something else.
- * And a key the grammar cannot spell is renamed — but every rename is returned,
- * so a caller can see it, and `onNonIdentifierField: "fail"` refuses instead.
+ * And a key the grammar cannot spell is renamed — every rename is returned, so
+ * a caller can see it, and `onNonIdentifierField: "fail"` refuses instead.
+ *
+ * Two things throw rather than being smoothed over, and both are the same
+ * failure this module refuses everywhere else — data that changes meaning
+ * without saying so. A `null` *inside an array* would shift every later index,
+ * so a predicate on `args[1]` would start matching `args[0]`'s value. And two
+ * payload keys that rewrite to the same identifier (`tool-name` and `tool.name`
+ * both become `tool_name`) would silently drop one of them.
  */
 export function coerceFields(
   value: unknown,
@@ -234,19 +269,28 @@ export function coerceFields(
   const fields: Record<string, AgentCoreTraceValue> = {};
   if (!isRecord(value)) return { fields, renames };
 
+  const sources = new Map<string, string>();
   for (const [key, raw] of Object.entries(value)) {
-    const coerced = coerceValue(raw, options, path ? `${path}.${key}` : key, renames);
+    const here = path ? `${path}.${key}` : key;
+    const coerced = coerceValue(raw, options, here, renames);
     if (coerced === undefined) continue;
     let name = key;
     if (!IDENT.test(key)) {
       if (options.onNonIdentifierField === "fail") {
         throw new AgentCoreTraceError(
-          `agentcore trace: the payload field "${path ? `${path}.` : ""}${key}" is not an identifier and the dogwood trace grammar cannot spell it — rename it at the source, or accept the rewrite by leaving onNonIdentifierField unset`,
+          `agentcore trace: the payload field "${here}" is not an identifier and the dogwood trace grammar cannot spell it — rename it at the source, or accept the rewrite by leaving onNonIdentifierField unset`,
         );
       }
       name = identifierFor(key);
-      renames.push({ path: path ? `${path}.${key}` : key, from: key, to: name });
+      renames.push({ path: here, from: key, to: name });
     }
+    const taken = sources.get(name);
+    if (taken !== undefined) {
+      throw new AgentCoreTraceError(
+        `agentcore trace: the payload fields "${taken}" and "${key}" both spell "${name}" in the trace grammar, so one would overwrite the other and a predicate on it would read the wrong value — rename one at the source`,
+      );
+    }
+    sources.set(name, key);
     fields[name] = coerced;
   }
   return { fields, renames };
@@ -262,18 +306,41 @@ function coerceValue(
   if (typeof value === "string" || typeof value === "boolean") return value;
   if (typeof value === "number") {
     if (!Number.isFinite(value)) return undefined;
-    return Number.isInteger(value) ? value : agentCoreDecimal(String(value));
+    return Number.isInteger(value) ? value : agentCoreDecimal(decimalText(value, path), path);
   }
   if (Array.isArray(value)) {
-    const items: AgentCoreTraceValue[] = [];
-    value.forEach((item, index) => {
-      const coerced = coerceValue(item, options, `${path}[${index}]`, renames);
-      if (coerced !== undefined) items.push(coerced);
+    return value.map((item, index) => {
+      const here = `${path}[${index}]`;
+      const coerced = coerceValue(item, options, here, renames);
+      if (coerced === undefined) {
+        throw new AgentCoreTraceError(
+          `agentcore trace: ${here} has no value the trace grammar can carry (${JSON.stringify(item) ?? "undefined"}), and dropping it would shift every later element — so a predicate written against a position in this array would read its neighbour's value. Fix it at the source.`,
+        );
+      }
+      return coerced;
     });
-    return items;
   }
   if (isRecord(value)) return coerceFields(value, options, path, renames).fields;
   return undefined;
+}
+
+/**
+ * One payload group from a `blob` member.
+ *
+ * A blob is arbitrary JSON, so `input` is not necessarily a record —
+ * `input: "the prompt text"` is a perfectly ordinary thing for an agent to
+ * write. A non-record is wrapped under `value` the same way a non-record
+ * `conversational.content` is, rather than being dropped for not being the
+ * shape this module hoped for.
+ */
+function coerceGroup(
+  value: unknown,
+  options: { onNonIdentifierField?: NonIdentifierFieldPolicy },
+  path: string,
+  renames: FieldRename[],
+): AgentCoreFields {
+  if (value === undefined || value === null) return {};
+  return coerceFields(isRecord(value) ? value : { value }, options, path, renames).fields;
 }
 
 /* ── Memory → normalized events ───────────────────────────────────────────── */
@@ -368,14 +435,14 @@ export function normalizeMemoryEvents(
       if (member.conversational) {
         const role = member.conversational.role ?? "OTHER";
         const mapping = roles[role] ?? roles.OTHER!;
-        const content = coerceFields(
+        const content = coerceGroup(
           isRecord(member.conversational.content)
             ? member.conversational.content
             : { text: member.conversational.content },
           options,
           `${where}.payload[${slot}].conversational.content`,
           renames,
-        ).fields;
+        );
         out.push({
           ...base,
           action: mapping.action,
@@ -394,9 +461,9 @@ export function normalizeMemoryEvents(
           if (!(BLOB_KEYS as readonly string[]).includes(key)) rest[key] = value;
         }
         const groups = {
-          input: coerceFields(blob.input, options, `${prefix}.input`, renames).fields,
-          output: coerceFields(blob.output, options, `${prefix}.output`, renames).fields,
-          error: coerceFields(blob.error, options, `${prefix}.error`, renames).fields,
+          input: coerceGroup(blob.input, options, `${prefix}.input`, renames),
+          output: coerceGroup(blob.output, options, `${prefix}.output`, renames),
+          error: coerceGroup(blob.error, options, `${prefix}.error`, renames),
           attributes: coerceFields(rest, options, prefix, renames).fields,
         };
         out.push({
@@ -499,6 +566,11 @@ export async function listMemoryEvents(
     `/actor/${segment(args.actorId, "actorId")}` +
     `/sessions/${segment(args.sessionId, "sessionId")}`;
   const cap = args.maxEvents ?? DEFAULT_MAX_EVENTS;
+  // `ListEvents` bounds maxResults at 1..100, so a cap of 0 would go out as a
+  // request the service rejects rather than as an empty result.
+  if (!Number.isInteger(cap) || cap < 1) {
+    throw new AgentCoreTraceError(`agentcore trace: maxEvents must be a positive integer — got ${String(cap)}`);
+  }
 
   const out: MemoryEvent[] = [];
   let nextToken: string | undefined;
@@ -592,10 +664,10 @@ function windowBound(value: number | string | undefined, what: string): number |
 /**
  * Fetch an AgentCore session history and render it as dogwood trace text.
  *
- * The window is applied after the fetch on purpose: `ListEvents`' `filter` takes
- * a branch and event metadata and has no time predicate, so a server-side
- * window is not on offer. `maxEvents` bounds the fetch; `since`/`until` bound
- * what is rendered.
+ * The window is applied client-side because `ListEvents`' `filter` takes a
+ * branch and event metadata and has no time predicate, so a server-side window
+ * is not on offer. `maxEvents` bounds the fetch; `since`/`until` bound what is
+ * normalized and rendered.
  */
 export async function awsAgentCoreFetchTrace(
   args: AwsAgentCoreFetchTraceArgs,
@@ -615,10 +687,16 @@ export async function awsAgentCoreFetchTrace(
   const since = windowBound(args.since, "the window's `since`");
   const until = windowBound(args.until, "the window's `until`");
 
-  const { events, renames } = normalizeMemoryEvents(raw, args);
-  const windowed = events.filter(
-    (event) => (since === undefined || event.timeMs >= since) && (until === undefined || event.timeMs <= until),
-  );
+  // The window is applied to the *fetched* events, before normalizing, so an
+  // event the caller deliberately excluded cannot fail the run. Normalizing
+  // first would let one payload-less record anywhere in the fetched range abort
+  // a narrowed window with no way to recover short of shrinking maxEvents.
+  const inWindow = raw.filter((event, index) => {
+    const at = toEpochMs(event.eventTimestamp, `event ${index}${event.eventId ? ` (${event.eventId})` : ""}'s eventTimestamp`);
+    return (since === undefined || at >= since) && (until === undefined || at <= until);
+  });
+
+  const { events: windowed, renames } = normalizeMemoryEvents(inWindow, args);
 
   if (windowed.length === 0 && (args.requireEvents ?? true)) {
     const window = since !== undefined || until !== undefined ? " in the requested window" : "";
