@@ -565,6 +565,53 @@ function generateManifest(
   };
 }
 
+/** What merging build-root contributions produced: non-fatal render notes and
+ * fatal messages (a failed contributor, a name collision). */
+export interface BuildRootMergeResult {
+  warnings: string[];
+  errors: string[];
+}
+
+/**
+ * Run each build-root contributor (#1548 piece 3) and merge its rendered
+ * entities into `entities`, in place. THE one merge implementation — `build()`
+ * uses it for step 4b, and the graph handler's discover-based paths reuse it
+ * so a rendered kustomize root joins the graphed entity set under exactly the
+ * rules the build applies (#1626):
+ *
+ * - a contributed name colliding with an existing entity is an error, never a
+ *   silent overwrite;
+ * - a contributor that throws becomes an error carrying its message (the k8s
+ *   hook's missing-binary refusal names the binaries), not a stack trace.
+ *
+ * Errors come back as plain messages; each caller wraps them in its own error
+ * vocabulary (`BuildErrorClass` in `build()`, the CLI's `formatError` on the
+ * graph paths).
+ */
+export async function mergeBuildRootEntities(
+  entities: Map<string, Declarable>,
+  contributors: ReadonlyArray<() => Promise<BuildRootContribution>>,
+): Promise<BuildRootMergeResult> {
+  const warnings: string[] = [];
+  const errors: string[] = [];
+  for (const contribute of contributors) {
+    try {
+      const contribution = await contribute();
+      warnings.push(...(contribution.warnings ?? []));
+      for (const [name, entity] of contribution.entities) {
+        if (entities.has(name)) {
+          errors.push(`Build-root entity "${name}" collides with a discovered entity of the same name`);
+          continue;
+        }
+        entities.set(name, entity);
+      }
+    } catch (error) {
+      errors.push(error instanceof Error ? error.message : String(error));
+    }
+  }
+  return { warnings, errors };
+}
+
 /**
  * Builds a lexicon specification by discovering entities, sorting them
  * topologically, and serializing them using the lexicon serializers.
@@ -680,25 +727,10 @@ async function buildFromDiscoveryResult(
   // object, and re-running the contributors there would duplicate every
   // contributed entity once per child.
   if (!parentBuildStack && options?.buildRoots) {
-    for (const contribute of options.buildRoots) {
-      try {
-        const contribution = await contribute();
-        for (const w of contribution.warnings ?? []) warnings.push(w);
-        for (const [name, entity] of contribution.entities) {
-          if (discoveryResult.entities.has(name)) {
-            errors.push(
-              new BuildErrorClass(
-                "",
-                `Build-root entity "${name}" collides with a discovered entity of the same name`,
-              ),
-            );
-            continue;
-          }
-          discoveryResult.entities.set(name, entity);
-        }
-      } catch (error) {
-        errors.push(new BuildErrorClass("", error instanceof Error ? error.message : String(error)));
-      }
+    const merged = await mergeBuildRootEntities(discoveryResult.entities, options.buildRoots);
+    warnings.push(...merged.warnings);
+    for (const message of merged.errors) {
+      errors.push(new BuildErrorClass("", message));
     }
   }
 
