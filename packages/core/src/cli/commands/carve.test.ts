@@ -2,7 +2,7 @@ import { describe, test, expect } from "vitest";
 import { mkdtempSync, writeFileSync, rmSync, readFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { carveAdvise, carveJson, formatCarveReport } from "./carve";
+import { carveAdvise, carveJson, formatCarveReport, CARVE_REPORT_VERSION } from "./carve";
 import { loadHcl2json } from "../../terraform/parse";
 
 let parserAvailable = false;
@@ -78,9 +78,25 @@ describe("carveAdvise", () => {
 
       // report file is valid JSON with the advisory banner + band counts
       const payload = JSON.parse(readFileSync(reportFile, "utf-8"));
+      expect(payload.version).toBe(CARVE_REPORT_VERSION);
       expect(payload.advisory).toContain("read-only");
       expect(payload.bands["clean leaf"]).toBeGreaterThanOrEqual(1);
       expect(payload.count).toBe(r.results!.length);
+
+      // The written report carries the edge lists, not just the counts (#1636).
+      const written = payload.resources.find((x: { address: string }) => x.address === "aws_s3_bucket.assets");
+      expect(written.boundary.inbound).toEqual([
+        {
+          direction: "inbound",
+          survivor: "aws_lambda_function.api",
+          carved: "aws_s3_bucket.assets",
+          attrs: ["bucket"],
+          via: ["environment"],
+          bridge: "tf-data-source",
+          required: "immediately",
+        },
+      ]);
+      expect(written.boundary.outbound).toEqual([]);
     });
   });
 
@@ -96,9 +112,34 @@ describe("carveAdvise", () => {
     });
   });
 
-  test("carveJson carries the read-only advisory banner", () => {
-    const payload = carveJson({ ok: true, from: "x", results: [] }) as { advisory: string; count: number };
+  test("carveJson carries the read-only advisory banner and the schema version", () => {
+    const payload = carveJson({ ok: true, from: "x", results: [] });
     expect(payload.advisory).toContain("read-only");
     expect(payload.count).toBe(0);
+    expect(payload.version).toBe(1);
+  });
+
+  test("carveJson omits boundary entirely with no graph — 'none' and 'not reported' differ", () => {
+    const payload = carveJson({
+      ok: true,
+      from: "x",
+      results: [
+        {
+          address: "aws_vpc.main",
+          kind: "resource",
+          score: 100,
+          band: "clean leaf",
+          breakdown: {
+            inbound: 0,
+            outbound: 0,
+            tier: 1,
+            hasDynamic: false,
+            instances: 1,
+            penalties: { inbound: 0, outbound: 0, tier: 0, dynamic: 0, instances: 0 },
+          },
+        },
+      ],
+    });
+    expect(payload.resources[0]).not.toHaveProperty("boundary");
   });
 });
