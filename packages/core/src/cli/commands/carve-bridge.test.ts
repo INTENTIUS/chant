@@ -162,6 +162,38 @@ describe("carveBridge", () => {
     });
   });
 
+  test("an output-only dependency is patched, not left dangling (#1638)", async () => {
+    if (!parserAvailable) return;
+    const dir = mkdtempSync(join(tmpdir(), "chant-bridge-outputs-"));
+    try {
+      // Nothing but an output reads the bucket. Before outputs entered the
+      // graph this produced no data source and no rewrite at all, so the
+      // surviving plan broke on the dangling reference at handoff.
+      writeFileSync(join(dir, "bucket.tf"), BUCKET_TF);
+      writeFileSync(
+        join(dir, "outputs.tf"),
+        `output "assets_bucket" {\n  value = aws_s3_bucket.assets.bucket\n}\n`,
+      );
+      const out = join(dir, "carveout");
+      const res = await carveBridge({ from: dir, select: "aws_s3_bucket.assets", output: out });
+      expect(res.ok).toBe(true);
+      expect(res.plan!.outputRewrites).toEqual(["output.assets_bucket"]);
+
+      expect(readFileSync(join(out, "aws_s3_bucket-assets-datasources.tf"), "utf-8")).toContain(
+        'data "aws_s3_bucket" "assets"',
+      );
+      expect(readFileSync(join(out, "outputs.tf"), "utf-8")).toContain("value = data.aws_s3_bucket.assets.bucket");
+
+      const patch = readFileSync(res.patchPath!, "utf-8");
+      expect(patch).toContain("diff --git a/outputs.tf b/outputs.tf");
+      expect(patch).toContain("-  value = aws_s3_bucket.assets.bucket");
+      expect(patch).toContain("+  value = data.aws_s3_bucket.assets.bucket");
+      expect(formatCarveBridge(res)).toContain("1 output block(s) repointed at the data source: output.assets_bucket");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test("formatCarveBridge summarizes data sources, rewires, and safety", async () => {
     if (!parserAvailable) return;
     await withEstate(async (dir) => {

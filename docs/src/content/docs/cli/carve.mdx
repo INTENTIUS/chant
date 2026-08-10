@@ -42,6 +42,7 @@ Each resource starts at 100 and loses points for boundary work and mapping diffi
 score = 100
   - 12 * inbound          # survivors that depend on this → a data-source patch each
   -  4 * outbound         # this depends on survivors → a deferred input each
+  -  4 * outputs          # an output block reads this → a one-line rewrite each
   - 15 * (tier - 1)       # native-spec map: tier1=0, tier2=-15, tier3=-30
   - 10 * has_dynamic      # count / for_each / data present
   -  3 * (instances - 1)  # state-expanded instance count
@@ -49,6 +50,8 @@ clamp 0..100              # no known native mapping → 0
 ```
 
 **Inbound** edges are the expensive ones: each resource that still depends on a carved piece needs its Terraform rewritten to a `data` source. **Outbound** edges are cheaper — a value the carved piece reads from a survivor becomes a deploy-time input, deferred until you actually apply.
+
+An `output` block that reads the carved resource counts too. It is an inbound dependency with the same urgency (the surviving plan errors on the dangling reference), but bridging it rewrites a single expression in a block that manages nothing, so it is weighted like an outbound edge rather than a data-source patch.
 
 | Score | Band | Meaning |
 |-------|------|---------|
@@ -112,10 +115,11 @@ Read it top to bottom: the log group has no dependents and a clean native map, s
       "breakdown": {
         "inbound": 3,
         "outbound": 0,
+        "outputs": 0,
         "tier": 1,
         "hasDynamic": false,
         "instances": 1,
-        "penalties": { "inbound": -36, "outbound": 0, "tier": 0, "dynamic": 0, "instances": 0 }
+        "penalties": { "inbound": -36, "outbound": 0, "outputs": 0, "tier": 0, "dynamic": 0, "instances": 0 }
       },
       "boundary": {
         "inbound": [
@@ -142,6 +146,7 @@ Read it top to bottom: the log group has no dependents and a clean native map, s
 
 - `survivor` is the address that stays in Terraform, `carved` the address that leaves. `attrs` are the producer-side attributes referenced (`id`, `arn`); `via` is the referring block's own attribute the reference sits in (`vpc_id`) — the name a deferred input's build parameter takes on emit.
 - An `inbound` edge is bridged by a `data` source and is `required: "immediately"`: the surviving plan breaks without it. An `outbound` edge becomes a `deferred-input`, `required: "at-apply"`.
+- An inbound edge whose `survivor` is an `output.<name>` pseudo-address comes from an `output` block. It carries `bridge: "tf-output-rewrite"` and `via: ["value"]`, and `carve bridge` repoints the output at the same data source. It is counted in `breakdown.outputs`, not `breakdown.inbound`, so `boundary.inbound.length` equals `breakdown.inbound + breakdown.outputs`.
 - Every cut appears **twice** across the report — once as an `inbound` edge on the depended-on resource, once as an `outbound` edge on the resource that depends on it. Each list answers "what would carving *this* resource cut", so a reader collecting edges across resources should key them in dependency direction to fold the two views into one.
 - The lists are the carve *set's* boundary, so a folded sub-resource is never an endpoint: it carves with its parent, and edges internal to the set are not boundary work.
 - `boundary` present with two empty lists means no boundary work. `boundary` absent means the report was produced by a chant that predates the field — "none" and "not reported" are different claims.
@@ -150,7 +155,7 @@ Read it top to bottom: the log group has no dependents and a clean native map, s
 
 `version` is a single integer, currently `1`.
 
-- **Additive within a version.** New top-level fields, new per-resource fields, and new entries in existing lists may appear in any release. Read leniently: ignore keys you do not know.
+- **Additive within a version.** New top-level fields, new per-resource fields, new kinds of entry in existing lists, and new values in an open-ended enum (a `bridge` kind, say) may appear in any release. Read leniently: ignore keys and values you do not know.
 - **Removing or renaming a field, or changing what one means, bumps the version.** So does narrowing a type. (An optional field becoming always-present is additive; the reverse is not.)
 - A reader handed a version it does not know should refuse the report and say so, rather than half-reading it.
 

@@ -8,6 +8,8 @@
  *    Bridge: add a `data` source for the (now chant-managed) resource and
  *    rewrite the survivor's `type.name.attr` references to `data.type.name.attr`.
  *    Required immediately, or `terraform plan` errors on the dangling ref.
+ *    An `output` block reading the carved resource is such a survivor (#1638):
+ *    same data source, same textual rewrite, applied to the output's value.
  *
  *  - outbound edge → the carved resource read a value from a survivor. That
  *    value must enter chant from outside synthesis, as a deploy-time input.
@@ -62,6 +64,12 @@ export interface BridgePlan {
   deferredInputs: DeferredInput[];
   /** Every carved address whose own block the rewrites remove, across files. */
   excised: string[];
+  /**
+   * `output` blocks whose value the rewrites repoint at a data source (#1638),
+   * as `output.<name>`. They are inbound edges like any other — listed
+   * separately only because the patch is a one-line expression edit.
+   */
+  outputRewrites: string[];
   runbook: string;
 }
 
@@ -139,13 +147,19 @@ export function generateBridge(
     };
   });
 
+  const outputRewrites = report.inbound
+    .filter((e) => e.bridge === "tf-output-rewrite")
+    .map((e) => e.survivor)
+    .sort();
+
   return {
     target: report.target,
     dataSources,
     rewrites,
     deferredInputs,
     excised,
-    runbook: buildRunbook(report, dataSources, deferredInputs, excised),
+    outputRewrites,
+    runbook: buildRunbook(report, dataSources, deferredInputs, excised, outputRewrites),
   };
 }
 
@@ -155,6 +169,7 @@ function buildRunbook(
   dataSources: DataSourceBlock[],
   deferred: DeferredInput[],
   excised: string[],
+  outputRewrites: string[],
 ): string {
   const carvedAddrs = report.carveSet.map((m) => m.address);
   const L: string[] = [];
@@ -179,6 +194,9 @@ function buildRunbook(
     for (const ds of dataSources) L.push(`    #   data.${ds.type}.${ds.name}  (for ${ds.address})`);
   } else if (!excised.length) {
     L.push("    # no inbound edges — no survivor patch needed.");
+  }
+  if (outputRewrites.length) {
+    L.push(`    # and repoints these output block(s) at the data source: ${outputRewrites.join(", ")}`);
   }
   L.push("    terraform plan   # expect: in-place updates to the survivors only");
   L.push("    terraform apply");

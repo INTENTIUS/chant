@@ -115,6 +115,31 @@ describe("scoreEstate — penalties", () => {
     expect(map["aws_sns_topic.alerts"].score).toBe(88); // 100 - 12*1 inbound
   });
 
+  test("an output block reading a resource costs 4, not 12 (#1638)", () => {
+    const tree: Hcl2JsonTree = {
+      resource: { aws_s3_bucket: { assets: [{ bucket: "b" }] } },
+      output: { assets_bucket: [{ value: "${aws_s3_bucket.assets.bucket}" }] },
+    };
+    const bucket = byAddress(scoreEstate(buildFixtureGraph(tree)))["aws_s3_bucket.assets"];
+    expect(bucket.score).toBe(96); // 100 - 4*1 output
+    expect(bucket.breakdown.outputs).toBe(1);
+    expect(bucket.breakdown.inbound).toBe(0); // not counted as a data-source patch
+    expect(bucket.breakdown.penalties.outputs).toBe(-4);
+  });
+
+  test("an output and a resource reference are counted apart", () => {
+    const tree: Hcl2JsonTree = {
+      resource: {
+        aws_s3_bucket: { assets: [{ bucket: "b" }] },
+        aws_lambda_function: { api: [{ environment: { variables: { B: "${aws_s3_bucket.assets.bucket}" } } }] },
+      },
+      output: { assets_arn: [{ value: "${aws_s3_bucket.assets.arn}" }] },
+    };
+    const bucket = byAddress(scoreEstate(buildFixtureGraph(tree)))["aws_s3_bucket.assets"];
+    expect(bucket.breakdown).toMatchObject({ inbound: 1, outputs: 1 });
+    expect(bucket.score).toBe(84); // 100 - 12 - 4
+  });
+
   test("results are ranked most-peelable first", () => {
     const tree: Hcl2JsonTree = {
       resource: {
