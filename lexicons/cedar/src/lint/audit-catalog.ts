@@ -159,6 +159,14 @@ export const cedarAuditCatalog: Record<string, RuleMeta> = {
     "Give the operator a `within <n><s|m|h|d>` window — all three past-only operators require one. The typed builders take it as an argument.",
     { category: "correctness" },
   ),
+  DWDC013: auditRule(
+    "DWDC013",
+    "report-only",
+    "guidance",
+    "AgentCore policy embeds temporal text with no event schema emitted",
+    "Declare a TemporalEventSchema so the .dwschema ships with the policy, or record where the service schema is registered — AWS::BedrockAgentCore::Policy has no property to carry it, and until the engine has it every temporal predicate in the statement matches nothing.",
+    { category: "correctness" },
+  ),
   DWDE010: auditRule(
     "DWDE010",
     "merge-worthy",

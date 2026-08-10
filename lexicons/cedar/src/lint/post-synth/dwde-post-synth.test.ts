@@ -341,7 +341,7 @@ describe("registration", () => {
   test("the helper module contributes no check of its own", () => {
     // `dogwood-helpers.ts` is excluded from discovery by the "helper" filename
     // filter, the same way `wasm-helpers.ts` is.
-    expect(postSynthChecks.filter((c) => c.id.startsWith("DWD"))).toHaveLength(6);
+    expect(postSynthChecks.filter((c) => c.id.startsWith("DWD"))).toHaveLength(7);
   });
 });
 

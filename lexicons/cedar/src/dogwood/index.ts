@@ -149,10 +149,11 @@ export type { EventSchemaProps, MacroLibraryProps, TemporalPolicyProps } from ".
 export {
   DOGWOOD_EVENT_SCHEMA_SUFFIX,
   DOGWOOD_POLICY_SUFFIX,
+  dogwoodPolicyRecords,
   renderTemporalPolicyText,
   serializeDogwood,
 } from "./serialize";
-export type { DogwoodSerializeResult } from "./serialize";
+export type { DogwoodPolicyRecord, DogwoodSerializeResult } from "./serialize";
 
 export {
   blankComments,
