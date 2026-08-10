@@ -3,6 +3,7 @@ import { mkdtempSync, writeFileSync, rmSync, readFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { carveEmit, formatCarveEmit } from "./carve-emit";
+import { lintCommand } from "./lint";
 import { loadHcl2json } from "../../terraform/parse";
 import { readCarveManifest } from "../../terraform/manifest";
 import type { ImportResult, LiveImportOptions } from "./import";
@@ -207,6 +208,112 @@ resource "aws_subnet" "a" {
         vpc_id: { tfAttr: "vpc_id", survivor: "aws_vpc.main", attrs: ["id"], default: "vpc-0abc" },
       });
       expect(formatCarveEmit(res)).toContain("vpc_id — was aws_vpc.main.id");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("folded sub-resources land in the emitted bucket's properties (#1637)", async () => {
+    if (!parserAvailable) return;
+    const dir = mkdtempSync(join(tmpdir(), "chant-emit-fold-"));
+    try {
+      writeFileSync(
+        join(dir, "main.tf"),
+        `
+resource "aws_s3_bucket" "assets" { bucket = "myapp-assets-prod" }
+resource "aws_s3_bucket_versioning" "assets" {
+  bucket = aws_s3_bucket.assets.id
+  versioning_configuration { status = "Enabled" }
+}
+resource "aws_s3_bucket_public_access_block" "assets" {
+  bucket                  = aws_s3_bucket.assets.id
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+`,
+      );
+      const attrs = (extra: Record<string, unknown>) => ({ id: "myapp-assets-prod", bucket: "myapp-assets-prod", ...extra });
+      writeFileSync(
+        join(dir, "terraform.tfstate"),
+        JSON.stringify({
+          version: 4,
+          resources: [
+            {
+              mode: "managed",
+              type: "aws_s3_bucket",
+              name: "assets",
+              instances: [
+                {
+                  attributes: attrs({
+                    arn: "arn:aws:s3:::myapp-assets-prod",
+                    versioning: [{ enabled: true, mfa_delete: false }],
+                    server_side_encryption_configuration: [
+                      {
+                        rule: [
+                          {
+                            apply_server_side_encryption_by_default: [{ sse_algorithm: "AES256", kms_master_key_id: "" }],
+                            bucket_key_enabled: false,
+                          },
+                        ],
+                      },
+                    ],
+                  }),
+                },
+              ],
+            },
+            {
+              mode: "managed",
+              type: "aws_s3_bucket_versioning",
+              name: "assets",
+              instances: [{ attributes: attrs({ versioning_configuration: [{ status: "Enabled", mfa_delete: "" }] }) }],
+            },
+            {
+              mode: "managed",
+              type: "aws_s3_bucket_public_access_block",
+              name: "assets",
+              instances: [
+                {
+                  attributes: attrs({
+                    block_public_acls: true,
+                    block_public_policy: true,
+                    ignore_public_acls: true,
+                    restrict_public_buckets: true,
+                  }),
+                },
+              ],
+            },
+          ],
+        }),
+      );
+
+      const out = join(dir, "carveout");
+      const res = await carveEmit(
+        { from: dir, select: "aws_s3_bucket.assets", statePath: join(dir, "terraform.tfstate"), output: out },
+        { plugins: [], liveImport },
+      );
+      expect(res.ok).toBe(true);
+
+      // The fold is applied, not merely announced: the emitted Bucket carries
+      // the versioning and public-access block the Terraform declared.
+      const emitted = readFileSync(join(out, "src", "assets.ts"), "utf-8");
+      expect(emitted).toContain('VersioningConfiguration: {"Status":"Enabled"}');
+      expect(emitted).toContain('"BlockPublicAcls":true');
+      expect(emitted).toContain('"RestrictPublicBuckets":true');
+      expect(emitted).toContain('BucketEncryption: {"ServerSideEncryptionConfiguration"');
+
+      expect(res.folded).toEqual([
+        { address: "aws_s3_bucket_public_access_block.assets", props: ["PublicAccessBlockConfiguration"] },
+        { address: "aws_s3_bucket_versioning.assets", props: ["VersioningConfiguration"] },
+      ]);
+      const text = formatCarveEmit(res);
+      expect(text).toContain("aws_s3_bucket_versioning.assets (VersioningConfiguration)");
+      expect(text).toContain("aws_s3_bucket_public_access_block.assets (PublicAccessBlockConfiguration)");
+
+      // And the emitted project still lints clean (no errors).
+      const lint = await lintCommand({ path: out, format: "stylish" });
+      expect(lint.diagnostics.filter((d) => d.severity === "error")).toEqual([]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

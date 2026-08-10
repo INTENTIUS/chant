@@ -17,9 +17,15 @@ import { basename, join, resolve } from "path";
 import { parseTerraformDir, Hcl2JsonNotInstalled } from "../../terraform/parse";
 import { boundaryReport, deferredParamName, type CarveReport } from "../../terraform/carve";
 import { resolveTier } from "../../terraform/tier-map";
-import { readStateResource } from "../../terraform/state";
+import { readStateResource, type StateResource } from "../../terraform/state";
 import { writeCarveManifest, type CarveManifest } from "../../terraform/manifest";
-import { adoptFromState, canAdoptFromState, supportedStateAdoptionTypes, type DeferredParam } from "../../terraform/adopt-state";
+import {
+  adoptFromState,
+  canAdoptFromState,
+  supportedStateAdoptionTypes,
+  type DeferredParam,
+  type FoldedContribution,
+} from "../../terraform/adopt-state";
 import { getChantVersion } from "./init";
 import type { LexiconPlugin, ResourceSelector } from "../../lexicon";
 import type { ImportResult, LiveImportOptions } from "./import";
@@ -67,6 +73,8 @@ export interface CarveEmitResult {
   scaffolded?: string[];
   /** Deferred outbound inputs declared as build parameters in the emitted project (#998). */
   params?: DeferredParam[];
+  /** Folded sub-resources and the props each joined into the emitted parent (#1637). */
+  folded?: FoldedContribution[];
   /** The persisted carve state manifest bridge/apply compose with. */
   manifestPath?: string;
 }
@@ -125,7 +133,13 @@ export async function carveEmit(opts: CarveEmitOptions, deps: CarveEmitDeps): Pr
     // value the carved block read enters the emitted project as a declared
     // param, defaulted to the value the state resolved.
     const params = deferredParams(report, stateResource.attributes);
-    const adopted = adoptFromState(stateResource, params);
+    // The carve set's folded sub-resources come out of the same state file:
+    // their mappable attributes belong in the parent's emitted props (#1637).
+    const folded = report.carveSet
+      .filter((m) => m.foldedInto)
+      .map((m) => readStateResource(opts.statePath!, m.address))
+      .filter((r): r is StateResource => r !== null);
+    const adopted = adoptFromState(stateResource, params, folded);
     if (!adopted) return { ok: false, error: `Could not adopt ${opts.select} from state.` };
 
     // The output dir is a buildable chant project: source in src/, plus the
@@ -139,7 +153,16 @@ export async function carveEmit(opts: CarveEmitOptions, deps: CarveEmitDeps): Pr
     const scaffolded = scaffoldProject(outDir, lexicon, params);
 
     const manifestPath = persistManifest(outDir, opts, report, tfType, "tfstate", [outPath], params);
-    return { ok: true, report, source: "tfstate", emittedFiles: [outPath], scaffolded, manifestPath, params };
+    return {
+      ok: true,
+      report,
+      source: "tfstate",
+      emittedFiles: [outPath],
+      scaffolded,
+      manifestPath,
+      params,
+      folded: adopted.folded,
+    };
   }
 
   // ── Adoption path 2: live import (cloud→code) ──
@@ -335,7 +358,16 @@ export function formatCarveEmit(result: CarveEmitResult): string {
     lines.push(`  State manifest: ${result.manifestPath} — carve bridge/apply pick the target up from here.`);
   }
   if (r.carveSet.length > 1) {
-    const folded = r.carveSet.filter((m) => m.foldedInto).map((m) => m.address);
+    // Say what each fold actually contributed — announcing the fold without the
+    // properties was the bug behind #1637.
+    const contributed = new Map((result.folded ?? []).map((f) => [f.address, f.props]));
+    const folded = r.carveSet
+      .filter((m) => m.foldedInto)
+      .map((m) => {
+        const props = contributed.get(m.address);
+        if (props === undefined) return m.address;
+        return props.length ? `${m.address} (${props.join(", ")})` : `${m.address} (nothing mappable)`;
+      });
     lines.push(`  Folded in: ${folded.join(", ")}`);
   }
   lines.push("");
