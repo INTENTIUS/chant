@@ -1,0 +1,106 @@
+---
+title: "Schema"
+description: "The .cedarschema this lexicon's codegen reads, and how it is resolved."
+---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-cedar` — DO NOT EDIT.
+    Edit lexicons/cedar/src/codegen/docs.ts instead; changes here are overwritten. */}
+Unlike every other lexicon, cedar's interesting spec is not one global upstream. It is **your** schema.
+
+The pinned upstream here is the Cedar *grammar* — `@cedar-policy/cedar-wasm`,
+whose language version is asserted before anything is emitted. The schema is
+the input.
+
+## Where it is looked for
+
+1. `cedar.schema` in `chant.config.ts`
+2. `schema.cedarschema` in the project root
+3. the schema bundled with the lexicon
+
+Step 3 exists so `generate()` has something to read in a fresh clone — a
+generate step that only works after the user does something is a generate step
+nothing gates. It is a real application-authorization model, not a stub.
+
+**Turn it off once you have your own:**
+
+```typescript
+// chant.config.ts
+import type { ChantConfig } from "@intentius/chant";
+import "@intentius/chant-lexicon-cedar";
+
+export default {
+  lexicons: ["cedar"],
+  cedar: {
+    schema: "authz/app.cedarschema",
+    validation: {
+      mode: "strict",
+      warnings: "warn",
+      requireProjectSchema: true,
+    },
+  },
+} satisfies ChantConfig;
+```
+
+Without `requireProjectSchema`, a typo in the path is the difference between
+"your entity types" and "the bundled default" — and the build succeeds either
+way.
+
+## Writing one
+
+```
+namespace App {
+  type Level = Long;
+  type TagSet = Set<String>;
+
+  entity Group = { "name": String };
+
+  entity User in [Group] = {
+    "email": String,
+    "level": Level,
+    "manager"?: User,
+    "roles": TagSet,
+  };
+
+  entity Document = {
+    "title": String,
+    "owner": User,
+    "classification": String,
+  };
+
+  action read, write appliesTo {
+    principal: [User],
+    resource: [Document],
+    context: { "mfa": Bool }
+  };
+}
+```
+
+Common types (`type Level = Long`) are resolved away by the codegen — real
+schemas use them, so the resolver collapses them rather than pretending they
+are absent.
+
+## Config keys
+
+| Key | Meaning |
+|-----|---------|
+| `schema` | Path to the `.cedarschema`, relative to the project root |
+| `validation.mode` | `"strict"`. The only mode cedar-wasm 4.12 accepts |
+| `validation.warnings` | `"ignore"`, `"warn"`, or `"error"` — the validator reports "policy is impossible" here, separately from errors |
+| `validation.requireProjectSchema` | Refuse to fall back to the bundled default |
+
+The namespace is a `strictObject`, nested levels included: a typo inside
+`validation` is a config error, not a silently ignored key.
+
+## Both syntaxes
+
+Cedar's schema grammar has a human-readable form and a JSON form. The codegen
+consumes the human-readable one; `cedar-wasm` converts between them
+(`schemaToJson`, `schemaToText`) if you need the other.
+
+## The pin
+
+The language version is pinned separately from the package version. A package
+bump that leaves the language at 4.x cannot change what parses, so
+`CEDAR_WASM_VERSION` is what the self-upgrade tooling moves and
+`CEDAR_LANG_VERSION` is what `generate()` asserts at runtime. Both live in
+`src/spec/pin.ts`, beside a content pin over the bundled default schema.

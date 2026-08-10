@@ -1,0 +1,65 @@
+---
+title: "Importing"
+description: "The JSON policy format round trip, reconcile, and ownership."
+---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-cedar` — DO NOT EDIT.
+    Edit lexicons/cedar/src/codegen/docs.ts instead; changes here are overwritten. */}
+Bringing an existing Cedar policy set into typed source, and pulling console edits back.
+
+## The round trip
+
+```
+.cedar text  ->  JSON policy format  ->  TypeScript  ->  .cedar text
+```
+
+The JSON policy format is the parse source, not the `.cedar` text. That is why
+the serializer produces it from the same structured model rather than by
+re-parsing what it just wrote: the two views cannot drift, and the import path
+reads a format with an actual grammar rather than doing a second parse of the
+surface syntax.
+
+`cedar-wasm` converts in both directions — `policyToJson`, `policyToText`,
+`policySetTextToParts` — so a set that exists only as `.cedar` text is one
+call away from the importable form.
+
+## What round-tripping has to preserve
+
+| Carried | Notes |
+|---|---|
+| Effect | `permit` / `forbid` |
+| All three scope positions | Including `is T in E` |
+| `when` / `unless` clauses | In order |
+| Annotations | Including `@id`, which becomes the export name's override |
+
+The one asymmetry today is condition bodies. The JSON policy format wants an
+expression *tree*; the model carries expression *text*, written as
+`{ "__expr": "…" }` — Cedar's own escape for a source-given expression.
+Producing real trees means parsing Cedar expression text, which is precisely
+the work the import path has to do anyway.
+
+## Reconcile
+
+The interesting case is not the initial import. It is the policy somebody edited
+in a console: a `ReconcileOp` pulls it back into source, and the diff is
+reviewable.
+
+An **ambient permit** — one found in a policy store that no source file declares
+— is not housekeeping. It is a standing grant somebody made outside review, and
+it is a security finding.
+
+## Ownership
+
+AVP policy *stores* are taggable; individual policies are not. The ownership
+channel is store-scoped until finer granularity is proven, and no channel is
+declared until its read paths are implemented — `chant dev check-lexicon` has
+a tier-2 gate for exactly the failure of declaring a marker channel on a path
+the plugin does not implement.
+
+## Status
+
+The JSON policy-format parser, the TypeScript generator, and the
+`ReconcileOp` example are
+[INTENTIUS/chant#1653](https://github.com/INTENTIUS/chant/issues/1653). The
+serializer already emits the format they read, which is why it exists as a
+first-class output rather than a debugging aid.

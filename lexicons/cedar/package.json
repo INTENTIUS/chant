@@ -55,6 +55,8 @@
     "bundle": "tsx src/package-cli.ts",
     "validate": "tsx src/validate-cli.ts",
     "docs": "tsx src/codegen/docs-cli.ts",
+    "docs:dev": "cd docs && npm run dev",
+    "docs:build": "cd docs && npm install && npm run build",
     "prepack": "npm run generate && npm run bundle && npm run validate && npm run build",
     "build": "tsc -p tsconfig.build.json && tsc-alias -p tsconfig.build.json && find dist -type f \\( -name \"*.js\" -o -name \"*.js.map\" \\) -delete"
   },
