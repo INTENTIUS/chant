@@ -47,6 +47,7 @@ import { assertExecCredentialAllowed, credentialPathOf, DEFAULT_EXEC_ALLOWLIST }
 import { asFieldManagerConflict } from "./conflict";
 import { assertValidFieldManager, CHANT_FIELD_MANAGER } from "./field-manager";
 import { DEFAULT_CONCURRENCY, mapConcurrent } from "./concurrency";
+import { loadKubeConfig } from "./kubeconfig";
 import type {
   ApiResourceInfo,
   ClientProvenance,
@@ -56,6 +57,8 @@ import type {
   RequestContextLike,
   ResourceSelector,
   ResponseContextLike,
+  KubeconfigContextInfo,
+  KubeconfigView,
 } from "./types";
 
 type ClientNode = typeof import("@kubernetes/client-node");
@@ -103,16 +106,64 @@ export async function isK8sClientAvailable(): Promise<boolean> {
 export async function readAmbientContext(
   options: Pick<K8sClientOptions, "kubeconfig" | "kubeconfigPath"> = {},
 ): Promise<string | undefined> {
-  const mod = await loadClientNode();
-  const kc = new mod.KubeConfig();
   try {
-    if (options.kubeconfig !== undefined) kc.loadFromString(options.kubeconfig);
-    else if (options.kubeconfigPath !== undefined) kc.loadFromFile(options.kubeconfigPath);
-    else kc.loadFromDefault();
+    const { kc } = loadKubeConfig(await loadClientNode(), options);
+    return kc.getCurrentContext() || undefined;
   } catch {
     return undefined;
   }
-  return kc.getCurrentContext() || undefined;
+}
+
+/**
+ * The merged kubeconfig's contexts and their apiservers, without building a
+ * client (chant #1630).
+ *
+ * A lens showing an operator which cluster the k8s half is being read from
+ * needs an address out of a file, not a client about to talk to one. Going
+ * through `createK8sClient` for that answer refuses in two places it should
+ * not: an auth plugin outside the exec allowlist throws, so a cluster whose
+ * address is sitting right there in the kubeconfig — and which kubectl reads
+ * without complaint — reports as no target at all; and a context resolving to
+ * no cluster throws where the caller wants "nothing to report". Both refusals
+ * are right for a client that is about to send a request and wrong for a
+ * config read. Enumerating also takes one client per context, and enumerating
+ * is exactly what a lens does.
+ *
+ * So: no credential touched, no exec plugin run, no request issued. Every
+ * failure — no kubeconfig, an unreadable one, `@kubernetes/client-node` not
+ * installed — is an empty result rather than a throw, because a lens on an
+ * aws-only project running on a machine that has never seen Kubernetes has
+ * nothing to report and nothing to fail about.
+ *
+ * `server` per context rather than a separate cluster map: joining the two is
+ * what every caller does anyway.
+ */
+export async function readKubeconfigView(
+  options: Pick<K8sClientOptions, "kubeconfig" | "kubeconfigPath"> = {},
+): Promise<KubeconfigView> {
+  let kc;
+  try {
+    ({ kc } = loadKubeConfig(await loadClientNode(), options));
+  } catch {
+    return { contexts: [] };
+  }
+  try {
+    const servers = new Map<string, string | undefined>();
+    for (const cluster of kc.getClusters()) servers.set(cluster.name, cluster.server || undefined);
+    const contexts: KubeconfigContextInfo[] = kc.getContexts().map((context) => {
+      const server = servers.get(context.cluster);
+      return {
+        name: context.name,
+        cluster: context.cluster ?? "",
+        ...(context.user ? { user: context.user } : {}),
+        ...(context.namespace ? { namespace: context.namespace } : {}),
+        ...(server ? { server } : {}),
+      };
+    });
+    return { contexts, ...(kc.getCurrentContext() ? { currentContext: kc.getCurrentContext() } : {}) };
+  } catch {
+    return { contexts: [] };
+  }
 }
 
 /** Options for a single object read. */
@@ -268,18 +319,10 @@ interface RootDiscovery {
 export async function createK8sClient(options: K8sClientOptions = {}): Promise<K8sClient> {
   const mod = await loadClientNode();
 
-  const kc = new mod.KubeConfig();
-  let kubeconfigSource: ClientProvenance["kubeconfigSource"];
-  if (options.kubeconfig !== undefined) {
-    kc.loadFromString(options.kubeconfig);
-    kubeconfigSource = "explicit-string";
-  } else if (options.kubeconfigPath !== undefined) {
-    kc.loadFromFile(options.kubeconfigPath);
-    kubeconfigSource = "explicit-path";
-  } else {
-    kc.loadFromDefault();
-    kubeconfigSource = kc.getCurrentContext() === "inCluster" ? "in-cluster" : "default";
-  }
+  // kubectl's merge semantics, not client-node's (#1630): a KUBECONFIG list
+  // with overlapping names resolves first-wins instead of throwing, and
+  // current-context comes from the first file that sets one.
+  const { kc, source: kubeconfigSource } = loadKubeConfig(mod, options);
 
   if (options.context !== undefined) {
     if (!kc.getContextObject(options.context)) {
