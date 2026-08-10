@@ -255,6 +255,14 @@ export async function describeResources(
 ): Promise<ObservationResult> {
   const resources: Record<string, ResourceMetadata> = {};
   const unobserved: Record<string, UnobservedEntity> = {};
+  // The resolved query address per declared entity (#1620) — the exact request
+  // path each read was issued against, with the namespace the client actually
+  // defaulted to when the declaration carries none. This is what lets an
+  // absence explain itself: a Flux-deployed object declaring no
+  // metadata.namespace reads from `default`, correctly comes back 404, and
+  // without the address the report says "not there" when the truth is "not
+  // looked for where it lives".
+  const queried: Record<string, string> = {};
 
   const declared: Declared[] = [...options.entities].map(([entityName, entity]) => ({
     entityName,
@@ -323,13 +331,27 @@ export async function describeResources(
       return;
     }
 
+    const ref = {
+      apiVersion: operation.apiVersion,
+      kind: operation.kind,
+      name,
+      ...(metadata?.namespace ? { namespace: metadata.namespace } : {}),
+    };
+
+    // Resolve the address BEFORE the read, so every verdict below — present,
+    // absent, filtered, read-failed — carries the same record of what was
+    // asked. Resolution rides the client's cached discovery; a kind discovery
+    // does not serve has no path, and a resolution failure classifies through
+    // the read below, never here.
     try {
-      const obj = await client.read({
-        apiVersion: operation.apiVersion,
-        kind: operation.kind,
-        name,
-        ...(metadata?.namespace ? { namespace: metadata.namespace } : {}),
-      });
+      const address = typeof client.pathFor === "function" ? await client.pathFor(ref) : undefined;
+      if (address) queried[entityName] = address;
+    } catch {
+      // The read below hits the same resolution and classifies its failure.
+    }
+
+    try {
+      const obj = await client.read(ref);
 
       // owned filter: withhold resources not carrying chant's marker label.
       // Withheld is not absent (chant #1089) — this object exists, it just
@@ -340,6 +362,7 @@ export async function describeResources(
           type: entityType,
           reason: "filtered",
           detail: "live object carries no chant ownership marker and --owned was requested",
+          ...(queried[entityName] ? { queried: queried[entityName] } : {}),
         };
         return;
       }
@@ -361,16 +384,22 @@ export async function describeResources(
     } catch (err) {
       const outcome = classifyApiFailure(err);
       if (outcome.kind === "unobserved") {
-        unobserved[entityName] = { type: entityType, reason: outcome.reason, detail: outcome.detail };
+        unobserved[entityName] = {
+          type: entityType,
+          reason: outcome.reason,
+          detail: outcome.detail,
+          ...(queried[entityName] ? { queried: queried[entityName] } : {}),
+        };
       }
       // `absent` deliberately records nothing: in neither map is how the
-      // contract spells "asked, and it is not there".
+      // contract spells "asked, and it is not there". Its address stays in
+      // `queried` (#1620), which is the only record an absence gets.
     }
   });
 
   await addRuntimeChildren(client, resources, unobserved, options.owned, declared);
 
-  return observation(resources, unobserved);
+  return observation(resources, unobserved, queried);
 }
 
 /**

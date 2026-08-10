@@ -149,6 +149,32 @@ Returning the bare `Record<string, ResourceMetadata>` map is still valid and mea
 
 Throwing is the whole-lexicon failure — core catches it and marks **every** declared entity `read-failed`, so a broken read never arrives downstream as an empty environment. Failing the whole snapshot because one Deployment is gone still defeats the point; catch per-resource errors and classify them.
 
+### Say where you looked: the resolved query address
+
+An absence is only as trustworthy as the address behind it. When the read address is *derived* — a Kubernetes namespace defaulted from the context, an endpoint override, a region, an account — "the provider said no" and "I asked the wrong place" produce identical verdicts, and the consumer cannot tell them apart. The motivating case (chant #1620): a Flux-deployed object declares no `metadata.namespace` because the controller stamps `targetNamespace` at apply time, so the live read scopes to `default`, finds nothing, and correctly reports absence — painting weeks-old running infrastructure as pending.
+
+The envelope carries an optional `queried` map for this — the resolved address each read was actually issued against, keyed by entity name:
+
+```typescript
+const queried: Record<string, string> = {};
+// k8s: the exact request path, namespace defaulting made visible
+const address = await client.pathFor(ref); // "/apis/apps/v1/namespaces/default/deployments/web"
+if (address) queried[entityName] = address;
+
+return observation(resources, unobserved, queried);
+```
+
+Rules:
+
+- **Purely additive.** `queried` never changes a verdict; classification reads only `resources` and `unobserved`, and the tri-state above does not shift. An entity in `queried` and neither map is still observed-absent.
+- **It is the only record an absence gets.** Absence is spelled "in neither map", so there is no row to hang diagnostics on — the `queried` map is where an absent verdict says which address answered not-found.
+- **Unobserved entries can carry it inline** via `UnobservedEntity.queried`, so a failed-read row renders without a join.
+- **Omitting it stays valid.** A lexicon with nothing derived about its addresses can skip it entirely.
+
+The harness (`observeEntities`, below) collects it for you: every `EntityObservation` variant — `present`, `absent`, `unobserved` — accepts an optional `queried` string.
+
+Downstream, `chant lifecycle diff --live --json` passes the map through as `resources.queried` per lexicon and joins it onto unobserved rows, so a consumer can render `queried: /apis/apps/v1/namespaces/default/deployments/web → 404` next to a pending verdict — see [`chant lifecycle`](/chant/cli/lifecycle/).
+
 ### Unknown entity types are unobserved, not absent
 
 Lexicons grow new resource types over time. If your describe path doesn't cover a type yet, say so per entity — a warning alone is invisible to `lifecycle plan`, which is exactly where the wrong `create` gets proposed:

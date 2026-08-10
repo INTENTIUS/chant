@@ -103,13 +103,30 @@ describe("classifyApiFailure", () => {
     }
   });
 
-  test("the context note survives the one-line cap rather than truncating with the message (#1488)", () => {
+  test("the context note leads the detail, so it survives the one-line cap and any consumer truncation (#1488, #1620)", () => {
     const err = new K8sApiError(500, "InternalError", "x".repeat(500));
     err.contextNote = 'context "prod-eks" (bound by k8s.profiles.prod.context)';
     const outcome = classifyApiFailure(err);
     expect(outcome.kind).toBe("unobserved");
     if (outcome.kind === "unobserved") {
-      expect(outcome.detail.endsWith('context "prod-eks" (bound by k8s.profiles.prod.context)')).toBe(true);
+      expect(outcome.detail.startsWith('context "prod-eks" (bound by k8s.profiles.prod.context)')).toBe(true);
+      // The error itself still follows — leading with the cluster does not
+      // cost the message.
+      expect(outcome.detail).toContain("xxx");
+    }
+  });
+
+  test("the context appears within the first 160 chars of a long multi-line error's detail (#1620)", () => {
+    // behold's estate overlay truncates a reason to its first line / 160 chars;
+    // the context must land inside that window or it vanishes exactly on the
+    // failures long enough to need it.
+    const err = new K8sApiError(500, "InternalError", `${"y".repeat(300)}\n${"z".repeat(300)}`);
+    err.contextNote = 'context "prod-eks" (bound by k8s.profiles.prod.context)';
+    const outcome = classifyApiFailure(err);
+    expect(outcome.kind).toBe("unobserved");
+    if (outcome.kind === "unobserved") {
+      const firstLine = outcome.detail.split("\n")[0];
+      expect(firstLine.slice(0, 160)).toContain('context "prod-eks" (bound by k8s.profiles.prod.context)');
     }
   });
 

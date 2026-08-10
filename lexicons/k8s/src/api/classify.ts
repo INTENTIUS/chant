@@ -145,7 +145,10 @@ function detailOf(err: unknown): string {
   const capped = line.length > 200 ? `${line.slice(0, 197)}...` : line;
   // #1488 — a reason that does not say which cluster was read turned an
   // ambient-context switch into an afternoon. The client stamps the context it
-  // resolved onto every failure; append it after the cap so it never truncates.
+  // resolved onto every failure. The note LEADS the detail (#1620): consumers
+  // truncate a reason to its first line and ~160 chars, and a note appended
+  // after a long error is cut off exactly when the error is long enough to
+  // need it. Leading, it survives any suffix truncation.
   const note = shapeOf(err).contextNote;
-  return note ? `${capped} — ${note}` : capped;
+  return note ? `${note} — ${capped}` : capped;
 }

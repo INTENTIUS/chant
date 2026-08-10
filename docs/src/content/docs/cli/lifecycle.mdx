@@ -85,6 +85,33 @@ Each **unobserved** entry names a reason: `read failed`, `no credentials`, `no b
 
 Drifted entries include attribute-level deltas (`status`, `physicalId`, `lastUpdated`, and each `attributes.*` key).
 
+#### The resolved query address
+
+When the lexicon reports one, each entity also carries the **resolved address its live read was issued against** — for k8s the exact request path, with any defaulting the client applied made visible. This is what separates "confirmed not there" from "looked in the wrong place": a k8s object declared without `metadata.namespace` (a Flux-managed one, say, whose namespace is stamped at apply time) is read from the *default* namespace, and only the address shows that.
+
+```
+MISSING (declared, provider reports not in cloud):
+  - web [queried /apis/apps/v1/namespaces/default/deployments/web]
+```
+
+In `--json`, the addresses arrive as `resources.queried` per lexicon — a `name → address` map covering every entity a read was issued for — and each `resources.unobserved[]` row carries its own `queried` field inline:
+
+```json
+{
+  "k8s": {
+    "resources": {
+      "missing": ["web"],
+      "queried": { "web": "/apis/apps/v1/namespaces/default/deployments/web" },
+      "unobserved": [
+        { "name": "api", "reason": "read-failed", "detail": "…", "queried": "/api/v1/namespaces/default/services/api" }
+      ]
+    }
+  }
+}
+```
+
+The field is optional and purely diagnostic: verdicts are unchanged, and a lexicon that reports no addresses simply omits it. `lifecycle plan --json` carries the same address per entry as `queried` on the change set (a `create`'s address is the one the provider confirmed absent). The k8s lexicon is the first implementer.
+
 #### Property-level drift
 
 A lexicon that also implements `observeResourcesDeep()` ([coverage](/chant/lexicons/overview/#runtime-observation-coverage)) adds a second section per lexicon, comparing **property trees** rather than metadata. It reports what the categories above cannot: a property that changed, a property source never declared at all (the console edit CloudFormation's own drift detection does not see), and a declared property the cloud is not carrying.

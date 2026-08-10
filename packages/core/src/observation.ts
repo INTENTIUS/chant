@@ -79,6 +79,14 @@ export interface UnobservedEntity {
   reason: UnobservedReason;
   /** Human-readable detail: the command that failed, the missing binding key, the unsupported kind. */
   detail?: string;
+  /**
+   * The resolved address the read was issued against (#1620) — for k8s the
+   * request path (`/apis/apps/v1/namespaces/default/deployments/web`), for
+   * other substrates whatever names the endpoint/region/account actually
+   * asked. Optional and purely diagnostic: it never changes the verdict, it
+   * lets a consumer tell "looked in the wrong place" from "not there".
+   */
+  queried?: string;
 }
 
 /**
@@ -92,6 +100,18 @@ export interface ObservationResult {
   resources: Record<string, ResourceMetadata>;
   /** NOT-OBSERVED, keyed by chant entity name. Omit or leave empty when everything asked about was looked at. */
   unobserved?: Record<string, UnobservedEntity>;
+  /**
+   * The resolved query address per declared entity (#1620), keyed by chant
+   * entity name — what was actually asked of the provider, whatever the
+   * verdict came back as. Additive metadata over the tri-state, never part of
+   * it: classification still reads only `resources` and `unobserved`, and an
+   * entity in neither map is still OBSERVED-ABSENT whether or not it appears
+   * here. This map is the only place an ABSENT entity can carry its address —
+   * absence is spelled "in neither map", so there is no row to hang it on —
+   * which is exactly the entry that lets a consumer see that a defaulted
+   * namespace, endpoint or region was read, not the one the resource lives in.
+   */
+  queried?: Record<string, string>;
 }
 
 /**
@@ -100,10 +120,12 @@ export interface ObservationResult {
  */
 export type DescribeResourcesResult = Record<string, ResourceMetadata> | ObservationResult;
 
-/** Normalized form every consumer works with. Both maps always present. */
+/** Normalized form every consumer works with. All maps always present. */
 export interface NormalizedObservation {
   resources: Record<string, ResourceMetadata>;
   unobserved: Record<string, UnobservedEntity>;
+  /** Resolved query address per entity name (#1620). Empty when the lexicon reported none. */
+  queried: Record<string, string>;
 }
 
 /** True when `value` is the versioned {@link ObservationResult} envelope. */
@@ -122,11 +144,13 @@ export function isObservationResult(value: unknown): value is ObservationResult 
 export function observation(
   resources: Record<string, ResourceMetadata>,
   unobserved?: Record<string, UnobservedEntity>,
+  queried?: Record<string, string>,
 ): ObservationResult {
   return {
     observation: "v1",
     resources,
     ...(unobserved && Object.keys(unobserved).length > 0 ? { unobserved } : {}),
+    ...(queried && Object.keys(queried).length > 0 ? { queried } : {}),
   };
 }
 
@@ -137,11 +161,11 @@ export function observation(
  * {@link unobservedAll} rather than returning nothing.
  */
 export function normalizeObservation(value: DescribeResourcesResult | undefined): NormalizedObservation {
-  if (!value) return { resources: {}, unobserved: {} };
+  if (!value) return { resources: {}, unobserved: {}, queried: {} };
   if (isObservationResult(value)) {
-    return { resources: value.resources ?? {}, unobserved: value.unobserved ?? {} };
+    return { resources: value.resources ?? {}, unobserved: value.unobserved ?? {}, queried: value.queried ?? {} };
   }
-  return { resources: value, unobserved: {} };
+  return { resources: value, unobserved: {}, queried: {} };
 }
 
 /**
@@ -180,14 +204,16 @@ export function unobservedAll(
 export function mergeObservations(parts: Iterable<NormalizedObservation>): NormalizedObservation {
   const resources: Record<string, ResourceMetadata> = {};
   const unobserved: Record<string, UnobservedEntity> = {};
+  const queried: Record<string, string> = {};
   for (const part of parts) {
     Object.assign(resources, part.resources);
     Object.assign(unobserved, part.unobserved);
+    Object.assign(queried, part.queried);
   }
   // Present wins: a stack that could not be read does not un-observe a resource
   // another stack returned.
   for (const name of Object.keys(resources)) delete unobserved[name];
-  return { resources, unobserved };
+  return { resources, unobserved, queried };
 }
 
 /** One-line human phrasing of a reason, for CLI output. */
@@ -206,10 +232,11 @@ export function unobservedReasonText(reason: UnobservedReason): string {
   }
 }
 
-/** `name — reason (detail)`, the shared rendering for CLI and plan output. */
+/** `name — reason (detail) [queried address]`, the shared rendering for CLI and plan output. */
 export function formatUnobserved(name: string, entry: UnobservedEntity): string {
   const base = `${name}${entry.type ? ` (${entry.type})` : ""} — ${unobservedReasonText(entry.reason)}`;
-  return entry.detail ? `${base}: ${entry.detail}` : base;
+  const detailed = entry.detail ? `${base}: ${entry.detail}` : base;
+  return entry.queried ? `${detailed} [queried ${entry.queried}]` : detailed;
 }
 
 /* ------------------------------------------------------------------------- *
@@ -246,11 +273,16 @@ export interface DeclaredEntity {
  * - `present` — a key in `resources`.
  * - `absent` — in neither map (the provider was asked and reported it missing).
  * - `unobserved` — a typed NOT-OBSERVED (unsupported kind, filtered, read error).
+ *
+ * Every variant may carry `queried` (#1620): the resolved address the read was
+ * issued against. The harness collects it into the result's `queried` map (and
+ * onto the unobserved entry), so even an absent verdict — which records
+ * nothing else — says where the provider was asked.
  */
 export type EntityObservation =
-  | { present: ResourceMetadata }
-  | { absent: true }
-  | { unobserved: { reason: UnobservedReason; detail?: string } };
+  | { present: ResourceMetadata; queried?: string }
+  | { absent: true; queried?: string }
+  | { unobserved: { reason: UnobservedReason; detail?: string }; queried?: string };
 
 /** What a lexicon supplies to drive the harness. `Client` is its transport handle. */
 export interface ObserverAdapter<Client> {
@@ -338,6 +370,7 @@ export async function observeEntities<Client>(
 
   const resources: Record<string, ResourceMetadata> = {};
   const unobserved: Record<string, UnobservedEntity> = {};
+  const queried: Record<string, string> = {};
   const run = adapter.concurrently ?? ((items, fn) => boundedConcurrently(items, fn));
 
   await run(declared, async (entity) => {
@@ -352,13 +385,20 @@ export async function observeEntities<Client>(
         },
       };
     }
+    if (result.queried) queried[entity.name] = result.queried;
     if ("present" in result) {
       resources[entity.name] = result.present;
     } else if ("unobserved" in result) {
-      unobserved[entity.name] = { type: entity.type, ...result.unobserved };
+      unobserved[entity.name] = {
+        type: entity.type,
+        ...result.unobserved,
+        ...(result.queried ? { queried: result.queried } : {}),
+      };
     }
-    // `absent`: record nothing — in neither map is how the contract spells absence.
+    // `absent`: the verdict records nothing — in neither map is how the
+    // contract spells absence — but its address, when the adapter supplied
+    // one, lands in `queried` (#1620) so the absence can explain itself.
   });
 
-  return observation(resources, unobserved);
+  return observation(resources, unobserved, queried);
 }

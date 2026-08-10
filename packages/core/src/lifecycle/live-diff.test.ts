@@ -229,6 +229,41 @@ describe("diffLive", () => {
     expect(result.unobserved.map((u) => u.name)).toEqual(["crd"]);
   });
 
+  test("the queried addresses pass through, and a missing entity's address is readable off the result (#1620)", () => {
+    const result = diffLive({
+      declared: new Set(["web"]),
+      observedNow: {},
+      observedThen: undefined,
+      queried: { web: "/apis/apps/v1/namespaces/default/deployments/web" },
+    });
+    // The verdict itself does not move: still a confirmed absence.
+    expect(result.missing).toEqual(["web"]);
+    // But the row can explain itself — behold renders `queried: <path> → 404`.
+    expect(result.queried).toEqual({ web: "/apis/apps/v1/namespaces/default/deployments/web" });
+  });
+
+  test("no queried input → no queried key on the result — other lexicons omitting it stays valid (#1620)", () => {
+    const result = diffLive({ declared: new Set(["web"]), observedNow: {}, observedThen: undefined });
+    expect("queried" in result).toBe(false);
+  });
+
+  test("an unobserved row carries the address of the failed read, from the entry or the map (#1620)", () => {
+    const result = diffLive({
+      declared: new Set(["a", "b"]),
+      observedNow: {},
+      observedThen: undefined,
+      unobserved: {
+        a: { reason: "read-failed", detail: "HTTP 500", queried: "/api/v1/namespaces/default/services/a" },
+        b: { reason: "no-credentials" },
+      },
+      queried: { b: "/api/v1/namespaces/default/services/b" },
+    });
+    expect(result.unobserved).toEqual([
+      { name: "a", reason: "read-failed", detail: "HTTP 500", queried: "/api/v1/namespaces/default/services/a" },
+      { name: "b", reason: "no-credentials", queried: "/api/v1/namespaces/default/services/b" },
+    ]);
+  });
+
   test("a resource that was returned is never also unobserved", () => {
     const result = diffLive({
       declared: new Set(["a"]),
