@@ -64,5 +64,8 @@
   "peerDependencies": {
     "@intentius/chant": "^0.44.7",
     "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "@cedar-policy/cedar-wasm": "4.12.0"
   }
 }
