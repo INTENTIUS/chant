@@ -66,6 +66,7 @@
     "typescript": "^5.9.3"
   },
   "peerDependencies": {
+    "zod": "^4.3.6",
     "@intentius/chant": "^0.44.7",
     "typescript": "^5.9.3"
   }
