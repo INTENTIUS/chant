@@ -657,7 +657,7 @@ describe("k8s describeResources", () => {
         cluster.connector,
       );
 
-      const child = result.resources["prod/backup-29157"];
+      const child = result.resources["Job/prod/backup-29157"];
       expect(child).toMatchObject({
         type: "K8s::Batch::Job",
         physicalId: "job-uid",
@@ -683,7 +683,7 @@ describe("k8s describeResources", () => {
         cluster.connector,
       );
 
-      expect(result.resources["prod/hand-made"]).toBeUndefined();
+      expect(result.resources["Job/prod/hand-made"]).toBeUndefined();
     });
 
     // The issue's own estate: a declared MicroVMReplicaSet whose operator
@@ -730,7 +730,7 @@ describe("k8s describeResources", () => {
         cluster.connector,
       );
 
-      expect(result.resources["microvm-demo/kmv-dev-a-vm-42sgf"]).toMatchObject({
+      expect(result.resources["MicroVM/microvm-demo/kmv-dev-a-vm-42sgf"]).toMatchObject({
         type: "K8s::KubeMicroVM::MicroVM",
         physicalId: "vm-uid",
         ownerChain: { root: "declared", entity: "workloadReplicaSet" },
@@ -771,7 +771,7 @@ describe("k8s describeResources", () => {
         cluster.connector,
       );
 
-      expect(result.resources["ray/ml-head"]).toMatchObject({
+      expect(result.resources["Deployment/ray/ml-head"]).toMatchObject({
         type: "K8s::Apps::Deployment",
         physicalId: "head-uid",
         ownerChain: { root: "declared", entity: "ml" },
@@ -834,7 +834,7 @@ describe("k8s describeResources", () => {
         cluster.connector,
       );
 
-      expect(result.resources["cluster:team-a-admin"]).toMatchObject({
+      expect(result.resources["cluster:ClusterRole/team-a-admin"]).toMatchObject({
         type: "K8s::Rbac::ClusterRole",
         physicalId: "role-uid",
         ownerChain: { root: "declared", entity: "team" },
@@ -887,7 +887,7 @@ describe("k8s describeResources", () => {
         cluster.connector,
       );
 
-      expect(result.resources["prod/web"]).toMatchObject({
+      expect(result.resources["Deployment/prod/web"]).toMatchObject({
         type: "K8s::Apps::Deployment",
         ownerChain: { root: "declared", entity: "apps" },
       });
@@ -928,10 +928,60 @@ describe("k8s describeResources", () => {
         cluster.connector,
       );
 
-      expect(result.resources["prod/web"]).toMatchObject({
+      expect(result.resources["Deployment/prod/web"]).toMatchObject({
         type: "K8s::Apps::Deployment",
         ownerChain: { root: "declared", entity: "webApp" },
       });
+    });
+
+    // #1643 — the common convention names a workload and its Service alike, so
+    // a kind-less `namespace/name` key made them one row and only whichever
+    // kind swept first survived. Found by behold's argo estate: Application
+    // boxes held Endpoints instead of the Deployment.
+    test("same-named objects of different kinds are all reported — the key carries the kind (#1643)", async () => {
+      const app = {
+        apiVersion: "argoproj.io/v1alpha1",
+        kind: "Application",
+        metadata: { name: "app-a", namespace: "argocd", uid: "app-uid" },
+        status: { health: { status: "Healthy" }, sync: { status: "Synced" } },
+      };
+      const label = { "app.kubernetes.io/instance": "app-a" };
+      const deployment = {
+        apiVersion: "apps/v1",
+        kind: "Deployment",
+        metadata: { name: "app-a", namespace: "app-a", uid: "dep-uid", labels: label },
+      };
+      const service = {
+        apiVersion: "v1",
+        kind: "Service",
+        metadata: { name: "app-a", namespace: "app-a", uid: "svc-uid", labels: label },
+      };
+      const cluster = fakeCluster({
+        objects: {
+          [objectKey("argoproj.io/v1alpha1", "Application", "app-a", "argocd")]: app,
+          [objectKey("apps/v1", "Deployment", "app-a", "app-a")]: deployment,
+          [objectKey("v1", "Service", "app-a", "app-a")]: service,
+        },
+      });
+
+      const result = await describeResources(
+        {
+          environment: "prod",
+          buildOutput: "",
+          entityNames: ["appA"],
+          entities: makeEntities([
+            {
+              name: "appA",
+              entityType: "K8s::Argo::Application",
+              props: { metadata: { name: "app-a", namespace: "argocd" }, spec: { destination: { namespace: "app-a" } } },
+            },
+          ]),
+        },
+        cluster.connector,
+      );
+
+      expect(result.resources["Deployment/app-a/app-a"]).toMatchObject({ type: "K8s::Apps::Deployment", physicalId: "dep-uid" });
+      expect(result.resources["Service/app-a/app-a"]).toMatchObject({ type: "K8s::Core::Service", physicalId: "svc-uid" });
     });
 
     test("a generic instance label matching NO declared Application claims nothing — not an inventory (#1549)", async () => {
@@ -967,7 +1017,7 @@ describe("k8s describeResources", () => {
         cluster.connector,
       );
 
-      expect(result.resources["flux-system/cert-manager"]).toBeUndefined();
+      expect(result.resources["Deployment/flux-system/cert-manager"]).toBeUndefined();
     });
 
     test("the sweep's bound is the estate's namespaces, not a kind list — and no cluster-scoped list without a cluster-scoped entity", async () => {
@@ -1047,7 +1097,7 @@ describe("k8s describeResources", () => {
         cluster.connector,
       );
 
-      const child = result.resources["prod/web-7d9f8c9c8-abcde"];
+      const child = result.resources["Pod/prod/web-7d9f8c9c8-abcde"];
       expect(child).toMatchObject({
         type: "K8s::Core::Pod",
         physicalId: "pod-uid",
@@ -1078,7 +1128,7 @@ describe("k8s describeResources", () => {
         cluster.connector,
       );
 
-      expect(result.resources["prod/standalone"]).toMatchObject({
+      expect(result.resources["Pod/prod/standalone"]).toMatchObject({
         type: "K8s::Core::Pod",
         ownerChain: { root: "unowned" },
       });
@@ -1113,7 +1163,7 @@ describe("k8s describeResources", () => {
         cluster.connector,
       );
 
-      expect(result.resources["prod/other-pod"]).toMatchObject({ ownerChain: { root: "foreign" } });
+      expect(result.resources["Pod/prod/other-pod"]).toMatchObject({ ownerChain: { root: "foreign" } });
     });
 
     test("--owned withholds an unrelated Pod, but keeps a runtime child of a declared (owned) entity", async () => {
@@ -1156,8 +1206,8 @@ describe("k8s describeResources", () => {
       );
 
       expect(result.resources.web).toBeDefined(); // the marker let it through
-      expect(result.resources["prod/standalone"]).toBeUndefined();
-      expect(result.resources["prod/web-abc"]).toMatchObject({ ownerChain: { root: "declared", entity: "web" } });
+      expect(result.resources["Pod/prod/standalone"]).toBeUndefined();
+      expect(result.resources["Pod/prod/web-abc"]).toMatchObject({ ownerChain: { root: "declared", entity: "web" } });
     });
 
     test("a Pod that is itself declared is never duplicated as a runtime child", async () => {
@@ -1188,7 +1238,7 @@ describe("k8s describeResources", () => {
       );
 
       expect(result.resources.standalonePod).toBeDefined();
-      expect(result.resources["prod/standalone-pod"]).toBeUndefined();
+      expect(result.resources["Pod/prod/standalone-pod"]).toBeUndefined();
       expect(Object.keys(result.resources)).toHaveLength(2); // web + standalonePod, no synthetic duplicate
     });
 
