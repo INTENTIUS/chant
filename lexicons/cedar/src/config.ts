@@ -71,6 +71,34 @@ export const cedarConfigSchema = z.strictObject({
       requireProjectSchema: z.boolean().optional(),
     })
     .optional(),
+
+  /**
+   * The dogwood dialect's CLI-gated leg (#1659).
+   *
+   * `strictObject` again, for the reason the outer one is: a typo here is the
+   * difference between "full .dw validation ran" and "DWDE010 said it could
+   * not run", and the second is easy to skim past.
+   */
+  dogwood: z
+    .strictObject({
+      /**
+       * Path to the `dogwood` binary, absolute or relative to the config file.
+       *
+       * Optional, and its absence is not an error: DWDE010 warns-and-skips
+       * with an issue-linked advisory when no binary is found, which is the
+       * epic's explicit exception. Set this when the binary is built somewhere
+       * `PATH` does not reach — the on-demand harness shape the epic borrows
+       * from forgejo-runtime-e2e.
+       *
+       * A `chant.config.ts` cannot be read from inside a post-synth check —
+       * `check()` is synchronous and evaluating project code is not — so this
+       * key is honoured from `chant.config.json` and the `CHANT_DOGWOOD_BINARY`
+       * environment variable covers the TypeScript-config case. See
+       * `src/dogwood/cli.ts`.
+       */
+      binary: z.string().optional(),
+    })
+    .optional(),
 });
 
 export type CedarConfig = z.infer<typeof cedarConfigSchema>;

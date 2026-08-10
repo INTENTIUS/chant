@@ -1,0 +1,13 @@
+{
+  "cedar_policies": "@id(\"read_after_login\")\npermit (\n  principal,\n  action == Drupe::Action::\"Read\",\n  resource\n)\nwhen { context.policy_0__temporal_0 };\n",
+  "cedar_schema": "namespace Drupe {\n  type LoginInput = { user: String };\n  type ReadInput = { user: String };\n  entity Gateway;\n  entity OAuthUser = { id: String } tags String;\n  action \"Login\" appliesTo {\n    principal: [OAuthUser],\n    resource: [Gateway],\n    context: { input: LoginInput }\n  };\n  action \"Read\" appliesTo {\n    principal: [OAuthUser],\n    resource: [Gateway],\n    context: { input: ReadInput, policy_0__temporal_0: __cedar::Bool }\n  };\n}\n",
+  "cedar_schema_json": "{\"Drupe\":{\"commonTypes\":{\"LoginInput\":{\"type\":\"Record\",\"attributes\":{\"user\":{\"type\":\"EntityOrCommon\",\"name\":\"String\"}}},\"ReadInput\":{\"type\":\"Record\",\"attributes\":{\"user\":{\"type\":\"EntityOrCommon\",\"name\":\"String\"}}}},\"entityTypes\":{\"Gateway\":{},\"OAuthUser\":{\"shape\":{\"type\":\"Record\",\"attributes\":{\"id\":{\"type\":\"EntityOrCommon\",\"name\":\"String\"}}},\"tags\":{\"type\":\"EntityOrCommon\",\"name\":\"String\"}}},\"actions\":{\"Login\":{\"appliesTo\":{\"resourceTypes\":[\"Gateway\"],\"principalTypes\":[\"OAuthUser\"],\"context\":{\"type\":\"Record\",\"attributes\":{\"input\":{\"type\":\"EntityOrCommon\",\"name\":\"LoginInput\"}}}}},\"Read\":{\"appliesTo\":{\"resourceTypes\":[\"Gateway\"],\"principalTypes\":[\"OAuthUser\"],\"context\":{\"type\":\"Record\",\"attributes\":{\"input\":{\"type\":\"EntityOrCommon\",\"name\":\"ReadInput\"},\"policy_0__temporal_0\":{\"type\":\"EntityOrCommon\",\"name\":\"__cedar::Bool\"}}}}}}}}",
+  "self_contained": false,
+  "temporal_fields": [
+    "policy_0__temporal_0"
+  ],
+  "provider_fields": [],
+  "decision_kinds": [
+    "request"
+  ]
+}

@@ -37,6 +37,18 @@ describe("cedar config namespace", () => {
   it("leaves everything optional, so an empty namespace is legal", () => {
     expect(cedarConfigSchema.parse({})).toEqual({});
   });
+
+  it("takes the dogwood binary path (#1659)", () => {
+    const parsed = cedarConfigSchema.parse({ dogwood: { binary: "../dogwood/target/release/dogwood" } });
+    expect(parsed.dogwood?.binary).toBe("../dogwood/target/release/dogwood");
+  });
+
+  it("rejects a typo in the dogwood namespace, where a silent skip would follow", () => {
+    // A misspelled key here means "no binary found", and "no binary found" is
+    // an advisory rather than a failure — exactly the case strictObject exists
+    // to catch before it turns into a validation gap nobody notices.
+    expect(() => cedarConfigSchema.parse({ dogwood: { path: "/usr/local/bin/dogwood" } })).toThrow();
+  });
 });
 
 describe("schema resolution", () => {

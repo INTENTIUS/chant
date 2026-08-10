@@ -1,0 +1,17 @@
+// Adapted from dogwood-policy/dogwood@5063bcc2d6d6cf5024d1b0498e6cc8ef52cbcf0c (Apache-2.0):
+//   dogwood-docs/examples/read_after_login/policy.dw
+// The bundle the CLI-gated DWDE checks are exercised against (#1659).
+
+// Permit Read only if the same user successfully logged in within the last
+// hour. The `when temporal { … }` clause reads the accumulated event history;
+// the `{ input.user: context.input.user }` pin correlates the past login's
+// user with the current request's user.
+@id("read_after_login")
+permit (
+    principal,
+    action == Drupe::Action::"Read",
+    resource
+)
+when temporal {
+    formerly within 1h Drupe::Action::"Login"::response{ input.user: context.input.user }
+};

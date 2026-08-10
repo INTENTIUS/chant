@@ -212,7 +212,7 @@ describe("DWDS010 — an unpinned schema widens every predicate", () => {
 describe("registration", () => {
   test("every DWD check is auto-discovered into the committed barrel", () => {
     const ids = postSynthChecks.map((c) => c.id).filter((id) => id.startsWith("DWD"));
-    expect(ids.sort()).toEqual(["DWDC010", "DWDC011", "DWDC012", "DWDS010"]);
+    expect(ids.sort()).toEqual(["DWDC010", "DWDC011", "DWDC012", "DWDE010", "DWDE011", "DWDS010"]);
   });
 
   test("every DWD check has a catalog entry, so `chant audit` can title it", () => {
