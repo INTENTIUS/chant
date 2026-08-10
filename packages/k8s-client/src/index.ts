@@ -15,6 +15,7 @@
 export {
   createK8sClient,
   readAmbientContext,
+  readKubeconfigView,
   loadClientNode,
   isK8sClientAvailable,
   apiVersionPath,
@@ -85,6 +86,8 @@ export type {
   ClientProvenance,
   CredentialPath,
   K8sClientOptions,
+  KubeconfigContextInfo,
+  KubeconfigView,
   K8sObject,
   ObjectRef,
   RequestContextLike,

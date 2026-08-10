@@ -95,6 +95,27 @@ export interface ClientProvenance {
   kubeconfigSource: "explicit-string" | "explicit-path" | "default" | "in-cluster";
 }
 
+/**
+ * One context of the merged kubeconfig, joined to the apiserver its cluster
+ * resolves to (chant #1630). Plain data read out of a file: no credential is
+ * touched, no exec plugin runs, no request is issued.
+ */
+export interface KubeconfigContextInfo {
+  name: string;
+  /** Cluster name the context names. Empty when the context declares none. */
+  cluster: string;
+  user?: string;
+  namespace?: string;
+  /** The apiserver URL the named cluster resolves to, when the config has one. */
+  server?: string;
+}
+
+/** What {@link import("./client").readKubeconfigView} returns. */
+export interface KubeconfigView {
+  contexts: KubeconfigContextInfo[];
+  currentContext?: string;
+}
+
 /** Options for {@link import("./client").createK8sClient}. */
 export interface K8sClientOptions {
   /**
