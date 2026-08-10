@@ -1,58 +1,104 @@
+/**
+ * Schema-driven code generation for the cedar lexicon (#1650).
+ *
+ * The pipeline is core's; what is unusual is its input. Every other lexicon
+ * fetches one global upstream spec, so `fetchSchemas` is an HTTP call and a
+ * cache. Cedar's spec-of-interest is the project's own `.cedarschema` (epic
+ * #1645), so `fetchSchemas` is a file read with a fallback, and the pinned
+ * upstream is the *grammar* — `@cedar-policy/cedar-wasm`, whose language
+ * version is asserted before anything is emitted.
+ *
+ * Order matters in {@link generate}: the language-version assert runs before
+ * the schema is resolved, because resolution is the thing whose output shape a
+ * grammar change would move.
+ */
+
 import { generatePipeline, writeGeneratedArtifacts } from "@intentius/chant/codegen/generate";
-import type { GenerateResult } from "@intentius/chant/codegen/generate";
+import type { GenerateOptions, GenerateResult } from "@intentius/chant/codegen/generate";
+import type { NamingStrategy } from "@intentius/chant/codegen/naming";
 import { dirname } from "path";
 import { fileURLToPath } from "url";
+import { createNaming } from "./naming";
+import {
+  buildEmitModel,
+  generateRegistry,
+  generateRuntimeIndex,
+  generateTypes,
+  RUNTIME_TS,
+  type EmitModel,
+} from "./emit";
+import { DEFAULT_SCHEMA_KEY, fetchSchemas, resolveSchemaPath } from "../spec/fetch";
+import { parseCedarSchema, type CedarDecl } from "../spec/parse";
+import { assertPinnedLangVersion, assertPinnedSchema } from "../spec/pin";
+
+/** Filename of the generated registry. */
+export const LEXICON_JSON_FILENAME = "lexicon-cedar.json";
+
+export interface CedarGenerateOptions extends GenerateOptions {
+  /** Project root the `cedar.schema` path is resolved against. Defaults to `process.cwd()`. */
+  projectRoot?: string;
+  /** The `cedar` config namespace, when the caller has already loaded it. */
+  config?: { schema?: string; validation?: { requireProjectSchema?: boolean } };
+}
 
 /**
  * Run the code generation pipeline.
- *
- * Each callback has a TODO describing what to implement.
  */
-export async function generate(options?: { verbose?: boolean; force?: boolean }): Promise<GenerateResult> {
-  const result = await generatePipeline({
-    // Must return Map<typeName, Buffer> — each entry is one schema file.
-    // Example: fetch a zip, extract JSON files, key by type name.
-    // See lexicons/aws/src/spec/fetch.ts for a working example.
-    fetchSchemas: async (opts) => {
-      throw new Error("TODO: implement fetchSchemas — download your upstream spec");
-    },
+export async function generate(options: CedarGenerateOptions = {}): Promise<GenerateResult> {
+  // Refuse a grammar nobody chose before reading anything (#1390's rule).
+  assertPinnedLangVersion();
 
-    // Must return a ParsedResult (with propertyTypes[] and enums[] at minimum).
-    // Return null to skip a schema file.
-    // See lexicons/aws/src/spec/parse.ts for a working example.
-    parseSchema: (name, data) => {
-      throw new Error("TODO: implement parseSchema — parse a single schema file");
-    },
+  // The three emit callbacks each need the same model, and the pipeline hands
+  // them the results separately. Memoizing on the results array keeps one
+  // build per run without a mutable `let` whose assignment TypeScript cannot
+  // see happening inside a callback.
+  const models = new Map<readonly CedarDecl[], EmitModel>();
+  const modelFor = (results: CedarDecl[], naming: NamingStrategy): EmitModel => {
+    const cached = models.get(results);
+    if (cached) return cached;
+    const built = buildEmitModel(results, naming);
+    models.set(results, built);
+    return built;
+  };
 
-    // Must return a NamingStrategy instance.
-    // See lexicons/aws/src/codegen/naming.ts and ./naming.ts for setup.
-    createNaming: (results) => {
-      throw new Error("TODO: implement createNaming — return a NamingStrategy instance");
-    },
+  const result = await generatePipeline<CedarDecl>(
+    {
+      fetchSchemas: () => fetchSchemas({ projectRoot: options.projectRoot, config: options.config }),
 
-    // Must return a string of JSON (the lexicon registry).
-    // Use buildRegistry + serializeRegistry from @intentius/chant/codegen/generate-registry.
-    // See lexicons/aws/src/codegen/generate.ts for a working example.
-    generateRegistry: (results, naming) => {
-      throw new Error("TODO: implement generateRegistry — produce lexicon JSON");
-    },
+      parseSchema: (typeName, data) => {
+        const { decls, resolved } = parseCedarSchema(data.toString("utf-8"));
 
-    // Must return a string of TypeScript declarations (.d.ts content).
-    // See lexicons/aws/src/codegen/generate.ts for a working example.
-    generateTypes: (results, naming) => {
-      throw new Error("TODO: implement generateTypes — produce .d.ts content");
-    },
+        // The content pin covers the schema this package ships, not a user's.
+        // Theirs is their input; its churn is theirs to own.
+        if (typeName === DEFAULT_SCHEMA_KEY) {
+          assertPinnedSchema(
+            resolved,
+            decls.map((d) => d.typeName).sort(),
+          );
+        }
 
-    // Must return a string of TypeScript (runtime index with factory exports).
-    // Use generateRuntimeIndex from @intentius/chant/codegen/generate-runtime-index.
-    // See lexicons/aws/src/codegen/generate.ts for a working example.
-    generateRuntimeIndex: (results, naming) => {
-      throw new Error("TODO: implement generateRuntimeIndex — produce index.ts content");
-    },
-  }, options);
+        return decls;
+      },
 
-  if (options?.verbose) {
-    console.error(`Generated ${result.resources} resources, ${result.properties} property types`);
+      createNaming: (results) => createNaming(results),
+
+      generateRegistry: (results, naming) => generateRegistry(modelFor(results, naming)),
+
+      generateTypes: (results, naming) => generateTypes(modelFor(results, naming)),
+
+      generateRuntimeIndex: (results, naming) => generateRuntimeIndex(modelFor(results, naming)),
+
+      generateExtraArtifacts: () => ({ "runtime.ts": RUNTIME_TS }),
+    },
+    options,
+  );
+
+  if (options.verbose) {
+    const source = resolveSchemaPath({ projectRoot: options.projectRoot, config: options.config });
+    console.error(
+      `Generated ${result.resources} declaration(s) from ` +
+        `${source.isDefault ? "the bundled default schema" : source.path}`,
+    );
   }
 
   return result;
@@ -62,13 +108,16 @@ export async function generate(options?: { verbose?: boolean; force?: boolean })
  * Write generated files to the package directory.
  */
 export function writeGeneratedFiles(result: GenerateResult, pkgDir?: string): void {
-  const dir = pkgDir ?? dirname(dirname(fileURLToPath(import.meta.url)));
+  // This module lives at <pkg>/src/codegen/generate.ts, so the package root is
+  // three levels up — the scaffold's two-level default wrote into src/src/.
+  const dir = pkgDir ?? dirname(dirname(dirname(fileURLToPath(import.meta.url))));
   writeGeneratedArtifacts({
     baseDir: dir,
     files: {
-      "lexicon.json": result.lexiconJSON,
+      [LEXICON_JSON_FILENAME]: result.lexiconJSON,
       "index.d.ts": result.typesDTS,
       "index.ts": result.indexTS,
+      ...(result.extraArtifacts ?? {}),
     },
   });
 }

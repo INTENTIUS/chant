@@ -56,6 +56,7 @@ export const IN_SCOPE_LEXICONS: readonly SupportedLexicon[] = [
   "azure",
   "github",
   "fly",
+  "cedar",
 ] as const;
 
 export interface LexiconUpgradeOpConfig {

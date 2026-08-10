@@ -65,18 +65,14 @@ const lexiconsDir = join(repoRoot, "lexicons");
  * Every entry here MUST reference a filed, open issue.
  */
 const KNOWN_FAILURES: Record<string, Record<string, string>> = {
-  // cedar lands across eight sub-issues of #1645, and #1649 is the second of
-  // them: the scaffold, the serializer, and the packaging that gets a real
-  // dist/manifest.json onto disk. The two checks below cover work that
-  // belongs to named, open sub-issues after it, not to gaps in what #1649
-  // delivers — its own tier-1 surface (plugin export, serializer, rule
-  // prefix, manifest, chantVersion, packaging shape, plugin/serializer
-  // tests, docs reachability) passes unallowlisted.
+  // cedar lands across eight sub-issues of #1645. #1650 (schema-driven
+  // generate) closed the example gap: both shipped examples now author a
+  // policy set against schema-derived action constants and entity UID types,
+  // so "Every shipped example builds" passes unallowlisted. The one below
+  // belongs to a named, open sub-issue after it.
   cedar: {
     "postSynthChecks() returns at least 1 check":
-      "#1651 — cedar 4/8. The checks that matter here run policies through cedar-wasm and span policies and the resources they govern; both need the typed classes #1650 generates. Ships with the scaffold's empty list until then.",
-    "Every shipped example builds":
-      "#1650 — cedar 3/8. examples/getting-started is still `chant init lexicon`'s placeholder: a policy set can only be authored against schema-derived entity and action classes, which schema-driven generate() produces.",
+      "#1651 — cedar 4/8. The checks that matter here run policies through cedar-wasm and span policies and the resources they govern. The typed classes they need landed in #1650; the checks themselves are #1651's.",
   },
 };
 

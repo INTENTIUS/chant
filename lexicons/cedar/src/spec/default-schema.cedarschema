@@ -1,0 +1,108 @@
+// The schema `chant generate` falls back to when a project declares none.
+//
+// Cedar's codegen input is the project's own schema, not one global upstream
+// (epic #1645), so there is no spec to fetch. That leaves `generate()` with
+// nothing to do in a checkout that has not written a schema yet — which is
+// every fresh clone, every `just check-lexicons` run, and this lexicon's own
+// examples. This file is that fallback: a small, realistic application
+// authorization model, generated from whenever `cedar.schema` is unset or
+// points at a file that is not there.
+//
+// Point `cedar.schema` in chant.config.ts at your own `.cedarschema` and this
+// file stops being read.
+
+namespace App {
+  // Common types are resolved away by the codegen — they exist here because
+  // real schemas use them, and the resolver has to collapse them.
+  type Level = Long;
+  type TagSet = Set<String>;
+
+  entity Group = {
+    "name": String,
+    "description"?: String,
+  };
+
+  entity Team in [Group] = {
+    "name": String,
+    "costCenter"?: String,
+  };
+
+  entity User in [Group, Team] = {
+    "email": String,
+    "department": String,
+    "level": Level,
+    "manager"?: User,
+    "roles": TagSet,
+    "mfaEnabled": Bool,
+  };
+
+  entity ServiceAccount in [Group] = {
+    "name": String,
+    "owner": User,
+    "rotatedAt"?: String,
+  };
+
+  entity Folder = {
+    "name": String,
+    "owner": User,
+    "tags": TagSet,
+  };
+
+  entity Document in [Folder] = {
+    "title": String,
+    "owner": User,
+    "folder": Folder,
+    "public": Bool,
+    "tags": TagSet,
+    "classification": String,
+  };
+
+  entity Application = {
+    "name": String,
+    "owner": Team,
+  };
+
+  action read, list appliesTo {
+    principal: [User, ServiceAccount],
+    resource: [Document, Folder],
+    context: {
+      "mfa": Bool,
+      "sourceIp"?: String,
+    }
+  };
+
+  action write, create, comment appliesTo {
+    principal: [User],
+    resource: [Document, Folder],
+    context: {
+      "mfa": Bool,
+      "reason"?: String,
+    }
+  };
+
+  action delete, share appliesTo {
+    principal: [User],
+    resource: [Document],
+    context: {
+      "mfa": Bool,
+      "approvedBy"?: User,
+    }
+  };
+
+  action approve appliesTo {
+    principal: [User],
+    resource: [Document],
+    context: {
+      "mfa": Bool,
+    }
+  };
+
+  action admin appliesTo {
+    principal: [User],
+    resource: [Application],
+    context: {
+      "mfa": Bool,
+      "breakGlass"?: Bool,
+    }
+  };
+}

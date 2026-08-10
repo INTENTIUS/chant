@@ -1,0 +1,9 @@
+{
+  "name": "@intentius/chant-lexicon-cedar-example-basic-policies",
+  "version": "0.0.1",
+  "private": true,
+  "dependencies": {
+    "@intentius/chant-lexicon-cedar": "workspace:*",
+    "@intentius/chant": "workspace:*"
+  }
+}

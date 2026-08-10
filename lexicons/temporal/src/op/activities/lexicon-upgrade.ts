@@ -47,7 +47,7 @@ export type SemverLabel = "minor" | "breaking";
 export interface LexiconUpgradeArgs {
   /**
    * Which lexicon to check. Determines pinned vs rolling dispatch:
-   *   PINNED: k8s, gcp, docker, gitlab
+   *   PINNED: k8s, gcp, docker, gitlab, cedar
    *   ROLLING: aws, azure, github, fly
    */
   lexicon: SupportedLexicon;
@@ -163,7 +163,9 @@ export function computeBumpedVersion(
 
 // ── Classification ────────────────────────────────────────────────────
 
-const PINNED_LEXICONS: ReadonlySet<string> = new Set<LexiconId>(["k8s", "gcp", "docker", "gitlab"]);
+// cedar pins `CEDAR_WASM_VERSION`, a dependency version rather than a spec
+// URL, but the pinned-constant machinery is the same (#1650).
+const PINNED_LEXICONS: ReadonlySet<string> = new Set<LexiconId>(["k8s", "gcp", "docker", "gitlab", "cedar"]);
 const ROLLING_LEXICONS: ReadonlySet<string> = new Set<RollingLexicon>(["aws", "azure", "github", "fly"]);
 
 /** Return true when the lexicon uses a pinned version constant. */

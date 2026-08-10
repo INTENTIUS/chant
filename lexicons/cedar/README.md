@@ -11,14 +11,14 @@ that text.
 ## Status
 
 The lexicon lands across the sub-issues of INTENTIUS/chant#1645. What works
-today is the scaffold, the serializer and packaging (#1649). Schema-driven
-codegen (#1650), lint and post-synth validation through `cedar-wasm` (#1651),
-AVP embedding (#1652), import (#1653), and the docs/LSP/skills surface (#1654)
+today is the scaffold and serializer (#1649) and schema-driven codegen
+(#1650). Lint and post-synth validation through `cedar-wasm` (#1651), AVP
+embedding (#1652), import (#1653), and the docs/LSP/skills surface (#1654)
 follow.
 
 ## The policy model
 
-Until codegen lands, a policy is a `Cedar::Policy` entity whose props are:
+A policy is a `Cedar::Policy` entity whose props are:
 
 | Prop | Meaning |
 |------|---------|
@@ -30,8 +30,46 @@ Until codegen lands, a policy is a `Cedar::Policy` entity whose props are:
 The policy id comes from the export's logical name (`allowAdminRead` →
 `allow-admin-read`) unless `annotations.id` sets one.
 
-Codegen generates typed entity and action classes onto this same shape, so the
-serializer does not change when it arrives.
+## Where the types come from
+
+`chant generate` reads a `.cedarschema` and emits a class per entity type, a
+constant per action, and a UID type per entity — so `action: { eq: ReadAction }`
+is checked at compile time and a renamed entity type is a compiler-guided
+refactor.
+
+Point it at your schema in `chant.config.ts`:
+
+```ts
+import type { ChantConfig } from "@intentius/chant";
+import "@intentius/chant-lexicon-cedar";
+
+export default {
+  lexicons: ["cedar"],
+  cedar: { schema: "schema.cedarschema" },
+} satisfies ChantConfig;
+```
+
+`cedar.schema` defaults to `schema.cedarschema` in the project root. When
+neither the configured path nor that default exists, generation falls back to
+the small application-authorization schema bundled at
+`src/spec/default-schema.cedarschema`, so a fresh checkout still produces a
+surface. Set `cedar.validation.requireProjectSchema` to turn that fallback off
+once your project has its own schema.
+
+## Pins
+
+Two, for two different things:
+
+- `CEDAR_WASM_VERSION` — the `@cedar-policy/cedar-wasm` package, bumped by the
+  weekly `cedar-upgrade` Op.
+- `CEDAR_LANG_VERSION` — the Cedar *language* that package implements (4.5).
+  `generate()` asserts it before emitting anything, because a package bump that
+  leaves the language alone cannot change what parses.
+
+Beside them, a content pin over the resolved JSON of the bundled default
+schema. It moves when the schema is edited and — the case it exists for — when
+a cedar-wasm upgrade resolves the same schema differently. Both rewrite the
+generated types, and `src/generated/` is not committed.
 
 ## Output
 
@@ -44,8 +82,8 @@ by any Cedar evaluator with chant nowhere in sight.
 ```bash
 just bundle     # build dist/ (manifest, rules, integrity, OKF)
 just test       # run the lexicon's tests
-just validate   # check generated artifacts (needs #1650)
-just generate   # schema-driven codegen (needs #1650)
+just validate   # check generated artifacts
+just generate   # schema-driven codegen from your .cedarschema
 ```
 
 ## Project structure
