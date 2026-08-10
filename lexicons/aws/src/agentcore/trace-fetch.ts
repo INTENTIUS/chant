@@ -62,14 +62,23 @@
  *
  * ## Signing
  *
- * Requests go out unsigned, exactly like `awsApply`'s and `read-client.ts`'s.
- * Real AWS rejects them; an endpoint override does not. SigV4 rides #1686, and
- * when it lands this module needs only its `http` default swapped.
+ * SigV4 through `read-client.ts`'s `requestHeaders`, which is the same seam its
+ * own CloudFormation and Cloud Control calls use (#1686). Signed when
+ * credentials resolve and the target is real AWS; scope-only against an
+ * endpoint override, since an emulator does not verify signatures and requiring
+ * credentials to read a local lane would be a tax with nothing behind it.
+ * `signEndpointOverride: true` opts back in for an override that *is* real AWS.
  */
 
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
-import { AwsReadError, serviceUrl, type AwsReadHttp } from "../api/read-client";
+import {
+  AwsReadError,
+  requestHeaders,
+  serviceUrl,
+  type AwsCredentialSource,
+  type AwsReadHttp,
+} from "../api/read-client";
 import {
   agentCoreDecimal,
   renderAgentCoreTrace,
@@ -495,12 +504,24 @@ const defaultHttp: AwsReadHttp = async (url, init, signal) => {
   return { status: res.status, text: await res.text() };
 };
 
-/** Where to read from and how to reach it. */
+/** Where to read from, how to reach it, and what to sign with. */
 export interface AgentCoreReadOptions {
   /** Endpoint override. Omit for the real regional host. */
   readonly endpoint?: string;
   /** Default `us-east-1`. */
   readonly region?: string;
+  /**
+   * What to sign with: literal credentials, or a resolver that decides.
+   * Omitted, the environment answers; with nothing there, the request goes out
+   * carrying the credential scope and no signature.
+   */
+  readonly credentials?: AwsCredentialSource;
+  /** Environment the credential fallback reads. Defaults to `process.env`; injectable for tests. */
+  readonly env?: Record<string, string | undefined>;
+  /** Sign even against an endpoint override — for an override that is real AWS. */
+  readonly signEndpointOverride?: boolean;
+  /** Signing clock. Injected by tests so a signature is reproducible. */
+  readonly now?: Date;
 }
 
 async function agentCorePost(
@@ -510,10 +531,14 @@ async function agentCorePost(
   http: AwsReadHttp,
   signal?: AbortSignal,
 ): Promise<Record<string, unknown>> {
-  const base = serviceUrl(SERVICE, options.endpoint, options.region);
+  const url = `${serviceUrl(SERVICE, options.endpoint, options.region)}${path.replace(/^\//, "")}`;
+  const wire = JSON.stringify(body);
   const res = await http(
-    `${base}${path.replace(/^\//, "")}`,
-    { headers: { "content-type": "application/json" }, body: JSON.stringify(body) },
+    url,
+    {
+      headers: requestHeaders(SERVICE, url, wire, { "content-type": "application/json" }, options),
+      body: wire,
+    },
     signal,
   );
 

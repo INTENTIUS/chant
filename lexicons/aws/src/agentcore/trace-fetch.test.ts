@@ -19,12 +19,12 @@ import {
 /** A transport that answers every POST with the next canned body, recording calls. */
 function mockHttp(responses: Array<{ status?: number; body: unknown }>): {
   http: AwsReadHttp;
-  calls: Array<{ url: string; body: Record<string, unknown> }>;
+  calls: Array<{ url: string; body: Record<string, unknown>; headers: Record<string, string> }>;
 } {
-  const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+  const calls: Array<{ url: string; body: Record<string, unknown>; headers: Record<string, string> }> = [];
   let index = 0;
   const http: AwsReadHttp = async (url, init) => {
-    calls.push({ url, body: JSON.parse(init.body) as Record<string, unknown> });
+    calls.push({ url, body: JSON.parse(init.body) as Record<string, unknown>, headers: init.headers });
     const next = responses[Math.min(index++, responses.length - 1)];
     return { status: next?.status ?? 200, text: JSON.stringify(next?.body ?? {}) };
   };
@@ -337,6 +337,62 @@ describe("listMemoryEvents — transport", () => {
   test("an unparseable body is a failed read, not an empty session", async () => {
     const http: AwsReadHttp = async () => ({ status: 200, text: "<html>gateway timeout</html>" });
     await expect(listMemoryEvents(BASE, undefined, http)).rejects.toBeInstanceOf(AwsReadError);
+  });
+
+  test("a real-AWS read is signed with SigV4 over bedrock-agentcore (#1686)", async () => {
+    const { http, calls } = mockHttp([{ body: { events: [] } }]);
+    await listMemoryEvents(
+      {
+        ...BASE,
+        endpoint: undefined,
+        region: "eu-west-1",
+        credentials: { accessKeyId: "AKID", secretAccessKey: "secret" },
+        now: new Date("2026-08-10T00:00:00Z"),
+      },
+      undefined,
+      http,
+    );
+
+    const auth = calls[0]?.headers.authorization ?? "";
+    expect(auth).toContain("Credential=AKID/20260810/eu-west-1/bedrock-agentcore/aws4_request");
+    expect(auth).not.toContain("Signature=unsigned");
+    // The body is what was signed, so a payload hash has to be on the wire.
+    expect(calls[0]?.headers["x-amz-content-sha256"]).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  test("an endpoint override carries the scope and no signature — an emulator verifies neither", async () => {
+    const { http, calls } = mockHttp([{ body: { events: [] } }]);
+    await listMemoryEvents(
+      { ...BASE, region: "us-west-2", credentials: { accessKeyId: "AKID", secretAccessKey: "secret" } },
+      undefined,
+      http,
+    );
+    expect(calls[0]?.headers.authorization).toContain("Signature=unsigned");
+  });
+
+  test("signEndpointOverride signs anyway, for an override that is real AWS", async () => {
+    const { http, calls } = mockHttp([{ body: { events: [] } }]);
+    await listMemoryEvents(
+      {
+        ...BASE,
+        region: "us-west-2",
+        credentials: { accessKeyId: "AKID", secretAccessKey: "secret" },
+        signEndpointOverride: true,
+      },
+      undefined,
+      http,
+    );
+    expect(calls[0]?.headers.authorization).not.toContain("Signature=unsigned");
+  });
+
+  test("no credentials, no signature — the emulator path needs none", async () => {
+    const { http, calls } = mockHttp([{ body: { events: [] } }]);
+    await listMemoryEvents(
+      { ...BASE, endpoint: undefined, region: "us-east-1", credentials: () => undefined, env: {} },
+      undefined,
+      http,
+    );
+    expect(calls[0]?.headers.authorization).toContain("Signature=unsigned");
   });
 
   test("maxEvents below 1 is refused, since ListEvents bounds maxResults at 1..100", async () => {
