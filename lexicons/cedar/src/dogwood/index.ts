@@ -168,3 +168,31 @@ export {
 export type { DogwoodArtifact, EventSchemaFacts, TemporalPredicateRef, WindowRef } from "./scan";
 
 export { DOGWOOD_UPSTREAM } from "./upstream";
+
+export {
+  DOGWOOD_BINARY_ENV,
+  DOGWOOD_BINARY_NAME,
+  DOGWOOD_SEARCH_ORDER,
+  configureDogwoodCli,
+  findDogwoodBinary,
+  formatDogwoodDiagnostic,
+  parseLowerOutput,
+  parseValidateOutput,
+  resetDogwoodCli,
+  runDogwoodLower,
+  runDogwoodValidate,
+} from "./cli";
+export type {
+  DogwoodBinary,
+  DogwoodBinarySource,
+  DogwoodBundle,
+  DogwoodDiagnostic,
+  DogwoodFatal,
+  DogwoodLabel,
+  DogwoodLowerResult,
+  DogwoodLowered,
+  DogwoodRun,
+  DogwoodRunner,
+  DogwoodUnusable,
+  DogwoodValidateResult,
+} from "./cli";

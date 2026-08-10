@@ -159,6 +159,22 @@ export const cedarAuditCatalog: Record<string, RuleMeta> = {
     "Give the operator a `within <n><s|m|h|d>` window — all three past-only operators require one. The typed builders take it as an argument.",
     { category: "correctness" },
   ),
+  DWDE010: auditRule(
+    "DWDE010",
+    "merge-worthy",
+    "guidance",
+    "Dogwood policy set fails `dogwood validate`",
+    "Fix what upstream's frontend names — a macro, a temporal type error, or a Cedar body the action schema rejects. If the finding is the advisory, install the dogwood binary (or set cedar.dogwood.binary) so full .dw validation can run at all; without it only the DWDC walls apply.",
+    { category: "correctness" },
+  ),
+  DWDE011: auditRule(
+    "DWDE011",
+    "merge-worthy",
+    "guidance",
+    "Cedar lowered from a dogwood policy set fails Cedar validation",
+    "Fix the entity type, action, or attribute Cedar's validator names in the lowered body — the temporal clauses became context slots, so everything the finding points at is ordinary Cedar the policy wrote.",
+    { category: "correctness" },
+  ),
   DWDS010: auditRule(
     "DWDS010",
     "report-only",

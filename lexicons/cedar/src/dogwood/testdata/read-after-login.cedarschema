@@ -1,0 +1,20 @@
+// Adapted from dogwood-policy/dogwood@5063bcc2d6d6cf5024d1b0498e6cc8ef52cbcf0c (Apache-2.0):
+//   dogwood-docs/examples/read_after_login/schema.cedarschema
+// The action schema half — what `dogwood validate --policy-schema` reads.
+
+namespace Drupe {
+  type LoginInput = { user: String };
+  type ReadInput = { user: String };
+  entity Gateway;
+  entity OAuthUser = { id: String } tags String;
+  action "Login" appliesTo {
+    principal: [OAuthUser],
+    resource: [Gateway],
+    context: { input: LoginInput }
+  };
+  action "Read" appliesTo {
+    principal: [OAuthUser],
+    resource: [Gateway],
+    context: { input: ReadInput }
+  };
+}
