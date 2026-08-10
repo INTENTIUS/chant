@@ -4,6 +4,14 @@
  * emulator lifecycle (`flociUp`/`flociDown`) and the native CloudFormation
  * applier (`awsApply`), which calls the CloudFormation API directly rather than
  * shelling `aws` — the direct twin of `azApply`/`gcpApply`.
+ *
+ * The registry keys every exported *function* here by its name, so only the
+ * activities themselves belong in this barrel. `awsAgentCoreFetchTrace`'s
+ * helpers — the normalizer, the JSON coercion, the `ListEvents` walk — stay
+ * importable from `@intentius/chant-lexicon-aws/agentcore/trace-fetch` rather
+ * than being registered as activities nobody would ever name in a step, and the
+ * pure renderer lives one module further out again, in
+ * `@intentius/chant-lexicon-aws/agentcore/trace-render`.
  */
 export {
   flociUp,
@@ -35,3 +43,10 @@ export {
   isTerminalStatus,
 } from "./aws-apply";
 export type { AwsApplyArgs, AwsHttp } from "./aws-apply";
+
+export { awsAgentCoreFetchTrace } from "../../agentcore/trace-fetch";
+export type {
+  AgentCoreTraceSource,
+  AwsAgentCoreFetchTraceArgs,
+  AwsAgentCoreFetchTraceResult,
+} from "../../agentcore/trace-fetch";

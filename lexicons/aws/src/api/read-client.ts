@@ -135,8 +135,14 @@ function regionScope(
  * string has a slot for one; it borrows the same `us-east-1` default that
  * {@link serviceUrl} already used to build the host, so the signature agrees
  * with the endpoint it is sent to.
+ *
+ * Exported because this decision — sign, or carry the scope and no signature —
+ * belongs to the lexicon's read transport rather than to any one API on it.
+ * `agentcore/trace-fetch.ts` reads `bedrock-agentcore` through the same seam,
+ * and a second copy of this would be a second place for the emulator carve-out
+ * to drift.
  */
-function requestHeaders(
+export function requestHeaders(
   service: string,
   url: string,
   body: string,
