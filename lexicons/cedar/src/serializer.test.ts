@@ -1,7 +1,7 @@
 import { describe, test, expect } from "vitest";
 import { DECLARABLE_MARKER, type Declarable } from "@intentius/chant/declarable";
 import type { SerializerResult } from "@intentius/chant/serializer";
-import { checkParsePolicySet } from "@cedar-policy/cedar-wasm/nodejs";
+import { checkParsePolicySet, type PolicySet } from "@cedar-policy/cedar-wasm/nodejs";
 import { cedarSerializer, CEDAR_JSON_FILENAME, policyIdFromLogicalName } from "./serializer";
 
 // ── Mock entities ──────────────────────────────────────────────────
@@ -364,7 +364,7 @@ describe("the JSON companion as Cedar sees it", () => {
   );
 
   test("the emitted policy set parses as Cedar JSON", () => {
-    const answer = checkParsePolicySet(json(entities));
+    const answer = checkParsePolicySet(json(entities) as unknown as PolicySet);
     expect(answer.type, JSON.stringify(answer)).toBe("success");
   });
 
@@ -411,7 +411,7 @@ describe("the JSON companion as Cedar sees it", () => {
     ]));
     expect(Object.keys(doc.staticPolicies)).toEqual([]);
     expect(Object.keys(doc.templates)).toEqual(["share-with-slots"]);
-    expect(checkParsePolicySet(doc).type).toBe("success");
+    expect(checkParsePolicySet(doc as unknown as PolicySet).type).toBe("success");
   });
 
   test("text the module rejects yields a warning and no JSON file, not a broken one", () => {
