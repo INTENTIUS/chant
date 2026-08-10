@@ -98,14 +98,14 @@ To use Graphviz for layout instead of dagre (e.g. to match `dot`'s routing), pas
 
 ## Detail tiers: `--detail 0..3`
 
-The detail dial controls how much of the graph each format shows. It is a transform over the same IR, so it works with every `--format`.
+The detail dial controls how much of the graph each format shows. It is a transform over the same IR, so it works with every `--format`. It moves two things at once: the graph's shape (what collapses) and each node's attribute payload, which grows monotonically — a node's attrs at one level are always a subset of its attrs at the next.
 
 | Level | Name | Shows |
 |-------|------|-------|
-| `0` | stacks | one node per lexicon; edges are cross-lexicon dependencies |
-| `1` | composites | each composite instance collapsed to a single node |
-| `2` | declarables | every resource (the default) |
-| `3` | attributes | declarables, plus the referenced attribute on each edge |
+| `0` | stacks | one node per lexicon; edges are cross-lexicon dependencies; no attrs |
+| `1` | composites | each composite instance collapsed to a single node; topology only — no per-resource properties |
+| `2` | declarables | every resource with the resource view of its attrs — identity and other scalar fields, plus reference envelopes (the default) |
+| `3` | attributes | the full property tree on every node (a k8s `spec`, a Tags list), plus the referenced producer attribute on each edge |
 
 ```bash
 chant graph ./infra --format mermaid --detail 0   # high-level: lexicons only
