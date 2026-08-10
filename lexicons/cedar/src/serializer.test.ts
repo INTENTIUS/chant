@@ -1,6 +1,7 @@
 import { describe, test, expect } from "vitest";
 import { DECLARABLE_MARKER, type Declarable } from "@intentius/chant/declarable";
 import type { SerializerResult } from "@intentius/chant/serializer";
+import { checkParsePolicySet } from "@cedar-policy/cedar-wasm/nodejs";
 import { cedarSerializer, CEDAR_JSON_FILENAME, policyIdFromLogicalName } from "./serializer";
 
 // ── Mock entities ──────────────────────────────────────────────────
@@ -45,7 +46,7 @@ function text(entities: Map<string, Declarable>): string {
 
 function json(entities: Map<string, Declarable>): {
   staticPolicies: Record<string, Record<string, unknown>>;
-  templates: Record<string, unknown>;
+  templates: Record<string, Record<string, unknown>>;
   templateLinks: unknown[];
 } {
   const files = result(entities).files ?? {};
@@ -324,11 +325,100 @@ unless { principal.isBreakGlass };
       },
       resource: { op: "All" },
       conditions: [
-        { kind: "when", body: { __expr: 'resource.classification == "restricted"' } },
-        { kind: "unless", body: { __expr: "context.mfaAuthenticated" } },
-        { kind: "unless", body: { __expr: "principal.isBreakGlass" } },
+        {
+          kind: "when",
+          body: {
+            "==": {
+              left: { ".": { left: { Var: "resource" }, attr: "classification" } },
+              right: { Value: "restricted" },
+            },
+          },
+        },
+        { kind: "unless", body: { ".": { left: { Var: "context" }, attr: "mfaAuthenticated" } } },
+        { kind: "unless", body: { ".": { left: { Var: "principal" }, attr: "isBreakGlass" } } },
       ],
     });
+  });
+});
+
+// ── The JSON companion is real Cedar, not a chant-shaped file ──────
+//
+// It shipped writing `when` bodies as `{ "__expr": "<text>" }`, which is not a
+// key in Cedar's JSON grammar — the module answers `unknown variant '__expr'`
+// (#1664). Asserting the document is well-formed JSON never caught it; only
+// handing it back to Cedar does.
+
+describe("the JSON companion as Cedar sees it", () => {
+  const entities = entitiesOf(
+    [
+      "denyUnlessMfa",
+      mockPolicy({
+        effect: "forbid",
+        principal: { is: "User", in: 'Group::"contractors"' },
+        action: { in: ['Action::"delete"', 'Action::"purge"'] },
+        when: ['resource.classification == "restricted"'],
+        unless: ["context.mfaAuthenticated"],
+      }),
+    ],
+    ["allowRead", mockPolicy({ action: { eq: 'Action::"read"' } })],
+  );
+
+  test("the emitted policy set parses as Cedar JSON", () => {
+    const answer = checkParsePolicySet(json(entities));
+    expect(answer.type, JSON.stringify(answer)).toBe("success");
+  });
+
+  test("the emitted text parses too, and both describe the same policies", () => {
+    const answer = checkParsePolicySet({ staticPolicies: text(entities) });
+    expect(answer.type, JSON.stringify(answer)).toBe("success");
+    expect(Object.keys(json(entities).staticPolicies)).toEqual(["deny-unless-mfa", "allow-read"]);
+  });
+
+  test("golden: the expression trees are exactly what the module makes of the text", () => {
+    // `policyToJson` is deterministic with sorted keys (#1648 §5.2), so this
+    // compares safely. `policyToText` is not golden-testable and is not used.
+    expect(json(entities).staticPolicies["deny-unless-mfa"]).toEqual({
+      effect: "forbid",
+      principal: { op: "is", entity_type: "User", in: { entity: { type: "Group", id: "contractors" } } },
+      action: {
+        op: "in",
+        entities: [
+          { type: "Action", id: "delete" },
+          { type: "Action", id: "purge" },
+        ],
+      },
+      resource: { op: "All" },
+      conditions: [
+        {
+          kind: "when",
+          body: {
+            "==": {
+              left: { ".": { left: { Var: "resource" }, attr: "classification" } },
+              right: { Value: "restricted" },
+            },
+          },
+        },
+        { kind: "unless", body: { ".": { left: { Var: "context" }, attr: "mfaAuthenticated" } } },
+      ],
+      annotations: { id: "deny-unless-mfa" },
+    });
+  });
+
+  test("a policy carrying a slot is filed as a template, because Cedar says it is one", () => {
+    const doc = json(entitiesOf([
+      "shareWithSlots",
+      mockPolicy({ principal: { eq: "?principal" }, resource: { in: "?resource" } }),
+    ]));
+    expect(Object.keys(doc.staticPolicies)).toEqual([]);
+    expect(Object.keys(doc.templates)).toEqual(["share-with-slots"]);
+    expect(checkParsePolicySet(doc).type).toBe("success");
+  });
+
+  test("text the module rejects yields a warning and no JSON file, not a broken one", () => {
+    const out = result(entitiesOf(["broken", mockPolicy({ when: ["=== nonsense ==="] })]));
+    expect(out.files).toBeUndefined();
+    expect(out.warnings?.join(" ")).toContain(`${CEDAR_JSON_FILENAME} was not written`);
+    expect(out.primary).toContain("=== nonsense ===");
   });
 });
 
@@ -378,12 +468,12 @@ describe("entity UID handling", () => {
     });
   });
 
-  test("a single in-scope emits entity, an array emits entities", () => {
+  test("a single in-scope emits entity, a set of two emits entities", () => {
     const doc = json(entitiesOf([
       "grouped",
       mockPolicy({
         principal: { in: 'Group::"admins"' },
-        action: { in: ['Action::"read"'] },
+        action: { in: ['Action::"read"', 'Action::"list"'] },
       }),
     ]));
     expect(doc.staticPolicies["grouped"].principal).toEqual({
@@ -392,7 +482,21 @@ describe("entity UID handling", () => {
     });
     expect(doc.staticPolicies["grouped"].action).toEqual({
       op: "in",
-      entities: [{ type: "Action", id: "read" }],
+      entities: [
+        { type: "Action", id: "read" },
+        { type: "Action", id: "list" },
+      ],
+    });
+  });
+
+  test("a one-element action set is Cedar's own normalization of `in E`", () => {
+    // `action in [E]` and `action in E` are one constraint. The JSON leg is now
+    // whatever the module makes of the emitted text, so the brackets are gone
+    // by the time it is written — which is Cedar's reading, not a lost prop.
+    const doc = json(entitiesOf(["single", mockPolicy({ action: { in: ['Action::"read"'] } })]));
+    expect(doc.staticPolicies["single"].action).toEqual({
+      op: "in",
+      entity: { type: "Action", id: "read" },
     });
   });
 });

@@ -57,12 +57,18 @@ describe("cedar examples", () => {
         const parsed = JSON.parse(raw!) as { staticPolicies: Record<string, unknown> };
         expect(Object.keys(parsed.staticPolicies).length).toBeGreaterThan(0);
 
-        // Deliberately not fed to `checkParsePolicySet`: the serializer writes
-        // `when`/`unless` bodies as `{ __expr: "<text>" }`, and Cedar's JSON
-        // grammar has no such escape — it wants an expression tree. Producing
-        // one means parsing Cedar expression text, which is the import/reconcile
-        // work (epic #1645 sub-issue 6), not codegen's. The `.cedar` text above
-        // is the artifact every evaluator reads, and it does parse.
+        // And it is fed straight back to Cedar. The JSON leg is built from the
+        // emitted text by the module itself (#1653), so "well-formed JSON" is
+        // no longer the bar — "a policy set Cedar accepts" is.
+        const answer = checkParsePolicySet(parsed);
+        expect(answer.type, JSON.stringify(answer)).toBe("success");
+      });
+
+      it("emits no serializer warnings", async () => {
+        const result = await build(join(examplesDir, name, "src"), [cedarSerializer]);
+        const output = result.outputs.get("cedar");
+        const warnings = typeof output === "string" ? [] : (output?.warnings ?? []);
+        expect(warnings).toEqual([]);
       });
     });
   }

@@ -1,0 +1,238 @@
+{
+  "staticPolicies": {
+    "full-grant": {
+      "effect": "permit",
+      "principal": {
+        "op": "is",
+        "entity_type": "App::User",
+        "in": {
+          "entity": {
+            "type": "App::Group",
+            "id": "engineering"
+          }
+        }
+      },
+      "action": {
+        "op": "in",
+        "entities": [
+          {
+            "type": "App::Action",
+            "id": "read"
+          },
+          {
+            "type": "App::Action",
+            "id": "write"
+          },
+          {
+            "type": "App::Action",
+            "id": "list"
+          }
+        ]
+      },
+      "resource": {
+        "op": "is",
+        "entity_type": "App::Document",
+        "in": {
+          "entity": {
+            "type": "App::Folder",
+            "id": "handbook"
+          }
+        }
+      },
+      "conditions": [
+        {
+          "kind": "when",
+          "body": {
+            "&&": {
+              "left": {
+                "==": {
+                  "left": {
+                    ".": {
+                      "left": {
+                        "Var": "resource"
+                      },
+                      "attr": "owner"
+                    }
+                  },
+                  "right": {
+                    "Var": "principal"
+                  }
+                }
+              },
+              "right": {
+                "==": {
+                  "left": {
+                    ".": {
+                      "left": {
+                        "Var": "context"
+                      },
+                      "attr": "mfa"
+                    }
+                  },
+                  "right": {
+                    "Value": true
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "kind": "when",
+          "body": {
+            "==": {
+              "left": {
+                ".": {
+                  "left": {
+                    "Var": "principal"
+                  },
+                  "attr": "department"
+                }
+              },
+              "right": {
+                "Value": "eng"
+              }
+            }
+          }
+        },
+        {
+          "kind": "unless",
+          "body": {
+            "==": {
+              "left": {
+                ".": {
+                  "left": {
+                    "Var": "resource"
+                  },
+                  "attr": "classification"
+                }
+              },
+              "right": {
+                "Value": "secret"
+              }
+            }
+          }
+        },
+        {
+          "kind": "unless",
+          "body": {
+            "isInRange": [
+              {
+                ".": {
+                  "left": {
+                    "Var": "context"
+                  },
+                  "attr": "ip"
+                }
+              },
+              {
+                "ip": [
+                  {
+                    "Value": "10.0.0.0/8"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "annotations": {
+        "doc": "Everything the authoring model can carry, in one policy.",
+        "id": "full-grant",
+        "owner": "platform",
+        "ticket": "SEC-12"
+      }
+    },
+    "deny-anonymous": {
+      "effect": "forbid",
+      "principal": {
+        "op": "All"
+      },
+      "action": {
+        "op": "All"
+      },
+      "resource": {
+        "op": "All"
+      },
+      "conditions": [],
+      "annotations": {
+        "id": "deny-anonymous"
+      }
+    },
+    "quoted-note": {
+      "effect": "permit",
+      "principal": {
+        "op": "==",
+        "entity": {
+          "type": "App::ServiceAccount",
+          "id": "ci"
+        }
+      },
+      "action": {
+        "op": "in",
+        "entities": [
+          {
+            "type": "App::Action",
+            "id": "create"
+          },
+          {
+            "type": "App::Action",
+            "id": "approve"
+          }
+        ]
+      },
+      "resource": {
+        "op": "All"
+      },
+      "conditions": [
+        {
+          "kind": "when",
+          "body": {
+            "==": {
+              "left": {
+                ".": {
+                  "left": {
+                    "Var": "context"
+                  },
+                  "attr": "note"
+                }
+              },
+              "right": {
+                "Value": "a } b { c"
+              }
+            }
+          }
+        }
+      ],
+      "annotations": {
+        "id": "quoted-note",
+        "note": "say \"hi\" \\ done"
+      }
+    }
+  },
+  "templates": {
+    "share-with-slots": {
+      "effect": "permit",
+      "principal": {
+        "op": "==",
+        "slot": "?principal"
+      },
+      "action": {
+        "op": "==",
+        "entity": {
+          "type": "App::Action",
+          "id": "share"
+        }
+      },
+      "resource": {
+        "op": "in",
+        "slot": "?resource"
+      },
+      "conditions": [],
+      "annotations": {
+        "id": "share-with-slots"
+      }
+    }
+  },
+  "templateLinks": []
+}

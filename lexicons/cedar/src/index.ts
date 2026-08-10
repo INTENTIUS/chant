@@ -6,6 +6,18 @@ export { cedarSerializer, policyIdFromLogicalName } from "./serializer";
 export { CEDAR_POLICY_TYPE, CEDAR_JSON_FILENAME } from "./serializer";
 export type { CedarEffect, CedarScope, CedarPolicyProps } from "./serializer";
 
+export { policySetJSON, escapeCedarString } from "./serializer";
+export type { CedarPolicySetJSON } from "./serializer";
+
+// Import / reconcile (#1653) — `.cedar` text and the JSON policy-set envelope
+// in, authoring TypeScript out.
+export { CedarParser, isPolicySetEnvelope } from "./import/parser";
+export type { CedarParseResult, CedarPolicyIR, CedarEntityKind } from "./import/parser";
+export { CedarGenerator, loadActionConstants, sanitizeName, CEDAR_PACKAGE } from "./import/generator";
+export type { CedarGenerateOptions, CedarGenerateResult } from "./import/generator";
+export { CedarTemplateParser, CedarTemplateGenerator } from "./import/adapter";
+export { detectTemplate } from "./detect";
+
 // Lint rules
 export { rules as cedarLintRules } from "./lint/rules";
 

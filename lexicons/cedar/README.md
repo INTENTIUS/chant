@@ -11,10 +11,10 @@ that text.
 ## Status
 
 The lexicon lands across the sub-issues of INTENTIUS/chant#1645. What works
-today is the scaffold and serializer (#1649) and schema-driven codegen
-(#1650). Lint and post-synth validation through `cedar-wasm` (#1651), AVP
-embedding (#1652), import (#1653), and the docs/LSP/skills surface (#1654)
-follow.
+today is the scaffold and serializer (#1649), schema-driven codegen (#1650)
+and import/reconcile (#1653). Lint and post-synth validation through
+`cedar-wasm` (#1651), AVP embedding (#1652), and the docs/LSP/skills surface
+(#1654) follow.
 
 ## The policy model
 
@@ -77,6 +77,32 @@ Serializing produces canonical `.cedar` policy text as the primary output and
 a Cedar JSON policy set as `policies.cedar.json` beside it. Both are consumed
 by any Cedar evaluator with chant nowhere in sight.
 
+The JSON leg is built by handing the emitted text back to `cedar-wasm`, so
+what lands on disk is Cedar's own reading of it — expression trees, not
+expression source — and a policy carrying a `?principal`/`?resource` slot is
+filed under `templates` rather than `staticPolicies` because Cedar, not this
+serializer, decides which it is. Text the module cannot parse yields a build
+warning and no JSON file, never an invalid one.
+
+## Import
+
+`chant import` reads either surface back into TypeScript:
+
+```bash
+chant import policies.cedar.json --output ./src
+```
+
+The text leg round-trips byte-for-byte — `.cedar` → props → `new Policy({ … })`
+→ `.cedar` — because condition bodies are lifted out of the source verbatim and
+then checked against the tree `cedar-wasm` makes of them. Two normalizations do
+happen on the first lap and settle after it: annotations come back
+alphabetically (they serialize into a sorted map), and interleaved
+`when`/`unless` clauses regroup, since they are separate props.
+
+Importing the JSON envelope instead has no source to quote, so its clauses come
+back as the module renders them — semantically identical, defensively
+parenthesized.
+
 ## Commands
 
 ```bash
@@ -90,6 +116,8 @@ just generate   # schema-driven codegen from your .cedarschema
 
 - `src/plugin.ts` — LexiconPlugin with all lifecycle methods
 - `src/serializer.ts` — `.cedar` text and JSON policy-set output
+- `src/import/` — `chant import` parser, generator and round-trip fixtures
+- `src/detect.ts` — which documents belong to this lexicon
 - `src/codegen/` — code generation and packaging pipelines
 - `src/spec/` — upstream schema fetching and parsing
 - `src/lint/rules/` — lint rules
