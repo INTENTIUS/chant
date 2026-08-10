@@ -22,7 +22,7 @@
  * `create` the moment the emulator lacks Cloud Control.
  */
 import { createRequire } from "module";
-import { getResource, type AwsReadClientOptions } from "./api/read-client";
+import { AwsReadError, getResource, listResources, type AwsReadClientOptions, type CloudControlDescription } from "./api/read-client";
 import type { ResourceMetadata } from "@intentius/chant/lexicon";
 
 const require = createRequire(import.meta.url);
@@ -63,6 +63,29 @@ export function declaredIdentifier(entityType: string, props: Record<string, unk
   return values.join("|");
 }
 
+/**
+ * `GetResource`, with a `ListResources` + identifier-match fallback when the
+ * endpoint says the operation itself is unsupported. That is Floci's exact
+ * answer (read-client's own note) while it serves `ListResources` fine — and
+ * an emulator is exactly where the carve state lives, so without this leg the
+ * fallback proves itself everywhere except the one place the walkthrough
+ * films it. Every other refusal propagates: the caller decides what a failed
+ * refinement means.
+ */
+async function readByIdentity(
+  typeName: string,
+  identifier: string,
+  client: AwsReadClientOptions,
+): Promise<CloudControlDescription | null> {
+  try {
+    return await getResource(typeName, identifier, client);
+  } catch (err) {
+    if (!(err instanceof AwsReadError) || err.code !== "UnsupportedOperation") throw err;
+    const listed = await listResources(typeName, client);
+    return listed.find((d) => d.identifier === identifier) ?? null;
+  }
+}
+
 /** The same scrub the stack-output path applies, on live property KEYS. */
 function redactSensitive(properties: Record<string, unknown>): Record<string, unknown> | undefined {
   const out: Record<string, unknown> = {};
@@ -95,7 +118,7 @@ export async function observeByIdentity(
     if (!identifier) continue;
     queried[name] = `cloudcontrol:GetResource:${entity.entityType}:${identifier}`;
     try {
-      const found = await getResource(entity.entityType, identifier, client);
+      const found = await readByIdentity(entity.entityType, identifier, client);
       if (!found) continue;
       resources[name] = {
         type: entity.entityType,

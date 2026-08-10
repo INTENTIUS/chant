@@ -74,9 +74,51 @@ describe("observeByIdentity (#1647)", () => {
     expect(queried.assets).toBeDefined();
   });
 
-  test("an emulator without Cloud Control keeps the absent verdict — never a hole, or pre-first-apply plans stop proposing create", async () => {
+  test("an emulator without Cloud Control at all keeps the absent verdict — never a hole, or pre-first-apply plans stop proposing create", async () => {
     const { resources } = await observeByIdentity(["assets"], bucket, {}, {
-      http: async () => ccError("UnsupportedOperation", "Operation GetResource is not supported."),
+      http: async () => ccError("UnsupportedOperation", "not supported"),
+    });
+    expect(resources.assets).toBeUndefined();
+  });
+
+  // Floci serves ListResources but answers UnsupportedOperation for
+  // GetResource (read-client's own note) — and the emulator is where the carve
+  // walkthrough films the observe beat. Verified against Floci 1.5.34 on the
+  // behold demo: the list leg is what turns the miss into a read.
+  test("GetResource-unsupported falls back to ListResources and matches the identifier (Floci)", async () => {
+    const targets: string[] = [];
+    const { resources } = await observeByIdentity(["assets"], bucket, {}, {
+      http: async (_url, init) => {
+        const target = (init.headers as Record<string, string>)["x-amz-target"] ?? "";
+        targets.push(target);
+        if (target.endsWith("GetResource")) return ccError("UnsupportedOperation", "Operation GetResource is not supported.");
+        return {
+          status: 200,
+          text: JSON.stringify({
+            ResourceDescriptions: [
+              { Identifier: "some-other-bucket", Properties: JSON.stringify({ BucketName: "some-other-bucket" }) },
+              { Identifier: "acme-platform-assets-prod", Properties: JSON.stringify({ BucketName: "acme-platform-assets-prod" }) },
+            ],
+          }),
+        };
+      },
+    });
+    expect(targets.some((t) => t.endsWith("ListResources"))).toBe(true);
+    expect(resources.assets).toMatchObject({
+      type: "AWS::S3::Bucket",
+      physicalId: "acme-platform-assets-prod",
+      status: "EXTERNAL",
+      ownership: "foreign",
+    });
+  });
+
+  test("the list leg missing the identifier keeps the absent verdict", async () => {
+    const { resources } = await observeByIdentity(["assets"], bucket, {}, {
+      http: async (_url, init) => {
+        const target = (init.headers as Record<string, string>)["x-amz-target"] ?? "";
+        if (target.endsWith("GetResource")) return ccError("UnsupportedOperation", "not supported");
+        return { status: 200, text: JSON.stringify({ ResourceDescriptions: [] }) };
+      },
     });
     expect(resources.assets).toBeUndefined();
   });
