@@ -67,6 +67,22 @@ export interface ParsedArgs {
   selectName?: string;
   /** `chant import --owned` — restrict live import to chant-owned resources */
   owned?: boolean;
+  /**
+   * `chant graph --live --namespace <ns>` / `chant lifecycle diff <env> --live
+   * --namespace <ns>` / `chant lifecycle plan <env> --namespace <ns>` (#1629) —
+   * where to READ an entity whose declaration names no namespace of its own.
+   *
+   * A GitOps estate splits the binding from the objects: the control-plane
+   * project declares `spec.targetNamespace`, the app project declares bare
+   * objects the controller stamps at apply time. Without this the app
+   * project's live read falls through to the substrate default and paints a
+   * running estate as absent.
+   *
+   * A default, never a rewrite — an entity that declares its own namespace is
+   * read from the one it declares. Lexicons with no namespace-like scope
+   * ignore it.
+   */
+  namespace?: string;
   /** `chant lifecycle rollback --dry-run` — compute the rollback delta and print it; open no PR, push nothing, leave no branch. */
   dryRun?: boolean;
   /** `chant import --verbatim` — keep server-defaulted fields in live import */

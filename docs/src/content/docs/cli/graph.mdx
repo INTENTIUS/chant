@@ -64,6 +64,16 @@ chant graph --format ir --live --env prod --overlay                     # source
 chant graph --format ir --live --env prod --overlay --overlay-anchor live  # provisioned graph's own edges
 ```
 
+##### `--namespace <ns>` — where to read entities that declare none
+
+A live read resolves each entity's address from its own declaration. For a Kubernetes object whose namespace is stamped by a controller at apply time (a Flux/Argo estate where the binding lives in a different project than the objects), there is nothing to resolve, so the read goes to `default` and every node paints pending. `--namespace <ns>` supplies the missing default:
+
+```bash
+chant graph --format ir --live --env prod --overlay --namespace app-b
+```
+
+An entity that declares its own namespace keeps it — the option fills holes, it does not redirect reads. Lexicons with no namespace-like scope ignore it.
+
 ## Infra graph: `--format`
 
 ```bash

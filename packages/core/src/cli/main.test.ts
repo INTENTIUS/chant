@@ -10,6 +10,16 @@ describe("parseArgs", () => {
     expect(parseArgs(["build", "src", "--no-fold"]).fold).toBe(false);
   });
 
+  test("--namespace carries the live read's namespace default (#1629)", () => {
+    expect(parseArgs(["graph", "--live", "--env", "prod"]).namespace).toBeUndefined();
+    expect(parseArgs(["graph", "--live", "--env", "prod", "--namespace", "app-b"]).namespace).toBe("app-b");
+    expect(parseArgs(["lifecycle", "diff", "prod", "--live", "--namespace", "app-b"]).namespace).toBe("app-b");
+    // A missing value would otherwise swallow the next flag and read from a
+    // namespace called `--overlay`.
+    expect(() => parseArgs(["graph", "--live", "--namespace"])).toThrow(/--namespace needs a namespace/);
+    expect(() => parseArgs(["graph", "--live", "--namespace", "--overlay"])).toThrow(/--namespace needs a namespace/);
+  });
+
   test("parses command as first positional arg", () => {
     const result = parseArgs(["build"]);
     expect(result.command).toBe("build");

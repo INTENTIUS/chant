@@ -199,6 +199,13 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.selectName = args[++i];
     } else if (arg === "--owned") {
       result.owned = true;
+    } else if (arg === "--namespace") {
+      // The live read's namespace default (#1629), not a kubectl `-n`: it fills
+      // in for entities that declare no namespace and leaves the ones that do
+      // alone. No `-n` short form — that spelling belongs to `chant kube`,
+      // where it means kubectl's scope selector.
+      result.namespace = args[++i];
+      if (!result.namespace || result.namespace.startsWith("-")) throw new Error("--namespace needs a namespace: --namespace <ns>");
     } else if (arg === "--verbatim") {
       result.verbatim = true;
     } else if (arg === "--state") {
