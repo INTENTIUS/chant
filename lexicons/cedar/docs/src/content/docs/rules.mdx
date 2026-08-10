@@ -6,10 +6,34 @@ description: "Every lint rule and post-synth check provided by the Cedar lexicon
 {/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-cedar` — DO NOT EDIT.
     Edit lexicons/cedar/src/codegen/docs.ts instead; changes here are overwritten. */}
 
-The Cedar lexicon provides **1** rules: 1 lint rule and 0 post-synth checks.
+The Cedar lexicon provides **18** rules: 1 lint rule and 17 post-synth checks.
 
 ## Lint Rules
 
 | ID | Severity | Category | Description |
 |----|----------|----------|-------------|
-| `CED001` | warning | style | Sample lint rule |
+| `CEDC001` | error | correctness | a Cedar policy declaration must have a usable effect and no empty guard |
+
+## Post-Synth Checks
+
+Post-synth checks validate the serialized output after the build pipeline completes.
+
+| ID | Description |
+|----|-------------|
+| `CEDC010` | The emitted Cedar policy set must parse as Cedar (checkParsePolicySet) |
+| `CEDC011` | Every when/unless condition expression in an emitted policy must parse as a Cedar expression |
+| `CEDC012` | No two emitted Cedar policies may claim the same policy id |
+| `CEDC013` | An emitted policy's @id annotation must match its policy id, and annotation values must be non-empty strings |
+| `CEDC014` | An entity reference in a policy scope must be a well-formed Namespace::Type::\ |
+| `CEDE010` | Every emitted Cedar policy set validates clean against the project schema (cedar-wasm validate) |
+| `CEDE011` | Cedar validation warnings (impossible policies, shadowed conditions) on an emitted policy set |
+| `CEDS010` | A bare permit(principal, action, resource) with no scope constraints and no conditions grants everything |
+| `CEDS011` | A policy set built entirely from permits carries no forbid to bound them |
+| `CEDS012` | A permit that leaves the action scope unconstrained grants every action, including future ones |
+| `DWDC010` | A dogwood temporal predicate names an event kind the emitted .dwschema declares |
+| `DWDC011` | A dogwood temporal window stays inside the event schema's max_window cap |
+| `DWDC012` | A dogwood formerly/previous/since operator carries its mandatory within window |
+| `DWDC013` | An embedded AgentCore temporal statement has its event schema emitted beside it |
+| `DWDE010` | Emitted dogwood policy sets validate clean under `dogwood validate`, when the binary is available |
+| `DWDE011` | The Cedar `dogwood lower` produces validates clean against the augmented schema (cedar-wasm validate) |
+| `DWDS010` | An emitted dogwood event schema pins its temporal predicates to a request-side value |

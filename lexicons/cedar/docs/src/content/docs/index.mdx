@@ -49,6 +49,13 @@ There is no `cedarGate()` and there will not be one.
 TypeScript post-synth checks; a second policy engine would duplicate the lint
 engine. chant compiles *to* Cedar; it is not governed *by* Cedar.
 
+## The dogwood dialect
+
+Cedar with temporal operators, shipping inside this lexicon as a pre-release
+surface under the `DWD` id family: a policy that can depend on what already
+happened in a session. Start at [The Dogwood Dialect](./dogwood), which is
+honest about upstream's governance before it shows you a builder.
+
 ## At a Glance
 
 | Metric | Count |
@@ -58,9 +65,9 @@ engine. chant compiles *to* Cedar; it is not governed *by* Cedar.
 | Services | 2 |
 | Intrinsic functions | 0 |
 | Pseudo-parameters | 0 |
-| Lint rules | 1 |
+| Lint rules | 18 |
 
-**Lexicon version:** 0.44.7  
+**Lexicon version:** 0.44.9  
 **Namespace:** `Cedar`
 
 - [Getting Started](./getting-started)
@@ -71,5 +78,5 @@ engine. chant compiles *to* Cedar; it is not governed *by* Cedar.
 - [Lint Rules](./lint-rules)
 - [Importing](./importing)
 - [Verified Permissions](./avp)
-- [All Rules](./rules) — 1 rules
+- [All Rules](./rules) — 18 rules
 - [Serialization](./serialization) — output format details

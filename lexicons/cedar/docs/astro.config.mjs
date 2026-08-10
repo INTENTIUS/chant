@@ -59,6 +59,31 @@ export default defineConfig({
             {
                   "label": "Serialization",
                   "slug": "serialization"
+            },
+            {
+                  "label": "Dogwood",
+                  "items": [
+                        {
+                              "label": "The Dialect",
+                              "slug": "dogwood"
+                        },
+                        {
+                              "label": "Temporal Policies",
+                              "slug": "dogwood-temporal-policies"
+                        },
+                        {
+                              "label": "Event Schemas",
+                              "slug": "dogwood-event-schemas"
+                        },
+                        {
+                              "label": "Validation",
+                              "slug": "dogwood-validation"
+                        },
+                        {
+                              "label": "Replay",
+                              "slug": "dogwood-replay"
+                        }
+                  ]
             }
       ],
     }),

@@ -43,9 +43,9 @@ describe("cedar plugin", () => {
     }
   });
 
-  it("ships three skills whose frontmatter matches their registered name", () => {
+  it("ships four skills whose frontmatter matches their registered name", () => {
     const skills = cedarPlugin.skills?.() ?? [];
-    expect(skills).toHaveLength(3);
+    expect(skills).toHaveLength(4);
 
     for (const skill of skills) {
       // An empty body means the loader could not read the file — the skill
@@ -59,6 +59,7 @@ describe("cedar plugin", () => {
     expect(skills.map((s) => s.name).sort()).toEqual([
       "chant-cedar-authoring",
       "chant-cedar-avp-embedding",
+      "chant-cedar-dogwood",
       "chant-cedar-meta-policy",
     ]);
   });

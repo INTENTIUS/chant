@@ -1,0 +1,182 @@
+---
+title: "The Dogwood Dialect"
+description: "Cedar with temporal operators — what ships, and what pre-release means here."
+---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-cedar` — DO NOT EDIT.
+    Edit lexicons/cedar/src/codegen/docs.ts instead; changes here are overwritten. */}
+[Dogwood](https://github.com/dogwood-policy/dogwood) is Cedar with temporal
+operators. A policy can ask what already happened in a session — was there a
+login in the last hour, how much has been transferred in the last fifteen
+minutes, has anything touched a classified document since the session started —
+so approval-before-action, rate limits and budgets become policy instead of
+application code.
+
+A `.dw` file is a Cedar policy with extra clause forms. Its head is Cedar's,
+byte for byte, and its action schema is an ordinary `.cedarschema`.
+
+```
+@id("read_after_login")
+permit (
+  principal,
+  action == Drupe::Action::"Read",
+  resource
+)
+when temporal {
+    formerly within 1h Drupe::Action::"Login"::response{ input.user: context.input.user }
+};
+```
+
+## Pre-release, and what that means here
+
+Upstream calls itself a reference interpreter and says, in bold on its own
+README, that it is **not intended for production use**. The gaps it enumerates:
+no event timestamp validation, no event authentication, no trace durability,
+unsandboxed Rhai in providers, no audit logging, no multi-tenancy isolation,
+and an `http_get` provider with no SSRF protection.
+
+Most of those are a runtime consumer's problem rather than chant's — chant's
+half is authoring, serialization and the walls, and evaluation stays with
+Bedrock AgentCore Policy or whatever engine reads the emitted files. The part
+that *is* chant's problem is that the language surface can move underneath the
+typed builders, which is the next section.
+
+## How upstream is governed
+
+There is no versioning story, and that is a finding rather than a complaint.
+
+| Question | Answer at the pinned revision |
+|---|---|
+| Tags | None |
+| GitHub releases | None |
+| Changelog | None |
+| Crate version | `1.0.0`, declared `publish = ["brazil"]` — an Amazon-internal registry, not crates.io |
+| Contributions | CONTRIBUTING declares the repo a read-only mirror, not accepting external PRs, not using GitHub issues |
+| Stability statement | Nowhere in README, CONTRIBUTING, SECURITY or the guide |
+
+Every content change arrives as one squashed `Sync from internal source`
+commit from a publish bot, authored against a repository nobody outside Amazon
+can see. Over the repo's public life the cadence has been roughly one sync
+every three days. A sync is a wholesale tree replacement, so it can retune the
+grammar, rename a JSON field or swap the default macro library in a single
+commit, and the crate will report `1.0.0` either way.
+
+So a chant version gate cannot key off anything upstream publishes. What
+`src/dogwood/upstream.ts` records instead is a git SHA plus the blob hashes of
+seven files — three `.pest` grammars, the default macro library, and the three
+`dogwood-cli/src` files whose report structs are the JSON contract. The whole
+tree hash moves on docs-only syncs, which makes it too noisy to gate on.
+
+Three consequences run through everything else on these pages:
+
+- The typed builders target the **parser primitives**, never the named
+  aggregates, because the aggregates live in a file a sync can edit and a
+  caller can replace. See [Temporal Policies](../dogwood-temporal-policies/).
+- The CLI's **JSON report structs** are the integration surface, never its
+  human text, because the human renderer is the likelier thing to get
+  cosmetically retuned. See [Validation](../dogwood-validation/).
+- **Nothing in gating CI runs the binary.** Full `.dw` validation is a
+  CLI-gated check that says out loud when it did not run.
+
+## A dialect, not a sibling lexicon
+
+k3s beside k3d and forgejo beside github are parallel peers with separate
+upstreams. Dogwood is not a peer: it embeds Cedar, a `.dw` file stripped of
+Cedar semantics is meaningless, and the expensive machinery — schema codegen,
+typed entity and action classes, meta-policy lint — is shared verbatim. It
+ships as a surface inside this lexicon, with its checks under the `DWD` id
+family declared on the serializer's `extraRulePrefixes`.
+
+## Quick start
+
+```typescript
+import { TemporalPolicy, TemporalEventSchema, dogwood } from "@intentius/chant-lexicon-cedar";
+
+export const events = new TemporalEventSchema({ schema: dogwood.defaultEventSchema() });
+
+export const readAfterLogin = new TemporalPolicy({
+  annotations: { id: "read_after_login" },
+  action: { eq: 'Drupe::Action::"Read"' },
+  whenTemporal: [
+    dogwood.formerly(
+      "1h",
+      dogwood.predicate('Drupe::Action::"Login"', "response", {
+        "input.user": dogwood.ctx("input.user"),
+      }),
+    ),
+  ],
+});
+```
+
+## What comes out
+
+| File | What reads it |
+|---|---|
+| `policies.dw` | `dogwood validate` / `lower` / `replay` |
+| `events.dwschema` | `dogwood --event-schema` — the service half of the schema |
+| `macros.dw` | `dogwood --macros` — a macro library, when one is declared non-inline |
+| `<name>.cedar`, `policies.cedar.json` | The plain-Cedar half of the same policy set, unchanged |
+
+A build with no temporal policies emits none of the first three and behaves
+exactly as it did before. A build with both halves emits both from one pass,
+with policy ids derived the same way on each leg.
+
+## Deploying it: AgentCore
+
+`AWS::BedrockAgentCore::Policy` — generated by the
+[aws lexicon](/chant/lexicons/aws/) — is where a temporal policy is actually
+deployed. Its `Definition` is a two-arm `oneOf`: `Cedar.Statement` for plain
+Cedar, `Policy.Statement` for anything else. The second arm is what a `.dw`
+policy travels in, and it is why the epic picked AgentCore as the target.
+
+```typescript
+import { agentCoreStagedPolicy } from "@intentius/chant-lexicon-cedar";
+
+new BedrockAgentCorePolicy({
+  PolicyEngineId: engine.ref(),
+  ...agentCoreStagedPolicy("writeNeedsApproval", writeNeedsApproval, "log-only"),
+});
+```
+
+`agentCorePolicyDefinition(name, policy)` picks the arm from the policy itself:
+a `TemporalPolicy`, or any props carrying a temporal clause, goes to `Policy`;
+plain Cedar goes to `Cedar`. Nothing in the cedar lexicon imports the aws one —
+the seam is the data shape, the same rule the AVP embedding follows.
+
+`EnforcementMode` is the staging dial, and a temporal rule is the case that
+needs it most: `LOG_ONLY` is evaluated on every request with its decision
+observed rather than returned, so a policy whose behaviour depends on unreplayed
+traffic can be watched before it binds. Promotion is one token, `"log-only"` to
+`"enforce"`.
+
+The resource carries a statement and nothing else, so the event schema has
+nowhere to live in it and is registered with the engine separately. DWDC013
+warns when a build embeds temporal text and emits no `.dwschema` beside it,
+because a deployed statement whose event kinds nobody registered matches
+nothing and stops doing its job without failing.
+
+The worked example is `lexicons/cedar/examples/agentcore-policy`.
+
+## What chant does not do
+
+chant does not lower. `dogwood lower` compiles a `.dw` set to plain Cedar with
+the temporal conditions hoisted into `context.*` slots; that is upstream's
+semantics to own, and a reimplementation would drift the first time a sync
+changed it. Where the lowered form is wanted, chant shells to the binary.
+
+chant does not evaluate at request time. Temporal decisions are made by the
+policy engine in front of the traffic, and chant has no seat there. What chant
+does have is the offline half: `PolicyReplayOp` replays a declared set against
+recorded history through upstream's own interpreter and reports where the
+verdicts diverged from what the policy set was supposed to decide.
+
+## The pages
+
+- [Temporal Policies](../dogwood-temporal-policies/) — the builders, the
+  operators, and which of them are macros
+- [Event Schemas](../dogwood-event-schemas/) — the `.dwschema` surface and the
+  `callerPrincipal` pin
+- [Validation](../dogwood-validation/) — which checks always run and which need
+  the binary
+- [Replay](../dogwood-replay/) — typed traces, `PolicyReplayOp`, and the trap
+  that makes half a trace pass silently
