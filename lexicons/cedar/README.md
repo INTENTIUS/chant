@@ -10,11 +10,12 @@ that text.
 
 ## Status
 
-The lexicon lands across the sub-issues of INTENTIUS/chant#1645. What works
-today is the scaffold and serializer (#1649), schema-driven codegen (#1650),
-lint and post-synth validation through `cedar-wasm` (#1651), import/reconcile
-(#1653), and the docs/LSP/MCP/skills/composites surface (#1654). AVP embedding
-and policy-store observation (#1652) follow.
+Complete. The lexicon landed across the eight sub-issues of
+INTENTIUS/chant#1645: the upstream pin (#1648), the scaffold and serializer
+(#1649), schema-driven codegen (#1650), lint and post-synth validation through
+`cedar-wasm` (#1651), AVP embedding and policy-store observation (#1652),
+import/reconcile (#1653), the docs/LSP/MCP/skills/composites surface (#1654),
+and CI/publishing onboarding (#1655).
 
 ## The policy model
 
@@ -135,6 +136,29 @@ three `chant init` templates (`default`, `avp-embedding`,
 groups, `is`, `in` and `appliesTo` are expanded by Cedar and not by a second,
 worse implementation of it.
 
+## Amazon Verified Permissions
+
+AVP is one evaluator among several, and the aws lexicon keeps the deployment
+vehicle. What this lexicon adds is the typed statement inside it:
+`avpPolicyDefinition(name, props)` returns exactly the `Definition` property
+`AWS::VerifiedPermissions::Policy` takes, rendered by the same renderer that
+writes the `.cedar` file — so the two cannot drift. There is deliberately **no
+dependency on the aws lexicon**; the seam is the data shape. See
+`examples/avp-embedding/`.
+
+Beside the embedding, `describeResources()`, `observeAmbient()` and
+`exportResources()` read a live policy store. `chant lifecycle diff --live`
+reports declared policies that are missing from the store, and
+`observeAmbient()` reports the reverse — policies in the store that no
+declaration accounts for, which for an authorization store is a standing grant
+nobody in the source tree can see.
+
+The store is named by `CEDAR_AVP_POLICY_STORE_ID` (or
+`CEDAR_AVP_POLICY_STORE_ID_<ENV>`), or by a `policyStoreId` prop on a declared
+policy. AVP policy stores are taggable and individual policies are not, so
+chant's per-policy ownership marker rides in the policy description — the
+design record is `src/avp/OWNERSHIP.md`.
+
 ## Commands
 
 ```bash
@@ -151,6 +175,7 @@ npm run docs:build  # build the Starlight site in docs/
 
 - `src/plugin.ts` — LexiconPlugin with all lifecycle methods
 - `src/serializer.ts` — `.cedar` text and JSON policy-set output
+- `src/avp/` — AVP embedding, the policy-store readers, and the ownership channel
 - `src/import/` — `chant import` parser, generator and round-trip fixtures
 - `src/detect.ts` — which documents belong to this lexicon
 - `src/codegen/` — code generation, docs, and packaging pipelines

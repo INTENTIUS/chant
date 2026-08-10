@@ -158,7 +158,15 @@ function conditionStrings(value: unknown): string[] {
   return [refText(value)];
 }
 
-function renderPolicyText(id: string, props: Record<string, unknown>): string {
+/**
+ * One policy, as `.cedar` text.
+ *
+ * Exported because the AVP embedding (#1652) needs exactly this string and
+ * nothing else — `AWS::VerifiedPermissions::Policy` carries its policy as
+ * `Definition.Static.Statement`, a single Cedar policy rather than a set. Two
+ * renderers would be two dialects; there is one.
+ */
+export function renderPolicyText(id: string, props: Record<string, unknown>): string {
   const lines: string[] = [];
 
   // @id first, then the author's own annotations in declaration order.
@@ -237,6 +245,59 @@ export function policySetJSON(text: string): { doc?: CedarPolicySetJSON; error?:
   return { doc };
 }
 
+// ── The shared policy model ───────────────────────────────────────
+
+/** One declared policy, resolved: its chant name, its Cedar id, and its walked props. */
+export interface CedarPolicyRecord {
+  /** The chant entity name — the export name on the `*.ts` file. */
+  name: string;
+  /** The Cedar policy id, as it appears in `@id(…)`. */
+  id: string;
+  /** Props with references resolved, ready for either renderer. */
+  props: Record<string, unknown>;
+}
+
+/**
+ * The Cedar id for a policy: an explicit `annotations.id` when the author gave
+ * one, else derived from the logical name.
+ *
+ * This is the only rule that links a chant entity to a policy in a live AVP
+ * store (#1652) — the observation resolves the same id from the same props and
+ * matches it against the `@id` annotation the statement carries. Two copies of
+ * this rule would be a mapping that drifts silently, so there is one.
+ */
+export function resolvePolicyId(logicalName: string, props: Record<string, unknown>): string {
+  const explicit = isRecord(props.annotations) ? props.annotations.id : undefined;
+  return typeof explicit === "string" && explicit.length > 0
+    ? explicit
+    : policyIdFromLogicalName(logicalName);
+}
+
+/**
+ * Every `Cedar::Policy` in a build, with references walked and ids resolved.
+ *
+ * The serializer's own first pass, exported so the AVP embedding (#1652)
+ * renders from the same model rather than re-deriving it.
+ */
+export function cedarPolicyRecords(entities: Map<string, Declarable>): CedarPolicyRecord[] {
+  // Reverse map first: walkValue resolves a Declarable reference by identity,
+  // so every entity has to be known before any of them is walked.
+  const entityNames = new Map<Declarable, string>();
+  for (const [name, entity] of entities) {
+    entityNames.set(entity, name);
+  }
+
+  const records: CedarPolicyRecord[] = [];
+  for (const [name, entity] of entities) {
+    if (isPropertyDeclarable(entity)) continue;
+    if (entity.entityType !== CEDAR_POLICY_TYPE) continue;
+
+    const props = walkValue(getProps(entity), entityNames, cedarVisitor) as Record<string, unknown>;
+    records.push({ name, id: resolvePolicyId(name, props), props });
+  }
+  return records;
+}
+
 // ── Serializer ────────────────────────────────────────────────────
 
 export const cedarSerializer: Serializer = {
@@ -244,26 +305,9 @@ export const cedarSerializer: Serializer = {
   rulePrefix: "CED",
 
   serialize(entities: Map<string, Declarable>, _outputs?: LexiconOutput[]): string | SerializerResult {
-    // Reverse map first: walkValue resolves a Declarable reference by identity,
-    // so every entity has to be known before any of them is walked.
-    const entityNames = new Map<Declarable, string>();
-    for (const [name, entity] of entities) {
-      entityNames.set(entity, name);
-    }
-
     const policyText: string[] = [];
 
-    for (const [name, entity] of entities) {
-      if (isPropertyDeclarable(entity)) continue;
-      if (entity.entityType !== CEDAR_POLICY_TYPE) continue;
-
-      const props = walkValue(getProps(entity), entityNames, cedarVisitor) as Record<string, unknown>;
-
-      const explicitId = isRecord(props.annotations) ? props.annotations.id : undefined;
-      const id = typeof explicitId === "string" && explicitId.length > 0
-        ? explicitId
-        : policyIdFromLogicalName(name);
-
+    for (const { id, props } of cedarPolicyRecords(entities)) {
       policyText.push(renderPolicyText(id, props));
     }
 

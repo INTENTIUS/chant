@@ -27,50 +27,80 @@ The walk-away test holds on both sides. The emitted `.cedar` file is read by any
 evaluator with no AWS involved; the AVP resource deploys through the same
 CloudFormation path every other AWS resource does.
 
-## What ships today
+## The typed handoff
 
-The cedar lexicon serializes a policy set to `.cedar` text and to the JSON
-policy format. Those are files. Feeding one policy's text into an AVP resource
-is a build-time operation over the same serializer:
+`avpPolicyDefinition(name, props)` returns exactly the `Definition` property
+`AWS::VerifiedPermissions::Policy` takes, rendered by the same renderer that
+writes the `.cedar` file — so the deployed policy and the reviewed file cannot
+disagree.
 
 ```typescript
-import { Policy, ReadAction } from "@intentius/chant-lexicon-cedar";
-import { cedarSerializer } from "@intentius/chant-lexicon-cedar/serializer";
+import { Policy, ReadAction, avpPolicyDefinition } from "@intentius/chant-lexicon-cedar";
+import { VerifiedPermissionsPolicy } from "@intentius/chant-lexicon-aws";
 
-export const ownerRead = new Policy({
+const ownerReadProps = {
   effect: "permit",
   principal: { is: "App::User" },
   action: { eq: ReadAction },
   resource: { is: "App::Document" },
   when: ["resource.owner == principal"],
+} as const;
+
+/** The evaluator-agnostic artifact: this is what lands in the `.cedar` file. */
+export const ownerRead = new Policy(ownerReadProps);
+
+/** The AVP deployment view of the same policy. */
+export const ownerReadAvp = new VerifiedPermissionsPolicy({
+  PolicyStoreId: policyStore.ref(),
+  Definition: avpPolicyDefinition("ownerRead", ownerReadProps, {
+    ownership: { stack: "authz", env: "prod" },
+    description: "Owners read their own documents.",
+  }),
 });
 ```
 
-The statement text for `ownerRead` is what `cedarSerializer.serialize()` emits
-for that one entity — the same bytes that go in the `.cedar` file, so the
-deployed policy and the reviewed file cannot disagree.
+Beside it: `avpStatement()` for the bare string, `avpStatementJSON()` for
+evaluators that take the JSON policy format, and `avpPolicySet(entities)` to
+render a whole build's policies at once, keyed by chant entity name.
 
-## What is deferred
+**The cedar lexicon does not depend on the aws lexicon.** The seam is the data
+shape, which is stable CloudFormation. `examples/avp-embedding/` shows the
+pairing with a plain-object stand-in, because the shipped cedar examples build
+against the cedar serializer alone.
 
-A typed handoff — a `VerifiedPermissionsPolicy` whose `statement` accepts a
-cedar-lexicon `Policy` value directly, rather than a string a caller assembled —
-is **landing with INTENTIUS/chant#1652**, along with the policy-store lifecycle
-work: `describeResources()`/`observeAmbient()` against a live store, and the
-ownership-channel design.
+## The lifecycle surface
 
-Do not hand-roll a replacement for it. In particular:
+`describeResources()`, `observeAmbient()` and `exportResources()` read a live
+policy store. Point them at one with `CEDAR_AVP_POLICY_STORE_ID` (or
+`CEDAR_AVP_POLICY_STORE_ID_<ENV>`), or a `policyStoreId` prop on a declared
+policy.
+
+The link from a chant entity to a live policy is the Cedar `@id` annotation,
+which is derived from the export name (`ownerRead` → `owner-read`) unless
+`annotations.id` overrides it. Rename an export and the observation follows it;
+rename it *and* pin `annotations.id` and the live policy stays matched.
+
+## Rules
 
 - **Do not write the statement as prose.** A hand-typed
   `"permit(principal, action, resource);"` in an AVP resource is the exact thing
   this lexicon exists to remove, and the meta-policy wall (see the
   `chant-cedar-meta-policy` skill) fails a bare permit in a prod build.
-- **Do not tag individual policies for ownership.** AVP policy *stores* are
-  taggable; individual policies are not. Store-level granularity is the decided
-  scope, and no ownership channel is declared until its read paths exist — the
-  tier-2 `check-lexicon` gate exists because of exactly this failure mode.
+- **Do not try to tag an individual policy.** AVP policy *stores* are taggable;
+  individual policies are not — `CreatePolicy` has no tag surface and a policy
+  has no ARN. chant's per-policy marker therefore rides in the policy
+  description, stamped by passing `ownership` to `avpPolicyDefinition` and read
+  back by `describeResources`/`exportResources`. Store tags remain the coarse
+  channel. The design record, including what the choice costs, is
+  `src/avp/OWNERSHIP.md`.
+- **Do not hand-write the description when you want ownership.** Pass
+  `ownership` and let the marker be encoded; the description is capped at 150
+  characters and the encoder truncates prose rather than the marker, which is
+  what keeps a chant-owned policy from silently reading as foreign.
 - **Do not treat an ambient permit as housekeeping.** A permit found in a store
   that no source file declares is a standing grant somebody made outside review.
-  It is a security finding.
+  It is a security finding. `observeAmbient()` reports the statement and its
+  effect and stops short of the verdict — the judgement is yours.
 
 ## Non-AVP evaluators
 
