@@ -12,7 +12,7 @@
 import { describe, test, expect } from "vitest";
 import { createPostSynthContext, makePostSynthCtxFromFiles } from "@intentius/chant-test-utils";
 import type { PostSynthContext } from "@intentius/chant/lint/post-synth";
-import { CEDAR_JSON_FILENAME } from "../../serializer";
+import { CEDAR_JSON_FILENAME, cedarSerializer } from "../../serializer";
 import { postSynthChecks } from ".";
 import { cedc010 } from "./cedc010";
 import { cedc011 } from "./cedc011";
@@ -103,10 +103,14 @@ function ctxWithSchema(
 // ── Barrel ─────────────────────────────────────────────────────────
 
 describe("the cedar post-synth barrel", () => {
-  test("ships every check exactly once, all under the CED prefix", () => {
+  test("ships every check exactly once, under a declared prefix", () => {
+    // Two id families, both declared on the serializer: CED for Cedar itself,
+    // DWD for the dogwood temporal dialect that ships inside this lexicon
+    // (#1658). An id outside both is what `chant dev check-lexicon` fails on.
+    const declared = [cedarSerializer.rulePrefix, ...(cedarSerializer.extraRulePrefixes ?? [])];
     const ids = postSynthChecks.map((c) => c.id);
     expect(new Set(ids).size).toBe(ids.length);
-    expect(ids.every((id) => id.startsWith("CED"))).toBe(true);
+    expect(ids.filter((id) => !declared.some((p) => id.startsWith(p)))).toEqual([]);
     expect(ids.length).toBeGreaterThanOrEqual(10);
   });
 

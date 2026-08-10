@@ -54,6 +54,30 @@ export type { CedarGenerateOptions, CedarGenerateResult } from "./import/generat
 export { CedarTemplateParser, CedarTemplateGenerator } from "./import/adapter";
 export { detectTemplate } from "./detect";
 
+// The dogwood temporal dialect (#1658) — typed temporal builders, the `.dw`
+// serializer leg, `.dwschema` event schemas. Pre-release; see ./dogwood.
+//
+// Namespaced rather than flattened: the temporal sub-language's builders are
+// named after its own grammar (`and`, `not`, `count`, `sum`, `str`, `field`,
+// `record`, `window`), and spilling those into the package root would collide
+// with a schema-generated entity class the moment someone declares one. The
+// three entity classes are re-exported flat because that is what a policy file
+// names.
+export * as dogwood from "./dogwood/index";
+export {
+  DOGWOOD_EVENT_SCHEMA_FILENAME,
+  DOGWOOD_EVENT_SCHEMA_TYPE,
+  DOGWOOD_MACRO_FILENAME,
+  DOGWOOD_MACRO_LIBRARY_TYPE,
+  DOGWOOD_POLICY_FILENAME,
+  DOGWOOD_POLICY_TYPE,
+  TemporalEventSchema,
+  TemporalMacroLibrary,
+  TemporalPolicy,
+} from "./dogwood/policy";
+export type { EventSchemaProps, MacroLibraryProps, TemporalPolicyProps } from "./dogwood/policy";
+export { DOGWOOD_UPSTREAM } from "./dogwood/upstream";
+
 // Lint rules
 export { rules as cedarLintRules } from "./lint/rules";
 

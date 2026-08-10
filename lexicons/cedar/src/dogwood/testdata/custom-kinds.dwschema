@@ -1,0 +1,17 @@
+// Adapted from dogwood-policy/dogwood@5063bcc2d6d6cf5024d1b0498e6cc8ef52cbcf0c (Apache-2.0):
+//   dogwood-docs/examples/login_attempt_custom_kind/event.dwschema
+// Upstream's shape; the bytes are what chant's typed builders emit.
+
+// Author-defined event kinds — `attempt` decides, `outcome` is history — and
+// a renamed injected principal field.
+
+decision event <A>::attempt {
+    ...inputs(A),
+    actor: principalType(A),
+}
+
+event <A>::outcome {
+    ...inputs(A),
+    ...outputs(A),
+    actor: principalType(A),
+}

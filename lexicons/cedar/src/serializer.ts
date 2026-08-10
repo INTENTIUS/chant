@@ -19,14 +19,28 @@
  * (#1650) generates typed classes onto exactly this shape, so nothing here
  * changes when it lands — the guards become typed expressions rather than
  * the opaque Cedar-expression strings they are today.
+ *
+ * A third view arrives when the build holds dogwood entities (#1658): `.dw`
+ * policy text and its `.dwschema`/`macros.dw` companions, rendered by
+ * `./dogwood/serialize.ts` and returned in the same result. Both legs share
+ * `./policy-text.ts` rather than a copy of it, because a `.dw` policy's head
+ * *is* a Cedar policy's head.
  */
 
 import type { Declarable } from "@intentius/chant/declarable";
-import { isPropertyDeclarable, isResourceDeclarable } from "@intentius/chant/declarable";
+import { isPropertyDeclarable } from "@intentius/chant/declarable";
 import type { Serializer, SerializerResult } from "@intentius/chant/serializer";
 import type { LexiconOutput } from "@intentius/chant/lexicon-output";
 import { walkValue, type SerializerVisitor } from "@intentius/chant/serializer-walker";
 import { policyToJson, splitPolicySet, templateToJson, type PolicyJson } from "./spec/wasm";
+import { serializeDogwood } from "./dogwood/serialize";
+import {
+  conditionStrings,
+  getProps,
+  isRecord,
+  renderPolicyHead,
+  resolvePolicyId,
+} from "./policy-text";
 
 // ── The policy entity model ───────────────────────────────────────
 
@@ -74,40 +88,22 @@ export interface CedarPolicyProps {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────
+//
+// Rendering the dogwood dialect shares lives in `./policy-text.ts`, along with
+// `resolvePolicyId` — the one rule linking a chant entity to a policy id, which
+// #1652 extracted for the AVP observation and the `.dw` leg needs for the same
+// reason. Re-exported here so this module stays the one import a caller needs.
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function getProps(entity: Declarable): Record<string, unknown> {
-  if (isResourceDeclarable(entity) && isRecord(entity.props)) {
-    return entity.props;
-  }
-  return {};
-}
-
-/** Escape a string for a double-quoted Cedar literal. */
-export function escapeCedarString(value: string): string {
-  return value
-    .replace(/\\/g, "\\\\")
-    .replace(/"/g, '\\"')
-    .replace(/\n/g, "\\n")
-    .replace(/\r/g, "\\r")
-    .replace(/\t/g, "\\t");
-}
-
-/**
- * Derive a policy id from a logical name: `allowAdminRead` → `allow-admin-read`.
- * Cedar ids are free-form strings; kebab-case keeps them readable in the
- * `@id` annotation and stable across a rename-free refactor.
- */
-export function policyIdFromLogicalName(name: string): string {
-  return name
-    .replace(/([a-z0-9])([A-Z])/g, "$1-$2")
-    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1-$2")
-    .replace(/[\s_]+/g, "-")
-    .toLowerCase();
-}
+export {
+  conditionStrings,
+  escapeCedarString,
+  getProps,
+  isRecord,
+  policyIdFromLogicalName,
+  renderPolicyHead,
+  renderScope,
+  resolvePolicyId,
+} from "./policy-text";
 
 // ── Walker visitor ────────────────────────────────────────────────
 
@@ -131,33 +127,6 @@ const cedarVisitor: SerializerVisitor = {
 
 // ── Cedar policy text ─────────────────────────────────────────────
 
-function refText(value: unknown): string {
-  return String(value);
-}
-
-/** `principal`, `principal == User::"alice"`, `action in [ … ]`, `resource is Photo`. */
-function renderScope(variable: string, scope: unknown): string {
-  if (!isRecord(scope)) return variable;
-
-  const parts = [variable];
-  if (typeof scope.is === "string") parts.push(`is ${scope.is}`);
-  if (scope.eq !== undefined) parts.push(`== ${refText(scope.eq)}`);
-  if (scope.in !== undefined) {
-    parts.push(
-      Array.isArray(scope.in)
-        ? `in [${scope.in.map(refText).join(", ")}]`
-        : `in ${refText(scope.in)}`,
-    );
-  }
-  return parts.join(" ");
-}
-
-function conditionStrings(value: unknown): string[] {
-  if (value === undefined || value === null) return [];
-  if (Array.isArray(value)) return value.map(refText);
-  return [refText(value)];
-}
-
 /**
  * One policy, as `.cedar` text.
  *
@@ -165,24 +134,12 @@ function conditionStrings(value: unknown): string[] {
  * nothing else — `AWS::VerifiedPermissions::Policy` carries its policy as
  * `Definition.Static.Statement`, a single Cedar policy rather than a set. Two
  * renderers would be two dialects; there is one.
+ *
+ * The head comes from `renderPolicyHead`, which the dogwood dialect's `.dw`
+ * leg also calls: three surfaces, one rendering of an annotation and a scope.
  */
 export function renderPolicyText(id: string, props: Record<string, unknown>): string {
-  const lines: string[] = [];
-
-  // @id first, then the author's own annotations in declaration order.
-  const annotations = isRecord(props.annotations) ? props.annotations : {};
-  lines.push(`@id("${escapeCedarString(id)}")`);
-  for (const [key, value] of Object.entries(annotations)) {
-    if (key === "id" || value === undefined || value === null) continue;
-    lines.push(`@${key}("${escapeCedarString(refText(value))}")`);
-  }
-
-  const effect = props.effect === "forbid" ? "forbid" : "permit";
-  lines.push(`${effect} (`);
-  lines.push(`  ${renderScope("principal", props.principal)},`);
-  lines.push(`  ${renderScope("action", props.action)},`);
-  lines.push(`  ${renderScope("resource", props.resource)}`);
-  lines.push(")");
+  const lines = renderPolicyHead(id, props);
 
   for (const clause of conditionStrings(props.when)) {
     lines.push(`when { ${clause} }`);
@@ -258,22 +215,6 @@ export interface CedarPolicyRecord {
 }
 
 /**
- * The Cedar id for a policy: an explicit `annotations.id` when the author gave
- * one, else derived from the logical name.
- *
- * This is the only rule that links a chant entity to a policy in a live AVP
- * store (#1652) — the observation resolves the same id from the same props and
- * matches it against the `@id` annotation the statement carries. Two copies of
- * this rule would be a mapping that drifts silently, so there is one.
- */
-export function resolvePolicyId(logicalName: string, props: Record<string, unknown>): string {
-  const explicit = isRecord(props.annotations) ? props.annotations.id : undefined;
-  return typeof explicit === "string" && explicit.length > 0
-    ? explicit
-    : policyIdFromLogicalName(logicalName);
-}
-
-/**
  * Every `Cedar::Policy` in a build, with references walked and ids resolved.
  *
  * The serializer's own first pass, exported so the AVP embedding (#1652)
@@ -304,6 +245,11 @@ export const cedarSerializer: Serializer = {
   name: "cedar",
   rulePrefix: "CED",
 
+  // The dogwood temporal dialect ships inside this lexicon (epic #1646): a
+  // `.dw` file stripped of Cedar semantics is meaningless, so its checks are
+  // this serializer's, under their own published id family.
+  extraRulePrefixes: ["DWD"],
+
   serialize(entities: Map<string, Declarable>, _outputs?: LexiconOutput[]): string | SerializerResult {
     const policyText: string[] = [];
 
@@ -311,25 +257,41 @@ export const cedarSerializer: Serializer = {
       policyText.push(renderPolicyText(id, props));
     }
 
-    if (policyText.length === 0) return "";
+    // The dogwood dialect's own entities (#1658). Emitted from here rather
+    // than from a second serializer because they are one policy set with two
+    // halves — the `.dw` text and the `.cedar` text describe the same system,
+    // and a project holding only temporal policies still gets its files.
+    const dogwood = serializeDogwood(entities);
 
-    const primary = policyText.join("\n\n") + "\n";
-    const { doc, error } = policySetJSON(primary);
+    if (policyText.length === 0 && !dogwood) return "";
 
-    // A policy set Cedar cannot read is a real defect, but it is the lint and
-    // post-synth surface's to report (#1651) — the text is still the artifact
-    // every evaluator consumes, so it is emitted either way, with the module's
-    // own message carried out as a build warning rather than swallowed.
-    if (!doc) {
-      return {
-        primary,
-        warnings: [`cedar: the emitted policy text did not parse, so ${CEDAR_JSON_FILENAME} was not written — ${error}`],
-      };
+    const files: Record<string, string> = {};
+    const warnings: string[] = [...(dogwood?.warnings ?? [])];
+    let primary = "";
+
+    if (policyText.length > 0) {
+      primary = policyText.join("\n\n") + "\n";
+      const { doc, error } = policySetJSON(primary);
+
+      // A policy set Cedar cannot read is a real defect, but it is the lint and
+      // post-synth surface's to report (#1651) — the text is still the artifact
+      // every evaluator consumes, so it is emitted either way, with the module's
+      // own message carried out as a build warning rather than swallowed.
+      if (doc) {
+        files[CEDAR_JSON_FILENAME] = JSON.stringify(doc, null, 2) + "\n";
+      } else {
+        warnings.push(
+          `cedar: the emitted policy text did not parse, so ${CEDAR_JSON_FILENAME} was not written — ${error}`,
+        );
+      }
     }
+
+    Object.assign(files, dogwood?.files ?? {});
 
     return {
       primary,
-      files: { [CEDAR_JSON_FILENAME]: JSON.stringify(doc, null, 2) + "\n" },
+      ...(Object.keys(files).length > 0 ? { files } : {}),
+      ...(warnings.length > 0 ? { warnings } : {}),
     };
   },
 };

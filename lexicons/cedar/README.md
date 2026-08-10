@@ -17,6 +17,11 @@ INTENTIUS/chant#1645: the upstream pin (#1648), the scaffold and serializer
 import/reconcile (#1653), the docs/LSP/MCP/skills/composites surface (#1654),
 and CI/publishing onboarding (#1655).
 
+Landing beside it, and pre-release on its own terms, is the dogwood temporal
+dialect (epic #1646) — see [The dogwood dialect](#the-dogwood-dialect-pre-release).
+It is a surface *inside* this lexicon rather than a sibling, so the eight
+sub-issues above are still the whole of Cedar itself.
+
 ## The policy model
 
 A policy is a `Cedar::Policy` entity whose props are:
@@ -159,6 +164,57 @@ policy. AVP policy stores are taggable and individual policies are not, so
 chant's per-policy ownership marker rides in the policy description — the
 design record is `src/avp/OWNERSHIP.md`.
 
+## The dogwood dialect (pre-release)
+
+[Dogwood](https://github.com/dogwood-policy/dogwood) is Cedar with temporal
+operators: a policy can depend on what already happened in a session, so
+approval-before-action, rate limits and budgets become policy rather than
+application code. It ships here as a dialect rather than as a sibling lexicon —
+a `.dw` file stripped of Cedar semantics is meaningless, and the head of a
+`.dw` policy is Cedar's, byte for byte. Its checks are under the `DWD` id
+family, declared on the serializer's `extraRulePrefixes`.
+
+```ts
+import { TemporalPolicy, TemporalEventSchema, dogwood } from "@intentius/chant-lexicon-cedar";
+
+export const events = new TemporalEventSchema({ schema: dogwood.defaultEventSchema() });
+
+export const readAfterLogin = new TemporalPolicy({
+  action: { eq: 'Drupe::Action::"Read"' },
+  whenTemporal: [
+    dogwood.formerly("1h", dogwood.predicate('Drupe::Action::"Login"', "response", {
+      "input.user": dogwood.ctx("input.user"),
+    })),
+  ],
+});
+```
+
+A build holding temporal policies emits `policies.dw` beside the `.cedar`
+outputs, plus `events.dwschema` and `macros.dw` where those are declared.
+
+The builders target dogwood's **parser primitives** — `formerly`, `previous`,
+`since`, `exists`, `tp()`, `count for … where`, `sum … for … where` — because
+those are the only temporal keywords in the grammar. `count_within`,
+`sum_within` and `count_distinct_within` are macros in a default library that
+a caller passing `--macros` replaces wholesale, so they are expressible as
+calls (`dogwood.countWithin`) and never as operators. `dogwood.defaultMacroLibrary()`
+emits the same definitions into a project's own file for anyone who would
+rather not depend on the far end's.
+
+Three walls run in the build with no dogwood binary anywhere: a temporal
+predicate naming an event kind the emitted `.dwschema` never declares
+(DWDC010), a window past the schema's `max_window` or upstream's 24h default
+(DWDC011), and a `formerly`/`previous`/`since` with no window (DWDC012, which
+the typed builders already make unrepresentable). DWDS010 reports an event
+schema that pins nothing — supplying any schema opts out of upstream's
+`callerPrincipal` pin, which widens every temporal predicate to cross-principal.
+
+Pre-release. Upstream is a read-only squash-sync mirror of an internal Amazon
+repository with no tags, no releases and no stability statement, and its README
+says it is not intended for production use. The revision this is built against
+is recorded in `src/dogwood/upstream.ts`; full `.dw` validation shells to the
+`dogwood` binary and is deliberately not part of any gating check.
+
 ## Commands
 
 ```bash
@@ -175,7 +231,9 @@ npm run docs:build  # build the Starlight site in docs/
 
 - `src/plugin.ts` — LexiconPlugin with all lifecycle methods
 - `src/serializer.ts` — `.cedar` text and JSON policy-set output
+- `src/policy-text.ts` — policy-head rendering shared by every renderer
 - `src/avp/` — AVP embedding, the policy-store readers, and the ownership channel
+- `src/dogwood/` — the temporal dialect: builders, `.dw`/`.dwschema` output
 - `src/import/` — `chant import` parser, generator and round-trip fixtures
 - `src/detect.ts` — which documents belong to this lexicon
 - `src/codegen/` — code generation, docs, and packaging pipelines
