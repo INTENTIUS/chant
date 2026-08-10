@@ -1,6 +1,6 @@
 {
   "name": "@intentius/chant-lexicon-k3s",
-  "version": "0.44.6",
+  "version": "0.44.7",
   "type": "module",
   "files": [
     "src/",
@@ -45,7 +45,7 @@
     "access": "public"
   },
   "peerDependencies": {
-    "@intentius/chant": "^0.44.6",
+    "@intentius/chant": "^0.44.7",
     "typescript": "^5.9.3"
   },
   "description": "k3s lexicon for chant — the k3s distro's host configuration as declarable data",
