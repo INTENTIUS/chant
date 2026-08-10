@@ -1178,6 +1178,9 @@ export async function runLifecyclePlan(ctx: CommandContext): Promise<number> {
         observedNow: observed.resources,
         observedThen,
         unobserved: observed.unobserved,
+        // The resolved read address rides every entry, not just unobserved
+        // ones — the diff path already passes it (#1620); plan lost it.
+        queried: observed.queried,
       });
       merged.entries.push(...cs.entries);
       checked++;

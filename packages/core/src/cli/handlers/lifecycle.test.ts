@@ -677,6 +677,33 @@ describe("runLifecyclePlan", () => {
     expect(stdoutBuf.join("\n")).toContain("bucket");
   });
 
+  // #1620 — the resolved read address rides plan entries the same way it rides
+  // the live diff. Regression: the plan path dropped the observation's queried
+  // map, so only unobserved rows ever carried an address while the docs
+  // promised it per-entry.
+  test("--json carries the observation's queried address on observed entries", async () => {
+    buildMock.mockResolvedValue(makeBuildResult({ k8s: ["web"] }));
+    const plugins: LexiconPlugin[] = [
+      createMockPlugin({
+        name: "k8s",
+        describeResources: async () => ({
+          observation: "v1" as const,
+          resources: { web: meta({ type: "K8s::Apps::Deployment" }) },
+          queried: { web: "/apis/apps/v1/namespaces/default/deployments/web" },
+        }),
+      }),
+    ];
+    const exit = await runLifecyclePlan({
+      args: makeArgs({ path: "plan", extraPositional: "prod", json: true }),
+      plugins,
+      serializers: plugins.map((p) => p.serializer),
+    });
+    expect(exit).toBe(0);
+    const plan = JSON.parse(stdoutBuf.join("\n"));
+    const web = plan.entries.find((e: { name: string }) => e.name === "web");
+    expect(web.queried).toBe("/apis/apps/v1/namespaces/default/deployments/web");
+  });
+
   // #1166 — plan is always a live read (no `--live` flag of its own), so a
   // declared environment endpoint applies here exactly as it does for
   // `chant graph --live` / `chant lifecycle diff --live`.
