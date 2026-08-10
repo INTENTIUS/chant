@@ -1,0 +1,12 @@
+{
+  "name": "@intentius/chant-lexicon-cedar-example-policy-replay",
+  "version": "0.0.1",
+  "private": true,
+  "scripts": {
+    "build": "chant build src -o dist/policies.cedar"
+  },
+  "dependencies": {
+    "@intentius/chant-lexicon-cedar": "workspace:*",
+    "@intentius/chant": "workspace:*"
+  }
+}

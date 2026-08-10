@@ -347,6 +347,29 @@ export interface DogwoodLowered {
 
 export type DogwoodLowerResult = { kind: "lowered"; value: DogwoodLowered } | DogwoodFatal | DogwoodUnusable;
 
+/**
+ * One decision point out of `replay --format json`.
+ *
+ * `index` is the 0-based position in the *decision* stream, not the trace line
+ * number: a history-only event (any kind the event schema does not mark
+ * `decision`) contributes history and no verdict, so the two do not line up.
+ */
+export interface DogwoodVerdict {
+  index: number;
+  /** The `@<timestamp>` of the line that produced this decision. */
+  timestamp: number;
+  verdict: "allow" | "deny";
+  /** `.dw` rule indices that determined the decision — upstream's `[rules: 0, 2]`. */
+  determiningRules: number[];
+  /** Per-evaluation errors, such as a provider with no inlined Rhai script. */
+  errors: string[];
+}
+
+export type DogwoodReplayResult =
+  | { kind: "replayed"; verdicts: DogwoodVerdict[] }
+  | DogwoodFatal
+  | DogwoodUnusable;
+
 function unusable(reason: string): DogwoodUnusable {
   return { kind: "unusable", reason };
 }
@@ -430,6 +453,69 @@ export function parseLowerOutput(run: DogwoodRun): DogwoodLowerResult {
   return unusable("`dogwood lower --format json` returned JSON in neither the artifact nor the error shape");
 }
 
+/**
+ * Read a `replay --format json` run.
+ *
+ * The one place the exit-code discipline matters most: **replay exits 0 even
+ * when every verdict is DENY.** A nonzero exit means the trace or the policy
+ * set failed to load, never that a policy denied — so a caller that read the
+ * exit code as a verdict would report a working deny-by-default policy set as
+ * a broken one. As everywhere else in this module, the JSON decides: a body
+ * carrying `verdicts` is the report, a body carrying `message` is the fatal
+ * `OpError` (a malformed trace line lands here), anything else is unusable.
+ */
+export function parseReplayOutput(run: DogwoodRun): DogwoodReplayResult {
+  if (run.error) return unusable(`the dogwood binary could not be run: ${run.error}`);
+
+  const parsed = readJson(run.stdout);
+  if (!parsed) {
+    return unusable(
+      `\`dogwood replay --format json\` exited ${String(run.status)} without JSON on stdout${streamNote(run)}`,
+    );
+  }
+
+  if (Array.isArray(parsed.verdicts)) {
+    return { kind: "replayed", verdicts: parseVerdicts(parsed.verdicts) };
+  }
+
+  const fatal = fatalFrom(parsed);
+  if (fatal) return fatal;
+
+  return unusable("`dogwood replay --format json` returned JSON in neither the verdict nor the error shape");
+}
+
+function parseVerdicts(value: unknown[]): DogwoodVerdict[] {
+  const out: DogwoodVerdict[] = [];
+  value.forEach((raw, position) => {
+    if (!isRecord(raw)) return;
+    // `allow`/`deny` lowercase, as upstream serializes the enum. Anything else
+    // is read as a deny rather than dropped: an unrecognised verdict is not a
+    // permission, and dropping the entry would shift every later index.
+    const verdict = raw.verdict === "allow" ? "allow" : "deny";
+    out.push({
+      index: typeof raw.index === "number" ? raw.index : position,
+      timestamp: typeof raw.timestamp === "number" ? raw.timestamp : 0,
+      verdict,
+      determiningRules: Array.isArray(raw.determining_rules)
+        ? raw.determining_rules.filter((r): r is number => typeof r === "number")
+        : [],
+      errors: errorList(raw.errors),
+    });
+  });
+  return out;
+}
+
+/** Per-evaluation errors, tolerating both a string list and a diagnostic list. */
+function errorList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const out: string[] = [];
+  for (const entry of value) {
+    if (typeof entry === "string") out.push(entry);
+    else if (isRecord(entry) && typeof entry.message === "string") out.push(scrubPosition(entry.message));
+  }
+  return out;
+}
+
 function stringList(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((v): v is string => typeof v === "string") : [];
 }
@@ -481,6 +567,13 @@ const defaultRunner: DogwoodRunner = (binary, args) => {
   };
 };
 
+/** An extra file+flag pair a subcommand needs — `replay`'s `--trace`, today. */
+interface ExtraInput {
+  flag: string;
+  filename: string;
+  content: string;
+}
+
 /**
  * Materialize a bundle into a scratch directory and run one subcommand.
  *
@@ -488,7 +581,12 @@ const defaultRunner: DogwoodRunner = (binary, args) => {
  * schema flags all take paths. The directory is removed in a `finally`, so a
  * throwing runner does not leave one behind.
  */
-function runBundle(binary: string, subcommand: string, bundle: DogwoodBundle): DogwoodRun {
+function runBundle(
+  binary: string,
+  subcommand: string,
+  bundle: DogwoodBundle,
+  extras: ExtraInput[] = [],
+): DogwoodRun {
   const runner = defaults.runner ?? defaultRunner;
   const dir = mkdtempSync(join(tmpdir(), "chant-dogwood-"));
   try {
@@ -513,6 +611,12 @@ function runBundle(binary: string, subcommand: string, bundle: DogwoodBundle): D
       const path = join(dir, "providers.json");
       writeFileSync(path, bundle.providers, "utf-8");
       args.push("--providers", path);
+    }
+
+    for (const extra of extras) {
+      const path = join(dir, extra.filename);
+      writeFileSync(path, extra.content, "utf-8");
+      args.push(extra.flag, path);
     }
 
     // No `--emit`: it is ignored under `--format json`, which returns all three
@@ -541,5 +645,22 @@ export function runDogwoodLower(binary: string, bundle: DogwoodBundle): DogwoodL
     return parseLowerOutput(runBundle(binary, "lower", bundle));
   } catch (err) {
     return unusable(`the dogwood lower run failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+/**
+ * Run `dogwood replay` over a bundle and a trace. Never throws.
+ *
+ * The trace is materialized beside the bundle's own files and passed as
+ * `--trace`; the same scratch directory is removed in the same `finally`, so a
+ * trace carrying a session's request payloads does not outlive the run.
+ */
+export function runDogwoodReplay(binary: string, bundle: DogwoodBundle, trace: string): DogwoodReplayResult {
+  try {
+    return parseReplayOutput(
+      runBundle(binary, "replay", bundle, [{ flag: "--trace", filename: "trace.log", content: trace }]),
+    );
+  } catch (err) {
+    return unusable(`the dogwood replay run failed: ${err instanceof Error ? err.message : String(err)}`);
   }
 }

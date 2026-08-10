@@ -1,0 +1,66 @@
+// The action schema — what `--policy-schema` reads, and what `chant generate`
+// derives this example's typed classes from.
+//
+// Two namespaces, because the project has two surfaces. `App` is the
+// application's own model, and is a subset of the schema this lexicon bundles
+// as its default, so the example compiles against a package generated either
+// way (the same arrangement `examples/basic-policies` uses). `Drupe` is the
+// gateway that fronts it — the surface the recorded session trace comes from.
+//
+// The Drupe half is adapted from dogwood-policy/dogwood
+// @5063bcc2d6d6cf5024d1b0498e6cc8ef52cbcf0c (Apache-2.0),
+// dogwood-docs/examples/read_after_login/schema.cedarschema.
+
+namespace App {
+  type TagSet = Set<String>;
+
+  entity Group = {
+    "name": String,
+    "description"?: String,
+  };
+
+  entity User in [Group] = {
+    "email": String,
+    "department": String,
+    "mfaEnabled": Bool,
+  };
+
+  entity Folder = {
+    "name": String,
+    "owner": User,
+    "tags": TagSet,
+  };
+
+  entity Document in [Folder] = {
+    "title": String,
+    "owner": User,
+    "public": Bool,
+    "classification": String,
+  };
+
+  action read, list appliesTo {
+    principal: [User],
+    resource: [Document, Folder],
+    context: {
+      "mfa": Bool,
+      "sourceIp"?: String,
+    }
+  };
+}
+
+namespace Drupe {
+  type LoginInput = { user: String };
+  type ReadInput = { user: String };
+  entity Gateway;
+  entity OAuthUser = { id: String } tags String;
+  action "Login" appliesTo {
+    principal: [OAuthUser],
+    resource: [Gateway],
+    context: { input: LoginInput }
+  };
+  action "Read" appliesTo {
+    principal: [OAuthUser],
+    resource: [Gateway],
+    context: { input: ReadInput }
+  };
+}

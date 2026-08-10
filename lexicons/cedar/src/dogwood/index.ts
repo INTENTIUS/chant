@@ -178,9 +178,11 @@ export {
   findDogwoodBinary,
   formatDogwoodDiagnostic,
   parseLowerOutput,
+  parseReplayOutput,
   parseValidateOutput,
   resetDogwoodCli,
   runDogwoodLower,
+  runDogwoodReplay,
   runDogwoodValidate,
 } from "./cli";
 export type {
@@ -192,8 +194,78 @@ export type {
   DogwoodLabel,
   DogwoodLowerResult,
   DogwoodLowered,
+  DogwoodReplayResult,
   DogwoodRun,
   DogwoodRunner,
   DogwoodUnusable,
   DogwoodValidateResult,
+  DogwoodVerdict,
 } from "./cli";
+
+// Replay traces (#1661) — typed construction of the §6 line grammar, with
+// both-bag population as the default and the weakening as an opt-out.
+export {
+  auditTrace,
+  decimalValue,
+  entityRef,
+  rawValue,
+  renderTrace,
+  renderTraceFields,
+  renderTraceLine,
+  renderTraceValue,
+  traceEntity,
+  traceEvent,
+  traceFixture,
+} from "./trace";
+export type {
+  TraceAuditOptions,
+  TraceBags,
+  TraceDecimal,
+  TraceEntityDecl,
+  TraceEntityRef,
+  TraceEvent,
+  TraceEventInput,
+  TraceFields,
+  TraceFixture,
+  TraceFixtureOptions,
+  TraceIssue,
+  TraceIssueKind,
+  TraceRaw,
+  TraceScope,
+  TraceTagged,
+  TraceValue,
+} from "./trace";
+
+// The replay activities (#1661). Contributed by name through
+// `src/op/activities/index.ts`; the helpers are here for direct use.
+export {
+  compareVerdicts,
+  dogwoodReplay,
+  dogwoodReplayReport,
+  renderReplaySummary,
+  resolveReplayInputs,
+} from "./replay-activity";
+export type {
+  DogwoodReplayArgs,
+  DogwoodReplayReportArgs,
+  ExpectedVerdict,
+  PolicyReplayDispatch,
+  PolicyReplayMode,
+  PolicyReplayReport,
+  ReplayDivergence,
+  ReplayExpectation,
+} from "./replay-activity";
+
+// The PolicyReplayOp composite and its typed step builders (#1661).
+export {
+  DEFAULT_REPLAY_REPORT_PATH,
+  PolicyReplayOp,
+  dogwoodReplayReportStep,
+  dogwoodReplayStep,
+} from "./replay-op";
+export type {
+  DogwoodReplayReportStepOpts,
+  DogwoodReplayStepOpts,
+  PolicyReplayOpConfig,
+  PolicyReplayOpResources,
+} from "./replay-op";
