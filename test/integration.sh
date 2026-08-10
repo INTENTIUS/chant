@@ -463,6 +463,73 @@ mkdir -p "$TESTDIR/src" && cp /app/test/fixtures/docker.ts "$TESTDIR/src/"
 test_init "docker" "$TESTDIR"
 rm -rf "$TESTDIR"
 
+# Cedar
+# The artifact is policy text, not a document tree: `chant build` emits the
+# `.cedar` statements followed by the JSON policy format, so the output checks
+# grep for the statement forms rather than parsing YAML or JSON. The fixture
+# builds against the schema bundled at src/spec/default-schema.cedarschema —
+# no project-local .cedarschema and no chant.config.ts needed.
+test_lexicon "cedar" "/app/test/fixtures/cedar.ts" 'grep -q "permit ("' 'grep -q "forbid ("'
+
+# cedar init
+# `chant init --lexicon cedar` scaffolds the project shell but no policy source:
+# cedar registers neither initTemplates nor skills yet (#1654). test_init asserts
+# both, so it would fail here for reasons that have nothing to do with the CI
+# wiring this section exists to cover. Assert what init produces today, then
+# build and lint a real policy set inside the scaffold.
+log "test_init_cedar"
+CEDAR_INIT_DIR="/app/_smoke_test_cedar_init"
+rm -rf "$CEDAR_INIT_DIR"
+mkdir -p "$CEDAR_INIT_DIR"
+if $CHANT init --lexicon cedar "$CEDAR_INIT_DIR" > /dev/null 2>&1; then
+  pass "init --lexicon cedar succeeds"
+
+  if grep -q '"cedar"' "$CEDAR_INIT_DIR/chant.config.ts"; then
+    pass "cedar init writes a chant.config.ts declaring the cedar lexicon"
+  else
+    fail "cedar init chant.config.ts does not declare the cedar lexicon"
+  fi
+
+  if grep -q "@intentius/chant-lexicon-cedar" "$CEDAR_INIT_DIR/package.json"; then
+    pass "cedar init package.json depends on the cedar lexicon"
+  else
+    fail "cedar init package.json is missing the cedar lexicon dependency"
+  fi
+
+  if [ -f "$CEDAR_INIT_DIR/skills/chant-cedar/SKILL.md" ]; then
+    pass "cedar init installs the chant-cedar skill"
+  else
+    echo "  note: cedar ships no skills yet (#1654) — skill install not asserted"
+  fi
+
+  mkdir -p "$CEDAR_INIT_DIR/src"
+  cp /app/test/fixtures/cedar.ts "$CEDAR_INIT_DIR/src/"
+  ln -s /app/node_modules "$CEDAR_INIT_DIR/node_modules"
+
+  if BUILD_CEDAR_INIT=$($CHANT build "$CEDAR_INIT_DIR/src" 2>"$CEDAR_INIT_DIR/build-stderr.log"); then
+    if echo "$BUILD_CEDAR_INIT" | grep -q "permit ("; then
+      pass "cedar init project builds a policy set"
+    else
+      echo "  stdout: $BUILD_CEDAR_INIT"
+      fail "cedar init project build produced no permit statement"
+    fi
+  else
+    echo "  stderr: $(cat "$CEDAR_INIT_DIR/build-stderr.log")"
+    fail "cedar init project build failed"
+  fi
+
+  if $CHANT lint "$CEDAR_INIT_DIR/src" > /dev/null 2>&1; then
+    pass "cedar init project passes lint"
+  else
+    LINT_CEDAR_INIT=$($CHANT lint "$CEDAR_INIT_DIR/src" 2>&1 || true)
+    echo "  lint: $LINT_CEDAR_INIT"
+    fail "cedar init project lint failed"
+  fi
+else
+  fail "init --lexicon cedar failed"
+fi
+rm -rf "$CEDAR_INIT_DIR"
+
 # ── Multi-stack smoke test ────────────────────────────────────────────
 
 log "test_build_multistack"

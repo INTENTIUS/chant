@@ -22,7 +22,6 @@
     "chant"
   ],
   "type": "module",
-  "private": true,
   "files": [
     "src/",
     "dist/"
@@ -69,10 +68,8 @@
     "typescript": "^5.9.3"
   },
   "peerDependencies": {
+    "zod": "^4.3.6",
     "@intentius/chant": "^0.44.7",
     "typescript": "^5.9.3"
-  },
-  "dependencies": {
-    "@cedar-policy/cedar-wasm": "4.12.0"
   }
 }
