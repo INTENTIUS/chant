@@ -143,6 +143,75 @@ describe("aws lifecycle integration (#163)", () => {
     expect(cs2.entries.find((e) => e.name === "MyBucket")!.action).toBe("noop");
   });
 
+  // #1647 — the carve state, end to end: terraform applied the bucket, carve
+  // emitted a carveout declaring it by BucketName, and no CFN stack has ever
+  // heard of it. The stack read alone said confirmed-absent (missing → a plan
+  // proposing create for a bucket that EXISTS); the identity fallback asks
+  // Cloud Control by the declared identifier and the verdict comes back
+  // observed.
+  test("identity fallback: a declared, stack-absent, live resource reads observed, not missing (#1647)", async () => {
+    const routeBoth = (cc: { status?: number; text: string }): void => {
+      vi.spyOn(globalThis, "fetch").mockImplementation((async (url: string, init: { body: string; headers?: Record<string, string> }) => {
+        const target = init.headers?.["x-amz-target"] ?? "";
+        if (target.endsWith("GetResource")) return { status: cc.status ?? 200, text: () => Promise.resolve(cc.text) };
+        const action = new URLSearchParams(init.body).get("Action") ?? "";
+        return {
+          status: 200,
+          text: () => Promise.resolve(action === "DescribeStackResources" ? stackResourcesXml([]) : stackOutputsXml()),
+        };
+      }) as unknown as typeof fetch);
+    };
+
+    const entities = new Map([
+      ["assets", { entityType: "AWS::S3::Bucket", props: { BucketName: "acme-platform-assets-prod" } }],
+    ]);
+
+    routeBoth({
+      text: JSON.stringify({
+        ResourceDescription: {
+          Identifier: "acme-platform-assets-prod",
+          Properties: JSON.stringify({ BucketName: "acme-platform-assets-prod" }),
+        },
+      }),
+    });
+    const observed = normalizeObservation(
+      await awsPlugin.describeResources!({
+        environment: "prod",
+        buildOutput: "",
+        entityNames: ["assets"],
+        entities,
+      }),
+    );
+    expect(observed.resources.assets).toMatchObject({
+      type: "AWS::S3::Bucket",
+      status: "EXTERNAL",
+      ownership: "foreign",
+    });
+    // #1620: the identity read's address rides the observation.
+    expect(observed.queried.assets).toContain("acme-platform-assets-prod");
+
+    // Through the change set: declared + live → noop, never create. `foreign`
+    // ownership never escalates anything (#120's rule holds).
+    const cs = buildChangeSet("prod", { declared: new Set(["assets"]), observedNow: observed.resources, observedThen: undefined });
+    expect(cs.entries.find((e) => e.name === "assets")!.action).toBe("noop");
+
+    // An emulator without Cloud Control keeps today's verdict exactly: absent,
+    // create proposed — the fallback must not turn pre-first-apply into a hole.
+    routeBoth({ status: 400, text: JSON.stringify({ __type: "UnsupportedOperation", message: "not supported" }) });
+    const degraded = normalizeObservation(
+      await awsPlugin.describeResources!({
+        environment: "prod",
+        buildOutput: "",
+        entityNames: ["assets"],
+        entities,
+      }),
+    );
+    expect(degraded.resources.assets).toBeUndefined();
+    expect(degraded.unobserved.assets).toBeUndefined();
+    const cs2 = buildChangeSet("prod", { declared: new Set(["assets"]), observedNow: degraded.resources, observedThen: undefined });
+    expect(cs2.entries.find((e) => e.name === "assets")!.action).toBe("create");
+  });
+
   describe("describeStackStatus (#57 — per-component stack presence)", () => {
     const err = (stderr: string) => ({ stdout: "", stderr, exitCode: 255 });
 

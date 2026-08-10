@@ -548,6 +548,7 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
     environment: string;
     buildOutput: string;
     entityNames: string[];
+    entities?: Map<string, { entityType: string; props: Record<string, unknown> }>;
     stack?: string;
     region?: string;
     owned?: boolean;
@@ -592,9 +593,14 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
       // A stack that doesn't exist yet is the pre-first-apply state: nothing is
       // deployed for this env, so there are no live resources (every declared
       // resource is "pending") — not an error. That is a real absence, so the
-      // empty result is the honest one and `create` is the right proposal.
+      // empty result is the honest one and `create` is the right proposal —
+      // EXCEPT for an entity whose props spell its own physical identity
+      // (#1647): a freshly carve-emitted, still-Terraform-owned resource lives
+      // in no stack at all, and only an identity read can see it.
       if (err instanceof AwsReadError && stackDoesNotExist(err.message)) {
-        return observation(resources);
+        const { observeByIdentity } = await import("./identity-observe");
+        const identity = await observeByIdentity(options.entityNames, options.entities, resources, client);
+        return observation({ ...resources, ...identity.resources }, undefined, identity.queried);
       }
       // Any other failure (credentials, throttling, a region that can't be
       // reached) establishes nothing about what is deployed. Reporting every
@@ -655,6 +661,14 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
       };
     }
 
+    // The identity fallback (#1647): entities the stack did not answer for but
+    // whose declared props spell a full primary identifier get a Cloud Control
+    // read before "absent" stands. Computed against the stack's answer and
+    // merged at the return sites, so the own-property enrichment below neither
+    // re-describes nor un-observes what identity found.
+    const { observeByIdentity } = await import("./identity-observe");
+    const identity = await observeByIdentity(options.entityNames, options.entities, resources, client);
+
     // Each resource's OWN properties, on top of the stack outputs above (#1279).
     // Until this, a node's `attrs` were the stack's exports replicated onto
     // every member, so no instance carried its own `VpcId`.
@@ -687,13 +701,13 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
           detail: `the stack was read, but this resource's own properties were not — ${own.failures.get(type) ?? "the describe call failed"}`,
         };
       }
-      return observation(described, holes);
+      return observation({ ...described, ...identity.resources }, holes, identity.queried);
     }
 
     // Every entity the stack answered for was answered for: an entity the
     // template doesn't carry is genuinely not in this stack, which is an
-    // absence, not a hole.
-    return observation(withProperties);
+    // absence, not a hole — unless the identity fallback saw it live (#1647).
+    return observation({ ...withProperties, ...identity.resources }, undefined, identity.queried);
   },
 
   /**
