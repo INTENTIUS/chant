@@ -2,10 +2,12 @@
  * Cedar lexicon packaging — delegates to core's packagePipeline.
  */
 
+import { cedarPlugin } from "../plugin";
 import { readFileSync } from "fs";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
 import {
+  collectSkills,
   packagePipeline,
   type PackageOptions,
   type PackageResult,
@@ -42,8 +44,7 @@ export async function packageLexicon(opts: PackageOptions = {}): Promise<Package
 
       srcDir: pkgDir,
 
-      // Skills, initTemplates and the docs site are #1654.
-      collectSkills: () => new Map(),
+      collectSkills: () => collectSkills(cedarPlugin.skills?.() ?? []),
 
       version: pkgJson.version ?? "0.0.0",
     },
