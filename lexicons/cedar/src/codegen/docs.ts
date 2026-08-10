@@ -21,6 +21,13 @@
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
 import { docsPipeline, writeDocsSite, type DocsConfig } from "@intentius/chant/codegen/docs";
+import {
+  dogwoodEventSchemas,
+  dogwoodOverview,
+  dogwoodReplay,
+  dogwoodTemporalPolicies,
+  dogwoodValidation,
+} from "./docs-dogwood";
 
 const pkgDir = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 
@@ -67,7 +74,14 @@ any evaluator with chant nowhere in sight.
 There is no \`cedarGate()\` and there will not be one.
 [Organizational policy](/chant/guide/organizational-policy/) in chant is
 TypeScript post-synth checks; a second policy engine would duplicate the lint
-engine. chant compiles *to* Cedar; it is not governed *by* Cedar.`;
+engine. chant compiles *to* Cedar; it is not governed *by* Cedar.
+
+## The dogwood dialect
+
+Cedar with temporal operators, shipping inside this lexicon as a pre-release
+surface under the \`DWD\` id family: a policy that can depend on what already
+happened in a session. Start at [The Dogwood Dialect](./dogwood), which is
+honest about upstream's governance before it shows you a builder.`;
 
 // ── getting-started ───────────────────────────────────────────────
 
@@ -857,6 +871,57 @@ export async function generateDocs(options?: { verbose?: boolean }): Promise<voi
         title: "Verified Permissions",
         description: "The AVP statement seam, and the other Cedar evaluators.",
         content: avpPage,
+      },
+      // The dogwood dialect (#1662). `sidebar: false` on each, because these
+      // five belong under one group rather than flat after the cedar pages —
+      // the group is declared in `sidebarExtra` below, and `buildSidebar`
+      // would otherwise list them twice.
+      {
+        slug: "dogwood",
+        title: "The Dogwood Dialect",
+        description: "Cedar with temporal operators — what ships, and what pre-release means here.",
+        content: dogwoodOverview,
+        sidebar: false,
+      },
+      {
+        slug: "dogwood-temporal-policies",
+        title: "Temporal Policies",
+        description: "The typed builders, the parser primitives, and which operators are really macros.",
+        content: dogwoodTemporalPolicies,
+        sidebar: false,
+      },
+      {
+        slug: "dogwood-event-schemas",
+        title: "Event Schemas",
+        description: "The .dwschema surface, the callerPrincipal pin, and what opting out of it widens.",
+        content: dogwoodEventSchemas,
+        sidebar: false,
+      },
+      {
+        slug: "dogwood-validation",
+        title: "Dogwood Validation",
+        description: "The DWD walls that always run, and the CLI-gated checks that need the binary.",
+        content: dogwoodValidation,
+        sidebar: false,
+      },
+      {
+        slug: "dogwood-replay",
+        title: "Replay",
+        description: "Typed traces, PolicyReplayOp, and the both-bags trap that makes half a trace pass.",
+        content: dogwoodReplay,
+        sidebar: false,
+      },
+    ],
+    sidebarExtra: [
+      {
+        label: "Dogwood",
+        items: [
+          { label: "The Dialect", slug: "dogwood" },
+          { label: "Temporal Policies", slug: "dogwood-temporal-policies" },
+          { label: "Event Schemas", slug: "dogwood-event-schemas" },
+          { label: "Validation", slug: "dogwood-validation" },
+          { label: "Replay", slug: "dogwood-replay" },
+        ],
       },
     ],
   };

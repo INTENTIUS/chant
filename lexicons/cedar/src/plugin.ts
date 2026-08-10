@@ -153,6 +153,36 @@ export const cedarPlugin: LexiconPlugin = {
         },
       ],
     },
+    {
+      file: "chant-cedar-dogwood.md",
+      name: "chant-cedar-dogwood",
+      description:
+        "Author dogwood temporal policies with the typed builders — parser primitives versus default-library macros, the callerPrincipal pin, the CLI-gated validation split, AgentCore embedding and trace replay",
+      triggers: [
+        { type: "file-pattern", value: "**/*.dw" },
+        { type: "file-pattern", value: "**/*.dwschema" },
+        { type: "context", value: "dogwood" },
+        { type: "context", value: "temporal policy" },
+        { type: "context", value: "agentcore policy" },
+        { type: "context", value: "rate limit policy" },
+        { type: "context", value: "policy replay" },
+      ],
+      parameters: [],
+      examples: [
+        {
+          title: "Approval before action",
+          description: "Allow a read only if a login happened inside the window",
+          input: "Only let them read if they logged in within the last hour",
+          output: `whenTemporal: [dogwood.formerly("1h", dogwood.predicate('Drupe::Action::"Login"', "response"))]`,
+        },
+        {
+          title: "The macro caveat",
+          input: "Use count_within for a rate limit",
+          output:
+            "count_within is a default-library macro a --macros caller replaces — emit the call and ship the definition, or build it from `count for … where`",
+        },
+      ],
+    },
   ]),
 
   initTemplates(template?: string): InitTemplateSet {
