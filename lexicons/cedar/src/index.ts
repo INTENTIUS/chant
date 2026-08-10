@@ -54,6 +54,41 @@ export type { CedarGenerateOptions, CedarGenerateResult } from "./import/generat
 export { CedarTemplateParser, CedarTemplateGenerator } from "./import/adapter";
 export { detectTemplate } from "./detect";
 
+// AgentCore embedding (#1660) — the typed statement an
+// `AWS::BedrockAgentCore::Policy` carries on either arm of its Definition
+// union, and the EnforcementMode dial that stages the rollout. Same
+// no-dependency rule as the AVP seam above. See src/agentcore/embed.ts.
+export {
+  agentCoreStatement,
+  agentCorePolicyDefinition,
+  agentCorePolicyResource,
+  agentCorePolicySet,
+  agentCoreStagedPolicy,
+  agentCorePolicyName,
+  AGENTCORE_NAME_PATTERN,
+  AGENTCORE_STATEMENT_MIN,
+  AGENTCORE_STATEMENT_MAX,
+} from "./agentcore/embed";
+export type {
+  AgentCoreCedarDefinition,
+  AgentCoreEmbedOptions,
+  AgentCoreLanguageDefinition,
+  AgentCorePolicyDefinition,
+  AgentCorePolicyResource,
+  AgentCorePolicySource,
+  AgentCoreStagedPolicy,
+} from "./agentcore/embed";
+export {
+  AGENTCORE_ENFORCEMENT,
+  describeStage,
+  enforcementMode,
+  enforcementStage,
+  isEnforcing,
+} from "./agentcore/enforcement";
+export type { AgentCoreEnforcementMode, AgentCoreStage } from "./agentcore/enforcement";
+export { embeddedAgentCoreDefinitions, embeddedAgentCorePolicyStatements } from "./agentcore/scan";
+export type { EmbeddedAgentCoreDefinition, EmbeddedAgentCoreStatement } from "./agentcore/scan";
+
 // The dogwood temporal dialect (#1658) — typed temporal builders, the `.dw`
 // serializer leg, `.dwschema` event schemas. Pre-release; see ./dogwood.
 //

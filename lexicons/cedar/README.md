@@ -215,6 +215,39 @@ says it is not intended for production use. The revision this is built against
 is recorded in `src/dogwood/upstream.ts`; full `.dw` validation shells to the
 `dogwood` binary and is deliberately not part of any gating check.
 
+## Bedrock AgentCore
+
+`AWS::BedrockAgentCore::Policy` is where a temporal policy is actually
+deployed, and its `Definition` is a two-arm `oneOf`: `Cedar.Statement` for plain
+Cedar, `Policy.Statement` for anything else. That second arm is what a `.dw`
+policy travels in.
+
+`agentCorePolicyDefinition(name, policy)` picks the arm from the policy — a
+`TemporalPolicy`, or any props carrying a temporal clause, goes to `Policy`;
+plain Cedar goes to `Cedar`. Same no-dependency rule as the AVP seam above: the
+seam is the data shape, not an import. Templates are refused, because
+AgentCore's union has no template-linked arm.
+
+`EnforcementMode` is the staging dial. `LOG_ONLY` is evaluated on every request
+and its decision is observed rather than returned, which is observe-before-
+enforce in the substrate, per policy — and it is how a temporal rule should
+start, since whether `formerly within 1h …` fires depends on traffic nobody has
+replayed:
+
+```ts
+new BedrockAgentCorePolicy({
+  PolicyEngineId: engine.ref(),
+  ...agentCoreStagedPolicy("writeNeedsApproval", writeNeedsApproval, "log-only"),
+});
+```
+
+Promotion is `"log-only"` → `"enforce"`. The resource carries a statement and
+nothing else, so the event schema has no property to live in and is registered
+with the engine separately; DWDC013 warns when a build embeds temporal text and
+emits no `.dwschema` beside it, because the deployed statement then matches
+nothing and fails open or closed without failing. See
+`examples/agentcore-policy/`.
+
 ## Commands
 
 ```bash
@@ -233,6 +266,7 @@ npm run docs:build  # build the Starlight site in docs/
 - `src/serializer.ts` — `.cedar` text and JSON policy-set output
 - `src/policy-text.ts` — policy-head rendering shared by every renderer
 - `src/avp/` — AVP embedding, the policy-store readers, and the ownership channel
+- `src/agentcore/` — the AgentCore `Definition` seam and the `EnforcementMode` dial
 - `src/dogwood/` — the temporal dialect: builders, `.dw`/`.dwschema` output
 - `src/import/` — `chant import` parser, generator and round-trip fixtures
 - `src/detect.ts` — which documents belong to this lexicon

@@ -13,6 +13,7 @@ import { postSynthChecks } from "./index";
 import { dwdc010 } from "./dwdc010";
 import { dwdc011 } from "./dwdc011";
 import { dwdc012 } from "./dwdc012";
+import { dwdc013 } from "./dwdc013";
 import { dwds010 } from "./dwds010";
 import { cedarAuditCatalog } from "../audit-catalog";
 import { renderEventSchema, defaultEventSchema } from "../../dogwood/event-schema";
@@ -207,12 +208,129 @@ describe("DWDS010 — an unpinned schema widens every predicate", () => {
   });
 });
 
+// ── DWDC013 ────────────────────────────────────────────────────────
+
+/**
+ * A build with two lexicons in it: the cedar one, and whatever emitted the
+ * CloudFormation the AgentCore policy landed in. The check reads the emitted
+ * JSON rather than an aws entity class, which is what lets the cedar lexicon
+ * have an opinion about an embedding without depending on the aws lexicon.
+ */
+function ctxOfLexicons(byLexicon: Record<string, Record<string, string>>): PostSynthContext {
+  const outputs = new Map<string, string | SerializerResult>();
+  for (const [lexicon, files] of Object.entries(byLexicon)) {
+    outputs.set(lexicon, { primary: "", files } satisfies SerializerResult);
+  }
+  return {
+    outputs,
+    entities: new Map(),
+    buildResult: { outputs, entities: new Map(), warnings: [], errors: [], sourceFileCount: 1 },
+  };
+}
+
+const TEMPORAL_STATEMENT =
+  '@id("write-needs-approval")\npermit (\n  principal,\n  action == Ns::Action::"Write",\n  resource\n)\nwhen temporal {\n    formerly within 1h Ns::Action::"Approve"::response{}\n}\n;';
+
+const PLAIN_STATEMENT = '@id("deny")\nforbid (\n  principal,\n  action,\n  resource\n)\nunless { context.ok == true };';
+
+function template(definition: Record<string, unknown>, logicalId = "GatewayPolicy"): string {
+  return JSON.stringify({
+    Resources: {
+      [logicalId]: {
+        Type: "AWS::BedrockAgentCore::Policy",
+        Properties: {
+          PolicyEngineId: "GatewayEngine-abcdefghij",
+          Name: logicalId,
+          Definition: definition,
+          EnforcementMode: "LOG_ONLY",
+        },
+      },
+    },
+  });
+}
+
+describe("DWDC013 — an embedded temporal statement needs its event schema", () => {
+  test("temporal text with no emitted schema is a warning naming the resource", () => {
+    const ctx = ctxOfLexicons({
+      cedar: { "policies.dw": policy('formerly within 1h Ns::Action::"Approve"::response{}') },
+      aws: { "template.json": template({ Policy: { Statement: TEMPORAL_STATEMENT } }) },
+    });
+
+    const [finding, ...rest] = dwdc013.check(ctx);
+    expect(rest).toEqual([]);
+    expect(finding.severity).toBe("warning");
+    expect(finding.entity).toBe("GatewayPolicy");
+    expect(finding.lexicon).toBe("aws");
+    expect(finding.message).toContain("Definition.Policy.Statement");
+    expect(finding.message).toContain("no .dwschema");
+  });
+
+  test("an emitted event schema settles it", () => {
+    const ctx = ctxOfLexicons({
+      cedar: { "events.dwschema": PINNED },
+      aws: { "template.json": template({ Policy: { Statement: TEMPORAL_STATEMENT } }) },
+    });
+    expect(dwdc013.check(ctx)).toEqual([]);
+  });
+
+  test("plain Cedar in the language-agnostic arm is not this check's business", () => {
+    const ctx = ctxOfLexicons({
+      aws: { "template.json": template({ Policy: { Statement: PLAIN_STATEMENT } }) },
+    });
+    expect(dwdc013.check(ctx)).toEqual([]);
+  });
+
+  test("the Cedar arm is left alone — a temporal statement there is a different bug", () => {
+    const ctx = ctxOfLexicons({
+      aws: { "template.json": template({ Cedar: { Statement: TEMPORAL_STATEMENT } }) },
+    });
+    expect(dwdc013.check(ctx)).toEqual([]);
+  });
+
+  test("every embedded policy is reported, not only the first", () => {
+    const both = JSON.stringify({
+      Resources: {
+        Approval: {
+          Type: "AWS::BedrockAgentCore::Policy",
+          Properties: { Definition: { Policy: { Statement: TEMPORAL_STATEMENT } } },
+        },
+        Budget: {
+          Type: "AWS::BedrockAgentCore::Policy",
+          Properties: { Definition: { Policy: { Statement: TEMPORAL_STATEMENT } } },
+        },
+      },
+    });
+    const findings = dwdc013.check(ctxOfLexicons({ aws: { "template.json": both } }));
+    expect(findings.map((f) => f.entity).sort()).toEqual(["Approval", "Budget"]);
+  });
+
+  test("a build with no embedding at all is silent", () => {
+    const ctx = ctxOfLexicons({
+      cedar: { "policies.dw": policy('formerly within 1h Ns::Action::"Approve"::response{}') },
+    });
+    expect(dwdc013.check(ctx)).toEqual([]);
+  });
+
+  test("non-JSON output is skipped rather than reported", () => {
+    const ctx = ctxOfLexicons({ aws: { "template.yaml": "Resources:\n  Gateway:\n    Type: Whatever\n" } });
+    expect(dwdc013.check(ctx)).toEqual([]);
+  });
+});
+
 // ── Registration ───────────────────────────────────────────────────
 
 describe("registration", () => {
   test("every DWD check is auto-discovered into the committed barrel", () => {
     const ids = postSynthChecks.map((c) => c.id).filter((id) => id.startsWith("DWD"));
-    expect(ids.sort()).toEqual(["DWDC010", "DWDC011", "DWDC012", "DWDE010", "DWDE011", "DWDS010"]);
+    expect(ids.sort()).toEqual([
+      "DWDC010",
+      "DWDC011",
+      "DWDC012",
+      "DWDC013",
+      "DWDE010",
+      "DWDE011",
+      "DWDS010",
+    ]);
   });
 
   test("every DWD check has a catalog entry, so `chant audit` can title it", () => {

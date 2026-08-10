@@ -207,3 +207,40 @@ export function serializeDogwood(entities: Map<string, Declarable>): DogwoodSeri
 
   return { files, warnings };
 }
+
+/** One declared temporal policy, resolved: chant name, policy id, walked props. */
+export interface DogwoodPolicyRecord {
+  /** The chant entity name — the export name on the `*.ts` file. */
+  name: string;
+  /** The policy id, as it appears in `@id(…)`. */
+  id: string;
+  /** Props with references resolved, ready for `renderTemporalPolicyText`. */
+  props: Record<string, unknown>;
+}
+
+/**
+ * Every `Dogwood::TemporalPolicy` in a build, with references walked and ids
+ * resolved — the temporal counterpart of `cedarPolicyRecords` (#1660).
+ *
+ * `serializeDogwood` above renders whole *files*; the AgentCore embedding needs
+ * the policies one at a time, because `AWS::BedrockAgentCore::Policy` carries a
+ * single statement and `EnforcementMode` is set per policy. Both paths walk
+ * references through the same visitor, so a scope that names another declared
+ * entity resolves identically whichever one rendered it.
+ */
+export function dogwoodPolicyRecords(entities: Map<string, Declarable>): DogwoodPolicyRecord[] {
+  const entityNames = new Map<Declarable, string>();
+  for (const [name, entity] of entities) {
+    entityNames.set(entity, name);
+  }
+
+  const records: DogwoodPolicyRecord[] = [];
+  for (const [name, entity] of entities) {
+    if (isPropertyDeclarable(entity)) continue;
+    if (entity.entityType !== DOGWOOD_POLICY_TYPE) continue;
+
+    const props = walkValue(getProps(entity), entityNames, dogwoodVisitor) as Record<string, unknown>;
+    records.push({ name, id: resolvePolicyId(name, props), props });
+  }
+  return records;
+}
