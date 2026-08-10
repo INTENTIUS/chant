@@ -10,6 +10,8 @@ import { cedarAuditCatalog } from "./lint/audit-catalog";
 import { completions } from "./lsp/completions";
 import { hover } from "./lsp/hover";
 import { cedarConfigSchema } from "./config";
+import { detectTemplate as detectCedarTemplate } from "./detect";
+import { CedarTemplateGenerator, CedarTemplateParser } from "./import/adapter";
 
 /**
  * cedar lexicon plugin.
@@ -93,7 +95,17 @@ export const cedarPlugin: LexiconPlugin = {
   },
 
   detectTemplate(data: unknown) {
-    return false; // TODO: Detect if a template belongs to this lexicon
+    return detectCedarTemplate(data);
+  },
+
+  /** `.cedar` text and the JSON policy-set envelope, into the core IR (#1653). */
+  templateParser() {
+    return new CedarTemplateParser();
+  },
+
+  /** The IR back out as `new Policy({ … })` against the generated classes. */
+  templateGenerator() {
+    return new CedarTemplateGenerator();
   },
 
   completionProvider(ctx: CompletionContext) {

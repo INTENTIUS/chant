@@ -145,6 +145,126 @@ export function resolveSchema(schemaText: unknown): WasmResult<ResolvedSchemaJso
   return { ok: true, value: record.json as ResolvedSchemaJson };
 }
 
+// ── Policy conversion ─────────────────────────────────────────────
+
+/** One Cedar policy in Cedar's own JSON policy format. */
+export type PolicyJson = CedarWasm.PolicyJson;
+
+/** The two halves `policySetTextToParts` splits a `.cedar` document into. */
+export interface PolicySetParts {
+  /** Verbatim source text of each static policy, in source order. */
+  policies: string[];
+  /** Verbatim source text of each template, in source order. */
+  templates: string[];
+}
+
+/**
+ * Run one wasm call and collapse both of its error channels into a result.
+ *
+ * The `Answer` union is not the whole error channel — malformed input throws a
+ * bare serde `Error` from inside the module, and the `line 1 column N` those
+ * messages carry points at the internal call struct rather than at anything
+ * the user wrote (#1648 §5.3). Both land here as `{ ok: false }`.
+ */
+function wasmCall<T>(
+  what: string,
+  run: () => unknown,
+  extract: (answer: Record<string, unknown>) => T | undefined,
+): WasmResult<T> {
+  let answer: unknown;
+  try {
+    answer = run();
+  } catch (err) {
+    return { ok: false, error: `${what}: ${err instanceof Error ? err.message : String(err)}` };
+  }
+
+  if (!answer || typeof answer !== "object") {
+    return { ok: false, error: `${what}: cedar-wasm returned no answer` };
+  }
+
+  const record = answer as { type?: string; errors?: unknown };
+  if (record.type !== "success") {
+    return { ok: false, error: formatWasmErrors(record.errors) };
+  }
+
+  const value = extract(answer as Record<string, unknown>);
+  if (value === undefined) {
+    return { ok: false, error: `${what}: cedar-wasm reported success with no result` };
+  }
+  return { ok: true, value };
+}
+
+/**
+ * Split a `.cedar` document into its policies and its templates.
+ *
+ * The strings that come back are the **verbatim source** of each policy —
+ * annotations, line breaks and all — in source order, which is what lets the
+ * importer recover a condition body exactly as it was written rather than as
+ * the JSON leg would re-render it. Comments are dropped: they are not part of
+ * any grammar the module round-trips.
+ */
+export function splitPolicySet(text: unknown): WasmResult<PolicySetParts> {
+  if (typeof text !== "string") {
+    return { ok: false, error: `policySetTextToParts takes policy text as a string; got ${typeof text}` };
+  }
+  return wasmCall("policySetTextToParts", () => cedar().policySetTextToParts(text), (answer) => {
+    const { policies, policy_templates: templates } = answer as {
+      policies?: unknown;
+      policy_templates?: unknown;
+    };
+    if (!Array.isArray(policies) || !Array.isArray(templates)) return undefined;
+    return { policies: policies as string[], templates: templates as string[] };
+  });
+}
+
+/** Convert one *static* policy (text or JSON) into Cedar's JSON policy format. */
+export function policyToJson(policy: string | PolicyJson): WasmResult<PolicyJson> {
+  return wasmCall("policyToJson", () => cedar().policyToJson(policy), (answer) => answer.json as PolicyJson | undefined);
+}
+
+/**
+ * Convert one *template* (text or JSON) into Cedar's JSON policy format.
+ *
+ * A policy carrying `?principal`/`?resource` is a template, and `policyToJson`
+ * refuses it outright ("expected a static policy, got a template containing
+ * the slot ?resource") — the two entry points are not interchangeable.
+ */
+export function templateToJson(template: string | PolicyJson): WasmResult<PolicyJson> {
+  return wasmCall(
+    "templateToJson",
+    () => cedar().templateToJson(template),
+    (answer) => answer.json as PolicyJson | undefined,
+  );
+}
+
+/**
+ * Render one policy's JSON back to Cedar text.
+ *
+ * Only ever used to recover an *expression* body that has no source text to
+ * quote — an imported JSON policy set. The output is single-line and defensively
+ * parenthesized (`((context.mfa) == true)`), and `formatPolicies` does not undo
+ * that, so it is never the source of a human-facing `.cedar` artifact: those are
+ * laid out by the serializer.
+ */
+export function policyToText(policy: PolicyJson): WasmResult<string> {
+  return wasmCall("policyToText", () => cedar().policyToText(policy), (answer) => answer.text as string | undefined);
+}
+
+/**
+ * Does this value parse as a Cedar policy set?
+ *
+ * `checkParsePolicySet` throws — rather than answering `failure` — for a
+ * document carrying keys it does not know, which is precisely the shape a
+ * foreign lexicon's JSON has, so the throw is a match rejection here.
+ */
+export function parsesAsPolicySet(value: unknown): boolean {
+  try {
+    return cedar().checkParsePolicySet(value as CedarWasm.PolicySet).type === "success";
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Flatten a `DetailedError[]` into one line.
  *

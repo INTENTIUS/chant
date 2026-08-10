@@ -5,9 +5,13 @@
  *
  * - `.cedar` policy text — the primary output, and the surface every Cedar
  *   evaluator reads (AVP, cedar-agent, an embedded `cedar-wasm`).
- * - the Cedar JSON policy format — a second file, written alongside. It is
- *   also the parse source for import (#1653), which is why it is produced
- *   from the same structured model rather than by re-parsing the text.
+ * - the Cedar JSON policy format — a second file, written alongside, and the
+ *   parse source for import (#1653). It is produced by handing the emitted
+ *   `.cedar` text back to `cedar-wasm`, so what lands on disk is whatever
+ *   Cedar itself says that text means. Deriving it from the in-memory model
+ *   instead is what shipped first, and it wrote `when` bodies as
+ *   `{ "__expr": "<text>" }` — a key Cedar's JSON grammar does not have, which
+ *   every Cedar tool rejects with `unknown variant '__expr'`.
  *
  * The entity model this serializer reads is hand-shaped for now: one
  * `Cedar::Policy` entity type whose `props` carry an effect, three scope
@@ -22,6 +26,7 @@ import { isPropertyDeclarable, isResourceDeclarable } from "@intentius/chant/dec
 import type { Serializer, SerializerResult } from "@intentius/chant/serializer";
 import type { LexiconOutput } from "@intentius/chant/lexicon-output";
 import { walkValue, type SerializerVisitor } from "@intentius/chant/serializer-walker";
+import { policyToJson, splitPolicySet, templateToJson, type PolicyJson } from "./spec/wasm";
 
 // ── The policy entity model ───────────────────────────────────────
 
@@ -82,7 +87,7 @@ function getProps(entity: Declarable): Record<string, unknown> {
 }
 
 /** Escape a string for a double-quoted Cedar literal. */
-function escapeCedarString(value: string): string {
+export function escapeCedarString(value: string): string {
   return value
     .replace(/\\/g, "\\\\")
     .replace(/"/g, '\\"')
@@ -102,19 +107,6 @@ export function policyIdFromLogicalName(name: string): string {
     .replace(/([A-Z]+)([A-Z][a-z])/g, "$1-$2")
     .replace(/[\s_]+/g, "-")
     .toLowerCase();
-}
-
-/**
- * Split an entity UID (`Namespace::Type::"id"`) into its JSON parts.
- *
- * A value that is not in UID form is carried through as a bare type with an
- * empty id rather than dropped — validating that it parses is the wasm
- * validator's job (#1651), not the serializer's.
- */
-function entityUid(ref: string): { type: string; id: string } {
-  const match = /^(.+)::"(.*)"$/.exec(ref.trim());
-  if (match) return { type: match[1], id: match[2] };
-  return { type: ref.trim(), id: "" };
 }
 
 // ── Walker visitor ────────────────────────────────────────────────
@@ -196,64 +188,53 @@ function renderPolicyText(id: string, props: Record<string, unknown>): string {
 
 // ── Cedar JSON policy format ──────────────────────────────────────
 
-function scopeJSON(scope: unknown): Record<string, unknown> {
-  if (!isRecord(scope)) return { op: "All" };
-
-  const inValue = scope.in;
-  const inJSON = (): Record<string, unknown> =>
-    Array.isArray(inValue)
-      ? { entities: inValue.map((entry) => entityUid(refText(entry))) }
-      : { entity: entityUid(refText(inValue)) };
-
-  if (typeof scope.is === "string") {
-    const out: Record<string, unknown> = { op: "is", entity_type: scope.is };
-    if (inValue !== undefined) out.in = inJSON();
-    return out;
-  }
-  if (scope.eq !== undefined) {
-    return { op: "==", entity: entityUid(refText(scope.eq)) };
-  }
-  if (inValue !== undefined) {
-    return { op: "in", ...inJSON() };
-  }
-  return { op: "All" };
+/** The JSON policy-set envelope, exactly as `cedar-wasm` accepts it. */
+export interface CedarPolicySetJSON {
+  staticPolicies: Record<string, PolicyJson>;
+  templates: Record<string, PolicyJson>;
+  templateLinks: unknown[];
 }
 
 /**
- * Condition bodies are Cedar expression ASTs in the JSON format, and the
- * model carries expression *text* until #1650 makes them typed. `__expr` is
- * Cedar's own escape for exactly that — an expression given as source rather
- * than as a tree — so the file stays machine-readable instead of inventing a
- * private key nothing downstream knows.
+ * Build the JSON companion from the emitted `.cedar` text.
+ *
+ * Two things fall out of going through the module rather than around it. The
+ * condition bodies become real expression trees, which is the whole reason the
+ * file is worth writing; and a policy carrying a `?principal`/`?resource` slot
+ * lands under `templates` rather than `staticPolicies`, because Cedar — not
+ * this serializer — is what decides which one it is.
+ *
+ * Ids come from each policy's own `@id`, not from the emission order, so the
+ * keys here cannot drift from the annotations in the text beside them.
  */
-function conditionsJSON(props: Record<string, unknown>): Array<Record<string, unknown>> {
-  const out: Array<Record<string, unknown>> = [];
-  for (const clause of conditionStrings(props.when)) {
-    out.push({ kind: "when", body: { __expr: clause } });
-  }
-  for (const clause of conditionStrings(props.unless)) {
-    out.push({ kind: "unless", body: { __expr: clause } });
-  }
-  return out;
-}
+export function policySetJSON(text: string): { doc?: CedarPolicySetJSON; error?: string } {
+  const parts = splitPolicySet(text);
+  if (!parts.ok) return { error: parts.error };
 
-function renderPolicyJSON(id: string, props: Record<string, unknown>): Record<string, unknown> {
-  const annotations: Record<string, string> = { id };
-  if (isRecord(props.annotations)) {
-    for (const [key, value] of Object.entries(props.annotations)) {
-      if (key === "id" || value === undefined || value === null) continue;
-      annotations[key] = refText(value);
+  const doc: CedarPolicySetJSON = { staticPolicies: {}, templates: {}, templateLinks: [] };
+
+  const collect = (
+    sources: string[],
+    convert: (source: string) => ReturnType<typeof policyToJson>,
+    into: Record<string, PolicyJson>,
+    fallbackPrefix: string,
+  ): string | undefined => {
+    for (const [index, source] of sources.entries()) {
+      const converted = convert(source);
+      if (!converted.ok) return converted.error;
+      const id = converted.value.annotations?.id;
+      into[typeof id === "string" && id.length > 0 ? id : `${fallbackPrefix}${index}`] = converted.value;
     }
-  }
-
-  return {
-    effect: props.effect === "forbid" ? "forbid" : "permit",
-    principal: scopeJSON(props.principal),
-    action: scopeJSON(props.action),
-    resource: scopeJSON(props.resource),
-    conditions: conditionsJSON(props),
-    annotations,
+    return undefined;
   };
+
+  const policyError = collect(parts.value.policies, policyToJson, doc.staticPolicies, "policy");
+  if (policyError) return { error: policyError };
+
+  const templateError = collect(parts.value.templates, templateToJson, doc.templates, "template");
+  if (templateError) return { error: templateError };
+
+  return { doc };
 }
 
 // ── Serializer ────────────────────────────────────────────────────
@@ -271,7 +252,6 @@ export const cedarSerializer: Serializer = {
     }
 
     const policyText: string[] = [];
-    const staticPolicies: Record<string, unknown> = {};
 
     for (const [name, entity] of entities) {
       if (isPropertyDeclarable(entity)) continue;
@@ -285,17 +265,27 @@ export const cedarSerializer: Serializer = {
         : policyIdFromLogicalName(name);
 
       policyText.push(renderPolicyText(id, props));
-      staticPolicies[id] = renderPolicyJSON(id, props);
     }
 
     if (policyText.length === 0) return "";
 
+    const primary = policyText.join("\n\n") + "\n";
+    const { doc, error } = policySetJSON(primary);
+
+    // A policy set Cedar cannot read is a real defect, but it is the lint and
+    // post-synth surface's to report (#1651) — the text is still the artifact
+    // every evaluator consumes, so it is emitted either way, with the module's
+    // own message carried out as a build warning rather than swallowed.
+    if (!doc) {
+      return {
+        primary,
+        warnings: [`cedar: the emitted policy text did not parse, so ${CEDAR_JSON_FILENAME} was not written — ${error}`],
+      };
+    }
+
     return {
-      primary: policyText.join("\n\n") + "\n",
-      files: {
-        [CEDAR_JSON_FILENAME]:
-          JSON.stringify({ staticPolicies, templates: {}, templateLinks: [] }, null, 2) + "\n",
-      },
+      primary,
+      files: { [CEDAR_JSON_FILENAME]: JSON.stringify(doc, null, 2) + "\n" },
     };
   },
 };

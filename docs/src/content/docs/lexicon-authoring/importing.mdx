@@ -285,3 +285,4 @@ test("simple.yaml → Service + Volume constructors", () => {
 - **K8s** — uses `parseYAML`; iterates multi-document YAML separated by `---`
 - **AWS** — uses a custom YAML schema layer for CloudFormation intrinsic functions (`!Ref`, `!Sub`, etc.)
 - **Docker** — uses `parseYAML`; iterates top-level Compose sections
+- **Cedar** — the source format has its own grammar, so parsing is delegated to `@cedar-policy/cedar-wasm` rather than done here; the parser's own work is turning that module's output into props. Worth reading if your format has a real parser upstream
