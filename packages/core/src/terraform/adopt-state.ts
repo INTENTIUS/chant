@@ -18,7 +18,14 @@
  * resolved value as the declared default (see `carve-emit.ts`'s scaffold).
  */
 
-import { AWS_CARVE_TYPES, AWS_LEXICON_IMPORT, awsCarveType, applyAwsMapper } from "./aws-resources";
+import {
+  AWS_CARVE_TYPES,
+  AWS_LEXICON_IMPORT,
+  awsCarveType,
+  applyAwsMapper,
+  applyAwsFold,
+  unmappedFoldAttrs,
+} from "./aws-resources";
 import type { StateResource } from "./state";
 
 /** The core subpath the emitted source reads build parameters from. */
@@ -43,6 +50,14 @@ export interface DeferredParam {
   default?: string | number | boolean;
 }
 
+/** What one folded sub-resource contributed to the parent's emitted props (#1637). */
+export interface FoldedContribution {
+  /** The sub-resource's Terraform address, e.g. `aws_s3_bucket_versioning.assets`. */
+  address: string;
+  /** CFN properties it added to the parent, e.g. `["VersioningConfiguration"]`. */
+  props: string[];
+}
+
 export interface AdoptedSource {
   fileName: string;
   content: string;
@@ -51,6 +66,8 @@ export interface AdoptedSource {
   nativeType: string;
   /** Deferred params actually substituted into the emitted props (#998). */
   parameterized: string[];
+  /** Folded sub-resources and the props each one joined into the parent (#1637). */
+  folded: FoldedContribution[];
 }
 
 /** Is this Terraform type adoptable from state (has a native constructor)? */
@@ -79,12 +96,37 @@ class ParamRef {
  * A mapped attribute named by a `DeferredParam` renders as a `params.<name>`
  * reference (a real chant build parameter) instead of the state literal —
  * the value came from a survivor, so it stays overridable per build.
+ *
+ * `folded` carries the carve set's sub-resources (`aws_s3_bucket_versioning`
+ * and friends), read from the same state file. Their mappable attributes join
+ * the parent's props (#1637) — a fold that only announced itself and left the
+ * emitted resource without the versioning or public-access block the Terraform
+ * declared was a silent loss of configuration. A sub-resource's setting wins
+ * over the parent's own legacy in-state block: it is the one the config
+ * actually declares.
  */
-export function adoptFromState(resource: StateResource, params: DeferredParam[] = []): AdoptedSource | null {
+export function adoptFromState(
+  resource: StateResource,
+  params: DeferredParam[] = [],
+  folded: StateResource[] = [],
+): AdoptedSource | null {
   const entry = awsCarveType(resource.type);
   if (!entry) return null;
 
   const { props, mappedKeys } = applyAwsMapper(entry, resource.attributes);
+
+  const contributions: FoldedContribution[] = [];
+  const foldedUnmapped: Record<string, Record<string, unknown>> = {};
+  for (const sub of folded) {
+    const address = `${sub.type}.${sub.name}`;
+    const fold = applyAwsFold(sub.type, sub.attributes);
+    // No fold mapping for this sub-resource type: it still carves with the
+    // parent, so report its attributes rather than dropping them on the floor.
+    const rest = fold ? fold.unmapped : unmappedFoldAttrs(sub.attributes);
+    if (fold) Object.assign(props, fold.props);
+    if (Object.keys(rest).length) foldedUnmapped[address] = rest;
+    contributions.push({ address, props: Object.keys(fold?.props ?? {}) });
+  }
 
   // Substitute deferred inputs: only plain (untransformed) field mappings can
   // carry a parameter reference — a transform ran against the literal at emit
@@ -102,10 +144,17 @@ export function adoptFromState(resource: StateResource, params: DeferredParam[] 
   for (const [k, v] of Object.entries(resource.attributes)) {
     if (!mappedKeys.includes(k)) unmapped[k] = v;
   }
+  // A folded sub-resource's leftovers are keyed by its address, so the comment
+  // says which block a stray attribute came from.
+  for (const [address, attrs] of Object.entries(foldedUnmapped)) unmapped[address] = attrs;
 
   const L: string[] = [];
   L.push(`// Adopted from Terraform state: ${resource.type}.${resource.name} -> ${entry.nativeType}`);
   L.push(`// Properties mapped from Terraform attributes (CloudFormation PascalCase).`);
+  for (const c of contributions) {
+    const into = c.props.length ? c.props.join(", ") : "nothing mappable — see the reference comment below";
+    L.push(`// Folded in ${c.address} -> ${into}`);
+  }
   L.push(`import { ${entry.ctor} } from "${AWS_LEXICON_IMPORT}";`);
   if (parameterized.length) {
     L.push(`// Deferred deploy-time input(s) — declared in chant.config.ts's buildParams.`);
@@ -126,6 +175,7 @@ export function adoptFromState(resource: StateResource, params: DeferredParam[] 
     mapped: Object.keys(props).length > 0,
     nativeType: entry.nativeType,
     parameterized,
+    folded: contributions,
   };
 }
 

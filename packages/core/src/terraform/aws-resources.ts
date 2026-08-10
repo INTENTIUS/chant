@@ -46,10 +46,64 @@ const asJson = (v: unknown): unknown => {
 };
 const json = (prop: string): FieldSpec => ({ prop, transform: asJson });
 
+/**
+ * Terraform state renders a nested block as a one-element list. Take that
+ * entry (or the object itself, if the provider wrote it unwrapped).
+ */
+function firstBlock(value: unknown): Record<string, unknown> | undefined {
+  const candidate = Array.isArray(value) ? value[0] : value;
+  return candidate && typeof candidate === "object" ? (candidate as Record<string, unknown>) : undefined;
+}
+
+/**
+ * A list of TF server-side-encryption `rule` blocks → the CFN `BucketEncryption`
+ * property. Shared by the bucket's own (deprecated, still state-resident)
+ * `server_side_encryption_configuration` block and by the modern
+ * `aws_s3_bucket_server_side_encryption_configuration` sub-resource, whose
+ * `rule` list has the same shape.
+ */
+function sseRulesToCfn(rules: unknown): unknown {
+  if (!Array.isArray(rules)) return undefined;
+  const cfnRules: Array<Record<string, unknown>> = [];
+  for (const raw of rules) {
+    if (!raw || typeof raw !== "object") continue;
+    const rule = raw as Record<string, unknown>;
+    const out: Record<string, unknown> = {};
+    const byDefault = firstBlock(rule.apply_server_side_encryption_by_default);
+    const algorithm = byDefault?.sse_algorithm;
+    if (typeof algorithm === "string" && algorithm) {
+      const sse: Record<string, unknown> = { SSEAlgorithm: algorithm };
+      const kmsKey = byDefault?.kms_master_key_id;
+      if (typeof kmsKey === "string" && kmsKey) sse.KMSMasterKeyID = kmsKey;
+      out.ServerSideEncryptionByDefault = sse;
+    }
+    if (typeof rule.bucket_key_enabled === "boolean") out.BucketKeyEnabled = rule.bucket_key_enabled;
+    if (Object.keys(out).length) cfnRules.push(out);
+  }
+  return cfnRules.length ? { ServerSideEncryptionConfiguration: cfnRules } : undefined;
+}
+
+/**
+ * The bucket's own deprecated `versioning` block, as state still carries it.
+ * Only an enabled bucket says anything CloudFormation needs: a bucket that
+ * never had versioning has no `VersioningConfiguration` at all, so `enabled =
+ * false` maps to nothing and the block stays in the unmapped comment.
+ */
+function legacyVersioningToCfn(value: unknown): unknown {
+  const block = firstBlock(value);
+  return block?.enabled === true ? { Status: "Enabled" } : undefined;
+}
+
 export const AWS_CARVE_TYPES: AwsCarveType[] = [
   // ── Storage & data ──
   { tfType: "aws_s3_bucket", tier: 1, nativeType: "AWS::S3::Bucket", ctor: "Bucket", identityAttr: "bucket",
-    fields: { bucket: "BucketName" }, tags: true },
+    fields: {
+      bucket: "BucketName",
+      // The provider still resolves these two into the bucket's own state, even
+      // when the config declares them through sub-resources (#1637).
+      server_side_encryption_configuration: { prop: "BucketEncryption", transform: (v) => sseRulesToCfn(firstBlock(v)?.rule) },
+      versioning: { prop: "VersioningConfiguration", transform: legacyVersioningToCfn },
+    }, tags: true },
   { tfType: "aws_dynamodb_table", tier: 2, nativeType: "AWS::DynamoDB::Table", ctor: "Table", identityAttr: "name",
     fields: { name: "TableName", billing_mode: "BillingMode" }, tags: true },
   { tfType: "aws_efs_file_system", tier: 1, nativeType: "AWS::EFS::FileSystem", ctor: "EFSFileSystem",
@@ -267,6 +321,91 @@ export function awsCarveType(tfType: string): AwsCarveType | undefined {
   return BY_TYPE.get(tfType);
 }
 
+/**
+ * How a folded sub-resource (see `FOLDS_INTO`) joins its parent's emitted
+ * properties (#1637). Terraform splits configuration the CloudFormation shape
+ * keeps inside the parent resource, so the fold is not just a carve-set
+ * membership claim: the sub-resource's attributes have to land in the parent's
+ * props, or the emitted resource silently loses what the Terraform declared.
+ */
+export interface AwsFoldMapper {
+  /** Sub-resource attributes this mapper reads. Anything else stays unmapped. */
+  consumes: string[];
+  /** The parent CFN properties this sub-resource contributes. */
+  map: (attrs: Record<string, unknown>) => Record<string, unknown>;
+}
+
+/** Identity and parent-link attributes: never content, never reported unmapped. */
+const FOLD_LINK_ATTRS = new Set(["id", "arn", "bucket"]);
+
+export const AWS_FOLD_MAPPERS: Record<string, AwsFoldMapper> = {
+  aws_s3_bucket_versioning: {
+    consumes: ["versioning_configuration"],
+    map: (attrs) => {
+      const status = firstBlock(attrs.versioning_configuration)?.status;
+      // CFN takes Enabled/Suspended only; TF's third state ("Disabled", write-once
+      // buckets) has no CloudFormation spelling and stays in the comment.
+      return status === "Enabled" || status === "Suspended" ? { VersioningConfiguration: { Status: status } } : {};
+    },
+  },
+  aws_s3_bucket_public_access_block: {
+    consumes: ["block_public_acls", "block_public_policy", "ignore_public_acls", "restrict_public_buckets"],
+    map: (attrs) => {
+      const config: Record<string, unknown> = {};
+      const flags: Array<[string, string]> = [
+        ["block_public_acls", "BlockPublicAcls"],
+        ["block_public_policy", "BlockPublicPolicy"],
+        ["ignore_public_acls", "IgnorePublicAcls"],
+        ["restrict_public_buckets", "RestrictPublicBuckets"],
+      ];
+      for (const [tfAttr, prop] of flags) {
+        if (typeof attrs[tfAttr] === "boolean") config[prop] = attrs[tfAttr];
+      }
+      return Object.keys(config).length ? { PublicAccessBlockConfiguration: config } : {};
+    },
+  },
+  aws_s3_bucket_server_side_encryption_configuration: {
+    consumes: ["rule"],
+    map: (attrs) => {
+      const encryption = sseRulesToCfn(attrs.rule);
+      return encryption ? { BucketEncryption: encryption } : {};
+    },
+  },
+};
+
+/**
+ * Apply a folded sub-resource's state attributes to its parent's properties.
+ *
+ * Returns the props it contributes plus the attributes that stay genuinely
+ * unmappable (which the emitted source preserves in its reference comment). A
+ * mapper that produced nothing consumes nothing — the caller reports the whole
+ * sub-resource rather than claiming a fold that did not happen. `null` means
+ * this sub-resource type has no fold mapping at all.
+ */
+export function applyAwsFold(
+  tfType: string,
+  attrs: Record<string, unknown>,
+): { props: Record<string, unknown>; unmapped: Record<string, unknown> } | null {
+  const mapper = AWS_FOLD_MAPPERS[tfType];
+  if (!mapper) return null;
+  const props = mapper.map(attrs);
+  const consumed = new Set(Object.keys(props).length ? mapper.consumes : []);
+  return { props, unmapped: unmappedFoldAttrs(attrs, consumed) };
+}
+
+/** A folded sub-resource's attributes minus what was consumed and its parent link. */
+export function unmappedFoldAttrs(
+  attrs: Record<string, unknown>,
+  consumed: ReadonlySet<string> = new Set(),
+): Record<string, unknown> {
+  const rest: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(attrs)) {
+    if (consumed.has(key) || FOLD_LINK_ATTRS.has(key)) continue;
+    rest[key] = value;
+  }
+  return rest;
+}
+
 /** TF `tags` map → CloudFormation `Tags` list of {Key, Value}. */
 function tagsToCfn(tags: unknown): Array<{ Key: string; Value: unknown }> | undefined {
   if (!tags || typeof tags !== "object" || Array.isArray(tags)) return undefined;
@@ -291,8 +430,11 @@ export function applyAwsMapper(
     if (typeof spec === "string") {
       props[spec] = value;
     } else {
+      // A transform that declines (undefined) has mapped nothing — the attribute
+      // stays in the unmapped report rather than being claimed and dropped.
       const t = spec.transform(value);
-      if (t !== undefined) props[spec.prop] = t;
+      if (t === undefined) continue;
+      props[spec.prop] = t;
     }
     mappedKeys.push(tfAttr);
   }

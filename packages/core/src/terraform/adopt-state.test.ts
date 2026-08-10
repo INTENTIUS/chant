@@ -78,6 +78,70 @@ describe("adoptFromState", () => {
     expect(out.content).toContain('FunctionName: "myapp-api"');
   });
 
+  test("folded sub-resources join the parent's emitted properties (#1637)", () => {
+    const bucket: StateResource = {
+      type: "aws_s3_bucket",
+      name: "assets",
+      attributes: {
+        id: "myapp-assets-prod",
+        bucket: "myapp-assets-prod",
+        versioning: [{ enabled: true, mfa_delete: false }],
+        server_side_encryption_configuration: [
+          { rule: [{ apply_server_side_encryption_by_default: [{ sse_algorithm: "AES256" }], bucket_key_enabled: false }] },
+        ],
+      },
+    };
+    const out = adoptFromState(bucket, [], [
+      {
+        type: "aws_s3_bucket_versioning",
+        name: "assets",
+        attributes: { bucket: "myapp-assets-prod", versioning_configuration: [{ status: "Enabled" }], mfa: null },
+      },
+      {
+        type: "aws_s3_bucket_public_access_block",
+        name: "assets",
+        attributes: {
+          bucket: "myapp-assets-prod",
+          block_public_acls: true,
+          block_public_policy: true,
+          ignore_public_acls: true,
+          restrict_public_buckets: true,
+        },
+      },
+    ])!;
+
+    expect(out.content).toContain('VersioningConfiguration: {"Status":"Enabled"}');
+    expect(out.content).toContain(
+      'PublicAccessBlockConfiguration: {"BlockPublicAcls":true,"BlockPublicPolicy":true,"IgnorePublicAcls":true,"RestrictPublicBuckets":true}',
+    );
+    // The bucket's own in-state SSE block lands as BucketEncryption.
+    expect(out.content).toContain('BucketEncryption: {"ServerSideEncryptionConfiguration"');
+    // The source says what each fold contributed.
+    expect(out.content).toContain("// Folded in aws_s3_bucket_versioning.assets -> VersioningConfiguration");
+    expect(out.content).toContain(
+      "// Folded in aws_s3_bucket_public_access_block.assets -> PublicAccessBlockConfiguration",
+    );
+    expect(out.folded).toEqual([
+      { address: "aws_s3_bucket_versioning.assets", props: ["VersioningConfiguration"] },
+      { address: "aws_s3_bucket_public_access_block.assets", props: ["PublicAccessBlockConfiguration"] },
+    ]);
+    // Only the genuinely unmappable leftover is in the comment.
+    expect(out.content).toContain('"aws_s3_bucket_versioning.assets"');
+    expect(out.content).toContain('"mfa": null');
+  });
+
+  test("a folded sub-resource with no mapping yet is reported, not dropped", () => {
+    const out = adoptFromState(
+      { type: "aws_s3_bucket", name: "assets", attributes: { bucket: "b" } },
+      [],
+      [{ type: "aws_s3_bucket_policy", name: "assets", attributes: { bucket: "b", policy: '{"Statement":[]}' } }],
+    )!;
+    expect(out.folded).toEqual([{ address: "aws_s3_bucket_policy.assets", props: [] }]);
+    expect(out.content).toContain("// Folded in aws_s3_bucket_policy.assets -> nothing mappable");
+    expect(out.content).toContain('"aws_s3_bucket_policy.assets"');
+    expect(out.content).toContain('"policy"');
+  });
+
   test("canAdoptFromState gates on a known native constructor", () => {
     expect(canAdoptFromState("aws_s3_bucket")).toBe(true);
     expect(canAdoptFromState("random_pet")).toBe(false);

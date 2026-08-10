@@ -1,5 +1,5 @@
 import { describe, test, expect } from "vitest";
-import { AWS_CARVE_TYPES, awsCarveType, applyAwsMapper } from "./aws-resources";
+import { AWS_CARVE_TYPES, AWS_FOLD_MAPPERS, awsCarveType, applyAwsMapper, applyAwsFold } from "./aws-resources";
 import { TIER_MAP, FOLDS_INTO, IDENTITY_ATTR } from "./tier-map";
 import { canAdoptFromState } from "./adopt-state";
 
@@ -97,6 +97,107 @@ describe("applyAwsMapper", () => {
     });
     expect(props.Queues).toEqual(["https://sqs.us-east-1.amazonaws.com/1/q"]);
     expect(props.PolicyDocument).toEqual({ Version: "2012-10-17", Statement: [] });
+  });
+});
+
+describe("folded sub-resource mappers (#1637)", () => {
+  test("every fold mapper is for a type that actually folds", () => {
+    for (const tfType of Object.keys(AWS_FOLD_MAPPERS)) {
+      expect(FOLDS_INTO[tfType]).toBeDefined();
+    }
+  });
+
+  test("versioning becomes the parent's VersioningConfiguration", () => {
+    const fold = applyAwsFold("aws_s3_bucket_versioning", {
+      id: "my-bucket",
+      bucket: "my-bucket",
+      versioning_configuration: [{ status: "Enabled", mfa_delete: "" }],
+      expected_bucket_owner: "",
+    })!;
+    expect(fold.props).toEqual({ VersioningConfiguration: { Status: "Enabled" } });
+    // The parent link is not content; the leftover attribute still reports.
+    expect(fold.unmapped).toEqual({ expected_bucket_owner: "" });
+  });
+
+  test("a status CloudFormation cannot spell maps nothing and consumes nothing", () => {
+    const fold = applyAwsFold("aws_s3_bucket_versioning", {
+      bucket: "b",
+      versioning_configuration: [{ status: "Disabled" }],
+    })!;
+    expect(fold.props).toEqual({});
+    expect(fold.unmapped).toEqual({ versioning_configuration: [{ status: "Disabled" }] });
+  });
+
+  test("the public access block becomes the parent's PublicAccessBlockConfiguration", () => {
+    const fold = applyAwsFold("aws_s3_bucket_public_access_block", {
+      id: "my-bucket",
+      bucket: "my-bucket",
+      block_public_acls: true,
+      block_public_policy: true,
+      ignore_public_acls: true,
+      restrict_public_buckets: false,
+    })!;
+    expect(fold.props).toEqual({
+      PublicAccessBlockConfiguration: {
+        BlockPublicAcls: true,
+        BlockPublicPolicy: true,
+        IgnorePublicAcls: true,
+        RestrictPublicBuckets: false,
+      },
+    });
+    expect(fold.unmapped).toEqual({});
+  });
+
+  test("the SSE sub-resource becomes BucketEncryption, KMS key included", () => {
+    const fold = applyAwsFold("aws_s3_bucket_server_side_encryption_configuration", {
+      bucket: "my-bucket",
+      rule: [
+        {
+          apply_server_side_encryption_by_default: [{ sse_algorithm: "aws:kms", kms_master_key_id: "arn:aws:kms:k" }],
+          bucket_key_enabled: true,
+        },
+      ],
+    })!;
+    expect(fold.props).toEqual({
+      BucketEncryption: {
+        ServerSideEncryptionConfiguration: [
+          { ServerSideEncryptionByDefault: { SSEAlgorithm: "aws:kms", KMSMasterKeyID: "arn:aws:kms:k" }, BucketKeyEnabled: true },
+        ],
+      },
+    });
+  });
+
+  test("a sub-resource type with no mapping yet returns null (the caller reports it)", () => {
+    expect(applyAwsFold("aws_s3_bucket_policy", { policy: "{}" })).toBeNull();
+  });
+
+  test("the bucket's own in-state versioning and SSE blocks map too", () => {
+    const { props, mappedKeys } = applyAwsMapper(awsCarveType("aws_s3_bucket")!, {
+      bucket: "my-bucket",
+      versioning: [{ enabled: true, mfa_delete: false }],
+      server_side_encryption_configuration: [
+        { rule: [{ apply_server_side_encryption_by_default: [{ sse_algorithm: "AES256", kms_master_key_id: "" }], bucket_key_enabled: false }] },
+      ],
+    });
+    expect(props.VersioningConfiguration).toEqual({ Status: "Enabled" });
+    expect(props.BucketEncryption).toEqual({
+      ServerSideEncryptionConfiguration: [
+        { ServerSideEncryptionByDefault: { SSEAlgorithm: "AES256" }, BucketKeyEnabled: false },
+      ],
+    });
+    expect(mappedKeys).toContain("versioning");
+  });
+
+  test("an unversioned bucket's empty blocks map nothing and stay reported", () => {
+    const { props, mappedKeys } = applyAwsMapper(awsCarveType("aws_s3_bucket")!, {
+      bucket: "my-bucket",
+      versioning: [{ enabled: false, mfa_delete: false }],
+      server_side_encryption_configuration: [],
+    });
+    expect(props).not.toHaveProperty("VersioningConfiguration");
+    expect(props).not.toHaveProperty("BucketEncryption");
+    expect(mappedKeys).not.toContain("versioning");
+    expect(mappedKeys).not.toContain("server_side_encryption_configuration");
   });
 });
 
