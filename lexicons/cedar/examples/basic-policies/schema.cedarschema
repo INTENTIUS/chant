@@ -1,0 +1,51 @@
+// The schema this example's typed classes come from.
+//
+// `chant.config.ts` points `cedar.schema` here, so `chant generate` produces
+// `User`, `Document`, `ReadAction` and friends from these declarations. It is a
+// subset of the schema this lexicon bundles as its default, which is why the
+// example compiles against a package generated either way.
+
+namespace App {
+  type TagSet = Set<String>;
+
+  entity Group = {
+    "name": String,
+    "description"?: String,
+  };
+
+  entity User in [Group] = {
+    "email": String,
+    "department": String,
+    "mfaEnabled": Bool,
+  };
+
+  entity Folder = {
+    "name": String,
+    "owner": User,
+    "tags": TagSet,
+  };
+
+  entity Document in [Folder] = {
+    "title": String,
+    "owner": User,
+    "public": Bool,
+    "classification": String,
+  };
+
+  action read, list appliesTo {
+    principal: [User],
+    resource: [Document, Folder],
+    context: {
+      "mfa": Bool,
+      "sourceIp"?: String,
+    }
+  };
+
+  action write, delete appliesTo {
+    principal: [User],
+    resource: [Document],
+    context: {
+      "mfa": Bool,
+    }
+  };
+}

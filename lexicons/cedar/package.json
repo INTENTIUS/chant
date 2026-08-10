@@ -50,8 +50,11 @@
     "bundle": "tsx src/package-cli.ts",
     "validate": "tsx src/validate-cli.ts",
     "docs": "tsx src/codegen/docs-cli.ts",
-    "prepack": "npm run bundle && npm run build",
+    "prepack": "npm run generate && npm run bundle && npm run validate && npm run build",
     "build": "tsc -p tsconfig.build.json && tsc-alias -p tsconfig.build.json && find dist -type f \\( -name \"*.js\" -o -name \"*.js.map\" \\) -delete"
+  },
+  "dependencies": {
+    "@cedar-policy/cedar-wasm": "4.12.0"
   },
   "devDependencies": {
     "@intentius/chant": "*",

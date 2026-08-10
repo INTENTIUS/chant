@@ -1,0 +1,18 @@
+[
+  "App::Action::\"admin\"",
+  "App::Action::\"approve\"",
+  "App::Action::\"comment\"",
+  "App::Action::\"create\"",
+  "App::Action::\"delete\"",
+  "App::Action::\"list\"",
+  "App::Action::\"read\"",
+  "App::Action::\"share\"",
+  "App::Action::\"write\"",
+  "App::Application",
+  "App::Document",
+  "App::Folder",
+  "App::Group",
+  "App::ServiceAccount",
+  "App::Team",
+  "App::User"
+]

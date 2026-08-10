@@ -43,7 +43,10 @@ jobs:
         # The in-scope lexicons (epic #523). helm / temporal / forgejo are
         # excluded — they have no upstream spec to upgrade from. fly rolls off
         # the live Fly Machines OpenAPI (docs.machines.dev), like aws/azure/github.
-        lexicon: [k8s, gcp, docker, gitlab, aws, azure, github, fly]
+        # cedar pins a *dependency* rather than a downloaded spec — the Cedar
+        # grammar via @cedar-policy/cedar-wasm (#1650) — but the pinned-constant
+        # mechanics are identical, so it rides the same lane.
+        lexicon: [k8s, gcp, docker, gitlab, aws, azure, github, fly, cedar]
     steps:
       # Mint a short-lived GitHub App token so bot PRs trigger CI — a PR opened
       # with the default GITHUB_TOKEN gets no workflow runs (#534). Skipped in

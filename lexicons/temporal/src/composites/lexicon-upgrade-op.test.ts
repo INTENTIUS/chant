@@ -52,9 +52,12 @@ describe("LexiconUpgradeOp composite (#527)", () => {
     expect(phases[0].steps[0].outcomeAttribute).toEqual({ name: "HasUpgrade", from: "hasUpgrade" });
   });
 
-  test("in-scope set is exactly the 8 lexicons (helm/temporal/forgejo excluded)", () => {
+  test("in-scope set is exactly the 9 lexicons (helm/temporal/forgejo excluded)", () => {
+    // cedar joined with #1650: it pins `CEDAR_WASM_VERSION`, a dependency
+    // rather than a downloaded spec, but the pinned-constant machinery the Op
+    // drives is identical. helm/temporal/forgejo still have no upstream at all.
     expect([...IN_SCOPE_LEXICONS].sort()).toEqual(
-      ["aws", "azure", "docker", "fly", "gcp", "github", "gitlab", "k8s"].sort(),
+      ["aws", "azure", "cedar", "docker", "fly", "gcp", "github", "gitlab", "k8s"].sort(),
     );
     expect(IN_SCOPE_LEXICONS).not.toContain("helm");
     expect(IN_SCOPE_LEXICONS).not.toContain("temporal");

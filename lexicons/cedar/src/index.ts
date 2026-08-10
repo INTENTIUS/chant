@@ -13,5 +13,18 @@ export { rules as cedarLintRules } from "./lint/rules";
 export { packageLexicon } from "./codegen/package";
 export type { PackageOptions, PackageResult } from "./codegen/package";
 
-// Generated entities — populated by schema-driven codegen (#1650).
-// export * from "./generated/index";
+// The `cedar` config namespace (#1344). Importing this package is what brings
+// the key into ChantConfig, so a `chant.config.ts` that sets it compiles.
+export { cedarConfigSchema, loadCedarConfig, CEDAR_DEFAULT_SCHEMA_PATH } from "./config";
+export type { CedarConfig } from "./config";
+
+// Upstream pin — the cedar-wasm package version and the Cedar language
+// version it implements (#1650).
+export { CEDAR_WASM_VERSION, CEDAR_LANG_VERSION } from "./spec/pin";
+
+// Schema coverage.
+export { computeCedarCoverage, formatCedarCoverage, analyzeCedarCoverage } from "./coverage";
+export type { CedarCoverageReport, CedarCoverageItem } from "./coverage";
+
+// Generated entity types, actions and the Policy authoring class (#1650).
+export * from "./generated/index";

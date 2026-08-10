@@ -30,6 +30,6 @@ test:
 bundle:
     npx tsx src/package-cli.ts
 
-# Package the lexicon. Codegen is schema-driven and lands in #1650, so this
-# does not depend on `generate` yet.
-package: bundle
+# Package the lexicon: codegen first, since src/index.ts re-exports the
+# generated entity and action surface (#1650).
+package: generate bundle

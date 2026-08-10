@@ -63,8 +63,9 @@ jobs:
           npm run --prefix lexicons/fountain prepack
           npm run --prefix lexicons/k3d prepack
           npm run --prefix lexicons/k3s prepack
-          # cedar's prepack is bundle + build, with no generate step — its
-          # codegen input is the user's own schema and lands in #1650 (#1649).
+          # cedar generates from the project's own .cedarschema, falling
+          # back to the schema bundled at src/spec/default-schema.cedarschema
+          # so a clean checkout still produces a surface to gate (#1650).
           npm run --prefix lexicons/cedar prepack
 
       - name: Typecheck
@@ -167,8 +168,9 @@ jobs:
           npm run --prefix lexicons/fountain prepack
           npm run --prefix lexicons/k3d prepack
           npm run --prefix lexicons/k3s prepack
-          # cedar's prepack is bundle + build, with no generate step — its
-          # codegen input is the user's own schema and lands in #1650 (#1649).
+          # cedar generates from the project's own .cedarschema, falling
+          # back to the schema bundled at src/spec/default-schema.cedarschema
+          # so a clean checkout still produces a surface to gate (#1650).
           npm run --prefix lexicons/cedar prepack
 
       # The helm lexicon targets Helm 4 (epic #1228); the runner image ships
@@ -252,6 +254,12 @@ jobs:
 
       - name: Generate and validate K3s lexicon
         run: npm run --prefix lexicons/k3s prepack
+
+      # cedar joins this job now that it has a real generate and a real
+      # validate (#1650) — 33 required names over the bundled default schema.
+      # Before that its prepack was bundle + build and had nothing to assert.
+      - name: Generate and validate Cedar lexicon
+        run: npm run --prefix lexicons/cedar prepack
 
   smoke-npm:
     if: false  # disabled — Docker smoke tests are for local/release validation, not every push
