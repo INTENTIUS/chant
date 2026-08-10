@@ -1,0 +1,31 @@
+// Adapted from dogwood-policy/dogwood@5063bcc2d6d6cf5024d1b0498e6cc8ef52cbcf0c (Apache-2.0):
+//   dogwood-language/configuration/event-schemas/pinned.dwschema
+// Upstream's shape; the bytes are what chant's typed builders emit.
+
+// The default event-schema shape: request/response/error, each correlated to
+// the deciding request's principal.
+
+decision event <A>::request {
+    ...inputs(A),
+    pin callerPrincipal: principalType(A) = principal,
+    callerResource: resourceType(A),
+    requestId: String,
+    sessionId: String,
+}
+
+event <A>::response {
+    ...inputs(A),
+    ...outputs(A),
+    pin callerPrincipal: principalType(A) = principal,
+    callerResource: resourceType(A),
+    requestId: String,
+    sessionId: String,
+}
+
+event <A>::error {
+    ...inputs(A),
+    pin callerPrincipal: principalType(A) = principal,
+    callerResource: resourceType(A),
+    requestId: String,
+    sessionId: String,
+}

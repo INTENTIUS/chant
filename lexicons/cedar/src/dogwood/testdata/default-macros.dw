@@ -1,0 +1,23 @@
+// Adapted from dogwood-policy/dogwood@5063bcc2d6d6cf5024d1b0498e6cc8ef52cbcf0c (Apache-2.0):
+//   dogwood-language/configuration/default_macros.dw
+// Upstream's shape; the bytes are what chant's typed builders emit.
+
+// Counts the timepoints within window `?w` at which condition `?s` held.
+def temporal count_within(?w, ?s) {
+    count for ($t: Timepoint). where (formerly within ?w (?s && tp($t)))
+};
+
+// Sums the numeric value `?a` over occurrences of `?body` within window `?w`.
+def temporal sum_within(?a, ?w, ?body) {
+    sum ?a for (?a: Long), ($t: Timepoint). where (formerly within ?w (?body && tp($t)))
+};
+
+// Counts the distinct key values `?k` for which `?s` held within window `?w`.
+def temporal count_distinct_within(?k, ?w, ?s) {
+    count for (?k: String). where (formerly within ?w ?s)
+};
+
+// A "let"-style binder: names an aggregate result `?n` and uses it in `?B`.
+def temporal bind(?n, ?A, ?B) {
+    exists (?n: Long). (?A == ?n && ?B)
+};

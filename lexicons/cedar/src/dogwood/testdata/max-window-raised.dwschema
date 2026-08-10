@@ -1,0 +1,25 @@
+// Adapted from dogwood-policy/dogwood@5063bcc2d6d6cf5024d1b0498e6cc8ef52cbcf0c (Apache-2.0):
+//   dogwood-docs/examples/max_window_raised/event.dwschema
+// Upstream's shape; the bytes are what chant's typed builders emit.
+
+// Raises the look-back cap from the 24h default to 30 days. The directive
+// must come first, before any event declaration.
+//
+// No pinned field: this schema correlates across principals on purpose.
+
+max_window = 30d
+
+decision event <A>::request {
+    ...inputs(A),
+    callerPrincipal: principalType(A),
+    callerResource: resourceType(A),
+    requestId: String,
+}
+
+event <A>::response {
+    ...inputs(A),
+    ...outputs(A),
+    callerPrincipal: principalType(A),
+    callerResource: resourceType(A),
+    requestId: String,
+}

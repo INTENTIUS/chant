@@ -10,6 +10,10 @@ import { cede011 } from "./cede011";
 import { ceds010 } from "./ceds010";
 import { ceds011 } from "./ceds011";
 import { ceds012 } from "./ceds012";
+import { dwdc010 } from "./dwdc010";
+import { dwdc011 } from "./dwdc011";
+import { dwdc012 } from "./dwdc012";
+import { dwds010 } from "./dwds010";
 
 export const postSynthChecks: PostSynthCheck[] = [
   cedc010,
@@ -22,4 +26,8 @@ export const postSynthChecks: PostSynthCheck[] = [
   ceds010,
   ceds011,
   ceds012,
+  dwdc010,
+  dwdc011,
+  dwdc012,
+  dwds010,
 ];

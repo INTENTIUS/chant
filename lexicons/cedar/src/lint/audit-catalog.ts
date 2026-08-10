@@ -127,4 +127,44 @@ export const cedarAuditCatalog: Record<string, RuleMeta> = {
     'Name the actions the grant needs (action == Action::"read", or action in [ … ]) so it does not widen as the schema gains actions.',
     { category: "security" },
   ),
+
+  // ── The dogwood dialect (DWD) ──────────────────────────────────
+  //
+  // A second id family under the same lexicon, declared on the serializer as
+  // `extraRulePrefixes` (#1349's mechanism, the way k8s owns ARGO and FLUX).
+  // Dogwood is a dialect of Cedar rather than a peer language — a `.dw` file
+  // stripped of Cedar semantics is meaningless — so its checks ship here, and
+  // its ids are their own family so a reader can tell which surface bit them.
+  DWDC010: auditRule(
+    "DWDC010",
+    "merge-worthy",
+    "guidance",
+    "Dogwood temporal predicate names an undeclared event kind",
+    "Declare the event kind in the emitted .dwschema, or correct the predicate to a kind the schema derives — upstream rejects the policy set otherwise.",
+    { category: "correctness" },
+  ),
+  DWDC011: auditRule(
+    "DWDC011",
+    "merge-worthy",
+    "guidance",
+    "Dogwood temporal window exceeds the event schema's max_window",
+    "Shorten the window, or raise max_window in the event schema. With no schema emitted the cap is upstream's 24h default.",
+    { category: "correctness" },
+  ),
+  DWDC012: auditRule(
+    "DWDC012",
+    "merge-worthy",
+    "guidance",
+    "Dogwood formerly/previous/since is missing its window",
+    "Give the operator a `within <n><s|m|h|d>` window — all three past-only operators require one. The typed builders take it as an argument.",
+    { category: "correctness" },
+  ),
+  DWDS010: auditRule(
+    "DWDS010",
+    "report-only",
+    "guidance",
+    "Dogwood event schema pins nothing, widening every temporal predicate",
+    "Pin a field to the deciding request (pin callerPrincipal: principalType(A) = principal), or record that cross-principal correlation is the intent — supplying any event schema opts out of upstream's default pin.",
+    { category: "security" },
+  ),
 };

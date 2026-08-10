@@ -1,0 +1,53 @@
+// Adapted from dogwood-policy/dogwood@5063bcc2d6d6cf5024d1b0498e6cc8ef52cbcf0c (Apache-2.0):
+//   dogwood-docs/examples/read_after_login/policy.dw
+//   dogwood-docs/examples/temporal_sum_formerly_transfer/policy.dw
+//   dogwood-docs/examples/read_heartbeat_since_login_30s/policy.dw
+//   dogwood-docs/examples/temporal_count_formerly_login/policy.dw
+// Upstream's shape; the bytes are what chant's typed builders emit.
+
+// Sums the numeric value `?a` over occurrences of `?body` within window `?w`.
+def temporal sum_formerly(?a, ?w, ?body) {
+    sum ?a for (?a: Long), ($t: Timepoint). where formerly within ?w (?body && tp($t))
+};
+
+@id("read_after_login")
+permit (
+  principal,
+  action == Drupe::Action::"Read",
+  resource
+)
+when temporal {
+    formerly within 1h Drupe::Action::"Login"::response{ input.user: context.input.user }
+};
+
+@id("transfer_sum_over_100")
+permit (
+  principal,
+  action == Drupe::Action::"Alert",
+  resource
+)
+when temporal {
+    exists (total: Long). (sum_formerly(a, 1h, Drupe::Action::"Transfer"::request{ input.user: _, input.amount: a })) == total && total > 100
+};
+
+@id("no_tool_after_sensitive_read")
+forbid (
+  principal,
+  action == Drupe::Action::"Invoke",
+  resource
+)
+when guardrails { context.input.tool != "audit" }
+when temporal {
+    Drupe::Action::"Read"::response{ output.classification: c } since within 30m Drupe::Action::"Login"::request{}
+}
+unless { principal in Drupe::Group::"breakglass" };
+
+@id("rate_limited")
+permit (
+  principal,
+  action == Drupe::Action::"Transfer",
+  resource
+)
+when temporal {
+    (count for (t: Timepoint). where formerly within 15m (Drupe::Action::"Transfer"::request{} && tp(t))) < 5
+};
