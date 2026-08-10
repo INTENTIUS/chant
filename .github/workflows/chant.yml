@@ -63,6 +63,9 @@ jobs:
           npm run --prefix lexicons/fountain prepack
           npm run --prefix lexicons/k3d prepack
           npm run --prefix lexicons/k3s prepack
+          # cedar's prepack is bundle + build, with no generate step — its
+          # codegen input is the user's own schema and lands in #1650 (#1649).
+          npm run --prefix lexicons/cedar prepack
 
       - name: Typecheck
         run: npx tsc --noEmit -p packages/core/tsconfig.json
@@ -164,6 +167,9 @@ jobs:
           npm run --prefix lexicons/fountain prepack
           npm run --prefix lexicons/k3d prepack
           npm run --prefix lexicons/k3s prepack
+          # cedar's prepack is bundle + build, with no generate step — its
+          # codegen input is the user's own schema and lands in #1650 (#1649).
+          npm run --prefix lexicons/cedar prepack
 
       # The helm lexicon targets Helm 4 (epic #1228); the runner image ships
       # Helm 3. Pin the version the render tests run against.
