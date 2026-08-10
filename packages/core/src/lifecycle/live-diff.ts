@@ -34,6 +34,8 @@ export interface UnobservedResource {
   type?: string;
   reason: UnobservedReason;
   detail?: string;
+  /** The resolved address the failed read was issued against (#1620), when the lexicon reported one. */
+  queried?: string;
 }
 
 /**
@@ -84,6 +86,16 @@ export interface LiveDiffResult {
    * in the observation. Sorted by name.
    */
   unobserved: UnobservedResource[];
+  /**
+   * The resolved query address per entity name (#1620) — what the live read
+   * was actually issued against, as the lexicon reported it. Present only when
+   * the lexicon supplied addresses; other lexicons omitting it stays valid.
+   * This is where a `missing` entry explains itself: `missing` is a bare name
+   * list, and `queried[name]` says which address the provider answered 404
+   * for — a declared k8s object with no namespace reads from the *defaulted*
+   * namespace, and only this field makes that visible.
+   */
+  queried?: Record<string, string>;
 }
 
 export interface DiffLiveInput {
@@ -99,6 +111,12 @@ export interface DiffLiveInput {
    * at, so absence from `observedNow` is a confirmed absence.
    */
   unobserved?: Record<string, UnobservedEntity>;
+  /**
+   * Resolved query address per entity name (#1620), as the observation
+   * reported it. Passed through to the result and joined onto unobserved rows;
+   * never consulted for classification.
+   */
+  queried?: Record<string, string>;
 }
 
 const TRACKED_FIELDS: Array<keyof ResourceMetadata> = [
@@ -223,11 +241,13 @@ export function diffLive(input: DiffLiveInput): LiveDiffResult {
 
   for (const name of unobservedNames) {
     const entry = unobservedMap[name];
+    const queriedAddress = entry.queried ?? input.queried?.[name];
     unobserved.push({
       name,
       ...(entry.type ? { type: entry.type } : {}),
       reason: entry.reason,
       ...(entry.detail ? { detail: entry.detail } : {}),
+      ...(queriedAddress ? { queried: queriedAddress } : {}),
     });
   }
 
@@ -330,6 +350,7 @@ export function diffLive(input: DiffLiveInput): LiveDiffResult {
     driftedSinceSnapshot: driftedSinceSnapshot.sort((a, b) => a.name.localeCompare(b.name)),
     unchanged: unchanged.sort(),
     unobserved: unobserved.sort((a, b) => a.name.localeCompare(b.name)),
+    ...(input.queried && Object.keys(input.queried).length > 0 ? { queried: input.queried } : {}),
   };
 }
 

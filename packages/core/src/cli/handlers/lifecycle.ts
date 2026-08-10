@@ -737,6 +737,7 @@ async function observeLexicon(
     return {
       resources: {},
       unobserved: unobservedAll(entityNames, "read-failed", message, opts.entities),
+      queried: {},
     };
   }
 }
@@ -806,7 +807,7 @@ async function runLifecycleDiffLive(args: LiveDiffArgs): Promise<LiveDiffOutcome
       });
       const observedNow = observed.resources;
       const observedThen = prevSnapshot?.resources;
-      const diff = diffLive({ declared, observedNow, observedThen, unobserved: observed.unobserved });
+      const diff = diffLive({ declared, observedNow, observedThen, unobserved: observed.unobserved, queried: observed.queried });
       // Unobserved entities are deliberately NOT drift: a hole in the read is
       // not a change in the cloud. They are reported separately (#1089) so a
       // "no drift detected" line can never be built on top of a failed read.
@@ -962,7 +963,12 @@ function renderLiveDiff(lexiconName: string, environment: string, diff: LiveDiff
   }
   if (diff.missing.length > 0) {
     console.log(formatBold("\nMISSING (declared, provider reports not in cloud):"));
-    for (const name of diff.missing) console.log(`  - ${name}`);
+    for (const name of diff.missing) {
+      // The address the read actually went to (#1620) — the line between "not
+      // there" and "looked in the wrong place" (a defaulted namespace, say).
+      const queried = diff.queried?.[name];
+      console.log(`  - ${name}${queried ? ` [queried ${queried}]` : ""}`);
+    }
   }
   if (diff.orphan.length > 0) {
     console.log(formatBold("\nORPHAN (in cloud, not declared):"));

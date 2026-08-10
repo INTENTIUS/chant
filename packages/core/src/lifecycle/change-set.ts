@@ -74,6 +74,13 @@ export interface ChangeSetEntry {
   unobservedReason?: UnobservedReason;
   /** Human-readable backing for `unobservedReason` (the failing command, the missing binding). */
   unobservedDetail?: string;
+  /**
+   * The resolved address the live read was issued against (#1620), when the
+   * lexicon reported one. On a `create` it says which address the provider
+   * confirmed absent — the line between "not there" and "looked in the wrong
+   * place" (a defaulted namespace, an endpoint override, the wrong region).
+   */
+  queried?: string;
   /** The declared entity this resource's owner chain resolves to, for `action: "runtime"` (#1077). */
   runtimeOwner?: string;
 }
@@ -172,6 +179,11 @@ export function buildChangeSet(env: string, input: DiffLiveInput): ChangeSet {
       action = "noop";
     }
 
+    // The address the read went to (#1620) — from the unobserved entry when
+    // there is one, else the observation's queried map. Diagnostic only; the
+    // classification above never reads it.
+    const queried = unobservedEntry?.queried ?? input.queried?.[name];
+
     entries.push({
       name,
       type,
@@ -185,6 +197,7 @@ export function buildChangeSet(env: string, input: DiffLiveInput): ChangeSet {
             ...(unobservedEntry.detail ? { unobservedDetail: unobservedEntry.detail } : {}),
           }
         : {}),
+      ...(queried ? { queried } : {}),
       ...(runtimeOwner ? { runtimeOwner } : {}),
     });
   }

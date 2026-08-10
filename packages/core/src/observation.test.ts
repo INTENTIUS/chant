@@ -29,7 +29,7 @@ const meta = (over: Partial<ResourceMetadata> = {}): ResourceMetadata => ({
 
 describe("normalizeObservation", () => {
   test("a bare map means 'I looked at everything'", () => {
-    expect(normalizeObservation({ a: meta() })).toEqual({ resources: { a: meta() }, unobserved: {} });
+    expect(normalizeObservation({ a: meta() })).toEqual({ resources: { a: meta() }, unobserved: {}, queried: {} });
   });
 
   test("the envelope carries both halves", () => {
@@ -37,11 +37,27 @@ describe("normalizeObservation", () => {
     expect(normalizeObservation(value)).toEqual({
       resources: { a: meta() },
       unobserved: { b: { reason: "read-failed" } },
+      queried: {},
     });
   });
 
-  test("undefined normalizes to two empty maps", () => {
-    expect(normalizeObservation(undefined)).toEqual({ resources: {}, unobserved: {} });
+  test("undefined normalizes to empty maps", () => {
+    expect(normalizeObservation(undefined)).toEqual({ resources: {}, unobserved: {}, queried: {} });
+  });
+
+  test("the envelope carries the queried addresses through normalization (#1620)", () => {
+    const value = observation({}, {}, { web: "/apis/apps/v1/namespaces/default/deployments/web" });
+    expect(normalizeObservation(value).queried).toEqual({
+      web: "/apis/apps/v1/namespaces/default/deployments/web",
+    });
+    // Additive metadata only: an entity in `queried` and neither map is still
+    // OBSERVED-ABSENT — the tri-state does not shift.
+    expect(normalizeObservation(value).resources).toEqual({});
+    expect(normalizeObservation(value).unobserved).toEqual({});
+  });
+
+  test("the envelope omits an empty queried map (#1620)", () => {
+    expect(observation({ a: meta() }, {}, {})).toEqual({ observation: "v1", resources: { a: meta() } });
   });
 
   test("an entity literally named `observation` cannot be mistaken for the envelope", () => {
@@ -68,8 +84,8 @@ describe("unobservedAll", () => {
 describe("mergeObservations (multi-stack)", () => {
   test("present beats not-observed beats absent", () => {
     const merged = mergeObservations([
-      { resources: {}, unobserved: { a: { reason: "read-failed" }, b: { reason: "no-binding" } } },
-      { resources: { a: meta() }, unobserved: {} },
+      { resources: {}, unobserved: { a: { reason: "read-failed" }, b: { reason: "no-binding" } }, queried: {} },
+      { resources: { a: meta() }, unobserved: {}, queried: {} },
     ]);
     expect(Object.keys(merged.resources)).toEqual(["a"]);
     expect(Object.keys(merged.unobserved)).toEqual(["b"]);
@@ -77,10 +93,18 @@ describe("mergeObservations (multi-stack)", () => {
 
   test("an entity nobody looked for in any stack stays absent", () => {
     const merged = mergeObservations([
-      { resources: { a: meta() }, unobserved: {} },
-      { resources: { b: meta() }, unobserved: {} },
+      { resources: { a: meta() }, unobserved: {}, queried: {} },
+      { resources: { b: meta() }, unobserved: {}, queried: {} },
     ]);
     expect(merged.unobserved).toEqual({});
+  });
+
+  test("queried addresses union across stacks (#1620)", () => {
+    const merged = mergeObservations([
+      { resources: {}, unobserved: {}, queried: { a: "stack-1/a" } },
+      { resources: { b: meta() }, unobserved: {}, queried: { b: "stack-2/b" } },
+    ]);
+    expect(merged.queried).toEqual({ a: "stack-1/a", b: "stack-2/b" });
   });
 });
 
@@ -97,6 +121,12 @@ describe("reason totality", () => {
     expect(
       formatUnobserved("widget", { type: "K8s::X::Widget", reason: "unsupported-kind", detail: "no mapping" }),
     ).toBe("widget (K8s::X::Widget) — no reader for this resource kind: no mapping");
+  });
+
+  test("formatUnobserved appends the queried address when the entry carries one (#1620)", () => {
+    expect(
+      formatUnobserved("web", { reason: "read-failed", detail: "HTTP 500", queried: "/apis/apps/v1/namespaces/default/deployments/web" }),
+    ).toBe("web — read failed: HTTP 500 [queried /apis/apps/v1/namespaces/default/deployments/web]");
   });
 });
 
@@ -161,6 +191,23 @@ describe("observeEntities harness (#1201)", () => {
     expect(result.unobserved).toEqual({
       c: { type: "Fake::Odd", reason: "unsupported-kind", detail: "no reader" },
     });
+  });
+
+  test("collects the queried address from every variant — the absent one especially (#1620)", async () => {
+    const result = await observeEntities(
+      [entity("a"), entity("b"), entity("c")],
+      adapterOf({
+        a: { present: meta(), queried: "region-1/a" },
+        b: { absent: true, queried: "region-1/b" },
+        c: { unobserved: { reason: "read-failed", detail: "boom" }, queried: "region-1/c" },
+      }),
+    );
+    // The absent entity stays in neither map — additive metadata, tri-state unshifted.
+    expect(Object.keys(result.resources)).toEqual(["a"]);
+    expect(Object.keys(result.unobserved ?? {})).toEqual(["c"]);
+    expect(result.queried).toEqual({ a: "region-1/a", b: "region-1/b", c: "region-1/c" });
+    // The unobserved entry carries its own copy, so a row renders without a join.
+    expect(result.unobserved?.c.queried).toBe("region-1/c");
   });
 
   test("a bind failure marks every entity NOT-OBSERVED with the typed reason and declared type", async () => {

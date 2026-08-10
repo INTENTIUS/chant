@@ -105,6 +105,81 @@ describe("k8s describeResources", () => {
     expect(result.unobserved ?? {}).toEqual({});
   });
 
+  // The behold#192 shape (#1620): a Flux-deployed object declares no
+  // metadata.namespace (the controller stamps targetNamespace at apply), so the
+  // live read scopes to the client's default namespace, finds nothing, and
+  // correctly reports absence. Every layer is spec-correct and the picture
+  // still says the opposite of the truth — unless the report carries the
+  // address it actually asked, which is what `queried` is.
+  test("an absent verdict carries the resolved query address, namespace defaulted and visible (#1620)", async () => {
+    const cluster = fakeCluster({
+      // The object lives where Flux put it — not where the read will look.
+      objects: { [objectKey("apps/v1", "Deployment", "web", "flux-target")]: web },
+    });
+    const result = await describeResources(
+      {
+        environment: "prod",
+        buildOutput: "",
+        entityNames: ["web"],
+        entities: makeEntities([
+          // No metadata.namespace declared — Flux stamps it at apply time.
+          { name: "web", entityType: "K8s::Apps::Deployment", props: { metadata: { name: "web" } } },
+        ]),
+      },
+      cluster.connector,
+    );
+
+    // Still a clean absence: in neither map, the tri-state unshifted.
+    expect(result.resources).toEqual({});
+    expect(result.unobserved ?? {}).toEqual({});
+    // But the report can now explain itself: the read went to `default`.
+    expect(result.queried?.web).toBe("/apis/apps/v1/namespaces/default/deployments/web");
+  });
+
+  test("a present entity carries its query address too — the map is total over issued reads (#1620)", async () => {
+    const cluster = fakeCluster({
+      objects: { [objectKey("apps/v1", "Deployment", "web", "prod")]: web },
+    });
+    const result = await describeResources(
+      {
+        environment: "prod",
+        buildOutput: "",
+        entityNames: ["web"],
+        entities: makeEntities([
+          { name: "web", entityType: "K8s::Apps::Deployment", props: { metadata: { name: "web", namespace: "prod" } } },
+        ]),
+      },
+      cluster.connector,
+    );
+    expect(result.resources.web).toBeDefined();
+    expect(result.queried?.web).toBe("/apis/apps/v1/namespaces/prod/deployments/web");
+  });
+
+  test("a read-failed unobserved entry carries the address the failing read was issued against (#1620)", async () => {
+    const cluster = fakeCluster({
+      respond: (req) =>
+        req.path.endsWith("/deployments/web")
+          ? { status: 500, body: statusBody(500, "InternalError", "etcdserver: request timed out") }
+          : undefined,
+    });
+    const result = await describeResources(
+      {
+        environment: "prod",
+        buildOutput: "",
+        entityNames: ["web"],
+        entities: makeEntities([
+          { name: "web", entityType: "K8s::Apps::Deployment", props: { metadata: { name: "web", namespace: "prod" } } },
+        ]),
+      },
+      cluster.connector,
+    );
+    expect(result.unobserved?.web).toMatchObject({
+      reason: "read-failed",
+      queried: "/apis/apps/v1/namespaces/prod/deployments/web",
+    });
+    expect(result.queried?.web).toBe("/apis/apps/v1/namespaces/prod/deployments/web");
+  });
+
   // The headline of chant #1074: the twenty-entry map is gone, so a CRD is an
   // ordinary read rather than a permanent hole.
   test("a CRD is observed like anything else — no KUBECTL_RESOURCE entry required", async () => {

@@ -378,6 +378,28 @@ describe("reads", () => {
       c.readIfPresent({ apiVersion: "apps/v1", kind: "Deployment", name: "denied", namespace: "prod" }),
     ).rejects.toThrow(K8sApiError);
   });
+
+  test("pathFor returns the exact path read would GET, with the namespace defaulted (chant #1620)", async () => {
+    const c = await client(cluster());
+    // No namespace on the ref: the resolved path shows where the read actually
+    // went — the context's default — which is the whole diagnostic point.
+    expect(await c.pathFor({ apiVersion: "apps/v1", kind: "Deployment", name: "web" })).toBe(
+      "/apis/apps/v1/namespaces/default/deployments/web",
+    );
+    expect(await c.pathFor({ apiVersion: "apps/v1", kind: "Deployment", name: "web", namespace: "prod" })).toBe(
+      "/apis/apps/v1/namespaces/prod/deployments/web",
+    );
+  });
+
+  test("pathFor on a cluster-scoped kind carries no namespace segment", async () => {
+    const c = await client(cluster());
+    expect(await c.pathFor({ apiVersion: "v1", kind: "Namespace", name: "ns-a" })).toBe("/api/v1/namespaces/ns-a");
+  });
+
+  test("pathFor is undefined for a kind discovery does not serve — no path exists", async () => {
+    const c = await client(cluster());
+    expect(await c.pathFor({ apiVersion: "widgets.example.com/v1", kind: "Widget", name: "w" })).toBeUndefined();
+  });
 });
 
 describe("concurrency", () => {

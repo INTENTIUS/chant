@@ -320,6 +320,32 @@ describe("buildChangeSet: not-observed is not absent (#1089)", () => {
     expect(cs.entries.find((x) => x.name === "crd-widget")!.action).toBe("create");
   });
 
+  test("a create carries the address the provider confirmed absent, when the lexicon reported one (#1620)", () => {
+    const cs = buildChangeSet("prod", {
+      declared: new Set(["web"]),
+      observedNow: {},
+      observedThen: undefined,
+      queried: { web: "/apis/apps/v1/namespaces/default/deployments/web" },
+    });
+    const e = cs.entries.find((x) => x.name === "web")!;
+    // The verdict is unchanged — the address is diagnostic, never load-bearing.
+    expect(e.action).toBe("create");
+    expect(e.queried).toBe("/apis/apps/v1/namespaces/default/deployments/web");
+  });
+
+  test("an unobserved entry's own queried address wins over the map (#1620)", () => {
+    const cs = buildChangeSet("prod", {
+      declared: new Set(["web"]),
+      observedNow: {},
+      observedThen: undefined,
+      unobserved: { web: { reason: "read-failed", queried: "from-entry" } },
+      queried: { web: "from-map" },
+    });
+    const e = cs.entries.find((x) => x.name === "web")!;
+    expect(e.action).toBe("unobserved");
+    expect(e.queried).toBe("from-entry");
+  });
+
   test("a returned resource wins over an unobserved claim for the same name", () => {
     const cs = buildChangeSet("prod", {
       declared: new Set(["queue"]),

@@ -43,7 +43,7 @@ export interface ObserveResult {
 function qualifyObservation(obs: NormalizedObservation, stackName: string): NormalizedObservation {
   const q = <T>(m: Record<string, T>): Record<string, T> =>
     Object.fromEntries(Object.entries(m).map(([k, v]) => [`${stackName}::${k}`, v]));
-  return { resources: q(obs.resources), unobserved: q(obs.unobserved) };
+  return { resources: q(obs.resources), unobserved: q(obs.unobserved), queried: q(obs.queried) };
 }
 
 /**
@@ -253,6 +253,7 @@ export async function observeResources(
         {
           resources: {},
           unobserved: unobservedAll(entityNames, "read-failed", message, entities),
+          queried: {},
         },
         environment,
         entityNames.length,

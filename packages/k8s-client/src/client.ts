@@ -187,6 +187,18 @@ export interface K8sClient {
   resolve(selector: ResourceSelector, signal?: AbortSignal): Promise<ApiResourceInfo | undefined>;
   /** GET one object. Throws {@link K8sApiError} with `notFound` when absent. */
   read(ref: ObjectRef, options?: ReadOptions): Promise<K8sObject>;
+  /**
+   * The exact request path {@link read} would GET for this ref — apiVersion and
+   * kind resolved against the cluster's own discovery (which supplies the
+   * plural and the scope), and the namespace defaulted from the resolved
+   * context when the ref carries none. `undefined` when discovery does not
+   * serve the kind, where no path exists.
+   *
+   * This is the observation wire's resolved query address (chant #1620): the
+   * per-entity record of what was actually asked of the cluster, so a
+   * consumer can tell "looked in the wrong place" from "not there".
+   */
+  pathFor(ref: ObjectRef, signal?: AbortSignal): Promise<string | undefined>;
   /** GET one object, returning undefined instead of throwing on a 404. */
   readIfPresent(ref: ObjectRef, options?: ReadOptions): Promise<K8sObject | undefined>;
   /** LIST a kind, optionally namespaced and label-filtered. Follows `continue` tokens. */
@@ -572,6 +584,12 @@ export async function createK8sClient(options: K8sClientOptions = {}): Promise<K
     return parts.join("/");
   }
 
+  async function pathFor(ref: ObjectRef, signal?: AbortSignal): Promise<string | undefined> {
+    const info = await resolve({ apiVersion: ref.apiVersion, kind: ref.kind }, signal);
+    if (!info) return undefined;
+    return objectPath(info, ref.name, ref.namespace);
+  }
+
   async function read(ref: ObjectRef, opts: ReadOptions = {}): Promise<K8sObject> {
     const info = await resolveOrThrow({ apiVersion: ref.apiVersion, kind: ref.kind }, opts.signal);
     return sendJson<K8sObject>(objectPath(info, ref.name, ref.namespace), "GET", {
@@ -702,6 +720,7 @@ export async function createK8sClient(options: K8sClientOptions = {}): Promise<K
     defaultNamespace,
     resolve,
     read,
+    pathFor,
     readIfPresent,
     list,
     readLog,
