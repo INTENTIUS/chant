@@ -28,6 +28,9 @@
  * migration path and the "no behavior change" guarantee.
  */
 
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { Capability } from "./capability";
 
 /**
@@ -105,4 +108,34 @@ export function isCapabilityPlugin(value: unknown): value is CapabilityPlugin {
   }
   const obj = value as Record<string, unknown>;
   return typeof obj.capabilities === "function";
+}
+
+/**
+ * The calling module's own package version, read from the nearest
+ * `package.json` above it (chant #1505).
+ *
+ * `CapabilityPlugin.version` documents itself as the plugin package's semver,
+ * but chant's packages release in lockstep, so a hardcoded literal goes stale
+ * on every `just release` — the aws plugin shipped `"1.0.0"` from the day it
+ * was extracted from the starter set (#681), and the k8s plugin's authoring-
+ * time `"0.41.0"` was stale one release later. Walking up from the module's
+ * own URL survives both the `src/` (development condition) and `dist/`
+ * layouts, and an npm install, without any build-time stamping.
+ *
+ * Returns `"0.0.0"` when no versioned `package.json` is found — a visible
+ * sentinel rather than a guess; nothing gates on the field.
+ */
+export function ownPackageVersion(moduleUrl: string): string {
+  let dir = dirname(fileURLToPath(moduleUrl));
+  for (;;) {
+    try {
+      const pkg = JSON.parse(readFileSync(join(dir, "package.json"), "utf-8")) as { version?: unknown };
+      if (typeof pkg.version === "string") return pkg.version;
+    } catch {
+      // No package.json here (or unreadable) — keep walking up.
+    }
+    const parent = dirname(dir);
+    if (parent === dir) return "0.0.0";
+    dir = parent;
+  }
 }

@@ -114,6 +114,18 @@ export interface Component {
   archetype?: Archetype;
   /** Other component names that must complete before this one runs. Ordering only — no logic. */
   dependsOn: string[];
+  /**
+   * Whether this component participates in a `chant run all --components` run
+   * (chant #1522). A seam-gated component — kubemicrovm-ops' golden-image,
+   * which only exists when `goldenImageMode=provision`; its local-substrate,
+   * which declares nothing on the real target — computes this from `params.*`
+   * at discovery, so "all" deploys the estate the parameters actually
+   * describe instead of failing on a unit the seams turned off. Default true.
+   * Running a disabled component BY NAME still errors, with the reason —
+   * an explicit ask for a thing the parameters excluded is a mistake to
+   * surface, not to skip.
+   */
+  enabled?: boolean;
   /** Optional: source -> BuildArchive. Omitted entirely for config-only / infra components. */
   build?: BuildSpec;
   /** The component's own composition over shared capabilities. */

@@ -567,29 +567,146 @@ if [ -d "$CARVE_TF" ]; then
   # emit: adopt the bucket from tfstate into native chant source (offline)
   EMIT_OUT=$(mktemp -d)
   if $CHANT carve emit --from "$CARVE_TF" --select aws_s3_bucket.assets --state "$CARVE_STATE" --output "$EMIT_OUT" >/dev/null 2>&1; then
-    if grep -q 'new Bucket({' "$EMIT_OUT"/assets.ts 2>/dev/null && grep -q 'BucketName: "myapp-assets-prod"' "$EMIT_OUT"/assets.ts 2>/dev/null; then
+    if grep -q 'new Bucket({' "$EMIT_OUT"/src/assets.ts 2>/dev/null && grep -q 'BucketName: "myapp-assets-prod"' "$EMIT_OUT"/src/assets.ts 2>/dev/null; then
       pass "carve emit adopts a resource from tfstate into chant source"
     else
       fail "carve emit did not produce the expected chant source"
     fi
+
+    # emit scaffolds a buildable chant project around the source
+    if grep -q '"@intentius/chant-lexicon-aws"' "$EMIT_OUT"/package.json 2>/dev/null \
+       && grep -q 'lexicons: \["aws"\]' "$EMIT_OUT"/chant.config.ts 2>/dev/null; then
+      pass "carve emit scaffolds a buildable chant project"
+    else
+      fail "carve emit did not scaffold the chant project"
+    fi
+
     # the emitted source must actually build against the aws lexicon → valid CFN.
     # Use the log group: a carved bucket faithfully lacks chant's stricter S3
     # security posture (PublicAccessBlock / TLS policy), so `build` lints it as a
     # finding — that is expected for adopted live infra, not an emit defect.
     BUILD_OUT=$(mktemp -d)
     $CHANT carve emit --from "$CARVE_TF" --select aws_cloudwatch_log_group.api --state "$CARVE_STATE" --output "$BUILD_OUT" >/dev/null 2>&1
-    if BUILT=$($CHANT build "$BUILD_OUT" --lexicon aws 2>/dev/null) && echo "$BUILT" | grep -q '"AWS::Logs::LogGroup"' && echo "$BUILT" | grep -q '"LogGroupName": "/myapp/api"'; then
+    if BUILT=$($CHANT build "$BUILD_OUT"/src --lexicon aws 2>/dev/null) && echo "$BUILT" | grep -q '"AWS::Logs::LogGroup"' && echo "$BUILT" | grep -q '"LogGroupName": "/myapp/api"'; then
       pass "emitted chant source builds to valid CloudFormation"
     else
       fail "emitted chant source did not build to the expected CloudFormation"
     fi
+
+    # --write-source stamps the ownership marker into the emitted source, and
+    # the marker flows through to the built CloudFormation template.
+    if $CHANT carve apply --from "$CARVE_TF" --output "$BUILD_OUT" --env prod --write-source >/dev/null 2>&1 \
+       && grep -q 'chant:managed-by' "$BUILD_OUT"/src/api.ts 2>/dev/null \
+       && STAMPED=$($CHANT build "$BUILD_OUT"/src --lexicon aws 2>/dev/null) && echo "$STAMPED" | grep -q '"chant:managed-by"'; then
+      pass "carve apply --write-source stamps the marker into source and template"
+    else
+      fail "carve apply --write-source did not stamp the emitted source"
+    fi
     rm -rf "$BUILD_OUT"
+
+    # the carve state manifest is persisted next to the emitted source
+    if grep -q '"target": "aws_s3_bucket.assets"' "$EMIT_OUT"/aws_s3_bucket-assets.carve.json 2>/dev/null; then
+      pass "carve emit persists the state manifest"
+    else
+      fail "carve emit did not persist the state manifest"
+    fi
+
+    # bridge + apply compose with the manifest: no --select needed
+    if $CHANT carve bridge --from "$CARVE_TF" --output "$EMIT_OUT" >/dev/null 2>&1 \
+       && grep -q 'data "aws_s3_bucket" "assets"' "$EMIT_OUT"/aws_s3_bucket-assets-datasources.tf 2>/dev/null; then
+      pass "carve bridge composes with the manifest (no --select)"
+    else
+      fail "carve bridge did not compose with the manifest"
+    fi
+
+    # bridge emits one git-applyable patch: the data-source file as a new file
+    # plus the rewired survivor references
+    if grep -q '+++ b/aws_s3_bucket-assets-datasources.tf' "$EMIT_OUT"/aws_s3_bucket-assets-bridge.patch 2>/dev/null \
+       && grep -q 'diff --git a/main.tf b/main.tf' "$EMIT_OUT"/aws_s3_bucket-assets-bridge.patch 2>/dev/null \
+       && grep -q '^+.*data\.aws_s3_bucket\.assets' "$EMIT_OUT"/aws_s3_bucket-assets-bridge.patch 2>/dev/null; then
+      pass "carve bridge emits a git-applyable patch"
+    else
+      fail "carve bridge did not emit the bridge patch"
+    fi
+    # auto-excise (#998): the patch also removes the carved block (and its
+    # folded versioning sub-resource) from the survivor source — without this,
+    # the next apply would re-create what `terraform state rm` released.
+    if grep -q '^-resource "aws_s3_bucket" "assets" {' "$EMIT_OUT"/aws_s3_bucket-assets-bridge.patch 2>/dev/null \
+       && grep -q '^-resource "aws_s3_bucket_versioning" "assets" {' "$EMIT_OUT"/aws_s3_bucket-assets-bridge.patch 2>/dev/null; then
+      pass "bridge patch excises the carved block and its folded sub-resource"
+    else
+      fail "bridge patch did not excise the carved block"
+    fi
+    # ...and the excised estate still parses, with the carved resource gone.
+    EXCISED_TF=$(mktemp -d)
+    cp "$CARVE_TF"/*.tf "$EXCISED_TF"/ && cp "$EMIT_OUT"/*.tf "$EXCISED_TF"/
+    if ADV2=$($CHANT carve advise --from "$EXCISED_TF" 2>/dev/null) \
+       && ! echo "$ADV2" | grep -q 'aws_s3_bucket.assets ->' \
+       && echo "$ADV2" | grep -q 'aws_lambda_function.api'; then
+      pass "the excised survivor estate parses clean without the carved resource"
+    else
+      fail "the excised survivor estate did not parse as expected"
+    fi
+    rm -rf "$EXCISED_TF"
+    if COMPOSED_APPLY=$($CHANT carve apply --from "$CARVE_TF" --output "$EMIT_OUT" --env prod 2>/dev/null) \
+       && echo "$COMPOSED_APPLY" | grep -q 'target from the carve manifest' \
+       && grep -q '"apply"' "$EMIT_OUT"/aws_s3_bucket-assets.carve.json 2>/dev/null; then
+      pass "carve apply composes with the manifest (no --select)"
+    else
+      fail "carve apply did not compose with the manifest"
+    fi
   else
     EMIT_ERR=$($CHANT carve emit --from "$CARVE_TF" --select aws_s3_bucket.assets --state "$CARVE_STATE" --output "$EMIT_OUT" 2>&1 >/dev/null || true)
     echo "  stderr: $EMIT_ERR"
     fail "carve emit failed"
   fi
   rm -rf "$EMIT_OUT"
+
+  # deferred outbound inputs → real build params: the subnet reads its VPC, so
+  # emit declares vpc_id as a build parameter (defaulted from state), the source
+  # references params.vpc_id, the built template resolves the default, and
+  # --param overrides it per build.
+  PARAM_OUT=$(mktemp -d)
+  if $CHANT carve emit --from "$CARVE_TF" --select aws_subnet.a --state "$CARVE_STATE" --output "$PARAM_OUT" >/dev/null 2>&1; then
+    if grep -q 'VpcId: params.vpc_id as string' "$PARAM_OUT"/src/a.ts 2>/dev/null \
+       && grep -q 'default: "vpc-0a1b2c3d4e5f6a7b8"' "$PARAM_OUT"/chant.config.ts 2>/dev/null; then
+      pass "carve emit declares a deferred input as a build param"
+    else
+      fail "carve emit did not declare the deferred input as a build param"
+    fi
+    if PBUILT=$($CHANT build "$PARAM_OUT"/src --lexicon aws 2>/dev/null) && echo "$PBUILT" | grep -q '"VpcId": "vpc-0a1b2c3d4e5f6a7b8"'; then
+      pass "deferred-input param folds to its state default in the built template"
+    else
+      fail "deferred-input param did not fold to its state default"
+    fi
+    if POVER=$($CHANT build "$PARAM_OUT"/src --lexicon aws --param vpc_id=vpc-override 2>/dev/null) && echo "$POVER" | grep -q '"VpcId": "vpc-override"'; then
+      pass "deferred-input param is overridable with --param"
+    else
+      fail "--param did not override the deferred input"
+    fi
+  else
+    PARAM_ERR=$($CHANT carve emit --from "$CARVE_TF" --select aws_subnet.a --state "$CARVE_STATE" --output "$PARAM_OUT" 2>&1 >/dev/null || true)
+    echo "  stderr: $PARAM_ERR"
+    fail "carve emit of the subnet failed"
+  fi
+  rm -rf "$PARAM_OUT"
+
+  # expression-AST edge detection: the lambda's env carries the log group's
+  # address as a quoted map key (var.settings["aws_cloudwatch_log_group..."]).
+  # The AST knows a string literal is not a reference, so the log group has no
+  # inbound edge and needs no data source. (The regex scan this replaced would
+  # have manufactured one.)
+  AST_OUT=$(mktemp -d)
+  if AST_BRIDGE=$($CHANT carve bridge --from "$CARVE_TF" --select aws_cloudwatch_log_group.api --output "$AST_OUT" 2>/dev/null); then
+    if echo "$AST_BRIDGE" | grep -q 'no inbound edges' && [ ! -f "$AST_OUT"/aws_cloudwatch_log_group-api-datasources.tf ]; then
+      pass "expression-AST edge detection ignores a quoted address in an expression"
+    else
+      fail "a quoted address inside an expression produced a phantom edge"
+    fi
+  else
+    fail "carve bridge on the log group failed"
+  fi
+  rm -rf "$AST_OUT"
 
   # bridge: generate the survivor data source + runbook for one carve
   if $CHANT carve bridge --from "$CARVE_TF" --select aws_s3_bucket.assets --output "$CARVE_OUT" >/dev/null 2>&1; then

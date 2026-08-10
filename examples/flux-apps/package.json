@@ -1,0 +1,25 @@
+{
+  "name": "flux-apps-example",
+  "version": "0.0.1",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "npm run build:platform && npm run build:api && npm run build:web && npm run build:flux",
+    "build:platform": "chant build src/platform --lexicon k8s -o dist/platform/manifests.yaml",
+    "build:api": "chant build src/apps/api --lexicon k8s -o dist/apps/api/manifests.yaml",
+    "build:web": "chant build src/apps/web --lexicon k8s -o dist/apps/web/manifests.yaml",
+    "build:flux": "chant build src/flux --lexicon k8s -o dist/flux.yaml",
+    "lint": "chant lint src",
+    "install-flux": "kubectl apply -f https://github.com/fluxcd/flux2/releases/download/v2.9.1/install.yaml && kubectl -n flux-system wait deploy --all --for=condition=Available --timeout=180s",
+    "install-cert-manager": "kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.16.2/cert-manager.yaml && kubectl -n cert-manager wait deploy --all --for=condition=Available --timeout=180s",
+    "bootstrap": "kubectl apply -f dist/flux.yaml",
+    "deploy": "chant run --components flux-bootstrap --env home --no-release-record",
+    "status": "kubectl -n flux-system get gitrepositories,kustomizations",
+    "status:components": "chant components status home --live --no-release-record",
+    "wait": "kubectl -n flux-system wait kustomization/web --for=condition=Ready --timeout=300s"
+  },
+  "dependencies": {
+    "@intentius/chant": "*",
+    "@intentius/chant-lexicon-k8s": "*"
+  }
+}

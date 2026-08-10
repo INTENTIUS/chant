@@ -148,5 +148,5 @@ export function createGenerateSbomCapability(
   };
 }
 
-/** Default `generate-sbom` capability, backed by the process-wide default `SbomGenerator` (throws until a real backend is injected — see ./sbom-generator.ts's `notImplementedSbomGenerator`). */
+/** Default `generate-sbom` capability, backed by the process-wide default `SbomGenerator` — the hermetic lockfile backend (#630), so `dir`/`zip`/`jar` work with no tool installed; only `forImage` throws until `toolSbomGenerator` is injected. See ./sbom-generator.ts's `defaultSbomGenerator`. */
 export const generateSbomCapability: Capability<GenerateSbomInput, GenerateSbomOutput> = createGenerateSbomCapability();

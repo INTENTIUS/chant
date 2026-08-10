@@ -1,5 +1,6 @@
 import { describe, test, expect } from "vitest";
-import { buildGraph, inboundEdges, outboundEdges } from "./graph";
+import { inboundEdges, outboundEdges, refFromAccessor } from "./graph";
+import { buildFixtureGraph } from "./__fixtures__/build-graph";
 import type { Hcl2JsonTree } from "./types";
 
 /**
@@ -37,7 +38,7 @@ const workedExample: Hcl2JsonTree = {
 
 describe("buildGraph", () => {
   test("extracts resource nodes with addresses", () => {
-    const g = buildGraph(workedExample);
+    const g = buildFixtureGraph(workedExample);
     expect(g.nodes.map((n) => n.address)).toEqual([
       "aws_lambda_function.api",
       "aws_s3_bucket.assets",
@@ -47,16 +48,16 @@ describe("buildGraph", () => {
   });
 
   test("records directed edges with referenced attributes, deduped per target", () => {
-    const g = buildGraph(workedExample);
+    const g = buildFixtureGraph(workedExample);
     // versioning → bucket (.id), lambda → bucket (.bucket, .arn)
     expect(g.edges).toEqual([
-      { from: "aws_lambda_function.api", to: "aws_s3_bucket.assets", attrs: ["arn", "bucket"] },
-      { from: "aws_s3_bucket_versioning.assets", to: "aws_s3_bucket.assets", attrs: ["id"] },
+      { from: "aws_lambda_function.api", to: "aws_s3_bucket.assets", attrs: ["arn", "bucket"], via: ["environment"] },
+      { from: "aws_s3_bucket_versioning.assets", to: "aws_s3_bucket.assets", attrs: ["id"], via: ["bucket"] },
     ]);
   });
 
   test("inbound/outbound classification", () => {
-    const g = buildGraph(workedExample);
+    const g = buildFixtureGraph(workedExample);
     // Two survivors depend on the bucket; the bucket depends on nothing.
     expect(inboundEdges(g, "aws_s3_bucket.assets").map((e) => e.from)).toEqual([
       "aws_lambda_function.api",
@@ -78,7 +79,7 @@ describe("buildGraph", () => {
         aws_route53_record: { cdn: [{ name: "${module.cdn.domain}" }] },
       },
     };
-    const g = buildGraph(tree);
+    const g = buildFixtureGraph(tree);
     const cdn = g.nodes.find((n) => n.address === "module.cdn");
     expect(cdn).toMatchObject({ kind: "module", name: "cdn" });
     // module → bucket, and record → module
@@ -86,11 +87,13 @@ describe("buildGraph", () => {
       from: "module.cdn",
       to: "aws_s3_bucket.assets",
       attrs: ["arn"],
+      via: ["bucket_arn"],
     });
     expect(g.edges).toContainEqual({
       from: "aws_route53_record.cdn",
       to: "module.cdn",
       attrs: ["domain"],
+      via: ["name"],
     });
   });
 
@@ -104,7 +107,7 @@ describe("buildGraph", () => {
         },
       },
     };
-    const g = buildGraph(tree);
+    const g = buildFixtureGraph(tree);
     const byAddr = Object.fromEntries(g.nodes.map((n) => [n.address, n]));
     expect(byAddr["aws_instance.web"]).toMatchObject({ hasDynamic: true, instances: 1 });
     expect(byAddr["aws_instance.worker"]).toMatchObject({ hasDynamic: true, instances: 1 });
@@ -118,10 +121,40 @@ describe("buildGraph", () => {
         aws_instance: { web: [{ ami: "${data.aws_ami.ubuntu.id}" }] },
       },
     };
-    const g = buildGraph(tree);
+    const g = buildFixtureGraph(tree);
     expect(g.nodes.map((n) => n.address)).toEqual(["aws_instance.web"]); // data is not a node
     expect(g.edges).toEqual([]); // ref to data → no resource edge
     expect(g.nodes[0].hasDynamic).toBe(true);
+  });
+
+  test("an expression whose AST found no references contributes no edge", () => {
+    // `${var.m["aws_s3_bucket.assets.arn"]}` — the AST reports only `var.m`;
+    // the quoted address inside the brackets is a map key, not a reference.
+    const tree: Hcl2JsonTree = {
+      resource: {
+        aws_s3_bucket: { assets: [{ bucket: "x" }] },
+        aws_lambda_function: { api: [{ handler: '${var.m["aws_s3_bucket.assets.arn"]}' }] },
+      },
+    };
+    const g = buildFixtureGraph(tree);
+    expect(g.edges).toEqual([]);
+  });
+
+  test("a dotted identity attr resolves through nested blocks (#998)", () => {
+    const tree: Hcl2JsonTree = {
+      resource: {
+        kubernetes_manifest: {
+          app_config: [{ manifest: { apiVersion: "v1", kind: "ConfigMap", metadata: { name: "app-config", namespace: "web" } } }],
+          templated: [{ manifest: { apiVersion: "v1", kind: "ConfigMap", metadata: { name: "${var.name}" } } }],
+        },
+        aws_s3_bucket: { assets: [{ bucket: "myapp-assets-prod" }] },
+      },
+    };
+    const g = buildFixtureGraph(tree);
+    const byAddr = Object.fromEntries(g.nodes.map((n) => [n.address, n]));
+    expect(byAddr["kubernetes_manifest.app_config"].identity).toBe("app-config");
+    expect(byAddr["kubernetes_manifest.templated"].identity).toBeUndefined(); // interpolated
+    expect(byAddr["aws_s3_bucket.assets"].identity).toBe("myapp-assets-prod"); // flat attr unaffected
   });
 
   test("var / local references are not edges", () => {
@@ -130,8 +163,38 @@ describe("buildGraph", () => {
         aws_s3_bucket: { assets: [{ bucket: "${var.name}", tags: { env: "${local.env}" } }] },
       },
     };
-    const g = buildGraph(tree);
+    const g = buildFixtureGraph(tree);
     expect(g.edges).toEqual([]);
     expect(g.nodes[0].hasDynamic).toBe(false); // var/local alone are not the dynamic markers
+  });
+});
+
+describe("refFromAccessor", () => {
+  test("classifies resource, module, and data accessors", () => {
+    expect(refFromAccessor("aws_s3_bucket.assets.bucket")).toEqual({
+      address: "aws_s3_bucket.assets",
+      attr: "bucket",
+    });
+    expect(refFromAccessor("aws_s3_bucket.assets")).toEqual({ address: "aws_s3_bucket.assets", attr: undefined });
+    expect(refFromAccessor("module.cdn.domain")).toEqual({ address: "module.cdn", attr: "domain" });
+    expect(refFromAccessor("data.aws_ami.ubuntu.id")).toEqual({ address: "data.aws_ami.ubuntu", attr: "id" });
+  });
+
+  test("non-resource heads are not references", () => {
+    for (const accessor of ["var.name", "local.env", "each.value", "count.index", "self.arn", "path.module", "terraform.workspace"]) {
+      expect(refFromAccessor(accessor)).toBeNull();
+    }
+  });
+
+  test("quoted map keys and numeric indexes never become the attribute", () => {
+    // `var.m["aws_s3_bucket.assets.arn"]` → the AST renders `var.m."aws_s3_bucket.assets.arn"`
+    expect(refFromAccessor('var.m."aws_s3_bucket.assets.arn"')).toBeNull();
+    // `aws_instance.web[0].id` → `aws_instance.web.0.id`
+    expect(refFromAccessor("aws_instance.web.0.id")).toEqual({ address: "aws_instance.web", attr: "id" });
+    // `aws_s3_bucket.assets.tags["a.b"]` → the key must not shadow the attr
+    expect(refFromAccessor('aws_s3_bucket.assets.tags."a.b"')).toEqual({
+      address: "aws_s3_bucket.assets",
+      attr: "tags",
+    });
   });
 });

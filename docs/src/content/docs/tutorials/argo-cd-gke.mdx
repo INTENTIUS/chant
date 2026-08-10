@@ -134,3 +134,4 @@ The `web` Deployment and Service exist in the `demo` namespace — created by Ar
 - Scope the Application to a real `AppProject` for RBAC ([ARGO002](/chant/lexicons/k8s/lint-rules/)).
 - Fan out across regional clusters with [`ArgoAppSetForRegions`](/chant/lexicons/k8s/argo-composites/).
 - Gate procedural steps on Argo finishing with the temporal lexicon's `waitForArgoSync` activity — see the [CockroachDB multi-region tutorial](/chant/tutorials/temporal-crdb-deploy/), which uses Argo for the apply layer and Temporal for the procedural one.
+- Running Flux instead of Argo? The same split, on a self-hosted estate: [Flux CD Self-Hosted](/chant/tutorials/flux-apps/).

@@ -148,9 +148,14 @@ APISERVER="$(awsl eks describe-cluster --name "$CLUSTER" --query 'cluster.endpoi
 echo "  stack $STATUS; EKS $CS on $APISERVER"
 
 aws --endpoint-url "$ENDPOINT" eks update-kubeconfig --name "$CLUSTER" >/dev/null
-kubectl apply -f k8s.yaml >/dev/null || fail "apply" "kubectl could not apply the k8s half"
+# The k8s half is released the same way the cloud half was: by its component
+# (#1495). cc-workload's kubectl-apply step stamps the field manager
+# `chant:cc-aws-canonical` and prunes only within that marker — the release
+# path and the ownership model are the same mechanism.
+chant run --components cc-workload --env local --no-release-record >/dev/null \
+  || fail "apply" "the cc-workload component could not kubectl-apply the k8s half"
 kubectl get service cc-api -n default >/dev/null 2>&1 || fail "apply" "the Service is not on the cluster"
-echo "  k8s half applied through the cluster's own kubeconfig"
+echo "  k8s half applied by the cc-workload component, through the cluster's own kubeconfig"
 
 # ── 4. OBSERVE (both substrates, one read) ───────────────────────────────────
 echo "=== 4. Observe — one --live read covering both substrates ==="
@@ -165,6 +170,25 @@ grep -q "apiService" "$WORK/observe.txt" || fail "observe" "the k8s Service was 
 grep -q "0 property drift" "$WORK/observe.txt" \
   || fail "observe" "a clean apply reported property drift (see $WORK/observe.txt)"
 echo "  both substrates observed; clean apply is quiet"
+
+# Both deploy units observed by their own lexicons (#1495): cc-canonical's
+# cfn-deploy stack by aws's describeStackStatus, cc-workload's kubectl-apply
+# unit by k8s's — which selects on the ownership labels the build stamped, so
+# this line also proves the stamp survived the round trip.
+chant components status local --live --json --no-release-record >"$WORK/components.json" 2>/dev/null \
+  || fail "observe" "components status --live failed"
+node -e '
+  const raw = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+  const rows = Array.isArray(raw) ? raw : raw.rows;
+  const want = { "cc-canonical": "cc-canonical", "cc-workload": "cc-aws-canonical" };
+  for (const [name, stack] of Object.entries(want)) {
+    const row = rows.find((r) => r.component === name);
+    if (!row) { console.error("no status row for " + name); process.exit(1); }
+    if (!row.live) { console.error(name + " is not live: " + JSON.stringify(row)); process.exit(1); }
+    if (row.stack?.name !== stack) { console.error(name + " observed stack " + JSON.stringify(row.stack) + ", expected " + stack); process.exit(1); }
+  }
+' "$WORK/components.json" || fail "observe" "components status --live did not report both deploy units (see $WORK/components.json)"
+echo "  components status --live reports both units: cfn stack + kubectl-apply stack"
 
 # ── 5. MUTATE + DETECT DRIFT ─────────────────────────────────────────────────
 # Out-of-band, exactly as a console edit would be. The security group is the

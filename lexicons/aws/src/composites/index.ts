@@ -1,3 +1,10 @@
+export { OrganizationRoot, GovernanceFoundation, RegionRestriction, OrganizationTrail } from "./landing-zone";
+export type {
+  OrganizationRootProps,
+  GovernanceFoundationProps,
+  RegionRestrictionProps,
+  OrganizationTrailProps,
+} from "./landing-zone";
 export { LambdaFunction, LambdaNode, LambdaPython, NodeLambda, PythonLambda } from "./lambda-function";
 export type { LambdaFunctionProps } from "./lambda-function";
 export { LambdaApi } from "./lambda-api";
@@ -32,6 +39,8 @@ export { Ec2InstanceRole } from "./ec2-instance-role";
 export type { Ec2InstanceRoleProps } from "./ec2-instance-role";
 export { MinimalVpc } from "./minimal-vpc";
 export type { MinimalVpcProps } from "./minimal-vpc";
+export { EksCluster } from "./eks-cluster";
+export type { EksClusterProps } from "./eks-cluster";
 export { MicrovmApp, MICROVM_LIMITS } from "./microvm-app";
 export type { MicrovmAppProps, MicrovmAppResult, MicrovmAppBuildConnectorProps, MicrovmMemoryMiB } from "./microvm-app";
 export { AgentCoreAgent } from "./agentcore-agent";

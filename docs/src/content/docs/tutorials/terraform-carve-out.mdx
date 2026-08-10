@@ -71,9 +71,14 @@ chant carve bridge --from ./terraform --select aws_s3_bucket.assets --output ./c
 ```
 
 This writes to `./carveout/`: a `data "aws_s3_bucket" "assets"` block, a
-rewritten `api.tf` with the Lambda's references rewired to `data.aws_s3_bucket.assets.*`,
-and a reversible runbook. Nothing in `./terraform` changes. `--apply-rewrites`
-edits the survivor `.tf` in place instead.
+rewritten `main.tf` with the bucket's own `resource` block (and its folded
+versioning sub-resource) removed and the Lambda's references rewired to
+`data.aws_s3_bucket.assets.*`, a reversible runbook, and one git-applyable
+patch carrying the whole edit
+(`git apply --directory=terraform carveout/aws_s3_bucket-assets-bridge.patch`
+from the repo root — the patch's paths are relative to the Terraform dir).
+Nothing in `./terraform` changes. `--apply-rewrites` edits the survivor `.tf`
+in place instead.
 
 ## 3. Adopt the bucket into chant source (offline, from state)
 
@@ -82,7 +87,9 @@ chant carve emit --from ./terraform --select aws_s3_bucket.assets \
   --state ./terraform/terraform.tfstate --output ./carveout
 ```
 
-This writes `./carveout/assets.ts`:
+This writes `./carveout/src/assets.ts` and scaffolds `./carveout` into a
+buildable chant project (`chant.config.ts`, `package.json`, `tsconfig.json` —
+`npm install && npm run build` works there as-is):
 
 ```ts
 // Adopted from Terraform state: aws_s3_bucket.assets -> AWS::S3::Bucket

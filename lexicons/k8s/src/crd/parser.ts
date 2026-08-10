@@ -52,6 +52,12 @@ const GROUP_NAMESPACE_OVERRIDES: Record<string, string> = {
   // Not `Secrets`: `K8s::Secrets::InfisicalSecret` reads like a core Secret,
   // and `K8s::Core::Secret` is right there to be confused with.
   "secrets.infisical.com": "Infisical",
+  // k3s's bundled controllers ship under two groups but are one thing to an
+  // author — the k3s auto-deploy surface. The first-segment rule would give
+  // `K8s::Helm::HelmChart`, which reads like it belongs to the helm lexicon,
+  // and would split HelmChart from the Addon that tracks its deployment.
+  "helm.cattle.io": "K3s",
+  "k3s.cattle.io": "K3s",
 };
 
 /**

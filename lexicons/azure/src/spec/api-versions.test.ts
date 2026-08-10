@@ -47,8 +47,8 @@ describe("latestVersionPerProvider", () => {
       "schemas/2023-01-01/Microsoft.Network.json",
     ];
     const result = latestVersionPerProvider(paths);
-    expect(result.get("Microsoft.Storage")?.apiVersion).toBe("2023-06-01");
-    expect(result.get("Microsoft.Network")?.apiVersion).toBe("2023-01-01");
+    expect(result.get("Microsoft.Storage")?.map((f) => f.apiVersion)).toEqual(["2023-06-01"]);
+    expect(result.get("Microsoft.Network")?.map((f) => f.apiVersion)).toEqual(["2023-01-01"]);
   });
 });
 
@@ -62,6 +62,35 @@ describe("PROVIDER_VERSION_OVERRIDES", () => {
     const result = latestVersionPerProvider(paths);
     // 2026-03-02 is the naive "latest by date" but drops virtualMachines
     // (a disk-only delta); the override keeps 2026-03-01 instead.
-    expect(result.get("Microsoft.Compute")?.apiVersion).toBe("2026-03-01");
+    expect(result.get("Microsoft.Compute")?.map((f) => f.apiVersion)).toEqual(["2026-03-01"]);
+  });
+
+  it("keeps every pinned Microsoft.Authorization file, in pin order (#1545)", () => {
+    // Shuffled on purpose — the result must follow the pin order (roles
+    // first, then the policy file, then policyExemptions), not path order.
+    const paths = [
+      "schemas/2026-06-01/Microsoft.Authorization.json",
+      "schemas/2022-07-01-preview/Microsoft.Authorization.json",
+      "schemas/2025-01-01/Microsoft.Authorization.json",
+      "schemas/2022-04-01/Microsoft.Authorization.json",
+    ];
+    const result = latestVersionPerProvider(paths);
+    expect(result.get("Microsoft.Authorization")?.map((f) => f.apiVersion)).toEqual([
+      "2022-04-01",
+      "2026-06-01",
+      "2022-07-01-preview",
+    ]);
+  });
+
+  it("pins Microsoft.Management and Microsoft.Subscription to their latest GA dates (#1545)", () => {
+    const paths = [
+      "schemas/2023-04-01/Microsoft.Management.json",
+      "schemas/2024-02-01-preview/Microsoft.Management.json",
+      "schemas/2021-10-01/Microsoft.Subscription.json",
+      "schemas/2025-11-01-preview/Microsoft.Subscription.json",
+    ];
+    const result = latestVersionPerProvider(paths);
+    expect(result.get("Microsoft.Management")?.map((f) => f.apiVersion)).toEqual(["2023-04-01"]);
+    expect(result.get("Microsoft.Subscription")?.map((f) => f.apiVersion)).toEqual(["2021-10-01"]);
   });
 });

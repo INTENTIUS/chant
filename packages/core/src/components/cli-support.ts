@@ -136,6 +136,11 @@ export interface ComponentGraphResult {
    * so a renderer can deep-link a component node to source (`chant graph
    * --components --format ir` sets `sourceLoc` from this). */
   files?: Record<string, string>;
+  /** Component name → the live resource names it owns (#1491): the declared
+   * `liveNames`, or `[name]` when undeclared — the identity-join fallback the
+   * `Component` contract already specifies. This is what lets a consumer join
+   * the component DAG to the resource graph without guessing at kinds. */
+  liveNames?: Record<string, string[]>;
   error?: string;
 }
 
@@ -165,8 +170,13 @@ export async function computeComponentGraph(
 
   // component name → its declaring file, relative to `path`, for node deep-links.
   const files: Record<string, string> = {};
+  // component name → owned live resource names (#1491), declared or the
+  // contract's identity fallback.
+  const liveNames: Record<string, string[]> = {};
   for (const [name, discovered] of result.components) {
     files[name] = relative(path, discovered.filePath);
+    const declared = discovered.component.liveNames;
+    liveNames[name] = declared && declared.length > 0 ? [...declared] : [name];
   }
 
   try {
@@ -175,7 +185,7 @@ export async function computeComponentGraph(
     for (const c of driverComponents) {
       for (const dep of c.dependsOn ?? []) edges.push({ from: c.name, to: dep });
     }
-    return { success: true, order, waves, edges, files };
+    return { success: true, order, waves, edges, files, liveNames };
   } catch (err) {
     if (err instanceof UnknownDependencyError || err instanceof DependencyCycleError) {
       return { success: false, order: [], waves: [], edges: [], error: err.message };
@@ -452,13 +462,34 @@ export async function resolveComponentTargets(
     return { success: false, targets: [], error: result.errors.map((e) => e.message).join("\n") };
   }
 
-  const all = [...result.components.values()].map(({ component }) => toDriverComponent(component));
+  const discovered = [...result.components.values()].map(({ component }) => component);
+  const all = discovered.map((component) => toDriverComponent(component));
 
   if (selector === "all") {
-    return { success: true, targets: all };
+    // chant #1522 — a seam-gated component (`enabled: false`, computed from
+    // this run's own params) sits out of "all": the run deploys the estate
+    // the parameters describe, not the units the seams turned off. A disabled
+    // dependency is satisfied vacuously — ordering is dependsOn's only
+    // semantics — so it is also stripped from the survivors' dependsOn,
+    // rather than failing wave resolution as an unknown name.
+    const disabled = new Set(discovered.filter((c) => c.enabled === false).map((c) => c.name));
+    const targets = all
+      .filter((c) => !disabled.has(c.name))
+      .map((c) => (c.dependsOn?.some((d) => disabled.has(d)) ? { ...c, dependsOn: c.dependsOn.filter((d) => !disabled.has(d)) } : c));
+    return { success: true, targets };
   }
 
   const found = all.find((c) => c.name === selector);
+  const disabledByName = discovered.find((c) => c.name === selector && c.enabled === false);
+  if (disabledByName) {
+    // An explicit ask for a unit the parameters excluded is a mistake to
+    // surface, not to skip silently.
+    return {
+      success: false,
+      targets: [],
+      error: `Component "${selector}" is disabled under this run's parameters (enabled: false) — enable the seam it is gated on, or run without naming it.`,
+    };
+  }
   if (!found) {
     const known = all.map((c) => c.name).sort().join(", ");
     return {

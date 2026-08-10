@@ -1,4 +1,5 @@
 import { resolve } from "node:path";
+import { commandBuildParams } from "../build-params-cli";
 import { build } from "../../build";
 import { takeSnapshot } from "../../lifecycle/snapshot";
 import { readSnapshot, readSnapshotAt, readEnvironmentSnapshots, listSnapshots, fetchLifecycle, pushLifecycle, snapshotStorageKey, StaleLifecycleBranchError } from "../../lifecycle/git";
@@ -30,7 +31,9 @@ import { cfnDeployStacks } from "./components";
 import { affectedStacks } from "../../lifecycle/affected";
 import { rollbackToRevision } from "../../lifecycle/rollback";
 import { loadChantConfig, environmentNames } from "../../config";
+import { collectBuildRootContributors } from "../plugins";
 import { applyLiveEndpoint } from "../../live-endpoint";
+import { isResourceDeclarable } from "../../declarable";
 import { formatError, formatWarning, formatSuccess, formatBold } from "../format";
 import type { CommandContext } from "../registry";
 import type { LifecycleSnapshot } from "../../lifecycle/types";
@@ -101,6 +104,10 @@ export async function runLifecycleSnapshot(ctx: CommandContext): Promise<number>
   // Validate environment against config
   const projectPath = resolve(".");
   const { config } = await loadChantConfig(projectPath);
+  // This invocation's parameters, so the declared side of the comparison is the estate
+  // the caller asked for rather than the parameter defaults (#1483).
+  const declaredParams = await commandBuildParams(config.buildParams, args);
+  if (!declaredParams) return 1;
   const declaredEnvNames = environmentNames(config.environments);
   if (declaredEnvNames && !declaredEnvNames.includes(environment)) {
     console.error(formatError({
@@ -144,9 +151,10 @@ export async function runLifecycleSnapshot(ctx: CommandContext): Promise<number>
   // estate; a region whose stack declares no security group still has a default
   // one, and scoping the bound per stack silently drops it.
   const built: Array<{ target: (typeof targets)[number]; buildResult: Awaited<ReturnType<typeof build>> }> = [];
+  const buildRoots = collectBuildRootContributors(targetPlugins, config as unknown as Record<string, unknown>, projectPath);
   for (const target of targets) {
     const label = target.stack ? `stack "${target.stack}"` : "project";
-    const buildResult = await build(target.root, targetSerializers);
+    const buildResult = await build(target.root, targetSerializers, undefined, { buildParams: declaredParams, buildRoots });
     if (buildResult.errors.length > 0) {
       console.error(formatError({ message: `Build failed for ${label} — fix errors before taking a snapshot` }));
       anyHardError = true;
@@ -326,6 +334,10 @@ export async function runLifecycleDiff(ctx: CommandContext): Promise<number> {
 
   // Fetch previous snapshots once (all stacks share the orphan branch).
   const { config } = await loadChantConfig(resolve("."));
+  // This invocation's parameters, so the declared side of the comparison is the estate
+  // the caller asked for rather than the parameter defaults (#1483).
+  const declaredParams = await commandBuildParams(config.buildParams, args);
+  if (!declaredParams) return 1;
   await fetchLifecycle();
 
   // One target per stack (single-stack projects: exactly one), each built from
@@ -353,9 +365,11 @@ export async function runLifecycleDiff(ctx: CommandContext): Promise<number> {
   const endpointResult = applyLiveEndpoint(config.environments, environment, liveLexicons);
   if (endpointResult.notice) console.error(formatWarning({ message: endpointResult.notice }));
 
+  const diffBuildRoots = collectBuildRootContributors(plugins, config as unknown as Record<string, unknown>, resolve("."));
+
   try {
     for (const target of targets) {
-      const buildResult = await build(target.root, targetSerializers);
+      const buildResult = await build(target.root, targetSerializers, undefined, { buildParams: declaredParams, buildRoots: diffBuildRoots });
       if (buildResult.errors.length > 0) {
         const label = target.stack ? `stack "${target.stack}"` : "project";
         console.error(formatError({ message: `Build failed for ${label} — fix errors before diffing` }));
@@ -363,9 +377,22 @@ export async function runLifecycleDiff(ctx: CommandContext): Promise<number> {
         continue;
       }
 
+      // The lexicons the diff walks. Keyed on the BUILT manifest — which is
+      // right for the resource axis (a lexicon with no declared entities has
+      // nothing to diff) but drops the artifact axis whole: artifacts are
+      // context-keyed with no declared side at all (that is their defining
+      // property), so an estate that uses helm purely as component deploy
+      // steps builds zero helm entities and its releases were never listed —
+      // `observedArtifacts` silently absent for exactly the estates behold#146
+      // exists for (found live on kubemicrovm-ops, four releases invisible).
+      // On the live path, artifact-capable configured lexicons join the walk;
+      // their resource half stays gated on `describeResources` + declared
+      // entities as before.
+      const builtLexicons = Array.from(buildResult.manifest.lexicons);
+      const artifactLexicons = args.live ? plugins.filter((p) => p.listArtifacts).map((p) => p.name) : [];
       const lexicons = lexiconFilter
         ? [lexiconFilter]
-        : Array.from(buildResult.manifest.lexicons);
+        : [...new Set([...builtLexicons, ...artifactLexicons])];
 
       if (args.live) {
         // Multi-stack component projects: observe each component's own cfn stack
@@ -643,6 +670,12 @@ interface LiveDiffOutcome {
       /** Property-level drift (#1014), present only for lexicons with a deep reader. */
       deep?: DeepDiffResult;
       artifacts?: LiveArtifactDiffResult;
+      /** What `listArtifacts` actually saw, keyed like `artifacts`' entries
+       * (behold#146). The diff alone is snapshot-relative key lists — on a
+       * first run everything is `added` with no metadata, so a consumer
+       * painting artifact presence (a Helm release's status) had nothing to
+       * read. Mirrors `observed` on the resources path. */
+      observedArtifacts?: Record<string, ArtifactMetadata>;
     }
   >;
   totalDrift: number;
@@ -730,17 +763,18 @@ async function runLifecycleDiffLive(args: LiveDiffArgs): Promise<LiveDiffOutcome
       continue;
     }
 
-    // Build per-lexicon entity index
+    // Build per-lexicon entity index. Resource declarables only — outputs,
+    // parameters and serializer directives have no live counterpart, and a
+    // declared name the reader can never resolve reads as missing (see
+    // lifecycle/observe.ts).
     const declared = new Set<string>();
     const entities = new Map<string, { entityType: string; props: Record<string, unknown> }>();
     for (const [name, entity] of args.buildResult.entities) {
-      if (entity.lexicon === lexiconName) {
+      if (entity.lexicon === lexiconName && isResourceDeclarable(entity)) {
         declared.add(name);
         entities.set(name, {
           entityType: entity.entityType,
-          props: ("props" in entity && entity.props != null
-            ? entity.props
-            : {}) as Record<string, unknown>,
+          props: (entity.props != null ? entity.props : {}) as Record<string, unknown>,
         });
       }
     }
@@ -822,8 +856,14 @@ async function runLifecycleDiffLive(args: LiveDiffArgs): Promise<LiveDiffOutcome
       const observedThen = prevSnapshot?.artifacts;
       const adiff = diffLiveArtifacts({ observedNow, observedThen });
       totalDrift += adiff.added.length + adiff.removed.length + adiff.changed.length;
-      if (args.json) (byLexicon[lexiconName] ??= {}).artifacts = adiff;
-      else renderLiveArtifactDiff(lexiconName, args.environment, adiff);
+      if (args.json) {
+        const lex = (byLexicon[lexiconName] ??= {});
+        lex.artifacts = adiff;
+        // What was actually seen, not just how it moved (behold#146): the
+        // metadata was in hand and dropped, leaving JSON consumers unable to
+        // read an artifact's own status (a Helm release's "deployed").
+        lex.observedArtifacts = observedNow;
+      } else renderLiveArtifactDiff(lexiconName, args.environment, adiff);
       lexiconChecked = true;
     }
 
@@ -1021,7 +1061,14 @@ export async function runLifecyclePlan(ctx: CommandContext): Promise<number> {
     : serializers;
 
   const { config } = await loadChantConfig(resolve("."));
-  const buildResult = await build(resolveBuildRoot(args, config), targetSerializers);
+  // This invocation's parameters, so the declared side of the comparison is the estate
+  // the caller asked for rather than the parameter defaults (#1483).
+  const declaredParams = await commandBuildParams(config.buildParams, args);
+  if (!declaredParams) return 1;
+  const buildResult = await build(resolveBuildRoot(args, config), targetSerializers, undefined, {
+    buildParams: declaredParams,
+    buildRoots: collectBuildRootContributors(plugins, config as unknown as Record<string, unknown>, resolve(".")),
+  });
   if (buildResult.errors.length > 0) {
     console.error(formatError({ message: "Build failed — fix errors before planning" }));
     return 1;
@@ -1079,11 +1126,11 @@ export async function runLifecyclePlan(ctx: CommandContext): Promise<number> {
       const declared = new Set<string>();
       const entities = new Map<string, { entityType: string; props: Record<string, unknown> }>();
       for (const [name, entity] of buildResult.entities) {
-        if (entity.lexicon === lexiconName) {
+        if (entity.lexicon === lexiconName && isResourceDeclarable(entity)) {
           declared.add(name);
           entities.set(name, {
             entityType: entity.entityType,
-            props: ("props" in entity && entity.props != null ? entity.props : {}) as Record<string, unknown>,
+            props: (entity.props != null ? entity.props : {}) as Record<string, unknown>,
           });
         }
       }

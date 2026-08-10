@@ -23,6 +23,7 @@ export {
   GkeCluster, CloudRunServiceComposite, CloudSqlInstance, GcsBucket, VpcNetwork,
   PubSubPipeline, CloudFunctionWithTrigger, PrivateService, ManagedCertificate, SecureProject,
   MemorystoreRedis, MultiRegionVpc, GkeCrdbRegion,
+  GovernanceFoundation, LocationRestriction, OrganizationAuditConfig,
 } from "./composites/index";
 export type {
   GkeClusterProps,
@@ -38,7 +39,16 @@ export type {
   MemorystoreRedisProps,
   MultiRegionVpcConfig, MultiRegionVpcRegion,
   GkeCrdbRegionConfig, GkeCrdbRegionNodeConfig,
+  GovernanceFoundationProps, LocationRestrictionProps, OrganizationAuditConfigProps,
 } from "./composites/index";
+
+// GCP governance authoring: the desired-state config an external governance
+// reconciler applies, and the typed landing-zone authoring layer.
+export {
+  landingZoneConfig, resourceLocationRestriction,
+  DISABLE_SA_KEY_CREATION, SKIP_DEFAULT_NETWORK, AUDIT_ALL_SERVICES, FOUNDATION_FOLDERS,
+} from "./governance";
+export type { GcpGovernanceConfig, LandingZoneConfigProps, FolderConfig, OrgPolicyConfig, ProjectConfig } from "./governance";
 
 // IAM role constants
 export { StorageRoles, ComputeRoles, ContainerRoles, IAMRoles, SQLRoles, RunRoles, PubSubRoles } from "./actions/index";

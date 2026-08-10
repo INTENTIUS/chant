@@ -225,3 +225,177 @@ Verified from chant's side against the rebuilt image: a stack declaring one SSH
 ingress rule now reports `0 property drift, 1 unchanged` on a clean apply, and
 an out-of-band `0.0.0.0/0` rule added afterwards surfaces as drift. That is both
 halves of chant#1207's acceptance bar, on the canonical example.
+
+## 5. Organizations service is entirely absent
+
+**Status:** confirmed 2026-08-07, unfiled. Blocked the archived governance-reconcile e2e (see `archive/wardens-monorepo-state`): every governance cycle starts
+from `ListRoots`, so no part of the org-unit / policy-guardrail surface can be
+exercised against the emulator.
+
+```
+$ curl -s -X POST http://localhost:4599/ \
+    -H "Content-Type: application/x-amz-json-1.1" \
+    -H "X-Amz-Target: AWSOrganizationsV20161128.CreateOrganization" \
+    -d '{"FeatureSet":"ALL"}'
+{"__type":"UnknownOperationException","message":"Unknown operation: AWSOrganizationsV20161128.CreateOrganization"}
+```
+
+Confirmed against `floci/floci:1.5.34`: `/_localstack/health` lists no
+`organizations` service at all (the full service list has 70 entries;
+`cloudtrail` is present and `running`). That e2e's bootstrap probes
+health for `"organizations"` and exits without exporting `AWS_ENDPOINT_URL`,
+so the suite self-skips (green, with a notice) until the emulator gains the
+service. Fallback for a real run: a live sandbox org in dry-run.
+
+The identity-assignment cycle (chant#792) is behind the same skip: floci's
+service catalog has neither `sso-admin` (IAM Identity Center) nor
+`identitystore` (checked in the floci source's ServiceCatalog, 2026-08-07),
+and every identity fetch starts from `ListInstances`. The in-memory
+convergence suite (archived with the branch above) covers
+the identity loop meanwhile, like the other governance cycles.
+
+## 6. floci-gcp: GCS bucket insert drops `iamConfiguration`
+
+**Status:** confirmed 2026-08-07 against `floci/floci-gcp:0.5.0`, unfiled
+(upstream: floci-io/floci-gcp).
+
+```
+$ docker run -d --rm -p 4588:4588 floci/floci-gcp:0.5.0
+$ curl -s -X POST 'http://localhost:4588/storage/v1/b?project=local-project' \
+    -H 'content-type: application/json' \
+    -d '{"name":"g","iamConfiguration":{"uniformBucketLevelAccess":{"enabled":true}}}'
+$ curl -s http://localhost:4588/storage/v1/b/g
+{"kind":"storage#bucket","id":"g", … "name":"g", …}     # no iamConfiguration
+```
+
+Real GCS persists `iamConfiguration` and returns it on GET. The emulator
+accepts the field and drops it, so a chant estate declaring
+`uniformBucketLevelAccess: true` reports one `absent` property drift on a
+clean apply (chant#1210's acceptance run). Detection is correct — the live
+resource genuinely does not carry the configuration — the emulator is what
+loses it. Same class as entry 4 (CloudFormation dropping SG rules), one
+emulator over.
+
+## 7. floci-az: the modeled storage-account provider does not persist what was PUT
+
+**Status:** confirmed 2026-08-07 against `floci/floci-az:0.10.0`, unfiled.
+This is the azure sibling (floci-io/floci-az), not floci — recorded here
+because it is the same one-pass upstream filing.
+
+Generic ARM types (NSGs, VNets, route tables) round-trip: floci-az stores the
+PUT body and GETs return it, tags and nested collections included — which is
+what the azure drift acceptance (`test/azure-drift-e2e.sh`, chant#1213) rides.
+`Microsoft.Storage/storageAccounts` is instead a *modeled* provider, and the
+model discards the request:
+
+```
+$ curl -s -X PUT "$BASE/resourceGroups/rg/providers/Microsoft.Storage/storageAccounts/s1?api-version=2023-01-01" \
+    -H 'content-type: application/json' \
+    -d '{"location":"eastus","tags":{"environment":"e2e"},"sku":{"name":"Standard_LRS"},"kind":"StorageV2",
+         "properties":{"minimumTlsVersion":"TLS1_2","allowBlobPublicAccess":false,"supportsHttpsTrafficOnly":true,
+                       "networkAcls":{"bypass":"AzureServices","defaultAction":"Deny","ipRules":[],"virtualNetworkRules":[]}}}'
+$ curl -s "$BASE/resourceGroups/rg/providers/Microsoft.Storage/storageAccounts/s1?api-version=2023-01-01"
+```
+
+The GET drops `tags` entirely, drops `minimumTlsVersion` /
+`allowBlobPublicAccess` / `networkAcls`, returns `supportsHttpsTrafficOnly:
+false` against the requested `true`, and adds a modeled surface
+(`accessTier`, `primaryEndpoints.*`, `primaryLocation`, `statusOfPrimary`,
+`sku.tier`).
+
+What it blocks: a storage account cannot appear in a drift acceptance estate —
+every declared secure-default reads as `absent` drift and the flipped
+`supportsHttpsTrafficOnly` reads as `changed`, all of it emulator artifact.
+The drift e2e uses the VnetDefault networking estate instead; entry stands
+until the provider either echoes unknown properties like the generic path or
+models the requested values.
+
+## 8. floci-az: an AKS cluster never reaches Succeeded, and its admin credential is a mock
+
+**Status:** confirmed 2026-08-07 against `floci/floci-az:0.10.0` running in
+Docker (`-v /var/run/docker.sock:/var/run/docker.sock`), unfiled (upstream:
+floci-io/floci-az).
+
+Two symptoms, one root: the finalize path — poll the k3s apiserver, extract
+`/etc/rancher/k3s/k3s.yaml`, rewrite the server — never runs in the 0.10.0
+image when the emulator itself is a container.
+
+```
+$ curl -s -X PUT "$BASE/resourceGroups/rg/providers/Microsoft.ContainerService/managedClusters/probe?api-version=2024-02-01" \
+    -H 'content-type: application/json' -d '{"location":"eastus","properties":{"dnsPrefix":"probe"}}'
+{… "provisioningState":"Creating", "fqdn":"floci-az-aks-<id>:6443" …}
+# The k3s container comes up and its apiserver answers (/livez → 401 anonymous,
+# kubectl through the extracted k3s.yaml works), but the cluster stays
+# "Creating" indefinitely — silently, no poller error in the emulator log.
+
+$ curl -s -X POST ".../managedClusters/probe/listClusterAdminCredential?api-version=2024-02-01"
+# kubeconfig decodes to server https://floci-az-aks-<id>:6443 (a docker-network
+# name the host cannot resolve) with token "floci-az-mock-token", which the
+# real k3s rejects ("the server has asked for the client to provide credentials").
+```
+
+The floci-az source (`AksClusterManager.finalizeCluster` + the
+`aks-readiness-poller`, accepting 200/401/403 from `/livez` and polling an
+internal-IP endpoint) does all of this correctly — it is just not what the
+0.10.0 image does; the image's poller never confirms readiness (likely polling
+the container-name endpoint, unresolvable on the default bridge, or requiring
+a 200 that k3s's anonymous-auth-off apiserver never returns).
+
+**Effect on chant:** `test/azure-cc-e2e.sh` gates on the cluster's own
+`/readyz` through an extracted kubeconfig rather than on `provisioningState`,
+and performs floci-az's own finalize itself: `docker exec <k3s> cat
+/etc/rancher/k3s/k3s.yaml`, server rewritten to the host-published port. It
+still asserts `listClusterAdminCredential` answers and names the cluster's
+endpoint, so an upstream fix will not break the harness.
+
+Also worth carrying in the same filing: a k3s container from a dead emulator
+is never cleaned up (the harness removes its own by the cluster's fqdn), and a
+stale `floci-az-aks-*` holding host port 6443 makes the next cluster's k3s
+fail to start — the port allocator only knows its own allocations.
+
+## 9. floci-az: the modeled managedClusters provider drops declared AKS surface
+
+**Status:** confirmed 2026-08-07 against `floci/floci-az:0.10.0`, unfiled.
+Same class as entry 7, one provider over.
+
+```
+$ curl -s -X PUT ".../managedClusters/echo?api-version=2023-08-01" -H 'content-type: application/json' \
+    -d '{"location":"eastus","tags":{...},"identity":{"type":"SystemAssigned"},
+         "properties":{"kubernetesVersion":"1.29.0","dnsPrefix":"echo","enableRBAC":true,
+           "agentPoolProfiles":[{"name":"default","count":1,"vmSize":"Standard_B2s","osType":"Linux",
+                                 "mode":"System","enableAutoScaling":false,"type":"VirtualMachineScaleSets"}],
+           "networkProfile":{...},"addonProfiles":{...}}}'
+```
+
+The echo (and every later GET) keeps `location`/`tags`/`kubernetesVersion`/
+`dnsPrefix`/`enableRBAC` and the pool's `name`/`count`/`vmSize`/`osType`/
+`mode` — and drops `identity`, `networkProfile`, `addonProfiles` and the
+pool's `enableAutoScaling`/`type`, while adding computed surface
+(`currentKubernetesVersion`, `fqdn`, `nodeResourceGroup`, per-pool
+`provisioningState`).
+
+**Effect on chant:** the AksCluster composite's production defaults would put
+honest-but-emulator-made `absent` drift on every clean apply, so
+`examples/cc-azure-canonical` declares a raw managedCluster carrying exactly
+the surface that round-trips. The added computed fields are genuinely
+read-only in real Azure and normalize away via `AZURE_SERVER_COMPUTED_NAMES`
+(counterpart-gated — a declared `nodeResourceGroup` is still compared).
+
+## 10. floci-az: managedClusters are absent from the resource-group resource list
+
+**Status:** confirmed 2026-08-07 against `floci/floci-az:0.10.0`, unfiled.
+
+```
+$ curl -s "$BASE/resourceGroups/rg/resources?api-version=2021-04-01"
+{"value":[ …every generic ARM resource in the group, full bodies… ]}
+# The AKS cluster created above is not in the list, though GET on its own URL
+# returns it. Modeled providers keep their own store; the RG listing only
+# covers the generic one.
+```
+
+**Effect on chant:** live export over ARM (`chant import --from <env>` with
+`AZURE_ENDPOINT_URL` set, #1214) enumerates the group through this listing, so
+a reconcile regenerates the networking estate but cannot carry the AKS
+cluster; the authored cluster source stays as-is. `test/azure-cc-e2e.sh`
+asserts exactly that split. Entry stands until the listing includes modeled
+providers.

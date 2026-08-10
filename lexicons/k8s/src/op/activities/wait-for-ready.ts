@@ -40,7 +40,23 @@ export interface PathMatch {
   // With neither `equals` nor `oneOf`, holds when the value is present (non-null).
 }
 
-export type ReadinessMatch = ConditionMatch | PathMatch;
+/**
+ * Match a `status.conditions[]` entry by `type` AND its `reason` (#1549).
+ * The dot-path walk can't index into a conditions array, and the Flux
+ * toolkit's failure signal is exactly `conditions[type=Ready].reason` — a
+ * wedge like `BuildFailed` keeps `Ready=False` forever while the generic
+ * poll waits out its whole timeout. `status` defaults to "False": a reason
+ * on a True condition is progress vocabulary, not a wedge.
+ */
+export interface ConditionReasonMatch {
+  conditionType: string;
+  /** Required `status` of the condition (default "False"). */
+  status?: string;
+  /** Holds when the condition's `reason` is one of these. */
+  reasonOneOf: string[];
+}
+
+export type ReadinessMatch = ConditionMatch | PathMatch | ConditionReasonMatch;
 
 export interface ReadinessSpec {
   /** All must hold for the resource to be ready. */
@@ -69,6 +85,19 @@ export const DEFAULT_READINESS: ReadinessSpec = {
  * reports `health`/`sync`, not a `Ready` condition — the case that proves the
  * override is necessary (#365).
  */
+/**
+ * Flux toolkit wedge reasons (#1549): a `Ready=False` with one of these
+ * `reason`s does not heal by waiting — a bad build, a failed install, an
+ * unreachable or invalid source. The toolkit is kstatus-conformant, so the
+ * READY half of every entry below is just the default; the value added is
+ * failing fast instead of polling out the full timeout.
+ */
+const FLUX_TERMINAL = (reasons: string[]): ReadinessSpec => ({
+  ready: [{ conditionType: "Ready", status: "True" }],
+  terminal: [{ conditionType: "Ready", reasonOneOf: reasons }],
+  observedGeneration: true,
+});
+
 export const READINESS_OVERRIDES: Record<string, ReadinessSpec> = {
   "argoproj.io/Application": {
     ready: [
@@ -78,6 +107,38 @@ export const READINESS_OVERRIDES: Record<string, ReadinessSpec> = {
     terminal: [{ path: "status.health.status", oneOf: ["Degraded", "Missing"] }],
     observedGeneration: false,
   },
+  "kustomize.toolkit.fluxcd.io/Kustomization": FLUX_TERMINAL([
+    "BuildFailed",
+    "HealthCheckFailed",
+    "ReconciliationFailed",
+    "ArtifactFailed",
+    "PruneFailed",
+  ]),
+  "helm.toolkit.fluxcd.io/HelmRelease": FLUX_TERMINAL([
+    "InstallFailed",
+    "UpgradeFailed",
+    "RollbackFailed",
+    "UninstallFailed",
+    "ArtifactFailed",
+    "ChartPullError",
+  ]),
+  "source.toolkit.fluxcd.io/GitRepository": FLUX_TERMINAL([
+    "AuthenticationFailed",
+    "GitOperationFailed",
+    "URLInvalid",
+    "StorageOperationFailed",
+  ]),
+  "source.toolkit.fluxcd.io/OCIRepository": FLUX_TERMINAL([
+    "AuthenticationFailed",
+    "OCIPullFailed",
+    "URLInvalid",
+    "StorageOperationFailed",
+  ]),
+  "source.toolkit.fluxcd.io/HelmChart": FLUX_TERMINAL([
+    "ChartPullError",
+    "ChartPackageError",
+    "StorageOperationFailed",
+  ]),
 };
 
 /** Resolve the readiness spec for a resource: registry override, else default. */
@@ -94,15 +155,31 @@ function getPath(obj: unknown, path: string): unknown {
   );
 }
 
+function isConditionReason(m: ReadinessMatch): m is ConditionReasonMatch {
+  return (m as ConditionReasonMatch).reasonOneOf !== undefined;
+}
+
 function isCondition(m: ReadinessMatch): m is ConditionMatch {
-  return (m as ConditionMatch).conditionType !== undefined;
+  return (m as ConditionMatch).conditionType !== undefined && !isConditionReason(m);
+}
+
+function findCondition(obj: unknown, conditionType: string): Record<string, unknown> | undefined {
+  const conds = getPath(obj, "status.conditions");
+  if (!Array.isArray(conds)) return undefined;
+  return conds.find((x) => x && typeof x === "object" && (x as Record<string, unknown>).type === conditionType) as
+    | Record<string, unknown>
+    | undefined;
 }
 
 function matchCondition(obj: unknown, m: ConditionMatch): boolean {
-  const conds = getPath(obj, "status.conditions");
-  if (!Array.isArray(conds)) return false;
-  const c = conds.find((x) => x && typeof x === "object" && (x as Record<string, unknown>).type === m.conditionType);
-  return !!c && String((c as Record<string, unknown>).status) === (m.status ?? "True");
+  const c = findCondition(obj, m.conditionType);
+  return !!c && String(c.status) === (m.status ?? "True");
+}
+
+function matchConditionReason(obj: unknown, m: ConditionReasonMatch): boolean {
+  const c = findCondition(obj, m.conditionType);
+  if (!c || String(c.status) !== (m.status ?? "False")) return false;
+  return typeof c.reason === "string" && m.reasonOneOf.includes(c.reason);
 }
 
 function matchPath(obj: unknown, m: PathMatch): boolean {
@@ -113,6 +190,7 @@ function matchPath(obj: unknown, m: PathMatch): boolean {
 }
 
 function matches(obj: unknown, m: ReadinessMatch): boolean {
+  if (isConditionReason(m)) return matchConditionReason(obj, m);
   return isCondition(m) ? matchCondition(obj, m) : matchPath(obj, m);
 }
 

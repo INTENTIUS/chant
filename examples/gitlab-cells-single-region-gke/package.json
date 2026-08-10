@@ -22,13 +22,15 @@
     "register-runners": "bash scripts/register-runners.sh",
     "teardown": "bash scripts/teardown.sh",
     "build:k3d": "chant build k3d --lexicon k8s -o k3d.yaml",
-    "test:local": "bash scripts/k3d-smoke.sh"
+    "test:local": "bash scripts/k3d-smoke.sh",
+    "build:k3d-cluster": "chant build k3d --lexicon k3d -o k3d-cluster.yaml"
   },
   "dependencies": {
     "@intentius/chant": "*",
     "@intentius/chant-lexicon-gcp": "*",
     "@intentius/chant-lexicon-k8s": "*",
     "@intentius/chant-lexicon-helm": "*",
-    "@intentius/chant-lexicon-gitlab": "*"
+    "@intentius/chant-lexicon-gitlab": "*",
+    "@intentius/chant-lexicon-k3d": "*"
   }
 }

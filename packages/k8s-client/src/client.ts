@@ -207,6 +207,23 @@ export interface K8sClient {
   delete(ref: ObjectRef, options?: DeleteOptions): Promise<void>;
   /** Run `fn` over `items` with this client's concurrency ceiling. */
   concurrently<T, R>(items: readonly T[], fn: (item: T, index: number) => Promise<R>): Promise<R[]>;
+  /**
+   * Every resource a groupVersion serves, from the cluster's own discovery
+   * (chant #1517) — what the runtime-children sweep enumerates so a custom
+   * kind's instances are reachable without a table someone maintains.
+   * Subresources (`pods/log`) are excluded. `[]` when the cluster serves no
+   * such groupVersion — an answer, not a failure. Cached like `resolve`.
+   */
+  resources(apiVersion: string, signal?: AbortSignal): Promise<ApiResourceInfo[]>;
+  /**
+   * One groupVersion per API group the cluster serves — each group's own
+   * `preferredVersion` (falling back to its first listed version), with the
+   * core group's `v1` first (chant #1517). This is the discovery-driven
+   * sweep's enumeration unit: one version per group names every kind exactly
+   * once, without re-listing the same resources at a second served version.
+   * Cached for the client's lifetime, like the rest of discovery.
+   */
+  preferredGroupVersions(signal?: AbortSignal): Promise<string[]>;
   /** The API resource lists discovery has been asked for so far, for tests and diagnostics. */
   discoveryCacheKeys(): string[];
 }
@@ -221,6 +238,14 @@ interface ApiResourceListResponse {
     verbs?: string[];
     shortNames?: string[];
   }>;
+}
+
+/** The `/api` + `/apis` root discovery documents, kept structured so both the
+ * flat enumeration (`servedGroupVersions`) and the one-per-group enumeration
+ * (`preferredGroupVersions`, chant #1517) derive from a single cached fetch. */
+interface RootDiscovery {
+  coreVersions: string[];
+  groups: Array<{ preferred?: string; versions: string[] }>;
 }
 
 /**
@@ -293,12 +318,23 @@ export async function createK8sClient(options: K8sClientOptions = {}): Promise<K
   const defaultNamespace = kc.getContextObject(kc.getCurrentContext())?.namespace || "default";
   const concurrency = options.concurrency ?? DEFAULT_CONCURRENCY;
 
+  // Which cluster this client reads, in words, stamped onto every failure it
+  // throws (chant #1488). A `read-failed` that does not say which context it
+  // read turned "the ambient context moved" into an afternoon of debugging;
+  // naming it here — at construction, once — means every read path's
+  // classification carries it without each caller remembering to.
+  const contextNote = `context "${provenance.context ?? "(unset)"}" (${options.contextLabel ?? provenance.contextSource})`;
+  function noted<T extends { contextNote?: string }>(err: T): T {
+    err.contextNote = contextNote;
+    return err;
+  }
+
   // apiVersion → its APIResourceList, or null when the cluster does not serve
   // that group/version at all. Promises are cached, not values, so N entities
   // resolved concurrently issue one discovery request between them rather
   // than N identical ones.
   const discoveryCache = new Map<string, Promise<ApiResourceListResponse | null>>();
-  let groupVersionsCache: Promise<string[]> | undefined;
+  let rootDiscoveryCache: Promise<RootDiscovery> | undefined;
 
   async function send(
     path: string,
@@ -330,10 +366,10 @@ export async function createK8sClient(options: K8sClientOptions = {}): Promise<K
         .send(ctx)
         .toPromise()) as unknown as ResponseContextLike;
     } catch (err) {
-      throw new K8sTransportError(
-        err instanceof Error ? err.message : String(err),
-        opts.target ?? `${method} ${path}`,
-        { cause: err },
+      throw noted(
+        new K8sTransportError(err instanceof Error ? err.message : String(err), opts.target ?? `${method} ${path}`, {
+          cause: err,
+        }),
       );
     }
 
@@ -341,10 +377,12 @@ export async function createK8sClient(options: K8sClientOptions = {}): Promise<K
     try {
       text = await response.body.text();
     } catch (err) {
-      throw new K8sTransportError(
-        `response body could not be read: ${err instanceof Error ? err.message : String(err)}`,
-        opts.target ?? `${method} ${path}`,
-        { cause: err },
+      throw noted(
+        new K8sTransportError(
+          `response body could not be read: ${err instanceof Error ? err.message : String(err)}`,
+          opts.target ?? `${method} ${path}`,
+          { cause: err },
+        ),
       );
     }
     return { status: response.httpStatusCode, body: text };
@@ -357,15 +395,17 @@ export async function createK8sClient(options: K8sClientOptions = {}): Promise<K
   ): Promise<T> {
     const { status, body } = await send(path, method, opts);
     if (status < 200 || status > 299) {
-      throw K8sApiError.fromResponse(status, body, opts.target);
+      throw noted(K8sApiError.fromResponse(status, body, opts.target));
     }
     try {
       return JSON.parse(body) as T;
     } catch (err) {
-      throw new K8sTransportError(
-        `the API server returned HTTP ${status} with a body that is not JSON`,
-        opts.target ?? `${method} ${path}`,
-        { cause: err },
+      throw noted(
+        new K8sTransportError(
+          `the API server returned HTTP ${status} with a body that is not JSON`,
+          opts.target ?? `${method} ${path}`,
+          { cause: err },
+        ),
       );
     }
   }
@@ -391,15 +431,13 @@ export async function createK8sClient(options: K8sClientOptions = {}): Promise<K
     return pending;
   }
 
-  async function servedGroupVersions(signal?: AbortSignal): Promise<string[]> {
-    if (groupVersionsCache) return groupVersionsCache;
-    groupVersionsCache = (async () => {
-      const out: string[] = [];
+  async function rootDiscovery(signal?: AbortSignal): Promise<RootDiscovery> {
+    if (rootDiscoveryCache) return rootDiscoveryCache;
+    rootDiscoveryCache = (async (): Promise<RootDiscovery> => {
       const core = await sendJson<{ versions?: string[] }>("/api", "GET", {
         signal,
         target: "discovery /api",
       });
-      out.push(...(core.versions ?? ["v1"]));
       const groups = await sendJson<{
         groups?: Array<{
           name?: string;
@@ -407,19 +445,43 @@ export async function createK8sClient(options: K8sClientOptions = {}): Promise<K
           versions?: Array<{ groupVersion?: string }>;
         }>;
       }>("/apis", "GET", { signal, target: "discovery /apis" });
-      for (const group of groups.groups ?? []) {
-        const preferred = group.preferredVersion?.groupVersion;
-        if (preferred) out.push(preferred);
-        for (const v of group.versions ?? []) {
-          if (v.groupVersion && v.groupVersion !== preferred) out.push(v.groupVersion);
-        }
-      }
-      return [...new Set(out)];
+      return {
+        coreVersions: core.versions ?? ["v1"],
+        groups: (groups.groups ?? []).map((group) => ({
+          preferred: group.preferredVersion?.groupVersion,
+          versions: (group.versions ?? [])
+            .map((v) => v.groupVersion)
+            .filter((gv): gv is string => typeof gv === "string" && gv.length > 0),
+        })),
+      };
     })().catch((err: unknown) => {
-      groupVersionsCache = undefined;
+      rootDiscoveryCache = undefined;
       throw err;
     });
-    return groupVersionsCache;
+    return rootDiscoveryCache;
+  }
+
+  async function servedGroupVersions(signal?: AbortSignal): Promise<string[]> {
+    const root = await rootDiscovery(signal);
+    const out: string[] = [...root.coreVersions];
+    for (const group of root.groups) {
+      if (group.preferred) out.push(group.preferred);
+      for (const gv of group.versions) {
+        if (gv !== group.preferred) out.push(gv);
+      }
+    }
+    return [...new Set(out)];
+  }
+
+  async function preferredGroupVersions(signal?: AbortSignal): Promise<string[]> {
+    const root = await rootDiscovery(signal);
+    const core = root.coreVersions.includes("v1") ? "v1" : root.coreVersions[0];
+    const out: string[] = core ? [core] : [];
+    for (const group of root.groups) {
+      const gv = group.preferred ?? group.versions[0];
+      if (gv) out.push(gv);
+    }
+    return [...new Set(out)];
   }
 
   function toInfo(apiVersion: string, entry: NonNullable<ApiResourceListResponse["resources"]>[number]): ApiResourceInfo {
@@ -610,7 +672,7 @@ export async function createK8sClient(options: K8sClientOptions = {}): Promise<K
       target,
     });
     if (status < 200 || status > 299) {
-      throw K8sApiError.fromResponse(status, body, target);
+      throw noted(K8sApiError.fromResponse(status, body, target));
     }
     return body;
   }
@@ -627,6 +689,14 @@ export async function createK8sClient(options: K8sClientOptions = {}): Promise<K
     });
   }
 
+  async function resourcesOf(apiVersion: string, signal?: AbortSignal): Promise<ApiResourceInfo[]> {
+    const list = await apiResourceList(apiVersion, signal);
+    if (!list) return [];
+    return (list.resources ?? [])
+      .filter((r) => !(r.name ?? "").includes("/"))
+      .map((entry) => toInfo(apiVersion, entry));
+  }
+
   return {
     provenance,
     defaultNamespace,
@@ -638,6 +708,8 @@ export async function createK8sClient(options: K8sClientOptions = {}): Promise<K
     apply,
     delete: remove,
     concurrently: (items, fn) => mapConcurrent(items, fn, concurrency),
+    resources: resourcesOf,
+    preferredGroupVersions,
     discoveryCacheKeys: () => [...discoveryCache.keys()].sort(),
   };
 }

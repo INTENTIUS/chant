@@ -2,9 +2,9 @@
  * Cross-lexicon lifecycle integration (#163) — GCP row.
  *
  * Drives the REAL gcpPlugin through core's live-import driver and the changeset
- * path. Two edges are mocked, because since #1209 the plugin has two
- * transports: `describeResources` reads GCP REST (stubbed `fetch`), while
- * `exportResources` and the deep reader still go through Config Connector
+ * path. Two edges are mocked, because the plugin has two transports:
+ * `describeResources` and the deep reader read GCP REST (stubbed `fetch`,
+ * #1209), while `exportResources` still goes through Config Connector
  * (stubbed `exec`).
  */
 import { describe, test, expect, vi, beforeEach } from "vitest";

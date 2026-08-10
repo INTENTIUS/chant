@@ -42,5 +42,9 @@ export async function validate(opts?: { basePath?: string }): Promise<ValidateRe
     lexiconJsonFilename: "lexicon-k8s.json",
     requiredNames: REQUIRED_NAMES,
     basePath,
+    // chant #1475 — the k8s baseline was re-baselined together with the k3s
+    // CRD work (#1605), so a release must now verify the API it ships is the
+    // reviewed one. Runs only under CHANT_RELEASE_GATE=1.
+    checkSurfaceSnapshot: true,
   });
 }

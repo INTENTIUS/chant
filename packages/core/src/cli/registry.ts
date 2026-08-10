@@ -31,6 +31,8 @@ export interface ParsedArgs {
   live: boolean;
   /** `chant migrate --from <name>` (default "github") */
   migrateFrom?: string;
+  /** `chant import --kustomize <dir>` — render the kustomization, then import (#1548) */
+  kustomize?: string;
   /** `chant carve advise --state <path>` — opt-in .tfstate for accurate instance counts */
   statePath?: string;
   /** `chant carve emit --select <tf-address>` — the Terraform resource to carve */
@@ -43,6 +45,8 @@ export interface ParsedArgs {
   carveStack?: string;
   /** `chant carve apply --write` — save the graduation doc */
   write?: boolean;
+  /** `chant carve apply --write-source` — stamp the ownership marker into the emitted source */
+  writeSource?: boolean;
   /** `chant migrate --to <name>` (default "gitlab") */
   migrateTo?: string;
   /** `chant migrate --emit yaml|ts` */

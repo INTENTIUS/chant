@@ -20,6 +20,10 @@ import { azr026 } from "./azr026";
 import { azr027 } from "./azr027";
 import { azr028 } from "./azr028";
 import { azr029 } from "./azr029";
+import { azr030 } from "./azr030";
+import { azr031 } from "./azr031";
+import { azr032 } from "./azr032";
+import { azr033 } from "./azr033";
 
 export const postSynthChecks: PostSynthCheck[] = [
   azr010,
@@ -42,4 +46,8 @@ export const postSynthChecks: PostSynthCheck[] = [
   azr027,
   azr028,
   azr029,
+  azr030,
+  azr031,
+  azr032,
+  azr033,
 ];

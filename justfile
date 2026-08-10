@@ -41,9 +41,11 @@ _ensure-gen:
       if [ -f "${lex}src/generated/index.ts" ] \
          && grep -rqls 'generated/operations.json' "${lex}src/api" "${lex}src/codegen" 2>/dev/null \
          && [ ! -f "${lex}src/generated/operations.json" ]; then needs=true; fi
-      # import/audit load the bundled dist/meta.json
+      # import/audit load the bundled dist/meta.json; the OKF knowledge
+      # bundle (#1060) is part of the same bundle output — an old checkout
+      # can have meta.json but predate dist/okf/
       if grep -q '"bundle"' "${lex}package.json" 2>/dev/null \
-         && [ ! -f "${lex}dist/meta.json" ]; then needs=true; fi
+         && { [ ! -f "${lex}dist/meta.json" ] || [ ! -f "${lex}dist/okf/index.md" ]; }; then needs=true; fi
       if [ "$needs" = true ]; then
         echo "gen: $(basename "$lex")"
         npm run --prefix "$lex" generate
@@ -176,6 +178,24 @@ components-aws-e2e:
 aws-cc-e2e:
     bash test/aws-cc-e2e.sh
 
+# GCP config-controller round-trip (#1211): apply -> observe -> drift -> remediate -> destroy
+# on the canonical GCP estate via direct REST against floci-gcp
+# (on-demand, needs Docker)
+gcp-cc-e2e:
+    bash test/gcp-cc-e2e.sh
+
+# Azure property-level drift acceptance (#1213): clean apply quiet, hand-edited NSG rule
+# surfaces, RG-orphan estate stays observed, emulator restart reads MISSING
+# (floci-az in Docker; on-demand, needs Docker only)
+azure-drift-e2e:
+    bash test/azure-drift-e2e.sh
+
+# Azure config-controller round-trip (#1214): apply -> observe -> drift -> reconcile -> rollback
+# on the canonical mixed-substrate example — AKS backed by a real k3s, the k8s
+# Service on it included (floci-az in Docker; on-demand, needs Docker + kubectl)
+azure-cc-e2e:
+    bash test/azure-cc-e2e.sh
+
 # Prove the adopt-alb-services GENERATED pipeline deploys multi-service across isolated jobs, with cross-stack outputs threaded as artifacts (Floci in Docker; on-demand, needs Docker + aws CLI)
 adopt-alb-services-e2e:
     bash test/adopt-alb-services-e2e.sh
@@ -262,8 +282,8 @@ release bump="patch":
     for f in packages/core/package.json packages/k8s-client/package.json lexicons/*/package.json; do
       jq --arg v "$next" '
         .version = $v
-        | if .peerDependencies["@intentius/chant"] then .peerDependencies["@intentius/chant"] = "^" + $v else . end
-        | if .peerDependencies["@intentius/chant-lexicon-github"] then .peerDependencies["@intentius/chant-lexicon-github"] = "^" + $v else . end
+        | if .peerDependencies then .peerDependencies |= with_entries(if (.key | startswith("@intentius/")) then .value = "^" + $v else . end) else . end
+        | if .optionalDependencies then .optionalDependencies |= with_entries(if ((.key | startswith("@intentius/")) and .value != "*") then .value = "^" + $v else . end) else . end
       ' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
     done
     # Keep the committed lockfile's workspace entries in step with the bump —

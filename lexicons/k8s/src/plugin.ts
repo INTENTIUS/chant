@@ -21,6 +21,7 @@ import { latestImageTagRule } from "./lint/rules/latest-image-tag";
 import { missingResourceLimitsRule } from "./lint/rules/missing-resource-limits";
 import { argoAutomatedPruneRule } from "./lint/rules/argo-automated-prune";
 import { argoAppSetSingleProjectRule } from "./lint/rules/argo-appset-single-project";
+import { fluxSourceRefPinRule } from "./lint/rules/flux-source-ref-pin";
 import { k8sCompletions } from "./lsp/completions";
 import { k8sHover } from "./lsp/hover";
 import { K8sParser } from "./import/parser";
@@ -28,6 +29,8 @@ import { K8sGenerator } from "./import/generator";
 import { k8sDeepNormalizationHooks } from "./deep-observe-hooks";
 import { LABEL_OWNERSHIP_KEYS } from "@intentius/chant/ownership";
 import { k8sConfigSchema } from "./config-schema";
+import type { K8sChantConfig } from "./config";
+import { renderKustomizeRoots } from "./kustomize/root";
 
 export const k8sPlugin: LexiconPlugin = {
   name: "k8s",
@@ -62,11 +65,24 @@ export const k8sPlugin: LexiconPlugin = {
       missingResourceLimitsRule,
       argoAutomatedPruneRule,
       argoAppSetSingleProjectRule,
+      fluxSourceRefPinRule,
     ];
   },
 
   postSynthChecks() {
     return postSynthCheckList;
+  },
+
+  // #1548 piece 3 — kustomization dirs declared as build roots. Each entry in
+  // `k8s.kustomize.roots` renders at build time (same injectable runner as
+  // the kustomize-apply capability: `kustomize build`, `kubectl kustomize`
+  // fallback) and the documents join the build as verbatim manifest entities:
+  // serialized with ownership stamping, checked post-synth, observed by
+  // `lifecycle diff --live`. See ./kustomize/root.ts.
+  async buildRoots(ctx) {
+    const roots = (ctx.config as { k8s?: K8sChantConfig }).k8s?.kustomize?.roots ?? [];
+    if (roots.length === 0) return { entities: new Map() };
+    return renderKustomizeRoots({ projectRoot: ctx.projectRoot, roots });
   },
 
   // K8s YAML has no template interpolation functions like CloudFormation's
@@ -624,11 +640,54 @@ const { deployment, service, serviceMonitor, prometheusRule } = MonitoredService
           },
         ],
       },
+      {
+        file: "chant-k8s-flux.md",
+        name: "chant-k8s-flux",
+        description: "Flux CD composites — FluxGitSource + FluxAppFor, the one-source-many-apps shape, dependsOn ordering, the FLUX rules, and the flux-reconcile deploy step",
+        triggers: [
+          { type: "context", value: "flux" },
+          { type: "context", value: "fluxcd" },
+          { type: "context", value: "flux cd" },
+          { type: "context", value: "gitops" },
+          { type: "context", value: "gitrepository" },
+          { type: "context", value: "kustomization" },
+          { type: "context", value: "source-controller" },
+          { type: "context", value: "kustomize-controller" },
+          { type: "context", value: "reconcile" },
+        ],
+        parameters: [],
+        examples: [
+          {
+            title: "Source + Kustomization from a build target",
+            description: "Reconcile a Chant build target with Flux",
+            input: "Deploy my app through Flux",
+            output: "import { FluxGitSource, FluxAppFor } from \"@intentius/chant-lexicon-k8s\";\n\nexport const source = FluxGitSource(\"infra\", {\n  url: \"https://github.com/acme/infra\",\n  branch: \"main\",\n});\n\nexport const app = FluxAppFor(\"app\", {\n  source,\n  path: \"./dist/apps/app\",\n  dependsOn: [\"platform\"],\n});",
+          },
+          {
+            title: "One source, many apps",
+            description: "The multi-app repo shape — one GitRepository shared by every Kustomization",
+            input: "Reconcile platform, api, and web from one repo with ordering",
+            output: "import { FluxGitSource, FluxAppFor } from \"@intentius/chant-lexicon-k8s\";\n\nconst source = FluxGitSource(\"infra\", { url: \"https://github.com/acme/infra\" });\n\nexport const platform = FluxAppFor(\"platform\", { source, path: \"./dist/platform\" });\nexport const api = FluxAppFor(\"api\", { source, path: \"./dist/apps/api\", dependsOn: [\"platform\"] });\nexport const web = FluxAppFor(\"web\", { source, path: \"./dist/apps/web\", dependsOn: [\"platform\", \"api\"] });",
+          },
+        ],
+      },
     ]),
 
   async describeResources(options) {
     const { describeResources } = await import("./describe-resources");
     return describeResources(options);
+  },
+
+  /**
+   * Deploy-unit presence + health for `chant components status --live`
+   * (#1495 piece 3): a Kubernetes deploy unit is the label selector chant's
+   * own serializer stamps, so this reads back
+   * `app.kubernetes.io/managed-by=chant, chant.intentius.io/stack=<stack>`
+   * and rolls readiness up from the matching workloads' controllers.
+   */
+  async describeStackStatus(options) {
+    const { describeStackStatus } = await import("./describe-stack-status");
+    return describeStackStatus(options);
   },
 
   async exportResources(options) {

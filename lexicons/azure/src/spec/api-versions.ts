@@ -64,23 +64,44 @@ export function parseSchemaPath(
  * (validate.ts's REQUIRED_NAMES and composites/vm-linux.ts depend on it);
  * it drops the disk-only resources (disks, diskAccesses, diskEncryptionSets,
  * snapshots), which nothing here currently references.
+ *
+ * A pin can list several versions (#1545): Azure publishes some providers as
+ * per-family deltas, so no single date carries every resource we need. The
+ * files merge in the order listed — the first file that defines a resource
+ * name wins, later files only contribute resources not yet seen.
+ * Microsoft.Authorization needs three: 2022-04-01 for roleAssignments /
+ * roleDefinitions (#223), 2026-06-01 (latest stable policy file) for
+ * policyAssignments / policyDefinitions / policySetDefinitions and their
+ * _versions children, and 2022-07-01-preview for policyExemptions, which has
+ * no GA date and whose newer preview files (2024-12-01-preview and later)
+ * drag in policy variables we don't want yet.
+ *
+ * Microsoft.Management and Microsoft.Subscription are pinned to their latest
+ * GA dates: the naive latest for both is a preview (2024-02-01-preview adds
+ * serviceGroups; 2025-11-01-preview adds changeTenantRequest), and the
+ * management-group hierarchy should not author against preview apiVersions.
  */
-export const PROVIDER_VERSION_OVERRIDES: Record<string, string> = {
-  "Microsoft.Authorization": "2022-04-01",
-  "Microsoft.Compute": "2026-03-01",
+export const PROVIDER_VERSION_OVERRIDES: Record<string, readonly string[]> = {
+  "Microsoft.Authorization": ["2022-04-01", "2026-06-01", "2022-07-01-preview"],
+  "Microsoft.Compute": ["2026-03-01"],
+  "Microsoft.Management": ["2023-04-01"],
+  "Microsoft.Subscription": ["2021-10-01"],
 };
 
 /**
- * Given a set of schema paths, return only the latest API version per provider,
- * with {@link PROVIDER_VERSION_OVERRIDES} pinning specific providers to a chosen
- * version (used where "latest" drops resources we depend on).
+ * Given a set of schema paths, return the schema files to generate from, per
+ * provider: the single latest API version, unless
+ * {@link PROVIDER_VERSION_OVERRIDES} pins the provider to one or more chosen
+ * versions (used where "latest" drops resources we depend on). For pinned
+ * providers the array preserves the pin order — callers merge the files
+ * first-wins per resource name.
  *
- * Returns a Map of provider → { path, apiVersion }.
+ * Returns a Map of provider → [{ path, apiVersion }, ...].
  */
 export function latestVersionPerProvider(
   paths: string[],
-): Map<string, { path: string; apiVersion: string }> {
-  const best = new Map<string, { path: string; apiVersion: string }>();
+): Map<string, Array<{ path: string; apiVersion: string }>> {
+  const best = new Map<string, Array<{ path: string; apiVersion: string }>>();
 
   for (const p of paths) {
     const parsed = parseSchemaPath(p);
@@ -88,16 +109,20 @@ export function latestVersionPerProvider(
 
     const pinned = PROVIDER_VERSION_OVERRIDES[parsed.provider];
     if (pinned) {
-      // Only accept the pinned version for an overridden provider.
-      if (parsed.apiVersion === pinned) {
-        best.set(parsed.provider, { path: p, apiVersion: parsed.apiVersion });
+      // Only accept the pinned versions for an overridden provider,
+      // slotted into pin order.
+      if (pinned.includes(parsed.apiVersion)) {
+        const files = best.get(parsed.provider) ?? [];
+        files.push({ path: p, apiVersion: parsed.apiVersion });
+        files.sort((a, b) => pinned.indexOf(a.apiVersion) - pinned.indexOf(b.apiVersion));
+        best.set(parsed.provider, files);
       }
       continue;
     }
 
     const existing = best.get(parsed.provider);
-    if (!existing || compareApiDates(parsed.apiVersion, existing.apiVersion) > 0) {
-      best.set(parsed.provider, { path: p, apiVersion: parsed.apiVersion });
+    if (!existing || compareApiDates(parsed.apiVersion, existing[0].apiVersion) > 0) {
+      best.set(parsed.provider, [{ path: p, apiVersion: parsed.apiVersion }]);
     }
   }
 

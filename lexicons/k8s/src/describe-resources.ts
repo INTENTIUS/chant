@@ -42,17 +42,19 @@
  * exactly the shape `lifecycle diff --live` has always classified `orphan`.
  * On Kubernetes that is wrong: it is expected runtime, not drift, and will be
  * recreated the moment it is deleted. After the declared-entity reads above
- * resolve, this scans Pods in the namespaces they actually live in and walks
- * each one's `ownerReferences` chain (`./api/owner-chain.ts`) against the
- * entities this very call resolved. A chain reaching one of them is reported
- * with `ownerChain: { root: "declared", ... }`; core's diff/change-set engine
- * reads that as `runtime` instead of `orphan`. Deliberately scoped to Pods —
- * the concrete case the issue and its acceptance criteria name — and to the
- * namespaces this observation already touched, not a cluster-wide sweep;
- * widening to other controller-spawned kinds is the same walk repeated.
+ * resolve, this sweeps candidate kinds in the namespaces they actually live in
+ * and walks each object's `ownerReferences` chain (`./api/owner-chain.ts`)
+ * against the entities this very call resolved. A chain reaching one of them
+ * is reported with `ownerChain: { root: "declared", ... }`; core's
+ * diff/change-set engine reads that as `runtime` instead of `orphan`.
+ *
+ * Which kinds are candidates is the cluster's own API discovery's answer
+ * (#1517): every listable kind it serves, one version per group. The sweep's
+ * bound is the namespaces the declared estate touches, never a kind table —
+ * see `addRuntimeChildren`.
  */
 
-import type { ObservationResult, ResourceMetadata, UnobservedEntity } from "@intentius/chant/lexicon";
+import type { ObservationResult, ResourceMetadata, UnobservedEntity, UnobservedReason } from "@intentius/chant/lexicon";
 import { observation, unobservedAll } from "@intentius/chant/observation";
 import { hasOwnershipMarker, classifyOwnership, LABEL_OWNERSHIP_KEYS } from "@intentius/chant/ownership";
 import type { K8sClient, K8sObject } from "@intentius/chant-k8s-client";
@@ -65,6 +67,7 @@ import {
 } from "./api/classify";
 import { operationFor } from "./api/operation-surface";
 import { resolveK8sOwnerChain } from "./api/owner-chain";
+import { gvkToTypeName } from "./spec/parse";
 
 function pruneUndefined<T extends Record<string, unknown>>(obj: T): Record<string, unknown> {
   const out: Record<string, unknown> = {};
@@ -103,7 +106,52 @@ export function statusFromObject(obj: K8sObject): string {
       ? "READY"
       : `PROGRESSING(${status.readyReplicas}/${status.replicas})`;
   }
+
+  // The kstatus rung (#1549): an object with NO phase and NO replica counts —
+  // a Flux Kustomization/HelmRelease, cert-manager, any conditions-first CRD —
+  // used to fall straight to PRESENT, so a wedged reconciler read exactly like
+  // a healthy one. `Ready` is the contract those objects speak: False → its
+  // reason (`BuildFailed`, `UpgradeFailed`, …), True → READY. Deliberately
+  // BELOW the phase/replica rungs so no Pod or workload word changes — for
+  // those objects a False Ready is already visible through the rungs above.
+  const ready = readyConditionWord(status);
+  if (ready) return ready;
+
+  // Argo's Application speaks health/sync, not a Ready condition (the same
+  // split the readiness registry encodes) — `Degraded` / `OutOfSync` beats
+  // PRESENT for the one object whose whole job is convergence.
+  const argo = argoStatusWord(status);
+  if (argo) return argo;
+
   return "PRESENT";
+}
+
+/** The `Ready` condition rendered as a status word: False → its reason (or
+ * NOT-READY when the controller gave none), True → READY, absent → nothing. */
+function readyConditionWord(status: K8sObject["status"]): string | undefined {
+  const conditions = (status as { conditions?: unknown } | undefined)?.conditions;
+  if (!Array.isArray(conditions)) return undefined;
+  for (const c of conditions) {
+    const cond = c as { type?: unknown; status?: unknown; reason?: unknown };
+    if (cond.type !== "Ready") continue;
+    if (cond.status === "True") return "READY";
+    if (cond.status === "False") {
+      return typeof cond.reason === "string" && cond.reason.length > 0 ? cond.reason : "NOT-READY";
+    }
+  }
+  return undefined;
+}
+
+/** Argo Application health/sync as a status word: anything but the happy pair
+ * surfaces the unhappy half; Healthy+Synced reads as READY. */
+function argoStatusWord(status: K8sObject["status"]): string | undefined {
+  const s = status as { health?: { status?: unknown }; sync?: { status?: unknown } } | undefined;
+  const health = typeof s?.health?.status === "string" ? s.health.status : undefined;
+  const sync = typeof s?.sync?.status === "string" ? s.sync.status : undefined;
+  if (!health && !sync) return undefined;
+  if (health && health !== "Healthy") return health;
+  if (sync && sync !== "Synced") return sync;
+  return "READY";
 }
 
 /**
@@ -320,75 +368,302 @@ export async function describeResources(
     }
   });
 
-  await addRuntimeChildren(client, resources, options.owned);
+  await addRuntimeChildren(client, resources, unobserved, options.owned, declared);
 
   return observation(resources, unobserved);
 }
 
 /**
- * Scan Pods in the namespaces of entities this call just resolved, and
- * classify each one's owner-reference chain (#1077). Mutates `resources` in
- * place, adding an entry per Pod whose chain was worth reporting.
+ * Sweep runtime-child candidates in the namespaces of entities this call just
+ * resolved, and classify each one's owner-reference chain (#1077). Mutates
+ * `resources` in place, adding an entry per object whose chain was worth
+ * reporting, and `unobserved` for the parts of the sweep that could not look.
  *
- * Best-effort and additive: a namespace this scan cannot list (RBAC denial,
- * a transient error) is simply skipped rather than failing the observation —
- * Pods are not declared entities, so there is no NOT-OBSERVED axis for them
- * to report against, the same way an out-of-band AWS child resource has none
- * either.
+ * The candidate kinds are the cluster's own API discovery's answer (#1517):
+ * every listable kind it serves, one version per group (the group's
+ * preferredVersion, so nothing is listed twice at a second served version).
+ * The first cut scoped this to Pods, the second to the estate's own declared
+ * API groups — and both missed exactly where the runtime tier says the most:
+ * an operator's children are whatever kinds its controllers make (a
+ * MicroVMReplicaSet's MicroVMs, a CR's Deployments in a group the estate
+ * never declares), which no kind table can anticipate. The same open-world
+ * inversion behold#74 made for declared CRDs, applied to the runtime axis.
+ *
+ * What bounds the sweep is not a kind list but reach:
+ *  - **Namespaced kinds** are listed only in the namespaces the declared
+ *    estate touches (where its entities resolved, plus the namespaces its
+ *    GitOps CRs target) — owner references cannot cross a namespace, so a
+ *    child elsewhere could never chain to this estate anyway.
+ *  - **Cluster-scoped kinds** are listed only when the estate resolved a
+ *    cluster-scoped entity — a cluster-scoped object's owners are themselves
+ *    cluster-scoped (Kubernetes' own GC rule), so without one declared there
+ *    is nothing such a chain could reach.
+ *  - **It is not an inventory**: outside Pods (whose chain verdicts, foreign
+ *    included, are #1077's original contract), a swept object is only
+ *    reported when its chain resolves to a declared entity.
+ *
+ * Tri-state honesty (#1089, extended to the sweep): a kind discovery names
+ * but the sweep cannot list — RBAC denial, a flaking apiserver — becomes a
+ * `runtime-sweep:*` entry in `unobserved`, never a silent gap. Silence would
+ * read as "no runtime children there", which the failed list never proved.
+ * A list 404 (the kind vanished between discovery and the list) stays an
+ * absence, per `classifyApiFailure`'s standing rule. Declared-entity
+ * resolution is never failed by the sweep.
  */
+/** The declared GitOps CRs, indexed the way their controllers' labels can be
+ * resolved (#1549). `byRef` keys are `type\0namespace\0name` (Flux — exact);
+ * `argoByName` maps an Application's name to its declared entity, or null
+ * when two declared Applications share the name (ambiguous → no claim). */
+interface GitopsIndex {
+  present: boolean;
+  byRef: Map<string, string>;
+  argoByName: Map<string, string | null>;
+  targetNamespaces: Set<string>;
+}
+
+function gitopsIndex(declared: readonly Declared[]): GitopsIndex {
+  const byRef = new Map<string, string>();
+  const argoByName = new Map<string, string | null>();
+  const targetNamespaces = new Set<string>();
+  let present = false;
+  for (const { entityName, entityType, props } of declared) {
+    const isArgo = entityType === "K8s::Argo::Application";
+    const isFlux = entityType === "K8s::Flux::Kustomization" || entityType === "K8s::Flux::HelmRelease";
+    if (!isArgo && !isFlux) continue;
+    present = true;
+    const meta = props.metadata as { name?: string; namespace?: string } | undefined;
+    const spec = props.spec as { targetNamespace?: unknown; destination?: { namespace?: unknown } } | undefined;
+    const name = meta?.name;
+    if (!name) continue;
+    if (isFlux) {
+      byRef.set(`${entityType}\0${meta?.namespace ?? "default"}\0${name}`, entityName);
+      if (typeof spec?.targetNamespace === "string") targetNamespaces.add(spec.targetNamespace);
+    } else {
+      argoByName.set(name, argoByName.has(name) ? null : entityName);
+      if (typeof spec?.destination?.namespace === "string") targetNamespaces.add(spec.destination.namespace);
+    }
+  }
+  return { present, byRef, argoByName, targetNamespaces };
+}
+
+/** The declared GitOps CR a swept object's controller labels resolve to, or
+ * undefined. Flux's label pairs are exact; Argo's bare instance label claims
+ * only a UNIQUE declared Application. */
+function gitopsOwner(labels: Record<string, string> | undefined, gitops: GitopsIndex): string | undefined {
+  if (!labels || !gitops.present) return undefined;
+  const ksName = labels["kustomize.toolkit.fluxcd.io/name"];
+  const ksNs = labels["kustomize.toolkit.fluxcd.io/namespace"];
+  if (ksName && ksNs) {
+    const hit = gitops.byRef.get(`K8s::Flux::Kustomization\0${ksNs}\0${ksName}`);
+    if (hit) return hit;
+  }
+  const hrName = labels["helm.toolkit.fluxcd.io/name"];
+  const hrNs = labels["helm.toolkit.fluxcd.io/namespace"];
+  if (hrName && hrNs) {
+    const hit = gitops.byRef.get(`K8s::Flux::HelmRelease\0${hrNs}\0${hrName}`);
+    if (hit) return hit;
+  }
+  const instance = labels["app.kubernetes.io/instance"];
+  if (instance) {
+    const hit = gitops.argoByName.get(instance);
+    if (hit) return hit; // null (ambiguous) and undefined both decline
+  }
+  return undefined;
+}
+
+/** One candidate kind of the discovery-driven sweep. */
+interface SweptKind {
+  apiVersion: string;
+  kind: string;
+  typeName: string;
+}
+
+/**
+ * Kinds the sweep skips even though discovery serves them. Not a kind table
+ * creeping back in: each entry is a kind that CANNOT attribute to a declared
+ * owner — an Event names its subject via `involvedObject`, never
+ * `ownerReferences` — and churns by the thousands in any active namespace,
+ * so listing it can only cost and never attach.
+ */
+function isSweepNoise(info: { kind: string; group: string }): boolean {
+  return info.kind === "Event" && (info.group === "" || info.group === "events.k8s.io");
+}
+
 async function addRuntimeChildren(
   client: K8sClient,
   resources: Record<string, ResourceMetadata>,
+  unobserved: Record<string, UnobservedEntity>,
   owned: boolean | undefined,
+  declared: readonly Declared[] = [],
 ): Promise<void> {
   const declaredByUid = new Map<string, string>();
   for (const [entityName, meta] of Object.entries(resources)) {
     if (meta.physicalId) declaredByUid.set(meta.physicalId, entityName);
   }
 
+  // GitOps attribution (#1549): Argo and Flux stamp their managed objects with
+  // labels, not ownerReferences, so the chain walk never reaches a declared
+  // entity for them. The label channel resolves against the DECLARED CRs by
+  // (type, namespace, name) — exact for Flux (its labels carry both halves) —
+  // and by unique name for Argo (its instance label carries no namespace, and
+  // it doubles as a generic Helm label, so anything ambiguous resolves to
+  // nothing: the module's standing conservatism).
+  const gitops = gitopsIndex(declared);
+
   const namespaces = new Set<string>();
+  let clusterScopedDeclared = false;
   for (const meta of Object.values(resources)) {
     const namespace = (meta.attributes as { namespace?: string } | undefined)?.namespace;
     if (namespace) namespaces.add(namespace);
+    else clusterScopedDeclared = true;
   }
-  if (namespaces.size === 0) return;
+  // The namespaces a declared GitOps CR TARGETS are declared literals too
+  // (Argo `spec.destination.namespace`, Flux `spec.targetNamespace`) — the
+  // controller puts the workloads there, so the scan must look there, and
+  // reading it off the declaration keeps this bounded by the estate, never a
+  // cluster-wide sweep.
+  for (const ns of gitops.targetNamespaces) namespaces.add(ns);
+  if (namespaces.size === 0 && !clusterScopedDeclared) return;
 
-  await client.concurrently([...namespaces], async (namespace) => {
-    let pods: K8sObject[];
+  // Every kind the cluster serves, from its own discovery (#1517): one
+  // groupVersion per group, every listable kind, split by scope. Failing to
+  // enumerate is a hole the observation must admit — silently sweeping
+  // nothing would read as "no runtime children", which was never established.
+  let groupVersions: string[];
+  try {
+    groupVersions = await client.preferredGroupVersions();
+  } catch (err) {
+    const outcome = classifyApiFailure(err);
+    unobserved["runtime-sweep"] = {
+      reason: outcome.kind === "unobserved" ? outcome.reason : "read-failed",
+      detail:
+        "cluster API discovery failed, so runtime children were not swept" +
+        (outcome.kind === "unobserved" ? `: ${outcome.detail}` : ""),
+    };
+    return;
+  }
+
+  const perGroup = await client.concurrently(groupVersions, async (gv) => {
     try {
-      pods = await client.list({ apiVersion: "v1", kind: "Pod" }, { namespace });
-    } catch {
-      return; // best-effort — see the function doc
+      return await client.resources(gv);
+    } catch (err) {
+      const outcome = classifyApiFailure(err);
+      if (outcome.kind === "unobserved") {
+        unobserved[`runtime-sweep:${gv}`] = {
+          reason: outcome.reason,
+          detail: `discovery for ${gv} failed, so its kinds were not swept: ${outcome.detail}`,
+        };
+      }
+      return [];
+    }
+  });
+
+  const namespacedKinds: SweptKind[] = [];
+  const clusterKinds: SweptKind[] = [];
+  for (const infos of perGroup) {
+    for (const info of infos) {
+      if (!info.verbs.includes("list") || isSweepNoise(info)) continue;
+      const swept: SweptKind = {
+        apiVersion: info.apiVersion,
+        kind: info.kind,
+        typeName: gvkToTypeName({ group: info.group, version: info.version, kind: info.kind }),
+      };
+      (info.namespaced ? namespacedKinds : clusterKinds).push(swept);
+    }
+  }
+
+  // A failed list is recorded once per kind, naming every scope it failed in,
+  // rather than once per (kind, namespace) — one RBAC rule denying a kind
+  // across N namespaces is one hole, not N.
+  const listFailures = new Map<
+    string,
+    { typeName: string; reason: UnobservedReason; scopes: string[]; detail: string }
+  >();
+
+  const sweep = async (swept: SweptKind, namespace: string | undefined): Promise<void> => {
+    let objects: K8sObject[];
+    try {
+      objects = await client.list(
+        { apiVersion: swept.apiVersion, kind: swept.kind },
+        namespace ? { namespace } : {},
+      );
+    } catch (err) {
+      const outcome = classifyApiFailure(err);
+      // `absent` (a list 404: the kind vanished between discovery and now)
+      // proves no instance exists — nothing to record.
+      if (outcome.kind === "unobserved") {
+        const key = `runtime-sweep:${swept.apiVersion}/${swept.kind}`;
+        const scope = namespace ? `namespace ${namespace}` : "cluster scope";
+        const failure = listFailures.get(key);
+        if (failure) failure.scopes.push(scope);
+        else listFailures.set(key, { typeName: swept.typeName, reason: outcome.reason, scopes: [scope], detail: outcome.detail });
+      }
+      return;
     }
 
-    await client.concurrently(pods, async (pod) => {
-      const uid = pod.metadata?.uid;
-      const name = pod.metadata?.name;
+    await client.concurrently(objects, async (obj) => {
+      const uid = obj.metadata?.uid;
+      const name = obj.metadata?.name;
       if (!uid || !name || declaredByUid.has(uid)) return; // declared directly, or unaddressable
+      const key = namespace ? `${namespace}/${name}` : `cluster:${name}`;
+      if (resources[key]) return; // already reported by an earlier kind
 
-      const ownerChain = await resolveK8sOwnerChain(pod, { declaredByUid, reader: client, namespace });
+      let ownerChain = await resolveK8sOwnerChain(obj, { declaredByUid, reader: client, namespace });
+      // The label channel (#1549) — only when the chain itself said nothing:
+      // a verdict the walk DID reach is never overridden.
+      if (ownerChain.root !== "declared") {
+        const entity = gitopsOwner(obj.metadata?.labels, gitops);
+        if (entity) ownerChain = { root: "declared", entity };
+      }
 
-      // `--owned`: withhold a Pod that is neither a runtime child of a
+      // `--owned`: withhold an object that is neither a runtime child of a
       // declared entity nor carrying chant's own marker — the same rule the
       // declared-entity read above applies, extended to the undeclared axis
       // this scan introduces.
-      const marker = hasOwnershipMarker(pod.metadata?.labels, LABEL_OWNERSHIP_KEYS);
+      const marker = hasOwnershipMarker(obj.metadata?.labels, LABEL_OWNERSHIP_KEYS);
       if (owned && ownerChain.root !== "declared" && !marker) return;
 
-      resources[`${namespace}/${name}`] = {
-        type: "K8s::Core::Pod",
+      // An undeclared object with NO owner chain at all is not a runtime
+      // child — reporting every loose object the cluster serves would turn
+      // the sweep into an inventory. Pods keep their pre-#1517 reporting
+      // (their chain verdicts, including foreign, were already part of
+      // #1077's contract); every other swept kind only reports when the
+      // chain reaches a declared entity.
+      if (swept.kind !== "Pod" && ownerChain.root !== "declared") return;
+
+      resources[key] = {
+        type: swept.typeName,
         physicalId: uid,
-        status: statusFromObject(pod),
-        lastUpdated: pod.metadata?.creationTimestamp,
-        ownership: classifyOwnership(pod.metadata?.labels, LABEL_OWNERSHIP_KEYS),
+        status: statusFromObject(obj),
+        lastUpdated: obj.metadata?.creationTimestamp,
+        ownership: classifyOwnership(obj.metadata?.labels, LABEL_OWNERSHIP_KEYS),
         ownerChain,
         attributes: pruneUndefined({
           namespace,
-          labels: pod.metadata?.labels,
-          resourceVersion: pod.metadata?.resourceVersion,
-          conditions: unhappyConditions(pod),
+          labels: obj.metadata?.labels,
+          resourceVersion: obj.metadata?.resourceVersion,
+          conditions: unhappyConditions(obj),
         }),
       };
     });
+  };
+
+  await client.concurrently([...namespaces], async (namespace) => {
+    for (const swept of namespacedKinds) await sweep(swept, namespace);
   });
+
+  // Cluster-scoped kinds are swept once (their lists are cluster-wide by
+  // nature), and only when a declared cluster-scoped entity exists for a
+  // chain to reach — a cluster-scoped object's owners are cluster-scoped.
+  if (clusterScopedDeclared) {
+    await client.concurrently(clusterKinds, async (swept) => sweep(swept, undefined));
+  }
+
+  for (const [key, failure] of listFailures) {
+    unobserved[key] = {
+      type: failure.typeName,
+      reason: failure.reason,
+      detail: `the runtime-children sweep could not list this kind in ${failure.scopes.join(", ")}: ${failure.detail}`,
+    };
+  }
 }

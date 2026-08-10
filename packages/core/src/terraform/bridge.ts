@@ -19,7 +19,8 @@
  * is reversible via `terraform import`.
  */
 
-import type { CarveReport } from "./carve";
+import { deferredParamName, type CarveReport } from "./carve";
+import { exciseResourceBlocks, type ExciseTarget } from "./excise";
 
 export interface CarvedIdentity {
   /** The HCL identity attribute, e.g. `bucket` or `name`. */
@@ -41,12 +42,16 @@ export interface FileRewrite {
   original: string;
   rewritten: string;
   changed: boolean;
+  /** Carved addresses whose own `resource` block was removed from this file (#998). */
+  excised: string[];
 }
 
 export interface DeferredInput {
   survivor: string;
   carved: string;
   attrs: string[];
+  /** Build-parameter name(s) the input becomes in the emitted project (#998). */
+  params: string[];
   note: string;
 }
 
@@ -55,6 +60,8 @@ export interface BridgePlan {
   dataSources: DataSourceBlock[];
   rewrites: FileRewrite[];
   deferredInputs: DeferredInput[];
+  /** Every carved address whose own block the rewrites remove, across files. */
+  excised: string[];
   runbook: string;
 }
 
@@ -99,33 +106,56 @@ export function generateBridge(
     hcl: dataSourceHcl(type, name, identities.get(address) ?? {}),
   }));
 
-  // Rewrite every survivor reference to the carved resources into a data ref.
+  // Excise the carve set's own blocks (#998): after `terraform state rm`, a
+  // block left behind would re-create the resource on the next apply. Then
+  // rewrite every remaining survivor reference into a data ref.
+  const exciseTargets: ExciseTarget[] = report.carveSet
+    .filter((m) => !m.address.startsWith("module."))
+    .map((m) => {
+      const [type, ...rest] = m.address.split(".");
+      return { address: m.address, type, name: rest.join(".") };
+    });
   const rewrites: FileRewrite[] = files.map(({ path, content }) => {
-    let rewritten = content;
+    const excision = exciseResourceBlocks(content, exciseTargets);
+    let rewritten = excision.content;
     for (const address of carvedWithInbound.keys()) {
       rewritten = rewritten.replace(referenceRegex(address), `data.${address}`);
     }
-    return { path, original: content, rewritten, changed: rewritten !== content };
+    return { path, original: content, rewritten, changed: rewritten !== content, excised: excision.excised };
   });
+  const excised = rewrites.flatMap((r) => r.excised);
 
-  const deferredInputs: DeferredInput[] = report.outbound.map((e) => ({
-    survivor: e.survivor,
-    carved: e.carved,
-    attrs: e.attrs,
-    note: `${e.carved} reads ${e.survivor}.${e.attrs.join(", ")} — supply this as a deploy-time input to the carved component at apply.`,
-  }));
+  const deferredInputs: DeferredInput[] = report.outbound.map((e) => {
+    const params = (e.via ?? []).map(deferredParamName);
+    const wiring = params.length
+      ? `emit declares it as build param ${params.map((p) => `\`${p}\``).join(", ")} — override with --param at build`
+      : "supply this as a deploy-time input to the carved component at apply";
+    return {
+      survivor: e.survivor,
+      carved: e.carved,
+      attrs: e.attrs,
+      params,
+      note: `${e.carved} reads ${e.survivor}.${e.attrs.join(", ")} — ${wiring}.`,
+    };
+  });
 
   return {
     target: report.target,
     dataSources,
     rewrites,
     deferredInputs,
-    runbook: buildRunbook(report, dataSources, deferredInputs),
+    excised,
+    runbook: buildRunbook(report, dataSources, deferredInputs, excised),
   };
 }
 
 /** The reversible, observe-first handoff runbook (#197). */
-function buildRunbook(report: CarveReport, dataSources: DataSourceBlock[], deferred: DeferredInput[]): string {
+function buildRunbook(
+  report: CarveReport,
+  dataSources: DataSourceBlock[],
+  deferred: DeferredInput[],
+  excised: string[],
+): string {
   const carvedAddrs = report.carveSet.map((m) => m.address);
   const L: string[] = [];
   L.push(`# Carve-out: ${report.target} → chant   [observe-first, reversible]`);
@@ -140,10 +170,14 @@ function buildRunbook(report: CarveReport, dataSources: DataSourceBlock[], defer
   L.push("");
   L.push("## 3. Confirm no destroy, then patch the survivors");
   L.push("    terraform plan   # expect 0 to destroy; refs to the carved resource now error");
+  if (excised.length) {
+    L.push(`    # the generated bridge patch removes the carved block(s): ${excised.join(", ")}`);
+    L.push("    #   (without this, the next apply would re-create what state rm released)");
+  }
   if (dataSources.length) {
-    L.push("    # apply the generated bridge patch — it adds these data sources and rewires references:");
+    L.push("    # it also adds these data sources and rewires references:");
     for (const ds of dataSources) L.push(`    #   data.${ds.type}.${ds.name}  (for ${ds.address})`);
-  } else {
+  } else if (!excised.length) {
     L.push("    # no inbound edges — no survivor patch needed.");
   }
   L.push("    terraform plan   # expect: in-place updates to the survivors only");

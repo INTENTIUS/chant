@@ -233,3 +233,24 @@ describe("MalformedCapabilityPluginError", () => {
     expect(err.name).toBe("MalformedCapabilityPluginError");
   });
 });
+
+// #1505 — plugin versions track the lockstep release instead of a literal that
+// goes stale on every `just release` (aws shipped "1.0.0" from its extraction;
+// the k8s plugin's authoring-time literal was stale one release later).
+describe("ownPackageVersion (#1505)", () => {
+  test("resolves this module's own package version — core's package.json, exactly", async () => {
+    const { ownPackageVersion } = await import("./capability-plugin");
+    const { readFileSync } = await import("node:fs");
+    const { version } = JSON.parse(
+      readFileSync(new URL("../../package.json", import.meta.url), "utf-8"),
+    ) as { version: string };
+    expect(ownPackageVersion(import.meta.url)).toBe(version);
+  });
+
+  test("the starter plugin reports that version, not a literal", async () => {
+    const { starterCapabilityPlugin } = await import("./starter-plugin");
+    const { ownPackageVersion } = await import("./capability-plugin");
+    expect(starterCapabilityPlugin.version).toBe(ownPackageVersion(import.meta.url));
+    expect(starterCapabilityPlugin.version).not.toBe("1.0.0");
+  });
+});

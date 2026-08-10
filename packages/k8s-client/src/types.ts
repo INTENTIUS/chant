@@ -125,6 +125,15 @@ export interface K8sClientOptions {
   concurrency?: number;
   /** Where the context came from, for provenance. Default `ambient`. */
   contextSource?: "bound" | "ambient";
+  /**
+   * How the context was selected, in words — e.g.
+   * `bound by k8s.profiles.prod.context` or
+   * `ambient; no k8s.profiles.local binding`. Stamped (with the resolved
+   * context name) onto every API/transport failure the client throws, so a
+   * `read-failed` reason names the cluster it read (chant #1488). Defaults to
+   * the bare `contextSource`.
+   */
+  contextLabel?: string;
 }
 
 /**

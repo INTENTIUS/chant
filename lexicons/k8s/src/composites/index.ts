@@ -93,3 +93,12 @@ export type {
   RegisterArgoClusterOptions,
   RegisterArgoClusterResult,
 } from "./argo-app";
+export { FluxGitSource, FluxAppFor } from "./flux-app";
+export type {
+  FluxSourceKind,
+  FluxSourceRef,
+  FluxGitSourceOptions,
+  FluxGitSourceResult,
+  FluxAppForOptions,
+  FluxAppForResult,
+} from "./flux-app";

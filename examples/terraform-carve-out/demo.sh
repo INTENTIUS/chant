@@ -25,8 +25,8 @@ $CHANT carve advise --from "$TF"
 
 rule "2. emit — adopt $SELECT into chant source from tfstate (offline)"
 $CHANT carve emit --from "$TF" --select "$SELECT" --state "$STATE" --output "$OUT"
-echo "--- emitted chant source: $OUT/assets.ts ---"
-cat "$OUT/assets.ts"
+echo "--- emitted chant source: $OUT/src/assets.ts ---"
+cat "$OUT/src/assets.ts"
 
 rule "3. bridge — patch the surviving Terraform (data source + rewired refs)"
 $CHANT carve bridge --from "$TF" --select "$SELECT" --output "$OUT"

@@ -1,6 +1,10 @@
 import { homedir } from "os";
-import { join } from "path";
+import { dirname, join } from "path";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
+import { execFile } from "child_process";
+import { promisify } from "util";
 import { fetchWithCache, extractFromZip, clearCacheFile } from "@intentius/chant/codegen/fetch";
+import { ACCEPT_ENV, AWS_SPEC_PIN, specContentDigest, type SpecPin } from "./pin";
 
 /**
  * Top-level CloudFormation Registry JSON Schema for a single resource type.
@@ -68,17 +72,153 @@ const CACHE_DIR = join(homedir(), ".chant");
 const CACHE_FILE = join(CACHE_DIR, "CloudformationSchema.zip");
 
 /**
+ * The pinned-spec store (chant #1511): assets on one dedicated GitHub release,
+ * named by content digest, in a public repo — so nothing binary ever enters
+ * git history, and the download needs no auth anywhere (CI included).
+ *
+ * Why a store at all: `prepack` regenerates from upstream, and the registry
+ * serves a single mutable "latest" artifact — on 2026-08-05 four distinct
+ * contents were observed in one day, two *contradicting* each other about the
+ * same resources, so the surface gate compared artifacts built from whichever
+ * variant that fetch happened to hit. Publishing aws was a retry lottery
+ * (v0.41.1 and v0.41.2 both stranded it). The accepted content itself is the
+ * only deterministic input; the accept uploads it, every build downloads it
+ * by digest and verifies before trusting it.
+ */
+const SPEC_PIN_RELEASE_TAG = "aws-spec-pin";
+const SPEC_PIN_REPO = "INTENTIUS/chant";
+/** Verified-by-digest local copies of pin assets, so repeat builds skip the download. Content-addressed: no TTL, never invalidated. */
+const PIN_CACHE_DIR = join(CACHE_DIR, "spec-pin");
+
+/** `<first 12 digest hex>.zip` — the asset (and local cache) name for a pin. */
+export function pinAssetName(pin: SpecPin = AWS_SPEC_PIN): string {
+  return `${pin.digest.replace(/^sha256:/, "").slice(0, 12)}.zip`;
+}
+
+/** Public, unauthenticated download URL for a pin's asset. */
+export function pinAssetUrl(pin: SpecPin = AWS_SPEC_PIN): string {
+  return `https://github.com/${SPEC_PIN_REPO}/releases/download/${SPEC_PIN_RELEASE_TAG}/${pinAssetName(pin)}`;
+}
+
+/** Injectable downloader, so tests never reach the network. Returns undefined on any failure — the caller falls back to the live fetch. */
+export type PinAssetDownloader = (url: string) => Promise<Buffer | undefined>;
+
+const downloadPinAsset: PinAssetDownloader = async (url) => {
+  try {
+    const res = await fetch(url, { redirect: "follow" });
+    if (!res.ok) return undefined;
+    return Buffer.from(await res.arrayBuffer());
+  } catch {
+    return undefined;
+  }
+};
+
+/**
+ * Load and verify the pinned spec: the local verified cache first, then the
+ * release asset. Returns undefined when neither is available (offline and
+ * cold, or the accept never uploaded) — the caller falls back to the live
+ * fetch and the pin's existing advisory drift report. Content that does not
+ * digest to the pin throws: a tampered or half-uploaded asset must never
+ * silently pass as the accepted spec, wherever it came from.
+ */
+export async function loadPinnedSchemas(
+  options: { pin?: SpecPin; cacheDir?: string; download?: PinAssetDownloader } = {},
+): Promise<Map<string, Buffer> | undefined> {
+  const pin = options.pin ?? AWS_SPEC_PIN;
+  const cacheDir = options.cacheDir ?? PIN_CACHE_DIR;
+  const cachePath = join(cacheDir, pinAssetName(pin));
+
+  const verify = async (zipData: Buffer, source: string): Promise<Map<string, Buffer>> => {
+    const schemas = await extractRawSchemas(zipData);
+    const digest = specContentDigest(schemas);
+    if (digest !== pin.digest) {
+      throw new Error(
+        `pinned spec from ${source} extracts to ${digest}, but the pin declares ${pin.digest} — ` +
+          `refusing to build from it. Re-run the accept (${ACCEPT_ENV}=1 npm run generate) to ` +
+          `upload the content the pin actually names.`,
+      );
+    }
+    return schemas;
+  };
+
+  if (existsSync(cachePath)) {
+    return verify(readFileSync(cachePath), cachePath);
+  }
+
+  const url = pinAssetUrl(pin);
+  const zipData = await (options.download ?? downloadPinAsset)(url);
+  if (zipData === undefined) return undefined;
+  const schemas = await verify(zipData, url);
+  // Cache only after verification, so the cache can never hold a bad copy.
+  mkdirSync(cacheDir, { recursive: true });
+  writeFileSync(cachePath, zipData);
+  return schemas;
+}
+
+/**
+ * The accept flow's upload half: push the just-accepted zip to the pin
+ * release via `gh` (dev-machine path — publishes never upload). Creates the
+ * rolling `aws-spec-pin` release on first use. Assets are content-addressed
+ * and never overwritten. A missing/unauthenticated `gh` degrades to printing
+ * the exact command to run by hand — the accept still completes, and the pin
+ * block still prints.
+ */
+async function uploadPinAsset(zipData: Buffer, digest: string): Promise<void> {
+  const pin: SpecPin = { ...AWS_SPEC_PIN, digest };
+  mkdirSync(PIN_CACHE_DIR, { recursive: true });
+  const localPath = join(PIN_CACHE_DIR, pinAssetName(pin));
+  writeFileSync(localPath, zipData);
+
+  const run = promisify(execFile);
+  try {
+    try {
+      await run("gh", ["release", "view", SPEC_PIN_RELEASE_TAG, "--repo", SPEC_PIN_REPO]);
+    } catch {
+      await run("gh", [
+        "release", "create", SPEC_PIN_RELEASE_TAG,
+        "--repo", SPEC_PIN_REPO,
+        "--title", "aws spec pin assets",
+        "--notes", "Content-addressed CloudFormation registry archives, one per accepted spec pin (chant #1511). Uploaded by the accept flow; downloaded and digest-verified by every build. Not a chant release.",
+      ]);
+    }
+    await run("gh", ["release", "upload", SPEC_PIN_RELEASE_TAG, localPath, "--repo", SPEC_PIN_REPO]);
+    console.error(`Accepted spec uploaded: ${pinAssetUrl(pin)}`);
+  } catch (err) {
+    console.error(
+      `Could not upload the accepted spec via gh (${err instanceof Error ? err.message.split("\n")[0] : String(err)}).\n` +
+        `Upload it yourself before merging the pin:\n` +
+        `  gh release upload ${SPEC_PIN_RELEASE_TAG} ${localPath} --repo ${SPEC_PIN_REPO}`,
+    );
+  }
+}
+
+/**
  * Fetch the CloudFormation Registry schema zip and extract per-resource JSON schemas.
  * Returns a Map keyed by typeName (e.g. "AWS::S3::Bucket") to raw JSON bytes.
  *
- * Uses a local cache with 24h TTL.
+ * chant #1511 — the pinned release asset is the primary source: when it
+ * resolves and digest-verifies, generation uses the content a human accepted
+ * rather than whatever upstream variant this fetch happens to hit, so every
+ * build (CI, prepack, publish) is deterministic. The live fetch remains for:
+ * `force`, the accept flow (`CHANT_ACCEPT_AWS_SPEC=1`, which must sample
+ * upstream — and bypasses the 24h cache for the same reason), and when the
+ * asset is unreachable. The live path keeps its 24h local cache.
  */
 export async function fetchSchemaZip(force = false): Promise<Map<string, Buffer>> {
+  const accepting = !!process.env[ACCEPT_ENV];
+  if (!force && !accepting) {
+    const pinned = await loadPinnedSchemas();
+    if (pinned) return pinned;
+  }
   const zipData = await fetchWithCache(
     { url: SCHEMA_ZIP_URL, cacheFile: CACHE_FILE },
-    force,
+    force || accepting,
   );
-  return extractRawSchemas(zipData);
+  const schemas = await extractRawSchemas(zipData);
+  if (accepting) {
+    await uploadPinAsset(zipData, specContentDigest(schemas));
+  }
+  return schemas;
 }
 
 /**

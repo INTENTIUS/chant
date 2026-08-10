@@ -117,6 +117,47 @@ describe("createK8sClient — kubeconfig and credential policy", () => {
     expect(layer.requests).toHaveLength(0);
   });
 
+  test("an API failure names the context it read (#1488)", async () => {
+    const layer = cluster({}, (req) =>
+      req.path.endsWith("/deployments/web")
+        ? { status: 500, body: statusBody(500, "InternalError", "etcdserver: leader changed") }
+        : undefined,
+    );
+    const c = await client(layer);
+    const err = await c.read({ apiVersion: "apps/v1", kind: "Deployment", name: "web", namespace: "prod" }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(K8sApiError);
+    expect((err as K8sApiError).contextNote).toBe('context "test-context" (ambient)');
+  });
+
+  test("a bound client's failures carry the binding story via contextLabel (#1488)", async () => {
+    const layer = cluster({}, (req) =>
+      req.path.endsWith("/deployments/web") ? { status: 503, body: statusBody(503, "ServiceUnavailable", "apiserver down") } : undefined,
+    );
+    const c = await createK8sClient({
+      kubeconfig: fakeKubeconfig({
+        contexts: [{ name: "staging-eks" }, { name: "prod-eks", cluster: "prod", user: "prod-user" }],
+        currentContext: "staging-eks",
+      }),
+      context: "prod-eks",
+      contextSource: "bound",
+      contextLabel: "bound by k8s.profiles.prod.context",
+      requestLayer: layer,
+    });
+    const err = await c.read({ apiVersion: "apps/v1", kind: "Deployment", name: "web", namespace: "prod" }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(K8sApiError);
+    expect((err as K8sApiError).contextNote).toBe('context "prod-eks" (bound by k8s.profiles.prod.context)');
+  });
+
+  test("a transport failure names the context it was aimed at (#1488)", async () => {
+    const layer = fakeRequestLayer(() => {
+      throw new Error("connect ECONNREFUSED 127.0.0.1:6443");
+    });
+    const c = await createK8sClient({ kubeconfig: fakeKubeconfig(), requestLayer: layer });
+    const err = await c.read({ apiVersion: "apps/v1", kind: "Deployment", name: "web" }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(K8sTransportError);
+    expect((err as K8sTransportError).contextNote).toBe('context "test-context" (ambient)');
+  });
+
   test("an exec credential plugin off the allowlist refuses before it can run", async () => {
     const layer = cluster();
     await expect(
@@ -199,6 +240,39 @@ describe("resource resolution through the cluster's own discovery", () => {
 
     expect(layer.paths().filter((p) => p === "/apis/apps/v1")).toHaveLength(1);
     expect(c.discoveryCacheKeys()).toEqual(["apps/v1"]);
+  });
+
+  // chant #1517 — the runtime-children sweep's enumeration unit: one version
+  // per group, so every kind is named exactly once.
+  test("preferredGroupVersions returns core v1 plus each group's own preferredVersion, once", async () => {
+    const layer = fakeRequestLayer((req) => {
+      if (req.path === "/api") return { body: { kind: "APIVersions", versions: ["v1"] } };
+      if (req.path === "/apis") {
+        return {
+          body: {
+            kind: "APIGroupList",
+            groups: [
+              {
+                name: "apps",
+                preferredVersion: { groupVersion: "apps/v1", version: "v1" },
+                versions: [{ groupVersion: "apps/v1" }, { groupVersion: "apps/v1beta1" }],
+              },
+              // A group reporting no preferredVersion falls back to its first
+              // listed version rather than being dropped.
+              { name: "widgets.example.com", versions: [{ groupVersion: "widgets.example.com/v1alpha1" }] },
+            ],
+          },
+        };
+      }
+      return { status: 404, body: statusBody(404, "NotFound", `${req.path} not found`) };
+    });
+    const c = await client(layer);
+
+    expect(await c.preferredGroupVersions()).toEqual(["v1", "apps/v1", "widgets.example.com/v1alpha1"]);
+
+    // Cached: a second call issues no further discovery requests.
+    await c.preferredGroupVersions();
+    expect(layer.paths().filter((p) => p === "/apis")).toHaveLength(1);
   });
 
   test("kubectl-style resource strings resolve the way kubectl resolves them", async () => {

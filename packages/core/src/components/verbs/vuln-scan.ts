@@ -9,10 +9,10 @@
  * digest) over re-scanning the image: deterministic (same SBOM -> same
  * findings), fast, and reuses work already done. Real backends shell out to
  * `grype`/`trivy` through the injectable `ProcessRunner` (./process-runner.ts),
- * exactly like ./tool-sbom-generator.ts's deep-scan backend — tests inject a
- * `MockVulnScanner` (./__tests__/mock-vuln-scanner.ts) and never invoke a real
- * scanner, network, or vuln DB. The scanner's vuln DB currency is the tool's
- * job, not chant's.
+ * exactly like ./tool-sbom-generator.ts's deep-scan backend — tests inject an
+ * inline fake `VulnScanner` (an object literal with a canned `scan()`, see
+ * ./vuln-gate.test.ts) and never invoke a real scanner, network, or vuln DB.
+ * The scanner's vuln DB currency is the tool's job, not chant's.
  */
 
 import { writeFileSync } from "node:fs";
@@ -57,6 +57,18 @@ export interface VulnFinding {
   fixedVersion?: string;
   /** True when a fix exists (upgradeable) — the beginner-safe default gate blocks only fixable findings, since an unfixable one can't be actioned by bumping. */
   fixable: boolean;
+  /** EPSS score (0.0–1.0): probability of exploitation in the next 30 days. Absent when the scanner did not report one. */
+  epss?: number;
+  /** EPSS percentile (0.0–1.0) — rank against all scored CVEs. */
+  epssPercentile?: number;
+  /** Present in CISA's Known Exploited Vulnerabilities catalog. `undefined` means the scanner did not report KEV membership at all — NOT the same conclusion as a reported `false`. Never default this. */
+  inKev?: boolean;
+  /** When the CVE entered the KEV catalog (ISO date, as the source reports it). */
+  kevDateAdded?: string;
+  /** KEV remediation due date (ISO date). */
+  kevDueDate?: string;
+  /** Known use in a ransomware campaign, per KEV. */
+  kevRansomware?: boolean;
 }
 
 // ── injectable scanner boundary ──────────────────────────────────────────────
@@ -72,8 +84,8 @@ export interface ScanInput {
  * Injectable vulnerability-scan boundary — the scan-side analogue of
  * `SbomGenerator` (./sbom-generator.ts) and `CloudExecutor`
  * (./cloud-executor.ts). A real implementation shells out to `grype`/`trivy`;
- * tests substitute `MockVulnScanner` (./__tests__/mock-vuln-scanner.ts) and
- * never touch a real tool, network, or vuln DB.
+ * tests substitute an inline fake (an object literal with a canned `scan()`)
+ * and never touch a real tool, network, or vuln DB.
  */
 export interface VulnScanner {
   /** Scan an SBOM, returning every known vulnerability it surfaces. */
@@ -83,15 +95,26 @@ export interface VulnScanner {
 /** Which real CLI scanner a `ProcessRunner`-backed scanner shells out to. */
 export type ScannerTool = "grype" | "trivy";
 
-/** grype `-o json` output shape (the subset we read). */
+/** grype `-o json` output shape (the subset we read). `epss` and `knownExploited` are omitted (not empty) for a vuln grype has no data on, so absence maps to `undefined`, never `false`/`0`. grype's composite `risk` score is deliberately not read — policy gates on the inputs (EPSS, KEV), not one tool's weighting of them. */
 interface GrypeOutput {
   matches?: Array<{
-    vulnerability?: { id?: string; severity?: string; fix?: { versions?: string[]; state?: string } };
+    vulnerability?: {
+      id?: string;
+      severity?: string;
+      fix?: { versions?: string[]; state?: string };
+      epss?: Array<{ cve?: string; epss?: number; percentile?: number; date?: string }>;
+      knownExploited?: Array<{
+        cve?: string;
+        dateAdded?: string;
+        dueDate?: string;
+        knownRansomwareCampaignUse?: string;
+      }>;
+    };
     artifact?: { name?: string; version?: string };
   }>;
 }
 
-/** trivy `--format json` output shape (the subset we read). */
+/** trivy `--format json` output shape (the subset we read). Trivy (v0.73, __fixtures__/trivy-with-kev-epss.json) reports no KEV/EPSS data in its JSON output, so a trivy-backed finding carries every exploitability field as `undefined` — the honest "not reported" state, not `false`. */
 interface TrivyOutput {
   Results?: Array<{
     Vulnerabilities?: Array<{
@@ -109,6 +132,8 @@ export function parseGrypeOutput(stdout: string): VulnFinding[] {
   const doc = JSON.parse(stdout) as GrypeOutput;
   return (doc.matches ?? []).map((m) => {
     const fixVersions = m.vulnerability?.fix?.versions ?? [];
+    const epss = m.vulnerability?.epss?.[0];
+    const kev = m.vulnerability?.knownExploited?.[0];
     return {
       cveId: m.vulnerability?.id ?? "UNKNOWN",
       severity: normalizeSeverity(m.vulnerability?.severity),
@@ -116,6 +141,16 @@ export function parseGrypeOutput(stdout: string): VulnFinding[] {
       installedVersion: m.artifact?.version ?? "",
       fixedVersion: fixVersions[0],
       fixable: m.vulnerability?.fix?.state === "fixed" || fixVersions.length > 0,
+      epss: epss?.epss,
+      epssPercentile: epss?.percentile,
+      // grype omits `knownExploited` for a non-KEV vuln, so `undefined` here
+      // means "no KEV annotation reported" — never coerced to `false`.
+      inKev: kev ? true : undefined,
+      kevDateAdded: kev?.dateAdded,
+      kevDueDate: kev?.dueDate,
+      // KEV's ransomware field is "known"/"unknown" — "unknown" is not "no",
+      // so only an explicit "known" becomes `true`; everything else stays unset.
+      kevRansomware: kev?.knownRansomwareCampaignUse?.toLowerCase() === "known" ? true : undefined,
     } satisfies VulnFinding;
   });
 }

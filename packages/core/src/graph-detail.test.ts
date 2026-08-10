@@ -1,5 +1,5 @@
 import { describe, test, expect } from "vitest";
-import { applyDetail, DETAIL } from "./graph-detail";
+import { applyDetail, DETAIL, detailInertNotice } from "./graph-detail";
 import type { GraphIR } from "./graph-ir";
 
 // A small graph: a gcp vpc/subnet pair plus a k8s namespace and deployment that
@@ -88,5 +88,41 @@ describe("applyDetail", () => {
       viaAttr: "subnet",
       toAttr: "selfLink",
     });
+  });
+});
+
+// #1489 — an inert --detail 3 names itself instead of silently emitting the
+// same bytes as --detail 2 (the k8s lexicon links by name/label convention, so
+// its graphs never have a producer attribute to annotate).
+describe("detailInertNotice (#1489)", () => {
+  test("detail 3 that added toAttr annotations: no notice", () => {
+    const detailed = applyDetail(base, DETAIL.ATTRIBUTES);
+    expect(detailInertNotice(base, detailed)).toBeUndefined();
+  });
+
+  test("edges without producer attributes: notice names the convention-linking cause", () => {
+    const labelLinked: GraphIR = {
+      nodes: [
+        { id: "svc", kind: "Service", lexicon: "k8s", attrs: { spec: { selector: { app: "web" } } } },
+        { id: "web", kind: "Deployment", lexicon: "k8s", attrs: { metadata: { labels: { app: "web" } } } },
+      ],
+      edges: [{ from: "svc", to: "web", kind: "ref", viaAttr: "spec.selector" }],
+      groups: {},
+    };
+    const detailed = applyDetail(labelLinked, DETAIL.ATTRIBUTES);
+    const notice = detailInertNotice(labelLinked, detailed);
+    expect(notice).toContain("--detail 3");
+    expect(notice).toContain("1 edge(s)");
+    expect(notice).toContain("identical to --detail 2");
+  });
+
+  test("no edges at all: notice says so", () => {
+    const edgeless: GraphIR = {
+      nodes: [{ id: "ns", kind: "Namespace", lexicon: "k8s", attrs: {} }],
+      edges: [],
+      groups: {},
+    };
+    const detailed = applyDetail(edgeless, DETAIL.ATTRIBUTES);
+    expect(detailInertNotice(edgeless, detailed)).toContain("no edges at all");
   });
 });

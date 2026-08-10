@@ -25,7 +25,7 @@
       "@intentius/chant": [
         "packages/core/src/index.ts"
       ],
-      "@intentius/chant/*": [
+    "@intentius/chant/*": [
         "packages/core/src/*"
       ],
       "@intentius/chant-lexicon-aws": [
@@ -99,6 +99,18 @@
       ],
       "@intentius/chant-lexicon-forgejo/*": [
         "lexicons/forgejo/src/*"
+      ],
+      "@intentius/chant-lexicon-k3d": [
+        "lexicons/k3d/src/index.ts"
+      ],
+      "@intentius/chant-lexicon-k3d/*": [
+        "lexicons/k3d/src/*"
+      ],
+      "@intentius/chant-lexicon-k3s": [
+        "lexicons/k3s/src/index.ts"
+      ],
+      "@intentius/chant-lexicon-k3s/*": [
+        "lexicons/k3s/src/*"
       ],
       "@intentius/chant-test-utils": [
         "packages/test-utils/src/index.ts"

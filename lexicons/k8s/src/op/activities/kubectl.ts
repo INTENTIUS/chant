@@ -55,8 +55,21 @@ import { DEFAULT_IMPORT_TYPES } from "../../api/sweep-types";
 export type ApplyDeleteMode = "never" | "owned-only" | "gated";
 
 export interface KubectlApplyArgs {
-  /** Path to a manifest file, or a directory of them. */
+  /**
+   * Path to a manifest file, or a directory of them. With `documents` given,
+   * this becomes only the human-facing label the heartbeats and logs carry
+   * (e.g. `kustomize:<dir>`), and nothing is read from disk.
+   */
   manifest: string;
+  /**
+   * Already-parsed documents to apply INSTEAD of reading `manifest` (#1548):
+   * a renderer that produced the objects in memory — kustomize-apply's
+   * `kustomize build` — hands them straight in rather than round-tripping
+   * through a temp file. Everything downstream (ownership stamping, the
+   * marker-scoped prune, the self-conflict retake) is document-driven and
+   * behaves identically.
+   */
+  documents?: K8sObject[];
   /**
    * kubectl context name. Uses the ambient context if omitted. To target the
    * same cluster the read path (`describeResources`) resolved for an
@@ -192,6 +205,87 @@ async function resolveApplyIdentity(
 }
 
 /**
+ * Structural mirror of the client's `FieldManagerConflictError` surface —
+ * matched by `name` + shape, NOT `instanceof`, because a static value import
+ * of `@intentius/chant-k8s-client` here would put the API-client chain on the
+ * build path (the #1074 boundary; same reason the applier itself is reached
+ * by dynamic import).
+ */
+interface ConflictErrorLike {
+  name: string;
+  conflicts?: Array<{ manager?: unknown; field?: unknown }>;
+}
+
+/** chant's reserved label channel — the `chant.intentius.io/*` keys the
+ * ownership marker lives under, as a conflict-cause field-path prefix. */
+const MARKER_FIELD_PREFIX = `.metadata.labels.${LABEL_OWNERSHIP_KEYS.stack.split("/")[0]}/`;
+
+/**
+ * Is this conflict one chant may retake without a human? Two shapes qualify,
+ * per contested field:
+ *
+ * - the owning manager is chant itself (`chant` bare or `chant:<stack>`) —
+ *   the ownership-stack → unit-stack migration, or a renamed deploy unit; or
+ * - the field lives in chant's OWN reserved label channel
+ *   (`chant.intentius.io/*`). A controller that reconciles whole objects
+ *   echoes existing labels and becomes their SSA owner as a side effect
+ *   (observed live: kubemicrovm's `microvmimagereconciler` owning
+ *   `.metadata.labels.chant.intentius.io/stack`) — it never chose that value,
+ *   and chant is the authority for its marker namespace no matter who last
+ *   echoed it.
+ *
+ * Any contested field outside both shapes — a spec field, an app label —
+ * keeps the presented refusal: that IS a dispute with another tool.
+ */
+function isChantSelfConflict(err: unknown): boolean {
+  const e = err as ConflictErrorLike;
+  if (!e || e.name !== "FieldManagerConflictError" || !Array.isArray(e.conflicts) || e.conflicts.length === 0) return false;
+  return e.conflicts.every((c) => {
+    const chantManager = typeof c.manager === "string" && (c.manager === "chant" || c.manager.startsWith("chant:"));
+    const markerField = typeof c.field === "string" && c.field.startsWith(MARKER_FIELD_PREFIX);
+    return chantManager || markerField;
+  });
+}
+
+/**
+ * Stamp the apply's own stack identity onto a document's labels.
+ *
+ * The serializer bakes `ownership.stack` — the *project* identity from
+ * `chant.config.ts` — into every manifest it emits. But the apply's identity
+ * is the *stack argument it resolved* (a component's `kubectl-apply` step
+ * names its own deploy unit, e.g. `kmv-workload`), and that is the value both
+ * consumers of the label query for: the owned-only prune's selector and
+ * `describeStackStatus`'s presence sweep. Applying the manifest verbatim left
+ * the label saying `kubemicrovm-ops` while both readers asked for
+ * `kmv-workload` — the prune silently matched nothing and every kubectl-apply
+ * unit read absent in `components status --live` (a green estate painted
+ * dead). A manifest chant never serialized (upstream CRDs pinned into a
+ * `crds` unit) carried no marker at all, with the same two failures.
+ *
+ * So the apply now re-stamps what it applies: `managed-by=chant` plus the
+ * resolved stack. The ownership *verdict* keys on `managed-by` alone
+ * (core/ownership.ts `hasOwnershipMarker`), so overlay classification is
+ * unchanged; the env label is the serializer's to write and is left as-is.
+ * No stack resolved (no explicit arg, no project ownership) applies verbatim,
+ * exactly as before.
+ */
+function stampOwnership(document: K8sObject, stack: string | undefined): K8sObject {
+  if (stack === undefined) return document;
+  const metadata = (document.metadata ?? {}) as { labels?: Record<string, string> };
+  return {
+    ...document,
+    metadata: {
+      ...metadata,
+      labels: {
+        ...(metadata.labels ?? {}),
+        [LABEL_OWNERSHIP_KEYS.managedBy]: OWNERSHIP_MANAGED_BY_VALUE,
+        [LABEL_OWNERSHIP_KEYS.stack]: stack,
+      },
+    },
+  } as K8sObject;
+}
+
+/**
  * Apply every document in `args.manifest`, then prune when asked.
  *
  * Returns what it did. `kubectlApply` is the registered activity and keeps its
@@ -204,7 +298,7 @@ export async function applyManifest(
   signal?: AbortSignal,
   connect: K8sConnector = defaultK8sConnector,
 ): Promise<ApplyManifestResult> {
-  const documents = readManifestDocuments(args.manifest);
+  const documents = args.documents ?? readManifestDocuments(args.manifest);
   const { fieldManager, stack } = await resolveApplyIdentity(args);
   const heartbeatInterval = setInterval(() => {
     safeHeartbeat({ step: "kubectl apply", manifest: args.manifest });
@@ -219,12 +313,26 @@ export async function applyManifest(
 
     const applied: AppliedRef[] = [];
     for (const document of documents) {
-      const result = await client.apply(document as K8sObject, {
-        fieldManager,
-        force: args.force ?? false,
-        dryRun: args.dryRun,
-        signal,
-      });
+      const stamped = stampOwnership(document as K8sObject, stack);
+      let result: K8sObject;
+      try {
+        result = await client.apply(stamped, {
+          fieldManager,
+          force: args.force ?? false,
+          dryRun: args.dryRun,
+          signal,
+        });
+      } catch (err) {
+        // "chant never forces a conflict on its own" is about taking fields
+        // from ANOTHER tool. A conflict where every contested field is owned
+        // by another `chant:*` manager is chant contesting itself — the
+        // ownership-stack → unit-stack label migration, or a renamed deploy
+        // unit — and refusing that forever would strand every estate applied
+        // before the rename with no non-force path back. Retake those fields
+        // deliberately, once, and only when no foreign manager is involved.
+        if (!isChantSelfConflict(err)) throw err;
+        result = await client.apply(stamped, { fieldManager, force: true, dryRun: args.dryRun, signal });
+      }
       const ref: AppliedRef = {
         apiVersion: String(result.apiVersion ?? document.apiVersion ?? ""),
         kind: String(result.kind ?? document.kind ?? ""),

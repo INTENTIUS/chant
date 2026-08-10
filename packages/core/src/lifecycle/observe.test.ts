@@ -64,6 +64,24 @@ describe("observeResources", () => {
     expect(names).toEqual(["web-vpc"]);
   });
 
+  it("keeps non-resource declarables out of the observation universe", async () => {
+    // Outputs, parameters and serializer directives (gcp's defaultAnnotations)
+    // have no `props` and no live counterpart — a declared name the reader can
+    // never resolve would read as unobserved or missing forever.
+    const buildResult = {
+      outputs: new Map<string, string>([["aws", "{}"]]),
+      entities: new Map<string, unknown>([
+        ["web-vpc", { lexicon: "aws", entityType: "AWS::EC2::VPC", props: {} }],
+        ["annotations", { lexicon: "aws", entityType: "chant:aws:directive" }],
+      ]),
+      errors: [],
+    } as unknown as BuildResult;
+    let names: string[] = [];
+    const plugins = [awsPlugin(({ entityNames }) => { names = entityNames; return {}; })];
+    await observeResources("prod", plugins, buildResult);
+    expect(names).toEqual(["web-vpc"]);
+  });
+
   it("collects a throwing plugin into errors instead of failing the whole graph, and reports its entities unobserved (#1089)", async () => {
     const plugins = [
       awsPlugin(() => { throw new Error("access denied"); }),

@@ -1,0 +1,8 @@
+{
+  "rules": {
+    "COR001": "off",
+    "COR004": "off",
+    "WGC001": "off",
+    "WGC002": "off"
+  }
+}

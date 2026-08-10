@@ -132,6 +132,177 @@ describe("kubectlApply", () => {
     }
   });
 
+  test("the apply stamps its resolved stack onto every document's labels — the identity the prune and the status sweep query", async () => {
+    // The serializer bakes the PROJECT stack (`ownership.stack`) into what it
+    // emits, but a component's kubectl-apply step applies under its own unit
+    // stack — and that is what both label readers select on. A manifest with
+    // the project label (or none at all: upstream CRDs) must leave the apply
+    // carrying the unit's identity, or the unit reads absent forever.
+    const file = join(dir, "k8s.yaml");
+    const labeled = deploymentYaml.replace(
+      "  name: web\n  namespace: prod\n",
+      "  name: web\n  namespace: prod\n  labels:\n    app.kubernetes.io/managed-by: chant\n    chant.intentius.io/stack: whole-project\n    chant.intentius.io/env: dev\n",
+    );
+    writeFileSync(file, labeled);
+    const cluster = fakeCluster({ respond: echoApplies });
+
+    await applyManifest({ manifest: file, stack: "kmv-workload" }, undefined, cluster.connector);
+
+    const bodies = cluster.layer.requests
+      .filter((r) => r.method === "PATCH")
+      .map((r) => JSON.parse(String(r.body)) as { metadata?: { labels?: Record<string, string> } });
+    expect(bodies).toHaveLength(2);
+    for (const body of bodies) {
+      expect(body.metadata?.labels).toMatchObject({
+        "app.kubernetes.io/managed-by": "chant",
+        "chant.intentius.io/stack": "kmv-workload",
+      });
+    }
+    // The env label is the serializer's channel — restamped never, kept as-is.
+    expect(bodies[0].metadata?.labels?.["chant.intentius.io/env"]).toBe("dev");
+    // The previously-unlabeled Service now carries the marker too.
+    expect(bodies[1].metadata?.labels?.["chant.intentius.io/env"]).toBeUndefined();
+  });
+
+  test("a conflict owned entirely by chant's own managers is retaken with force — the stack-label migration path", async () => {
+    // An estate applied before its components named per-unit stacks has every
+    // object's labels owned by `chant:<ownership.stack>`. The re-stamp under
+    // the unit's manager conflicts — with chant itself. Refusing that forever
+    // would strand the estate with no non-force path (the capability exposes
+    // no force flag), so chant retakes its OWN fields, once, per document.
+    const file = join(dir, "k8s.yaml");
+    writeFileSync(file, deploymentYaml);
+    let patches = 0;
+    const cluster = fakeCluster({
+      respond: (req) => {
+        if (req.method !== "PATCH") return undefined;
+        patches++;
+        const forced = req.query.force === "true";
+        if (forced) return { body: JSON.parse(String(req.body)) };
+        return {
+          status: 409,
+          body: {
+            ...statusBody(409, "Conflict", 'Apply failed with 1 conflict: conflict with "chant:kubemicrovm-ops"'),
+            details: {
+              causes: [
+                {
+                  type: "FieldManagerConflict",
+                  message: 'conflict with "chant:kubemicrovm-ops"',
+                  field: ".metadata.labels.chant.intentius.io/stack",
+                },
+              ],
+            },
+          },
+        };
+      },
+    });
+
+    const result = await applyManifest({ manifest: file, stack: "kmv-workload" }, undefined, cluster.connector);
+    expect(result.applied).toHaveLength(2);
+    // Each of the two documents: one refused apply + one forced retake.
+    expect(patches).toBe(4);
+    const requests = cluster.layer.requests.filter((r) => r.method === "PATCH");
+    expect(requests.map((r) => r.query.force)).toEqual(["false", "true", "false", "true"]);
+  });
+
+  test("a controller echoing chant's marker label is retaken too — chant owns its reserved channel", async () => {
+    // An operator that reconciles whole objects becomes SSA owner of labels it
+    // merely echoed (observed live: kubemicrovm's microvmimagereconciler
+    // owning .metadata.labels.chant.intentius.io/stack). It never chose that
+    // value; the marker namespace is chant's.
+    const file = join(dir, "k8s.yaml");
+    writeFileSync(file, deploymentYaml);
+    const cluster = fakeCluster({
+      respond: (req) => {
+        if (req.method !== "PATCH") return undefined;
+        if (req.query.force === "true") return { body: JSON.parse(String(req.body)) };
+        return {
+          status: 409,
+          body: {
+            ...statusBody(409, "Conflict", 'Apply failed with 1 conflict: conflict with "microvmimagereconciler"'),
+            details: {
+              causes: [
+                {
+                  type: "FieldManagerConflict",
+                  message: 'conflict with "microvmimagereconciler"',
+                  field: ".metadata.labels.chant.intentius.io/stack",
+                },
+              ],
+            },
+          },
+        };
+      },
+    });
+
+    const result = await applyManifest({ manifest: file, stack: "kmv-workload" }, undefined, cluster.connector);
+    expect(result.applied).toHaveLength(2);
+  });
+
+  test("a conflict involving any FOREIGN manager still refuses — self-retake never widens", async () => {
+    const file = join(dir, "k8s.yaml");
+    writeFileSync(file, deploymentYaml);
+    const cluster = fakeCluster({
+      respond: (req) =>
+        req.method === "PATCH"
+          ? {
+              status: 409,
+              body: {
+                ...statusBody(409, "Conflict", "Apply failed with 2 conflicts"),
+                details: {
+                  causes: [
+                    { type: "FieldManagerConflict", message: 'conflict with "chant:old"', field: ".metadata.labels.chant.intentius.io/stack" },
+                    { type: "FieldManagerConflict", message: 'conflict with "helm"', field: ".spec.replicas" },
+                  ],
+                },
+              },
+            }
+          : undefined,
+    });
+
+    const err = (await applyManifest({ manifest: file, stack: "kmv-workload" }, undefined, cluster.connector).catch(
+      (e: unknown) => e,
+    )) as Error;
+    expect(err.name).toBe("FieldManagerConflictError");
+    // No forced retry was attempted.
+    expect(cluster.layer.requests.filter((r) => r.method === "PATCH" && r.query.force === "true")).toHaveLength(0);
+  });
+
+  test("no resolvable stack applies the documents verbatim — no marker invented", async () => {
+    const file = join(dir, "k8s.yaml");
+    writeFileSync(file, deploymentYaml);
+    const cluster = fakeCluster({ respond: echoApplies });
+
+    // No stack arg, no project config: identity resolution yields none.
+    await applyManifest({ manifest: file, cwd: dir }, undefined, cluster.connector);
+
+    const body = JSON.parse(
+      String(cluster.layer.requests.find((r) => r.method === "PATCH")!.body),
+    ) as { metadata?: { labels?: Record<string, string> } };
+    expect(body.metadata?.labels).toBeUndefined();
+  });
+
+  test("inline documents bypass the filesystem — the kustomize-apply seam (#1548)", async () => {
+    const cluster = fakeCluster({ respond: echoApplies });
+    const result = await applyManifest(
+      {
+        manifest: "kustomize:overlays/dev", // a label; nothing at this path
+        documents: [
+          { apiVersion: "v1", kind: "Namespace", metadata: { name: "web" } },
+          { apiVersion: "apps/v1", kind: "Deployment", metadata: { name: "app", namespace: "web" } },
+        ],
+        stack: "web",
+      },
+      undefined,
+      cluster.connector,
+    );
+    expect(result.applied.map((r) => r.kind)).toEqual(["Namespace", "Deployment"]);
+    // The documents were stamped like any read-from-disk manifest.
+    const body = JSON.parse(String(cluster.layer.requests.find((r) => r.method === "PATCH")!.body)) as {
+      metadata?: { labels?: Record<string, string> };
+    };
+    expect(body.metadata?.labels?.["chant.intentius.io/stack"]).toBe("web");
+  });
+
   test("an explicit context is honored and skips the environment lookup entirely", async () => {
     const file = join(dir, "k8s.yaml");
     writeFileSync(file, deploymentYaml);

@@ -420,8 +420,11 @@ describe("k8s describeResources", () => {
       expect(result.resources.web).toMatchObject({ type: "K8s::Apps::Deployment", physicalId: "uid-1", status: "READY" });
     });
 
-    test("bound and ambient context mismatches: refuses loudly instead of reading the wrong cluster", async () => {
+    test("bound while a different context is ambient: the binding wins and the estate observes (#1488)", async () => {
       loadChantConfigMock.mockResolvedValue({ config: { k8s: { profiles: { prod: { context: "prod-eks" } } } } });
+      // Ambient points at staging — the state any other project's k3d cluster
+      // leaves behind. Before #1488 this refused and the whole estate read
+      // grey; the declared binding must simply be used instead.
       const ambientIsStaging = fakeKubeconfig({
         contexts: [
           { name: "prod-eks", cluster: "prod", user: "prod-user" },
@@ -429,16 +432,17 @@ describe("k8s describeResources", () => {
         ],
         currentContext: "staging-eks",
       });
-      const cluster = fakeCluster({ kubeconfig: ambientIsStaging });
+      const cluster = fakeCluster({
+        kubeconfig: ambientIsStaging,
+        objects: { [objectKey("apps/v1", "Deployment", "web", "prod")]: web },
+      });
 
-      await expect(
-        describeResources({ environment: "prod", buildOutput: "", entityNames: ["web"], entities: entities() }, (o) =>
-          defaultK8sConnector({ ...o, client: { kubeconfig: ambientIsStaging, requestLayer: cluster.layer } }),
-        ),
-      ).rejects.toThrow(/environment "prod".*"prod-eks".*"staging-eks"/s);
+      const result = await describeResources(
+        { environment: "prod", buildOutput: "", entityNames: ["web"], entities: entities() },
+        (o) => defaultK8sConnector({ ...o, client: { kubeconfig: ambientIsStaging, requestLayer: cluster.layer } }),
+      );
 
-      // Refused before a single request left the process.
-      expect(cluster.layer.requests).toHaveLength(0);
+      expect(result.resources.web).toMatchObject({ type: "K8s::Apps::Deployment", physicalId: "uid-1", status: "READY" });
     });
 
     test("unbound: the kubeconfig's own context is used, and the fallback is visible", async () => {
@@ -459,6 +463,44 @@ describe("k8s describeResources", () => {
       expect(bindingWarning?.[0]).toContain('environment "prod"');
       expect(bindingWarning?.[0]).toContain("k8s.profiles.prod.context");
       warnSpy.mockRestore();
+    });
+
+    test("a failed read names the bound context it read (#1488)", async () => {
+      loadChantConfigMock.mockResolvedValue({ config: { k8s: { profiles: { prod: { context: "prod-eks" } } } } });
+      const cluster = fakeCluster({
+        kubeconfig: twoContexts,
+        respond: (req) =>
+          req.path.endsWith("/deployments/web")
+            ? { status: 500, body: statusBody(500, "InternalError", "etcdserver: leader changed") }
+            : undefined,
+      });
+
+      const result = await describeResources(
+        { environment: "prod", buildOutput: "", entityNames: ["web"], entities: entities() },
+        (o) => defaultK8sConnector({ ...o, client: { kubeconfig: twoContexts, requestLayer: cluster.layer } }),
+      );
+
+      expect(result.unobserved?.web?.reason).toBe("read-failed");
+      expect(result.unobserved?.web?.detail).toContain('context "prod-eks" (bound by k8s.profiles.prod.context)');
+    });
+
+    test("an ambient read failure names the context that was read and the missing binding (#1488)", async () => {
+      loadChantConfigMock.mockResolvedValue({ config: {} });
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const cluster = fakeCluster({
+        kubeconfig: twoContexts,
+        respond: (req) =>
+          req.path.endsWith("/deployments/web") ? { status: 500, body: statusBody(500, "InternalError", "nope") } : undefined,
+      });
+
+      const result = await describeResources(
+        { environment: "prod", buildOutput: "", entityNames: ["web"], entities: entities() },
+        (o) => defaultK8sConnector({ ...o, client: { kubeconfig: twoContexts, requestLayer: cluster.layer } }),
+      );
+      warnSpy.mockRestore();
+
+      expect(result.unobserved?.web?.reason).toBe("read-failed");
+      expect(result.unobserved?.web?.detail).toContain('context "prod-eks" (ambient; no k8s.profiles.prod binding)');
     });
 
     test("a bound context the kubeconfig does not have refuses with the context name", async () => {
@@ -503,6 +545,390 @@ describe("k8s describeResources", () => {
   });
 
   // ── Runtime children: owner-reference chain classification (chant #1077) ──
+
+  describe("runtime children of the estate's own API groups (#1517)", () => {
+    function declaredCronJob() {
+      return makeEntities([
+        { name: "backup", entityType: "K8s::Batch::CronJob", props: { metadata: { name: "backup", namespace: "prod" } } },
+      ]);
+    }
+    const cronJob = {
+      apiVersion: "batch/v1",
+      kind: "CronJob",
+      metadata: { name: "backup", namespace: "prod", uid: "cj-uid" },
+    };
+
+    test("a controller-made child in a declared non-core group surfaces with its own kind and a declared chain", async () => {
+      const job = {
+        apiVersion: "batch/v1",
+        kind: "Job",
+        metadata: {
+          name: "backup-29157",
+          namespace: "prod",
+          uid: "job-uid",
+          ownerReferences: [{ apiVersion: "batch/v1", kind: "CronJob", name: "backup", uid: "cj-uid", controller: true }],
+        },
+        status: { conditions: [{ type: "Complete", status: "True" }] },
+      };
+      const cluster = fakeCluster({
+        objects: {
+          [objectKey("batch/v1", "CronJob", "backup", "prod")]: cronJob,
+          [objectKey("batch/v1", "Job", "backup-29157", "prod")]: job,
+        },
+      });
+
+      const result = await describeResources(
+        { environment: "prod", buildOutput: "", entityNames: ["backup"], entities: declaredCronJob() },
+        cluster.connector,
+      );
+
+      const child = result.resources["prod/backup-29157"];
+      expect(child).toMatchObject({
+        type: "K8s::Batch::Job",
+        physicalId: "job-uid",
+        ownerChain: { root: "declared", entity: "backup" },
+      });
+    });
+
+    test("a loose object in a swept group with no owner chain is NOT reported — the scan is not an inventory", async () => {
+      const looseJob = {
+        apiVersion: "batch/v1",
+        kind: "Job",
+        metadata: { name: "hand-made", namespace: "prod", uid: "loose-uid" },
+      };
+      const cluster = fakeCluster({
+        objects: {
+          [objectKey("batch/v1", "CronJob", "backup", "prod")]: cronJob,
+          [objectKey("batch/v1", "Job", "hand-made", "prod")]: looseJob,
+        },
+      });
+
+      const result = await describeResources(
+        { environment: "prod", buildOutput: "", entityNames: ["backup"], entities: declaredCronJob() },
+        cluster.connector,
+      );
+
+      expect(result.resources["prod/hand-made"]).toBeUndefined();
+    });
+
+    // The issue's own estate: a declared MicroVMReplicaSet whose operator
+    // made MicroVMs — a CRD kind no table anticipated. Discovery names it.
+    test("a controller-made child of a CRD kind surfaces as a runtime child of the declared CR", async () => {
+      const replicaSet = {
+        apiVersion: "lambda.aws.amazon.com/v1alpha1",
+        kind: "MicroVMReplicaSet",
+        metadata: { name: "kmv-dev-a-vm", namespace: "microvm-demo", uid: "mvrs-uid" },
+      };
+      const vm = {
+        apiVersion: "lambda.aws.amazon.com/v1alpha1",
+        kind: "MicroVM",
+        metadata: {
+          name: "kmv-dev-a-vm-42sgf",
+          namespace: "microvm-demo",
+          uid: "vm-uid",
+          ownerReferences: [
+            { apiVersion: "lambda.aws.amazon.com/v1alpha1", kind: "MicroVMReplicaSet", name: "kmv-dev-a-vm", uid: "mvrs-uid", controller: true },
+          ],
+        },
+        status: { phase: "Running" },
+      };
+      const cluster = fakeCluster({
+        objects: {
+          [objectKey("lambda.aws.amazon.com/v1alpha1", "MicroVMReplicaSet", "kmv-dev-a-vm", "microvm-demo")]: replicaSet,
+          [objectKey("lambda.aws.amazon.com/v1alpha1", "MicroVM", "kmv-dev-a-vm-42sgf", "microvm-demo")]: vm,
+        },
+      });
+
+      const result = await describeResources(
+        {
+          environment: "dev",
+          buildOutput: "",
+          entityNames: ["workloadReplicaSet"],
+          entities: makeEntities([
+            {
+              name: "workloadReplicaSet",
+              entityType: "K8s::KubeMicroVM::MicroVMReplicaSet",
+              props: { metadata: { name: "kmv-dev-a-vm", namespace: "microvm-demo" } },
+            },
+          ]),
+        },
+        cluster.connector,
+      );
+
+      expect(result.resources["microvm-demo/kmv-dev-a-vm-42sgf"]).toMatchObject({
+        type: "K8s::Lambda::MicroVM",
+        physicalId: "vm-uid",
+        ownerChain: { root: "declared", entity: "workloadReplicaSet" },
+      });
+    });
+
+    test("a child in a group the estate never declares surfaces too — discovery names the kinds, not the declaration", async () => {
+      // A declared CR whose operator makes ordinary Deployments: ray.io is
+      // declared, apps/v1 is not, and the estate-groups sweep never listed it.
+      const rayCluster = { apiVersion: "ray.io/v1", kind: "RayCluster", metadata: { name: "ml", namespace: "ray", uid: "ray-uid" } };
+      const head = {
+        apiVersion: "apps/v1",
+        kind: "Deployment",
+        metadata: {
+          name: "ml-head",
+          namespace: "ray",
+          uid: "head-uid",
+          ownerReferences: [{ apiVersion: "ray.io/v1", kind: "RayCluster", name: "ml", uid: "ray-uid", controller: true }],
+        },
+        status: { readyReplicas: 1, replicas: 1 },
+      };
+      const cluster = fakeCluster({
+        objects: {
+          [objectKey("ray.io/v1", "RayCluster", "ml", "ray")]: rayCluster,
+          [objectKey("apps/v1", "Deployment", "ml-head", "ray")]: head,
+        },
+      });
+
+      const result = await describeResources(
+        {
+          environment: "prod",
+          buildOutput: "",
+          entityNames: ["ml"],
+          entities: makeEntities([
+            { name: "ml", entityType: "K8s::Ray::RayCluster", props: { metadata: { name: "ml", namespace: "ray" } } },
+          ]),
+        },
+        cluster.connector,
+      );
+
+      expect(result.resources["ray/ml-head"]).toMatchObject({
+        type: "K8s::Apps::Deployment",
+        physicalId: "head-uid",
+        ownerChain: { root: "declared", entity: "ml" },
+      });
+    });
+
+    test("a discovered kind the sweep cannot list is an unobserved hole, never silently absent", async () => {
+      const cluster = fakeCluster({
+        objects: { [objectKey("batch/v1", "CronJob", "backup", "prod")]: cronJob },
+        respond: (req) =>
+          req.path === "/apis/batch/v1/namespaces/prod/jobs"
+            ? { status: 403, body: statusBody(403, "Forbidden", "jobs is forbidden") }
+            : undefined,
+      });
+
+      const result = await describeResources(
+        { environment: "prod", buildOutput: "", entityNames: ["backup"], entities: declaredCronJob() },
+        cluster.connector,
+      );
+
+      // Declared resolution is never failed by the sweep.
+      expect(result.resources.backup).toMatchObject({ type: "K8s::Batch::CronJob", physicalId: "cj-uid" });
+      // The failed list is a hole the observation admits, with the failure's
+      // own classification — a 403 is a credentials problem, and silence here
+      // would have read as "no runtime children in prod".
+      expect(result.unobserved?.["runtime-sweep:batch/v1/Job"]).toMatchObject({
+        type: "K8s::Batch::Job",
+        reason: "no-credentials",
+      });
+      expect(result.unobserved?.["runtime-sweep:batch/v1/Job"]?.detail).toContain("namespace prod");
+    });
+
+    test("a cluster-scoped child chains to a declared cluster-scoped entity — the one case cluster-scoped kinds are swept", async () => {
+      const ns = { apiVersion: "v1", kind: "Namespace", metadata: { name: "team-a", uid: "ns-uid" }, status: { phase: "Active" } };
+      const role = {
+        apiVersion: "rbac.authorization.k8s.io/v1",
+        kind: "ClusterRole",
+        metadata: {
+          name: "team-a-admin",
+          uid: "role-uid",
+          ownerReferences: [{ apiVersion: "v1", kind: "Namespace", name: "team-a", uid: "ns-uid", controller: true }],
+        },
+      };
+      const cluster = fakeCluster({
+        objects: {
+          [objectKey("v1", "Namespace", "team-a")]: ns,
+          [objectKey("rbac.authorization.k8s.io/v1", "ClusterRole", "team-a-admin")]: role,
+        },
+      });
+
+      const result = await describeResources(
+        {
+          environment: "prod",
+          buildOutput: "",
+          entityNames: ["team"],
+          entities: makeEntities([
+            { name: "team", entityType: "K8s::Core::Namespace", props: { metadata: { name: "team-a" } } },
+          ]),
+        },
+        cluster.connector,
+      );
+
+      expect(result.resources["cluster:team-a-admin"]).toMatchObject({
+        type: "K8s::Rbac::ClusterRole",
+        physicalId: "role-uid",
+        ownerChain: { root: "declared", entity: "team" },
+      });
+    });
+
+    test("a Flux-managed Deployment is attributed to its declared Kustomization by the controller's labels (#1549)", async () => {
+      // Flux stamps managed objects with name+namespace labels instead of
+      // ownerReferences, so the chain walk reaches nothing — the label
+      // channel resolves against the DECLARED CR, exactly. The workload also
+      // lives in a namespace the estate never declares an entity in: the
+      // Kustomization's own spec.targetNamespace is what puts it in scope.
+      const kustomization = {
+        apiVersion: "kustomize.toolkit.fluxcd.io/v1",
+        kind: "Kustomization",
+        metadata: { name: "apps", namespace: "flux-system", uid: "ks-uid" },
+        status: { conditions: [{ type: "Ready", status: "True" }] },
+      };
+      const managed = {
+        apiVersion: "apps/v1",
+        kind: "Deployment",
+        metadata: {
+          name: "web",
+          namespace: "prod",
+          uid: "dep-uid",
+          labels: { "kustomize.toolkit.fluxcd.io/name": "apps", "kustomize.toolkit.fluxcd.io/namespace": "flux-system" },
+        },
+        status: { readyReplicas: 1, replicas: 1 },
+      };
+      const cluster = fakeCluster({
+        objects: {
+          [objectKey("kustomize.toolkit.fluxcd.io/v1", "Kustomization", "apps", "flux-system")]: kustomization,
+          [objectKey("apps/v1", "Deployment", "web", "prod")]: managed,
+        },
+      });
+
+      const result = await describeResources(
+        {
+          environment: "prod",
+          buildOutput: "",
+          entityNames: ["apps"],
+          entities: makeEntities([
+            {
+              name: "apps",
+              entityType: "K8s::Flux::Kustomization",
+              props: { metadata: { name: "apps", namespace: "flux-system" }, spec: { targetNamespace: "prod", sourceRef: { kind: "GitRepository", name: "infra" } } },
+            },
+          ]),
+        },
+        cluster.connector,
+      );
+
+      expect(result.resources["prod/web"]).toMatchObject({
+        type: "K8s::Apps::Deployment",
+        ownerChain: { root: "declared", entity: "apps" },
+      });
+    });
+
+    test("Argo's bare instance label claims only a UNIQUE declared Application (#1549)", async () => {
+      const app = (name: string) => ({
+        apiVersion: "argoproj.io/v1alpha1",
+        kind: "Application",
+        metadata: { name, namespace: "argocd", uid: `${name}-uid` },
+        status: { health: { status: "Healthy" }, sync: { status: "Synced" } },
+      });
+      const managed = {
+        apiVersion: "apps/v1",
+        kind: "Deployment",
+        metadata: { name: "web", namespace: "prod", uid: "dep-uid", labels: { "app.kubernetes.io/instance": "web" } },
+      };
+      const cluster = fakeCluster({
+        objects: {
+          [objectKey("argoproj.io/v1alpha1", "Application", "web", "argocd")]: app("web"),
+          [objectKey("apps/v1", "Deployment", "web", "prod")]: managed,
+        },
+      });
+
+      const result = await describeResources(
+        {
+          environment: "prod",
+          buildOutput: "",
+          entityNames: ["webApp"],
+          entities: makeEntities([
+            {
+              name: "webApp",
+              entityType: "K8s::Argo::Application",
+              props: { metadata: { name: "web", namespace: "argocd" }, spec: { destination: { namespace: "prod" } } },
+            },
+          ]),
+        },
+        cluster.connector,
+      );
+
+      expect(result.resources["prod/web"]).toMatchObject({
+        type: "K8s::Apps::Deployment",
+        ownerChain: { root: "declared", entity: "webApp" },
+      });
+    });
+
+    test("a generic instance label matching NO declared Application claims nothing — not an inventory (#1549)", async () => {
+      // `app.kubernetes.io/instance` is also what plain helm sets; on an
+      // estate declaring a Flux CR (so the widened sweep runs), a foreign
+      // helm-installed Deployment must not be attributed.
+      const kustomization = {
+        apiVersion: "kustomize.toolkit.fluxcd.io/v1",
+        kind: "Kustomization",
+        metadata: { name: "apps", namespace: "flux-system", uid: "ks-uid" },
+      };
+      const foreign = {
+        apiVersion: "apps/v1",
+        kind: "Deployment",
+        metadata: { name: "cert-manager", namespace: "flux-system", uid: "cm-uid", labels: { "app.kubernetes.io/instance": "cert-manager" } },
+      };
+      const cluster = fakeCluster({
+        objects: {
+          [objectKey("kustomize.toolkit.fluxcd.io/v1", "Kustomization", "apps", "flux-system")]: kustomization,
+          [objectKey("apps/v1", "Deployment", "cert-manager", "flux-system")]: foreign,
+        },
+      });
+
+      const result = await describeResources(
+        {
+          environment: "prod",
+          buildOutput: "",
+          entityNames: ["apps"],
+          entities: makeEntities([
+            { name: "apps", entityType: "K8s::Flux::Kustomization", props: { metadata: { name: "apps", namespace: "flux-system" } } },
+          ]),
+        },
+        cluster.connector,
+      );
+
+      expect(result.resources["flux-system/cert-manager"]).toBeUndefined();
+    });
+
+    test("the sweep's bound is the estate's namespaces, not a kind list — and no cluster-scoped list without a cluster-scoped entity", async () => {
+      const svc = { apiVersion: "v1", kind: "Service", metadata: { name: "web", namespace: "prod", uid: "svc-uid" } };
+      const cluster = fakeCluster({
+        objects: { [objectKey("v1", "Service", "web", "prod")]: svc },
+      });
+
+      await describeResources(
+        {
+          environment: "prod",
+          buildOutput: "",
+          entityNames: ["web"],
+          entities: makeEntities([
+            { name: "web", entityType: "K8s::Core::Service", props: { metadata: { name: "web", namespace: "prod" } } },
+          ]),
+        },
+        cluster.connector,
+      );
+
+      const paths = cluster.layer.paths();
+      const isDiscovery = (p: string) =>
+        p === "/api" || p === "/apis" || /^\/api\/[^/]+$/.test(p) || /^\/apis\/[^/]+\/[^/]+$/.test(p);
+      const reads = paths.filter((p) => !isDiscovery(p));
+      // Discovery names the kinds; every actual read or list stays inside the
+      // one namespace the estate touches. Nothing is listed cluster-wide.
+      expect(reads.length).toBeGreaterThan(0);
+      expect(reads.every((p) => p.includes("/namespaces/prod/"))).toBe(true);
+      // Nothing declared is cluster-scoped, so no owner chain could reach a
+      // cluster-scoped object — their kinds are not listed at all.
+      expect(paths.some((p) => p.endsWith("/clusterroles"))).toBe(false);
+      // Events churn by the thousands and can never chain (`involvedObject`,
+      // not `ownerReferences`) — discovery serves them, the sweep skips them.
+      expect(paths.some((p) => p.endsWith("/events"))).toBe(false);
+    });
+  });
 
   describe("runtime children (#1077)", () => {
     function declaredDeployment() {
@@ -691,7 +1117,7 @@ describe("k8s describeResources", () => {
       expect(Object.keys(result.resources)).toHaveLength(2); // web + standalonePod, no synthetic duplicate
     });
 
-    test("a Pod-list failure for a namespace is best-effort — declared entities still resolve", async () => {
+    test("a Pod-list failure never fails declared resolution — and surfaces as an unobserved hole (#1517)", async () => {
       const cluster = fakeCluster({
         objects: { [objectKey("apps/v1", "Deployment", "web", "prod")]: web },
         respond: (req) => (req.path.endsWith("/pods") ? { status: 403, body: statusBody(403, "Forbidden", "no pods list") } : undefined),
@@ -704,6 +1130,12 @@ describe("k8s describeResources", () => {
 
       expect(result.resources.web).toMatchObject({ type: "K8s::Apps::Deployment", physicalId: "uid-1" });
       expect(Object.keys(result.resources)).toEqual(["web"]);
+      // Silence would read as "no runtime Pods in prod", which the failed
+      // list never proved — the sweep admits the hole instead.
+      expect(result.unobserved?.["runtime-sweep:v1/Pod"]).toMatchObject({
+        type: "K8s::Core::Pod",
+        reason: "no-credentials",
+      });
     });
 
     test("a lexicon-supported entity type with no namespaced entities resolved does no Pod scan at all", async () => {
@@ -785,6 +1217,36 @@ describe("statusFromObject — the most specific failing signal (#1397)", () => 
     expect(statusFromObject({ status: { readyReplicas: 3, replicas: 3 } } as never)).toBe("READY");
     expect(statusFromObject({ status: { readyReplicas: 1, replicas: 3 } } as never)).toBe("PROGRESSING(1/3)");
     expect(statusFromObject({} as never)).toBe("PRESENT");
+  });
+
+  test("a conditions-first CR reads its Ready condition, not PRESENT (#1549)", () => {
+    // A wedged Flux Kustomization/HelmRelease has no phase and no replica
+    // counts, so it fell straight to PRESENT — a wedged reconciler read
+    // exactly like a healthy one.
+    expect(
+      statusFromObject({ status: { conditions: [{ type: "Ready", status: "False", reason: "BuildFailed" }] } } as never),
+    ).toBe("BuildFailed");
+    expect(
+      statusFromObject({ status: { conditions: [{ type: "Ready", status: "False" }] } } as never),
+    ).toBe("NOT-READY");
+    expect(
+      statusFromObject({ status: { conditions: [{ type: "Ready", status: "True", reason: "ReconciliationSucceeded" }] } } as never),
+    ).toBe("READY");
+  });
+
+  test("the Ready rung never changes a Pod or workload word — phase and replicas rank above it (#1549)", () => {
+    expect(
+      statusFromObject({ status: { phase: "Running", conditions: [{ type: "Ready", status: "False" }] } } as never),
+    ).toBe("Running");
+    expect(
+      statusFromObject({ status: { readyReplicas: 1, replicas: 3, conditions: [{ type: "Ready", status: "False" }] } } as never),
+    ).toBe("PROGRESSING(1/3)");
+  });
+
+  test("an Argo Application reads health/sync (#1549)", () => {
+    expect(statusFromObject({ status: { health: { status: "Degraded" }, sync: { status: "Synced" } } } as never)).toBe("Degraded");
+    expect(statusFromObject({ status: { health: { status: "Healthy" }, sync: { status: "OutOfSync" } } } as never)).toBe("OutOfSync");
+    expect(statusFromObject({ status: { health: { status: "Healthy" }, sync: { status: "Synced" } } } as never)).toBe("READY");
   });
 });
 

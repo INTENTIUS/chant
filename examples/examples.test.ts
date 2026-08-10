@@ -68,6 +68,32 @@ describeExample("cc-aws-canonical", {
   examplesDir: import.meta.dirname,
 });
 
+// ── CC lane canonical Azure estate (epic #1200) ──────────────────────
+// VnetDefault networking + an AKS managedCluster + the k8s Service on it.
+// Deployed to floci-az by #1214's round-trip (`just azure-cc-e2e`); the
+// assertions here are the offline half — it synthesizes and lints like any
+// other example.
+
+describeExample("cc-azure-canonical", {
+  lexicon: "azure+k8s",
+  serializer: [azureSerializer, k8sSerializer],
+  outputKey: ["azure", "k8s"],
+  examplesDir: import.meta.dirname,
+});
+
+// ── CC lane canonical GCP estate (epic #1199) ────────────────────────
+// Every kind the direct-REST applier can write (gcpApply's MAPPERS): bucket,
+// topic + subscription, secret, service account, Cloud Run service. Deployed
+// to floci-gcp by `just gcp-cc-e2e` (#1211); the assertions here are the
+// offline half — it synthesizes and lints like any other example.
+
+describeExample("cc-gcp-canonical", {
+  lexicon: "gcp",
+  serializer: gcpSerializer,
+  outputKey: "gcp",
+  examplesDir: import.meta.dirname,
+});
+
 // ── GitLab + AWS ALB examples ────────────────────────────────────────
 
 describeExample("gitlab-aws-alb-infra", {
@@ -611,6 +637,68 @@ describe("fly-deploy-rollback Ops", () => {
     expect(restore.args).toMatchObject({ id: "deploy-sandbox", comment: "known-good" });
   });
 });
+
+// ── Flux CD on self-hosted k8s — flux-apps (#1590) ──────────────────
+// One FluxGitSource + three FluxAppFor calls reconcile a platform layer and
+// two workloads out of one repo, with dependsOn ordering (platform ← api ←
+// web). The workloads are plain Chant k8s (Traefik IngressRoute +
+// cert-manager Certificate — the self-hosted stack); Flux is opt-in via
+// src/flux. The live run needs a cluster (documented in the tutorial); CI
+// builds the whole src tree — FLUX002/003's cross-resource joins hold
+// because source and Kustomizations are declared in the same build.
+
+describeExample(
+  "flux-apps",
+  {
+    lexicon: "k8s",
+    serializer: k8sSerializer,
+    outputKey: "k8s",
+    examplesDir: import.meta.dirname,
+  },
+  {
+    checks: (output) => {
+      const docs = parseK8sDocs(output);
+      // 2 platform + 2 api + 4 web + 1 GitRepository + 3 Kustomizations = 12.
+      // The README states this count — keep them in lockstep (#1422).
+      expect(docs).toHaveLength(12);
+      const kinds = docs.map((d) => d.kind);
+      expect(kinds.filter((k) => k === "GitRepository")).toHaveLength(1);
+      expect(kinds.filter((k) => k === "Kustomization")).toHaveLength(3);
+      expect(kinds.filter((k) => k === "Deployment")).toHaveLength(2);
+      expect(kinds.filter((k) => k === "Service")).toHaveLength(2);
+      expect(kinds).toContain("Namespace");
+      expect(kinds).toContain("ClusterIssuer");
+      expect(kinds).toContain("Certificate");
+      expect(kinds).toContain("IngressRoute");
+
+      // The source pins a ref (FLUX001's default) at a 5m interval.
+      const source = docs.find((d) => d.kind === "GitRepository")!;
+      expect(source.doc).toContain("branch: main");
+      expect(source.doc).toMatch(/interval: '?5m'?/);
+
+      // Every Kustomization reconciles out of the one shared source, with
+      // estate defaults on (one source, many apps; prune + wait).
+      const kustomizations = docs.filter((d) => d.kind === "Kustomization");
+      for (const k of kustomizations) {
+        expect(k.doc).toContain("name: flux-apps");
+        expect(k.doc).toContain("kind: GitRepository");
+        expect(k.doc).toContain("prune: true");
+        expect(k.doc).toContain("wait: true");
+      }
+
+      // The dependsOn graph: platform ← api ← web (FLUX003 validates the
+      // names against this same build).
+      const web = kustomizations.find((d) => d.name === "web")!;
+      expect(web.doc).toContain("dependsOn");
+      expect(web.doc).toContain("- name: platform");
+      expect(web.doc).toContain("- name: api");
+      const api = kustomizations.find((d) => d.name === "api")!;
+      expect(api.doc).toContain("- name: platform");
+      const platform = kustomizations.find((d) => d.name === "platform")!;
+      expect(platform.doc).not.toContain("dependsOn");
+    },
+  },
+);
 
 // ── K8s + AWS EKS microservice (comprehensive) ──────────────────────
 

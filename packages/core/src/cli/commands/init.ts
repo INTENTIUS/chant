@@ -7,7 +7,7 @@ import { formatSuccess, formatWarning } from "../format";
 import { loadPlugin } from "../plugins";
 
 /** Read the current chant package version from our own package.json. */
-function getChantVersion(): string {
+export function getChantVersion(): string {
   try {
     const pkgDir = dirname(dirname(dirname(dirname(fileURLToPath(import.meta.url)))));
     const pkg = JSON.parse(readFileSync(join(pkgDir, "package.json"), "utf-8"));

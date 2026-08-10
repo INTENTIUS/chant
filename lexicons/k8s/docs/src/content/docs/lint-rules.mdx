@@ -76,6 +76,16 @@ Quality checks for the [Argo CD composites](/chant/lexicons/k8s/argo-composites/
 | ARGO004 | `ApplicationSet` template doesn't scope to a single static `AppProject` |
 | ARGO005 | `Application` `source.path` doesn't resolve to a directory (warn) |
 
+### Flux
+
+Quality checks for the [Flux composites](/chant/lexicons/k8s/flux-composites/) (`FluxGitSource` / `FluxAppFor`). FLUX001 is declarative (source AST); FLUX002/003 are post-synth (cross-resource).
+
+| Rule | Description |
+|------|-------------|
+| FLUX001 | `GitRepository` has no `spec.ref` pin — Flux falls back to the `master` branch |
+| FLUX002 | `Kustomization.spec.sourceRef` references an undeclared source (the bootstrap `flux-system` repo is exempt) |
+| FLUX003 | `Kustomization.spec.dependsOn` names a `Kustomization` nothing in the build declares, or itself (warn) |
+
 ## Running lint
 
 ```bash

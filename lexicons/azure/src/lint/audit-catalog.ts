@@ -27,4 +27,10 @@ export const azureAuditCatalog: Record<string, RuleMeta> = {
   AZR027: auditRule("AZR027", "merge-worthy", "guidance", "Container Registry admin user enabled", "Disable the admin user; use Azure AD / service principals.", { authority: [AZ_SEC] }),
   AZR028: auditRule("AZR028", "report-only", "guidance", "Network interface missing NSG", "Associate an NSG to control traffic.", { category: "best-practice" }),
   AZR029: auditRule("AZR029", "merge-worthy", "guidance", "Managed disk missing encryption", "Enable encryption for data at rest.", { authority: [AZ_SEC] }),
+  AZR030: auditRule("AZR030", "merge-worthy", "guidance", "Resource at unsupported template scope", "Move the resource to a project deployed at a scope its schema supports.", { category: "correctness" }),
+
+  // governance posture regressions.
+  AZR031: auditRule("AZR031", "merge-worthy", "guidance", "Policy assignment not enforced (DoNotEnforce)", "Set enforcementMode to Default so the assigned guardrail applies.", { authority: [AZ_SEC] }),
+  AZR032: auditRule("AZR032", "merge-worthy", "guidance", "Custom policy definition assigned nowhere", "Pair the policy definition with a policy assignment — unassigned it enforces nothing.", { authority: [AZ_SEC] }),
+  AZR033: auditRule("AZR033", "merge-worthy", "guidance", "Subscriptions may leave the tenant", "Set blockSubscriptionsLeavingTenant: true on the Microsoft.Subscription/policies resource.", { authority: [AZ_SEC] }),
 };

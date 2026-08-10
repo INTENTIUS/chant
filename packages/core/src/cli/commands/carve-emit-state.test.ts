@@ -4,6 +4,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { carveEmit, formatCarveEmit } from "./carve-emit";
 import { loadHcl2json } from "../../terraform/parse";
+import { readCarveManifest } from "../../terraform/manifest";
 import type { ImportResult, LiveImportOptions } from "./import";
 import type { LexiconPlugin } from "../../lexicon";
 
@@ -89,7 +90,7 @@ describe("carve emit --state (real adoption from tfstate)", () => {
       expect(liveImport).not.toHaveBeenCalled(); // offline — no cloud
 
       // A real .ts file with the native constructor + props from real state.
-      expect(res.emittedFiles).toEqual([join(out, "assets.ts")]);
+      expect(res.emittedFiles).toEqual([join(out, "src", "assets.ts")]);
       const emitted = readFileSync(res.emittedFiles![0], "utf-8");
       expect(emitted).toContain("new Bucket({");
       expect(emitted).toContain('BucketName: "myapp-assets-prod"');
@@ -98,9 +99,117 @@ describe("carve emit --state (real adoption from tfstate)", () => {
       // Boundary still classified (the Lambda inbound).
       expect(res.report!.inbound.map((e) => e.survivor)).toEqual(["aws_lambda_function.api"]);
 
+      // The carve state manifest persists boundary + selector for bridge/apply.
+      expect(res.manifestPath).toBe(join(out, "aws_s3_bucket-assets.carve.json"));
+      const manifest = readCarveManifest(res.manifestPath!)!;
+      expect(manifest.target).toBe("aws_s3_bucket.assets");
+      expect(manifest.statePath).toBe(join(dir, "terraform.tfstate"));
+      expect(manifest.emit!.source).toBe("tfstate");
+      expect(manifest.emit!.files).toEqual([join(out, "src", "assets.ts")]);
+      expect(manifest.boundary.inbound.map((e) => e.survivor)).toEqual(["aws_lambda_function.api"]);
+
       const text = formatCarveEmit(res);
       expect(text).toContain("Adopted from Terraform state (offline)");
+      expect(text).toContain("State manifest");
+      expect(text).toContain("Scaffolded a buildable chant project");
     });
+  });
+
+  test("scaffolds a buildable chant project around the emitted source, never overwriting", async () => {
+    if (!parserAvailable) return;
+    await withEstate(async (dir) => {
+      const out = join(dir, "carveout");
+      const res = await carveEmit(
+        { from: dir, select: "aws_s3_bucket.assets", statePath: join(dir, "terraform.tfstate"), output: out },
+        { plugins: [], liveImport },
+      );
+      expect(res.ok).toBe(true);
+      expect(res.scaffolded!.map((f) => f.slice(out.length + 1)).sort()).toEqual([
+        "chant.config.ts",
+        "package.json",
+        "tsconfig.json",
+      ]);
+
+      const pkg = JSON.parse(readFileSync(join(out, "package.json"), "utf-8"));
+      expect(pkg.scripts.build).toBe("chant build src --lexicon aws");
+      expect(Object.keys(pkg.dependencies)).toEqual(["@intentius/chant", "@intentius/chant-lexicon-aws"]);
+      expect(readFileSync(join(out, "chant.config.ts"), "utf-8")).toContain('lexicons: ["aws"]');
+
+      // A second emit into the same dir leaves the scaffold (and edits) alone.
+      writeFileSync(join(out, "package.json"), '{"name":"edited"}');
+      const again = await carveEmit(
+        { from: dir, select: "aws_s3_bucket.assets", statePath: join(dir, "terraform.tfstate"), output: out },
+        { plugins: [], liveImport },
+      );
+      expect(again.ok).toBe(true);
+      expect(again.scaffolded).toEqual([]);
+      expect(readFileSync(join(out, "package.json"), "utf-8")).toBe('{"name":"edited"}');
+    });
+  });
+
+  test("deferred outbound inputs become declared build params (#998)", async () => {
+    if (!parserAvailable) return;
+    const dir = mkdtempSync(join(tmpdir(), "chant-emit-params-"));
+    try {
+      writeFileSync(
+        join(dir, "main.tf"),
+        `
+resource "aws_vpc" "main" { cidr_block = "10.0.0.0/16" }
+resource "aws_subnet" "a" {
+  vpc_id     = aws_vpc.main.id
+  cidr_block = "10.0.1.0/24"
+}
+`,
+      );
+      writeFileSync(
+        join(dir, "terraform.tfstate"),
+        JSON.stringify({
+          version: 4,
+          resources: [
+            {
+              mode: "managed",
+              type: "aws_subnet",
+              name: "a",
+              instances: [{ attributes: { id: "subnet-0aa", vpc_id: "vpc-0abc", cidr_block: "10.0.1.0/24" } }],
+            },
+            {
+              mode: "managed",
+              type: "aws_vpc",
+              name: "main",
+              instances: [{ attributes: { id: "vpc-0abc", cidr_block: "10.0.0.0/16" } }],
+            },
+          ],
+        }),
+      );
+      const out = join(dir, "carveout");
+      const res = await carveEmit(
+        { from: dir, select: "aws_subnet.a", statePath: join(dir, "terraform.tfstate"), output: out },
+        { plugins: [], liveImport },
+      );
+      expect(res.ok).toBe(true);
+
+      // The survivor-fed prop is a params reference; the rest stay literal.
+      const emitted = readFileSync(join(out, "src", "a.ts"), "utf-8");
+      expect(emitted).toContain('import { params } from "@intentius/chant/params";');
+      expect(emitted).toContain("VpcId: params.vpc_id as string,");
+      expect(emitted).toContain('CidrBlock: "10.0.1.0/24"');
+
+      // The scaffolded config declares the param, defaulted from state.
+      const config = readFileSync(join(out, "chant.config.ts"), "utf-8");
+      expect(config).toContain("buildParams: {");
+      expect(config).toContain("vpc_id: {");
+      expect(config).toContain('default: "vpc-0abc",');
+      expect(config).toContain("was aws_vpc.main.id in Terraform");
+
+      // Recorded in the manifest, reported in the summary.
+      const manifest = readCarveManifest(res.manifestPath!)!;
+      expect(manifest.emit!.params).toEqual({
+        vpc_id: { tfAttr: "vpc_id", survivor: "aws_vpc.main", attrs: ["id"], default: "vpc-0abc" },
+      });
+      expect(formatCarveEmit(res)).toContain("vpc_id — was aws_vpc.main.id");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   test("without --state or --env it explains both adoption sources", async () => {

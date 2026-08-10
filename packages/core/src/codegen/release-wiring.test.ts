@@ -117,10 +117,13 @@ function recipeBody(name: string): string {
  * which is why this asserts the mechanism, not a shared literal.
  */
 describe("release wiring: peer ranges stay in lockstep (#1255)", () => {
-  it("the whole-repo release rewrites both @intentius peer ranges", () => {
+  it("the whole-repo release rewrites every @intentius peer range", () => {
+    // The rewrite is generic (`with_entries` over every `@intentius/*`
+    // peer) rather than named keys — a hand-listed rewrite goes stale the
+    // same way the hand-listed publish steps did.
     const body = recipeBody("release");
-    expect(body).toMatch(/peerDependencies\["@intentius\/chant"\]/);
-    expect(body).toMatch(/peerDependencies\["@intentius\/chant-lexicon-github"\]/);
+    expect(body).toMatch(/\.peerDependencies\s*\|=\s*with_entries/);
+    expect(body).toMatch(/startswith\("@intentius\/"\)/);
   });
 
   it("the single-lexicon release rewrites them too", () => {

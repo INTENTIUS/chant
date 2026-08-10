@@ -13,6 +13,11 @@ import { latestVersionPerProvider } from "./api-versions";
 
 /**
  * Top-level ARM JSON Schema for a provider file.
+ *
+ * Besides the resource-group-scope `resourceDefinitions`, provider files
+ * carry parallel sections for the other deployment scopes. Org-hierarchy and
+ * policy resources (management groups, subscription aliases, policy
+ * definitions) exist ONLY in those sections (#1545).
  */
 export interface ArmProviderSchema {
   id?: string;
@@ -20,8 +25,14 @@ export interface ArmProviderSchema {
   title?: string;
   description?: string;
   resourceDefinitions?: Record<string, ArmResourceDefinition>;
+  subscription_resourceDefinitions?: Record<string, ArmResourceDefinition>;
+  managementGroup_resourceDefinitions?: Record<string, ArmResourceDefinition>;
+  tenant_resourceDefinitions?: Record<string, ArmResourceDefinition>;
   definitions?: Record<string, ArmSchemaDefinition>;
 }
+
+/** ARM deployment scopes a resource definition can target. */
+export type DeployScope = "resourceGroup" | "subscription" | "managementGroup" | "tenant";
 
 /**
  * A single resource definition within a provider schema.
@@ -128,6 +139,85 @@ function normalizeProvider(fileProvider: string): string {
 }
 
 /**
+ * Providers whose scope-specific resource definition sections are read in
+ * addition to `resourceDefinitions` (#1545).
+ *
+ * Deliberately an allowlist: reading the scoped sections for every provider
+ * would pull hundreds of subscription/tenant-scope resources into the
+ * generated surface at once (and back into tsc time — see the #438 bounding
+ * story). Only the org-hierarchy and policy providers need them today; grow
+ * this set intentionally, checking generated size and azure tsc time after.
+ */
+const SCOPED_SECTION_PROVIDERS = new Set([
+  "Microsoft.Management",
+  "Microsoft.Subscription",
+  "Microsoft.Authorization",
+]);
+
+/** Scope sections of a provider file, in definition-priority order. */
+const SCOPE_SECTIONS: Array<{ key: keyof ArmProviderSchema; scope: DeployScope }> = [
+  { key: "resourceDefinitions", scope: "resourceGroup" },
+  { key: "subscription_resourceDefinitions", scope: "subscription" },
+  { key: "managementGroup_resourceDefinitions", scope: "managementGroup" },
+  { key: "tenant_resourceDefinitions", scope: "tenant" },
+];
+
+/**
+ * Explode one provider schema file into per-resource schema entries,
+ * writing into `out` keyed by resource type. Resource types already present
+ * in `out` are left untouched (first file wins across a multi-version pin).
+ *
+ * For providers in {@link SCOPED_SECTION_PROVIDERS} all deployment-scope
+ * sections are read; the definition comes from the highest-priority section
+ * that has it, and `deployScopes` unions every section that defines it.
+ */
+export function explodeProviderSchema(
+  provider: string,
+  apiVersion: string,
+  providerSchema: ArmProviderSchema,
+  out: Map<string, Buffer>,
+): void {
+  const definitions = providerSchema.definitions ?? {};
+  const sections = SCOPED_SECTION_PROVIDERS.has(normalizeProvider(provider))
+    ? SCOPE_SECTIONS
+    : SCOPE_SECTIONS.slice(0, 1);
+
+  // Gather each resource name's definition (highest-priority section wins)
+  // and the union of scopes that define it.
+  const byName = new Map<string, { def: ArmResourceDefinition; scopes: DeployScope[] }>();
+  for (const { key, scope } of sections) {
+    const defs = providerSchema[key] as Record<string, ArmResourceDefinition> | undefined;
+    if (!defs) continue;
+    for (const [resourceName, resourceDef] of Object.entries(defs)) {
+      const existing = byName.get(resourceName);
+      if (existing) {
+        existing.scopes.push(scope);
+      } else {
+        byName.set(resourceName, { def: resourceDef, scopes: [scope] });
+      }
+    }
+  }
+
+  for (const [resourceName, { def, scopes }] of byName) {
+    const resourceType = `${normalizeProvider(provider)}/${resourceName}`;
+    if (out.has(resourceType)) continue;
+
+    // Build a per-resource schema that includes the resource def + shared definitions + apiVersion
+    const perResourceSchema = {
+      resourceType,
+      apiVersion,
+      provider,
+      resourceName,
+      deployScopes: scopes,
+      resourceDefinition: def,
+      definitions,
+    };
+
+    out.set(resourceType, Buffer.from(JSON.stringify(perResourceSchema)));
+  }
+}
+
+/**
  * Fetch ARM schemas and return a Map keyed by resource type
  * (e.g. "Microsoft.Storage/storageAccounts") to raw JSON bytes.
  *
@@ -147,39 +237,33 @@ export async function fetchArmSchemas(force = false): Promise<Map<string, Buffer
   // Extract all provider schema files
   const allFiles = extractFromTar(tarData, isProviderSchema);
 
-  // Deduplicate: keep only latest API version per provider
+  // Deduplicate: keep only the latest API version per provider, or the pinned
+  // versions (in pin order) for providers in PROVIDER_VERSION_OVERRIDES.
   const paths = [...allFiles.keys()];
-  const latest = latestVersionPerProvider(paths);
+  const selected = latestVersionPerProvider(paths);
 
-  // Explode: one provider file has N resourceDefinitions → emit N entries
+  // Explode: one provider file has N resourceDefinitions → emit N entries.
+  // With a multi-version pin the first file that defines a resource wins.
   const schemas = new Map<string, Buffer>();
 
-  for (const [provider, { path, apiVersion }] of latest) {
-    const data = allFiles.get(path);
-    if (!data) continue;
+  for (const [provider, files] of selected) {
+    // First-wins applies within one provider's pin list; across providers the
+    // pre-#1545 behavior is kept (a later provider file may overwrite a
+    // normalized-name collision, e.g. Microsoft.Sql.Legacy vs Microsoft.Sql).
+    const providerSchemas = new Map<string, Buffer>();
+    for (const { path, apiVersion } of files) {
+      const data = allFiles.get(path);
+      if (!data) continue;
 
-    try {
-      const providerSchema: ArmProviderSchema = JSON.parse(data.toString("utf-8"));
-      const definitions = providerSchema.definitions ?? {};
-      const resourceDefs = providerSchema.resourceDefinitions ?? {};
-
-      for (const [resourceName, resourceDef] of Object.entries(resourceDefs)) {
-        const resourceType = `${normalizeProvider(provider)}/${resourceName}`;
-
-        // Build a per-resource schema that includes the resource def + shared definitions + apiVersion
-        const perResourceSchema = {
-          resourceType,
-          apiVersion,
-          provider,
-          resourceName,
-          resourceDefinition: resourceDef,
-          definitions,
-        };
-
-        schemas.set(resourceType, Buffer.from(JSON.stringify(perResourceSchema)));
+      try {
+        const providerSchema: ArmProviderSchema = JSON.parse(data.toString("utf-8"));
+        explodeProviderSchema(provider, apiVersion, providerSchema, providerSchemas);
+      } catch {
+        // Skip files that can't be parsed
       }
-    } catch {
-      // Skip files that can't be parsed
+    }
+    for (const [resourceType, buf] of providerSchemas) {
+      schemas.set(resourceType, buf);
     }
   }
 

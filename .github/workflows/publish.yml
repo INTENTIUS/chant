@@ -76,6 +76,8 @@ jobs:
       - run: npm run --prefix lexicons/temporal prepack
       - run: npm run --prefix lexicons/fly prepack
       - run: npm run --prefix lexicons/fountain prepack
+      - run: npm run --prefix lexicons/k3d prepack
+      - run: npm run --prefix lexicons/k3s prepack
       - run: npx vitest run
 
   publish:

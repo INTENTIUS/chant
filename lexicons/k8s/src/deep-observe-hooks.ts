@@ -41,8 +41,19 @@
  * keyed by chant's own k8s entityType catalog.
  */
 
+import { createRequire } from "module";
 import type { DeepArrayElement, DeepNode, DeepNormalizationHooks } from "@intentius/chant/lexicon";
 import { K8S_OBJECT_ENVELOPE_PRUNE_PATTERNS, k8sListMapOrderKey } from "@intentius/chant/managed-fields";
+import { LABEL_OWNERSHIP_KEYS, OWNERSHIP_MANAGED_BY_VALUE } from "@intentius/chant/ownership";
+
+// This module ships as ESM (tsx strips types from src/ directly), where a bare
+// `require` is not defined — the same reason serializer.ts and the LSP modules
+// already build one. The bug only surfaced on a LIVE deep read that meets an
+// associative list (every k8s estate does: a Deployment's containers), so
+// `lifecycle diff --live` crashed with `require is not defined` on exactly the
+// estates the generated table exists for (#1441 regression, found on
+// kubemicrovm-ops).
+const require = createRequire(import.meta.url);
 
 /**
  * Kubernetes-defaulted fields, per entity type, as index-erased property
@@ -76,12 +87,63 @@ export const K8S_SERVICE_DEFAULTS: Record<string, Record<string, unknown>> = {
     "spec.template.spec.restartPolicy": "Always",
     "spec.template.spec.terminationGracePeriodSeconds": 30,
     "spec.template.spec.schedulerName": "default-scheduler",
+    // Widened on the CC canonical estate (#1214): a container declaring an
+    // httpGet probe, a named port, or nothing about termination gets exactly
+    // these from the API server. SSA attributes a server-defaulted field to no
+    // manager, so the managed-fields prune deliberately leaves them diffable
+    // (see ./deep-observe.ts) — this table is where they subtract.
+    "spec.template.spec.containers[].livenessProbe.failureThreshold": 3,
+    "spec.template.spec.containers[].livenessProbe.periodSeconds": 10,
+    "spec.template.spec.containers[].livenessProbe.successThreshold": 1,
+    "spec.template.spec.containers[].livenessProbe.timeoutSeconds": 1,
+    "spec.template.spec.containers[].livenessProbe.httpGet.scheme": "HTTP",
+    "spec.template.spec.containers[].readinessProbe.failureThreshold": 3,
+    "spec.template.spec.containers[].readinessProbe.periodSeconds": 10,
+    "spec.template.spec.containers[].readinessProbe.successThreshold": 1,
+    "spec.template.spec.containers[].readinessProbe.timeoutSeconds": 1,
+    "spec.template.spec.containers[].readinessProbe.httpGet.scheme": "HTTP",
+    "spec.template.spec.containers[].ports[].protocol": "TCP",
+    "spec.template.spec.containers[].terminationMessagePath": "/dev/termination-log",
+    "spec.template.spec.containers[].terminationMessagePolicy": "File",
+    "spec.template.spec.securityContext": {},
   },
   "K8s::Core::Service": {
     "spec.sessionAffinity": "None",
     "spec.type": "ClusterIP",
+    "spec.internalTrafficPolicy": "Cluster",
+    "spec.ipFamilyPolicy": "SingleStack",
+    "spec.ports[].protocol": "TCP",
   },
 };
+
+/**
+ * Server-ASSIGNED fields — populated by the API server with a value that
+ * varies per object (an allocated ClusterIP, the resolved IP family list), so
+ * unlike {@link K8S_SERVICE_DEFAULTS} there is no fixed value to compare
+ * against. Counterpart-gated like the defaults table: a declared `clusterIP`
+ * is still compared, only the purely server-filled appearance is noise.
+ */
+export const K8S_SERVER_ASSIGNED_PATTERNS: Record<string, ReadonlySet<string>> = {
+  "K8s::Core::Service": new Set(["spec.clusterIP", "spec.clusterIPs", "spec.ipFamilies"]),
+};
+
+/**
+ * chant's own ownership marker, as label paths (#1214 — the k8s edition of
+ * azure's #1213 rule). The build stamps `app.kubernetes.io/managed-by` +
+ * `chant.intentius.io/{stack,env}` into every manifest it emits, so a managed
+ * object always carries them live while the declared *source* the diff
+ * compares does not — chant reading its own signature back as drift. The
+ * managed-fields prune cannot subtract them: they are in the applied config,
+ * so chant's field manager owns them, and chant-owned is always diffable.
+ * Counterpart-gated at the call site; managed-by is additionally gated on the
+ * value `"chant"`, so `managed-by: helm` appearing out of band still surfaces.
+ */
+const K8S_OWNERSHIP_LABEL_PATTERNS: ReadonlySet<string> = new Set([
+  `metadata.labels.${LABEL_OWNERSHIP_KEYS.stack}`,
+  `metadata.labels.${LABEL_OWNERSHIP_KEYS.env}`,
+]);
+
+const K8S_MANAGED_BY_LABEL_PATTERN = `metadata.labels.${LABEL_OWNERSHIP_KEYS.managedBy}`;
 
 /** Stable JSON with sorted keys — the fallback ordering key for a set-like array without a natural identity field. */
 function canonicalJson(value: unknown): string {
@@ -196,6 +258,14 @@ export const k8sDeepNormalizationHooks: DeepNormalizationHooks = {
     if (K8S_OBJECT_ENVELOPE_PRUNE_PATTERNS.has(node.pattern)) return true;
 
     if (node.side !== "live" || node.counterpart !== "absent") return false;
+
+    // chant's own ownership marker is not drift (see the sets' docs).
+    if (K8S_OWNERSHIP_LABEL_PATTERNS.has(node.pattern)) return true;
+    if (node.pattern === K8S_MANAGED_BY_LABEL_PATTERN && node.value === OWNERSHIP_MANAGED_BY_VALUE) return true;
+
+    // A server-assigned value nobody declared is allocation, not drift.
+    if (K8S_SERVER_ASSIGNED_PATTERNS[node.entityType]?.has(node.pattern)) return true;
+
     const defaults = K8S_SERVICE_DEFAULTS[node.entityType];
     if (!defaults || !Object.prototype.hasOwnProperty.call(defaults, node.pattern)) return false;
     return canonicalJson(defaults[node.pattern]) === canonicalJson(node.value);

@@ -1,0 +1,81 @@
+---
+title: Overview
+description: k3s host configuration — server/agent config.yaml and registries.yaml — as typed chant source
+---
+
+The k3s lexicon declares the files k3s itself consumes: `config.yaml` for
+`k3s server` / `k3s agent`, and `registries.yaml` for the embedded
+containerd. The emitted files are exactly what the native tool accepts —
+drop them at `/etc/rancher/k3s/` (or pass `--config`) and chant is nowhere
+in sight. That walk-away property is the reason this is a lexicon at all.
+
+```bash
+npm install --save-dev @intentius/chant @intentius/chant-lexicon-k3s
+```
+
+```typescript
+// chant.config.ts
+export default {
+  lexicons: ["k3s"],
+};
+```
+
+## Entities
+
+| Entity | Emits | For |
+|---|---|---|
+| `Server` | `config.yaml` | `k3s server` — every server flag as a YAML key |
+| `Agent` | `<name>.config.yaml` | `k3s agent` — requires `server` |
+| `Registries` | `registries.yaml` | containerd mirrors, auth, TLS |
+
+Config keys are the CLI flag names, verbatim: if `k3s server --help` shows
+`--write-kubeconfig-mode`, the declaration key is
+`"write-kubeconfig-mode"`. The typed surface is generated from the pinned
+k3s release's own flag definitions (v1.36.3+k3s1), so a regeneration is a
+reviewable diff against a known upstream.
+
+## A two-node cluster
+
+```typescript
+import { Agent, Server } from "@intentius/chant-lexicon-k3s";
+
+export const controlPlane = new Server({
+  "cluster-init": true,
+  "tls-san": ["10.0.0.10", "cp.example.internal"],
+  "write-kubeconfig-mode": "0600",
+});
+
+export const worker = new Agent({
+  server: "https://cp.example.internal:6443",
+  "token-file": "/etc/rancher/k3s/agent-token",
+});
+```
+
+## The token boundary
+
+There is no `token` property, on purpose. The join secret reaches a node
+as a file (`token-file`, `agent-token-file`) or as `K3S_TOKEN` /
+`K3S_TOKEN_FILE` in the installer's environment — never as a value in
+source. A literal that arrives through raw props anyway fails K3S001 at
+lint and K3S101 at build; the same wall covers the etcd S3 snapshot
+credentials (`etcd-s3-config-secret` is the reference form upstream
+provides).
+
+## Rules
+
+| Rule | Severity | What it catches |
+|---|---|---|
+| K3S001 | error | literal `token` / `agent-token` in source |
+| K3S101 | error | a literal secret reaching the build |
+| K3S102 | error | literal registry credentials in registries.yaml |
+| K3S103 | error | an Agent with no `server` to join |
+| K3S104 | warning | kubeconfig written wider than 0644 |
+| K3S105 | warning | registry TLS verification disabled |
+
+## Relationship to k3d
+
+The [k3d lexicon](/chant/lexicons/k3d/) declares a k3d-managed cluster —
+k3s wrapped in Docker, config consumed by the `k3d` CLI. This lexicon
+declares k3s on real hosts: Lima VMs, bare metal, cloud instances. The
+acceptance test for both is the same idea — the native tool consuming the
+emitted file is the proof.

@@ -114,6 +114,50 @@ export interface ArmResourceBody {
   [key: string]: unknown;
 }
 
+/**
+ * GET the resource-group's resource list — the enumeration half live export
+ * needs (#1214). Real ARM returns envelopes (id/name/type/location/tags);
+ * callers wanting the full body follow up with {@link getResourceById}.
+ */
+export async function listResources(options: AzureReadClientOptions): Promise<ArmResourceBody[]> {
+  const http = options.http ?? defaultHttp;
+  const base = (options.endpoint ?? DEFAULT_ENDPOINT).replace(/\/$/, "");
+  const subscription = options.subscriptionId ?? DEFAULT_SUBSCRIPTION;
+  const url = `${base}/subscriptions/${subscription}/resourceGroups/${options.resourceGroup}/resources?api-version=${DEFAULT_API_VERSION}`;
+  const res = await http("GET", url, undefined, options.signal);
+  if (res.status >= 300) throw readError(res.status, res.text);
+  try {
+    const body: unknown = JSON.parse(res.text);
+    const value = isRecord(body) ? body.value : undefined;
+    if (!Array.isArray(value)) throw new AzureReadError("unparseable ARM resource list", res.status);
+    return value.filter(isRecord) as ArmResourceBody[];
+  } catch (err) {
+    if (err instanceof AzureReadError) throw err;
+    throw new AzureReadError("unparseable ARM resource list", res.status);
+  }
+}
+
+/** GET one resource by its full ARM id — the read for a list entry, nested types included. */
+export async function getResourceById(
+  options: AzureReadClientOptions,
+  id: string,
+  apiVersion = DEFAULT_API_VERSION,
+): Promise<ArmResourceBody> {
+  const http = options.http ?? defaultHttp;
+  const base = (options.endpoint ?? DEFAULT_ENDPOINT).replace(/\/$/, "");
+  const url = `${base}${id}?api-version=${apiVersion}`;
+  const res = await http("GET", url, undefined, options.signal);
+  if (res.status >= 300) throw readError(res.status, res.text);
+  try {
+    const body: unknown = JSON.parse(res.text);
+    if (!isRecord(body)) throw new AzureReadError(`unparseable ARM body for ${id}`, res.status);
+    return body as ArmResourceBody;
+  } catch (err) {
+    if (err instanceof AzureReadError) throw err;
+    throw new AzureReadError(`unparseable ARM body for ${id}`, res.status);
+  }
+}
+
 /** GET one resource. Throws {@link AzureReadError}; 404 means absent, which callers check with {@link isNotFound}. */
 export async function getResource(
   options: AzureReadClientOptions,

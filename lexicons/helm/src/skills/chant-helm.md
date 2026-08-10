@@ -292,7 +292,7 @@ const lifecycle = HelmCRDLifecycle({
 
 ## OCI registry workflow
 
-Helm 3.8+ supports OCI registries as first-class chart repositories.
+Helm 4 supports OCI registries as first-class chart repositories.
 
 ```bash
 # Login to an OCI registry
@@ -407,7 +407,7 @@ helm uninstall my-app --keep-history      # preserve history for rollback
 ### Common errors
 
 #### "apiVersion must be v2"
-Helm 3 requires `apiVersion: v2` in Chart.yaml. Update your Chart metadata.
+Helm requires `apiVersion: v2` in Chart.yaml. Update your Chart metadata.
 
 #### "unbalanced template braces"
 A Go template expression has mismatched `{{` / `}}`. Check your intrinsic usage.

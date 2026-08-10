@@ -39,11 +39,11 @@ done
 
 # --- 2. Create k3d cluster ---
 echo "=== Creating k3d cluster: $CLUSTER ==="
-k3d cluster create "$CLUSTER" \
-  --k3s-arg "--disable=traefik@server:*" \
-  --k3s-arg "--disable=servicelb@server:*" \
-  --k3s-arg "--kubelet-arg=pod-max-pids=4096@server:*" \
-  --wait
+# The cluster shape lives in k3d/src/k3d-cluster.ts as a typed declaration;
+# this builds it and hands the emitted config to k3d verbatim, so the script
+# and the declaration cannot drift.
+npm run build:k3d-cluster
+k3d cluster create --config k3d/cluster.yaml
 
 # --- 3. Install KubeRay operator ---
 echo "=== Installing KubeRay operator (helm $KUBERAY_HELM_VERSION) ==="

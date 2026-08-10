@@ -38,11 +38,13 @@ export interface K8sConfigShape {
 }
 
 /**
- * Thrown when an environment declares a cluster binding but the ambient
- * kubectl context disagrees with it. Refusing here — instead of silently
- * observing whichever cluster is ambient — is the fix for #1100: a
- * wrong-cluster read reports every declared resource as missing, which #1089
- * then classifies as a confident (and wrong) list of `create` actions.
+ * Historically thrown when an environment declared a cluster binding but the
+ * ambient kubectl context disagreed with it (#1100/#1155). As of #1488 the
+ * resolver no longer polices ambient at all — a declared binding is USED, not
+ * checked — so {@link resolveClusterTarget} never throws this anymore. The
+ * class stays exported because the k8s lexicon's read/write paths still catch
+ * it (converting a refusal into NOT-OBSERVED), and a custom connector may
+ * still throw it to get that classification.
  */
 export class ClusterBindingMismatchError extends Error {
   constructor(
@@ -77,8 +79,11 @@ export interface ResolvedClusterTarget {
  * `kubectl config current-context`; the k8s lexicon's typed API client
  * (chant #1074) supplies one that reads the parsed kubeconfig instead, so a
  * client that never needs the `kubectl` binary does not acquire a dependency
- * on it just to check the binding. Both answer the same question, so the
- * refusal semantics below are identical either way.
+ * on it just to check the binding.
+ *
+ * As of #1488 the resolver itself no longer reads ambient (a declared binding
+ * is used directly), so this hook only matters to callers that surface the
+ * ambient context in their own messages.
  */
 export type AmbientContextReader = () => Promise<string | undefined>;
 
@@ -112,13 +117,16 @@ export interface ResolveClusterTargetOptions {
  * - No binding declared: returns `{ source: "ambient" }` — unchanged
  *   behavior — but logs a visible warning identifying the caller and
  *   environment, so the fallback is never silent (#1100 acceptance).
- * - Binding declared and the ambient context agrees (or ambient can't be
- *   determined): returns `{ context: bound, source: "bound" }`. Callers
- *   should pass this context explicitly on every kubectl invocation rather
- *   than relying on it also being ambient.
- * - Binding declared and the ambient context disagrees: throws
- *   {@link ClusterBindingMismatchError} — a loud refusal instead of quietly
- *   reading the wrong cluster.
+ * - Binding declared: returns `{ context: bound, source: "bound" }`,
+ *   regardless of what is ambient (#1488). The declared binding is the
+ *   selection, not a check: callers pass this context explicitly on every
+ *   read and write, so whichever cluster `kubectl` happens to be pointed at
+ *   is irrelevant. Any k3d cluster another project creates mid-session used
+ *   to steal the ambient context and turn a healthy estate grey with
+ *   `read-failed` as the only explanation; now it cannot. A bound context
+ *   that is absent from the kubeconfig fails downstream in the typed client
+ *   with an error naming the context and the `k8s.profiles.<env>.context`
+ *   binding — never by falling back to ambient.
  */
 export async function resolveClusterTarget(
   config: Record<string, unknown>,
@@ -139,11 +147,6 @@ export async function resolveClusterTarget(
         `context is ambient. Add a binding to pin this environment to a specific cluster (chant #1100).`,
     );
     return { source: "ambient" };
-  }
-
-  const ambient = await (options.ambientContext ?? currentAmbientContext)();
-  if (ambient && ambient !== bound) {
-    throw new ClusterBindingMismatchError(environment, bound, ambient);
   }
 
   return { context: bound, source: "bound" };

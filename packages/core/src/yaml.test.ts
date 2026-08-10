@@ -243,6 +243,54 @@ describe("parseYAML block scalars (#910)", () => {
   test("folded > folds line breaks to spaces, blank line to one newline", () => {
     expect(parseYAML("msg: >\n  a\n  b\n\n  c\n")).toEqual({ msg: "a b\nc\n" });
   });
+
+  // #1482 — a block scalar as the sequence ITEM itself (`- |`), not as an
+  // item key's value. The header parsed as the literal string "|" and the
+  // body lines leaked upward: inside a container list, every key after
+  // `args:` — securityContext, even the following `containers:` — was
+  // hoisted to the document root, so the post-synth security checks read a
+  // manifest that had quietly lost the app containers.
+  test("literal | as a sequence item (#1482)", () => {
+    expect(parseYAML("args:\n  - |\n    set -eu\n    echo done\n")).toEqual({
+      args: ["set -eu\necho done\n"],
+    });
+  });
+
+  test("the #1482 shape: keys after a block-scalar arg stay on the item, and later keys stay nested", () => {
+    const doc = [
+      "spec:",
+      "  initContainers:",
+      "    - name: wait",
+      "      args:",
+      "        - |",
+      "          line one",
+      "          line two",
+      "      securityContext:",
+      "        runAsNonRoot: true",
+      "  containers:",
+      "    - name: app",
+      "      image: x:1",
+      "",
+    ].join("\n");
+    expect(parseYAML(doc)).toEqual({
+      spec: {
+        initContainers: [
+          {
+            name: "wait",
+            args: ["line one\nline two\n"],
+            securityContext: { runAsNonRoot: true },
+          },
+        ],
+        containers: [{ name: "app", image: "x:1" }],
+      },
+    });
+  });
+
+  test("folded >- as a sequence item strips the trailing newline", () => {
+    expect(parseYAML("cmds:\n  - >-\n    a\n    b\n  - plain\n")).toEqual({
+      cmds: ["a b", "plain"],
+    });
+  });
 });
 
 // #1311 — a sequence item's sibling keys survive a nested block, whichever key

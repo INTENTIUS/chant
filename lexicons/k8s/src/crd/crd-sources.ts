@@ -277,6 +277,40 @@ const FLUX_OPERATOR_INSTALL = `https://github.com/controlplaneio-fluxcd/flux-ope
 const KUBEMICROVM_CHART = "oci://ghcr.io/codriverlabs/helm/kube-microvm-operator";
 const KUBEMICROVM_VERSION = "1.0.11";
 
+/**
+ * k3s bundled-controller CRDs — helm.cattle.io/v1 + k3s.cattle.io/v1
+ *
+ * k3s's manifest auto-deploy machinery speaks these CRDs: drop a HelmChart
+ * into /var/lib/rancher/k3s/server/manifests and the embedded helm-controller
+ * installs the chart; every auto-deployed manifest is tracked by an Addon.
+ * Typed here for the same reason the Flux toolkit kinds are — they are what a
+ * k3s estate's GitOps surface is written in.
+ *
+ * Produces (both groups map to the `K3s` namespace — see
+ * GROUP_NAMESPACE_OVERRIDES in crd/parser.ts):
+ *   K8s::K3s::HelmChart        → apiVersion: helm.cattle.io/v1, kind: HelmChart
+ *   K8s::K3s::HelmChartConfig  → apiVersion: helm.cattle.io/v1, kind: HelmChartConfig
+ *   K8s::K3s::Addon            → apiVersion: k3s.cattle.io/v1,  kind: Addon
+ *
+ * The pin is k3s v1.36.3+k3s1 (the release the k3s lexicon pins), but the k3s
+ * repo itself publishes no CRD YAMLs — its manifests/ directory carries only
+ * the bundled charts, and the API types live in dependency repos. The URLs
+ * below point at the exact versions that release vendors in its go.mod:
+ *   github.com/k3s-io/helm-controller v0.17.7  (helm.cattle.io CRDs)
+ *   github.com/k3s-io/api             v0.1.4   (k3s.cattle.io CRDs)
+ * When bumping, re-read go.mod at the new k3s tag and move both pins together.
+ *
+ * k3s-io/api also ships an ETCDSnapshotFile CRD — deliberately left out. It is
+ * status-only controller bookkeeping (the server writes them to describe
+ * snapshots it took); nothing an author would declare.
+ *
+ * Controller install: none — both controllers are embedded in the k3s binary.
+ */
+const K3S_HELM_CONTROLLER_VERSION = "v0.17.7"; // vendored by k3s v1.36.3+k3s1
+const K3S_API_VERSION = "v0.1.4"; // vendored by k3s v1.36.3+k3s1
+const K3S_HELM_CONTROLLER_CRD_BASE = `https://raw.githubusercontent.com/k3s-io/helm-controller/${K3S_HELM_CONTROLLER_VERSION}/pkg/crds/yaml/generated`;
+const K3S_API_CRD_BASE = `https://raw.githubusercontent.com/k3s-io/api/${K3S_API_VERSION}/pkg/crds/yaml/generated`;
+
 export const CRD_SOURCES: CRDSource[] = [
   { type: "url", url: `${KUBERAY_CRD_BASE}/ray.io_rayclusters.yaml` },
   { type: "url", url: `${KUBERAY_CRD_BASE}/ray.io_rayjobs.yaml` },
@@ -335,6 +369,9 @@ export const CRD_SOURCES: CRDSource[] = [
     url: FLUX_OPERATOR_INSTALL,
     kinds: ["FluxInstance", "FluxReport", "ResourceSet", "ResourceSetInputProvider"],
   },
+  { type: "url", url: `${K3S_HELM_CONTROLLER_CRD_BASE}/helm.cattle.io_helmcharts.yaml` },
+  { type: "url", url: `${K3S_HELM_CONTROLLER_CRD_BASE}/helm.cattle.io_helmchartconfigs.yaml` },
+  { type: "url", url: `${K3S_API_CRD_BASE}/k3s.cattle.io_addons.yaml` },
   {
     type: "helm",
     chart: KUBEMICROVM_CHART,

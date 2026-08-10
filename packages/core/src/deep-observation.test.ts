@@ -75,6 +75,25 @@ describe("normalizeDeepProperties", () => {
     expect(out.List).toEqual(["x", "y"]);
   });
 
+  test("a value the unresolved hook claims collapses to UNRESOLVED, and only that value", () => {
+    const hooks: DeepNormalizationHooks = {
+      unresolved: (n) =>
+        n.side === "declared" && typeof n.value === "string" && n.value.startsWith("[") && n.value.endsWith("]"),
+    };
+    const declared = normalizeDeepProperties(
+      { ref: { id: "[resourceId('T', 'x')]" }, name: "n" },
+      { entityType: "T", side: "declared", hooks },
+    );
+    expect(declared).toEqual({ ref: { id: UNRESOLVED }, name: "n" });
+    // The hook sees the side, so the live tree — where the same shape is an
+    // evaluated value — is untouched.
+    const live = normalizeDeepProperties(
+      { ref: { id: "[literal]" }, name: "n" },
+      { entityType: "T", side: "live", hooks },
+    );
+    expect(live).toEqual({ ref: { id: "[literal]" }, name: "n" });
+  });
+
   test("prunes by hook, and prunes the whole subtree", () => {
     const hooks: DeepNormalizationHooks = { prune: (n) => n.pattern === "Status" };
     const out = normalizeDeepProperties(

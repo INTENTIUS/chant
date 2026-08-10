@@ -9,7 +9,7 @@
 import { describe, test, expect } from "vitest";
 import { parseOpenVex, parseCycloneDxVex, parseVexDocument, applyVex } from "./vex";
 import { extractLicenses, evaluateLicensePolicy } from "./license-policy";
-import { createVulnGateCapability, VulnGateFailedError, type VulnGateInput } from "./vuln-gate";
+import { createVulnGateCapability, DEFAULT_VULN_POLICY, VulnGateFailedError, type VulnGateInput } from "./vuln-gate";
 import type { VulnFinding, VulnScanner } from "./vuln-scan";
 import type { SbomDocument } from "./sbom-generator";
 import { resolveVulnPolicy } from "../../config";
@@ -186,6 +186,131 @@ describe("audit hardening (#628)", () => {
   });
 });
 
+// ── exploitability shape (#1462, phase 0 of epic #1461) ──────────────────────
+
+describe("exploitability policy shape (#1462)", () => {
+  test("DEFAULT_VULN_POLICY does not gate on KEV — flipping failOnKev is a deliberate release decision (epic #1461), not a drive-by", () => {
+    expect(DEFAULT_VULN_POLICY.failOnKev).toBe(false);
+    expect(DEFAULT_VULN_POLICY.exploitabilityFixableOnly).toBe(true);
+    expect(DEFAULT_VULN_POLICY.failEpssAtOrAbove).toBeUndefined();
+    expect(DEFAULT_VULN_POLICY.warnEpssAtOrAbove).toBeUndefined();
+  });
+
+  test("a finding carrying exploitability fields passes through the gate with today's outcomes (evaluation is #1465)", async () => {
+    const kevHigh: VulnFinding = {
+      ...HIGH_FIXABLE,
+      epss: 0.42,
+      epssPercentile: 0.97,
+      inKev: true,
+      kevDateAdded: "2026-01-15",
+      kevDueDate: "2026-02-05",
+      kevRansomware: true,
+    };
+    // KEV membership changes no outcome in this phase: still a warning under the default policy.
+    const out = await gate({ sbom: SBOM_SPDX, findings: [kevHigh] });
+    expect(out.passed).toBe(true);
+    expect(out.warnings).toEqual([kevHigh]);
+  });
+
+  test("a finding constructed without exploitability fields still typechecks and gates as before", async () => {
+    await expect(gate({ sbom: SBOM_SPDX, findings: [CRIT_FIXABLE], policy: { failOnKev: false, exploitabilityFixableOnly: true } })).rejects.toBeInstanceOf(
+      VulnGateFailedError,
+    );
+  });
+});
+
+// ── exploitability evaluation (#1465, phase 2 of epic #1461) ─────────────────
+
+describe("exploitability evaluation (#1465)", () => {
+  const MEDIUM_KEV_FIXABLE: VulnFinding = {
+    cveId: "CVE-K1", severity: "medium", package: "libfoo", installedVersion: "1", fixedVersion: "2", fixable: true,
+    inKev: true, kevDateAdded: "2024-03-11", kevRansomware: true,
+  };
+  const LOW_HIGH_EPSS: VulnFinding = {
+    cveId: "CVE-E1", severity: "low", package: "libbar", installedVersion: "1", fixedVersion: "2", fixable: true,
+    epss: 0.42, epssPercentile: 0.97,
+  };
+
+  async function blockingOf(input: VulnGateInput) {
+    try {
+      await gate(input);
+    } catch (e) {
+      expect(e).toBeInstanceOf(VulnGateFailedError);
+      return (e as VulnGateFailedError).blocking;
+    }
+    throw new Error("expected the gate to block");
+  }
+
+  test("failOnKev blocks a fixable KEV finding BELOW the fail severity, reason kev — the headline case that passes today", async () => {
+    const blocking = await blockingOf({ sbom: SBOM_SPDX, findings: [MEDIUM_KEV_FIXABLE], policy: { failOnKev: true } });
+    expect(blocking).toEqual([{ finding: MEDIUM_KEV_FIXABLE, reason: "kev" }]);
+  });
+
+  test("an UNFIXABLE KEV finding warns instead of blocking under exploitabilityFixableOnly (default)", async () => {
+    const unfixable: VulnFinding = { ...MEDIUM_KEV_FIXABLE, fixedVersion: undefined, fixable: false };
+    const out = await gate({ sbom: SBOM_SPDX, findings: [unfixable], policy: { failOnKev: true } });
+    expect(out.passed).toBe(true);
+    expect(out.warnings).toEqual([unfixable]);
+  });
+
+  test("exploitabilityFixableOnly: false blocks the unfixable KEV finding too", async () => {
+    const unfixable: VulnFinding = { ...MEDIUM_KEV_FIXABLE, fixedVersion: undefined, fixable: false };
+    const blocking = await blockingOf({ sbom: SBOM_SPDX, findings: [unfixable], policy: { failOnKev: true, exploitabilityFixableOnly: false } });
+    expect(blocking[0].reason).toBe("kev");
+  });
+
+  test("failEpssAtOrAbove blocks a low-severity finding at/above the threshold, reason epss-threshold", async () => {
+    const blocking = await blockingOf({ sbom: SBOM_SPDX, findings: [LOW_HIGH_EPSS], policy: { failEpssAtOrAbove: 0.1 } });
+    expect(blocking).toEqual([{ finding: LOW_HIGH_EPSS, reason: "epss-threshold" }]);
+  });
+
+  test("absent EPSS never matches a threshold — undefined is not zero", async () => {
+    const unscored: VulnFinding = { ...LOW_HIGH_EPSS, epss: undefined, epssPercentile: undefined };
+    const out = await gate({ sbom: SBOM_SPDX, findings: [unscored], policy: { failEpssAtOrAbove: 0, warnEpssAtOrAbove: 0 } });
+    expect(out.passed).toBe(true);
+    expect(out.warnings).toEqual([]);
+  });
+
+  test("warnEpssAtOrAbove warns without blocking", async () => {
+    const out = await gate({ sbom: SBOM_SPDX, findings: [LOW_HIGH_EPSS], policy: { warnEpssAtOrAbove: 0.1 } });
+    expect(out.passed).toBe(true);
+    expect(out.warnings).toEqual([LOW_HIGH_EPSS]);
+  });
+
+  test("VEX suppression outranks KEV — a suppressed KEV finding does not block and lands in suppressed", async () => {
+    const vex = JSON.stringify({ statements: [{ vulnerability: "CVE-K1", status: "not_affected", justification: "vulnerable code not in execute path" }] });
+    const out = await gate({ sbom: SBOM_SPDX, findings: [MEDIUM_KEV_FIXABLE], vex: [vex], policy: { failOnKev: true } });
+    expect(out.passed).toBe(true);
+    expect(out.suppressed.map((s) => s.finding.cveId)).toEqual(["CVE-K1"]);
+  });
+
+  test("exploitability escalates, never de-escalates: a severity block with low EPSS and no KEV still blocks", async () => {
+    const dullCritical: VulnFinding = { ...CRIT_FIXABLE, epss: 0.001, inKev: undefined };
+    const blocking = await blockingOf({ sbom: SBOM_SPDX, findings: [dullCritical], policy: { failOnKev: true, failEpssAtOrAbove: 0.5 } });
+    expect(blocking).toEqual([{ finding: dullCritical, reason: "severity-threshold" }]);
+  });
+
+  test("a finding blocked for several reasons is reported once, under the most specific: kev > epss-threshold > severity-threshold", async () => {
+    const everything: VulnFinding = { ...CRIT_FIXABLE, epss: 0.9, inKev: true, kevDateAdded: "2024-03-11" };
+    const blocking = await blockingOf({ sbom: SBOM_SPDX, findings: [everything], policy: { failOnKev: true, failEpssAtOrAbove: 0.1 } });
+    expect(blocking).toEqual([{ finding: everything, reason: "kev" }]);
+  });
+
+  test("the error message names the rule that fired for each finding", async () => {
+    const err = await gate({
+      sbom: SBOM_SPDX,
+      findings: [MEDIUM_KEV_FIXABLE, LOW_HIGH_EPSS, CRIT_FIXABLE],
+      policy: { failOnKev: true, failEpssAtOrAbove: 0.1 },
+    }).then(
+      () => { throw new Error("expected the gate to block"); },
+      (e) => e as VulnGateFailedError,
+    );
+    expect(err.message).toContain("CVE-K1 (medium, libfoo) — in CISA KEV since 2024-03-11, known ransomware use");
+    expect(err.message).toContain("CVE-E1 (low, libbar) — EPSS 0.42 at/above the fail threshold");
+    expect(err.message).toContain("CVE-1 (critical, a) — severity at/above the fail threshold, fixable");
+  });
+});
+
 // ── config resolver ──────────────────────────────────────────────────────────
 
 describe("resolveVulnPolicy", () => {
@@ -197,5 +322,23 @@ describe("resolveVulnPolicy", () => {
       failOnLicense: true,
       license: { deny: ["GPL-3.0"] },
     });
+  });
+
+  test("passes through the exploitability fields (#1466)", () => {
+    expect(resolveVulnPolicy({ vulnPolicy: { failOnKev: true, failEpssAtOrAbove: 0.1, warnEpssAtOrAbove: 0.01, exploitabilityFixableOnly: false } })).toEqual({
+      failOnKev: true,
+      failEpssAtOrAbove: 0.1,
+      warnEpssAtOrAbove: 0.01,
+      exploitabilityFixableOnly: false,
+    });
+  });
+
+  test("failEpssAtOrAbove: 0 survives — a meaningful value, not falsy noise", () => {
+    expect(resolveVulnPolicy({ vulnPolicy: { failEpssAtOrAbove: 0, warnEpssAtOrAbove: 0 } })).toEqual({ failEpssAtOrAbove: 0, warnEpssAtOrAbove: 0 });
+  });
+
+  test("an explicit failOnKev: false is distinguishable from unset", () => {
+    expect(resolveVulnPolicy({ vulnPolicy: { failOnKev: false } })).toEqual({ failOnKev: false });
+    expect(resolveVulnPolicy({ vulnPolicy: {} })).toEqual({});
   });
 });

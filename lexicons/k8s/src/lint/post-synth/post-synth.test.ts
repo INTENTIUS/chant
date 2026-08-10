@@ -31,6 +31,8 @@ import { wk8403 } from "./wk8403";
 import { argo002 } from "./argo002";
 import { argo003 } from "./argo003";
 import { argo005 } from "./argo005";
+import { flux002 } from "./flux002";
+import { flux003 } from "./flux003";
 
 function makeCtx(yaml: string): PostSynthContext {
   return {
@@ -665,6 +667,45 @@ describe("WK8204: runAsNonRoot", () => {
     }));
     const diags = wk8204.check(ctx);
     expect(diags.length).toBe(0);
+  });
+
+  // #1482 — the manifest arrives as real YAML, and the initContainer's args is
+  // a block scalar. The parser bug turned `- |` into the string "|" and hoisted
+  // every key after it (securityContext, the containers list itself) to the
+  // document root, so this check warned on a compliant initContainer and never
+  // saw the app container at all.
+  test("initContainer with a block-scalar arg keeps its securityContext, and the app container is still checked (#1482)", () => {
+    const yaml = [
+      "apiVersion: apps/v1",
+      "kind: Deployment",
+      "metadata:",
+      "  name: app",
+      "spec:",
+      "  template:",
+      "    spec:",
+      "      initContainers:",
+      "        - name: wait",
+      "          image: pg:16",
+      "          args:",
+      "            - |",
+      "              set -eu",
+      "              echo ready",
+      "          securityContext:",
+      "            runAsNonRoot: true",
+      "            runAsUser: 1001",
+      "      containers:",
+      "        - name: app",
+      "          image: app:1.0",
+      "          securityContext: {}",
+      "",
+    ].join("\n");
+    const ctx = makeCtx(yaml);
+    const diags = wk8204.check(ctx);
+    // The compliant initContainer produces nothing; the bare app container is
+    // the one — and the only one — that warns.
+    expect(diags.length).toBe(1);
+    expect(diags[0].message).toContain('"app"');
+    expect(diags[0].message).not.toContain("wait");
   });
 
   test("pod-level runAsUser satisfies container-level runAsNonRoot", () => {
@@ -1618,5 +1659,135 @@ describe("ARGO005: Application source path exists", () => {
       argoApp("api", { project: "default", destination: inClusterDest, source: { repoURL: "x", chart: "redis" } }),
     );
     expect(argo005.check(ctx).length).toBe(0);
+  });
+});
+
+// ── FLUX002: Kustomization sourceRef references a declared source ─────────────
+
+function fluxKustomization(name: string, spec: Record<string, unknown>) {
+  return {
+    apiVersion: "kustomize.toolkit.fluxcd.io/v1",
+    kind: "Kustomization",
+    metadata: { name, namespace: "flux-system" },
+    spec: { interval: "10m", path: "./k8s", prune: true, wait: true, ...spec },
+  };
+}
+function fluxGitRepository(name: string) {
+  return {
+    apiVersion: "source.toolkit.fluxcd.io/v1",
+    kind: "GitRepository",
+    metadata: { name, namespace: "flux-system" },
+    spec: { interval: "5m", url: `https://example.com/${name}`, ref: { branch: "main" } },
+  };
+}
+const gitSourceRef = (name: string) => ({ sourceRef: { kind: "GitRepository", name } });
+
+describe("FLUX002: Kustomization sourceRef references a declared source", () => {
+  test("metadata", () => {
+    expect(flux002.id).toBe("FLUX002");
+  });
+
+  test("flags a Kustomization referencing an undeclared GitRepository", () => {
+    const ctx = manifestsCtx(fluxKustomization("hello", gitSourceRef("home-chant")));
+    const diags = flux002.check(ctx);
+    expect(diags.length).toBe(1);
+    expect(diags[0].checkId).toBe("FLUX002");
+    expect(diags[0].severity).toBe("error");
+    expect(diags[0].message).toContain("home-chant");
+  });
+
+  test("passes when the GitRepository is declared in the same build", () => {
+    const ctx = manifestsCtx(
+      fluxGitRepository("home-chant"),
+      fluxKustomization("hello", gitSourceRef("home-chant")),
+    );
+    expect(flux002.check(ctx).length).toBe(0);
+  });
+
+  test("does NOT flag the bootstrap-created flux-system source", () => {
+    const ctx = manifestsCtx(fluxKustomization("mealie", gitSourceRef("flux-system")));
+    expect(flux002.check(ctx).length).toBe(0);
+  });
+
+  test("matches on source kind — a GitRepository does not satisfy an OCIRepository ref", () => {
+    const ctx = manifestsCtx(
+      fluxGitRepository("fountain"),
+      fluxKustomization("fountain", { sourceRef: { kind: "OCIRepository", name: "fountain" } }),
+    );
+    const diags = flux002.check(ctx);
+    expect(diags.length).toBe(1);
+    expect(diags[0].message).toContain("OCIRepository");
+  });
+
+  test("flags a Kustomization with no sourceRef at all", () => {
+    const ctx = manifestsCtx(fluxKustomization("hello", {}));
+    const diags = flux002.check(ctx);
+    expect(diags.length).toBe(1);
+    expect(diags[0].message).toContain("no spec.sourceRef.name");
+  });
+
+  test("skips kustomize.config.k8s.io Kustomizations (not Flux CRs)", () => {
+    const ctx = manifestsCtx({
+      apiVersion: "kustomize.config.k8s.io/v1beta1",
+      kind: "Kustomization",
+      metadata: { name: "overlay" },
+      spec: {},
+    });
+    expect(flux002.check(ctx).length).toBe(0);
+  });
+});
+
+// ── FLUX003: Kustomization dependsOn names declared Kustomizations ────────────
+
+describe("FLUX003: Kustomization dependsOn names declared Kustomizations", () => {
+  test("metadata", () => {
+    expect(flux003.id).toBe("FLUX003");
+  });
+
+  test("flags a dependsOn entry nothing in the build declares", () => {
+    const ctx = manifestsCtx(
+      fluxKustomization("hello", { ...gitSourceRef("flux-system"), dependsOn: [{ name: "cert-manger" }] }),
+    );
+    const diags = flux003.check(ctx);
+    expect(diags.length).toBe(1);
+    expect(diags[0].checkId).toBe("FLUX003");
+    expect(diags[0].severity).toBe("warning");
+    expect(diags[0].message).toContain("cert-manger");
+  });
+
+  test("passes when every dependency is declared", () => {
+    const ctx = manifestsCtx(
+      fluxKustomization("cert-manager", gitSourceRef("flux-system")),
+      fluxKustomization("traefik", gitSourceRef("flux-system")),
+      fluxKustomization("hello", {
+        ...gitSourceRef("flux-system"),
+        dependsOn: [{ name: "cert-manager" }, { name: "traefik" }],
+      }),
+    );
+    expect(flux003.check(ctx).length).toBe(0);
+  });
+
+  test("flags a self-referencing dependsOn entry", () => {
+    const ctx = manifestsCtx(
+      fluxKustomization("hello", { ...gitSourceRef("flux-system"), dependsOn: [{ name: "hello" }] }),
+    );
+    const diags = flux003.check(ctx);
+    expect(diags.length).toBe(1);
+    expect(diags[0].message).toContain("itself");
+  });
+
+  test("reports every broken edge, not just the first", () => {
+    const ctx = manifestsCtx(
+      fluxKustomization("hello", {
+        ...gitSourceRef("flux-system"),
+        dependsOn: [{ name: "nope-a" }, { name: "nope-b" }],
+      }),
+    );
+    expect(flux003.check(ctx).length).toBe(2);
+  });
+
+  test("skips a Kustomization without dependsOn", () => {
+    const ctx = manifestsCtx(fluxKustomization("hello", gitSourceRef("flux-system")));
+    expect(flux003.check(ctx).length).toBe(0);
   });
 });

@@ -62,10 +62,13 @@ export interface CliBuildParamsResolution {
  * chant #1064's acceptance criterion that this never surfaces as a thrown
  * error from inside user source.
  *
- * On success, every resolved parameter is logged via `console.error` as
- * `[param] <name> = <value> (<source>)` — unconditional, not gated on
- * `--verbose`, so a build's environment-varying inputs are always visible,
- * the same way #1022's fold decisions are.
+ * On success, every explicitly-set parameter is logged via `console.error` as
+ * `[param] <name> = <value> (<source>)`, and the ones still at their declared
+ * defaults collapse to a single count line (`CHANT_PARAM_ECHO=all` lists them
+ * individually). Overrides stay unconditionally visible — not gated on
+ * `--verbose` — so a build's environment-varying inputs are always in the log,
+ * the same way #1022's fold decisions are; the defaults are the part that
+ * never varies, which is exactly why they can be a count.
  */
 export function resolveCliBuildParams(
   buildParamsConfig: BuildParamsConfig | undefined,
@@ -99,9 +102,58 @@ export function resolveCliBuildParams(
     return { success: false, provenance: [], errors };
   }
 
-  for (const p of resolution.provenance) {
+  // Echo what the operator SET, one line each; collapse what they did not.
+  // A project with two dozen declared parameters printed two dozen grey lines
+  // on every build, and the ones that matter — the overrides — drowned in the
+  // ones that never vary. Defaults still get named on request
+  // (CHANT_PARAM_ECHO=all), and a build with no overrides still says how many
+  // parameters resolved, so silence never means "no parameters reached us"
+  // (the failure mode warnIfParamsCannotReachProject exists for).
+  const explicit = resolution.provenance.filter((p) => p.source !== "default");
+  const defaulted = resolution.provenance.length - explicit.length;
+  const echoAll = process.env.CHANT_PARAM_ECHO === "all";
+  for (const p of echoAll ? resolution.provenance : explicit) {
     console.error(formatInfo(`[param] ${p.name} = ${JSON.stringify(p.value)} (${p.source})`));
+  }
+  if (!echoAll && defaulted > 0) {
+    const more = explicit.length > 0 ? `${defaulted} more` : `${defaulted} parameters`;
+    console.error(formatInfo(`[param] ${more} at their defaults (CHANT_PARAM_ECHO=all lists them)`));
   }
 
   return { success: true, provenance: resolution.provenance, errors: [] };
+}
+
+/**
+ * Resolve a command's declared build-time parameters, the same way `chant
+ * build` does, so a `build()`/`discover()` on the declared side sees the values
+ * the source will actually read.
+ *
+ * Every command that reads declared source needs this and only `chant build`
+ * had it. `chant graph` was fixed in #1483; the lifecycle family — `diff`,
+ * `snapshot`, `plan`, and `components status --live` — built the declared side
+ * on parameter *defaults* while the live side was whatever is really deployed.
+ *
+ * For a project whose parameters choose which resources *exist* that is not a
+ * near miss. `chant lifecycle diff dev --live` on kubemicrovm-ops returned
+ * byte-identical output at `KMV_TIER=minimal` and `KMV_TIER=prod-ha`, and
+ * reported the tier label itself as drift — `minimal → prod-ha`, declared
+ * against live — which is the comparison announcing it is against the wrong
+ * declaration.
+ *
+ * Returns `undefined` when resolution failed, having printed why: the caller
+ * should stop rather than compare against source that will not build.
+ */
+export async function commandBuildParams(
+  buildParamsConfig: BuildParamsConfig | undefined,
+  args: { param?: string[]; paramsFile?: string },
+): Promise<BuildParamProvenance[] | undefined> {
+  const resolution = resolveCliBuildParams(buildParamsConfig, {
+    cli: parseParamFlags(args.param),
+    paramsFile: args.paramsFile,
+  });
+  if (!resolution.success) {
+    for (const message of resolution.errors) console.error(message);
+    return undefined;
+  }
+  return resolution.provenance;
 }

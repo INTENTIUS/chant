@@ -42,7 +42,7 @@ import {
   healthGateCapability,
   shellCapability,
 } from "./verbs/index";
-import type { CapabilityPlugin } from "./capability-plugin";
+import { ownPackageVersion, type CapabilityPlugin } from "./capability-plugin";
 
 /**
  * Every `kind` in the starter verb set, grouped by family, per epic #551 and
@@ -99,7 +99,9 @@ function starterCapabilities(): Array<Capability<never, unknown>> {
  */
 export const starterCapabilityPlugin: CapabilityPlugin = {
   name: "starter",
-  version: "1.0.0",
+  // The core package's own version (#1505) — lockstep releases bump it, so a
+  // literal here would go stale every `just release`.
+  version: ownPackageVersion(import.meta.url),
   capabilities: starterCapabilities,
   families: () => STARTER_VERB_FAMILIES,
 };

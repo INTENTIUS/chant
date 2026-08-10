@@ -1,10 +1,11 @@
 /**
  * Connecting to a cluster on `chant kube`'s behalf (chant #1079), honoring
  * the exact same environment→cluster binding every other observing path
- * does (chant #1100/#1155): `--env` resolves `k8s.profiles.<env>.context`
- * and refuses loudly on a mismatch, `--context` is an explicit override that
- * skips the binding entirely, and neither given falls back to the ambient
- * kubeconfig context — the same three modes `describeResources` and the Op
+ * does (chant #1100/#1155, revised by #1488): `--env` resolves
+ * `k8s.profiles.<env>.context` and uses it regardless of the ambient
+ * context, `--context` is an explicit override that skips the binding
+ * entirely, and neither given falls back to the ambient kubeconfig
+ * context — the same three modes `describeResources` and the Op
  * activities already use, via the same `defaultK8sConnector`. Nothing here
  * reimplements that resolution; this only turns a connect failure into the
  * observation tri-state so a verb can render NOT-OBSERVED-with-reason

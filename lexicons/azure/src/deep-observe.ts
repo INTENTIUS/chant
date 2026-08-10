@@ -50,7 +50,7 @@
 
 import { boundedConcurrently } from "@intentius/chant/observation";
 import { getResource, isNotFound, type AzureReadClientOptions } from "./api/read-client";
-import type { AzHttp } from "./op/activities/az-apply";
+import { LEGACY_OWNERSHIP_TAG_KEY, type AzHttp } from "./op/activities/az-apply";
 import type {
   DeepArrayElement,
   DeepNode,
@@ -60,7 +60,10 @@ import type {
   UnobservedEntity,
 } from "@intentius/chant/lexicon";
 import { deepObservation, normalizeDeepProperties } from "@intentius/chant/deep-observation";
+import { OWNERSHIP_MANAGED_BY_VALUE } from "@intentius/chant/ownership";
 import { classifyArmFailure, isTopLevelType } from "./describe-resources";
+import { isBracketExpression } from "./lint/post-synth/arm-refs";
+import { AZURE_TAG_OWNERSHIP_KEYS } from "./ownership";
 
 
 /** The full `az resource show -o json` shape this reader reads (a superset of the thin path's `AzResourceShowResponse`). */
@@ -86,10 +89,21 @@ interface ArmResourceShowResponse {
  * `properties`, plus every `properties.*` field spread onto that same top
  * level (see the module doc). `id`/`type`/`etag`/`systemData` are envelope
  * bookkeeping with no declared counterpart and are never read in at all.
+ *
+ * `queriedName` is the declared name the GET was addressed by. A child
+ * resource is declared as `vnet/subnet` while ARM answers with the leaf
+ * (`name: "subnet"`) — the same identity in two spellings, since the URL that
+ * returned 200 is the declared name. The leaf is folded back to the declared
+ * spelling; a name that is not the leaf of the query is kept as returned.
  */
-function buildLiveProperties(obj: ArmResourceShowResponse): Record<string, unknown> {
+function buildLiveProperties(obj: ArmResourceShowResponse, queriedName?: string): Record<string, unknown> {
   const out: Record<string, unknown> = {};
-  if (obj.name !== undefined) out.name = obj.name;
+  if (obj.name !== undefined) {
+    out.name =
+      queriedName !== undefined && queriedName !== obj.name && queriedName.endsWith(`/${obj.name}`)
+        ? queriedName
+        : obj.name;
+  }
   if (obj.location !== undefined) out.location = obj.location;
   if (obj.sku !== undefined) out.sku = obj.sku;
   if (obj.kind !== undefined) out.kind = obj.kind;
@@ -122,6 +136,10 @@ export const AZURE_READ_ONLY_NAMES: ReadonlySet<string> = new Set([
   "resourceGuid",
   "principalId",
   "tenantId",
+  // The resource's own envelope etag never reaches the tree (see the module
+  // doc), but ARM also stamps one on every *nested* child — each security rule,
+  // each subnet — and nobody declares those.
+  "etag",
 ]);
 
 /**
@@ -131,6 +149,22 @@ export const AZURE_READ_ONLY_NAMES: ReadonlySet<string> = new Set([
  * this is dropped outright rather than compared.
  */
 const AZURE_UNCONDITIONAL_PRUNE_NAMES: ReadonlySet<string> = new Set(["defaultSecurityRules"]);
+
+/**
+ * Server-computed surfaces ARM fills in on its own (#1214, the AKS row of the
+ * CC round-trip): a managed cluster always comes back with `fqdn`,
+ * `currentKubernetesVersion` and `nodeResourceGroup` whether or not the
+ * declaration said anything about them. Unlike `AZURE_READ_ONLY_NAMES` these
+ * are counterpart-gated rather than pruned outright: `nodeResourceGroup` IS
+ * declarable at create time, so a declared value is still compared — only the
+ * purely server-filled appearance is noise. Sparse and evidence-based, like
+ * `AZURE_SERVICE_DEFAULTS`.
+ */
+export const AZURE_SERVER_COMPUTED_NAMES: ReadonlySet<string> = new Set([
+  "currentKubernetesVersion",
+  "fqdn",
+  "nodeResourceGroup",
+]);
 
 /**
  * ARM service defaults, per type, as index-erased property paths. Subtracted
@@ -154,6 +188,30 @@ const AZURE_SET_ARRAY_NAMES: ReadonlySet<string> = new Set([
   "addressPrefixes",
   "dnsServers",
   "zones",
+]);
+
+/**
+ * chant's own ownership marker, as tag paths (#1213 — the azure edition of
+ * AWS's #1301 correction). The serializer stamps `chant-stack`/`chant-env` from
+ * project config and `azApply` stamps the managed-by pair on every resource it
+ * PUTs, so a managed estate always carries them live while the declared
+ * *properties* the diff compares do not — chant reading its own signature back
+ * as drift. Counterpart-gated at the call site, so a source that declares one
+ * of these tags itself is still compared.
+ */
+const AZURE_OWNERSHIP_TAG_PATTERNS: ReadonlySet<string> = new Set([
+  `tags.${AZURE_TAG_OWNERSHIP_KEYS.stack}`,
+  `tags.${AZURE_TAG_OWNERSHIP_KEYS.env}`,
+]);
+
+/**
+ * The managed-by pair is gated on the value as well: both keys always carry
+ * `"chant"` when chant wrote them, so `managed-by: terraform` appearing out of
+ * band still surfaces as the drift it is.
+ */
+const AZURE_MANAGED_BY_TAG_PATTERNS: ReadonlySet<string> = new Set([
+  `tags.${AZURE_TAG_OWNERSHIP_KEYS.managedBy}`,
+  `tags.${LEGACY_OWNERSHIP_TAG_KEY}`,
 ]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -202,9 +260,49 @@ export const azureDeepNormalizationHooks: DeepNormalizationHooks = {
     // tag at all is the default, not a finding.
     if (node.pattern === "tags" && isEmptyRecord(node.value)) return true;
 
+    // A live `location` nobody declared is the effective placement, not drift:
+    // a child resource (a subnet) has no location property of its own to
+    // declare, and every top-level resource that CAN take one is declared with
+    // one (or with `[resourceGroup().location]`, which is a declared
+    // counterpart). Resource-level only — `pattern` is the exact top-level
+    // path, so a nested `.location` inside a declared property is untouched.
+    if (node.pattern === "location") return true;
+
+    // A server-computed surface nobody declared is ARM doing its job, not
+    // drift (see the set's doc for why this is counterpart-gated).
+    if (AZURE_SERVER_COMPUTED_NAMES.has(name)) return true;
+
+    // chant's own ownership marker is not drift (see the sets' docs).
+    if (AZURE_OWNERSHIP_TAG_PATTERNS.has(node.pattern)) return true;
+    if (AZURE_MANAGED_BY_TAG_PATTERNS.has(node.pattern) && node.value === OWNERSHIP_MANAGED_BY_VALUE) return true;
+
+    // ARM stamps a self-`id` on every element of a nested child collection —
+    // each security rule, each inline subnet. Only the element's *own* id
+    // (`securityRules[].id`, directly on the element): a declared
+    // cross-reference like `virtualNetworkRules[].id` has a counterpart and is
+    // still compared, and object-valued references (`routeTable.id`) never
+    // match the array-element shape.
+    if (node.pattern.endsWith("[].id")) return true;
+
     const defaults = AZURE_SERVICE_DEFAULTS[node.entityType];
     if (!defaults || !Object.prototype.hasOwnProperty.call(defaults, node.pattern)) return false;
     return canonicalJson(defaults[node.pattern]) === canonicalJson(node.value);
+  },
+
+  /**
+   * An ARM bracket-expression string (`"[resourceId(...)]"`) is an unevaluated
+   * reference: the applier resolves it at deploy time, so the live side holds
+   * the evaluated value and comparing the two is comparing a formula to its
+   * result. Collapsed to UNRESOLVED on the declared side only — a live payload
+   * cannot carry an unevaluated expression, and `[[`-escaped strings are ARM's
+   * own literal-`[` spelling, not expressions.
+   */
+  unresolved(node: DeepNode): boolean {
+    return (
+      node.side === "declared" &&
+      isBracketExpression(node.value) &&
+      !(node.value as string).startsWith("[[")
+    );
   },
 
   /**
@@ -296,7 +394,7 @@ export async function observeResourcesDeepAzure(
       resources[entityName] = {
         type: entityType,
         physicalId: obj.id,
-        properties: normalizeDeepProperties(buildLiveProperties(obj), {
+        properties: normalizeDeepProperties(buildLiveProperties(obj, name), {
           entityType,
           side: "live",
           hooks: azureDeepNormalizationHooks,

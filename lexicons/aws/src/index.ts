@@ -110,20 +110,22 @@ export {
   LambdaSqs, LambdaEventBridge, LambdaDynamoDB, LambdaS3, LambdaSns,
   VpcDefault, FargateAlb, AlbShared, FargateService, RdsInstance, RdsPostgres,
   EfsWithAccessPoint,
-  Ec2InstanceRole, MinimalVpc,
+  Ec2InstanceRole, MinimalVpc, EksCluster,
   SolrFargateService,
   MicrovmApp, MICROVM_LIMITS,
   AgentCoreAgent,
+  OrganizationRoot, GovernanceFoundation, RegionRestriction, OrganizationTrail,
 } from "./composites/index";
 export type {
   LambdaFunctionProps, LambdaApiProps, ScheduledLambdaProps,
   LambdaSqsProps, LambdaEventBridgeProps, LambdaDynamoDBProps, LambdaS3Props, LambdaSnsProps,
   VpcDefaultProps, FargateAlbProps, AlbSharedProps, FargateServiceProps, RdsInstanceProps, RdsPostgresProps,
   EfsWithAccessPointProps,
-  Ec2InstanceRoleProps, MinimalVpcProps,
+  Ec2InstanceRoleProps, MinimalVpcProps, EksClusterProps,
   SolrFargateServiceProps,
   MicrovmAppProps, MicrovmAppResult, MicrovmAppBuildConnectorProps, MicrovmMemoryMiB,
   AgentCoreAgentProps, AgentCoreAgentResult,
+  OrganizationRootProps, GovernanceFoundationProps, RegionRestrictionProps, OrganizationTrailProps,
 } from "./composites/index";
 
 // Code generation pipeline
@@ -135,3 +137,17 @@ export type { PackageOptions, PackageResult } from "./codegen/package";
 // emr-*, code-deploy, …) contributed to core's capability-plugin seam. Core
 // loads `awsCapabilityPlugin` when a project's chant.config lists this lexicon.
 export { awsCapabilityPlugin } from "./components/capability-plugin";
+
+// AWS governance authoring: the desired-state config the AWS cloud
+// external governance reconciler applies, and the typed landing-zone authoring layer.
+export { landingZoneConfig, regionRestriction, DENY_AUDIT_TAMPER, DENY_LEAVE_ORGANIZATION, FOUNDATION_OUS } from "./governance";
+export type {
+  AwsGovernanceConfig,
+  LandingZoneConfigProps,
+  OuConfig,
+  ScpConfig,
+  AccountConfig,
+  IdentityConfig,
+  PermissionSetConfig,
+  AssignmentConfig,
+} from "./governance";

@@ -1,5 +1,7 @@
 /**
  * Shared helpers for the Argo post-synth checks (ARGO002, ARGO003, ARGO005).
+ * The generic manifest collectors (`allManifests`, `manifestsOfKind`) are
+ * shared by the Flux checks (FLUX002, FLUX003) too.
  *
  * Excluded from check auto-discovery by the "helper" filename filter.
  */

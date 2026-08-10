@@ -1,0 +1,6 @@
+resources:
+  - ../../base
+namePrefix: prod-
+replicas:
+  - name: web
+    count: 3

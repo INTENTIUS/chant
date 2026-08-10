@@ -20,9 +20,19 @@ the cluster is real and the Service really lands on it.
   hardcode it (behold#106).
 - `src/cc-workload/service.ts` — the k8s half, observed through the cluster's own
   kubeconfig. behold anchors it under the cluster (behold#103).
-- `src/cc.component.ts` — one component owning every declared resource via
-  `liveNames`, which is what makes `chant components status --live` report a
-  real rollup rather than the rollup-of-one an identity join produces.
+- `src/cc-workload/deployment.ts` — the Deployment behind the Service. Its
+  controller creates Pods the cluster owns through `ownerReferences`
+  (chant#1180), which is what makes the K8S *runtime* tier — and the
+  field-manager drift an out-of-band `kubectl scale` leaves — demonstrable on
+  this estate (behold#148's runtime clause).
+- `src/cc.component.ts` — the component owning the cloud half via `liveNames`,
+  which is what makes `chant components status --live` report a real rollup
+  rather than the rollup-of-one an identity join produces.
+- `src/cc-workload/workload.component.ts` — the component releasing the k8s
+  half (#1495): a `kubectl-apply` step whose `stack` names the same owner the
+  build stamps into the manifests, so the k8s lexicon's `describeStackStatus`
+  observes the unit by its own labels and the status table reports both
+  substrates.
 
 ## Run it
 
@@ -33,17 +43,26 @@ export AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_REGION=us-east-1
 
 npm install
 npm run build      # AWS lexicon -> template.json, k8s lexicon -> k8s.yaml
-npm run deploy     # the component cfn-deploys it
-npm run status     # one row, with the resource rollup behold#100 paints from
+npm run deploy     # cc-canonical cfn-deploys the cloud half
+
+# once EKS is ACTIVE, point kubectl at the cluster, then release the k8s half
+aws eks update-kubeconfig --name cc-eks
+npm run deploy-workload   # cc-workload kubectl-applies k8s.yaml
+
+npm run status     # two rows: the cfn stack and the kubectl-apply unit
 npm run diff       # declared vs live
 ```
 
-Expect `status` to report all ten resources present:
+Expect `status` to report both units live — cc-canonical with all ten cloud
+resources present, cc-workload observed through the k8s lexicon's
+`describeStackStatus` over the stamped ownership labels:
 
 ```json
-{ "component": "cc-canonical", "live": true,
-  "stack": { "name": "cc-canonical", "status": "CREATE_COMPLETE", "healthy": true },
-  "resources": { "total": 10, "present": 10, "absent": 0, "unobserved": 0 } }
+[{ "component": "cc-canonical", "live": true,
+   "stack": { "name": "cc-canonical", "status": "CREATE_COMPLETE", "healthy": true },
+   "resources": { "total": 10, "present": 10, "absent": 0, "unobserved": 0 } },
+ { "component": "cc-workload", "live": true,
+   "stack": { "name": "cc-aws-canonical", "healthy": true } }]
 ```
 
 Tear down with `npm run teardown`, then `docker stop floci`.

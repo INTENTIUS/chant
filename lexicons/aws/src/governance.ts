@@ -1,0 +1,249 @@
+/**
+ * AWS governance authoring: the desired-state config
+ * shape an external governance reconciler applies, and `landingZoneConfig()` —
+ * the typed authoring layer that emits it.
+ *
+ * This is deliberately NOT a composite. The evaluability rules (EVL002/004,
+ * #916/#952) require composites to declare a fixed set of resources, so a
+ * data-driven OU tree walker cannot be one. The split mirrors the SCM
+ * reconcilers: authoring emits config (this module, arbitrary cardinality);
+ * resources for greenfield bootstrap are the fixed-shape composites in
+ * `composites/landing-zone.ts`; the reconciler consumes only the config.
+ *
+ * GCP (Folder/OrgPolicy/AuditConfig) and Azure (blocked on #1545)
+ * counterparts followed the same shape.
+ */
+
+// ---------------------------------------------------------------------------
+// The desired-state config shape an external governance reconciler consumes
+// ---------------------------------------------------------------------------
+
+/** An SCP definition, keyed by name in `AwsGovernanceConfig.scps`. */
+export interface ScpConfig {
+  description?: string;
+  /** The policy document (SCP JSON). */
+  document: Record<string, unknown>;
+}
+
+/** A member account declared inside an OU. */
+export interface AccountConfig {
+  name: string;
+  email: string;
+}
+
+/** One OU: its guardrails, accounts, and child OUs, keyed by OU name. */
+export interface OuConfig {
+  /** Names of SCPs (from `scps`) attached to this OU. */
+  scps?: string[];
+  accounts?: AccountConfig[];
+  children?: Record<string, OuConfig>;
+}
+
+/** An IAM Identity Center permission set, keyed by name in `IdentityConfig.permissionSets`. */
+export interface PermissionSetConfig {
+  description?: string;
+  /** ISO-8601 session duration, e.g. "PT8H". Omitted → the provider default (PT1H). */
+  sessionDuration?: string;
+  /** Managed policy ARNs attached to the set. */
+  managedPolicies?: string[];
+  /** Inline policy document attached to the set. */
+  inlinePolicy?: Record<string, unknown>;
+}
+
+/** One permission-set grant to an identity-store principal on member accounts. */
+export interface AssignmentConfig {
+  /** Identity-store principal: a group's DisplayName or a user's UserName. */
+  principal: string;
+  principalType: "GROUP" | "USER";
+  /** Permission-set name from `IdentityConfig.permissionSets`. */
+  permissionSet: string;
+  /** Account names (as declared in the OU tree) the grant applies to. */
+  accounts: string[];
+}
+
+/** IAM Identity Center desired state — the `identity-assignment` verb. */
+export interface IdentityConfig {
+  /** Permission-set definitions, keyed by the names assignments reference. */
+  permissionSets: Record<string, PermissionSetConfig>;
+  assignments?: AssignmentConfig[];
+  /**
+   * The named break-glass admin grant. Implicitly desired (reconcile keeps
+   * it) and protected by the reconciler's break-glass-admin guardrail: no plan
+   * may remove this assignment or its permission set.
+   */
+  breakGlass?: AssignmentConfig;
+}
+
+/**
+ * The desired-state governance tree for one AWS organization. This is the
+ * shape an external governance reconciler loads as config — the AWS counterpart of the
+ * SCM governance reconcilers' GovernanceConfig. Cycles map onto the governance verbs
+ *: the OU/account tree is `org-unit`, SCPs are `policy-guardrail`,
+ * audit sinks are `audit-sink`.
+ */
+export interface AwsGovernanceConfig {
+  organization: {
+    /** SCP names attached at the organization root. */
+    scps?: string[];
+  };
+  /** Top-level OUs under the root, keyed by OU name. */
+  ous: Record<string, OuConfig>;
+  /** SCP definitions, keyed by the names the tree attaches. */
+  scps: Record<string, ScpConfig>;
+  /** IAM Identity Center permission sets and account assignments. */
+  identity?: IdentityConfig;
+  /** Where audit evidence flows. */
+  auditSinks?: {
+    cloudtrail?: { bucket: string; multiRegion: boolean };
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Baseline guardrails (shared with the bootstrap composites)
+// ---------------------------------------------------------------------------
+
+export const DENY_LEAVE_ORGANIZATION: ScpConfig = {
+  description: "Member accounts may not remove themselves from the organization.",
+  document: {
+    Version: "2012-10-17",
+    Statement: [{ Effect: "Deny", Action: "organizations:LeaveOrganization", Resource: "*" }],
+  },
+};
+
+export const DENY_AUDIT_TAMPER: ScpConfig = {
+  description: "Audit trails and recorders cannot be stopped or deleted from member accounts.",
+  document: {
+    Version: "2012-10-17",
+    Statement: [
+      {
+        Effect: "Deny",
+        Action: [
+          "cloudtrail:StopLogging",
+          "cloudtrail:DeleteTrail",
+          "config:StopConfigurationRecorder",
+          "config:DeleteConfigurationRecorder",
+          "config:DeleteDeliveryChannel",
+        ],
+        Resource: "*",
+      },
+    ],
+  },
+};
+
+/** Deny requests outside `regions`, excepting global services. */
+export function regionRestriction(regions: readonly string[]): ScpConfig {
+  return {
+    description: `Deny requests outside [${regions.join(", ")}] except global services.`,
+    document: {
+      Version: "2012-10-17",
+      Statement: [
+        {
+          Effect: "Deny",
+          NotAction: [
+            "iam:*",
+            "organizations:*",
+            "route53:*",
+            "cloudfront:*",
+            "sts:*",
+            "support:*",
+            "budgets:*",
+          ],
+          Resource: "*",
+          Condition: { StringNotEquals: { "aws:RequestedRegion": regions } },
+        },
+      ],
+    },
+  };
+}
+
+/**
+ * The recommended foundation OU structure. Exported so callers can extend it
+ * rather than restate it.
+ */
+export const FOUNDATION_OUS: Record<string, OuConfig> = {
+  Security: { scps: ["deny-audit-tamper"] },
+  Infrastructure: {},
+  Sandbox: {},
+  Workloads: {},
+};
+
+// ---------------------------------------------------------------------------
+// Authoring
+// ---------------------------------------------------------------------------
+
+export interface LandingZoneConfigProps {
+  /**
+   * Start from the recommended foundation: Security / Infrastructure /
+   * Sandbox / Workloads OUs, `deny-leave-organization` at the root, and
+   * `deny-audit-tamper` on Security. Default true; your `ous`/`scps` merge
+   * over it (same-name keys win).
+   */
+  foundation?: boolean;
+  /** Adds a region-restriction SCP at the root allowing only these regions. */
+  allowedRegions?: string[];
+  /** OU tree, merged over the foundation's. Greenfield (full tree) and brownfield (partial subtree) are both just this map. */
+  ous?: Record<string, OuConfig>;
+  /** SCP definitions, merged over the foundation's. */
+  scps?: Record<string, ScpConfig>;
+  /** Extra SCP names to attach at the organization root. */
+  rootScps?: string[];
+  /** IAM Identity Center permission sets, assignments, and the break-glass admin. */
+  identity?: IdentityConfig;
+  /** Declare an organization CloudTrail flowing into this bucket. */
+  cloudtrailBucket?: string;
+}
+
+/**
+ * Author the desired-state tree an external governance reconciler applies.
+ * Pure. Throws when the tree attaches an SCP name with no definition; only
+ * SCPs the tree actually attaches are included in the output.
+ */
+export function landingZoneConfig(props: LandingZoneConfigProps = {}): AwsGovernanceConfig {
+  const foundation = props.foundation ?? true;
+  const scps: Record<string, ScpConfig> = {
+    ...(foundation
+      ? { "deny-leave-organization": DENY_LEAVE_ORGANIZATION, "deny-audit-tamper": DENY_AUDIT_TAMPER }
+      : {}),
+    ...(props.allowedRegions?.length ? { "region-restriction": regionRestriction(props.allowedRegions) } : {}),
+    ...props.scps,
+  };
+  const ous = { ...(foundation ? FOUNDATION_OUS : {}), ...props.ous };
+  const rootScps = [
+    ...(foundation ? ["deny-leave-organization"] : []),
+    ...(props.allowedRegions?.length ? ["region-restriction"] : []),
+    ...(props.rootScps ?? []),
+  ];
+
+  const attached = new Set(rootScps);
+  const collect = (tree: Record<string, OuConfig>): void => {
+    for (const node of Object.values(tree)) {
+      for (const s of node.scps ?? []) attached.add(s);
+      if (node.children) collect(node.children);
+    }
+  };
+  collect(ous);
+  for (const name of attached) {
+    if (!scps[name]) throw new Error(`landingZoneConfig: SCP "${name}" is attached but not defined in scps`);
+  }
+
+  if (props.identity) {
+    const granted = [...(props.identity.assignments ?? []), ...(props.identity.breakGlass ? [props.identity.breakGlass] : [])];
+    for (const a of granted) {
+      if (!props.identity.permissionSets[a.permissionSet]) {
+        throw new Error(
+          `landingZoneConfig: assignment for "${a.principal}" references permission set "${a.permissionSet}" not defined in identity.permissionSets`,
+        );
+      }
+    }
+  }
+
+  return {
+    organization: rootScps.length ? { scps: rootScps } : {},
+    ous,
+    scps: Object.fromEntries(Object.entries(scps).filter(([n]) => attached.has(n))),
+    ...(props.identity ? { identity: props.identity } : {}),
+    ...(props.cloudtrailBucket
+      ? { auditSinks: { cloudtrail: { bucket: props.cloudtrailBucket, multiRegion: true } } }
+      : {}),
+  };
+}
