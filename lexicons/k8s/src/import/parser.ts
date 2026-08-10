@@ -8,6 +8,7 @@
 
 import type { TemplateParser, TemplateIR, ResourceIR } from "@intentius/chant/import/parser";
 import { parseYAML } from "@intentius/chant/yaml";
+import { namespaceSegmentForGroup } from "../group-namespace";
 
 // ── GVK to type name mapping ───────────────────────────────────────
 
@@ -91,20 +92,20 @@ function resolveTypeName(apiVersion: string, kind: string): string {
 }
 
 /**
- * Extract PascalCase group name from an apiVersion string.
+ * Extract the namespace segment from an apiVersion string.
  * "apps/v1" → "Apps"
  * "v1" → "Core"
- * "networking.k8s.io/v1" → "Networking"
  * "rbac.authorization.k8s.io/v1" → "Rbac"
+ * "argoproj.io/v1alpha1" → "Argo" (override)
+ *
+ * Splits the version off and hands the group to the shared rule, so an
+ * imported manifest is typed exactly as a declared one is.
  */
 function apiVersionToGroup(apiVersion: string): string {
   const slashIdx = apiVersion.indexOf("/");
   if (slashIdx === -1) return "Core"; // core group (v1)
 
-  const groupStr = apiVersion.slice(0, slashIdx);
-  const firstSegment = groupStr.split(".")[0];
-  if (firstSegment === "rbac") return "Rbac";
-  return firstSegment.charAt(0).toUpperCase() + firstSegment.slice(1);
+  return namespaceSegmentForGroup(apiVersion.slice(0, slashIdx));
 }
 
 /**

@@ -94,7 +94,9 @@ describe("renderKustomizeRoots", () => {
     // The generated operation surface's naming, so `lifecycle diff --live`
     // observes a rendered Deployment through the same reader a declared one uses.
     expect(deployment.entityType).toBe("K8s::Apps::Deployment");
-    expect(entities.get("overlays/prod/certificateProdWebTls")!.entityType).toBe("K8s::Cert-manager::Certificate");
+    // Hyphenated groups PascalCase the same way the declarable surface does
+    // (#1628), so this Certificate matches the reader a declared one gets.
+    expect(entities.get("overlays/prod/certificateProdWebTls")!.entityType).toBe("K8s::CertManager::Certificate");
 
     const props = (deployment as unknown as { props: Record<string, unknown> }).props;
     const metadata = props.metadata as { annotations: Record<string, string> };
