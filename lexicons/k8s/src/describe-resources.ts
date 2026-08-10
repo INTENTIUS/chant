@@ -222,10 +222,18 @@ export function unhappyConditions(obj: K8sObject): string[] | undefined {
   const out: string[] = [];
   for (const c of conditions) {
     const cond = c as { type?: unknown; status?: unknown; reason?: unknown; message?: unknown };
-    if (typeof cond.type !== "string" || typeof cond.status !== "string") continue;
-    const goodWhenFalse = CONDITIONS_GOOD_WHEN_FALSE.test(cond.type);
-    const happy = goodWhenFalse ? cond.status === "False" : cond.status === "True";
-    if (happy) continue;
+    if (typeof cond.type !== "string") continue;
+    if (typeof cond.status === "string") {
+      const goodWhenFalse = CONDITIONS_GOOD_WHEN_FALSE.test(cond.type);
+      const happy = goodWhenFalse ? cond.status === "False" : cond.status === "True";
+      if (happy) continue;
+    } else if (!(typeof cond.message === "string" && cond.message)) {
+      // No status, no message: nothing to say. But a status-less condition
+      // WITH a message is an object speaking — Argo's ApplicationCondition is
+      // `{type, message, lastTransitionTime}`, written only for problems, and
+      // the polarity test above has nothing to read on it (#1644).
+      continue;
+    }
     const reason = typeof cond.reason === "string" && cond.reason ? `=${cond.reason}` : "";
     const message = typeof cond.message === "string" && cond.message ? `: ${cond.message}` : "";
     out.push(`${cond.type}${reason}${message}`);

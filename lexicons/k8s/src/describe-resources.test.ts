@@ -1398,6 +1398,34 @@ describe("unhappyConditions (#1401)", () => {
     expect(unhappyConditions({ status: {} } as never)).toBeUndefined();
     expect(unhappyConditions({} as never)).toBeUndefined();
   });
+
+  // #1644 — Argo's ApplicationCondition is {type, message, lastTransitionTime},
+  // no status field, written only for problems. The polarity test has nothing
+  // to read on it; the message IS the report, and it was the one diagnostic
+  // line a broken Application writes.
+  test("a status-less condition with a message passes through — Argo's ComparisonError (#1644)", () => {
+    expect(
+      unhappyConditions({
+        status: {
+          conditions: [
+            {
+              type: "ComparisonError",
+              message: "Failed to load target state: app path does not exist",
+              lastTransitionTime: "2026-08-10T00:00:00Z",
+            },
+          ],
+        },
+      } as never),
+    ).toEqual(["ComparisonError: Failed to load target state: app path does not exist"]);
+  });
+
+  test("a status-less condition with no message stays silent", () => {
+    expect(
+      unhappyConditions({
+        status: { conditions: [{ type: "SomeMarker", lastTransitionTime: "2026-08-10T00:00:00Z" }] },
+      } as never),
+    ).toBeUndefined();
+  });
 });
 
 describe("revisionAttributes — the GitOps convergence fields (#1632)", () => {
