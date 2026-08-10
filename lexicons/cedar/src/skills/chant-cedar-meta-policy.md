@@ -1,5 +1,5 @@
 ---
-skill: cedar-meta-policy
+skill: chant-cedar-meta-policy
 description: Organizational policy over Cedar policy sets — the bare-permit wall, forbid conventions, and env-aware severity
 user-invocable: true
 ---

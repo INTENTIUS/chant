@@ -87,8 +87,8 @@ export const cedarPlugin: LexiconPlugin = {
 
   skills: createSkillsLoader(import.meta.url, [
     {
-      file: "cedar-authoring.md",
-      name: "cedar-authoring",
+      file: "chant-cedar-authoring.md",
+      name: "chant-cedar-authoring",
       description:
         "Author Cedar policies as typed chant resources — schema to generated classes to .cedar and JSON outputs",
       triggers: [
@@ -109,8 +109,8 @@ export const cedarPlugin: LexiconPlugin = {
       ],
     },
     {
-      file: "cedar-avp-embedding.md",
-      name: "cedar-avp-embedding",
+      file: "chant-cedar-avp-embedding.md",
+      name: "chant-cedar-avp-embedding",
       description:
         "Embed a typed cedar-lexicon policy into an AWS Verified Permissions policy resource instead of a hand-written string",
       triggers: [
@@ -129,8 +129,8 @@ export const cedarPlugin: LexiconPlugin = {
       ],
     },
     {
-      file: "cedar-meta-policy.md",
-      name: "cedar-meta-policy",
+      file: "chant-cedar-meta-policy.md",
+      name: "chant-cedar-meta-policy",
       description:
         "Organizational policy over Cedar policy sets — the bare-permit wall, forbid conventions, and env-aware severity",
       triggers: [

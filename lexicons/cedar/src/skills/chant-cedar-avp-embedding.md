@@ -1,5 +1,5 @@
 ---
-skill: cedar-avp-embedding
+skill: chant-cedar-avp-embedding
 description: Embed a typed cedar-lexicon policy into an AWS Verified Permissions policy resource instead of a hand-written string
 user-invocable: true
 ---
@@ -63,7 +63,7 @@ Do not hand-roll a replacement for it. In particular:
 - **Do not write the statement as prose.** A hand-typed
   `"permit(principal, action, resource);"` in an AVP resource is the exact thing
   this lexicon exists to remove, and the meta-policy wall (see the
-  `cedar-meta-policy` skill) fails a bare permit in a prod build.
+  `chant-cedar-meta-policy` skill) fails a bare permit in a prod build.
 - **Do not tag individual policies for ownership.** AVP policy *stores* are
   taggable; individual policies are not. Store-level granularity is the decided
   scope, and no ownership channel is declared until its read paths exist — the

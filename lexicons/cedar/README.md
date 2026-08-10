@@ -120,7 +120,7 @@ import { OwnerCanManage, DenyByDefaultSet } from "@intentius/chant-lexicon-cedar
 
 ## Agent surface
 
-Three skills (`cedar-authoring`, `cedar-avp-embedding`, `cedar-meta-policy`),
+Three skills (`chant-cedar-authoring`, `chant-cedar-avp-embedding`, `chant-cedar-meta-policy`),
 three `chant init` templates (`default`, `avp-embedding`,
 `gateway-policy-set`), and three MCP contributions:
 

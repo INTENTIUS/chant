@@ -1,5 +1,5 @@
 ---
-skill: cedar-authoring
+skill: chant-cedar-authoring
 description: Author Cedar authorization policies as typed chant resources — schema to generated classes to .cedar and JSON outputs
 user-invocable: true
 ---

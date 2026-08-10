@@ -56,9 +56,9 @@ describe("cedar plugin", () => {
     }
 
     expect(skills.map((s) => s.name).sort()).toEqual([
-      "cedar-authoring",
-      "cedar-avp-embedding",
-      "cedar-meta-policy",
+      "chant-cedar-authoring",
+      "chant-cedar-avp-embedding",
+      "chant-cedar-meta-policy",
     ]);
   });
 
