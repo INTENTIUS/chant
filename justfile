@@ -117,6 +117,15 @@ scaffold-check:
     npx tsc --noEmit -p "lexicons/$name/tsconfig.build.json"
     echo "scaffold-check: a fresh lexicon installs and typechecks ✓"
 
+# Which pinned dogwood surfaces has upstream moved? (#1688) Reads
+# dogwood-policy/dogwood's current main over the GitHub API and diffs the blob
+# hashes in lexicons/cedar/src/dogwood/upstream.ts against it. Needs the network;
+# set GITHUB_TOKEN to avoid the anonymous rate limit. Advisory and never gating:
+# exits 0 whatever it finds, nonzero only when the check itself cannot run. Per
+# #808 the pin moves when a consuming test needs the newer upstream.
+dogwood-freshness:
+    npx tsx scripts/check-dogwood-freshness.ts
+
 # Run linter
 lint:
     npx eslint packages/
