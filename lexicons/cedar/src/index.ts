@@ -34,9 +34,25 @@ export type { CedarConfig } from "./config";
 // version it implements (#1650).
 export { CEDAR_WASM_VERSION, CEDAR_LANG_VERSION } from "./spec/pin";
 
-// Schema coverage.
+// Schema coverage — is every schema declaration reachable from the generated
+// artifacts? Policy coverage below asks the other half.
 export { computeCedarCoverage, formatCedarCoverage, analyzeCedarCoverage } from "./coverage";
 export type { CedarCoverageReport, CedarCoverageItem } from "./coverage";
+
+// Policy coverage — which schema declarations the built policy set can apply
+// to. Backs the `cedar:coverage` MCP tool.
+export { computePolicyCoverage, formatPolicyCoverage } from "./mcp/policy-coverage";
+export type {
+  CedarPolicyCoverageReport,
+  CedarPolicyCoverageItem,
+  CedarPolicyCoverageOptions,
+} from "./mcp/policy-coverage";
+
+// Composites — the repeated policy shapes Cedar itself has nowhere to put.
+export * from "./composites/index";
+
+// `chant init --lexicon cedar --template <name>` scaffolds.
+export { cedarInitTemplates, CEDAR_INIT_TEMPLATES } from "./init-templates";
 
 // Generated entity types, actions and the Policy authoring class (#1650).
 export * from "./generated/index";

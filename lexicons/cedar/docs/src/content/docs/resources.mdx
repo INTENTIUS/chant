@@ -1,0 +1,85 @@
+---
+title: "Resources"
+description: "Policy, and the entity and action declarations generated from your schema."
+---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-cedar` — DO NOT EDIT.
+    Edit lexicons/cedar/src/codegen/docs.ts instead; changes here are overwritten. */}
+Everything below `Policy` is generated from your schema, so the exact list depends on it. What follows is the shape.
+
+## Policy
+
+The one declaration this lexicon serializes. One `Policy` per policy.
+
+```typescript
+import { Policy } from "@intentius/chant-lexicon-cedar";
+
+export const ownerRead = new Policy({ /* … */ });
+```
+
+Its props are covered in [Policies](../policies/).
+
+## Entity classes
+
+Each `entity T = { … }` in the schema produces three things:
+
+| Generated | Kind | What it is |
+|---|---|---|
+| `Document` | resource class | The entity type, for declaring entities |
+| `DocumentAttributes` | property class | Its attribute record, usable standalone |
+| `DocumentUid` | type | ``App::Document::"${string}"`` — a template-literal type |
+
+`DocumentUid` is the one that earns its keep. It makes a mistyped namespace a
+compile error:
+
+```typescript
+import type { DocumentUid } from "@intentius/chant-lexicon-cedar";
+
+const contract: DocumentUid = 'App::Document::"contract-2026"';  // ok
+const typo: DocumentUid = 'App::Docmnt::"contract-2026"';        // compile error
+```
+
+## Action constants
+
+Each action produces a `const` (not a class — an action UID is a value, not a
+constructor) and a context record type:
+
+```typescript
+import { ReadAction, type ReadContextProps } from "@intentius/chant-lexicon-cedar";
+
+// ReadAction === 'App::Action::"read"'
+```
+
+## Schema-wide types
+
+| Name | What it holds |
+|---|---|
+| `EntityTypeName` | Union of every entity type name, as Cedar writes it |
+| `EntityUid` | Union of every entity UID type |
+| `ActionUid` | Union of every action UID |
+| `PolicyRef` | `EntityUid \| ActionUid` — anything a scope may name |
+| `PolicyScope` | One scope position |
+| `ALL_ACTIONS` | Every action constant, for exhaustive iteration |
+| `ALL_ENTITY_TYPES` | Every entity type name |
+
+`ALL_ACTIONS` is what a cross-domain post-synth check iterates when asking "is
+any action uncovered".
+
+## Naming
+
+Names are derived from the schema and de-duplicated against a single pool, so a
+schema declaring an entity type literally called `UserAttributes` beside a
+`User` does not get its name stolen by the derived record type. Two
+declarations in the same namespace reducing to the same short name are both
+qualified rather than one silently overwriting the other.
+
+## Coverage
+
+```bash
+npx chant coverage --lexicon cedar --verbose
+```
+
+Reports whether every entity type and every action in the schema is reachable
+from the generated artifacts. A gap is a defect: an action with no generated
+constant is one a policy can only name as a hand-typed string, which is the
+failure mode this lexicon exists to remove.

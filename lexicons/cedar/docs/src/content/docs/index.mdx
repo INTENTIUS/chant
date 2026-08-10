@@ -1,35 +1,75 @@
 ---
-title: Overview
-description: Cedar lexicon for chant
+title: "Cedar"
+description: "Typed authoring for Cedar authorization policies"
 ---
 
-The Cedar lexicon is the typed authoring layer above Cedar policy text. You
-declare policies as TypeScript values; the build emits canonical `.cedar` text
-plus the Cedar JSON policy format, which any Cedar evaluator reads.
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-cedar` — DO NOT EDIT.
+    Edit lexicons/cedar/src/codegen/docs.ts instead; changes here are overwritten. */}
 
-## The policy model
+The **cedar** lexicon is the typed authoring layer above [Cedar](https://www.cedarpolicy.com/), the vendor-neutral authorization policy language that joined the CNCF as a Sandbox project in December 2025.
 
-A policy is a `Cedar::Policy` entity:
+Cedar is deliberately abstraction-free: no variables, no modules, no loops, and templates carrying exactly two slots (`?principal`, `?resource`). Its own toolchain validates and evaluates — it checks policies after they are written and decides requests at runtime. Everything upstream of the policy text is unowned, which is where this lexicon lives.
 
-| Prop | Meaning |
-|------|---------|
-| `effect` | `"permit"` or `"forbid"`; defaults to `permit` |
-| `principal`, `action`, `resource` | scope constraints — `{}` for any, or `{ eq }`, `{ in }`, `{ is }` |
-| `when`, `unless` | Cedar expression strings, one clause each |
-| `annotations` | `Record<string, string>`, emitted as `@key("value")` |
+```bash
+npm install --save-dev @intentius/chant-lexicon-cedar
+```
 
-The policy id is derived from the export's logical name unless
-`annotations.id` sets one, so `allowAdminRead` becomes `@id("allow-admin-read")`.
+## Quick start
 
-## Output
+```typescript
+import { Policy, ReadAction } from "@intentius/chant-lexicon-cedar";
 
-Every build writes two files: the `.cedar` policy set as the primary output,
-and `policies.cedar.json` in the Cedar JSON policy format beside it. The JSON
-form is also the parse source for import.
+export const ownerRead = new Policy({
+  effect: "permit",
+  principal: { is: "App::User" },
+  action: { eq: ReadAction },
+  resource: { is: "App::Document" },
+  when: ["resource.owner == principal"],
+});
+```
 
-## Not here yet
+`ReadAction` and `"App::User"` are generated from *your* Cedar schema, so a
+renamed entity type is a compiler-guided refactor and a typo'd action is a
+compile error — not a validation failure after the text is written.
 
-Schema-driven codegen turns your own Cedar schema into typed entity and action
-classes, so a typo'd attribute is a compile error. That, the `cedar-wasm`
-validation checks, and the generated reference pages for this site are still
-in flight — see the epic, INTENTIUS/chant#1645.
+## What comes out
+
+| File | Who reads it |
+|------|--------------|
+| `<name>.cedar` | Every Cedar evaluator — Amazon Verified Permissions, cedar-agent, an embedded `cedar-wasm` |
+| `policies.cedar.json` | The Cedar JSON policy format; also the parse source for import |
+
+chant appears in neither. An emitted policy set walks away and is consumed by
+any evaluator with chant nowhere in sight.
+
+## Cedar is a target, never a gate
+
+There is no `cedarGate()` and there will not be one.
+[Organizational policy](/chant/guide/organizational-policy/) in chant is
+TypeScript post-synth checks; a second policy engine would duplicate the lint
+engine. chant compiles *to* Cedar; it is not governed *by* Cedar.
+
+## At a Glance
+
+| Metric | Count |
+|--------|-------|
+| Resources | 17 |
+| Property types | 16 |
+| Services | 2 |
+| Intrinsic functions | 0 |
+| Pseudo-parameters | 0 |
+| Lint rules | 1 |
+
+**Lexicon version:** 0.44.7  
+**Namespace:** `Cedar`
+
+- [Getting Started](./getting-started)
+- [Schema](./schema)
+- [Resources](./resources)
+- [Policies](./policies)
+- [Composites](./composites)
+- [Lint Rules](./lint-rules)
+- [Importing](./importing)
+- [Verified Permissions](./avp)
+- [All Rules](./rules) — 1 rules
+- [Serialization](./serialization) — output format details

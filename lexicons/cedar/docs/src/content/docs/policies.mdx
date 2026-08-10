@@ -1,0 +1,96 @@
+---
+title: "Policies"
+description: "Policy props, scope forms, conditions, annotations, and ids."
+---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-cedar` — DO NOT EDIT.
+    Edit lexicons/cedar/src/codegen/docs.ts instead; changes here are overwritten. */}
+A policy is a `Policy` value. The serializer turns each one into a `.cedar` block and an entry in the JSON policy set.
+
+## Props
+
+| Prop | Meaning |
+|------|---------|
+| `effect` | `"permit"` or `"forbid"`. Defaults to `permit` |
+| `principal`, `action`, `resource` | Scope constraints. Omit for unconstrained |
+| `when` | Cedar expression strings, one `when { … }` clause each |
+| `unless` | Cedar expression strings, one `unless { … }` clause each |
+| `annotations` | `Record<string, string>`, emitted as `@key("value")` |
+
+## Scope forms
+
+The scope type mirrors the grammar exactly:
+
+| Written | Emitted |
+|---|---|
+| `{}` or omitted | `principal` |
+| `{ eq: X }` | `principal == X` |
+| `{ in: X }` | `principal in X` |
+| `{ in: [X, Y] }` | `principal in [X, Y]` |
+| `{ is: "App::User" }` | `principal is App::User` |
+| `{ is: "App::User", in: X }` | `principal is App::User in X` |
+
+`is` takes an `EntityTypeName`; `eq` and `in` take a `PolicyRef`. Both are
+schema-derived unions, so an entity type the schema never declared does not
+compile.
+
+## Conditions
+
+`when` and `unless` carry Cedar expression **text**:
+
+```typescript
+export const ownerWrite = new Policy({
+  effect: "permit",
+  principal: { is: "App::User" },
+  action: { eq: WriteAction },
+  resource: { is: "App::Document" },
+  when: ["resource.owner == principal", "context.mfa == true"],
+  unless: ['resource.classification == "confidential"'],
+});
+```
+
+Each array element becomes its own clause. They stay strings on purpose:
+Cedar's expression grammar *is* the policy language, and typing it in
+TypeScript is [import and reconcile](../importing/)'s problem, not codegen's.
+
+## Policy ids
+
+The id comes from the export's logical name, kebab-cased — `allowAdminRead`
+becomes `@id("allow-admin-read")`. Set `annotations.id` to pin one:
+
+```typescript
+export const anything = new Policy({
+  annotations: { id: "tenant-isolation", owner: "platform" },
+  // …
+});
+```
+
+An explicit `id` wins. `@id` is emitted first, then your annotations in
+declaration order.
+
+## permit and forbid
+
+Cedar is default-deny, so a `permit` is what grants anything at all. A
+`forbid` is not the absence of a grant — it beats every `permit` in the set
+unconditionally, which makes it the only construct that survives a wider grant
+somebody adds next quarter.
+
+Two consequences worth internalizing:
+
+- **A forbid with no guard denies everything**, and no permit can lift it. The
+  `DenyByDefaultSet` [composite](../composites/) throws rather than emit one.
+- **"Nobody wrote a permit" and "a forbid says no" evaluate identically** and
+  read completely differently in review. Give sensitive resources an explicit
+  floor.
+
+## The JSON companion
+
+Every build writes `policies.cedar.json` beside the `.cedar` text — the same
+policy set in Cedar's JSON policy format, produced from the same structured
+model rather than by re-parsing the text.
+
+One deliberate gap: condition bodies are expression *ASTs* in that format, and
+the model carries expression text. They are written as `{ "__expr": "<text>" }`,
+Cedar's own escape for source-given expressions, so the file stays
+machine-readable instead of inventing a private key. Producing real trees means
+parsing Cedar expression text, which lands with import.

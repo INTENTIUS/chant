@@ -1,14 +1,17 @@
-import type { LexiconPlugin, SkillDefinition, IntrinsicDef } from "@intentius/chant/lexicon";
+import type { LexiconPlugin, SkillDefinition, IntrinsicDef, InitTemplateSet } from "@intentius/chant/lexicon";
 import type { LintRule } from "@intentius/chant/lint/rule";
 import type { PostSynthCheck } from "@intentius/chant/lint/post-synth";
 import type { CompletionContext, CompletionItem, HoverContext, HoverInfo } from "@intentius/chant/lsp/types";
 import type { McpToolContribution, McpResourceContribution } from "@intentius/chant/mcp/types";
+import { createSkillsLoader } from "@intentius/chant/lexicon-plugin-helpers";
 import { cedarSerializer } from "./serializer";
 import { rules } from "./lint/rules";
 import { postSynthChecks as cedarPostSynthChecks } from "./lint/post-synth";
 import { cedarAuditCatalog } from "./lint/audit-catalog";
 import { completions } from "./lsp/completions";
 import { hover } from "./lsp/hover";
+import { cedarMcpResources, cedarMcpTools } from "./mcp/index";
+import { cedarInitTemplates } from "./init-templates";
 import { cedarConfigSchema } from "./config";
 import { detectTemplate as detectCedarTemplate } from "./detect";
 import { CedarTemplateGenerator, CedarTemplateParser } from "./import/adapter";
@@ -82,16 +85,88 @@ export const cedarPlugin: LexiconPlugin = {
     return cedarAuditCatalog;
   },
 
-  skills() {
-    return []; // TODO: Add skills
+  skills: createSkillsLoader(import.meta.url, [
+    {
+      file: "cedar-authoring.md",
+      name: "cedar-authoring",
+      description:
+        "Author Cedar policies as typed chant resources — schema to generated classes to .cedar and JSON outputs",
+      triggers: [
+        { type: "file-pattern", value: "**/*.cedarschema" },
+        { type: "file-pattern", value: "**/policies.ts" },
+        { type: "context", value: "cedar policy" },
+        { type: "context", value: "cedar schema" },
+        { type: "context", value: "authorization policy" },
+      ],
+      parameters: [],
+      examples: [
+        {
+          title: "Owner-scoped permit",
+          description: "Grant an action to the owner of a resource",
+          input: "Let users read documents they own",
+          output: `new Policy({ principal: { is: "App::User" }, action: { eq: ReadAction }, when: ["resource.owner == principal"] })`,
+        },
+      ],
+    },
+    {
+      file: "cedar-avp-embedding.md",
+      name: "cedar-avp-embedding",
+      description:
+        "Embed a typed cedar-lexicon policy into an AWS Verified Permissions policy resource instead of a hand-written string",
+      triggers: [
+        { type: "context", value: "verified permissions" },
+        { type: "context", value: "avp policy store" },
+        { type: "context", value: "cedar deployment" },
+        { type: "context", value: "cedar-agent" },
+      ],
+      parameters: [],
+      examples: [
+        {
+          title: "Policy destined for a policy store",
+          input: "Deploy this Cedar policy to Verified Permissions",
+          output: "Emit the .cedar text and reference it — the typed statement seam lands with #1652",
+        },
+      ],
+    },
+    {
+      file: "cedar-meta-policy.md",
+      name: "cedar-meta-policy",
+      description:
+        "Organizational policy over Cedar policy sets — the bare-permit wall, forbid conventions, and env-aware severity",
+      triggers: [
+        { type: "context", value: "cedar lint" },
+        { type: "context", value: "bare permit" },
+        { type: "context", value: "policy review" },
+        { type: "context", value: "meta-policy" },
+      ],
+      parameters: [],
+      examples: [
+        {
+          title: "The bare-permit wall",
+          input: "Is `permit (principal, action, resource);` acceptable?",
+          output: "Warn in dev and staging; fail the build in prod",
+        },
+      ],
+    },
+  ]),
+
+  initTemplates(template?: string): InitTemplateSet {
+    // The branch names are spelled out here rather than only in
+    // ./init-templates.ts because `chant dev check-lexicon` counts a lexicon's
+    // templates by scanning this file. The content lives next door.
+    if (template === "avp-embedding") return cedarInitTemplates("avp-embedding");
+    if (template === "gateway-policy-set") return cedarInitTemplates("gateway-policy-set");
+    return cedarInitTemplates(template);
   },
 
   mcpTools() {
-    return []; // TODO: Implement MCP tools
+    return cedarMcpTools();
   },
 
   mcpResources() {
-    return []; // TODO: Implement MCP resources
+    // `createCatalogResource` resolves the registry relative to the module URL
+    // it is handed, so it needs this file's — src/generated/, not src/mcp/.
+    return cedarMcpResources(import.meta.url);
   },
 
   detectTemplate(data: unknown) {

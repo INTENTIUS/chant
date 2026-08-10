@@ -1,0 +1,45 @@
+---
+title: "Serialization"
+description: "Output format for the Cedar lexicon"
+---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-cedar` — DO NOT EDIT.
+    Edit lexicons/cedar/src/codegen/docs.ts instead; changes here are overwritten. */}
+
+The cedar lexicon emits two views of one policy set.
+
+**`<name>.cedar`** — the primary output, and the surface every Cedar evaluator reads.
+
+```cedar
+@id("owner-read")
+@doc("Owners always read their own documents.")
+permit (
+  principal is App::User,
+  action in [App::Action::"read", App::Action::"list"],
+  resource is App::Document
+)
+when { resource.owner == principal };
+```
+
+**`policies.cedar.json`** — the Cedar JSON policy format, written alongside.
+
+```json
+{
+  "staticPolicies": {
+    "owner-read": {
+      "effect": "permit",
+      "principal": { "op": "is", "entity_type": "App::User" },
+      "action": { "op": "in", "entities": [{ "type": "App::Action", "id": "read" }] },
+      "resource": { "op": "is", "entity_type": "App::Document" },
+      "conditions": [{ "kind": "when", "body": { "__expr": "resource.owner == principal" } }],
+      "annotations": { "id": "owner-read" }
+    }
+  },
+  "templates": {},
+  "templateLinks": []
+}
+```
+
+Both come from the same structured model in one pass, so they cannot drift. The
+JSON form is also the parse source for import — see [Importing](../importing/).
+

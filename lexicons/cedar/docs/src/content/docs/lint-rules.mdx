@@ -1,0 +1,97 @@
+---
+title: "Lint Rules"
+description: "The bare-permit wall, schema-absent references, and cross-domain checks."
+---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-cedar` — DO NOT EDIT.
+    Edit lexicons/cedar/src/codegen/docs.ts instead; changes here are overwritten. */}
+Rules under the `CED` prefix. The complete generated table is on [All Rules](../rules/); this page is the reasoning.
+
+## The two engines, and why there is only one
+
+Cedar's own validator runs in-process through `@cedar-policy/cedar-wasm` — the
+real thing, not a reimplementation. It answers "is this policy well-formed
+against this schema".
+
+Everything else is a TypeScript check. There is no `cedarGate()`, because
+organizational policy in chant is post-synth checks and a second policy engine
+would duplicate the lint engine.
+
+## The bare-permit wall
+
+```cedar
+permit (principal, action, resource);
+```
+
+Every scope unconstrained, no conditions. Legal Cedar, validates clean, grants
+everything to everyone. The rule is **env-aware**:
+
+| Environment | Verdict |
+|---|---|
+| dev / local | warn |
+| staging | warn |
+| prod | **fail** |
+
+Env-aware rather than absolute because an absolute rule gets suppressed the
+first time it fires during development, and a suppressed rule protects nothing.
+A permit with any constrained scope position, or any `when`/`unless`, is not
+bare.
+
+## Schema-absent references
+
+A policy naming an entity type or action the schema does not declare fails
+**everywhere**, dev included. Two failure modes hide behind it:
+
+- **The typo** — `App::Documnt`. Generated classes make this a compile error
+  before any check runs; it survives only inside `when`/`unless` expression
+  strings.
+- **The silent no-op** — a scope naming an absent entity type *parses*, and
+  Cedar's request-envelope resolver answers "success, nothing". The policy is
+  well-formed, deployable, and can never fire.
+
+## Cross-domain checks
+
+The differentiator, and the thing no Cedar tool can express: Cedar only ever
+sees policies, while a chant build holds the policies *and* the infrastructure
+they govern in one entity graph. So a post-synth check can span both:
+
+- an entity id in a policy references an actual resource declaration
+- every declared bucket is covered by at least one `forbid`
+- no schema action lacks any policy
+
+These are ordinary post-synth checks. Nothing exotic — they just need both
+halves in the same build, which is the arrangement chant already has.
+
+## Coverage, two ways
+
+```bash
+npx chant coverage --lexicon cedar     # schema -> generated artifacts
+```
+
+The MCP tool asks the other half:
+
+```
+cedar:coverage { "path": ".", "format": "text" }
+```
+
+It builds the policy set, hands each policy to Cedar's own
+`getValidRequestEnvsPolicy` alongside the schema, and reports:
+
+| Field | Meaning |
+|---|---|
+| `uncovered` | Declarations no policy can apply to |
+| `forbidOnly` | Declarations reachable only from a `forbid` — nothing grants them |
+| `inert` | Policies whose request envelope is empty; they can never fire |
+| `unresolved` | Policies the resolver rejected outright |
+| `parseErrors` | Why the set would not split into policies |
+
+Container entity types — the ones that appear in no action's `appliesTo` and
+exist only to be `in` — show as uncovered even under a bare permit. That is
+the resolver telling the truth: no request can name them.
+
+## What is not here yet
+
+The post-synth checks encoding all of the above are
+[INTENTIUS/chant#1651](https://github.com/INTENTIUS/chant/issues/1651). Today
+the lexicon ships the source-level rule set and the validation plumbing; the
+checks that span policies and estate land there.
