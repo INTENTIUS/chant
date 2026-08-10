@@ -1,0 +1,56 @@
+name: dogwood-freshness
+
+# Weekly advisory check: which of the pinned dogwood surfaces has upstream moved?
+# dogwood-policy/dogwood is a read-only squash-sync mirror with no tags, no
+# releases and a crate version frozen at 1.0.0, so there is no version feed to
+# watch — only content. This diffs the blob hashes in
+# lexicons/cedar/src/dogwood/upstream.ts against the mirror's current main and
+# publishes the report as an artifact and a job summary.
+#
+# It never fails on a moved surface, and it is deliberately absent from gating CI
+# (chant.yml). Per the #808 policy the pin moves when a consuming test needs the
+# newer upstream, not because upstream moved (#1688).
+run-name: dogwood-freshness — ${{ github.event_name }}
+
+on:
+  # Mondays at 08:00 UTC — an hour after emulator-freshness, to spread the load.
+  schedule:
+    - cron: '0 8 * * 1'
+  workflow_dispatch:
+
+concurrency:
+  group: dogwood-freshness
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: 'npm'
+      - name: Install dependencies
+        run: npm install
+
+      # Human lines land in the log, the Markdown table in the job summary, and
+      # the JSON in the file uploaded below. A moved surface is reported, not
+      # raised: the step only fails when the check could not run at all.
+      - name: Check dogwood pin freshness
+        id: freshness
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: npx tsx scripts/check-dogwood-freshness.ts > dogwood-freshness.json
+
+      - name: Upload the freshness report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: dogwood-freshness
+          path: dogwood-freshness.json
+          if-no-files-found: warn

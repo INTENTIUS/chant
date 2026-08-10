@@ -37,6 +37,11 @@ export default defineConfig({
       "packages/**/*.test.ts",
       "lexicons/**/*.test.ts",
       "examples/examples.test.ts",
+      // Repo tooling in scripts/ was covered by nothing until #1688's dogwood
+      // freshness check arrived with pure comparison logic worth testing. A
+      // test here must be hermetic like any other in this suite — the network
+      // layer it covers is injectable for exactly that reason.
+      "scripts/**/*.test.ts",
       // The alert-triage app ships colocated unit tests for its triage
       // activities. (examples/ is not globbed wholesale — fargate's docker
       // e2e/volume suites need Docker and aren't CI unit tests.)
