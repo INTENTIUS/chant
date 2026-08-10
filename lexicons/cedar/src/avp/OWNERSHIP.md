@@ -94,6 +94,44 @@ for a lexicon that reported nothing. The obligation is still real for anyone ext
 this file: a new read path that cannot see the description must not be added to
 `reads`.
 
+## Reading the store: the signing seam
+
+The reader was an emulator-and-test transport when #1652 landed, because its requests
+were unsigned and real AWS rejects those. SigV4 now exists in the aws lexicon
+(`lexicons/aws/src/api/sigv4.ts`, chant #1686) and `src/avp/client.ts` uses it — through
+a function on `AvpClientOptions`, not through an import.
+
+The reason is the same one that kept `src/avp/embed.ts` free of the aws lexicon: a
+cedar → aws dependency edge would make the vendor-neutral lexicon unbuildable without
+the AWS one, for the sake of a transport most Cedar deployments never use. So
+`AvpSigner`, `AvpCredentials` and `AvpSignableRequest` restate the aws lexicon's own
+shapes, and `signRequest` satisfies `AvpSigner` as it stands. A project that has both
+lexicons installed wires them where it already builds the client options:
+
+```ts
+import { signRequest } from "@intentius/chant-lexicon-aws";
+import { describeAvpResources } from "@intentius/chant-lexicon-cedar";
+
+await describeAvpResources({
+  environment,
+  entityNames,
+  entities,
+  client: { region: "us-west-2", signer: signRequest },
+});
+```
+
+The cost of restating rather than importing is that a shape change in the aws lexicon
+shows up as a type error in the consumer that wires the two, not here. That is the
+trade the decoupling buys, and it is why the two files name each other in prose.
+
+Unsigned stays the default, and three cases stay unsigned regardless: no signer wired
+in, no credentials resolved, and an endpoint override without `signEndpointOverride`
+(an emulator does not verify signatures, and signing against one would make every local
+lane need credentials to read what it just deployed). `credentialsAvailable` therefore
+still gates the readers exactly as before — a caller that wires nothing in gets every
+entity NOT-OBSERVED with `no-credentials` rather than a request that was never going to
+work.
+
 ## Alternatives rejected
 
 **Store-level tags as the only channel.** The epic's provisional position. Rejected
