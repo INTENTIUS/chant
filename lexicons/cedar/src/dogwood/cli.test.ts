@@ -10,7 +10,7 @@
  * sync.
  */
 import { describe, test, expect, afterEach } from "vitest";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { fileURLToPath } from "url";
@@ -20,9 +20,11 @@ import {
   findDogwoodBinary,
   formatDogwoodDiagnostic,
   parseLowerOutput,
+  parseReplayOutput,
   parseValidateOutput,
   resetDogwoodCli,
   runDogwoodLower,
+  runDogwoodReplay,
   runDogwoodValidate,
   type DogwoodRun,
   type DogwoodRunner,
@@ -258,6 +260,125 @@ describe("parseLowerOutput", () => {
       json({ severity: "error", message: "unknown macro `once`", labels: [], spanned: false }, 2),
     );
     expect(result.kind).toBe("fatal");
+  });
+});
+
+// ── replay ─────────────────────────────────────────────────────────
+
+describe("parseReplayOutput", () => {
+  /** The stream #1657 recorded for `read_after_login`, exit 0. */
+  const RECORDED = {
+    verdicts: [
+      { index: 0, timestamp: 0, verdict: "deny", determining_rules: [], errors: [] },
+      { index: 1, timestamp: 10, verdict: "allow", determining_rules: [0], errors: [] },
+      { index: 2, timestamp: 7200, verdict: "deny", determining_rules: [], errors: [] },
+    ],
+  };
+
+  test("reads the verdict stream, rules included", () => {
+    const result = parseReplayOutput(json(RECORDED));
+    expect(result.kind).toBe("replayed");
+    if (result.kind !== "replayed") return;
+    expect(result.verdicts).toHaveLength(3);
+    expect(result.verdicts[1]).toEqual({
+      index: 1,
+      timestamp: 10,
+      verdict: "allow",
+      determiningRules: [0],
+      errors: [],
+    });
+  });
+
+  test("every verdict DENY at exit 0 is a result, not a failure", () => {
+    // The sharpest edge in the replay contract: a nonzero exit means the trace
+    // or the policy set failed to load, never that a policy denied.
+    const allDeny = { verdicts: RECORDED.verdicts.map((v) => ({ ...v, verdict: "deny" })) };
+    const result = parseReplayOutput(json(allDeny));
+    expect(result.kind).toBe("replayed");
+  });
+
+  test("an unrecognised verdict reads as a deny rather than being dropped", () => {
+    // Dropping it would shift every later index; treating it as a permit would
+    // be a permission upstream never granted.
+    const result = parseReplayOutput(json({ verdicts: [{ index: 0, timestamp: 0, verdict: "maybe" }] }));
+    expect(result.kind).toBe("replayed");
+    if (result.kind !== "replayed") return;
+    expect(result.verdicts[0].verdict).toBe("deny");
+  });
+
+  test("a malformed trace line comes back through the fatal channel", () => {
+    const result = parseReplayOutput(
+      json({ severity: "error", message: "trace parse: line 1: timepoint must start with `@`", spanned: false }, 2),
+    );
+    expect(result.kind).toBe("fatal");
+    if (result.kind !== "fatal") return;
+    expect(result.error.message).toMatch(/timepoint must start with/);
+  });
+
+  test("no JSON at all is unusable, never a verdict", () => {
+    const result = parseReplayOutput(run({ status: 2, stderr: "error: unexpected argument '--nope'" }));
+    expect(result.kind).toBe("unusable");
+  });
+
+  test("per-evaluation errors are carried through in either shape", () => {
+    const result = parseReplayOutput(
+      json({
+        verdicts: [
+          { index: 0, timestamp: 0, verdict: "deny", determining_rules: [], errors: ["no script"] },
+          {
+            index: 1,
+            timestamp: 1,
+            verdict: "deny",
+            determining_rules: [],
+            errors: [{ message: "provider failed at line 1 column 4" }],
+          },
+        ],
+      }),
+    );
+    expect(result.kind).toBe("replayed");
+    if (result.kind !== "replayed") return;
+    expect(result.verdicts[0].errors).toEqual(["no script"]);
+    // The internal position is scrubbed for the same reason as everywhere else.
+    expect(result.verdicts[1].errors).toEqual(["provider failed"]);
+  });
+});
+
+describe("runDogwoodReplay", () => {
+  test("passes the trace as --trace beside the bundle, and asks for JSON", () => {
+    let seen: { args: string[]; trace: string } | undefined;
+    const runner: DogwoodRunner = (_binary, args) => {
+      const at = args.indexOf("--trace");
+      seen = { args, trace: readFileSync(args[at + 1], "utf-8") };
+      return run({ status: 0, stdout: JSON.stringify({ verdicts: [] }) });
+    };
+    configureDogwoodCli({ runner });
+
+    const result = runDogwoodReplay("/bin/dogwood", { policies: "p", policySchema: "s" }, "@0 A::Action::\"B\"::request()");
+    expect(result.kind).toBe("replayed");
+    expect(seen?.args[0]).toBe("replay");
+    expect(seen?.args.slice(-2)).toEqual(["--format", "json"]);
+    expect(seen?.trace).toBe('@0 A::Action::"B"::request()');
+  });
+
+  test("the scratch directory, trace included, does not outlive the run", () => {
+    let tracePath = "";
+    const runner: DogwoodRunner = (_binary, args) => {
+      tracePath = args[args.indexOf("--trace") + 1];
+      return run({ status: 0, stdout: JSON.stringify({ verdicts: [] }) });
+    };
+    configureDogwoodCli({ runner });
+    runDogwoodReplay("/bin/dogwood", { policies: "p", policySchema: "s" }, "@0 A::Action::\"B\"::request()");
+    expect(existsSync(tracePath)).toBe(false);
+  });
+
+  test("a throwing runner is an unusable run, not an exception", () => {
+    configureDogwoodCli({
+      runner: () => {
+        throw new Error("spawn blew up");
+      },
+    });
+    const result = runDogwoodReplay("/bin/dogwood", { policies: "p", policySchema: "s" }, "@0 x");
+    expect(result.kind).toBe("unusable");
   });
 });
 

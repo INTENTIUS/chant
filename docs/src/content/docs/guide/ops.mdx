@@ -348,6 +348,26 @@ export const { op: scheduledOp, schedule } = WorkflowAuditOp({
 
 `PipelineAuditOp` is the GitLab counterpart — it audits `.gitlab-ci.yml` `include:` / `component:` / `image:` references, and its finding-modes are `report | issue | merge-request`. Both run one-shot on the local executor (`chant run <name>`) with no Temporal dependency; only the scheduled, durable form requires Temporal, and `report` mode needs no external services at all. See the [github](/chant/lexicons/github/) and [gitlab](/chant/lexicons/gitlab/) lexicon docs for the per-platform reference lists each audit resolves.
 
+## Replay (policy drift)
+
+`PolicyReplayOp` is the same shape applied to authorization policy. A [dogwood](/chant/lexicons/cedar/) `.dw` policy set carries temporal clauses — `formerly within 1h …` — so what a policy decides depends on a history the build cannot see. Replaying the declared set against a recorded event trace is how that gets checked, and the answer moves as the history does.
+
+```typescript
+import { PolicyReplayOp } from "@intentius/chant-lexicon-cedar";
+
+export const { op } = PolicyReplayOp({
+  name: "policy-replay",
+  tracePath: "trace/session.log",
+  expect: [
+    { timestamp: 10, verdict: "allow", determiningRules: [0] },
+    { timestamp: 7200, verdict: "deny" },
+  ],
+  onFinding: "report",   // "issue" | "pull-request"
+});
+```
+
+Phases are **artifacts → replay → report**: `chant build` emits the `.dw` bundle, the `dogwoodReplay` activity runs it through upstream's CLI and writes a divergence report, and `dogwoodReplayReport` acts on the finding mode. Unlike the two audit Ops above it ships from the **cedar** lexicon rather than the temporal one, because it hands back an Op and no schedule — pair it with a `TemporalSchedule` yourself for the recurring form. The replay step needs the `dogwood` binary; without one the step fails rather than reporting nothing found.
+
 ## Op dependencies
 
 `depends` declares Ops that must succeed before this one starts. `chant build` validates all referenced names exist at build time.

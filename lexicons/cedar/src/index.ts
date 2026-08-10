@@ -113,6 +113,23 @@ export {
 export type { EventSchemaProps, MacroLibraryProps, TemporalPolicyProps } from "./dogwood/policy";
 export { DOGWOOD_UPSTREAM } from "./dogwood/upstream";
 
+// The replay Op composite and its typed step builders (#1661). Flat, like
+// fly's `flyDeploy`: an Op factory is what a project's `ops/*.op.ts` names,
+// and it carries no dependency on the temporal lexicon — see
+// ./dogwood/replay-op.ts for why the composite ships from cedar.
+export {
+  DEFAULT_REPLAY_REPORT_PATH,
+  PolicyReplayOp,
+  dogwoodReplayReportStep,
+  dogwoodReplayStep,
+} from "./dogwood/replay-op";
+export type {
+  DogwoodReplayReportStepOpts,
+  DogwoodReplayStepOpts,
+  PolicyReplayOpConfig,
+  PolicyReplayOpResources,
+} from "./dogwood/replay-op";
+
 // Lint rules
 export { rules as cedarLintRules } from "./lint/rules";
 

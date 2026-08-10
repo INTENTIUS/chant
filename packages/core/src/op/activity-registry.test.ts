@@ -108,6 +108,13 @@ describe("loadActivities — multi-lexicon (#706)", () => {
     expect(a.has("azApply")).toBe(true);
   });
 
+  test("cedar lexicon contributes the dogwood replay activities (#1661)", async () => {
+    const a = await loadActivities(["cedar"]);
+    expect(a.has("dogwoodReplay")).toBe(true);
+    expect(a.has("dogwoodReplayReport")).toBe(true);
+    expect(a.has("waitForStack")).toBe(true); // base still loaded alongside
+  });
+
   test("unknown lexicon is skipped without throwing", async () => {
     const a = await loadActivities(["definitely-not-a-lexicon"]);
     expect(a.has("waitForStack")).toBe(true); // temporal base still loads
