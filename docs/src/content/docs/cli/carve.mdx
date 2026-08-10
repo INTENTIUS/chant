@@ -23,7 +23,7 @@ Use it to decide where an incremental move off Terraform is worth starting. The 
 |------|-------------|
 | `--from <dir>` | The Terraform estate directory to analyze (required) |
 | `--state <path>` | Optional `.tfstate` for accurate `count`/`for_each` instance counts |
-| `--json` | Emit the full per-resource breakdown as JSON |
+| `--json` | Emit the full per-resource breakdown as JSON (see [The JSON report](#the-json-report)) |
 | `--report <path>` | Write the JSON report to a file |
 
 ## The parser is installed on demand
@@ -90,6 +90,69 @@ Bands: 80-100 carve now | 50-79 carve with boundary edits | 0-49 leave in Terraf
 ```
 
 Read it top to bottom: the log group has no dependents and a clean native map, so it carves for free. The bucket is a clean leaf too, held back one notch by the one Lambda that reads it. The VPC is carvable but three subnets hang off it, so carving it means three data-source patches. `random_pet` has no native mapping at all, so it stays.
+
+## The JSON report
+
+`--json` prints the report to stdout; `--report <path>` writes the same bytes to a file. Other tools read it — [behold](https://github.com/INTENTIUS/behold) renders it as a graph — so it is a contract, and it says which version of that contract it is:
+
+```json
+{
+  "version": 1,
+  "from": "./infra",
+  "advisory": "read-only — emits nothing, patches nothing, touches no live resource",
+  "count": 8,
+  "bands": { "clean leaf": 6, "carvable w/ edits": 1, "leave in Terraform": 1 },
+  "resources": [
+    {
+      "address": "aws_vpc.main",
+      "kind": "resource",
+      "score": 64,
+      "band": "carvable w/ edits",
+      "mapsTo": "AWS::EC2::VPC",
+      "breakdown": {
+        "inbound": 3,
+        "outbound": 0,
+        "tier": 1,
+        "hasDynamic": false,
+        "instances": 1,
+        "penalties": { "inbound": -36, "outbound": 0, "tier": 0, "dynamic": 0, "instances": 0 }
+      },
+      "boundary": {
+        "inbound": [
+          {
+            "direction": "inbound",
+            "survivor": "aws_subnet.a",
+            "carved": "aws_vpc.main",
+            "attrs": ["id"],
+            "via": ["vpc_id"],
+            "bridge": "tf-data-source",
+            "required": "immediately"
+          }
+        ],
+        "outbound": []
+      }
+    }
+  ]
+}
+```
+
+### Boundary edges
+
+`breakdown.inbound` and `breakdown.outbound` are the counts the score was computed from. `boundary` is the same information as **edges**: every dependency link carving that resource would cut, named at both ends.
+
+- `survivor` is the address that stays in Terraform, `carved` the address that leaves. `attrs` are the producer-side attributes referenced (`id`, `arn`); `via` is the referring block's own attribute the reference sits in (`vpc_id`) — the name a deferred input's build parameter takes on emit.
+- An `inbound` edge is bridged by a `data` source and is `required: "immediately"`: the surviving plan breaks without it. An `outbound` edge becomes a `deferred-input`, `required: "at-apply"`.
+- Every cut appears **twice** across the report — once as an `inbound` edge on the depended-on resource, once as an `outbound` edge on the resource that depends on it. Each list answers "what would carving *this* resource cut", so a reader collecting edges across resources should key them in dependency direction to fold the two views into one.
+- The lists are the carve *set's* boundary, so a folded sub-resource is never an endpoint: it carves with its parent, and edges internal to the set are not boundary work.
+- `boundary` present with two empty lists means no boundary work. `boundary` absent means the report was produced by a chant that predates the field — "none" and "not reported" are different claims.
+
+### Version policy
+
+`version` is a single integer, currently `1`.
+
+- **Additive within a version.** New top-level fields, new per-resource fields, and new entries in existing lists may appear in any release. Read leniently: ignore keys you do not know.
+- **Removing or renaming a field, or changing what one means, bumps the version.** So does narrowing a type. (An optional field becoming always-present is additive; the reverse is not.)
+- A reader handed a version it does not know should refuse the report and say so, rather than half-reading it.
 
 ## Coverage
 
