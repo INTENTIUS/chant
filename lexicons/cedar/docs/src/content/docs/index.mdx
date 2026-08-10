@@ -1,0 +1,35 @@
+---
+title: Overview
+description: Cedar lexicon for chant
+---
+
+The Cedar lexicon is the typed authoring layer above Cedar policy text. You
+declare policies as TypeScript values; the build emits canonical `.cedar` text
+plus the Cedar JSON policy format, which any Cedar evaluator reads.
+
+## The policy model
+
+A policy is a `Cedar::Policy` entity:
+
+| Prop | Meaning |
+|------|---------|
+| `effect` | `"permit"` or `"forbid"`; defaults to `permit` |
+| `principal`, `action`, `resource` | scope constraints — `{}` for any, or `{ eq }`, `{ in }`, `{ is }` |
+| `when`, `unless` | Cedar expression strings, one clause each |
+| `annotations` | `Record<string, string>`, emitted as `@key("value")` |
+
+The policy id is derived from the export's logical name unless
+`annotations.id` sets one, so `allowAdminRead` becomes `@id("allow-admin-read")`.
+
+## Output
+
+Every build writes two files: the `.cedar` policy set as the primary output,
+and `policies.cedar.json` in the Cedar JSON policy format beside it. The JSON
+form is also the parse source for import.
+
+## Not here yet
+
+Schema-driven codegen turns your own Cedar schema into typed entity and action
+classes, so a typo'd attribute is a compile error. That, the `cedar-wasm`
+validation checks, and the generated reference pages for this site are still
+in flight — see the epic, INTENTIUS/chant#1645.

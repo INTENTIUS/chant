@@ -1,0 +1,35 @@
+# Default recipe - list all available commands
+default:
+    @just --list
+
+# Generate types and metadata from upstream schemas
+generate:
+    npx tsx src/codegen/generate-cli.ts
+
+# Validate generated artifacts
+validate:
+    npx tsx src/validate-cli.ts
+
+# Generate docs site, install deps, and start dev server
+docs:
+    npx tsx src/codegen/docs-cli.ts
+    npm install --prefix docs
+    npm run --prefix docs dev
+
+# Build docs site for production
+docs-build:
+    npx tsx src/codegen/docs-cli.ts
+    npm install --prefix docs
+    npm run --prefix docs build
+
+# Run all tests
+test:
+    npx vitest run
+
+# Build the distributable bundle into dist/ (manifest, rules, integrity, OKF)
+bundle:
+    npx tsx src/package-cli.ts
+
+# Package the lexicon. Codegen is schema-driven and lands in #1650, so this
+# does not depend on `generate` yet.
+package: bundle
