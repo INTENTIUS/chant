@@ -52,10 +52,16 @@ vi.mock("../../graph-layout", () => ({
 // hit the Op-graph and source-view modes, so these mocks don't touch them).
 const loadPluginsMock = vi.fn();
 const resolveLexMock = vi.fn();
-vi.mock("../plugins", () => ({
-  loadPlugins: (...a: unknown[]) => loadPluginsMock(...a),
-  resolveProjectLexicons: (...a: unknown[]) => resolveLexMock(...a),
-}));
+vi.mock("../plugins", async () => {
+  // Real `collectBuildRootContributors` (#1626): it is pure binding — the
+  // handler's build-root plumbing is exactly what the tests below assert.
+  const actual = await vi.importActual<typeof import("../plugins")>("../plugins");
+  return {
+    ...actual,
+    loadPlugins: (...a: unknown[]) => loadPluginsMock(...a),
+    resolveProjectLexicons: (...a: unknown[]) => resolveLexMock(...a),
+  };
+});
 const observeMock = vi.fn();
 const replayMock = vi.fn();
 const hasSnapshotMock = vi.fn((..._a: unknown[]) => Promise.resolve(false));
@@ -86,17 +92,22 @@ vi.mock("../../config", async () => {
   };
 });
 const buildMock = vi.fn();
-vi.mock("../../build", () => ({
-  // Forwards its arguments so a test can assert what the live path passed —
-  // `buildParams` in particular (#1483), the same reason `discover` above
-  // forwards for #1359.
-  build: (...a: unknown[]) => {
-    buildMock(...a);
-    return Promise.resolve({ errors: [] });
-  },
-  partitionByLexicon: () => ({}),
-  computeStackGraph: () => ({}),
-}));
+vi.mock("../../build", async () => {
+  // Real `mergeBuildRootEntities` (#1626): the graph paths reuse build's one
+  // merge implementation, so the tests exercise the real merge rules
+  // (collision → error) rather than a re-stubbed copy of them.
+  const actual = await vi.importActual<typeof import("../../build")>("../../build");
+  return {
+    ...actual,
+    // Forwards its arguments so a test can assert what the live path passed —
+    // `buildParams` in particular (#1483), the same reason `discover` above
+    // forwards for #1359.
+    build: (...a: unknown[]) => {
+      buildMock(...a);
+      return Promise.resolve({ errors: [] });
+    },
+  };
+});
 
 const { runGraph } = await import("./graph");
 
@@ -810,6 +821,171 @@ describe("runGraph", () => {
         expect(process.env.AWS_ENDPOINT_URL).toBe("http://real-endpoint.example"); // untouched
         expect(stderrBuf.join("\n")).toMatch(/ambient AWS_ENDPOINT_URL already set/);
       });
+    });
+  });
+
+  // #1626 — #1612's `buildRoots` seam reached `chant build` and the lifecycle
+  // handlers but none of the graph command's four entity-collection sites, so
+  // a `k8s.kustomize.roots` estate graphed only its typed source: the rendered
+  // Deployment/Service existed in the build output and on the cluster, and
+  // nowhere in any graph. The shapes here mirror the kustomize-root fixture
+  // (lexicons/k8s/src/testdata/kustomize-root, rendered as `overlays/prod`):
+  // the contributor below returns exactly what `renderKustomizeRoots` returns
+  // for it — rendered-manifest entities keyed `overlays/prod/<kindName>`,
+  // props = the verbatim document, provenance annotation stamped.
+  describe("build-root contributions reach the graph (#1626)", () => {
+    const KUSTOMIZE_ROOT_ANNOTATION = "chant.intentius.io/kustomize-root";
+
+    /** A rendered kustomize document as `renderedManifestEntity` shapes it. */
+    const rendered = (group: string, kind: string, name: string, spec: Record<string, unknown>): Declarable =>
+      ({
+        lexicon: "k8s",
+        entityType: `K8s::${group}::${kind}`,
+        kind: "resource",
+        props: {
+          apiVersion: group === "Core" ? "v1" : `${group.toLowerCase()}/v1`,
+          kind,
+          metadata: { name, annotations: { [KUSTOMIZE_ROOT_ANNOTATION]: "overlays/prod" } },
+          spec,
+        },
+        [DECLARABLE_MARKER]: true,
+        [Symbol.for("chant.k8s.renderedManifest")]: true,
+      }) as unknown as Declarable;
+
+    const fixtureContribution = () => ({
+      entities: new Map<string, Declarable>([
+        ["overlays/prod/serviceProdWeb", rendered("Core", "Service", "prod-web", { selector: { app: "web" } })],
+        ["overlays/prod/deploymentProdWeb", rendered("Apps", "Deployment", "prod-web", { replicas: 3 })],
+      ]),
+    });
+
+    /** A k8s-shaped plugin whose `buildRoots` hook renders the fixture. */
+    const k8sPluginStub = (hook = async () => fixtureContribution()) => ({
+      name: "k8s",
+      serializer: {},
+      describeResources: () => Promise.resolve({}),
+      buildRoots: hook,
+    });
+
+    const declaredNamespace = (): void => {
+      discoverMock.mockResolvedValue({
+        entities: new Map<string, Declarable>([["ns", decl({ lexicon: "k8s", entityType: "K8s::Core::Namespace", kind: "resource", props: { metadata: { name: "web" } } })]]),
+        errors: [], dependencies: new Map(), sourceFiles: [],
+      });
+    };
+
+    const staticWithFixtureRoot = (hook?: () => Promise<{ entities: Map<string, Declarable> }>): void => {
+      lintMock.mockResolvedValue({ success: true });
+      declaredNamespace();
+      resolveLexMock.mockResolvedValue(["k8s"]);
+      loadPluginsMock.mockResolvedValue([k8sPluginStub(hook)]);
+    };
+
+    test("static --format ir emits the rendered nodes alongside the typed ones", async () => {
+      staticWithFixtureRoot();
+      const exit = await runGraph({ args: makeArgs({ format: "ir" }), plugins: [], serializers: [] });
+      expect(exit).toBe(0);
+      const ir = JSON.parse(stdoutBuf.join("\n"));
+      expect(ir.nodes.map((n: { id: string }) => n.id).sort()).toEqual([
+        "ns",
+        "overlays/prod/deploymentProdWeb",
+        "overlays/prod/serviceProdWeb",
+      ]);
+      const deployment = ir.nodes.find((n: { id: string }) => n.id === "overlays/prod/deploymentProdWeb");
+      expect(deployment.kind).toBe("K8s::Apps::Deployment");
+      expect(deployment.lexicon).toBe("k8s");
+    });
+
+    // #1624 made attrs projection monotonic; the provenance annotation is a
+    // nested `metadata` tree, so it belongs to the full-property tier and only
+    // that tier — present at --detail 3, absent from --detail 1's topology view.
+    test("--detail 3 carries the provenance annotation in the rendered node's attrs; --detail 1 does not", async () => {
+      staticWithFixtureRoot();
+      expect(await runGraph({ args: makeArgs({ format: "ir", detail: 3 }), plugins: [], serializers: [] })).toBe(0);
+      const detailed = JSON.parse(stdoutBuf.join("\n"));
+      const at3 = detailed.nodes.find((n: { id: string }) => n.id === "overlays/prod/deploymentProdWeb");
+      expect(at3.attrs.metadata.annotations[KUSTOMIZE_ROOT_ANNOTATION]).toBe("overlays/prod");
+
+      stdoutBuf.length = 0;
+      staticWithFixtureRoot();
+      expect(await runGraph({ args: makeArgs({ format: "ir", detail: 1 }), plugins: [], serializers: [] })).toBe(0);
+      const coarse = JSON.parse(stdoutBuf.join("\n"));
+      const at1 = coarse.nodes.find((n: { id: string }) => n.id === "overlays/prod/deploymentProdWeb");
+      expect(at1).toBeDefined(); // the node survives the tier —
+      expect(at1.attrs.metadata).toBeUndefined(); // its property tree does not
+    });
+
+    test("a contributed name colliding with a discovered entity fails the graph like a discovery error", async () => {
+      staticWithFixtureRoot(async () => ({
+        entities: new Map<string, Declarable>([["ns", rendered("Core", "Namespace", "web", {})]]),
+      }));
+      const exit = await runGraph({ args: makeArgs({ format: "ir" }), plugins: [], serializers: [] });
+      expect(exit).toBe(1);
+      expect(stdoutBuf.join("\n")).toBe("");
+      expect(stderrBuf.join("\n")).toContain('"ns" collides');
+    });
+
+    test("--stacks joins the rendered entities into the stack partitions", async () => {
+      declaredNamespace();
+      resolveLexMock.mockResolvedValue(["k8s"]);
+      loadPluginsMock.mockResolvedValue([k8sPluginStub()]);
+      const exit = await runGraph({ args: makeArgs({ stacks: true, json: true }), plugins: [], serializers: [] });
+      expect(exit).toBe(0);
+      // partitionByLexicon/computeStackGraph are stubbed above; what matters is
+      // that the merge ran before them without erroring. The collision case
+      // proves the same merge is live on this path:
+      stderrBuf.length = 0;
+      declaredNamespace();
+      loadPluginsMock.mockResolvedValue([
+        k8sPluginStub(async () => ({ entities: new Map<string, Declarable>([["ns", rendered("Core", "Namespace", "web", {})]]) })),
+      ]);
+      expect(await runGraph({ args: makeArgs({ stacks: true, json: true }), plugins: [], serializers: [] })).toBe(1);
+      expect(stderrBuf.join("\n")).toContain('"ns" collides');
+    });
+
+    test("--live passes the contributors through to build(), like lifecycle does", async () => {
+      resolveLexMock.mockResolvedValue(["k8s"]);
+      loadPluginsMock.mockResolvedValue([k8sPluginStub()]);
+      observeMock.mockResolvedValue({ observations: [], errors: [], warnings: [] });
+      const exit = await runGraph({ args: makeArgs({ format: "ir", live: true, env: "kcheck" }), plugins: [], serializers: [] });
+      expect(exit).toBe(0);
+      const [, , , options] = buildMock.mock.calls[0] as [string, unknown, unknown, { buildRoots?: unknown[] }];
+      expect(options.buildRoots).toHaveLength(1);
+    });
+
+    test("--live --overlay classifies an observed rendered node as managed, not foreign", async () => {
+      resolveLexMock.mockResolvedValue(["k8s"]);
+      loadPluginsMock.mockResolvedValue([k8sPluginStub()]);
+      declaredNamespace();
+      // The cluster has the namespace and the rendered Deployment — the
+      // latter observed through the same entityType/props flow as any
+      // declared entity (its props carry metadata.name like typed ones).
+      observeMock.mockResolvedValue({
+        observations: [{
+          lexicon: "k8s",
+          resources: {
+            ns: { type: "K8s::Core::Namespace", status: "OBSERVED", physicalId: "uid-ns", ownership: "owned" },
+            "overlays/prod/deploymentProdWeb": { type: "K8s::Apps::Deployment", status: "OBSERVED", physicalId: "uid-deploy", ownership: "owned" },
+          },
+        }],
+        errors: [], warnings: [],
+      });
+      const exit = await runGraph({
+        args: makeArgs({ format: "ir", live: true, overlay: true, env: "kcheck" }),
+        plugins: [], serializers: [],
+      });
+      expect(exit).toBe(0);
+      const ir = JSON.parse(stdoutBuf.join("\n"));
+      const deployment = ir.nodes.find((n: { id: string }) => n.id === "overlays/prod/deploymentProdWeb");
+      // Declared (via the merged contribution) + observed = managed. Before
+      // #1626 the declared canvas lacked the rendered node, so it read as
+      // foreign (`warn`) despite being chant's own build output.
+      expect(deployment.attrs._status).toBe("good");
+      expect(deployment.physicalId).toBe("uid-deploy");
+      // The rendered Service was declared but not observed — pending, the
+      // same verdict a typed entity would get.
+      const service = ir.nodes.find((n: { id: string }) => n.id === "overlays/prod/serviceProdWeb");
+      expect(service.attrs._status).toBe("accent");
     });
   });
 });

@@ -1,7 +1,7 @@
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 import { discoverOps } from "../../op/discover";
 import { discover } from "../../discovery/index";
-import { partitionByLexicon, computeStackGraph, build } from "../../build";
+import { partitionByLexicon, computeStackGraph, build, mergeBuildRootEntities } from "../../build";
 import { buildGraphIr, buildLiveGraphIr, collectUnobserved, overlayGraphs, sourceOverlayGraphs, type GraphIR, type IRPipeline, type LiveObservation } from "../../graph-ir";
 import { buildDeclaredPerStack } from "../../graph-declared";
 import { reconstructEdges, mergeCatalogs, containmentGroups, type ReferenceCatalog, type ContainmentPair } from "../../graph-refs";
@@ -15,7 +15,7 @@ import { toMermaid } from "../../graph-mermaid";
 import { toDot } from "../../graph-dot";
 import { getLayoutEngine, toLayoutInput, type NodeSize } from "../../graph-layout";
 import { lintCommand } from "../commands/lint";
-import { loadPlugins, resolveProjectLexicons } from "../plugins";
+import { loadPlugins, resolveProjectLexicons, collectBuildRootContributors } from "../plugins";
 import { readFileSync } from "node:fs";
 import { formatError, formatWarning, formatBold } from "../format";
 import type { CommandContext } from "../registry";
@@ -54,6 +54,69 @@ async function graphBuildParams(
     return undefined;
   }
   return resolution.provenance;
+}
+
+/**
+ * The build-root contributors this invocation's project configures (#1626) —
+ * the same closures `chant build` and the lifecycle handlers hand to
+ * `BuildOptions.buildRoots`, bound here for the graph command's
+ * discover-based paths, which never run `build()` and so never ran the hook:
+ * a `k8s.kustomize.roots` estate graphed only its typed source while its
+ * built (and deployed) output carried the rendered manifests too.
+ *
+ * `graph` is not `requiresPlugins` (Op/source-graph modes must work without a
+ * lexicon), so plugins are loaded here when `ctx.plugins` is empty, mirroring
+ * `runGraphLive`. Rooted at the config's own directory, like
+ * `cli/commands/build.ts` — a relative kustomize root resolves against where
+ * it was declared, not against a sourceDir-scoped graph path. A project that
+ * fails to load plugins degrades to no contributors with a warning rather
+ * than failing modes that never needed plugins at all.
+ */
+async function graphBuildRootContributors(
+  ctx: CommandContext,
+  projectPath: string,
+): Promise<Array<() => Promise<import("../../lexicon").BuildRootContribution>>> {
+  const { config, configPath } = await loadChantConfigUpward(projectPath).catch(
+    () => ({ config: {} as ChantConfig, configPath: undefined }),
+  );
+  let plugins = ctx.plugins;
+  if (plugins.length === 0) {
+    try {
+      plugins = await loadPlugins(await resolveProjectLexicons(projectPath));
+    } catch (err) {
+      console.error(formatWarning({
+        message: `could not load the project's lexicons — build-root entities (kustomize roots) will be missing from the graph (${err instanceof Error ? err.message : String(err)})`,
+      }));
+      return [];
+    }
+  }
+  return collectBuildRootContributors(
+    plugins,
+    config as unknown as Record<string, unknown>,
+    configPath ? dirname(configPath) : projectPath,
+  );
+}
+
+/**
+ * Merge build-root contributions into a discovered entity set — the exact
+ * merge `build()` performs (one implementation: `mergeBuildRootEntities`,
+ * ../../build.ts), surfaced in the graph command's error style. Returns false
+ * when a contributor failed or a name collided; the caller stops, matching
+ * how the discover-based paths treat discovery errors — a graph missing the
+ * entities the build would refuse over must not be emitted as if complete.
+ */
+async function mergeGraphBuildRoots(
+  entities: Map<string, import("../../declarable").Declarable>,
+  contributors: Array<() => Promise<import("../../lexicon").BuildRootContribution>>,
+): Promise<boolean> {
+  if (contributors.length === 0) return true;
+  const merged = await mergeBuildRootEntities(entities, contributors);
+  for (const w of merged.warnings) console.error(formatWarning({ message: w }));
+  if (merged.errors.length > 0) {
+    for (const message of merged.errors) console.error(formatError({ message }));
+    return false;
+  }
+  return true;
 }
 
 /**
@@ -154,11 +217,17 @@ async function runGraphLive(
   // a confidently wrong overlay rather than an empty one.
   const liveBuildParams = await graphBuildParams(ctx, projectPath);
   if (!liveBuildParams) return 1;
+  // #1626 — the same build-root contributors `chant build` runs (kustomize
+  // roots rendered into entities), so the scope handed to describeResources
+  // includes the rendered objects and the live read observes them like any
+  // declared entity. Without this the built estate carried them but the graph
+  // build here didn't, and the overlay called every one of them foreign.
+  const buildRoots = collectBuildRootContributors(plugins, config as unknown as Record<string, unknown>, projectPath);
   const buildResult = await build(
     resolve(args.src ?? config.sourceDir ?? "."),
     plugins.map((p) => p.serializer),
     undefined,
-    { buildParams: liveBuildParams },
+    { buildParams: liveBuildParams, buildRoots },
   );
   if (buildResult.errors.length > 0) {
     console.error(formatError({ message: "Build failed — fix errors before graphing live state" }));
@@ -323,14 +392,23 @@ async function runGraphLive(
       const declared = await discover(resolve(args.src ?? config.sourceDir ?? "."), {
         ...(declaredParams ? { buildParams: declaredParams } : {}),
       });
-      if (declared.errors.length === 0) {
+      // #1626 — the declared canvas must include what the build declares, and
+      // that is discovery PLUS build-root contributions (rendered kustomize
+      // objects). Same contributors, same merge as the `build()` above — so
+      // the rendered nodes classify `good`/`accent` like typed ones instead
+      // of reading as foreign. A merge that fails here (it just succeeded in
+      // the build above, so only a non-deterministic render gets this far)
+      // degrades exactly like discovery errors: overlay skipped, said once.
+      if (declared.errors.length > 0) {
+        console.error(formatWarning({ message: "overlay: source has discovery errors — showing the provisioned graph without the declared overlay" }));
+      } else if (!(await mergeGraphBuildRoots(declared.entities, buildRoots))) {
+        console.error(formatWarning({ message: "overlay: a build root failed to render — showing the provisioned graph without the declared overlay" }));
+      } else {
         const declaredIr = buildGraphIr(declared.entities, projectPath);
         ir =
           args.overlayAnchor === "live"
             ? overlayGraphs(ir, declaredIr, overlayOpts)
             : sourceOverlayGraphs(declaredIr, ir, overlayOpts);
-      } else {
-        console.error(formatWarning({ message: "overlay: source has discovery errors — showing the provisioned graph without the declared overlay" }));
       }
     }
   }
@@ -584,6 +662,14 @@ async function runGraphView(
     return 1;
   }
 
+  // #1626 — join the build-root contributions (rendered kustomize objects) to
+  // the discovered set, the way `build()` does before partitioning, so the
+  // static graph shows the same estate the build emits. Fatal on failure,
+  // like discovery errors: this graph stands for what would build.
+  if (!(await mergeGraphBuildRoots(result.entities, await graphBuildRootContributors(ctx, projectPath)))) {
+    return 1;
+  }
+
   // Build the base IR, focus with a lens (declarable-level, most precise), then
   // apply the detail tier — so e.g. blast:<resource> works before any collapse.
   let ir: GraphIR = buildGraphIr(result.entities, projectPath);
@@ -700,6 +786,12 @@ async function runStackGraph(ctx: CommandContext): Promise<number> {
   const result = await discover(projectPath, { buildParams });
   if (result.errors.length > 0) {
     for (const e of result.errors) console.error(formatError({ message: e.message }));
+    return 1;
+  }
+
+  // #1626 — same join as runGraphView: contributed entities are part of the
+  // built estate, so they belong in its stack partitions too.
+  if (!(await mergeGraphBuildRoots(result.entities, await graphBuildRootContributors(ctx, projectPath)))) {
     return 1;
   }
 
