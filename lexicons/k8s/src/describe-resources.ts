@@ -701,8 +701,11 @@ async function addRuntimeChildren(
       const uid = obj.metadata?.uid;
       const name = obj.metadata?.name;
       if (!uid || !name || declaredByUid.has(uid)) return; // declared directly, or unaddressable
-      const key = namespace ? `${namespace}/${name}` : `cluster:${name}`;
-      if (resources[key]) return; // already reported by an earlier kind
+      // The kind is part of the identity: a Deployment, Service and Endpoints
+      // all named `app-a` in namespace `app-a` are three objects, and a
+      // kind-less key reported only whichever kind swept first (#1643).
+      const key = namespace ? `${swept.kind}/${namespace}/${name}` : `cluster:${swept.kind}/${name}`;
+      if (resources[key]) return; // re-swept object, not a new report
 
       let ownerChain = await resolveK8sOwnerChain(obj, { declaredByUid, reader: client, namespace });
       // The label channel (#1549) — only when the chain itself said nothing:
