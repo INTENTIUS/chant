@@ -15,7 +15,7 @@ vi.mock("@intentius/chant/config", () => ({
   loadChantConfig: (...args: unknown[]) => loadChantConfigMock(...args),
 }));
 
-const { describeResources, statusFromObject, unhappyConditions } = await import("./describe-resources");
+const { describeResources, statusFromObject, unhappyConditions, revisionAttributes } = await import("./describe-resources");
 const { fakeCluster, objectKey, ownedObject } = await import("./api/fake-cluster");
 const { defaultK8sConnector } = await import("./api/connect");
 const { fakeKubeconfig, statusBody } = await import("@intentius/chant-k8s-client/testing");
@@ -1397,5 +1397,155 @@ describe("unhappyConditions (#1401)", () => {
   test("is absent for an object with no conditions at all", () => {
     expect(unhappyConditions({ status: {} } as never)).toBeUndefined();
     expect(unhappyConditions({} as never)).toBeUndefined();
+  });
+});
+
+describe("revisionAttributes — the GitOps convergence fields (#1632)", () => {
+  test("carries a Kustomization's applied and attempted revisions", () => {
+    expect(
+      revisionAttributes({
+        status: {
+          lastAppliedRevision: "main@sha1:1a2b3c4d",
+          lastAttemptedRevision: "main@sha1:5e6f7a8b",
+          conditions: [{ type: "Ready", status: "True" }],
+        },
+      } as never),
+    ).toMatchObject({ lastAppliedRevision: "main@sha1:1a2b3c4d", lastAttemptedRevision: "main@sha1:5e6f7a8b" });
+  });
+
+  test("flattens a source kind's status.artifact.revision", () => {
+    expect(revisionAttributes({ status: { artifact: { revision: "main@sha1:1a2b3c4d" } } } as never)).toMatchObject({
+      artifactRevision: "main@sha1:1a2b3c4d",
+    });
+  });
+
+  test("says nothing for an object that carries none of them", () => {
+    // Every field undefined, so `pruneUndefined` drops all three and the
+    // attributes of a Deployment or a Service are byte-for-byte what they were.
+    expect(revisionAttributes({ status: { readyReplicas: 1, replicas: 1 } } as never)).toEqual({
+      lastAppliedRevision: undefined,
+      lastAttemptedRevision: undefined,
+      artifactRevision: undefined,
+    });
+    expect(revisionAttributes({} as never)).toEqual({
+      lastAppliedRevision: undefined,
+      lastAttemptedRevision: undefined,
+      artifactRevision: undefined,
+    });
+  });
+
+  test("ignores non-string and empty revisions", () => {
+    expect(
+      revisionAttributes({ status: { lastAppliedRevision: "", lastAttemptedRevision: 7, artifact: { revision: null } } } as never),
+    ).toEqual({ lastAppliedRevision: undefined, lastAttemptedRevision: undefined, artifactRevision: undefined });
+  });
+});
+
+describe("observed attributes carry the Flux revisions (#1632)", () => {
+  const applied = "main@sha1:1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b";
+  const attempted = "main@sha1:5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d";
+
+  test("a Kustomization mid-rollout reports applied != attempted even with Ready=True", async () => {
+    const kustomization = {
+      apiVersion: "kustomize.toolkit.fluxcd.io/v1",
+      kind: "Kustomization",
+      metadata: { name: "apps", namespace: "flux-system", uid: "ks-uid", resourceVersion: "42" },
+      status: {
+        lastAppliedRevision: applied,
+        lastAttemptedRevision: attempted,
+        conditions: [{ type: "Ready", status: "True", reason: "ReconciliationSucceeded" }],
+      },
+    };
+    const source = {
+      apiVersion: "source.toolkit.fluxcd.io/v1",
+      kind: "GitRepository",
+      metadata: { name: "infra", namespace: "flux-system", uid: "gr-uid" },
+      status: {
+        artifact: { revision: attempted, path: "gitrepository/flux-system/infra/x.tar.gz" },
+        conditions: [{ type: "Ready", status: "True" }],
+      },
+    };
+    const cluster = fakeCluster({
+      objects: {
+        [objectKey("kustomize.toolkit.fluxcd.io/v1", "Kustomization", "apps", "flux-system")]: kustomization,
+        [objectKey("source.toolkit.fluxcd.io/v1", "GitRepository", "infra", "flux-system")]: source,
+      },
+    });
+
+    const result = await describeResources(
+      {
+        environment: "prod",
+        buildOutput: "",
+        entityNames: ["apps", "infra"],
+        entities: makeEntities([
+          {
+            name: "apps",
+            entityType: "K8s::Flux::Kustomization",
+            props: { metadata: { name: "apps", namespace: "flux-system" } },
+          },
+          {
+            name: "infra",
+            entityType: "K8s::Flux::GitRepository",
+            props: { metadata: { name: "infra", namespace: "flux-system" } },
+          },
+        ]),
+      },
+      cluster.connector,
+    );
+
+    // The per-node half: attempted is ahead of applied, so this object is
+    // mid-flight however cheerful its Ready condition is.
+    expect(result.resources.apps?.attributes).toMatchObject({
+      lastAppliedRevision: applied,
+      lastAttemptedRevision: attempted,
+    });
+    // The cross-node half: the source's artifact revision, which a consumer
+    // joins against the Kustomization's applied revision.
+    expect(result.resources.infra?.attributes).toMatchObject({ artifactRevision: attempted });
+    expect(result.resources.apps?.status).toBe("READY");
+  });
+
+  test("a HelmRelease's revisions ride the same path, and other kinds are untouched", async () => {
+    const helmRelease = {
+      apiVersion: "helm.toolkit.fluxcd.io/v2",
+      kind: "HelmRelease",
+      metadata: { name: "podinfo", namespace: "prod", uid: "hr-uid" },
+      status: { lastAppliedRevision: "6.5.4", lastAttemptedRevision: "6.5.4", conditions: [{ type: "Ready", status: "True" }] },
+    };
+    const cluster = fakeCluster({
+      objects: {
+        [objectKey("helm.toolkit.fluxcd.io/v2", "HelmRelease", "podinfo", "prod")]: helmRelease,
+        [objectKey("apps/v1", "Deployment", "web", "prod")]: web,
+      },
+    });
+
+    const result = await describeResources(
+      {
+        environment: "prod",
+        buildOutput: "",
+        entityNames: ["podinfo", "web"],
+        entities: makeEntities([
+          {
+            name: "podinfo",
+            entityType: "K8s::Flux::HelmRelease",
+            props: { metadata: { name: "podinfo", namespace: "prod" } },
+          },
+          { name: "web", entityType: "K8s::Apps::Deployment", props: { metadata: { name: "web", namespace: "prod" } } },
+        ]),
+      },
+      cluster.connector,
+    );
+
+    expect(result.resources.podinfo?.attributes).toMatchObject({
+      lastAppliedRevision: "6.5.4",
+      lastAttemptedRevision: "6.5.4",
+    });
+    // The string wire form for every other kind is what it was — no empty
+    // revision keys appear on a Deployment (#1401's shape, unchanged).
+    expect(result.resources.web?.attributes).toEqual({
+      namespace: "prod",
+      labels: { app: "web" },
+      resourceVersion: "7",
+    });
   });
 });
