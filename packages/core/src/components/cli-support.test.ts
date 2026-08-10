@@ -229,6 +229,58 @@ describe("computeComponentGraph", () => {
     expect(result.edges).toEqual([]);
   });
 
+  // #1490 — `discoverComponents` has honoured buildParams since #1108, but
+  // every caller stopped short of passing them, so the component graph was
+  // always the default-parameter graph. A component conditioned on a parameter
+  // survived `--param` that removed the resources it describes, and `chant
+  // build` and `chant graph --components` disagreed about the same source.
+  //
+  // The fixture imports the params module by absolute path rather than by the
+  // `@intentius/chant/params` specifier: it is written to a temp dir with no
+  // node_modules, so the bare specifier would resolve elsewhere (or nowhere)
+  // and the fixture would read a DIFFERENT params object than the one
+  // discovery mutates — passing the test for the wrong reason.
+  const paramsModule = new URL("../params.ts", import.meta.url).pathname;
+  const conditionalComponent = `import { params } from ${JSON.stringify(paramsModule)};
+export const backup =
+  params.backups === "omit"
+    ? undefined
+    : { name: "backup", dependsOn: [], deploy: [{ phase: "Apply", steps: [{ kind: "shell", reason: "t" }] }] };`;
+
+  // A fresh directory per call: the ESM loader caches a module by path, so
+  // re-importing the same fixture would replay the FIRST call's parameter
+  // binding and the assertion would pass or fail for the wrong reason.
+  async function graphWith(
+    dir: string,
+    provenance?: Array<{ name: string; value: string; source: "cli" }>,
+  ) {
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, "backup.component.ts"), conditionalComponent);
+    return computeComponentGraph(dir, undefined, provenance);
+  }
+
+  test("a component conditioned on a build parameter follows the parameter", async () => {
+    const omitted = await graphWith(join(testDir, "omit"), [
+      { name: "backups", value: "omit", source: "cli" },
+    ]);
+    expect(omitted.success).toBe(true);
+    expect(omitted.order).toEqual([]);
+
+    const kept = await graphWith(join(testDir, "keep"), [
+      { name: "backups", value: "pg-dump", source: "cli" },
+    ]);
+    expect(kept.success).toBe(true);
+    expect(kept.order).toEqual(["backup"]);
+  });
+
+  // Supplying none must not inherit whatever a previous call set — the same
+  // leak `discoverComponents`'s unconditional setBuildParams guards against.
+  test("passing no parameters does not inherit the previous call's", async () => {
+    await graphWith(join(testDir, "first"), [{ name: "backups", value: "omit", source: "cli" }]);
+    const fresh = await graphWith(join(testDir, "second"));
+    expect(fresh.order).toEqual(["backup"]);
+  });
+
   test("orders a consumer after its producer, with a consumer → producer edge", async () => {
     await writeFile(
       join(testDir, "alb.component.ts"),

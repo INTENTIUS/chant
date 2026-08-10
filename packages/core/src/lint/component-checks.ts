@@ -25,6 +25,7 @@
 import type { Component } from "../components/component";
 import type { DiscoveredComponent } from "../components/discover";
 import { discoverComponents } from "../components/discover";
+import type { BuildParamProvenance } from "../provenance";
 import type { RollbackPolicy } from "../components/capability";
 import type { Severity } from "./rule";
 
@@ -105,10 +106,16 @@ export async function runComponentChecks(
   checks: ComponentCheck[],
   registryContext?: Pick<ComponentCheckContext, "knownKinds" | "rollbackPolicies">,
   sandbox?: boolean,
+  buildParams?: BuildParamProvenance[],
 ): Promise<ComponentCheckDiagnostic[]> {
   if (checks.length === 0) return [];
 
-  const result = await discoverComponents(path, { sandbox });
+  // #1490 — this import runs BEFORE the caller's own component discovery, and
+  // an ES module is evaluated once per path. Whatever parameters are in effect
+  // here are the ones every later reader sees, however carefully that reader
+  // resolves its own. Passing them at the second call and not this one left
+  // the graph on defaults while the CLI reported the values it had resolved.
+  const result = await discoverComponents(path, { sandbox, buildParams });
   const diagnostics: ComponentCheckDiagnostic[] = [];
 
   for (const err of result.errors) {
