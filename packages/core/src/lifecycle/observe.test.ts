@@ -64,6 +64,21 @@ describe("observeResources", () => {
     expect(names).toEqual(["web-vpc"]);
   });
 
+  it("threads the caller's namespace override to every lexicon, and only when given (#1629)", async () => {
+    // A per-read option, not config: one project declares the GitOps binding
+    // and another declares the objects, so which namespace to read from is a
+    // property of the invocation. Lexicons with no namespace-like scope
+    // receive it and ignore it.
+    let seen: unknown = "unset";
+    const plugins = [awsPlugin((opts) => { seen = (opts as { namespace?: string }).namespace; return {}; })];
+
+    await observeResources("prod", plugins, mockBuild());
+    expect(seen).toBeUndefined();
+
+    await observeResources("prod", plugins, mockBuild(), { namespace: "app-b" });
+    expect(seen).toBe("app-b");
+  });
+
   it("keeps non-resource declarables out of the observation universe", async () => {
     // Outputs, parameters and serializer directives (gcp's defaultAnnotations)
     // have no `props` and no live counterpart — a declared name the reader can

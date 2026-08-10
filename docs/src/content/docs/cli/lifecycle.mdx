@@ -112,6 +112,17 @@ In `--json`, the addresses arrive as `resources.queried` per lexicon — a `name
 
 The field is optional and purely diagnostic: verdicts are unchanged, and a lexicon that reports no addresses simply omits it. `lifecycle plan --json` carries the same address per entry as `queried` on the change set (a `create`'s address is the one the provider confirmed absent). The k8s lexicon is the first implementer.
 
+#### `--namespace <ns>` — where to read scope-less entities
+
+The address above is also the fix's starting point. When an object's namespace is stamped by a controller rather than declared — a GitOps estate where one project declares the `Kustomization` with `spec.targetNamespace` and another declares the bare objects — the read falls through to `default` and reports a running estate as absent. `--namespace <ns>` replaces that fallback:
+
+```bash
+chant lifecycle diff prod --live --namespace app-b
+chant lifecycle plan prod --namespace app-b
+```
+
+It is a **default, not a rewrite**: an entity that declares its own `metadata.namespace` is still read from the one it declares, and cluster-scoped kinds are unaffected. The `queried` addresses reflect whichever namespace the read actually used. Lexicons with no namespace-like scope ignore the option.
+
 #### Property-level drift
 
 A lexicon that also implements `observeResourcesDeep()` ([coverage](/chant/lexicons/overview/#runtime-observation-coverage)) adds a second section per lexicon, comparing **property trees** rather than metadata. It reports what the categories above cannot: a property that changed, a property source never declared at all (the console edit CloudFormation's own drift detection does not see), and a declared property the cloud is not carrying.

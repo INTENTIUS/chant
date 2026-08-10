@@ -419,6 +419,7 @@ export async function runLifecycleDiff(ctx: CommandContext): Promise<number> {
           componentStacks,
           baseline,
           updateBaseline: args.updateBaseline,
+          ...(args.namespace ? { namespace: args.namespace } : {}),
         });
         totalDrift += r.totalDrift;
         totalUnobserved += r.totalUnobserved;
@@ -657,6 +658,9 @@ interface LiveDiffArgs {
   baseline: ObservationBaseline | null;
   /** `--update-baseline`: accept everything the deep pass reports this run. */
   updateBaseline?: boolean;
+  /** `--namespace <ns>` (#1629): where to read entities that declare no
+   * namespace of their own. */
+  namespace?: string;
 }
 
 interface LiveDiffOutcome {
@@ -708,6 +712,9 @@ async function observeLexicon(
     stack?: string;
     componentStacks?: string[];
     owned?: boolean;
+    /** `--namespace <ns>` (#1629): where to read an entity that declares no
+     * namespace of its own. A default, not a rewrite. */
+    namespace?: string;
   },
 ): Promise<NormalizedObservation> {
   const entityNames = Array.from(opts.declared);
@@ -717,6 +724,7 @@ async function observeLexicon(
     entityNames,
     entities: opts.entities,
     ...(opts.owned !== undefined ? { owned: opts.owned } : {}),
+    ...(opts.namespace ? { namespace: opts.namespace } : {}),
   };
   try {
     if (opts.componentStacks && opts.componentStacks.length > 0) {
@@ -804,6 +812,7 @@ async function runLifecycleDiffLive(args: LiveDiffArgs): Promise<LiveDiffOutcome
         entities,
         stack: args.stack,
         componentStacks: args.componentStacks,
+        ...(args.namespace ? { namespace: args.namespace } : {}),
       });
       const observedNow = observed.resources;
       const observedThen = prevSnapshot?.resources;
@@ -1156,6 +1165,9 @@ export async function runLifecyclePlan(ctx: CommandContext): Promise<number> {
         entities,
         componentStacks,
         owned: args.owned,
+        // A plan reading the wrong namespace proposes creates for resources
+        // that are running (#1629) — the same override the live diff takes.
+        ...(args.namespace ? { namespace: args.namespace } : {}),
       });
 
       const content = await readSnapshot(environment, lexiconName);

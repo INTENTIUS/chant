@@ -1549,3 +1549,127 @@ describe("observed attributes carry the Flux revisions (#1632)", () => {
     });
   });
 });
+
+// The behold#221 shape (#1629): the estate's control-plane project declares
+// the Kustomization carrying `spec.targetNamespace`, and the app project
+// declares bare objects the controller stamps at apply time. Reading the app
+// project alone, `metadata.namespace` is absent everywhere and the read
+// defaults to `default` — a running estate reported entirely absent. The
+// caller that knows the binding can now say where to look.
+describe("a per-read namespace override for entities that declare none (#1629)", () => {
+  const inAppB = {
+    apiVersion: "apps/v1",
+    kind: "Deployment",
+    metadata: { name: "web", namespace: "app-b", uid: "uid-b", resourceVersion: "11" },
+    status: { readyReplicas: 1, replicas: 1 },
+  };
+
+  test("replaces the `default` fallback for a namespaced entity that declares no namespace", async () => {
+    const cluster = fakeCluster({ objects: { [objectKey("apps/v1", "Deployment", "web", "app-b")]: inAppB } });
+    const result = await describeResources(
+      {
+        environment: "prod",
+        buildOutput: "",
+        entityNames: ["web"],
+        entities: makeEntities([
+          { name: "web", entityType: "K8s::Apps::Deployment", props: { metadata: { name: "web" } } },
+        ]),
+        namespace: "app-b",
+      },
+      cluster.connector,
+    );
+
+    expect(result.resources.web).toMatchObject({ type: "K8s::Apps::Deployment", physicalId: "uid-b" });
+    // The `queried` diagnosis line (#1620) reflects the overridden address —
+    // whatever the read did, the report says where it looked.
+    expect(result.queried?.web).toBe("/apis/apps/v1/namespaces/app-b/deployments/web");
+  });
+
+  test("an explicitly declared namespace still wins — the override is a default, not a rewrite", async () => {
+    const cluster = fakeCluster({
+      objects: {
+        [objectKey("apps/v1", "Deployment", "web", "prod")]: web,
+        [objectKey("apps/v1", "Deployment", "web", "app-b")]: inAppB,
+      },
+    });
+    const result = await describeResources(
+      {
+        environment: "prod",
+        buildOutput: "",
+        entityNames: ["web"],
+        entities: makeEntities([
+          { name: "web", entityType: "K8s::Apps::Deployment", props: { metadata: { name: "web", namespace: "prod" } } },
+        ]),
+        namespace: "app-b",
+      },
+      cluster.connector,
+    );
+
+    // Both objects exist; the declared namespace decides which one was read.
+    expect(result.resources.web).toMatchObject({ physicalId: "uid-1" });
+    expect(result.queried?.web).toBe("/apis/apps/v1/namespaces/prod/deployments/web");
+  });
+
+  test("without the override the read still defaults to `default` — nothing changed for a caller that passes none", async () => {
+    const cluster = fakeCluster({ objects: { [objectKey("apps/v1", "Deployment", "web", "app-b")]: inAppB } });
+    const result = await describeResources(
+      {
+        environment: "prod",
+        buildOutput: "",
+        entityNames: ["web"],
+        entities: makeEntities([
+          { name: "web", entityType: "K8s::Apps::Deployment", props: { metadata: { name: "web" } } },
+        ]),
+      },
+      cluster.connector,
+    );
+
+    expect(result.resources).toEqual({});
+    expect(result.queried?.web).toBe("/apis/apps/v1/namespaces/default/deployments/web");
+  });
+
+  test("a cluster-scoped kind is untouched — it has no namespace to default", async () => {
+    const ns = { apiVersion: "v1", kind: "Namespace", metadata: { name: "app-b", uid: "ns-uid" } };
+    const cluster = fakeCluster({ objects: { [objectKey("v1", "Namespace", "app-b")]: ns } });
+    const result = await describeResources(
+      {
+        environment: "prod",
+        buildOutput: "",
+        entityNames: ["appB"],
+        entities: makeEntities([
+          { name: "appB", entityType: "K8s::Core::Namespace", props: { metadata: { name: "app-b" } } },
+        ]),
+        namespace: "app-b",
+      },
+      cluster.connector,
+    );
+
+    expect(result.resources.appB).toMatchObject({ physicalId: "ns-uid" });
+    expect(result.queried?.appB).toBe("/api/v1/namespaces/app-b");
+  });
+
+  test("the override reaches every declared entity, not just the first", async () => {
+    const svc = { apiVersion: "v1", kind: "Service", metadata: { name: "web-svc", namespace: "app-b", uid: "svc-b" } };
+    const cluster = fakeCluster({
+      objects: {
+        [objectKey("apps/v1", "Deployment", "web", "app-b")]: inAppB,
+        [objectKey("v1", "Service", "web-svc", "app-b")]: svc,
+      },
+    });
+    const result = await describeResources(
+      {
+        environment: "prod",
+        buildOutput: "",
+        entityNames: ["web", "webSvc"],
+        entities: makeEntities([
+          { name: "web", entityType: "K8s::Apps::Deployment", props: { metadata: { name: "web" } } },
+          { name: "webSvc", entityType: "K8s::Core::Service", props: { metadata: { name: "web-svc" } } },
+        ]),
+        namespace: "app-b",
+      },
+      cluster.connector,
+    );
+
+    expect(Object.keys(result.resources).sort()).toEqual(["web", "webSvc"]);
+  });
+});

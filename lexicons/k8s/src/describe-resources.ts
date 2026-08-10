@@ -286,6 +286,25 @@ export interface DescribeResourcesOptions {
   owned?: boolean;
   /** Directory whose `chant.config.ts` carries the cluster binding. Defaults to cwd. */
   cwd?: string;
+  /**
+   * Namespace to read a namespaced entity from when it declares none (#1629).
+   *
+   * A GitOps estate splits the binding from the objects: the control-plane
+   * project declares a Kustomization with `spec.targetNamespace: app-b`, the
+   * app project declares bare Deployments and Services with no
+   * `metadata.namespace` at all — the controller stamps it at apply time. The
+   * live read of the app project had no way to be told that, so it fell
+   * through to the client's `default` and reported an estate that is running
+   * as entirely absent (#1620's `queried` line is what made that visible).
+   *
+   * A DEFAULT, never a rewrite: an entity with an explicit
+   * `metadata.namespace` reads from the namespace it declares, override or
+   * not — that declaration is the estate's own statement of where the object
+   * lives, and overruling it would make the option a way to read the wrong
+   * object rather than the right one. Cluster-scoped kinds are untouched:
+   * they have no namespace to default.
+   */
+  namespace?: string;
 }
 
 export async function describeResources(
@@ -370,11 +389,17 @@ export async function describeResources(
       return;
     }
 
+    // The declared namespace wins; the caller's override only fills the hole a
+    // declaration left, and only for a kind that HAS a namespace (#1629). With
+    // neither, the client defaults to `default` exactly as it did.
+    const namespace =
+      metadata?.namespace ?? (operation.scope === "Namespaced" ? options.namespace : undefined);
+
     const ref = {
       apiVersion: operation.apiVersion,
       kind: operation.kind,
       name,
-      ...(metadata?.namespace ? { namespace: metadata.namespace } : {}),
+      ...(namespace ? { namespace } : {}),
     };
 
     // Resolve the address BEFORE the read, so every verdict below — present,

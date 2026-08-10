@@ -300,6 +300,11 @@ async function runGraphLive(
       const observeResult = await observeResources(environment, observing, buildResult, {
         owned: true,
         stacks: [...stacks],
+        // `--namespace <ns>` (#1629): where to read entities that declare no
+        // namespace. One project declaring the GitOps binding and another
+        // declaring the objects is the whole reason this is a per-read option
+        // and not config.
+        ...(args.namespace ? { namespace: args.namespace } : {}),
       });
       observations = observeResult.observations;
       const { errors, warnings } = observeResult;

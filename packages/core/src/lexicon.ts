@@ -702,6 +702,22 @@ export interface LexiconPlugin {
      * everything.
      */
     owned?: boolean;
+    /**
+     * Where to look for an entity whose declaration names no scope of its own
+     * (#1629) — `chant graph --live --namespace <ns>`, `chant lifecycle diff
+     * --live --namespace <ns>`.
+     *
+     * For a substrate with a namespace-like scope (Kubernetes today), a GitOps
+     * estate splits the binding from the objects: one project declares
+     * `spec.targetNamespace`, another declares bare objects the controller
+     * stamps at apply time. Reading the second project has to be told where
+     * the first put them, or it reads the substrate's default and reports a
+     * running estate as absent.
+     *
+     * A default, never a rewrite: an entity that declares its own namespace
+     * keeps it. Optional, and a lexicon with no such scope ignores it.
+     */
+    namespace?: string;
   }): Promise<DescribeResourcesResult>;
 
   /**

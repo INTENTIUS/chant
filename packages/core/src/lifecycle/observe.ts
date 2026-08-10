@@ -83,6 +83,10 @@ export async function observeResources(
      * references (#1278). Opt-in: it asks the provider what exists rather than
      * resolving out from what is declared. */
     ambient?: boolean;
+    /** Where to read an entity that declares no namespace of its own (#1629).
+     * Passed through to every lexicon's `describeResources`; one that has no
+     * namespace-like scope ignores it. */
+    namespace?: string;
   },
 ): Promise<ObserveResult> {
   const owned = opts?.owned ?? true;
@@ -171,6 +175,7 @@ export async function observeResources(
               owned,
               stack: stack.name,
               region: stack.region,
+              ...(opts?.namespace ? { namespace: opts.namespace } : {}),
             }),
           );
           // Qualify ids by stack ONLY for a scoped (`src`) stack (#1162): that
@@ -191,6 +196,7 @@ export async function observeResources(
             entityNames,
             entities,
             owned,
+            ...(opts?.namespace ? { namespace: opts.namespace } : {}),
           }),
         );
       }
