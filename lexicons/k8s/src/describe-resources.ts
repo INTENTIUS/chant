@@ -233,6 +233,45 @@ export function unhappyConditions(obj: K8sObject): string[] | undefined {
   return out.length > 0 ? out : undefined;
 }
 
+/**
+ * The revisions a GitOps controller writes onto its own object (#1632).
+ *
+ * Conditions lag. A Flux Kustomization mid-rollout still reports the previous
+ * reconcile's `Ready=True` for as long as the new one takes, so a consumer
+ * reading only conditions calls a half-applied estate converged. The
+ * controller's own definition of converged is a revision comparison:
+ * `lastAppliedRevision` against `lastAttemptedRevision` on the same object
+ * (attempted-but-not-applied is in flight), and a Kustomization's
+ * `lastAppliedRevision` against its source's `artifact.revision` (the
+ * cross-object half, which a consumer joins once both ends are on the wire).
+ * None of the three reached an observed entity's attributes before this.
+ *
+ * Read by path rather than by kind, which is the module's standing rule
+ * everywhere else: `status.lastAppliedRevision` / `status.lastAttemptedRevision`
+ * are what kustomize-controller and helm-controller write, and
+ * `status.artifact.revision` is what every source kind (GitRepository,
+ * OCIRepository, Bucket, HelmChart) writes. An object that has none of them —
+ * every non-GitOps kind — contributes nothing, so no kind table has to name
+ * which kinds those are, and a CRD speaking the same convention is carried for
+ * free. `artifactRevision` flattens the one nested path so every revision on
+ * the wire is a plain string next to the others.
+ */
+export function revisionAttributes(obj: K8sObject): {
+  lastAppliedRevision?: string;
+  lastAttemptedRevision?: string;
+  artifactRevision?: string;
+} {
+  const status = obj.status as
+    | { lastAppliedRevision?: unknown; lastAttemptedRevision?: unknown; artifact?: { revision?: unknown } }
+    | undefined;
+  const str = (v: unknown): string | undefined => (typeof v === "string" && v.length > 0 ? v : undefined);
+  return {
+    lastAppliedRevision: str(status?.lastAppliedRevision),
+    lastAttemptedRevision: str(status?.lastAttemptedRevision),
+    artifactRevision: str(status?.artifact?.revision),
+  };
+}
+
 interface Declared {
   entityName: string;
   entityType: string;
@@ -379,6 +418,9 @@ export async function describeResources(
           resourceVersion: obj.metadata?.resourceVersion,
           // What the object's own controller says is wrong with it (#1401).
           conditions: unhappyConditions(obj),
+          // What a GitOps controller says it has applied and is applying
+          // (#1632) — the convergence signal conditions cannot carry.
+          ...revisionAttributes(obj),
         }),
       };
     } catch (err) {
