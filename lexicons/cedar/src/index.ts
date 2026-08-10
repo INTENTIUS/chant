@@ -2,9 +2,45 @@
 export { cedarPlugin } from "./plugin";
 
 // Serializer
-export { cedarSerializer, policyIdFromLogicalName } from "./serializer";
+export { cedarSerializer, policyIdFromLogicalName, resolvePolicyId, cedarPolicyRecords } from "./serializer";
 export { CEDAR_POLICY_TYPE, CEDAR_JSON_FILENAME } from "./serializer";
-export type { CedarEffect, CedarScope, CedarPolicyProps } from "./serializer";
+export type { CedarEffect, CedarScope, CedarPolicyProps, CedarPolicyRecord } from "./serializer";
+
+// AVP embedding (#1652) — the typed statement an `AWS::VerifiedPermissions::Policy`
+// carries, without a dependency on the aws lexicon. See src/avp/embed.ts.
+export {
+  avpStatement,
+  avpStatementJSON,
+  avpPolicyDefinition,
+  avpPolicyResource,
+  avpPolicySet,
+} from "./avp/embed";
+export type {
+  AvpEmbedOptions,
+  AvpPolicyDefinition,
+  AvpPolicyResource,
+  AvpStaticDefinition,
+} from "./avp/embed";
+
+// The AVP ownership channel (#1652, chant #1348). Design record: src/avp/OWNERSHIP.md.
+export {
+  AVP_OWNERSHIP_KEYS,
+  AVP_POLICY_ID_KEY,
+  AVP_DESCRIPTION_MAX,
+  encodeOwnershipDescription,
+  decodeOwnershipDescription,
+  ownershipFromDescription,
+  ownershipFromStoreTags,
+  descriptionIsOwned,
+  storeOwnershipTags,
+} from "./avp/ownership";
+export type { DecodedDescription } from "./avp/ownership";
+
+// AVP lifecycle readers (#1652).
+export { describeAvpResources } from "./avp/describe-resources";
+export { observeAvpAmbient, AVP_AMBIENT_KINDS } from "./avp/ambient";
+export { exportAvpResources, policyToResourceIR } from "./avp/live-export";
+export { resolvePolicyStoreId, AVP_POLICY_STORE_ENV } from "./avp/store";
 
 export { policySetJSON, escapeCedarString } from "./serializer";
 export type { CedarPolicySetJSON } from "./serializer";

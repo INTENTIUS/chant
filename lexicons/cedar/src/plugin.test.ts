@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { isLexiconPlugin } from "@intentius/chant/lexicon";
 import { cedarPlugin } from "./plugin";
-import { cedarSerializer } from "./serializer";
+import { cedarSerializer, CEDAR_POLICY_TYPE } from "./serializer";
+import { AVP_OWNERSHIP_KEYS } from "./avp/ownership";
 
 describe("cedar plugin", () => {
   it("is a valid LexiconPlugin", () => {
@@ -76,5 +77,39 @@ describe("cedar plugin", () => {
       expect(set?.root?.["schema.cedarschema"]).toContain("namespace ");
     }
     expect(new Set(sets.map((s) => s?.src["policies.ts"])).size).toBe(3);
+  });
+
+  // ── AVP lifecycle (#1652) ────────────────────────────────────
+
+  it("registers the AVP lifecycle readers", () => {
+    for (const method of ["describeResources", "ambientKinds", "observeAmbient", "exportResources"] as const) {
+      expect(typeof cedarPlugin[method], method).toBe("function");
+    }
+  });
+
+  it("declares an ownership channel with complete keys", () => {
+    const channel = cedarPlugin.ownershipChannel;
+    expect(channel).toBeDefined();
+    expect(channel!.keys).toEqual(AVP_OWNERSHIP_KEYS);
+    for (const key of ["managedBy", "stack", "env"] as const) {
+      expect(typeof channel!.keys[key], key).toBe("string");
+      expect(channel!.keys[key].length).toBeGreaterThan(0);
+    }
+  });
+
+  it("declares a marker channel only on the paths it implements (chant #1348)", () => {
+    const channel = cedarPlugin.ownershipChannel!;
+    expect([...channel.reads].sort()).toEqual(["describeResources", "exportResources"]);
+    for (const path of channel.reads) {
+      expect(typeof cedarPlugin[path], path).toBe("function");
+    }
+    // Not declared, because it is not implemented — the whole point of the
+    // per-path declaration is that a caller learns this before asking.
+    expect(channel.reads).not.toContain("observeResourcesDeep");
+    expect(cedarPlugin.observeResourcesDeep).toBeUndefined();
+  });
+
+  it("can enumerate the one kind it deploys", () => {
+    expect(cedarPlugin.ambientKinds?.()).toEqual([CEDAR_POLICY_TYPE]);
   });
 });

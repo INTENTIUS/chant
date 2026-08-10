@@ -15,6 +15,11 @@ import { cedarInitTemplates } from "./init-templates";
 import { cedarConfigSchema } from "./config";
 import { detectTemplate as detectCedarTemplate } from "./detect";
 import { CedarTemplateGenerator, CedarTemplateParser } from "./import/adapter";
+// #1652 — the AVP ownership channel is data on the plugin, so its keys have to
+// be a value at module load rather than a dynamic import.
+import type { ResourceMetadata } from "@intentius/chant/lexicon";
+import { AVP_OWNERSHIP_KEYS } from "./avp/ownership";
+import { AVP_AMBIENT_KINDS } from "./avp/ambient";
 
 /**
  * cedar lexicon plugin.
@@ -213,5 +218,95 @@ export const cedarPlugin: LexiconPlugin = {
     pattern: /export const CEDAR_WASM_VERSION\s*=\s*"([^"]+)"/,
     replace: (v: string, line: string) => line.replace(/= "[^"]+"/, `= "${v}"`),
     upstream: { owner: "cedar-policy", repo: "cedar", kind: "releases" as const },
+  },
+
+  // ── AVP lifecycle (#1652) ──────────────────────────────────────
+
+  /**
+   * AVP policy stores are taggable; the policies inside them are not, so the
+   * per-policy channel is a marker encoded into `Definition.Static.Description`
+   * and the store's tags are the coarse channel beside it. Only the two paths
+   * that actually read the description are declared (chant #1348) — the full
+   * design record is src/avp/OWNERSHIP.md.
+   */
+  ownershipChannel: {
+    keys: AVP_OWNERSHIP_KEYS,
+    reads: ["describeResources", "exportResources"] as const,
+  },
+
+  /**
+   * Observe the declared policy set against a live AVP policy store.
+   *
+   * The tri-state carries more weight here than on most substrates: a declared
+   * policy reported absent becomes a `create`, and creating a permit that
+   * already exists duplicates a grant. Every path that did not look says so.
+   */
+  async describeResources(options: {
+    environment: string;
+    buildOutput: string;
+    entityNames: string[];
+    entities: Map<string, { entityType: string; props: Record<string, unknown> }>;
+    stack?: string;
+    region?: string;
+    owned?: boolean;
+  }) {
+    const { describeAvpResources } = await import("./avp/describe-resources");
+    return describeAvpResources({
+      environment: options.environment,
+      entityNames: options.entityNames,
+      entities: options.entities,
+      ...(options.owned !== undefined ? { owned: options.owned } : {}),
+      ...(options.region ? { client: { region: options.region } } : {}),
+    });
+  },
+
+  /** The one kind this lexicon deploys, and therefore the one it can enumerate. */
+  ambientKinds(): string[] {
+    return [...AVP_AMBIENT_KINDS];
+  },
+
+  /**
+   * Policies in the store that nothing declares — a standing grant nobody in
+   * the source tree can see. For an authorization store this is a security
+   * finding rather than housekeeping.
+   */
+  async observeAmbient(options: {
+    environment: string;
+    kinds: string[];
+    observed: Record<string, ResourceMetadata>;
+    stack?: string;
+    region?: string;
+  }) {
+    const { observeAvpAmbient } = await import("./avp/ambient");
+    return observeAvpAmbient({
+      environment: options.environment,
+      kinds: options.kinds,
+      observed: options.observed,
+      ...(options.region ? { client: { region: options.region } } : {}),
+    });
+  },
+
+  /**
+   * Full-fidelity read of the live policies, as import IR. Server-written
+   * fields are stripped to the declared shape unless `verbatim` is set — see
+   * the note in src/avp/live-export.ts for what counts as server-written when
+   * the only thing a user authors is the statement.
+   */
+  async exportResources(options: {
+    environment: string;
+    stack?: string;
+    region?: string;
+    selector?: { type?: string; name?: string };
+    owned?: boolean;
+    verbatim?: boolean;
+  }) {
+    const { exportAvpResources } = await import("./avp/live-export");
+    return exportAvpResources({
+      environment: options.environment,
+      ...(options.selector ? { selector: options.selector } : {}),
+      ...(options.owned !== undefined ? { owned: options.owned } : {}),
+      ...(options.verbatim !== undefined ? { verbatim: options.verbatim } : {}),
+      ...(options.region ? { client: { region: options.region } } : {}),
+    });
   },
 };
