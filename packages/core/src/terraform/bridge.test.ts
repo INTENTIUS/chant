@@ -110,6 +110,36 @@ describe("generateBridge — inbound (data-source rewrite)", () => {
   });
 });
 
+describe("generateBridge — output blocks (#1638)", () => {
+  const withOutput: Hcl2JsonTree = {
+    resource: { aws_s3_bucket: { assets: [{ bucket: "myapp-assets-prod" }] } },
+    output: { assets_bucket: [{ value: "${aws_s3_bucket.assets.bucket}" }] },
+  };
+  const OUTPUTS_TF = `output "assets_bucket" {\n  value = aws_s3_bucket.assets.bucket\n}\n`;
+
+  test("an output-only dependency still gets a data source and a rewrite", () => {
+    const report = boundaryReport(buildFixtureGraph(withOutput), "aws_s3_bucket.assets")!;
+    const plan = generateBridge(report, [{ path: "outputs.tf", content: OUTPUTS_TF }], identities);
+
+    // Before #1638 the graph could not see the output, so this was an unpatched
+    // dependency: no data source, no rewrite, a broken plan at handoff.
+    expect(plan.dataSources.map((d) => d.address)).toEqual(["aws_s3_bucket.assets"]);
+    expect(plan.outputRewrites).toEqual(["output.assets_bucket"]);
+
+    const rewrite = plan.rewrites.find((r) => r.path === "outputs.tf")!;
+    expect(rewrite.changed).toBe(true);
+    expect(rewrite.rewritten).toContain("value = data.aws_s3_bucket.assets.bucket");
+    expect(plan.runbook).toContain("repoints these output block(s) at the data source: output.assets_bucket");
+  });
+
+  test("no outputs → nothing listed", () => {
+    const report = boundaryReport(buildFixtureGraph(workedExample), "aws_s3_bucket.assets")!;
+    const plan = generateBridge(report, [{ path: "api.tf", content: API_TF }], identities);
+    expect(plan.outputRewrites).toEqual([]);
+    expect(plan.runbook).not.toContain("repoints these output block(s) at the data source");
+  });
+});
+
 describe("generateBridge — outbound (deferred inputs)", () => {
   test("records outbound edges as deferred deploy-time inputs", () => {
     const tree: Hcl2JsonTree = {

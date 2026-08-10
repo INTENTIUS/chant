@@ -183,6 +183,9 @@ export function formatCarveBridge(result: CarveBridgeResult): string {
   if (changed.length) {
     L.push(`  ${changed.length} survivor file(s) rewired: ${changed.map((r) => basename(r.path)).join(", ")}`);
   }
+  if (p.outputRewrites.length) {
+    L.push(`  ${p.outputRewrites.length} output block(s) repointed at the data source: ${p.outputRewrites.join(", ")}`);
+  }
   if (p.deferredInputs.length) {
     L.push(`  ${p.deferredInputs.length} deferred deploy-time input(s) (wired at apply):`);
     for (const d of p.deferredInputs) L.push(`    - ${d.note}`);

@@ -68,7 +68,7 @@ async function resolveExpressionRefs(hcl2json: Hcl2Json, tree: Hcl2JsonTree): Pr
   return refs;
 }
 
-/** Deep-merge hcl2json trees across files (resource/module/data namespaces). */
+/** Deep-merge hcl2json trees across files (resource/module/data/output namespaces). */
 function mergeTrees(into: Hcl2JsonTree, next: Hcl2JsonTree): void {
   for (const section of ["resource", "data"] as const) {
     const src = next[section];
@@ -79,6 +79,9 @@ function mergeTrees(into: Hcl2JsonTree, next: Hcl2JsonTree): void {
     }
   }
   if (next.module) into.module = { ...(into.module ?? {}), ...next.module };
+  // Outputs usually live in their own file (#1638) — merge them, or the graph
+  // never sees the estate's outputs.tf at all.
+  if (next.output) into.output = { ...(into.output ?? {}), ...next.output };
 }
 
 /** List every `.tf` file directly under `dir` (non-recursive; matches Terraform's own module scoping). */

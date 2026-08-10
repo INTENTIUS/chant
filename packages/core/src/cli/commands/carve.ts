@@ -73,8 +73,9 @@ export async function carveAdvise(opts: CarveAdviseOptions): Promise<CarveAdvise
  * says which shape it is. The promise attached to this number:
  *
  *  - **Additive within a version.** New top-level fields, new per-resource
- *    fields, and new entries in an existing list may appear in any release. A
- *    reader must ignore keys it does not know.
+ *    fields, new kinds of entry in an existing list, and new values in an
+ *    open-ended enum (a `bridge` kind, say) may appear in any release. A
+ *    reader must ignore keys and values it does not know.
  *  - **A removal, a rename, or a changed meaning bumps it.** So does narrowing
  *    a field's type (an optional becoming required is additive; the reverse is
  *    not).
@@ -96,6 +97,10 @@ export interface CarveJsonResource extends Peelability {
    * appears as an endpoint: it carves with its parent, and the parent's edges
    * stand in for it. Edges internal to the carve set are not boundary work and
    * are not listed.
+   *
+   * An inbound edge's survivor can be an `output.<name>` pseudo-address
+   * (#1638), carrying `bridge: "tf-output-rewrite"` and `via: ["value"]`. It
+   * is counted in `breakdown.outputs`, not `breakdown.inbound`.
    *
    * Present (possibly with two empty lists) whenever the graph was available;
    * absent means this chant did not compute it — "none" and "not reported" are
@@ -184,6 +189,7 @@ function reasons(r: Peelability): string {
   if (b.tier === null) return "no known native mapping (unsupported provider/type)";
   const parts: string[] = [];
   if (b.inbound) parts.push(`${b.inbound} inbound (data-source patch each)`);
+  if (b.outputs) parts.push(`${b.outputs} output block(s) reading it (one-line rewrite each)`);
   if (b.outbound) parts.push(`${b.outbound} outbound (deferred input each)`);
   if (b.tier > 1) parts.push(`tier ${b.tier} map`);
   if (b.hasDynamic) parts.push("count/for_each/data present");

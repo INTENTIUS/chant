@@ -46,6 +46,15 @@ export interface TfNode {
 export interface TfEdge {
   from: string;
   to: string;
+  /**
+   * The kind of block the reference came from, when it is not one of the
+   * graph's own nodes. `"output"` marks a root-module `output` block (#1638):
+   * a real dependency — `terraform plan` errors on the dangling reference the
+   * moment the carve lands — but a cheaper one to bridge than a resource's,
+   * since the patch is a single expression edit in a block that manages
+   * nothing. Absent means the reference came from a resource or module node.
+   */
+  fromKind?: "output";
   /** The attribute path(s) referenced, e.g. `["id", "arn"]`. */
   attrs: string[];
   /**
@@ -72,5 +81,7 @@ export interface Hcl2JsonTree {
   resource?: Record<string, Record<string, unknown[]>>;
   module?: Record<string, unknown[]>;
   data?: Record<string, Record<string, unknown[]>>;
+  /** Root-module `output` blocks. Not nodes — they reference, they are not carvable (#1638). */
+  output?: Record<string, unknown[]>;
   [k: string]: unknown;
 }

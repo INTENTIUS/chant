@@ -81,9 +81,9 @@ export function refFromAccessor(accessor: string): RawRef | null {
 }
 
 /**
- * Every string value carrying an interpolation across the tree's resource and
- * module blocks — exactly the expressions `parse.ts` must resolve through the
- * AST before `buildGraph` can classify them.
+ * Every string value carrying an interpolation across the tree's resource,
+ * module and output blocks — exactly the expressions `parse.ts` must resolve
+ * through the AST before `buildGraph` can classify them.
  */
 export function collectExpressions(tree: Hcl2JsonTree): string[] {
   const exprs = new Set<string>();
@@ -98,6 +98,7 @@ export function collectExpressions(tree: Hcl2JsonTree): string[] {
   };
   for (const named of Object.values(tree.resource ?? {})) for (const blocks of Object.values(named)) visit(blocks);
   for (const blocks of Object.values(tree.module ?? {})) visit(blocks);
+  for (const blocks of Object.values(tree.output ?? {})) visit(blocks);
   return [...exprs].sort();
 }
 
@@ -167,6 +168,12 @@ function literalIdentity(block: unknown, type: string): string | undefined {
  * marks the referring node dynamic. An edge is recorded only when its target
  * resolves to a known resource/module node — references to `var`/`local`/data
  * are dropped.
+ *
+ * `output` blocks are not nodes either — nothing carves an output — but they
+ * do reference, and a reference to a carved resource breaks the surviving plan
+ * exactly like a resource's does. So an output contributes an edge tagged
+ * `fromKind: "output"` from the pseudo-address `output.<name>` (#1638),
+ * which the scorer weights lower and `carve bridge` patches.
  */
 export function buildGraph(tree: Hcl2JsonTree, exprRefs: ExpressionRefs): TfGraph {
   const nodes: TfNode[] = [];
@@ -216,22 +223,34 @@ export function buildGraph(tree: Hcl2JsonTree, exprRefs: ExpressionRefs): TfGrap
     });
   }
 
+  // Output blocks: referrers without being nodes (#1638). Their pseudo-address
+  // never joins `known`, so nothing can depend on an output in turn.
+  const outputRefs = new Map<string, RawRef[]>();
+  for (const [name, blocks] of Object.entries(tree.output ?? {})) {
+    const block = Array.isArray(blocks) ? blocks[0] : blocks;
+    outputRefs.set(`output.${name}`, refsInBlock(block, exprRefs));
+  }
+
   // Edges: keep only references that resolve to a known node.
   const known = new Set(nodes.map((n) => n.address));
   const edges: TfEdge[] = [];
-  for (const [from, refs] of rawRefsByNode) {
-    const byTarget = new Map<string, { attrs: Set<string>; via: Set<string> }>();
-    for (const ref of refs) {
-      if (ref.address === from || !known.has(ref.address)) continue;
-      if (!byTarget.has(ref.address)) byTarget.set(ref.address, { attrs: new Set(), via: new Set() });
-      const target = byTarget.get(ref.address)!;
-      if (ref.attr) target.attrs.add(ref.attr);
-      if (ref.via) target.via.add(ref.via);
+  const collect = (source: Map<string, RawRef[]>, fromKind?: "output"): void => {
+    for (const [from, refs] of source) {
+      const byTarget = new Map<string, { attrs: Set<string>; via: Set<string> }>();
+      for (const ref of refs) {
+        if (ref.address === from || !known.has(ref.address)) continue;
+        if (!byTarget.has(ref.address)) byTarget.set(ref.address, { attrs: new Set(), via: new Set() });
+        const target = byTarget.get(ref.address)!;
+        if (ref.attr) target.attrs.add(ref.attr);
+        if (ref.via) target.via.add(ref.via);
+      }
+      for (const [to, { attrs, via }] of byTarget) {
+        edges.push({ from, to, attrs: [...attrs].sort(), via: [...via].sort(), ...(fromKind ? { fromKind } : {}) });
+      }
     }
-    for (const [to, { attrs, via }] of byTarget) {
-      edges.push({ from, to, attrs: [...attrs].sort(), via: [...via].sort() });
-    }
-  }
+  };
+  collect(rawRefsByNode);
+  collect(outputRefs, "output");
 
   // Code-point ordering (not localeCompare) so output is locale-independent and
   // punctuation sorts predictably (`.` < `_`).
@@ -242,7 +261,7 @@ export function buildGraph(tree: Hcl2JsonTree, exprRefs: ExpressionRefs): TfGrap
   };
 }
 
-/** Edges where other nodes depend on `address` (each → a surviving-TF data-source patch). */
+/** Edges where something in the surviving Terraform depends on `address`. */
 export function inboundEdges(graph: TfGraph, address: string): TfEdge[] {
   return graph.edges.filter((e) => e.to === address);
 }

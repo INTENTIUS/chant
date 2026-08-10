@@ -129,11 +129,13 @@ describe("carve advise --json against the sample estate", () => {
     if (!parserAvailable) return;
     const report = carveJson(await carveAdvise({ from: ESTATE }));
 
-    // `breakdown.inbound`/`outbound` are what the score was computed from and
-    // stay for backward compatibility. They must agree with the lists, or the
-    // arithmetic a reader prints beside the drawn edges is a lie.
+    // `breakdown.inbound`/`outbound`/`outputs` are what the score was computed
+    // from and stay for backward compatibility. They must agree with the lists,
+    // or the arithmetic a reader prints beside the drawn edges is a lie. The
+    // inbound list holds both resource and output survivors (#1638), so it is
+    // the two counts together.
     for (const r of report.resources) {
-      expect([r.address, r.boundary!.inbound.length]).toEqual([r.address, r.breakdown.inbound]);
+      expect([r.address, r.boundary!.inbound.length]).toEqual([r.address, r.breakdown.inbound + r.breakdown.outputs]);
       expect([r.address, r.boundary!.outbound.length]).toEqual([r.address, r.breakdown.outbound]);
     }
 

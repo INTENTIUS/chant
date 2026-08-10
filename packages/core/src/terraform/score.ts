@@ -6,10 +6,17 @@
  *   score = 100
  *     - 12 * inbound          # survivors that depend on this → each a TF data-source patch
  *     -  4 * outbound         # this depends on survivors → a deferred deploy-time input
+ *     -  4 * outputs          # an output block reads this → a one-line rewrite (#1638)
  *     - 15 * (tier - 1)       # native-spec map: tier1=0, tier2=-15, tier3=-30
  *     - 10 * has_dynamic      # count / for_each / data present
  *     -  3 * (instances - 1)  # state-expanded instance count
  *   clamp 0..100   (unsupported provider/type → 0)
+ *
+ * An `output` block referencing the target is a real inbound dependency — the
+ * surviving plan errors on the dangling reference — so it cannot score as
+ * free. It is not a data-source patch either: bridging it rewrites one
+ * expression in a block that manages no infrastructure, the same order of work
+ * as recording an outbound deferred input. Hence 4, not 12.
  *
  * Sub-resources that inline into a parent (see `FOLDS_INTO`) are folded into the
  * parent's carve set: they are removed from the ranking and their edge to the
@@ -23,8 +30,11 @@ import type { TfGraph, TfNode } from "./types";
 export type PeelabilityBand = "clean leaf" | "carvable w/ edits" | "leave in Terraform";
 
 export interface PeelabilityBreakdown {
+  /** Inbound edges from resource/module blocks — a data-source patch each. */
   inbound: number;
   outbound: number;
+  /** Inbound edges from `output` blocks — a one-line rewrite each (#1638). */
+  outputs: number;
   tier: 1 | 2 | 3 | null;
   hasDynamic: boolean;
   instances: number;
@@ -32,6 +42,7 @@ export interface PeelabilityBreakdown {
   penalties: {
     inbound: number;
     outbound: number;
+    outputs: number;
     tier: number;
     dynamic: number;
     instances: number;
@@ -82,8 +93,11 @@ function computeFolds(graph: TfGraph): { folded: Set<string>; childrenOf: Map<st
 }
 
 function scoreNode(node: TfNode, graph: TfGraph, foldedChildren: Set<string>): Peelability {
-  // Inbound excludes edges from this node's own folded sub-resources.
-  const inbound = inboundEdges(graph, node.address).filter((e) => !foldedChildren.has(e.from)).length;
+  // Inbound excludes edges from this node's own folded sub-resources, and
+  // counts output blocks separately — they cost less to bridge (#1638).
+  const inboundAll = inboundEdges(graph, node.address).filter((e) => !foldedChildren.has(e.from));
+  const inbound = inboundAll.filter((e) => e.fromKind !== "output").length;
+  const outputs = inboundAll.length - inbound;
   const outbound = outboundEdges(graph, node.address).length;
 
   const tierInfo = node.kind === "module" ? { tier: MODULE_TIER, mapsTo: undefined } : resolveTier(node.type!);
@@ -99,10 +113,11 @@ function scoreNode(node: TfNode, graph: TfGraph, foldedChildren: Set<string>): P
       breakdown: {
         inbound,
         outbound,
+        outputs,
         tier: null,
         hasDynamic: node.hasDynamic,
         instances: node.instances,
-        penalties: { inbound: 0, outbound: 0, tier: 0, dynamic: 0, instances: 0 },
+        penalties: { inbound: 0, outbound: 0, outputs: 0, tier: 0, dynamic: 0, instances: 0 },
       },
     };
   }
@@ -110,12 +125,19 @@ function scoreNode(node: TfNode, graph: TfGraph, foldedChildren: Set<string>): P
   const penalties = {
     inbound: -12 * inbound,
     outbound: -4 * outbound,
+    outputs: -4 * outputs,
     tier: -15 * (tier - 1),
     dynamic: node.hasDynamic ? -10 : 0,
     instances: -3 * Math.max(0, node.instances - 1),
   };
   const score = clamp(
-    100 + penalties.inbound + penalties.outbound + penalties.tier + penalties.dynamic + penalties.instances,
+    100 +
+      penalties.inbound +
+      penalties.outbound +
+      penalties.outputs +
+      penalties.tier +
+      penalties.dynamic +
+      penalties.instances,
   );
 
   return {
@@ -127,6 +149,7 @@ function scoreNode(node: TfNode, graph: TfGraph, foldedChildren: Set<string>): P
     breakdown: {
       inbound,
       outbound,
+      outputs,
       tier,
       hasDynamic: node.hasDynamic,
       instances: node.instances,

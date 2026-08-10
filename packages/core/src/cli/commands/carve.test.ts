@@ -100,6 +100,43 @@ describe("carveAdvise", () => {
     });
   });
 
+  test("an output block in its own file counts against the score it reads (#1638)", async () => {
+    if (!parserAvailable) return;
+    const dir = mkdtempSync(join(tmpdir(), "chant-carve-outputs-"));
+    try {
+      writeFileSync(join(dir, "main.tf"), ESTATE);
+      // Outputs almost always live in their own file — the merge across files
+      // has to carry them, or the graph never sees the estate's outputs.tf.
+      writeFileSync(
+        join(dir, "outputs.tf"),
+        `output "assets_bucket" {\n  value = aws_s3_bucket.assets.bucket\n}\n`,
+      );
+      const r = await carveAdvise({ from: dir });
+      expect(r.ok).toBe(true);
+
+      // Outputs are not carve candidates.
+      expect((r.results ?? []).map((x) => x.address)).not.toContain("output.assets_bucket");
+
+      const bucket = r.results!.find((x) => x.address === "aws_s3_bucket.assets")!;
+      expect(bucket.breakdown).toMatchObject({ inbound: 1, outputs: 1 });
+      expect(bucket.score).toBe(84); // 88 with the Lambda alone, minus 4 for the output
+      expect(formatCarveReport(r)).toContain("1 output block(s) reading it (one-line rewrite each)");
+
+      const written = carveJson(r).resources.find((x) => x.address === "aws_s3_bucket.assets")!;
+      expect(written.boundary!.inbound).toContainEqual({
+        direction: "inbound",
+        survivor: "output.assets_bucket",
+        carved: "aws_s3_bucket.assets",
+        attrs: ["bucket"],
+        via: ["value"],
+        bridge: "tf-output-rewrite",
+        required: "immediately",
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test("formatCarveReport groups by band and never suggests a mutation", async () => {
     if (!parserAvailable) return;
     await withEstate(async (dir) => {
@@ -132,10 +169,11 @@ describe("carveAdvise", () => {
           breakdown: {
             inbound: 0,
             outbound: 0,
+            outputs: 0,
             tier: 1,
             hasDynamic: false,
             instances: 1,
-            penalties: { inbound: 0, outbound: 0, tier: 0, dynamic: 0, instances: 0 },
+            penalties: { inbound: 0, outbound: 0, outputs: 0, tier: 0, dynamic: 0, instances: 0 },
           },
         },
       ],

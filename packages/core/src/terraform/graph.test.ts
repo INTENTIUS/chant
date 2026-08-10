@@ -157,6 +157,51 @@ describe("buildGraph", () => {
     expect(byAddr["aws_s3_bucket.assets"].identity).toBe("myapp-assets-prod"); // flat attr unaffected
   });
 
+  test("an output block referencing a resource is an inbound edge, tagged as an output (#1638)", () => {
+    const tree: Hcl2JsonTree = {
+      resource: { aws_s3_bucket: { assets: [{ bucket: "x" }] } },
+      output: {
+        assets_bucket: [{ value: "${aws_s3_bucket.assets.bucket}" }],
+        assets_pair: [{ value: ["${aws_s3_bucket.assets.arn}", "${aws_s3_bucket.assets.id}"], description: "both" }],
+      },
+    };
+    const g = buildFixtureGraph(tree);
+
+    // An output is a referrer, never a node — nothing carves an output.
+    expect(g.nodes.map((n) => n.address)).toEqual(["aws_s3_bucket.assets"]);
+    expect(inboundEdges(g, "aws_s3_bucket.assets")).toEqual([
+      {
+        from: "output.assets_bucket",
+        to: "aws_s3_bucket.assets",
+        attrs: ["bucket"],
+        via: ["value"],
+        fromKind: "output",
+      },
+      {
+        from: "output.assets_pair",
+        to: "aws_s3_bucket.assets",
+        attrs: ["arn", "id"],
+        via: ["value"],
+        fromKind: "output",
+      },
+    ]);
+    // Nothing can depend on an output in turn.
+    expect(outboundEdges(g, "output.assets_bucket").map((e) => e.to)).toEqual(["aws_s3_bucket.assets"]);
+    expect(inboundEdges(g, "output.assets_bucket")).toEqual([]);
+  });
+
+  test("an output referencing a var or a data source contributes no edge", () => {
+    const tree: Hcl2JsonTree = {
+      data: { aws_ami: { ubuntu: [{ owners: ["1"] }] } },
+      resource: { aws_s3_bucket: { assets: [{ bucket: "x" }] } },
+      output: {
+        name: [{ value: "${var.name}" }],
+        ami: [{ value: "${data.aws_ami.ubuntu.id}" }],
+      },
+    };
+    expect(buildFixtureGraph(tree).edges).toEqual([]);
+  });
+
   test("var / local references are not edges", () => {
     const tree: Hcl2JsonTree = {
       resource: {

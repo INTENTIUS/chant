@@ -87,6 +87,40 @@ describe("boundaryReport", () => {
     ]);
   });
 
+  test("an output block is an inbound edge with its own bridge kind (#1638)", () => {
+    const tree: Hcl2JsonTree = {
+      resource: { aws_s3_bucket: { assets: [{ bucket: "b" }] } },
+      output: { assets_bucket: [{ value: "${aws_s3_bucket.assets.bucket}" }] },
+    };
+    const report = boundaryReport(buildFixtureGraph(tree), "aws_s3_bucket.assets")!;
+    expect(report.inbound).toEqual([
+      {
+        direction: "inbound",
+        survivor: "output.assets_bucket",
+        carved: "aws_s3_bucket.assets",
+        attrs: ["bucket"],
+        via: ["value"],
+        bridge: "tf-output-rewrite",
+        required: "immediately",
+      },
+    ]);
+    expect(report.peelability).toBe(96); // the cheaper output weight, not 88
+  });
+
+  test("an output on a folded sub-resource is still the parent's boundary work", () => {
+    const tree: Hcl2JsonTree = {
+      resource: {
+        aws_s3_bucket: { assets: [{ bucket: "b" }] },
+        aws_s3_bucket_versioning: { assets: [{ bucket: "${aws_s3_bucket.assets.id}" }] },
+      },
+      output: { versioning_id: [{ value: "${aws_s3_bucket_versioning.assets.id}" }] },
+    };
+    const report = boundaryReport(buildFixtureGraph(tree), "aws_s3_bucket.assets")!;
+    expect(report.inbound.map((e) => [e.survivor, e.carved, e.bridge])).toEqual([
+      ["output.versioning_id", "aws_s3_bucket_versioning.assets", "tf-output-rewrite"],
+    ]);
+  });
+
   test("unsupported type is flagged in diagnostics", () => {
     const tree: Hcl2JsonTree = { resource: { random_pet: { n: [{ length: 2 }] } } };
     const report = boundaryReport(buildFixtureGraph(tree), "random_pet.n")!;
