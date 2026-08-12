@@ -46,6 +46,8 @@ import type { LexiconPlugin } from "../lexicon";
  */
 const BOOLEAN_FLAGS = new Set([
   "--help",
+  "--agents",
+  "--all-projects",
   "--force",
   "--fix",
   "--watch",
@@ -242,6 +244,14 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.env = args[++i];
     } else if (arg === "--tier") {
       result.tier = args[++i];
+    } else if (arg === "--agents") {
+      result.agents = true;
+    } else if (arg === "--scope") {
+      result.scope = args[++i];
+    } else if (arg === "--all-projects") {
+      result.allProjects = true;
+    } else if (arg === "--runtime") {
+      result.runtime = args[++i];
     } else if (arg === "--fail-on") {
       result.failOn = args[++i];
     } else if (arg === "--theme") {

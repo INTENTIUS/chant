@@ -17,6 +17,7 @@ import { detectFountainTemplate } from "./detect";
 import { fountainInitTemplates } from "./init-templates";
 import { FountainParser } from "./import/parser";
 import { FountainGenerator } from "./import/generator";
+import { sitesToTemplateIR } from "./import/local-agents";
 import { completions } from "./lsp/completions";
 import { hover } from "./lsp/hover";
 
@@ -141,6 +142,10 @@ export const fountainPlugin: LexiconPlugin = {
 
   templateGenerator() {
     return new FountainGenerator();
+  },
+
+  agentConfigImporter() {
+    return { toTemplateIR: sitesToTemplateIR };
   },
 
   async exportResources(options) {

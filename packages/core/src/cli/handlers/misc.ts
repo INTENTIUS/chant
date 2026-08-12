@@ -5,6 +5,9 @@ import { loadChantConfig } from "../../config";
 import { resolve } from "path";
 import { auditCommand, printAuditResult, type AuditFormat, type AuditTier, type AuditFailOn } from "../commands/audit";
 import type { ReportTheme } from "../../audit/report-html";
+import { AGENT_RUNTIMES, AGENT_SCOPES, type AgentRuntime, type AgentScope } from "../../agents/types";
+import { registeredProjectRoots } from "../../agents/discover";
+import { homedir } from "os";
 import type { ResourceSelector } from "../../lexicon";
 import { formatError, formatSuccess, formatWarning, formatBold } from "../format";
 import type { CommandContext } from "../registry";
@@ -23,6 +26,44 @@ const AUDIT_FORMATS: AuditFormat[] = ["stylish", "json", "sarif", "markdown", "h
 const AUDIT_TIERS: AuditTier[] = ["merge-worthy", "all"];
 const AUDIT_FAIL_ON: AuditFailOn[] = ["merge-worthy", "warning", "none"];
 
+/**
+ * Parse `--scope system,user,project`. Returns `undefined` (meaning "all") when
+ * the flag is absent, or an Error the caller reports — an unrecognized scope is
+ * rejected rather than ignored, since silently scanning more than the user
+ * asked for is exactly the surprise this command exists to prevent.
+ */
+function parseScopes(raw: string | undefined): readonly AgentScope[] | undefined | Error {
+  if (!raw) return undefined;
+  const parts = raw.split(",").map((s) => s.trim()).filter(Boolean);
+  const bad = parts.filter((p) => !AGENT_SCOPES.includes(p as AgentScope));
+  if (bad.length > 0) return new Error(`Invalid --scope: ${bad.join(", ")}. Expected one or more of ${AGENT_SCOPES.join(", ")}.`);
+  return parts.length > 0 ? (parts as AgentScope[]) : undefined;
+}
+
+/** Parse `--runtime claude,codex,...`. Same contract as {@link parseScopes}. */
+function parseRuntimes(raw: string | undefined): readonly AgentRuntime[] | undefined | Error {
+  if (!raw) return undefined;
+  const parts = raw.split(",").map((s) => s.trim()).filter(Boolean);
+  const bad = parts.filter((p) => !AGENT_RUNTIMES.includes(p as AgentRuntime));
+  if (bad.length > 0) return new Error(`Invalid --runtime: ${bad.join(", ")}. Expected one or more of ${AGENT_RUNTIMES.join(", ")}.`);
+  return parts.length > 0 ? (parts as AgentRuntime[]) : undefined;
+}
+
+/**
+ * Project roots for an `--agents` run.
+ *
+ * Default: the path argument alone. With `--all-projects`, every project root
+ * the harness has registered, *unioned* with the path argument rather than
+ * replacing it — a flag that silently discarded an argument the user typed
+ * would be the wrong kind of surprise, and a cwd that isn't registered yet is
+ * still a project the user is plainly interested in.
+ */
+function resolveProjectRoots(args: { path: string; allProjects?: boolean }): string[] {
+  const named = resolve(args.path);
+  if (!args.allProjects) return [named];
+  return [...new Set([...registeredProjectRoots(homedir()), named])].sort();
+}
+
 export async function runAudit(ctx: CommandContext): Promise<number> {
   const { args } = ctx;
 
@@ -40,6 +81,37 @@ export async function runAudit(ctx: CommandContext): Promise<number> {
   if (!AUDIT_FAIL_ON.includes(failOn)) {
     console.error(formatError({ message: `Invalid --fail-on: ${failOn}. Expected one of ${AUDIT_FAIL_ON.join(", ")}.` }));
     return 1;
+  }
+
+  // `--agents` switches the subject from a repo to this machine's agent
+  // configuration. Same formats, tiers, and fail-on policy — a different thing
+  // being audited, not a different report.
+  if (args.agents) {
+    const scopes = parseScopes(args.scope);
+    if (scopes instanceof Error) {
+      console.error(formatError({ message: scopes.message }));
+      return 1;
+    }
+    const runtimes = parseRuntimes(args.runtime);
+    if (runtimes instanceof Error) {
+      console.error(formatError({ message: runtimes.message }));
+      return 1;
+    }
+    const { auditAgentsCommand } = await import("../commands/audit-agents");
+    const result = auditAgentsCommand({
+      format,
+      tier,
+      failOn,
+      scopes,
+      runtimes,
+      projectRoots: resolveProjectRoots(args),
+      output: args.output,
+      toolVersion: CHANT_VERSION,
+    });
+    if (result.error) console.error(formatError({ message: result.error }));
+    else if (result.wroteTo) console.log(formatSuccess(`Report written to ${result.wroteTo}`));
+    else console.log(result.output);
+    return result.exitCode;
   }
 
   // HTML report customization: --template <file> (full override) + --theme <file> (JSON knobs).
@@ -170,6 +242,45 @@ export async function runDescribe(ctx: CommandContext): Promise<number> {
 
 export async function runImport(ctx: CommandContext): Promise<number> {
   const { args } = ctx;
+
+  // `--agents` (#chant audit --agents' other half): the source is this
+  // machine's agent configuration rather than a template file, so there is
+  // nothing to detect — the flag names the subject, like `--kustomize` below
+  // names the lexicon.
+  if (args.agents) {
+    const scopes = parseScopes(args.scope);
+    if (scopes instanceof Error) {
+      console.error(formatError({ message: scopes.message }));
+      return 1;
+    }
+    const runtimes = parseRuntimes(args.runtime);
+    if (runtimes instanceof Error) {
+      console.error(formatError({ message: runtimes.message }));
+      return 1;
+    }
+    const { importAgentsCommand } = await import("../commands/import-agents");
+    const result = await importAgentsCommand({
+      lexicon: args.lexicon,
+      output: args.output,
+      force: args.force,
+      scopes,
+      runtimes,
+      projectRoots: resolveProjectRoots(args),
+    });
+    for (const warning of result.warnings) console.warn(formatWarning({ message: warning }));
+    if (!result.success) {
+      console.error(formatError({ message: result.error ?? "Import failed." }));
+      return 1;
+    }
+    console.log(
+      formatSuccess(
+        `Re-expressed ${result.summary.mapped} resource${result.summary.mapped === 1 ? "" : "s"} ` +
+          `from ${result.summary.discovered} agent config${result.summary.discovered === 1 ? "" : "s"}:`,
+      ),
+    );
+    for (const file of result.generatedFiles) console.log(`  ${file}`);
+    return 0;
+  }
 
   // `--kustomize <dir>` (#1548): render the overlay and import the output
   // through the k8s template parser — the flag NAMES the lexicon, so no JSON
