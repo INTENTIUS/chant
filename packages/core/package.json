@@ -76,7 +76,7 @@
   },
   "dependencies": {
     "@dagrejs/dagre": "^3.0.0",
-    "esbuild": "^0.27.0",
+    "esbuild": "^0.28.1",
     "fflate": "^0.8.2",
     "picomatch": "^4.0.3",
     "tsx": "^4.0.0",
