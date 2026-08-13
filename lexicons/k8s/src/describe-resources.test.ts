@@ -15,7 +15,7 @@ vi.mock("@intentius/chant/config", () => ({
   loadChantConfig: (...args: unknown[]) => loadChantConfigMock(...args),
 }));
 
-const { describeResources, statusFromObject, unhappyConditions, revisionAttributes } = await import("./describe-resources");
+const { describeResources, statusFromObject, unhappyConditions, revisionAttributes, helmRepositoryTypeAttribute } = await import("./describe-resources");
 const { fakeCluster, objectKey, ownedObject } = await import("./api/fake-cluster");
 const { defaultK8sConnector } = await import("./api/connect");
 const { fakeKubeconfig, statusBody } = await import("@intentius/chant-k8s-client/testing");
@@ -1625,6 +1625,126 @@ describe("observed attributes carry the Flux revisions (#1632)", () => {
       labels: { app: "web" },
       resourceVersion: "7",
     });
+  });
+});
+
+describe("helmRepositoryTypeAttribute — the one spec field on the wire (behold#298)", () => {
+  const gvk = { apiVersion: "source.toolkit.fluxcd.io/v1", kind: "HelmRepository" };
+
+  test("carries a HelmRepository's spec.type when set", () => {
+    expect(helmRepositoryTypeAttribute(gvk, { spec: { type: "oci" } } as never)).toBe("oci");
+    expect(helmRepositoryTypeAttribute(gvk, { spec: { type: "default" } } as never)).toBe("default");
+  });
+
+  test("says nothing when the field is absent — the CRD does not default it", () => {
+    expect(helmRepositoryTypeAttribute(gvk, { spec: { url: "https://charts.example.com" } } as never)).toBeUndefined();
+    expect(helmRepositoryTypeAttribute(gvk, {} as never)).toBeUndefined();
+  });
+
+  test("ignores non-string and empty values", () => {
+    expect(helmRepositoryTypeAttribute(gvk, { spec: { type: "" } } as never)).toBeUndefined();
+    expect(helmRepositoryTypeAttribute(gvk, { spec: { type: 7 } } as never)).toBeUndefined();
+  });
+
+  test("declines every other kind — spec.type is not a distinctive path", () => {
+    // A core Service HAS a spec.type; forwarding it would change a wire shape
+    // this field was never about.
+    expect(
+      helmRepositoryTypeAttribute({ apiVersion: "v1", kind: "Service" }, { spec: { type: "LoadBalancer" } } as never),
+    ).toBeUndefined();
+    // Same kind name in a foreign group claims nothing either.
+    expect(
+      helmRepositoryTypeAttribute({ apiVersion: "example.io/v1", kind: "HelmRepository" }, { spec: { type: "oci" } } as never),
+    ).toBeUndefined();
+  });
+});
+
+describe("observed attributes carry a HelmRepository's spec.type (behold#298)", () => {
+  test("an OCI HelmRepository reads type: 'oci'; a default one grows no type key", async () => {
+    // The behold#298 shape: `spec.type: oci` means source-controller never
+    // reconciles the object — no conditions, no artifact, by design — so a
+    // consumer classifying off conditions needs this field to tell a healthy
+    // OCI repository from a wedged default one.
+    const oci = {
+      apiVersion: "source.toolkit.fluxcd.io/v1",
+      kind: "HelmRepository",
+      metadata: { name: "charts-oci", namespace: "flux-system", uid: "hrepo-oci-uid" },
+      spec: { type: "oci", url: "oci://ghcr.io/example/charts" },
+      // No status at all — exactly what the API returns for an OCI one.
+    };
+    const plain = {
+      apiVersion: "source.toolkit.fluxcd.io/v1",
+      kind: "HelmRepository",
+      metadata: { name: "charts-http", namespace: "flux-system", uid: "hrepo-http-uid" },
+      // The CRD does not default spec.type: a default repository simply
+      // carries no `type` field, and the wire says nothing for it.
+      spec: { url: "https://charts.example.com" },
+      status: { conditions: [{ type: "Ready", status: "True" }], artifact: { revision: "sha256:abc123" } },
+    };
+    const cluster = fakeCluster({
+      objects: {
+        [objectKey("source.toolkit.fluxcd.io/v1", "HelmRepository", "charts-oci", "flux-system")]: oci,
+        [objectKey("source.toolkit.fluxcd.io/v1", "HelmRepository", "charts-http", "flux-system")]: plain,
+      },
+    });
+
+    const result = await describeResources(
+      {
+        environment: "prod",
+        buildOutput: "",
+        entityNames: ["chartsOci", "chartsHttp"],
+        entities: makeEntities([
+          {
+            name: "chartsOci",
+            entityType: "K8s::Flux::HelmRepository",
+            props: { metadata: { name: "charts-oci", namespace: "flux-system" }, spec: { type: "oci", url: "oci://ghcr.io/example/charts" } },
+          },
+          {
+            name: "chartsHttp",
+            entityType: "K8s::Flux::HelmRepository",
+            props: { metadata: { name: "charts-http", namespace: "flux-system" }, spec: { url: "https://charts.example.com" } },
+          },
+        ]),
+      },
+      cluster.connector,
+    );
+
+    expect(result.resources.chartsOci?.attributes).toMatchObject({ type: "oci" });
+    // No conditions is the healthy shape for OCI — nothing unhappy to carry.
+    expect(result.resources.chartsOci?.attributes).not.toHaveProperty("conditions");
+    // The default repository's attributes are byte-for-byte what they were:
+    // no `type` key appears, and its revision still rides #1632's path.
+    expect(result.resources.chartsHttp?.attributes).not.toHaveProperty("type");
+    expect(result.resources.chartsHttp?.attributes).toMatchObject({ artifactRevision: "sha256:abc123" });
+  });
+
+  test("no other kind grows a type attribute — a Service's spec.type stays off the wire", async () => {
+    const lb = {
+      apiVersion: "v1",
+      kind: "Service",
+      metadata: { name: "web-lb", namespace: "prod", uid: "lb-uid" },
+      spec: { type: "LoadBalancer", ports: [{ port: 80 }] },
+    };
+    const cluster = fakeCluster({ objects: { [objectKey("v1", "Service", "web-lb", "prod")]: lb } });
+
+    const result = await describeResources(
+      {
+        environment: "prod",
+        buildOutput: "",
+        entityNames: ["webLb"],
+        entities: makeEntities([
+          {
+            name: "webLb",
+            entityType: "K8s::Core::Service",
+            props: { metadata: { name: "web-lb", namespace: "prod" }, spec: { type: "LoadBalancer" } },
+          },
+        ]),
+      },
+      cluster.connector,
+    );
+
+    expect(result.resources.webLb).toBeDefined();
+    expect(result.resources.webLb?.attributes).not.toHaveProperty("type");
   });
 });
 
