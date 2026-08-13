@@ -280,6 +280,33 @@ export function revisionAttributes(obj: K8sObject): {
   };
 }
 
+/**
+ * The declared repository protocol of a Flux HelmRepository (behold#298).
+ *
+ * A HelmRepository with `spec.type: oci` is never reconciled by
+ * source-controller — no conditions, no artifact, by design — so a consumer
+ * classifying health off conditions reads a healthy OCI repository exactly
+ * like one whose controller has not shown up. `spec.type` is the field that
+ * separates the two, and no spec field reached the wire before this. It rides
+ * the attributes flattened, as `type`, the same way `artifactRevision`
+ * flattens `status.artifact.revision`: every scalar on the wire is a plain
+ * key next to the others, and the wire stays lean — one field, not the spec.
+ *
+ * Kind-gated, unlike the module's usual read-by-path rule, because the PATH
+ * is not distinctive: a core Service's `spec.type` is
+ * `ClusterIP`/`LoadBalancer`, and forwarding that would change the wire shape
+ * of a kind this was never about. Only source.toolkit.fluxcd.io's
+ * HelmRepository speaks this meaning of the field.
+ */
+export function helmRepositoryTypeAttribute(
+  gvk: { apiVersion: string; kind: string },
+  obj: K8sObject,
+): string | undefined {
+  if (gvk.kind !== "HelmRepository" || !gvk.apiVersion.startsWith("source.toolkit.fluxcd.io/")) return undefined;
+  const type = (obj.spec as { type?: unknown } | undefined)?.type;
+  return typeof type === "string" && type.length > 0 ? type : undefined;
+}
+
 interface Declared {
   entityName: string;
   entityType: string;
@@ -454,6 +481,9 @@ export async function describeResources(
           // What a GitOps controller says it has applied and is applying
           // (#1632) — the convergence signal conditions cannot carry.
           ...revisionAttributes(obj),
+          // A HelmRepository's spec.type — `oci` means "no conditions is
+          // healthy", and only this field can say so (behold#298).
+          type: helmRepositoryTypeAttribute(operation, obj),
         }),
       };
     } catch (err) {
@@ -750,6 +780,10 @@ async function addRuntimeChildren(
           labels: obj.metadata?.labels,
           resourceVersion: obj.metadata?.resourceVersion,
           conditions: unhappyConditions(obj),
+          // The same one spec field the declared read forwards (behold#298):
+          // a swept HelmRepository (Flux's own bootstrap manages them through
+          // a Kustomization) must not read differently from a declared one.
+          type: helmRepositoryTypeAttribute(swept, obj),
         }),
       };
     });
