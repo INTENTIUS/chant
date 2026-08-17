@@ -19,122 +19,33 @@ npm run --prefix docs build
 mkdir -p "$SITE"
 cp -r docs/dist/* "$SITE/"
 
-# 2. Generate + build AWS lexicon docs
-echo "Building AWS lexicon docs..."
-cd lexicons/aws
-npm run prepack
-npx tsx src/codegen/docs-cli.ts
-cd docs && npm install && npm run build && cd ../../..
-mkdir -p "$SITE/lexicons/aws"
-cp -r lexicons/aws/docs/dist/* "$SITE/lexicons/aws/"
+# 2. Generate + build every lexicon's docs site.
+#
+# chant #1720 — this was thirteen copies of the same five lines, one per
+# lexicon, and k3d and k3s were simply absent from it. Both have a complete
+# docs/ tree; neither was ever built, so /chant/lexicons/k3d/ and
+# /chant/lexicons/k3s/ 404 and lychee failed any page that linked to them.
+#
+# Deriving the list from the filesystem is the fix: a lexicon with a docs/
+# directory is in the site, and a new one cannot be silently left out. The
+# codegen step is conditional because a hand-written docs site (k3d, k3s) has
+# no generated pages and therefore no src/codegen/docs-cli.ts.
+for lex_dir in lexicons/*/; do
+  lex="$(basename "$lex_dir")"
+  [ -d "$lex_dir/docs" ] || continue
 
-# 3. Generate + build GitLab lexicon docs
-echo "Building GitLab lexicon docs..."
-cd lexicons/gitlab
-npm run prepack
-npx tsx src/codegen/docs-cli.ts
-cd docs && npm install && npm run build && cd ../../..
-mkdir -p "$SITE/lexicons/gitlab"
-cp -r lexicons/gitlab/docs/dist/* "$SITE/lexicons/gitlab/"
-
-# 4. Generate + build K8s lexicon docs
-echo "Building K8s lexicon docs..."
-cd lexicons/k8s
-npm run prepack
-npx tsx src/codegen/docs-cli.ts
-cd docs && npm install && npm run build && cd ../../..
-mkdir -p "$SITE/lexicons/k8s"
-cp -r lexicons/k8s/docs/dist/* "$SITE/lexicons/k8s/"
-
-# 5. Generate + build Azure lexicon docs
-echo "Building Azure lexicon docs..."
-cd lexicons/azure
-npm run prepack
-npx tsx src/codegen/docs-cli.ts
-cd docs && npm install && npm run build && cd ../../..
-mkdir -p "$SITE/lexicons/azure"
-cp -r lexicons/azure/docs/dist/* "$SITE/lexicons/azure/"
-
-# 7. Generate + build GCP lexicon docs
-echo "Building GCP lexicon docs..."
-cd lexicons/gcp
-npm run prepack
-npx tsx src/codegen/docs-cli.ts
-cd docs && npm install && npm run build && cd ../../..
-mkdir -p "$SITE/lexicons/gcp"
-cp -r lexicons/gcp/docs/dist/* "$SITE/lexicons/gcp/"
-
-# 7b. Generate + build Fly lexicon docs
-echo "Building Fly lexicon docs..."
-cd lexicons/fly
-npm run prepack
-npx tsx src/codegen/docs-cli.ts
-cd docs && npm install && npm run build && cd ../../..
-mkdir -p "$SITE/lexicons/fly"
-cp -r lexicons/fly/docs/dist/* "$SITE/lexicons/fly/"
-
-# 7c. Generate + build Fountain lexicon docs
-echo "Building Fountain lexicon docs..."
-cd lexicons/fountain
-npm run prepack
-npx tsx src/codegen/docs-cli.ts
-cd docs && npm install && npm run build && cd ../../..
-mkdir -p "$SITE/lexicons/fountain"
-cp -r lexicons/fountain/docs/dist/* "$SITE/lexicons/fountain/"
-
-# 8. Generate + build Helm lexicon docs
-echo "Building Helm lexicon docs..."
-cd lexicons/helm
-npm run prepack
-npx tsx src/codegen/docs-cli.ts
-cd docs && npm install && npm run build && cd ../../..
-mkdir -p "$SITE/lexicons/helm"
-cp -r lexicons/helm/docs/dist/* "$SITE/lexicons/helm/"
-
-# 9. Generate + build GitHub lexicon docs
-echo "Building GitHub lexicon docs..."
-cd lexicons/github
-npm run prepack
-npx tsx src/codegen/docs-cli.ts
-cd docs && npm install && npm run build && cd ../../..
-mkdir -p "$SITE/lexicons/github"
-cp -r lexicons/github/docs/dist/* "$SITE/lexicons/github/"
-
-# 10. Generate + build Docker lexicon docs
-echo "Building Docker lexicon docs..."
-cd lexicons/docker
-npm run prepack
-npx tsx src/codegen/docs-cli.ts
-cd docs && npm install && npm run build && cd ../../..
-mkdir -p "$SITE/lexicons/docker"
-cp -r lexicons/docker/docs/dist/* "$SITE/lexicons/docker/"
-
-# 10b. Generate + build Forgejo lexicon docs
-echo "Building Forgejo lexicon docs..."
-cd lexicons/forgejo
-npm run prepack
-npx tsx src/codegen/docs-cli.ts
-cd docs && npm install && npm run build && cd ../../..
-mkdir -p "$SITE/lexicons/forgejo"
-cp -r lexicons/forgejo/docs/dist/* "$SITE/lexicons/forgejo/"
-
-# 10c. Generate + build Cedar lexicon docs
-echo "Building Cedar lexicon docs..."
-cd lexicons/cedar
-npm run prepack
-npx tsx src/codegen/docs-cli.ts
-cd docs && npm install && npm run build && cd ../../..
-mkdir -p "$SITE/lexicons/cedar"
-cp -r lexicons/cedar/docs/dist/* "$SITE/lexicons/cedar/"
-
-# 11. Generate + build Temporal lexicon docs
-echo "Building Temporal lexicon docs..."
-cd lexicons/temporal
-npm run prepack
-npx tsx src/codegen/docs-cli.ts
-cd docs && npm install && npm run build && cd ../../..
-mkdir -p "$SITE/lexicons/temporal"
-cp -r lexicons/temporal/docs/dist/* "$SITE/lexicons/temporal/"
+  echo "Building $lex lexicon docs..."
+  (
+    cd "$lex_dir"
+    npm run prepack
+    if [ -f src/codegen/docs-cli.ts ]; then
+      npx tsx src/codegen/docs-cli.ts
+    fi
+    cd docs && npm install && npm run build
+  )
+  mkdir -p "$SITE/lexicons/$lex"
+  cp -r "$lex_dir/docs/dist/"* "$SITE/lexicons/$lex/"
+done
 
 # Match GitHub Pages: redirect directory URLs to the trailing-slash form so
 # relative links (e.g. ../composites/) resolve the same locally as in prod.

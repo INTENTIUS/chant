@@ -41,7 +41,7 @@ npm run smoke        # chant run crdb-k3d-smoke
 
 Three CockroachDB regions in three namespaces of one k3d cluster: a shared CA, three secure nodes, one logical cluster, three regions known to SQL, and a `REGIONAL BY ROW` table that takes a write. About a minute once the CockroachDB image is cached. Needs `k3d`, `kubectl` and `docker`, and no credentials.
 
-The cluster's own shape is declared with the k3d lexicon and built to the config `k3d cluster create --config` consumes, so the declaration and the cluster cannot drift:
+The cluster's own shape is declared with the [k3d lexicon](/chant/lexicons/k3d/) and built to the config `k3d cluster create --config` consumes, so the declaration and the cluster cannot drift:
 
 ```typescript
 // k3d/src/k3d-cluster.ts
