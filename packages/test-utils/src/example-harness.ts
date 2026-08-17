@@ -1,9 +1,35 @@
 import { describe, test, expect } from "vitest";
 import { build } from "@intentius/chant/build";
 import { lintCommand } from "@intentius/chant/cli/commands/lint";
+import { loadChantConfigUpward } from "@intentius/chant/config";
+import { resolveBuildParams } from "@intentius/chant/build-params";
 import { resolve } from "path";
 import { readdirSync, statSync } from "fs";
 import type { Serializer } from "@intentius/chant/serializer";
+import type { BuildParamProvenance } from "@intentius/chant/provenance";
+
+/**
+ * Resolve the example project's declared `buildParams` (chant.config.ts) the
+ * same way the CLI does, so a source file reading `params.<name>` sees the
+ * declared defaults/env mapping rather than an empty object.
+ *
+ * `build()` deliberately does no declaration or validation — the CLI layer
+ * owns that (see `cli/build-params-cli.ts`) — so a harness that calls
+ * `build()` directly has to reproduce the step, exactly as it already
+ * reproduces the plugin and intrinsic wiring. Without it, an example that
+ * migrated off `process.env` onto build parameters silently builds with every
+ * parameter `undefined`: the assertions see `undefined.svc.id.goog`, and the
+ * fold path declines to substitute a `params` import at all (fold-import.ts
+ * gates that on the build supplying parameters), so the very files the
+ * migration was meant to make foldable drop back to the run path.
+ *
+ * A resolution error is left to the build to surface rather than thrown here.
+ */
+async function declaredBuildParams(srcDir: string): Promise<BuildParamProvenance[]> {
+  const { config } = await loadChantConfigUpward(srcDir);
+  if (!config.buildParams) return [];
+  return resolveBuildParams(config.buildParams, { env: process.env }).provenance;
+}
 
 /**
  * Configuration for the example test harness.
@@ -74,7 +100,9 @@ export function describeExample(
 
     if (!opts?.skipBuild) {
       test("build succeeds", async () => {
-        const result = await build(srcDir, serializers);
+        const result = await build(srcDir, serializers, undefined, {
+          buildParams: await declaredBuildParams(srcDir),
+        });
 
         expect(result.errors).toHaveLength(0);
 

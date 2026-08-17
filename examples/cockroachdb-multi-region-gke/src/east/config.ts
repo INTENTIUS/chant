@@ -11,6 +11,8 @@ export const config = {
   locality: "cloud=gcp,region=us-east4",
   regionShort: "east",
   domain: `east.${CRDB_DOMAIN}`,
-  externalDnsGsaEmail: process.env.EXTERNAL_DNS_GSA_EMAIL_EAST ?? `gke-crdb-east-dns@${GCP_PROJECT_ID}.iam.gserviceaccount.com`,
+  // Both service accounts are created by this same stack, so their emails
+  // follow from the cluster name — there was never anything to override.
+  externalDnsGsaEmail: `gke-crdb-east-dns@${GCP_PROJECT_ID}.iam.gserviceaccount.com`,
   crdbGsaEmail: `gke-crdb-east-crdb@${GCP_PROJECT_ID}.iam.gserviceaccount.com`,
 };
