@@ -1,11 +1,11 @@
 ---
 title: "CockroachDB Multi-Region on GKE"
-description: "A single CockroachDB cluster spanning 3 GCP regions — 9 nodes total — defined in TypeScript with chant's GCP and K8s lexicons."
+description: "One CockroachDB cluster across three GCP regions — nine nodes, three composites, four Ops — with a local k3d smoke test that needs no cloud account."
 ---
 
 import { Aside } from '@astrojs/starlight/components';
 
-One TypeScript project, seven output files, nine CockroachDB nodes across three GCP regions. The key insight: GCP's global VPC with native cross-region routing eliminates the need for VPN gateways or two-pass deploys. All GCP infrastructure is managed by Config Connector on a central management cluster; workloads are applied to three regional clusters.
+One TypeScript project, eight output files, nine CockroachDB nodes across three GCP regions. GCP's VPC is global and routes between regions natively, so there is no VPN gateway and no two-pass build: every value is known at synthesis. Config Connector on a management cluster turns the GCP half of the output into real infrastructure; the Kubernetes half goes to the three clusters it creates.
 
 ## What you'll build
 
@@ -25,78 +25,251 @@ One TypeScript project, seven output files, nine CockroachDB nodes across three 
 
 ## What you'll learn
 
-- Why `advertiseHostDomain` exists: cluster-local FQDNs (`$(hostname -f)`) don't resolve across clusters; nodes must advertise ExternalDNS-registered names instead
-- The multi-stack layout: `src/shared/` + `src/{east,central,west}/` → 7 output files, all values known at build time (no two-pass build)
-- How ExternalDNS + Cloud DNS private zone enables cross-cluster node discovery without public DNS exposure
-- Why the single CA cert matters: if each region generates its own CA, cross-region mTLS fails with "certificate signed by unknown authority"
+- Why `advertiseHostDomain` exists — a cluster-local FQDN does not resolve from another cluster, and nodes that advertise one come up healthy, never find each other, and sit there
+- How three composites collapse a 3-region estate to two files per region
+- How a 13-step deploy script becomes phases, and where a gate belongs (and where it does not)
+- Why the operator you install with Helm belongs in the build output, pinned
+- How to prove a multi-region database forms, on a laptop, with no cloud account
 
-## Cost
+## Try it without a cloud account
 
-~$1.90/hr (~$46/day) for all three regions. See the [example README](https://github.com/intentius/chant/tree/main/examples/cockroachdb-multi-region-gke#cost-estimate) for the full breakdown. Teardown after testing.
-
-## Get started
-
-```
-Deploy the cockroachdb-multi-region-gke example.
-My domain is crdb.mycompany.com. My GCP project is my-project-id.
+```bash
+cd examples/cockroachdb-multi-region-gke
+npm install
+npm run smoke        # chant run crdb-k3d-smoke
 ```
 
-See [`examples/cockroachdb-multi-region-gke/`](https://github.com/intentius/chant/tree/main/examples/cockroachdb-multi-region-gke) for the full README, 11-phase deploy walkthrough, and teardown.
+Three CockroachDB regions in three namespaces of one k3d cluster: a shared CA, three secure nodes, one logical cluster, three regions known to SQL, and a `REGIONAL BY ROW` table that takes a write. About a minute once the CockroachDB image is cached. Needs `k3d`, `kubectl` and `docker`, and no credentials.
 
-## Key patterns
-
-### advertiseHostDomain: fixing cross-cluster gossip
-
-By default, CockroachDB nodes advertise their cluster-local FQDN: `cockroachdb-0.cockroachdb.crdb-east.svc.cluster.local`. This only resolves within the east cluster — central and west nodes can't reach it, so gossip fails.
-
-The `CockroachDbCluster` composite adds an `advertiseHostDomain` prop. When set, nodes use shell form to expand `$HOSTNAME` and append the ExternalDNS-registered domain:
+The cluster's own shape is declared with the k3d lexicon and built to the config `k3d cluster create --config` consumes, so the declaration and the cluster cannot drift:
 
 ```typescript
-// src/east/k8s/cockroachdb.ts
-export const crdb = CockroachDbCluster({
-  replicas: 3,
-  joinAddresses: config.joinAddresses,  // all 9 nodes' external DNS names
-  advertiseHostDomain: "east.crdb.internal",
-  // → cockroachdb-0.east.crdb.internal (registered by ExternalDNS in private zone)
+// k3d/src/k3d-cluster.ts
+export const smokeCluster = new Cluster({
+  metadata: { name: "crdb-smoke" },
+  servers: 1,
+  agents: 0,
+  options: new Options({
+    k3d: new K3dOptions({ wait: true }),
+    k3s: new K3sOptions({
+      extraArgs: [
+        new K3sExtraArg({ arg: "--disable=traefik", nodeFilters: ["server:*"] }),
+        new K3sExtraArg({ arg: "--disable=servicelb", nodeFilters: ["server:*"] }),
+      ],
+    }),
+  }),
 });
 ```
 
-K8s exec form (`command: ["/cockroach/cockroach"]`) doesn't expand `$HOSTNAME`. The composite uses shell form internally:
+<Aside type="note" title="One cluster, not three">
+Cross-*cluster* gossip is the part that needs three k3d clusters, plus something standing in for Cloud DNS and triple the memory. One cluster still proves everything short of that: the manifests apply, a secure cluster forms across three localities on a shared CA, exactly one region initialises, and multi-region SQL works. What it cannot cover — ExternalDNS, Workload Identity, External Secrets, GCE Ingress, Cloud Armor, and NetworkPolicy enforcement (k3s runs flannel, which ignores it) — is listed in `k3d/src/config.ts`, next to the code.
+</Aside>
+
+## Key patterns
+
+### advertiseHostDomain: the bug that looks like nothing
+
+By default a CockroachDB node advertises its cluster-local FQDN, `cockroachdb-0.cockroachdb.crdb-east.svc.cluster.local`. That resolves inside east and nowhere else. Central and west receive an address they cannot reach, gossip never converges, and the symptom is nine healthy pods that never become one cluster.
+
+`CockroachDbRegionStack` takes `advertiseHostDomain`, and every node advertises a name the private zone resolves from all three clusters:
+
+```typescript
+// src/east/k8s.ts
+export const east = CockroachDbRegionStack({
+  region: "east",
+  namespace: "crdb-east",
+  internalDomain: "east.crdb.internal",
+  cockroachdb: {
+    joinAddresses: config.joinAddresses,        // all nine
+    advertiseHostDomain: "east.crdb.internal",  // → cockroachdb-0.east.crdb.internal
+    extraCertNodeAddresses: NODE_ADDRESSES.east,
+  },
+  // ...
+});
+```
+
+There is a second trap underneath it. Kubernetes exec-form args do not expand shell variables, so `command: ["/cockroach/cockroach"]` would emit the literal `${HOSTNAME}`. The composite uses shell form:
 
 ```
 command: ["/bin/sh", "-c"]
 args: ["cockroach start ... --advertise-host=${HOSTNAME}.east.crdb.internal"]
 ```
 
-### Multi-stack layout: one project, subdirectories per region
+Both properties are asserted in `examples/examples.test.ts` rather than left to documentation.
+
+### Three composites, two files per region
 
 ```
-src/shared/   → dist/shared-infra.yaml  (VPC, DNS, KMS, GCS, IAM, Cloud Armor)
-src/east/     → dist/east-infra.yaml + dist/east-k8s.yaml
-src/central/  → dist/central-infra.yaml + dist/central-k8s.yaml
-src/west/     → dist/west-infra.yaml + dist/west-k8s.yaml
+src/shared/   config.ts  infra.ts  platform.ts  secrets.ts  iam.ts
+src/east/     config.ts  infra.ts  k8s.ts
+src/central/  config.ts  infra.ts  k8s.ts
+src/west/     config.ts  infra.ts  k8s.ts
+platform/     eso.ts
 ```
 
-Each subdirectory has its own `chant.config.json`. `npm run build` runs `chant build` in each directory and produces 7 files. There's no rebuild step — all values (project ID, domain, CIDR ranges) are known at build time via `src/shared/config.ts`.
+| Composite | Lexicon | What it emits |
+|---|---|---|
+| `MultiRegionVpc` | gcp | VPC, node + pod subnets per region, a router and NAT per region, allow-internal firewall |
+| `GkeCrdbRegion` | gcp | GKE cluster + node pools, public DNS zone, ExternalDNS identity with WI + `dns.admin`, CockroachDB identity with WI + backup-bucket access |
+| `CockroachDbRegionStack` | k8s | namespace with quota, limits and default-deny; `pd-ssd` StorageClass; the StatefulSet, services, RBAC and PDB; ClusterSecretStore + two ExternalSecrets; managed cert, FrontendConfig and GCE Ingress; Cloud Armor BackendConfig; ExternalDNS; Prometheus |
+
+A whole region is two calls:
 
 ```typescript
-// src/shared/config.ts — the single source of truth
-export const config = {
-  gcpProjectId: process.env.GCP_PROJECT_ID!,
-  crdbDomain: process.env.CRDB_DOMAIN!,
-  joinAddresses: [
-    "cockroachdb-0.east.crdb.internal:26257",
-    // ... all 9 nodes
-  ],
-};
+// src/east/infra.ts
+export const east = GkeCrdbRegion({
+  region: "us-east4",
+  clusterName: "gke-crdb-east",
+  network: "crdb-multi-region",
+  subnetwork: "crdb-multi-region-east-nodes",
+  domain: config.domain,
+  project: config.projectId,
+  crdbNamespace: "crdb-east",
+  masterCidr: "172.16.0.0/28",
+  backupBucket: BACKUP_BUCKET,
+});
 ```
+
+<Aside type="tip" title="A gap in a composite is a lexicon fix">
+When one of these does not quite do what an estate needs, the answer is to change the composite, not to work around it in the example. Two of these three were extracted from an earlier version of this very example.
+</Aside>
+
+### Build parameters, not process.env
+
+Three values vary per deployment. Reading them from `process.env` at module scope is exactly the ambient read [synthesis refuses to fold](/chant/concepts/where-values-come-from/) — and it is not free: it forced nine of twelve files in each region onto the run path, and every regional stack had to switch EVL001 off to permit it.
+
+```typescript
+// chant.config.ts
+buildParams: {
+  projectId:     { type: "string", default: "my-project",      env: "GCP_PROJECT_ID" },
+  projectNumber: { type: "string", default: "000000000000",    env: "GCP_PROJECT_NUMBER" },
+  domain:        { type: "string", default: "crdb.example.com", env: "CRDB_DOMAIN" },
+}
+```
+
+```typescript
+// src/shared/config.ts
+import { params } from "@intentius/chant/params";
+
+export const GCP_PROJECT_ID = params.projectId as string;
+```
+
+The `env` mapping keeps `set -a && source .env && set +a` working exactly as before. Every file in all four stacks now folds. See [Build-Time Parameters](/chant/concepts/build-time-parameters/).
+
+`projectNumber` is there for one reason worth knowing: Google-managed service agents are addressed by project *number*, not id, and the GCS agent needs permission on the CMEK key before the backup bucket will accept it.
+
+### The deploy is an Op
+
+`scripts/deploy.sh` used to be 205 lines and thirteen numbered steps. Each thing it did badly is something an Op does by construction.
+
+```typescript
+// ops/deploy.op.ts
+phase("Network", [kubectlApply("dist/shared-infra.yaml", { context: MGMT, profile: "longInfra" })]),
+
+phase("Clusters",
+  REGIONS.map((r) => kubectlApply(`dist/${r}-infra.yaml`, { context: MGMT, profile: "longInfra" })),
+  { parallel: true }),
+
+phase("Clusters ready", [
+  ...REGIONS.map((r) => waitForReady(CC_CLUSTER,   `gke-crdb-${r}`,       { context: MGMT })),
+  ...REGIONS.map((r) => waitForReady(CC_NODE_POOL, `gke-crdb-${r}-nodes`, { context: MGMT })),
+], { parallel: true }),
+```
+
+The readiness phase is the clearest trade. The script waited on `kubectl wait --for=condition=Ready containercluster/...` and then polled `gcloud container node-pools describe` sixty times in a bash loop. Both are Config Connector resources, so [`waitForReady`](/chant/guide/ops/#phases-and-steps) reads their own Ready condition — and fails fast on a terminal one instead of polling out the timeout.
+
+### Where the gate goes
+
+Between two steps the old script printed a DNS-delegation reminder in an ASCII box and carried straight on. Delegating three subdomains at a registrar is the one action nobody can automate from inside GCP, and Google will not issue the managed certificates until the names resolve — so the deploy "succeeded" while three certificates sat in PROVISIONING and the UIs served 502 until somebody remembered.
+
+That is a gate. It is *not* in the deploy Op:
+
+```typescript
+// ops/publish-ui.op.ts
+export default Op({
+  name: "crdb-publish-ui",
+  depends: ["crdb-deploy"],
+  phases: [
+    phase("Nameservers",      [shell("gcloud dns managed-zones describe ...")]),
+    phase("Await delegation", [gate("gate-dns-delegation", { timeout: "72h", description: "..." })]),
+    phase("Certificates",     [shell("kubectl wait managedcertificate/... --timeout=45m")]),
+    phase("Verify",           REGIONS.map((r) => httpCheck(`https://${r}.${DOMAIN}/health`)), { parallel: true }),
+  ],
+});
+```
+
+A gate anywhere in an Op makes the whole Op refuse to run on the local executor — gates need a durable runtime. The database does not depend on delegation at all, so folding this into the deploy would mean requiring a Temporal server to bring up a database cluster. Split, `crdb-deploy` runs locally with no server and `crdb-publish-ui --temporal` holds for up to three days, surviving a worker restart.
+
+```bash
+chant run crdb-deploy                                    # local executor
+chant run crdb-publish-ui --temporal                     # holds
+chant run signal crdb-publish-ui gate-dns-delegation     # when the NS records are live
+```
+
+### The operator belongs in the build output
+
+External Secrets Operator was installed by `helm repo add` + `helm upgrade --install` in the deploy script. That left `kubectl apply -f dist/` short of the actual deployment, and pinned no version at all — the chart has gone from 0.10 to 2.9 since this example was written, across a major version, and every region's `ClusterSecretStore` depends on the CRDs it installs.
+
+```typescript
+// platform/eso.ts
+export const ESO_CHART_VERSION = "2.9.0";
+
+export const externalSecrets = HelmRender({
+  name: "external-secrets",
+  repo: "https://charts.external-secrets.io",
+  chart: "external-secrets",
+  version: ESO_CHART_VERSION,
+  namespace: "kube-system",
+  values: { installCRDs: true, serviceAccount: { name: "external-secrets-sa" } },
+});
+```
+
+[`HelmRender`](/chant/lexicons/helm/) runs `helm template` at synthesis and turns each rendered manifest into a Declarable, so the operator lands in `dist/eso.yaml` — 44 resources, 25 of them CRDs — and is applied like anything else. The render caches under `~/.chant/helm-renders`, keyed by repo, chart, version and values.
+
+It lives in `platform/`, outside `src/`, because rendering wants the `helm` binary and, on a cold cache, the network. The four stacks under `src/` stay pure synthesis.
+
+### Ownership, and the observe position
+
+```typescript
+// chant.config.ts
+ownership: { stack: "crdb-multi-region" },
+```
+
+Every one of the 193 emitted resources carries `chant.intentius.io/stack: crdb-multi-region`. That marker lives on the live resource, not in a state file chant hosts, which is what makes a later prune precise — and what makes this work:
+
+```bash
+chant lifecycle diff prod --live
+```
+
+See [Lifecycle Models](/chant/concepts/lifecycle-models/) for why the marker and the snapshot are deliberately different things.
 
 ### No two-pass build
 
-GKE and EKS examples use a two-pass build: deploy infra first, extract outputs (SA emails or ARNs), then build K8s manifests with real values. This example doesn't need it — GCP's global VPC means all three clusters share one VPC and one IAM system, so all values can be derived statically from project ID and domain.
+The GKE and EKS microservice examples build twice: infra first, then extract service-account emails or ARNs, then build the manifests with real values. This estate does not need it. One global VPC, one IAM system, and names that follow from the project and the domain — so everything resolves at synthesis, from three build parameters.
+
+## Cost
+
+~$1.90/hr (~$46/day) for all three regions. See the [example README](https://github.com/intentius/chant/tree/main/examples/cockroachdb-multi-region-gke#cost) for the breakdown. Tear it down after testing.
+
+## Deploy it
+
+```bash
+cd examples/cockroachdb-multi-region-gke
+cp .env.example .env && $EDITOR .env
+set -a && source .env && set +a
+
+npm install
+npm run bootstrap    # once: management cluster + Config Connector
+npm run deploy       # chant run crdb-deploy
+```
+
+The [example README](https://github.com/intentius/chant/tree/main/examples/cockroachdb-multi-region-gke) has the full deploy, verification and troubleshooting walkthrough — including the one that costs the most time to diagnose: `cockroach sql` against `/cockroach/cockroach-certs` fails with `password authentication failed for user root`, because the node certs secret contains no client certificate.
 
 ## Further reading
 
 - [GCP Config Connector lexicon](/chant/lexicons/gcp/) — resource reference and composites
-- [GKE Composites](/chant/lexicons/k8s/gke-composites/) — CockroachDbCluster, GkeExternalDnsAgent, and more
-- [Multi-Stack Projects guide](/chant/guide/multi-stack/) — patterns for splitting projects across stacks
+- [GKE Composites](/chant/lexicons/k8s/gke-composites/) — `CockroachDbRegionStack`, `GkeExternalDnsAgent`, and more
+- [Ops](/chant/guide/ops/) — phases, gates, profiles, and compensation
+- [Build-Time Parameters](/chant/concepts/build-time-parameters/) — declaring what varies per deployment
+- [Multi-Stack Projects](/chant/guide/multi-stack/) — splitting one project across stacks
+- [temporal-crdb-deploy](/chant/tutorials/temporal-crdb-deploy/) — the same estate driven by a hand-written Temporal workflow
