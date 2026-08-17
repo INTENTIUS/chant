@@ -36,6 +36,44 @@ const MGMT = "mgmt";
 const CC_CLUSTER = "containercluster.container.cnrm.cloud.google.com";
 const CC_NODE_POOL = "containernodepool.container.cnrm.cloud.google.com";
 
+const EXTERNAL_SECRET = "externalsecret.external-secrets.io";
+
+/**
+ * An ExternalSecret is ready when ESO has written the target Secret, and is
+ * wedged — not slow — when the store is misconfigured or the remote key is
+ * missing. Without the terminal half this waits out the whole timeout on a
+ * typo in a secret name.
+ */
+const SECRET_SYNCED = {
+  ready: [{ conditionType: "Ready", status: "True" }],
+  terminal: [
+    {
+      conditionType: "Ready",
+      reasonOneOf: [
+        "SecretSyncedError",
+        "SecretSyncErrorDeleted",
+        "InvalidProviderConfig",
+        "SecretStoreNotReady",
+        "UpdateFailed",
+      ],
+    },
+  ],
+  observedGeneration: false,
+};
+
+/**
+ * The init Job: ready on Complete, terminal on Failed. Waiting on the
+ * StatefulSet rollout instead would be waiting on something this produces —
+ * a CockroachDB pod's readiness probe stays 503 until the cluster is
+ * initialised — so a Job that exhausts its backoffLimit used to leave the
+ * rollout wait polling out its full timeout with nothing naming the cause.
+ */
+const JOB_DONE = {
+  ready: [{ conditionType: "Complete", status: "True" }],
+  terminal: [{ conditionType: "Failed", status: "True" }],
+  observedGeneration: false,
+};
+
 const REGIONS = ["east", "central", "west"] as const;
 
 export default Op({
@@ -107,7 +145,8 @@ export default Op({
 
     // One CA, one node cert with SANs for all nine nodes, one client cert.
     // Generated in Docker, then stored as Secret Manager versions — the
-    // secrets are declared, their payload is not.
+    // secrets are declared, their payload is not, and nothing here writes a
+    // K8s Secret. External Secrets does that, below.
     phase("Certificates", [
       shell("bash scripts/generate-certs.sh", { profile: "longInfra" }),
       shell("bash scripts/push-certs.sh"),
@@ -133,6 +172,29 @@ export default Op({
       { parallel: true },
     ),
 
+    // The proof that Secret Manager -> ESO -> K8s Secret actually works.
+    //
+    // Every CockroachDB pod mounts these, so without the wait a broken chain
+    // shows up as pods stuck pending on a missing Secret, three phases later,
+    // with nothing pointing at the cause. It is also the assertion that the
+    // chain is not decorative: before #1724 the certs were pre-created by
+    // hand and both ExternalSecrets sat in permanent error while the deploy
+    // reported success.
+    phase(
+      "Secrets synced",
+      REGIONS.flatMap((r) =>
+        ["cockroachdb-node-certs-eso", "cockroachdb-client-certs-eso"].map((name) =>
+          waitForReady(EXTERNAL_SECRET, name, {
+            namespace: `crdb-${r}`,
+            context: r,
+            spec: SECRET_SYNCED,
+            profile: "k8sWait",
+          }),
+        ),
+      ),
+      { parallel: true },
+    ),
+
     // Nodes gossip over the names ExternalDNS registers in crdb.internal. A
     // StatefulSet that starts before they resolve burns its join attempts on
     // NXDOMAIN and then backs off for a long time — this wait is what keeps
@@ -144,21 +206,36 @@ export default Op({
     ),
     phase("Discovery records", [shell("bash scripts/wait-dns.sh", { profile: "k8sWait" })]),
 
+    // Before the rollout wait, not after it. Init is declared, not scripted —
+    // CockroachDbRegionStack emits an init Job for east only, and that Job is
+    // the only thing that mounts the client cert `cockroach init` needs. A
+    // CockroachDB pod's readiness probe stays 503 until the cluster is
+    // initialised, so waiting on the StatefulSet first is waiting on
+    // something this produces: a Job that exhausts its backoffLimit would
+    // leave the rollout wait polling out its whole timeout while the phase
+    // that names the real failure never runs.
+    phase("Initialize", [
+      waitForReady("job", "cockroachdb-init", {
+        namespace: "crdb-east",
+        context: "east",
+        spec: JOB_DONE,
+        profile: "k8sWait",
+      }),
+    ]),
+
+    // Now the pods can actually become ready.
     phase(
       "Nodes",
       REGIONS.map((r) => waitForStack("cockroachdb", { namespace: `crdb-${r}`, context: r })),
       { parallel: true },
     ),
 
-    // Init is declared, not scripted — CockroachDbRegionStack emits an init Job
-    // for east only, and that Job is the only thing that mounts the client
-    // cert `cockroach init` needs. This waits for it, then adds the backup
-    // schedule.
-    phase("Initialize", [shell("bash scripts/init-cluster.sh", { profile: "longInfra" })]),
-
     // Primary region, the two secondaries, SURVIVE REGION FAILURE, and a demo
     // REGIONAL BY ROW table.
     phase("Topology", [shell("bash scripts/configure-regions.sh", { profile: "longInfra" })]),
+
+    // Last, because it execs into a ready pod.
+    phase("Backups", [shell("bash scripts/backup-schedule.sh", { profile: "longInfra" })]),
   ],
 
   // Not a rollback. Tearing a half-built database estate down automatically is

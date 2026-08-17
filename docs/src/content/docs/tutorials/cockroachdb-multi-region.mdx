@@ -227,6 +227,17 @@ export const externalSecrets = HelmRender({
 
 [`HelmRender`](/chant/lexicons/helm/) runs `helm template` at synthesis and turns each rendered manifest into a Declarable, so the operator lands in `dist/eso.yaml` — 44 resources, 25 of them CRDs — and is applied like anything else. The render caches under `~/.chant/helm-renders`, keyed by repo, chart, version and values.
 
+Getting the operator installed is only half of it. The deploy waits for both ExternalSecrets in every region to report `SecretSynced` before it waits on a single CockroachDB pod:
+
+```typescript
+phase("Secrets synced",
+  REGIONS.flatMap((r) => ["cockroachdb-node-certs-eso", "cockroachdb-client-certs-eso"].map((name) =>
+    waitForReady(EXTERNAL_SECRET, name, { namespace: `crdb-${r}`, context: r, spec: SECRET_SYNCED }))),
+  { parallel: true }),
+```
+
+That gate is there because the chain was decorative until recently. The cert script created those Secrets itself with `kubectl create secret`, and ESO will not adopt a Secret it does not own — so both ExternalSecrets sat in permanent error while the deploy reported success on the pre-created bytes. Secret Manager, the ESO install and the Workload Identity bindings behind it delivered nothing, and nothing said so.
+
 It lives in `platform/`, outside `src/`, because rendering wants the `helm` binary and, on a cold cache, the network. The four stacks under `src/` stay pure synthesis.
 
 ### Ownership, and the observe position

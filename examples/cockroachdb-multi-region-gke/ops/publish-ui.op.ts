@@ -33,8 +33,17 @@ const REGIONS = ["east", "central", "west"] as const;
 /**
  * Read from the environment, not from a build parameter: an Op is operational
  * code, and nothing here is synthesized. `set -a && source .env && set +a`.
+ *
+ * The placeholder default is kept so the Op still COMPILES with nothing set —
+ * `chant build` validates every Op's shape, and the repo's test suite reads
+ * this file — but a run against `crdb.example.com` would verify somebody
+ * else's domain and pass or fail for reasons that have nothing to do with
+ * this estate. The Preflight phase below refuses that. Note this Op reads the
+ * env var and not the `domain` build parameter, so a build parameterized with
+ * `--param domain=…` alone is exactly the mismatch Preflight catches.
  */
-const DOMAIN = process.env.CRDB_DOMAIN ?? "crdb.example.com";
+const PLACEHOLDER_DOMAIN = "crdb.example.com";
+const DOMAIN = process.env.CRDB_DOMAIN ?? PLACEHOLDER_DOMAIN;
 
 export default Op({
   name: "crdb-publish-ui",
@@ -44,6 +53,21 @@ export default Op({
   searchAttributes: { Estate: "crdb-multi-region" },
 
   phases: [
+    phase("Preflight", [
+      shell(
+        '[ -n "${CRDB_DOMAIN:-}" ] || ' +
+          '{ echo "CRDB_DOMAIN is not set. This Op verifies https://<region>.$CRDB_DOMAIN/health, ' +
+          'and would otherwise check ' + PLACEHOLDER_DOMAIN + ' — somebody else\'s domain. ' +
+          'set -a && source .env && set +a"; exit 1; }',
+      ),
+      shell(
+        '[ "${CRDB_DOMAIN}" != "' + PLACEHOLDER_DOMAIN + '" ] || ' +
+          '{ echo "CRDB_DOMAIN is still the placeholder (' + PLACEHOLDER_DOMAIN + ') — ' +
+          'put your own domain in .env"; exit 1; }',
+      ),
+      shell('[ -n "${GCP_PROJECT_ID:-}" ] || { echo "GCP_PROJECT_ID is not set"; exit 1; }'),
+    ]),
+
     // The nameservers to copy to your registrar.
     phase("Nameservers", [
       shell(
