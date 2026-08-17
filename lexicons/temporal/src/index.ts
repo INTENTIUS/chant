@@ -62,6 +62,7 @@ export {
   kubectlApply,
   helmInstall,
   waitForStack,
+  waitForReady,
   gitlabPipeline,
   lifecycleSnapshot,
   shell,

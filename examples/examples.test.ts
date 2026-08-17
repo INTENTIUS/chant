@@ -34,6 +34,9 @@ import deployGatedOp from "./getting-started/deploy-gated.op";
 import observeOp from "./getting-started/observe.op";
 import reconcileOp from "./getting-started/reconcile.op";
 import applyOp from "./getting-started/apply.op";
+import crdbDeployOp from "./cockroachdb-multi-region-gke/ops/deploy.op";
+import crdbPublishUiOp from "./cockroachdb-multi-region-gke/ops/publish-ui.op";
+import crdbTeardownOp from "./cockroachdb-multi-region-gke/ops/teardown.op";
 import { resolve } from "path";
 
 /** Read an Op default export's name. */
@@ -1300,5 +1303,137 @@ describe("ray-kuberay-gke example", () => {
     // GCS egress with RFC1918 exclusion
     expect(netpol.doc).toContain("0.0.0.0/0");
     expect(netpol.doc).toContain("10.0.0.0/8");
+  });
+});
+
+// ── CockroachDB multi-region GKE — the three Ops (#1707) ─────────────
+// The Ops replace a 205-line deploy script and a teardown script. None of the
+// three can run in CI — between them they want four GKE clusters, a registrar
+// and a Temporal server — so what is gated here is their shape: the phase
+// order that makes the deploy correct, which phases fan out, and the fact that
+// the one gate lives in the Op that is allowed to have one.
+
+describe("cockroachdb-multi-region-gke Ops (#1707)", () => {
+  type OpProps = {
+    name: string;
+    taskQueue?: string;
+    depends?: string[];
+    phases: Array<{
+      name: string;
+      parallel?: boolean;
+      steps: Array<{ kind: string; fn?: string; signalName?: string }>;
+    }>;
+    onFailure?: Array<{ name: string }>;
+  };
+  const propsOf = (op: unknown) => (op as { props: OpProps }).props;
+
+  test("deploy: phases run in the order that makes the deploy correct", () => {
+    const props = propsOf(crdbDeployOp);
+    expect(props.name).toBe("crdb-deploy");
+    expect(props.phases.map((p) => p.name)).toEqual([
+      "Preflight",
+      "Build",
+      "Network",
+      "Clusters",
+      "Clusters ready",
+      "Reclaim quota",
+      "Credentials",
+      "Certificates",
+      "Operators",
+      "Operators ready",
+      "Workloads",
+      "Discovery",
+      "Discovery records",
+      "Nodes",
+      "Initialize",
+      "Topology",
+    ]);
+
+    // The network exists before the clusters that sit in it, the clusters are
+    // Ready before anything is scheduled on them, and the operator that syncs
+    // TLS secrets is up before the workloads that mount them.
+    const at = (name: string) => props.phases.findIndex((p) => p.name === name);
+    expect(at("Network")).toBeLessThan(at("Clusters"));
+    expect(at("Clusters ready")).toBeLessThan(at("Workloads"));
+    expect(at("Certificates")).toBeLessThan(at("Operators"));
+    expect(at("Operators ready")).toBeLessThan(at("Workloads"));
+    // Nodes gossip over ExternalDNS names; joining before they resolve costs
+    // a long backoff.
+    expect(at("Discovery records")).toBeLessThan(at("Nodes"));
+    expect(at("Nodes")).toBeLessThan(at("Initialize"));
+  });
+
+  test("deploy: the per-region phases fan out, the ordered ones do not", () => {
+    const props = propsOf(crdbDeployOp);
+    const parallel = props.phases.filter((p) => p.parallel).map((p) => p.name);
+    expect(parallel).toEqual([
+      "Clusters",
+      "Clusters ready",
+      "Operators",
+      "Operators ready",
+      "Workloads",
+      "Discovery",
+      "Nodes",
+    ]);
+    for (const name of parallel) {
+      // Three regions, except the readiness wait that covers both the cluster
+      // and its node pool.
+      const phase = props.phases.find((p) => p.name === name)!;
+      expect(phase.steps.length, name).toBeGreaterThanOrEqual(3);
+    }
+  });
+
+  test("deploy: runs on the local executor — no gate anywhere", () => {
+    const props = propsOf(crdbDeployOp);
+    const all = [...props.phases, ...(props.onFailure ?? [])] as OpProps["phases"];
+    expect(all.flatMap((p) => p.steps ?? []).filter((s) => s.kind === "gate")).toEqual([]);
+    // A failure leaves evidence rather than unwinding a half-built database.
+    expect(props.onFailure?.map((p) => p.name)).toEqual(["Diagnose"]);
+  });
+
+  test("deploy: Config Connector resources are waited on by their own Ready condition", () => {
+    const props = propsOf(crdbDeployOp);
+    const ready = props.phases.find((p) => p.name === "Clusters ready")!;
+    expect(ready.steps.every((s) => s.fn === "waitForReady")).toBe(true);
+  });
+
+  test("publish-ui: the gate lives here, and only here", () => {
+    const props = propsOf(crdbPublishUiOp);
+    expect(props.name).toBe("crdb-publish-ui");
+    expect(props.depends).toEqual(["crdb-deploy"]);
+    expect(props.phases.map((p) => p.name)).toEqual([
+      "Nameservers",
+      "Await delegation",
+      "Certificates",
+      "Verify",
+    ]);
+    const gates = props.phases.flatMap((p) => p.steps).filter((s) => s.kind === "gate");
+    expect(gates).toHaveLength(1);
+    expect(gates[0].signalName).toBe("gate-dns-delegation");
+  });
+
+  test("teardown: unwinds inside out", () => {
+    const props = propsOf(crdbTeardownOp);
+    expect(props.name).toBe("crdb-teardown");
+    expect(props.phases.map((p) => p.name)).toEqual([
+      "Build",
+      "Workloads",
+      "Volumes",
+      "Clusters",
+      "Clusters gone",
+      "Network",
+      "Residue",
+    ]);
+    const at = (name: string) => props.phases.findIndex((p) => p.name === name);
+    // Load balancers are orphaned if the cluster goes before its workloads,
+    // and the VPC delete blocks if it goes before the clusters in it.
+    expect(at("Workloads")).toBeLessThan(at("Clusters"));
+    expect(at("Clusters gone")).toBeLessThan(at("Network"));
+  });
+
+  test("all three share a task queue", () => {
+    for (const op of [crdbDeployOp, crdbPublishUiOp, crdbTeardownOp]) {
+      expect(propsOf(op).taskQueue).toBe("crdb");
+    }
   });
 });

@@ -21,7 +21,7 @@ export default {
   // manifests — registering the plugin would turn its chart-authoring rules on
   // over `src/`, where WHM003 reads a plain container image as an
   // unparameterized chart value.
-  lexicons: ["gcp", "k8s"],
+  lexicons: ["gcp", "k8s", "temporal"],
 
   // Stamped onto every emitted resource as `chant.intentius.io/stack`, next to
   // `app.kubernetes.io/managed-by=chant`. This is what lets a later prune tell
