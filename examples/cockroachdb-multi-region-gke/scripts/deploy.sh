@@ -40,6 +40,8 @@ if [[ ${_missing} -eq 1 ]]; then
 fi
 
 echo "==> Pre-flight: checking required tools"
+# helm is needed by `chant build` (platform/eso.ts renders the ESO chart at
+# synth time), not by the deploy itself.
 for cmd in gcloud kubectl docker helm; do
   if ! command -v "${cmd}" &>/dev/null; then
     echo "  [ERROR] ${cmd} is not installed or not in PATH"
@@ -119,15 +121,13 @@ echo "==> Step 5: Generate and distribute TLS certificates"
 bash scripts/generate-certs.sh
 
 echo "==> Step 6: Install External Secrets Operator on all workload clusters"
-helm repo add external-secrets https://charts.external-secrets.io 2>/dev/null || true
-helm repo update external-secrets
+# The operator is rendered into dist/eso.yaml at build time (platform/eso.ts,
+# HelmRender), pinned to a chart version declared in source. Applying it is a
+# kubectl apply like everything else — no helm repo, no floating version.
 for ctx in east central west; do
-  echo "  -> Installing ESO on ${ctx}..."
-  helm upgrade --install external-secrets external-secrets/external-secrets \
-    --kube-context "${ctx}" \
-    --namespace kube-system \
-    --set installCRDs=true \
-    --wait --timeout 120s
+  echo "  -> Applying ESO to ${ctx}..."
+  kubectl --context "${ctx}" apply -f dist/eso.yaml --server-side --force-conflicts
+  kubectl --context "${ctx}" -n kube-system rollout status deployment/external-secrets --timeout=180s
 done
 
 echo "==> Step 7: Push TLS certificates to Secret Manager"

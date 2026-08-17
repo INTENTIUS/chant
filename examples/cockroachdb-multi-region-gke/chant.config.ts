@@ -16,6 +16,11 @@ import type { ChantConfig } from "@intentius/chant";
  * with `--param`, `--params-file`, or the env vars in `.env`.
  */
 export default {
+  // `helm` is a dependency but deliberately not an active lexicon. It is here
+  // only for `platform/eso.ts`'s HelmRender import, whose output is k8s
+  // manifests — registering the plugin would turn its chart-authoring rules on
+  // over `src/`, where WHM003 reads a plain container image as an
+  // unparameterized chart value.
   lexicons: ["gcp", "k8s"],
 
   // Stamped onto every emitted resource as `chant.intentius.io/stack`, next to
