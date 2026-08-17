@@ -11,6 +11,7 @@ import {
   classifyFoldMode,
   type CorpusEntry,
   type FoldMode,
+  entryBuildParams,
 } from "./differential-corpus";
 import { extractFoldCoverageBlock, renderFoldCoverageBlock, FOLD_COVERAGE_DOCS } from "./fold-coverage";
 import { foldExecutionCounts, resetFoldExecutionCounts } from "../packages/core/src/discovery/fold-import";
@@ -280,12 +281,15 @@ async function buildBothWays(
   // chant #1112 — `build` is loaded per call, never captured once at module
   // scope, so the run baseline is always produced by the same chant-core copy
   // the project files were just loaded into. See {@link loadBuild}.
-  const runOnce = async () => (await loadBuild())(entry.srcDir, entry.serializers, undefined, { fold: false });
+  const buildParams = await entryBuildParams(entry);
+  const runOnce = async () =>
+    (await loadBuild())(entry.srcDir, entry.serializers, undefined, { fold: false, buildParams });
   const foldOnce = async () =>
     (await loadBuild())(entry.srcDir, entry.serializers, undefined, {
       fold: true,
       intrinsics: entry.intrinsics,
       lexicons: entry.lexicons,
+      buildParams,
     });
 
   const run = await runOnce();
@@ -320,7 +324,7 @@ describe("fold differential — fold output === run output (#1025, epic #1019)",
       // `--fold` build of the entry, which is exactly the figure the report
       // wants; the both-ways comparison below would double it.
       resetFoldExecutionCounts();
-      const probe = await (await loadBuild())(entry.srcDir, entry.serializers, undefined, { fold: true, intrinsics: entry.intrinsics, lexicons: entry.lexicons });
+      const probe = await (await loadBuild())(entry.srcDir, entry.serializers, undefined, { fold: true, intrinsics: entry.intrinsics, lexicons: entry.lexicons, buildParams: await entryBuildParams(entry) });
       const counts = foldExecutionCounts();
       const mode = classifyFoldMode(probe.foldDecisions);
       if (mode !== "fold") {

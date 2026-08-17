@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import type { Serializer, SerializerResult } from "@intentius/chant/serializer";
 import type { DiscoveryError, BuildError } from "@intentius/chant/errors";
 import type { IntrinsicDef, LexiconPlugin } from "@intentius/chant/lexicon";
+import type { BuildParamProvenance } from "@intentius/chant/provenance";
 import { awsSerializer, awsPlugin } from "@intentius/chant-lexicon-aws";
 import { gcpSerializer, gcpPlugin } from "@intentius/chant-lexicon-gcp";
 import { azureSerializer, azurePlugin } from "@intentius/chant-lexicon-azure";
@@ -177,6 +178,46 @@ export interface CorpusEntry {
 
 /** Every lexicon name the corpus can build with — the keys of {@link SERIALIZER_BY_LEXICON}. */
 export const ALL_LEXICONS: string[] = Object.keys(SERIALIZER_BY_LEXICON);
+
+const buildParamsCache = new Map<string, Promise<BuildParamProvenance[]>>();
+
+/**
+ * chant #1712 — this entry's declared build-time parameters
+ * (`chant.config.ts`'s `buildParams`), resolved the way the CLI resolves them.
+ *
+ * `build()` takes already-resolved values and does no declaration or
+ * validation of its own; that lives in the CLI layer
+ * (`cli/build-params-cli.ts`). So a differential building through `build()`
+ * has to reproduce the step — the same reason it already reproduces
+ * `intrinsics`, `plugins` and `lexicons`, and the same consequence if it
+ * doesn't.
+ *
+ * The consequence is not only a pessimistic measurement. `fold-import.ts`
+ * gates its `params` substitution on the build having supplied parameters, so
+ * an entry that migrated off `process.env` reads as run-fallback. And an
+ * unresolved parameter is plain `undefined`, which the two sides of the JSON
+ * boundary do not agree about: the run path serializes it as `null`, while
+ * `JSON.stringify` drops the key. `examples/cockroachdb-multi-region-gke`'s
+ * ClusterSecretStore `projectID` failed exactly there.
+ *
+ * Cached per source directory: every differential resolves the same entry,
+ * and the resolution reads (and evaluates) a `chant.config.ts`.
+ */
+export function entryBuildParams(entry: CorpusEntry): Promise<BuildParamProvenance[]> {
+  const cached = buildParamsCache.get(entry.srcDir);
+  if (cached) return cached;
+  const resolved = (async () => {
+    const [{ loadChantConfigUpward }, { resolveBuildParams }] = await Promise.all([
+      import("@intentius/chant/config"),
+      import("@intentius/chant/build-params"),
+    ]);
+    const { config } = await loadChantConfigUpward(entry.srcDir);
+    if (!config.buildParams) return [];
+    return resolveBuildParams(config.buildParams, { env: process.env }).provenance;
+  })();
+  buildParamsCache.set(entry.srcDir, resolved);
+  return resolved;
+}
 
 function isDir(p: string): boolean {
   try {

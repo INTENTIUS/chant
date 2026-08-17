@@ -9,6 +9,7 @@ import {
   normalizeErrors,
   type CorpusEntry,
   type NormalizedOutputs,
+  entryBuildParams,
 } from "./differential-corpus";
 
 /**
@@ -230,13 +231,16 @@ async function buildBothWays(entry: CorpusEntry) {
   // scope, so the in-process baseline is always produced by the same
   // chant-core copy the project files were just loaded into. See
   // {@link loadBuild} for what a stale one silently drops.
-  const run = async () => (await loadBuild())(entry.srcDir, entry.serializers, undefined, { fold: false });
+  const buildParams = await entryBuildParams(entry);
+  const run = async () =>
+    (await loadBuild())(entry.srcDir, entry.serializers, undefined, { fold: false, buildParams });
   const sandboxed = async () =>
     (await loadBuild())(entry.srcDir, entry.serializers, undefined, {
       fold: true,
       sandbox: true,
       intrinsics: entry.intrinsics,
       lexicons: entry.lexicons,
+      buildParams,
     });
 
   const runResult = await run();
@@ -298,6 +302,7 @@ describe("sandbox differential — sandboxed-run output === in-process-run outpu
           fold: true,
           intrinsics: entry.intrinsics,
           lexicons: entry.lexicons,
+          buildParams: await entryBuildParams(entry),
         });
         const plainByFile = new Map(plainFold.foldDecisions.map((d) => [d.file, d.mode]));
         const promoted = sandboxedResult.foldDecisions

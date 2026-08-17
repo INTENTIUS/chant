@@ -2,7 +2,7 @@ import { describe, expect, test, vi, afterAll } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { discoverCorpus } from "./differential-corpus";
+import { discoverCorpus, entryBuildParams } from "./differential-corpus";
 
 /**
  * chant #1093, extended by chant #1113 and #1131 — the security property,
@@ -174,6 +174,7 @@ describe("under --sandbox, no project module is executed in the CLI process (cha
         sandbox: true,
         intrinsics: entry.intrinsics,
         lexicons: entry.lexicons,
+        buildParams: await entryBuildParams(entry),
       });
 
       const seen = [...new Set(importedPaths)];
