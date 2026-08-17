@@ -6,6 +6,7 @@ import {
   normalizeOutputs,
   outputsEqual,
   normalizeErrors,
+  entryBuildParams,
 } from "./differential-corpus";
 
 /**
@@ -77,10 +78,12 @@ async function buildBothWays(entry: ReturnType<typeof discoverCorpus>[number]) {
   // module scope, so neither is built by a chant-core copy the project files
   // were not loaded into. See {@link loadBuild} for what a stale one silently
   // drops.
-  const run = async () => (await loadBuild())(entry.srcDir, entry.serializers, undefined, { fold: false });
+  const buildParams = await entryBuildParams(entry);
+  const run = async () =>
+    (await loadBuild())(entry.srcDir, entry.serializers, undefined, { fold: false, buildParams });
   const viaJson = async () => {
     const { discoverEntitySetJson, buildFromEntitiesJson } = await loadEntityWireBuild();
-    const json = await discoverEntitySetJson(entry.srcDir, { fold: false });
+    const json = await discoverEntitySetJson(entry.srcDir, { fold: false, buildParams });
     // The actual "is this pure JSON" proof — a real wire round trip, not just
     // handing the in-memory object across.
     const wire = JSON.parse(JSON.stringify(json)) as typeof json;

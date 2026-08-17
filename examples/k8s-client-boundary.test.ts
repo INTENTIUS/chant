@@ -44,7 +44,7 @@ vi.mock("@kubernetes/client-node", async (importOriginal) => {
 });
 
 const { build } = await import("@intentius/chant/build");
-const { discoverCorpus } = await import("./differential-corpus");
+const { discoverCorpus, entryBuildParams } = await import("./differential-corpus");
 
 const ROOT = resolve(import.meta.dirname, "..");
 const K8S_SRC = join(ROOT, "lexicons/k8s/src");
@@ -191,6 +191,7 @@ describe("chant #1074 — the build path does not resolve the client (observed)"
       const result = await build(entry.srcDir, entry.serializers, undefined, {
         intrinsics: entry.intrinsics,
         lexicons: entry.lexicons,
+        buildParams: await entryBuildParams(entry),
       });
       expect(result.errors, `${entry.name}: the build itself failed`).toEqual([]);
       expect(result.sourceFileCount).toBeGreaterThan(0);
