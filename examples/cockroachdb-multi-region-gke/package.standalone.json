@@ -4,21 +4,32 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "build": "npm run build:shared && npm run build:east && npm run build:central && npm run build:west",
+    "build": "npm run build:shared && npm run build:platform && npm run build:east && npm run build:central && npm run build:west",
     "build:shared": "chant build src/shared --lexicon gcp -o dist/shared-infra.yaml",
+    "build:platform": "chant build platform --lexicon k8s -o dist/eso.yaml",
     "build:east": "chant build src/east --lexicon gcp -o dist/east-infra.yaml && chant build src/east --lexicon k8s -o dist/east-k8s.yaml",
     "build:central": "chant build src/central --lexicon gcp -o dist/central-infra.yaml && chant build src/central --lexicon k8s -o dist/central-k8s.yaml",
     "build:west": "chant build src/west --lexicon gcp -o dist/west-infra.yaml && chant build src/west --lexicon k8s -o dist/west-k8s.yaml",
     "lint": "chant lint src/shared && chant lint src/east && chant lint src/central && chant lint src/west",
-    "deploy": "bash scripts/deploy.sh",
-    "teardown": "bash scripts/teardown.sh"
+    "build:k3d-cluster": "chant build k3d/src --lexicon k3d -o k3d/cluster.yaml",
+    "build:k3d": "chant build k3d/src --lexicon k8s -o dist/k3d.yaml",
+    "smoke": "chant run crdb-k3d-smoke",
+    "bootstrap": "bash scripts/bootstrap.sh",
+    "deploy": "chant run crdb-deploy",
+    "teardown": "chant run crdb-teardown",
+    "publish-ui": "chant run crdb-publish-ui --temporal",
+    "contexts": "bash scripts/kube-contexts.sh",
+    "diff": "chant lifecycle diff prod --live"
   },
   "dependencies": {
-    "@intentius/chant": "^0.0.22",
-    "@intentius/chant-lexicon-gcp": "^0.0.22",
-    "@intentius/chant-lexicon-k8s": "^0.0.22"
+    "@intentius/chant": "^0.44.13",
+    "@intentius/chant-lexicon-gcp": "^0.44.13",
+    "@intentius/chant-lexicon-k8s": "^0.44.13",
+    "@intentius/chant-lexicon-helm": "^0.44.13",
+    "@intentius/chant-lexicon-temporal": "^0.44.13",
+    "@intentius/chant-lexicon-k3d": "^0.44.13"
   },
   "devDependencies": {
-    "typescript": "^5.0.0"
+    "typescript": "^5.9.3"
   }
 }

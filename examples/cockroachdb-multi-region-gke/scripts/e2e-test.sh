@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 # E2E validation for CockroachDB multi-region GKE deployment.
-# Run after `npm run deploy` completes successfully.
+# Run after `chant run crdb-deploy` completes successfully.
+#
+# Every SQL statement uses /cockroach/cockroach-client-certs, not
+# /cockroach/cockroach-certs: the node certs secret holds no client
+# certificate, so the CLI falls through to password auth against it and fails
+# with "password authentication failed for user root". Only east mounts the
+# client certs.
 set -euo pipefail
 
 GCP_PROJECT_ID="${GCP_PROJECT_ID:?GCP_PROJECT_ID must be set}"
@@ -90,7 +96,7 @@ done
 echo ""
 echo "--- Backup Schedule ---"
 _schedules=$(kubectl --context east exec cockroachdb-0 -n crdb-east -- \
-  /cockroach/cockroach sql --certs-dir=/cockroach/cockroach-certs \
+  /cockroach/cockroach sql --certs-dir=/cockroach/cockroach-client-certs \
   -e "SELECT label FROM [SHOW SCHEDULES] WHERE label = 'daily-full-backup';" 2>/dev/null || echo "")
 if echo "${_schedules}" | grep -q "daily-full-backup"; then
   pass "Backup schedule 'daily-full-backup' exists"
@@ -102,7 +108,7 @@ fi
 echo ""
 echo "--- CockroachDB Cluster ---"
 _node_count=$(kubectl --context east exec cockroachdb-0 -n crdb-east -- \
-  /cockroach/cockroach node status --certs-dir=/cockroach/cockroach-certs \
+  /cockroach/cockroach node status --certs-dir=/cockroach/cockroach-client-certs \
   --format=csv 2>/dev/null | tail -n +2 | wc -l | tr -d ' ')
 if [[ "${_node_count}" -ge 9 ]]; then
   pass "All ${_node_count} nodes healthy"
@@ -113,7 +119,7 @@ fi
 # ── Multi-Region Topology ────────────────────────────────────────────
 echo ""
 echo "--- Multi-Region Topology ---"
-_crdb_sql="kubectl --context east exec cockroachdb-0 -n crdb-east -- /cockroach/cockroach sql --certs-dir=/cockroach/cockroach-certs --format=csv -e"
+_crdb_sql="kubectl --context east exec cockroachdb-0 -n crdb-east -- /cockroach/cockroach sql --certs-dir=/cockroach/cockroach-client-certs --format=csv -e"
 
 _region_count=$(${_crdb_sql} "SELECT count(*) FROM [SHOW REGIONS FROM DATABASE defaultdb];" 2>/dev/null | tail -1 | tr -d ' ')
 if [[ "${_region_count}" -ge 3 ]]; then
