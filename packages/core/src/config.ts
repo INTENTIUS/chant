@@ -414,6 +414,7 @@ export async function loadChantConfigUpward(startDir: string): Promise<ResolvedC
     if (parent === dir) break;
     ({ dir, configPath } = findProjectConfig(parent));
   }
+  if (configPath) warnIfFragmentShadowsProjectConfig(configPath);
   return loadChantConfig(dir);
 }
 
@@ -426,12 +427,25 @@ export async function loadChantConfigUpward(startDir: string): Promise<ResolvedC
  */
 const LINT_FRAGMENT_KEYS = new Set(["$schema", "extends", "rules", "overrides", "plugins", "policies"]);
 
+/**
+ * JSON has no comments, so a project that wants to explain why it disabled a
+ * rule reaches for an underscore-prefixed key. chant #1711: both CockroachDB
+ * examples carried a `_ruleNotes` object in every stack's fragment, and one
+ * unrecognized key was enough to stop the walk — `chant build src/east`
+ * resolved the fragment as the project config, found no `buildParams`, no
+ * `ownership` and no `lexicons`, and emitted
+ * `gke-crdb-east-crdb@undefined.iam.gserviceaccount.com`. Silently.
+ *
+ * An underscore key is a comment. It does not make a fragment a project config.
+ */
+const isCommentKey = (k: string): boolean => k.startsWith("_");
+
 function isLintOnlyFragment(configPath: string): boolean {
   if (!configPath.endsWith("chant.config.json")) return false;
   try {
     const parsed = JSON.parse(readFileSync(configPath, "utf-8")) as unknown;
     if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return false;
-    const keys = Object.keys(parsed);
+    const keys = Object.keys(parsed).filter((k) => !isCommentKey(k));
     return keys.length > 0 && keys.every((k) => LINT_FRAGMENT_KEYS.has(k));
   } catch {
     // Unreadable/unparseable JSON: let loadChantConfig surface the real error
@@ -439,6 +453,42 @@ function isLintOnlyFragment(configPath: string): boolean {
     return false;
   }
 }
+
+/**
+ * The `chant.config.json` the walk stopped at declares no project-level key at
+ * all — so it is about to be used as the project config while carrying none of
+ * the things a project config exists to carry.
+ *
+ * The comment-key rule above fixes the case that bit (chant #1711), but the
+ * hole it came from is general: any key outside {@link LINT_FRAGMENT_KEYS}
+ * turns a fragment into the project config, and the consequence is a build
+ * that silently loses every parameter, the ownership marker and the lexicon
+ * list. This says so, naming the key responsible, instead of leaving it to be
+ * discovered in the output.
+ */
+function warnIfFragmentShadowsProjectConfig(configPath: string): void {
+  if (!configPath.endsWith("chant.config.json")) return;
+  try {
+    const parsed = JSON.parse(readFileSync(configPath, "utf-8")) as Record<string, unknown>;
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return;
+    const keys = Object.keys(parsed).filter((k) => !isCommentKey(k));
+    if (keys.some((k) => !LINT_FRAGMENT_KEYS.has(k)) && !keys.some((k) => PROJECT_CONFIG_KEYS.has(k))) {
+      const offenders = keys.filter((k) => !LINT_FRAGMENT_KEYS.has(k));
+      console.error(
+        `warning: ${configPath} is being used as the project config, but declares no project-level ` +
+          `key (${[...PROJECT_CONFIG_KEYS].slice(0, 4).join(", ")}, …). ` +
+          `${offenders.length === 1 ? "The key" : "The keys"} ${offenders.map((k) => `"${k}"`).join(", ")} ` +
+          `stopped the walk to the real one — any config above this file is being ignored. ` +
+          `Prefix a comment key with "_", or move the key to the project config. (chant #1711)`,
+      );
+    }
+  } catch {
+    // Unreadable/unparseable: loadChantConfig reports it properly.
+  }
+}
+
+/** Top-level keys that make a config a *project* config rather than a lint fragment. */
+const PROJECT_CONFIG_KEYS = new Set(Object.keys(ChantConfigSchema.shape).filter((k) => k !== "lint"));
 
 /**
  * Resolve the ownership marker to stamp from project config, or undefined when

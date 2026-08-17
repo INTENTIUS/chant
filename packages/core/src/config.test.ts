@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach, afterEach } from "vitest";
+import { describe, test, expect, beforeEach, afterEach, vi } from "vitest";
 import {
   loadChantConfig,
   loadChantConfigUpward,
@@ -174,6 +174,61 @@ describe("loadChantConfigUpward (#1502 — lint fragments do not end the walk)",
 
     const result = await loadChantConfigUpward(SRC);
     expect(result.config.ownership?.stack).toBe("nested");
+  });
+
+  // #1711 — JSON has no comments, so a project explaining its rule disables
+  // reaches for an underscore key. Both CockroachDB examples carried
+  // `_ruleNotes` in every stack's fragment, and that one key stopped the walk:
+  // `chant build src/east` resolved the fragment, found no `buildParams`, and
+  // emitted `...@undefined.iam.gserviceaccount.com` without a word.
+  test("an underscore comment key does not turn a fragment into a project config", async () => {
+    mkdirSync(SRC, { recursive: true });
+    writeFileSync(
+      join(SRC, "chant.config.json"),
+      JSON.stringify({
+        extends: ["@intentius/chant/lint/presets/strict"],
+        _ruleNotes: { COR001: "inline objects read better here" },
+        rules: { COR001: "off" },
+      }),
+    );
+    writeFileSync(
+      join(TEST_DIR, "chant.config.json"),
+      JSON.stringify({
+        ownership: { stack: "crdb-multi-region" },
+        buildParams: { projectId: { type: "string", default: "my-project" } },
+      }),
+    );
+
+    const result = await loadChantConfigUpward(SRC);
+    expect(result.config.ownership?.stack).toBe("crdb-multi-region");
+    expect(result.config.buildParams?.projectId?.default).toBe("my-project");
+    expect(result.configPath).toBe(join(TEST_DIR, "chant.config.json"));
+  });
+
+  test("a non-comment unknown key still stops the walk, but says so", async () => {
+    mkdirSync(SRC, { recursive: true });
+    writeFileSync(
+      join(SRC, "chant.config.json"),
+      JSON.stringify({ extends: ["@intentius/chant/lint/presets/strict"], ruleNotes: { a: "b" } }),
+    );
+    writeFileSync(
+      join(TEST_DIR, "chant.config.json"),
+      JSON.stringify({ ownership: { stack: "root" } }),
+    );
+
+    const warn = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const result = await loadChantConfigUpward(SRC);
+      // Unchanged behaviour: the fragment is the project config. What is new is
+      // that the build no longer loses the root config in silence.
+      expect(result.configPath).toBe(join(SRC, "chant.config.json"));
+      expect(result.config.ownership).toBeUndefined();
+      const said = warn.mock.calls.flat().join("\n");
+      expect(said).toContain("declares no project-level key");
+      expect(said).toContain('"ruleNotes"');
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   test("a fragment-only project resolves to the default config at the boundary", async () => {
