@@ -34,6 +34,7 @@ import {
   k3dDown,
   kubectlApply,
   shell,
+  waitForReady,
   waitForStack,
 } from "@intentius/chant-lexicon-temporal";
 
@@ -89,24 +90,35 @@ export default Op({
 
     phase("Apply", [kubectlApply("dist/k3d.yaml", { context: CTX, profile: "longInfra" })]),
 
-    phase(
-      "Nodes",
-      REGIONS.map((r) => waitForStack("cockroachdb", { namespace: `crdb-${r}`, context: CTX })),
-      { parallel: true },
-    ),
-
     // Init is declared, not scripted: CockroachDbCluster emits an init Job for
     // the primary region, and that Job is the only thing here that mounts the
     // client cert `cockroach init` needs. Running init by hand from inside a
     // database pod hits the node certs directory instead and fails with
     // "password authentication failed for user root".
+    //
+    // Before the rollout wait, for the same reason as the real deploy: a pod's
+    // readiness probe stays 503 until the cluster is initialised, so the
+    // rollout is waiting on what this produces. Ready on Complete, terminal on
+    // Failed, so a Job that will never finish says so instead of leaving the
+    // next phase to time out.
     phase("Initialize", [
-      shell(
-        `kubectl --context ${CTX} -n crdb-east wait --for=condition=complete ` +
-          "job/cockroachdb-init --timeout=300s",
-        { profile: "k8sWait" },
-      ),
+      waitForReady("job", "cockroachdb-init", {
+        namespace: "crdb-east",
+        context: CTX,
+        spec: {
+          ready: [{ conditionType: "Complete", status: "True" }],
+          terminal: [{ conditionType: "Failed", status: "True" }],
+          observedGeneration: false,
+        },
+        profile: "k8sWait",
+      }),
     ]),
+
+    phase(
+      "Nodes",
+      REGIONS.map((r) => waitForStack("cockroachdb", { namespace: `crdb-${r}`, context: CTX })),
+      { parallel: true },
+    ),
 
     phase("Verify", [
       shell("bash k3d/verify.sh", { env: { K3D_CONTEXT: CTX }, profile: "k8sWait" }),

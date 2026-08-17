@@ -38,6 +38,7 @@ import crdbDeployOp from "./cockroachdb-multi-region-gke/ops/deploy.op";
 import crdbPublishUiOp from "./cockroachdb-multi-region-gke/ops/publish-ui.op";
 import crdbTeardownOp from "./cockroachdb-multi-region-gke/ops/teardown.op";
 import { resolve } from "path";
+import { readFileSync } from "fs";
 
 /** Read an Op default export's name. */
 function opName(op: unknown): string {
@@ -1341,11 +1342,13 @@ describe("cockroachdb-multi-region-gke Ops (#1707)", () => {
       "Operators",
       "Operators ready",
       "Workloads",
+      "Secrets synced",
       "Discovery",
       "Discovery records",
-      "Nodes",
       "Initialize",
+      "Nodes",
       "Topology",
+      "Backups",
     ]);
 
     // Every infra apply targets the `mgmt` context, and bootstrap.sh does not
@@ -1367,7 +1370,20 @@ describe("cockroachdb-multi-region-gke Ops (#1707)", () => {
     // Nodes gossip over ExternalDNS names; joining before they resolve costs
     // a long backoff.
     expect(at("Discovery records")).toBeLessThan(at("Nodes"));
-    expect(at("Nodes")).toBeLessThan(at("Initialize"));
+
+    // Init before the rollout wait, not after it (#1724). A CockroachDB pod's
+    // readiness probe stays 503 until the cluster is initialised, so the
+    // rollout is waiting on something Initialize produces — reversed, a Job
+    // that exhausts its backoffLimit leaves the rollout polling out its full
+    // timeout and the phase that names the failure never runs.
+    expect(at("Initialize")).toBeLessThan(at("Nodes"));
+    // The backup schedule execs into a ready pod, so it comes after.
+    expect(at("Nodes")).toBeLessThan(at("Backups"));
+
+    // Every pod mounts the ESO-delivered certs, so the chain has to be proven
+    // working before anything waits on a pod (#1724).
+    expect(at("Workloads")).toBeLessThan(at("Secrets synced"));
+    expect(at("Secrets synced")).toBeLessThan(at("Nodes"));
   });
 
   test("deploy: the per-region phases fan out, the ordered ones do not", () => {
@@ -1379,6 +1395,7 @@ describe("cockroachdb-multi-region-gke Ops (#1707)", () => {
       "Operators",
       "Operators ready",
       "Workloads",
+      "Secrets synced",
       "Discovery",
       "Nodes",
     ]);
@@ -1404,11 +1421,46 @@ describe("cockroachdb-multi-region-gke Ops (#1707)", () => {
     expect(ready.steps.every((s) => s.fn === "waitForReady")).toBe(true);
   });
 
+  test("deploy: the ESO chain is gated, and the gate fails fast (#1724)", () => {
+    const props = propsOf(crdbDeployOp);
+    const synced = props.phases.find((p) => p.name === "Secrets synced")!;
+    // Two ExternalSecrets per region, each waited on by its own readiness spec.
+    expect(synced.steps).toHaveLength(6);
+    expect(synced.steps.every((s) => s.fn === "waitForReady")).toBe(true);
+    // A wedged store must fail the phase rather than wait out the timeout.
+    const spec = JSON.stringify(synced.steps);
+    expect(spec).toContain("SecretSyncedError");
+    expect(spec).toContain("externalsecret.external-secrets.io");
+  });
+
+  test("deploy: nothing pre-creates the Secrets ESO owns (#1724)", () => {
+    // The regression this guards is invisible in the Op: generate-certs.sh
+    // used to `kubectl create secret` the exact names the ExternalSecrets
+    // target with creationPolicy: Owner, so ESO could never adopt them and
+    // the whole Secret Manager path was decorative while the deploy passed.
+    const certs = readFileSync(
+      resolve(import.meta.dirname, "cockroachdb-multi-region-gke/scripts/generate-certs.sh"),
+      "utf-8",
+    );
+    const active = certs.split("\n").filter((l) => !l.trimStart().startsWith("#")).join("\n");
+    expect(active).not.toMatch(/kubectl[^\n]*create secret/);
+    expect(active).not.toMatch(/cockroachdb-node-certs/);
+  });
+
+  test("publish-ui: refuses to verify somebody else's domain (#1724)", () => {
+    const props = propsOf(crdbPublishUiOp);
+    expect(props.phases[0].name).toBe("Preflight");
+    const guard = JSON.stringify(props.phases[0].steps);
+    expect(guard).toContain("CRDB_DOMAIN");
+    expect(guard).toContain("crdb.example.com");
+  });
+
   test("publish-ui: the gate lives here, and only here", () => {
     const props = propsOf(crdbPublishUiOp);
     expect(props.name).toBe("crdb-publish-ui");
     expect(props.depends).toEqual(["crdb-deploy"]);
     expect(props.phases.map((p) => p.name)).toEqual([
+      "Preflight",
       "Nameservers",
       "Await delegation",
       "Certificates",
