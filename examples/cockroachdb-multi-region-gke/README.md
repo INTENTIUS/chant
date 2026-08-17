@@ -15,11 +15,11 @@ npm run teardown   # chant run crdb-teardown
 
 ## What runs the deploy
 
-Three Ops, in `ops/`. Together they replace a 205-line shell script.
+Four Ops, in `ops/`. Three of them replace a 205-line shell script; the fourth is the local test.
 
 | Op | What it does | Where it runs |
 |---|---|---|
-| `crdb-deploy` | 16 phases: network, three clusters, readiness, certificates, the operator, workloads, discovery, init, topology. Seven phases fan out per region. | local executor — no Temporal server |
+| `crdb-deploy` | 15 phases: network, three clusters, readiness, certificates, the operator, workloads, discovery, init, topology. Seven phases fan out per region. | local executor — no Temporal server |
 | `crdb-publish-ui` | Holds for DNS delegation at your registrar, then verifies all three UIs answer. | Temporal (`--temporal`) |
 | `crdb-teardown` | Unwinds inside out: workloads, volumes, clusters, network, residue. | local executor |
 | `crdb-k3d-smoke` | The local proof — see [Local verification](#local-verification-no-cloud-account). | local executor |
@@ -151,7 +151,7 @@ The cluster's own shape is declared too — `k3d/src/k3d-cluster.ts` builds to t
 
 **What it covers:** the manifests apply; a secure cluster forms on a shared CA across three localities; `advertiseHostDomain` works; exactly one region initialises; multi-region SQL works.
 
-**What it does not, and could not without three clusters:** cross-*cluster* gossip, ExternalDNS against Cloud DNS, Workload Identity, External Secrets against Secret Manager, GCE Ingress, Cloud Armor, and NetworkPolicy enforcement — k3s runs flannel, which ignores NetworkPolicy entirely. `k3d/src/config.ts` says the same thing next to the code.
+**What it does not, and could not without three clusters:** cross-*cluster* gossip, ExternalDNS against Cloud DNS, Workload Identity, External Secrets against Secret Manager, GCE Ingress, Cloud Armor, and NetworkPolicy enforcement — k3s runs flannel, which ignores NetworkPolicy entirely. `k3d/src/regions.ts` says the same thing next to the declarations it applies to, and `k3d/src/config.ts` explains the one-cluster choice.
 
 Build and lint on their own, without a cluster:
 
@@ -165,7 +165,24 @@ npm run lint      # 4 stacks
 
 ### Quota
 
-Config Connector creates each GKE cluster with a default node pool it cannot suppress, alongside the managed pool. The deploy's Reclaim quota phase deletes the default pools once the managed ones are ready, but peak usage is what your quota has to cover: **6 + 3×18 = 60 vCPU**, settling to 42. Ensure `CPUS_ALL_REGIONS` is at least **64**.
+Two things drive this, and both multiply by three.
+
+All four clusters are **regional**, so every node count in the declarations is *per zone* — `initialNodeCount: 1` means three nodes.
+
+GKE also creates a default node pool with each cluster and will not let you suppress it. `GkeCrdbRegion` declares that pool at `nodeCount: 0`, so Config Connector scales it to nothing as soon as it reconciles — but the cluster is created before that happens, so peak is what your quota has to cover.
+
+| | machine | vCPU | nodes at peak | vCPU at peak |
+|---|---|---|---|---|
+| mgmt (us-central1) | e2-medium | 2 | 3 | 6 |
+| east default pool | n2-standard-2 | 2 | 3 | 6 |
+| east managed pool | n2-standard-2 | 2 | 3 | 6 |
+| central default + managed | e2-standard-2 | 2 | 3 + 3 | 12 |
+| west default + managed | e2-standard-2 | 2 | 3 + 3 | 12 |
+| | | | **peak** | **42** |
+
+Once the default pools reconcile to zero, steady state is **24**. East's managed pool can autoscale to 3 per zone, which would take it to 36.
+
+So `CPUS_ALL_REGIONS` wants **48** with headroom, and the per-region `CPUS` quota needs 18 in us-central1 (which hosts both the management cluster and the central region), 12 in us-east4 and 12 in us-west1.
 
 ```bash
 gcloud compute regions list --project "${GCP_PROJECT_ID}" \
@@ -309,17 +326,22 @@ If you delegated DNS at your registrar, remove the NS records — they now point
 
 ## Cost
 
-~$1.90/hr (~$46/day). Tear it down after testing.
+Order of magnitude: **a dollar or two an hour** at steady state, so tens of dollars a day. Tear it down after testing.
 
-| Component | Per region | 3 regions |
+What that is made of, by what the declarations actually ask for — four regional control planes, twelve nodes, and the disks under them:
+
+| Component | Count | Where declared |
 |---|---|---|
-| GKE control plane | $0.10/hr | $0.30/hr |
-| 3× e2-standard-4 nodes | ~$0.40/hr | ~$1.20/hr |
-| Storage (3× 100Gi pd-ssd) | ~$0.05/hr | ~$0.15/hr |
-| Cloud NAT | ~$0.05/hr | ~$0.15/hr |
-| KMS + Secret Manager | — | ~$0.01/hr |
-| GCS backup bucket | — | ~$0.01/hr |
-| Cloud Armor | — | ~$0.08/hr |
+| GKE control planes (regional) | 4 | one per cluster, plus mgmt |
+| e2-medium nodes (mgmt) | 3 | `scripts/bootstrap.sh` |
+| n2-standard-2 nodes (east) | 3, autoscaling to 9 | `src/east/config.ts` |
+| e2-standard-2 nodes (central, west) | 3 each | `src/{central,west}/config.ts` |
+| 100Gi pd-standard boot disks | 12 | `nodeConfig.diskSizeGb` |
+| 10Gi pd-ssd CockroachDB volumes | 9 | `CRDB_CLUSTER.storageSize` |
+| Cloud NAT gateways | 3 | one per region, `MultiRegionVpc` |
+| Cloud Armor policy, KMS key, GCS bucket, Secret Manager | 1 each | `src/shared/platform.ts` |
+
+Priced against the [GCP calculator](https://cloud.google.com/products/calculator) for your regions — the numbers move, and a stale figure in a README is worse than none. The previous version of this table quoted `3× e2-standard-4` and `3× 100Gi pd-ssd`, neither of which this example has ever deployed. See #1418.
 
 No VPN gateway: GCP's VPC routes between regions natively.
 
@@ -333,7 +355,7 @@ src/
 │   ├── infra.ts              # MultiRegionVpc + GKE-pod firewall + private DNS zone
 │   ├── platform.ts           # KMS, GCS backups, Cloud Armor
 │   ├── secrets.ts            # 5 Secret Manager entries for the TLS material
-│   └── iam.ts                # External Secrets identity + 3 WI bindings
+│   └── iam.ts                # External Secrets identity, 3 WI bindings + secret access
 ├── east/                     → dist/east-infra.yaml (10) + dist/east-k8s.yaml (30)
 │   ├── config.ts             # us-east4: machine type, master CIDR, domains
 │   ├── infra.ts              # GkeCrdbRegion
@@ -353,8 +375,7 @@ k3d/
 └── verify.sh                 # 3 live nodes, 3 regions, a regional-by-row write
 scripts/
 ├── bootstrap.sh              # management cluster + Config Connector (once)
-├── kube-contexts.sh          # credentials for mgmt + east/central/west
-├── delete-default-pools.sh   # reclaim the CPU quota GKE takes
+├── kube-contexts.sh          # mgmt | workload | all — see the deploy Op's Preflight
 ├── generate-certs.sh         # one CA, one node cert with all 9 SANs, one client cert
 ├── push-certs.sh             # cert versions into Secret Manager
 ├── wait-dns.sh               # block until ExternalDNS has registered

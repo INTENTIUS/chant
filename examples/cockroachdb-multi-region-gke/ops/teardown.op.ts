@@ -23,9 +23,29 @@ export default Op({
   searchAttributes: { Estate: "crdb-multi-region" },
 
   phases: [
+    // Without the mgmt context every Config Connector delete below is a
+    // `|| true` no-op, and the run still reaches Residue — which deletes the
+    // management cluster, orphaning three GKE clusters, the VPC, its subnets,
+    // NAT and IAM with nothing left to reconcile them, and reports success.
+    // So this is not `|| true`: if the management cluster is unreachable,
+    // stop here rather than destroy the only thing that can clean up.
+    phase("Management context", [
+      shell("bash scripts/kube-contexts.sh mgmt"),
+      shell(
+        "kubectl --context mgmt get crd containerclusters.container.cnrm.cloud.google.com >/dev/null || " +
+          '{ echo "Config Connector is not reachable on the mgmt cluster. Refusing to tear down: ' +
+          'the GCP estate is deleted THROUGH it, and Residue would delete the cluster itself, ' +
+          'leaving everything else orphaned."; exit 1; }',
+      ),
+    ]),
+
     // The manifests have to exist to be deleted, and after a failed deploy
     // they may not have been built yet.
     phase("Build", [shell("npm run build")]),
+
+    // Tolerant on purpose: after a partial teardown these clusters may be gone,
+    // and their contexts with them.
+    phase("Workload contexts", [shell("bash scripts/kube-contexts.sh workload || true")]),
 
     phase(
       "Workloads",

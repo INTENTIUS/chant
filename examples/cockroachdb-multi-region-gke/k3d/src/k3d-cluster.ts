@@ -30,10 +30,11 @@ export const smokeCluster = new Cluster({
         new K3sExtraArg({ arg: "--disable=servicelb", nodeFilters: ["server:*"] }),
       ],
     }),
-    // Deliberately NOT updateDefaultKubeconfig/switchCurrentContext: the Op's
-    // k3dUp resolves the context and every later step names it, so the smoke
-    // test never touches the kubeconfig the operator is using for real
-    // clusters. chant's default is the safe one; this is a note that it was a
-    // choice.
+    // Left at chant's safe default (both false). The Op's k3dUp overrides
+    // updateDefaultKubeconfig to true — later steps address the cluster by
+    // context name, so the entry has to exist — but never
+    // switchCurrentContext, so the smoke test does not move the current
+    // context out from under a machine that also has three real GKE clusters
+    // in its kubeconfig.
   }),
 });

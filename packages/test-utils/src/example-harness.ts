@@ -28,15 +28,24 @@ import type { OwnershipMarker } from "@intentius/chant/ownership";
  *   cannot assert the one thing that makes an owned-only prune possible —
  *   and it would read as the project having no `ownership.stack` at all.
  *
- * A resolution error is left to the build to surface rather than thrown here.
+ * A resolution error throws. `build()` does no declaration validation either,
+ * so returning the empty provenance would leave the parameter reading
+ * `undefined` — the exact silence this function exists to remove, one layer up.
  */
 export async function declaredBuildOptions(
   srcDir: string,
 ): Promise<{ buildParams: BuildParamProvenance[]; ownership?: OwnershipMarker }> {
   const { config } = await loadChantConfigUpward(srcDir);
-  const buildParams = config.buildParams
-    ? resolveBuildParams(config.buildParams, { env: process.env }).provenance
-    : [];
+  let buildParams: BuildParamProvenance[] = [];
+  if (config.buildParams) {
+    const resolved = resolveBuildParams(config.buildParams, { env: process.env });
+    if (resolved.errors.length > 0) {
+      throw new Error(
+        `${srcDir}: build parameters did not resolve —\n  ${resolved.errors.join("\n  ")}`,
+      );
+    }
+    buildParams = resolved.provenance;
+  }
   return { buildParams, ownership: resolveOwnershipMarker(config) };
 }
 

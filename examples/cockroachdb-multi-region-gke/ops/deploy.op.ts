@@ -45,16 +45,33 @@ export default Op({
   searchAttributes: { Estate: "crdb-multi-region" },
 
   phases: [
-    // Fail on a missing tool or an unbootstrapped management cluster now,
-    // rather than ten minutes into a cluster create.
+    // Fail on a missing tool, a missing parameter, or an unbootstrapped
+    // management cluster now, rather than ten minutes into a cluster create.
+    //
+    // The env check is not redundant with the build parameters: those have
+    // placeholder defaults so the example BUILDS with nothing set, which is
+    // exactly the state that must not reach a deploy. Without it the estate
+    // gets applied as `my-project` and the first hard stop is a gcloud call
+    // fifteen minutes later, against a half-built estate.
     phase("Preflight", [
       shell(
         "for c in gcloud kubectl docker helm; do command -v $c >/dev/null || " +
           '{ echo "missing: $c"; exit 1; }; done',
       ),
       shell(
+        'for v in GCP_PROJECT_ID GCP_PROJECT_NUMBER CRDB_DOMAIN; do ' +
+          'eval "val=\\$$v"; [ -n "$val" ] || ' +
+          '{ echo "$v is not set — cp .env.example .env, fill it in, ' +
+          'then: set -a && source .env && set +a"; exit 1; }; done',
+      ),
+      // Every infra apply below targets `mgmt`, and bootstrap.sh leaves the
+      // context called `gke_<project>_us-central1_gke-crdb-mgmt`. Name it
+      // before anything uses it — the three workload contexts come later,
+      // because those clusters do not exist yet.
+      shell("bash scripts/kube-contexts.sh mgmt"),
+      shell(
         "kubectl --context mgmt get crd containerclusters.container.cnrm.cloud.google.com >/dev/null || " +
-          '{ echo "Config Connector not found on the mgmt context — run npm run bootstrap"; exit 1; }',
+          '{ echo "Config Connector not found on the mgmt cluster — run npm run bootstrap"; exit 1; }',
       ),
     ]),
 
@@ -85,11 +102,8 @@ export default Op({
       { parallel: true },
     ),
 
-    // GKE creates a default-pool next to the declared one; nine CockroachDB
-    // nodes need the CPU quota back.
-    phase("Reclaim quota", [shell("bash scripts/delete-default-pools.sh", { profile: "longInfra" })]),
-
-    phase("Credentials", [shell("bash scripts/kube-contexts.sh")]),
+    // The three workload clusters exist now, so their contexts can be named.
+    phase("Credentials", [shell("bash scripts/kube-contexts.sh workload")]),
 
     // One CA, one node cert with SANs for all nine nodes, one client cert.
     // Generated in Docker, then stored as Secret Manager versions — the
