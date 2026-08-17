@@ -12,13 +12,17 @@
     "build:west": "chant build src/west --lexicon gcp -o dist/west-infra.yaml && chant build src/west --lexicon k8s -o dist/west-k8s.yaml",
     "lint": "chant lint src/shared && chant lint src/east && chant lint src/central && chant lint src/west",
     "bootstrap": "bash scripts/bootstrap.sh",
-    "deploy": "bash scripts/deploy.sh",
-    "teardown": "bash scripts/teardown.sh"
+    "deploy": "chant run crdb-deploy",
+    "teardown": "chant run crdb-teardown",
+    "publish-ui": "chant run crdb-publish-ui --temporal",
+    "contexts": "bash scripts/kube-contexts.sh",
+    "diff": "chant lifecycle diff prod --live"
   },
   "dependencies": {
     "@intentius/chant": "*",
     "@intentius/chant-lexicon-gcp": "*",
     "@intentius/chant-lexicon-k8s": "*",
-    "@intentius/chant-lexicon-helm": "*"
+    "@intentius/chant-lexicon-helm": "*",
+    "@intentius/chant-lexicon-temporal": "*"
   }
 }

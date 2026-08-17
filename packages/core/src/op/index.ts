@@ -1,4 +1,4 @@
-export { Op, phase, activity, gate, build, kubectlApply, helmInstall, waitForStack,
+export { Op, phase, activity, gate, build, kubectlApply, helmInstall, waitForStack, waitForReady,
          gitlabPipeline, lifecycleSnapshot, shell, teardown, k3dUp, k3dDown, flociUp, flociDown,
          flociAzUp, flociAzDown, flociGcpUp, flociGcpDown, httpCheck,
          azGroupEnsure, azGroupDelete, azApply, azDelete, awsApply, awsDelete, gcpApply, gcpDelete, policyGate,
