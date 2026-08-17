@@ -36,17 +36,17 @@ export default {
    *
    *   COR001  inline objects — composite props read better inline
    *   COR004  unused exports — resources are consumed by serializers
-   *   COR009  file-count limit — too strict for a 4-stack, 3-region estate
-   *   COR013  mixed resource/config — region config sits next to its resources
-   *   EVL001  one remaining non-literal: the `ALL_CIDRS.map(...)` that shapes
-   *           the allow-cockroachdb NetworkPolicy's `from` list. It used to
-   *           cover the `process.env` reads too; those are build parameters
-   *           now, and the map goes away when the region stacks move onto the
-   *           k8s lexicon's CockroachDbRegionStack, which takes the CIDRs as
-   *           data and does the shaping itself.
+   *   COR013  shared only. An IAMPolicyMember is classified as configuration,
+   *           so a binding sitting next to the identity it binds trips this.
+   *           That grouping is the point.
    *   EVL004  spread from shared config (CRDB_CLUSTER) is static and traceable
-   *   WGC002  hardcoded regions — the 3 regions ARE the topology
-   *   WK8001  hardcoded namespaces — one dedicated namespace per region
+   *   WGC002  hardcoded regions — the three regions ARE the topology
+   *   WK8001  regions only. One dedicated namespace per region, by design.
+   *
+   * COR009, COR013 (regions) and EVL001 came off when the stacks moved onto
+   * the composites: the file counts dropped under the limit, and the last
+   * non-literal — an `ALL_CIDRS.map(...)` shaping a NetworkPolicy's `from`
+   * list — became `allowCidrs` data handed to CockroachDbRegionStack.
    */
 
   buildParams: {
