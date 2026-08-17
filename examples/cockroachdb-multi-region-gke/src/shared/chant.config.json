@@ -3,7 +3,6 @@
   "rules": {
     "COR001": "off",
     "COR004": "off",
-    "COR009": "off",
     "COR013": "off",
     "EVL004": "off",
     "WGC002": "off"
