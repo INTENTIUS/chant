@@ -27,9 +27,14 @@ function lexiconsWithDocs(): string[] {
  * regression to the hardcoded shape.
  */
 describe("unified docs cover every lexicon that has a docs site (#1720)", () => {
-  test("build-docs.sh derives the lexicon list rather than listing them", () => {
+  test("build-docs.sh derives which lexicons it builds from the filesystem", () => {
     const script = readFileSync(join(ROOT, "scripts", "build-docs.sh"), "utf-8");
-    expect(script).toMatch(/for lex_dir in lexicons\/\*\//);
+
+    // Membership comes from the glob. `ORDER` in that script is a sequencing
+    // hint — forgejo and gitlab import github's generated surface at prepack
+    // time — and a lexicon absent from it is appended, not skipped.
+    expect(script).toMatch(/lexicons_with_docs\(\)/);
+    expect(script).toMatch(/for d in lexicons\/\*\//);
 
     // A hardcoded `cd lexicons/<name>` is how the old shape looked. One is a
     // regression; the loop uses a variable.
@@ -39,6 +44,25 @@ describe("unified docs cover every lexicon that has a docs site (#1720)", () => 
       `build-docs.sh hardcodes these lexicons again — a new lexicon's docs would be ` +
         `silently left out of the site, which is #1720`,
     ).toEqual([]);
+  });
+
+  test("the ordering hint names only lexicons that exist", () => {
+    const script = readFileSync(join(ROOT, "scripts", "build-docs.sh"), "utf-8");
+    const order = (script.match(/^ORDER="([^"]*)"/m)?.[1] ?? "").split(/\s+/).filter(Boolean);
+    expect(order.length).toBeGreaterThan(0);
+    const have = new Set(lexiconsWithDocs());
+    const stale = order.filter((lex) => !have.has(lex));
+    expect(
+      stale,
+      `ORDER names lexicons that no longer have a docs site: ${stale.join(", ")}`,
+    ).toEqual([]);
+
+    // forgejo's prepack imports lexicons/github/src/generated, so github has to
+    // be generated first — the alphabetical order this replaced put forgejo
+    // first and died with ERR_MODULE_NOT_FOUND. gitlab imports github too but
+    // has always been built before it without complaint, so that edge is not
+    // asserted: only the one CI actually proved.
+    expect(order.indexOf("github")).toBeLessThan(order.indexOf("forgejo"));
   });
 
   test("every lexicon docs site declares the base its published path needs", () => {
