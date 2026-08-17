@@ -1,34 +1,48 @@
 import { describe, test, expect } from "vitest";
 import { build } from "@intentius/chant/build";
 import { lintCommand } from "@intentius/chant/cli/commands/lint";
-import { loadChantConfigUpward } from "@intentius/chant/config";
+import { loadChantConfigUpward, resolveOwnershipMarker } from "@intentius/chant/config";
 import { resolveBuildParams } from "@intentius/chant/build-params";
 import { resolve } from "path";
 import { readdirSync, statSync } from "fs";
 import type { Serializer } from "@intentius/chant/serializer";
 import type { BuildParamProvenance } from "@intentius/chant/provenance";
+import type { OwnershipMarker } from "@intentius/chant/ownership";
 
 /**
- * Resolve the example project's declared `buildParams` (chant.config.ts) the
- * same way the CLI does, so a source file reading `params.<name>` sees the
- * declared defaults/env mapping rather than an empty object.
+ * What `chant build` resolves from `chant.config.ts` before it calls `build()`,
+ * resolved the same way here.
  *
- * `build()` deliberately does no declaration or validation — the CLI layer
- * owns that (see `cli/build-params-cli.ts`) — so a harness that calls
- * `build()` directly has to reproduce the step, exactly as it already
- * reproduces the plugin and intrinsic wiring. Without it, an example that
- * migrated off `process.env` onto build parameters silently builds with every
- * parameter `undefined`: the assertions see `undefined.svc.id.goog`, and the
- * fold path declines to substitute a `params` import at all (fold-import.ts
- * gates that on the build supplying parameters), so the very files the
- * migration was meant to make foldable drop back to the run path.
+ * `build()` takes both of these as already-resolved options and reads no
+ * config itself — that lives in the CLI layer (`cli/commands/build.ts`,
+ * `cli/build-params-cli.ts`). A harness that calls `build()` directly has to
+ * reproduce the step, exactly as the differential corpus already reproduces
+ * the plugin, intrinsic and lexicon wiring. Both omissions are silent:
+ *
+ * - Without `buildParams`, a source file reading `params.<name>` gets
+ *   `undefined`, so assertions see `undefined.svc.id.goog`. The fold path also
+ *   declines to substitute a `params` import at all (fold-import.ts gates that
+ *   on the build supplying parameters), so the files a migration off
+ *   `process.env` was meant to make foldable drop back to the run path.
+ * - Without `ownership`, no resource carries the stack marker, so a test
+ *   cannot assert the one thing that makes an owned-only prune possible —
+ *   and it would read as the project having no `ownership.stack` at all.
  *
  * A resolution error is left to the build to surface rather than thrown here.
  */
-async function declaredBuildParams(srcDir: string): Promise<BuildParamProvenance[]> {
+export async function declaredBuildOptions(
+  srcDir: string,
+): Promise<{ buildParams: BuildParamProvenance[]; ownership?: OwnershipMarker }> {
   const { config } = await loadChantConfigUpward(srcDir);
-  if (!config.buildParams) return [];
-  return resolveBuildParams(config.buildParams, { env: process.env }).provenance;
+  const buildParams = config.buildParams
+    ? resolveBuildParams(config.buildParams, { env: process.env }).provenance
+    : [];
+  return { buildParams, ownership: resolveOwnershipMarker(config) };
+}
+
+/** Just the parameters half of {@link declaredBuildOptions}. */
+export async function declaredBuildParams(srcDir: string): Promise<BuildParamProvenance[]> {
+  return (await declaredBuildOptions(srcDir)).buildParams;
 }
 
 /**
@@ -100,9 +114,7 @@ export function describeExample(
 
     if (!opts?.skipBuild) {
       test("build succeeds", async () => {
-        const result = await build(srcDir, serializers, undefined, {
-          buildParams: await declaredBuildParams(srcDir),
-        });
+        const result = await build(srcDir, serializers, undefined, await declaredBuildOptions(srcDir));
 
         expect(result.errors).toHaveLength(0);
 

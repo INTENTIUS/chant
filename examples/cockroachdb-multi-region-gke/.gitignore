@@ -1,1 +1,3 @@
 certs/
+k3d/certs/
+k3d/cluster.yaml

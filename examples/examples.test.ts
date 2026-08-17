@@ -8,7 +8,7 @@ vi.hoisted(() => {
   process.env.FLY_FLAPS_BASE_URL ??= "http://localhost:4280";
   process.env.SPRITES_BASE_URL ??= "http://localhost:4290";
 });
-import { describeExample } from "@intentius/chant-test-utils/example-harness";
+import { describeExample, declaredBuildOptions } from "@intentius/chant-test-utils/example-harness";
 import { build } from "@intentius/chant/build";
 import { lintCommand } from "@intentius/chant/cli/commands/lint";
 import { awsSerializer } from "@intentius/chant-lexicon-aws";
@@ -1434,6 +1434,206 @@ describe("cockroachdb-multi-region-gke Ops (#1707)", () => {
   test("all three share a task queue", () => {
     for (const op of [crdbDeployOp, crdbPublishUiOp, crdbTeardownOp]) {
       expect(propsOf(op).taskQueue).toBe("crdb");
+    }
+  });
+});
+
+// ── CockroachDB multi-region GKE — synthesis (#1709) ─────────────────
+// Four stacks, built the way `npm run build` builds them: one shared, three
+// regional, each regional one twice (gcp for Config Connector, k8s for the
+// workloads). Not `describeExample`, because that builds `src` as a single
+// directory — and the three regions deliberately share names (one `pd-ssd`
+// StorageClass, one `external-dns-role` ClusterRole each) that only collide
+// when they are merged into one output, which is never how they are deployed.
+//
+// The assertions are the properties that were expensive to learn: the ones a
+// multi-region CockroachDB cluster is silently broken without.
+
+describe("cockroachdb-multi-region-gke (#1704)", () => {
+  const root = resolve(import.meta.dirname, "cockroachdb-multi-region-gke");
+  const stack = (name: string) => resolve(root, "src", name);
+
+  /** Build one stack with both serializers; return whichever output is asked for. */
+  async function buildStack(dir: string) {
+    const result = await build(dir, [gcpSerializer, k8sSerializer], undefined, await declaredBuildOptions(dir));
+    expect(result.errors, `${dir}: build errors`).toEqual([]);
+    const text = (key: string) => {
+      const out = result.outputs.get(key);
+      return typeof out === "string" ? out : (out?.primary ?? "");
+    };
+    return { gcp: text("gcp"), k8s: text("k8s") };
+  }
+
+  test("all four stacks lint clean", async () => {
+    for (const name of ["shared", "east", "central", "west"]) {
+      const result = await lintCommand({ path: stack(name), format: "stylish", fix: true });
+      if (!result.success || result.errorCount > 0 || result.warningCount > 0) {
+        console.log(result.output);
+      }
+      expect(result.success, name).toBe(true);
+      expect(result.errorCount, name).toBe(0);
+      expect(result.warningCount, name).toBe(0);
+    }
+  });
+
+  test("every resource carries the ownership marker", async () => {
+    for (const name of ["shared", "east", "central", "west"]) {
+      const { gcp, k8s } = await buildStack(stack(name));
+      for (const output of [gcp, k8s].filter(Boolean)) {
+        const docs = parseK8sDocs(output);
+        expect(docs.length, name).toBeGreaterThan(0);
+        for (const doc of docs) {
+          // Ownership is a marker on the live resource, which is what makes a
+          // later owned-only prune possible without a state file.
+          expect(doc.doc, `${name}/${doc.kind} ${doc.name}`).toContain(
+            "chant.intentius.io/stack: crdb-multi-region",
+          );
+          expect(doc.doc).toContain("app.kubernetes.io/managed-by: chant");
+        }
+      }
+    }
+  });
+
+  test("shared: the VPC spans three regions with NAT in each", async () => {
+    const { gcp } = await buildStack(stack("shared"));
+    const docs = parseK8sDocs(gcp);
+    const kinds = docs.map((d) => d.kind);
+
+    // One global VPC, node + pod subnet per region.
+    expect(kinds.filter((k) => k === "ComputeNetwork")).toHaveLength(1);
+    expect(kinds.filter((k) => k === "ComputeSubnetwork")).toHaveLength(6);
+    // Private nodes reach the internet through NAT, and there is no such thing
+    // as a global Cloud NAT — one router and one NAT per region or the two
+    // secondaries have no egress.
+    expect(kinds.filter((k) => k === "ComputeRouter")).toHaveLength(3);
+    expect(kinds.filter((k) => k === "ComputeRouterNAT")).toHaveLength(3);
+
+    // The private zone is what makes cross-region gossip resolvable at all.
+    const zone = docs.find((d) => d.kind === "DNSManagedZone")!;
+    expect(zone.name).toBe("crdb-internal");
+    expect(zone.doc).toContain("visibility: private");
+
+    // GKE hands pods addresses from secondary ranges that are not the declared
+    // pod subnets, so the allow-internal rule does not cover them.
+    const fw = docs.filter((d) => d.kind === "ComputeFirewall");
+    expect(fw.map((f) => f.name).sort()).toEqual([
+      "crdb-multi-region-allow-gke-pods",
+      "crdb-multi-region-allow-internal",
+    ]);
+  });
+
+  test("shared: backups are CMEK-encrypted and the GCS agent can use the key", async () => {
+    const { gcp } = await buildStack(stack("shared"));
+    const docs = parseK8sDocs(gcp);
+    const bucket = docs.find((d) => d.kind === "StorageBucket")!;
+    expect(bucket.doc).toContain("cryptoKeys/crdb-encryption");
+    // The agent is addressed by project NUMBER, not id — the reason the
+    // example declares a second build parameter at all.
+    const binding = docs.find((d) => d.name === "gcs-kms-encrypter-decrypter")!;
+    expect(binding.doc).toContain("gs-project-accounts.iam.gserviceaccount.com");
+    expect(binding.doc).toContain("roles/cloudkms.cryptoKeyEncrypterDecrypter");
+  });
+
+  test("each region declares its own cluster, zone and two identities", async () => {
+    for (const region of ["east", "central", "west"]) {
+      const { gcp } = await buildStack(stack(region));
+      const docs = parseK8sDocs(gcp);
+      expect(docs.find((d) => d.kind === "ContainerCluster")!.name).toBe(`gke-crdb-${region}`);
+      expect(docs.find((d) => d.kind === "DNSManagedZone")!.name).toBe(`gke-crdb-${region}-zone`);
+      const sas = docs.filter((d) => d.kind === "IAMServiceAccount").map((d) => d.name).sort();
+      expect(sas).toEqual([`gke-crdb-${region}-crdb`, `gke-crdb-${region}-dns`]);
+    }
+  });
+
+  test("the three GKE masters do not overlap", async () => {
+    const cidrs: string[] = [];
+    for (const region of ["east", "central", "west"]) {
+      const { gcp } = await buildStack(stack(region));
+      const cluster = parseK8sDocs(gcp).find((d) => d.kind === "ContainerCluster")!;
+      cidrs.push(cluster.doc.match(/masterIpv4CidrBlock:\s*'?([^\s']+)/)![1]);
+    }
+    // Three private clusters peered into one VPC. Identical master CIDRs is a
+    // create-time failure on the second cluster.
+    expect(new Set(cidrs).size).toBe(3);
+  });
+
+  test("every node advertises a name the other two regions can resolve", async () => {
+    for (const region of ["east", "central", "west"]) {
+      const { k8s } = await buildStack(stack(region));
+      const sts = parseK8sDocs(k8s).find((d) => d.kind === "StatefulSet")!;
+
+      // $(hostname -f) gives a .svc.cluster.local name, which resolves in this
+      // cluster and nowhere else — gossip across regions then never converges.
+      expect(sts.doc).toContain(`--advertise-host=\${HOSTNAME}.${region}.crdb.internal`);
+      expect(sts.doc).not.toContain("--advertise-host=$(hostname -f)");
+
+      // K8s exec-form args do not expand shell variables, so ${HOSTNAME} only
+      // means anything because the command is a shell.
+      expect(sts.doc).toContain("/bin/sh");
+
+      // All nine nodes, in every region's --join.
+      for (const r of ["east", "central", "west"]) {
+        for (const i of [0, 1, 2]) {
+          expect(sts.doc, `${region} joins ${r}-${i}`).toContain(
+            `cockroachdb-${i}.${r}.crdb.internal`,
+          );
+        }
+      }
+    }
+  });
+
+  test("exactly one region runs cockroach init", async () => {
+    const initJobs: string[] = [];
+    for (const region of ["east", "central", "west"]) {
+      const { k8s } = await buildStack(stack(region));
+      if (parseK8sDocs(k8s).some((d) => d.kind === "Job")) initJobs.push(region);
+    }
+    // Two regions bootstrapping in parallel is two clusters, not one.
+    expect(initJobs).toEqual(["east"]);
+  });
+
+  test("no region generates its own CA", async () => {
+    for (const region of ["east", "central", "west"]) {
+      const { k8s } = await buildStack(stack(region));
+      const docs = parseK8sDocs(k8s);
+      // A per-region cert-gen Job would mint a third CA and nothing would
+      // trust anything. The one shared CA arrives through External Secrets.
+      expect(docs.some((d) => d.name.includes("cert-gen")), region).toBe(false);
+      const store = docs.find((d) => d.kind === "ClusterSecretStore")!;
+      expect(store.doc).toContain("workloadIdentity");
+      expect(store.doc).toContain(`clusterName: gke-crdb-${region}`);
+      const secrets = docs.filter((d) => d.kind === "ExternalSecret").map((d) => d.name).sort();
+      expect(secrets).toEqual([
+        "cockroachdb-client-certs-eso",
+        "cockroachdb-node-certs-eso",
+      ]);
+    }
+  });
+
+  test("the UI is behind a managed cert and Cloud Armor", async () => {
+    for (const region of ["east", "central", "west"]) {
+      const { k8s } = await buildStack(stack(region));
+      const docs = parseK8sDocs(k8s);
+      const ingress = docs.find((d) => d.kind === "Ingress")!;
+      expect(ingress.doc).toContain("networking.gke.io/managed-certificates: cockroachdb-ui-cert");
+      expect(ingress.doc).toContain("cockroachdb-ui-frontend");
+      const backend = docs.find((d) => d.kind === "BackendConfig")!;
+      expect(backend.doc).toContain("securityPolicy");
+      expect(backend.doc).toContain("crdb-ui-waf");
+      // CockroachDB serves its UI over TLS, so the LB has to speak HTTPS to it.
+      const svc = docs.find((d) => d.name === "cockroachdb-public")!;
+      expect(svc.doc).toContain('{"http":"HTTPS"}');
+    }
+  });
+
+  test("no dangling ServiceAccount reference in any regional stack", async () => {
+    for (const region of ["east", "central", "west"]) {
+      const { k8s } = await buildStack(stack(region));
+      const docs = parseK8sDocs(k8s);
+      const declared = new Set(docs.filter((d) => d.kind === "ServiceAccount").map((d) => d.name));
+      for (const m of k8s.matchAll(/serviceAccountName:\s*(\S+)/g)) {
+        expect(declared.has(m[1]), `${region}: ${m[1]}`).toBe(true);
+      }
     }
   });
 });

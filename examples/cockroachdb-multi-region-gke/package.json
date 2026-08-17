@@ -11,6 +11,9 @@
     "build:central": "chant build src/central --lexicon gcp -o dist/central-infra.yaml && chant build src/central --lexicon k8s -o dist/central-k8s.yaml",
     "build:west": "chant build src/west --lexicon gcp -o dist/west-infra.yaml && chant build src/west --lexicon k8s -o dist/west-k8s.yaml",
     "lint": "chant lint src/shared && chant lint src/east && chant lint src/central && chant lint src/west",
+    "build:k3d-cluster": "chant build k3d/src --lexicon k3d -o k3d/cluster.yaml",
+    "build:k3d": "chant build k3d/src --lexicon k8s -o dist/k3d.yaml",
+    "smoke": "chant run crdb-k3d-smoke",
     "bootstrap": "bash scripts/bootstrap.sh",
     "deploy": "chant run crdb-deploy",
     "teardown": "chant run crdb-teardown",
@@ -23,6 +26,7 @@
     "@intentius/chant-lexicon-gcp": "*",
     "@intentius/chant-lexicon-k8s": "*",
     "@intentius/chant-lexicon-helm": "*",
-    "@intentius/chant-lexicon-temporal": "*"
+    "@intentius/chant-lexicon-temporal": "*",
+    "@intentius/chant-lexicon-k3d": "*"
   }
 }
