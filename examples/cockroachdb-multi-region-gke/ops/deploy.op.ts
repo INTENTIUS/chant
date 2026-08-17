@@ -136,7 +136,10 @@ export default Op({
       { parallel: true },
     ),
 
-    // From east, once, for all nine.
+    // Init is declared, not scripted — CockroachDbRegionStack emits an init Job
+    // for east only, and that Job is the only thing that mounts the client
+    // cert `cockroach init` needs. This waits for it, then adds the backup
+    // schedule.
     phase("Initialize", [shell("bash scripts/init-cluster.sh", { profile: "longInfra" })]),
 
     // Primary region, the two secondaries, SURVIVE REGION FAILURE, and a demo

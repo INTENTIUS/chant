@@ -1,27 +1,40 @@
 #!/usr/bin/env bash
-# Configure CockroachDB multi-region topology after cluster init.
-# Sets primary region, adds secondary regions, configures survival goal,
-# and creates a demo REGIONAL BY ROW table.
+# Turn nine nodes that know about each other into a multi-region database:
+# a primary region, two secondaries, and a survival goal that means the cluster
+# keeps serving when a whole region goes.
+#
+# Every statement runs from east against the CLIENT certs directory. The node
+# certs secret has no client certificate in it, so `--certs-dir=/cockroach/
+# cockroach-certs` falls through to password auth and fails — see
+# scripts/init-cluster.sh.
 set -euo pipefail
 
-echo "==> Configuring CockroachDB multi-region topology"
+ctx="${CRDB_CONTEXT:-east}"
+ns="${CRDB_NAMESPACE:-crdb-east}"
+client_certs="/cockroach/cockroach-client-certs"
 
-CRDB_SQL="kubectl --context east exec cockroachdb-0 -n crdb-east -- /cockroach/cockroach sql --certs-dir=/cockroach/cockroach-certs -e"
+sql() {
+  kubectl --context "${ctx}" exec cockroachdb-0 -n "${ns}" -- \
+    /cockroach/cockroach sql --certs-dir="${client_certs}" -e "$1"
+}
 
-echo "  -> Setting primary region to us-east4"
-${CRDB_SQL} "ALTER DATABASE defaultdb SET PRIMARY REGION 'us-east4';"
+echo "==> primary region us-east4"
+sql "ALTER DATABASE defaultdb SET PRIMARY REGION 'us-east4';"
 
-echo "  -> Adding region us-central1"
-${CRDB_SQL} "ALTER DATABASE defaultdb ADD REGION 'us-central1';"
+echo "==> adding us-central1 and us-west1"
+sql "ALTER DATABASE defaultdb ADD REGION 'us-central1';"
+sql "ALTER DATABASE defaultdb ADD REGION 'us-west1';"
 
-echo "  -> Adding region us-west1"
-${CRDB_SQL} "ALTER DATABASE defaultdb ADD REGION 'us-west1';"
+# The reason the cluster spans three regions at all. Under REGION survival a
+# whole region can fail without the database losing quorum — which needs
+# replicas in all three, so it is only legal once all three are added.
+echo "==> survive region failure"
+sql "ALTER DATABASE defaultdb SURVIVE REGION FAILURE;"
 
-echo "  -> Setting survival goal to REGION"
-${CRDB_SQL} "ALTER DATABASE defaultdb SURVIVE REGION FAILURE;"
-
-echo "  -> Creating demo REGIONAL BY ROW table"
-${CRDB_SQL} "
+# Rows carry their own region and are homed there, so a read from the region
+# that owns the row is local. This is the payoff of the whole topology.
+echo "==> demo REGIONAL BY ROW table"
+sql "
 CREATE TABLE IF NOT EXISTS orders (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   region crdb_internal_region NOT NULL DEFAULT gateway_region()::crdb_internal_region,
@@ -32,18 +45,19 @@ CREATE TABLE IF NOT EXISTS orders (
 ) LOCALITY REGIONAL BY ROW;
 "
 
-echo "  -> Inserting sample rows from each region"
-${CRDB_SQL} "INSERT INTO orders (customer_id, total) VALUES ('11111111-1111-1111-1111-111111111111', 99.99);"
+# One row per region, written through each region's own gateway so the default
+# gateway_region() puts it where it belongs. Central and west run the insert
+# themselves; they hold no client cert, so the statement goes in over the SQL
+# service from east with an explicit region instead.
+echo "==> sample rows"
+sql "
+INSERT INTO orders (region, customer_id, total) VALUES
+  ('us-east4',    '11111111-1111-1111-1111-111111111111',  99.99),
+  ('us-central1', '22222222-2222-2222-2222-222222222222', 149.99),
+  ('us-west1',    '33333333-3333-3333-3333-333333333333',  79.99);
+"
 
-kubectl --context central exec cockroachdb-0 -n crdb-central -- \
-  /cockroach/cockroach sql --certs-dir=/cockroach/cockroach-certs -e \
-  "INSERT INTO orders (customer_id, total) VALUES ('22222222-2222-2222-2222-222222222222', 149.99);"
-
-kubectl --context west exec cockroachdb-0 -n crdb-west -- \
-  /cockroach/cockroach sql --certs-dir=/cockroach/cockroach-certs -e \
-  "INSERT INTO orders (customer_id, total) VALUES ('33333333-3333-3333-3333-333333333333', 79.99);"
-
-echo "==> Multi-region topology configured"
-echo "    Run 'SHOW REGIONS FROM DATABASE defaultdb;' to verify"
-echo "    Run 'SELECT * FROM orders;' to see rows from all regions"
-echo "    Run 'SHOW SCHEDULES;' to verify backup schedule"
+echo ""
+echo "  SHOW REGIONS FROM DATABASE defaultdb;   -- three regions"
+echo "  SELECT region, count(*) FROM orders GROUP BY region;"
+echo "  SHOW SCHEDULES;                          -- the daily backup"

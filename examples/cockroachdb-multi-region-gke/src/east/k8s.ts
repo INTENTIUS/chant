@@ -46,6 +46,12 @@ export const east = CockroachDbRegionStack({
     // cluster only, and gossip across regions then never converges.
     advertiseHostDomain: config.internalDomain,
     extraCertNodeAddresses: NODE_ADDRESSES.east,
+    // East is where every post-deploy SQL statement runs — the backup schedule
+    // and the multi-region topology. `cockroach sql` needs a CLIENT cert, and
+    // the node certs secret does not contain one: without this the CLI falls
+    // through to password auth and fails with "password authentication failed
+    // for user root", which reads like a credentials problem and is not.
+    mountClientCerts: true,
   },
 
   tls: { gcpSecretNames: CERT_SECRET_NAMES },
