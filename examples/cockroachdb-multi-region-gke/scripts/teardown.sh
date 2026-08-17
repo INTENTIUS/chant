@@ -8,10 +8,11 @@ GCP_PROJECT_ID="${GCP_PROJECT_ID:?GCP_PROJECT_ID must be set}"
 
 echo "==> Tearing down CockroachDB multi-region GKE cluster"
 
-# Step 0: Uninstall External Secrets Operator from workload clusters
-echo "==> Uninstalling External Secrets Operator..."
+# Step 0: Remove External Secrets Operator from workload clusters.
+# It was applied from dist/eso.yaml, so it comes out the same way.
+echo "==> Deleting External Secrets Operator..."
 for ctx in east central west; do
-  helm uninstall external-secrets --kube-context "${ctx}" --namespace kube-system 2>/dev/null || true
+  kubectl --context "${ctx}" delete -f dist/eso.yaml --ignore-not-found 2>/dev/null || true
 done
 
 # Step 1: Delete K8s resources from workload clusters (parallel)
