@@ -19,7 +19,8 @@
  * What it does not cover, and could not without three clusters: cross-CLUSTER
  * gossip, ExternalDNS against Cloud DNS, Workload Identity, External Secrets
  * against Secret Manager, GCE Ingress, Cloud Armor, and NetworkPolicy
- * enforcement (k3s runs flannel, which ignores it). See k3d/src/config.ts.
+ * enforcement (k3s runs flannel, which ignores it). k3d/src/regions.ts says
+ * the same next to the declarations; k3d/src/config.ts explains why one cluster.
  *
  * Teardown runs whether or not the run succeeded — a failed smoke test that
  * leaves a cluster behind gets run once and then avoided.

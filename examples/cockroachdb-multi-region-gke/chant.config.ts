@@ -9,7 +9,7 @@ import type { ChantConfig } from "@intentius/chant";
  * `process.env` in source. The env mapping keeps `set -a && source .env` working
  * exactly as before, but the read is now explicit, validated, and — the reason
  * that matters here — foldable: an ambient `process.env` read at module scope
- * forced nine of this example's twelve regional files onto the run path, and
+ * forced nine of each region's eleven source files onto the run path, and
  * every regional stack had to switch EVL001 off to permit it.
  *
  * The defaults are placeholders that build but do not deploy. Supply real ones

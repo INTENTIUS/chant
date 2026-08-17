@@ -62,7 +62,7 @@ export const smokeCluster = new Cluster({
 ```
 
 <Aside type="note" title="One cluster, not three">
-Cross-*cluster* gossip is the part that needs three k3d clusters, plus something standing in for Cloud DNS and triple the memory. One cluster still proves everything short of that: the manifests apply, a secure cluster forms across three localities on a shared CA, exactly one region initialises, and multi-region SQL works. What it cannot cover — ExternalDNS, Workload Identity, External Secrets, GCE Ingress, Cloud Armor, and NetworkPolicy enforcement (k3s runs flannel, which ignores it) — is listed in `k3d/src/config.ts`, next to the code.
+Cross-*cluster* gossip is the part that needs three k3d clusters, plus something standing in for Cloud DNS and triple the memory. One cluster still proves everything short of that: the manifests apply, a secure cluster forms across three localities on a shared CA, exactly one region initialises, and multi-region SQL works. What it cannot cover — ExternalDNS, Workload Identity, External Secrets, GCE Ingress, Cloud Armor, and NetworkPolicy enforcement (k3s runs flannel, which ignores it) — is listed in `k3d/src/regions.ts`, next to the declarations it applies to.
 </Aside>
 
 ## Key patterns
@@ -127,6 +127,7 @@ export const east = GkeCrdbRegion({
   crdbNamespace: "crdb-east",
   masterCidr: "172.16.0.0/28",
   backupBucket: BACKUP_BUCKET,
+  nodeConfig: { machineType: "n2-standard-2", maxNodeCount: 3, diskSizeGb: 100 },
 });
 ```
 
@@ -136,7 +137,7 @@ When one of these does not quite do what an estate needs, the answer is to chang
 
 ### Build parameters, not process.env
 
-Three values vary per deployment. Reading them from `process.env` at module scope is exactly the ambient read [synthesis refuses to fold](/chant/concepts/where-values-come-from/) — and it is not free: it forced nine of twelve files in each region onto the run path, and every regional stack had to switch EVL001 off to permit it.
+Three values vary per deployment. Reading them from `process.env` at module scope is exactly the ambient read [synthesis refuses to fold](/chant/concepts/where-values-come-from/) — and it is not free: it forced nine of each region's eleven source files onto the run path, and every regional stack had to switch EVL001 off to permit it.
 
 ```typescript
 // chant.config.ts
@@ -171,8 +172,8 @@ phase("Clusters",
   { parallel: true }),
 
 phase("Clusters ready", [
-  ...REGIONS.map((r) => waitForReady(CC_CLUSTER,   `gke-crdb-${r}`,       { context: MGMT })),
-  ...REGIONS.map((r) => waitForReady(CC_NODE_POOL, `gke-crdb-${r}-nodes`, { context: MGMT })),
+  ...REGIONS.map((r) => waitForReady(CC_CLUSTER,   `gke-crdb-${r}`,       { context: MGMT, profile: "longInfra" })),
+  ...REGIONS.map((r) => waitForReady(CC_NODE_POOL, `gke-crdb-${r}-nodes`, { context: MGMT, profile: "longInfra" })),
 ], { parallel: true }),
 ```
 
@@ -220,7 +221,7 @@ export const externalSecrets = HelmRender({
   chart: "external-secrets",
   version: ESO_CHART_VERSION,
   namespace: "kube-system",
-  values: { installCRDs: true, serviceAccount: { name: "external-secrets-sa" } },
+  values: { installCRDs: true, serviceAccount: { name: "external-secrets-sa" }, /* … */ },
 });
 ```
 
@@ -249,7 +250,7 @@ The GKE and EKS microservice examples build twice: infra first, then extract ser
 
 ## Cost
 
-~$1.90/hr (~$46/day) for all three regions. See the [example README](https://github.com/intentius/chant/tree/main/examples/cockroachdb-multi-region-gke#cost) for the breakdown. Tear it down after testing.
+A dollar or two an hour at steady state — four regional control planes, twelve nodes, and the disks under them. The [example README](https://github.com/intentius/chant/tree/main/examples/cockroachdb-multi-region-gke#cost) lists what to price; the numbers move, so price it for your own regions. Tear it down after testing.
 
 ## Deploy it
 
@@ -268,7 +269,7 @@ The [example README](https://github.com/intentius/chant/tree/main/examples/cockr
 ## Further reading
 
 - [GCP Config Connector lexicon](/chant/lexicons/gcp/) — resource reference and composites
-- [GKE Composites](/chant/lexicons/k8s/gke-composites/) — `CockroachDbRegionStack`, `GkeExternalDnsAgent`, and more
+- [GKE Composites](/chant/lexicons/k8s/gke-composites/) — `GkeExternalDnsAgent`, `GceIngress`, and the rest of the GKE surface (`CockroachDbRegionStack` is not documented there yet — #1723)
 - [Ops](/chant/guide/ops/) — phases, gates, profiles, and compensation
 - [Build-Time Parameters](/chant/concepts/build-time-parameters/) — declaring what varies per deployment
 - [Multi-Stack Projects](/chant/guide/multi-stack/) — splitting one project across stacks

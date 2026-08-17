@@ -1336,7 +1336,6 @@ describe("cockroachdb-multi-region-gke Ops (#1707)", () => {
       "Network",
       "Clusters",
       "Clusters ready",
-      "Reclaim quota",
       "Credentials",
       "Certificates",
       "Operators",
@@ -1348,6 +1347,14 @@ describe("cockroachdb-multi-region-gke Ops (#1707)", () => {
       "Initialize",
       "Topology",
     ]);
+
+    // Every infra apply targets the `mgmt` context, and bootstrap.sh does not
+    // create it under that name — so Preflight has to, before Network.
+    const preflight = props.phases.find((p) => p.name === "Preflight")!;
+    expect(
+      preflight.steps.some((s) => JSON.stringify(s).includes("kube-contexts.sh mgmt")),
+      "Preflight must name the mgmt context before anything applies through it",
+    ).toBe(true);
 
     // The network exists before the clusters that sit in it, the clusters are
     // Ready before anything is scheduled on them, and the operator that syncs
@@ -1416,7 +1423,9 @@ describe("cockroachdb-multi-region-gke Ops (#1707)", () => {
     const props = propsOf(crdbTeardownOp);
     expect(props.name).toBe("crdb-teardown");
     expect(props.phases.map((p) => p.name)).toEqual([
+      "Management context",
       "Build",
+      "Workload contexts",
       "Workloads",
       "Volumes",
       "Clusters",
@@ -1429,6 +1438,19 @@ describe("cockroachdb-multi-region-gke Ops (#1707)", () => {
     // and the VPC delete blocks if it goes before the clusters in it.
     expect(at("Workloads")).toBeLessThan(at("Clusters"));
     expect(at("Clusters gone")).toBeLessThan(at("Network"));
+
+    // Residue deletes the management cluster. Every GCP delete before it goes
+    // THROUGH that cluster, and each is `|| true` — so without a hard check
+    // that Config Connector is reachable, an unreachable mgmt context means
+    // every delete no-ops, Residue destroys the only thing that could have
+    // cleaned up, and the run reports success.
+    const mgmt = props.phases[0];
+    expect(mgmt.name).toBe("Management context");
+    expect(at("Management context")).toBeLessThan(at("Residue"));
+    const guard = JSON.stringify(mgmt.steps);
+    expect(guard).toContain("kube-contexts.sh mgmt");
+    expect(guard).toContain("Refusing to tear down");
+    expect(guard).not.toContain("containerclusters.container.cnrm.cloud.google.com >/dev/null || true");
   });
 
   test("all three share a task queue", () => {
