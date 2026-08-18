@@ -35,4 +35,4 @@ Every serialized service and env group carries the `CHANT_MANAGED_BY=chant` owne
 
 ## Applying
 
-The output is applied against the Public API directly by `renderApply` (via `chant run` and the `renderDeploy` Op). Endpoint and auth come from `RENDER_API_BASE_URL` and `RENDER_API_KEY`; the workspace from `RENDER_OWNER_ID` (or the sole workspace the key can see). Each resource is found by name and created or PATCHed; created services are waited to `live`; with `prune` the owned services and env groups no longer declared are deleted.
+The output is applied against the Public API directly by `renderApply` (via `chant run` and the `renderDeploy` Op). Endpoint and auth come from `RENDER_API_BASE_URL` and `RENDER_API_KEY`; the workspace from `RENDER_OWNER_ID` (or the sole workspace the key can see). Each resource is found by name and created or PATCHed; created services are waited to `live`; with `prune` the owned services and env groups no longer declared — and the disks and custom domains under owned services no longer declared — are deleted.

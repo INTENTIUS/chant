@@ -14,10 +14,14 @@
  *   - Services and env groups carry the primary marker (`CHANT_MANAGED_BY`,
  *     RENDER_ENV_OWNERSHIP_KEYS) in their env vars, so their verdict is
  *     per-resource: `owned` when marked, else `foreign`.
- *   - Datastores, projects, environments, disks, custom domains, registry
- *     credentials, and webhooks carry no marker channel, so their verdict is
- *     `unknown` — the change set never escalates `unknown` to a delete. When
- *     the `owned` filter asks for those types, this logs that no verdict is
+ *   - Disks and custom domains carry no marker but hang off a service, so
+ *     they inherit the parent's verdict (the service boundary — fly's app
+ *     boundary, one level down); undeclared ones under an owned declared
+ *     service surface as owned orphans.
+ *   - Datastores, projects, environments, registry credentials, and webhooks
+ *     carry no marker channel and no boundary, so their verdict is `unknown`
+ *     — the change set never escalates `unknown` to a delete. When the
+ *     `owned` filter asks for those types, this logs that no verdict is
  *     available rather than silently returning everything.
  *
  * Endpoint + auth reuse the applier verbatim (resolveEndpoint /
@@ -143,6 +147,10 @@ export async function describeResources(
   // parent exists. A missing parent means the child cannot exist yet — it is
   // reported absent, which is exactly the create the plan should propose.
   const liveId = new Map<string, string>();
+  // Service verdicts by live id, so a disk/domain can inherit its parent's.
+  const serviceVerdict = new Map<string, "owned" | "foreign">();
+  // Declared children by `${serviceId}:${name}`, for the orphan scan.
+  const declaredChildren = new Set<string>();
 
   // Declared services and env groups by natural key, so the workspace-wide
   // marker scan below can tell an orphan from a declared one.
@@ -154,7 +162,7 @@ export async function describeResources(
     if (loggedUnknown || !owned) return;
     loggedUnknown = true;
     console.warn(
-      "[render] datastores, projects, environments, disks, custom domains, registry credentials and webhooks carry no ownership marker — their verdict is unknown; --owned withholds them rather than guessing",
+      "[render] datastores, projects, environments, registry credentials and webhooks carry no ownership marker — their verdict is unknown; --owned withholds them rather than guessing",
     );
   };
 
@@ -216,7 +224,9 @@ export async function describeResources(
     const id = typeof live.id === "string" ? live.id : undefined;
     if (id) liveId.set(entityName, id);
 
-    // Ownership verdict.
+    // Ownership verdict: the marker for services and env groups; the parent
+    // service's verdict for disks and custom domains (service boundary);
+    // unknown for the rest.
     let ownership: ResourceMetadata["ownership"];
     if (entry.marked && id) {
       let env: Record<string, string>;
@@ -227,6 +237,18 @@ export async function describeResources(
         env = envVarsToMap(full.envVars);
       }
       ownership = isChantOwned(env) ? "owned" : "foreign";
+      if (isServiceEntityType(req.entityType)) serviceVerdict.set(id, ownership);
+    } else if (entry.boundary === "service") {
+      const raw = req.entityType === ENTITY_TYPES.customDomain ? req.pathParams?.serviceId : req.body.serviceId;
+      const parentId = isRefMarker(raw) ? liveId.get(raw.$ref) : typeof raw === "string" ? raw : undefined;
+      if (parentId) declaredChildren.add(`${parentId}:${req.name}`);
+      let verdict = parentId ? serviceVerdict.get(parentId) : undefined;
+      if (!verdict && parentId) {
+        // Parent named by literal id (not declared here): read its marker.
+        verdict = isChantOwned(await readServiceEnvVars(ctx, parentId, http, signal)) ? "owned" : "foreign";
+        serviceVerdict.set(parentId, verdict);
+      }
+      ownership = verdict ?? "unknown";
     } else {
       ownership = "unknown";
       noteUnknown();
@@ -270,18 +292,48 @@ export async function describeResources(
       const id = typeof svc.id === "string" ? svc.id : undefined;
       const name = typeof svc.name === "string" ? svc.name : "";
       const type = typeof svc.type === "string" ? svc.type : "";
-      if (!id || declaredServices.has(`${type}:${name}`)) continue;
-      const env = await readServiceEnvVars(ctx, id, http, signal);
-      if (!isChantOwned(env)) continue;
-      const entityType = ENTITY_TYPE_OF_SERVICE[type] ?? ENTITY_TYPES.webService;
-      result[`${CATALOG[entityType].kind}/${name}`] = {
-        type: entityType,
-        physicalId: id,
-        status: statusOf(svc),
-        lastUpdated: typeof svc.updatedAt === "string" ? svc.updatedAt : undefined,
-        ownership: "owned",
-        attributes: pruneUndefined({ id, name, dashboardUrl: svc.dashboardUrl, type }),
-      };
+      if (!id) continue;
+      const declared = declaredServices.has(`${type}:${name}`);
+      const verdict = serviceVerdict.get(id) ?? (isChantOwned(await readServiceEnvVars(ctx, id, http, signal)) ? "owned" : "foreign");
+      if (verdict !== "owned") continue;
+      if (!declared) {
+        const entityType = ENTITY_TYPE_OF_SERVICE[type] ?? ENTITY_TYPES.webService;
+        result[`${CATALOG[entityType].kind}/${name}`] = {
+          type: entityType,
+          physicalId: id,
+          status: statusOf(svc),
+          lastUpdated: typeof svc.updatedAt === "string" ? svc.updatedAt : undefined,
+          ownership: "owned",
+          attributes: pruneUndefined({ id, name, dashboardUrl: svc.dashboardUrl, type }),
+        };
+        continue; // its children go with it
+      }
+      // Service boundary: undeclared disks and custom domains under a declared
+      // owned service are owned orphans too.
+      for (const disk of await listAll(ctx, "/disks", { serviceId: id, ownerId }, "disk", http, signal)) {
+        const diskId = typeof disk.id === "string" ? disk.id : undefined;
+        const diskName = typeof disk.name === "string" ? disk.name : "";
+        if (!diskId || disk.serviceId !== id || declaredChildren.has(`${id}:${diskName}`)) continue;
+        result[`Disk/${diskName}`] = {
+          type: ENTITY_TYPES.disk,
+          physicalId: diskId,
+          status: "deployed",
+          ownership: "owned",
+          attributes: pruneUndefined({ id: diskId, name: diskName, serviceId: id, mountPath: disk.mountPath, sizeGB: disk.sizeGB }),
+        };
+      }
+      for (const domain of await listAll(ctx, `/services/${id}/custom-domains`, {}, "customDomain", http, signal)) {
+        const domainId = typeof domain.id === "string" ? domain.id : undefined;
+        const domainName = typeof domain.name === "string" ? domain.name : "";
+        if (!domainId || declaredChildren.has(`${id}:${domainName}`)) continue;
+        result[`CustomDomain/${domainName}`] = {
+          type: ENTITY_TYPES.customDomain,
+          physicalId: domainId,
+          status: statusOf(domain),
+          ownership: "owned",
+          attributes: pruneUndefined({ id: domainId, name: domainName, serviceId: id }),
+        };
+      }
     }
     for (const grp of await listAll(ctx, "/env-groups", { ownerId }, "envGroup", http, signal)) {
       const id = typeof grp.id === "string" ? grp.id : undefined;

@@ -33,6 +33,12 @@ function resourceHover(className: string, entry: LexiconEntry): HoverInfo | unde
     if (cat.marked) {
       lines.push("");
       lines.push("Carries chant's `CHANT_MANAGED_BY` env-var ownership marker; eligible for owned-only prune.");
+    } else if (cat.boundary === "service") {
+      lines.push("");
+      lines.push("Inherits its parent service's ownership verdict (service boundary); pruned when the service is chant-owned and this is undeclared.");
+    } else {
+      lines.push("");
+      lines.push("No ownership marker channel: verdict is `unknown`; never auto-pruned.");
     }
   } else if (entry.kind === "resource") {
     lines.push("*Resource — a Render Public API object*");

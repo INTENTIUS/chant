@@ -5,7 +5,7 @@ import { renderSerializer } from "./serializer";
 import { describeResources } from "./describe-resources";
 import { FakeRender } from "./op/activities/fake-render";
 import { renderApply } from "./op/activities/render-apply";
-import { WebService, WebServiceDetails, Postgres, Disk, EnvGroup } from "./generated/index";
+import { WebService, WebServiceDetails, Postgres, Disk, CustomDomain, EnvGroup } from "./generated/index";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -59,8 +59,42 @@ describe("render describeResources", () => {
     expect(after.resources.web.type).toBe("Render::Services::WebService");
     expect(after.resources.web.physicalId).toMatch(/^srv-/);
     expect(after.resources.db.ownership).toBe("unknown");
-    expect(after.resources.disk.ownership).toBe("unknown");
+    // Service boundary: the disk inherits its owned parent's verdict.
+    expect(after.resources.disk.ownership).toBe("owned");
     expect(after.resources.disk.attributes?.serviceId).toBe(after.resources.web.physicalId);
+  });
+
+  it("disks and domains inherit a foreign parent's verdict, and undeclared ones under an owned service are owned orphans", async () => {
+    process.env.RENDER_OWNER_ID = "tea-1";
+    const fake = new FakeRender();
+    const foreign = fake.seed("/services", { name: "theirs", type: "web_service", ownerId: "tea-1", envVars: [] });
+    fake.seed("/disks", { name: "fd", sizeGB: 1, mountPath: "/d", serviceId: foreign.id });
+    const w = new WebService({ name: "web", serviceDetails: new WebServiceDetails({ runtime: "docker" }) });
+    const b = build(
+      stack(
+        ["web", w],
+        ["disk", new Disk({ name: "data", sizeGB: 1, mountPath: "/d", serviceId: w })],
+        ["fdisk", new Disk({ name: "fd", sizeGB: 1, mountPath: "/d", serviceId: foreign.id as string })],
+      ),
+    );
+    const dir = mkdtempSync(join(tmpdir(), "render-obs-"));
+    const planPath = join(dir, "render.json");
+    writeFileSync(planPath, b.buildOutput);
+    await renderApply({ planPath, endpoint: "http://fake/v1", wait: { intervalMs: 0 } }, undefined, fake.http());
+    const webId = fake.service("web")!.id as string;
+    fake.seed("/disks", { name: "stray", sizeGB: 1, mountPath: "/s", serviceId: webId });
+    fake.domains.set(webId, [{ id: "cd-1", name: "stray.example.com", verificationStatus: "unverified" }]);
+
+    const out = await describeResources(base(b), fake.http());
+    expect(out.resources.disk.ownership).toBe("owned");
+    expect(out.resources.fdisk.ownership).toBe("foreign");
+    expect(out.resources["Disk/stray"]).toMatchObject({ ownership: "owned", type: "Render::Services::Disk" });
+    expect(out.resources["CustomDomain/stray.example.com"]).toMatchObject({ ownership: "owned", status: "unverified" });
+
+    const owned = await describeResources({ ...base(b), owned: true }, fake.http());
+    expect(owned.resources.fdisk).toBeUndefined();
+    expect(owned.unobserved?.fdisk.reason).toBe("filtered");
+    expect(owned.resources.disk.ownership).toBe("owned");
   });
 
   it("marks an unmarked live service foreign, and withholds it under --owned", async () => {

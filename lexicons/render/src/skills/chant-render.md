@@ -99,13 +99,13 @@ Fix every reported violation before applying. Secret values belong in `generateV
 2. Finds the existing resource by name (services also by type; environments by project; disks by service).
 3. `POST`s a create when absent, or `PATCH`es the differing patchable fields when present. Service env vars are replaced through `PUT /services/{id}/env-vars`; a `generateValue` var keeps its live value rather than being regenerated. Env-group vars are reconciled per key.
 4. Waits each **created** service's first deploy to `live` (`wait.deploys: false` to skip; `wait.deadlineMs` default 15 minutes) and throws on `build_failed`/`update_failed`/`canceled`.
-5. With `prune: true`, deletes services and env groups that carry the marker for this stack but are no longer in the plan. Foreign resources (no marker) and other stacks' resources are never touched. Datastores, projects, environments, disks, and domains are never pruned — they have no marker; remove them explicitly with `renderDelete`.
+5. With `prune: true`, deletes services and env groups that carry the marker for this stack but are no longer in the plan, and the disks and custom domains under an owned declared service that the plan no longer declares. Foreign resources (no marker) and other stacks' resources are never touched. Datastores, projects, environments, registry credentials, and webhooks are never pruned — they have no marker; remove them explicitly with `renderDelete`.
 
 Returns the versioned apply envelope: `applied` (`created` / `updated` / `unchanged`, with the Render id as `physicalId`) and `pruned`.
 
 ## Read back with plan
 
-`chant lifecycle plan` (via `describeResources`) lists what is live for every declared entity, with an ownership verdict: services and env groups are `owned` or `foreign` by the marker; everything else is `unknown`, which the change set never escalates to a delete. Undeclared chant-marked services and env groups in the workspace surface as owned orphans, so a removed declaration shows up as a delete candidate before you prune.
+`chant lifecycle plan` (via `describeResources`) lists what is live for every declared entity, with an ownership verdict: services and env groups are `owned` or `foreign` by the marker; disks and custom domains inherit their service's verdict; everything else is `unknown`, which the change set never escalates to a delete. Undeclared chant-owned services, env groups, disks, and domains surface as owned orphans, so a removed declaration shows up as a delete candidate before you prune.
 
 ## Teardown
 

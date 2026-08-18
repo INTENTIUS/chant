@@ -120,6 +120,7 @@ export const site = new StaticSite({
 Render has no tags or labels. chant's marker is an env var:
 
 - **Services and env groups** carry `CHANT_MANAGED_BY=chant`, `CHANT_STACK=<stack>`, `CHANT_ENV=<env>` in their env vars. That is the primary marker: `describeResources` answers `owned` / `foreign` from it, and `prune: true` deletes only marked resources of the current stack that the plan no longer declares. A service someone created in the dashboard is `foreign` and is never modified or deleted by prune — but it *is* adopted by name if you declare it (a PATCH brings it to the declared shape and stamps the marker).
-- **Everything else** (Postgres, KeyValue, Project, Environment, Disk, CustomDomain, RegistryCredential, Webhook) has no marker channel; its verdict is `unknown` and it is never pruned. Remove one by dropping it from the plan and running `renderDelete` on the old plan, or by hand.
+- **Disks and custom domains** have no marker but hang off a service and inherit its verdict — the service boundary. An undeclared disk or domain under a chant-owned service is pruned with `prune: true`; one under a foreign service is foreign and untouched.
+- **Everything else** (Postgres, KeyValue, Project, Environment, RegistryCredential, Webhook) has no marker channel and no boundary; its verdict is `unknown` and it is never pruned. Remove one by dropping it from the plan and running `renderDelete` on the old plan, or by hand.
 
 The marker keys are visible in the service's environment. That is deliberate — it is the same information a Kubernetes label or an AWS tag carries, in the only durable key/value store Render exposes.

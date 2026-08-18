@@ -48,7 +48,7 @@ Each service type is its own class (`WebService`, `StaticSite`, `PrivateService`
 - Finds each resource by name (services also by type), `POST`s a create when absent or `PATCH`es the differing fields when present, and replaces service env vars through `PUT /services/{id}/env-vars` — keeping a `generateValue` var's live value rather than regenerating it.
 - Resolves references in dependency order: projects → environments → env groups and datastores → services → disks and custom domains → webhooks.
 - Waits each created service's first deploy to `live`, and fails on `build_failed` / `update_failed`.
-- Prunes only what chant owns. Every service and env group chant creates carries a `CHANT_MANAGED_BY=chant` env-var marker (plus `CHANT_STACK` / `CHANT_ENV`); a resource without it — or belonging to another stack — is never modified or deleted by `prune`, so the applier is safe to point at a workspace that also holds resources you manage elsewhere. Datastores and the other marker-less kinds are never pruned.
+- Prunes only what chant owns. Every service and env group chant creates carries a `CHANT_MANAGED_BY=chant` env-var marker (plus `CHANT_STACK` / `CHANT_ENV`); disks and custom domains inherit their service's verdict. A resource without the marker — or belonging to another stack — is never modified or deleted by `prune`, so the applier is safe to point at a workspace that also holds resources you manage elsewhere. Datastores, projects, environments, registry credentials, and webhooks have no marker channel and are never pruned — remove those with `renderDelete`.
 
 Auth is `RENDER_API_KEY`; the workspace is `RENDER_OWNER_ID`, or the sole workspace the key can see. `RENDER_API_BASE_URL` (or an `endpoint` arg) redirects the whole loop to a local stand-in.
 
@@ -63,7 +63,7 @@ Lint rules run during `chant build`, before anything reaches the API:
 
 ## Read back and plan
 
-`describeResources` lists what is live for every declared entity with an ownership verdict — `owned` / `foreign` for services and env groups by the marker, `unknown` for the rest — and surfaces undeclared chant-marked services and env groups as owned orphans, so `chant lifecycle plan` shows the delete before you prune.
+`describeResources` lists what is live for every declared entity with an ownership verdict — `owned` / `foreign` for services and env groups by the marker, inherited by their disks and custom domains, `unknown` for the rest — and surfaces undeclared chant-owned services, env groups, disks, and domains as owned orphans, so `chant lifecycle plan` shows the delete before you prune.
 
 ## The deploy Op
 

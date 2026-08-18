@@ -900,7 +900,9 @@ export async function renderApplyDetailed(
     outcome.applied.push({ kind: entry.kind, name: req.name, action: changed ? "updated" : "unchanged", id, entity: entityName });
   }
 
-  // Prune: owned services and env groups (marked, this stack) not in the plan.
+  // Prune: owned services and env groups (marked, this stack) not in the plan,
+  // and — at the service boundary — the disks and custom domains under an
+  // owned service that the plan does not declare.
   if (args.prune) {
     const ownerId = await owner();
     const marker = planOwnership(plan);
@@ -908,14 +910,51 @@ export async function renderApplyDetailed(
       ordered.filter(([, r]) => isServiceEntityType(r.entityType)).map(([, r]) => `${r.body.type}:${r.name}`),
     );
     const declaredGroups = new Set(ordered.filter(([, r]) => r.entityType === ENTITY_TYPES.envGroup).map(([, r]) => r.name));
+    // Declared children by `${serviceId}:${name}`, with the parent's live id.
+    const declaredChildren = new Set<string>();
+    for (const [, r] of ordered) {
+      const entry = catalogEntry(r.entityType);
+      if (entry.boundary !== "service") continue;
+      const raw = r.entityType === ENTITY_TYPES.customDomain ? r.pathParams?.serviceId : r.body.serviceId;
+      const parentId = isRefMarker(raw) ? lives.get(raw.$ref)?.id : typeof raw === "string" ? raw : undefined;
+      if (parentId) declaredChildren.add(`${parentId}:${r.name}`);
+    }
 
+    // Owned services first (declared or not): their undeclared children go,
+    // then the undeclared services themselves.
+    const staleServices: Array<{ id: string; name: string; type: string }> = [];
     for (const svc of await listAll(ctx, "/services", { ownerId }, "service", http, signal)) {
       const id = typeof svc.id === "string" ? svc.id : undefined;
       const name = typeof svc.name === "string" ? svc.name : "";
       const type = typeof svc.type === "string" ? svc.type : "";
-      if (!id || declaredServices.has(`${type}:${name}`)) continue;
+      if (!id) continue;
       const env = await readServiceEnvVars(ctx, id, http, signal);
       if (!isChantOwned(env) || !inStack(ownershipOf(env), marker)) continue;
+      const declared = declaredServices.has(`${type}:${name}`);
+      if (!declared) staleServices.push({ id, name, type });
+
+      // Service boundary: disks and custom domains under this owned service.
+      // A stale service takes its children with it, so only a declared parent
+      // needs its children reconciled one by one.
+      if (!declared) continue;
+      for (const disk of await listAll(ctx, "/disks", { serviceId: id, ownerId }, "disk", http, signal)) {
+        const diskId = typeof disk.id === "string" ? disk.id : undefined;
+        const diskName = typeof disk.name === "string" ? disk.name : "";
+        if (!diskId || disk.serviceId !== id || declaredChildren.has(`${id}:${diskName}`)) continue;
+        const deleted = await remove(ctx, `/disks/${diskId}`, http, signal);
+        console.log(`pruned: Disk/${diskName} (${diskId}) under ${type}/${name}`);
+        outcome.pruned.push({ kind: "Disk", name: diskName, id: diskId, deleted });
+      }
+      for (const domain of await listAll(ctx, `/services/${id}/custom-domains`, {}, "customDomain", http, signal)) {
+        const domainId = typeof domain.id === "string" ? domain.id : undefined;
+        const domainName = typeof domain.name === "string" ? domain.name : "";
+        if (!domainId || declaredChildren.has(`${id}:${domainName}`)) continue;
+        const deleted = await remove(ctx, `/services/${id}/custom-domains/${encodeURIComponent(domainId)}`, http, signal);
+        console.log(`pruned: CustomDomain/${domainName} (${domainId}) under ${type}/${name}`);
+        outcome.pruned.push({ kind: "CustomDomain", name: domainName, id: domainId, deleted });
+      }
+    }
+    for (const { id, name, type } of staleServices) {
       const kind = catalogEntry(ENTITY_TYPE_OF_SERVICE[type] ?? ENTITY_TYPES.webService).kind;
       const deleted = await remove(ctx, `/services/${id}`, http, signal);
       console.log(`pruned: ${kind}/${name} (${id})`);

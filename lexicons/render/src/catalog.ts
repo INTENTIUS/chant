@@ -95,6 +95,14 @@ export interface CatalogEntry {
   /** Whether the resource carries chant's env-var ownership marker. */
   marked: boolean;
   /**
+   * The ownership boundary for a kind with no marker of its own. `"service"`:
+   * the resource hangs off a service (`serviceId`), and inherits that service's
+   * verdict — a disk or custom domain under a chant-owned service is chant's,
+   * the same way fly treats volumes and IPs at the app boundary. Absent: no
+   * boundary either; the verdict is `unknown` and the kind is never pruned.
+   */
+  boundary?: "service";
+  /**
    * Whether the create body takes an `ownerId` (workspace). When it does and
    * the author omitted it, the serializer fills it from `Render.OwnerId`.
    */
@@ -230,6 +238,7 @@ export const CATALOG: Record<string, CatalogEntry> = {
     patchable: true,
     patchFields: ["name", "sizeGB", "mountPath"],
     marked: false,
+    boundary: "service",
     ownerScoped: false,
     order: 50,
     nonBodyProps: [],
@@ -242,6 +251,7 @@ export const CATALOG: Record<string, CatalogEntry> = {
     patchable: false,
     patchFields: [],
     marked: false,
+    boundary: "service",
     ownerScoped: false,
     order: 50,
     nonBodyProps: ["serviceId"],

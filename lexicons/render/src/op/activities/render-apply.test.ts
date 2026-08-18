@@ -295,6 +295,43 @@ describe("renderApply against the fake API", () => {
     expect([...fake.collections["/env-groups"].items.values()].map((g) => g.name)).toEqual(["foreign-group"]);
   });
 
+  it("prunes undeclared disks and custom domains under an owned declared service, never under a foreign one", async () => {
+    const fake = new FakeRender();
+    process.env.RENDER_OWNER_ID = "tea-1";
+    // First apply: web + two disks + two domains.
+    const w1 = web();
+    const first = planFile(
+      stack(
+        ["web", w1],
+        ["data", new Disk({ name: "data", sizeGB: 1, mountPath: "/data", serviceId: w1 })],
+        ["old", new Disk({ name: "old", sizeGB: 1, mountPath: "/old", serviceId: w1 })],
+        ["apex", new CustomDomain({ name: "example.com", serviceId: w1 })],
+        ["www", new CustomDomain({ name: "www.example.com", serviceId: w1 })],
+      ),
+    );
+    await renderApply({ planPath: first, endpoint: "http://fake/v1", wait: { intervalMs: 0 } }, undefined, fake.http());
+    // A foreign service with a disk and a domain of its own.
+    const foreign = fake.seed("/services", { name: "theirs", type: "web_service", ownerId: "tea-1", envVars: [] });
+    fake.seed("/disks", { name: "theirs-data", sizeGB: 1, mountPath: "/d", serviceId: foreign.id });
+    fake.domains.set(foreign.id as string, [{ id: "cd-theirs", name: "theirs.example.com" }]);
+
+    // Second apply drops `old` and `www`.
+    const w2 = web();
+    const second = planFile(
+      stack(
+        ["web", w2],
+        ["data", new Disk({ name: "data", sizeGB: 1, mountPath: "/data", serviceId: w2 })],
+        ["apex", new CustomDomain({ name: "example.com", serviceId: w2 })],
+      ),
+    );
+    const result = await renderApply({ planPath: second, endpoint: "http://fake/v1", prune: true, wait: { intervalMs: 0 } }, undefined, fake.http());
+    expect(result.pruned?.map((p) => `${p.kind}/${p.name}`).sort()).toEqual(["CustomDomain/www.example.com", "Disk/old"]);
+    const webId = fake.service("web")!.id as string;
+    expect([...fake.collections["/disks"].items.values()].map((d) => d.name).sort()).toEqual(["data", "theirs-data"]);
+    expect(fake.domains.get(webId)?.map((d) => d.name)).toEqual(["example.com"]);
+    expect(fake.domains.get(foreign.id as string)?.map((d) => d.name)).toEqual(["theirs.example.com"]);
+  });
+
   it("does not prune without the flag", async () => {
     const fake = new FakeRender();
     process.env.RENDER_OWNER_ID = "tea-1";

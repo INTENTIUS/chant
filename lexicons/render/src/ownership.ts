@@ -13,11 +13,16 @@
  * deleted by a prune. The keys are upper-snake because that is what an env var
  * is; the values are exactly what every other lexicon stamps.
  *
- * Datastores, projects, environments, disks, custom domains, registry
- * credentials, and webhooks carry no such channel. Their verdict is `unknown`
- * (never `foreign`, never `owned`): the change set never escalates `unknown`
- * to a delete, so an undeclared Postgres is reported, never pruned. Removing
- * one is an explicit `renderDelete` of a plan that names it.
+ * Disks and custom domains carry no marker either, but they hang off a
+ * service, so they inherit the parent's verdict — the service boundary, one
+ * level down from fly's app boundary. An undeclared disk under a chant-owned
+ * service is chant's and is pruned; one under a foreign service is foreign.
+ *
+ * Datastores, projects, environments, registry credentials, and webhooks
+ * carry no channel and no boundary. Their verdict is `unknown` (never
+ * `foreign`, never `owned`): the change set never escalates `unknown` to a
+ * delete, so an undeclared Postgres is never pruned. Removing one is an
+ * explicit `renderDelete` of a plan that names it.
  */
 
 import type { ChannelKeys } from "@intentius/chant/ownership";

@@ -149,7 +149,7 @@ Every serialized service and env group carries the \`CHANT_MANAGED_BY=chant\` ow
 
 ## Applying
 
-The output is applied against the Public API directly by \`renderApply\` (via \`chant run\` and the \`renderDeploy\` Op). Endpoint and auth come from \`RENDER_API_BASE_URL\` and \`RENDER_API_KEY\`; the workspace from \`RENDER_OWNER_ID\` (or the sole workspace the key can see). Each resource is found by name and created or PATCHed; created services are waited to \`live\`; with \`prune\` the owned services and env groups no longer declared are deleted.`;
+The output is applied against the Public API directly by \`renderApply\` (via \`chant run\` and the \`renderDeploy\` Op). Endpoint and auth come from \`RENDER_API_BASE_URL\` and \`RENDER_API_KEY\`; the workspace from \`RENDER_OWNER_ID\` (or the sole workspace the key can see). Each resource is found by name and created or PATCHed; created services are waited to \`live\`; with \`prune\` the owned services and env groups no longer declared — and the disks and custom domains under owned services no longer declared — are deleted.`;
 
 const resourcesPage = `The render lexicon ships ${RESOURCES.length} top-level resources. Each maps to a Public API create body; follow the reference link for the underlying API shape.
 
@@ -157,7 +157,8 @@ const resourcesPage = `The render lexicon ships ${RESOURCES.length} top-level re
 |----------|------|-------|--------|---------------|--------|---------------|
 ${RESOURCES.map((r) => {
   const c = CATALOG[r.resourceType];
-  return `| \`${r.className}\` | \`${r.resourceType}\` | ${serviceFromType(r.resourceType)} | \`POST ${c.collection}\` | name${r.className === "Environment" ? " + project" : r.className === "Disk" ? " + service" : ""} | ${c.marked ? "yes" : "—"} | [reference](${resourceTypeUrl(r.resourceType)}) |`;
+  const marker = c.marked ? "yes" : c.boundary === "service" ? "via service" : "—";
+  return `| \`${r.className}\` | \`${r.resourceType}\` | ${serviceFromType(r.resourceType)} | \`POST ${c.collection}\` | name${r.className === "Environment" ? " + project" : r.className === "Disk" ? " + service" : ""} | ${marker} | [reference](${resourceTypeUrl(r.resourceType)}) |`;
 }).join("\n")}
 
 Property types such as \`WebServiceDetails\`, \`StaticSiteDetails\`, \`CronJobDetails\`, \`NativeEnvironmentDetails\`, \`DockerDetails\`, \`Image\`, \`ServiceDisk\`, \`Route\`, \`Header\`, \`ReadReplica\`, and \`CidrBlockAndDescription\` are authored inline on a resource and are documented alongside the resources they belong to.
@@ -168,7 +169,7 @@ Render assigns ids on create, so id-valued fields accept the declared resource i
 
 ## Ownership
 
-Services and env groups carry chant's marker in their env vars and are the only kinds \`prune\` can delete. Datastores, projects, environments, disks, custom domains, registry credentials, and webhooks have no marker channel: their ownership verdict is \`unknown\`, and they are removed only by an explicit \`renderDelete\` of a plan that names them.`;
+Services and env groups carry chant's marker in their env vars. Disks and custom domains have no marker but hang off a service and inherit its verdict (the service boundary), so an undeclared disk or domain under a chant-owned service is pruned too. Datastores, projects, environments, registry credentials, and webhooks have no marker channel and no boundary: their ownership verdict is \`unknown\`, and they are removed only by an explicit \`renderDelete\` of a plan that names them.`;
 
 /**
  * Generate documentation for the render lexicon.
