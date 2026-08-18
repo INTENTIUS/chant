@@ -63,6 +63,7 @@ jobs:
           npm run --prefix lexicons/fountain prepack
           npm run --prefix lexicons/k3d prepack
           npm run --prefix lexicons/k3s prepack
+          npm run --prefix lexicons/render prepack
           # cedar generates from the project's own .cedarschema, falling
           # back to the schema bundled at src/spec/default-schema.cedarschema
           # so a clean checkout still produces a surface to gate (#1650).
@@ -168,6 +169,7 @@ jobs:
           npm run --prefix lexicons/fountain prepack
           npm run --prefix lexicons/k3d prepack
           npm run --prefix lexicons/k3s prepack
+          npm run --prefix lexicons/render prepack
           # cedar generates from the project's own .cedarschema, falling
           # back to the schema bundled at src/spec/default-schema.cedarschema
           # so a clean checkout still produces a surface to gate (#1650).
@@ -260,6 +262,9 @@ jobs:
       # Before that its prepack was bundle + build and had nothing to assert.
       - name: Generate and validate Cedar lexicon
         run: npm run --prefix lexicons/cedar prepack
+
+      - name: Generate and validate Render lexicon
+        run: npm run --prefix lexicons/render prepack
 
   smoke-npm:
     if: false  # disabled — Docker smoke tests are for local/release validation, not every push

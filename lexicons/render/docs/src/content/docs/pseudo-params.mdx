@@ -1,0 +1,21 @@
+---
+title: "Pseudo-parameters"
+description: "Environment-resolved values: Render.OwnerId, Render.Region"
+---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-render` — DO NOT EDIT.
+    Edit lexicons/render/src/codegen/docs.ts instead; changes here are overwritten. */}
+Pseudo-parameters stand in for values that vary by environment. Reference them instead of hard-coding, and the serializer resolves each from an environment variable at build time.
+
+| Pseudo-parameter | Environment variable | Fallback |
+|------------------|----------------------|----------|
+| `Render.OwnerId` | `RENDER_OWNER_ID` | an `{ "$owner": true }` marker the applier resolves from `GET /owners` (the sole visible workspace; several is an error) |
+| `Render.Region` | `RENDER_REGION` | `oregon` |
+
+```typescript
+import { KeyValue, Render } from "@intentius/chant-lexicon-render";
+
+const cache = new KeyValue({ name: "cache", plan: "free", region: Render.Region, ownerId: Render.OwnerId });
+```
+
+With `RENDER_REGION=frankfurt` set, `region` serializes to `"frankfurt"`; unset, it falls back to `"oregon"`. Every owner-scoped resource that omits `ownerId` gets `Render.OwnerId` filled in, so naming it is optional.

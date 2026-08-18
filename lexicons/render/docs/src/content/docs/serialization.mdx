@@ -1,0 +1,38 @@
+---
+title: "Serialization"
+description: "Output format for the Render lexicon"
+---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-render` — DO NOT EDIT.
+    Edit lexicons/render/src/codegen/docs.ts instead; changes here are overwritten. */}
+
+The render lexicon serializes resources into the JSON create bodies the Render Public API accepts.
+
+## Building
+
+Each declared resource becomes a single request keyed by its logical name:
+
+```json
+{
+  "web": {
+    "kind": "WebService",
+    "entityType": "Render::Services::WebService",
+    "endpoint": "/services",
+    "method": "POST",
+    "name": "app-web",
+    "body": { "type": "web_service", "name": "app-web", "ownerId": "tea-…", "serviceDetails": { ... }, "envVars": [ ... ] }
+  }
+}
+```
+
+- Each service type becomes `POST /services` with its `type` discriminator re-injected and `serviceDetails` in that type's shape.
+- `Postgres` → `POST /postgres`; `KeyValue` → `POST /key-value`; `EnvGroup` → `POST /env-groups`; `Project` → `POST /projects`; `Environment` → `POST /environments`; `Disk` → `POST /disks`; `RegistryCredential` → `POST /registrycredentials`; `Webhook` → `POST /webhooks`.
+- `CustomDomain` → `POST /services/{serviceId}/custom-domains`; the service is a path segment carried in `pathParams`.
+
+Three markers may appear in a body, resolved by the applier once their target is live: `{ "$ref": "<entity>" }` (a declared resource's id), `{ "$attr": { "entity", "attribute" } }` (an attribute read — `id`, `dashboardUrl`, or a datastore connection string), and `{ "$owner": true }` (the workspace, when neither the author nor `RENDER_OWNER_ID` named one).
+
+Every serialized service and env group carries the `CHANT_MANAGED_BY=chant` ownership marker (plus `CHANT_STACK` / `CHANT_ENV`) in its `envVars`, which the owned-only prune reads back.
+
+## Applying
+
+The output is applied against the Public API directly by `renderApply` (via `chant run` and the `renderDeploy` Op). Endpoint and auth come from `RENDER_API_BASE_URL` and `RENDER_API_KEY`; the workspace from `RENDER_OWNER_ID` (or the sole workspace the key can see). Each resource is found by name and created or PATCHed; created services are waited to `live`; with `prune` the owned services and env groups no longer declared are deleted.

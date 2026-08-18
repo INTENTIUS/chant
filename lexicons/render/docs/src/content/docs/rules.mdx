@@ -1,0 +1,27 @@
+---
+title: "All Rules"
+description: "Every lint rule and post-synth check provided by the Render lexicon"
+---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-render` — DO NOT EDIT.
+    Edit lexicons/render/src/codegen/docs.ts instead; changes here are overwritten. */}
+
+The Render lexicon provides **6** rules: 3 lint rules and 3 post-synth checks.
+
+## Lint Rules
+
+| ID | Severity | Category | Description |
+|----|----------|----------|-------------|
+| `REN001` | error | correctness | Valid Render region |
+| `REN002` | warning | security | No secret literals in env vars |
+| `REN003` | error | correctness | Valid cron schedule |
+
+## Post-Synth Checks
+
+Post-synth checks validate the serialized output after the build pipeline completes.
+
+| ID | Description |
+|----|-------------|
+| `REN010` | A native-runtime service must set envSpecificDetails.buildCommand and startCommand |
+| `REN011` | A service must have a repo (git-backed) or an image (image-backed) |
+| `REN012` | A free-plan service cannot set numInstances > 1, autoscaling, or a disk |

@@ -1,0 +1,20 @@
+{
+  "name": "render-getting-started-example",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "chant build src --lexicon render -o dist/render.json",
+    "build:render": "chant build src --lexicon render -o dist/render.json",
+    "lint": "chant lint src",
+    "dev": "chant build src --lexicon render --watch -o dist/render.json"
+  },
+  "dependencies": {
+    "@intentius/chant": "*",
+    "@intentius/chant-lexicon-render": "*",
+    "@intentius/chant-lexicon-temporal": "*"
+  },
+  "devDependencies": {
+    "typescript": "*"
+  }
+}
