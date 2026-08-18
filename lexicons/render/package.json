@@ -1,0 +1,73 @@
+{
+  "name": "@intentius/chant-lexicon-render",
+  "version": "0.44.14",
+  "type": "module",
+  "files": [
+    "src/",
+    "dist/"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "exports": {
+    ".": {
+      "development": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./src/index.ts"
+    },
+    "./*": {
+      "development": "./src/*.ts",
+      "types": "./dist/*.d.ts",
+      "default": "./src/*.ts"
+    },
+    "./op/activities": {
+      "development": "./src/op/activities/index.ts",
+      "types": "./dist/op/activities/index.d.ts",
+      "default": "./src/op/activities/index.ts"
+    },
+    "./lint/post-synth": {
+      "development": "./src/lint/post-synth/index.ts",
+      "types": "./dist/lint/post-synth/index.d.ts",
+      "default": "./src/lint/post-synth/index.ts"
+    },
+    "./manifest": "./dist/manifest.json",
+    "./meta": "./dist/meta.json",
+    "./types": "./dist/types/index.d.ts"
+  },
+  "scripts": {
+    "generate": "tsx src/codegen/generate-cli.ts",
+    "bundle": "tsx src/package-cli.ts",
+    "validate": "tsx src/validate-cli.ts",
+    "docs": "tsx src/codegen/docs-cli.ts",
+    "prepack": "npm run generate && npm run bundle && npm run validate && npm run build",
+    "build": "tsc -p tsconfig.build.json && tsc-alias -p tsconfig.build.json && find dist -type f \\( -name \"*.js\" -o -name \"*.js.map\" \\) -delete"
+  },
+  "devDependencies": {
+    "@intentius/chant": "*",
+    "tsc-alias": "^1.8.17",
+    "typescript": "^5.9.3"
+  },
+  "peerDependencies": {
+    "@intentius/chant": "^0.44.14",
+    "typescript": "^5.9.3"
+  },
+  "description": "Render (render.com) lexicon for chant — services, datastores, env groups, projects as typed TypeScript, applied straight to the Render API",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/INTENTIUS/chant.git",
+    "directory": "lexicons/render"
+  },
+  "homepage": "https://intentius.io/chant",
+  "bugs": {
+    "url": "https://github.com/INTENTIUS/chant/issues"
+  },
+  "keywords": [
+    "infrastructure-as-code",
+    "iac",
+    "typescript",
+    "render",
+    "render.com",
+    "chant"
+  ]
+}
