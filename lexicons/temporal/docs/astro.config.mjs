@@ -21,40 +21,60 @@ export default defineConfig({
                   "slug": "index"
             },
             {
-                  "label": "All Rules",
-                  "slug": "rules"
+                  "label": "Tutorials",
+                  "items": [
+                        {
+                              "label": "Getting Started",
+                              "slug": "getting-started"
+                        }
+                  ]
             },
             {
-                  "label": "Serialization",
-                  "slug": "serialization"
+                  "label": "How-to guides",
+                  "items": [
+                        {
+                              "label": "Ops",
+                              "slug": "ops"
+                        }
+                  ]
             },
             {
-                  "label": "Getting Started",
-                  "slug": "getting-started"
+                  "label": "Reference",
+                  "items": [
+                        {
+                              "label": "All Rules",
+                              "slug": "rules"
+                        },
+                        {
+                              "label": "Serialization",
+                              "slug": "serialization"
+                        },
+                        {
+                              "label": "AI Skills",
+                              "slug": "skills"
+                        },
+                        {
+                              "label": "Lint Rules",
+                              "slug": "lint-rules"
+                        },
+                        {
+                              "label": "Resources",
+                              "slug": "resources"
+                        },
+                        {
+                              "label": "Worker Profiles",
+                              "slug": "worker-profiles"
+                        }
+                  ]
             },
             {
-                  "label": "Temporal Concepts",
-                  "slug": "temporal-concepts"
-            },
-            {
-                  "label": "Resources",
-                  "slug": "resources"
-            },
-            {
-                  "label": "Ops",
-                  "slug": "ops"
-            },
-            {
-                  "label": "Worker Profiles",
-                  "slug": "worker-profiles"
-            },
-            {
-                  "label": "Lint Rules",
-                  "slug": "lint-rules"
-            },
-            {
-                  "label": "AI Skills",
-                  "slug": "skills"
+                  "label": "Explanation",
+                  "items": [
+                        {
+                              "label": "Temporal Concepts",
+                              "slug": "temporal-concepts"
+                        }
+                  ]
             }
       ],
     }),

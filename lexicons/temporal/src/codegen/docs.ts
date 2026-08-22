@@ -20,18 +20,6 @@ export async function generateDocs(options?: { verbose?: boolean }): Promise<voi
     // always-current version, so both ship — the same overview/reference
     // pairing aws uses for `intrinsics-guide` and `intrinsics`. Suppressing
     // `rules` here would break that link.
-    //
-    // Hand-written pages under docs/src/content/docs/. Starlight does not
-    // auto-discover, so every one of these was reachable only by URL (#1312).
-    sidebarExtra: [
-      { label: "Getting Started", slug: "getting-started" },
-      { label: "Temporal Concepts", slug: "temporal-concepts" },
-      { label: "Resources", slug: "resources" },
-      { label: "Ops", slug: "ops" },
-      { label: "Worker Profiles", slug: "worker-profiles" },
-      { label: "Lint Rules", slug: "lint-rules" },
-      { label: "AI Skills", slug: "skills" },
-    ],
   };
 
   const result = docsPipeline(config);
