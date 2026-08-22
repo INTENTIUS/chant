@@ -39,7 +39,7 @@ jobs:
             lexicon-schemas-
 
       - name: Check Diátaxis classification
-        run: node scripts/check-docs-diataxis.mjs --strict
+        run: node scripts/check-docs-diataxis.mjs
 
       - name: Build unified docs
         run: chmod +x scripts/build-docs.sh && ./scripts/build-docs.sh

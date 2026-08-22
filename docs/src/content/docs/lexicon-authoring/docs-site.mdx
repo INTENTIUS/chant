@@ -92,7 +92,7 @@ Frontmatter the pipeline reads, on top of Starlight's `title` and `description`:
 
 | Field | Required | Meaning |
 |---|---|---|
-| `diataxis` | yes | `tutorial`, `how-to`, `reference` or `explanation`. The sidebar group |
+| `diataxis` | yes | `tutorial`, `how-to`, `reference` or `explanation`. The sidebar group. One mode per page; a page that needs two gets split |
 | `label` | no | Sidebar label; defaults to `title` |
 | `group` | no | A nested subgroup inside the quadrant, e.g. `"Vendor Composites"` |
 | `order` | no | Lower sorts first within its group; pages without it follow, by label |
@@ -114,10 +114,6 @@ Frontmatter the pipeline reads, on top of Starlight's `title` and `description`:
 | Examples | `examples.mdx` | how-to |
 | Operational playbook | `operational-playbook.mdx` | how-to |
 | AI Skills | `skills.mdx` | reference |
-
-### Deprecated modes
-
-Two older ways of adding pages still work and print a warning: `extraPages` (prose inside a template literal in `docs.ts`) and `sidebarExtra` (hand-written files in `docs/src/content/docs/` listed by hand). Both are removed once every lexicon is on `docs/pages/` (chant #1731). `extraPages` entries are shown under Reference until moved.
 
 ## Building the Docs
 

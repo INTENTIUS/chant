@@ -86,59 +86,20 @@ export function docsPipeline(config: DocsConfig): DocsResult {
     if (!page.hidden) sidebarPages.push(page);
   }
 
-  const extraSlugs = new Set([
-    ...(config.extraPages ?? []).map((p) => p.slug),
-    ...authored.map((p) => p.slug),
-  ]);
+  const extraSlugs = new Set(authored.map((p) => p.slug));
 
-  // Extra pages from lexicon config. Deprecated in favour of docs/pages/
-  // (#1731): prose in a template literal is prose nobody can edit as
-  // markdown. Still honoured so a lexicon can migrate page by page.
-  if (config.extraPages && config.extraPages.length > 0) {
-    console.warn(
-      `[docs:${config.name}] extraPages is deprecated — move these ${config.extraPages.length} page(s) to docs/pages/*.mdx with a \`diataxis\` field (chant #1731).`,
-    );
-    for (const page of config.extraPages) {
-      if (authoredSources.has(`${page.slug}.mdx`)) {
-        console.warn(`[docs:${config.name}] docs/pages/${page.slug}.mdx overrides the extraPages entry of the same slug.`);
-        continue;
-      }
-      if (page.sidebar !== false) {
-        sidebarPages.push({ slug: page.slug, label: page.title, quadrant: "reference" });
-      }
-      let content = page.content;
-      if (config.examplesDir) {
-        content = expandFileMarkers(content, config.examplesDir);
-      }
-      pages.set(
-        `${page.slug}.mdx`,
-        [
-          "---",
-          `title: "${page.title}"`,
-          page.description ? `description: "${page.description}"` : "",
-          "---",
-          "",
-          content,
-          "",
-        ]
-          .filter(Boolean)
-          .join("\n"),
-      );
-    }
-  }
-
-  // A generated page must not overwrite one the lexicon explicitly declared.
-  // The extraPages above are written into `pages` first, so an unguarded
-  // `pages.set` below silently discards them: helm declared its own
-  // "Intrinsics Reference" and pre-synth rules pages and shipped neither for
-  // as long as both slugs collided (#1312). Explicit authorship wins, and the
-  // collision is reported rather than resolved in silence.
+  // A generated page must not overwrite one the lexicon authored. Authored
+  // pages are written into `pages` first, so an unguarded `pages.set` below
+  // would silently discard them: helm once declared its own "Intrinsics
+  // Reference" and pre-synth rules pages and shipped neither for as long as
+  // both slugs collided (#1312). Authorship wins, and the collision is
+  // reported rather than resolved in silence.
   const claimed = (slug: string): boolean => {
     if (suppress.has(slug)) return true;
     if (!extraSlugs.has(slug)) return false;
     console.warn(
-      `[docs:${config.name}] extraPages declares "${slug}", which is also a generated page — keeping the declared one.\n` +
-        `  Add "${slug}" to suppressPages to make that explicit, or rename the extraPage if both are wanted.`,
+      `[docs:${config.name}] docs/pages/${slug}.mdx has the slug of a generated page — keeping the authored one.\n` +
+        `  Add "${slug}" to suppressPages to make that explicit, or rename the authored page if both are wanted.`,
     );
     return true;
   };

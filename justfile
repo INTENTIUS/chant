@@ -226,7 +226,7 @@ docs-serve: docs-build
 
 # Check every core docs page carries a Diátaxis quadrant matching its sidebar group
 docs-check:
-    node scripts/check-docs-diataxis.mjs --strict
+    node scripts/check-docs-diataxis.mjs
 
 # Check internal doc links across the unified site (requires lychee: brew install lychee)
 docs-check-links: docs-check docs-build

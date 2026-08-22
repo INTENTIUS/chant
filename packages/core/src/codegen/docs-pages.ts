@@ -5,9 +5,9 @@
  * Each carries a `diataxis` frontmatter field naming its Diátaxis quadrant
  * (https://diataxis.fr). The pipeline expands `{{file:...}}` markers, stamps a
  * provenance marker and writes the result into `src/content/docs/`, and the
- * sidebar is grouped from the field. This replaces the two older modes — prose
+ * sidebar is grouped from the field. This replaced two older modes — prose
  * inside `docs.ts` template literals (`extraPages`) and hand-written content
- * pages wired through `sidebarExtra` — which are still read but deprecated.
+ * pages wired through `sidebarExtra` — removed in chant #1757.
  *
  * Frontmatter recognised here, on top of Starlight's `title` / `description`:
  *

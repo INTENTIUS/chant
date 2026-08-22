@@ -63,6 +63,7 @@ describe("initLexiconCommand", () => {
       "docs/astro.config.mjs",
       "docs/src/content.config.ts",
       "docs/src/content/docs/index.mdx",
+      "docs/pages/getting-started.mdx",
       "examples/getting-started/package.json",
       "examples/getting-started/src/infra.ts",
       "src/generated/.gitkeep",
