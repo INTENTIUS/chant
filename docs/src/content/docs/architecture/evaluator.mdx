@@ -1,6 +1,7 @@
 ---
 title: Evaluator Engine
 description: How chant extracts resource declarations — the static folder that reads your source as data, and the run path a file falls back to
+diataxis: explanation
 ---
 
 chant has two ways to turn a source file's exported resources into structured data for the lexicon serializer: reduce their AST to a value directly (the default), or run them for real (the per-file fallback, and what `--no-fold` forces). This page covers both — see [TypeScript as Data](/chant/concepts/typescript-as-data/#folded-vs-run) for the full comparison.

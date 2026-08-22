@@ -8,6 +8,7 @@ on:
       - 'lexicons/*/src/codegen/**'
       - 'packages/core/src/codegen/**'
       - 'scripts/build-docs.sh'
+      - 'scripts/check-docs-diataxis.mjs'
       - 'scripts/build-diagrams.sh'
       - 'justfile'
       - '.github/workflows/docs-check.yml'
@@ -36,6 +37,9 @@ jobs:
           key: lexicon-schemas-${{ hashFiles('lexicons/*/src/**/fetch.ts', 'lexicons/*/src/**/versions.ts') }}
           restore-keys: |
             lexicon-schemas-
+
+      - name: Check Diátaxis classification
+        run: node scripts/check-docs-diataxis.mjs --strict
 
       - name: Build unified docs
         run: chmod +x scripts/build-docs.sh && ./scripts/build-docs.sh

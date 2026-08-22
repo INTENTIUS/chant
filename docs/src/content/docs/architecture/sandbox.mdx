@@ -1,6 +1,7 @@
 ---
 title: Sandboxed Execution
 description: What chant build --sandbox isolates project source from, and what it deliberately does not
+diataxis: explanation
 ---
 
 `chant build --fold` folds a subset of source files with zero module execution ([TypeScript as Data](/chant/concepts/typescript-as-data/#folded-vs-run)). Everything outside that subset — most source files today — falls back to importing and running the file for real. Run in-process, that execution has the same filesystem, network, environment, and process-spawn access as the `chant` CLI itself.
