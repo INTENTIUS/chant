@@ -4,10 +4,6 @@ description: "Flux CD support in the k8s lexicon — the toolkit CRDs, FluxGitSo
 diataxis: reference
 ---
 
-{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-k8s` — DO NOT EDIT.
-    Edit lexicons/k8s/docs/pages/flux-composites.mdx instead; changes here are overwritten. */}
-
-
 import { Aside } from '@astrojs/starlight/components';
 
 Flux's `GitRepository`, `Kustomization`, `HelmRelease`, and the rest of the GitOps Toolkit are Kubernetes CRDs. The k8s lexicon registers all six groups via codegen (see [CRD-Generated Classes](../crd-classes/#flux)) — typed `K8s::Flux::*` resources, serializer, LSP, hover, and MCP for free. The value-add ships as composites, lint rules, and the `chant-k8s-flux` skill — the Flux counterpart of the [Argo CD composites](../argo-composites/).

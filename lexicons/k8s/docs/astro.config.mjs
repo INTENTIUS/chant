@@ -21,88 +21,113 @@ export default defineConfig({
                   "slug": "index"
             },
             {
-                  "label": "Getting Started",
-                  "slug": "getting-started"
-            },
-            {
-                  "label": "Kubernetes Concepts",
-                  "slug": "kubernetes-concepts"
-            },
-            {
-                  "label": "Lint Rules",
-                  "slug": "lint-rules"
-            },
-            {
-                  "label": "Examples: Resources",
-                  "slug": "examples"
-            },
-            {
-                  "label": "Examples: Composites",
-                  "slug": "composite-examples"
-            },
-            {
-                  "label": "Operational Playbook",
-                  "slug": "operational-playbook"
-            },
-            {
-                  "label": "Importing Existing YAML",
-                  "slug": "importing-yaml"
-            },
-            {
-                  "label": "Testing & Validation",
-                  "slug": "testing"
-            },
-            {
-                  "label": "AI Skills",
-                  "slug": "skills"
-            },
-            {
-                  "label": "All Rules",
-                  "slug": "rules"
-            },
-            {
-                  "label": "Serialization",
-                  "slug": "serialization"
-            },
-            {
-                  "label": "Live Cluster",
+                  "label": "Tutorials",
                   "items": [
                         {
-                              "label": "The API Client",
-                              "slug": "api-client"
-                        },
-                        {
-                              "label": "chant kube",
-                              "slug": "kube"
+                              "label": "Getting Started",
+                              "slug": "getting-started"
                         }
                   ]
             },
             {
-                  "label": "CRD-Generated Classes",
-                  "slug": "crd-classes"
-            },
-            {
-                  "label": "Argo CD Composites",
-                  "slug": "argo-composites"
-            },
-            {
-                  "label": "Flux Composites",
-                  "slug": "flux-composites"
-            },
-            {
-                  "label": "Vendor Composites",
+                  "label": "How-to guides",
                   "items": [
                         {
-                              "label": "EKS Composites",
-                              "slug": "eks-composites"
+                              "label": "Examples: Composites",
+                              "slug": "composite-examples"
                         },
                         {
-                              "label": "AKS Composites",
-                              "slug": "aks-composites"
+                              "label": "Examples: Resources",
+                              "slug": "examples"
                         },
                         {
-                              "label": "GKE Composites",
-                              "slug": "gke-composites"
+                              "label": "Importing Existing YAML",
+                              "slug": "importing-yaml"
+                        },
+                        {
+                              "label": "Operational Playbook",
+                              "slug": "operational-playbook"
+                        },
+                        {
+                              "label": "Testing & Validation",
+                              "slug": "testing"
+                        },
+                        {
+                              "label": "Live Cluster",
+                              "items": [
+                                    {
+                                          "label": "chant kube",
+                                          "slug": "kube"
+                                    }
+                              ]
+                        }
+                  ]
+            },
+            {
+                  "label": "Reference",
+                  "items": [
+                        {
+                              "label": "All Rules",
+                              "slug": "rules"
+                        },
+                        {
+                              "label": "Serialization",
+                              "slug": "serialization"
+                        },
+                        {
+                              "label": "AI Skills",
+                              "slug": "skills"
+                        },
+                        {
+                              "label": "Argo CD Composites",
+                              "slug": "argo-composites"
+                        },
+                        {
+                              "label": "CRD-Generated Classes",
+                              "slug": "crd-classes"
+                        },
+                        {
+                              "label": "Flux Composites",
+                              "slug": "flux-composites"
+                        },
+                        {
+                              "label": "Lint Rules",
+                              "slug": "lint-rules"
+                        },
+                        {
+                              "label": "Vendor Composites",
+                              "items": [
+                                    {
+                                          "label": "AKS Composites",
+                                          "slug": "aks-composites"
+                                    },
+                                    {
+                                          "label": "EKS Composites",
+                                          "slug": "eks-composites"
+                                    },
+                                    {
+                                          "label": "GKE Composites",
+                                          "slug": "gke-composites"
+                                    }
+                              ]
+                        },
+                        {
+                              "label": "Live Cluster",
+                              "items": [
+                                    {
+                                          "label": "The API Client",
+                                          "slug": "api-client"
+                                    }
+                              ]
+                        }
+                  ]
+            },
+            {
+                  "label": "Explanation",
+                  "items": [
+                        {
+                              "label": "Kubernetes Concepts",
+                              "slug": "kubernetes-concepts"
                         }
                   ]
             }
