@@ -4,10 +4,6 @@ description: "Built-in lint rules and post-synth checks for GitHub Actions workf
 diataxis: reference
 ---
 
-{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-github` — DO NOT EDIT.
-    Edit lexicons/github/docs/pages/lint-rules.mdx instead; changes here are overwritten. */}
-
-
 The GitHub Actions lexicon ships lint rules that run during `chant lint` and post-synth checks that validate the serialized YAML after `chant build`.
 
 ## Lint rules
@@ -32,32 +28,7 @@ Flags raw `${{ }}` strings in `if:` conditions. Use the typed Expression helpers
 
 Flags hardcoded GitHub tokens, AWS keys, and other secret patterns in source code. Use `secrets("...")` expressions instead.
 
-```typescript title="lint-gha003.ts"
-import { Job, Step, secrets } from "@intentius/chant-lexicon-github";
-
-// BAD — hardcoded token triggers GHA003
-export const badDeploy = new Job({
-  "runs-on": "ubuntu-latest",
-  steps: [
-    new Step({
-      name: "Deploy",
-      run: "curl -H 'Authorization: token ghp_abc123def456' https://api.github.com/repos",
-    }),
-  ],
-});
-
-// GOOD — use secrets() expression
-export const goodDeploy = new Job({
-  "runs-on": "ubuntu-latest",
-  steps: [
-    new Step({
-      name: "Deploy",
-      env: { GH_TOKEN: secrets("GITHUB_TOKEN") },
-      run: "curl -H \"Authorization: token $GH_TOKEN\" https://api.github.com/repos",
-    }),
-  ],
-});
-```
+{{file:docs-snippets/src/lint-gha003.ts}}
 
 ### GHA004 — Extract inline matrix
 

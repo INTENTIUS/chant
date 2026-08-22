@@ -4,10 +4,6 @@ description: "Step-by-step guide to building your first GitHub Actions workflow 
 diataxis: tutorial
 ---
 
-{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-github` — DO NOT EDIT.
-    Edit lexicons/github/docs/pages/getting-started.mdx instead; changes here are overwritten. */}
-
-
 ## 1. Install
 
 ```bash
@@ -20,30 +16,7 @@ npm install --save-dev @intentius/chant @intentius/chant-lexicon-github typescri
 
 Create `src/ci.ts`:
 
-```typescript title="quickstart.ts"
-import { Workflow, Job, Step, Checkout, SetupNode } from "@intentius/chant-lexicon-github";
-
-export const workflow = new Workflow({
-  name: "CI",
-  on: {
-    push: { branches: ["main"] },
-    pull_request: { branches: ["main"] },
-  },
-  permissions: { contents: "read" },
-});
-
-export const buildJob = new Job({
-  "runs-on": "ubuntu-latest",
-  timeoutMinutes: 15,
-  steps: [
-    Checkout({}).step,
-    SetupNode({ nodeVersion: "22", cache: "npm" }).step,
-    new Step({ name: "Install", run: "npm ci" }),
-    new Step({ name: "Build", run: "npm run build" }),
-    new Step({ name: "Test", run: "npm test" }),
-  ],
-});
-```
+{{file:docs-snippets/src/quickstart.ts}}
 
 ## 3. Build
 

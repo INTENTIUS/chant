@@ -1,106 +1,14 @@
 ---
-title: "Composites"
-description: "Pre-built composites — action wrappers, CI pipelines, Docker builds, and deploy environments"
+title: "Actions & Composites"
+description: "Pre-built composites -- action wrappers, CI pipelines, Docker builds, and deploy environments"
 diataxis: reference
 ---
 
-{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-github` — DO NOT EDIT.
-    Edit lexicons/github/docs/pages/composites.mdx instead; changes here are overwritten. */}
-
-
 Composites are pre-built abstractions that produce typed GitHub Actions resources. They range from single-action wrappers to full multi-job workflow pipelines.
 
-```typescript title="composites-usage.ts"
-import {
-  Job,
-  Step,
-  Checkout,
-  SetupNode,
-  SetupGo,
-  CacheAction,
-  UploadArtifact,
-  DownloadArtifact,
-  NodePipeline,
-  PythonCI,
-  DockerBuild,
-  DeployEnvironment,
-  GoCI,
-  BunPipeline,
-} from "@intentius/chant-lexicon-github";
+## Action wrappers
 
-// Checkout — wraps actions/checkout
-const checkout = Checkout({ fetchDepth: 0 });
-
-// SetupNode — wraps actions/setup-node with optional caching
-const setupNode = SetupNode({ nodeVersion: "22", cache: "npm" });
-
-// SetupGo — wraps actions/setup-go
-const setupGo = SetupGo({ goVersion: "1.22" });
-
-// CacheAction — wraps actions/cache for custom cache keys
-const cache = CacheAction({
-  path: "~/.cache/my-tool",
-  key: "my-tool-cache-${{ runner.os }}",
-});
-
-// UploadArtifact — wraps actions/upload-artifact
-const upload = UploadArtifact({
-  name: "build-output",
-  path: "dist/",
-});
-
-// DownloadArtifact — wraps actions/download-artifact
-const download = DownloadArtifact({
-  name: "build-output",
-  path: "dist/",
-});
-
-// Combine composites in a job
-export const combinedJob = new Job({
-  "runs-on": "ubuntu-latest",
-  steps: [
-    checkout.step,
-    setupNode.step,
-    new Step({ name: "Build", run: "npm ci && npm run build" }),
-    upload.step,
-  ],
-});
-
-// ── Multi-job pipelines ──────────────────────────────────────────────
-
-// NodePipeline — build + test with artifact passing
-const node = NodePipeline({ nodeVersion: "22", packageManager: "pnpm" });
-export const nodeWorkflow = node.workflow;
-export const nodeBuild = node.buildJob;
-export const nodeTest = node.testJob;
-
-// BunPipeline preset — NodePipeline with bun defaults
-const bun = BunPipeline({});
-export const bunWorkflow = bun.workflow;
-
-// PythonCI — test + optional lint
-const python = PythonCI({ pythonVersion: "3.12" });
-export const pythonWorkflow = python.workflow;
-
-// DockerBuild — build + push with official Docker actions
-const docker = DockerBuild({ imageName: "ghcr.io/my-org/my-app" });
-export const dockerWorkflow = docker.workflow;
-
-// DeployEnvironment — deploy + cleanup job pair
-const deploy = DeployEnvironment({
-  name: "staging",
-  deployScript: "npm run deploy",
-});
-export const deployJob = deploy.deployJob;
-
-// GoCI — build + test + optional lint
-const go = GoCI({ goVersion: "1.22" });
-export const goWorkflow = go.workflow;
-```
-
-**A note on folding.** These two composite shapes fold differently (see [Folded vs Run](/chant/concepts/typescript-as-data/#folded-vs-run)). A single-action wrapper like `Checkout({...})` is normally embedded inline as `checkout.step` inside a `Job`'s `steps` array — a call nested as a value inside another resource's own properties, which is outside the fold subset, so a file using it falls back to the normal run path. A multi-job pipeline composite like `NodePipeline({...})` is normally consumed the other way: bound to a local `const`, then each member re-exported separately (`export const nodeWorkflow = node.workflow`) — a top-level export whose value is a call result's member access, which is exactly the composite-call shape folding resolves (chant #1023).
-
-## Checkout
+### Checkout
 
 Wraps `actions/checkout@v4`. Clones the repository.
 
@@ -115,7 +23,7 @@ Checkout({ submodules: "recursive" }).step     // With submodules
 
 **Props:** `ref?`, `repository?`, `fetchDepth?`, `token?`, `submodules?`, `sshKey?`
 
-## SetupNode
+### SetupNode
 
 Wraps `actions/setup-node@v4`. Installs Node.js with optional dependency caching.
 
@@ -129,7 +37,7 @@ SetupNode({ nodeVersion: "20", cache: "pnpm" }).step // pnpm cache
 
 **Props:** `nodeVersion?`, `cache?` (`"npm"` | `"pnpm"` | `"yarn"`), `registryUrl?`
 
-## SetupGo
+### SetupGo
 
 Wraps `actions/setup-go@v5`. Installs Go.
 
@@ -142,7 +50,7 @@ SetupGo({ goVersion: "stable" }).step
 
 **Props:** `goVersion?`, `cache?`
 
-## SetupPython
+### SetupPython
 
 Wraps `actions/setup-python@v5`. Installs Python.
 
@@ -155,7 +63,7 @@ SetupPython({ pythonVersion: "3.12", cache: "pip" }).step
 
 **Props:** `pythonVersion?`, `cache?` (`"pip"` | `"pipenv"` | `"poetry"`), `architecture?`
 
-## CacheAction
+### CacheAction
 
 Wraps `actions/cache@v4`. Caches files between workflow runs.
 
@@ -171,7 +79,7 @@ CacheAction({
 
 **Props:** `path`, `key`, `restoreKeys?`
 
-## UploadArtifact
+### UploadArtifact
 
 Wraps `actions/upload-artifact@v4`. Uploads files as workflow artifacts.
 
@@ -187,7 +95,7 @@ UploadArtifact({
 
 **Props:** `name`, `path`, `retentionDays?`, `ifNoFilesFound?`
 
-## DownloadArtifact
+### DownloadArtifact
 
 Wraps `actions/download-artifact@v4`. Downloads previously uploaded artifacts.
 
@@ -202,7 +110,9 @@ DownloadArtifact({
 
 **Props:** `name`, `path?`
 
-## NodeCI
+## CI pipeline composites
+
+### NodeCI
 
 A batteries-included composite that produces a full CI workflow and job. Generates a `Workflow` (push + PR on main) and a `Job` with checkout, setup-node, install, build, and test steps.
 
@@ -223,7 +133,7 @@ const { workflow: w, job: j } = NodeCI({
 
 **Props:** `nodeVersion?`, `packageManager?` (`"npm"` | `"pnpm"` | `"yarn"` | `"bun"`), `buildScript?`, `testScript?`, `installCommand?`
 
-The returned `workflow` and `job` can be exported directly:
+Export the returned `workflow` and `job` directly:
 
 ```typescript
 const ci = NodeCI({ nodeVersion: "22", packageManager: "npm" });
@@ -231,7 +141,7 @@ export const workflow = ci.workflow;
 export const build = ci.job;
 ```
 
-## NodePipeline
+### NodePipeline
 
 A production-grade Node pipeline with separate build and test jobs connected by artifact passing. The build job uploads artifacts; the test job downloads them and runs tests with `needs: ["build"]`.
 
@@ -247,9 +157,9 @@ const { workflow, buildJob, testJob } = NodePipeline({
 });
 ```
 
-**Props:** `nodeVersion?`, `packageManager?` (`"npm"` | `"pnpm"` | `"yarn"` | `"bun"`), `buildScript?`, `testScript?`, `installCommand?`, `buildArtifactPaths?`, `artifactName?`, `artifactRetentionDays?`, `runsOn?`
+**Props:** `nodeVersion?`, `packageManager?`, `buildScript?`, `testScript?`, `installCommand?`, `buildArtifactPaths?`, `artifactName?`, `artifactRetentionDays?`, `runsOn?`
 
-### Presets
+#### Pipeline presets
 
 ```typescript
 import { BunPipeline, PnpmPipeline, YarnPipeline } from "@intentius/chant-lexicon-github";
@@ -259,7 +169,7 @@ const pnpm = PnpmPipeline({});       // packageManager: "pnpm"
 const yarn = YarnPipeline({});       // packageManager: "yarn"
 ```
 
-## PythonCI
+### PythonCI
 
 Python CI with test and optional lint jobs. Supports pip and Poetry workflows.
 
@@ -281,7 +191,7 @@ const poetry = PythonCI({ usePoetry: true });
 
 **Props:** `pythonVersion?`, `testCommand?`, `lintCommand?` (null to omit), `requirementsFile?`, `usePoetry?`, `runsOn?`
 
-## DockerBuild
+### DockerBuild
 
 Docker build and push using official Docker actions (login, setup-buildx, metadata, build-push). Configured for GitHub Container Registry by default.
 
@@ -298,7 +208,7 @@ const { workflow, job } = DockerBuild({
 
 **Props:** `tag?`, `dockerfile?`, `context?`, `registry?`, `imageName?`, `tagLatest?`, `buildArgs?`, `push?`, `platforms?`, `runsOn?`
 
-## DeployEnvironment
+### DeployEnvironment
 
 Deploy and cleanup job pair using GitHub Environments with concurrency control.
 
@@ -315,7 +225,7 @@ const { deployJob, cleanupJob } = DeployEnvironment({
 
 **Props:** `name` (required), `deployScript` (required), `cleanupScript?`, `url?`, `concurrencyGroup?`, `cancelInProgress?`, `runsOn?`
 
-## GoCI
+### GoCI
 
 Go CI with build, test, and optional lint jobs. Uses `golangci-lint-action` for linting.
 
@@ -334,22 +244,41 @@ const noLint = GoCI({ lintCommand: null });
 
 **Props:** `goVersion?`, `testCommand?`, `buildCommand?`, `lintCommand?` (null to omit), `runsOn?`
 
-## Dependabot
+## Combining composites in a job
 
-Models the repository's dependency-update configuration (`.github/dependabot.yml`) as a chant resource, so it is emitted and lintable like a workflow. The composite ships **safe defaults**: a cooldown window on every ecosystem (so a version published moments ago — including a compromised one — is not adopted before anyone can react) and external code execution explicitly denied.
+Composites return objects with a `.step` property. Combine them freely in any job:
 
 ```typescript
-import { Dependabot } from "@intentius/chant-lexicon-github";
+import {
+  Job, Step,
+  Checkout, SetupNode, CacheAction, UploadArtifact,
+} from "@intentius/chant-lexicon-github";
 
-export const dependabot = Dependabot({
-  ecosystems: [
-    { packageEcosystem: "npm", directory: "/" },
-    { packageEcosystem: "github-actions", directory: "/" },
+export const build = new Job({
+  "runs-on": "ubuntu-latest",
+  timeoutMinutes: 15,
+  steps: [
+    Checkout({}).step,
+    SetupNode({ nodeVersion: "22", cache: "npm" }).step,
+    new Step({ name: "Install", run: "npm ci" }),
+    new Step({ name: "Build", run: "npm run build" }),
+    UploadArtifact({ name: "dist", path: "dist/" }).step,
   ],
-  // cooldownDays defaults to 7, openPullRequestsLimit to 5
 });
 ```
 
-**Props:** `ecosystems` (required — each `{ packageEcosystem, directory?, interval? }`), `cooldownDays?` (default 7), `openPullRequestsLimit?` (default 5)
+## Using raw action references
 
-For full control, construct the `DependabotConfig` resource directly with raw `updates:` entries. Two post-synth checks validate the emitted config: **GHA057** (`insecure-external-code-execution: allow`) and **GHA058** (no cooldown). See [Lint Rules](/chant/lexicons/github/lint-rules/).
+You can always use raw `uses:` strings for actions that do not have a typed composite wrapper:
+
+```typescript
+import { Step } from "@intentius/chant-lexicon-github";
+
+new Step({
+  name: "Deploy to Pages",
+  uses: "actions/deploy-pages@v4",
+  with: { artifact_name: "github-pages" },
+});
+```
+
+The GHA001 lint rule will suggest a typed composite if one is available.
