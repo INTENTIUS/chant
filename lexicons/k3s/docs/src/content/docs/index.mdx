@@ -20,20 +20,6 @@ export default {
 };
 ```
 
-## Entities
-
-| Entity | Emits | For |
-|---|---|---|
-| `Server` | `config.yaml` | `k3s server` — every server flag as a YAML key |
-| `Agent` | `<name>.config.yaml` | `k3s agent` — requires `server` |
-| `Registries` | `registries.yaml` | containerd mirrors, auth, TLS |
-
-Config keys are the CLI flag names, verbatim: if `k3s server --help` shows
-`--write-kubeconfig-mode`, the declaration key is
-`"write-kubeconfig-mode"`. The typed surface is generated from the pinned
-k3s release's own flag definitions (v1.36.3+k3s1), so a regeneration is a
-reviewable diff against a known upstream.
-
 ## A two-node cluster
 
 ```typescript
@@ -60,17 +46,6 @@ source. A literal that arrives through raw props anyway fails K3S001 at
 lint and K3S101 at build; the same wall covers the etcd S3 snapshot
 credentials (`etcd-s3-config-secret` is the reference form upstream
 provides).
-
-## Rules
-
-| Rule | Severity | What it catches |
-|---|---|---|
-| K3S001 | error | literal `token` / `agent-token` in source |
-| K3S101 | error | a literal secret reaching the build |
-| K3S102 | error | literal registry credentials in registries.yaml |
-| K3S103 | error | an Agent with no `server` to join |
-| K3S104 | warning | kubeconfig written wider than 0644 |
-| K3S105 | warning | registry TLS verification disabled |
 
 ## Relationship to k3d
 

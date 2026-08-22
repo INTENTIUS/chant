@@ -13,7 +13,7 @@ export default defineConfig({
       title: 'K3d',
       sidebar: [
         { label: '← chant docs', link: '../../' },
-        { label: 'Overview', slug: '' },
+        { label: 'Overview', slug: 'index' },
       ],
     }),
   ],
