@@ -4,10 +4,6 @@ description: "Splitting resources into child CloudFormation templates with autom
 diataxis: how-to
 ---
 
-{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-aws` — DO NOT EDIT.
-    Edit lexicons/aws/docs/pages/nested-stacks.mdx instead; changes here are overwritten. */}
-
-
 import Diagram from '../../components/Diagram.astro';
 
 CloudFormation nested stacks (`AWS::CloudFormation::Stack`) let you decompose large templates into smaller, reusable child templates. The AWS lexicon's `nestedStack()` function references a **child project directory** — a subdirectory that builds independently to a valid CloudFormation template.
@@ -35,25 +31,7 @@ src/
 
 Use `stackOutput()` to mark values that the parent can reference. Each `stackOutput()` becomes an entry in the child template's `Outputs` section:
 
-```typescript title="outputs.ts"
-/**
- * Cross-stack outputs — values the parent can reference
- */
-
-import { stackOutput } from "@intentius/chant";
-import { vpc, subnet } from "./vpc";
-import { lambdaSg } from "./security";
-
-export const vpcId = stackOutput(vpc.VpcId, {
-  description: "VPC ID",
-});
-export const subnetId = stackOutput(subnet.SubnetId, {
-  description: "Public subnet ID",
-});
-export const lambdaSgId = stackOutput(lambdaSg.GroupId, {
-  description: "Lambda security group ID",
-});
-```
+{{file:../src/testdata/nested-stacks/network/outputs.ts}}
 
 The child can be built independently:
 
@@ -66,34 +44,7 @@ chant build src/network/ -o network.json
 
 Use `nestedStack()` in the parent to reference a child project directory. It returns an object with an `outputs` proxy for cross-stack references:
 
-```typescript title="app.ts"
-/**
- * App layer — Lambda function in the parent template that references
- * the network nested stack's outputs via cross-stack references
- */
-
-import { Function, Sub, AWS, Ref, nestedStack } from "@intentius/chant-lexicon-aws";
-
-// nestedStack() references a child project directory
-const network = nestedStack("network", import.meta.dirname + "/network", {
-  parameters: { Environment: "prod" },
-});
-
-export const handler = new Function({
-  FunctionName: Sub`${AWS.StackName}-handler`,
-  Runtime: "nodejs20.x",
-  Handler: "index.handler",
-  Role: Ref("LambdaExecutionRole"),
-  Code: { ZipFile: "exports.handler = async () => ({ statusCode: 200 });" },
-  VpcConfig: {
-    SubnetIds: [network.outputs.subnetId],
-    SecurityGroupIds: [network.outputs.lambdaSgId],
-  },
-});
-
-// Re-export so discovery picks it up as an entity
-export { network };
-```
+{{file:../src/testdata/nested-stacks/app.ts}}
 
 `network.outputs.subnetId` produces a `NestedStackOutputRef` that serializes to `{ "Fn::GetAtt": ["Network", "Outputs.SubnetId"] }`.
 

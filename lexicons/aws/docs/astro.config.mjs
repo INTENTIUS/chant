@@ -21,52 +21,67 @@ export default defineConfig({
                   "slug": "index"
             },
             {
-                  "label": "CloudFormation Concepts",
-                  "slug": "cloudformation"
+                  "label": "How-to guides",
+                  "items": [
+                        {
+                              "label": "Custom Lint Rules",
+                              "slug": "custom-rules"
+                        },
+                        {
+                              "label": "Deploying to EKS",
+                              "slug": "eks-kubernetes"
+                        },
+                        {
+                              "label": "Examples",
+                              "slug": "examples"
+                        },
+                        {
+                              "label": "Nested Stacks",
+                              "slug": "nested-stacks"
+                        }
+                  ]
             },
             {
-                  "label": "Intrinsics Guide",
-                  "slug": "intrinsics-guide"
+                  "label": "Reference",
+                  "items": [
+                        {
+                              "label": "Intrinsics",
+                              "slug": "intrinsics"
+                        },
+                        {
+                              "label": "All Rules",
+                              "slug": "rules"
+                        },
+                        {
+                              "label": "Serialization",
+                              "slug": "serialization"
+                        },
+                        {
+                              "label": "AI Skills",
+                              "slug": "skills"
+                        },
+                        {
+                              "label": "Composites",
+                              "slug": "composites"
+                        },
+                        {
+                              "label": "Intrinsics Guide",
+                              "slug": "intrinsics-guide"
+                        },
+                        {
+                              "label": "Lint Rules",
+                              "slug": "lint-rules"
+                        }
+                  ]
             },
             {
-                  "label": "Composites",
-                  "slug": "composites"
-            },
-            {
-                  "label": "Lint Rules",
-                  "slug": "lint-rules"
-            },
-            {
-                  "label": "Custom Lint Rules",
-                  "slug": "custom-rules"
-            },
-            {
-                  "label": "Examples",
-                  "slug": "examples"
-            },
-            {
-                  "label": "AI Skills",
-                  "slug": "skills"
-            },
-            {
-                  "label": "Intrinsics",
-                  "slug": "intrinsics"
-            },
-            {
-                  "label": "All Rules",
-                  "slug": "rules"
-            },
-            {
-                  "label": "Serialization",
-                  "slug": "serialization"
-            },
-            {
-                  "label": "Deploying to EKS",
-                  "slug": "eks-kubernetes"
-            },
-            {
-                  "label": "Nested Stacks",
-                  "slug": "nested-stacks"
+                  "label": "Explanation",
+                  "items": [
+                        {
+                              "label": "CloudFormation Concepts",
+                              "slug": "cloudformation"
+                        }
+                  ]
             }
       ],
     }),

@@ -1,10 +1,13 @@
 ---
 title: "Composites"
 description: "Composite resources, built-in composites, action constants, and withDefaults presets in the AWS CloudFormation lexicon"
+diataxis: reference
 ---
 
 {/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-aws` — DO NOT EDIT.
-    Edit lexicons/aws/src/codegen/docs.ts instead; changes here are overwritten. */}
+    Edit lexicons/aws/docs/pages/composites.mdx instead; changes here are overwritten. */}
+
+
 Composites group related resources into reusable factories. See also the core [Composite Resources](/chant/guide/composite-resources/) guide.
 
 ```typescript title="lambda-api.ts"
@@ -268,10 +271,12 @@ Wrap a composite with pre-applied defaults. Defaulted props become optional:
 
 ```typescript title="with-defaults.ts"
 import { Sub, AWS, Function as LambdaFunction } from "@intentius/chant-lexicon-aws";
-import { Composite, withDefaults } from "@intentius/chant";
+import { Composite, withDefaults, type Value } from "@intentius/chant";
 
 interface LambdaApiProps {
-  name: string;
+  // `Value<string>`, because the snippet below fills it with `Sub` — a prop a
+  // reader will build from an intrinsic should say so.
+  name: Value<string>;
   runtime: string;
   handler: string;
   timeout: number;
