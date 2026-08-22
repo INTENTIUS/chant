@@ -4,10 +4,6 @@ description: "Templates, resources, parameters, outputs, dependencies, and taggi
 diataxis: explanation
 ---
 
-{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-aws` — DO NOT EDIT.
-    Edit lexicons/aws/docs/pages/cloudformation.mdx instead; changes here are overwritten. */}
-
-
 {/* TODO(diataxis): split — this page mixes concept mapping (resource
     naming, dependencies, intrinsics) with reference tables (naming,
     PolicyDocument fields, resource attributes) and task-style walkthroughs
@@ -21,32 +17,7 @@ Every exported resource declaration becomes a logical resource in a CloudFormati
 - Resolves `AttrRef` references to `Fn::GetAtt`
 - Resolves resource references to `Ref` intrinsics
 
-```typescript title="main.ts"
-import { LambdaS3, Sub, AWS, Ref } from "@intentius/chant-lexicon-aws";
-import { environment } from "./params";
-
-export const app = LambdaS3({
-  name: Sub`${AWS.StackName}-${Ref(environment)}-fn`,
-  bucketName: Sub`${AWS.StackName}-${Ref(environment)}-bucket`,
-  Runtime: "nodejs20.x",
-  Handler: "index.handler",
-  Code: {
-    ZipFile: `const { S3Client, ListObjectsV2Command } = require("@aws-sdk/client-s3");
-const s3 = new S3Client();
-
-exports.handler = async () => {
-  const result = await s3.send(
-    new ListObjectsV2Command({ Bucket: process.env.BUCKET_NAME })
-  );
-  return {
-    statusCode: 200,
-    body: JSON.stringify(result.Contents ?? []),
-  };
-};`,
-  },
-  access: "ReadOnly",
-});
-```
+{{file:lambda-s3/src/main.ts}}
 
 The `LambdaS3` composite expands to 3 CloudFormation resources: an S3 Bucket, an IAM Role (with S3 read policy), and a Lambda Function. Property names like `BucketName` use the CloudFormation spec-native PascalCase directly, and the export name `app` becomes the resource name prefix (e.g. `appBucket`, `appRole`, `appFunc`).
 
@@ -71,23 +42,7 @@ Common resources get fixed short names for stability. When two services define t
 
 Chant projects use standard TypeScript imports. Lexicon types come from the lexicon package, and cross-file references are standard imports:
 
-```typescript title="health-api.ts"
-import { Sub, AWS, Ref } from "@intentius/chant-lexicon-aws";
-import { SecureApi } from "./lambda-api";
-import { environment } from "./params";
-
-export const healthApi = SecureApi({
-  name: Sub`${AWS.StackName}-${Ref(environment)}-health`,
-  runtime: "nodejs20.x",
-  handler: "index.handler",
-  code: {
-    ZipFile: `exports.handler = async () => ({
-      statusCode: 200,
-      body: JSON.stringify({ status: 'healthy' })
-    });`,
-  },
-});
-```
+{{file:lambda-api/src/health-api.ts}}
 
 When you reference a resource or attribute from another file (e.g. `dataBucket.Arn`), the serializer resolves it to `Fn::GetAtt` or `Ref` as appropriate. This is how cross-file references work — standard imports, no indirection.
 
@@ -95,14 +50,7 @@ When you reference a resource or attribute from another file (e.g. `dataBucket.A
 
 CloudFormation parameters let you customize a stack at deploy time. Export a `Parameter` to add it to the template's `Parameters` section:
 
-```typescript title="parameter-declaration.ts"
-import { Parameter } from "@intentius/chant-lexicon-aws";
-
-export const environment = new Parameter("String", {
-  description: "Deployment environment",
-  defaultValue: "dev",
-});
-```
+{{file:docs-snippets/src/parameter-declaration.ts}}
 
 Produces:
 
@@ -118,20 +66,7 @@ Produces:
 
 Reference parameters with `Ref`:
 
-```typescript title="parameter-cross-file-ref.ts"
-import { Bucket, Sub, Ref } from "@intentius/chant-lexicon-aws";
-import { environment } from "./parameter-declaration";
-
-export const crossRefBucket = new Bucket({
-  BucketName: Sub`${Ref(environment)}-data`,
-  PublicAccessBlockConfiguration: {
-    BlockPublicAcls: true,
-    BlockPublicPolicy: true,
-    IgnorePublicAcls: true,
-    RestrictPublicBuckets: true,
-  },
-});
-```
+{{file:docs-snippets/src/parameter-cross-file-ref.ts}}
 
 ## Outputs
 
@@ -139,21 +74,7 @@ Use `output()` to create explicit stack outputs. Accepts an `AttrRef` (resource 
 or any intrinsic (e.g. `Sub`, `Join`) for computed values. Cross-resource `AttrRef` usage
 is also auto-detected and promoted to outputs when needed.
 
-```typescript title="output-explicit.ts"
-import { Bucket, Sub, AWS, output } from "@intentius/chant-lexicon-aws";
-
-export const dataBucket = new Bucket({
-  BucketName: Sub`${AWS.StackName}-data`,
-  PublicAccessBlockConfiguration: {
-    BlockPublicAcls: true,
-    BlockPublicPolicy: true,
-    IgnorePublicAcls: true,
-    RestrictPublicBuckets: true,
-  },
-});
-
-export const dataBucketArn = output(dataBucket.Arn, "DataBucketArn");
-```
+{{file:docs-snippets/src/output-explicit.ts}}
 
 Produces:
 
@@ -175,11 +96,7 @@ export const solrUrl = output(Sub`http://${Ref(albDnsName)}/solr`, "solrUrl");
 
 Runtime context values available in every template, accessed via the `AWS` namespace:
 
-```typescript title="pseudo-params.ts"
-import { Sub, AWS } from "@intentius/chant-lexicon-aws";
-
-export const s3Endpoint = Sub`https://s3.${AWS.Region}.${AWS.URLSuffix}`;
-```
+{{file:docs-snippets/src/pseudo-params.ts}}
 
 | Pseudo-parameter | Description |
 |---|---|
@@ -202,34 +119,7 @@ CloudFormation automatically creates dependencies between resources when you use
 
 For cases where you need an explicit dependency without a property reference, pass `DependsOn` as a resource-level attribute (second constructor argument):
 
-```typescript title="depends-on.ts"
-import { Instance, DbCluster } from "@intentius/chant-lexicon-aws";
-
-// DependsOn with a string logical name
-export const appServer = new Instance(
-  {
-    ImageId: "ami-12345678",
-    InstanceType: "t3.micro",
-  },
-  { DependsOn: ["dbCluster"] },
-);
-
-// DependsOn with a Declarable reference (resolved automatically)
-export const dbCluster = new DbCluster({
-  Engine: "aurora-postgresql",
-  MasterUsername: "admin",
-  MasterUserPassword: "changeme",
-  StorageEncrypted: true,
-});
-
-export const dependentWorker = new Instance(
-  {
-    ImageId: "ami-12345678",
-    InstanceType: "t3.micro",
-  },
-  { DependsOn: [dbCluster] },
-);
-```
+{{file:docs-snippets/src/depends-on.ts}}
 
 `DependsOn` values can be string logical names or references to other resource objects — Declarable references are resolved to their logical names automatically at build time.
 
@@ -239,57 +129,7 @@ The `WAW010` post-synth check warns if a `DependsOn` target is already reference
 
 Every resource constructor accepts an optional second argument for CloudFormation resource-level attributes. These control lifecycle behavior, conditional creation, and metadata — they are distinct from resource *properties* (the first argument).
 
-```typescript title="resource-attributes.ts"
-import { Bucket, DbInstance, Instance } from "@intentius/chant-lexicon-aws";
-
-// DeletionPolicy — protect data from accidental stack deletion
-export const dbInstance = new DbInstance(
-  {
-    DBInstanceClass: "db.t3.micro",
-    Engine: "postgres",
-    MasterUsername: "admin",
-    MasterUserPassword: "changeme",
-    BackupRetentionPeriod: 7,
-    StorageEncrypted: true,
-  },
-  { DeletionPolicy: "Snapshot", UpdateReplacePolicy: "Snapshot" },
-);
-
-// Condition — only create this resource when a condition is true
-export const prodBucket = new Bucket(
-  {
-    BucketName: "prod-data",
-    PublicAccessBlockConfiguration: {
-      BlockPublicAcls: true,
-      BlockPublicPolicy: true,
-      IgnorePublicAcls: true,
-      RestrictPublicBuckets: true,
-    },
-  },
-  { Condition: "IsProduction" },
-);
-
-// Metadata — attach cfn-init configuration to an EC2 instance
-export const webServer = new Instance(
-  {
-    ImageId: "ami-12345678",
-    InstanceType: "t3.micro",
-  },
-  {
-    Metadata: {
-      "AWS::CloudFormation::Init": {
-        config: {
-          packages: { yum: { httpd: [] } },
-          services: { sysvinit: { httpd: { enabled: true, ensureRunning: true } } },
-        },
-      },
-    },
-    CreationPolicy: {
-      ResourceSignal: { Timeout: "PT15M" },
-    },
-  },
-);
-```
+{{file:docs-snippets/src/resource-attributes.ts}}
 
 | Attribute | Type | Description |
 |-----------|------|-------------|
@@ -319,58 +159,15 @@ Policy documents use **PascalCase keys** (`Effect`, `Action`, `Resource`) becaus
 
 The recommended pattern is to extract policies into your `defaults.ts` and import them directly:
 
-```typescript title="policy-trust.ts"
-import { Sub, AWS } from "@intentius/chant-lexicon-aws";
-
-// Trust policy — allows Lambda service to assume this role
-export const lambdaTrustPolicy = {
-  Version: "2012-10-17",
-  Statement: [{
-    Effect: "Allow",
-    Principal: { Service: "lambda.amazonaws.com" },
-    Action: "sts:AssumeRole",
-  }],
-};
-
-// Read-only S3 policy
-export const s3ReadPolicy = {
-  Statement: [{
-    Effect: "Allow",
-    Action: ["s3:GetObject", "s3:ListBucket"],
-    Resource: Sub`arn:aws:s3:::${AWS.StackName}-data/*`,
-  }],
-};
-```
+{{file:docs-snippets/src/policy-trust.ts}}
 
 Then reference them from resource files:
 
-```typescript title="policy-role.ts"
-import { Role, ManagedPolicy } from "@intentius/chant-lexicon-aws";
-import { lambdaTrustPolicy, s3ReadPolicy } from "./policy-trust";
-
-export const functionRole = new Role({
-  AssumeRolePolicyDocument: lambdaTrustPolicy,
-});
-
-export const readPolicy = new ManagedPolicy({
-  PolicyDocument: s3ReadPolicy,
-  Roles: [functionRole],
-});
-```
+{{file:docs-snippets/src/policy-role.ts}}
 
 For scoped resource ARNs, use `Sub` in the policy constant:
 
-```typescript title="policy-scoped.ts"
-import { Sub, AWS } from "@intentius/chant-lexicon-aws";
-
-export const bucketWritePolicy = {
-  Statement: [{
-    Effect: "Allow",
-    Action: ["s3:PutObject"],
-    Resource: Sub`arn:aws:s3:::${AWS.StackName}-data/*`,
-  }],
-};
-```
+{{file:docs-snippets/src/policy-scoped.ts}}
 
 The `IamPolicyPrincipal` type supports all principal forms — wildcard (`"*"`), AWS accounts, services, and federated providers:
 
@@ -392,31 +189,7 @@ Principal: { Service: ["lambda.amazonaws.com", "edgelambda.amazonaws.com"] },
 
 Use the `If` intrinsic for conditional values within resource properties:
 
-```typescript title="conditions.ts"
-import { Bucket, If, AWS } from "@intentius/chant-lexicon-aws";
-
-export const conditionalBucket = new Bucket({
-  BucketName: "my-bucket",
-  AccelerateConfiguration: If(
-    "EnableAcceleration",
-    { AccelerationStatus: "Enabled" },
-    AWS.NoValue,
-  ),
-  BucketEncryption: {
-    ServerSideEncryptionConfiguration: [
-      {
-        ServerSideEncryptionByDefault: { SSEAlgorithm: "AES256" },
-      },
-    ],
-  },
-  PublicAccessBlockConfiguration: {
-    BlockPublicAcls: true,
-    BlockPublicPolicy: true,
-    IgnorePublicAcls: true,
-    RestrictPublicBuckets: true,
-  },
-});
-```
+{{file:docs-snippets/src/conditions.ts}}
 
 CloudFormation `Conditions` blocks are recognized by the serializer when importing existing templates. For new stacks, use TypeScript logic for build-time decisions and `If` for deploy-time decisions.
 
@@ -424,20 +197,7 @@ CloudFormation `Conditions` blocks are recognized by the serializer when importi
 
 CloudFormation Mappings are a static lookup mechanism. In chant, use TypeScript objects instead — they're evaluated at build time and produce the same result:
 
-```typescript title="mappings.ts"
-import { Instance } from "@intentius/chant-lexicon-aws";
-
-const regionAMIs: Record<string, string> = {
-  "us-east-1": "ami-12345678",
-  "us-west-2": "ami-87654321",
-  "eu-west-1": "ami-abcdef01",
-};
-
-export const server = new Instance({
-  ImageId: regionAMIs["us-east-1"],
-  InstanceType: "t3.micro",
-});
-```
+{{file:docs-snippets/src/mappings.ts}}
 
 For deploy-time region lookups, combine `AWS.Region` with `If` or use `Fn::Sub` with SSM parameter store references.
 
@@ -453,15 +213,7 @@ CloudFormation nested stacks (`AWS::CloudFormation::Stack`) split resources into
 
 Use `defaultTags()` to declare project-wide tags. The serializer automatically injects them into every taggable resource at synthesis time:
 
-```typescript title="tagging.ts"
-import { defaultTags, Sub, AWS } from "@intentius/chant-lexicon-aws";
-
-export const tags = defaultTags([
-  { Key: "Environment", Value: "production" },
-  { Key: "Team", Value: "platform" },
-  { Key: "Stack", Value: Sub`${AWS.StackName}` },
-]);
-```
+{{file:docs-snippets/src/tagging.ts}}
 
 No other changes needed — all taggable resources in the project get these tags automatically. Resources with explicit `Tags` keep them (explicit key wins over default). Non-taggable resources like `AWS::Lambda::Permission` are never tagged.
 

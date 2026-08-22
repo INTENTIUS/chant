@@ -4,10 +4,6 @@ description: "Built-in lint rules and post-synth checks for AWS CloudFormation"
 diataxis: reference
 ---
 
-{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-aws` — DO NOT EDIT.
-    Edit lexicons/aws/docs/pages/lint-rules.mdx instead; changes here are overwritten. */}
-
-
 The AWS lexicon ships lint rules that run during `chant lint` and post-synth checks that validate the serialized CloudFormation output after `chant build`.
 
 This page explains the most commonly hit rules in depth. For the complete list —
@@ -28,20 +24,11 @@ Flags hardcoded AWS region strings like `us-east-1`. Use `AWS.Region` instead so
 
 **Bad** — triggers WAW001:
 
-```typescript title="lint-waw001-bad.ts"
-import { Sub, AWS } from "@intentius/chant-lexicon-aws";
-
-// chant-disable-next-line WAW001
-export const hardcodedEndpoint = Sub`s3.us-east-1.amazonaws.com/${AWS.StackName}`;
-```
+{{file:docs-snippets/src/lint-waw001-bad.ts}}
 
 **Good** — uses `AWS.Region`:
 
-```typescript title="lint-waw001-good.ts"
-import { Sub, AWS } from "@intentius/chant-lexicon-aws";
-
-export const regionEndpoint = Sub`s3.${AWS.Region}.amazonaws.com/${AWS.StackName}`;
-```
+{{file:docs-snippets/src/lint-waw001-good.ts}}
 
 ### WAW006 — S3 Bucket Encryption
 
@@ -51,43 +38,11 @@ Flags S3 buckets that don't configure server-side encryption. AWS recommends ena
 
 **Bad** — triggers WAW006:
 
-```typescript title="lint-waw006-bad.ts"
-import { Bucket } from "@intentius/chant-lexicon-aws";
-
-// chant-disable-next-line WAW006
-export const hardcodedBucket = new Bucket({
-  BucketName: "my-bucket",
-  PublicAccessBlockConfiguration: {
-    BlockPublicAcls: true,
-    BlockPublicPolicy: true,
-    IgnorePublicAcls: true,
-    RestrictPublicBuckets: true,
-  },
-});
-```
+{{file:docs-snippets/src/lint-waw006-bad.ts}}
 
 **Good** — encryption configured:
 
-```typescript title="lint-waw006-good.ts"
-import { Bucket } from "@intentius/chant-lexicon-aws";
-
-export const bucket = new Bucket({
-  BucketName: "my-bucket",
-  BucketEncryption: {
-    ServerSideEncryptionConfiguration: [
-      {
-        ServerSideEncryptionByDefault: { SSEAlgorithm: "AES256" },
-      },
-    ],
-  },
-  PublicAccessBlockConfiguration: {
-    BlockPublicAcls: true,
-    BlockPublicPolicy: true,
-    IgnorePublicAcls: true,
-    RestrictPublicBuckets: true,
-  },
-});
-```
+{{file:docs-snippets/src/lint-waw006-good.ts}}
 
 ### WAW009 — IAM Wildcard Resource
 
@@ -97,70 +52,11 @@ Flags IAM policy statements that use `"Resource": "*"`. Prefer scoped resource A
 
 **Bad** — triggers WAW009:
 
-```typescript title="lint-waw009-bad.ts"
-import { Role, ManagedPolicy, Sub, AWS } from "@intentius/chant-lexicon-aws";
-
-export const roleBad = new Role({
-  RoleName: Sub`${AWS.StackName}-role`,
-  AssumeRolePolicyDocument: {
-    Version: "2012-10-17",
-    Statement: [
-      {
-        Effect: "Allow",
-        Principal: { Service: "lambda.amazonaws.com" },
-        Action: "sts:AssumeRole",
-      },
-    ],
-  },
-});
-
-export const policyBad = new ManagedPolicy({
-  PolicyDocument: {
-    Statement: [
-      {
-        Effect: "Allow",
-        Action: ["s3:GetObject"],
-        // chant-disable-next-line WAW009
-        Resource: "*",
-      },
-    ],
-  },
-  Roles: [roleBad],
-});
-```
+{{file:docs-snippets/src/lint-waw009-bad.ts}}
 
 **Good** — scoped ARN:
 
-```typescript title="lint-waw009-good.ts"
-import { Role, ManagedPolicy, Sub, AWS } from "@intentius/chant-lexicon-aws";
-
-export const roleGood = new Role({
-  RoleName: Sub`${AWS.StackName}-role`,
-  AssumeRolePolicyDocument: {
-    Version: "2012-10-17",
-    Statement: [
-      {
-        Effect: "Allow",
-        Principal: { Service: "lambda.amazonaws.com" },
-        Action: "sts:AssumeRole",
-      },
-    ],
-  },
-});
-
-export const policyGood = new ManagedPolicy({
-  PolicyDocument: {
-    Statement: [
-      {
-        Effect: "Allow",
-        Action: ["s3:GetObject"],
-        Resource: Sub`arn:aws:s3:::${AWS.StackName}-data/*`,
-      },
-    ],
-  },
-  Roles: [roleGood],
-});
-```
+{{file:docs-snippets/src/lint-waw009-good.ts}}
 
 IAM policy documents use PascalCase keys (`Effect`, `Action`, `Resource`) matching the IAM JSON Policy Language spec. The `PolicyDocument` and `IamPolicyStatement` types provide full autocomplete for these fields.
 

@@ -1,0 +1,23 @@
+---
+title: "Custom Lint Rules"
+description: "Writing and registering project-specific lint rules for AWS CloudFormation"
+diataxis: how-to
+---
+
+Chant's lint engine runs TypeScript AST visitors. Write project-specific rules that enforce domain conventions.
+
+## Anatomy of a lint rule
+
+The lambda-api example includes a full custom rule implementation:
+
+{{file:lambda-api/src/lint/api-timeout.ts}}
+
+The `check` function receives a `LintContext` containing the TypeScript `sourceFile` and returns an array of diagnostics with file, line, column, and message.
+
+## Registering custom rules
+
+Add a `chant.config.ts` to your project:
+
+{{file:lambda-api/src/chant.config.ts}}
+
+The `plugins` array accepts relative paths. Each plugin module should export a `LintRule` object.
