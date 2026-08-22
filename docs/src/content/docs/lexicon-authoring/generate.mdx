@@ -1,6 +1,7 @@
 ---
 title: Implement Generate
 description: Wire up generatePipeline with your upstream spec
+diataxis: how-to
 ---
 
 The `generate` lifecycle method is the heart of a lexicon — it fetches upstream schemas, parses them, and produces TypeScript types, a runtime index, and a registry. Core provides `generatePipeline` to orchestrate this; you supply provider-specific callbacks.

@@ -1,6 +1,7 @@
 ---
 title: TypeScript as Data
 description: How chant reads the resource objects your TypeScript exports, and the supported subset
+diataxis: explanation
 ---
 
 chant reads the resource objects your TypeScript exports. It supports a specific subset of the language, the part whose value is fully determined by literals, constants, and cross-resource references. `chant build` reduces your files directly to those objects without executing them; a file that steps outside the subset is imported and run instead. The subset exists so that either path has no side effects and always yields the same output. This page documents exactly which patterns are supported and which are not.

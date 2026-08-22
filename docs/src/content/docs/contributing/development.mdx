@@ -1,6 +1,7 @@
 ---
 title: Development Setup
 description: Setting up a development environment for chant
+diataxis: how-to
 ---
 
 ## Prerequisites
@@ -129,6 +130,21 @@ chant/
 ### Core codegen infrastructure
 
 The `packages/core/src/codegen/` directory contains reusable infrastructure for lexicon code generation pipelines. Lexicons supply provider-specific callbacks and data tables; core handles orchestration, logging, warning collection, stats counting, and artifact writing. The AWS lexicon (`lexicons/aws/`) demonstrates this pattern — its codegen files are thin wrappers around core pipelines.
+
+## Docs Classification
+
+Every page under `docs/src/content/docs/` carries a `diataxis` frontmatter field with one of four values, following [Diátaxis](https://diataxis.fr):
+
+| Value | The page is for | Sidebar group |
+|---|---|---|
+| `tutorial` | learning by doing, start to finish | Tutorials |
+| `how-to` | getting one task done | How-to guides |
+| `reference` | looking something up | Reference |
+| `explanation` | understanding why | Explanation |
+
+One mode per page. A page that needs two gets split. The sidebar in `docs/astro.config.mjs` is grouped by the same four values, and `just docs-check` fails when a page is missing the field, is in no sidebar group, or sits in a group that does not match its field. `index` and `whats-new` are the only exempt pages.
+
+Lexicon docs sites use the same four values in `lexicons/<name>/docs/pages/*.mdx`; the docs pipeline builds their sidebar from the field.
 
 ## What's Next
 

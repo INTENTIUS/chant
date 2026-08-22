@@ -224,8 +224,12 @@ docs-build:
 docs-serve: docs-build
     npx serve .docs-dist
 
+# Check every core docs page carries a Diátaxis quadrant matching its sidebar group
+docs-check:
+    node scripts/check-docs-diataxis.mjs --strict
+
 # Check internal doc links across the unified site (requires lychee: brew install lychee)
-docs-check-links: docs-build
+docs-check-links: docs-check docs-build
     #!/usr/bin/env bash
     set -euo pipefail
     if ! command -v lychee >/dev/null 2>&1; then

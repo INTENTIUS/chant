@@ -1,6 +1,7 @@
 ---
 title: Add a Third-Party CRD
 description: Extend the Kubernetes lexicon with an operator's CRDs — typed resources plus rules — without building a new lexicon.
+diataxis: how-to
 ---
 
 Most operators ship their API as Kubernetes CustomResourceDefinitions. Because a CRD carries an `openAPIV3Schema`, the k8s lexicon can generate typed resources from it the same way it generates the built-in Kubernetes types. You do not write a new lexicon for KubeRay, Argo CD, cert-manager, or Crossplane — you add their CRDs to the k8s lexicon and, optionally, author rules against the kinds they introduce.
