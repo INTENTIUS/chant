@@ -21,32 +21,37 @@ export default defineConfig({
                   "slug": "index"
             },
             {
-                  "label": "Resources",
-                  "slug": "resources"
-            },
-            {
-                  "label": "Composites",
-                  "slug": "composites"
-            },
-            {
-                  "label": "Ops",
-                  "slug": "ops"
-            },
-            {
-                  "label": "Drift and Adoption",
-                  "slug": "adoption"
-            },
-            {
-                  "label": "Skills",
-                  "slug": "skills"
-            },
-            {
-                  "label": "All Rules",
-                  "slug": "rules"
-            },
-            {
-                  "label": "Serialization",
-                  "slug": "serialization"
+                  "label": "Reference",
+                  "items": [
+                        {
+                              "label": "All Rules",
+                              "slug": "rules"
+                        },
+                        {
+                              "label": "Serialization",
+                              "slug": "serialization"
+                        },
+                        {
+                              "label": "Composites",
+                              "slug": "composites"
+                        },
+                        {
+                              "label": "Drift and Adoption",
+                              "slug": "adoption"
+                        },
+                        {
+                              "label": "Ops",
+                              "slug": "ops"
+                        },
+                        {
+                              "label": "Resources",
+                              "slug": "resources"
+                        },
+                        {
+                              "label": "Skills",
+                              "slug": "skills"
+                        }
+                  ]
             }
       ],
     }),
