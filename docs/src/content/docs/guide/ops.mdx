@@ -84,29 +84,7 @@ Once this works end-to-end, swap `shell()` for `kubectlApply()`, `helmInstall()`
 
 Each `phase()` has a name and an ordered list of steps. All steps in a phase run sequentially by default. Set `parallel: true` to run them concurrently via `Promise.all`.
 
-Pre-built step builders:
-
-| Builder | What it does |
-|---------|-------------|
-| `shell(cmd, opts?)` | Run an arbitrary shell command |
-| `build(path)` | Run `chant build` |
-| `kubectlApply(manifest, opts?)` | Server-side apply a manifest as chant's field manager |
-| `helmInstall(name, chart, opts?)` | `helm upgrade --install` |
-| `waitForStack(stackFile, opts?)` | Poll until a chant stack output file is ready |
-| `gitlabPipeline(projectId, ref, opts?)` | Trigger a GitLab pipeline and wait |
-| `lifecycleSnapshot(env, opts?)` | `chant lifecycle snapshot` |
-| `teardown(path, opts?)` | Build + destroy |
-
 A reconcile activity is also available via `activity("reconcilePr", args)`: given the change-set entries that triggered it, it regenerates TypeScript with `chant import --from <env>` and opens a reviewable PR (modes: `pull-request`, `issue`, `report`). It never commits to the main branch. It is the building block for the reconcile workflow (cloud → code).
-
-Each step takes an optional `profile` that controls Temporal retry and timeout settings:
-
-| Profile | Suitable for |
-|---------|-------------|
-| `fastIdempotent` (default) | Quick, safe-to-retry steps |
-| `longInfra` | Slow infra changes (cluster create, Helm install) |
-| `k8sWait` | Polling until K8s resources are ready |
-| `humanGate` | Steps that may take hours |
 
 ## Gate steps
 
@@ -156,81 +134,6 @@ export default Op({
 });
 ```
 
-## Search attributes
-
-Each generated workflow auto-emits `upsertSearchAttributes()` calls so workflow runs are filterable in the Temporal UI without hand-coded boilerplate. Two emission points:
-
-1. **Initial call** at workflow start: `OpName` plus any `searchAttributes` you declare on the Op
-2. **Per-phase call** at the start of each phase (and each `onFailure` phase): `Phase` set to the current phase name
-
-Declare custom attributes on the Op:
-
-```typescript
-export default Op({
-  name: "alb-deploy",
-  overview: "Deploy ALB stack",
-  searchAttributes: {
-    Environment: "staging",
-    Region: "us-east-1",
-  },
-  phases: [
-    phase("Build",  [/* ... */]),
-    phase("Deploy", [/* ... */]),
-  ],
-});
-```
-
-The generated `workflow.ts` produces:
-
-```typescript
-export async function albDeployWorkflow(): Promise<void> {
-  upsertSearchAttributes({
-    OpName: ["alb-deploy"],
-    Environment: ["staging"],
-    Region: ["us-east-1"],
-  });
-
-  // Phase: Build
-  upsertSearchAttributes({ Phase: ["Build"] });
-  // ...
-
-  // Phase: Deploy
-  upsertSearchAttributes({ Phase: ["Deploy"] });
-  // ...
-}
-```
-
-For an Op with N phases this is **N+1 upsert calls total**. Values are wrapped as single-element arrays for the classic `@temporalio/workflow` API.
-
-> **Registration is separate.** Auto-emit assumes the attributes are already registered server-side. Declare them with the [`SearchAttribute`](/chant/lexicons/temporal/resources/#searchattribute) resource so `chant build` emits the registration commands. See also [`chant lifecycle`](/chant/cli/lifecycle/) for snapshotting registered attributes against a live cluster.
-
-User-provided keys merge over the `OpName` default; if you set `searchAttributes: { OpName: "custom" }` the user value wins.
-
-### Outcome-based search attributes
-
-Activity steps support an optional `outcomeAttribute` field that captures the activity's return value and surfaces it as a workflow search attribute:
-
-```typescript
-phase("Diff", [
-  {
-    kind: "activity",
-    fn: "lifecycleDiff",
-    args: { env: "prod", live: true },
-    // Capture lifecycleDiff's `drifted` field and tag the run Drift=true/false
-    outcomeAttribute: { name: "Drift", from: "drifted" },
-  },
-]),
-```
-
-The serializer turns this into:
-
-```typescript
-const __r0 = await lifecycleDiff({"env":"prod","live":true});
-upsertSearchAttributes({ "Drift": [String(__r0?.drifted)] });
-```
-
-`from` is a dot-path into the return value; when omitted, the whole return value is stringified. Counters are workflow-scoped (`__r0`, `__r1`, ...), and parallel phases destructure `Promise.all` results so each outcome attribute fires after the corresponding activity returns.
-
 ## Continuous observation
 
 The `WatchOp` composite pairs an Op with a `TemporalSchedule` so `chant lifecycle snapshot` and `chant lifecycle diff --live` run on a recurring cron — periodic drift detection between change windows, not just at the next deploy.
@@ -266,7 +169,7 @@ The `ApplyOp` composite is the other direction: compute the plan, then apply it.
 
 `target` picks the mechanism, and there are three: `kubectl` is a server-side apply through the k8s lexicon's typed client, while `cloudformation` and `arm` shell out to `aws cloudformation deploy` and `az deployment group create`.
 
-chant also ships four **native per-resource appliers** that speak each provider's own API directly, with no CLI in the path and an endpoint override so the same step targets a real account or an emulator: `awsApply`, `azApply` and `gcpApply` (typed step builders, like the ones in [Phases and steps](#phases-and-steps)), and `flyApply` (an activity the fly lexicon contributes, reached by name). None of them is reachable through `ApplyOp` — `target` has no value for GCP or Fly, and the two shell targets do not route to their applier ([#1449](https://github.com/INTENTIUS/chant/issues/1449)). Until that changes, use them as steps in a hand-written Op.
+chant also ships four **native per-resource appliers** that speak each provider's own API directly, with no CLI in the path and an endpoint override so the same step targets a real account or an emulator: `awsApply`, `azApply` and `gcpApply` (typed step builders, like the ones in [Ops Reference](/chant/guide/ops-reference/#step-builders)), and `flyApply` (an activity the fly lexicon contributes, reached by name). None of them is reachable through `ApplyOp` — `target` has no value for GCP or Fly, and the two shell targets do not route to their applier ([#1449](https://github.com/INTENTIUS/chant/issues/1449)). Until that changes, use them as steps in a hand-written Op.
 
 ```typescript
 import { ApplyOp } from "@intentius/chant-lexicon-temporal";
@@ -283,24 +186,6 @@ const { op } = ApplyOp({
 
 export default op;
 ```
-
-`delete` controls how apply treats resources no longer declared. The delete rides the target's own delete path, and what bounds that path differs per target:
-
-| target | delete path | what bounds it |
-|---|---|---|
-| `kubectl` | a sweep filtered by `app.kubernetes.io/managed-by=chant` (and by the stack when `ownership.stack` is set), restricted to the namespaces the apply touched | the ownership marker — an unmarked object is never touched |
-| `arm` | `pruneArmOrphans`, which lists the resource group and deletes only resources carrying chant's ownership tag | the ownership tag — an untagged resource is never touched |
-| `cloudformation` | the stack deletes resources removed from its template | the stack — a resource CloudFormation did not create is not in it |
-
-All three are owned-only by construction.
-
-<Aside type="note" title="`arm` used to delete at resource-group scope">
-Before [#1448](https://github.com/INTENTIUS/chant/issues/1448), the ARM target ran `az deployment group create --mode Complete`, which removes every resource in the resource group the template does not declare — including resources chant never applied. Both `owned-only` and `gated` selected it, so neither was owned-only on that target.
-
-It now routes to the azure lexicon's `azApply`, which prunes through the ownership tag. If you worked around this by keeping `delete: "never"` on `arm` targets, or by giving the stack a resource group it was the sole occupant of, neither is necessary any more.
-
-One caveat that is not a chant limitation: **floci-az drops resource tags**, so nothing reads back as chant-owned there and an owned-only prune deletes nothing. It fails closed rather than open, but it means the prune can only be verified against real Azure.
-</Aside>
 
 ### Field ownership on the kubectl target
 
@@ -414,12 +299,4 @@ chant run log alb-deploy
 
 See [`chant run`](/chant/cli/run/) for the full CLI reference, and [Worker Profiles](/chant/lexicons/temporal/worker-profiles/) for connection configuration.
 
-## Codegen
-
-`chant build` emits three files per Op under `dist/ops/<name>/`:
-
-| File | Purpose |
-|------|---------|
-| `workflow.ts` | Temporal workflow function — phases, gates, onFailure |
-| `activities.ts` | Re-exports all pre-built activity implementations |
-| `worker.ts` | Worker bootstrap — reads profile from `chant.config.js` |
+See [Ops Reference](/chant/guide/ops-reference/) for step builders, retry profiles, the search-attributes contract, per-target delete-path bounds, and the files `chant build` generates.

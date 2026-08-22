@@ -196,6 +196,12 @@ export default defineConfig({
 							],
 						},
 						{
+							label: 'Ops and lifecycle',
+							items: [
+								{ label: 'Ops Reference', slug: 'guide/ops-reference' },
+							],
+						},
+						{
 							label: 'Lint rules',
 							items: [
 								{ label: 'Overview', slug: 'lint-rules/overview' },
@@ -283,6 +289,7 @@ export default defineConfig({
 								{ label: 'Evaluation Pipeline', slug: 'concepts/evaluation-pipeline' },
 								{ label: 'State and Governance', slug: 'concepts/governance' },
 								{ label: 'Drift Detection', slug: 'concepts/drift-detection' },
+								{ label: 'Reconciliation', slug: 'concepts/reconciliation' },
 								{ label: 'Durable Workflows', slug: 'concepts/durable-workflows' },
 								{ label: 'Local vs Temporal', slug: 'guide/local-vs-temporal' },
 								{ label: 'Agent Integration', slug: 'guide/agent-integration' },

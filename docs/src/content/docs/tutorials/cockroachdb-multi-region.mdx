@@ -178,7 +178,7 @@ phase("Clusters ready", [
 ], { parallel: true }),
 ```
 
-The readiness phase is the clearest trade. The script waited on `kubectl wait --for=condition=Ready containercluster/...` and then polled `gcloud container node-pools describe` sixty times in a bash loop. Both are Config Connector resources, so [`waitForReady`](/chant/guide/ops/#phases-and-steps) reads their own Ready condition — and fails fast on a terminal one instead of polling out the timeout.
+The readiness phase is the clearest trade. The script waited on `kubectl wait --for=condition=Ready containercluster/...` and then polled `gcloud container node-pools describe` sixty times in a bash loop. Both are Config Connector resources, so [`waitForReady`](/chant/guide/ops-reference/#step-builders) reads their own Ready condition — and fails fast on a terminal one instead of polling out the timeout.
 
 ### Where the gate goes
 
