@@ -4,10 +4,6 @@ description: "Walkthrough of GitHub Actions examples — workflows, composites, 
 diataxis: how-to
 ---
 
-{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-github` — DO NOT EDIT.
-    Edit lexicons/github/docs/pages/examples.mdx instead; changes here are overwritten. */}
-
-
 Runnable examples live in the lexicon's `examples/` directory. Clone the repo and try them:
 
 ```bash
@@ -29,30 +25,7 @@ src/
 
 ### Source
 
-```typescript title="ci.ts"
-import { Workflow, Job, Step, Checkout, SetupNode } from "@intentius/chant-lexicon-github";
-
-export const workflow = new Workflow({
-  name: "CI",
-  on: {
-    push: { branches: ["main"] },
-    pull_request: { branches: ["main"] },
-  },
-  permissions: { contents: "read" },
-});
-
-export const build = new Job({
-  "runs-on": "ubuntu-latest",
-  timeoutMinutes: 15,
-  steps: [
-    Checkout({}).step,
-    SetupNode({ nodeVersion: "22", cache: "npm" }).step,
-    new Step({ name: "Install", run: "npm ci" }),
-    new Step({ name: "Build", run: "npm run build" }),
-    new Step({ name: "Test", run: "npm test" }),
-  ],
-});
-```
+{{file:getting-started/src/ci.ts}}
 
 ### Generated output
 

@@ -4,30 +4,9 @@ description: "GitHub and Runner context variable references for GitHub Actions w
 diataxis: reference
 ---
 
-{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-github` — DO NOT EDIT.
-    Edit lexicons/github/docs/pages/variables.mdx instead; changes here are overwritten. */}
-
-
 The `GitHub` and `Runner` objects provide type-safe access to GitHub Actions context variables. These expand to `${{ github.* }}` and `${{ runner.* }}` expressions in the generated YAML.
 
-```typescript title="variables-usage.ts"
-import { Job, Step, GitHub, Runner } from "@intentius/chant-lexicon-github";
-
-// Use GitHub context variables in steps
-export const deploy = new Job({
-  "runs-on": "ubuntu-latest",
-  steps: [
-    new Step({
-      name: "Print context",
-      run: `echo "Branch: ${GitHub.RefName}"
-echo "SHA: ${GitHub.Sha}"
-echo "Actor: ${GitHub.Actor}"
-echo "Repo: ${GitHub.Repository}"
-echo "Runner OS: ${Runner.Os}"`,
-    }),
-  ],
-});
-```
+{{file:docs-snippets/src/variables-usage.ts}}
 
 ## GitHub context
 
