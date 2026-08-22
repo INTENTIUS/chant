@@ -4,10 +4,6 @@ description: "Jobs, stages, artifacts, caching, images, rules, environments, and
 diataxis: explanation
 ---
 
-{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-gitlab` — DO NOT EDIT.
-    Edit lexicons/gitlab/docs/pages/pipeline-concepts.mdx instead; changes here are overwritten. */}
-
-
 import Diagram from '../../components/Diagram.astro';
 
 Every exported `Job` declaration becomes a job entry in the generated `.gitlab-ci.yml`. The serializer handles the translation automatically:
@@ -19,15 +15,7 @@ Every exported `Job` declaration becomes a job entry in the generated `.gitlab-c
 - Collects stages from all jobs into a `stages:` list
 - Collapses single-property objects (`new Image({ name: "node:20" })` → `image: node:20`)
 
-```typescript title="job-basic.ts"
-import { Job, Image } from "@intentius/chant-lexicon-gitlab";
-
-export const buildApp = new Job({
-  stage: "build",
-  image: new Image({ name: "node:20" }),
-  script: ["npm ci", "npm run build"],
-});
-```
+{{file:docs-snippets/src/job-basic.ts}}
 
 Produces this YAML:
 
@@ -80,37 +68,13 @@ The lexicon provides 3 resource types and 16 property types:
 
 Extract reusable objects into a shared config file and import them across your pipeline files:
 
-```typescript title="pipeline-shared-config.ts"
-import { Job } from "@intentius/chant-lexicon-gitlab";
-import { nodeImage, npmCache, buildArtifacts } from "./config";
-
-export const build = new Job({
-  stage: "build",
-  image: nodeImage,
-  cache: npmCache,
-  script: ["npm ci", "npm run build"],
-  artifacts: buildArtifacts,
-});
-```
+{{file:docs-snippets/src/pipeline-shared-config.ts}}
 
 ## Jobs
 
 A `Job` is the fundamental unit. Every exported `Job` becomes a job entry in the YAML:
 
-```typescript title="job-test.ts"
-import { Job, Image, Artifacts } from "@intentius/chant-lexicon-gitlab";
-
-export const test = new Job({
-  stage: "test",
-  image: new Image({ name: "node:20-alpine" }),
-  script: ["npm ci", "npm test"],
-  artifacts: new Artifacts({
-    paths: ["coverage/"],
-    expire_in: "1 week",
-    reports: { junit: "coverage/junit.xml" },
-  }),
-});
-```
+{{file:docs-snippets/src/job-test.ts}}
 
 Key properties:
 - `script` — **required** (or `trigger`/`run`). Array of shell commands to execute.
@@ -122,14 +86,7 @@ Key properties:
 
 Stages define the execution order of a pipeline. The serializer automatically collects unique stage values from all jobs:
 
-```typescript title="stages.ts"
-import { Job } from "@intentius/chant-lexicon-gitlab";
-
-export const lint = new Job({ stage: "test", script: ["npm run lint"] });
-export const unitTest = new Job({ stage: "test", script: ["npm test"] });
-export const stageBuild = new Job({ stage: "build", script: ["npm run build"] });
-export const deploy = new Job({ stage: "deploy", script: ["npm run deploy"] });
-```
+{{file:docs-snippets/src/stages.ts}}
 
 Produces:
 
@@ -146,27 +103,7 @@ Jobs in the same stage run in parallel. Stages run sequentially in declaration o
 
 **Artifacts** are files produced by a job and passed to later stages or stored for download. **Caches** persist files between pipeline runs to speed up builds. Both are shown in the shared config:
 
-```typescript title="config.ts"
-
-export const npmCache = new Cache({
-  key: "$CI_COMMIT_REF_SLUG",
-  paths: ["node_modules/"],
-  policy: "pull-push",
-});
-
-export const buildArtifacts = new Artifacts({
-  paths: ["dist/"],
-  expire_in: "1 hour",
-});
-
-export const testArtifacts = new Artifacts({
-  paths: ["coverage/"],
-  expire_in: "1 week",
-  reports: { junit: "coverage/junit.xml" },
-});
-
-export const onMergeRequest = new Rule({
-```
+{{file:docs-snippets/src/config.ts:4-22}}
 
 The key difference: artifacts are for passing files between **stages in the same pipeline**; caches are for speeding up **repeated pipeline runs**.
 
@@ -174,24 +111,7 @@ The key difference: artifacts are for passing files between **stages in the same
 
 `Rule` objects control when a job runs. They map to `rules:` entries in the YAML:
 
-```typescript title="rules-conditions.ts"
-import { Rule, Job, CI } from "@intentius/chant-lexicon-gitlab";
-
-export const mrRule = new Rule({
-  if: CI.MergeRequestIid,
-});
-
-export const defaultBranchRule = new Rule({
-  if: `${CI.CommitBranch} == ${CI.DefaultBranch}`,
-  when: "manual",
-});
-
-export const deployJob = new Job({
-  stage: "deploy",
-  script: ["npm run deploy"],
-  rules: [defaultBranchRule],
-});
-```
+{{file:docs-snippets/src/rules-conditions.ts}}
 
 Produces:
 
@@ -211,22 +131,7 @@ The `if` property maps directly to `if:` in the YAML. Use the `CI` pseudo-parame
 
 `Environment` defines a deployment target:
 
-```typescript title="environment.ts"
-import { Environment, Job } from "@intentius/chant-lexicon-gitlab";
-import { onDefaultBranch } from "./config";
-
-export const prodEnv = new Environment({
-  name: "production",
-  url: "https://example.com",
-});
-
-export const deployProd = new Job({
-  stage: "deploy",
-  script: ["npm run deploy"],
-  environment: prodEnv,
-  rules: [onDefaultBranch],
-});
-```
+{{file:docs-snippets/src/environment.ts}}
 
 GitLab tracks deployments to environments and provides rollback capabilities in the UI.
 
@@ -234,49 +139,19 @@ GitLab tracks deployments to environments and provides rollback capabilities in 
 
 `Image` specifies the Docker image for a job:
 
-```typescript title="images.ts"
-import { Image } from "@intentius/chant-lexicon-gitlab";
-
-export const alpineNodeImage = new Image({ name: "node:20-alpine" });
-
-export const customImage = new Image({
-  name: "registry.example.com/my-image:latest",
-  entrypoint: ["/bin/sh", "-c"],
-});
-```
+{{file:docs-snippets/src/images.ts}}
 
 ## Workflow
 
 `Workflow` controls pipeline-level settings — when pipelines run, auto-cancellation, and global includes:
 
-```typescript title="workflow.ts"
-import { Workflow, Rule, AutoCancel, CI } from "@intentius/chant-lexicon-gitlab";
-
-export const workflow = new Workflow({
-  name: `CI Pipeline for ${CI.CommitRef}`,
-  rules: [
-    new Rule({ if: CI.MergeRequestIid }),
-    new Rule({ if: CI.CommitBranch }),
-  ],
-  auto_cancel: new AutoCancel({
-    on_new_commit: "interruptible",
-  }),
-});
-```
+{{file:docs-snippets/src/workflow.ts}}
 
 ## Default
 
 `Default` sets shared configuration inherited by all jobs:
 
-```typescript title="defaults.ts"
-import { Default, Image, Cache, Retry, CI } from "@intentius/chant-lexicon-gitlab";
-
-export const defaults = new Default({
-  image: new Image({ name: "node:20-alpine" }),
-  cache: new Cache({ key: CI.CommitRef, paths: ["node_modules/"] }),
-  retry: new Retry({ max: 2, when: ["runner_system_failure"] }),
-});
-```
+{{file:docs-snippets/src/defaults.ts}}
 
 Jobs can override any default property individually.
 
@@ -284,15 +159,4 @@ Jobs can override any default property individually.
 
 `Trigger` creates downstream pipeline jobs:
 
-```typescript title="trigger.ts"
-import { Job, Trigger } from "@intentius/chant-lexicon-gitlab";
-
-export const deployInfra = new Job({
-  stage: "deploy",
-  trigger: new Trigger({
-    project: "my-group/infra-repo",
-    branch: "main",
-    strategy: "depend",
-  }),
-});
-```
+{{file:docs-snippets/src/trigger.ts}}

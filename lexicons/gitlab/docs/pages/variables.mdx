@@ -4,26 +4,9 @@ description: "GitLab CI/CD predefined variable references"
 diataxis: reference
 ---
 
-{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-gitlab` — DO NOT EDIT.
-    Edit lexicons/gitlab/docs/pages/variables.mdx instead; changes here are overwritten. */}
-
-
 The `CI` object provides type-safe access to GitLab CI/CD predefined variables. These map to `$CI_*` environment variables at runtime.
 
-```typescript title="variables-usage.ts"
-import { Rule, Cache, CI } from "@intentius/chant-lexicon-gitlab";
-
-// Use in rule conditions
-export const onDefault = new Rule({
-  if: `${CI.CommitBranch} == ${CI.DefaultBranch}`,
-});
-
-// Use in cache keys
-export const cache = new Cache({
-  key: CI.CommitRef,
-  paths: ["node_modules/"],
-});
-```
+{{file:docs-snippets/src/variables-usage.ts}}
 
 ## Variable reference
 
@@ -50,37 +33,4 @@ export const cache = new Cache({
 
 ## Common patterns
 
-```typescript title="variables-patterns.ts"
-import { Rule, Job, Image, Environment, CI } from "@intentius/chant-lexicon-gitlab";
-
-// Only on merge requests
-export const onMR = new Rule({ if: CI.MergeRequestIid });
-
-// Only on default branch
-export const onMain = new Rule({
-  if: `${CI.CommitBranch} == ${CI.DefaultBranch}`,
-});
-
-// Only on tags
-export const onTag = new Rule({ if: CI.CommitTag });
-
-// Dynamic environment naming
-export const reviewDeploy = new Job({
-  stage: "deploy",
-  environment: new Environment({
-    name: `review/${CI.CommitRef}`,
-    url: `https://${CI.CommitRef}.preview.example.com`,
-  }),
-  script: ["deploy-preview"],
-});
-
-// Container registry
-export const buildImage = new Job({
-  stage: "build",
-  image: new Image({ name: "docker:24" }),
-  script: [
-    `docker build -t ${CI.RegistryImage}:${CI.CommitSha} .`,
-    `docker push ${CI.RegistryImage}:${CI.CommitSha}`,
-  ],
-});
-```
+{{file:docs-snippets/src/variables-patterns.ts}}

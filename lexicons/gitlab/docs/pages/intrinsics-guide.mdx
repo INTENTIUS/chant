@@ -4,10 +4,6 @@ description: "Worked examples for the GitLab reference() intrinsic and its chant
 diataxis: reference
 ---
 
-{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-gitlab` — DO NOT EDIT.
-    Edit lexicons/gitlab/docs/pages/intrinsics-guide.mdx instead; changes here are overwritten. */}
-
-
 See [Intrinsic Functions](../intrinsics/) for the generated reference table (name, description, output key, whether it's a tagged template, whether folding can reduce it). This page is the worked-example companion.
 
 The GitLab lexicon provides one intrinsic function: `reference()`, which maps to GitLab's `!reference` YAML tag.
@@ -18,13 +14,7 @@ The GitLab lexicon provides one intrinsic function: `reference()`, which maps to
 
 The `reference()` intrinsic lets you reuse properties from other jobs or hidden keys. It produces the `!reference` YAML tag:
 
-```typescript title="reference-basic.ts"
-import { Job, reference } from "@intentius/chant-lexicon-gitlab";
-
-export const deployRef = new Job({
-  script: reference(".setup", "script"),
-});
-```
+{{file:docs-snippets/src/reference-basic.ts}}
 
 Serializes to:
 
@@ -44,29 +34,7 @@ reference(jobName: string, property: string): ReferenceTag
 
 ### Use cases
 
-```typescript title="reference-shared.ts"
-import { Job, reference } from "@intentius/chant-lexicon-gitlab";
-
-// Shared setup scripts from external YAML
-export const testRef = new Job({
-  stage: "test",
-  before_script: reference(".node-setup", "before_script"),
-  script: ["npm test"],
-});
-
-export const lintRef = new Job({
-  stage: "test",
-  before_script: reference(".node-setup", "before_script"),
-  script: ["npm run lint"],
-});
-
-// Shared rules
-export const buildRef = new Job({
-  stage: "build",
-  rules: reference(".default-rules", "rules"),
-  script: ["npm run build"],
-});
-```
+{{file:docs-snippets/src/reference-shared.ts}}
 
 Produces:
 
@@ -86,20 +54,4 @@ lint:
 
 ### When to use `reference()` vs direct imports
 
-```typescript title="reference-vs-import.ts"
-import { Job, reference } from "@intentius/chant-lexicon-gitlab";
-import { npmCache, testArtifacts } from "./config";
-
-// Preferred for chant-managed config — resolved at build time
-export const testImported = new Job({
-  cache: npmCache,
-  artifacts: testArtifacts,
-  script: ["npm test"],
-});
-
-// For external/included YAML definitions — produces !reference tags
-export const testExternal = new Job({
-  before_script: reference(".ci-setup", "before_script"),
-  script: ["npm test"],
-});
-```
+{{file:docs-snippets/src/reference-vs-import.ts}}
