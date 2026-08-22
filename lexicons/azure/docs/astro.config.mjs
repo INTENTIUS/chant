@@ -21,20 +21,25 @@ export default defineConfig({
                   "slug": "index"
             },
             {
-                  "label": "Intrinsics",
-                  "slug": "intrinsics"
-            },
-            {
-                  "label": "Pseudo-Parameters",
-                  "slug": "pseudo-parameters"
-            },
-            {
-                  "label": "All Rules",
-                  "slug": "rules"
-            },
-            {
-                  "label": "Serialization",
-                  "slug": "serialization"
+                  "label": "Reference",
+                  "items": [
+                        {
+                              "label": "Intrinsics",
+                              "slug": "intrinsics"
+                        },
+                        {
+                              "label": "Pseudo-Parameters",
+                              "slug": "pseudo-parameters"
+                        },
+                        {
+                              "label": "All Rules",
+                              "slug": "rules"
+                        },
+                        {
+                              "label": "Serialization",
+                              "slug": "serialization"
+                        }
+                  ]
             },
             {
                   "label": "Getting Started",

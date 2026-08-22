@@ -33,10 +33,33 @@ export interface DocsConfig {
   examplesDir?: string;
   /** Extra sidebar entries appended after extraPages (supports Starlight groups) */
   sidebarExtra?: Array<Record<string, unknown>>;
+  /**
+   * Directory of authored `.mdx` pages, each tagged with a Diátaxis quadrant
+   * (chant #1733). Defaults to `<outDir>/pages`. See docs-pages.ts.
+   */
+  pagesDir?: string;
+}
+
+/** Diátaxis quadrant (https://diataxis.fr). */
+export type Quadrant = "tutorial" | "how-to" | "reference" | "explanation";
+
+/** One sidebar entry, as the quadrant-grouped sidebar builder sees it. */
+export interface SidebarPage {
+  slug: string;
+  label: string;
+  quadrant: Quadrant;
+  /** Nested subgroup label inside the quadrant. */
+  group?: string;
+  /** Lower sorts first within its group; unordered pages follow, by label. */
+  order?: number;
+  /** Keep out of the sidebar. */
+  hidden?: boolean;
 }
 
 export interface DocsResult {
   pages: Map<string, string>;
+  /** Every page the sidebar should list, authored and generated, by quadrant. */
+  sidebarPages: SidebarPage[];
   stats: {
     resources: number;
     properties: number;

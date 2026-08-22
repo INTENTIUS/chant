@@ -2,7 +2,7 @@ import { existsSync, readdirSync, readFileSync } from "fs";
 import { join, basename } from "path";
 import { auditIntrinsics } from "./check-lexicon-intrinsics";
 import { checkExamplesBuild } from "./check-lexicon-examples";
-import { auditDocsReachability } from "./check-lexicon-docs";
+import { auditDocsClassification, auditDocsReachability } from "./check-lexicon-docs";
 import { auditMcpNames, lexiconNameFor } from "./check-lexicon-mcp";
 import { loadLexiconFromDir, registers, safeList } from "./check-lexicon-plugin";
 import { RULE_CATALOG } from "../../audit/catalog";
@@ -371,6 +371,19 @@ export async function checkLexicon(dir: string): Promise<CheckResult> {
     detail:
       docsReach.unreachable.length > 0
         ? `${docsReach.unreachable.length} unreachable: ${docsReach.unreachable.join(", ")}`
+        : undefined,
+  });
+
+  // Authored pages name their Diátaxis quadrant; the sidebar is built from
+  // it, so an untagged page cannot be placed (#1731).
+  const docsClass = auditDocsClassification(dir);
+  items.push({
+    name: "Every authored doc page has a diataxis quadrant",
+    tier: 1,
+    pass: !docsClass.hasPages || docsClass.unclassified.length === 0,
+    detail:
+      docsClass.unclassified.length > 0
+        ? `${docsClass.unclassified.length} unclassified: ${docsClass.unclassified.join(", ")}`
         : undefined,
   });
 

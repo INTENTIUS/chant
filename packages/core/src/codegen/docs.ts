@@ -12,14 +12,16 @@ import { join } from "path";
 import { fileURLToPath } from "url";
 
 import { expandFileMarkers } from "./docs-file-markers";
+import { readAuthoredPages } from "./docs-pages";
 import { scanRules, generateRules } from "./docs-rule-scanning";
 import { buildSidebar } from "./docs-sidebar";
 import { generateOverview, generateIntrinsics, generatePseudoParameters, generateSerialization } from "./docs-sections";
-import type { DocsConfig, DocsResult, ManifestJSON, MetaEntry } from "./docs-types";
+import type { DocsConfig, DocsResult, ManifestJSON, MetaEntry, SidebarPage } from "./docs-types";
 
 // Re-export all public types and functions so existing importers continue to work.
 export { expandFileMarkers } from "./docs-file-markers";
-export type { DocsConfig, DocsResult } from "./docs-types";
+export type { DocsConfig, DocsResult, Quadrant, SidebarPage } from "./docs-types";
+export { QUADRANTS, QUADRANT_LABELS, readAuthoredPages } from "./docs-pages";
 
 // ── Pipeline ───────────────────────────────────────────────────────
 
@@ -71,11 +73,39 @@ export function docsPipeline(config: DocsConfig): DocsResult {
   }
   pages.set("index.mdx", overviewContent);
   const suppress = new Set(config.suppressPages ?? []);
-  const extraSlugs = new Set((config.extraPages ?? []).map((p) => p.slug));
+  const sidebarPages: SidebarPage[] = [];
 
-  // Extra pages from lexicon config
-  if (config.extraPages) {
+  // Authored pages under docs/pages/ (#1733). Each names its Diátaxis
+  // quadrant; the sidebar is grouped from that. Written with a provenance
+  // marker that points back at the source file.
+  const authored = readAuthoredPages(config);
+  const authoredSources = new Map<string, string>();
+  for (const page of authored) {
+    pages.set(`${page.slug}.mdx`, page.content);
+    authoredSources.set(`${page.slug}.mdx`, page.file);
+    if (!page.hidden) sidebarPages.push(page);
+  }
+
+  const extraSlugs = new Set([
+    ...(config.extraPages ?? []).map((p) => p.slug),
+    ...authored.map((p) => p.slug),
+  ]);
+
+  // Extra pages from lexicon config. Deprecated in favour of docs/pages/
+  // (#1731): prose in a template literal is prose nobody can edit as
+  // markdown. Still honoured so a lexicon can migrate page by page.
+  if (config.extraPages && config.extraPages.length > 0) {
+    console.warn(
+      `[docs:${config.name}] extraPages is deprecated — move these ${config.extraPages.length} page(s) to docs/pages/*.mdx with a \`diataxis\` field (chant #1731).`,
+    );
     for (const page of config.extraPages) {
+      if (authoredSources.has(`${page.slug}.mdx`)) {
+        console.warn(`[docs:${config.name}] docs/pages/${page.slug}.mdx overrides the extraPages entry of the same slug.`);
+        continue;
+      }
+      if (page.sidebar !== false) {
+        sidebarPages.push({ slug: page.slug, label: page.title, quadrant: "reference" });
+      }
       let content = page.content;
       if (config.examplesDir) {
         content = expandFileMarkers(content, config.examplesDir);
@@ -113,8 +143,16 @@ export function docsPipeline(config: DocsConfig): DocsResult {
     return true;
   };
 
+  // Generated reference tables sort after authored reference pages, in the
+  // order the old flat sidebar listed them.
+  let generatedOrder = 1000;
+  const generated = (slug: string, label: string): void => {
+    sidebarPages.push({ slug, label, quadrant: "reference", order: generatedOrder++ });
+  };
+
   if (!claimed("intrinsics") && manifest.intrinsics && manifest.intrinsics.length > 0) {
     pages.set("intrinsics.mdx", generateIntrinsics(config, manifest));
+    generated("intrinsics", "Intrinsics");
   }
 
   if (
@@ -126,14 +164,21 @@ export function docsPipeline(config: DocsConfig): DocsResult {
       "pseudo-parameters.mdx",
       generatePseudoParameters(config, manifest),
     );
+    generated("pseudo-parameters", "Pseudo-Parameters");
   }
 
+  // Every lexicon links its generated rules table, whether or not it also
+  // ships a prose `lint-rules` page. Skipping it when one existed was how gcp
+  // ended up emitting a page nothing pointed at (#1312). The label
+  // distinguishes the generated table from a prose page.
   if (!claimed("rules") && rules.length > 0) {
     pages.set("rules.mdx", generateRules(config, rules));
+    generated("rules", "All Rules");
   }
 
   if (!claimed("serialization")) {
     pages.set("serialization.mdx", generateSerialization(config));
+    generated("serialization", "Serialization");
   }
 
   // Stamp every emitted page with its provenance. These files look exactly
@@ -142,11 +187,12 @@ export function docsPipeline(config: DocsConfig): DocsResult {
   // intrinsics guide's #1044 claim were both fixed in the emitted `.mdx` and
   // silently reverted by the next regen (#1312).
   for (const [filename, content] of pages) {
-    pages.set(filename, withGeneratedMarker(config, content));
+    pages.set(filename, withGeneratedMarker(config, content, authoredSources.get(filename)));
   }
 
   return {
     pages,
+    sidebarPages,
     stats: {
       resources: resources.size,
       properties: properties.size,
@@ -163,8 +209,11 @@ export function docsPipeline(config: DocsConfig): DocsResult {
  * MDX parses `<!-- -->` as JSX rather than a comment, so this uses the
  * `{/* … *\/}` form the rest of the docs already use for generated markers.
  */
-function withGeneratedMarker(config: DocsConfig, content: string): string {
-  const marker = `{/* ${GENERATED_MARKER_TAG} by \`npm run docs -w @intentius/chant-lexicon-${config.name}\` — DO NOT EDIT.\n    Edit lexicons/${config.name}/src/codegen/docs.ts instead; changes here are overwritten. */}`;
+function withGeneratedMarker(config: DocsConfig, content: string, source?: string): string {
+  const edit = source
+    ? `Edit lexicons/${config.name}/docs/pages/${source} instead`
+    : `Edit lexicons/${config.name}/src/codegen/docs.ts instead`;
+  const marker = `{/* ${GENERATED_MARKER_TAG} by \`npm run docs -w @intentius/chant-lexicon-${config.name}\` — DO NOT EDIT.\n    ${edit}; changes here are overwritten. */}`;
   const lines = content.split("\n");
   // Frontmatter is the leading `---` … `---` block; the marker goes after it.
   if (lines[0] === "---") {
@@ -302,7 +351,7 @@ export function writeDocsSite(config: DocsConfig, result: DocsResult): void {
   if (unreachable.length > 0) {
     console.warn(
       `[docs:${config.name}] ${unreachable.length} page(s) in no sidebar entry — reachable only by direct URL: ${unreachable.join(", ")}.\n` +
-        `  Declare them in this lexicon's DocsConfig \`sidebarExtra\` (or \`extraPages\`) to surface them.`,
+        `  Move them to docs/pages/ with a \`diataxis\` field to surface them (chant #1731).`,
     );
   }
 
@@ -349,12 +398,20 @@ export function writeDocsSite(config: DocsConfig, result: DocsResult): void {
   mkdirSync(join(outDir, "src"), { recursive: true });
   writeFileSync(
     join(outDir, "src", "content.config.ts"),
-    `import { defineCollection } from 'astro:content';
+    `import { defineCollection, z } from 'astro:content';
 import { docsLoader } from '@astrojs/starlight/loaders';
 import { docsSchema } from '@astrojs/starlight/schema';
 
 export const collections = {
-  docs: defineCollection({ loader: docsLoader(), schema: docsSchema() }),
+  docs: defineCollection({
+    loader: docsLoader(),
+    schema: docsSchema({
+      extend: z.object({
+        // Diátaxis quadrant (https://diataxis.fr), chant #1731.
+        diataxis: z.enum(['tutorial', 'how-to', 'reference', 'explanation']).optional(),
+      }),
+    }),
+  }),
 };
 `,
   );
