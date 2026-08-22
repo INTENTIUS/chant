@@ -2,8 +2,7 @@
 // Check that every core docs page carries a Diátaxis quadrant in its
 // frontmatter and sits in the matching sidebar group. chant #1731 / #1732.
 //
-//   node scripts/check-docs-diataxis.mjs            # report, exit 0
-//   node scripts/check-docs-diataxis.mjs --strict   # exit 1 on any violation
+//   node scripts/check-docs-diataxis.mjs   # exit 1 on any violation
 //
 // No dependencies. The sidebar is read by slicing the `sidebar: [...]`
 // literal out of docs/astro.config.mjs and evaluating it — it is plain data
@@ -26,8 +25,6 @@ const GROUP_TO_QUADRANT = {
 };
 // Pages that live outside the four quadrants by design.
 const EXEMPT = new Set(["index", "whats-new"]);
-
-const strict = process.argv.includes("--strict");
 
 function walk(dir, out = []) {
   for (const name of readdirSync(dir)) {
@@ -146,6 +143,6 @@ console.log(
 );
 for (const v of violations.sort()) console.log(`  ${v}`);
 if (violations.length) {
-  console.log(`${violations.length} violation(s)${strict ? "" : " (report mode; pass --strict to fail)"}`);
-  if (strict) process.exit(1);
+  console.log(`${violations.length} violation(s)`);
+  process.exit(1);
 }

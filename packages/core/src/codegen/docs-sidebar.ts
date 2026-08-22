@@ -2,9 +2,8 @@
  * Sidebar generation for Starlight docs sites.
  *
  * Grouped by Diátaxis quadrant (https://diataxis.fr), chant #1731. Every page
- * the pipeline knows about — authored under docs/pages/, generated reference
- * tables, legacy `extraPages` — arrives as a {@link SidebarPage} with a
- * quadrant; this module only sorts and nests. Empty quadrants are omitted.
+ * the pipeline knows about — authored under docs/pages/ and generated reference
+ * tables — arrives as a {@link SidebarPage} with a quadrant; this module only sorts and nests. Empty quadrants are omitted.
  */
 
 import { QUADRANTS, QUADRANT_LABELS } from "./docs-pages";
@@ -70,16 +69,6 @@ export function buildSidebar(
     const pages = byQuadrant.get(q);
     if (!pages || pages.length === 0) continue;
     items.push({ label: QUADRANT_LABELS[q], items: quadrantItems(pages) });
-  }
-
-  // Raw sidebar entries from the lexicon config. Deprecated (#1731): pages
-  // listed here carry no quadrant. Appended unchanged so a lexicon can migrate
-  // page by page.
-  if (config.sidebarExtra && config.sidebarExtra.length > 0) {
-    console.warn(
-      `[docs:${config.name}] sidebarExtra is deprecated — move the pages it lists to docs/pages/*.mdx with a \`diataxis\` field (chant #1731).`,
-    );
-    items.push(...config.sidebarExtra);
   }
 
   return items;

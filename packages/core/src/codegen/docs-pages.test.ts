@@ -134,8 +134,8 @@ describe("docsPipeline with authored pages", () => {
 });
 
 describe("buildSidebar", () => {
-  const sb = (pages: SidebarPage[], extra?: Partial<DocsConfig>) =>
-    buildSidebar(config(extra), { pages: new Map(), sidebarPages: pages, stats: { resources: 0, properties: 0, services: 0, rules: 0, intrinsics: 0 } } satisfies DocsResult);
+  const sb = (pages: SidebarPage[]) =>
+    buildSidebar(config(), { pages: new Map(), sidebarPages: pages, stats: { resources: 0, properties: 0, services: 0, rules: 0, intrinsics: 0 } } satisfies DocsResult);
 
   test("groups in fixed quadrant order and omits empty quadrants", () => {
     const items = sb([
@@ -160,10 +160,5 @@ describe("buildSidebar", () => {
       { label: "Bravo", slug: "b" },
       { label: "Vendor", items: [{ label: "AKS", slug: "aks" }, { label: "EKS", slug: "eks" }] },
     ]);
-  });
-
-  test("legacy sidebarExtra is appended unchanged", () => {
-    const items = sb([], { sidebarExtra: [{ label: "Legacy", slug: "legacy" }] });
-    expect(items[items.length - 1]).toEqual({ label: "Legacy", slug: "legacy" });
   });
 });

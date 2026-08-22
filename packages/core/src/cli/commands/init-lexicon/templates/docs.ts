@@ -57,13 +57,46 @@ export default defineConfig({
 }
 
 export function generateDocsContentConfig(): string {
-  return `import { defineCollection } from 'astro:content';
+  return `import { defineCollection, z } from 'astro:content';
 import { docsLoader } from '@astrojs/starlight/loaders';
 import { docsSchema } from '@astrojs/starlight/schema';
 
 export const collections = {
-  docs: defineCollection({ loader: docsLoader(), schema: docsSchema() }),
+  docs: defineCollection({
+    loader: docsLoader(),
+    schema: docsSchema({
+      extend: z.object({
+        // Diátaxis quadrant (https://diataxis.fr), chant #1731.
+        diataxis: z.enum(['tutorial', 'how-to', 'reference', 'explanation']).optional(),
+      }),
+    }),
+  }),
 };
+`;
+}
+
+/**
+ * First authored page. Lives under docs/pages/; the docs pipeline copies it
+ * into src/content/docs/ and builds the sidebar from its `diataxis` field.
+ */
+export function generateDocsGettingStartedMdx(name: string): string {
+  const displayName = name.charAt(0).toUpperCase() + name.slice(1);
+  return `---
+title: Getting Started
+description: First project with the ${displayName} lexicon
+diataxis: tutorial
+---
+
+Install the lexicon, declare one resource, and build it.
+
+\`\`\`bash
+npm install --save-dev @intentius/chant-lexicon-${name}
+chant build
+\`\`\`
+
+Replace this with a walkthrough a new user can follow start to finish. Other
+pages go beside this file in \`docs/pages/\`, each with a \`diataxis\` field
+(\`tutorial\`, \`how-to\`, \`reference\` or \`explanation\`).
 `;
 }
 

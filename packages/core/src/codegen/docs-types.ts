@@ -21,8 +21,6 @@ export interface DocsConfig {
   serviceFromType?: (resourceType: string) => string;
   /** Custom sections to append to overview page */
   extraSections?: Array<{ title: string; content: string }>;
-  /** Standalone pages added to the sidebar after Overview */
-  extraPages?: Array<{ slug: string; title: string; description?: string; content: string; sidebar?: boolean }>;
   /** Slugs of auto-generated pages to suppress (e.g. "pseudo-parameters") */
   suppressPages?: string[];
   /** Source directory for scanning rule files (defaults to srcDir sibling of distDir) */
@@ -31,11 +29,12 @@ export interface DocsConfig {
   basePath?: string;
   /** Root directory for resolving {{file:...}} markers in extra page content */
   examplesDir?: string;
-  /** Extra sidebar entries appended after extraPages (supports Starlight groups) */
-  sidebarExtra?: Array<Record<string, unknown>>;
   /**
    * Directory of authored `.mdx` pages, each tagged with a Diátaxis quadrant
-   * (chant #1733). Defaults to `<outDir>/pages`. See docs-pages.ts.
+   * (chant #1733). Defaults to `<outDir>/pages`. See docs-pages.ts. This is
+   * the only way a lexicon adds prose pages; `extraPages` (prose in docs.ts
+   * template literals) and `sidebarExtra` (hand-listed content files) were
+   * removed in chant #1757.
    */
   pagesDir?: string;
 }
