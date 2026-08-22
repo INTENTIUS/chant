@@ -1,0 +1,322 @@
+---
+title: Observation Contract
+description: The result shape chant's observation hooks return — tri-state verdicts, ownership rules, per-hook coverage, and the additional opt-in readers.
+diataxis: reference
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+This is the result shape behind [Implementing Observation](/chant/lexicon-authoring/observation/): what each verdict means, which reasons are legal, and how coverage is tracked. For the walkthrough of writing a reader against a real transport, start there.
+
+## describeResources()
+
+### The observation tri-state: absent is not the same as unread
+
+Returning nothing for a declared entity is a claim, and there are two very different claims to make:
+
+| Verdict | How you report it | What chant does with it |
+|---|---|---|
+| **Observed present** | a key in `resources` | drift comparison, `noop` / `update` |
+| **Observed absent** | in neither map — you asked, the provider said no | `MISSING` in the diff, `create` in the plan |
+| **Not observed** | a key in `unobserved`, with a reason | reported as a hole; **never** a create or a delete |
+
+Only the middle row may become a `create`. Before chant #1089 the third row was indistinguishable from the second, so a Kubernetes CRD with no reader — or a read that failed on an expired token — arrived at `chant lifecycle plan` as a confident proposal to create something that was already running.
+
+Report a hole with the `ObservationResult` envelope:
+
+```typescript
+import { observation } from "@intentius/chant/observation";
+import type { ObservationResult, UnobservedEntity } from "@intentius/chant/lexicon";
+
+const resources: Record<string, ResourceMetadata> = {};
+const unobserved: Record<string, UnobservedEntity> = {};
+
+try {
+  const { stdout } = await execAsync(cmd);
+  resources[entityName] = { type: entityType, /* ... */ };
+} catch (err) {
+  // Only a real not-found leaves the entity out. Everything else proves
+  // nothing about whether the resource exists.
+  const outcome = classifyKubectlFailure(err);
+  if (outcome.kind === "unobserved") {
+    unobserved[entityName] = { type: entityType, reason: outcome.reason, detail: outcome.detail };
+  }
+}
+
+return observation(resources, unobserved);
+```
+
+The reasons are total — pick one:
+
+| Reason | When |
+|---|---|
+| `read-failed` | the provider was reached and the read errored |
+| `no-credentials` | no usable credentials for the target |
+| `no-binding` | the environment resolves to no concrete target (no kubectl context, no subscription, no stack) |
+| `unsupported-kind` | your lexicon has no reader for this entity type |
+| `filtered` | the resource was reached but withheld by `owned: true` (it exists, it just isn't chant's) |
+
+Returning the bare `Record<string, ResourceMetadata>` map is still valid and means "everything I was asked about, I looked at". Use it only when that is true.
+
+Throwing is the whole-lexicon failure — core catches it and marks **every** declared entity `read-failed`, so a broken read never arrives downstream as an empty environment. Failing the whole snapshot because one Deployment is gone still defeats the point; catch per-resource errors and classify them.
+
+### Say where you looked: the resolved query address
+
+An absence is only as trustworthy as the address behind it. When the read address is *derived* — a Kubernetes namespace defaulted from the context, an endpoint override, a region, an account — "the provider said no" and "I asked the wrong place" produce identical verdicts, and the consumer cannot tell them apart. The motivating case (chant #1620): a Flux-deployed object declares no `metadata.namespace` because the controller stamps `targetNamespace` at apply time, so the live read scopes to `default`, finds nothing, and correctly reports absence — painting weeks-old running infrastructure as pending.
+
+The envelope carries an optional `queried` map for this — the resolved address each read was actually issued against, keyed by entity name:
+
+```typescript
+const queried: Record<string, string> = {};
+// k8s: the exact request path, namespace defaulting made visible
+const address = await client.pathFor(ref); // "/apis/apps/v1/namespaces/default/deployments/web"
+if (address) queried[entityName] = address;
+
+return observation(resources, unobserved, queried);
+```
+
+Rules:
+
+- **Purely additive.** `queried` never changes a verdict; classification reads only `resources` and `unobserved`, and the tri-state above does not shift. An entity in `queried` and neither map is still observed-absent.
+- **It is the only record an absence gets.** Absence is spelled "in neither map", so there is no row to hang diagnostics on — the `queried` map is where an absent verdict says which address answered not-found.
+- **Unobserved entries can carry it inline** via `UnobservedEntity.queried`, so a failed-read row renders without a join.
+- **Omitting it stays valid.** A lexicon with nothing derived about its addresses can skip it entirely.
+
+The harness (`observeEntities`, below) collects it for you: every `EntityObservation` variant — `present`, `absent`, `unobserved` — accepts an optional `queried` string.
+
+Downstream, `chant lifecycle diff --live --json` passes the map through as `resources.queried` per lexicon and joins it onto unobserved rows, so a consumer can render `queried: /apis/apps/v1/namespaces/default/deployments/web → 404` next to a pending verdict — see [`chant lifecycle`](/chant/cli/lifecycle/).
+
+### Unknown entity types are unobserved, not absent
+
+Lexicons grow new resource types over time. If your describe path doesn't cover a type yet, say so per entity — a warning alone is invisible to `lifecycle plan`, which is exactly where the wrong `create` gets proposed:
+
+```typescript
+const operation = operationFor(entityType);
+if (!operation) {
+  unobserved[entityName] = {
+    type: entityType,
+    reason: "unsupported-kind",
+    detail: `no generated operation surface for ${entityType} — run \`chant generate\``,
+  };
+  return;
+}
+```
+
+Better still, arrange for the gap not to exist. The K8s lexicon's coverage went from twenty types to every generated one by deriving the address table from the same codegen pass as the classes, so "your lexicon grew a type the describe path does not cover" stopped being a state it can be in. `unsupported-kind` is then the honest answer for a genuinely unaddressable type, not the routine one.
+
+### Ownership verdicts are total
+
+If your read path can't determine ownership (AWS's `describe-stack-resources` returns no tags), stamp `ownership: "unknown"` on what you return rather than leaving the field off and degrading silently. `unknown` is a legitimate verdict — the change set never escalates it to a delete.
+
+### Declare where you can read the marker
+
+`ownership` on a returned resource is one of `owned`, `foreign`, or `unknown`,
+and the verdict is **total** — a lexicon that cannot read the marker on a path
+must say `unknown` rather than return everything as if it had checked, because
+the change set never escalates `unknown` to a delete.
+
+Which paths those are is declared on the plugin (chant #1348):
+
+```typescript
+// plugin.ts
+ownershipChannel: {
+  keys: AWS_TAG_OWNERSHIP_KEYS,
+  reads: ["observeResourcesDeep", "exportResources"],
+},
+```
+
+Per read path, because the answer genuinely differs by path. aws stamps tags at
+synthesis and reads them on the deep observation and on live export — but its
+`describeResources` is sourced from `describe-stack-resources`, which returns no
+tags at all, so an `owned: true` thin read against aws can only answer `unknown`.
+It always did; what was missing was any way for a caller to know that before
+asking. A warning on stderr afterwards is invisible to `lifecycle plan`, which is
+exactly where the wrong delete gets proposed.
+
+Omit the field entirely if you have no marker channel anywhere. That is a real
+answer, and the suite will hold you to it: every verdict must then be `unknown`.
+
+| Lexicon | Keys | Resolves on |
+|---|---|---|
+| aws | `chant:managed-by` tags | `observeResourcesDeep`, `exportResources` |
+| azure | `chant-managed-by` tags | `exportResources` |
+| gcp | `app.kubernetes.io/managed-by` labels | all three |
+| k8s | `app.kubernetes.io/managed-by` labels | all three |
+| fly | `managed-by` machine metadata | `describeResources` |
+
+`chant dev check-lexicon` fails a declaration that names a path the plugin does
+not implement, or whose keys are incomplete.
+
+### Prove it with the conformance suite
+
+`describeObservationConformance` in `@intentius/chant-test-utils` is the shared suite every observing lexicon runs. Give it scenarios driven by your own transport mocks; it checks the result shape, reason totality, ownership totality, and — through core's real `buildChangeSet` — that an unreadable entity never classifies as `create`:
+
+```typescript
+describeObservationConformance({
+  lexicon: "k8s",
+  scenarios: [
+    {
+      name: "a CRD kind with no reader",
+      declared: ["widget", "gone"],
+      expectUnobserved: ["widget"],
+      expectAbsent: ["gone"],
+      run: () => k8sPlugin.describeResources!({ /* ... */ }),
+    },
+  ],
+});
+```
+
+## observeResourcesDeep() — property-level drift
+
+### The accepted baseline
+
+Some deviations are permanent facts of the account — a platform team's mandatory tag, a setting an org policy flips on. `chant lifecycle diff <env> --live --update-baseline` records what a run reported into `<env>/observation-baseline.json` on the `chant/lifecycle` orphan branch, and later runs subtract it. Acceptance is **value-bound**: the accepted value stops alerting, a change away from it is drift again, reported with all three axes (declared / live / baseline). Nothing in a lexicon has to implement this — it is applied by core, above the reader.
+
+## Beyond the declared estate
+
+`describeResources()` answers "what do I manage". Three further readers answer
+questions it structurally cannot, because all of them resolve *outward* from
+what was declared. Each is opt-in and additive: a lexicon implementing none
+behaves exactly as it does today, and aws is currently the only one that
+implements any of them.
+
+### `observeDependencies()` — what the estate relies on
+
+A shared subnet, an account's default VPC route tables, a network another team
+owns. The estate references them and does not declare them, so they never become
+nodes, so no edge can reach them and no fold can traverse them. That is why
+derived facts about un-modelled topology have had to be computed inside lexicons
+and injected as attributes.
+
+The closure rule is **depth one by reference, plus whatever chains your
+[`referenceCatalog`](#live-graph-edges-referencecatalog--enrichliveattrs)
+declares as meaningful** — aws follows `SubnetId` → `RouteTableId` → `GatewayId`
+because the catalog says those references matter, not because they happen to be
+reachable. Without a rule, a VPC transitively reaches most of an account.
+
+Every resource you return must carry `referencedBy`, naming the declared nodes
+that pulled it in. A dependency with no referrer is unbounded discovery, which is
+the thing the closure rule exists to prevent.
+
+### `observeAmbient()` and `ambientKinds()` — what is simply there
+
+An unattached security group, an orphaned volume, the default security group AWS
+creates per VPC. Nothing declares them and nothing points at them, so neither of
+the readers above can see them — and "which of my security groups are unused"
+cannot be answered from a state file at all, because a state file knows only what
+it created.
+
+`kinds` bounds the scan to types the project actually declares, so a project
+managing security groups is not made to enumerate the account. Return resources
+marked `ambient: true`, and exclude anything already in `observed` — those are
+managed, not ambient.
+
+`ambientKinds()` is declared **separately** from the reader so a caller can know
+that ambient resources of a kind are *possible* without paying for a scan to find
+out. `chant search` uses it to point out that `--ambient` is relevant to the kind
+just queried: an agent asking which security groups are unused otherwise has no
+way to know that some are not in the answer at all.
+
+### `describeStackStatus()` — one deploy unit, by deployed name
+
+`describeResources()` observes a stack's entities keyed by chant entity name and
+assumes one stack per environment, which cannot see a multi-stack component
+project where each component owns its own stack. `chant components status --live`
+resolves a component's deploy-step target and calls this to learn whether that
+unit is present and healthy.
+
+Return `null` when you cannot determine status — a provider CLI failing for a
+reason other than "does not exist". A genuinely absent unit is
+`{ present: false }`. The distinction matters for the same reason the
+observation tri-state does: "I could not look" and "it is not there" support
+different conclusions.
+
+## listArtifacts()
+
+### Two-way diff: there is no "declared" axis
+
+`lifecycle diff --live` reports four artifact categories per lexicon: **added**, **removed**, **changed**, **unchanged** — comparing now vs. last snapshot, not declared vs. observed. That's all the diff engine can do without a chant entity to anchor each artifact. Don't try to forge an entity-keyed mapping just to fit `describeResources()` — the artifact concept is the right shape for tooling that creates runtime state outside chant.
+
+## Coverage today
+
+| Lexicon | `describeResources()` | `observeResourcesDeep()` | `listArtifacts()` | How it queries |
+|---|---|---|---|---|
+| AWS | ✅ | ✅ |  | CloudFormation `DescribeStackResources` over the applier's read transport; deep read via Cloud Control plus a bulk EC2 describe for security groups |
+| Azure | ✅ | ✅ |  | ARM `GET` per declared entity over the applier's read transport |
+| GCP (Config Connector) | ✅ | ✅ |  | Direct REST `GET` via the applier's per-kind mappers — no Config Connector cluster needed to observe |
+| K8s | ✅ | ✅ |  | Typed API client — concurrent `GET`s, resource resolved through the cluster's own API discovery (chant #1074) |
+| Temporal | ✅ | ✅ |  | Temporal client (`workflowService.listNamespaces`, `operatorService.listSearchAttributes`, `scheduleClient.list`) |
+| Helm |  |  | ✅ | `helm list -A -o json` |
+| Docker |  |  | ✅ | `docker ps`, `docker image ls`, `docker network ls` (NDJSON) |
+| GitHub / GitLab |  |  |  | N/A — git-tracked authoring primitives, see [github](/lexicons/github/) and [gitlab](/lexicons/gitlab/) READMEs |
+
+For the user-facing version of this matrix and how the diff output is grouped, see [`chant lifecycle`](/chant/cli/lifecycle/#coverage-today).
+
+## Live export — `exportResources()`
+
+`describeResources()` returns **scrubbed output metadata** for diffing. It cannot regenerate a resource — `attributes` are cloud-assigned outputs, not the input config you wrote. Live import needs the other half: the full input config, read from the live API.
+
+That is a separate, opt-in capability:
+
+```typescript
+exportResources?(options: {
+  environment: string;
+  selector?: ResourceSelector;   // { type?, name? }
+  owned?: boolean;               // restrict to chant-owned resources (live marker)
+  verbatim?: boolean;            // keep server-defaulted fields; default strips
+}): Promise<ExportedTemplate>;
+```
+
+`ExportedTemplate` is the existing import IR (`TemplateIR`) — so the result feeds your lexicon's `templateGenerator()` unchanged — branded distinct from the observation types. The brand is the contract's guardrail: a full-fidelity export (which may carry secrets) can never flow into the `lifecycle` code paths, which consume `ResourceMetadata` through the `ObservationLexicon` view that omits `exportResources` entirely.
+
+<Aside type="caution">
+Keep the scrubbing boundary single-purpose. `describeResources()` scrubs for diffing; `exportResources()` returns full config for regeneration. Never overload one method for both — the secret-exposure surface stays in one place.
+</Aside>
+
+Implementing this is what powers [`chant import --from <env>`](/chant/cli/import/). A full authoring walkthrough — per-provider fidelity, the `--verbatim` switch, and the ownership marker — lands in the live-export authoring guide.
+
+Live-export coverage today:
+
+| Lexicon | `exportResources()` | How it reads live config |
+|---|---|---|
+| AWS | ✅ | `aws cloudformation get-template --template-stage Original`, parsed by the CloudFormation import parser |
+| K8s | ✅ | Typed API client `LIST` per kind, stripped of `status`/`managedFields`/server metadata (kept under `--verbatim`), parsed by the K8s import parser |
+| GCP (Config Connector) | ✅ | `kubectl get <*.cnrm.cloud.google.com> -A -o json` (each CC object is its manifest), stripped of `status`/server metadata/`cnrm.cloud.google.com/*` annotations, parsed by the GCP import parser |
+
+## Live graph edges: `referenceCatalog` + `enrichLiveAttrs`
+
+`describeResources()` gives [`chant graph --live`](/chant/cli/graph/) its **nodes** — the provisioned resources. To get **edges** — the topology between them — a lexicon declares a **reference catalog**. A live resource has no declared AttrRefs; it references others by physical identifier buried in its attributes (a subnet's `VpcId`, an ALB listener's `TargetGroupArn`). The catalog tells chant how to reconstruct those into a graph.
+
+```typescript
+referenceCatalog?: ReferenceCatalog;   // { identities, refs }
+```
+
+- **`identities`** — which attr paths identify each kind (its id / ARN / name). chant indexes every node by these (and its `physicalId`, and its own id).
+- **`refs`** — per `(kind, attr path)`, that the value there references another resource. Each rule is tagged `reference` (→ a graph edge) or **`containment`** (subnet ∈ VPC → a boundary box, not a line). `path` supports `a.b` and `arr[].id`.
+
+```typescript
+export const myReferenceCatalog: ReferenceCatalog = {
+  identities: [{ kind: "Subnet", ids: ["SubnetId"] }, { kind: "Vpc", ids: ["VpcId"] }],
+  refs: [{ from: "Subnet", path: "VpcId", targetKind: "Vpc", relation: "containment", label: "in VPC" }],
+};
+```
+
+A reference whose target isn't in the observed set is reported as dangling — never a wrong edge.
+
+### When `describeResources` is too thin: `enrichLiveAttrs`
+
+Edge reconstruction only works if the observed nodes actually carry those reference attributes. Some observation APIs return thin metadata — AWS `describe-stack-resources`, for instance, gives stack outputs, not per-resource references. When that's the case, implement `enrichLiveAttrs` to source richer attributes for graphing:
+
+```typescript
+enrichLiveAttrs?(options: { environment: string; owned?: boolean }): Promise<Record<string, Record<string, unknown>>>;
+```
+
+It returns `nodeId → attributes` with cross-resource references resolved to the referenced **node id**, which chant merges into the live nodes before reconstruction. The AWS lexicon sources these from the deployed CloudFormation template (via `exportResources()`), resolving `{Ref}` / `{Fn::GetAtt}` intrinsics — which reference by logical id (= the node id) — to bare strings the resolver matches. See `lexicons/aws/src/reference-catalog.ts` and `live-attrs.ts` for the reference implementation.
+
+<Aside type="note">
+Both are opt-in. A lexicon with neither still contributes nodes to `chant graph --live`; it just won't draw edges between them.
+</Aside>
+
+## See also
+
+- [Implementing Observation](/chant/lexicon-authoring/observation/) — the implementation walkthrough for these hooks

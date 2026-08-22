@@ -113,7 +113,6 @@ export default defineConfig({
 								{ label: 'Add a Third-Party CRD', slug: 'lexicon-authoring/crd-sources' },
 								{ label: 'Create a Serializer', slug: 'lexicon-authoring/serializer' },
 								{ label: 'Implementing Observation', slug: 'lexicon-authoring/observation' },
-								{ label: 'Implementing Apply', slug: 'lexicon-authoring/applying' },
 								{ label: 'Implementing Live Export', slug: 'lexicon-authoring/live-export' },
 								{ label: 'Declaring a Local Emulator', slug: 'lexicon-authoring/emulator' },
 								{ label: 'Write Lint Rules', slug: 'lexicon-authoring/lint-rules' },
@@ -260,6 +259,8 @@ export default defineConfig({
 							items: [
 								{ label: 'Completeness Checklist', slug: 'lexicon-authoring/completeness-checklist' },
 								{ label: 'Skills', slug: 'lexicon-authoring/skills' },
+								{ label: 'Observation Contract', slug: 'lexicon-authoring/observation-contract' },
+								{ label: 'Apply Conformance Suite', slug: 'lexicon-authoring/applying-conformance' },
 							],
 						},
 					],
@@ -298,7 +299,15 @@ export default defineConfig({
 							],
 						},
 						{ label: 'Lexicons', slug: 'lexicons/overview' },
-						{ label: 'Lexicon Authoring Overview', slug: 'lexicon-authoring/overview' },
+						{
+							label: 'Lexicon authoring',
+							collapsed: true,
+							badge: { text: 'Plugin Dev', variant: 'tip' },
+							items: [
+								{ label: 'Lexicon Authoring Overview', slug: 'lexicon-authoring/overview' },
+								{ label: 'Implementing Apply', slug: 'lexicon-authoring/applying' },
+							],
+						},
 						{ label: 'Examples — Tiers and Layout', slug: 'contributing/examples' },
 						{
 							label: 'Architecture',
