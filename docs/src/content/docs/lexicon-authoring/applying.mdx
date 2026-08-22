@@ -1,7 +1,7 @@
 ---
 title: Implementing Apply
-description: What an applier's result is allowed to mean, and the suite that enforces it.
-diataxis: how-to
+description: What an applier's result is allowed to mean.
+diataxis: explanation
 ---
 
 import { Aside } from '@astrojs/starlight/components';
@@ -68,37 +68,12 @@ Reporting NOT-ATTEMPTED requires the envelope. You cannot claim the guarantee wi
 The envelope is an interface, not a replacement. A lexicon's applier knows more than the shared vocabulary can hold — the CNRM `kind`, the ARM type, per-resource `created`/`updated`. Keep returning that, and project onto the envelope with a small `toApplyResult`. `gcpApply` is the reference.
 </Aside>
 
-## Run the conformance suite
-
-From your lexicon's own test file, where your transport mocks live:
-
-```typescript
-import { describeApplyConformance } from "@intentius/chant-test-utils";
-
-describeApplyConformance({
-  lexicon: "gcp",
-  scenarios: [{
-    name: "a manifest with one mapped and one unmapped kind",
-    plan: [{ kind: "StorageBucket", name: "mapped" }, { kind: "SQLInstance", name: "unmapped" }],
-    run: () => gcpApply(args, undefined, mockHttp).then(toApplyResult),
-    expectApplied: ["StorageBucket/mapped"],
-    expectNotAttempted: ["SQLInstance/unmapped"],
-  }],
-});
-```
-
-What it proves:
-
-1. **Shape** — the buckets are disjoint. A resource cannot be both written and skipped.
-2. **Total reasons** — every not-attempted entry names a legal reason, every applied entry a legal action.
-3. **Nothing is dropped** — every resource in the plan is accounted for. *This is the suite's reason to exist.*
-4. **Owned-only prune** — given a foreign resource and an owned orphan in the same scope, exactly one delete is issued, against the orphan. **Asserted on the transport**, not the return value.
-5. **Idempotence** — the same plan applied twice creates nothing the second time.
-
-Assertion 4 is on the transport deliberately. An applier that returns a tidy result while issuing a delete against a stranger's resource passes every other check — which is precisely what the ARM target did when `owned-only` ran `az deployment --mode Complete`.
-
 ## Ownership
 
 Prune deletes only what chant owns. The marker channel differs per provider — tags on Azure, labels on GCP, metadata on Fly, the field manager on Kubernetes — but the rule does not: **read the marker before issuing a delete, and never delete a resource that does not carry it.**
 
-Assertion 4 is what holds you to it. A comment saying prune is owned-only is not enforcement, and every applier that got this wrong had the comment.
+[Assertion 4](/chant/lexicon-authoring/applying-conformance/#run-the-conformance-suite) is what holds you to it. A comment saying prune is owned-only is not enforcement, and every applier that got this wrong had the comment.
+
+## See also
+
+- [Apply Conformance Suite](/chant/lexicon-authoring/applying-conformance/) — the suite that proves an applier honors this contract

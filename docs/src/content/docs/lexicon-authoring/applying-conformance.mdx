@@ -1,0 +1,40 @@
+---
+title: Apply Conformance Suite
+description: The shared suite that proves an applier's result never drops a resource, misreports a reason, or prunes a stranger's.
+diataxis: reference
+---
+
+`describeApplyConformance`, from `@intentius/chant-test-utils`, is the suite every applier runs against its own transport mocks. It checks the tri-state and reason vocabulary documented in [Implementing Apply](/chant/lexicon-authoring/applying/) against your implementation.
+
+## Run the conformance suite
+
+From your lexicon's own test file, where your transport mocks live:
+
+```typescript
+import { describeApplyConformance } from "@intentius/chant-test-utils";
+
+describeApplyConformance({
+  lexicon: "gcp",
+  scenarios: [{
+    name: "a manifest with one mapped and one unmapped kind",
+    plan: [{ kind: "StorageBucket", name: "mapped" }, { kind: "SQLInstance", name: "unmapped" }],
+    run: () => gcpApply(args, undefined, mockHttp).then(toApplyResult),
+    expectApplied: ["StorageBucket/mapped"],
+    expectNotAttempted: ["SQLInstance/unmapped"],
+  }],
+});
+```
+
+What it proves:
+
+1. **Shape** — the buckets are disjoint. A resource cannot be both written and skipped.
+2. **Total reasons** — every not-attempted entry names a legal reason, every applied entry a legal action.
+3. **Nothing is dropped** — every resource in the plan is accounted for. *This is the suite's reason to exist.*
+4. **Owned-only prune** — given a foreign resource and an owned orphan in the same scope, exactly one delete is issued, against the orphan. **Asserted on the transport**, not the return value.
+5. **Idempotence** — the same plan applied twice creates nothing the second time.
+
+Assertion 4 is on the transport deliberately. An applier that returns a tidy result while issuing a delete against a stranger's resource passes every other check — which is precisely what the ARM target did when `owned-only` ran `az deployment --mode Complete`.
+
+## See also
+
+- [Implementing Apply](/chant/lexicon-authoring/applying/) — what the tri-state, the reasons, and the envelope mean
