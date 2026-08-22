@@ -10,6 +10,14 @@ export default defineConfig({
 	markdown: {
 		rehypePlugins: [[rehypeBaseUrl, { base: '/chant' }]],
 	},
+	redirects: {
+		// Destination is base-prefixed: Astro's own redirect renderer emits this
+		// path verbatim into the meta-refresh/canonical of the generated static
+		// page (unlike Starlight's internal nav, it does not resolve `base`
+		// itself), so an unprefixed target 404s once the site is served under
+		// `/chant`.
+		'/getting-started/configuration/': '/chant/configuration/config-file/',
+	},
 	integrations: [
 		starlight({
 			title: 'chant',
@@ -192,7 +200,6 @@ export default defineConfig({
 							items: [
 								{ label: 'Config File', slug: 'configuration/config-file' },
 								{ label: 'TypeScript Configuration', slug: 'configuration/tsconfig' },
-								{ label: 'Getting Started (config)', slug: 'getting-started/configuration' },
 							],
 						},
 						{
