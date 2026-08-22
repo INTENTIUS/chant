@@ -49,6 +49,7 @@ export async function renderRulesReference(): Promise<string> {
   return `---
 title: Audit rules reference
 description: Every rule chant audit can report, with its tier, fix kind, and remediation.
+diataxis: reference
 ---
 
 This is the reference for every rule [\`chant audit\`](/chant/cli/audit/) can report. Each finding in a report links to its rule here.
