@@ -102,6 +102,12 @@ export default defineConfig({
 							],
 						},
 						{
+							label: 'Components',
+							items: [
+								{ label: 'Wiring Components', slug: 'components/wiring-howto' },
+							],
+						},
+						{
 							label: 'Local testing',
 							items: [
 								{ label: 'Overview', slug: 'local-testing/overview' },
@@ -237,6 +243,8 @@ export default defineConfig({
 								{ label: 'Capabilities', slug: 'components/capabilities' },
 								{ label: 'Composition & Wiring', slug: 'components/composition-and-wiring' },
 								{ label: 'Build Archive', slug: 'components/build-archive' },
+								{ label: 'Attestation Reference', slug: 'components/attestation-reference' },
+								{ label: 'Execution Backends', slug: 'components/backends-reference' },
 								{ label: 'Observability', slug: 'components/observability' },
 							],
 						},
