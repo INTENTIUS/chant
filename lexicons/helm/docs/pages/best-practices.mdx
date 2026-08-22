@@ -4,10 +4,6 @@ description: "Common patterns and recommendations for Helm charts with chant"
 diataxis: how-to
 ---
 
-{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-helm` — DO NOT EDIT.
-    Edit lexicons/helm/docs/pages/best-practices.mdx instead; changes here are overwritten. */}
-
-
 ## CRD lifecycle
 
 Helm installs CRDs from the `crds/` directory but **never upgrades or deletes them**. For managed CRD lifecycle, use the `HelmCRDLifecycle` composite:
