@@ -1,0 +1,62 @@
+---
+title: Wiring Components
+description: How to wire one component's data into another — cross-stack outputs and cross-component artifact references — and the commands that resolve them.
+diataxis: how-to
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+This is how to wire one component's data into another. The composition grammar these patterns build on — phases, steps, gate, onFailure — lives in [Composition & Wiring](/chant/components/composition-and-wiring/).
+
+## Cross-stack outputs
+
+When one component's stack exports a value another needs, the consumer imports it. The graph resolves it, replacing the `describe-stacks | jq` glue a pipeline would otherwise carry.
+
+```ts
+export const searchService: Component = {
+  name: "search-service",
+  dependsOn: ["shared-alb"],
+  deploy: [
+    phase("Apply", [cfnDeploy({ template: "archive:search.template.json", inputs: { ...sharedAlb.outputs } })]),   // listener ARN, cluster ARN, subnets, …
+  ],
+};
+```
+
+`chant graph --stacks` orders `shared-alb` before the service and wires its outputs. See [Multi-Stack Projects](/chant/guide/multi-stack/) for the underlying `stackOutput` mechanism.
+
+[`examples/adopt-alb-services`](https://github.com/INTENTIUS/chant/tree/main/examples/adopt-alb-services) is the runnable version of this exact pattern: a bespoke two-service ALB pipeline — `describe-stacks | jq` glue and all, kept as `before/.gitlab-ci.yml` — adopted as three `build.json` components a single driver runs.
+
+## Cross-component outputs
+
+Components also wire by **artifact**, not just by stack output. A [producer](/chant/components/component-contract/#archetypes) publishes an artifact; a consumer references it as `@<component>.publish.uri` (or `.digest` / `.key`). `dependsOn` orders the producer first; the graph resolves the reference into the consumer's step.
+
+The example illustrates the wiring — its `jvm-build` and `publish-artifact` verbs are [not yet implemented](/chant/components/capabilities/#the-families) (the cross-component reference resolution is what ships today):
+
+```ts
+// producer — a JAR published to S3, publish-only deploy
+export const jarLib: Component = {
+  name: "jar-lib",
+  build: jvmBuild({ tool: "maven", path: ".", into: "archive" }),
+  deploy: [phase("Publish", [publishArtifact({ from: "archive", to: "$env.s3" })])],   // → @jar-lib.publish.uri
+};
+
+// consumer — an EMR job that reads the JAR
+export const emrJob: Component = {
+  name: "emr-job",
+  dependsOn: ["jar-lib"],
+  deploy: [
+    phase("Submit", [emrStartJobRun({ jar: "@jar-lib.publish.uri", args: [/* … */] })]),
+    phase("Verify", [waitJob({ runId: "@Submit.runId" })]),
+  ],
+};
+```
+
+<Aside type="note" title="Both wirings, one resolver">
+Cross-stack outputs and cross-component artifact outputs are resolved the same way — by the graph, never by orchestrator code. That is what keeps the driver generic across an unbounded set of components.
+</Aside>
+
+## Read next
+
+- [Composition & Wiring](/chant/components/composition-and-wiring/) — the composition grammar and fan-out, which these two wiring mechanisms build on.
+- [examples/adopt-alb-services](https://github.com/INTENTIUS/chant/tree/main/examples/adopt-alb-services) — a bespoke multi-service ALB pipeline adopted onto the component model, before and after, runnable end to end.
+- [Build Archive](/chant/components/build-archive/) — where a producer's artifact lives before it is published.

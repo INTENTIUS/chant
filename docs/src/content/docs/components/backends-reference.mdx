@@ -1,0 +1,26 @@
+---
+title: Execution Backends
+description: The orchestrator's backend interface — the trigger/scheduler host and execution engine axes — and the general-consumption default profile.
+diataxis: reference
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+The backend interface behind [Orchestration](/chant/components/orchestration/)'s interpret and generate modes.
+
+## Execution backends and the default profile
+
+The orchestrator is a **backend interface**, not one engine. Two axes swap independently and a component definition does not change across them: the **trigger/scheduler host** (when and what to invoke) and the **execution engine** (how a run executes).
+
+- **General-consumption default.** Plain CI (generated) for the trigger and runner, the local executor for one-shot deploys, native scheduling. Zero exotic dependencies — this is what keeps the model broadly adoptable rather than "requires our stack."
+- **Cloud/k8s-native.** Lean on what the platform already reconciles and schedules — CronJob/Jobs/Argo on k8s, native schedulers and CloudFormation `deploy` on AWS.
+- **Opt-in advanced backends.** [Temporal](/chant/concepts/durable-workflows/) as the durable execution engine for gated or crash-resumable components; Dagster or Airflow as a team-owned trigger host that invokes `chant run`. Chosen when a team needs or owns them, never baseline.
+
+<Aside type="tip" title="Keep logic out of the trigger">
+When a team-owned scheduler (Dagster, Airflow) hosts the trigger, keep it a thin caller of the component. The moment a trigger op starts doing publish/apply/rollback itself, the logic splits across two systems and sprawl returns in a new tool.
+</Aside>
+
+## Read next
+
+- [Orchestration](/chant/components/orchestration/) — interpret vs generate mode, rollback, and what the model adds over hand-driving a pipeline.
+- [Local vs Temporal](/chant/guide/local-vs-temporal/) — the executor trade-off in depth.
