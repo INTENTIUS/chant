@@ -13,7 +13,11 @@ export default defineConfig({
       title: 'K3s',
       sidebar: [
         { label: '← chant docs', link: '../../' },
-        { label: 'Overview', slug: '' },
+        { label: 'Overview', slug: 'index' },
+        {
+          label: 'Reference',
+          items: [{ label: 'Entities & Rules', slug: 'reference' }],
+        },
       ],
     }),
   ],
