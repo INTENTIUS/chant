@@ -126,7 +126,7 @@ export {
   Ec2InstanceRole, MinimalVpc, EksCluster,
   SolrFargateService,
   MicrovmApp, MICROVM_LIMITS,
-  AgentCoreAgent,
+  AgentCoreAgent, agentCoreDefaultEndpointArn,
   OrganizationRoot, GovernanceFoundation, RegionRestriction, OrganizationTrail,
 } from "./composites/index";
 export type {

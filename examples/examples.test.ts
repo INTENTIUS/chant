@@ -122,10 +122,11 @@ describeExample("gitlab-aws-alb-ui", {
 });
 
 // ── Bedrock AgentCore agent — composite/base path (#882) ─────────────
-// AgentCoreAgent wires Runtime + RuntimeEndpoint + Memory + Gateway/
+// AgentCoreAgent wires Runtime + Memory + Gateway/
 // GatewayTarget + WorkloadIdentity + IAM into one CloudFormation stack,
 // deployed by agent.component.ts with cfn-deploy + wait-for-stack (no
-// bespoke verb). The agentcore-deploy version-promotion capability is
+// bespoke verb). No RuntimeEndpoint: AgentCore owns the managed DEFAULT one
+// (#978). The agentcore-deploy version-promotion capability is
 // deferred — see the example's README.
 
 describeExample(
@@ -142,7 +143,7 @@ describeExample(
       expect(template.AWSTemplateFormatVersion).toBe("2010-09-09");
 
       expect(template.Resources.agentRuntime.Type).toBe("AWS::BedrockAgentCore::Runtime");
-      expect(template.Resources.agentEndpoint.Type).toBe("AWS::BedrockAgentCore::RuntimeEndpoint");
+      expect(template.Resources.agentEndpoint).toBeUndefined();
       expect(template.Resources.agentMemory.Type).toBe("AWS::BedrockAgentCore::Memory");
       expect(template.Resources.agentGateway.Type).toBe("AWS::BedrockAgentCore::Gateway");
       expect(template.Resources.agentGatewayTarget.Type).toBe("AWS::BedrockAgentCore::GatewayTarget");
@@ -154,16 +155,15 @@ describeExample(
       expect(template.Resources.agentRuntime.Properties.RoleArn).toEqual({
         "Fn::GetAtt": ["agentRole", "Arn"],
       });
-      expect(template.Resources.agentEndpoint.Properties.AgentRuntimeId).toEqual({
-        "Fn::GetAtt": ["agentRuntime", "AgentRuntimeId"],
-      });
 
       // The kebab-case example name is sanitized for the Runtime family's
       // no-hyphen CFN pattern (^[a-zA-Z][a-zA-Z0-9_]{0,47}$).
       expect(template.Resources.agentRuntime.Properties.AgentRuntimeName).toBe("support_agent");
 
       expect(template.Outputs.RuntimeArn).toBeDefined();
-      expect(template.Outputs.EndpointArn).toBeDefined();
+      expect(template.Outputs.DefaultEndpointArn.Value).toEqual({
+        "Fn::Sub": "${agentRuntime.AgentRuntimeArn}/runtime-endpoint/DEFAULT",
+      });
       expect(template.Outputs.GatewayUrl).toBeDefined();
     },
   },
