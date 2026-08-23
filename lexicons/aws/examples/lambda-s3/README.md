@@ -24,9 +24,10 @@ npm run build
 
 ## What It Does
 
-The stack creates 3 CloudFormation resources:
+The stack creates 4 CloudFormation resources:
 
 - **S3 Bucket** — AES-256 server-side encryption, all public access blocked
+- **Bucket Policy** — denies any request made without TLS (`aws:SecureTransport = false`)
 - **IAM Role** — execution role with an inline policy scoped to `s3:GetObject`, `s3:ListBucket` on the bucket
 - **Lambda Function** — Node.js 20.x function that calls `ListObjectsV2` and returns the bucket contents
 
@@ -36,7 +37,8 @@ The composite automatically injects `BUCKET_NAME` into the function's environmen
 
 ```
 src/
-└── main.ts       # LambdaS3 composite instantiation + inline handler
+├── main.ts           # LambdaS3 composite instantiation + inline handler
+└── bucket-policy.ts  # TLS-only policy on the composite's bucket
 ```
 
 ## Patterns Demonstrated

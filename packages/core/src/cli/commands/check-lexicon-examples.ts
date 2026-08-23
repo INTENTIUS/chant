@@ -1,5 +1,6 @@
 /**
- * "Every shipped example builds" (chant #1067).
+ * "Every shipped example builds" (chant #1067) and "every shipped example
+ * passes its own lexicon's post-synth checks" (chant #1400).
  *
  * `check-lexicon.ts`'s existing example checks only count directories
  * ("At least 1 example", "At least 3 examples", "At least 5 examples with
@@ -12,33 +13,71 @@
  * pipeline `chant build` runs and report whether it produced output with no
  * structural error.
  *
- * Scope, deliberately: "builds" here means discovery + serialization
- * succeed (no `DiscoveryError`/`BuildError`, real output produced) — the
- * same thing a `Duplicate export name` failure blocks. It does not
- * additionally require the output to pass every post-synth/lint check
- * (WAW0xx and friends). Those are a separate, already-gated contract
- * (`chant lint`, the post-synth pipeline) with their own severity model and
- * their own CI step; several existing AWS examples (docs-snippets,
- * lambda-api, lambda-s3, shared-alb) currently fail one or more post-synth
- * checks for reasons unrelated to this issue (e.g. WAW042, a TLS-only
- * bucket policy check added after those examples were written). Folding
- * that axis into "does it build" would fail this new check for all of them
- * on its very first run, for defects this issue never set out to fix.
- * Tracked separately; not silently absorbed here.
+ * #1067 scoped "builds" to discovery + serialization on purpose, and said
+ * so here: three aws examples (lambda-api, lambda-s3, shared-alb) failed
+ * WAW042/WAW054 at error severity at the time, for defects that issue never
+ * set out to fix. #1400 fixed those three and added the second axis: after
+ * serialization, the post-synth checks each loaded plugin ships run against
+ * that plugin's own output, exactly as `chant build` runs them (scoped per
+ * plugin, `lint.rules` from the example's chant.config applied), and any
+ * diagnostic left at `error` severity fails the example. Warnings do not.
+ * An example is what a user copies wholesale; it must not teach a pattern
+ * the lexicon it demonstrates flags as an error.
  */
 
 import { existsSync, readdirSync } from "fs";
 import { join } from "path";
-import { build } from "../../build";
+import { build, type BuildResult } from "../../build";
 import { findInfraFiles } from "../../discovery/files";
 import { detectLexicons } from "../../detectLexicon";
 import { loadChantConfig } from "../../config";
 import { loadPlugins } from "../plugins";
+import { runPostSynthChecks, type PostSynthDiagnostic } from "../../lint/post-synth";
+import { applyConfiguredSeverity } from "../../lint/config";
+import type { LexiconPlugin } from "../../lexicon";
+import type { SerializerResult } from "../../serializer";
 
 export interface ExampleBuildResult {
   example: string;
   ok: boolean;
   detail?: string;
+}
+
+/**
+ * Run each plugin's own post-synth checks against that plugin's output —
+ * the same per-plugin scoping and `lint.rules` severity resolution
+ * `cli/commands/build.ts` applies — and return what is left at `error`
+ * severity. Project `lint.policies` are not run here: those are the
+ * example author's organizational policy, not the lexicon's contract.
+ */
+export function postSynthErrors(
+  plugins: LexiconPlugin[],
+  result: BuildResult,
+  lintRules: Parameters<typeof applyConfiguredSeverity>[1],
+): PostSynthDiagnostic[] {
+  const errors: PostSynthDiagnostic[] = [];
+  for (const plugin of plugins) {
+    if (!plugin.postSynthChecks) continue;
+    const checks = plugin.postSynthChecks();
+    if (checks.length === 0) continue;
+
+    const outputKey = plugin.serializer.name;
+    const scopedOutputs = new Map<string, string | SerializerResult>();
+    const pluginOutput = result.outputs.get(outputKey);
+    if (pluginOutput !== undefined) scopedOutputs.set(outputKey, pluginOutput);
+
+    const diags = runPostSynthChecks(checks, { ...result, outputs: scopedOutputs });
+    const { diagnostics } = applyConfiguredSeverity(diags, lintRules);
+    for (const diag of diagnostics) {
+      if (diag.severity === "error") errors.push(diag);
+    }
+  }
+  return errors;
+}
+
+function formatPostSynthError(diag: PostSynthDiagnostic): string {
+  const prefix = diag.entity ? `[${diag.entity}] ` : "";
+  return `${diag.checkId}: ${prefix}${diag.message}`;
 }
 
 /**
@@ -94,7 +133,15 @@ export async function checkExamplesBuild(lexiconDir: string): Promise<ExampleBui
 
       const structuralErrors = result.errors.map((e) => e.message);
       const producedOutput = result.outputs.size > 0;
-      const ok = structuralErrors.length === 0 && producedOutput;
+      const structurallyOk = structuralErrors.length === 0 && producedOutput;
+
+      // #1400 — only once the build is structurally sound. A discovery error
+      // already explains the failure, and partial output is not the output
+      // the checks are meant to see.
+      const postSynth = structurallyOk
+        ? postSynthErrors(plugins, result, exampleConfig.lint?.rules)
+        : [];
+      const ok = structurallyOk && postSynth.length === 0;
 
       results.push({
         example: entry.name,
@@ -103,7 +150,9 @@ export async function checkExamplesBuild(lexiconDir: string): Promise<ExampleBui
           ? undefined
           : structuralErrors.length > 0
             ? structuralErrors.join("; ")
-            : "discovered source but produced no output",
+            : !producedOutput
+              ? "discovered source but produced no output"
+              : `post-synth error(s) from the lexicon's own checks: ${postSynth.map(formatPostSynthError).join("; ")}`,
       });
     } catch (err) {
       results.push({
