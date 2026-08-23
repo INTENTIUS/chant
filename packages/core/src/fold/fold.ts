@@ -1,4 +1,5 @@
 import * as ts from "typescript";
+import { relative } from "node:path";
 import { intrinsicCallFolds, intrinsicTagFolds, type IntrinsicDef } from "../lexicon";
 import {
   SUPPORTED_BINARY_OPERATORS,
@@ -58,7 +59,15 @@ import { isFoldableHelperName } from "./foldable-helpers";
  *     #1044) → {@link FoldedIntrinsicCall}, the same `{__intrinsic}` family
  *     the tagged-template form already reduces to.
  *
- * Everything else — a user's function, a method call, an array `.map`, a
+ * chant #1373 adds a third, the only one that evaluates rather than
+ * enveloping: a call to a PROJECT-LOCAL function — declared in this file or
+ * imported from a sibling project file — whose body is itself inside the
+ * fold subset. ../discovery/fold-import.ts hands such a function in through
+ * `externals` as a {@link FoldableFunction}, and {@link callFoldableFunction}
+ * folds its body against the defining module's scope with the folded
+ * arguments bound. Still nothing is imported or run.
+ *
+ * Everything else — a package's function, a method call, an array `.map`, a
  * registered name shadowed by a local binding — still throws.
  *
  * Cross-file identifier resolution (chant #1020): `consts` alone is always
@@ -283,6 +292,295 @@ export class FoldError extends Error {
 }
 
 /**
+ * A project-local function `fold()` can CALL — chant #1373.
+ *
+ * Produced by ../discovery/fold-import.ts for every top-level function a
+ * project file declares (`export function f(...) {...}`, `export const f =
+ * (...) => ...`, and their non-exported siblings) and placed in the folding
+ * file's `externals` under the function's name, so a call through a bare
+ * identifier bound to one evaluates STATICALLY: the arguments fold in the
+ * caller's scope, the parameters are bound, and the body folds in the
+ * DEFINING module's scope (`consts`/`externals` here are that module's, not
+ * the caller's). Nothing is imported and nothing runs — this is the same
+ * "evaluate the source instead of the module" move #1023 makes for a
+ * composite factory body, applied to a plain function.
+ *
+ * Why this exists: the advice every chant project gets is to read build
+ * parameters through a small helper (`optionalAccountId(params.accountId)`)
+ * so defaulting and validation live in one place. Before #1373 a call to
+ * that helper was "a function call as a value" and unfoldable, and because
+ * fallback is per file and taint propagates along imports, ONE helper call
+ * at the top of a parameter file demoted every stack that imported it.
+ *
+ * The value is a marker, never a real function: a folded file's export
+ * namespace may carry one (an importer's `buildExternals` picks it up by
+ * name), and `fold()` refuses it anywhere a VALUE is expected — a function
+ * object cannot be serialized, and the run path's export namespace holds the
+ * real function the collector ignores, so ignoring the marker matches.
+ *
+ * Not a `FoldedValue`: it never appears inside a folded tree.
+ */
+export class FoldableFunction {
+  constructor(
+    /** The binding name, for diagnostics. */
+    readonly name: string,
+    readonly fn: ts.FunctionDeclaration | ts.ArrowFunction | ts.FunctionExpression,
+    /** Absolute path of the defining module, for diagnostics. */
+    readonly file: string,
+    /**
+     * The defining module's top-level `const` initializers, with every
+     * `new`-bound one already REMOVED — a body that mentions one reads the
+     * live instance out of `externals` instead (the same object the module's
+     * own fold registered), never a by-name `{__attrRef}` that would name an
+     * entity of the wrong file once revived in the caller.
+     */
+    readonly consts: Map<string, ts.Expression>,
+    /** The defining module's resolved imports, its own pre-built resources, and its own sibling functions. Read live, never copied, so a function declared before a const it reads still sees that const's value. */
+    readonly externals: ReadonlyMap<string, unknown>,
+    /** Why an import of the defining module did NOT resolve, by local name — enriches an "unresolved identifier" inside the body. */
+    readonly failures?: ReadonlyMap<string, string>,
+  ) {}
+
+  /**
+   * Set once a call to this function has RETURNED a live object (a value
+   * with a prototype — a pre-built resource instance of the defining module,
+   * say) into a caller. The caller then shares that object's identity with
+   * the defining module exactly as an imported resource binding would, and
+   * fold-import.ts records the same `liveSources` edge for it so the two
+   * files fold or run together. A function that returns only plain data never
+   * sets this, which is what keeps a parameter helper from tainting anything.
+   */
+  leakedIdentity = false;
+}
+
+/** True when `value` (or anything inside it, through plain objects and arrays) carries a prototype other than Object/Array — i.e. is a live instance, not folded data. */
+function carriesLiveObject(value: unknown, seen = new Set<unknown>()): boolean {
+  if (value === null || typeof value !== "object") return typeof value === "function";
+  if (seen.has(value)) return false;
+  seen.add(value);
+  const proto = Object.getPrototypeOf(value);
+  if (proto !== Object.prototype && proto !== Array.prototype && proto !== null) return true;
+  for (const inner of Object.values(value)) {
+    if (carriesLiveObject(inner, seen)) return true;
+  }
+  return false;
+}
+
+export function isFoldableFunction(value: unknown): value is FoldableFunction {
+  return value instanceof FoldableFunction;
+}
+
+/** A binding element a folded function can bind plainly: `{ a }` / `{ a: b }`, no rest, default, or nested pattern. */
+function plainBindingKey(el: ts.BindingElement): string | undefined {
+  if (el.dotDotDotToken || el.initializer || !ts.isIdentifier(el.name)) return undefined;
+  const key = el.propertyName ?? el.name;
+  if (ts.isIdentifier(key) || ts.isStringLiteral(key) || ts.isNumericLiteral(key)) return key.text;
+  return undefined;
+}
+
+/**
+ * The SHAPE half of what makes a project-local function foldable (chant
+ * #1373) — a reason string, or `undefined` when the function is admissible.
+ * Deliberately the same statement-level contract #1023 gives a composite
+ * factory body: parameters bound plainly (an identifier, optionally
+ * defaulted, or a flat object pattern), and a body that is either a single
+ * expression or `const` declarations followed by one `return`. Every
+ * expression inside is then folded by {@link fold} itself, so the expression
+ * subset is defined exactly once — with the additions {@link fold} refuses
+ * INSIDE a function body (a `new`, a tagged template, a registered helper or
+ * intrinsic call), because each of those reduces to an envelope revived
+ * against the CALLER's imports, which are not the scope the body was written
+ * in.
+ */
+export function findFunctionSubsetViolation(
+  fn: ts.FunctionDeclaration | ts.ArrowFunction | ts.FunctionExpression,
+): string | undefined {
+  if (fn.asteriskToken) return "a generator function is not foldable";
+  if (fn.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword)) return "an async function is not foldable";
+  if (!fn.body) return "a function without a body (an overload signature) is not foldable";
+
+  for (const param of fn.parameters) {
+    if (param.dotDotDotToken) return "a rest parameter is not foldable";
+    if (ts.isIdentifier(param.name)) continue;
+    if (ts.isObjectBindingPattern(param.name)) {
+      for (const el of param.name.elements) {
+        if (plainBindingKey(el) === undefined) {
+          return "a destructured parameter with a rest, default, or nested element is not foldable";
+        }
+      }
+      continue;
+    }
+    return "an array-destructured parameter is not foldable";
+  }
+
+  if (!ts.isBlock(fn.body)) return undefined;
+
+  const statements = fn.body.statements;
+  for (let i = 0; i < statements.length; i += 1) {
+    const statement = statements[i];
+    const last = i === statements.length - 1;
+
+    if (ts.isReturnStatement(statement)) {
+      if (!last) return "an early `return` is not foldable";
+      continue;
+    }
+    if (!ts.isVariableStatement(statement)) {
+      return `\`${ts.SyntaxKind[statement.kind]}\` in a function body is not foldable — only \`const\` declarations and a final \`return\` are`;
+    }
+    if ((statement.declarationList.flags & ts.NodeFlags.Const) === 0) {
+      return "`let`/`var` in a function body is not foldable";
+    }
+    for (const decl of statement.declarationList.declarations) {
+      if (!decl.initializer) return "an uninitialized `const` in a function body is not foldable";
+      if (ts.isIdentifier(decl.name)) continue;
+      if (ts.isObjectBindingPattern(decl.name)) {
+        for (const el of decl.name.elements) {
+          if (plainBindingKey(el) === undefined) {
+            return "a destructured `const` with a rest, default, or nested element is not foldable";
+          }
+        }
+        continue;
+      }
+      return "an array-destructured `const` in a function body is not foldable";
+    }
+  }
+  return undefined;
+}
+
+/**
+ * How many project-local function bodies are being folded around the current
+ * `fold()` call — 0 at a file's own top level. Two jobs: terminate a function
+ * that (directly or through another) calls itself, which has no fixpoint and
+ * no file boundary for fold-import's cycle detection to notice; and tell the
+ * envelope-producing branches of {@link fold} that they are inside a body,
+ * where an envelope must not be produced (see {@link findFunctionSubsetViolation}).
+ */
+let functionBodyDepth = 0;
+const MAX_FUNCTION_CALL_DEPTH = 32;
+
+function insideFunctionBody(node: ts.Node, what: string): FoldError | undefined {
+  if (functionBodyDepth === 0) return undefined;
+  return foldError(node, `${what} inside a folded function body is not foldable`);
+}
+
+function fileLabel(file: string): string {
+  const rel = relative(process.cwd(), file);
+  return rel.startsWith("..") ? file : rel;
+}
+
+/**
+ * Evaluate a call to a project-local function (chant #1373) — see
+ * {@link FoldableFunction}. Arguments fold in the caller's scope (`consts`/
+ * `externals`); the body folds in the callee's, with the parameters bound on
+ * top. Any failure inside the body is re-thrown at the CALL site, naming the
+ * callee, its file and the position inside it, and the reason — so the
+ * `[fold:run]` line for the importing file says which helper to fix and why,
+ * rather than the bare "function call as a value" it said before.
+ */
+function callFoldableFunction(
+  callee: FoldableFunction,
+  node: ts.CallExpression,
+  consts: Map<string, ts.Expression>,
+  intrinsics: readonly IntrinsicDef[],
+  externals: ReadonlyMap<string, unknown> | undefined,
+): FoldedValue {
+  const label = `call to "${callee.name}" (${fileLabel(callee.file)})`;
+  const violation = findFunctionSubsetViolation(callee.fn);
+  if (violation) throw foldError(node, `${label} is not foldable: ${violation}`);
+  if (functionBodyDepth >= MAX_FUNCTION_CALL_DEPTH) {
+    throw foldError(node, `${label} is not foldable: call depth exceeded — is it recursive?`);
+  }
+
+  const args: FoldedValue[] = [];
+  for (const arg of node.arguments) {
+    if (ts.isSpreadElement(arg)) throw foldError(arg, `${label} is not foldable: a spread argument is not foldable`);
+    args.push(fold(arg, consts, intrinsics, externals));
+  }
+
+  const bodyConsts = new Map(callee.consts);
+  const bodyExternals = new Map(callee.externals);
+  const bind = (name: string, value: unknown): void => {
+    // A parameter or body binding SHADOWS a module-level const of the same
+    // name — `fold()` consults `consts` before `externals`.
+    bodyConsts.delete(name);
+    bodyExternals.set(name, value);
+  };
+  const destructure = (pattern: ts.ObjectBindingPattern, value: unknown): void => {
+    if (value === null || typeof value !== "object") {
+      throw foldError(pattern, `destructured source in \`${briefNodeText(pattern)}\` is not an object`);
+    }
+    for (const el of pattern.elements) {
+      bind((el.name as ts.Identifier).text, (value as Record<string, unknown>)[plainBindingKey(el) as string]);
+    }
+  };
+
+  functionBodyDepth += 1;
+  try {
+    const result = evaluateFunctionBody(callee, args, bodyConsts, bodyExternals, intrinsics, bind, destructure);
+    // Live objects that ARRIVED through the arguments are the caller's own
+    // already; only one the body produced from its module's scope is new.
+    if (!callee.leakedIdentity && carriesLiveObject(result) && !args.some((arg) => carriesLiveObject(arg))) {
+      callee.leakedIdentity = true;
+    }
+    return result;
+  } catch (err) {
+    if (!(err instanceof FoldError)) throw err;
+    // The inner message is positioned inside the CALLEE file. Strip that
+    // prefix and re-anchor at the call site: callee, its file and position,
+    // then the reason.
+    const prefix = `${err.line}:${err.column} - `;
+    const inner = err.message.startsWith(prefix) ? err.message.slice(prefix.length) : err.message;
+    let reason = inner;
+    const unresolved = /^unresolved identifier: (\w+)$/.exec(inner);
+    if (unresolved && callee.failures?.has(unresolved[1])) {
+      reason = `${inner} (${callee.failures.get(unresolved[1])})`;
+    }
+    throw foldError(
+      node,
+      `${label} is not foldable: ${fileLabel(callee.file)}:${err.line}:${err.column} - ${reason}`,
+      err.ruleId,
+    );
+  } finally {
+    functionBodyDepth -= 1;
+  }
+}
+
+function evaluateFunctionBody(
+  callee: FoldableFunction,
+  args: readonly FoldedValue[],
+  bodyConsts: Map<string, ts.Expression>,
+  bodyExternals: Map<string, unknown>,
+  intrinsics: readonly IntrinsicDef[],
+  bind: (name: string, value: unknown) => void,
+  destructure: (pattern: ts.ObjectBindingPattern, value: unknown) => void,
+): FoldedValue {
+  callee.fn.parameters.forEach((param, i) => {
+    let value: unknown = args[i];
+    if (value === undefined && param.initializer) {
+      value = fold(param.initializer, bodyConsts, intrinsics, bodyExternals);
+    }
+    if (ts.isIdentifier(param.name)) bind(param.name.text, value);
+    else destructure(param.name as ts.ObjectBindingPattern, value);
+  });
+
+  const body = callee.fn.body as ts.ConciseBody;
+  if (!ts.isBlock(body)) return fold(body, bodyConsts, intrinsics, bodyExternals);
+
+  for (const statement of body.statements) {
+    if (ts.isReturnStatement(statement)) {
+      return statement.expression ? fold(statement.expression, bodyConsts, intrinsics, bodyExternals) : undefined;
+    }
+    for (const decl of (statement as ts.VariableStatement).declarationList.declarations) {
+      const value = fold(decl.initializer as ts.Expression, bodyConsts, intrinsics, bodyExternals);
+      if (ts.isIdentifier(decl.name)) bind(decl.name.text, value);
+      else destructure(decl.name as ts.ObjectBindingPattern, value);
+    }
+  }
+  // A block body with no `return` evaluates to `undefined`, as it would run.
+  return undefined;
+}
+
+/**
  * Resolve a node's 1-based line/column via its owning `SourceFile`. Exported
  * (chant #1020) so fold-import.ts can build its own located `FoldError`s
  * (e.g. an import-cycle diagnostic pointing at the specific `import`
@@ -474,6 +772,12 @@ export function fold(
     return fold(node.expression, consts, intrinsics, externals);
   }
 
+  if (ts.isArrowFunction(node) || ts.isFunctionExpression(node)) {
+    // chant #1373 — a function is callable here (see {@link FoldableFunction})
+    // but never a VALUE: nothing downstream can serialize one.
+    throw foldError(node, "a function used as a value is not foldable");
+  }
+
   if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
     return node.text;
   }
@@ -489,6 +793,8 @@ export function fold(
   if (ts.isIdentifier(node) && node.text === "undefined") return undefined;
 
   if (ts.isTaggedTemplateExpression(node)) {
+    const inside = insideFunctionBody(node, "a tagged template intrinsic");
+    if (inside) throw inside;
     return foldTaggedTemplate(node, consts, intrinsics, externals);
   }
 
@@ -547,7 +853,11 @@ export function fold(
       // `AttrRef` fall out of `network.vpc.VpcId` with zero special-casing
       // here (see fold-import.ts's module doc).
       if (externals?.has(node.text)) {
-        return externals.get(node.text) as FoldedValue;
+        const external = externals.get(node.text);
+        if (isFoldableFunction(external)) {
+          throw foldError(node, `function "${node.text}" used as a value is not foldable`);
+        }
+        return external as FoldedValue;
       }
       // chant #1064 — a bare `process` reference is ALWAYS an ambient
       // environment read (`process.env.X`, `process.argv`, …), never
@@ -719,6 +1029,8 @@ export function fold(
         `nested \`new ${briefNodeText(node.expression)}(...)\` as a value needs a plain imported constructor — falls back to run`,
       );
     }
+    const inside = insideFunctionBody(node, `\`new ${node.expression.text}(...)\``);
+    if (inside) throw inside;
     return foldResource(node, consts, intrinsics, externals);
   }
 
@@ -740,6 +1052,8 @@ export function fold(
       isFoldableHelperName(node.expression.text) &&
       !consts.has(node.expression.text)
     ) {
+      const inside = insideFunctionBody(node, `authoring helper call \`${node.expression.text}(...)\``);
+      if (inside) throw inside;
       return {
         __helper: node.expression.text,
         args: node.arguments.map((arg) => fold(arg, consts, intrinsics, externals)),
@@ -769,10 +1083,29 @@ export function fold(
     if (ts.isIdentifier(node.expression) && !consts.has(node.expression.text)) {
       const calleeName = node.expression.text;
       if (intrinsics.some((i) => i.name === calleeName && intrinsicCallFolds(i))) {
+        const inside = insideFunctionBody(node, `intrinsic call \`${calleeName}(...)\``);
+        if (inside) throw inside;
         return {
           __intrinsic: calleeName,
           args: node.arguments.map((arg) => foldIntrinsicValue(arg, consts, intrinsics, externals)),
         };
+      }
+    }
+
+    // chant #1373 — the third call shape, and the only open-ended one: a
+    // PROJECT-LOCAL function (declared in this file or imported from a
+    // sibling project file) whose body is itself foldable. fold-import.ts
+    // places a {@link FoldableFunction} marker in `externals` for each such
+    // declaration (a same-file `const f = () => …` is in `consts` too, which
+    // is why this is not gated on `consts` like the two above); the call is
+    // evaluated right here, statically, against the defining module's scope
+    // — see {@link callFoldableFunction}. Checked AFTER the two registered
+    // shapes so a registered name keeps its registered meaning; a package
+    // export never produces a marker, so `node_modules` stays out.
+    if (ts.isIdentifier(node.expression)) {
+      const callee = externals?.get(node.expression.text);
+      if (isFoldableFunction(callee)) {
+        return callFoldableFunction(callee, node, consts, intrinsics, externals);
       }
     }
 
