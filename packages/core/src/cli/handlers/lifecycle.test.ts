@@ -2,6 +2,7 @@ import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";
 import { sep } from "node:path";
 import { createMockPlugin, staticDescribeResources, staticObservation, staticDeepObservation, staticListArtifacts } from "@intentius/chant-test-utils";
 import type { LexiconPlugin, ResourceMetadata } from "../../lexicon";
+import { deepObservation } from "../../deep-observation";
 import type { BuildResult } from "../../build";
 import type { ParsedArgs } from "../registry";
 
@@ -298,6 +299,81 @@ describe("runLifecycleDiff --live", () => {
     const readKeys = readSnapshotMock.mock.calls.map((c) => c[1]);
     expect(readKeys).toContain("loom-backend__aws");
     expect(readKeys).toContain("loom-agents__aws");
+  });
+
+  // #1264 — each stack declares the region it deploys to. The diff dropped it
+  // on the way to the live read, so a multi-region estate compared every stack
+  // against the ambient region and reported the out-of-region ones as absent.
+  test("multi-stack: each stack's declared region reaches the thin and deep reads", async () => {
+    buildMock.mockResolvedValue(makeBuildResult({ aws: ["bucket"] }));
+    fetchLifecycleMock.mockResolvedValue(undefined);
+    readSnapshotMock.mockResolvedValue(null);
+    loadChantConfigMock.mockResolvedValue({ config: { stacks: [
+      { name: "app-us-east-1", src: "src/us-east-1", region: "us-east-1" },
+      { name: "app-us-west-2", src: "src/us-west-2", region: "us-west-2" },
+    ] } });
+
+    const thinReads: Array<{ stack?: string; region?: string }> = [];
+    const deepReads: Array<{ stack?: string; region?: string }> = [];
+    const plugins: LexiconPlugin[] = [
+      createMockPlugin({
+        name: "aws",
+        emulator: awsEmulatorStub,
+        describeResources: async (options: { stack?: string; region?: string }) => {
+          thinReads.push({ stack: options.stack, region: options.region });
+          return {};
+        },
+        observeResourcesDeep: async (options: { stack?: string; region?: string }) => {
+          deepReads.push({ stack: options.stack, region: options.region });
+          return deepObservation({});
+        },
+      }),
+    ];
+
+    const exit = await runLifecycleDiff({
+      args: makeArgs({ path: "diff", extraPositional: "prod", live: true }),
+      plugins,
+      serializers: plugins.map((p) => p.serializer),
+    });
+
+    expect(exit).toBe(0);
+    expect(thinReads).toEqual([
+      { stack: "app-us-east-1", region: "us-east-1" },
+      { stack: "app-us-west-2", region: "us-west-2" },
+    ]);
+    expect(deepReads).toEqual([
+      { stack: "app-us-east-1", region: "us-east-1" },
+      { stack: "app-us-west-2", region: "us-west-2" },
+    ]);
+  });
+
+  test("stack without a declared region: no region reaches the live read", async () => {
+    buildMock.mockResolvedValue(makeBuildResult({ aws: ["bucket"] }));
+    fetchLifecycleMock.mockResolvedValue(undefined);
+    readSnapshotMock.mockResolvedValue(null);
+    loadChantConfigMock.mockResolvedValue({ config: { stacks: [{ name: "app", src: "src/app" }] } });
+
+    const reads: Array<Record<string, unknown>> = [];
+    const plugins: LexiconPlugin[] = [
+      createMockPlugin({
+        name: "aws",
+        emulator: awsEmulatorStub,
+        describeResources: async (options: Record<string, unknown>) => {
+          reads.push(options);
+          return {};
+        },
+      }),
+    ];
+
+    await runLifecycleDiff({
+      args: makeArgs({ path: "diff", extraPositional: "prod", live: true }),
+      plugins,
+      serializers: plugins.map((p) => p.serializer),
+    });
+
+    expect(reads).toHaveLength(1);
+    expect(reads[0].stack).toBe("app");
+    expect("region" in reads[0]).toBe(false);
   });
 
   test("warns and skips lexicons without describeResources", async () => {
