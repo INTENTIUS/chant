@@ -320,7 +320,7 @@ async function runGraphLive(
         ...(args.namespace ? { namespace: args.namespace } : {}),
       });
       observations = observeResult.observations;
-      const { errors, warnings } = observeResult;
+      const { errors, warnings, notes = [] } = observeResult;
       for (const e of errors) console.error(formatWarning({ message: e }));
       // Unobserved entities (#1089) arrive as warnings — a node missing from the
       // live graph because nobody looked is a different fact from one that isn't
@@ -333,7 +333,9 @@ async function runGraphLive(
         console.error(formatWarning({
           message: `... and ${warnings.length - WARN_CAP} more entity(ies) not observed — run \`chant lifecycle diff ${environment} --live\` for the full list`,
         }));
-    }
+      }
+      // Run-level notes (#1265): one line each, outside the per-entity cap.
+      for (const n of notes) console.error(formatWarning({ message: n }));
     }
 
     // Both paths land here: a replay rejoins the live pipeline at exactly this

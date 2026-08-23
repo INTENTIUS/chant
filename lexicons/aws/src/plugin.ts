@@ -47,8 +47,14 @@ export { stackDoesNotExist } from "./stack-errors";
  * Provides serializer, lint rules, template detection,
  * import parsing, and code generation for AWS CloudFormation.
  */
-/** #1265 — the ownership notice is about the environment, so it is said once. */
-let warnedOwnership = false;
+/**
+ * describe-stack-resources returns no tags, so the ownership filter cannot be
+ * applied on this read path. Returned as a run-level note rather than printed
+ * (#1265): core says it once per run, after the answer, however many stacks
+ * were read. The text is the contract consumers grep for.
+ */
+const OWNERSHIP_UNAVAILABLE_NOTE =
+  "ownership filter unavailable on describeResources (no tags from describe-stack-resources) — returning all, each with an explicit `unknown` verdict; use `chant import --from <env> --owned` for ownership-filtered export";
 
 export const awsPlugin: LexiconPlugin = {
   name: "aws",
@@ -561,21 +567,14 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
       ...(options.region ? { region: options.region } : {}),
     };
 
-    if (options.owned) {
-      // describe-stack-resources does not return tags, so ownership cannot be
-      // determined here. Degrade to detect-only rather than silently filtering.
-      //
-      // Once per process, not once per stack (#1265). It is a property of the
-      // environment, not of each stack, and a four-stack project printed four
-      // identical copies ahead of every answer — enough that an agent piping
-      // `graph --format ir` with `2>&1` had to skip lines to find the JSON.
-      warnedOwnership ||
-        // eslint-disable-next-line no-console
-        console.warn(
-        "[aws] ownership filter unavailable on describeResources (no tags from describe-stack-resources) — returning all, each with an explicit `unknown` verdict; use `chant import --from <env> --owned` for ownership-filtered export",
-        );
-      warnedOwnership = true;
-    }
+    // describe-stack-resources does not return tags, so ownership cannot be
+    // determined here. Degrade to detect-only rather than silently filtering,
+    // and say so as a note on the observation. It is a property of the
+    // environment, not of each stack: a four-stack project once printed four
+    // identical copies ahead of every answer (#1265) — enough that an agent
+    // piping `graph --format ir` with `2>&1` had to skip lines to find the
+    // JSON. Core dedupes the note across stacks and prints it with the footer.
+    const notes = options.owned ? [OWNERSHIP_UNAVAILABLE_NOTE] : undefined;
 
     // Derive stack name. A multi-stack project passes the explicit CloudFormation
     // stack this observation targets (see `stacks` in ChantConfig); otherwise the
@@ -599,7 +598,7 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
       if (err instanceof AwsReadError && stackDoesNotExist(err.message)) {
         const { observeByIdentity } = await import("./identity-observe");
         const identity = await observeByIdentity(options.entityNames, options.entities, resources, client);
-        return observation({ ...resources, ...identity.resources }, undefined, identity.queried);
+        return observation({ ...resources, ...identity.resources }, undefined, identity.queried, notes);
       }
       // Any other failure (credentials, throttling, a region that can't be
       // reached) establishes nothing about what is deployed. Reporting every
@@ -616,6 +615,8 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
           reason,
           `DescribeStackResources failed for stack "${stackName}": ${detail}`,
         ),
+        undefined,
+        notes,
       );
     }
 
@@ -700,13 +701,13 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
           detail: `the stack was read, but this resource's own properties were not — ${own.failures.get(type) ?? "the describe call failed"}`,
         };
       }
-      return observation({ ...described, ...identity.resources }, holes, identity.queried);
+      return observation({ ...described, ...identity.resources }, holes, identity.queried, notes);
     }
 
     // Every entity the stack answered for was answered for: an entity the
     // template doesn't carry is genuinely not in this stack, which is an
     // absence, not a hole — unless the identity fallback saw it live (#1647).
-    return observation({ ...withProperties, ...identity.resources }, undefined, identity.queried);
+    return observation({ ...withProperties, ...identity.resources }, undefined, identity.queried, notes);
   },
 
   /**

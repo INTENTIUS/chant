@@ -11,7 +11,7 @@ import { replaySnapshots, hasSnapshot } from "../../lifecycle/replay";
 import type { LiveObservation } from "../../graph-ir";
 import { loadChantConfig } from "../../config";
 import { loadPlugins, resolveProjectLexicons } from "../plugins";
-import { formatError } from "../format";
+import { formatError, formatWarning } from "../format";
 import type { CommandContext } from "../registry";
 
 /**
@@ -64,6 +64,10 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
   // Lexicons whose live read threw (#1263). "Nothing observed" and "could not
   // observe" are different claims; this is what carries the second one.
   const liveFailures: string[] = [];
+  // Run-level notes from the read (#1265) — "ownership could not be filtered
+  // on this path" — printed with the provenance footer, after the rows, so the
+  // answer is not preceded by what qualifies it.
+  let liveNotes: string[] = [];
   // Kinds that can exist in the account without being declared (#1278). Known
   // without a scan, so it costs nothing to mention.
   let ambientKinds: string[] = [];
@@ -133,6 +137,7 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
         console.error(formatError({ message: `live read failed — ${e}` }));
       }
       observations = observed.observations;
+      liveNotes = observed.notes ?? [];
       source = { kind: "live" };
     }
     let live = buildLiveGraphIr(observations);
@@ -254,6 +259,7 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
     console.log("(no matches)");
     availableAttrs(terms, ir);
     if (args.explain) explain(terms, matches, ir, nodeById, query);
+    for (const n of liveNotes) console.error(formatWarning({ message: n }));
     return 0;
   }
   for (const n of matches) {
@@ -267,6 +273,9 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
       ? (await hasSnapshot(String(args.env))) ? "yes" : undefined
       : undefined;
   provenance(matches, source, recorded, liveFailures);
+  // Qualifies the provenance line, so it sits with it: one line per distinct
+  // note for the whole run, not one per stack, and after the rows (#1265).
+  for (const n of liveNotes) console.error(formatWarning({ message: n }));
   ambientHint(matches, ambientKinds, args.ambient === true, replayAmbient);
   showMiss(matches, show);
   regionSpread(terms, matches, show);
