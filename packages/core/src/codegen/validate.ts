@@ -209,7 +209,7 @@ export async function validateLexiconArtifacts(config: LexiconValidationConfig):
     try {
       const fresh = extractSurface(readFileSync(lexiconPath, "utf-8"), readFileSync(dtsPath, "utf-8"));
       const delta = diffSurface(parseSnapshot(readFileSync(snapshotPath, "utf-8")), fresh);
-      const moved = delta.added.length + delta.removed.length + delta.changed.length;
+      const moved = delta.added.length + delta.removed.length + delta.renamed.length + delta.changed.length;
       checks.push(
         moved === 0
           ? { name: "surface-matches-snapshot", ok: true }
@@ -218,7 +218,7 @@ export async function validateLexiconArtifacts(config: LexiconValidationConfig):
               ok: false,
               error:
                 `The generated API differs from the reviewed surface.snapshot.json ` +
-                `(${delta.added.length} added, ${delta.removed.length} removed, ${delta.changed.length} changed). ` +
+                `(${delta.added.length} added, ${delta.removed.length} removed, ${delta.renamed.length} renamed, ${delta.changed.length} changed). ` +
                 `Accept it deliberately with \`chant dev surface-diff <lexicon> --update-snapshot --bump\`, ` +
                 `never as a side effect of a release.\n${formatDelta(delta)}`,
             },

@@ -196,6 +196,7 @@ export default defineConfig({
 										{ label: 'dev publish', slug: 'cli/dev-publish' },
 										{ label: 'dev onboard', slug: 'cli/onboard' },
 										{ label: 'dev check-lexicon', slug: 'cli/check-lexicon' },
+										{ label: 'dev surface-diff', slug: 'cli/surface-diff' },
 									],
 								},
 							],
