@@ -2181,6 +2181,59 @@ describe("tryFoldFile — constructions as values (chant #1169)", () => {
     });
   });
 
+  // chant #1535 — the referenced resource is declared through a conditional
+  // (`flag ? new T(...) : undefined`), the kubemicrovm-ops shape that shipped
+  // a role whose trust policy had `Principal: {}`. The attribute read used to
+  // index the folded `{__resource}` envelope and come back `undefined`, which
+  // the props walk then dropped without a diagnostic. It must now fold to the
+  // same by-name envelope a bare `new` const produces, at any nesting depth.
+  test("an attribute reference to a CONDITIONALLY declared same-file resource folds to the `{__attrRef}` envelope, even nested inside a document", async () => {
+    await writeDefs();
+    const file = join(testDir, "main.ts");
+    await writeFile(
+      file,
+      `
+        import { Job } from "./resources";
+        const declared = true;
+        export const first = declared ? new Job({ stage: "first" }) : undefined;
+        const firstId = first ? first.Id : "fallback";
+        export const second = new Job({
+          upstream: first.Id,
+          policy: { Statement: [{ Principal: { Federated: firstId } }] },
+        });
+      `,
+    );
+
+    const result = await tryFoldFile(file);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.entities.map(([name]) => name)).toEqual(["first", "second"]);
+    const props = propsOf(result.exportedValues.get("second"));
+    expect(props.upstream).toEqual({ __attrRef: { entity: "first", attribute: "Id" } });
+    expect(props.policy).toEqual({
+      Statement: [{ Principal: { Federated: { __attrRef: { entity: "first", attribute: "Id" } } } }],
+    });
+  });
+
+  test("an attribute read on an inline resource expression falls the file back to run instead of folding to nothing", async () => {
+    await writeDefs();
+    const file = join(testDir, "main.ts");
+    await writeFile(
+      file,
+      `
+        import { Job } from "./resources";
+        export const second = new Job({ upstream: (true ? new Job({}) : undefined).Id });
+      `,
+    );
+
+    const result = await tryFoldFile(file);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toMatch(/attribute "Id" read on an inline resource expression is not foldable/);
+  });
+
   test("a nested construction whose class isn't a resolvable import falls the file back to run", async () => {
     await writeDefs();
     const file = join(testDir, "main.ts");

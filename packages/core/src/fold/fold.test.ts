@@ -151,6 +151,47 @@ describe("fold — cross-resource attribute refs", () => {
     expect(foldResult).toEqual(runResult);
     expect(foldResult).toEqual({ __attrRef: { entity: "bucket", attribute: "arn" } });
   });
+
+  // chant #1535 — the const is not a bare `new` but a conditional that yields
+  // one. Indexing the folded `{__resource}` envelope by the attribute name
+  // returned `undefined`, so `Principal: { Federated: provider.Arn }` emitted
+  // `Principal: {}` with no diagnostic.
+  test("property access on a const bound to a conditional `new` becomes the same symbolic ref", () => {
+    const src = `
+      const flag = true;
+      const provider = flag ? new OIDCProvider({ Url: "https://x" }) : undefined;
+      const ref = provider.Arn;
+      const nested = { Principal: { Federated: provider ? provider.Arn : "fallback" } };
+    `;
+    expect(foldConst(src, "ref")).toEqual({ __attrRef: { entity: "provider", attribute: "Arn" } });
+    expect(foldConst(src, "nested")).toEqual({
+      Principal: { Federated: { __attrRef: { entity: "provider", attribute: "Arn" } } },
+    });
+  });
+
+  test("element access on a const bound to a conditional `new` becomes the same symbolic ref", () => {
+    const src = `
+      const provider = true ? new OIDCProvider({}) : undefined;
+      const ref = provider["Arn"];
+    `;
+    expect(foldConst(src, "ref")).toEqual({ __attrRef: { entity: "provider", attribute: "Arn" } });
+  });
+
+  test("the untaken branch still folds to undefined, as the run path would see it", () => {
+    const src = `
+      const provider = false ? new OIDCProvider({}) : undefined;
+      const ref = provider ? provider.Arn : "fallback";
+    `;
+    expect(foldConst(src, "ref")).toBe("fallback");
+  });
+
+  test("attribute read on an inline resource expression throws a located FoldError rather than folding to undefined", () => {
+    const src = `
+      const ref = (true ? new OIDCProvider({}) : undefined).Arn;
+    `;
+    expect(() => foldConst(src, "ref")).toThrow(FoldError);
+    expect(() => foldConst(src, "ref")).toThrow(/attribute "Arn" read on an inline resource expression is not foldable/);
+  });
 });
 
 describe("fold — element access", () => {

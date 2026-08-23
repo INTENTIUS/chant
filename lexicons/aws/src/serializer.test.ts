@@ -8,6 +8,7 @@ import { AWS } from "./pseudo";
 import { nestedStack, NestedStackOutputRef } from "./nested-stack";
 import { stackOutput } from "@intentius/chant/stack-output";
 import { createResource } from "@intentius/chant/runtime";
+import { resolveAttrRefs } from "@intentius/chant/discovery/resolve";
 import type { SerializerResult } from "@intentius/chant/serializer";
 import type { BuildResult } from "@intentius/chant/build";
 import { Parameter } from "./parameter";
@@ -290,6 +291,40 @@ describe("intrinsic serialization", () => {
 
     expect(template.Resources.Replication.Properties.SourceArn).toEqual({
       "Fn::GetAtt": ["SourceBucket", "Arn"],
+    });
+  });
+
+  // chant #1535 — the issue's example: a sibling attr-ref inside a nested
+  // policy document. The serializer walks it to Fn::GetAtt at any depth; the
+  // `Principal: {}` the issue saw came from the fold path dropping the ref
+  // before the serializer ever ran (see core's fold.ts). Pinned here so the
+  // aws side of that contract stays covered.
+  test("handles AttrRef nested inside a policy document (#1535)", () => {
+    const OIDCProvider = createResource("AWS::IAM::OIDCProvider", "aws", { Arn: "Arn" });
+    const Role = createResource("AWS::IAM::Role", "aws", { Arn: "Arn", RoleId: "RoleId" });
+    const provider = new OIDCProvider({ Url: "https://token.actions.githubusercontent.com" });
+    const role = new Role({
+      AssumeRolePolicyDocument: {
+        Version: "2012-10-17",
+        Statement: [
+          {
+            Effect: "Allow",
+            Principal: { Federated: provider.Arn },
+            Action: "sts:AssumeRoleWithWebIdentity",
+          },
+        ],
+      },
+    });
+    const entities = new Map<string, Declarable>([
+      ["Provider", provider],
+      ["Role", role],
+    ]);
+    resolveAttrRefs(entities);
+
+    const template = JSON.parse(awsSerializer.serialize(entities) as string);
+
+    expect(template.Resources.Role.Properties.AssumeRolePolicyDocument.Statement[0].Principal).toEqual({
+      Federated: { "Fn::GetAtt": ["Provider", "Arn"] },
     });
   });
 });
