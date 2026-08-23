@@ -75,6 +75,7 @@ export default defineConfig({
       // optional Kubernetes client package. Same corpus-walking shape as the
       // differentials above (no Docker, no cluster).
       "examples/k8s-client-boundary.test.ts",
+      "examples/readme-counts.test.ts",
       // chant #1419 — unit tests for the missing-artifacts guard below.
       "test/lexicon-artifacts.test.ts",
     ],
