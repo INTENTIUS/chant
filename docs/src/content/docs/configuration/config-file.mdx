@@ -36,6 +36,17 @@ ownership: {
 }
 ```
 
+`env` can also reference a declared [build-time parameter](/chant/concepts/build-time-parameters/#the-ownership-marker-follows-the-parameter), so the marker takes the value the build was invoked with rather than a value fixed when the config loaded:
+
+```typescript
+ownership: { stack: "billing", env: { param: "env" } },
+buildParams: {
+  env: { type: "string", default: "dev", env: "BILLING_ENV" },
+},
+```
+
+With that, `chant build --param env=prod` stamps `env=prod` into the marker and binds `params.env` to `"prod"` for source in the same resolution. A reference to a parameter the config does not declare, or one with no value for the build, is a build error. A literal `env` next to an `env` parameter that resolved to something else gets a warning naming both values.
+
 The marker is the record that later lets `delete` be precise without an authoritative state file — ownership lives on the cloud resource, not in a file chant has to host or lock. It is stamped into each target's native metadata channel:
 
 | Channel | Targets | Keys |
@@ -54,7 +65,7 @@ An optional array of environment names the project deploys to. An environment is
 environments: ["local", "staging", "prod"],
 ```
 
-`--env <name>` selects one and defaults to `local` when omitted. The selected environment is what [`chant lifecycle`](/chant/cli/lifecycle/) diffs against, the `env` identity stamped into the [ownership](#ownership) marker, and the key the [component release ledger](/chant/components/observability/) records each deploy under — as in `chant run --components <name> --env <env>` and `chant components status <env>`.
+`--env <name>` selects one and defaults to `local` when omitted. The selected environment is what [`chant lifecycle`](/chant/cli/lifecycle/) diffs against, the environment organizational policy evaluates against during `chant build`, and the key the [component release ledger](/chant/components/observability/) records each deploy under — as in `chant run --components <name> --env <env>` and `chant components status <env>`. The `env` stamped into the [ownership](#ownership) marker is a separate setting, `ownership.env`, which can reference a build parameter so the two stay one value.
 
 An entry can also carry the endpoint that environment's `--live` reads should target, instead of a bare name:
 

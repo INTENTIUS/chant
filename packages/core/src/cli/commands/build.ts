@@ -1,5 +1,13 @@
 import { build } from "../../build";
-import { loadChantConfigUpward, resolveOwnershipMarker, resolveFoldEnabled, resolveSandboxEnabled } from "../../config";
+import {
+  loadChantConfigUpward,
+  resolveOwnershipMarker,
+  resolveOwnershipEnv,
+  ownershipEnvDisagreement,
+  resolveFoldEnabled,
+  resolveSandboxEnabled,
+} from "../../config";
+import type { OwnershipMarker } from "../../ownership";
 import { resolveCliBuildParams } from "../build-params-cli";
 import type { Serializer, SerializerResult } from "../../serializer";
 import type { LexiconPlugin } from "../../lexicon";
@@ -141,10 +149,9 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
   // its default.
   const loaded = await loadChantConfigUpward(infraPath);
   const config = loaded.config;
-  const ownership = resolveOwnershipMarker(config);
+  // The ownership marker is resolved further down, after build parameters —
+  // `ownership.env` may reference one (#1396).
 
-  // Environment for policy evaluation: explicit --env wins, else ownership.env.
-  const env = options.env ?? config.ownership?.env;
   // Project-authored organizational policy checks (lint.policies), run over the
   // resolved resources during build. Resolve paths relative to the config dir.
   const configDir = loaded.configPath ? dirname(loaded.configPath) : infraPath;
@@ -227,6 +234,27 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
       }),
     );
   }
+
+  // #1396 — opt-in ownership marking, resolved AFTER build parameters so
+  // `ownership.env: { param: "env" }` takes the value `--param env=prod` (or
+  // the declared env mapping, or the default) bound to params.env — one
+  // source for the label and the marker. A reference that cannot be
+  // satisfied is a build error, not a marker silently stamped without an env.
+  let ownership: OwnershipMarker | undefined;
+  // Environment for policy evaluation: explicit --env wins, else ownership.env
+  // (read even when marking itself is off, so policy can still branch on it).
+  let env: string | undefined;
+  try {
+    ownership = resolveOwnershipMarker(config, paramsResolution.provenance);
+    env = options.env ?? resolveOwnershipEnv(config, paramsResolution.provenance);
+  } catch (err) {
+    errors.push(formatError({ message: err instanceof Error ? err.message : String(err) }));
+    return { success: false, resourceCount: 0, fileCount: 0, errors, warnings };
+  }
+  // A literal `ownership.env` next to an `env` build parameter that resolved
+  // to something else is the silent divergence #1396 reports — say so.
+  const disagreement = ownershipEnvDisagreement(config, paramsResolution.provenance);
+  if (disagreement) warnings.push(formatWarning({ message: disagreement }));
 
   // #1039 — thread each loaded plugin's registered intrinsics (e.g. AWS's
   // `Sub`) through to the fold path, so a file using a registered intrinsic

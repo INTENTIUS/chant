@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeAll, afterAll } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { checkExamplesBuild } from "./check-lexicon-examples";
@@ -15,7 +15,10 @@ import { checkExamplesBuild } from "./check-lexicon-examples";
  * exactly what each example's own `npm run build` does.
  *
  * These fixtures import the real, already-installed `@intentius/chant-lexicon-aws`
- * package (workspace-linked), so no lexicon plugin needs to be faked.
+ * package (workspace-linked), so no lexicon plugin needs to be faked. The
+ * temp lexicon dir gets the repo's node_modules linked in so that bare
+ * specifier resolves from the fixture the way it does from a real lexicon
+ * (Vitest 4's module runner resolves from the importing file, not the root).
  */
 
 function writeLexiconDirWithExample(
@@ -35,6 +38,7 @@ describe("checkExamplesBuild", () => {
 
   beforeAll(() => {
     dir = mkdtempSync(join(tmpdir(), "chant-check-lexicon-examples-"));
+    symlinkSync(join(__dirname, "..", "..", "..", "..", "..", "node_modules"), join(dir, "node_modules"), "dir");
   });
   afterAll(() => rmSync(dir, { recursive: true, force: true }));
 

@@ -350,6 +350,41 @@ function resolvesToResource(consts: Map<string, ts.Expression>, ident: ts.Identi
   return init !== undefined && ts.isNewExpression(init);
 }
 
+/** True when a folded value is a {@link FoldedResource} envelope (a `new Type(...)` that nothing constructed yet). */
+function isFoldedResource(value: FoldedValue): value is FoldedResource {
+  return typeof value === "object" && value !== null && !Array.isArray(value) && "__resource" in value;
+}
+
+/**
+ * chant #1535 — an attribute read whose object folded to a resource ENVELOPE
+ * rather than resolving through {@link resolvesToResource}. That happens when
+ * the const's initializer is not a bare `new` but an expression that yields
+ * one: `const provider = flag ? new OIDCProvider({...}) : undefined;` then
+ * `provider.Arn`. Indexing the envelope (`{__resource, props}`) by the
+ * attribute name returns `undefined`, and the property vanished from the
+ * output without a word — a trust policy built with `Principal: { Federated:
+ * provider.Arn }` landed in CloudFormation as `Principal: {}`.
+ *
+ * When the object is a plain identifier, the answer is the same symbolic
+ * `{__attrRef}` the bare-`new` case produces — the serializer resolves it by
+ * the const's name, exactly as it would have for `const provider = new
+ * OIDCProvider({...})`. Any other expression shape has no name to key the
+ * ref on, so it refuses and the file falls back to run rather than emitting
+ * something wrong.
+ */
+function attrRefOnFoldedResource(
+  node: ts.PropertyAccessExpression | ts.ElementAccessExpression,
+  attribute: string,
+): AttrRefValue {
+  if (ts.isIdentifier(node.expression)) {
+    return { __attrRef: { entity: node.expression.text, attribute } };
+  }
+  throw foldError(
+    node,
+    `attribute "${attribute}" read on an inline resource expression is not foldable — bind the resource to a const first (falls back to run)`,
+  );
+}
+
 /**
  * True when `node` is an identifier, or a dotted/bracketed access chain
  * rooted at an identifier, that neither `consts` nor `externals` can resolve
@@ -605,6 +640,7 @@ export function fold(
     }
     const obj = fold(node.expression, consts, intrinsics, externals);
     if (obj === null || obj === undefined) return undefined;
+    if (isFoldedResource(obj)) return attrRefOnFoldedResource(node, node.name.text);
     return (obj as { [key: string]: FoldedValue })[node.name.text];
   }
 
@@ -615,6 +651,7 @@ export function fold(
     }
     const obj = fold(node.expression, consts, intrinsics, externals);
     if (obj === null || obj === undefined) return undefined;
+    if (isFoldedResource(obj)) return attrRefOnFoldedResource(node, key);
     return (obj as { [key: string]: FoldedValue })[key];
   }
 
