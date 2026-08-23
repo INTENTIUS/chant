@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 import { build } from "../../build";
-import { buildGraphIr, buildLiveGraphIr, sourceOverlayGraphs, type GraphIR, type IRNode, type IREdge } from "../../graph-ir";
+import { buildGraphIr, buildLiveGraphIr, collectUnobserved, sourceOverlayGraphs, type GraphIR, type IRNode, type IREdge } from "../../graph-ir";
 import { buildDeclaredPerStack } from "../../graph-declared";
 import { enrichEffectiveTopology } from "../../graph-effective";
 import { reconstructEdges, mergeCatalogs, type ReferenceCatalog } from "../../graph-refs";
@@ -11,7 +11,7 @@ import { replaySnapshots, hasSnapshot } from "../../lifecycle/replay";
 import type { LiveObservation } from "../../graph-ir";
 import { loadChantConfig } from "../../config";
 import { loadPlugins, resolveProjectLexicons } from "../plugins";
-import { formatError, formatWarning } from "../format";
+import { formatError } from "../format";
 import type { CommandContext } from "../registry";
 
 /**
@@ -61,6 +61,9 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
 
   let ir: GraphIR;
   let source: AnswerSource = { kind: "declared" };
+  // Lexicons whose live read threw (#1263). "Nothing observed" and "could not
+  // observe" are different claims; this is what carries the second one.
+  const liveFailures: string[] = [];
   // Kinds that can exist in the account without being declared (#1278). Known
   // without a scan, so it costs nothing to mention.
   let ambientKinds: string[] = [];
@@ -122,7 +125,13 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
         stacks,
         ambient: args.ambient === true,
       });
-      for (const e of observed.errors) console.error(formatWarning({ message: e }));
+      // A thrown read is not a warning. Printed as one, it sat between the
+      // ownership-filter notices that also print on a working run and carried
+      // no signal (#1263). Name the lexicon and the cause, as an error.
+      for (const e of observed.errors) {
+        liveFailures.push(e);
+        console.error(formatError({ message: `live read failed — ${e}` }));
+      }
       observations = observed.observations;
       source = { kind: "live" };
     }
@@ -189,7 +198,10 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
       stacks.length > 0
         ? await buildDeclaredPerStack(stacks, projectPath)
         : buildGraphIr((await discover(resolve(args.src ?? config.sourceDir ?? "."))).entities, projectPath);
-    ir = sourceOverlayGraphs(declared, live);
+    // Carry the NOT-OBSERVED half of the tri-state (#1089) onto the rows, so a
+    // declared entity nobody could read is painted `_unobserved` and a row can
+    // say so instead of printing blank where a physical id would go (#1263).
+    ir = sourceOverlayGraphs(declared, live, { unobserved: collectUnobserved(observations) });
     // Containment goes on AFTER the overlay, not through it.
     //
     // `sourceOverlayGraphs` admits a live edge only when one end is foreign,
@@ -254,12 +266,25 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
     source.kind === "live" && !matches.some((n) => n.physicalId) && args.env
       ? (await hasSnapshot(String(args.env))) ? "yes" : undefined
       : undefined;
-  provenance(matches, source, recorded);
+  provenance(matches, source, recorded, liveFailures);
   ambientHint(matches, ambientKinds, args.ambient === true, replayAmbient);
   showMiss(matches, show);
   regionSpread(terms, matches, show);
   derivedSurface(terms, matches, ir, backed);
   if (args.explain) explain(terms, matches, ir, nodeById, query);
+  // The caller asked for a live answer and at least one lexicon could not be
+  // read. The rows above are still printed — they are what the source declares,
+  // labelled as such — but the command did not do what it was asked, and a
+  // script or agent needs to see that without parsing the footer (#1263).
+  if (liveFailures.length > 0) {
+    console.error(formatError({
+      message: `live read failed for ${liveFailures.length} lexicon${liveFailures.length === 1 ? "" : "s"} — answer is declared-only`,
+      hint: recorded
+        ? "answer from the recorded snapshot with --at latest, or drop --live for a declared-only query"
+        : "drop --live for a declared-only query, or record a snapshot with chant lifecycle snapshot",
+    }));
+    return 1;
+  }
   return 0;
 }
 
@@ -379,13 +404,24 @@ function ambientHint(
  * already done. That is a fact about the query, printed for every query, and it
  * encodes no expected answer.
  */
-function provenance(matches: IRNode[], source: AnswerSource, recorded?: string): void {
+function provenance(matches: IRNode[], source: AnswerSource, recorded?: string, liveFailures: string[] = []): void {
   if (source.kind === "declared") {
     console.log("— declared only · no observation · physical ids unavailable");
     return;
   }
   const bound = matches.filter((n) => n.physicalId).length;
   const what = source.kind === "live" ? "live read" : "snapshot";
+  if (liveFailures.length > 0) {
+    // Could not observe, as distinct from observed nothing. The rows carry the
+    // per-entity verdict; this names the lexicons that failed in one line.
+    const lexicons = liveFailures.map((e) => e.split(":")[0]).join(", ");
+    const unobserved = matches.filter((n) => (n.attrs as Record<string, unknown> | undefined)?._unobserved).length;
+    const rest = recorded
+      ? "a snapshot of this environment is recorded — answer from it with --at latest"
+      : "answered from the declared graph · physical ids unavailable";
+    console.log(`— live read failed (${lexicons}) · ${unobserved}/${matches.length} rows unobserved · ${rest}`);
+    return;
+  }
   if (bound === 0) {
     // The estate was asked for and nothing came back bound. Naming it is the
     // difference between "these do not exist" and "nobody could see them".
@@ -742,6 +778,10 @@ function formatRow(n: IRNode, show: string[]): string {
   // skip source-mode AttrRef placeholders (objects).
   const physical = (n as { physicalId?: unknown }).physicalId ?? attrs["physicalId"] ?? attrs["InstanceId"] ?? attrs["Id"];
   if (physical != null && typeof physical !== "object") parts.push(String(physical));
+  // A row nobody could read says so where its physical id would go (#1263). A
+  // blank there reads as "declared, not provisioned", which the read never
+  // established; the reason is the tri-state's (#1089).
+  else if (typeof attrs["_unobserved"] === "string") parts.push(`(unobserved: ${attrs["_unobserved"]})`);
   for (const key of show) {
     // Match the name case-insensitively, and report what was actually found.
     // AWS attribute names are PascalCase and chant's derived ones are not, so a
@@ -763,4 +803,4 @@ function formatRow(n: IRNode, show: string[]): string {
 }
 
 /** Internals exposed for unit tests. */
-export const __searchInternals = { parseQuery, matchTerm, formatRow, explain, describeTerm, derivedSurface, availableAttrs, ambientHint, regionSpread, showMiss };
+export const __searchInternals = { parseQuery, matchTerm, formatRow, explain, describeTerm, derivedSurface, availableAttrs, ambientHint, regionSpread, showMiss, provenance };

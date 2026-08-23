@@ -109,6 +109,18 @@ the live side supplies physical ids and live-only attributes.
 Multi-stack projects are observed per stack, and results display the bare
 logical id without the stack qualifier.
 
+Every answer ends with a provenance line saying what backed it: `declared only`,
+`observed live · bound N/M`, or `observed from snapshot`. A live read that fails
+(unreachable endpoint, denied credentials) is reported as a failure rather than
+an empty estate. Each row the read could not cover prints `(unobserved:
+read-failed)` where its physical id would go, stderr names the lexicon and the
+underlying error, the footer reads `live read failed (<lexicon>) · N/M rows
+unobserved`, and the command exits 1. Derived attributes that fold over live
+topology are not advertised in that case, since nothing was read to compute
+them. The rows printed are what the source declares, labelled as such; answer
+from a recorded snapshot with `--at latest` or drop `--live` for a declared-only
+query.
+
 ## Usage
 
 ```bash
@@ -126,4 +138,4 @@ chant search "kind:Instance ->attr:MapPublicIpOnLaunch=true" --live --env dev --
 | Code | Meaning |
 |------|---------|
 | 0 | Query ran (including zero matches — prints `(no matches)`) |
-| 1 | Missing query, missing/unknown `--env`, or build failure in `--live` mode |
+| 1 | Missing query, missing/unknown `--env`, build failure in `--live` mode, or a `--live` read that failed for at least one lexicon (rows are printed, marked unobserved) |

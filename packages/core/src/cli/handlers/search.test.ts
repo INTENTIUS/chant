@@ -1,7 +1,7 @@
 import { describe, test, expect, vi } from "vitest";
 import { __searchInternals } from "./search";
 
-const { parseQuery, matchTerm, formatRow, explain, describeTerm, derivedSurface, availableAttrs, ambientHint, regionSpread, showMiss } = __searchInternals;
+const { parseQuery, matchTerm, formatRow, explain, describeTerm, derivedSurface, availableAttrs, ambientHint, regionSpread, showMiss, provenance } = __searchInternals;
 
 function node(id: string, kind: string, attrs: Record<string, unknown> = {}) {
   return { id, kind, lexicon: "aws", attrs } as never;
@@ -53,6 +53,13 @@ describe("search formatting", () => {
   test("compact row with live physical id, skipping object placeholders", () => {
     const live = node("webServer", "AWS::EC2::Instance", { physicalId: "i-abc" });
     expect(formatRow(live, [])).toBe("webServer  AWS::EC2::Instance  i-abc");
+  });
+
+  // #1263 — a row nobody could read printed blank where the physical id goes,
+  // which reads as "declared, not provisioned".
+  test("a row the live read could not observe says so in place of the physical id", () => {
+    const n = node("webServer", "AWS::EC2::Instance", { _status: "neutral", _unobserved: "read-failed" });
+    expect(formatRow(n, [])).toBe("webServer  AWS::EC2::Instance  (unobserved: read-failed)");
     const src = node("webServer", "AWS::EC2::Instance", { InstanceId: { $ref: "webServer.InstanceId" } });
     expect(formatRow(src, [])).toBe("webServer  AWS::EC2::Instance");
   });
@@ -351,5 +358,38 @@ describe("--show name matching", () => {
 
   test("says nothing when every requested column is present", () => {
     expect(capture(() => showMiss([n] as never, ["Region"]))).toBe("");
+  });
+});
+
+// #1263 — a `--live` read that failed entirely returned the declared rows with
+// the same footer as a working answer and exit 0.
+describe("provenance of a failed live read", () => {
+  const capture = (fn: () => void): string => {
+    const lines: string[] = [];
+    const spy = vi.spyOn(console, "log").mockImplementation((s: string) => { lines.push(s); });
+    fn();
+    spy.mockRestore();
+    return lines.join("\n");
+  };
+  const rows = [
+    node("a", "AWS::EC2::Instance", { _unobserved: "read-failed" }),
+    node("b", "AWS::EC2::Instance", { _unobserved: "read-failed" }),
+  ] as never;
+
+  test("names the lexicon and counts the unobserved rows", () => {
+    const out = capture(() => provenance(rows, { kind: "live" }, undefined, ["aws: connect ECONNREFUSED 127.0.0.1:9999"]));
+    expect(out).toContain("live read failed (aws)");
+    expect(out).toContain("2/2 rows unobserved");
+    expect(out).toContain("physical ids unavailable");
+  });
+
+  test("points at a recorded snapshot when one exists", () => {
+    const out = capture(() => provenance(rows, { kind: "live" }, "yes", ["aws: connect ECONNREFUSED"]));
+    expect(out).toContain("--at latest");
+  });
+
+  test("a working live read is unchanged", () => {
+    const bound = [{ id: "a", kind: "AWS::EC2::Instance", lexicon: "aws", attrs: {}, physicalId: "i-1" }] as never;
+    expect(capture(() => provenance(bound, { kind: "live" }))).toBe("— observed live · bound 1/1");
   });
 });
