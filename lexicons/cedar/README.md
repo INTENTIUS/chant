@@ -38,10 +38,15 @@ The policy id comes from the export's logical name (`allowAdminRead` →
 
 ## Where the types come from
 
-`chant generate` reads a `.cedarschema` and emits a class per entity type, a
-constant per action, and a UID type per entity — so `action: { eq: ReadAction }`
-is checked at compile time and a renamed entity type is a compiler-guided
-refactor.
+`chant cedar generate` reads a `.cedarschema` and emits a class per entity
+type, a constant per action, and a UID type per entity — so `action: { eq:
+ReadAction }` is checked at compile time and a renamed entity type is a
+compiler-guided refactor.
+
+The output goes into the project, at `src/generated/cedar/` or wherever
+`cedar.outDir` points, and policies import from there. It is never written
+under `node_modules` (#1696). In this package's own checkout the project is the
+package, so `npm run generate` writes `src/generated/` as before.
 
 Point it at your schema in `chant.config.ts`:
 
@@ -61,6 +66,10 @@ the small application-authorization schema bundled at
 `src/spec/default-schema.cedarschema`, so a fresh checkout still produces a
 surface. Set `cedar.validation.requireProjectSchema` to turn that fallback off
 once your project has its own schema.
+
+A project schema is also emitted by `chant build` as `dist/<name>.cedarschema`
+beside the policies (#1697), so CEDE010 validates the set against it and a
+dogwood bundle can carry it. The bundled default is never emitted.
 
 ## Pins
 
