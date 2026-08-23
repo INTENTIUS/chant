@@ -1,9 +1,10 @@
 /**
  * Generic capability-dispatch activities for the durable component path
- * (#589, epic #551). Two activities, both capability-agnostic — neither
- * branches on a component or capability `kind`; both dispatch purely through
- * the shared `CapabilityRegistry` (`@intentius/chant/components`), the same
- * registry the local interpret driver dispatches through.
+ * (#589, epic #551). Three activities, all capability-agnostic — none
+ * branches on a component or capability `kind`; the two dispatch activities
+ * go purely through the shared `CapabilityRegistry`
+ * (`@intentius/chant/components`), the same registry the local interpret
+ * driver dispatches through.
  *
  *   - `runCapabilityStep`      — resolve a step's wiring against the
  *     accumulated `phaseOutputs`/`componentOutputs`, then run its capability.
@@ -12,6 +13,11 @@
  *     `driver.ts`'s `rollback-opted-out` reporting, logged rather than
  *     returned since an activity's return value only feeds the workflow's
  *     `phaseOutputs`, not its run-result rendering).
+ *   - `accumulateComponentOutputs` — once every deploy phase has run, fold
+ *     the component's publish/stack outputs into `componentOutputs` via the
+ *     exact same core accumulator `runComponentDeploy` uses (#700), so the
+ *     durable path exposes the same `@<name>.publish.*` / `stackOutput()`
+ *     values downstream as the local driver does.
  *
  * These run in a real Node process (a Temporal activity, not the workflow
  * sandbox), so they can freely use the capability registry's real cloud
@@ -26,9 +32,19 @@
 import {
   buildCapabilityRegistry,
   resolveStepInput,
+  accumulateComponentOutputs as accumulateComponentOutputsCore,
   type CapabilityRegistry,
   type DeployContext,
 } from "@intentius/chant/components";
+
+export interface AccumulateComponentOutputsArgs {
+  /** Component name this run belongs to — the key its outputs land under (by convention the stack name a `stackOutput` reference targets). */
+  component: string;
+  /** Every deploy phase's outputs, keyed by phase name — the workflow's final `phaseOutputs`. */
+  phaseOutputs: Record<string, Record<string, unknown>>;
+  /** The workflow's `componentOutputs` so far (seeded by a parent workflow or empty) — returned with this component's entry merged in. */
+  componentOutputs: Record<string, Record<string, unknown>>;
+}
 
 export interface CapabilityStepArgs {
   /** The step as authored (`{ kind, ...fields }`), including any unresolved wiring references. */
@@ -93,4 +109,22 @@ export async function rollbackCapabilityStep(args: CapabilityStepArgs): Promise<
     return;
   }
   await capability.rollback(ctx, resolvedInput as never);
+}
+
+/**
+ * Fold a finished component's outputs into `componentOutputs` — the durable
+ * counterpart to the tail of `driver.ts`'s `runComponentDeploy`, and the
+ * same core function (`accumulateComponentOutputs` from
+ * `@intentius/chant/components`) behind it, so publish outputs AND
+ * `cfn-deploy` stack outputs are captured identically on both paths (#700).
+ * Pure data in, pure data out: the workflow assigns the returned map back to
+ * its own `componentOutputs` and carries it to the next activity (or returns
+ * it in `ComponentWorkflowResult` for a parent orchestration to seed the next
+ * component workflow with). Runs as an activity rather than inline workflow
+ * code so the workflow bundle never imports core.
+ */
+export async function accumulateComponentOutputs(
+  args: AccumulateComponentOutputsArgs,
+): Promise<Record<string, Record<string, unknown>>> {
+  return accumulateComponentOutputsCore({ ...args.componentOutputs }, args.component, args.phaseOutputs);
 }
