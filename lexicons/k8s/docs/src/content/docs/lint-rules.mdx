@@ -67,6 +67,15 @@ Post-synth checks run against the serialized YAML after build.
 | WK8302 | Single replica Deployment |
 | WK8303 | HA Deployment without PodDisruptionBudget |
 
+### Custom resources
+
+Every CRD-generated class ships its `spec` field schema in the lexicon JSON (`specSchema`), so a custom resource is checked against the CRD the way the API server's structural schema would check it, before apply. Built-in kinds are typed by the generated `.d.ts` and are not covered here.
+
+| Rule | Description |
+|------|-------------|
+| WK8501 | Custom resource `spec` has a field the CRD schema does not declare (with a "did you mean" suggestion) |
+| WK8502 | Custom resource `spec` field has the wrong scalar type, or a value outside its enum |
+
 ### Argo CD
 
 Quality checks for the [Argo CD composites](/chant/lexicons/k8s/argo-composites/). ARGO001/ARGO004 are declarative (source AST); ARGO002/003/005 are post-synth (cross-resource / filesystem).

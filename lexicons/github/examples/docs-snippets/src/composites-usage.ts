@@ -58,8 +58,9 @@ export const combinedJob = new Job({
 // NodePipeline — build + test with artifact passing
 const node = NodePipeline({ nodeVersion: "22", packageManager: "pnpm" });
 export const nodeWorkflow = node.workflow;
-export const nodeBuild = node.buildJob;
-export const nodeTest = node.testJob;
+// The test job declares `needs: ["build"]`, so the build job must be exported under that name.
+export const build = node.buildJob;
+export const test = node.testJob;
 
 // BunPipeline preset — NodePipeline with bun defaults
 const bun = BunPipeline({});

@@ -1,42 +1,39 @@
 // Shared configuration for the ray-kuberay-gke example.
-// In production, populate env vars from the infra outputs:
-//   gcloud container clusters describe ray-gke --region us-central1 --format json
-//   gcloud filestore instances describe ray-filestore --zone us-central1-a --format json
+// Every per-deployment value is declared in ../chant.config.ts's buildParams.
+// Supply with --param, --params-file, or the env vars named there.
+
+import { params } from "@intentius/chant/params";
 
 export const config = {
-  projectId: process.env.GCP_PROJECT_ID ?? "my-project",
-  region: process.env.GCP_REGION ?? "us-central1",
+  projectId: params.projectId as string,
+  region: params.region as string,
 
   // GKE
-  clusterName: process.env.GKE_CLUSTER_NAME ?? "ray-gke",
-  vpcName: process.env.VPC_NAME ?? "ray-vpc",
+  clusterName: params.clusterName as string,
+  vpcName: params.vpcName as string,
   // CC resource name for the subnet (VpcNetwork creates it as "${vpcName}-nodes").
-  subnetName: process.env.SUBNET_NAME ?? "ray-vpc-nodes",
+  subnetName: params.subnetName as string,
 
   // Filestore (created in infra layer)
-  filestoreName: process.env.FILESTORE_NAME ?? "ray-filestore",
+  filestoreName: params.filestoreName as string,
   filestoreStorageClass: "ray-filestore",
   // IP of the CC-managed Filestore instance (available after `just deploy-infra`).
-  // Get it with: gcloud filestore instances describe ray-filestore --zone us-central1-a --format='value(networks[0].ipAddresses[0])'
-  filestoreIp: process.env.FILESTORE_IP ?? "10.0.0.0",
+  filestoreIp: params.filestoreIp as string,
 
   // GCS spillover bucket
-  spilloverBucketName: process.env.SPILLOVER_BUCKET ?? "ray-spill",
+  spilloverBucketName: params.spilloverBucketName as string,
 
   // Artifact Registry
-  registryName: process.env.REGISTRY_NAME ?? "ray-images",
+  registryName: params.registryName as string,
 
   // IAM — GCP service account for head pods (Workload Identity)
-  rayGsaEmail: process.env.RAY_GSA_EMAIL
-    ?? "ray-workload@my-project.iam.gserviceaccount.com",
+  rayGsaEmail: params.rayGsaEmail as string,
 
   // Ray namespace and image
   namespace: "ray-system",
-  rayImage: process.env.RAY_IMAGE
-    ?? "us-central1-docker.pkg.dev/my-project/ray-images/ray:2.54.0",
+  rayImage: params.rayImage as string,
 
   // Grafana host for Ray dashboard Metrics tab (RAY_GRAFANA_HOST).
   // Points at kube-prometheus-stack Grafana installed via `just install-monitoring`.
-  grafanaHost: process.env.RAY_GRAFANA_HOST
-    ?? "http://kube-prometheus-stack-grafana.monitoring.svc.cluster.local",
+  grafanaHost: params.grafanaHost as string,
 };

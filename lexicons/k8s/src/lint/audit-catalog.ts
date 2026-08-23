@@ -36,4 +36,6 @@ export const k8sAuditCatalog: Record<string, RuleMeta> = {
   WK8401: auditRule("WK8401", "merge-worthy", "guidance", "shmSize exceeds the container memory limit", "Lower shmSize or raise the memory limit so the pod can schedule.", { category: "best-practice" }),
   WK8402: auditRule("WK8402", "report-only", "guidance", "RayCluster missing spec.rayVersion", "Set spec.rayVersion so KubeRay picks the right autoscaler image.", { category: "best-practice" }),
   WK8403: auditRule("WK8403", "report-only", "guidance", "rayVersion does not match the head image tag", "Align spec.rayVersion with the Ray version in the head container image.", { category: "best-practice" }),
+  WK8501: auditRule("WK8501", "merge-worthy", "guidance", "Custom resource spec has a field its CRD does not declare", "Fix the field name; the API server prunes unknown fields and the controller never sees them.", { category: "correctness" }),
+  WK8502: auditRule("WK8502", "merge-worthy", "guidance", "Custom resource spec field has the wrong type or enum value", "Match the CRD schema: use the declared scalar type and one of the enum values.", { category: "correctness" }),
 };

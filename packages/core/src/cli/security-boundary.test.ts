@@ -99,7 +99,8 @@ describe("CLI end-to-end — resolveProjectLexicons must not execute project sou
   }
 
   test("`chant build --fold` on a project with no `lexicons` config does not execute the hostile file", () => {
-    const { status, stdout, stderr } = runCli(["build", testDir, "--fold"]);
+    // --verbose: the per-file fold decision lines are behind it (#1424).
+    const { status, stdout, stderr } = runCli(["build", testDir, "--fold", "--verbose"]);
 
     expect(stderr).not.toMatch(/EXFIL/);
     expect(stdout).not.toMatch(/EXFIL/);

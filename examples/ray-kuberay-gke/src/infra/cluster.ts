@@ -20,6 +20,7 @@ import { config } from "../config";
 
 export const { cluster, nodePool } = GkeCluster({
   name: config.clusterName,
+  projectId: config.projectId,
   location: config.region,
   machineType: "n2-standard-4",
   minNodeCount: 1,

@@ -1,3 +1,4 @@
+import { params } from "@intentius/chant/params";
 import { Deployment, Service, ConfigMap } from "@intentius/chant-lexicon-k8s";
 import { createResource } from "@intentius/chant/runtime";
 import { shared } from "../config";
@@ -16,7 +17,7 @@ export const topologyConfig = new ConfigMap({
   data: {
     "config.yaml": `
 database:
-  host: ${process.env.TOPOLOGY_DB_HOST ?? "topology-db-ip"}
+  host: ${params.topologyDbHost as string}
   port: 5432
   name: topology_production
   user: gitlab-topology-db-admin

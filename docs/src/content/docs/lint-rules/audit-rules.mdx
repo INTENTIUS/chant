@@ -830,6 +830,18 @@ Set spec.rayVersion so KubeRay picks the right autoscaler image.
 
 Align spec.rayVersion with the Ray version in the head container image.
 
+### WK8501
+
+**Custom resource spec has a field its CRD does not declare** — merge-worthy · guidance
+
+Fix the field name; the API server prunes unknown fields and the controller never sees them.
+
+### WK8502
+
+**Custom resource spec field has the wrong type or enum value** — merge-worthy · guidance
+
+Match the CRD schema: use the declared scalar type and one of the enum values.
+
 ## Docker (DKRD)
 
 Run against Dockerfiles and Compose files.

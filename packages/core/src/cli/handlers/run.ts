@@ -714,6 +714,7 @@ export async function runOpComponents(ctx: CommandContext): Promise<number> {
   const paramsResolution = resolveCliBuildParams(config.buildParams, {
     cli: parseParamFlags(ctx.args.param),
     paramsFile: ctx.args.paramsFile,
+    verbose: ctx.args.verbose,
   });
   if (!paramsResolution.success) {
     for (const message of paramsResolution.errors) console.error(message);

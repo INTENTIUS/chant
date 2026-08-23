@@ -21,7 +21,7 @@ echo "── capture: chant build --fold (single process, no sandbox — the fol
 # real entry point directly under one profiled node process instead.
 (cd chant-app && node --cpu-prof --cpu-prof-dir="$HERE/captures" --cpu-prof-name=chant-build.cpuprofile \
   --import tsx node_modules/@intentius/chant/src/cli/main.ts \
-  build src --lexicon aws --fold -o out/template.json 2> "$HERE/results/chant-build.log")
+  build src --lexicon aws --fold --verbose -o out/template.json 2> "$HERE/results/chant-build.log")
 
 echo "── assert: every chant-app file folded (the boolean's hard invariant, not sampled)"
 FOLDS=$(grep -c '\[fold:fold\]' results/chant-build.log || true)

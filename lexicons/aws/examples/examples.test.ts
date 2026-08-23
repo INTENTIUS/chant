@@ -62,6 +62,7 @@ describeAllExamples(config, {
     checks: cfnChecks({
       resources: [
         "dataBucket",
+        "dataBucketPolicy",
         "healthApiRole",
         "healthApiFunc",
         "healthApiPermission",
@@ -72,12 +73,13 @@ describeAllExamples(config, {
         "processApiFunc",
         "processApiPermission",
       ],
-      resourceCount: 10,
+      resourceCount: 11,
     }),
   },
   "lambda-s3": {
     checks: cfnChecks({
-      resources: ["appBucket", "appRole", "appFunc"],
+      resources: ["appBucket", "appBucketPolicy", "appRole", "appFunc"],
+      resourceCount: 4,
     }),
   },
   "lambda-dynamodb": {

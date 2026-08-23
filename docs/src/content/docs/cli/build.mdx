@@ -22,7 +22,8 @@ chant build [path] [flags]
 | `-f, --format` | `string` | `json` | Output format: `json` or `yaml` |
 | `-d, --lexicon` | `string` | all | Build only the specified lexicon (e.g. `aws`, `gitlab`) |
 | `-w, --watch` | `bool` | `false` | Watch for file changes and rebuild |
-| `--fold` / `--no-fold` | `bool` | `true` | Fold source files statically instead of importing and running them. On by default since #1134; `--no-fold` runs every file instead. Folding falls back to running a file, per file, for anything outside the fold subset — logged as `[fold:fold]` or `[fold:run] <reason>` |
+| `--fold` / `--no-fold` | `bool` | `true` | Fold source files statically instead of importing and running them. On by default since #1134; `--no-fold` runs every file instead. Folding falls back to running a file, per file, for anything outside the fold subset — summarized as `fold: N files folded, M ran`, with the per-file `[fold:fold]` / `[fold:run] <reason>` lines under `--verbose` |
+| `-v, --verbose` | `bool` | `false` | List every resolved build parameter and every per-file fold decision, and print a success line with the resource count. Without it each group is one summary line |
 | `--sandbox` | `bool` | `false` | Run run-fallback source files (or every file, without `--fold`) together, isolated, in one sandboxed child process instead of in-process (opt-in). No filesystem write, no process spawn, no worker threads, no ambient environment visible to project source; network egress is not blocked — see [Sandboxed Execution](/chant/architecture/sandbox/) |
 | `--param <name=value>` | `string` | — | Bind a declared build-time parameter (`chant.config.ts`'s `buildParams`) to a value; repeatable. See [Build-Time Parameters](/chant/concepts/build-time-parameters/) |
 | `--params-file <path>` | `string` | — | JSON file of `{ "name": value }` build-time parameter values; second precedence, after `--param` |
@@ -73,6 +74,18 @@ export default {
 
 An explicit `--fold`/`--no-fold` flag always wins over `build.fold` when both are present.
 
+## What a build prints
+
+Output goes to stdout. Everything else goes to stderr, in this order: a one-line count of resolved build parameters, a one-line fold summary, then any warnings and errors, so the lines you can act on are at the bottom.
+
+```
+ℹ 23 build parameters resolved (4 from env, 19 default); --verbose to list
+ℹ fold: 8 files folded, 13 ran (--verbose for reasons)
+⚠ [apiDeployment] ...
+```
+
+A file that ran instead of folding is not a problem. It is the expected outcome for source that computes values in functions, and the build output is the same either way. Pass `--verbose` to see each `[param] name = value (source)` line and each `[fold:fold]` / `[fold:run] <reason>` line.
+
 ## Sandboxed execution
 
 `--sandbox` runs every run-fallback file for the build together, isolated, in one child process with the filesystem, process-spawn, worker-thread, and environment access locked down — see [Sandboxed Execution](/chant/architecture/sandbox/) for exactly what that isolates (and, importantly, what it doesn't: Node has no way to block network egress, so that's a documented residual risk with its own deployment guidance, not something this flag claims to close). It composes with `--fold`: the run-fallback remainder is what gets sandboxed.
@@ -90,7 +103,7 @@ The `--sandbox` flag always wins over `build.sandbox` when both are present.
 
 ## Build-time parameters
 
-`--param name=value` (repeatable) and `--params-file <path>` bind declared build-time parameters — `chant.config.ts`'s `buildParams` — so source can read `params.<name>` (`import { params } from "@intentius/chant/params"`) instead of `process.env`. Unlike the AWS lexicon's deploy-time `Parameter()`, a build-time parameter resolves before synthesis, so its value can change which resources are produced at all. An unknown name, a missing required value, or a value outside a declared `enum` is reported as a build error naming the parameter — never a thrown error from inside project source. Every resolved parameter is logged (`[param] name = value (source)`) and recorded on the build result for provenance. See [Build-Time Parameters](/chant/concepts/build-time-parameters/) for the full picture, including precedence and why it folds to a literal.
+`--param name=value` (repeatable) and `--params-file <path>` bind declared build-time parameters — `chant.config.ts`'s `buildParams` — so source can read `params.<name>` (`import { params } from "@intentius/chant/params"`) instead of `process.env`. Unlike the AWS lexicon's deploy-time `Parameter()`, a build-time parameter resolves before synthesis, so its value can change which resources are produced at all. An unknown name, a missing required value, or a value outside a declared `enum` is reported as a build error naming the parameter — never a thrown error from inside project source. The resolution is summarized on one line (`23 build parameters resolved (4 from env, 19 default)`), listed one per line as `[param] name = value (source)` under `--verbose`, and recorded on the build result for provenance. See [Build-Time Parameters](/chant/concepts/build-time-parameters/) for the full picture, including precedence and why it folds to a literal.
 
 ## Exit Codes
 

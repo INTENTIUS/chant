@@ -56,16 +56,16 @@ describe("resolveCliBuildParams", () => {
     }
   });
 
-  test("a build with no overrides collapses to a single defaults count", () => {
+  test("a build with no overrides collapses to a single count line (#1424)", () => {
     // The provenance still records every value; the echo just stops naming
-    // what nobody set. One line, so silence still never means "no parameters
-    // reached us".
+    // them. One line, so silence still never means "no parameters reached us".
     const defs: BuildParamsConfig = { tier: { type: "string", default: "light" } };
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     try {
       const result = resolveCliBuildParams(defs, {});
       const logged = errorSpy.mock.calls.map((call) => String(call[0]));
-      expect(logged.some((line) => line.includes("1 parameters at their defaults"))).toBe(true);
+      expect(logged).toHaveLength(1);
+      expect(logged[0]).toContain("1 build parameter resolved (1 default); --verbose to list");
       expect(logged.some((line) => line.includes("[param] tier"))).toBe(false);
       expect(result.provenance).toEqual([{ name: "tier", value: "light", source: "default" }]);
     } finally {
@@ -73,7 +73,7 @@ describe("resolveCliBuildParams", () => {
     }
   });
 
-  test("names the overrides and collapses the defaults into a count", () => {
+  test("the count line breaks down by source, so an override's arrival is still visible", () => {
     const defs: BuildParamsConfig = {
       tier: { type: "string", default: "light" },
       target: { type: "string", default: "k3d" },
@@ -83,9 +83,26 @@ describe("resolveCliBuildParams", () => {
     try {
       resolveCliBuildParams(defs, { cli: { tier: "ha" } });
       const logged = errorSpy.mock.calls.map((call) => String(call[0]));
+      expect(logged).toHaveLength(1);
+      expect(logged[0]).toContain("3 build parameters resolved (1 from cli, 2 default); --verbose to list");
+      expect(logged.some((line) => line.includes("[param]"))).toBe(false);
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  test("--verbose lists every parameter with its source", () => {
+    const defs: BuildParamsConfig = {
+      tier: { type: "string", default: "light" },
+      target: { type: "string", default: "k3d" },
+    };
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      resolveCliBuildParams(defs, { cli: { tier: "ha" }, verbose: true });
+      const logged = errorSpy.mock.calls.map((call) => String(call[0]));
       expect(logged.some((line) => line.includes("[param] tier") && line.includes("ha") && line.includes("cli"))).toBe(true);
-      expect(logged.some((line) => line.includes("2 more at their defaults"))).toBe(true);
-      expect(logged.some((line) => line.includes("[param] target"))).toBe(false);
+      expect(logged.some((line) => line.includes("[param] target") && line.includes("k3d") && line.includes("default"))).toBe(true);
+      expect(logged.some((line) => line.includes("--verbose to list"))).toBe(false);
     } finally {
       errorSpy.mockRestore();
     }
@@ -104,7 +121,7 @@ describe("resolveCliBuildParams", () => {
       const logged = errorSpy.mock.calls.map((call) => String(call[0]));
       expect(logged.some((line) => line.includes("[param] tier") && line.includes("ha"))).toBe(true);
       expect(logged.some((line) => line.includes("[param] target") && line.includes("k3d") && line.includes("default"))).toBe(true);
-      expect(logged.some((line) => line.includes("more at their defaults"))).toBe(false);
+      expect(logged.some((line) => line.includes("--verbose to list"))).toBe(false);
     } finally {
       if (prev === undefined) delete process.env.CHANT_PARAM_ECHO;
       else process.env.CHANT_PARAM_ECHO = prev;

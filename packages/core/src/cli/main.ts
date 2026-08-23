@@ -542,7 +542,9 @@ Options:
   --fix                 Auto-fix fixable issues (lint command)
   --force               Force overwrite existing files (import command)
   -w, --watch           Watch for changes and rebuild/re-lint (build, lint)
-  -v, --verbose         Show stack traces on errors
+  -v, --verbose         Show stack traces on errors; (build) list every
+                        resolved build parameter and per-file fold decision
+                        instead of the one-line summaries
   -h, --help            Show this help message
   -p, --profile <name>  Temporal worker profile to use (run command)
   --local               Run an Op with the local in-process executor (default)
@@ -572,8 +574,8 @@ Options:
                         composite factory calls (#1022/#1023), falling back
                         to run per-file for anything else outside the fold
                         subset (a cross-file-only reference, a re-export,
-                        \`export default\`, ...). Logs which path each file
-                        took. DEFAULT since #1134 — this flag forces it on
+                        \`export default\`, ...). Logs a fold/run count
+                        (per-file lines under --verbose). DEFAULT since #1134 — this flag forces it on
                         over a chant.config.ts \`build.fold: false\`.
   --no-fold             (build) Opt out of folding for this invocation: every
                         source module is imported and run, the pre-#1134

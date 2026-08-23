@@ -18,10 +18,29 @@ Declared in \`main.ts\`.
 
 ## Referenced by
 
+- [appBucketPolicy](/aws/appBucketPolicy.md)
 - [appFunc](/aws/appFunc.md)
 - [appRole](/aws/appRole.md)
 ",
     "path": "aws/appBucket.md",
+  },
+  {
+    "content": "---
+type: AWS::S3::BucketPolicy
+title: appBucketPolicy
+description: aws resource of type AWS::S3::BucketPolicy
+name: appBucketPolicy
+lexicon: aws
+kind: resource
+source: bucket-policy.ts
+---
+Declared in \`bucket-policy.ts\`.
+
+## Depends on
+
+- [appBucket](/aws/appBucket.md)
+",
+    "path": "aws/appBucketPolicy.md",
   },
   {
     "content": "---
@@ -118,6 +137,7 @@ okf_version: '0.2'
 # Lexicon: aws
 
 * [appBucket](/aws/appBucket.md) - aws resource of type AWS::S3::Bucket
+* [appBucketPolicy](/aws/appBucketPolicy.md) - aws resource of type AWS::S3::BucketPolicy
 * [appFunc](/aws/appFunc.md) - aws resource of type AWS::Lambda::Function
 * [appRole](/aws/appRole.md) - aws resource of type AWS::IAM::Role
 * [bucketArn](/aws/bucketArn.md) - aws output of type Output

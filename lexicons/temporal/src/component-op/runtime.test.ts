@@ -36,7 +36,11 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { serializeComponent, componentWorkflowFnName } from "./serializer";
-import type { DriverComponent } from "@intentius/chant/components";
+import {
+  accumulateComponentOutputs as accumulateComponentOutputsCore,
+  resolveStepInput,
+  type DriverComponent,
+} from "@intentius/chant/components";
 
 const GEN_DIR = fileURLToPath(new URL("./__generated__", import.meta.url));
 
@@ -90,7 +94,30 @@ function makeFakeActivities(
     const fn = rollbacks[kind as string];
     if (fn) await fn(resolvedInput);
   }
-  return { runCapabilityStep, rollbackCapabilityStep };
+  // The accumulator is NOT faked: it is the real core function behind the real
+  // activity (component-op/activities.ts), so this harness proves the durable
+  // path captures outputs exactly as driver.ts does (#700 parity).
+  async function accumulateComponentOutputs(args: {
+    component: string;
+    phaseOutputs: Record<string, Record<string, unknown>>;
+    componentOutputs: Record<string, Record<string, unknown>>;
+  }): Promise<Record<string, Record<string, unknown>>> {
+    return accumulateComponentOutputsCore({ ...args.componentOutputs }, args.component, args.phaseOutputs);
+  }
+  return { runCapabilityStep, rollbackCapabilityStep, accumulateComponentOutputs };
+}
+
+/** Like `makeFakeActivities`, but resolving wiring through core's real `resolveStepInput` — so `stackOutput()` / `@<component>.publish.*` references resolve exactly as activities.ts does (the cross-stack test needs the componentOutputs branch, which the minimal resolver below deliberately ignores). */
+function makeFakeActivitiesWithCoreResolver(runs: Record<string, FakeCapabilityRun>) {
+  const base = makeFakeActivities(runs);
+  async function runCapabilityStep(args: CapabilityStepArgs): Promise<unknown> {
+    const { kind, ...rest } = args.step;
+    const resolvedInput = resolveStepInput(rest, args.phaseOutputs, args.componentOutputs);
+    const fn = runs[kind as string];
+    if (!fn) throw new Error(`no fake capability for kind "${kind as string}"`);
+    return fn(resolvedInput);
+  }
+  return { ...base, runCapabilityStep };
 }
 
 /** Minimal `@Phase.field` resolver, mirroring driver.ts's resolveStepInput for this test's fake dispatch (kept self-contained rather than importing core, matching the runtime harness's "activities are fakes" approach). */
@@ -129,7 +156,7 @@ function resolveWiringForTest(
 async function runComponent(
   component: DriverComponent,
   activities: Record<string, (...args: never[]) => unknown>,
-  opts: { signal?: string } = {},
+  opts: { signal?: string; seed?: Record<string, Record<string, unknown>> } = {},
 ): Promise<{ durationMs: number; failed: boolean; result?: { phaseOutputs: Record<string, Record<string, unknown>>; componentOutputs: Record<string, Record<string, unknown>> } }> {
   const files = serializeComponent(component);
   const wfKey = Object.keys(files).find((k) => k.endsWith("/workflow.ts"))!;
@@ -149,6 +176,7 @@ async function runComponent(
   const handle = await env.client.workflow.start(fnName, {
     taskQueue,
     workflowId: `${component.name}-${wfCounter++}`,
+    args: opts.seed ? [{ componentOutputs: opts.seed }] : [],
   });
   if (opts.signal) await handle.signal(opts.signal);
 
@@ -173,12 +201,12 @@ describe("component → Temporal runtime harness (#589)", () => {
         { phase: "Apply", steps: [{ kind: "cfn-deploy", imageRef: "@Publish.digest" }] },
       ],
     };
-    const { runCapabilityStep, rollbackCapabilityStep } = makeFakeActivities({
+    const activities = makeFakeActivities({
       "publish-image": () => { order.push("publish"); return { digest: "sha256:abc123" }; },
       "cfn-deploy": (input) => { order.push(`apply:${input.imageRef as string}`); return { ok: true }; },
     });
 
-    const { failed, result } = await runComponent(component, { runCapabilityStep, rollbackCapabilityStep });
+    const { failed, result } = await runComponent(component, activities);
     expect(failed).toBe(false);
     expect(order).toEqual(["publish", "apply:sha256:abc123"]);
     // (#597) the workflow returns its final phaseOutputs so the CLI can read the
@@ -197,14 +225,14 @@ describe("component → Temporal runtime harness (#589)", () => {
         { phase: "After", steps: [{ kind: "ecs-update-service" }] },
       ],
     });
-    const { runCapabilityStep, rollbackCapabilityStep } = makeFakeActivities({
+    const activities = makeFakeActivities({
       "cfn-deploy": () => { ran.push("before"); return {}; },
       "ecs-update-service": () => { ran.push("after"); return {}; },
     });
 
     // Signalled: the gate clears immediately, so the 48h timer never elapses.
     ran.length = 0;
-    const signalled = await runComponent(makeComponent(), { runCapabilityStep, rollbackCapabilityStep }, {
+    const signalled = await runComponent(makeComponent(), activities, {
       signal: "gate-approve",
     });
     expect(signalled.failed).toBe(false);
@@ -213,7 +241,7 @@ describe("component → Temporal runtime harness (#589)", () => {
 
     // Unsignalled: the gate blocks on its timer — the workflow's elapsed time is ~48h.
     ran.length = 0;
-    const unsignalled = await runComponent(makeComponent(), { runCapabilityStep, rollbackCapabilityStep });
+    const unsignalled = await runComponent(makeComponent(), activities);
     expect(unsignalled.durationMs).toBeGreaterThan(47 * 60 * 60 * 1000); // ~48h
   }, 120_000);
 
@@ -231,7 +259,7 @@ describe("component → Temporal runtime harness (#589)", () => {
         { phase: "Undo2", steps: [{ kind: "wait-for-stack" }] },
       ],
     };
-    const { runCapabilityStep, rollbackCapabilityStep } = makeFakeActivities(
+    const activities = makeFakeActivities(
       {
         "publish-image": () => { order.push("publish"); return { digest: "sha256:1" }; },
         "cfn-deploy": () => { throw new Error("boom"); },
@@ -243,7 +271,7 @@ describe("component → Temporal runtime harness (#589)", () => {
       },
     );
 
-    const { failed } = await runComponent(component, { runCapabilityStep, rollbackCapabilityStep });
+    const { failed } = await runComponent(component, activities);
     expect(failed).toBe(true); // original failure is re-thrown
     // Saga unwind (executed steps, reverse order) then component rollback phases (reverse order).
     expect(order).toEqual(["publish", "rollback:publish-image", "undo2", "undo1"]);
@@ -277,7 +305,7 @@ describe("component → Temporal runtime harness (#589)", () => {
         },
       ],
     };
-    const { runCapabilityStep, rollbackCapabilityStep } = makeFakeActivities({
+    const activities = makeFakeActivities({
       // publish-artifact resolves after a tick, publish-image resolves immediately —
       // so without the fix, publish-artifact's write would win the race and
       // publish-image's `digest` field would be lost from phaseOutputs.Fanout.
@@ -289,8 +317,66 @@ describe("component → Temporal runtime harness (#589)", () => {
       "cfn-deploy": (input) => { seen.push(input); return {}; },
     });
 
-    const { failed } = await runComponent(component, { runCapabilityStep, rollbackCapabilityStep });
+    const { failed } = await runComponent(component, activities);
     expect(failed).toBe(false);
     expect(seen).toEqual([{ imageDigest: "sha256:img", artifactKey: "s3://bucket/artifact" }]);
+  }, 120_000);
+  test("cross-stack — a cfn-deploy's outputs accumulate under the component name and feed a downstream stackOutput() through the seeded workflow (#700)", async () => {
+    // Durable mirror of driver.test.ts's "feeds a deployed stack's outputs to a
+    // downstream component's stackOutput references" (#699). Two workflows
+    // stand in for a parent orchestration: shared-alb runs first and its
+    // result.componentOutputs (built by the REAL core accumulator) seeds api,
+    // whose steps resolve stackOutput() through the REAL core resolver.
+    const sharedAlb: DriverComponent = {
+      name: "shared-alb",
+      dependsOn: [],
+      deploy: [
+        { phase: "Publish", steps: [{ kind: "publish-image" }] },
+        { phase: "Apply", steps: [{ kind: "cfn-deploy", stack: "shared-alb", template: "shared-alb.json" }] },
+      ],
+    };
+    const api: DriverComponent = {
+      name: "api",
+      dependsOn: ["shared-alb"],
+      deploy: [
+        { phase: "Publish", steps: [{ kind: "publish-image", from: "archive:api.tar", to: { stackOutput: { stack: "shared-alb", name: "ApiRepoUri" } } }] },
+        { phase: "Verify", steps: [{ kind: "wait-steady-state", service: "api", cluster: { stackOutput: { stack: "shared-alb", name: "ClusterArn" } }, base: "@shared-alb.publish.digest" }] },
+      ],
+    };
+
+    const seenPublish: Record<string, unknown>[] = [];
+    const seenVerify: Record<string, unknown>[] = [];
+    const activities = makeFakeActivitiesWithCoreResolver({
+      "publish-image": (input) => { seenPublish.push(input); return { uri: "repo@sha256:abc", digest: "sha256:abc" }; },
+      "cfn-deploy": () => ({
+        stackStatus: "CREATE_COMPLETE",
+        outputs: {
+          ApiRepoUri: "123.dkr.ecr.us-east-1.amazonaws.com/alb-api",
+          ClusterArn: "arn:aws:ecs:us-east-1:123:cluster/shared",
+        },
+      }),
+      "wait-steady-state": (input) => { seenVerify.push(input); return { ok: true }; },
+    });
+
+    const upstream = await runComponent(sharedAlb, activities);
+    expect(upstream.failed).toBe(false);
+    // Stack outputs at the top level (peer to `publish`), keyed by the component
+    // name — the same shape runInterpretDriver exposes locally.
+    expect(upstream.result?.componentOutputs).toEqual({
+      "shared-alb": {
+        ApiRepoUri: "123.dkr.ecr.us-east-1.amazonaws.com/alb-api",
+        ClusterArn: "arn:aws:ecs:us-east-1:123:cluster/shared",
+        publish: { uri: "repo@sha256:abc", digest: "sha256:abc" },
+      },
+    });
+
+    const downstream = await runComponent(api, activities, { seed: upstream.result!.componentOutputs });
+    expect(downstream.failed).toBe(false);
+    expect(seenPublish.at(-1)).toMatchObject({ to: "123.dkr.ecr.us-east-1.amazonaws.com/alb-api" });
+    expect(seenVerify.at(-1)).toMatchObject({ cluster: "arn:aws:ecs:us-east-1:123:cluster/shared", base: "sha256:abc" });
+    // The seed survives and api's own outputs are added beside it, so a parent
+    // can keep threading the same map to the next component workflow.
+    expect(Object.keys(downstream.result!.componentOutputs).sort()).toEqual(["api", "shared-alb"]);
+    expect(downstream.result!.componentOutputs.api).toEqual({ publish: { uri: "repo@sha256:abc", digest: "sha256:abc" } });
   }, 120_000);
 });

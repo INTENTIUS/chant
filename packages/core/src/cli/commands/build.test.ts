@@ -169,6 +169,7 @@ export const testEntity = {
         format: "json",
         serializers: [awsSerializer],
         fold: true,
+        verbose: true,
       });
 
       expect(result.success).toBe(true);
@@ -360,10 +361,10 @@ export const testEntity = {
       expect(result.resourceCount).toBe(1);
       expect(result.buildParams).toEqual([{ name: "tier", value: "production", source: "cli" }]);
 
-      const loggedParamLine = errorSpy.mock.calls
-        .map((call) => String(call[0]))
-        .some((line) => line.includes("[param] tier") && line.includes("production") && line.includes("cli"));
-      expect(loggedParamLine).toBe(true);
+      // #1424 — without --verbose the echo is a one-line count by source.
+      const logged = errorSpy.mock.calls.map((call) => String(call[0]));
+      expect(logged.some((line) => line.includes("1 build parameter resolved (1 from cli)"))).toBe(true);
+      expect(logged.some((line) => line.includes("[param] tier"))).toBe(false);
     } finally {
       errorSpy.mockRestore();
     }
@@ -471,6 +472,19 @@ export const testEntity = {
 
       expect(result.success).toBe(true);
       expect(result.resourceCount).toBe(1);
+      // #1424 — the default report is one summary line, not one line per file.
+      const logged = errorSpy.mock.calls.map((call) => String(call[0]));
+      expect(logged.some((line) => /^.*fold: \d+ files? folded, \d+ ran/.test(line))).toBe(true);
+      expect(logged.some((line) => line.includes("[fold:"))).toBe(false);
+
+      errorSpy.mockClear();
+      const verboseResult = await buildCommand({
+        path: testDir,
+        format: "json",
+        serializers: [mockSerializer],
+        verbose: true,
+      });
+      expect(verboseResult.success).toBe(true);
       const anyFoldLine = errorSpy.mock.calls.map((call) => String(call[0])).some((line) => line.includes("[fold:"));
       expect(anyFoldLine).toBe(true);
 
@@ -485,7 +499,7 @@ export const testEntity = {
       expect(runResult.resourceCount).toBe(1);
       const anyFoldLineOff = errorSpy.mock.calls
         .map((call) => String(call[0]))
-        .some((line) => line.includes("[fold:"));
+        .some((line) => line.includes("[fold:") || line.includes("fold: "));
       expect(anyFoldLineOff).toBe(false);
     } finally {
       errorSpy.mockRestore();

@@ -14,6 +14,8 @@ import {
   fold,
   propName,
   FoldError,
+  FoldableFunction,
+  isFoldableFunction,
   locate,
   type FoldedResource,
   type FoldedValue,
@@ -545,8 +547,15 @@ interface ReExportDeclarator {
   elements: Array<{ imported: string; exportedName: string }>;
 }
 
+/** `export function name(...) {...}` (chant #1373) — exported as a {@link FoldableFunction} marker so an importer can fold a call to it. The body's own foldability is judged at the CALL, never here: an unfoldable helper nobody calls from foldable source costs its module nothing. */
+interface FunctionDeclarator {
+  kind: "function";
+  name: string;
+}
+
 type ScanDeclarator =
   | ResourceDeclarator
+  | FunctionDeclarator
   | SingleDeclarator
   | DestructureDeclarator
   | NamedExportDeclarator
@@ -563,8 +572,9 @@ interface ScanResult {
  * `export const X = <expr>` / `export const { a, b } = <expr>` (composite
  * calls and member access on them, #1023), `export { a, b }` (a local
  * named-export list), and `export { a, b } from "./other"` (a re-export
- * chain, #1020). Any OTHER export construct (`export default`, `export *
- * from`, an exported function/class, `let`/`var`, a destructured export with
+ * chain, #1020), and `export function name(...) {...}` (a foldable-function
+ * export, #1373). Any OTHER export construct (`export default`, `export *
+ * from`, an exported class, `let`/`var`, a destructured export with
  * a rest/nested/defaulted element) makes the whole file ineligible: the
  * module must run so that construct is actually evaluated. This mirrors the
  * epic's hybrid design — fallback is per-module, not per-declaration,
@@ -629,10 +639,17 @@ function scanExports(sourceFile: ts.SourceFile): ScanResult {
     }
 
     if (ts.isFunctionDeclaration(statement) && hasExportModifier(statement)) {
-      return {
-        declarators,
-        unfoldableReason: `exported function declaration "${statement.name?.text ?? "<anonymous>"}" is not foldable`,
-      };
+      // chant #1373 — a named, bodied exported function is a foldable-function
+      // export (see {@link FunctionDeclarator}). An overload signature has no
+      // body and no value of its own — skipped, the implementation that
+      // follows it is the export. `export default function` has no name an
+      // importer could bind and stays a disqualifier, like `export default`.
+      if (statement.modifiers?.some((m) => m.kind === ts.SyntaxKind.DefaultKeyword) || !statement.name) {
+        return { declarators, unfoldableReason: "`export default` is not foldable" };
+      }
+      if (!statement.body) continue;
+      declarators.push({ kind: "function", name: statement.name.text });
+      continue;
     }
     if (ts.isClassDeclaration(statement) && hasExportModifier(statement)) {
       return {
@@ -725,6 +742,54 @@ function collectLocalBindings(sourceFile: ts.SourceFile): Map<string, LocalBindi
   }
 
   return bindings;
+}
+
+/** `(x) => …` / `function (x) {…}`, possibly wrapped in parens/`as`/`satisfies` — the initializer shapes that make a `const` a function binding. */
+function unwrapFunctionInitializer(node: ts.Expression): ts.ArrowFunction | ts.FunctionExpression | undefined {
+  let current = node;
+  while (ts.isParenthesizedExpression(current) || ts.isAsExpression(current) || ts.isSatisfiesExpression(current)) {
+    current = current.expression;
+  }
+  return ts.isArrowFunction(current) || ts.isFunctionExpression(current) ? current : undefined;
+}
+
+/**
+ * chant #1373 — every top-level function a file declares, exported or not, as
+ * a {@link FoldableFunction}: `function f(...) {...}` and `const f = (...) =>
+ * …`. Placed in the file's own `externals` (so a same-file call folds, and a
+ * sibling function can call it) and exported under its name (so an importer's
+ * `buildExternals` can). The marker carries the file's scope BY REFERENCE:
+ * `ctx.externals` is still being filled (pre-built resources land in it after
+ * this runs) and a body reads it only when called.
+ *
+ * The marker's `consts` drops every `new`-bound const (transitively, through
+ * aliases) — see {@link FoldableFunction.consts} for why a body must reach a
+ * module-level resource through `externals` only.
+ */
+function collectLocalFunctions(sourceFile: ts.SourceFile, ctx: ResolveCtx): Map<string, FoldableFunction> {
+  const consts = new Map(ctx.consts);
+  for (const [name] of [...consts]) {
+    if (constResolvesToResource(ctx.consts, name, new Set())) consts.delete(name);
+  }
+  const functions = new Map<string, FoldableFunction>();
+  const add = (name: string, fn: ts.FunctionDeclaration | ts.ArrowFunction | ts.FunctionExpression): void => {
+    functions.set(name, new FoldableFunction(name, fn, ctx.file, consts, ctx.externals, ctx.crossFileFailures));
+  };
+
+  for (const statement of sourceFile.statements) {
+    if (ts.isFunctionDeclaration(statement)) {
+      if (statement.name && statement.body) add(statement.name.text, statement);
+      continue;
+    }
+    if (!ts.isVariableStatement(statement)) continue;
+    if ((statement.declarationList.flags & ts.NodeFlags.Const) === 0) continue;
+    for (const decl of statement.declarationList.declarations) {
+      if (!ts.isIdentifier(decl.name) || !decl.initializer) continue;
+      const fn = unwrapFunctionInitializer(decl.initializer);
+      if (fn) add(decl.name.text, fn);
+    }
+  }
+  return functions;
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -1208,7 +1273,14 @@ async function resolveLiveValue(node: ts.Expression, ctx: ResolveCtx): Promise<L
       // exports object). Absent from `externals` falls through to
       // `undefined`, exactly the pre-#1020 behavior for any unbound name.
       if (ctx.externals.has(node.text)) {
-        return { value: ctx.externals.get(node.text) };
+        const external = ctx.externals.get(node.text);
+        // chant #1373 — a function marker is callable, never a value. The
+        // export-by-name cases (`export const g = f`, `export { f }`) are
+        // handled by the declarator loop before it gets here.
+        if (isFoldableFunction(external)) {
+          throw cheapError(`function "${node.text}" used as a value is not foldable`);
+        }
+        return { value: external };
       }
       return undefined;
     }
@@ -1278,10 +1350,48 @@ async function resolveCallExpression(node: ts.CallExpression, ctx: ResolveCtx): 
   }
   const calleeName = node.expression.text;
   const binding = ctx.imports.get(calleeName);
+
+  // chant #1373 — a project-local function with a foldable body (declared in
+  // this file, or imported from a sibling project file) is evaluated
+  // statically, through the same `fold()` branch a NESTED call to it takes.
+  // When its body turns out not to fold, an IMPORTED callee still has the
+  // pre-#1373 path below (interpret as a composite, else import and invoke) —
+  // a helper that wraps a composite call, say, keeps folding by invocation
+  // exactly as it did. A same-file callee has nothing to invoke without
+  // running the file, so the fold diagnostic is the verdict.
+  const local = ctx.externals.get(calleeName);
+  if (isFoldableFunction(local)) {
+    let foldFailure: Error | undefined;
+    try {
+      const folded = fold(node, ctx.consts, ctx.intrinsics, ctx.externals);
+      return await reviveFoldedValue(folded, ctx, false);
+    } catch (err) {
+      if (!(err instanceof Error)) throw err;
+      foldFailure = err;
+    }
+    if (!binding) throw foldFailure;
+    try {
+      return await resolveImportedCall(node, calleeName, binding, ctx);
+    } catch (err) {
+      throw cheapError(
+        `${foldFailure.message}; invoking it instead failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
   if (!binding) {
     throw cheapError(callExpressionMessage(node));
   }
+  return resolveImportedCall(node, calleeName, binding, ctx);
+}
 
+/** The pre-#1373 two-arm resolution of an IMPORTED callee — see {@link resolveCallExpression}. */
+async function resolveImportedCall(
+  node: ts.CallExpression,
+  calleeName: string,
+  binding: ImportBinding,
+  ctx: ResolveCtx,
+): Promise<unknown> {
   // chant #1023 — is this callee a composite whose body can be INTERPRETED
   // rather than run? Purely a static question (does the defining module parse,
   // does it declare this export as `Composite(<fn>, "<name>")`, is `<fn>`'s
@@ -3108,6 +3218,10 @@ async function buildExternals(
  * falls back. See {@link FoldFileResult.liveSources}.
  */
 function hasObjectIdentity(value: unknown): boolean {
+  // chant #1373 — a foldable-function marker is a description of source, not
+  // an object the run path could hold a different copy of: a call to it
+  // produces the same value folded or run. No identity to disagree about.
+  if (isFoldableFunction(value)) return false;
   return value !== null && (typeof value === "object" || typeof value === "function");
 }
 
@@ -3143,6 +3257,19 @@ async function resolveDeclaratorValue(node: ts.Expression, ctx: ResolveCtx): Pro
  * entry point below.
  */
 async function tryFoldFileCore(file: string, session: FoldSession): Promise<FoldFileResult> {
+  // chant #1373 — chant-core's own modules are library code, not project
+  // source: their exports are reached by importing them (a helper, a
+  // constructor, `params`), never by folding their bodies. Before #1373 every
+  // one of them happened to disqualify itself at the scan (each exports a
+  // function); now that an exported function is a foldable shape, the
+  // exclusion has to be explicit, or a fixture/in-repo import by path would
+  // walk fold into chant's own tree and fold `params` to an empty object.
+  {
+    const root = chantCoreRoot();
+    if (file === root || file.startsWith(root + sep)) {
+      return { ok: false, reason: "chant's own module is not project source" };
+    }
+  }
   try {
     const source = await readFile(file, "utf-8");
     const sourceFile = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, /* setParentNodes */ true);
@@ -3177,10 +3304,24 @@ async function tryFoldFileCore(file: string, session: FoldSession): Promise<Fold
     // {@link preresolveResourceConsts}.
     const prebuiltResources = await preresolveResourceConsts(ctx);
 
+    // chant #1373 — this file's own functions, callable from its own folds
+    // (and, once exported, from an importer's). Registered after the
+    // resource pre-pass so a marker never shadows a pre-built instance; a
+    // function and a const cannot share a name in valid TypeScript anyway.
+    const localFunctions = collectLocalFunctions(sourceFile, ctx);
+    for (const [name, marker] of localFunctions) {
+      if (!ctx.externals.has(name)) ctx.externals.set(name, marker);
+    }
+
     const entities: FoldedEntity[] = [];
     const exportedValues = new Map<string, unknown>();
 
     for (const decl of scan.declarators) {
+      if (decl.kind === "function") {
+        applyResolvedValue(decl.name, localFunctions.get(decl.name), entities, exportedValues);
+        continue;
+      }
+
       if (decl.kind === "resource") {
         // chant #1169 — the pre-pass already built this exact node. Reuse that
         // instance rather than constructing a second one: a sibling prop that
@@ -3199,6 +3340,15 @@ async function tryFoldFileCore(file: string, session: FoldSession): Promise<Fold
       }
 
       if (decl.kind === "single") {
+        // chant #1373 — `export const f = (…) => …` exports the function
+        // marker, exactly like `export function f`; so does an alias of one
+        // (`export const g = f`, `f` declared here or imported).
+        const aliased = ts.isIdentifier(decl.node) ? ctx.externals.get(decl.node.text) : undefined;
+        const marker = localFunctions.get(decl.name) ?? (isFoldableFunction(aliased) ? aliased : undefined);
+        if (marker) {
+          applyResolvedValue(decl.name, marker, entities, exportedValues);
+          continue;
+        }
         let value: unknown;
         try {
           value = (await resolveDeclaratorValue(decl.node, ctx)).value;
@@ -3244,6 +3394,12 @@ async function tryFoldFileCore(file: string, session: FoldSession): Promise<Fold
         // (ctx.locals/ctx.externals lookup + memoized destructured-member
         // extraction) rather than duplicating it here.
         for (const { localNameNode, exportedName } of decl.elements) {
+          // chant #1373 — `function f() {…}; export { f }`.
+          const marker = localFunctions.get(localNameNode.text);
+          if (marker) {
+            applyResolvedValue(exportedName, marker, entities, exportedValues);
+            continue;
+          }
           let value: unknown;
           try {
             value = (await resolveDeclaratorValue(localNameNode, ctx)).value;
