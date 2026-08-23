@@ -95,6 +95,23 @@ Because the value is known at build invocation — before any project file is im
 
 Determinism is preserved, not weakened: same parameters in, same output out. The parameters are supplied explicitly and recorded (`BuildResult.buildParams`), rather than read invisibly from whatever environment happened to be running the build.
 
+## The ownership marker follows the parameter
+
+`chant.config.ts` is evaluated before build parameters exist, so a config field cannot read `params.env`. For the one config field that naturally wants to vary with the build, the [`ownership`](/chant/configuration/config-file/#ownership) marker's `env`, the config references the parameter instead:
+
+```typescript
+export default {
+  ownership: { stack: "fountain", env: { param: "env" } },
+  buildParams: {
+    env: { type: "string", default: "dev", env: "FOUNTAIN_ENV" },
+  },
+} satisfies ChantConfig;
+```
+
+`--param env=prod` then sets the `chant.intentius.io/env` label and the `params.env` value in source from one resolution. Before this, a config that wanted both had to read `process.env` itself for the marker and declare a parameter for the label, and nothing kept the two in step. A build with a literal `ownership.env` next to an `env` parameter that resolved to a different value warns, naming both values.
+
+A reference that cannot be satisfied, a parameter the config does not declare or one that resolved to no value, is a build error. The marker is what `--owned` filtering, drift and prune key on, so a marker stamped without an env is the quiet failure this exists to rule out.
+
 ## A pointed error for `process.env`
 
 `chant build --fold` rejects a bare `process` reference with a message naming this mechanism, not the generic "unresolved identifier":

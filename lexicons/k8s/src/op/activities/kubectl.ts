@@ -35,7 +35,7 @@ import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { loadAll } from "js-yaml";
 import { safeHeartbeat } from "@intentius/chant/op";
-import { loadChantConfig, resolveOwnershipMarker } from "@intentius/chant/config";
+import { loadChantConfig, resolveOwnershipStack } from "@intentius/chant/config";
 import {
   hasOwnershipMarker,
   LABEL_OWNERSHIP_KEYS,
@@ -185,7 +185,7 @@ async function resolveApplyIdentity(
   if (stack === undefined) {
     try {
       const { config } = await loadChantConfig(args.cwd ?? process.cwd());
-      stack = resolveOwnershipMarker(config)?.stack;
+      stack = resolveOwnershipStack(config);
     } catch (err) {
       console.warn(
         `[k8s] could not read the project config to derive a field manager ` +

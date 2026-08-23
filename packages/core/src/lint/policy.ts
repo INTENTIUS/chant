@@ -4,7 +4,8 @@
  * `policyGate` Op step runs this to gate an apply on the same checks.
  */
 import { resolve, dirname } from "node:path";
-import { loadChantConfigUpward } from "../config";
+import { loadChantConfigUpward, resolveOwnershipEnv, resolveOwnershipMarker } from "../config";
+import { resolveBuildParams } from "../build-params";
 import { resolveProjectLexicons, loadPlugins } from "../cli/plugins";
 import { build } from "../build";
 import { runPostSynthChecks, isPostSynthCheck } from "./post-synth";
@@ -86,9 +87,19 @@ export async function evaluateProjectPolicies(opts: {
   const loaded = await loadChantConfigUpward(buildPath);
   const config = loaded.config;
   const configDir = loaded.configPath ? dirname(loaded.configPath) : buildPath;
-  const env = opts.env ?? config.ownership?.env;
+  // #1396 — `ownership.env` may reference a build parameter, so the declared
+  // parameters are resolved first (from their env mappings and defaults, the
+  // same inputs an Op step has) and the build sees them too.
+  const params = resolveBuildParams(config.buildParams, { env: process.env });
+  if (params.errors.length > 0) {
+    throw new Error(`Build parameters did not resolve — cannot evaluate policy:\n  ${params.errors.join("\n  ")}`);
+  }
+  const env = opts.env ?? resolveOwnershipEnv(config, params.provenance);
 
-  const result = await build(buildPath, serializers);
+  const result = await build(buildPath, serializers, undefined, {
+    ownership: resolveOwnershipMarker(config, params.provenance),
+    buildParams: params.provenance,
+  });
   if (result.errors.length > 0) {
     throw new Error("Build failed — cannot evaluate policy on a broken build");
   }
