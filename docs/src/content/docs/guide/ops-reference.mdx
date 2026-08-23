@@ -129,6 +129,8 @@ It now routes to the azure lexicon's `azApply`, which prunes through the ownersh
 One caveat that is not a chant limitation: **floci-az drops resource tags**, so nothing reads back as chant-owned there and an owned-only prune deletes nothing. It fails closed rather than open, but it means the prune can only be verified against real Azure.
 </Aside>
 
+An ARM delete needs an `apiVersion`, and the resource-group listing does not return one per resource. `pruneArmOrphans` takes it from the template when the template still declares the type, then from the lexicon's pinned apiVersion registry (the same one the serializer stamps into the template), then from ARM's provider metadata (`GET /subscriptions/{sub}/providers/{namespace}?api-version=2021-04-01`, newest stable version, one call per namespace per run). Removing the last resource of a type from source therefore still prunes it ([#1472](https://github.com/INTENTIUS/chant/issues/1472)). Only a type none of the three sources know is reported as `not-prunable` with detail `no-api-version`.
+
 ## Codegen
 
 `chant build` emits three files per Op under `dist/ops/<name>/`:
