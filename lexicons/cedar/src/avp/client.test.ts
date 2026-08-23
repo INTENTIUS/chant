@@ -11,6 +11,7 @@ import { createHmac } from "node:crypto";
 import { describe, expect, test } from "vitest";
 import {
   avpCall,
+  resolveEndpointOverride,
   resolveAvpCredentials,
   type AvpClientOptions,
   type AvpHttp,
@@ -223,6 +224,40 @@ describe("endpoint overrides", () => {
     expect(calls[0]!.url).toBe("http://localhost:4566/");
     expect(calls[0]!.headers.authorization).toContain("Signature=unsigned");
     expect(signed).toHaveLength(0);
+  });
+
+  test("AWS_ENDPOINT_URL_VERIFIEDPERMISSIONS wins over AWS_ENDPOINT_URL, and the option over both (#1694)", async () => {
+    const { http, calls } = recording();
+    const { signer, signed } = stubSigner();
+    const env = { AWS_ENDPOINT_URL: "http://all:1", AWS_ENDPOINT_URL_VERIFIEDPERMISSIONS: "http://avp:2" };
+    await avpCall("ListPolicies", { policyStoreId: "PS-abc" }, { region: "us-west-2", credentials, signer, http, env });
+    await avpCall("ListPolicies", { policyStoreId: "PS-abc" }, {
+      endpoint: "http://opt:3",
+      region: "us-west-2",
+      credentials,
+      signer,
+      http,
+      env,
+    });
+    expect(calls.map((c) => c.url)).toEqual(["http://avp:2/", "http://opt:3/"]);
+    expect(signed).toHaveLength(0);
+    expect(resolveEndpointOverride(undefined, {})).toBeUndefined();
+  });
+
+  test("signEndpointOverride signs against an override the environment named", async () => {
+    const { http, calls } = recording();
+    const { signer, signed } = stubSigner();
+    await avpCall("ListPolicies", { policyStoreId: "PS-abc" }, {
+      region: "us-west-2",
+      credentials,
+      signer,
+      signEndpointOverride: true,
+      now,
+      http,
+      env: { AWS_ENDPOINT_URL: "https://vpce-1234.verifiedpermissions.us-west-2.vpce.amazonaws.com" },
+    });
+    expect(calls[0]!.headers.authorization).toMatch(/Signature=[0-9a-f]{64}$/);
+    expect(signed[0]!.url).toBe("https://vpce-1234.verifiedpermissions.us-west-2.vpce.amazonaws.com/");
   });
 
   test("signEndpointOverride signs one anyway — for an override that is real AWS", async () => {

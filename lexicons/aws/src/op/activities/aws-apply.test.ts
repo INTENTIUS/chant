@@ -25,8 +25,16 @@ const describe_ = (status: string) => `<DescribeStacksResponse><Stacks><member><
 
 describe("CFN pure helpers (#awsApply)", () => {
   test("cfnUrl: endpoint override vs real regional host", () => {
-    expect(cfnUrl("http://localhost:4566")).toBe("http://localhost:4566/");
-    expect(cfnUrl(undefined, "eu-west-1")).toBe("https://cloudformation.eu-west-1.amazonaws.com/");
+    expect(cfnUrl("http://localhost:4566", undefined, {})).toBe("http://localhost:4566/");
+    expect(cfnUrl(undefined, "eu-west-1", {})).toBe("https://cloudformation.eu-west-1.amazonaws.com/");
+  });
+
+  test("cfnUrl: AWS_ENDPOINT_URL[_CLOUDFORMATION] is an override too, the same rule as the read client (#1694)", () => {
+    expect(cfnUrl(undefined, "eu-west-1", { AWS_ENDPOINT_URL: "http://localhost:4566" })).toBe("http://localhost:4566/");
+    expect(
+      cfnUrl(undefined, "eu-west-1", { AWS_ENDPOINT_URL: "http://all:1", AWS_ENDPOINT_URL_CLOUDFORMATION: "http://cfn:2" }),
+    ).toBe("http://cfn:2/");
+    expect(cfnUrl("http://opt:3", "eu-west-1", { AWS_ENDPOINT_URL: "http://all:1" })).toBe("http://opt:3/");
   });
 
   test("cfnForm stamps Action + Version", () => {

@@ -385,6 +385,23 @@ describe("listMemoryEvents — transport", () => {
     expect(calls[0]?.headers.authorization).not.toContain("Signature=unsigned");
   });
 
+  test("AWS_ENDPOINT_URL_BEDROCK_AGENTCORE is the same override as the option — retargeted, unsigned (#1694)", async () => {
+    const { http, calls } = mockHttp([{ body: { events: [] } }]);
+    await listMemoryEvents(
+      {
+        ...BASE,
+        endpoint: undefined,
+        region: "us-west-2",
+        credentials: { accessKeyId: "AKID", secretAccessKey: "secret" },
+        env: { AWS_ENDPOINT_URL_BEDROCK_AGENTCORE: "http://localhost:4566" },
+      },
+      undefined,
+      http,
+    );
+    expect(calls[0]?.url).toMatch(/^http:\/\/localhost:4566\//);
+    expect(calls[0]?.headers.authorization).toContain("Signature=unsigned");
+  });
+
   test("no credentials, no signature — the emulator path needs none", async () => {
     const { http, calls } = mockHttp([{ body: { events: [] } }]);
     await listMemoryEvents(

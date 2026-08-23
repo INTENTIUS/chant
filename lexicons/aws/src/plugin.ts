@@ -558,7 +558,6 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
     // The applier's own transport, pointed at the read APIs (#1206). Multi-region
     // estates target this stack's region, not the ambient one.
     const client: AwsReadClientOptions = {
-      ...(process.env.AWS_ENDPOINT_URL ? { endpoint: process.env.AWS_ENDPOINT_URL } : {}),
       ...(options.region ? { region: options.region } : {}),
     };
 

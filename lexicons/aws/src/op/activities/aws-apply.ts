@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { safeHeartbeat, sleep } from "@intentius/chant/op";
 import { awsDeployCapabilitiesForBody } from "../../components/cloud-executor.js";
+import { resolveEndpointOverride } from "../../api/read-client.js";
 
 const DEFAULT_REGION = "us-east-1";
 const CFN_API_VERSION = "2010-05-15";
@@ -10,7 +11,11 @@ export interface AwsApplyArgs {
   templatePath: string;
   /** CloudFormation stack name — the deploy boundary. */
   stackName: string;
-  /** CFN endpoint override (e.g. Floci `http://localhost:4566`). Default: real CloudFormation. */
+  /**
+   * CFN endpoint override (e.g. Floci `http://localhost:4566`). Omitted,
+   * `AWS_ENDPOINT_URL_CLOUDFORMATION` then `AWS_ENDPOINT_URL` answer — the same
+   * rule the read client applies (#1694). With neither: real CloudFormation.
+   */
   endpoint?: string;
   /** Region (real CFN host + `Version` context). Default: `us-east-1`. */
   region?: string;
@@ -40,9 +45,17 @@ const defaultHttp: AwsHttp = async (url, form, signal) => {
 
 // ── Pure helpers (CFN Query protocol) ─────────────────────────────────────────
 
-/** The CloudFormation endpoint URL — the override, or the real regional host. */
-export function cfnUrl(endpoint?: string, region = DEFAULT_REGION): string {
-  return `${(endpoint ?? `https://cloudformation.${region}.amazonaws.com`).replace(/\/$/, "")}/`;
+/**
+ * The CloudFormation endpoint URL — the override, or the real regional host.
+ * `env` is what the ambient-variable fallback reads; injectable for tests.
+ */
+export function cfnUrl(
+  endpoint?: string,
+  region = DEFAULT_REGION,
+  env: Record<string, string | undefined> = process.env,
+): string {
+  const override = resolveEndpointOverride("cloudformation", endpoint, env);
+  return `${(override ?? `https://cloudformation.${region}.amazonaws.com`).replace(/\/$/, "")}/`;
 }
 
 /** A CFN Query-protocol form body: `Action` + `Version` + params. */
