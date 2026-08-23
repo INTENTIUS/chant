@@ -38,7 +38,9 @@ jobs:
           restore-keys: |
             lexicon-schemas-
 
-      - name: Check Diátaxis classification
+      # Also the main site's sidebar-reachability gate (#1417): a page with
+      # no sidebar entry fails here.
+      - name: Check Diátaxis classification and sidebar reachability
         run: node scripts/check-docs-diataxis.mjs
 
       - name: Build unified docs
