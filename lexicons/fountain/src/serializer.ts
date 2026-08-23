@@ -15,6 +15,9 @@ import { propsOf } from "./entity-props";
  *
  * Cross-resource references (e.g. `agent.environment`) serialize to the
  * referenced entity's name — fountain resolves names to ids at apply.
+ *
+ * The `name` prop becomes `metadata.name` and is not repeated under `spec`,
+ * matching fountain's own manifest examples.
  */
 
 const API_VERSION = "fountain.dev/v1";
@@ -73,9 +76,12 @@ export const fountainSerializer: Serializer = {
 
     const docs: string[] = [];
     for (const [name, entity] of entities) {
+      // `name` lives in `metadata` only. fountain's manifest format carries
+      // the upsert key there and nowhere else; a second copy under `spec`
+      // is at best redundant and at worst a conflicting value (#1606).
       const spec: Record<string, unknown> = {};
       for (const [key, val] of Object.entries(propsOf(entity))) {
-        if (val === undefined) continue;
+        if (val === undefined || key === "name") continue;
         spec[key] = walkValue(val, entityNames, visitor);
       }
 

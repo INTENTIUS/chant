@@ -43,6 +43,25 @@ describe("fountain serializer", () => {
     expect(out).toContain("- github.com");
   });
 
+  it("carries the name in metadata only, never under spec (#1606)", () => {
+    const agent = entity("Fountain::V1::Agent", {
+      name: "tech-lead",
+      model: "anthropic/claude-sonnet-4-6",
+      runtime: "claude",
+    });
+
+    const out = fountainSerializer.serialize(new Map([["techLead", agent]])) as string;
+
+    expect(out).toContain("metadata:\n  name: tech-lead\n");
+    expect(out).not.toContain("spec:\n  name:");
+    expect(out.match(/^\s*name: /gm)).toHaveLength(1);
+
+    // The apply payload fountain receives has exactly one name per resource.
+    const [resource] = parseManifest(out);
+    expect(resource.name).toBe("tech-lead");
+    expect(resource.spec).not.toHaveProperty("name");
+  });
+
   it("separates multiple entities with document markers", () => {
     const env = entity("Fountain::V1::Environment", { name: "e" });
     const vault = entity("Fountain::V1::Vault", { name: "v" });

@@ -66,7 +66,9 @@ export class FountainParser extends BaseValueParser implements TemplateParser {
       const meta = isRecord(doc.metadata) ? doc.metadata : {};
       const name = typeof meta.name === "string" ? meta.name : kind.toLowerCase();
       const spec = isRecord(doc.spec) ? doc.spec : {};
-      resources.push(this.resource(type, name, spec));
+      // Manifests carry the name in `metadata` only; the typed resource
+      // needs it as its `name` prop.
+      resources.push(this.resource(type, name, { ...spec, name }));
     }
     return { resources, parameters: [] };
   }
