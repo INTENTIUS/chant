@@ -162,3 +162,33 @@ describe("buildSidebar", () => {
     ]);
   });
 });
+
+/**
+ * chant #1377 — `dist/manifest.json` is written by `npm run bundle` (prepack
+ * only), so its version is whatever was last bundled on the machine; on one
+ * checkout it put the fountain docs two minor versions behind what was
+ * already committed. `package.json` is the source of truth, so the rendered
+ * version comes from there and the manifest is only a fallback.
+ */
+describe("lexicon version in generated docs comes from package.json (#1377)", () => {
+  test("package.json beside dist/ wins over a stale manifest", () => {
+    writeFileSync(join(root, "package.json"), JSON.stringify({ name: "fixture", version: "0.37.2" }));
+    const index = docsPipeline(config()).pages.get("index.mdx");
+    expect(index).toContain("**Lexicon version:** 0.37.2");
+    expect(index).not.toContain("0.0.0");
+  });
+
+  test("packageJsonPath overrides the default location", () => {
+    mkdirSync(join(root, "elsewhere"), { recursive: true });
+    writeFileSync(join(root, "elsewhere", "package.json"), JSON.stringify({ version: "1.2.3" }));
+    const index = docsPipeline(config({ packageJsonPath: join(root, "elsewhere", "package.json") })).pages.get(
+      "index.mdx",
+    );
+    expect(index).toContain("**Lexicon version:** 1.2.3");
+  });
+
+  test("falls back to the manifest when no package.json is present", () => {
+    const index = docsPipeline(config()).pages.get("index.mdx");
+    expect(index).toContain("**Lexicon version:** 0.0.0");
+  });
+});
