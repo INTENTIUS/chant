@@ -139,8 +139,16 @@ export type { PackageOptions, PackageResult } from "./codegen/package";
 
 // The `cedar` config namespace (#1344). Importing this package is what brings
 // the key into ChantConfig, so a `chant.config.ts` that sets it compiles.
-export { cedarConfigSchema, loadCedarConfig, CEDAR_DEFAULT_SCHEMA_PATH } from "./config";
-export type { CedarConfig } from "./config";
+export { cedarConfigSchema, loadCedarConfig, loadCedarProject, CEDAR_DEFAULT_SCHEMA_PATH, CEDAR_DEFAULT_OUT_DIR } from "./config";
+export type { CedarConfig, CedarProject } from "./config";
+
+// Where `chant cedar generate` writes for a project (#1696).
+export { resolveGeneratedDir } from "./codegen/generate";
+
+// The project schema as a build artifact (#1697): authored by hand as
+// `new Schema({ text })`, or contributed automatically from `cedar.schema`.
+export { Schema, CEDAR_SCHEMA_TYPE, CEDAR_SCHEMA_FILENAME } from "./schema-artifact";
+export type { SchemaProps } from "./schema-artifact";
 
 // Upstream pin — the cedar-wasm package version and the Cedar language
 // version it implements (#1650).

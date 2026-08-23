@@ -48,10 +48,13 @@ function generatedNames(schemaText: string): Set<string> {
   return names;
 }
 
-/** Identifiers a policy file imports from the lexicon package (any subpath). */
+/**
+ * Identifiers a policy file imports from the lexicon package (any subpath) or
+ * from the project's generated tree, `./generated/cedar` (#1696).
+ */
 function importedNames(source: string): string[] {
   const names: string[] = [];
-  const importRe = /import\s+(?:type\s+)?\{([^}]+)\}\s+from\s+"@intentius\/chant-lexicon-cedar[^"]*"/g;
+  const importRe = /import\s+(?:type\s+)?\{([^}]+)\}\s+from\s+"(?:@intentius\/chant-lexicon-cedar[^"]*|\.\/generated\/cedar)"/g;
   for (const match of source.matchAll(importRe)) {
     for (const raw of match[1].split(",")) {
       const name = raw.trim().replace(/^type\s+/, "").split(/\s+as\s+/)[0].trim();
@@ -101,12 +104,27 @@ describe("cedarInitTemplates", () => {
 
       it("ships a policy file and a README", () => {
         expect(policies).toContain("export const");
-        expect(set.root?.["README.md"]).toContain("chant generate --lexicon cedar");
+        expect(set.root?.["README.md"]).toContain("chant cedar generate");
       });
 
       it("wires the generate and build scripts into package.json", () => {
-        expect(set.scripts?.generate).toBe("chant generate --lexicon cedar");
+        expect(set.scripts?.generate).toBe("chant cedar generate");
         expect(set.scripts?.build).toBe("chant build");
+      });
+
+      it("imports its schema-derived names from the project tree, not the package (#1696)", () => {
+        // The package's own `src/generated` describes the bundled default
+        // schema. A scaffold typed against that would compile with no
+        // generate step and be wrong about its own entity model.
+        const available = generatedNames(schemaText);
+        const fromPackage = /import\s+(?:type\s+)?\{([^}]+)\}\s+from\s+"@intentius\/chant-lexicon-cedar[^"]*"/g;
+        for (const match of policies.matchAll(fromPackage)) {
+          for (const raw of match[1].split(",")) {
+            const name = raw.trim().replace(/^type\s+/, "").split(/\s+as\s+/)[0].trim();
+            expect(available.has(name), `${template}: ${name} should come from ./generated/cedar`).toBe(false);
+          }
+        }
+        expect(policies).toMatch(/from "\.\/generated\/cedar"/);
       });
 
       it("imports only names its own schema generates", () => {

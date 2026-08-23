@@ -51,8 +51,14 @@ between "your entity types" and "somebody else's" is invisible.
 ### 2. Run generate
 
 ```bash
-npx chant generate --lexicon cedar
+npx chant cedar generate
 ```
+
+The output is written into the project, at `src/generated/cedar/` (or
+`cedar.outDir`), never into `node_modules`. Commit it or regenerate it in CI;
+re-run it whenever the schema changes. Policies import from that directory,
+not from `@intentius/chant-lexicon-cedar`, whose own `Policy` and classes
+describe the package's bundled sample schema.
 
 That produces, per declaration in the schema:
 
@@ -68,7 +74,7 @@ compile error, not a validation error hours later.
 ### 3. Write policies
 
 ```typescript
-import { Policy, ReadAction, WriteAction, type UserUid } from "@intentius/chant-lexicon-cedar";
+import { Policy, ReadAction, WriteAction, type UserUid } from "./generated/cedar";
 
 const archivist: UserUid = 'App::User::"archivist"';
 
@@ -159,7 +165,7 @@ wider grant.
 
 ```bash
 npx chant build                         # emits both artifacts, runs the CED rules
-npx chant coverage --lexicon cedar      # is every schema declaration generated?
+npx chant cedar coverage                # is every schema declaration generated?
 ```
 
 The MCP tool `cedar:coverage` answers the other question: which schema entity

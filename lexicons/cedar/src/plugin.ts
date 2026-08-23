@@ -20,6 +20,7 @@ import { CedarTemplateGenerator, CedarTemplateParser } from "./import/adapter";
 import type { ResourceMetadata } from "@intentius/chant/lexicon";
 import { AVP_OWNERSHIP_KEYS } from "./avp/ownership";
 import { AVP_AMBIENT_KINDS } from "./avp/ambient";
+import { cedarCommandGroup } from "./commands";
 
 /**
  * cedar lexicon plugin.
@@ -35,11 +36,17 @@ export const cedarPlugin: LexiconPlugin = {
   async generate(options?: { verbose?: boolean }): Promise<void> {
     // Cedar's codegen input is the project's own schema, so the `cedar` config
     // namespace is read here rather than being decoration (#1650).
-    const { generate, writeGeneratedFiles } = await import("./codegen/generate");
-    const { loadCedarConfig } = await import("./config");
-    const projectRoot = process.cwd();
-    const result = await generate({ ...options, projectRoot, config: await loadCedarConfig(projectRoot) });
-    writeGeneratedFiles(result);
+    //
+    // The output goes into the *project* (#1696): `cedar.outDir`, else
+    // `src/generated/cedar` under the config's directory. Only when the project
+    // is this package itself does it land in `src/generated/`.
+    const { generate, resolveGeneratedDir, writeGeneratedFiles } = await import("./codegen/generate");
+    const { loadCedarProject } = await import("./config");
+    const { projectRoot, config } = await loadCedarProject(process.cwd());
+    const result = await generate({ ...options, projectRoot, config });
+    const outDir = resolveGeneratedDir({ projectRoot, config });
+    writeGeneratedFiles(result, outDir);
+    if (options?.verbose) console.error(`cedar: wrote generated classes to ${outDir}`);
   },
 
   async validate(options?: { verbose?: boolean }): Promise<void> {
@@ -51,11 +58,15 @@ export const cedarPlugin: LexiconPlugin = {
 
   async coverage(options?: { verbose?: boolean; minOverall?: number }): Promise<void> {
     const { analyzeCedarCoverage } = await import("./coverage");
-    const { loadCedarConfig } = await import("./config");
-    const projectRoot = process.cwd();
+    const { resolveGeneratedDir } = await import("./codegen/generate");
+    const { loadCedarProject } = await import("./config");
+    const { projectRoot, config } = await loadCedarProject(process.cwd());
     analyzeCedarCoverage({
       projectRoot,
-      config: await loadCedarConfig(projectRoot),
+      config,
+      // Coverage compares the project's schema with the project's generated
+      // artifacts, which live where generate put them (#1696).
+      generatedDir: resolveGeneratedDir({ projectRoot, config }),
       verbose: options?.verbose,
       minOverall: options?.minOverall,
     });
@@ -75,6 +86,20 @@ export const cedarPlugin: LexiconPlugin = {
   },
 
   // ── Optional extensions ────────────────────────────────────
+
+  // #1697 — the project's `.cedarschema` joins the build as a `Cedar::Schema`
+  // entity, so it is emitted beside the policies and CEDE010 validates
+  // against it rather than reporting that it could not. Nothing is
+  // contributed when only the bundled default schema applies.
+  async buildRoots(ctx) {
+    const { schemaBuildRoot } = await import("./schema-artifact");
+    return schemaBuildRoot(ctx);
+  },
+
+  // `chant cedar generate` and `chant cedar coverage` (#1696, via #1078).
+  commands() {
+    return cedarCommandGroup();
+  },
 
   lintRules() {
     return rules;

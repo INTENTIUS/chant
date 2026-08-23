@@ -44,6 +44,38 @@ Without `requireProjectSchema`, a typo in the path is the difference between
 "your entity types" and "the bundled default" — and the build succeeds either
 way.
 
+## Where the output goes
+
+`chant cedar generate` writes the typed classes into the project:
+
+1. `cedar.outDir` in `chant.config.ts`, resolved against the project root
+2. `src/generated/cedar/` under the project root
+
+Inside the lexicon's own checkout the project root is the package directory,
+and the output stays at `src/generated/` so the package's own surface stays
+whole. Everywhere else the output is the project's, beside the schema it came
+from, and nothing is written under `node_modules`. Import from it:
+
+```typescript
+import { Policy, ReadAction } from "./generated/cedar";
+```
+
+## The schema in the build
+
+When a project schema resolves (steps 1 or 2 above), `chant build` emits it
+beside the policies as `dist/schema.cedarschema`, named after the source
+file. That is what CEDE010 validates the policy set against, and what a
+dogwood bundle carries as `--policy-schema`. The bundled default is never
+emitted.
+
+To emit a schema by hand, or under another name, declare one:
+
+```typescript
+import { Schema } from "@intentius/chant-lexicon-cedar";
+
+export const authz = new Schema({ text: schemaText, filename: "authz.cedarschema" });
+```
+
 ## Writing one
 
 ```
@@ -83,6 +115,7 @@ are absent.
 | Key | Meaning |
 |-----|---------|
 | `schema` | Path to the `.cedarschema`, relative to the project root |
+| `outDir` | Where `chant cedar generate` writes, relative to the project root. Default `src/generated/cedar` |
 | `validation.mode` | `"strict"`. The only mode cedar-wasm 4.12 accepts |
 | `validation.warnings` | `"ignore"`, `"warn"`, or `"error"` — the validator reports "policy is impossible" here, separately from errors |
 | `validation.requireProjectSchema` | Refuse to fall back to the bundled default |
