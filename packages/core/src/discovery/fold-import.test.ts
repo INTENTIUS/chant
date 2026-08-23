@@ -2418,7 +2418,7 @@ describe("tryFoldFile — project-local function calls (chant #1373)", () => {
       expect(result.ok, `${file}: ${!result.ok ? result.reason : ""}`).toBe(true);
     }
     const wouldFold = new Map(files.map((f) => [f, results.get(f)!.ok]));
-    const liveSources = new Map(files.map((f) => [f, (results.get(f) as { liveSources: Set<string> }).liveSources]));
+    const liveSources = new Map(files.map((f) => [f, results.get(f)!.liveSources]));
     const tainted = await planFoldTaint(files, wouldFold, liveSources);
     expect([...tainted]).toEqual([]);
     // A function marker is a description of source, not an object the run
