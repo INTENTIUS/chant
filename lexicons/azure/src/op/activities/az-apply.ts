@@ -3,6 +3,8 @@ import { createHash } from "node:crypto";
 import { safeHeartbeat } from "@intentius/chant/op";
 import { hasOwnershipMarker, OWNERSHIP_MANAGED_BY_VALUE } from "@intentius/chant/ownership";
 import { AZURE_TAG_OWNERSHIP_KEYS } from "../../ownership";
+import { lookupApiVersion } from "../../serializer";
+import { compareApiDates } from "../../spec/api-versions";
 import {
   applyResult,
   type ApplyResult,
@@ -501,38 +503,96 @@ export interface AzNotPrunable {
   type: string;
   name: string;
   /**
-   * `no-api-version` — the resource is owned and undeclared, but its type is
-   * absent from the current template, which is the only place an `apiVersion`
-   * comes from. `deleteArmResource` cannot build a URL without one.
+   * `no-api-version` — the resource is owned and undeclared, but no apiVersion
+   * could be found for its type: the current template does not declare the
+   * type, the lexicon's pinned registry has no entry for it, and ARM's
+   * provider metadata listed no apiVersion for it (or the call failed).
+   * `deleteArmResource` cannot build a URL without one.
    */
   reason: "no-api-version";
 }
 
+/** The ARM provider-metadata apiVersion (`GET /subscriptions/{sub}/providers/{ns}`). */
+const PROVIDER_METADATA_API_VERSION = "2021-04-01";
+
 /**
- * Owned-only prune: for each resource type present in the template, delete the
- * chant-owned live resources of that type whose (evaluated) name is not in the
- * template. Foreign (non-chant) resources are never touched.
+ * Resolve an apiVersion for a live resource type from ARM's provider metadata:
+ * `GET /subscriptions/{sub}/providers/{namespace}?api-version=2021-04-01`
+ * returns `resourceTypes[].apiVersions[]`. Picks the newest stable version,
+ * falling back to the newest preview when no stable one exists. One call per
+ * namespace per prune run; the result is memoised in `cache` so a group with
+ * many orphans of one provider costs one round trip. Returns `undefined` when
+ * the endpoint is unavailable (floci-az does not implement it) or the type is
+ * not listed.
+ */
+export async function providerApiVersion(
+  resourceType: string,
+  ctx: ArmEvalCtx,
+  http: AzHttp = defaultHttp,
+  signal?: AbortSignal,
+  cache: Map<string, Map<string, string>> = new Map(),
+): Promise<string | undefined> {
+  const slash = resourceType.indexOf("/");
+  if (slash < 0) return undefined;
+  const namespace = resourceType.slice(0, slash);
+  const typeName = resourceType.slice(slash + 1).toLowerCase();
+  let byType = cache.get(namespace.toLowerCase());
+  if (!byType) {
+    byType = new Map();
+    cache.set(namespace.toLowerCase(), byType);
+    const url = `${ctx.base}/subscriptions/${ctx.subscriptionId}/providers/${namespace}?api-version=${PROVIDER_METADATA_API_VERSION}`;
+    let res: { status: number; text: string };
+    try {
+      res = await http("GET", url, undefined, signal);
+    } catch {
+      return undefined;
+    }
+    if (res.status >= 300) return undefined;
+    let parsed: { resourceTypes?: Array<{ resourceType?: string; apiVersions?: string[] }> };
+    try {
+      parsed = JSON.parse(res.text);
+    } catch {
+      return undefined;
+    }
+    for (const rt of parsed.resourceTypes ?? []) {
+      if (!rt?.resourceType || !Array.isArray(rt.apiVersions) || rt.apiVersions.length === 0) continue;
+      const versions = rt.apiVersions.filter((v): v is string => typeof v === "string");
+      const stable = versions.filter((v) => !v.endsWith("-preview"));
+      const pool = stable.length > 0 ? stable : versions;
+      if (pool.length === 0) continue;
+      const newest = pool.reduce((a, b) => (compareApiDates(b, a) > 0 ? b : a));
+      byType.set(rt.resourceType.toLowerCase(), newest);
+    }
+  }
+  return byType.get(typeName);
+}
+
+/**
+ * Owned-only prune: delete every chant-owned live resource in the group whose
+ * (evaluated) name is not declared in the template. Foreign (non-chant)
+ * resources are never touched.
  *
- * ## The type-left-the-template hole (#1457)
+ * ## Where the apiVersion comes from (#1457, #1472)
  *
- * `byType` is keyed off the resources the template CURRENTLY declares, and the
- * `!entry` guard skipped any live resource of a type the template no longer
- * mentions — before `isChantOwned` was ever consulted.
+ * `deleteArmResource` needs an `apiVersion`, and ARM's resource-group listing
+ * does not return one per resource. The template is the obvious source, but it
+ * only covers types it still declares: declare one storage account, apply,
+ * delete it from source, and the template has zero resources of that type.
+ * Keying the delete scope off the template alone made the last resource of a
+ * type a permanent orphan (#1457 made that a reported skip rather than a
+ * silent one).
  *
- * So: declare one storage account, apply, then delete it from source. The
- * template now has zero resources of that type, `byType` has no entry, and the
- * live account is skipped. It is owned, it is undeclared, and prune would never
- * touch it — on that run or any future one. **Prune the last resource of a type
- * and you created a permanent orphan.** Prune one of several and it works,
- * which is why it survived testing.
+ * So the apiVersion is resolved in order:
  *
- * The guard cannot simply be removed: `deleteArmResource` needs an
- * `apiVersion`, and the template is the only source of one — ARM's
- * resource-group listing does not return it per resource. So the skip stays,
- * and is now REPORTED rather than silent: a permanent invisible orphan becomes
- * a permanent visible one, which is the difference between a bug and a known
- * limitation. Resolving it properly wants a per-type apiVersion source (the
- * provider metadata endpoint, or a lexicon-side map).
+ * 1. the template, when it still declares the type;
+ * 2. the lexicon's pinned per-provider registry (`lookupApiVersion`, the same
+ *    registry the serializer stamps into the template) — deterministic, no
+ *    extra call, covers every type the lexicon can emit;
+ * 3. ARM's provider metadata (`providerApiVersion`) — covers a type the
+ *    lexicon has never heard of, at one extra call per namespace per run.
+ *
+ * Only when all three come up empty is the resource reported as
+ * `notPrunable: no-api-version`.
  *
  * This matters more since #1448, which routed `ApplyOp`'s `arm` target through
  * `azApply` — before that, the composite reached `--mode Complete` and never
@@ -555,24 +615,39 @@ export async function pruneArmOrphans(
     byType.set(r.type, entry);
   }
 
+  const providerCache = new Map<string, Map<string, string>>();
+  const resolveApiVersion = async (type: string): Promise<string | undefined> => {
+    const fromTemplate = byType.get(type)?.apiVersion;
+    if (fromTemplate) return fromTemplate;
+    let fromRegistry: string | undefined;
+    try {
+      fromRegistry = lookupApiVersion(type);
+    } catch {
+      // A missing registry is the serializer's problem to report; prune still
+      // has the provider metadata to fall back on.
+    }
+    if (fromRegistry) return fromRegistry;
+    return providerApiVersion(type, ctx, http, signal, providerCache);
+  };
+
   const pruned: Array<{ type: string; name: string; deleted: boolean }> = [];
   const notPrunable: AzNotPrunable[] = [];
   for (const item of await listGroupResources(ctx, http, signal)) {
     // Ownership first, so a foreign resource never reaches the report either —
     // it is not an orphan chant failed to prune, it is simply not chant's.
     if (!isChantOwned(item.tags)) continue;
-    const entry = byType.get(item.type);
-    if (!entry) {
+    if (byType.get(item.type)?.keep.has(item.name)) continue;
+    const apiVersion = await resolveApiVersion(item.type);
+    if (!apiVersion) {
       console.log(
-        `prune: ${item.type}/${item.name} is chant-owned and undeclared, but its type is absent ` +
-          `from the template so no apiVersion is available — not deleted`,
+        `prune: ${item.type}/${item.name} is chant-owned and undeclared, but no apiVersion is ` +
+          `available for its type (not in the template, the lexicon registry, or ARM provider metadata) — not deleted`,
       );
       notPrunable.push({ type: item.type, name: item.name, reason: "no-api-version" });
       continue;
     }
-    if (entry.keep.has(item.name)) continue;
     safeHeartbeat({ step: "azPrune", type: item.type, name: item.name });
-    const result = await deleteArmResource(item.type, item.name, entry.apiVersion, ctx, http, signal);
+    const result = await deleteArmResource(item.type, item.name, apiVersion, ctx, http, signal);
     console.log(`pruned: ${item.type}/${item.name} (${ctx.base})`);
     pruned.push(result);
   }
