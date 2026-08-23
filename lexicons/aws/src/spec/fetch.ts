@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { execFile } from "child_process";
 import { promisify } from "util";
 import { fetchWithCache, extractFromZip, clearCacheFile } from "@intentius/chant/codegen/fetch";
+import { RELEASE_GATE_ENV } from "@intentius/chant/codegen/validate";
 import { ACCEPT_ENV, AWS_SPEC_PIN, specContentDigest, type SpecPin } from "./pin";
 
 /**
@@ -203,12 +204,32 @@ async function uploadPinAsset(zipData: Buffer, digest: string): Promise<void> {
  * `force`, the accept flow (`CHANT_ACCEPT_AWS_SPEC=1`, which must sample
  * upstream — and bypasses the 24h cache for the same reason), and when the
  * asset is unreachable. The live path keeps its 24h local cache.
+ *
+ * chant #1481 — the fallback is what made two workflows disagree about one
+ * commit. The live archive is served from CloudFront and two fetches seconds
+ * apart can get different variants; under the release gate, building from
+ * it would ship a surface nobody reviewed on a retry lottery, so the gate
+ * refuses instead. Anywhere else the fallback stays, but says so, because a
+ * silent fallback is indistinguishable from the pinned path in a CI log.
  */
-export async function fetchSchemaZip(force = false): Promise<Map<string, Buffer>> {
-  const accepting = !!process.env[ACCEPT_ENV];
+export async function fetchSchemaZip(
+  force = false,
+  options: { env?: NodeJS.ProcessEnv; download?: PinAssetDownloader; pinCacheDir?: string } = {},
+): Promise<Map<string, Buffer>> {
+  const env = options.env ?? process.env;
+  const accepting = !!env[ACCEPT_ENV];
   if (!force && !accepting) {
-    const pinned = await loadPinnedSchemas();
+    const pinned = await loadPinnedSchemas({ download: options.download, cacheDir: options.pinCacheDir });
     if (pinned) return pinned;
+    if (env[RELEASE_GATE_ENV] === "1") {
+      throw new Error(
+        `${RELEASE_GATE_ENV}=1 and the pinned spec asset could not be loaded (${pinAssetUrl()}) — ` +
+          `refusing to build a release from the live CloudFormation archive, which is not the content ` +
+          `the pin was reviewed against. Check the asset exists on the ${SPEC_PIN_RELEASE_TAG} release ` +
+          `(the accept flow uploads it: ${ACCEPT_ENV}=1 npm run generate).`,
+      );
+    }
+    console.error(`pinned spec asset unavailable (${pinAssetUrl()}); falling back to the live CloudFormation archive`);
   }
   const zipData = await fetchWithCache(
     { url: SCHEMA_ZIP_URL, cacheFile: CACHE_FILE },
