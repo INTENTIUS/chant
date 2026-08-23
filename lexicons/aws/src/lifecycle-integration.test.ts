@@ -31,6 +31,8 @@ const { normalizeObservation } = await import("@intentius/chant/observation");
 const { buildLiveGraphIr } = await import("@intentius/chant/graph-ir");
 const { liveEvidenceFromChangeSet, reconcileStatus } = await import("@intentius/chant/lifecycle/status");
 const { describeObservationConformance } = await import("@intentius/chant-test-utils");
+const { observeResources } = await import("@intentius/chant/lifecycle/observe");
+const { DECLARABLE_MARKER } = await import("@intentius/chant/declarable");
 
 const liveTemplate = {
   AWSTemplateFormatVersion: "2010-09-09",
@@ -346,6 +348,49 @@ describe("aws lifecycle integration (#163)", () => {
       unobserved: observed.unobserved,
     });
     expect(cs.entries[0].action).toBe("create");
+  });
+
+  // #1265 — the ownership notice printed once per `describeResources` call, so
+  // a four-stack project got four identical copies ahead of every answer. It
+  // is a property of the read path, not of a stack: the plugin now returns it
+  // as a note on the observation and core says it once per run.
+  test("owned read on a four-stack project: one ownership note, nothing printed", async () => {
+    stubCfn((action) =>
+      action === "DescribeStackResources"
+        ? { text: stackResourcesXml([{ logicalId: "MyBucket", type: "AWS::S3::Bucket", physicalId: "my-bucket" }]) }
+        : { text: stackOutputsXml() },
+    );
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const entities = new Map([
+      ["MyBucket", { [DECLARABLE_MARKER]: true as const, lexicon: "aws", entityType: "AWS::S3::Bucket", props: {} }],
+    ]);
+    const result = await observeResources(
+      "prod",
+      [awsPlugin],
+      { errors: [], warnings: [], entities, outputs: new Map([["aws", ""]]) } as never,
+      { owned: true, stacks: ["prod-net", "prod-data", "prod-app", "prod-edge"] },
+    );
+    const ownership = result.notes.filter((n) => n.includes("ownership filter unavailable"));
+    expect(ownership).toHaveLength(1);
+    expect(ownership[0]).toBe(
+      "[aws] ownership filter unavailable on describeResources (no tags from describe-stack-resources) — returning all, each with an explicit `unknown` verdict; use `chant import --from <env> --owned` for ownership-filtered export",
+    );
+    expect(result.warnings.join("\n")).not.toContain("ownership filter unavailable");
+    expect(warn).not.toHaveBeenCalled();
+    expect(error).not.toHaveBeenCalled();
+  });
+
+  test("an unowned read carries no ownership note", async () => {
+    stubCfn((action) =>
+      action === "DescribeStackResources"
+        ? { text: stackResourcesXml([{ logicalId: "MyBucket", type: "AWS::S3::Bucket", physicalId: "my-bucket" }]) }
+        : { text: stackOutputsXml() },
+    );
+    const observed = normalizeObservation(
+      await awsPlugin.describeResources!({ environment: "prod", buildOutput: "", entityNames: ["MyBucket"], entities: new Map() }),
+    );
+    expect(observed.notes).toEqual([]);
   });
 });
 

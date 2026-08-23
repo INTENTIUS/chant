@@ -2,15 +2,12 @@ import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import { mkdirSync, writeFileSync, readFileSync, rmSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
-
-// We test the patching logic by creating minimal fixture files in a temp dir
-// and calling the internal functions. Since the functions use findRepoRoot()
-// (which resolves from import.meta.url), we test by directly importing the
-// module and exercising the exported onboardCommand after setting up a
-// fake repo structure.
-
-// Rather than mocking findRepoRoot, we test the observable behaviour via
-// the CLI entry point. The unit tests below validate file-patching logic.
+import {
+  onboardCommand,
+  patchDockerfile,
+  patchRootTsconfigPaths,
+  insertPrepackAfterEach,
+} from "./onboard";
 
 function makeTempDir(): string {
   const dir = join(tmpdir(), `chant-onboard-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
@@ -18,46 +15,29 @@ function makeTempDir(): string {
   return dir;
 }
 
-describe("onboard patching logic", () => {
-  let root: string;
+const rootPackageJson = {
+  workspaces: ["packages/*", "lexicons/*"],
+  dependencies: {
+    "@intentius/chant-lexicon-aws": "workspace:*",
+    "@intentius/chant-lexicon-k8s": "workspace:*",
+  },
+};
 
-  beforeEach(() => {
-    root = makeTempDir();
-    // Create a minimal repo structure
-    mkdirSync(join(root, ".github/workflows"), { recursive: true });
-    mkdirSync(join(root, "test"), { recursive: true });
-  });
+const rootTsconfig = {
+  compilerOptions: {
+    moduleResolution: "node",
+    baseUrl: ".",
+    paths: {
+      "@intentius/chant": ["packages/core/src/index.ts"],
+      "@intentius/chant/*": ["packages/core/src/*"],
+      "@intentius/chant-lexicon-aws": ["lexicons/aws/src/index.ts"],
+      "@intentius/chant-lexicon-aws/*": ["lexicons/aws/src/*"],
+    },
+  },
+  include: ["packages/core/src/**/*.ts", "lexicons/*/src/**/*.ts", "lexicons/*/examples/*/src/**/*.ts"],
+};
 
-  afterEach(() => {
-    rmSync(root, { recursive: true, force: true });
-  });
-
-  // ── package.json ──────────────────────────────────────
-
-  describe("root package.json", () => {
-    test("adds workspace dependency", () => {
-      const pkg = {
-        workspaces: ["packages/*"],
-        dependencies: {
-          "@intentius/chant-lexicon-aws": "workspace:*",
-        },
-      };
-      writeFileSync(join(root, "package.json"), JSON.stringify(pkg, null, 2));
-
-      // Simulate the patch by reading+writing
-      const content = JSON.parse(readFileSync(join(root, "package.json"), "utf-8"));
-      content.dependencies["@intentius/chant-lexicon-terraform"] = "workspace:*";
-      writeFileSync(join(root, "package.json"), JSON.stringify(content, null, 2));
-
-      const result = JSON.parse(readFileSync(join(root, "package.json"), "utf-8"));
-      expect(result.dependencies["@intentius/chant-lexicon-terraform"]).toBe("workspace:*");
-    });
-  });
-
-  // ── chant.yml ──────────────────────────────────────────
-
-  describe("chant.yml patching", () => {
-    const ciContent = `name: chant
+const ciContent = `name: chant
 on: [push]
 jobs:
   check:
@@ -92,163 +72,53 @@ jobs:
         run: npm run --prefix lexicons/k8s prepack
 `;
 
-    test("inserts prepack line in multi-line blocks", () => {
-      writeFileSync(join(root, ".github/workflows/chant.yml"), ciContent);
-
-      // Use the same logic as the command
-      const content = readFileSync(join(root, ".github/workflows/chant.yml"), "utf-8");
-      const lines = content.split("\n");
-
-      // Find contiguous groups and insert
-      const groups: { start: number; end: number }[] = [];
-      let groupStart = -1;
-      for (let i = 0; i <= lines.length; i++) {
-        const isPrepack =
-          i < lines.length &&
-          lines[i].includes("npm run --prefix lexicons/") &&
-          lines[i].includes("prepack");
-        if (isPrepack && groupStart === -1) {
-          groupStart = i;
-        } else if (!isPrepack && groupStart !== -1) {
-          groups.push({ start: groupStart, end: i - 1 });
-          groupStart = -1;
-        }
-      }
-
-      // Should find 2 contiguous groups (check + test) and 3 standalone (validate)
-      const multiLineGroups = groups.filter((g) => g.end > g.start);
-      expect(multiLineGroups.length).toBe(2);
-
-      // Insert into multi-line groups only
-      const insertAfter = multiLineGroups.map((g) => g.end);
-      for (const idx of insertAfter.reverse()) {
-        const newLine = lines[idx].replace(/lexicons\/[a-z0-9-]+/i, "lexicons/terraform");
-        lines.splice(idx + 1, 0, newLine);
-      }
-
-      const result = lines.join("\n");
-      // Should have 2 new terraform prepack lines (in the run: | blocks)
-      const matches = result.match(/lexicons\/terraform prepack/g);
-      expect(matches?.length).toBe(2);
-
-      // Should NOT have altered the validate standalone steps
-      const validateSection = result.split("validate:")[1];
-      expect(validateSection).not.toContain("lexicons/terraform");
-    });
-
-    test("adds validate step after last existing validate step", () => {
-      writeFileSync(join(root, ".github/workflows/chant.yml"), ciContent);
-      const content = readFileSync(join(root, ".github/workflows/chant.yml"), "utf-8");
-      const lines = content.split("\n");
-
-      let lastValidateRunIdx = -1;
-      for (let i = 0; i < lines.length; i++) {
-        if (lines[i].includes("Generate and validate")) {
-          if (i + 1 < lines.length && lines[i + 1].trimStart().startsWith("run:")) {
-            lastValidateRunIdx = i + 1;
-          }
-        }
-      }
-
-      expect(lastValidateRunIdx).toBeGreaterThan(0);
-
-      const block = [
-        "",
-        "      - name: Generate and validate Terraform lexicon",
-        "        run: npm run --prefix lexicons/terraform prepack",
-      ];
-      lines.splice(lastValidateRunIdx + 1, 0, ...block);
-      const result = lines.join("\n");
-
-      expect(result).toContain("Generate and validate Terraform lexicon");
-      expect(result).toContain("npm run --prefix lexicons/terraform prepack");
-    });
-  });
-
-  // ── publish.yml ──────────────────────────────────────────
-
-  describe("publish.yml patching", () => {
-    const publishContent = `name: publish
+const publishContent = `name: publish
 on:
   push:
     tags: ['v*']
 jobs:
   test:
+    # 12 lexicon prepacks (build + validate) plus the full vitest suite
     steps:
       - run: npm run --prefix lexicons/aws prepack
       - run: npm run --prefix lexicons/gitlab prepack
       - run: npm run --prefix lexicons/k8s prepack
       - run: npx vitest run
-
-  publish:
-    steps:
-      - name: Publish @intentius/chant-lexicon-aws
-        working-directory: lexicons/aws
-        run: npm publish --access public
-
-      - name: Publish @intentius/chant-lexicon-k8s
-        working-directory: lexicons/k8s
-        run: npm publish --access public
 `;
 
-    test("adds prepack line in test job", () => {
-      writeFileSync(join(root, ".github/workflows/publish.yml"), publishContent);
-      const content = readFileSync(join(root, ".github/workflows/publish.yml"), "utf-8");
-      const lines = content.split("\n");
+// Mirrors test/Dockerfile.smoke on main: a loop, a comment and an echo that
+// all contain the placeholder substring the old matcher anchored on (#1678).
+const dockerLoopContent = `FROM node:22-slim
+WORKDIR /app
+COPY . .
+RUN npm install
+# Run: just prepack  (or npm run --prefix lexicons/<lex> prepack) before building this Dockerfile.
+RUN for lex in aws azure gcp gitlab k8s docker cedar; do \\
+      if [ ! -d "lexicons/$lex/dist" ]; then \\
+        echo "ERROR: lexicons/$lex/dist/ not found. Run codegen first: npm run --prefix lexicons/$lex prepack" >&2; \\
+        exit 1; \\
+      fi; \\
+    done
+COPY test/integration.sh /app/test/integration.sh
+`;
 
-      // Find contiguous prepack group in test job
-      const insertAfter: number[] = [];
-      for (let i = 0; i < lines.length; i++) {
-        if (!lines[i].includes("npm run --prefix lexicons/") || !lines[i].includes("prepack")) continue;
-        const nextIsAlsoPrepack =
-          i + 1 < lines.length &&
-          lines[i + 1].includes("npm run --prefix lexicons/") &&
-          lines[i + 1].includes("prepack");
-        if (!nextIsAlsoPrepack) insertAfter.push(i);
-      }
+// Mirrors test/Dockerfile.smoke-npm: two loops, no prepack invocation at all.
+const dockerNpmContent = `FROM node:22-slim AS build
+WORKDIR /app
+COPY . .
+RUN CORE_VERSION=$(jq -r '.version' packages/core/package.json) && \\
+    for lex in aws azure gcp gitlab k8s docker fly fountain; do \\
+      cd /app/lexicons/$lex && jq 'del(.scripts)' package.json > tmp.json && mv tmp.json package.json; \\
+    done
 
-      expect(insertAfter.length).toBe(1);
+#   smoke.sh ran prepack locally; COPY . . already brought dist/ into this stage.
+RUN mkdir -p /tarballs && \\
+    for lex in aws azure gcp gitlab k8s docker fly fountain; do \\
+      tar czf /tarballs/lexicon-\${lex}.tgz -C /app/lexicons/$lex ./package.json ./src ./dist || exit 1; \\
+    done
+`;
 
-      const idx = insertAfter[0];
-      const newLine = lines[idx].replace(/lexicons\/[a-z0-9-]+/i, "lexicons/terraform");
-      lines.splice(idx + 1, 0, newLine);
-
-      const result = lines.join("\n");
-      expect(result).toContain("lexicons/terraform prepack");
-    });
-
-    test("adds publish step after last publish step", () => {
-      writeFileSync(join(root, ".github/workflows/publish.yml"), publishContent);
-      const content = readFileSync(join(root, ".github/workflows/publish.yml"), "utf-8");
-      const lines = content.split("\n");
-
-      let lastPublishRunIdx = -1;
-      for (let i = 0; i < lines.length; i++) {
-        if (lines[i].includes("npm publish --access public")) {
-          lastPublishRunIdx = i;
-        }
-      }
-
-      expect(lastPublishRunIdx).toBeGreaterThan(0);
-
-      const block = [
-        "",
-        "      - name: Publish @intentius/chant-lexicon-terraform",
-        "        working-directory: lexicons/terraform",
-        "        run: npm publish --access public",
-      ];
-      lines.splice(lastPublishRunIdx + 1, 0, ...block);
-      const result = lines.join("\n");
-
-      expect(result).toContain("Publish @intentius/chant-lexicon-terraform");
-      expect(result).toContain("working-directory: lexicons/terraform");
-    });
-  });
-
-  // ── Dockerfile ──────────────────────────────────────────
-
-  describe("Dockerfile patching", () => {
-    const dockerContent = `FROM node:22-slim
+const dockerPerLineContent = `FROM node:22-slim
 WORKDIR /app
 COPY . .
 RUN npm install
@@ -258,38 +128,262 @@ RUN npm run --prefix lexicons/k8s prepack
 COPY test/integration.sh /app/test/integration.sh
 `;
 
-    test("adds prepack RUN line after last existing one", () => {
-      writeFileSync(join(root, "test/Dockerfile.smoke"), dockerContent);
-      const content = readFileSync(join(root, "test/Dockerfile.smoke"), "utf-8");
-      const lines = content.split("\n");
+function writeFixtureRepo(root: string): void {
+  mkdirSync(join(root, ".github/workflows"), { recursive: true });
+  mkdirSync(join(root, "test"), { recursive: true });
+  writeFileSync(join(root, "package.json"), JSON.stringify(rootPackageJson, null, 2) + "\n");
+  writeFileSync(join(root, "tsconfig.json"), JSON.stringify(rootTsconfig, null, 2) + "\n");
+  writeFileSync(join(root, ".github/workflows/chant.yml"), ciContent);
+  writeFileSync(join(root, ".github/workflows/publish.yml"), publishContent);
+  writeFileSync(join(root, "test/Dockerfile.smoke"), dockerLoopContent);
+  writeFileSync(join(root, "test/Dockerfile.smoke-npm"), dockerNpmContent);
+}
 
-      let lastIdx = -1;
-      for (let i = 0; i < lines.length; i++) {
-        if (lines[i].includes("npm run --prefix lexicons/") && lines[i].includes("prepack")) {
-          lastIdx = i;
-        }
-      }
+const TRACKED = [
+  "package.json",
+  "tsconfig.json",
+  ".github/workflows/chant.yml",
+  ".github/workflows/publish.yml",
+  "test/Dockerfile.smoke",
+  "test/Dockerfile.smoke-npm",
+];
 
-      expect(lastIdx).toBeGreaterThan(0);
+function snapshot(root: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const f of TRACKED) out[f] = readFileSync(join(root, f), "utf-8");
+  return out;
+}
 
-      const newLine = lines[lastIdx].replace(/lexicons\/[a-z0-9-]+/i, "lexicons/terraform");
-      lines.splice(lastIdx + 1, 0, newLine);
-      const result = lines.join("\n");
+describe("onboardCommand", () => {
+  let root: string;
 
-      expect(result).toContain("RUN npm run --prefix lexicons/terraform prepack");
-      // Should come after k8s line
-      const k8sIdx = result.indexOf("lexicons/k8s prepack");
-      const tfIdx = result.indexOf("lexicons/terraform prepack");
-      expect(tfIdx).toBeGreaterThan(k8sIdx);
-    });
+  beforeEach(() => {
+    root = makeTempDir();
+    writeFixtureRepo(root);
+  });
 
-    test("does not add duplicate", () => {
-      const withTerraform = dockerContent + "RUN npm run --prefix lexicons/terraform prepack\n";
-      writeFileSync(join(root, "test/Dockerfile.smoke"), withTerraform);
-      const content = readFileSync(join(root, "test/Dockerfile.smoke"), "utf-8");
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
 
-      const matches = content.match(/lexicons\/terraform prepack/g);
-      expect(matches?.length).toBe(1);
-    });
+  test("first run patches every file once", () => {
+    const result = onboardCommand({ name: "terraform", root });
+    expect(result.success).toBe(true);
+    expect(result.patched).toEqual([
+      "package.json (root dependency)",
+      "tsconfig.json (paths mapping)",
+      "chant.yml (prepack + validate)",
+      "publish.yml (prepack)",
+      "Dockerfile.smoke (lexicon list)",
+      "Dockerfile.smoke-npm (lexicon list)",
+    ]);
+    expect(result.skipped).toEqual([]);
+
+    const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf-8"));
+    expect(pkg.dependencies["@intentius/chant-lexicon-terraform"]).toBe("workspace:*");
+
+    const ci = readFileSync(join(root, ".github/workflows/chant.yml"), "utf-8");
+    expect(ci.match(/lexicons\/terraform prepack/g)?.length).toBe(3); // check + test + validate
+    expect(ci).toContain("Generate and validate Terraform lexicon");
+
+    const pub = readFileSync(join(root, ".github/workflows/publish.yml"), "utf-8");
+    expect(pub.match(/lexicons\/terraform prepack/g)?.length).toBe(1);
+    expect(pub).toContain("      - run: npm run --prefix lexicons/terraform prepack\n      - run: npx vitest run");
+  });
+
+  test("second run is a byte-identical no-op and reports already covered (#1678)", () => {
+    onboardCommand({ name: "terraform", root });
+    const after1 = snapshot(root);
+
+    const result = onboardCommand({ name: "terraform", root });
+    const after2 = snapshot(root);
+
+    expect(after2).toEqual(after1);
+    expect(result.patched).toEqual([]);
+    expect(result.skipped).toEqual([
+      "package.json: @intentius/chant-lexicon-terraform already in dependencies",
+      "tsconfig.json: @intentius/chant-lexicon-terraform already in paths",
+      "chant.yml: terraform already in chant.yml",
+      "publish.yml: prepack for terraform already present",
+      "Dockerfile.smoke: already covers terraform",
+      "Dockerfile.smoke-npm: already covers terraform",
+    ]);
+  });
+
+  test("running onboard three times leaves exactly one copy of everything", () => {
+    for (let i = 0; i < 3; i++) onboardCommand({ name: "terraform", root });
+    const ci = readFileSync(join(root, ".github/workflows/chant.yml"), "utf-8");
+    expect(ci.match(/lexicons\/terraform prepack/g)?.length).toBe(3);
+    const docker = readFileSync(join(root, "test/Dockerfile.smoke"), "utf-8");
+    expect(docker.match(/terraform/g)?.length).toBe(1);
+  });
+});
+
+describe("root tsconfig.json paths (#1614)", () => {
+  let root: string;
+
+  beforeEach(() => {
+    root = makeTempDir();
+    writeFixtureRepo(root);
+  });
+
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  test("adds bare and subpath mappings", () => {
+    const result = patchRootTsconfigPaths(root, "terraform");
+    expect(result.patched).toBe(true);
+
+    const cfg = JSON.parse(readFileSync(join(root, "tsconfig.json"), "utf-8"));
+    expect(cfg.compilerOptions.paths["@intentius/chant-lexicon-terraform"]).toEqual([
+      "lexicons/terraform/src/index.ts",
+    ]);
+    expect(cfg.compilerOptions.paths["@intentius/chant-lexicon-terraform/*"]).toEqual(["lexicons/terraform/src/*"]);
+    // Existing entries untouched
+    expect(cfg.compilerOptions.paths["@intentius/chant-lexicon-aws"]).toEqual(["lexicons/aws/src/index.ts"]);
+    expect(cfg.compilerOptions.moduleResolution).toBe("node");
+  });
+
+  test("is idempotent", () => {
+    patchRootTsconfigPaths(root, "terraform");
+    const before = readFileSync(join(root, "tsconfig.json"), "utf-8");
+    const result = patchRootTsconfigPaths(root, "terraform");
+    expect(result.patched).toBe(false);
+    expect(result.reason).toContain("already in paths");
+    expect(readFileSync(join(root, "tsconfig.json"), "utf-8")).toBe(before);
+  });
+
+  test("skips an already-present lexicon", () => {
+    const result = patchRootTsconfigPaths(root, "aws");
+    expect(result.patched).toBe(false);
+  });
+
+  test("creates the paths map when missing", () => {
+    writeFileSync(join(root, "tsconfig.json"), JSON.stringify({ compilerOptions: {} }) + "\n");
+    const result = patchRootTsconfigPaths(root, "terraform");
+    expect(result.patched).toBe(true);
+    const cfg = JSON.parse(readFileSync(join(root, "tsconfig.json"), "utf-8"));
+    expect(Object.keys(cfg.compilerOptions.paths)).toEqual([
+      "@intentius/chant-lexicon-terraform",
+      "@intentius/chant-lexicon-terraform/*",
+    ]);
+  });
+});
+
+describe("Dockerfile patching (#1678)", () => {
+  let root: string;
+
+  beforeEach(() => {
+    root = makeTempDir();
+    mkdirSync(join(root, "test"), { recursive: true });
+  });
+
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  test("loop-based Dockerfile.smoke gains exactly one list entry", () => {
+    const file = join(root, "test/Dockerfile.smoke");
+    writeFileSync(file, dockerLoopContent);
+
+    const result = patchDockerfile(file, "terraform");
+    expect(result.patched).toBe(true);
+
+    const out = readFileSync(file, "utf-8");
+    expect(out).toContain("RUN for lex in aws azure gcp gitlab k8s docker cedar terraform; do \\");
+    // No RUN line was appended after the comment or the echo
+    expect(out).not.toContain("RUN npm run --prefix lexicons/terraform prepack");
+    expect(out.match(/terraform/g)?.length).toBe(1);
+    // Everything else is untouched
+    expect(out.split("\n").length).toBe(dockerLoopContent.split("\n").length);
+  });
+
+  test("loop-based file already covering the lexicon is a no-op", () => {
+    const file = join(root, "test/Dockerfile.smoke");
+    writeFileSync(file, dockerLoopContent);
+
+    const result = patchDockerfile(file, "cedar");
+    expect(result.patched).toBe(false);
+    expect(result.reason).toBe("already covers cedar");
+    expect(readFileSync(file, "utf-8")).toBe(dockerLoopContent);
+  });
+
+  test("second patch of a loop-based file is byte-identical", () => {
+    const file = join(root, "test/Dockerfile.smoke");
+    writeFileSync(file, dockerLoopContent);
+
+    patchDockerfile(file, "terraform");
+    const once = readFileSync(file, "utf-8");
+    const result = patchDockerfile(file, "terraform");
+    expect(result.patched).toBe(false);
+    expect(readFileSync(file, "utf-8")).toBe(once);
+  });
+
+  test("Dockerfile.smoke-npm adds the name to both loops and nothing else", () => {
+    const file = join(root, "test/Dockerfile.smoke-npm");
+    writeFileSync(file, dockerNpmContent);
+
+    const result = patchDockerfile(file, "terraform");
+    expect(result.patched).toBe(true);
+
+    const out = readFileSync(file, "utf-8");
+    expect(out.match(/for lex in aws azure gcp gitlab k8s docker fly fountain terraform; do/g)?.length).toBe(2);
+    expect(out.match(/terraform/g)?.length).toBe(2);
+    expect(out.split("\n").length).toBe(dockerNpmContent.split("\n").length);
+
+    // Reported as a no-op the second time, not as patched
+    expect(patchDockerfile(file, "terraform")).toEqual({ patched: false, reason: "already covers terraform" });
+    expect(readFileSync(file, "utf-8")).toBe(out);
+  });
+
+  test("per-lexicon RUN layout still gets a new RUN line after the last one", () => {
+    const file = join(root, "test/Dockerfile.smoke");
+    writeFileSync(file, dockerPerLineContent);
+
+    const result = patchDockerfile(file, "terraform");
+    expect(result.patched).toBe(true);
+
+    const out = readFileSync(file, "utf-8");
+    expect(out).toContain("RUN npm run --prefix lexicons/k8s prepack\nRUN npm run --prefix lexicons/terraform prepack\n");
+    expect(out.match(/lexicons\/terraform prepack/g)?.length).toBe(1);
+
+    expect(patchDockerfile(file, "terraform").patched).toBe(false);
+    expect(readFileSync(file, "utf-8")).toBe(out);
+  });
+
+  test("a file with nothing to anchor on is reported, not silently 'patched'", () => {
+    const file = join(root, "test/Dockerfile.smoke-npm");
+    const content = "FROM node:22-slim\nCOPY . .\n";
+    writeFileSync(file, content);
+
+    const result = patchDockerfile(file, "terraform");
+    expect(result.patched).toBe(false);
+    expect(result.reason).toContain("anchor");
+    expect(readFileSync(file, "utf-8")).toBe(content);
+  });
+});
+
+describe("insertPrepackAfterEach", () => {
+  test("ignores comments and echo lines that mention prepack", () => {
+    const lines = dockerLoopContent.split("\n");
+    const before = [...lines];
+    expect(insertPrepackAfterEach(lines, "terraform")).toBe(false);
+    expect(lines).toEqual(before);
+  });
+
+  test("anchors on real RUN lines only", () => {
+    const lines = [
+      "# npm run --prefix lexicons/<lex> prepack",
+      "RUN npm run --prefix lexicons/aws prepack",
+      'RUN echo "npm run --prefix lexicons/$lex prepack"',
+    ];
+    expect(insertPrepackAfterEach(lines, "terraform")).toBe(true);
+    expect(lines).toEqual([
+      "# npm run --prefix lexicons/<lex> prepack",
+      "RUN npm run --prefix lexicons/aws prepack",
+      "RUN npm run --prefix lexicons/terraform prepack",
+      'RUN echo "npm run --prefix lexicons/$lex prepack"',
+    ]);
   });
 });

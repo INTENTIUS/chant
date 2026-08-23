@@ -430,14 +430,14 @@ export async function runComponentsStatus(ctx: CommandContext): Promise<number> 
             // rather than "stale" (recorded, and nothing live).
             const message = err instanceof Error ? err.message : String(err);
             console.error(formatWarning({ message: `${plugin.name}: describeResources failed — ${message} (components in this lexicon report unknown, not stale)` }));
-            observed = { resources: {}, unobserved: unobservedAll(declared, "read-failed", message, entities), queried: {} };
+            observed = { resources: {}, unobserved: unobservedAll(declared, "read-failed", message, entities), queried: {}, notes: [] };
           }
           const cs = buildChangeSet(environment, {
             declared,
             observedNow: observed.resources,
             observedThen: undefined,
             unobserved: observed.unobserved,
-          });
+          }, { lexicon: plugin.name });
           merged.entries.push(...cs.entries);
         }
         liveEvidence = liveEvidenceFromChangeSet(merged, liveNameMapping);

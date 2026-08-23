@@ -68,6 +68,9 @@
  * endpoint override, since an emulator does not verify signatures and requiring
  * credentials to read a local lane would be a tax with nothing behind it.
  * `signEndpointOverride: true` opts back in for an override that *is* real AWS.
+ * What counts as an override is read-client's `resolveEndpointOverride` rule —
+ * the `endpoint` option, else `AWS_ENDPOINT_URL_BEDROCK_AGENTCORE`, else
+ * `AWS_ENDPOINT_URL` (#1694).
  */
 
 import { mkdir, writeFile } from "node:fs/promises";
@@ -76,6 +79,7 @@ import {
   AwsReadError,
   requestHeaders,
   serviceUrl,
+  withEndpointOverride,
   type AwsCredentialSource,
   type AwsReadHttp,
 } from "../api/read-client";
@@ -506,7 +510,7 @@ const defaultHttp: AwsReadHttp = async (url, init, signal) => {
 
 /** Where to read from, how to reach it, and what to sign with. */
 export interface AgentCoreReadOptions {
-  /** Endpoint override. Omit for the real regional host. */
+  /** Endpoint override. Omitted, `AWS_ENDPOINT_URL[_BEDROCK_AGENTCORE]` answers; with neither, the real regional host. */
   readonly endpoint?: string;
   /** Default `us-east-1`. */
   readonly region?: string;
@@ -527,10 +531,11 @@ export interface AgentCoreReadOptions {
 async function agentCorePost(
   path: string,
   body: Record<string, unknown>,
-  options: AgentCoreReadOptions,
+  readOptions: AgentCoreReadOptions,
   http: AwsReadHttp,
   signal?: AbortSignal,
 ): Promise<Record<string, unknown>> {
+  const options = withEndpointOverride(SERVICE, readOptions);
   const url = `${serviceUrl(SERVICE, options.endpoint, options.region)}${path.replace(/^\//, "")}`;
   const wire = JSON.stringify(body);
   const res = await http(

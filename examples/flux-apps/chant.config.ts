@@ -19,4 +19,20 @@ export default {
   environments: [{ name: "home" }],
   ownership: { stack: "flux-apps", env: "home" },
   k8s: { profiles: { home: { context: "default" } } },
+
+  // Per-deployment values are build-time parameters, not `process.env` reads
+  // in `src/`. The `env` mapping keeps exported variables working; the read
+  // is declared, validated, and resolved once before any project file loads,
+  // so the in-process and sandboxed builds see the same values (chant #1728).
+  buildParams: {
+    // Git source Flux watches. Point these at your fork once you've pushed
+    // `npm run build` output.
+    repo: { type: "string", default: "https://github.com/your-org/flux-apps-demo", env: "FLUX_REPO" },
+    branch: { type: "string", default: "main", env: "FLUX_BRANCH" },
+    appNamespace: { type: "string", default: "demo", env: "APP_NAMESPACE" },
+    // Tiny, public, pinned images so the on-ramp needs no registry.
+    webImage: { type: "string", default: "nginxinc/nginx-unprivileged:1.27-alpine", env: "WEB_IMAGE" },
+    apiImage: { type: "string", default: "traefik/whoami:v1.10.3", env: "API_IMAGE" },
+    host: { type: "string", default: "web.home.example", env: "APP_HOST" },
+  },
 } satisfies ChantConfig;

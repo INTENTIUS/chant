@@ -524,13 +524,15 @@ function makeResult(
     added: [],
     changed: [],
     removed: [],
+    renamed: [],
     severity: "none",
   };
   const effectiveDelta = delta ?? emptyDelta;
   const changed =
     effectiveDelta.added.length > 0 ||
     effectiveDelta.changed.length > 0 ||
-    effectiveDelta.removed.length > 0;
+    effectiveDelta.removed.length > 0 ||
+    effectiveDelta.renamed.length > 0;
   const deltaText = changed ? formatDelta(effectiveDelta) : "";
 
   return {

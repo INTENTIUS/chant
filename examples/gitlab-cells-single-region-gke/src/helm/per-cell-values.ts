@@ -1,16 +1,16 @@
 import { ValuesOverride } from "@intentius/chant-lexicon-helm";
+import { params } from "@intentius/chant/params";
 import { cells, shared } from "../config";
 
 // Per-cell Helm values — generated to gitlab-cell/values-<cell>.yaml at build time.
-// Runtime IPs (DB, Redis) are read from env vars written by load-outputs.sh.
+// Runtime IPs (DB, Redis) are build parameters declared in ../../chant.config.ts;
+// load-outputs.sh writes ALPHA_DB_IP, ALPHA_REDIS_PERSISTENT, etc. to .env.
 // Pass as: helm upgrade gitlab-cell-<cell> ./gitlab-cell/ -f gitlab-cell/values-base.yaml -f gitlab-cell/values-<cell>.yaml
 //
-// Env vars use literal keys (e.g. process.env["ALPHA_DB_IP"]) to satisfy EVL003.
-// load-outputs.sh writes ALPHA_DB_IP, ALPHA_REDIS_PERSISTENT, etc. to .env.
 // cellEnvs[i] corresponds to cells[i] — kept in sync with the cells array order.
 const cellEnvs = [
-  { dbIp: process.env["ALPHA_DB_IP"] ?? "", redisPersistent: process.env["ALPHA_REDIS_PERSISTENT"] ?? "", redisCache: process.env["ALPHA_REDIS_CACHE"] ?? "" },
-  { dbIp: process.env["BETA_DB_IP"] ?? "", redisPersistent: process.env["BETA_REDIS_PERSISTENT"] ?? "", redisCache: process.env["BETA_REDIS_CACHE"] ?? "" },
+  { dbIp: params.alphaDbIp as string, redisPersistent: params.alphaRedisPersistent as string, redisCache: params.alphaRedisCache as string },
+  { dbIp: params.betaDbIp as string, redisPersistent: params.betaRedisPersistent as string, redisCache: params.betaRedisCache as string },
 ];
 
 function makeCellValues(cell: typeof cells[0], env: typeof cellEnvs[0]) {

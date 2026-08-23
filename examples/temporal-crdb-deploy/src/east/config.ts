@@ -1,5 +1,6 @@
 // East region (us-east4) configuration. Extends shared cluster config.
 
+import { params } from "@intentius/chant/params";
 import { CRDB_CLUSTER, CRDB_DOMAIN, GCP_PROJECT_ID } from "../shared/config";
 
 export const config = {
@@ -11,6 +12,6 @@ export const config = {
   locality: "cloud=gcp,region=us-east4",
   regionShort: "east",
   domain: `east.${CRDB_DOMAIN}`,
-  externalDnsGsaEmail: process.env.EXTERNAL_DNS_GSA_EMAIL_EAST ?? `gke-crdb-east-dns@${GCP_PROJECT_ID}.iam.gserviceaccount.com`,
+  externalDnsGsaEmail: (params.externalDnsGsaEmailEast as string | undefined) ?? `gke-crdb-east-dns@${GCP_PROJECT_ID}.iam.gserviceaccount.com`,
   crdbGsaEmail: `gke-crdb-east-crdb@${GCP_PROJECT_ID}.iam.gserviceaccount.com`,
 };

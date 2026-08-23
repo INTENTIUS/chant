@@ -26,12 +26,32 @@ export { QUADRANTS, QUADRANT_LABELS, readAuthoredPages } from "./docs-pages";
 // ── Pipeline ───────────────────────────────────────────────────────
 
 /**
+ * The version rendered into the docs (chant #1377).
+ *
+ * `dist/manifest.json` is written by `npm run bundle`, which runs only under
+ * `prepack`, so its `version` is whatever was last bundled on this machine
+ * and can trail `package.json` by several releases. `package.json` is the
+ * source of truth and is never stale, so it wins whenever it is present.
+ * The manifest's own version is the fallback for a dist with no package
+ * beside it (test fixtures, relocated dist directories).
+ */
+export function lexiconVersion(config: DocsConfig, manifest: ManifestJSON): string {
+  const pkgPath = config.packageJsonPath ?? join(config.distDir, "..", "package.json");
+  if (existsSync(pkgPath)) {
+    const pkg = JSON.parse(readFileSync(pkgPath, "utf-8")) as { version?: unknown };
+    if (typeof pkg.version === "string" && pkg.version.length > 0) return pkg.version;
+  }
+  return manifest.version;
+}
+
+/**
  * Run the documentation pipeline with the supplied config.
  */
 export function docsPipeline(config: DocsConfig): DocsResult {
   const manifest = JSON.parse(
     readFileSync(join(config.distDir, "manifest.json"), "utf-8"),
   ) as ManifestJSON;
+  manifest.version = lexiconVersion(config, manifest);
 
   const meta = JSON.parse(
     readFileSync(join(config.distDir, "meta.json"), "utf-8"),

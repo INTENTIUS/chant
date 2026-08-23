@@ -1,6 +1,8 @@
 // Shared CockroachDB cluster configuration.
 // One logical database cluster spanning 3 GCP regions — 9 nodes total.
 
+import { params } from "@intentius/chant/params";
+
 export const INTERNAL_DOMAIN = "crdb.internal";
 
 export const CRDB_CLUSTER = {
@@ -29,14 +31,12 @@ export const CRDB_CLUSTER = {
   ],
 };
 
-// Base domain for UI ingress. Override with CRDB_DOMAIN env var.
-export const CRDB_DOMAIN = process.env.CRDB_DOMAIN ?? "crdb.example.com";
-
-// GCP project ID and number.
-export const GCP_PROJECT_ID = process.env.GCP_PROJECT_ID ?? "my-project";
+// Declared in chant.config.ts's buildParams. Supply with --param, --params-file,
+// or the env vars named there (CRDB_DOMAIN, GCP_PROJECT_ID, GCP_PROJECT_NUMBER).
+export const CRDB_DOMAIN = params.domain as string;
+export const GCP_PROJECT_ID = params.projectId as string;
 // Project number is needed for Google-managed service agent emails (e.g. GCS service agent).
-// Find with: gcloud projects describe $GCP_PROJECT_ID --format='value(projectNumber)'
-export const GCP_PROJECT_NUMBER = process.env.GCP_PROJECT_NUMBER ?? "000000000000";
+export const GCP_PROJECT_NUMBER = params.projectNumber as string;
 
 // Resource names for KMS and backups.
 export const KMS_KEY_RING = "crdb-multi-region";

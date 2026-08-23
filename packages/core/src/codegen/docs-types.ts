@@ -13,6 +13,12 @@ export interface DocsConfig {
   distDir: string;
   /** Output directory for generated .mdx files */
   outDir: string;
+  /**
+   * The lexicon's package.json, read for the version rendered into the docs
+   * (chant #1377). Defaults to `<distDir>/../package.json`. The manifest's
+   * version is only a fallback; it goes stale between bundles.
+   */
+  packageJsonPath?: string;
   /** Lexicon-specific overview content (markdown) */
   overview?: string;
   /** Output format description (e.g. "CloudFormation JSON template") */

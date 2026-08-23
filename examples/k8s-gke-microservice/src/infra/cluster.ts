@@ -8,11 +8,13 @@ import {
   GCPServiceAccount,
   IAMPolicyMember,
 } from "@intentius/chant-lexicon-gcp";
+import { config } from "../config";
 
 // ── GKE Cluster ────────────────────────────────────────────────────
 
 export const { cluster, nodePool } = GkeCluster({
   name: "gke-microservice",
+  projectId: config.projectId,
   location: "us-central1",
   machineType: "e2-standard-4",
   minNodeCount: 2,

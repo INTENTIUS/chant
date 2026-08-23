@@ -45,10 +45,27 @@ export type ChangeAction = "create" | "update" | "delete" | "adopt" | "runtime" 
 export type Ownership = "owned" | "foreign" | "unknown";
 
 export interface ChangeSetEntry {
-  /** chant entity name. */
+  /**
+   * chant entity name for a declared entity. For an undeclared live resource
+   * (`adopt`, `delete`, `runtime`) this is the lexicon's live key — not an
+   * IR-joinable entity name; read `physicalId` for the provider id (#1674).
+   */
   name: string;
   /** Resource type, when known from either side. */
   type?: string;
+  /**
+   * The lexicon whose observation produced this entry (#1674). Set when the
+   * change set is built for one lexicon; `lifecycle plan` merges every
+   * lexicon's change set into one `entries[]`, and this is what keeps the
+   * attribution through the merge.
+   */
+  lexicon?: string;
+  /**
+   * Provider-assigned physical id (ARN, resource id, pod name) from the live
+   * observation's `ResourceMetadata.physicalId`, falling back to the snapshot's
+   * when the resource is gone (#1674). Absent when neither side reported one.
+   */
+  physicalId?: string;
   action: ChangeAction;
   /** The three-way evidence the classification was derived from. */
   evidence: {
@@ -101,7 +118,12 @@ export interface ChangeSet {
  * classifies as `unobserved` and nothing else: no `create` is ever synthesized
  * from a read that did not happen.
  */
-export function buildChangeSet(env: string, input: DiffLiveInput): ChangeSet {
+export interface ChangeSetOptions {
+  /** Stamp every entry with the lexicon it was observed by (#1674). */
+  lexicon?: string;
+}
+
+export function buildChangeSet(env: string, input: DiffLiveInput, options?: ChangeSetOptions): ChangeSet {
   const diff = diffLive(input);
   const { declared, observedNow } = input;
   const observedThen = input.observedThen ?? {};
@@ -184,9 +206,15 @@ export function buildChangeSet(env: string, input: DiffLiveInput): ChangeSet {
     // classification above never reads it.
     const queried = unobservedEntry?.queried ?? input.queried?.[name];
 
+    // The provider's id for the row (#1674). Live first; the snapshot's only
+    // when the resource is no longer live (a snapshot-only noop).
+    const physicalId = observedNow[name]?.physicalId ?? observedThen[name]?.physicalId;
+
     entries.push({
       name,
       type,
+      ...(options?.lexicon ? { lexicon: options.lexicon } : {}),
+      ...(physicalId ? { physicalId } : {}),
       action,
       evidence,
       deltas,

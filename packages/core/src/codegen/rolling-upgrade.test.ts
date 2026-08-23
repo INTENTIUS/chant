@@ -93,7 +93,7 @@ function makeRegen(
   return async () => {
     const delta = fresh
       ? diffSurface(baseline, fresh)
-      : { added: [], changed: [], removed: [], severity: "none" as const };
+      : { added: [], changed: [], removed: [], renamed: [], severity: "none" as const };
     const changed =
       delta.added.length > 0 || delta.changed.length > 0 || delta.removed.length > 0;
     return {

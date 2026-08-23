@@ -1,0 +1,24 @@
+---
+title: "All Rules"
+description: "Every lint rule and post-synth check provided by the K3d lexicon"
+---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-k3d` — DO NOT EDIT.
+    Edit lexicons/k3d/src/codegen/docs.ts instead; changes here are overwritten. */}
+
+The K3d lexicon provides **3** rules: 1 lint rule and 2 post-synth checks.
+
+## Lint Rules
+
+| ID | Severity | Category | Description |
+|----|----------|----------|-------------|
+| `K3D001` | error | security | literal registry proxy password in source. |
+
+## Post-Synth Checks
+
+Post-synth checks validate the serialized output after the build pipeline completes.
+
+| ID | Description |
+|----|-------------|
+| `K3D101` | A nodeFilter that matches no node applies to nothing, silently |
+| `K3D102` | The emitted cluster config carries a registry proxy password |

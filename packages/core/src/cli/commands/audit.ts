@@ -7,11 +7,11 @@
 
 import { existsSync, statSync, writeFileSync } from "fs";
 import { auditFiles, type AuditInput, type AuditFinding, type ChecksProvider } from "../../audit/core";
-import { discoverByDetection, classifyFiles, loadAuditPlugins, AUDIT_LEXICONS } from "../../audit/discover";
+import { AUDIT_LEXICONS, classifyFiles, collectCandidates, loadAuditPlugins, unclaimedFiles, type DetectPlugin, type RepoFile, type UnclaimedFile } from "../../audit/discover";
 import { RULE_CATALOG, resolveAuditCatalog, type RuleMeta } from "../../audit/catalog";
 import { renderMarkdown } from "../../audit/report";
 import { renderHtml, type ReportTheme } from "../../audit/report-html";
-import { buildReportJson, type AuditSnapshot } from "../../audit/report-model";
+import { buildReportJson, REPORT_SCHEMA_VERSION, type AuditSnapshot } from "../../audit/report-model";
 import { fetchRepoFiles, resolveActionSha, resolveImageDigest, resolveRepoCommit, parseRepoUrl, FetchError } from "../../audit/fetch";
 import { extractUnpinnedActions, extractUnpinnedImages } from "../../audit/proof";
 import type { ProveOptions } from "../../audit/proof";
@@ -45,6 +45,8 @@ export interface AuditCommandOptions {
   now?: string;
   /** Tool version recorded in the HTML snapshot. */
   toolVersion?: string;
+  /** Injectable detection plugins (testing); defaults to every installed audit lexicon. */
+  plugins?: DetectPlugin[];
 }
 
 export interface AuditCommandResult {
@@ -58,6 +60,94 @@ export interface AuditCommandResult {
   error?: string;
   /** Set when the report was written to a file (via `output`). */
   wroteTo?: string;
+  /**
+   * `"no-lexicons"` when not a single audit lexicon resolved, so nothing was
+   * inspected (#1623). `output` then carries the diagnostic, not a report.
+   */
+  status?: "ok" | "no-lexicons";
+  /** Candidate files that looked like they wanted a lexicon that is not installed. */
+  unclaimed?: UnclaimedFile[];
+  /** Where `output` belongs; diagnostics go to stderr, reports to stdout (default). */
+  stream?: "stdout" | "stderr";
+}
+
+/** Exit code when the audit had no lexicons to look with. Distinct from 1 (findings / failure). */
+export const NO_LEXICONS_EXIT_CODE = 2;
+
+/** The npm package that provides an audit lexicon's detection and checks. */
+function lexiconPackage(name: string): string {
+  return `@intentius/chant-lexicon-${name}`;
+}
+
+/** Missing audit lexicons the unclaimed files pointed at, in first-seen order. `terraform` is not installable. */
+function wantedLexicons(unclaimed: UnclaimedFile[]): string[] {
+  return [...new Set(unclaimed.map((u) => u.lexicon))].filter((l) => l !== "terraform");
+}
+
+/**
+ * The exact one-liner that gives a bare `npx @intentius/chant audit` the
+ * lexicons it needs. Every wanted lexicon is a `-p` package so npx puts all of
+ * them on the same resolution path.
+ */
+export function installLine(lexicons: string[], target: string): string {
+  const pkgs = ["@intentius/chant", ...lexicons.map(lexiconPackage)];
+  return `npx ${pkgs.map((p) => `-p ${p}`).join(" ")} chant audit ${target}`;
+}
+
+/** One-line coverage hint for the partial case: some lexicons loaded, others wanted by files on disk. */
+function missingLexiconHint(unclaimed: UnclaimedFile[]): string | undefined {
+  const wanted = wantedLexicons(unclaimed);
+  const tf = unclaimed.filter((u) => u.lexicon === "terraform").length;
+  const parts: string[] = [];
+  if (wanted.length > 0) {
+    const n = unclaimed.length - tf;
+    parts.push(
+      `${n} file${n === 1 ? " looks" : "s look"} like ${wanted.join("/")} but ${wanted.length === 1 ? "that lexicon is" : "those lexicons are"} not installed, so ${n === 1 ? "it was" : "they were"} skipped` +
+        ` (npm i ${wanted.map(lexiconPackage).join(" ")}).`,
+    );
+  }
+  if (tf > 0) parts.push(`${tf} Terraform file${tf === 1 ? "" : "s"} skipped; the audit does not read HCL (see chant carve).`);
+  return parts.length > 0 ? parts.join(" ") : undefined;
+}
+
+/** Human-readable diagnostic for the zero-lexicon case. */
+function renderNoLexicons(target: string, unclaimed: UnclaimedFile[]): string {
+  const lines: string[] = [];
+  lines.push(`chant audit had nothing to look with: no audit lexicon is installed, so nothing under ${target} was inspected.`);
+  lines.push("This is not a clean result. Detection and checks live in the lexicon packages.");
+  const wanted = wantedLexicons(unclaimed);
+  if (unclaimed.length > 0) {
+    lines.push("", "Files that wanted a lexicon:");
+    for (const u of unclaimed) {
+      const note = u.lexicon === "terraform" ? "terraform (not audited; see chant carve)" : u.lexicon;
+      lines.push(`  ${u.path}  ->  ${note}`);
+    }
+  } else {
+    lines.push("", "No file under the target looked like CI, Kubernetes, Helm, Docker, CloudFormation, ARM, or Config Connector either.");
+  }
+  lines.push("", "Run it with the lexicons those files need:");
+  lines.push(`  ${installLine(wanted.length > 0 ? wanted : [...AUDIT_LEXICONS], target)}`);
+  return lines.join("\n");
+}
+
+/** Machine-readable form of the zero-lexicon diagnostic (`status: "no-lexicons"`). */
+function renderNoLexiconsJson(target: string, unclaimed: UnclaimedFile[]): string {
+  const wanted = wantedLexicons(unclaimed);
+  return JSON.stringify(
+    {
+      schemaVersion: REPORT_SCHEMA_VERSION,
+      tool: { name: "chant-audit" },
+      status: "no-lexicons",
+      target,
+      summary: { total: 0 },
+      findings: [],
+      unclaimed,
+      missingLexicons: wanted,
+      install: installLine(wanted.length > 0 ? wanted : [...AUDIT_LEXICONS], target),
+    },
+    null,
+    2,
+  );
 }
 
 /**
@@ -205,20 +295,21 @@ export async function auditCommand(options: AuditCommandOptions): Promise<AuditC
 
   const isUrl = /^https?:\/\//.test(options.path);
 
-  let inputs: AuditInput[];
-  // Content-detected lexicons whose package isn't installed can't be detected
-  // (detection needs the plugin's `detectTemplate`), so a local audit would
-  // silently find nothing. Track the missing packages to turn that into a hint.
-  let missingHint = "";
+  // Detection lives in the lexicon plugins (each one's `detectTemplate`), so a
+  // lexicon that isn't installed can't claim its files. Every branch below
+  // therefore also computes which candidate files looked like they wanted an
+  // absent lexicon, so "nothing found" and "had nothing to look with" never
+  // render the same way (#1623).
+  const plugins = options.plugins ?? (await loadAuditPlugins());
+  let candidates: RepoFile[];
   if (isUrl) {
     try {
       // Fetch the whole repo's candidate files (all lexicons, not just CI) and
       // run them through the same classifier the local path uses (#420).
-      const files = await fetchRepoFiles(options.path, {
+      candidates = await fetchRepoFiles(options.path, {
         token: options.token ?? tokenForHost(options.path),
         fetchImpl: options.fetchImpl,
       });
-      inputs = classifyFiles(files, await loadAuditPlugins());
     } catch (err) {
       const msg = err instanceof FetchError ? err.message : err instanceof Error ? err.message : String(err);
       return { success: false, output: "", findings: [], scanned: [], exitCode: 1, error: msg };
@@ -227,25 +318,25 @@ export async function auditCommand(options: AuditCommandOptions): Promise<AuditC
     if (!existsSync(options.path)) {
       return { success: false, output: "", findings: [], scanned: [], exitCode: 1, error: `Path not found: ${options.path}` };
     }
-    // One walk, plugin-delegated detection. Each lexicon plugin's own
-    // `detectTemplate` classifies the files it recognizes; CI (path), Dockerfiles
-    // (name), and Helm charts (bundle) are handled by discoverByDetection's
-    // special-cases since content shape alone can't disambiguate them.
-    const plugins = await loadAuditPlugins();
-    const loaded = new Set(plugins.map((p) => p.name));
-    const missing = AUDIT_LEXICONS.filter((n) => !loaded.has(n));
-    if (missing.length > 0) {
-      missingHint =
-        ` Some lexicon packages are not installed, so files of those types were not detected: ${missing.join(", ")}.` +
-        ` Install what you need, e.g. npm i ${missing.map((n) => `@intentius/chant-lexicon-${n}`).join(" ")}`;
-    }
-    inputs = discoverByDetection(options.path, plugins);
+    // One walk, plugin-delegated detection. CI (path), Dockerfiles (name), and
+    // Helm charts (bundle) are special-cased by the classifier since content
+    // shape alone can't disambiguate them.
+    candidates = collectCandidates(options.path);
   }
-
+  const inputs = classifyFiles(candidates, plugins);
+  const unclaimed = unclaimedFiles(candidates, inputs, plugins);
   const scanned = inputs.map((i) => i.path);
 
+  if (plugins.length === 0) {
+    const output = format === "json" ? renderNoLexiconsJson(options.path, unclaimed) : renderNoLexicons(options.path, unclaimed);
+    return { success: true, status: "no-lexicons", output, findings: [], scanned: [], unclaimed, exitCode: NO_LEXICONS_EXIT_CODE, stream: format === "json" ? "stdout" : "stderr" };
+  }
+
+  const missingLexiconNote = missingLexiconHint(unclaimed);
+
   if (inputs.length === 0) {
-    return { success: true, output: `No auditable files found under ${options.path}.${missingHint}`, findings: [], scanned: [], exitCode: 0 };
+    const output = `No auditable files found under ${options.path}.${missingLexiconNote ? ` ${missingLexiconNote}` : ""}`;
+    return { success: true, status: "ok", output, findings: [], scanned: [], unclaimed, exitCode: 0 };
   }
 
   let findings: AuditFinding[];
@@ -262,6 +353,7 @@ export async function auditCommand(options: AuditCommandOptions): Promise<AuditC
 
   if (tier === "merge-worthy") findings = findings.filter((f) => isMergeWorthy(f, catalog));
   const notes = coverageNotes(inputs);
+  if (missingLexiconNote) notes.push(missingLexiconNote);
 
   // Diff-bearing renderers (markdown, html) need action SHAs / image digests
   // resolved up front (sync maps so rendering stays synchronous).
@@ -304,7 +396,7 @@ export async function auditCommand(options: AuditCommandOptions): Promise<AuditC
   switch (format) {
     case "json": {
       const snapshot = await buildSnapshot(options, scanned, isUrl);
-      output = JSON.stringify(buildReportJson(findings, { snapshot, toolVersion: options.toolVersion, catalog }), null, 2);
+      output = JSON.stringify(buildReportJson(findings, { snapshot, toolVersion: options.toolVersion, catalog, unclaimed }), null, 2);
       break;
     }
     case "sarif":
@@ -329,10 +421,10 @@ export async function auditCommand(options: AuditCommandOptions): Promise<AuditC
     } catch (err) {
       return { success: false, output, findings, scanned, exitCode: 1, error: `Failed to write ${options.output}: ${err instanceof Error ? err.message : String(err)}` };
     }
-    return { success: true, output, findings, scanned, exitCode, wroteTo: options.output };
+    return { success: true, status: "ok", output, findings, scanned, unclaimed, exitCode, wroteTo: options.output };
   }
 
-  return { success: true, output, findings, scanned, exitCode };
+  return { success: true, status: "ok", output, findings, scanned, unclaimed, exitCode };
 }
 
 /** Print an audit result to stdout. */
@@ -345,5 +437,6 @@ export function printAuditResult(result: AuditCommandResult): void {
     console.error(`Wrote report to ${result.wroteTo}`);
     return;
   }
-  console.log(result.output);
+  if (result.stream === "stderr") console.error(result.output);
+  else console.log(result.output);
 }

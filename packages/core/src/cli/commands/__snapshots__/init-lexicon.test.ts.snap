@@ -65,7 +65,8 @@ export async function generate(options?: { verbose?: boolean; force?: boolean })
  * Write generated files to the package directory.
  */
 export function writeGeneratedFiles(result: GenerateResult, pkgDir?: string): void {
-  const dir = pkgDir ?? dirname(dirname(fileURLToPath(import.meta.url)));
+  // This file lives in src/codegen/, so the package root is three levels up.
+  const dir = pkgDir ?? dirname(dirname(dirname(fileURLToPath(import.meta.url))));
   writeGeneratedArtifacts({
     baseDir: dir,
     files: {

@@ -21,7 +21,7 @@ function result(over: Partial<RegenResult>): RegenResult {
     ok: true,
     changed: true,
     severity: "additive",
-    delta: { added: [], changed: [], removed: [], severity: "additive" },
+    delta: { added: [], changed: [], removed: [], renamed: [], severity: "additive" },
     deltaText: "",
     failures: [],
     freshSnapshot: { surface: "x" } as unknown as RegenResult["freshSnapshot"],

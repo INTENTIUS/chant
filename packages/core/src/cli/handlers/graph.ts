@@ -4,6 +4,7 @@ import { discover } from "../../discovery/index";
 import { partitionByLexicon, computeStackGraph, build, mergeBuildRootEntities } from "../../build";
 import { buildGraphIr, buildLiveGraphIr, collectUnobserved, overlayGraphs, sourceOverlayGraphs, type GraphIR, type IRPipeline, type LiveObservation } from "../../graph-ir";
 import { buildDeclaredPerStack } from "../../graph-declared";
+import { mergeProjectOps } from "../../graph-ops";
 import { reconstructEdges, mergeCatalogs, containmentGroups, type ReferenceCatalog, type ContainmentPair } from "../../graph-refs";
 import { observeResources } from "../../lifecycle/observe";
 import { replaySnapshots, hasSnapshot } from "../../lifecycle/replay";
@@ -48,6 +49,7 @@ async function graphBuildParams(
   const resolution = resolveCliBuildParams(config.buildParams, {
     cli: parseParamFlags(ctx.args.param),
     paramsFile: ctx.args.paramsFile,
+    verbose: ctx.args.verbose,
   });
   if (!resolution.success) {
     for (const message of resolution.errors) console.error(message);
@@ -117,6 +119,17 @@ async function mergeGraphBuildRoots(
     return false;
   }
   return true;
+}
+
+/** #1675 — join git-root ops into a discovered entity map; op-discovery
+ * errors are warnings here (the lint gate never saw those files). */
+async function mergeGraphOps(
+  entities: Map<string, import("../../declarable").Declarable>,
+  sourceFiles: readonly string[],
+  projectPath: string,
+): Promise<void> {
+  const { errors } = await mergeProjectOps(entities, sourceFiles, projectPath);
+  for (const e of errors) console.error(formatWarning({ message: e }));
 }
 
 /**
@@ -307,7 +320,7 @@ async function runGraphLive(
         ...(args.namespace ? { namespace: args.namespace } : {}),
       });
       observations = observeResult.observations;
-      const { errors, warnings } = observeResult;
+      const { errors, warnings, notes = [] } = observeResult;
       for (const e of errors) console.error(formatWarning({ message: e }));
       // Unobserved entities (#1089) arrive as warnings — a node missing from the
       // live graph because nobody looked is a different fact from one that isn't
@@ -320,7 +333,9 @@ async function runGraphLive(
         console.error(formatWarning({
           message: `... and ${warnings.length - WARN_CAP} more entity(ies) not observed — run \`chant lifecycle diff ${environment} --live\` for the full list`,
         }));
-    }
+      }
+      // Run-level notes (#1265): one line each, outside the per-entity cap.
+      for (const n of notes) console.error(formatWarning({ message: n }));
     }
 
     // Both paths land here: a replay rejoins the live pipeline at exactly this
@@ -409,6 +424,7 @@ async function runGraphLive(
       } else if (!(await mergeGraphBuildRoots(declared.entities, buildRoots))) {
         console.error(formatWarning({ message: "overlay: a build root failed to render — showing the provisioned graph without the declared overlay" }));
       } else {
+        await mergeGraphOps(declared.entities, declared.sourceFiles, projectPath);
         const declaredIr = buildGraphIr(declared.entities, projectPath);
         ir =
           args.overlayAnchor === "live"
@@ -674,6 +690,10 @@ async function runGraphView(
   if (!(await mergeGraphBuildRoots(result.entities, await graphBuildRootContributors(ctx, projectPath)))) {
     return 1;
   }
+
+  // #1675 — ops live outside sourceDir by convention; join the ones
+  // `discoverOps` finds from the git root so the IR carries the declared DAG.
+  await mergeGraphOps(result.entities, result.sourceFiles, projectPath);
 
   // Build the base IR, focus with a lens (declarable-level, most precise), then
   // apply the detail tier — so e.g. blast:<resource> works before any collapse.

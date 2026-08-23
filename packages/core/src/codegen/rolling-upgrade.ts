@@ -293,7 +293,7 @@ export function classifyDelta(delta: SurfaceDelta): {
   severity: ChangeSeverity;
 } {
   const hasUpgrade =
-    delta.added.length > 0 || delta.changed.length > 0 || delta.removed.length > 0;
+    delta.added.length > 0 || delta.changed.length > 0 || delta.removed.length > 0 || delta.renamed.length > 0;
   return { hasUpgrade, severity: hasUpgrade ? delta.severity : "none" };
 }
 

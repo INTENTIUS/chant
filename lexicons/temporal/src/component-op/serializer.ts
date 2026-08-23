@@ -28,7 +28,12 @@
  * activities — `runCapabilityStep` / `rollbackCapabilityStep`
  * (./activities.ts) — which resolve wiring via the exact same
  * `resolveStepInput` the local executor calls, so local and durable runs can
- * never silently diverge on wiring semantics.
+ * never silently diverge on wiring semantics. The accumulation side is shared
+ * the same way (#700): after the deploy phases, a third activity
+ * (`accumulateComponentOutputs`) folds the component's publish/stack outputs
+ * into `componentOutputs` through core's `accumulateComponentOutputs`, and the
+ * workflow accepts an optional `{ componentOutputs }` seed so a parent
+ * orchestration can thread the map from one component workflow to the next.
  *
  * The target `env` (and any `vars`) is resolved by the CLI at the moment it
  * compiles the component (`chant run --components <name> --temporal --env
@@ -120,7 +125,7 @@ function generateWorkflow(component: DriverComponent, options: SerializeComponen
     "import { proxyActivities, condition, defineSignal, setHandler, upsertSearchAttributes } from '@temporalio/workflow';",
     "import type * as activities from './activities';",
     "",
-    "const { runCapabilityStep, rollbackCapabilityStep } = proxyActivities<typeof activities>({",
+    "const { runCapabilityStep, rollbackCapabilityStep, accumulateComponentOutputs } = proxyActivities<typeof activities>({",
     "  startToCloseTimeout: '20m',",
     "  retry: { maximumAttempts: 3, initialInterval: '5s', backoffCoefficient: 2 },",
     "});",
@@ -137,6 +142,13 @@ function generateWorkflow(component: DriverComponent, options: SerializeComponen
     "  componentOutputs: Record<string, Record<string, unknown>>;",
     "}",
     "",
+    "// Optional workflow input: a parent orchestration (or a CLI --seed-outputs",
+    "// equivalent) seeds componentOutputs with upstream components' accumulated",
+    "// outputs — the durable twin of InterpretRunOptions.componentOutputs (#700).",
+    "interface ComponentWorkflowInput {",
+    "  componentOutputs?: Record<string, Record<string, unknown>>;",
+    "}",
+    "",
   ];
 
   if (allGates.length > 0) {
@@ -148,7 +160,7 @@ function generateWorkflow(component: DriverComponent, options: SerializeComponen
     lines.push("");
   }
 
-  lines.push(`export async function ${fnName}(): Promise<ComponentWorkflowResult> {`);
+  lines.push(`export async function ${fnName}(input?: ComponentWorkflowInput): Promise<ComponentWorkflowResult> {`);
   lines.push(`  upsertSearchAttributes({ ComponentName: [${JSON.stringify(component.name)}] });`);
   lines.push("");
   lines.push("  // phaseOutputs/componentOutputs mirror the local interpret driver's wiring");
@@ -156,16 +168,18 @@ function generateWorkflow(component: DriverComponent, options: SerializeComponen
   lines.push("  // workflow-local variables (deterministic, replay-safe) and threaded into");
   lines.push("  // every activity call so `runCapabilityStep`/`rollbackCapabilityStep` can");
   lines.push("  // resolve `@Phase.field` references exactly like the local executor does.");
-  lines.push("  // componentOutputs starts (and stays) empty: this workflow compiles and runs");
-  lines.push("  // ONE component, so there is no other component's `@<name>.publish.*` output");
-  lines.push("  // to seed it with — matching the local executor's single-component invocation");
-  lines.push("  // (`runComponents`' single-name branch also passes an empty componentOutputs;");
-  lines.push("  // see packages/core/src/components/cli-support.ts). A cross-component artifact");
-  lines.push("  // reference in a --temporal component is therefore unresolved (undefined), same");
-  lines.push("  // as it would be running that single component locally without its dependency's");
-  lines.push("  // wave having run first in the same invocation.");
+  lines.push("  // componentOutputs starts from the caller's seed (empty when the CLI starts");
+  lines.push("  // this workflow standalone): this workflow compiles and runs ONE component, so");
+  lines.push("  // any other component's `@<name>.publish.*` / stackOutput() values can only");
+  lines.push("  // arrive via `input.componentOutputs` — the same way `runComponents`' single-");
+  lines.push("  // name branch is seeded from --seed-outputs locally (see packages/core/src/");
+  lines.push("  // components/cli-support.ts). Unseeded cross-component references resolve to");
+  lines.push("  // undefined, same as a single local run without its dependency's wave.");
+  lines.push("  // Once every deploy phase has run, this component's own outputs are folded");
+  lines.push("  // in by the `accumulateComponentOutputs` activity — the same core accumulator");
+  lines.push("  // the local driver uses (#700) — and returned for a parent to thread onward.");
   lines.push("  const phaseOutputs: Record<string, Record<string, unknown>> = {};");
-  lines.push("  const componentOutputs: Record<string, Record<string, unknown>> = {};");
+  lines.push("  let componentOutputs: Record<string, Record<string, unknown>> = { ...(input?.componentOutputs ?? {}) };");
   lines.push("  const executed: Array<{ step: Record<string, unknown>; phaseName: string }> = [];");
   lines.push("");
 
@@ -277,6 +291,11 @@ function generateWorkflow(component: DriverComponent, options: SerializeComponen
   const hasRollback = (component.rollback?.length ?? 0) > 0;
   lines.push("  try {");
   renderPhases(component.deploy, "    ");
+  lines.push("    // Every deploy phase succeeded: capture publish/stack outputs under this");
+  lines.push("    // component's name via the shared core accumulator (driver.ts parity, #700).");
+  lines.push(
+    `    componentOutputs = await accumulateComponentOutputs({ component: ${JSON.stringify(component.name)}, phaseOutputs, componentOutputs });`,
+  );
   lines.push("  } catch (__compErr) {");
   lines.push("    // Saga rollback + onFailure/rollback compensation (terminal failure only),");
   lines.push("    // matching runComponentDeploy's local semantics exactly.");
@@ -304,7 +323,7 @@ function generateActivities(): string {
   return [
     "// Generated by chant — do not edit directly.",
     "// Re-exports the generic capability-dispatch activities.",
-    "export { runCapabilityStep, rollbackCapabilityStep } from '@intentius/chant-lexicon-temporal/component-op/activities';",
+    "export { runCapabilityStep, rollbackCapabilityStep, accumulateComponentOutputs } from '@intentius/chant-lexicon-temporal/component-op/activities';",
     "",
   ].join("\n");
 }

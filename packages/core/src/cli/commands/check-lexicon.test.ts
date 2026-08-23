@@ -17,7 +17,7 @@ describe("checkLexicon", () => {
   test("includes the new #1067 tier-1 checks by name", async () => {
     const result = await checkLexicon(gitlabDir);
     const names = result.items.map((i) => i.name);
-    expect(names).toContain("Every shipped example builds");
+    expect(names).toContain("Every shipped example builds and passes its own post-synth checks");
     expect(names).toContain("Registered intrinsics are exported by the package");
     expect(names).toContain("Registered intrinsics' isTag matches how they're authored");
     expect(names).toContain("dist/manifest.json declares a chantVersion");

@@ -28,7 +28,7 @@ Produces 2 CloudFormation resources: IAM Role + Lambda Function.
 
 {{file:lambda-s3/src/main.ts}}
 
-Produces 3 resources: S3 Bucket (encrypted, public access blocked) + IAM Role (with S3 read policy) + Lambda Function. The `BUCKET_NAME` environment variable is auto-injected.
+Produces 4 resources: S3 Bucket (encrypted, public access blocked) + IAM Role (with S3 read policy) + Lambda Function, plus a Bucket Policy in `bucket-policy.ts` that denies requests made without TLS. The `BUCKET_NAME` environment variable is auto-injected.
 
 ## Lambda DynamoDB
 
@@ -137,6 +137,7 @@ src/
 ├── chant.config.ts   # Lint config: strict preset + custom plugin
 ├── defaults.ts       # Encryption, versioning, access block, Lambda trust policy
 ├── data-bucket.ts    # S3 bucket
+├── data-bucket-policy.ts # TLS-only bucket policy
 ├── lambda-api.ts     # Composite factory + SecureApi/HighMemoryApi presets
 ├── health-api.ts     # SecureApi — minimal health check
 ├── upload-api.ts     # SecureApi + S3 PutObject policy

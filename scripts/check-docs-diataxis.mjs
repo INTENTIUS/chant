@@ -2,19 +2,27 @@
 // Check that every core docs page carries a Diátaxis quadrant in its
 // frontmatter and sits in the matching sidebar group. chant #1731 / #1732.
 //
+// This is also the main site's reachability gate (chant #1417). Starlight has
+// no page auto-discovery, so a page with no sidebar entry can only be reached
+// by typing its URL; "in no sidebar group" below is that failure, the same one
+// `chant dev check-lexicon` catches for every lexicon site.
+//
 //   node scripts/check-docs-diataxis.mjs   # exit 1 on any violation
 //
 // No dependencies. The sidebar is read by slicing the `sidebar: [...]`
 // literal out of docs/astro.config.mjs and evaluating it — it is plain data
 // (labels, slugs, links, items, badges), so this needs no Astro install.
+//
+// CHANT_DOCS_DIR points the check at another docs site (tests use a fixture).
 
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = join(fileURLToPath(import.meta.url), "..", "..");
-const CONTENT = join(ROOT, "docs", "src", "content", "docs");
-const CONFIG = join(ROOT, "docs", "astro.config.mjs");
+const DOCS = process.env.CHANT_DOCS_DIR ?? join(ROOT, "docs");
+const CONTENT = join(DOCS, "src", "content", "docs");
+const CONFIG = join(DOCS, "astro.config.mjs");
 
 const QUADRANTS = ["tutorial", "how-to", "reference", "explanation"];
 const GROUP_TO_QUADRANT = {
@@ -117,7 +125,7 @@ for (const file of walk(CONTENT)) {
     counts[q]++;
   }
   if (!group) {
-    violations.push(`${slug}: in no sidebar group`);
+    violations.push(`${slug}: in no sidebar group (unreachable, #1417)`);
   } else if (q && GROUP_TO_QUADRANT[group] && GROUP_TO_QUADRANT[group] !== q) {
     violations.push(`${slug}: diataxis "${q}" but sidebar group "${group}"`);
   } else if (q && !GROUP_TO_QUADRANT[group]) {

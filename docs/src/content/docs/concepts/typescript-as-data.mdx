@@ -186,6 +186,40 @@ The list is a hand-written allowlist in chant's source (`packages/core/src/fold/
 
 Helpers that read the environment are deliberately excluded. `env()` is a function call like the others, but its result depends on `CHANT_ENV` rather than on its arguments, so folding it would freeze one run's environment into the output. Use [build-time parameters](/chant/concepts/build-time-parameters/) where you need an external value in foldable source.
 
+### Project-local function calls
+
+A call to a function from one of your own files folds when the function's body is itself inside the supported subset ([#1373](https://github.com/INTENTIUS/chant/issues/1373)). This is the shape a parameter file takes when defaulting and validation live in one helper rather than inline at every use:
+
+```typescript
+// lib/target.ts
+export function optionalAccountId(raw: string | undefined): string | undefined {
+  const trimmed = raw ?? "";
+  return trimmed === "" ? undefined : trimmed;
+}
+
+// params.ts
+import { params } from "@intentius/chant/params";
+import { optionalAccountId } from "./lib/target";
+
+export const namingParams = {
+  prefix: "kmv",
+  accountId: optionalAccountId(params.accountId),
+};
+```
+
+Nothing is imported or run. The arguments fold in the calling file, the parameters are bound, and the body folds in the *defining* file's scope, so a module-level `const` or an import of `lib/target.ts` resolves exactly as it would have there. The callee can be a `function` declaration or a `const` bound to an arrow or function expression, exported or declared in the same file, and can call other functions of the same kind. Parameters may have defaults and may destructure an object with plain keys.
+
+The body follows the same statement rules as an [interpretable composite factory](#interpretable-composite-factories): a single expression, or `const` declarations followed by one `return`. No `if`, loop, `throw`, `let`/`var`, `async`, rest parameter, or early return. Inside it, three things that fold at a file's top level do not: a `new Type(...)`, a tagged-template intrinsic, and a registered helper or intrinsic call. Each of those produces an object that is built against the importing file's own `import`s, which is not the scope the body was written in, so they are refused rather than built against the wrong file.
+
+When a body does not fold, the calling file falls back to run, and the reason names the callee, the file and position inside it, and what stopped it:
+
+```
+[fold:run] params.ts — "namingParams" is not foldable: 7:14 - call to "optionalAccountId" (src/lib/target.ts)
+    is not foldable: src/lib/target.ts:3:17 - ambient "process" read is not foldable — declare a build-time parameter instead ...
+```
+
+The function is a callable, not a value. `{ resolver: optionalAccountId }` does not fold, because nothing can serialize a function. Only project files produce a callable: a function imported from a package, chant's own modules included, is still a call fold cannot evaluate and is invoked the way [composite factories](#folded-vs-run) are, or falls back.
+
 ## Unsupported Patterns
 
 The following patterns are caught by the evaluability lint rules (EVL). Your editor shows them as lint errors, and `chant lint` reports them in CI. `chant build` does not fail on them — a pattern below makes fold reject that one file, which then falls back to being imported and run, producing whatever JavaScript produces, correct or not. Run lint, or rely on your editor, to keep source inside the supported subset.
@@ -201,7 +235,7 @@ export const store = new StorageType({
 });
 ```
 
-Your own functions, arrow functions, and method calls (`naming.name(...)`) are never evaluated statically — the value would depend on running code. Two closed exceptions fold: chant's own [registered authoring helpers](#registered-authoring-helpers), and a [lexicon intrinsic whose call form its lexicon opted in](#registered-intrinsic-calls). Both are allowlists of names, checked against what your file actually imported — neither widens to calls in general. Where you need a computed value in foldable source, move the computation into a composite, which chant expands for real.
+A function from a package, a function used as a value, and a method call (`naming.name(...)`, `list.map(...)`) are never evaluated statically — the value would depend on running code. Three exceptions fold. Two are closed allowlists of names, checked against what your file actually imported: chant's own [registered authoring helpers](#registered-authoring-helpers), and a [lexicon intrinsic whose call form its lexicon opted in](#registered-intrinsic-calls). The third is open but local: a call to a [function from one of your own project files](#project-local-function-calls) whose body is itself in this subset. EVL001 still flags the call above because the lint rule sees one file at a time and cannot know what `getName` does; the fold decides by reading the body.
 
 ### Control flow around resources
 
@@ -256,7 +290,7 @@ Nothing changes about what you write to get folding — the supported subset abo
 | Output | Resource objects — [byte-identical serialized output](#byte-identical-output) | Same resource objects |
 | How you get it | On by default since #1134 | `--no-fold`, `build.fold: false`, or a per-file fallback |
 
-Folding happens per file, not per project. A file either folds entirely or falls back to running entirely — chant never partially executes a file. `chant build` logs which path each file took, and why, in a real run:
+Folding happens per file, not per project. A file either folds entirely or falls back to running entirely — chant never partially executes a file. `chant build --verbose` logs which path each file took, and why, in a real run (without the flag, the same decisions collapse to one line: `fold: 1 files folded, 1 ran (--verbose for reasons)`):
 
 ```
 [fold:fold] tags.ts — 1 resource(s), no module execution
@@ -273,9 +307,10 @@ Fold covers more than a single leaf resource now:
 - **Registered intrinsic calls** — the same, for an intrinsic authored as a plain call (`Ref(...)`, `Concat(...)`), where its lexicon has opted that intrinsic in (#1044). Arguments fold by the ordinary subset rules; the real function is resolved through the file's own imports and invoked, so the intrinsic object is the one the run path would have built. Opt-in is per intrinsic and off by default — see [Registered intrinsic calls](#registered-intrinsic-calls).
 - **Nested constructions** — a `new Type(...)` used as a *value* rather than as the file's own top-level export folds too (#1169), whether it is written inline (`image: new Image({ name: "node:22" })`, a `Container` inside a pod spec, a `Rule` in a job's `rules` array) or named once and referenced (`const nodeImage = new Image({...})` then `image: nodeImage` in three jobs). The instance is built by the class your `import` names, so what the enclosing constructor receives is the object the run path would have handed it — the same prototype, the same `toJSON`, the same serialized shape. A named one is built exactly **once** per file, in source order, and every reference in that file reads the same object, so a resource referenced by name is the same entity chant registers.
 - **Cross-file references** — an imported `const`, or an imported resource referenced through an attribute, resolves through the module graph and folds in the defining file's own scope, including re-export chains (#1020). Each cross-file export folds exactly once per build and every referrer shares that one instance, so a symbolic reference always points at the same entity the defining file produced. An import cycle is rejected with a located error rather than followed.
+- **Project-local function calls** — a call to a function declared in one of your own files (or in the file itself), when its body stays inside the subset, evaluates statically against the defining file's scope (#1373). The defining module is never imported. A body that does not fold names the callee and the reason in the `[fold:run]` line. See [Project-local function calls](#project-local-function-calls).
 - **Lexicon package exports** — the same resolution follows a bare import into a lexicon package, so a lexicon's plain data exports fold as values: Azure's and GCP's pseudo-parameter namespaces (`Azure.ResourceGroupLocation`, `GCP.ProjectId`), AWS's `S3Actions`, GitLab's `CI` (#1063). Only lexicons this build actually loaded are followed, and only the package itself, never a subpath or an unrelated package — the boundary is the lexicon list your project already declares or chant already detected, not `node_modules` at large. The lexicon module is imported the same way the run path imports it, so what fold captures is the same object, not a copy.
 
-What still forces a fallback to run, per file: **a function call used as a value that is neither a registered authoring helper nor an opted-in intrinsic** — your own helper, an array `.map(...)`, a method call, an intrinsic whose lexicon has not opted it in. Also: a composite call nested as a *value* inside something else rather than being the file's own top-level export, a `new ns.Type(...)` through a namespace import (the class has to be reachable through a named import to be constructed), a re-export, `export default`, `let`/`var`, and an exported function or class declaration.
+What still forces a fallback to run, per file: **a function call used as a value that is neither a registered authoring helper, an opted-in intrinsic, nor a project-local function with a foldable body** — a package's function, an array `.map(...)`, a method call, an intrinsic whose lexicon has not opted it in, a helper of your own whose body reads the environment or does I/O. Also: a composite call nested as a *value* inside something else rather than being the file's own top-level export, a `new ns.Type(...)` through a namespace import (the class has to be reachable through a named import to be constructed), a re-export, `export default`, `let`/`var`, and an exported class declaration.
 
 `process.env.X` and other environment-dependent references are rejected by the same mechanism, but not because of a gap left to close: an environment read is a value fold can only get by executing code and consulting whatever process happens to be running the build, which is exactly what folding is built to avoid. It's an unresolved identifier like any other, and the file falls back to run by design — reported with a pointed message rather than the generic "unresolved identifier", naming the alternative below.
 
@@ -285,7 +320,7 @@ Fold and run are also kept from ever disagreeing about a shared entity's identit
 
 None of this is something you opt into piecemeal or write differently for — it's the existing supported subset, enforced by construction instead of by lint. Settable project-wide via `chant.config.ts`'s `build.fold` (default `true`); an explicit `--fold`/`--no-fold` flag always wins when passed.
 
-**Migrating from pre-#1134 builds**: the one observable change of fold-by-default is that a *folded* file's module-scope side effects (a `console.log`, a global registry mutation, an ambient read at import time) no longer run at build time — eliminating exactly that execution is what folding is. Files outside the subset still run, unchanged. If a build genuinely depends on module side effects, `--no-fold` (or `build.fold: false`) restores the pre-#1134 behavior wholesale, and each `[fold:fold]` log line tells you which files stopped executing.
+**Migrating from pre-#1134 builds**: the one observable change of fold-by-default is that a *folded* file's module-scope side effects (a `console.log`, a global registry mutation, an ambient read at import time) no longer run at build time — eliminating exactly that execution is what folding is. Files outside the subset still run, unchanged. If a build genuinely depends on module side effects, `--no-fold` (or `build.fold: false`) restores the pre-#1134 behavior wholesale, and each `[fold:fold]` log line under `chant build --verbose` tells you which files stopped executing.
 
 ### Interpretable composite factories
 
@@ -308,7 +343,7 @@ What you get is what running the factory produced. The resources are built by th
 ### Fold coverage today
 
 {/* GENERATED:fold-coverage:start */}
-As of this measurement, **78 of 105** example projects in the corpus fold completely — every file in them reduces to a value with zero module execution. The remaining **27** have at least one file that falls back to running.
+As of this measurement, **79 of 105** example projects in the corpus fold completely — every file in them reduces to a value with zero module execution. The remaining **26** have at least one file that falls back to running.
 {/* GENERATED:fold-coverage:end */}
 
 This is measured over the same corpus [`just fold-differential`](#byte-identical-output) builds both ways: every tutorial under `examples/*/src`, plus each lexicon's own build fixtures under `lexicons/*/examples/*/src`. It's a count of chant's own example suite, not a sample of real-world source — read it as "how much of chant's examples fold today," not as an estimate for any other codebase.

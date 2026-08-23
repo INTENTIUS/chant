@@ -31,6 +31,14 @@ export interface ObserveResult {
   observations: LiveObservation[];
   warnings: string[];
   errors: string[];
+  /**
+   * Run-level notices from the lexicons (#1265), each said once however many
+   * stacks or lexicons reported it — "ownership filter unavailable on this
+   * read path" is the canonical one. Kept apart from `warnings`, which are
+   * per-entity, so a caller can print them where a note belongs: after the
+   * answer, not ahead of it.
+   */
+  notes: string[];
 }
 
 /**
@@ -47,6 +55,7 @@ function qualifyObservation(obs: NormalizedObservation, stackName: string): Norm
     resources: q(obs.resources),
     unobserved: q(obs.unobserved),
     queried: q(obs.queried),
+    notes: obs.notes,
     // Exports are already keyed by stack (#1279); nothing to qualify.
     ...(obs.stackExports ? { stackExports: obs.stackExports } : {}),
   };
@@ -116,6 +125,7 @@ export async function observeResources(
   const observations: LiveObservation[] = [];
   const warnings: string[] = [];
   const errors: string[] = [];
+  const notes: string[] = [];
 
   for (const plugin of plugins) {
     if (!plugin.describeResources) continue;
@@ -206,6 +216,13 @@ export async function observeResources(
           }),
         );
       }
+      // Run-level notices (#1265): one line per distinct note per run,
+      // whatever the stack count. `mergeObservations` already folded the
+      // per-stack copies; this folds across lexicons.
+      for (const note of observed.notes) {
+        const line = `[${plugin.name}] ${note}`;
+        if (!notes.includes(line)) notes.push(line);
+      }
       // What the estate depends on but does not declare (#1273). Read after the
       // managed resources, because the declared observation is the closure's
       // roots — there is nothing to reference out from until it exists.
@@ -266,6 +283,7 @@ export async function observeResources(
           resources: {},
           unobserved: unobservedAll(entityNames, "read-failed", message, entities),
           queried: {},
+          notes: [],
         },
         environment,
         entityNames.length,
@@ -273,7 +291,7 @@ export async function observeResources(
     }
   }
 
-  return { observations, warnings, errors };
+  return { observations, warnings, errors, notes };
 }
 
 /**

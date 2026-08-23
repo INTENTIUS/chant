@@ -204,11 +204,13 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
   // missing required value, a type/enum mismatch) is reported as a chant
   // build error naming the parameter, never a thrown error from inside user
   // source (which is what loomster's hand-rolled `tierFromEnv()`-style
-  // validators did before migrating to this mechanism). Also logs every
-  // resolved value (`[param] name = value (source)`) on success.
+  // validators did before migrating to this mechanism). Also logs a one-line
+  // count on success, or every resolved value (`[param] name = value
+  // (source)`) under --verbose (#1424).
   const paramsResolution = resolveCliBuildParams(config.buildParams, {
     cli: options.params,
     paramsFile: options.paramsFile,
+    verbose: options.verbose,
   });
   if (!paramsResolution.success) {
     errors.push(...paramsResolution.errors);
@@ -300,14 +302,22 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
   });
 
   // #1022 — report per-file fold vs run so it's visible what still runs.
-  if (fold) {
-    for (const decision of result.foldDecisions) {
-      const rel = relative(infraPath, decision.file) || decision.file;
-      const detail =
-        decision.mode === "fold"
-          ? `${decision.resourceCount ?? 0} resource(s), no module execution`
-          : (decision.reason ?? "fell back to run");
-      console.error(formatInfo(`[fold:${decision.mode}] ${rel} — ${detail}`));
+  // #1424 — one line by default; the per-file lines and their reasons are
+  // --verbose. A file that ran is the expected outcome for source that
+  // computes values in functions, and a dozen "is not foldable" notes read
+  // like errors to someone meeting the project for the first time.
+  if (fold && result.foldDecisions.length > 0) {
+    if (options.verbose) {
+      for (const decision of result.foldDecisions) {
+        const rel = relative(infraPath, decision.file) || decision.file;
+        const detail =
+          decision.mode === "fold"
+            ? `${decision.resourceCount ?? 0} resource(s), no module execution`
+            : (decision.reason ?? "fell back to run");
+        console.error(formatInfo(`[fold:${decision.mode}] ${rel} — ${detail}`));
+      }
+    } else {
+      console.error(formatInfo(summarizeFoldDecisions(result.foldDecisions)));
     }
   }
 
@@ -613,6 +623,20 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
     warnings,
     buildParams: paramsResolution.provenance,
   };
+}
+
+/**
+ * `fold: 8 files folded, 13 ran (--verbose for reasons)` — the non-verbose
+ * report of a fold build's per-file decisions (#1424). The "(--verbose for
+ * reasons)" hint appears only when something ran, since that is the only case
+ * with a reason to read.
+ */
+export function summarizeFoldDecisions(decisions: readonly { mode: string }[]): string {
+  const folded = decisions.filter((d) => d.mode === "fold").length;
+  const ran = decisions.length - folded;
+  const files = (n: number) => `${n} file${n === 1 ? "" : "s"}`;
+  const hint = ran > 0 ? " (--verbose for reasons)" : "";
+  return `fold: ${files(folded)} folded, ${ran} ran${hint}`;
 }
 
 /**

@@ -27,6 +27,8 @@ chant graph --format ir --live --env <name> --overlay
 
 The infra-graph formats are a pure function of lint-clean source — every node traces to a source file, every edge is a real cross-resource reference. They are **lint-gated**: chant refuses to emit a graph for source that does not pass `chant lint`, because the graph represents valid infrastructure.
 
+Declared Ops are part of the infra graph. `*.op.ts` files are collected the way `chant graph` (the Op view) and `chant run` find them, from the git root, so an op kept outside `sourceDir` (`ops/`, or the project root beside `sourceDir: "src"`) still appears as a `Temporal::Op` node. Its `attrs` carry the full `OpConfig` (`phases`, `steps`, `gates`, `depends`) at `--detail 3`; lower tiers keep only the scalar fields.
+
 ### `--live` — the provisioned graph
 
 `--format ir --live --env <name>` emits the graph of what's **actually deployed** in that environment, not what source declares. It queries each lexicon's live observation (`describeResources`) for the chant-managed resources and projects them into the same IR. Nodes carry their observed `physicalId` and ownership marker.

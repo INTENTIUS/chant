@@ -100,8 +100,11 @@ function starterCapabilities(): Array<Capability<never, unknown>> {
 export const starterCapabilityPlugin: CapabilityPlugin = {
   name: "starter",
   // The core package's own version (#1505) — lockstep releases bump it, so a
-  // literal here would go stale every `just release`.
-  version: ownPackageVersion(import.meta.url),
+  // literal here would go stale every `just release`. A getter, so the
+  // package.json read happens on first access rather than at import time.
+  get version(): string {
+    return ownPackageVersion(import.meta.url);
+  },
   capabilities: starterCapabilities,
   families: () => STARTER_VERB_FAMILIES,
 };
