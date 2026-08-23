@@ -47,6 +47,8 @@ export {
   getResource,
   listResources,
   parseResourceDescription,
+  resolveEndpointOverride,
+  serviceEndpointEnvVar,
   AwsReadError,
   type AwsReadHttp,
   type AwsReadClientOptions,

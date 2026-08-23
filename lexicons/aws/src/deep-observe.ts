@@ -424,7 +424,6 @@ export async function observeResourcesDeepAws(
 
   const stackName = options.stack ?? options.environment;
   const client: AwsReadClientOptions = {
-    ...(process.env.AWS_ENDPOINT_URL ? { endpoint: process.env.AWS_ENDPOINT_URL } : {}),
     ...(options.region ? { region: options.region } : {}),
     ...(options.http ? { http: options.http } : {}),
   };

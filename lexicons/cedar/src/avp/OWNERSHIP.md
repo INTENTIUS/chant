@@ -127,7 +127,10 @@ trade the decoupling buys, and it is why the two files name each other in prose.
 Unsigned stays the default, and three cases stay unsigned regardless: no signer wired
 in, no credentials resolved, and an endpoint override without `signEndpointOverride`
 (an emulator does not verify signatures, and signing against one would make every local
-lane need credentials to read what it just deployed). `credentialsAvailable` therefore
+lane need credentials to read what it just deployed). An override is the `endpoint`
+option, else `AWS_ENDPOINT_URL_VERIFIEDPERMISSIONS`, else `AWS_ENDPOINT_URL` — the SDK's
+precedence, and the rule the aws lexicon's read client applies (#1694); it is restated
+in `resolveEndpointOverride` for the same reason the signer shapes are. `credentialsAvailable` therefore
 still gates the readers exactly as before — a caller that wires nothing in gets every
 entity NOT-OBSERVED with `no-credentials` rather than a request that was never going to
 work.
