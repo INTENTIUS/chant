@@ -951,9 +951,9 @@ describe("runOpComponents", () => {
       expect(runComponentsMock).toHaveBeenCalledWith(expect.any(String), "svc", expect.objectContaining({
         buildParams: [{ name: "tier", value: "light", source: "default" }],
       }));
-      // A parameter at its default collapses into the count line now; the
-      // provenance forwarded above is where its value is asserted.
-      expect(stderr.join("\n")).toContain("at their defaults");
+      // The echo is a one-line count (#1424); the provenance forwarded above
+      // is where the value is asserted.
+      expect(stderr.join("\n")).toContain("1 build parameter resolved (1 default)");
     });
 
     test("--param overrides a declared default and is threaded through to runComponents", async () => {
@@ -978,7 +978,7 @@ describe("runOpComponents", () => {
       expect(runComponentsMock).toHaveBeenCalledWith(expect.any(String), "svc", expect.objectContaining({
         buildParams: [{ name: "tier", value: "production", source: "cli" }],
       }));
-      expect(stderr.join("\n")).toContain("[param] tier");
+      expect(stderr.join("\n")).toContain("1 build parameter resolved (1 from cli)");
       vi.restoreAllMocks();
     });
 

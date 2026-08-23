@@ -48,6 +48,7 @@ async function graphBuildParams(
   const resolution = resolveCliBuildParams(config.buildParams, {
     cli: parseParamFlags(ctx.args.param),
     paramsFile: ctx.args.paramsFile,
+    verbose: ctx.args.verbose,
   });
   if (!resolution.success) {
     for (const message of resolution.errors) console.error(message);

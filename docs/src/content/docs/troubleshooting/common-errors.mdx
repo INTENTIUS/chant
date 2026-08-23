@@ -88,9 +88,9 @@ The resource class isn't recognized by the installed lexicon.
 
 **Fix:** Check for typos, then update the lexicon (`npm update`) and run `chant update` to sync lexicon types.
 
-## `[fold:run] <file> — <reason>` (using `chant build --fold`)
+## `[fold:run] <file> — <reason>` (using `chant build --verbose`)
 
-**Symptom:** Running `chant build --fold` logs `[fold:run]` for a file you expected to fold.
+**Symptom:** `chant build` reports `fold: N files folded, M ran`, and `chant build --verbose` logs `[fold:run]` for a file you expected to fold.
 
 **Cause:** This isn't an error — the file simply falls back to the normal run path for this build, exactly as if `--fold` hadn't been passed. The reason on the line says why: a construct outside the fold subset (a re-export, `export default`, a nested composite/resource call used as a value), or — the most common cause — a reference to another file's export, which cross-file resolution doesn't support yet (#1020).
 

@@ -256,7 +256,7 @@ Nothing changes about what you write to get folding — the supported subset abo
 | Output | Resource objects — [byte-identical serialized output](#byte-identical-output) | Same resource objects |
 | How you get it | On by default since #1134 | `--no-fold`, `build.fold: false`, or a per-file fallback |
 
-Folding happens per file, not per project. A file either folds entirely or falls back to running entirely — chant never partially executes a file. `chant build` logs which path each file took, and why, in a real run:
+Folding happens per file, not per project. A file either folds entirely or falls back to running entirely — chant never partially executes a file. `chant build --verbose` logs which path each file took, and why, in a real run (without the flag, the same decisions collapse to one line: `fold: 1 files folded, 1 ran (--verbose for reasons)`):
 
 ```
 [fold:fold] tags.ts — 1 resource(s), no module execution
@@ -285,7 +285,7 @@ Fold and run are also kept from ever disagreeing about a shared entity's identit
 
 None of this is something you opt into piecemeal or write differently for — it's the existing supported subset, enforced by construction instead of by lint. Settable project-wide via `chant.config.ts`'s `build.fold` (default `true`); an explicit `--fold`/`--no-fold` flag always wins when passed.
 
-**Migrating from pre-#1134 builds**: the one observable change of fold-by-default is that a *folded* file's module-scope side effects (a `console.log`, a global registry mutation, an ambient read at import time) no longer run at build time — eliminating exactly that execution is what folding is. Files outside the subset still run, unchanged. If a build genuinely depends on module side effects, `--no-fold` (or `build.fold: false`) restores the pre-#1134 behavior wholesale, and each `[fold:fold]` log line tells you which files stopped executing.
+**Migrating from pre-#1134 builds**: the one observable change of fold-by-default is that a *folded* file's module-scope side effects (a `console.log`, a global registry mutation, an ambient read at import time) no longer run at build time — eliminating exactly that execution is what folding is. Files outside the subset still run, unchanged. If a build genuinely depends on module side effects, `--no-fold` (or `build.fold: false`) restores the pre-#1134 behavior wholesale, and each `[fold:fold]` log line under `chant build --verbose` tells you which files stopped executing.
 
 ### Interpretable composite factories
 
