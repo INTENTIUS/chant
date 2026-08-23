@@ -4,7 +4,7 @@
  */
 
 import { describe, test, expect, beforeAll, afterAll } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { forgejoContextTools } from "./context-tools";
@@ -39,6 +39,12 @@ const tool = (name: string) => tools.find((t) => t.name === name)!;
 beforeAll(() => {
   dir = mkdtempSync(join(tmpdir(), "fj-ctx-"));
   mkdirSync(join(dir, "src"));
+  // The fixture imports `@intentius/chant-lexicon-forgejo` by bare specifier
+  // from outside the repo. Vitest 3's vite-node silently resolved that
+  // against the repo root; Vitest 4's module runner resolves from the
+  // importing file, the way Node does, so give the temp project a
+  // node_modules the same way a consumer project would have one.
+  symlinkSync(join(__dirname, "..", "..", "..", "..", "node_modules"), join(dir, "node_modules"), "dir");
   writeFileSync(join(dir, "src", "pipeline.ts"), SOURCE);
 });
 

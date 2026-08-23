@@ -97,7 +97,7 @@ function fakeClient(opts: {
 function setupClientMock(connection: unknown, client: unknown) {
   loadTemporalClientMock.mockResolvedValue({
     Connection: { connect: vi.fn(async () => connection) },
-    Client: vi.fn(() => client) as unknown as new () => unknown,
+    Client: vi.fn(function () { return client; }) as unknown as new () => unknown,
   });
 }
 

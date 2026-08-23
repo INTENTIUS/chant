@@ -76,7 +76,7 @@ async function runTriage(opts: { risky: boolean; signal?: boolean }) {
 }
 
 describe("alert-triage workflow", () => {
-  test("safe remediation auto-approves, applies, and skips the gate", async () => {
+  test("safe remediation auto-approves, applies, and skips the gate", { timeout: 120_000, retry: 2 }, async () => {
     const { record, durationMs } = await runTriage({ risky: false });
     expect(record.calls).toEqual(["classify", "context", "propose", "apply", "notify"]);
     expect(record.approved).toBe(true);
@@ -85,17 +85,17 @@ describe("alert-triage workflow", () => {
     // retry: the Temporal time-skipping harness can transiently flake under CI
     // load (worker/timer timing); the assertions are deterministic, so a retry
     // absorbs the flake without masking a real failure.
-  }, { timeout: 120_000, retry: 2 });
+  });
 
-  test("risky remediation applies once the approval signal arrives", async () => {
+  test("risky remediation applies once the approval signal arrives", { timeout: 120_000, retry: 2 }, async () => {
     const { record, durationMs } = await runTriage({ risky: true, signal: true });
     expect(record.approved).toBe(true);
     expect(record.applied).toBe(true);
     expect(record.calls).toEqual(["classify", "context", "propose", "apply", "notify"]);
     expect(durationMs).toBeLessThan(60 * 60 * 1000); // signal short-circuits the gate
-  }, { timeout: 120_000, retry: 2 });
+  });
 
-  test("risky remediation without approval waits out the gate and is never applied", async () => {
+  test("risky remediation without approval waits out the gate and is never applied", { timeout: 120_000, retry: 2 }, async () => {
     const { record, durationMs } = await runTriage({ risky: true });
     expect(record.approved).toBe(false);
     expect(record.applied).toBe(false);
@@ -103,5 +103,5 @@ describe("alert-triage workflow", () => {
     expect(record.calls).toContain("notify");
     expect(durationMs).toBeGreaterThan(11 * 60 * 60 * 1000); // ~12h gate timeout
     // retry: see note above — absorbs transient Temporal-harness timing flakes.
-  }, { timeout: 120_000, retry: 2 });
+  });
 });
