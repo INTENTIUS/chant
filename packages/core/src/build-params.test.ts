@@ -129,6 +129,58 @@ describe("resolveBuildParams — validation", () => {
   });
 });
 
+describe("resolveBuildParams — unset optional parameters (#1371)", () => {
+  // An unset optional parameter must read as `undefined` from `params.<name>`
+  // — never `null`. `null` is a value ("explicitly nothing"); leaving a
+  // parameter unset is not that statement, and a `null` that reaches a
+  // composite ships as `key: null` in the output.
+  test("unset optional with a declared default resolves to the default", () => {
+    const defs: BuildParamsConfig = {
+      baseImageArn: { type: "string", required: false, env: "KMV_BASE_IMAGE_ARN", default: "arn:base" },
+    };
+    const result = resolveBuildParams(defs, { env: {} });
+    expect(result.errors).toEqual([]);
+    expect(buildParamValues(result.provenance)).toEqual({ baseImageArn: "arn:base" });
+  });
+
+  test("unset optional without a default is absent — reads as undefined, never null", () => {
+    const defs: BuildParamsConfig = { baseImageArn: { type: "string", required: false, env: "KMV_BASE_IMAGE_ARN" } };
+    const result = resolveBuildParams(defs, { env: {} });
+    expect(result.errors).toEqual([]);
+    const values = buildParamValues(result.provenance);
+    expect("baseImageArn" in values).toBe(false);
+    expect(values.baseImageArn).toBeUndefined();
+    expect(values.baseImageArn ?? "fallback").toBe("fallback");
+  });
+
+  test("an env var declared but not exported is the same as unset", () => {
+    const defs: BuildParamsConfig = { baseImageArn: { type: "string", required: false, env: "KMV_BASE_IMAGE_ARN" } };
+    const result = resolveBuildParams(defs, { env: { KMV_BASE_IMAGE_ARN: undefined } });
+    expect(result.errors).toEqual([]);
+    expect(result.provenance).toEqual([]);
+  });
+
+  test("an explicit empty string is a supplied value, not unset", () => {
+    const defs: BuildParamsConfig = { baseImageArn: { type: "string", required: false, default: "arn:base" } };
+    const fromCli = resolveBuildParams(defs, { cli: { baseImageArn: "" } });
+    expect(fromCli.errors).toEqual([]);
+    expect(fromCli.provenance).toEqual([{ name: "baseImageArn", value: "", source: "cli" }]);
+
+    const fromEnv = resolveBuildParams({ baseImageArn: { type: "string", required: false, env: "X" } }, { env: { X: "" } });
+    expect(fromEnv.errors).toEqual([]);
+    expect(fromEnv.provenance).toEqual([{ name: "baseImageArn", value: "", source: "env" }]);
+  });
+
+  test("a null in --params-file is rejected, never passed through as a value", () => {
+    const defs: BuildParamsConfig = { baseImageArn: { type: "string", required: false } };
+    const result = resolveBuildParams(defs, { fromFile: { baseImageArn: null } });
+    expect(result.errors).toEqual([
+      'build parameter "baseImageArn" (from --params-file) must be a string, number, or boolean',
+    ]);
+    expect(result.provenance).toEqual([]);
+  });
+});
+
 describe("buildParamValues", () => {
   test("projects provenance records down to a plain value map", () => {
     const provenance = [

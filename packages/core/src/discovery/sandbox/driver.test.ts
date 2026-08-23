@@ -27,6 +27,17 @@ describe("generateDriverSource — build-time parameters (#1108)", () => {
     expect(bindAt).toBeLessThan(firstImportAt);
   });
 
+  test("an unset optional parameter is absent from the snapshot, not carried as null (#1371)", () => {
+    // The snapshot crosses into the child as JSON. JSON has no `undefined`,
+    // so "unset" must be expressed by omitting the key — a `null` here would
+    // bind `params.<name>` to a value in the child while the parent's fold
+    // path reads `undefined`.
+    setBuildParams({ tier: "light" });
+    const source = generateDriverSource({ files: ["/tmp/project/a.ts"], buildRoot: "/tmp/project" });
+    expect(source).toContain(`setBuildParams(${JSON.stringify({ tier: "light" })});`);
+    expect(source).not.toContain("null");
+  });
+
   test("with no params resolved, binds an empty snapshot (explicit, not absent)", () => {
     const source = generateDriverSource({ files: ["/tmp/project/a.ts"], buildRoot: "/tmp/project" });
     expect(source).toContain("setBuildParams({});");

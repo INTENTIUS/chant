@@ -1021,6 +1021,37 @@ describe("tryFoldFile — build-time parameters (chant #1064)", () => {
     expect(result.exportedValues.get("project")).toBe("loom");
   });
 
+  test("an unset optional parameter folds to undefined, not null — defaults and truthiness behave (#1371)", async () => {
+    const file = join(testDir, "main.ts");
+    await writeFile(
+      file,
+      `
+        import { params } from ${JSON.stringify(paramsPath)};
+        export const region = "us-east-1";
+        export const raw = params.baseImageArn;
+        export const withDefault =
+          (params.baseImageArn as string | undefined) ?? \`arn:aws:lambda:\${region}:aws:microvm-image:al2023-1\`;
+        export const conditional = { ...(params.baseImageArn ? { baseImageArn: params.baseImageArn } : {}) };
+        export const direct = { baseImageArn: params.baseImageArn };
+      `,
+    );
+
+    // Declared `required: false` with no value: the resolved map has no key at all.
+    const session = createFoldSession([], {});
+    const result = await tryFoldFile(file, [], session);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.exportedValues.get("raw")).toBeUndefined();
+    expect(result.exportedValues.get("raw")).not.toBeNull();
+    expect(result.exportedValues.get("withDefault")).toBe("arn:aws:lambda:us-east-1:aws:microvm-image:al2023-1");
+    expect(result.exportedValues.get("conditional")).toEqual({});
+    // The key is present but undefined — what the serializers drop (see yaml.ts).
+    const direct = result.exportedValues.get("direct") as { baseImageArn?: unknown };
+    expect(direct.baseImageArn).toBeUndefined();
+    expect(JSON.stringify(direct)).toBe("{}");
+  });
+
   test("an unrelated import also named `params` (not resolving to ../params.ts) is unaffected", async () => {
     await writeFile(
       join(testDir, "local-config.ts"),

@@ -19,9 +19,26 @@
  *   with `\n` so the caller can append it after a key.
  * - Tagged values `{ tag, value }` emit `!tag [...]` or `!tag scalar`.
  */
+/**
+ * An object's entries minus those whose value is `undefined`. An `undefined`
+ * property is "not supplied" in TypeScript (a declared-but-unset optional
+ * build parameter, `{ x: cond ? v : undefined }`), which `JSON.stringify`
+ * already omits; the YAML emitter must agree, or the same source ships
+ * `key: null` under `-o out.yaml` and no key at all under `-o out.json`. An
+ * explicit `null` is a value and is kept (chant #1371).
+ */
+function definedEntries(obj: Record<string, unknown>): [string, unknown][] {
+  return Object.entries(obj).filter(([, val]) => val !== undefined);
+}
+
 export function emitYAML(value: unknown, indent: number): string {
   const prefix = "  ".repeat(indent);
 
+  // `undefined` only reaches here as a top-level value or an array element —
+  // an object entry whose value is `undefined` is dropped below, the same way
+  // `JSON.stringify` omits it. A bare `undefined` renders as `null` for the
+  // same reason `JSON.stringify([undefined])` is `[null]`: YAML has no way to
+  // say "absent" in a sequence slot.
   if (value === null || value === undefined) {
     return "null";
   }
@@ -74,7 +91,7 @@ export function emitYAML(value: unknown, indent: number): string {
     for (const item of value) {
       if (typeof item === "object" && item !== null && !Array.isArray(item)) {
         // Object items in arrays
-        const entries = Object.entries(item as Record<string, unknown>);
+        const entries = definedEntries(item as Record<string, unknown>);
         if (entries.length > 0) {
           const [firstKey, firstVal] = entries[0];
           const firstEmitted = emitYAML(firstVal, indent + 2);
@@ -111,7 +128,7 @@ export function emitYAML(value: unknown, indent: number): string {
       return `${obj.tag} ${emitYAML(obj.value, indent)}`;
     }
 
-    const entries = Object.entries(obj);
+    const entries = definedEntries(obj);
     if (entries.length === 0) return "{}";
     const lines: string[] = [];
     for (const [key, val] of entries) {
