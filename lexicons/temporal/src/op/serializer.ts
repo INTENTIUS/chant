@@ -39,14 +39,38 @@ function collectActivitySteps(phases: PhaseDefinition[]): ActivityStep[] {
   return phases.flatMap((p) => p.steps.filter(isActivityStep));
 }
 
-function groupByProfile(steps: ActivityStep[]): Map<string, Set<string>> {
-  const map = new Map<string, Set<string>>();
+/**
+ * One proxy binding per (activity, profile) pair.
+ *
+ * Each profile gets its own `proxyActivities(...)` call, and an activity is
+ * destructured from it under a local identifier. The first profile an activity
+ * is authored at keeps the bare function name (`shellCmd`); every further
+ * profile the same activity appears at gets a suffixed alias
+ * (`shellCmd_longInfra`) so the generated workflow never declares the same
+ * `const` twice (#1698). Steps reference the alias for their own profile.
+ */
+interface ActivityBindings {
+  /** profile → [activity fn → local identifier], in first-seen order */
+  byProfile: Map<string, Map<string, string>>;
+  /** `${profile}:${fn}` → local identifier */
+  ident: (step: ActivityStep) => string;
+}
+
+function bindActivities(steps: ActivityStep[]): ActivityBindings {
+  const byProfile = new Map<string, Map<string, string>>();
+  const seenFns = new Set<string>();
   for (const step of steps) {
     const prof = effectiveProfile(step);
-    if (!map.has(prof)) map.set(prof, new Set());
-    map.get(prof)!.add(step.fn);
+    if (!byProfile.has(prof)) byProfile.set(prof, new Map());
+    const fns = byProfile.get(prof)!;
+    if (fns.has(step.fn)) continue;
+    fns.set(step.fn, seenFns.has(step.fn) ? `${step.fn}_${prof}` : step.fn);
+    seenFns.add(step.fn);
   }
-  return map;
+  return {
+    byProfile,
+    ident: (step) => byProfile.get(effectiveProfile(step))!.get(step.fn)!,
+  };
 }
 
 function generateWorkflow(config: OpConfig): string {
@@ -55,7 +79,9 @@ function generateWorkflow(config: OpConfig): string {
     ...(config.onFailure ? collectActivitySteps(config.onFailure) : []),
   ];
 
-  const byProfile = groupByProfile(allActivitySteps);
+  const bindings = bindActivities(allActivitySteps);
+  const byProfile = bindings.byProfile;
+  const callee = bindings.ident;
 
   const allGateSteps = [
     ...config.phases.flatMap((p) => p.steps.filter(isGateStep)),
@@ -82,7 +108,9 @@ function generateWorkflow(config: OpConfig): string {
     lines.push("");
   } else {
     for (const [prof, fns] of byProfile) {
-      const destructured = [...fns].join(", ");
+      const destructured = [...fns]
+        .map(([fn, id]) => (id === fn ? fn : `${fn}: ${id}`))
+        .join(", ");
       lines.push(`const { ${destructured} } = proxyActivities<typeof activities>(`);
       lines.push(`  TEMPORAL_ACTIVITY_PROFILES.${prof},`);
       lines.push(`);`);
@@ -148,55 +176,49 @@ function generateWorkflow(config: OpConfig): string {
       phaseLines.push(`  // Phase: ${phase.name}`);
       phaseLines.push(`  upsertSearchAttributes({ Phase: ${JSON.stringify([phase.name])} });`);
 
-      const activitySteps = phase.steps.filter(isActivityStep);
-      const gateSteps = phase.steps.filter(isGateStep);
+      const argsOf = (step: ActivityStep): string =>
+        step.args && Object.keys(step.args).length > 0 ? JSON.stringify(step.args) : "{}";
 
-      if (phase.parallel && activitySteps.length > 1) {
-        // Capture results into an array if any step has an outcome attribute,
-        // otherwise just await Promise.all without the destructure.
-        const anyOutcome = activitySteps.some((s) => s.outcomeAttribute);
-        if (anyOutcome) {
-          const vars = activitySteps.map(() => nextResultVar());
-          phaseLines.push(`  const [${vars.join(", ")}] = await Promise.all([`);
-          for (let i = 0; i < activitySteps.length; i++) {
-            const step = activitySteps[i];
-            const argsStr = step.args && Object.keys(step.args).length > 0
-              ? JSON.stringify(step.args)
-              : "{}";
-            phaseLines.push(`    ${step.fn}(${argsStr}),`);
+      // A run of consecutive activity steps. In a sequential phase each is
+      // awaited in turn; in a parallel phase the run is a single Promise.all.
+      const emitActivityRun = (run: ActivityStep[]) => {
+        if (phase.parallel && run.length > 1) {
+          // Capture results into an array if any step has an outcome attribute,
+          // otherwise just await Promise.all without the destructure.
+          const anyOutcome = run.some((s) => s.outcomeAttribute);
+          if (anyOutcome) {
+            const vars = run.map(() => nextResultVar());
+            phaseLines.push(`  const [${vars.join(", ")}] = await Promise.all([`);
+            for (const step of run) {
+              phaseLines.push(`    ${callee(step)}(${argsOf(step)}),`);
+            }
+            phaseLines.push("  ]);");
+            for (let i = 0; i < run.length; i++) {
+              const upsert = emitOutcomeUpsert(run[i], vars[i]);
+              if (upsert) phaseLines.push(upsert);
+            }
+          } else {
+            phaseLines.push("  await Promise.all([");
+            for (const step of run) {
+              phaseLines.push(`    ${callee(step)}(${argsOf(step)}),`);
+            }
+            phaseLines.push("  ]);");
           }
-          phaseLines.push("  ]);");
-          for (let i = 0; i < activitySteps.length; i++) {
-            const upsert = emitOutcomeUpsert(activitySteps[i], vars[i]);
-            if (upsert) phaseLines.push(upsert);
-          }
-        } else {
-          phaseLines.push("  await Promise.all([");
-          for (const step of activitySteps) {
-            const argsStr = step.args && Object.keys(step.args).length > 0
-              ? JSON.stringify(step.args)
-              : "{}";
-            phaseLines.push(`    ${step.fn}(${argsStr}),`);
-          }
-          phaseLines.push("  ]);");
+          return;
         }
-      } else {
-        for (const step of activitySteps) {
-          const argsStr = step.args && Object.keys(step.args).length > 0
-            ? JSON.stringify(step.args)
-            : "{}";
+        for (const step of run) {
           if (step.outcomeAttribute) {
             const v = nextResultVar();
-            phaseLines.push(`  const ${v} = await ${step.fn}(${argsStr});`);
+            phaseLines.push(`  const ${v} = await ${callee(step)}(${argsOf(step)});`);
             const upsert = emitOutcomeUpsert(step, v);
             if (upsert) phaseLines.push(upsert);
           } else {
-            phaseLines.push(`  await ${step.fn}(${argsStr});`);
+            phaseLines.push(`  await ${callee(step)}(${argsOf(step)});`);
           }
         }
-      }
+      };
 
-      for (const gateStep of gateSteps) {
+      const emitGate = (gateStep: GateStep) => {
         const varName = signalVarName(gateStep.signalName);
         const timeout = gateStep.timeout ?? "48h";
         if (gateStep.description) {
@@ -220,7 +242,25 @@ function generateWorkflow(config: OpConfig): string {
         } else {
           phaseLines.push(`  void ${varName}Approver;`);
         }
+      };
+
+      // Walk the steps in authored order. A gate splits the phase's activities
+      // into separate runs, so [gate, activity] waits for the gate before the
+      // activity runs (and [activity, gate] the other way round) — the
+      // serializer never reorders what the author wrote (#1698).
+      let run: ActivityStep[] = [];
+      for (const step of phase.steps) {
+        if (isActivityStep(step)) {
+          run.push(step);
+          continue;
+        }
+        if (isGateStep(step)) {
+          emitActivityRun(run);
+          run = [];
+          emitGate(step);
+        }
       }
+      emitActivityRun(run);
 
       lines.push(...phaseLines);
       lines.push("");
