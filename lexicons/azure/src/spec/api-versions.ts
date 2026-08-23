@@ -76,6 +76,18 @@ export function parseSchemaPath(
  * no GA date and whose newer preview files (2024-12-01-preview and later)
  * drag in policy variables we don't want yet.
  *
+ * Microsoft.AzureStackHCI splits the same way (#1795): the newest dated file
+ * (2026-05-01-preview) carries only the cluster/edge-device family, while the
+ * VM family (virtualMachineInstances, virtualNetworks, networkInterfaces,
+ * publicIPAddresses, galleryImages, virtualHardDisks, ...) last appears in
+ * 2026-04-01-preview. Pin both, newest first — the cluster/edge family
+ * generates from 2026-05-01-preview and the VM family fills in from
+ * 2026-04-01-preview. `Microsoft.DataReplication/replicationVaults_
+ * privateEndpointConnectionProxies` dropped out in the same re-baseline but
+ * is NOT pinnable back: no dated Microsoft.DataReplication.json at the
+ * AZURE_SCHEMA_COMMIT pin (2021-02-16-preview, 2024-09-01, 2026-05-01)
+ * defines it — upstream removed the resource, so it stays gone.
+ *
  * Microsoft.Management and Microsoft.Subscription are pinned to their latest
  * GA dates: the naive latest for both is a preview (2024-02-01-preview adds
  * serviceGroups; 2025-11-01-preview adds changeTenantRequest), and the
@@ -83,6 +95,7 @@ export function parseSchemaPath(
  */
 export const PROVIDER_VERSION_OVERRIDES: Record<string, readonly string[]> = {
   "Microsoft.Authorization": ["2022-04-01", "2026-06-01", "2022-07-01-preview"],
+  "Microsoft.AzureStackHCI": ["2026-05-01-preview", "2026-04-01-preview"],
   "Microsoft.Compute": ["2026-03-01"],
   "Microsoft.Management": ["2023-04-01"],
   "Microsoft.Subscription": ["2021-10-01"],
