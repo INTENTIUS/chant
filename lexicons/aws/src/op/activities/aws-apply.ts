@@ -1,9 +1,9 @@
 import { readFileSync } from "node:fs";
 import { safeHeartbeat, sleep } from "@intentius/chant/op";
+import { awsDeployCapabilitiesForBody } from "../../components/cloud-executor.js";
 
 const DEFAULT_REGION = "us-east-1";
 const CFN_API_VERSION = "2010-05-15";
-const DEFAULT_CAPABILITIES = ["CAPABILITY_NAMED_IAM"];
 
 export interface AwsApplyArgs {
   /** Path to a built CloudFormation template (JSON/YAML). */
@@ -14,7 +14,10 @@ export interface AwsApplyArgs {
   endpoint?: string;
   /** Region (real CFN host + `Version` context). Default: `us-east-1`. */
   region?: string;
-  /** Capabilities to acknowledge. Default: `["CAPABILITY_NAMED_IAM"]`. */
+  /**
+   * Capabilities to acknowledge. Default: `CAPABILITY_NAMED_IAM`, plus
+   * `CAPABILITY_AUTO_EXPAND` when the template has a top-level `Transform` (#980).
+   */
   capabilities?: string[];
   /** Stack-settle timeout in ms. Default: `300000`. */
   timeoutMs?: number;
@@ -122,8 +125,8 @@ export async function awsApply(
   http: AwsHttp = defaultHttp,
 ): Promise<{ stackName: string; status: string; action: "created" | "updated" | "unchanged" }> {
   const url = cfnUrl(args.endpoint, args.region);
-  const capabilities = args.capabilities ?? DEFAULT_CAPABILITIES;
   const templateBody = readFileSync(args.templatePath, "utf8");
+  const capabilities = args.capabilities ?? awsDeployCapabilitiesForBody(templateBody);
   const timeoutMs = args.timeoutMs ?? 300_000;
   const intervalMs = args.intervalMs ?? 3_000;
 

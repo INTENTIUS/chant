@@ -55,9 +55,9 @@ describe("CFN pure helpers (#awsApply)", () => {
   });
 });
 
-function tmpl(): string {
+function tmpl(extra: Record<string, unknown> = {}): string {
   const p = `/tmp/chant-cfn-${process.pid}-${Math.round(performance.now())}.json`;
-  writeFileSync(p, JSON.stringify({ Resources: { B: { Type: "AWS::S3::Bucket" } } }));
+  writeFileSync(p, JSON.stringify({ ...extra, Resources: { B: { Type: "AWS::S3::Bucket" } } }));
   return p;
 }
 
@@ -75,6 +75,34 @@ describe("awsApply flow (#awsApply)", () => {
     unlinkSync(p);
     expect(res).toEqual({ stackName: "s", status: "CREATE_COMPLETE", action: "created" });
     expect(calls).toEqual(["DescribeStacks", "CreateStack", "DescribeStacks"]);
+  });
+
+  test("capabilities follow the template: NAMED_IAM alone, plus AUTO_EXPAND for a Transform (#980)", async () => {
+    const sent: Record<string, string>[] = [];
+    let described = 0;
+    const http: AwsHttp = async (_url, form) => {
+      if (form.Action === "DescribeStacks") return described++ % 2 === 0 ? { status: 400, text: MISSING } : { status: 200, text: describe_("CREATE_COMPLETE") };
+      sent.push(form);
+      return { status: 200, text: CREATE_OK };
+    };
+    const plain = tmpl();
+    await awsApply({ templatePath: plain, stackName: "s", endpoint: "http://x", intervalMs: 1 }, undefined, http);
+    unlinkSync(plain);
+    expect(sent[0]["Capabilities.member.1"]).toBe("CAPABILITY_NAMED_IAM");
+    expect(sent[0]["Capabilities.member.2"]).toBeUndefined();
+
+    const macro = tmpl({ Transform: "AWS::SecretsManager-2020-07-23" });
+    await awsApply({ templatePath: macro, stackName: "s", endpoint: "http://x", intervalMs: 1 }, undefined, http);
+    unlinkSync(macro);
+    expect(sent[1]["Capabilities.member.1"]).toBe("CAPABILITY_NAMED_IAM");
+    expect(sent[1]["Capabilities.member.2"]).toBe("CAPABILITY_AUTO_EXPAND");
+
+    // An explicit list still wins.
+    const explicit = tmpl({ Transform: "AWS::Serverless-2016-10-31" });
+    await awsApply({ templatePath: explicit, stackName: "s", endpoint: "http://x", intervalMs: 1, capabilities: ["CAPABILITY_IAM"] }, undefined, http);
+    unlinkSync(explicit);
+    expect(sent[2]["Capabilities.member.1"]).toBe("CAPABILITY_IAM");
+    expect(sent[2]["Capabilities.member.2"]).toBeUndefined();
   });
 
   test("update path: existing stack → UpdateStack → UPDATE_COMPLETE", async () => {
