@@ -183,6 +183,131 @@ export const testEntity = {
     }
   });
 
+  describe("#1396 — ownership.env resolves from the env build parameter", () => {
+    const thisDir = dirname(fileURLToPath(import.meta.url));
+    const runtimePath = resolvePath(thisDir, "../../runtime");
+    const paramsPath = resolvePath(thisDir, "../../params");
+
+    // A label-stamping serializer in miniature: the resource's own `env` prop
+    // (from params.env) next to the ownership marker's env (from context).
+    const labelSerializer: Serializer = {
+      name: "aws",
+      rulePrefix: "TEST",
+      serialize: (entities, _outputs, context) =>
+        JSON.stringify(
+          [...entities.values()].map((e) => ({
+            label: (e as unknown as { props: { env: string } }).props.env,
+            marker: context?.ownership,
+          })),
+        ),
+    };
+
+    async function writeProject(ownershipEnv: string) {
+      await writeFile(
+        join(testDir, "chant.config.ts"),
+        `
+          export default {
+            ownership: { stack: "fountain", env: ${ownershipEnv} },
+            buildParams: {
+              env: { type: "string", default: "dev", env: "CHANT_TEST_1396_ENV" },
+            },
+          };
+        `,
+      );
+      await writeFile(
+        join(testDir, "resources.ts"),
+        `
+          import { createResource } from ${JSON.stringify(runtimePath)};
+          export const Bucket = createResource("Test::Bucket", "aws", { arn: "Arn" });
+        `,
+      );
+      await writeFile(
+        join(testDir, "main.ts"),
+        `
+          import { Bucket } from "./resources";
+          import { params } from ${JSON.stringify(paramsPath)};
+          export const bucket = new Bucket({ env: params.env });
+        `,
+      );
+    }
+
+    function built(): Array<{ label: string; marker?: { stack: string; env?: string } }> {
+      return JSON.parse(readFileSync(outputFile, "utf-8"));
+    }
+
+    test("--param env=prod drives both the label and the ownership marker", async () => {
+      await writeProject(`{ param: "env" }`);
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        const result = await buildCommand({
+          path: testDir,
+          output: outputFile,
+          format: "json",
+          serializers: [labelSerializer],
+          params: { env: "prod" },
+        });
+        expect(result.errors).toEqual([]);
+        expect(result.success).toBe(true);
+        expect(built()).toEqual([{ label: "prod", marker: { stack: "fountain", env: "prod" } }]);
+      } finally {
+        errorSpy.mockRestore();
+      }
+    });
+
+    test("with no parameter supplied, both follow the declared default", async () => {
+      await writeProject(`{ param: "env" }`);
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        const result = await buildCommand({
+          path: testDir,
+          output: outputFile,
+          format: "json",
+          serializers: [labelSerializer],
+        });
+        expect(result.success).toBe(true);
+        expect(built()).toEqual([{ label: "dev", marker: { stack: "fountain", env: "dev" } }]);
+      } finally {
+        errorSpy.mockRestore();
+      }
+    });
+
+    test("a literal ownership.env that disagrees with --param env is warned about", async () => {
+      await writeProject(`"dev"`);
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        const result = await buildCommand({
+          path: testDir,
+          output: outputFile,
+          format: "json",
+          serializers: [labelSerializer],
+          params: { env: "prod" },
+        });
+        expect(result.success).toBe(true);
+        expect(built()).toEqual([{ label: "prod", marker: { stack: "fountain", env: "dev" } }]);
+        expect(result.warnings.some((w) => w.includes('ownership.env is "dev"') && w.includes('"prod"'))).toBe(true);
+      } finally {
+        errorSpy.mockRestore();
+      }
+    });
+
+    test("a reference to an undeclared parameter fails the build", async () => {
+      await writeProject(`{ param: "environment" }`);
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        const result = await buildCommand({
+          path: testDir,
+          output: outputFile,
+          format: "json",
+          serializers: [labelSerializer],
+        });
+        expect(result.success).toBe(false);
+        expect(result.errors.some((e) => e.includes('build parameter "environment"'))).toBe(true);
+      } finally {
+        errorSpy.mockRestore();
+      }
+    });
+  });
+
   test("#1064 — a declared build-time parameter binds to params.<name> and folds to a literal", async () => {
     const thisDir = dirname(fileURLToPath(import.meta.url));
     const runtimePath = resolvePath(thisDir, "../../runtime");

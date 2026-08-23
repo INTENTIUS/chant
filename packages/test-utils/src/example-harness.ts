@@ -46,7 +46,7 @@ export async function declaredBuildOptions(
     }
     buildParams = resolved.provenance;
   }
-  return { buildParams, ownership: resolveOwnershipMarker(config) };
+  return { buildParams, ownership: resolveOwnershipMarker(config, buildParams) };
 }
 
 /** Just the parameters half of {@link declaredBuildOptions}. */
