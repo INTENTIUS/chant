@@ -27,6 +27,17 @@ export interface ValidateResult {
  */
 export const RELEASE_GATE_ENV = "CHANT_RELEASE_GATE";
 
+/**
+ * Set by `chant dev surface-diff --update-snapshot` for the validate run it
+ * performs before rewriting the baseline (chant #1825). When set to "1", the
+ * `surface-matches-snapshot` check is skipped. That check fails on exactly the
+ * staleness the update run exists to fix, and with an `"always"` gate (#1475)
+ * the two would deadlock: validate cannot pass until the snapshot is updated,
+ * and the snapshot cannot be updated until validate passes. Every other check
+ * still runs, so a broken generate cannot be baselined.
+ */
+export const SNAPSHOT_UPDATE_ENV = "CHANT_SNAPSHOT_UPDATE";
+
 export interface LexiconValidationConfig {
   /** Filename of the lexicon JSON (e.g. "lexicon-mydom.json") */
   lexiconJsonFilename: string;
@@ -201,10 +212,18 @@ export async function validateLexiconArtifacts(config: LexiconValidationConfig):
   // Runs on the artifacts already on disk — no second generation — and is
   // skipped for a lexicon with no committed snapshot, which is the case for a
   // new lexicon before its first baseline.
+  //
+  // A re-baseline run (`chant dev surface-diff --update-snapshot`) sets
+  // {@link SNAPSHOT_UPDATE_ENV} and is exempt: the check would fail on the
+  // stale snapshot that run is about to rewrite, deadlocking the documented
+  // update flow against an `"always"` gate (#1825). Only this check is exempt —
+  // every other check above still gates the run.
   const snapshotPath = join(config.basePath, "surface.snapshot.json");
+  const env = config.env ?? process.env;
   const surfaceGate =
-    config.checkSurfaceSnapshot === "always" ||
-    (config.checkSurfaceSnapshot === true && (config.env ?? process.env)[RELEASE_GATE_ENV] === "1");
+    (config.checkSurfaceSnapshot === "always" ||
+      (config.checkSurfaceSnapshot === true && env[RELEASE_GATE_ENV] === "1")) &&
+    env[SNAPSHOT_UPDATE_ENV] !== "1";
   if (surfaceGate && lexiconData && existsSync(snapshotPath) && existsSync(dtsPath)) {
     try {
       const fresh = extractSurface(readFileSync(lexiconPath, "utf-8"), readFileSync(dtsPath, "utf-8"));
