@@ -49,7 +49,7 @@ describe("roundtrip: declared entities → serialize → parse → generate → 
       ["app", app],
       ["web", web],
     ]);
-    const planA = JSON.parse(flySerializer.serialize(entities));
+    const planA = JSON.parse(flySerializer.serialize(entities) as string);
 
     // 2. Parse the plan and generate TypeScript.
     const ir = parser.parse(JSON.stringify(planA));
@@ -67,7 +67,7 @@ describe("roundtrip: declared entities → serialize → parse → generate → 
 
     // 4. Re-serialize the regenerated entities.
     const regenerated = new Map<string, any>(Object.entries(mod));
-    const planB = JSON.parse(flySerializer.serialize(regenerated));
+    const planB = JSON.parse(flySerializer.serialize(regenerated) as string);
 
     // The bodies survive the round-trip. Entity keys differ (variable names are
     // camelCased from the resource name), so compare the create bodies by kind.

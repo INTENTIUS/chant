@@ -1,4 +1,5 @@
 import { describe, test, expect } from "vitest";
+import { makePostSynthCtx } from "@intentius/chant-test-utils";
 import { wgc101 } from "./wgc101";
 import { wgc102 } from "./wgc102";
 import { wgc103 } from "./wgc103";
@@ -24,9 +25,7 @@ import { wgc402 } from "./wgc402";
 import { wgc403 } from "./wgc403";
 
 function makeCtx(yaml: string) {
-  return {
-    outputs: new Map([["gcp", yaml]]),
-  };
+  return makePostSynthCtx("gcp", yaml);
 }
 
 // ── WGC101: Missing encryption ─────────────────────────────────────

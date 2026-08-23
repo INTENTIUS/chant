@@ -144,7 +144,7 @@ describe("AgentCoreAgent", () => {
       code: { s3Bucket: "loom-artifacts", s3Prefix: "agents/assistant.zip", runtime: "PYTHON_3_12", entryPoint: ["app.py"] },
     }));
     resolveAttrRefs(expanded);
-    const template = JSON.parse(awsSerializer.serialize(expanded));
+    const template = JSON.parse(awsSerializer.serialize(expanded) as string);
     const artifact = template.Resources.agentRuntime.Properties.AgentRuntimeArtifact;
     expect(artifact.ContainerConfiguration).toBeUndefined();
     expect(artifact.CodeConfiguration).toEqual({
@@ -265,7 +265,7 @@ describe("AgentCoreAgent", () => {
   test("serializes to a valid CloudFormation template with the expected resource types", () => {
     const expanded = expandComposite("agent", AgentCoreAgent(withEndpoint));
     resolveAttrRefs(expanded);
-    const output = awsSerializer.serialize(expanded);
+    const output = awsSerializer.serialize(expanded) as string;
     const template = JSON.parse(output);
 
     expect(template.AWSTemplateFormatVersion).toBe("2010-09-09");

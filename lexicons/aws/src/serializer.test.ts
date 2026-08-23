@@ -42,7 +42,7 @@ describe("awsSerializer", () => {
 describe("awsSerializer.serialize", () => {
   test("produces valid CF template structure", () => {
     const entities = new Map<string, Declarable>();
-    const output = awsSerializer.serialize(entities);
+    const output = awsSerializer.serialize(entities) as string;
     const template = JSON.parse(output);
 
     expect(template.AWSTemplateFormatVersion).toBe("2010-09-09");
@@ -51,7 +51,7 @@ describe("awsSerializer.serialize", () => {
 
   test("serializes empty entities", () => {
     const entities = new Map<string, Declarable>();
-    const output = awsSerializer.serialize(entities);
+    const output = awsSerializer.serialize(entities) as string;
     const template = JSON.parse(output);
 
     expect(template.Resources).toEqual({});
@@ -62,7 +62,7 @@ describe("awsSerializer.serialize", () => {
     const entities = new Map<string, Declarable>();
     entities.set("MyBucket", new MockBucket({ BucketName: "my-bucket" }));
 
-    const output = awsSerializer.serialize(entities);
+    const output = awsSerializer.serialize(entities) as string;
     const template = JSON.parse(output);
 
     expect(template.Resources.MyBucket).toBeDefined();
@@ -75,7 +75,7 @@ describe("awsSerializer.serialize", () => {
     entities.set("MyBucket", new MockBucket({ BucketName: "my-bucket" }));
     entities.set("rotationTransform", templateTransform("AWS::SecretsManager-2020-07-23"));
 
-    const template = JSON.parse(awsSerializer.serialize(entities));
+    const template = JSON.parse(awsSerializer.serialize(entities) as string);
 
     expect(template.Transform).toBe("AWS::SecretsManager-2020-07-23");
     expect(template.Resources.rotationTransform).toBeUndefined();
@@ -88,7 +88,7 @@ describe("awsSerializer.serialize", () => {
     entities.set("t2", templateTransform("AWS::LanguageExtensions"));
     entities.set("t3", templateTransform("AWS::SecretsManager-2020-07-23")); // dup
 
-    const template = JSON.parse(awsSerializer.serialize(entities));
+    const template = JSON.parse(awsSerializer.serialize(entities) as string);
 
     expect(template.Transform).toEqual(["AWS::SecretsManager-2020-07-23", "AWS::LanguageExtensions"]);
   });
@@ -97,7 +97,7 @@ describe("awsSerializer.serialize", () => {
     const entities = new Map<string, Declarable>();
     entities.set("MyBucket", new MockBucket({ BucketName: "my-bucket" }));
 
-    const template = JSON.parse(awsSerializer.serialize(entities));
+    const template = JSON.parse(awsSerializer.serialize(entities) as string);
 
     expect(template.Transform).toBeUndefined();
   });
@@ -109,7 +109,7 @@ describe("awsSerializer.serialize", () => {
       defaultValue: "dev",
     }));
 
-    const output = awsSerializer.serialize(entities);
+    const output = awsSerializer.serialize(entities) as string;
     const template = JSON.parse(output);
 
     expect(template.Parameters).toBeDefined();
@@ -125,7 +125,7 @@ describe("awsSerializer.serialize", () => {
       VersioningConfiguration: { Status: "Enabled" },
     }));
 
-    const output = awsSerializer.serialize(entities);
+    const output = awsSerializer.serialize(entities) as string;
     const template = JSON.parse(output);
 
     expect(template.Resources.MyBucket.Properties.VersioningConfiguration).toEqual({
@@ -137,7 +137,7 @@ describe("awsSerializer.serialize", () => {
     const entities = new Map<string, Declarable>();
     entities.set("MyBucket", new MockBucket({ BucketName: "test" }));
 
-    const output = awsSerializer.serialize(entities);
+    const output = awsSerializer.serialize(entities) as string;
     const template = JSON.parse(output);
 
     expect(template.Resources.MyBucket.Properties.BucketName).toBeDefined();
@@ -148,7 +148,7 @@ describe("awsSerializer.serialize", () => {
     entities.set("DataBucket", new MockBucket({ BucketName: "data-bucket" }));
     entities.set("LogsBucket", new MockBucket({ BucketName: "logs-bucket" }));
 
-    const output = awsSerializer.serialize(entities);
+    const output = awsSerializer.serialize(entities) as string;
     const template = JSON.parse(output);
 
     expect(Object.keys(template.Resources)).toHaveLength(2);
@@ -161,7 +161,7 @@ describe("awsSerializer.serialize", () => {
     entities.set("Env", new Parameter("String"));
     entities.set("MyBucket", new MockBucket({ BucketName: "bucket" }));
 
-    const output = awsSerializer.serialize(entities);
+    const output = awsSerializer.serialize(entities) as string;
     const template = JSON.parse(output);
 
     expect(template.Parameters).toBeDefined();
@@ -174,7 +174,7 @@ describe("awsSerializer.serialize", () => {
     const entities = new Map<string, Declarable>();
     entities.set("MyBucket", new MockBucket({})); // No properties set
 
-    const output = awsSerializer.serialize(entities);
+    const output = awsSerializer.serialize(entities) as string;
     const template = JSON.parse(output);
 
     // Should have no Properties key or empty properties
@@ -211,7 +211,7 @@ describe("property-kind Declarables", () => {
     entities.set("DataEncryption", encryption);
     entities.set("MyBucket", bucket);
 
-    const output = awsSerializer.serialize(entities);
+    const output = awsSerializer.serialize(entities) as string;
     const template = JSON.parse(output);
 
     // Encryption should be inlined, not a Ref
@@ -233,7 +233,7 @@ describe("property-kind Declarables", () => {
     entities.set("DataEncryption", encryption);
     entities.set("MyBucket", new MockBucket({ BucketName: "my-bucket" }));
 
-    const output = awsSerializer.serialize(entities);
+    const output = awsSerializer.serialize(entities) as string;
     const template = JSON.parse(output);
 
     expect(template.Resources.DataEncryption).toBeUndefined();
@@ -258,7 +258,7 @@ describe("property-kind Declarables", () => {
     entities.set("SourceBucket", sourceBucket);
     entities.set("Config", new MockConfig(sourceBucket));
 
-    const output = awsSerializer.serialize(entities);
+    const output = awsSerializer.serialize(entities) as string;
     const template = JSON.parse(output);
 
     expect(template.Resources.Config.Properties.Bucket).toEqual({ Ref: "SourceBucket" });
@@ -269,7 +269,7 @@ describe("intrinsic serialization", () => {
   test("handles AttrRef in properties", () => {
     const source = new MockBucket({ BucketName: "source" });
     // Set the logical name on the AttrRef before using it
-    (source.arn as Record<string, unknown>)._setLogicalName("SourceBucket");
+    (source.arn as unknown as { _setLogicalName(n: string): void })._setLogicalName("SourceBucket");
 
     class MockReplication implements Declarable {
       readonly [DECLARABLE_MARKER] = true as const;
@@ -286,7 +286,7 @@ describe("intrinsic serialization", () => {
     entities.set("SourceBucket", source);
     entities.set("Replication", new MockReplication(source.arn));
 
-    const output = awsSerializer.serialize(entities);
+    const output = awsSerializer.serialize(entities) as string;
     const template = JSON.parse(output);
 
     expect(template.Resources.Replication.Properties.SourceArn).toEqual({
@@ -333,14 +333,14 @@ describe("LexiconOutput serialization", () => {
   test("resolves AttrRef nested in a Join output to Fn::GetAtt, not the __attrRef envelope (chant#935)", () => {
     const s1 = new MockBucket({ BucketName: "subnet-1" });
     const s2 = new MockBucket({ BucketName: "subnet-2" });
-    (s1.arn as Record<string, unknown>)._setLogicalName("Subnet1");
-    (s2.arn as Record<string, unknown>)._setLogicalName("Subnet2");
+    (s1.arn as unknown as { _setLogicalName(n: string): void })._setLogicalName("Subnet1");
+    (s2.arn as unknown as { _setLogicalName(n: string): void })._setLogicalName("Subnet2");
     const joined = new LexiconOutput(Join(":", [s1.arn, s2.arn]), "SubnetIds");
     joined._setSourceEntity("Subnet1");
     const entities = new Map<string, Declarable>();
     entities.set("Subnet1", s1);
     entities.set("Subnet2", s2);
-    const template = JSON.parse(awsSerializer.serialize(entities, [joined]));
+    const template = JSON.parse(awsSerializer.serialize(entities, [joined]) as string);
     const value = JSON.stringify(template.Outputs.SubnetIds.Value);
     expect(value).not.toContain("__attrRef");
     expect(value).toContain("Fn::GetAtt");
@@ -355,7 +355,7 @@ describe("LexiconOutput serialization", () => {
     const entities = new Map<string, Declarable>();
     entities.set("dataBucket", bucket);
 
-    const result = awsSerializer.serialize(entities, [lexiconOutput]);
+    const result = awsSerializer.serialize(entities, [lexiconOutput]) as string;
     const template = JSON.parse(result);
 
     expect(template.Outputs).toBeDefined();
@@ -377,7 +377,7 @@ describe("LexiconOutput serialization", () => {
     entities.set("dataBucket", dataBucket);
     entities.set("logsBucket", logsBucket);
 
-    const result = awsSerializer.serialize(entities, [dataOutput, logsOutput]);
+    const result = awsSerializer.serialize(entities, [dataOutput, logsOutput]) as string;
     const template = JSON.parse(result);
 
     expect(template.Outputs).toBeDefined();
@@ -411,7 +411,7 @@ describe("LexiconOutput serialization", () => {
     const entities = new Map<string, Declarable>();
     entities.set("MyBucket", new MockBucket({ BucketName: "bucket" }));
 
-    const result = awsSerializer.serialize(entities);
+    const result = awsSerializer.serialize(entities) as string;
     const template = JSON.parse(result);
 
     expect(template.Outputs).toBeUndefined();
@@ -493,7 +493,12 @@ function mockChildBuildResult(childTemplate: object): BuildResult {
     entities: new Map(),
     warnings: [],
     errors: [],
-    manifest: { lexicons: ["aws"], outputs: {}, deployOrder: ["aws"] },
+    manifest: {
+      lexicons: ["aws"],
+      outputs: {},
+      deployOrder: ["aws"],
+      stackGraph: { nodes: ["aws"], edges: [], order: ["aws"], waves: [["aws"]], cycles: [] },
+    },
     sourceFileCount: 1,
   };
 }
@@ -658,7 +663,7 @@ class MockResourceWithAttrs implements Declarable {
   readonly lexicon = "aws";
   readonly entityType: string;
   readonly props: Record<string, unknown>;
-  readonly attributes: Record<string, unknown>;
+  readonly attributes!: Record<string, unknown>;
 
   constructor(
     type: string,
@@ -674,7 +679,7 @@ class MockResourceWithAttrs implements Declarable {
 describe("resource-level CF attributes", () => {
   function serialize(...entries: [string, Declarable][]) {
     const entities = new Map<string, Declarable>(entries);
-    const output = awsSerializer.serialize(entities);
+    const output = awsSerializer.serialize(entities) as string;
     return JSON.parse(output as string);
   }
 
@@ -874,7 +879,7 @@ describe("default tags serialization", () => {
     entities.set("MyBucket", new MockBucket({ BucketName: "bucket" }));
     entities.set("tags", defaultTags([{ Key: "Env", Value: "prod" }]) as unknown as Declarable);
 
-    const output = awsSerializer.serialize(entities);
+    const output = awsSerializer.serialize(entities) as string;
     const template = JSON.parse(output as string);
 
     expect(template.Resources.tags).toBeUndefined();
@@ -886,7 +891,7 @@ describe("default tags serialization", () => {
     entities.set("MyBucket", new MockBucket({ BucketName: "bucket" }));
     entities.set("tags", defaultTags([{ Key: "Env", Value: "prod" }]) as unknown as Declarable);
 
-    const output = awsSerializer.serialize(entities);
+    const output = awsSerializer.serialize(entities) as string;
     const template = JSON.parse(output as string);
 
     expect(template.Resources.MyBucket.Properties.Tags).toEqual([
@@ -903,7 +908,7 @@ describe("default tags serialization", () => {
     }));
     entities.set("tags", defaultTags([{ Key: "Env", Value: "prod" }]) as unknown as Declarable);
 
-    const output = awsSerializer.serialize(entities);
+    const output = awsSerializer.serialize(entities) as string;
     const template = JSON.parse(output as string);
 
     expect(template.Resources.Perm.Properties.Tags).toBeUndefined();
@@ -920,7 +925,7 @@ describe("default tags serialization", () => {
       { Key: "Team", Value: "platform" },
     ]) as unknown as Declarable);
 
-    const output = awsSerializer.serialize(entities);
+    const output = awsSerializer.serialize(entities) as string;
     const template = JSON.parse(output as string);
 
     const tags = template.Resources.MyBucket.Properties.Tags;
@@ -939,7 +944,7 @@ describe("default tags serialization", () => {
       { Key: "Stack", Value: Sub`${AWS.StackName}` },
     ]) as unknown as Declarable);
 
-    const output = awsSerializer.serialize(entities);
+    const output = awsSerializer.serialize(entities) as string;
     const template = JSON.parse(output as string);
 
     const tags = template.Resources.MyBucket.Properties.Tags;
@@ -957,7 +962,7 @@ describe("default tags serialization", () => {
       { Key: "Environment", Value: env },
     ]) as unknown as Declarable);
 
-    const output = awsSerializer.serialize(entities);
+    const output = awsSerializer.serialize(entities) as string;
     const template = JSON.parse(output as string);
 
     const tags = template.Resources.MyBucket.Properties.Tags;
@@ -970,7 +975,7 @@ describe("default tags serialization", () => {
     const entities = new Map<string, Declarable>();
     entities.set("MyBucket", new MockBucket({ BucketName: "bucket" }));
 
-    const output = awsSerializer.serialize(entities);
+    const output = awsSerializer.serialize(entities) as string;
     const template = JSON.parse(output as string);
 
     expect(template.Resources.MyBucket.Properties.Tags).toBeUndefined();

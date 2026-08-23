@@ -149,7 +149,7 @@ describe("MicrovmApp", () => {
       const instance = MicrovmApp(baseProps);
       const entities = expandComposite("worker", instance);
       resolveAttrRefs(entities);
-      const output = awsSerializer.serialize(entities);
+      const output = awsSerializer.serialize(entities) as string;
       const template = JSON.parse(output);
 
       expect(template.AWSTemplateFormatVersion).toBe("2010-09-09");
@@ -204,7 +204,7 @@ describe("MicrovmApp", () => {
       });
       const entities = expandComposite("worker", instance);
       resolveAttrRefs(entities);
-      const output = awsSerializer.serialize(entities);
+      const output = awsSerializer.serialize(entities) as string;
       const template = JSON.parse(output);
 
       const connector = template.Resources.workerConnector;

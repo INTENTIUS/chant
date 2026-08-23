@@ -11,7 +11,7 @@ function stack(...entries: Array<[string, unknown]>): Map<string, Declarable> {
 
 describe("fly serializer", () => {
   it("serializes an empty map to valid JSON", () => {
-    const result = flySerializer.serialize(new Map());
+    const result = flySerializer.serialize(new Map()) as string;
     expect(typeof result).toBe("string");
     expect(JSON.parse(result)).toEqual({});
   });
@@ -27,7 +27,7 @@ describe("fly serializer", () => {
       new App({ name: "my-app", org_slug: "acme" }),
     ]);
 
-    const out = JSON.parse(flySerializer.serialize(entities));
+    const out = JSON.parse(flySerializer.serialize(entities) as string);
     expect(out.web).toEqual({
       endpoint: "/v1/apps",
       method: "POST",
@@ -36,7 +36,7 @@ describe("fly serializer", () => {
   });
 
   it("falls back to the entity name for app_name when no explicit name", () => {
-    const out = JSON.parse(flySerializer.serialize(stack(["billing", new App({ org_slug: "acme" })])));
+    const out = JSON.parse(flySerializer.serialize(stack(["billing", new App({ org_slug: "acme" })])) as string);
     expect(out.billing.body.app_name).toBe("billing");
   });
 
@@ -57,7 +57,7 @@ describe("fly serializer", () => {
       ],
     );
 
-    const out = JSON.parse(flySerializer.serialize(entities));
+    const out = JSON.parse(flySerializer.serialize(entities) as string);
     expect(out.api.endpoint).toBe("/v1/apps/my-app/machines");
     expect(out.api.method).toBe("POST");
     expect(out.api.body.name).toBe("api-1");
@@ -79,7 +79,7 @@ describe("fly serializer", () => {
       ],
     );
 
-    const out = JSON.parse(flySerializer.serialize(entities));
+    const out = JSON.parse(flySerializer.serialize(entities) as string);
     // No user metadata → marker still present.
     expect(out.bare.body.config.metadata["managed-by"]).toBe("chant");
     // User metadata is preserved and the marker is merged in.
@@ -94,7 +94,7 @@ describe("fly serializer", () => {
     );
 
     const out = JSON.parse(
-      flySerializer.serialize(entities, undefined, { ownership: { stack: "billing", env: "prod" } }),
+      flySerializer.serialize(entities, undefined, { ownership: { stack: "billing", env: "prod" } }) as string,
     );
     const meta = out.api.body.config.metadata;
     expect(meta["managed-by"]).toBe("chant");
@@ -110,7 +110,7 @@ describe("fly serializer", () => {
         new Machine({ name: "api-1", region: "iad", config: new MachineConfig({ image: "nginx" }) }),
       ],
     );
-    const body = JSON.parse(flySerializer.serialize(entities)).api.body;
+    const body = JSON.parse(flySerializer.serialize(entities) as string).api.body;
     // Only fields present on flaps CreateMachineRequest / MachineConfig.
     expect(Object.keys(body).sort()).toEqual(["config", "name", "region"]);
     expect(Object.keys(body.config.guest ?? {})).toEqual([]);
@@ -123,7 +123,7 @@ describe("fly serializer", () => {
       ["app", new App({ name: "my-app" })],
       ["data", new Volume({ name: "data", region: "iad", size_gb: 10, encrypted: true })],
     );
-    const out = JSON.parse(flySerializer.serialize(entities));
+    const out = JSON.parse(flySerializer.serialize(entities) as string);
     expect(out.data).toEqual({
       endpoint: "/v1/apps/my-app/volumes",
       method: "POST",
@@ -138,7 +138,7 @@ describe("fly serializer", () => {
       ["app", new App({ name: "my-app" })],
       ["ip", new IPAddress({ type: "shared_v4", region: "iad", org_slug: "acme", service_name: "web", network: "default" })],
     );
-    const out = JSON.parse(flySerializer.serialize(entities));
+    const out = JSON.parse(flySerializer.serialize(entities) as string);
     expect(out.ip).toEqual({
       endpoint: "/v1/apps/my-app/ip_assignments",
       method: "POST",
@@ -151,7 +151,7 @@ describe("fly serializer", () => {
       ["app", new App({ name: "my-app" })],
       ["cert", new Certificate({ hostname: "example.com" })],
     );
-    const out = JSON.parse(flySerializer.serialize(entities));
+    const out = JSON.parse(flySerializer.serialize(entities) as string);
     expect(out.cert).toEqual({
       endpoint: "/v1/apps/my-app/certificates",
       method: "POST",
@@ -164,7 +164,7 @@ describe("fly serializer", () => {
       ["app", new App({ name: "my-app" })],
       ["db-password", new Secret({ value: "s3cret" })],
     );
-    const out = JSON.parse(flySerializer.serialize(entities));
+    const out = JSON.parse(flySerializer.serialize(entities) as string);
     expect(out["db-password"]).toEqual({
       endpoint: "/v1/apps/my-app/secrets/db-password",
       method: "POST",
@@ -195,7 +195,7 @@ describe("fly serializer pseudo-parameters", () => {
       ["app", new App({ name: "my-app" })],
       ["web", new Machine({ region: Fly.Region, config: new MachineConfig({ image: "nginx" }) })],
     );
-    const body = JSON.parse(flySerializer.serialize(entities)).web.body;
+    const body = JSON.parse(flySerializer.serialize(entities) as string).web.body;
     expect(body.region).toBe("lhr");
   });
 
@@ -205,28 +205,28 @@ describe("fly serializer pseudo-parameters", () => {
       ["app", new App({ name: "my-app" })],
       ["web", new Machine({ region: Fly.Region, config: new MachineConfig({ image: "nginx" }) })],
     );
-    const body = JSON.parse(flySerializer.serialize(entities)).web.body;
+    const body = JSON.parse(flySerializer.serialize(entities) as string).web.body;
     expect(body.region).toBe("iad");
   });
 
   it("resolves Fly.OrgSlug from FLY_ORG (preferred over FLY_ORG_SLUG)", () => {
     process.env.FLY_ORG = "acme";
     process.env.FLY_ORG_SLUG = "ignored";
-    const out = JSON.parse(flySerializer.serialize(stack(["app", new App({ name: "my-app", org_slug: Fly.OrgSlug })])));
+    const out = JSON.parse(flySerializer.serialize(stack(["app", new App({ name: "my-app", org_slug: Fly.OrgSlug })])) as string);
     expect(out.app.body.org_slug).toBe("acme");
   });
 
   it("resolves Fly.OrgSlug from FLY_ORG_SLUG when FLY_ORG is unset", () => {
     delete process.env.FLY_ORG;
     process.env.FLY_ORG_SLUG = "beta-org";
-    const out = JSON.parse(flySerializer.serialize(stack(["app", new App({ name: "my-app", org_slug: Fly.OrgSlug })])));
+    const out = JSON.parse(flySerializer.serialize(stack(["app", new App({ name: "my-app", org_slug: Fly.OrgSlug })])) as string);
     expect(out.app.body.org_slug).toBe("beta-org");
   });
 
   it("falls back to personal for Fly.OrgSlug when no org env var is set", () => {
     delete process.env.FLY_ORG;
     delete process.env.FLY_ORG_SLUG;
-    const out = JSON.parse(flySerializer.serialize(stack(["app", new App({ name: "my-app", org_slug: Fly.OrgSlug })])));
+    const out = JSON.parse(flySerializer.serialize(stack(["app", new App({ name: "my-app", org_slug: Fly.OrgSlug })])) as string);
     expect(out.app.body.org_slug).toBe("personal");
   });
 });
