@@ -1193,6 +1193,9 @@ export async function runLifecyclePlan(ctx: CommandContext): Promise<number> {
         // The resolved read address rides every entry, not just unobserved
         // ones — the diff path already passes it (#1620); plan lost it.
         queried: observed.queried,
+      }, {
+        // Attribution survives the flat merge below (#1674).
+        lexicon: lexiconName,
       });
       merged.entries.push(...cs.entries);
       checked++;

@@ -780,6 +780,47 @@ describe("runLifecyclePlan", () => {
     expect(web.queried).toBe("/apis/apps/v1/namespaces/default/deployments/web");
   });
 
+  // #1674 — the plan merges every lexicon's change set into one flat
+  // `entries[]`; each row must still say which lexicon observed it, and carry
+  // the provider's physical id so an adopt/delete/runtime row named by a live
+  // key can be told apart from a declared entity name.
+  test("--json carries lexicon attribution and physicalId per entry across the merge", async () => {
+    buildMock.mockResolvedValue(makeBuildResult({ aws: ["bucket"], k8s: ["web"] }));
+    const plugins: LexiconPlugin[] = [
+      createMockPlugin({
+        name: "aws",
+        emulator: awsEmulatorStub,
+        describeResources: async () => ({
+          observation: "v1" as const,
+          resources: {
+            bucket: meta({ type: "AWS::S3::Bucket", physicalId: "arn:aws:s3:::my-bucket" }),
+            "sg-0abc123": meta({ type: "AWS::EC2::SecurityGroup", physicalId: "sg-0abc123", ownership: "foreign" }),
+          },
+        }),
+      }),
+      createMockPlugin({
+        name: "k8s",
+        describeResources: async () => ({
+          observation: "v1" as const,
+          resources: { web: meta({ type: "K8s::Apps::Deployment", physicalId: "default/web" }) },
+        }),
+      }),
+    ];
+    const exit = await runLifecyclePlan({
+      args: makeArgs({ path: "plan", extraPositional: "prod", json: true }),
+      plugins,
+      serializers: plugins.map((p) => p.serializer),
+    });
+    expect(exit).toBe(0);
+    const plan = JSON.parse(stdoutBuf.join("\n"));
+    const byName = Object.fromEntries(plan.entries.map((e: { name: string }) => [e.name, e]));
+    expect(byName.bucket).toMatchObject({ lexicon: "aws", physicalId: "arn:aws:s3:::my-bucket", action: "noop" });
+    expect(byName["sg-0abc123"]).toMatchObject({ lexicon: "aws", physicalId: "sg-0abc123", action: "adopt" });
+    expect(byName.web).toMatchObject({ lexicon: "k8s", physicalId: "default/web", action: "noop" });
+    // `name` is untouched: the adopt row is still keyed by the live key.
+    expect(byName["sg-0abc123"].name).toBe("sg-0abc123");
+  });
+
   // #1166 — plan is always a live read (no `--live` flag of its own), so a
   // declared environment endpoint applies here exactly as it does for
   // `chant graph --live` / `chant lifecycle diff --live`.

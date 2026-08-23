@@ -204,6 +204,50 @@ The `diff --live` categories and the `plan` actions describe the same signal on 
 
 The "when declared" qualifiers are where the axes diverge: an undeclared resource that also **drifted** or is **unchanged** is still an **orphan** to the plan — the snapshot history doesn't change that it's live-but-undeclared, so ownership decides between `adopt` and `delete`.
 
+#### The `--json` shape
+
+`--json` emits `{ env, entries }`. Every lexicon's change set is merged into the one `entries[]`, and each entry says which lexicon observed it:
+
+```json
+{
+  "env": "prod",
+  "entries": [
+    {
+      "name": "web",
+      "type": "K8s::Apps::Deployment",
+      "lexicon": "k8s",
+      "physicalId": "default/web",
+      "action": "noop",
+      "evidence": { "declared": true, "inSnapshot": true, "live": true, "observed": true },
+      "ownership": "owned",
+      "queried": "/apis/apps/v1/namespaces/default/deployments/web"
+    },
+    {
+      "name": "sg-0abc123",
+      "type": "AWS::EC2::SecurityGroup",
+      "lexicon": "aws",
+      "physicalId": "sg-0abc123",
+      "action": "adopt",
+      "evidence": { "declared": false, "inSnapshot": false, "live": true, "observed": true },
+      "ownership": "foreign"
+    }
+  ]
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `name` | The chant entity name for a declared entity. For an undeclared live resource (`adopt`, `delete`, `runtime`) it is the lexicon's live key, which is not a name you can join to the graph IR. |
+| `lexicon` | The lexicon whose observation produced the entry. |
+| `physicalId` | The provider-assigned id (`ResourceMetadata.physicalId`) from the live read, or from the snapshot when the resource is gone. Absent when neither reported one. |
+| `action`, `evidence`, `ownership` | The classification and the three-way evidence behind it, as in the table above. |
+| `deltas` | Attribute-level changes, on `update`. |
+| `queried` | The resolved read address, when the lexicon reported one (#1620). |
+| `runtimeOwner` | The declared entity a `runtime` entry's owner chain resolves to. |
+| `unobservedReason`, `unobservedDetail` | Why an `unobserved` entry could not be read. |
+
+`lexicon` and `physicalId` are what let a consumer route an entry to the right lexicon and tell a declared entity name apart from the live key of an undeclared resource without inferring it from the action.
+
 #### Reporting to a GitLab merge request
 
 `--report gitlab-mr` emits the plan as the JSON GitLab reads for its merge-request plan widget:

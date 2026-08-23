@@ -346,6 +346,47 @@ describe("buildChangeSet: not-observed is not absent (#1089)", () => {
     expect(e.queried).toBe("from-entry");
   });
 
+  // #1674 — lexicon attribution and the provider's physical id per entry.
+  test("stamps every entry with the lexicon it was built for, when given one", () => {
+    const cs = buildChangeSet("prod", {
+      declared: new Set(["web", "api"]),
+      observedNow: { web: meta(), "sg-0abc123": meta({ ownership: "foreign" }) },
+      observedThen: undefined,
+    }, { lexicon: "aws" });
+    expect(cs.entries.map((e) => e.lexicon)).toEqual(["aws", "aws", "aws"]);
+    const without = buildChangeSet("prod", { declared: new Set(["web"]), observedNow: {}, observedThen: undefined });
+    expect(without.entries[0]).not.toHaveProperty("lexicon");
+  });
+
+  test("physicalId comes from the live observation — name stays the lexicon's key", () => {
+    const cs = buildChangeSet("prod", {
+      declared: new Set(["web"]),
+      observedNow: {
+        web: meta({ physicalId: "arn:aws:elasticloadbalancing:us-east-1:123:loadbalancer/app/web/abc" }),
+        "sg-0abc123": meta({ physicalId: "sg-0abc123", ownership: "foreign" }),
+        "pod-xyz": meta({ physicalId: "default/pod-xyz", ownerChain: { root: "declared", entity: "web" } }),
+        owned: meta({ physicalId: "i-0deadbeef", ownership: "owned" }),
+      },
+      observedThen: undefined,
+    });
+    const byName = Object.fromEntries(cs.entries.map((e) => [e.name, e]));
+    expect(byName.web.physicalId).toBe("arn:aws:elasticloadbalancing:us-east-1:123:loadbalancer/app/web/abc");
+    expect(byName["sg-0abc123"]).toMatchObject({ action: "adopt", physicalId: "sg-0abc123", name: "sg-0abc123" });
+    expect(byName["pod-xyz"]).toMatchObject({ action: "runtime", physicalId: "default/pod-xyz" });
+    expect(byName.owned).toMatchObject({ action: "delete", physicalId: "i-0deadbeef" });
+  });
+
+  test("physicalId is absent when no side reported one, and falls back to the snapshot's when the resource is gone", () => {
+    const cs = buildChangeSet("prod", {
+      declared: new Set(["web"]),
+      observedNow: {},
+      observedThen: { gone: meta({ physicalId: "i-gone" }) },
+    });
+    const byName = Object.fromEntries(cs.entries.map((e) => [e.name, e]));
+    expect(byName.web).not.toHaveProperty("physicalId");
+    expect(byName.gone).toMatchObject({ action: "noop", physicalId: "i-gone" });
+  });
+
   test("a returned resource wins over an unobserved claim for the same name", () => {
     const cs = buildChangeSet("prod", {
       declared: new Set(["queue"]),
