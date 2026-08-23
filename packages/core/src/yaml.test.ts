@@ -10,6 +10,21 @@ describe("emitYAML", () => {
     expect(emitYAML(undefined, 0)).toBe("null");
   });
 
+  test("an undefined object value drops the key, an explicit null keeps it (#1371)", () => {
+    // Matches `JSON.stringify`: `{ a: undefined }` is `{}`; an unset optional
+    // build parameter passed straight into a resource must not ship as
+    // `a: null`.
+    expect(emitYAML({ a: undefined, b: 1 }, 0)).toBe("\nb: 1");
+    expect(emitYAML({ a: null, b: 1 }, 0)).toBe("\na: null\nb: 1");
+    expect(emitYAML({ a: undefined }, 0)).toBe("{}");
+    expect(emitYAML({ spec: { baseImageArn: undefined, name: "x" } }, 0)).toBe("\nspec:\n  name: x");
+  });
+
+  test("an undefined inside an array-item object drops the key; a bare undefined element is null", () => {
+    expect(emitYAML([{ a: undefined, b: 1 }, { c: undefined, d: 2, e: 3 }], 0)).toBe("\n- b: 1\n- d: 2\n  e: 3");
+    expect(emitYAML([undefined, 1], 0)).toBe("\n- null\n- 1");
+  });
+
   test("booleans", () => {
     expect(emitYAML(true, 0)).toBe("true");
     expect(emitYAML(false, 0)).toBe("false");

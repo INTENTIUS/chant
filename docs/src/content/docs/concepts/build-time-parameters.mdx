@@ -89,6 +89,21 @@ export const env = params.env ?? "dev";
 
 `params` is a plain object, so ordinary property access, optional chaining, and `??` all work exactly as they do on any other value.
 
+### Optional parameters
+
+A parameter declared with `required: false` and no `default` may go unset without a build error. An unset optional parameter is absent from `params`, so `params.<name>` reads as `undefined`, never `null`. A default written as `?? x` applies, a truthiness check is false, and a property that receives the bare value (`spec: { baseImageArn: params.baseImageArn }`) is dropped from the output in both JSON and YAML rather than shipped as `baseImageArn: null`.
+
+```typescript
+// chant.config.ts
+baseImageArn: { type: "string", required: false, env: "KMV_BASE_IMAGE_ARN" },
+
+// params.ts
+export const baseImageArn =
+  (params.baseImageArn as string | undefined) ?? `arn:aws:lambda:${region}:aws:microvm-image:al2023-1`;
+```
+
+An explicitly supplied empty string (`--param name=` or an exported-but-empty env var) is a value, not "unset". It reaches `params.<name>` as `""` and does not fall through `??`. A `null` in a `--params-file` is rejected as a build error.
+
 ## Why it folds
 
 Because the value is known at build invocation — before any project file is imported or folded — a `params.<name>` reference resolves to a **literal**, not a symbolic node, and not a function call. `env: process.env.LOOM_ENV ?? "dev"` cannot fold: the value comes from ambient state at module-evaluation time. `env: params.env` folds to `"dev"` (or whatever the build was invoked with) the same way a `const` does, so [`chant build --fold`](/chant/concepts/typescript-as-data/#folded-vs-run) reduces it with zero module execution.
