@@ -125,6 +125,7 @@ export const GkeCrdbRegion = Composite<GkeCrdbRegionConfig>((props) => {
 
   const { cluster, nodePool, defaultPool } = GkeCluster({
     name: clusterName,
+    projectId: project,
     location: region,
     machineType,
     diskSizeGb,

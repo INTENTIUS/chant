@@ -11,8 +11,8 @@ import { GKECluster, NodePool } from "../generated";
 export interface GkeClusterProps {
   /** Cluster name. */
   name: string;
-  /** GCP project ID for workload identity pool. Falls back to GCP_PROJECT_ID env var. */
-  projectId?: string;
+  /** GCP project ID for the workload identity pool. */
+  projectId: string;
   /** GCP region for regional cluster (default: uses GCP.Region). */
   location?: string;
   /** Initial node count per zone (default: 1). */
@@ -75,6 +75,7 @@ export interface GkeClusterProps {
  *
  * const { cluster, nodePool } = GkeCluster({
  *   name: "my-cluster",
+ *   projectId: "my-project",
  *   location: "us-central1",
  *   maxNodeCount: 10,
  * });
@@ -83,7 +84,7 @@ export interface GkeClusterProps {
 export const GkeCluster = Composite((props: GkeClusterProps) => {
   const {
     name,
-    projectId: rawProjectId,
+    projectId,
     location,
     initialNodeCount = 1,
     machineType = "e2-medium",
@@ -102,8 +103,6 @@ export const GkeCluster = Composite((props: GkeClusterProps) => {
     namespace,
     defaults: defs,
   } = props;
-
-  const projectId = rawProjectId ?? process.env.GCP_PROJECT_ID ?? "PROJECT_ID";
 
   const commonLabels: Record<string, string> = {
     "app.kubernetes.io/name": name,

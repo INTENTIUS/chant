@@ -19,35 +19,35 @@ function p(member: unknown): Record<string, any> {
 
 describe("GkeCluster", () => {
   test("returns cluster and node pool", () => {
-    const result = GkeCluster({ name: "my-cluster" });
+    const result = GkeCluster({ name: "my-cluster", projectId: "proj" });
     expect(result.cluster).toBeDefined();
     expect(result.nodePool).toBeDefined();
   });
 
   test("includes common labels", () => {
-    const result = GkeCluster({ name: "my-cluster" });
+    const result = GkeCluster({ name: "my-cluster", projectId: "proj" });
     const meta = p(result.cluster).metadata;
     expect(meta.labels["app.kubernetes.io/managed-by"]).toBe("chant");
   });
 
   test("node pool references cluster", () => {
-    const result = GkeCluster({ name: "my-cluster" });
+    const result = GkeCluster({ name: "my-cluster", projectId: "proj" });
     expect(p(result.nodePool).clusterRef.name).toBe("my-cluster");
   });
 
   test("respects maxNodeCount", () => {
-    const result = GkeCluster({ name: "c", maxNodeCount: 20 });
+    const result = GkeCluster({ name: "c", projectId: "proj", maxNodeCount: 20 });
     expect(p(result.nodePool).autoscaling.maxNodeCount).toBe(20);
   });
 
   test("sets namespace when provided", () => {
-    const result = GkeCluster({ name: "c", namespace: "infra" });
+    const result = GkeCluster({ name: "c", projectId: "proj", namespace: "infra" });
     expect(p(result.cluster).metadata.namespace).toBe("infra");
     expect(p(result.nodePool).metadata.namespace).toBe("infra");
   });
 
   test("enables workload identity by default", () => {
-    const result = GkeCluster({ name: "c" });
+    const result = GkeCluster({ name: "c", projectId: "proj" });
     expect(p(result.cluster).workloadIdentityConfig).toBeDefined();
     expect(p(result.nodePool).nodeConfig.workloadMetadataConfig).toBeDefined();
   });
@@ -59,13 +59,13 @@ describe("GkeCluster", () => {
     );
   });
 
-  test("workloadPool falls back to GCP_PROJECT_ID env var", () => {
+  test("ignores GCP_PROJECT_ID env var — projectId comes from props only", () => {
     const prev = process.env.GCP_PROJECT_ID;
     process.env.GCP_PROJECT_ID = "env-project-456";
     try {
-      const result = GkeCluster({ name: "c" });
+      const result = GkeCluster({ name: "c", projectId: "explicit-project" });
       expect(p(result.cluster).workloadIdentityConfig.workloadPool).toBe(
-        "env-project-456.svc.id.goog",
+        "explicit-project.svc.id.goog",
       );
     } finally {
       if (prev === undefined) delete process.env.GCP_PROJECT_ID;
