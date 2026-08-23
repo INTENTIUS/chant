@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-08-07T21:40:32.220Z",
+  "generatedAt": "2026-08-23T20:56:21.709Z",
   "entries": {
     "ADCCatalogProperties": {
       "kind": "property",
@@ -360,6 +360,92 @@
     "Aksfleets_UserAssignedIdentity": {
       "kind": "property",
       "resourceType": "Microsoft.ContainerService/fleets.UserAssignedIdentity"
+    },
+    "Akssnapshots": {
+      "kind": "resource",
+      "resourceType": "Microsoft.ContainerService/snapshots",
+      "attrs": [
+        "id"
+      ],
+      "props": [
+        "location:true",
+        "name:true",
+        "properties:true",
+        "tags:false"
+      ],
+      "taggable": true
+    },
+    "Akssnapshots_AgentPoolNetworkProfile": {
+      "kind": "property",
+      "resourceType": "Microsoft.ContainerService/snapshots.AgentPoolNetworkProfile"
+    },
+    "Akssnapshots_ContainerServiceNetworkProfile": {
+      "kind": "property",
+      "resourceType": "Microsoft.ContainerService/snapshots.ContainerServiceNetworkProfile"
+    },
+    "Akssnapshots_ManagedClusterIdentity": {
+      "kind": "property",
+      "resourceType": "Microsoft.ContainerService/snapshots.ManagedClusterIdentity"
+    },
+    "Akssnapshots_ManagedClusterIdentityUserAssignedIdentities": {
+      "kind": "property",
+      "resourceType": "Microsoft.ContainerService/snapshots.ManagedClusterIdentityUserAssignedIdentities"
+    },
+    "Akssnapshots_ManagedClusterPodIdentity": {
+      "kind": "property",
+      "resourceType": "Microsoft.ContainerService/snapshots.ManagedClusterPodIdentity"
+    },
+    "Akssnapshots_ManagedClusterPodIdentityException": {
+      "kind": "property",
+      "resourceType": "Microsoft.ContainerService/snapshots.ManagedClusterPodIdentityException"
+    },
+    "Akssnapshots_ManagedClusterPodIdentityExceptionPodLabels": {
+      "kind": "property",
+      "resourceType": "Microsoft.ContainerService/snapshots.ManagedClusterPodIdentityExceptionPodLabels"
+    },
+    "Akssnapshots_ManagedClusterPodIdentityProfile": {
+      "kind": "property",
+      "resourceType": "Microsoft.ContainerService/snapshots.ManagedClusterPodIdentityProfile"
+    },
+    "Akssnapshots_ManagedClusterPropertiesIdentityProfile": {
+      "kind": "property",
+      "resourceType": "Microsoft.ContainerService/snapshots.ManagedClusterPropertiesIdentityProfile"
+    },
+    "Akssnapshots_ManagedClusterSecurityProfileWorkloadIdentity": {
+      "kind": "property",
+      "resourceType": "Microsoft.ContainerService/snapshots.ManagedClusterSecurityProfileWorkloadIdentity"
+    },
+    "Akssnapshots_ManagedClusterStorageProfile": {
+      "kind": "property",
+      "resourceType": "Microsoft.ContainerService/snapshots.ManagedClusterStorageProfile"
+    },
+    "Akssnapshots_ManagedClusterStorageProfileBlobCSIDriver": {
+      "kind": "property",
+      "resourceType": "Microsoft.ContainerService/snapshots.ManagedClusterStorageProfileBlobCSIDriver"
+    },
+    "Akssnapshots_ManagedClusterStorageProfileDiskCSIDriver": {
+      "kind": "property",
+      "resourceType": "Microsoft.ContainerService/snapshots.ManagedClusterStorageProfileDiskCSIDriver"
+    },
+    "Akssnapshots_ManagedClusterStorageProfileFileCSIDriver": {
+      "kind": "property",
+      "resourceType": "Microsoft.ContainerService/snapshots.ManagedClusterStorageProfileFileCSIDriver"
+    },
+    "Akssnapshots_ManagedClusterStorageProfileSnapshotController": {
+      "kind": "property",
+      "resourceType": "Microsoft.ContainerService/snapshots.ManagedClusterStorageProfileSnapshotController"
+    },
+    "Akssnapshots_ManagedServiceIdentityUserAssignedIdentitiesValue": {
+      "kind": "property",
+      "resourceType": "Microsoft.ContainerService/snapshots.ManagedServiceIdentityUserAssignedIdentitiesValue"
+    },
+    "Akssnapshots_SnapshotProperties": {
+      "kind": "property",
+      "resourceType": "Microsoft.ContainerService/snapshots.SnapshotProperties"
+    },
+    "Akssnapshots_UserAssignedIdentity": {
+      "kind": "property",
+      "resourceType": "Microsoft.ContainerService/snapshots.UserAssignedIdentity"
     },
     "AlertConfigurationProperties": {
       "kind": "property",
@@ -1450,6 +1536,528 @@
     "AzureStackHCIclusters_UserAssignedIdentity": {
       "kind": "property",
       "resourceType": "Microsoft.AzureStackHCI/clusters.UserAssignedIdentity"
+    },
+    "AzureStackHCIloadBalancers": {
+      "kind": "resource",
+      "resourceType": "Microsoft.AzureStackHCI/loadBalancers",
+      "attrs": [
+        "id"
+      ],
+      "props": [
+        "extendedLocation:false",
+        "location:true",
+        "name:true",
+        "properties:true",
+        "tags:false"
+      ],
+      "taggable": true
+    },
+    "AzureStackHCIloadBalancers_ExtendedLocation": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/loadBalancers.ExtendedLocation"
+    },
+    "AzureStackHCIloadBalancers_GalleryImageVersionStorageProfile": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/loadBalancers.GalleryImageVersionStorageProfile"
+    },
+    "AzureStackHCIloadBalancers_LoadBalancerProperties": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/loadBalancers.LoadBalancerProperties"
+    },
+    "AzureStackHCIloadBalancers_ManagedServiceIdentity": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/loadBalancers.ManagedServiceIdentity"
+    },
+    "AzureStackHCIloadBalancers_ManagedServiceIdentityUserAssignedIdentities": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/loadBalancers.ManagedServiceIdentityUserAssignedIdentities"
+    },
+    "AzureStackHCIloadBalancers_SecurityRuleProperties": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/loadBalancers.SecurityRuleProperties"
+    },
+    "AzureStackHCIloadBalancers_SubnetIpConfigurationReference": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/loadBalancers.SubnetIpConfigurationReference"
+    },
+    "AzureStackHCIloadBalancers_SubnetProperties": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/loadBalancers.SubnetProperties"
+    },
+    "AzureStackHCIloadBalancers_UserAssignedIdentity": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/loadBalancers.UserAssignedIdentity"
+    },
+    "AzureStackHCIloadBalancers_VirtualMachineInstancePropertiesNetworkProfile": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/loadBalancers.VirtualMachineInstancePropertiesNetworkProfile"
+    },
+    "AzureStackHCIloadBalancers_VirtualMachineInstancePropertiesStorageProfile": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/loadBalancers.VirtualMachineInstancePropertiesStorageProfile"
+    },
+    "AzureStackHCIloadBalancers_VirtualMachineInstancePropertiesStorageProfileOsDisk": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/loadBalancers.VirtualMachineInstancePropertiesStorageProfileOsDisk"
+    },
+    "AzureStackHCIloadBalancers_VirtualNetworkSubnetProperties": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/loadBalancers.VirtualNetworkSubnetProperties"
+    },
+    "AzureStackHCInatGateways": {
+      "kind": "resource",
+      "resourceType": "Microsoft.AzureStackHCI/natGateways",
+      "attrs": [
+        "id"
+      ],
+      "props": [
+        "extendedLocation:false",
+        "location:true",
+        "name:true",
+        "properties:true",
+        "resources:false",
+        "tags:false"
+      ],
+      "taggable": true
+    },
+    "AzureStackHCInatGateways_ExtendedLocation": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/natGateways.ExtendedLocation"
+    },
+    "AzureStackHCInatGateways_GalleryImageVersionStorageProfile": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/natGateways.GalleryImageVersionStorageProfile"
+    },
+    "AzureStackHCInatGateways_ManagedServiceIdentity": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/natGateways.ManagedServiceIdentity"
+    },
+    "AzureStackHCInatGateways_ManagedServiceIdentityUserAssignedIdentities": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/natGateways.ManagedServiceIdentityUserAssignedIdentities"
+    },
+    "AzureStackHCInatGateways_NatGatewayProperties": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/natGateways.NatGatewayProperties"
+    },
+    "AzureStackHCInatGateways_SecurityRuleProperties": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/natGateways.SecurityRuleProperties"
+    },
+    "AzureStackHCInatGateways_SubnetIpConfigurationReference": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/natGateways.SubnetIpConfigurationReference"
+    },
+    "AzureStackHCInatGateways_SubnetProperties": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/natGateways.SubnetProperties"
+    },
+    "AzureStackHCInatGateways_UserAssignedIdentity": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/natGateways.UserAssignedIdentity"
+    },
+    "AzureStackHCInatGateways_VirtualMachineInstancePropertiesNetworkProfile": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/natGateways.VirtualMachineInstancePropertiesNetworkProfile"
+    },
+    "AzureStackHCInatGateways_VirtualMachineInstancePropertiesStorageProfile": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/natGateways.VirtualMachineInstancePropertiesStorageProfile"
+    },
+    "AzureStackHCInatGateways_VirtualMachineInstancePropertiesStorageProfileOsDisk": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/natGateways.VirtualMachineInstancePropertiesStorageProfileOsDisk"
+    },
+    "AzureStackHCInatGateways_VirtualNetworkSubnetProperties": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/natGateways.VirtualNetworkSubnetProperties"
+    },
+    "AzureStackHCInetworkSecurityGroups_securityRules": {
+      "kind": "resource",
+      "resourceType": "Microsoft.AzureStackHCI/networkSecurityGroups_securityRules",
+      "attrs": [
+        "id"
+      ],
+      "props": [
+        "extendedLocation:false",
+        "name:true",
+        "properties:true"
+      ]
+    },
+    "AzureStackHCInetworkSecurityGroups_securityRules_ExtendedLocation": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/networkSecurityGroups_securityRules.ExtendedLocation"
+    },
+    "AzureStackHCInetworkSecurityGroups_securityRules_GalleryImageVersionStorageProfile": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/networkSecurityGroups_securityRules.GalleryImageVersionStorageProfile"
+    },
+    "AzureStackHCInetworkSecurityGroups_securityRules_ManagedServiceIdentity": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/networkSecurityGroups_securityRules.ManagedServiceIdentity"
+    },
+    "AzureStackHCInetworkSecurityGroups_securityRules_ManagedServiceIdentityUserAssignedIdentities": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/networkSecurityGroups_securityRules.ManagedServiceIdentityUserAssignedIdentities"
+    },
+    "AzureStackHCInetworkSecurityGroups_securityRules_SecurityRuleProperties": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/networkSecurityGroups_securityRules.SecurityRuleProperties"
+    },
+    "AzureStackHCInetworkSecurityGroups_securityRules_SubnetIpConfigurationReference": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/networkSecurityGroups_securityRules.SubnetIpConfigurationReference"
+    },
+    "AzureStackHCInetworkSecurityGroups_securityRules_SubnetProperties": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/networkSecurityGroups_securityRules.SubnetProperties"
+    },
+    "AzureStackHCInetworkSecurityGroups_securityRules_UserAssignedIdentity": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/networkSecurityGroups_securityRules.UserAssignedIdentity"
+    },
+    "AzureStackHCInetworkSecurityGroups_securityRules_VirtualMachineInstancePropertiesNetworkProfile": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/networkSecurityGroups_securityRules.VirtualMachineInstancePropertiesNetworkProfile"
+    },
+    "AzureStackHCInetworkSecurityGroups_securityRules_VirtualMachineInstancePropertiesStorageProfile": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/networkSecurityGroups_securityRules.VirtualMachineInstancePropertiesStorageProfile"
+    },
+    "AzureStackHCInetworkSecurityGroups_securityRules_VirtualMachineInstancePropertiesStorageProfileOsDisk": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/networkSecurityGroups_securityRules.VirtualMachineInstancePropertiesStorageProfileOsDisk"
+    },
+    "AzureStackHCInetworkSecurityGroups_securityRules_VirtualNetworkSubnetProperties": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/networkSecurityGroups_securityRules.VirtualNetworkSubnetProperties"
+    },
+    "AzureStackHCIsnapshots": {
+      "kind": "resource",
+      "resourceType": "Microsoft.AzureStackHCI/snapshots",
+      "attrs": [
+        "id"
+      ],
+      "props": [
+        "extendedLocation:false",
+        "location:true",
+        "name:true",
+        "properties:true",
+        "tags:false"
+      ],
+      "taggable": true
+    },
+    "AzureStackHCIsnapshots_ExtendedLocation": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/snapshots.ExtendedLocation"
+    },
+    "AzureStackHCIsnapshots_GalleryImageVersionStorageProfile": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/snapshots.GalleryImageVersionStorageProfile"
+    },
+    "AzureStackHCIsnapshots_ManagedServiceIdentity": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/snapshots.ManagedServiceIdentity"
+    },
+    "AzureStackHCIsnapshots_ManagedServiceIdentityUserAssignedIdentities": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/snapshots.ManagedServiceIdentityUserAssignedIdentities"
+    },
+    "AzureStackHCIsnapshots_SecurityRuleProperties": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/snapshots.SecurityRuleProperties"
+    },
+    "AzureStackHCIsnapshots_SnapshotProperties": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/snapshots.SnapshotProperties"
+    },
+    "AzureStackHCIsnapshots_SubnetIpConfigurationReference": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/snapshots.SubnetIpConfigurationReference"
+    },
+    "AzureStackHCIsnapshots_SubnetProperties": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/snapshots.SubnetProperties"
+    },
+    "AzureStackHCIsnapshots_UserAssignedIdentity": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/snapshots.UserAssignedIdentity"
+    },
+    "AzureStackHCIsnapshots_VirtualMachineInstancePropertiesNetworkProfile": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/snapshots.VirtualMachineInstancePropertiesNetworkProfile"
+    },
+    "AzureStackHCIsnapshots_VirtualMachineInstancePropertiesStorageProfile": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/snapshots.VirtualMachineInstancePropertiesStorageProfile"
+    },
+    "AzureStackHCIsnapshots_VirtualMachineInstancePropertiesStorageProfileOsDisk": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/snapshots.VirtualMachineInstancePropertiesStorageProfileOsDisk"
+    },
+    "AzureStackHCIsnapshots_VirtualNetworkSubnetProperties": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/snapshots.VirtualNetworkSubnetProperties"
+    },
+    "AzureStackHCIstorageContainers": {
+      "kind": "resource",
+      "resourceType": "Microsoft.AzureStackHCI/storageContainers",
+      "attrs": [
+        "id"
+      ],
+      "props": [
+        "extendedLocation:false",
+        "location:true",
+        "name:true",
+        "properties:true",
+        "tags:false"
+      ],
+      "taggable": true
+    },
+    "AzureStackHCIstorageContainers_ExtendedLocation": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/storageContainers.ExtendedLocation"
+    },
+    "AzureStackHCIstorageContainers_GalleryImageVersionStorageProfile": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/storageContainers.GalleryImageVersionStorageProfile"
+    },
+    "AzureStackHCIstorageContainers_ManagedServiceIdentity": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/storageContainers.ManagedServiceIdentity"
+    },
+    "AzureStackHCIstorageContainers_ManagedServiceIdentityUserAssignedIdentities": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/storageContainers.ManagedServiceIdentityUserAssignedIdentities"
+    },
+    "AzureStackHCIstorageContainers_SecurityRuleProperties": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/storageContainers.SecurityRuleProperties"
+    },
+    "AzureStackHCIstorageContainers_StorageContainerProperties": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/storageContainers.StorageContainerProperties"
+    },
+    "AzureStackHCIstorageContainers_SubnetIpConfigurationReference": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/storageContainers.SubnetIpConfigurationReference"
+    },
+    "AzureStackHCIstorageContainers_SubnetProperties": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/storageContainers.SubnetProperties"
+    },
+    "AzureStackHCIstorageContainers_UserAssignedIdentity": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/storageContainers.UserAssignedIdentity"
+    },
+    "AzureStackHCIstorageContainers_VirtualMachineInstancePropertiesNetworkProfile": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/storageContainers.VirtualMachineInstancePropertiesNetworkProfile"
+    },
+    "AzureStackHCIstorageContainers_VirtualMachineInstancePropertiesStorageProfile": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/storageContainers.VirtualMachineInstancePropertiesStorageProfile"
+    },
+    "AzureStackHCIstorageContainers_VirtualMachineInstancePropertiesStorageProfileOsDisk": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/storageContainers.VirtualMachineInstancePropertiesStorageProfileOsDisk"
+    },
+    "AzureStackHCIstorageContainers_VirtualNetworkSubnetProperties": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/storageContainers.VirtualNetworkSubnetProperties"
+    },
+    "AzureStackHCIvirtualMachineInstances": {
+      "kind": "resource",
+      "resourceType": "Microsoft.AzureStackHCI/virtualMachineInstances",
+      "attrs": [
+        "id"
+      ],
+      "props": [
+        "extendedLocation:false",
+        "identity:false",
+        "name:true",
+        "properties:true",
+        "resources:false"
+      ]
+    },
+    "AzureStackHCIvirtualMachineInstances_ExtendedLocation": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/virtualMachineInstances.ExtendedLocation"
+    },
+    "AzureStackHCIvirtualMachineInstances_GalleryImageVersionStorageProfile": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/virtualMachineInstances.GalleryImageVersionStorageProfile"
+    },
+    "AzureStackHCIvirtualMachineInstances_ManagedServiceIdentity": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/virtualMachineInstances.ManagedServiceIdentity"
+    },
+    "AzureStackHCIvirtualMachineInstances_ManagedServiceIdentityUserAssignedIdentities": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/virtualMachineInstances.ManagedServiceIdentityUserAssignedIdentities"
+    },
+    "AzureStackHCIvirtualMachineInstances_SecurityRuleProperties": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/virtualMachineInstances.SecurityRuleProperties"
+    },
+    "AzureStackHCIvirtualMachineInstances_SubnetIpConfigurationReference": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/virtualMachineInstances.SubnetIpConfigurationReference"
+    },
+    "AzureStackHCIvirtualMachineInstances_SubnetProperties": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/virtualMachineInstances.SubnetProperties"
+    },
+    "AzureStackHCIvirtualMachineInstances_UserAssignedIdentity": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/virtualMachineInstances.UserAssignedIdentity"
+    },
+    "AzureStackHCIvirtualMachineInstances_VirtualMachineInstanceProperties": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/virtualMachineInstances.VirtualMachineInstanceProperties"
+    },
+    "AzureStackHCIvirtualMachineInstances_VirtualMachineInstancePropertiesNetworkProfile": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/virtualMachineInstances.VirtualMachineInstancePropertiesNetworkProfile"
+    },
+    "AzureStackHCIvirtualMachineInstances_VirtualMachineInstancePropertiesStorageProfile": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/virtualMachineInstances.VirtualMachineInstancePropertiesStorageProfile"
+    },
+    "AzureStackHCIvirtualMachineInstances_VirtualMachineInstancePropertiesStorageProfileOsDisk": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/virtualMachineInstances.VirtualMachineInstancePropertiesStorageProfileOsDisk"
+    },
+    "AzureStackHCIvirtualMachineInstances_VirtualNetworkSubnetProperties": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/virtualMachineInstances.VirtualNetworkSubnetProperties"
+    },
+    "AzureStackHCIvirtualMachineInstances_guestAgents": {
+      "kind": "resource",
+      "resourceType": "Microsoft.AzureStackHCI/virtualMachineInstances_guestAgents",
+      "attrs": [
+        "id"
+      ],
+      "props": [
+        "name:true",
+        "properties:true"
+      ]
+    },
+    "AzureStackHCIvirtualMachineInstances_guestAgents_GalleryImageVersionStorageProfile": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/virtualMachineInstances_guestAgents.GalleryImageVersionStorageProfile"
+    },
+    "AzureStackHCIvirtualMachineInstances_guestAgents_GuestAgentProperties": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/virtualMachineInstances_guestAgents.GuestAgentProperties"
+    },
+    "AzureStackHCIvirtualMachineInstances_guestAgents_ManagedServiceIdentity": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/virtualMachineInstances_guestAgents.ManagedServiceIdentity"
+    },
+    "AzureStackHCIvirtualMachineInstances_guestAgents_ManagedServiceIdentityUserAssignedIdentities": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/virtualMachineInstances_guestAgents.ManagedServiceIdentityUserAssignedIdentities"
+    },
+    "AzureStackHCIvirtualMachineInstances_guestAgents_SecurityRuleProperties": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/virtualMachineInstances_guestAgents.SecurityRuleProperties"
+    },
+    "AzureStackHCIvirtualMachineInstances_guestAgents_SubnetIpConfigurationReference": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/virtualMachineInstances_guestAgents.SubnetIpConfigurationReference"
+    },
+    "AzureStackHCIvirtualMachineInstances_guestAgents_SubnetProperties": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/virtualMachineInstances_guestAgents.SubnetProperties"
+    },
+    "AzureStackHCIvirtualMachineInstances_guestAgents_UserAssignedIdentity": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/virtualMachineInstances_guestAgents.UserAssignedIdentity"
+    },
+    "AzureStackHCIvirtualMachineInstances_guestAgents_VirtualMachineInstancePropertiesNetworkProfile": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/virtualMachineInstances_guestAgents.VirtualMachineInstancePropertiesNetworkProfile"
+    },
+    "AzureStackHCIvirtualMachineInstances_guestAgents_VirtualMachineInstancePropertiesStorageProfile": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/virtualMachineInstances_guestAgents.VirtualMachineInstancePropertiesStorageProfile"
+    },
+    "AzureStackHCIvirtualMachineInstances_guestAgents_VirtualMachineInstancePropertiesStorageProfileOsDisk": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/virtualMachineInstances_guestAgents.VirtualMachineInstancePropertiesStorageProfileOsDisk"
+    },
+    "AzureStackHCIvirtualMachineInstances_guestAgents_VirtualNetworkSubnetProperties": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/virtualMachineInstances_guestAgents.VirtualNetworkSubnetProperties"
+    },
+    "AzureStackHCIvirtualNetworks": {
+      "kind": "resource",
+      "resourceType": "Microsoft.AzureStackHCI/virtualNetworks",
+      "attrs": [
+        "id"
+      ],
+      "props": [
+        "extendedLocation:false",
+        "location:true",
+        "name:true",
+        "properties:true",
+        "resources:false",
+        "tags:false"
+      ],
+      "taggable": true
+    },
+    "AzureStackHCIvirtualNetworks_ExtendedLocation": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/virtualNetworks.ExtendedLocation"
+    },
+    "AzureStackHCIvirtualNetworks_GalleryImageVersionStorageProfile": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/virtualNetworks.GalleryImageVersionStorageProfile"
+    },
+    "AzureStackHCIvirtualNetworks_ManagedServiceIdentity": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/virtualNetworks.ManagedServiceIdentity"
+    },
+    "AzureStackHCIvirtualNetworks_ManagedServiceIdentityUserAssignedIdentities": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/virtualNetworks.ManagedServiceIdentityUserAssignedIdentities"
+    },
+    "AzureStackHCIvirtualNetworks_SecurityRuleProperties": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/virtualNetworks.SecurityRuleProperties"
+    },
+    "AzureStackHCIvirtualNetworks_SubnetIpConfigurationReference": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/virtualNetworks.SubnetIpConfigurationReference"
+    },
+    "AzureStackHCIvirtualNetworks_SubnetProperties": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/virtualNetworks.SubnetProperties"
+    },
+    "AzureStackHCIvirtualNetworks_UserAssignedIdentity": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/virtualNetworks.UserAssignedIdentity"
+    },
+    "AzureStackHCIvirtualNetworks_VirtualMachineInstancePropertiesNetworkProfile": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/virtualNetworks.VirtualMachineInstancePropertiesNetworkProfile"
+    },
+    "AzureStackHCIvirtualNetworks_VirtualMachineInstancePropertiesStorageProfile": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/virtualNetworks.VirtualMachineInstancePropertiesStorageProfile"
+    },
+    "AzureStackHCIvirtualNetworks_VirtualMachineInstancePropertiesStorageProfileOsDisk": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/virtualNetworks.VirtualMachineInstancePropertiesStorageProfileOsDisk"
+    },
+    "AzureStackHCIvirtualNetworks_VirtualNetworkProperties": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/virtualNetworks.VirtualNetworkProperties"
+    },
+    "AzureStackHCIvirtualNetworks_VirtualNetworkSubnetProperties": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/virtualNetworks.VirtualNetworkSubnetProperties"
     },
     "AzureTrafficCollectorPropertiesFormat": {
       "kind": "property",
@@ -4570,6 +5178,37 @@
       "kind": "property",
       "resourceType": "Microsoft.OffAzure/masterSites_webAppSites_discoverySiteDataSources.DiscoverySiteDataSourceProperties"
     },
+    "DiscoverystorageContainers": {
+      "kind": "resource",
+      "resourceType": "Microsoft.Discovery/storageContainers",
+      "attrs": [
+        "id"
+      ],
+      "props": [
+        "location:false",
+        "name:true",
+        "properties:true",
+        "resources:false",
+        "tags:false"
+      ],
+      "taggable": true
+    },
+    "DiscoverystorageContainers_Identity": {
+      "kind": "property",
+      "resourceType": "Microsoft.Discovery/storageContainers.Identity"
+    },
+    "DiscoverystorageContainers_StorageContainerProperties": {
+      "kind": "property",
+      "resourceType": "Microsoft.Discovery/storageContainers.StorageContainerProperties"
+    },
+    "DiscoverystorageContainers_SystemAssignedServiceIdentity": {
+      "kind": "property",
+      "resourceType": "Microsoft.Discovery/storageContainers.SystemAssignedServiceIdentity"
+    },
+    "DiscoverystorageContainers_UserAssignedIdentity": {
+      "kind": "property",
+      "resourceType": "Microsoft.Discovery/storageContainers.UserAssignedIdentity"
+    },
     "Discoveryworkspaces": {
       "kind": "resource",
       "resourceType": "Microsoft.Discovery/workspaces",
@@ -6194,6 +6833,10 @@
       "kind": "property",
       "resourceType": "Microsoft.ServiceNetworking/trafficControllers_frontends.FrontendProperties"
     },
+    "GalleryImageProperties": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/galleryImages.GalleryImageProperties"
+    },
     "GalleryProperties": {
       "kind": "property",
       "resourceType": "Microsoft.DevCenter/devcenters_galleries.GalleryProperties"
@@ -7034,6 +7677,10 @@
       "kind": "property",
       "resourceType": "Microsoft.Network/dnsResolvers_inboundEndpoints.InboundEndpointProperties"
     },
+    "InboundRuleProperties": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/natGateways_inboundRules.InboundRuleProperties"
+    },
     "InferenceEndpointProperties": {
       "kind": "property",
       "resourceType": "Microsoft.MachineLearningServices/workspaces_inferencePools_endpoints.InferenceEndpointProperties"
@@ -7763,6 +8410,21 @@
       "kind": "property",
       "resourceType": "Microsoft.NetworkCloud/kubernetesClusters.KubernetesClusterProperties"
     },
+    "KubernetesRuntimeloadBalancers": {
+      "kind": "resource",
+      "resourceType": "Microsoft.KubernetesRuntime/loadBalancers",
+      "attrs": [
+        "id"
+      ],
+      "props": [
+        "name:true",
+        "properties:true"
+      ]
+    },
+    "KubernetesRuntimeloadBalancers_LoadBalancerProperties": {
+      "kind": "property",
+      "resourceType": "Microsoft.KubernetesRuntime/loadBalancers.LoadBalancerProperties"
+    },
     "KubernetesRuntimeservices": {
       "kind": "resource",
       "resourceType": "Microsoft.KubernetesRuntime/services",
@@ -8270,6 +8932,10 @@
     "LogAnalyticsWorkspace_WorkspaceSku": {
       "kind": "property",
       "resourceType": "Microsoft.OperationalInsights/workspaces.WorkspaceSku"
+    },
+    "LogicalNetworkProperties": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/logicalNetworks.LogicalNetworkProperties"
     },
     "Logicworkflows": {
       "kind": "resource",
@@ -9131,6 +9797,10 @@
       "kind": "property",
       "resourceType": "Microsoft.Maps/accounts_privateEndpointConnections.UserAssignedIdentity"
     },
+    "MarketplaceGalleryImageProperties": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/marketplaceGalleryImages.MarketplaceGalleryImageProperties"
+    },
     "MarketplaceSubscriptionProperties": {
       "kind": "property",
       "resourceType": "Microsoft.MachineLearningServices/workspaces_marketplaceSubscriptions.MarketplaceSubscriptionProperties"
@@ -9355,6 +10025,10 @@
     "NamespaceTopicProperties": {
       "kind": "property",
       "resourceType": "Microsoft.EventGrid/namespaces_topics.NamespaceTopicProperties"
+    },
+    "NatGatewayProperties": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/natGateways.NatGatewayProperties"
     },
     "NeighborGroupProperties": {
       "kind": "property",
@@ -9612,10 +10286,6 @@
       ],
       "taggable": true
     },
-    "NetworkInterfaceProperties": {
-      "kind": "property",
-      "resourceType": "Microsoft.ManagedNetworkFabric/networkDevices_networkInterfaces.NetworkInterfaceProperties"
-    },
     "NetworkInterface_ApplicationGatewayPrivateLinkIpConfiguration": {
       "kind": "property",
       "resourceType": "Microsoft.Network/networkInterfaces.ApplicationGatewayPrivateLinkIpConfiguration"
@@ -9783,6 +10453,10 @@
         "location"
       ],
       "taggable": true
+    },
+    "NetworkSecurityGroupProperties": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/networkSecurityGroups.NetworkSecurityGroupProperties"
     },
     "NetworkSecurityGroup_ApplicationGatewayPrivateLinkIpConfiguration": {
       "kind": "property",
@@ -10062,6 +10736,263 @@
     "Networkconnections_networkVirtualAppliances_inboundSecurityRules_childResource": {
       "kind": "property",
       "resourceType": "Microsoft.Network/connections.networkVirtualAppliances_inboundSecurityRules_childResource"
+    },
+    "NetworknatGateways": {
+      "kind": "resource",
+      "resourceType": "Microsoft.Network/natGateways",
+      "attrs": [
+        "id"
+      ],
+      "props": [
+        "id:false",
+        "location:false",
+        "name:true",
+        "properties:true",
+        "sku:false",
+        "tags:false",
+        "zones:false"
+      ],
+      "taggable": true
+    },
+    "NetworknatGateways_ApplicationGatewayPrivateLinkIpConfiguration": {
+      "kind": "property",
+      "resourceType": "Microsoft.Network/natGateways.ApplicationGatewayPrivateLinkIpConfiguration"
+    },
+    "NetworknatGateways_ApplicationGatewayPrivateLinkIpConfigurationProperties": {
+      "kind": "property",
+      "resourceType": "Microsoft.Network/natGateways.ApplicationGatewayPrivateLinkIpConfigurationProperties"
+    },
+    "NetworknatGateways_ApplicationGatewaySku": {
+      "kind": "property",
+      "resourceType": "Microsoft.Network/natGateways.ApplicationGatewaySku"
+    },
+    "NetworknatGateways_AzureFirewallSku": {
+      "kind": "property",
+      "resourceType": "Microsoft.Network/natGateways.AzureFirewallSku"
+    },
+    "NetworknatGateways_CommonDdosFrontendIpConfigurationSettings": {
+      "kind": "property",
+      "resourceType": "Microsoft.Network/natGateways.CommonDdosFrontendIpConfigurationSettings"
+    },
+    "NetworknatGateways_CommonLoadBalancerSku": {
+      "kind": "property",
+      "resourceType": "Microsoft.Network/natGateways.CommonLoadBalancerSku"
+    },
+    "NetworknatGateways_CommonManagedServiceIdentity": {
+      "kind": "property",
+      "resourceType": "Microsoft.Network/natGateways.CommonManagedServiceIdentity"
+    },
+    "NetworknatGateways_CommonNatGatewayPropertiesFormat": {
+      "kind": "property",
+      "resourceType": "Microsoft.Network/natGateways.CommonNatGatewayPropertiesFormat"
+    },
+    "NetworknatGateways_CommonNatGatewaySku": {
+      "kind": "property",
+      "resourceType": "Microsoft.Network/natGateways.CommonNatGatewaySku"
+    },
+    "NetworknatGateways_CommonPrivateLinkServiceIpConfiguration": {
+      "kind": "property",
+      "resourceType": "Microsoft.Network/natGateways.CommonPrivateLinkServiceIpConfiguration"
+    },
+    "NetworknatGateways_CommonPrivateLinkServiceIpConfigurationProperties": {
+      "kind": "property",
+      "resourceType": "Microsoft.Network/natGateways.CommonPrivateLinkServiceIpConfigurationProperties"
+    },
+    "NetworknatGateways_CommonPublicIPAddressSku": {
+      "kind": "property",
+      "resourceType": "Microsoft.Network/natGateways.CommonPublicIPAddressSku"
+    },
+    "NetworknatGateways_CommonSecurityRule": {
+      "kind": "property",
+      "resourceType": "Microsoft.Network/natGateways.CommonSecurityRule"
+    },
+    "NetworknatGateways_CommonSecurityRulePropertiesFormat": {
+      "kind": "property",
+      "resourceType": "Microsoft.Network/natGateways.CommonSecurityRulePropertiesFormat"
+    },
+    "NetworknatGateways_CommonSubnetPropertiesFormat": {
+      "kind": "property",
+      "resourceType": "Microsoft.Network/natGateways.CommonSubnetPropertiesFormat"
+    },
+    "NetworknatGateways_ExpressRouteCircuitSku": {
+      "kind": "property",
+      "resourceType": "Microsoft.Network/natGateways.ExpressRouteCircuitSku"
+    },
+    "NetworknatGateways_FirewallPolicySku": {
+      "kind": "property",
+      "resourceType": "Microsoft.Network/natGateways.FirewallPolicySku"
+    },
+    "NetworknatGateways_GatewayCustomBgpIpAddressIpConfiguration": {
+      "kind": "property",
+      "resourceType": "Microsoft.Network/natGateways.GatewayCustomBgpIpAddressIpConfiguration"
+    },
+    "NetworknatGateways_InboundSecurityRuleProperties": {
+      "kind": "property",
+      "resourceType": "Microsoft.Network/natGateways.InboundSecurityRuleProperties"
+    },
+    "NetworknatGateways_InboundSecurityRules": {
+      "kind": "property",
+      "resourceType": "Microsoft.Network/natGateways.InboundSecurityRules"
+    },
+    "NetworknatGateways_ManagedServiceIdentityUserAssignedIdentities": {
+      "kind": "property",
+      "resourceType": "Microsoft.Network/natGateways.ManagedServiceIdentityUserAssignedIdentities"
+    },
+    "NetworknatGateways_NetworkProfilePropertiesFormat": {
+      "kind": "property",
+      "resourceType": "Microsoft.Network/natGateways.NetworkProfilePropertiesFormat"
+    },
+    "NetworknatGateways_NetworkVirtualAppliancePropertiesFormatNetworkProfile": {
+      "kind": "property",
+      "resourceType": "Microsoft.Network/natGateways.NetworkVirtualAppliancePropertiesFormatNetworkProfile"
+    },
+    "NetworknatGateways_PublicIPPrefixSku": {
+      "kind": "property",
+      "resourceType": "Microsoft.Network/natGateways.PublicIPPrefixSku"
+    },
+    "NetworknatGateways_ServiceGatewaySku": {
+      "kind": "property",
+      "resourceType": "Microsoft.Network/natGateways.ServiceGatewaySku"
+    },
+    "NetworknatGateways_Sku": {
+      "kind": "property",
+      "resourceType": "Microsoft.Network/natGateways.Sku"
+    },
+    "NetworknatGateways_VirtualApplianceSkuProperties": {
+      "kind": "property",
+      "resourceType": "Microsoft.Network/natGateways.VirtualApplianceSkuProperties"
+    },
+    "NetworknatGateways_VirtualNetworkGatewaySku": {
+      "kind": "property",
+      "resourceType": "Microsoft.Network/natGateways.VirtualNetworkGatewaySku"
+    },
+    "NetworknatGateways_networkVirtualAppliances_inboundSecurityRules_childResource": {
+      "kind": "property",
+      "resourceType": "Microsoft.Network/natGateways.networkVirtualAppliances_inboundSecurityRules_childResource"
+    },
+    "NetworknetworkSecurityGroups_securityRules": {
+      "kind": "resource",
+      "resourceType": "Microsoft.Network/networkSecurityGroups_securityRules",
+      "attrs": [
+        "id"
+      ],
+      "props": [
+        "id:false",
+        "name:true",
+        "properties:true"
+      ]
+    },
+    "NetworknetworkSecurityGroups_securityRules_ApplicationGatewayPrivateLinkIpConfiguration": {
+      "kind": "property",
+      "resourceType": "Microsoft.Network/networkSecurityGroups_securityRules.ApplicationGatewayPrivateLinkIpConfiguration"
+    },
+    "NetworknetworkSecurityGroups_securityRules_ApplicationGatewayPrivateLinkIpConfigurationProperties": {
+      "kind": "property",
+      "resourceType": "Microsoft.Network/networkSecurityGroups_securityRules.ApplicationGatewayPrivateLinkIpConfigurationProperties"
+    },
+    "NetworknetworkSecurityGroups_securityRules_ApplicationGatewaySku": {
+      "kind": "property",
+      "resourceType": "Microsoft.Network/networkSecurityGroups_securityRules.ApplicationGatewaySku"
+    },
+    "NetworknetworkSecurityGroups_securityRules_AzureFirewallSku": {
+      "kind": "property",
+      "resourceType": "Microsoft.Network/networkSecurityGroups_securityRules.AzureFirewallSku"
+    },
+    "NetworknetworkSecurityGroups_securityRules_CommonDdosFrontendIpConfigurationSettings": {
+      "kind": "property",
+      "resourceType": "Microsoft.Network/networkSecurityGroups_securityRules.CommonDdosFrontendIpConfigurationSettings"
+    },
+    "NetworknetworkSecurityGroups_securityRules_CommonLoadBalancerSku": {
+      "kind": "property",
+      "resourceType": "Microsoft.Network/networkSecurityGroups_securityRules.CommonLoadBalancerSku"
+    },
+    "NetworknetworkSecurityGroups_securityRules_CommonManagedServiceIdentity": {
+      "kind": "property",
+      "resourceType": "Microsoft.Network/networkSecurityGroups_securityRules.CommonManagedServiceIdentity"
+    },
+    "NetworknetworkSecurityGroups_securityRules_CommonNatGatewaySku": {
+      "kind": "property",
+      "resourceType": "Microsoft.Network/networkSecurityGroups_securityRules.CommonNatGatewaySku"
+    },
+    "NetworknetworkSecurityGroups_securityRules_CommonPrivateLinkServiceIpConfiguration": {
+      "kind": "property",
+      "resourceType": "Microsoft.Network/networkSecurityGroups_securityRules.CommonPrivateLinkServiceIpConfiguration"
+    },
+    "NetworknetworkSecurityGroups_securityRules_CommonPrivateLinkServiceIpConfigurationProperties": {
+      "kind": "property",
+      "resourceType": "Microsoft.Network/networkSecurityGroups_securityRules.CommonPrivateLinkServiceIpConfigurationProperties"
+    },
+    "NetworknetworkSecurityGroups_securityRules_CommonPublicIPAddressSku": {
+      "kind": "property",
+      "resourceType": "Microsoft.Network/networkSecurityGroups_securityRules.CommonPublicIPAddressSku"
+    },
+    "NetworknetworkSecurityGroups_securityRules_CommonSecurityRule": {
+      "kind": "property",
+      "resourceType": "Microsoft.Network/networkSecurityGroups_securityRules.CommonSecurityRule"
+    },
+    "NetworknetworkSecurityGroups_securityRules_CommonSecurityRulePropertiesFormat": {
+      "kind": "property",
+      "resourceType": "Microsoft.Network/networkSecurityGroups_securityRules.CommonSecurityRulePropertiesFormat"
+    },
+    "NetworknetworkSecurityGroups_securityRules_CommonSubnetPropertiesFormat": {
+      "kind": "property",
+      "resourceType": "Microsoft.Network/networkSecurityGroups_securityRules.CommonSubnetPropertiesFormat"
+    },
+    "NetworknetworkSecurityGroups_securityRules_ExpressRouteCircuitSku": {
+      "kind": "property",
+      "resourceType": "Microsoft.Network/networkSecurityGroups_securityRules.ExpressRouteCircuitSku"
+    },
+    "NetworknetworkSecurityGroups_securityRules_FirewallPolicySku": {
+      "kind": "property",
+      "resourceType": "Microsoft.Network/networkSecurityGroups_securityRules.FirewallPolicySku"
+    },
+    "NetworknetworkSecurityGroups_securityRules_GatewayCustomBgpIpAddressIpConfiguration": {
+      "kind": "property",
+      "resourceType": "Microsoft.Network/networkSecurityGroups_securityRules.GatewayCustomBgpIpAddressIpConfiguration"
+    },
+    "NetworknetworkSecurityGroups_securityRules_InboundSecurityRuleProperties": {
+      "kind": "property",
+      "resourceType": "Microsoft.Network/networkSecurityGroups_securityRules.InboundSecurityRuleProperties"
+    },
+    "NetworknetworkSecurityGroups_securityRules_InboundSecurityRules": {
+      "kind": "property",
+      "resourceType": "Microsoft.Network/networkSecurityGroups_securityRules.InboundSecurityRules"
+    },
+    "NetworknetworkSecurityGroups_securityRules_ManagedServiceIdentityUserAssignedIdentities": {
+      "kind": "property",
+      "resourceType": "Microsoft.Network/networkSecurityGroups_securityRules.ManagedServiceIdentityUserAssignedIdentities"
+    },
+    "NetworknetworkSecurityGroups_securityRules_NetworkProfilePropertiesFormat": {
+      "kind": "property",
+      "resourceType": "Microsoft.Network/networkSecurityGroups_securityRules.NetworkProfilePropertiesFormat"
+    },
+    "NetworknetworkSecurityGroups_securityRules_NetworkVirtualAppliancePropertiesFormatNetworkProfile": {
+      "kind": "property",
+      "resourceType": "Microsoft.Network/networkSecurityGroups_securityRules.NetworkVirtualAppliancePropertiesFormatNetworkProfile"
+    },
+    "NetworknetworkSecurityGroups_securityRules_PublicIPPrefixSku": {
+      "kind": "property",
+      "resourceType": "Microsoft.Network/networkSecurityGroups_securityRules.PublicIPPrefixSku"
+    },
+    "NetworknetworkSecurityGroups_securityRules_ServiceGatewaySku": {
+      "kind": "property",
+      "resourceType": "Microsoft.Network/networkSecurityGroups_securityRules.ServiceGatewaySku"
+    },
+    "NetworknetworkSecurityGroups_securityRules_Sku": {
+      "kind": "property",
+      "resourceType": "Microsoft.Network/networkSecurityGroups_securityRules.Sku"
+    },
+    "NetworknetworkSecurityGroups_securityRules_VirtualApplianceSkuProperties": {
+      "kind": "property",
+      "resourceType": "Microsoft.Network/networkSecurityGroups_securityRules.VirtualApplianceSkuProperties"
+    },
+    "NetworknetworkSecurityGroups_securityRules_VirtualNetworkGatewaySku": {
+      "kind": "property",
+      "resourceType": "Microsoft.Network/networkSecurityGroups_securityRules.VirtualNetworkGatewaySku"
+    },
+    "NetworknetworkSecurityGroups_securityRules_networkVirtualAppliances_inboundSecurityRules_childResource": {
+      "kind": "property",
+      "resourceType": "Microsoft.Network/networkSecurityGroups_securityRules.networkVirtualAppliances_inboundSecurityRules_childResource"
     },
     "NodeCustomizationProperties": {
       "kind": "property",
@@ -10884,6 +11815,10 @@
         "zones"
       ],
       "taggable": true
+    },
+    "PublicIPAddressProperties": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/publicIPAddresses.PublicIPAddressProperties"
     },
     "PublicIPAddress_ApplicationGatewayPrivateLinkIpConfiguration": {
       "kind": "property",
@@ -14694,10 +15629,6 @@
       "kind": "property",
       "resourceType": "Microsoft.Storage/storageAccounts_connectors.StorageConnectorProperties"
     },
-    "StorageContainerProperties": {
-      "kind": "property",
-      "resourceType": "Microsoft.Discovery/storageContainers.StorageContainerProperties"
-    },
     "StorageDataShareProperties": {
       "kind": "property",
       "resourceType": "Microsoft.Storage/storageAccounts_dataShares.StorageDataShareProperties"
@@ -15357,6 +16288,10 @@
     "VirtualEndpointResourceProperties": {
       "kind": "property",
       "resourceType": "Microsoft.DBforPostgreSQL/flexibleServers_virtualendpoints.VirtualEndpointResourceProperties"
+    },
+    "VirtualHardDiskProperties": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/virtualHardDisks.VirtualHardDiskProperties"
     },
     "VirtualHubProperties": {
       "kind": "property",
@@ -34241,6 +35176,73 @@
       "kind": "property",
       "resourceType": "Microsoft.Network/frontDoors_rulesEngines.Sku"
     },
+    "galleryImages": {
+      "kind": "resource",
+      "resourceType": "Microsoft.AzureStackHCI/galleryImages",
+      "attrs": [
+        "id"
+      ],
+      "props": [
+        "extendedLocation:false",
+        "location:true",
+        "name:true",
+        "properties:true",
+        "tags:false"
+      ],
+      "taggable": true
+    },
+    "galleryImages_ExtendedLocation": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/galleryImages.ExtendedLocation"
+    },
+    "galleryImages_GalleryImageProperties": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/galleryImages.GalleryImageProperties"
+    },
+    "galleryImages_GalleryImageVersionStorageProfile": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/galleryImages.GalleryImageVersionStorageProfile"
+    },
+    "galleryImages_ManagedServiceIdentity": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/galleryImages.ManagedServiceIdentity"
+    },
+    "galleryImages_ManagedServiceIdentityUserAssignedIdentities": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/galleryImages.ManagedServiceIdentityUserAssignedIdentities"
+    },
+    "galleryImages_SecurityRuleProperties": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/galleryImages.SecurityRuleProperties"
+    },
+    "galleryImages_SubnetIpConfigurationReference": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/galleryImages.SubnetIpConfigurationReference"
+    },
+    "galleryImages_SubnetProperties": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/galleryImages.SubnetProperties"
+    },
+    "galleryImages_UserAssignedIdentity": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/galleryImages.UserAssignedIdentity"
+    },
+    "galleryImages_VirtualMachineInstancePropertiesNetworkProfile": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/galleryImages.VirtualMachineInstancePropertiesNetworkProfile"
+    },
+    "galleryImages_VirtualMachineInstancePropertiesStorageProfile": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/galleryImages.VirtualMachineInstancePropertiesStorageProfile"
+    },
+    "galleryImages_VirtualMachineInstancePropertiesStorageProfileOsDisk": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/galleryImages.VirtualMachineInstancePropertiesStorageProfileOsDisk"
+    },
+    "galleryImages_VirtualNetworkSubnetProperties": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/galleryImages.VirtualNetworkSubnetProperties"
+    },
     "garnetClusters": {
       "kind": "resource",
       "resourceType": "Microsoft.DocumentDB/garnetClusters",
@@ -38684,21 +39686,6 @@
       "kind": "property",
       "resourceType": "Microsoft.ServiceLinker/linkers.UserAssignedIdentityAuthInfo"
     },
-    "loadBalancers": {
-      "kind": "resource",
-      "resourceType": "Microsoft.KubernetesRuntime/loadBalancers",
-      "attrs": [
-        "id"
-      ],
-      "props": [
-        "name:true",
-        "properties:true"
-      ]
-    },
-    "loadBalancers_LoadBalancerProperties": {
-      "kind": "property",
-      "resourceType": "Microsoft.KubernetesRuntime/loadBalancers.LoadBalancerProperties"
-    },
     "loadBalancers_backendAddressPools": {
       "kind": "resource",
       "resourceType": "Microsoft.Network/loadBalancers_backendAddressPools",
@@ -39374,6 +40361,73 @@
     "locations_serverTrustGroups_UserIdentity": {
       "kind": "property",
       "resourceType": "Microsoft.Sql/locations_serverTrustGroups.UserIdentity"
+    },
+    "logicalNetworks": {
+      "kind": "resource",
+      "resourceType": "Microsoft.AzureStackHCI/logicalNetworks",
+      "attrs": [
+        "id"
+      ],
+      "props": [
+        "extendedLocation:false",
+        "location:true",
+        "name:true",
+        "properties:true",
+        "tags:false"
+      ],
+      "taggable": true
+    },
+    "logicalNetworks_ExtendedLocation": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/logicalNetworks.ExtendedLocation"
+    },
+    "logicalNetworks_GalleryImageVersionStorageProfile": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/logicalNetworks.GalleryImageVersionStorageProfile"
+    },
+    "logicalNetworks_LogicalNetworkProperties": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/logicalNetworks.LogicalNetworkProperties"
+    },
+    "logicalNetworks_ManagedServiceIdentity": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/logicalNetworks.ManagedServiceIdentity"
+    },
+    "logicalNetworks_ManagedServiceIdentityUserAssignedIdentities": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/logicalNetworks.ManagedServiceIdentityUserAssignedIdentities"
+    },
+    "logicalNetworks_SecurityRuleProperties": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/logicalNetworks.SecurityRuleProperties"
+    },
+    "logicalNetworks_SubnetIpConfigurationReference": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/logicalNetworks.SubnetIpConfigurationReference"
+    },
+    "logicalNetworks_SubnetProperties": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/logicalNetworks.SubnetProperties"
+    },
+    "logicalNetworks_UserAssignedIdentity": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/logicalNetworks.UserAssignedIdentity"
+    },
+    "logicalNetworks_VirtualMachineInstancePropertiesNetworkProfile": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/logicalNetworks.VirtualMachineInstancePropertiesNetworkProfile"
+    },
+    "logicalNetworks_VirtualMachineInstancePropertiesStorageProfile": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/logicalNetworks.VirtualMachineInstancePropertiesStorageProfile"
+    },
+    "logicalNetworks_VirtualMachineInstancePropertiesStorageProfileOsDisk": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/logicalNetworks.VirtualMachineInstancePropertiesStorageProfileOsDisk"
+    },
+    "logicalNetworks_VirtualNetworkSubnetProperties": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/logicalNetworks.VirtualNetworkSubnetProperties"
     },
     "logsLogGroups": {
       "kind": "resource",
@@ -43289,6 +44343,73 @@
       ],
       "taggable": true
     },
+    "marketplaceGalleryImages": {
+      "kind": "resource",
+      "resourceType": "Microsoft.AzureStackHCI/marketplaceGalleryImages",
+      "attrs": [
+        "id"
+      ],
+      "props": [
+        "extendedLocation:false",
+        "location:true",
+        "name:true",
+        "properties:true",
+        "tags:false"
+      ],
+      "taggable": true
+    },
+    "marketplaceGalleryImages_ExtendedLocation": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/marketplaceGalleryImages.ExtendedLocation"
+    },
+    "marketplaceGalleryImages_GalleryImageVersionStorageProfile": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/marketplaceGalleryImages.GalleryImageVersionStorageProfile"
+    },
+    "marketplaceGalleryImages_ManagedServiceIdentity": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/marketplaceGalleryImages.ManagedServiceIdentity"
+    },
+    "marketplaceGalleryImages_ManagedServiceIdentityUserAssignedIdentities": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/marketplaceGalleryImages.ManagedServiceIdentityUserAssignedIdentities"
+    },
+    "marketplaceGalleryImages_MarketplaceGalleryImageProperties": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/marketplaceGalleryImages.MarketplaceGalleryImageProperties"
+    },
+    "marketplaceGalleryImages_SecurityRuleProperties": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/marketplaceGalleryImages.SecurityRuleProperties"
+    },
+    "marketplaceGalleryImages_SubnetIpConfigurationReference": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/marketplaceGalleryImages.SubnetIpConfigurationReference"
+    },
+    "marketplaceGalleryImages_SubnetProperties": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/marketplaceGalleryImages.SubnetProperties"
+    },
+    "marketplaceGalleryImages_UserAssignedIdentity": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/marketplaceGalleryImages.UserAssignedIdentity"
+    },
+    "marketplaceGalleryImages_VirtualMachineInstancePropertiesNetworkProfile": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/marketplaceGalleryImages.VirtualMachineInstancePropertiesNetworkProfile"
+    },
+    "marketplaceGalleryImages_VirtualMachineInstancePropertiesStorageProfile": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/marketplaceGalleryImages.VirtualMachineInstancePropertiesStorageProfile"
+    },
+    "marketplaceGalleryImages_VirtualMachineInstancePropertiesStorageProfileOsDisk": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/marketplaceGalleryImages.VirtualMachineInstancePropertiesStorageProfileOsDisk"
+    },
+    "marketplaceGalleryImages_VirtualNetworkSubnetProperties": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/marketplaceGalleryImages.VirtualNetworkSubnetProperties"
+    },
     "masterSites": {
       "kind": "resource",
       "resourceType": "Microsoft.OffAzure/masterSites",
@@ -45320,138 +46441,69 @@
       "kind": "property",
       "resourceType": "Microsoft.Relay/namespaces_wcfRelays_authorizationRules.Sku"
     },
-    "natGateways": {
+    "natGateways_inboundRules": {
       "kind": "resource",
-      "resourceType": "Microsoft.Network/natGateways",
+      "resourceType": "Microsoft.AzureStackHCI/natGateways_inboundRules",
       "attrs": [
         "id"
       ],
       "props": [
-        "id:false",
-        "location:false",
+        "extendedLocation:false",
         "name:true",
-        "properties:true",
-        "sku:false",
-        "tags:false",
-        "zones:false"
-      ],
-      "taggable": true
+        "properties:true"
+      ]
     },
-    "natGateways_ApplicationGatewayPrivateLinkIpConfiguration": {
+    "natGateways_inboundRules_ExtendedLocation": {
       "kind": "property",
-      "resourceType": "Microsoft.Network/natGateways.ApplicationGatewayPrivateLinkIpConfiguration"
+      "resourceType": "Microsoft.AzureStackHCI/natGateways_inboundRules.ExtendedLocation"
     },
-    "natGateways_ApplicationGatewayPrivateLinkIpConfigurationProperties": {
+    "natGateways_inboundRules_GalleryImageVersionStorageProfile": {
       "kind": "property",
-      "resourceType": "Microsoft.Network/natGateways.ApplicationGatewayPrivateLinkIpConfigurationProperties"
+      "resourceType": "Microsoft.AzureStackHCI/natGateways_inboundRules.GalleryImageVersionStorageProfile"
     },
-    "natGateways_ApplicationGatewaySku": {
+    "natGateways_inboundRules_InboundRuleProperties": {
       "kind": "property",
-      "resourceType": "Microsoft.Network/natGateways.ApplicationGatewaySku"
+      "resourceType": "Microsoft.AzureStackHCI/natGateways_inboundRules.InboundRuleProperties"
     },
-    "natGateways_AzureFirewallSku": {
+    "natGateways_inboundRules_ManagedServiceIdentity": {
       "kind": "property",
-      "resourceType": "Microsoft.Network/natGateways.AzureFirewallSku"
+      "resourceType": "Microsoft.AzureStackHCI/natGateways_inboundRules.ManagedServiceIdentity"
     },
-    "natGateways_CommonDdosFrontendIpConfigurationSettings": {
+    "natGateways_inboundRules_ManagedServiceIdentityUserAssignedIdentities": {
       "kind": "property",
-      "resourceType": "Microsoft.Network/natGateways.CommonDdosFrontendIpConfigurationSettings"
+      "resourceType": "Microsoft.AzureStackHCI/natGateways_inboundRules.ManagedServiceIdentityUserAssignedIdentities"
     },
-    "natGateways_CommonLoadBalancerSku": {
+    "natGateways_inboundRules_SecurityRuleProperties": {
       "kind": "property",
-      "resourceType": "Microsoft.Network/natGateways.CommonLoadBalancerSku"
+      "resourceType": "Microsoft.AzureStackHCI/natGateways_inboundRules.SecurityRuleProperties"
     },
-    "natGateways_CommonManagedServiceIdentity": {
+    "natGateways_inboundRules_SubnetIpConfigurationReference": {
       "kind": "property",
-      "resourceType": "Microsoft.Network/natGateways.CommonManagedServiceIdentity"
+      "resourceType": "Microsoft.AzureStackHCI/natGateways_inboundRules.SubnetIpConfigurationReference"
     },
-    "natGateways_CommonNatGatewayPropertiesFormat": {
+    "natGateways_inboundRules_SubnetProperties": {
       "kind": "property",
-      "resourceType": "Microsoft.Network/natGateways.CommonNatGatewayPropertiesFormat"
+      "resourceType": "Microsoft.AzureStackHCI/natGateways_inboundRules.SubnetProperties"
     },
-    "natGateways_CommonNatGatewaySku": {
+    "natGateways_inboundRules_UserAssignedIdentity": {
       "kind": "property",
-      "resourceType": "Microsoft.Network/natGateways.CommonNatGatewaySku"
+      "resourceType": "Microsoft.AzureStackHCI/natGateways_inboundRules.UserAssignedIdentity"
     },
-    "natGateways_CommonPrivateLinkServiceIpConfiguration": {
+    "natGateways_inboundRules_VirtualMachineInstancePropertiesNetworkProfile": {
       "kind": "property",
-      "resourceType": "Microsoft.Network/natGateways.CommonPrivateLinkServiceIpConfiguration"
+      "resourceType": "Microsoft.AzureStackHCI/natGateways_inboundRules.VirtualMachineInstancePropertiesNetworkProfile"
     },
-    "natGateways_CommonPrivateLinkServiceIpConfigurationProperties": {
+    "natGateways_inboundRules_VirtualMachineInstancePropertiesStorageProfile": {
       "kind": "property",
-      "resourceType": "Microsoft.Network/natGateways.CommonPrivateLinkServiceIpConfigurationProperties"
+      "resourceType": "Microsoft.AzureStackHCI/natGateways_inboundRules.VirtualMachineInstancePropertiesStorageProfile"
     },
-    "natGateways_CommonPublicIPAddressSku": {
+    "natGateways_inboundRules_VirtualMachineInstancePropertiesStorageProfileOsDisk": {
       "kind": "property",
-      "resourceType": "Microsoft.Network/natGateways.CommonPublicIPAddressSku"
+      "resourceType": "Microsoft.AzureStackHCI/natGateways_inboundRules.VirtualMachineInstancePropertiesStorageProfileOsDisk"
     },
-    "natGateways_CommonSecurityRule": {
+    "natGateways_inboundRules_VirtualNetworkSubnetProperties": {
       "kind": "property",
-      "resourceType": "Microsoft.Network/natGateways.CommonSecurityRule"
-    },
-    "natGateways_CommonSecurityRulePropertiesFormat": {
-      "kind": "property",
-      "resourceType": "Microsoft.Network/natGateways.CommonSecurityRulePropertiesFormat"
-    },
-    "natGateways_CommonSubnetPropertiesFormat": {
-      "kind": "property",
-      "resourceType": "Microsoft.Network/natGateways.CommonSubnetPropertiesFormat"
-    },
-    "natGateways_ExpressRouteCircuitSku": {
-      "kind": "property",
-      "resourceType": "Microsoft.Network/natGateways.ExpressRouteCircuitSku"
-    },
-    "natGateways_FirewallPolicySku": {
-      "kind": "property",
-      "resourceType": "Microsoft.Network/natGateways.FirewallPolicySku"
-    },
-    "natGateways_GatewayCustomBgpIpAddressIpConfiguration": {
-      "kind": "property",
-      "resourceType": "Microsoft.Network/natGateways.GatewayCustomBgpIpAddressIpConfiguration"
-    },
-    "natGateways_InboundSecurityRuleProperties": {
-      "kind": "property",
-      "resourceType": "Microsoft.Network/natGateways.InboundSecurityRuleProperties"
-    },
-    "natGateways_InboundSecurityRules": {
-      "kind": "property",
-      "resourceType": "Microsoft.Network/natGateways.InboundSecurityRules"
-    },
-    "natGateways_ManagedServiceIdentityUserAssignedIdentities": {
-      "kind": "property",
-      "resourceType": "Microsoft.Network/natGateways.ManagedServiceIdentityUserAssignedIdentities"
-    },
-    "natGateways_NetworkProfilePropertiesFormat": {
-      "kind": "property",
-      "resourceType": "Microsoft.Network/natGateways.NetworkProfilePropertiesFormat"
-    },
-    "natGateways_NetworkVirtualAppliancePropertiesFormatNetworkProfile": {
-      "kind": "property",
-      "resourceType": "Microsoft.Network/natGateways.NetworkVirtualAppliancePropertiesFormatNetworkProfile"
-    },
-    "natGateways_PublicIPPrefixSku": {
-      "kind": "property",
-      "resourceType": "Microsoft.Network/natGateways.PublicIPPrefixSku"
-    },
-    "natGateways_ServiceGatewaySku": {
-      "kind": "property",
-      "resourceType": "Microsoft.Network/natGateways.ServiceGatewaySku"
-    },
-    "natGateways_Sku": {
-      "kind": "property",
-      "resourceType": "Microsoft.Network/natGateways.Sku"
-    },
-    "natGateways_VirtualApplianceSkuProperties": {
-      "kind": "property",
-      "resourceType": "Microsoft.Network/natGateways.VirtualApplianceSkuProperties"
-    },
-    "natGateways_VirtualNetworkGatewaySku": {
-      "kind": "property",
-      "resourceType": "Microsoft.Network/natGateways.VirtualNetworkGatewaySku"
-    },
-    "natGateways_networkVirtualAppliances_inboundSecurityRules_childResource": {
-      "kind": "property",
-      "resourceType": "Microsoft.Network/natGateways.networkVirtualAppliances_inboundSecurityRules_childResource"
+      "resourceType": "Microsoft.AzureStackHCI/natGateways_inboundRules.VirtualNetworkSubnetProperties"
     },
     "neighborGroups": {
       "kind": "resource",
@@ -46356,6 +47408,73 @@
     "networkFunctions_UserAssignedIdentity": {
       "kind": "property",
       "resourceType": "Microsoft.HybridNetwork/networkFunctions.UserAssignedIdentity"
+    },
+    "networkInterfaces": {
+      "kind": "resource",
+      "resourceType": "Microsoft.AzureStackHCI/networkInterfaces",
+      "attrs": [
+        "id"
+      ],
+      "props": [
+        "extendedLocation:false",
+        "location:true",
+        "name:true",
+        "properties:true",
+        "tags:false"
+      ],
+      "taggable": true
+    },
+    "networkInterfaces_ExtendedLocation": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/networkInterfaces.ExtendedLocation"
+    },
+    "networkInterfaces_GalleryImageVersionStorageProfile": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/networkInterfaces.GalleryImageVersionStorageProfile"
+    },
+    "networkInterfaces_ManagedServiceIdentity": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/networkInterfaces.ManagedServiceIdentity"
+    },
+    "networkInterfaces_ManagedServiceIdentityUserAssignedIdentities": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/networkInterfaces.ManagedServiceIdentityUserAssignedIdentities"
+    },
+    "networkInterfaces_NetworkInterfaceProperties": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/networkInterfaces.NetworkInterfaceProperties"
+    },
+    "networkInterfaces_SecurityRuleProperties": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/networkInterfaces.SecurityRuleProperties"
+    },
+    "networkInterfaces_SubnetIpConfigurationReference": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/networkInterfaces.SubnetIpConfigurationReference"
+    },
+    "networkInterfaces_SubnetProperties": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/networkInterfaces.SubnetProperties"
+    },
+    "networkInterfaces_UserAssignedIdentity": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/networkInterfaces.UserAssignedIdentity"
+    },
+    "networkInterfaces_VirtualMachineInstancePropertiesNetworkProfile": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/networkInterfaces.VirtualMachineInstancePropertiesNetworkProfile"
+    },
+    "networkInterfaces_VirtualMachineInstancePropertiesStorageProfile": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/networkInterfaces.VirtualMachineInstancePropertiesStorageProfile"
+    },
+    "networkInterfaces_VirtualMachineInstancePropertiesStorageProfileOsDisk": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/networkInterfaces.VirtualMachineInstancePropertiesStorageProfileOsDisk"
+    },
+    "networkInterfaces_VirtualNetworkSubnetProperties": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/networkInterfaces.VirtualNetworkSubnetProperties"
     },
     "networkInterfaces_tapConfigurations": {
       "kind": "resource",
@@ -49258,129 +50377,73 @@
       "kind": "property",
       "resourceType": "Microsoft.ManagedNetworkFabric/networkRacks.UserAssignedIdentity"
     },
-    "networkSecurityGroups_securityRules": {
+    "networkSecurityGroups": {
       "kind": "resource",
-      "resourceType": "Microsoft.Network/networkSecurityGroups_securityRules",
+      "resourceType": "Microsoft.AzureStackHCI/networkSecurityGroups",
       "attrs": [
         "id"
       ],
       "props": [
-        "id:false",
+        "extendedLocation:false",
+        "location:true",
         "name:true",
-        "properties:true"
-      ]
+        "properties:true",
+        "resources:false",
+        "tags:false"
+      ],
+      "taggable": true
     },
-    "networkSecurityGroups_securityRules_ApplicationGatewayPrivateLinkIpConfiguration": {
+    "networkSecurityGroups_ExtendedLocation": {
       "kind": "property",
-      "resourceType": "Microsoft.Network/networkSecurityGroups_securityRules.ApplicationGatewayPrivateLinkIpConfiguration"
+      "resourceType": "Microsoft.AzureStackHCI/networkSecurityGroups.ExtendedLocation"
     },
-    "networkSecurityGroups_securityRules_ApplicationGatewayPrivateLinkIpConfigurationProperties": {
+    "networkSecurityGroups_GalleryImageVersionStorageProfile": {
       "kind": "property",
-      "resourceType": "Microsoft.Network/networkSecurityGroups_securityRules.ApplicationGatewayPrivateLinkIpConfigurationProperties"
+      "resourceType": "Microsoft.AzureStackHCI/networkSecurityGroups.GalleryImageVersionStorageProfile"
     },
-    "networkSecurityGroups_securityRules_ApplicationGatewaySku": {
+    "networkSecurityGroups_ManagedServiceIdentity": {
       "kind": "property",
-      "resourceType": "Microsoft.Network/networkSecurityGroups_securityRules.ApplicationGatewaySku"
+      "resourceType": "Microsoft.AzureStackHCI/networkSecurityGroups.ManagedServiceIdentity"
     },
-    "networkSecurityGroups_securityRules_AzureFirewallSku": {
+    "networkSecurityGroups_ManagedServiceIdentityUserAssignedIdentities": {
       "kind": "property",
-      "resourceType": "Microsoft.Network/networkSecurityGroups_securityRules.AzureFirewallSku"
+      "resourceType": "Microsoft.AzureStackHCI/networkSecurityGroups.ManagedServiceIdentityUserAssignedIdentities"
     },
-    "networkSecurityGroups_securityRules_CommonDdosFrontendIpConfigurationSettings": {
+    "networkSecurityGroups_NetworkSecurityGroupProperties": {
       "kind": "property",
-      "resourceType": "Microsoft.Network/networkSecurityGroups_securityRules.CommonDdosFrontendIpConfigurationSettings"
+      "resourceType": "Microsoft.AzureStackHCI/networkSecurityGroups.NetworkSecurityGroupProperties"
     },
-    "networkSecurityGroups_securityRules_CommonLoadBalancerSku": {
+    "networkSecurityGroups_SecurityRuleProperties": {
       "kind": "property",
-      "resourceType": "Microsoft.Network/networkSecurityGroups_securityRules.CommonLoadBalancerSku"
+      "resourceType": "Microsoft.AzureStackHCI/networkSecurityGroups.SecurityRuleProperties"
     },
-    "networkSecurityGroups_securityRules_CommonManagedServiceIdentity": {
+    "networkSecurityGroups_SubnetIpConfigurationReference": {
       "kind": "property",
-      "resourceType": "Microsoft.Network/networkSecurityGroups_securityRules.CommonManagedServiceIdentity"
+      "resourceType": "Microsoft.AzureStackHCI/networkSecurityGroups.SubnetIpConfigurationReference"
     },
-    "networkSecurityGroups_securityRules_CommonNatGatewaySku": {
+    "networkSecurityGroups_SubnetProperties": {
       "kind": "property",
-      "resourceType": "Microsoft.Network/networkSecurityGroups_securityRules.CommonNatGatewaySku"
+      "resourceType": "Microsoft.AzureStackHCI/networkSecurityGroups.SubnetProperties"
     },
-    "networkSecurityGroups_securityRules_CommonPrivateLinkServiceIpConfiguration": {
+    "networkSecurityGroups_UserAssignedIdentity": {
       "kind": "property",
-      "resourceType": "Microsoft.Network/networkSecurityGroups_securityRules.CommonPrivateLinkServiceIpConfiguration"
+      "resourceType": "Microsoft.AzureStackHCI/networkSecurityGroups.UserAssignedIdentity"
     },
-    "networkSecurityGroups_securityRules_CommonPrivateLinkServiceIpConfigurationProperties": {
+    "networkSecurityGroups_VirtualMachineInstancePropertiesNetworkProfile": {
       "kind": "property",
-      "resourceType": "Microsoft.Network/networkSecurityGroups_securityRules.CommonPrivateLinkServiceIpConfigurationProperties"
+      "resourceType": "Microsoft.AzureStackHCI/networkSecurityGroups.VirtualMachineInstancePropertiesNetworkProfile"
     },
-    "networkSecurityGroups_securityRules_CommonPublicIPAddressSku": {
+    "networkSecurityGroups_VirtualMachineInstancePropertiesStorageProfile": {
       "kind": "property",
-      "resourceType": "Microsoft.Network/networkSecurityGroups_securityRules.CommonPublicIPAddressSku"
+      "resourceType": "Microsoft.AzureStackHCI/networkSecurityGroups.VirtualMachineInstancePropertiesStorageProfile"
     },
-    "networkSecurityGroups_securityRules_CommonSecurityRule": {
+    "networkSecurityGroups_VirtualMachineInstancePropertiesStorageProfileOsDisk": {
       "kind": "property",
-      "resourceType": "Microsoft.Network/networkSecurityGroups_securityRules.CommonSecurityRule"
+      "resourceType": "Microsoft.AzureStackHCI/networkSecurityGroups.VirtualMachineInstancePropertiesStorageProfileOsDisk"
     },
-    "networkSecurityGroups_securityRules_CommonSecurityRulePropertiesFormat": {
+    "networkSecurityGroups_VirtualNetworkSubnetProperties": {
       "kind": "property",
-      "resourceType": "Microsoft.Network/networkSecurityGroups_securityRules.CommonSecurityRulePropertiesFormat"
-    },
-    "networkSecurityGroups_securityRules_CommonSubnetPropertiesFormat": {
-      "kind": "property",
-      "resourceType": "Microsoft.Network/networkSecurityGroups_securityRules.CommonSubnetPropertiesFormat"
-    },
-    "networkSecurityGroups_securityRules_ExpressRouteCircuitSku": {
-      "kind": "property",
-      "resourceType": "Microsoft.Network/networkSecurityGroups_securityRules.ExpressRouteCircuitSku"
-    },
-    "networkSecurityGroups_securityRules_FirewallPolicySku": {
-      "kind": "property",
-      "resourceType": "Microsoft.Network/networkSecurityGroups_securityRules.FirewallPolicySku"
-    },
-    "networkSecurityGroups_securityRules_GatewayCustomBgpIpAddressIpConfiguration": {
-      "kind": "property",
-      "resourceType": "Microsoft.Network/networkSecurityGroups_securityRules.GatewayCustomBgpIpAddressIpConfiguration"
-    },
-    "networkSecurityGroups_securityRules_InboundSecurityRuleProperties": {
-      "kind": "property",
-      "resourceType": "Microsoft.Network/networkSecurityGroups_securityRules.InboundSecurityRuleProperties"
-    },
-    "networkSecurityGroups_securityRules_InboundSecurityRules": {
-      "kind": "property",
-      "resourceType": "Microsoft.Network/networkSecurityGroups_securityRules.InboundSecurityRules"
-    },
-    "networkSecurityGroups_securityRules_ManagedServiceIdentityUserAssignedIdentities": {
-      "kind": "property",
-      "resourceType": "Microsoft.Network/networkSecurityGroups_securityRules.ManagedServiceIdentityUserAssignedIdentities"
-    },
-    "networkSecurityGroups_securityRules_NetworkProfilePropertiesFormat": {
-      "kind": "property",
-      "resourceType": "Microsoft.Network/networkSecurityGroups_securityRules.NetworkProfilePropertiesFormat"
-    },
-    "networkSecurityGroups_securityRules_NetworkVirtualAppliancePropertiesFormatNetworkProfile": {
-      "kind": "property",
-      "resourceType": "Microsoft.Network/networkSecurityGroups_securityRules.NetworkVirtualAppliancePropertiesFormatNetworkProfile"
-    },
-    "networkSecurityGroups_securityRules_PublicIPPrefixSku": {
-      "kind": "property",
-      "resourceType": "Microsoft.Network/networkSecurityGroups_securityRules.PublicIPPrefixSku"
-    },
-    "networkSecurityGroups_securityRules_ServiceGatewaySku": {
-      "kind": "property",
-      "resourceType": "Microsoft.Network/networkSecurityGroups_securityRules.ServiceGatewaySku"
-    },
-    "networkSecurityGroups_securityRules_Sku": {
-      "kind": "property",
-      "resourceType": "Microsoft.Network/networkSecurityGroups_securityRules.Sku"
-    },
-    "networkSecurityGroups_securityRules_VirtualApplianceSkuProperties": {
-      "kind": "property",
-      "resourceType": "Microsoft.Network/networkSecurityGroups_securityRules.VirtualApplianceSkuProperties"
-    },
-    "networkSecurityGroups_securityRules_VirtualNetworkGatewaySku": {
-      "kind": "property",
-      "resourceType": "Microsoft.Network/networkSecurityGroups_securityRules.VirtualNetworkGatewaySku"
-    },
-    "networkSecurityGroups_securityRules_networkVirtualAppliances_inboundSecurityRules_childResource": {
-      "kind": "property",
-      "resourceType": "Microsoft.Network/networkSecurityGroups_securityRules.networkVirtualAppliances_inboundSecurityRules_childResource"
+      "resourceType": "Microsoft.AzureStackHCI/networkSecurityGroups.VirtualNetworkSubnetProperties"
     },
     "networkSecurityPerimeters": {
       "kind": "resource",
@@ -55331,6 +56394,73 @@
     "publicCloudConnectors_PublicCloudConnectorProperties": {
       "kind": "property",
       "resourceType": "Microsoft.HybridConnectivity/publicCloudConnectors.PublicCloudConnectorProperties"
+    },
+    "publicIPAddresses": {
+      "kind": "resource",
+      "resourceType": "Microsoft.AzureStackHCI/publicIPAddresses",
+      "attrs": [
+        "id"
+      ],
+      "props": [
+        "extendedLocation:false",
+        "location:true",
+        "name:true",
+        "properties:true",
+        "tags:false"
+      ],
+      "taggable": true
+    },
+    "publicIPAddresses_ExtendedLocation": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/publicIPAddresses.ExtendedLocation"
+    },
+    "publicIPAddresses_GalleryImageVersionStorageProfile": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/publicIPAddresses.GalleryImageVersionStorageProfile"
+    },
+    "publicIPAddresses_ManagedServiceIdentity": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/publicIPAddresses.ManagedServiceIdentity"
+    },
+    "publicIPAddresses_ManagedServiceIdentityUserAssignedIdentities": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/publicIPAddresses.ManagedServiceIdentityUserAssignedIdentities"
+    },
+    "publicIPAddresses_PublicIPAddressProperties": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/publicIPAddresses.PublicIPAddressProperties"
+    },
+    "publicIPAddresses_SecurityRuleProperties": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/publicIPAddresses.SecurityRuleProperties"
+    },
+    "publicIPAddresses_SubnetIpConfigurationReference": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/publicIPAddresses.SubnetIpConfigurationReference"
+    },
+    "publicIPAddresses_SubnetProperties": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/publicIPAddresses.SubnetProperties"
+    },
+    "publicIPAddresses_UserAssignedIdentity": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/publicIPAddresses.UserAssignedIdentity"
+    },
+    "publicIPAddresses_VirtualMachineInstancePropertiesNetworkProfile": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/publicIPAddresses.VirtualMachineInstancePropertiesNetworkProfile"
+    },
+    "publicIPAddresses_VirtualMachineInstancePropertiesStorageProfile": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/publicIPAddresses.VirtualMachineInstancePropertiesStorageProfile"
+    },
+    "publicIPAddresses_VirtualMachineInstancePropertiesStorageProfileOsDisk": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/publicIPAddresses.VirtualMachineInstancePropertiesStorageProfileOsDisk"
+    },
+    "publicIPAddresses_VirtualNetworkSubnetProperties": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/publicIPAddresses.VirtualNetworkSubnetProperties"
     },
     "publicIPPrefixes": {
       "kind": "resource",
@@ -70641,92 +71771,6 @@
       "kind": "property",
       "resourceType": "Microsoft.MobilePacketCore/smfDeployments.SmfDeploymentResourceProperties"
     },
-    "snapshots": {
-      "kind": "resource",
-      "resourceType": "Microsoft.ContainerService/snapshots",
-      "attrs": [
-        "id"
-      ],
-      "props": [
-        "location:true",
-        "name:true",
-        "properties:true",
-        "tags:false"
-      ],
-      "taggable": true
-    },
-    "snapshots_AgentPoolNetworkProfile": {
-      "kind": "property",
-      "resourceType": "Microsoft.ContainerService/snapshots.AgentPoolNetworkProfile"
-    },
-    "snapshots_ContainerServiceNetworkProfile": {
-      "kind": "property",
-      "resourceType": "Microsoft.ContainerService/snapshots.ContainerServiceNetworkProfile"
-    },
-    "snapshots_ManagedClusterIdentity": {
-      "kind": "property",
-      "resourceType": "Microsoft.ContainerService/snapshots.ManagedClusterIdentity"
-    },
-    "snapshots_ManagedClusterIdentityUserAssignedIdentities": {
-      "kind": "property",
-      "resourceType": "Microsoft.ContainerService/snapshots.ManagedClusterIdentityUserAssignedIdentities"
-    },
-    "snapshots_ManagedClusterPodIdentity": {
-      "kind": "property",
-      "resourceType": "Microsoft.ContainerService/snapshots.ManagedClusterPodIdentity"
-    },
-    "snapshots_ManagedClusterPodIdentityException": {
-      "kind": "property",
-      "resourceType": "Microsoft.ContainerService/snapshots.ManagedClusterPodIdentityException"
-    },
-    "snapshots_ManagedClusterPodIdentityExceptionPodLabels": {
-      "kind": "property",
-      "resourceType": "Microsoft.ContainerService/snapshots.ManagedClusterPodIdentityExceptionPodLabels"
-    },
-    "snapshots_ManagedClusterPodIdentityProfile": {
-      "kind": "property",
-      "resourceType": "Microsoft.ContainerService/snapshots.ManagedClusterPodIdentityProfile"
-    },
-    "snapshots_ManagedClusterPropertiesIdentityProfile": {
-      "kind": "property",
-      "resourceType": "Microsoft.ContainerService/snapshots.ManagedClusterPropertiesIdentityProfile"
-    },
-    "snapshots_ManagedClusterSecurityProfileWorkloadIdentity": {
-      "kind": "property",
-      "resourceType": "Microsoft.ContainerService/snapshots.ManagedClusterSecurityProfileWorkloadIdentity"
-    },
-    "snapshots_ManagedClusterStorageProfile": {
-      "kind": "property",
-      "resourceType": "Microsoft.ContainerService/snapshots.ManagedClusterStorageProfile"
-    },
-    "snapshots_ManagedClusterStorageProfileBlobCSIDriver": {
-      "kind": "property",
-      "resourceType": "Microsoft.ContainerService/snapshots.ManagedClusterStorageProfileBlobCSIDriver"
-    },
-    "snapshots_ManagedClusterStorageProfileDiskCSIDriver": {
-      "kind": "property",
-      "resourceType": "Microsoft.ContainerService/snapshots.ManagedClusterStorageProfileDiskCSIDriver"
-    },
-    "snapshots_ManagedClusterStorageProfileFileCSIDriver": {
-      "kind": "property",
-      "resourceType": "Microsoft.ContainerService/snapshots.ManagedClusterStorageProfileFileCSIDriver"
-    },
-    "snapshots_ManagedClusterStorageProfileSnapshotController": {
-      "kind": "property",
-      "resourceType": "Microsoft.ContainerService/snapshots.ManagedClusterStorageProfileSnapshotController"
-    },
-    "snapshots_ManagedServiceIdentityUserAssignedIdentitiesValue": {
-      "kind": "property",
-      "resourceType": "Microsoft.ContainerService/snapshots.ManagedServiceIdentityUserAssignedIdentitiesValue"
-    },
-    "snapshots_SnapshotProperties": {
-      "kind": "property",
-      "resourceType": "Microsoft.ContainerService/snapshots.SnapshotProperties"
-    },
-    "snapshots_UserAssignedIdentity": {
-      "kind": "property",
-      "resourceType": "Microsoft.ContainerService/snapshots.UserAssignedIdentity"
-    },
     "snsSubscriptions": {
       "kind": "resource",
       "resourceType": "Microsoft.AwsConnector/snsSubscriptions",
@@ -72816,37 +73860,6 @@
     "storageClasses_StorageClassProperties": {
       "kind": "property",
       "resourceType": "Microsoft.KubernetesRuntime/storageClasses.StorageClassProperties"
-    },
-    "storageContainers": {
-      "kind": "resource",
-      "resourceType": "Microsoft.Discovery/storageContainers",
-      "attrs": [
-        "id"
-      ],
-      "props": [
-        "location:false",
-        "name:true",
-        "properties:true",
-        "resources:false",
-        "tags:false"
-      ],
-      "taggable": true
-    },
-    "storageContainers_Identity": {
-      "kind": "property",
-      "resourceType": "Microsoft.Discovery/storageContainers.Identity"
-    },
-    "storageContainers_StorageContainerProperties": {
-      "kind": "property",
-      "resourceType": "Microsoft.Discovery/storageContainers.StorageContainerProperties"
-    },
-    "storageContainers_SystemAssignedServiceIdentity": {
-      "kind": "property",
-      "resourceType": "Microsoft.Discovery/storageContainers.SystemAssignedServiceIdentity"
-    },
-    "storageContainers_UserAssignedIdentity": {
-      "kind": "property",
-      "resourceType": "Microsoft.Discovery/storageContainers.UserAssignedIdentity"
     },
     "storageContainers_storageAssets": {
       "kind": "resource",
@@ -75370,6 +76383,73 @@
       "kind": "property",
       "resourceType": "Microsoft.Mission/virtualEnclaves_workloads.WorkloadProperties"
     },
+    "virtualHardDisks": {
+      "kind": "resource",
+      "resourceType": "Microsoft.AzureStackHCI/virtualHardDisks",
+      "attrs": [
+        "id"
+      ],
+      "props": [
+        "extendedLocation:false",
+        "location:true",
+        "name:true",
+        "properties:true",
+        "tags:false"
+      ],
+      "taggable": true
+    },
+    "virtualHardDisks_ExtendedLocation": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/virtualHardDisks.ExtendedLocation"
+    },
+    "virtualHardDisks_GalleryImageVersionStorageProfile": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/virtualHardDisks.GalleryImageVersionStorageProfile"
+    },
+    "virtualHardDisks_ManagedServiceIdentity": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/virtualHardDisks.ManagedServiceIdentity"
+    },
+    "virtualHardDisks_ManagedServiceIdentityUserAssignedIdentities": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/virtualHardDisks.ManagedServiceIdentityUserAssignedIdentities"
+    },
+    "virtualHardDisks_SecurityRuleProperties": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/virtualHardDisks.SecurityRuleProperties"
+    },
+    "virtualHardDisks_SubnetIpConfigurationReference": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/virtualHardDisks.SubnetIpConfigurationReference"
+    },
+    "virtualHardDisks_SubnetProperties": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/virtualHardDisks.SubnetProperties"
+    },
+    "virtualHardDisks_UserAssignedIdentity": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/virtualHardDisks.UserAssignedIdentity"
+    },
+    "virtualHardDisks_VirtualHardDiskProperties": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/virtualHardDisks.VirtualHardDiskProperties"
+    },
+    "virtualHardDisks_VirtualMachineInstancePropertiesNetworkProfile": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/virtualHardDisks.VirtualMachineInstancePropertiesNetworkProfile"
+    },
+    "virtualHardDisks_VirtualMachineInstancePropertiesStorageProfile": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/virtualHardDisks.VirtualMachineInstancePropertiesStorageProfile"
+    },
+    "virtualHardDisks_VirtualMachineInstancePropertiesStorageProfileOsDisk": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/virtualHardDisks.VirtualMachineInstancePropertiesStorageProfileOsDisk"
+    },
+    "virtualHardDisks_VirtualNetworkSubnetProperties": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/virtualHardDisks.VirtualNetworkSubnetProperties"
+    },
     "virtualHubs": {
       "kind": "resource",
       "resourceType": "Microsoft.Network/virtualHubs",
@@ -77497,6 +78577,66 @@
     "virtualNetworkTaps_networkVirtualAppliances_inboundSecurityRules_childResource": {
       "kind": "property",
       "resourceType": "Microsoft.Network/virtualNetworkTaps.networkVirtualAppliances_inboundSecurityRules_childResource"
+    },
+    "virtualNetworks_subnets": {
+      "kind": "resource",
+      "resourceType": "Microsoft.AzureStackHCI/virtualNetworks_subnets",
+      "attrs": [
+        "id"
+      ],
+      "props": [
+        "extendedLocation:false",
+        "name:true",
+        "properties:true"
+      ]
+    },
+    "virtualNetworks_subnets_ExtendedLocation": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/virtualNetworks_subnets.ExtendedLocation"
+    },
+    "virtualNetworks_subnets_GalleryImageVersionStorageProfile": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/virtualNetworks_subnets.GalleryImageVersionStorageProfile"
+    },
+    "virtualNetworks_subnets_ManagedServiceIdentity": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/virtualNetworks_subnets.ManagedServiceIdentity"
+    },
+    "virtualNetworks_subnets_ManagedServiceIdentityUserAssignedIdentities": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/virtualNetworks_subnets.ManagedServiceIdentityUserAssignedIdentities"
+    },
+    "virtualNetworks_subnets_SecurityRuleProperties": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/virtualNetworks_subnets.SecurityRuleProperties"
+    },
+    "virtualNetworks_subnets_SubnetIpConfigurationReference": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/virtualNetworks_subnets.SubnetIpConfigurationReference"
+    },
+    "virtualNetworks_subnets_SubnetProperties": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/virtualNetworks_subnets.SubnetProperties"
+    },
+    "virtualNetworks_subnets_UserAssignedIdentity": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/virtualNetworks_subnets.UserAssignedIdentity"
+    },
+    "virtualNetworks_subnets_VirtualMachineInstancePropertiesNetworkProfile": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/virtualNetworks_subnets.VirtualMachineInstancePropertiesNetworkProfile"
+    },
+    "virtualNetworks_subnets_VirtualMachineInstancePropertiesStorageProfile": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/virtualNetworks_subnets.VirtualMachineInstancePropertiesStorageProfile"
+    },
+    "virtualNetworks_subnets_VirtualMachineInstancePropertiesStorageProfileOsDisk": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/virtualNetworks_subnets.VirtualMachineInstancePropertiesStorageProfileOsDisk"
+    },
+    "virtualNetworks_subnets_VirtualNetworkSubnetProperties": {
+      "kind": "property",
+      "resourceType": "Microsoft.AzureStackHCI/virtualNetworks_subnets.VirtualNetworkSubnetProperties"
     },
     "virtualNetworks_virtualNetworkPeerings": {
       "kind": "resource",
