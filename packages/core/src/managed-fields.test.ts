@@ -2,26 +2,14 @@ import { describe, test, expect } from "vitest";
 import {
   K8S_OBJECT_ENVELOPE_PRUNE_PATTERNS,
   k8sListMapOrderKey,
+  K8S_SYSTEM_METADATA_PRUNE_PATTERNS,
   buildOwnershipSets,
-  pruneByOwnership,
-  type OwnershipSets,
 } from "./managed-fields";
-import { normalizeDeepProperties, type DeepNode } from "./deep-observation";
+import { normalizeDeepProperties } from "./deep-observation";
 
 /** The naming scheme both the k8s lexicon (via `@intentius/chant-k8s-client`'s `isChantFieldManager`) and gcp restate use in their own tests. */
 function isChantManager(manager: string | undefined): boolean {
   return !!manager && (manager === "chant" || manager.startsWith("chant:"));
-}
-
-function node(partial: Partial<DeepNode> & Pick<DeepNode, "path" | "pattern">): DeepNode {
-  return {
-    entityType: "Test::Entity",
-    key: partial.pattern,
-    value: undefined,
-    side: "live",
-    counterpart: "unknown",
-    ...partial,
-  };
 }
 
 describe("K8S_OBJECT_ENVELOPE_PRUNE_PATTERNS — the generic Kubernetes object envelope", () => {
@@ -150,36 +138,21 @@ describe("buildOwnershipSets — resolving managedFields against live and declar
   });
 });
 
-describe("pruneByOwnership — the shared three-question rule", () => {
-  const sets: OwnershipSets = {
-    chantOwned: new Set(["metadata.labels.tier"]),
-    foreignOwned: new Set(["spec.replicas", "metadata.annotations.noise"]),
-    foreignContested: new Set(["spec.replicas"]),
-    owners: new Map([
-      ["metadata.labels.tier", "chant"],
-      ["spec.replicas", "hpa-controller"],
-      ["metadata.annotations.noise", "kube-controller-manager"],
-    ]),
-  };
-
-  test("never prunes the declared side", () => {
-    expect(pruneByOwnership(node({ path: "spec.replicas", pattern: "spec.replicas", side: "declared" }), sets)).toBe(false);
+describe("K8S_SYSTEM_METADATA_PRUNE_PATTERNS — what the controllers stamp, not what a human labels (#1191)", () => {
+  test("covers client-side apply bookkeeping, the Deployment controller's rollout counters and the controllers' selector labels", () => {
+    for (const p of [
+      "metadata.annotations.kubectl.kubernetes.io/last-applied-configuration",
+      "metadata.annotations.deployment.kubernetes.io/revision",
+      "metadata.labels.pod-template-hash",
+      "metadata.labels.controller-revision-hash",
+    ]) {
+      expect(K8S_SYSTEM_METADATA_PRUNE_PATTERNS.has(p)).toBe(true);
+    }
   });
 
-  test("never prunes a chant-owned path", () => {
-    expect(pruneByOwnership(node({ path: "metadata.labels.tier", pattern: "metadata.labels.tier" }), sets)).toBe(false);
-  });
-
-  test("prunes a foreign-owned, uncontested (undeclared) path", () => {
-    expect(pruneByOwnership(node({ path: "metadata.annotations.noise", pattern: "metadata.annotations.noise" }), sets)).toBe(true);
-  });
-
-  test("keeps a foreign-owned, contested (declared) path", () => {
-    expect(pruneByOwnership(node({ path: "spec.replicas", pattern: "spec.replicas" }), sets)).toBe(false);
-  });
-
-  test("leaves a path with no ownership information alone (never pruned by this rule)", () => {
-    expect(pruneByOwnership(node({ path: "spec.selector", pattern: "spec.selector" }), sets)).toBe(false);
+  test("an out-of-band user label is not on the list — it has to reach the diff as undeclared", () => {
+    expect(K8S_SYSTEM_METADATA_PRUNE_PATTERNS.has("metadata.labels.team")).toBe(false);
+    expect(K8S_SYSTEM_METADATA_PRUNE_PATTERNS.has("metadata.annotations.kubernetes.io/change-cause")).toBe(false);
   });
 });
 

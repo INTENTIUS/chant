@@ -168,6 +168,10 @@ describeObservationConformance({
 
 ## observeResourcesDeep() — property-level drift
 
+### Ownership is a label on drift, not a filter
+
+A substrate that records who wrote each field (Kubernetes' `metadata.managedFields`, read by the k8s row) may return `fieldOwners` — a map from path to manager name — alongside each resource's normalized tree. Core attaches it to every reported drift as `owner`. It must not be used to drop fields before the diff: a field a foreign manager owns and source never declared is the `undeclared` kind's whole reason to exist, and pruning it at read time is how chant #1191 lost a console-added label. Subtract only what the platform writes on every object of a kind (`status`, server-minted metadata, controller-stamped annotations and labels — `K8S_SYSTEM_METADATA_PRUNE_PATTERNS` in `@intentius/chant/managed-fields` for Kubernetes-shaped objects) and let the baseline absorb the rest.
+
 ### The accepted baseline
 
 Some deviations are permanent facts of the account — a platform team's mandatory tag, a setting an org policy flips on. `chant lifecycle diff <env> --live --update-baseline` records what a run reported into `<env>/observation-baseline.json` on the `chant/lifecycle` orphan branch, and later runs subtract it. Acceptance is **value-bound**: the accepted value stops alerting, a change away from it is drift again, reported with all three axes (declared / live / baseline). Nothing in a lexicon has to implement this — it is applied by core, above the reader.

@@ -143,6 +143,10 @@ export function diffDeepObservation(
       normalizedLive[name] = {
         type: liveEntity.type || entity.entityType,
         ...(liveEntity.physicalId ? { physicalId: liveEntity.physicalId } : {}),
+        // Per-path owners (#1189) ride through unchanged; the diff looks them
+        // up by the flattened path, so a keyed list element (`[#name]`) has
+        // no owner today — its raw index path is what the reader recorded.
+        ...(liveEntity.fieldOwners ? { fieldOwners: liveEntity.fieldOwners } : {}),
         properties: normalizeDeepProperties(liveRaw, {
           entityType: liveEntity.type || entity.entityType,
           side: "live",

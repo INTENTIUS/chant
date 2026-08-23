@@ -160,6 +160,18 @@ fieldSetsOf(live);             // one decoded entry per manager, subresources in
 
 Paths render the way `sigs.k8s.io/structured-merge-diff` does — `.spec.template.spec.containers[name="web"].image` — which is the same syntax a conflict cause uses, so the two are comparable as strings. Subresource entries (a controller's `status` writes) are excluded by default.
 
+### What ownership means for drift
+
+`chant lifecycle diff --live` reads `managedFields` on every declared object, but ownership decides who gets named on a drift line, not whether the line is reported. The rule:
+
+| Live field is | Reported as |
+|---|---|
+| Declared in source, whoever owns it live | `changed` (or nothing, when the values agree). A `kubectl scale` that took `spec.replicas` away from chant still shows, with `owner: kubectl-client-side-apply`. |
+| Not declared, owned by another manager | `undeclared`, with the owner named — `kubectl label deploy web team=platform` shows as `metadata.labels.team` owned by `kubectl-edit`; an HPA that owns `spec.replicas` on a Deployment whose source is silent about replicas shows as `spec.replicas` owned by `kube-controller-manager`. |
+| Not declared, stamped by Kubernetes itself | Nothing. `deployment.kubernetes.io/revision`, `kubectl.kubernetes.io/last-applied-configuration`, `pod-template-hash` and the other controller-written annotations and labels are on a static allowlist (`K8S_SYSTEM_METADATA_PRUNE_PATTERNS` in `@intentius/chant/managed-fields`), alongside `status` and the server-minted metadata. |
+
+The second row is the one that changed in chant #1191. Until then a foreign-owned field nobody declared was pruned before the diff ran, which silenced the console-edit case the deep read exists for. The noise valve is the [accepted baseline](/chant/concepts/drift-detection/#the-accepted-baseline---update-baseline): accept the HPA's `spec.replicas` once with `--update-baseline` and it stays quiet until the value moves. Acceptance is value-bound, so accepting `team=platform` does not bless `team=security`.
+
 ## What is still shelled out
 
 `kubectl exec`, `attach`, `port-forward` and `cp` need SPDY or the 1.30+ WebSocket subprotocol, are not on any critical path, and stay as they are. Chant is not reimplementing `kubectl`.
