@@ -24,6 +24,7 @@ const {
   observeResourcesDeepAws,
   awsDeepNormalizationHooks,
   hasOwnershipMarker,
+  schemaReadOnlyPatterns,
 } = await import("./deep-observe");
 const { parseResourceDescription } = await import("./api/read-client");
 const { deepDiffForLexicon } = await import("@intentius/chant/lifecycle/deep-observe");
@@ -249,6 +250,99 @@ describe("the aws noise rules", () => {
       { entityType: "AWS::IAM::Role", side: "live", hooks: awsDeepNormalizationHooks },
     );
     expect(out).toEqual({ Path: "/", RoleName: "r" });
+  });
+});
+
+// A property the schema marks read-only is a GetAtt attribute, never a
+// declared input. The live read still reports it, so without the schema-driven
+// rule every clean apply shows `<undeclared> -> value` for it.
+describe("schema read-only properties are attributes, not drift (#1641)", () => {
+  test("the registry is read off the schema's readOnlyProperties, arrays spelled as patterns", () => {
+    expect([...schemaReadOnlyPatterns("AWS::IAM::ManagedPolicy")]).toEqual(
+      expect.arrayContaining(["PolicyArn", "PolicyId", "AttachmentCount", "DefaultVersionId"]),
+    );
+    expect([...schemaReadOnlyPatterns("AWS::RDS::DBInstance")]).toEqual(
+      expect.arrayContaining(["Endpoint.Address", "Endpoint.Port", "DbiResourceId", "DBInstanceStatus"]),
+    );
+    expect([...schemaReadOnlyPatterns("AWS::CE::AnomalySubscription")]).toContain("Subscribers[].Status");
+    expect(schemaReadOnlyPatterns("AWS::Made::Up").size).toBe(0);
+  });
+
+  test("ManagedPolicy: a live read carrying PolicyArn is not property drift", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((async (_url: string, init: { headers: Record<string, string>; body: string }) => {
+      const target = init.headers["x-amz-target"];
+      if (!target) return { status: 200, text: () => Promise.resolve(stackResources([["ReadOnly", "AWS::IAM::ManagedPolicy", "arn:aws:iam::000000000000:policy/S3VectorsReadOnlyAccess"]]).text) };
+      const r = cloudControl("arn:aws:iam::000000000000:policy/S3VectorsReadOnlyAccess", {
+        ManagedPolicyName: "S3VectorsReadOnlyAccess",
+        Path: "/",
+        PolicyDocument: { Version: "2012-10-17", Statement: [{ Effect: "Allow", Action: ["s3vectors:Get*"], Resource: "*" }] },
+        // Every readOnlyProperties entry for the type, as real AWS and the
+        // emulator return them. PolicyArn is also the primary identifier.
+        PolicyArn: "arn:aws:iam::000000000000:policy/S3VectorsReadOnlyAccess",
+        PolicyId: "ANPA000000000000EXAMPLE",
+        AttachmentCount: 1,
+        DefaultVersionId: "v1",
+        IsAttachable: true,
+        PermissionsBoundaryUsageCount: 0,
+        CreateDate: "2026-01-01T00:00:00Z",
+        UpdateDate: "2026-01-01T00:00:00Z",
+      });
+      return { status: r.status, text: () => Promise.resolve(r.text) };
+    }) as unknown as typeof fetch);
+    try {
+      const result = await deepDiffForLexicon(awsPlugin, {
+        environment: "prod",
+        buildOutput: "",
+        entities: entities({
+          ReadOnly: {
+            entityType: "AWS::IAM::ManagedPolicy",
+            props: {
+              ManagedPolicyName: "S3VectorsReadOnlyAccess",
+              PolicyDocument: { Version: "2012-10-17", Statement: [{ Effect: "Allow", Action: ["s3vectors:Get*"], Resource: "*" }] },
+            },
+          },
+        }),
+      });
+      expect(result.drifted).toEqual([]);
+      expect(result.unchanged).toEqual(["ReadOnly"]);
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
+  test("a second type with nested read-only paths: RDS DBInstance's endpoint and status are pruned, inputs are kept", () => {
+    const out = normalizeDeepProperties(
+      {
+        DBInstanceIdentifier: "db-1",
+        DBInstanceClass: "db.t4g.micro",
+        Endpoint: { Address: "db-1.abc.us-east-1.rds.amazonaws.com", Port: "5432", HostedZoneId: "Z1" },
+        DbiResourceId: "db-ABCDEF",
+        DBInstanceStatus: "available",
+        InstanceCreateTime: "2026-01-01T00:00:00Z",
+        CertificateDetails: { CAIdentifier: "rds-ca-rsa2048-g1", ValidTill: "2027-01-01T00:00:00Z" },
+        ProcessorFeatures: [{ Name: "coreCount", Value: "2" }],
+      },
+      { entityType: "AWS::RDS::DBInstance", side: "live", hooks: awsDeepNormalizationHooks },
+    );
+    expect(out).toEqual({
+      DBInstanceIdentifier: "db-1",
+      DBInstanceClass: "db.t4g.micro",
+      ProcessorFeatures: [{ Name: "coreCount", Value: "2" }],
+    });
+  });
+
+  test("an array element path from the schema prunes inside the array", () => {
+    const out = normalizeDeepProperties(
+      {
+        SubscriptionName: "spend",
+        Subscribers: [{ Address: "a@example.com", Type: "EMAIL", Status: "CONFIRMED" }],
+      },
+      { entityType: "AWS::CE::AnomalySubscription", side: "live", hooks: awsDeepNormalizationHooks },
+    );
+    expect(out).toEqual({
+      SubscriptionName: "spend",
+      Subscribers: [{ Address: "a@example.com", Type: "EMAIL" }],
+    });
   });
 });
 
