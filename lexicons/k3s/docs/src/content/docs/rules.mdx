@@ -1,0 +1,27 @@
+---
+title: "All Rules"
+description: "Every lint rule and post-synth check provided by the K3s lexicon"
+---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-k3s` — DO NOT EDIT.
+    Edit lexicons/k3s/src/codegen/docs.ts instead; changes here are overwritten. */}
+
+The K3s lexicon provides **6** rules: 1 lint rule and 5 post-synth checks.
+
+## Lint Rules
+
+| ID | Severity | Category | Description |
+|----|----------|----------|-------------|
+| `K3S001` | error | security | literal join token in source. |
+
+## Post-Synth Checks
+
+Post-synth checks validate the serialized output after the build pipeline completes.
+
+| ID | Description |
+|----|-------------|
+| `K3S101` | A k3s config entity carries a literal join token |
+| `K3S102` | registries.yaml carries a literal registry credential |
+| `K3S103` | An agent config declares no server to join |
+| `K3S104` | write-kubeconfig-mode is wider than 0644 |
+| `K3S105` | registries.yaml disables TLS verification for a registry |
