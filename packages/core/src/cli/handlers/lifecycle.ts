@@ -416,6 +416,7 @@ export async function runLifecycleDiff(ctx: CommandContext): Promise<number> {
           buildResult,
           json,
           stack: target.stack,
+          region: target.region,
           componentStacks,
           baseline,
           updateBaseline: args.updateBaseline,
@@ -650,6 +651,11 @@ interface LiveDiffArgs {
   /** Deployed stack name for a multi-stack project (#932); scopes the live
    * observation (which CloudFormation stack to query) and the snapshot read. */
   stack?: string;
+  /** Region that stack is deployed in, from `stacks[].region` (#1264). Same
+   * contract as snapshot (#1261): without it every stack is read against the
+   * ambient region, so a multi-region estate reports its out-of-region stacks
+   * as absent rather than unobserved. */
+  region?: string;
   /** Component projects deploy one CFN stack per component; observe them all and
    * union (the same fix graph/plan use), else every deployed resource reads as
    * "missing". Empty → the single-stack observe path. */
@@ -710,6 +716,9 @@ async function observeLexicon(
     declared: Set<string>;
     entities: Map<string, { entityType: string; props: Record<string, unknown> }>;
     stack?: string;
+    /** Region the stack is deployed in (#1264); the read targets it instead of
+     * the ambient region. */
+    region?: string;
     componentStacks?: string[];
     owned?: boolean;
     /** `--namespace <ns>` (#1629): where to read an entity that declares no
@@ -723,6 +732,7 @@ async function observeLexicon(
     buildOutput: opts.buildOutput,
     entityNames,
     entities: opts.entities,
+    ...(opts.region ? { region: opts.region } : {}),
     ...(opts.owned !== undefined ? { owned: opts.owned } : {}),
     ...(opts.namespace ? { namespace: opts.namespace } : {}),
   };
@@ -811,6 +821,7 @@ async function runLifecycleDiffLive(args: LiveDiffArgs): Promise<LiveDiffOutcome
         declared,
         entities,
         stack: args.stack,
+        region: args.region,
         componentStacks: args.componentStacks,
         ...(args.namespace ? { namespace: args.namespace } : {}),
       });
@@ -839,6 +850,7 @@ async function runLifecycleDiffLive(args: LiveDiffArgs): Promise<LiveDiffOutcome
           buildOutput,
           entities,
           stack: args.stack,
+          region: args.region,
           componentStacks: args.componentStacks,
           baseline: baselineForLexicon(args.baseline, lexiconName),
         });
