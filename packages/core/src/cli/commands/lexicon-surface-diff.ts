@@ -62,7 +62,7 @@ export async function runSurfaceDiff(opts: SurfaceDiffOptions): Promise<RegenRes
       ok: false,
       changed: false,
       severity: "none",
-      delta: { added: [], changed: [], removed: [], severity: "none" },
+      delta: { added: [], changed: [], removed: [], renamed: [], severity: "none" },
       deltaText: "",
       failures: [failure],
       freshSnapshot: null,

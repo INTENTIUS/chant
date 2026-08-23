@@ -46,7 +46,7 @@ export async function runRollingUpgrade(
       lexicon: "aws",
       hasUpgrade: false,
       severity: "none",
-      delta: { added: [], changed: [], removed: [], severity: "none" },
+      delta: { added: [], changed: [], removed: [], renamed: [], severity: "none" },
       deltaText: "",
       validationOk: false,
       failures: [{ step: "setup", output: `Lexicon directory not found: ${dir}` }],

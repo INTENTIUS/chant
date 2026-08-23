@@ -72,8 +72,8 @@ export interface RemovedEntry {
   entry: SurfaceEntry;
 }
 
-export interface ChangedEntry {
-  name: string;
+/** Structural differences between two versions of one entry. */
+export interface EntryChanges {
   /** New resourceType (breaking). */
   resourceTypeChanged?: { before: string; after: string };
   /** kind changed from resource to property or vice-versa (breaking). */
@@ -96,14 +96,40 @@ export interface ChangedEntry {
   taggableChanged?: { before?: boolean; after?: boolean };
 }
 
+export interface ChangedEntry extends EntryChanges {
+  name: string;
+}
+
+/**
+ * An entry whose TS export name changed while its kind and resourceType
+ * stayed the same (#1460). Paired from one removal and one addition.
+ */
+export interface RenamedEntry {
+  /** TS export name in the baseline. */
+  from: string;
+  /** TS export name in the fresh surface. */
+  to: string;
+  /** The entry as it now appears. */
+  entry: SurfaceEntry;
+  /** Structural differences between the two, when any. */
+  changes?: EntryChanges;
+}
+
 export interface SurfaceDelta {
   added: AddedEntry[];
   changed: ChangedEntry[];
   removed: RemovedEntry[];
   /**
+   * Removals and additions paired by kind + resourceType. A rename still
+   * breaks the old import, so it counts as breaking; it is reported apart
+   * from removals so a reader can tell the two kinds of break apart.
+   */
+  renamed: RenamedEntry[];
+  /**
    * Rolled-up severity. "none" means no surface changes at all.
    * "additive" means only new resources / new optional props / new attrs.
-   * "breaking" means any removal or change that could break existing consumers.
+   * "breaking" means any removal, rename, or change that could break
+   * existing consumers.
    */
   severity: ChangeSeverity;
 }
@@ -314,9 +340,9 @@ export function extractPropsFromDts(dts: string): Map<string, string[]> {
  *   - taggable: false→true or undefined→true → additive
  */
 export function diffSurface(baseline: SurfaceSnapshot, fresh: SurfaceSnapshot): SurfaceDelta {
-  const added: AddedEntry[] = [];
   const changed: ChangedEntry[] = [];
-  const removed: RemovedEntry[] = [];
+  let added: AddedEntry[] = [];
+  let removed: RemovedEntry[] = [];
 
   const baseNames = new Set(Object.keys(baseline.entries));
   const freshNames = new Set(Object.keys(fresh.entries));
@@ -335,80 +361,30 @@ export function diffSurface(baseline: SurfaceSnapshot, fresh: SurfaceSnapshot): 
     }
   }
 
+  // Renamed (#1460): a removal and an addition that carry the same
+  // resourceType and kind are one entry under a new TS name. Pair them
+  // before classifying so the report shows what upstream actually did.
+  const renamed: RenamedEntry[] = [];
+  const paired = pairRenames(removed, added);
+  for (const { from, to } of paired) {
+    const entry: RenamedEntry = { from: from.name, to: to.name, entry: to.entry };
+    const changes = diffEntries(from.entry, to.entry);
+    if (changes) entry.changes = changes;
+    renamed.push(entry);
+  }
+  if (paired.length > 0) {
+    const fromNames = new Set(paired.map((p) => p.from.name));
+    const toNames = new Set(paired.map((p) => p.to.name));
+    removed = removed.filter((r) => !fromNames.has(r.name));
+    added = added.filter((a) => !toNames.has(a.name));
+  }
+  renamed.sort((a, b) => a.from.localeCompare(b.from));
+
   // Changed
   for (const name of baseNames) {
     if (!freshNames.has(name)) continue;
-
-    const before = baseline.entries[name];
-    const after = fresh.entries[name];
-
-    const change: ChangedEntry = { name };
-    let hasChange = false;
-
-    if (before.resourceType !== after.resourceType) {
-      change.resourceTypeChanged = { before: before.resourceType, after: after.resourceType };
-      hasChange = true;
-    }
-
-    if (before.kind !== after.kind) {
-      change.kindChanged = { before: before.kind, after: after.kind };
-      hasChange = true;
-    }
-
-    // Props diff (only meaningful for resource entries)
-    const beforeProps = new Map(
-      (before.props ?? []).map((p) => {
-        const [nm, req] = splitProp(p);
-        return [nm, req === "true"];
-      }),
-    );
-    const afterProps = new Map(
-      (after.props ?? []).map((p) => {
-        const [nm, req] = splitProp(p);
-        return [nm, req === "true"];
-      }),
-    );
-
-    const removedProps = [...beforeProps.keys()].filter((k) => !afterProps.has(k));
-    const addedProps = [...afterProps.keys()].filter((k) => !beforeProps.has(k));
-    const nowRequired = [...beforeProps.keys()].filter(
-      (k) => afterProps.has(k) && !beforeProps.get(k) && afterProps.get(k),
-    );
-    const nowOptional = [...beforeProps.keys()].filter(
-      (k) => afterProps.has(k) && beforeProps.get(k) && !afterProps.get(k),
-    );
-
-    if (removedProps.length > 0) { change.removedProps = removedProps.sort(); hasChange = true; }
-    if (addedProps.length > 0) { change.addedProps = addedProps.sort(); hasChange = true; }
-    if (nowRequired.length > 0) { change.nowRequired = nowRequired.sort(); hasChange = true; }
-    if (nowOptional.length > 0) { change.nowOptional = nowOptional.sort(); hasChange = true; }
-
-    // Attrs diff
-    const beforeAttrs = new Set(before.attrs ?? []);
-    const afterAttrs = new Set(after.attrs ?? []);
-    const removedAttrs = [...beforeAttrs].filter((a) => !afterAttrs.has(a));
-    const addedAttrs = [...afterAttrs].filter((a) => !beforeAttrs.has(a));
-    if (removedAttrs.length > 0) { change.removedAttrs = removedAttrs.sort(); hasChange = true; }
-    if (addedAttrs.length > 0) { change.addedAttrs = addedAttrs.sort(); hasChange = true; }
-
-    // createOnly diff
-    const beforeCO = JSON.stringify((before.createOnly ?? []).sort());
-    const afterCO = JSON.stringify((after.createOnly ?? []).sort());
-    if (beforeCO !== afterCO) {
-      change.createOnlyChanged = {
-        before: before.createOnly ?? [],
-        after: after.createOnly ?? [],
-      };
-      hasChange = true;
-    }
-
-    // taggable diff
-    if (before.taggable !== after.taggable) {
-      change.taggableChanged = { before: before.taggable, after: after.taggable };
-      hasChange = true;
-    }
-
-    if (hasChange) changed.push(change);
+    const changes = diffEntries(baseline.entries[name], fresh.entries[name]);
+    if (changes) changed.push({ name, ...changes });
   }
 
   // Severity
@@ -419,35 +395,219 @@ export function diffSurface(baseline: SurfaceSnapshot, fresh: SurfaceSnapshot): 
   }
 
   // Additive-only changes in the changed[] set
-  const hasAdditiveChanges = changed.some((c) =>
-    (c.addedProps?.length ?? 0) > 0 ||
-    (c.nowOptional?.length ?? 0) > 0 ||
-    (c.addedAttrs?.length ?? 0) > 0 ||
-    // gaining tagging is additive
-    (c.taggableChanged !== undefined && c.taggableChanged.after === true && c.taggableChanged.before !== true),
-  );
+  const hasAdditiveChanges = changed.some(isAdditiveChange);
 
   if (hasAdditiveChanges && severity === "none") {
     severity = "additive";
   }
 
+  // A rename is still breaking for the consumer: the old import no longer
+  // resolves, whether the entry is a resource or a property type. It is
+  // reported separately so the reader can tell a rename from a deletion.
   const hasBreaking =
     removed.length > 0 ||
-    changed.some(
-      (c) =>
-        c.resourceTypeChanged !== undefined ||
-        c.kindChanged !== undefined ||
-        (c.removedProps?.length ?? 0) > 0 ||
-        (c.nowRequired?.length ?? 0) > 0 ||
-        (c.removedAttrs?.length ?? 0) > 0 ||
-        (c.createOnlyChanged !== undefined) ||
-        // losing taggable is breaking
-        (c.taggableChanged !== undefined && c.taggableChanged.before === true && c.taggableChanged.after !== true),
-    );
+    renamed.length > 0 ||
+    changed.some(isBreakingChange);
 
   if (hasBreaking) severity = "breaking";
 
-  return { added, changed, removed, severity };
+  return { added, changed, removed, renamed, severity };
+}
+
+/**
+ * Diff two entries that are (or are taken to be) the same thing. Returns
+ * `null` when nothing differs.
+ */
+function diffEntries(before: SurfaceEntry, after: SurfaceEntry): EntryChanges | null {
+  const change: EntryChanges = {};
+  let hasChange = false;
+
+  if (before.resourceType !== after.resourceType) {
+    change.resourceTypeChanged = { before: before.resourceType, after: after.resourceType };
+    hasChange = true;
+  }
+
+  if (before.kind !== after.kind) {
+    change.kindChanged = { before: before.kind, after: after.kind };
+    hasChange = true;
+  }
+
+  // Props diff (only meaningful for resource entries)
+  const beforeProps = new Map(
+    (before.props ?? []).map((p) => {
+      const [nm, req] = splitProp(p);
+      return [nm, req === "true"];
+    }),
+  );
+  const afterProps = new Map(
+    (after.props ?? []).map((p) => {
+      const [nm, req] = splitProp(p);
+      return [nm, req === "true"];
+    }),
+  );
+
+  const removedProps = [...beforeProps.keys()].filter((k) => !afterProps.has(k));
+  const addedProps = [...afterProps.keys()].filter((k) => !beforeProps.has(k));
+  const nowRequired = [...beforeProps.keys()].filter(
+    (k) => afterProps.has(k) && !beforeProps.get(k) && afterProps.get(k),
+  );
+  const nowOptional = [...beforeProps.keys()].filter(
+    (k) => afterProps.has(k) && beforeProps.get(k) && !afterProps.get(k),
+  );
+
+  if (removedProps.length > 0) { change.removedProps = removedProps.sort(); hasChange = true; }
+  if (addedProps.length > 0) { change.addedProps = addedProps.sort(); hasChange = true; }
+  if (nowRequired.length > 0) { change.nowRequired = nowRequired.sort(); hasChange = true; }
+  if (nowOptional.length > 0) { change.nowOptional = nowOptional.sort(); hasChange = true; }
+
+  // Attrs diff
+  const beforeAttrs = new Set(before.attrs ?? []);
+  const afterAttrs = new Set(after.attrs ?? []);
+  const removedAttrs = [...beforeAttrs].filter((a) => !afterAttrs.has(a));
+  const addedAttrs = [...afterAttrs].filter((a) => !beforeAttrs.has(a));
+  if (removedAttrs.length > 0) { change.removedAttrs = removedAttrs.sort(); hasChange = true; }
+  if (addedAttrs.length > 0) { change.addedAttrs = addedAttrs.sort(); hasChange = true; }
+
+  // createOnly diff
+  const beforeCO = JSON.stringify((before.createOnly ?? []).sort());
+  const afterCO = JSON.stringify((after.createOnly ?? []).sort());
+  if (beforeCO !== afterCO) {
+    change.createOnlyChanged = {
+      before: before.createOnly ?? [],
+      after: after.createOnly ?? [],
+    };
+    hasChange = true;
+  }
+
+  // taggable diff
+  if (before.taggable !== after.taggable) {
+    change.taggableChanged = { before: before.taggable, after: after.taggable };
+    hasChange = true;
+  }
+
+  return hasChange ? change : null;
+}
+
+function isAdditiveChange(c: EntryChanges): boolean {
+  return (
+    (c.addedProps?.length ?? 0) > 0 ||
+    (c.nowOptional?.length ?? 0) > 0 ||
+    (c.addedAttrs?.length ?? 0) > 0 ||
+    // gaining tagging is additive
+    (c.taggableChanged !== undefined && c.taggableChanged.after === true && c.taggableChanged.before !== true)
+  );
+}
+
+function isBreakingChange(c: EntryChanges): boolean {
+  return (
+    c.resourceTypeChanged !== undefined ||
+    c.kindChanged !== undefined ||
+    (c.removedProps?.length ?? 0) > 0 ||
+    (c.nowRequired?.length ?? 0) > 0 ||
+    (c.removedAttrs?.length ?? 0) > 0 ||
+    c.createOnlyChanged !== undefined ||
+    // losing taggable is breaking
+    (c.taggableChanged !== undefined && c.taggableChanged.before === true && c.taggableChanged.after !== true)
+  );
+}
+
+// ── Rename pairing ───────────────────────────────────────────────────
+
+interface RenamePair {
+  from: RemovedEntry;
+  to: AddedEntry;
+}
+
+/**
+ * Pair removed and added entries that share a kind and resourceType.
+ *
+ * One removal and one addition under a resourceType pair directly. When a
+ * resourceType has several of each (property types of one renamed parent
+ * resource, for instance), pairs are chosen greedily by name similarity and
+ * whatever is left over stays a plain removal or addition. Entries with an
+ * empty resourceType are never paired; there is nothing to key them on.
+ */
+function pairRenames(removed: RemovedEntry[], added: AddedEntry[]): RenamePair[] {
+  const key = (e: SurfaceEntry): string => `${e.kind} ${e.resourceType}`;
+
+  const addedByKey = new Map<string, AddedEntry[]>();
+  for (const a of added) {
+    if (!a.entry.resourceType) continue;
+    const k = key(a.entry);
+    const bucket = addedByKey.get(k);
+    if (bucket) bucket.push(a);
+    else addedByKey.set(k, [a]);
+  }
+
+  const removedByKey = new Map<string, RemovedEntry[]>();
+  for (const r of removed) {
+    if (!r.entry.resourceType) continue;
+    const k = key(r.entry);
+    if (!addedByKey.has(k)) continue;
+    const bucket = removedByKey.get(k);
+    if (bucket) bucket.push(r);
+    else removedByKey.set(k, [r]);
+  }
+
+  const pairs: RenamePair[] = [];
+  for (const [k, olds] of removedByKey) {
+    const news = addedByKey.get(k) ?? [];
+    if (olds.length === 1 && news.length === 1) {
+      pairs.push({ from: olds[0], to: news[0] });
+      continue;
+    }
+
+    // Ambiguous: rank every (old, new) combination by similarity and take
+    // the best remaining pair until one side runs out.
+    const candidates: Array<{ from: RemovedEntry; to: AddedEntry; score: number }> = [];
+    for (const from of olds) {
+      for (const to of news) {
+        candidates.push({ from, to, score: nameSimilarity(from.name, to.name) });
+      }
+    }
+    candidates.sort((a, b) =>
+      b.score - a.score ||
+      a.from.name.localeCompare(b.from.name) ||
+      a.to.name.localeCompare(b.to.name),
+    );
+    const usedOld = new Set<string>();
+    const usedNew = new Set<string>();
+    for (const cand of candidates) {
+      if (usedOld.has(cand.from.name) || usedNew.has(cand.to.name)) continue;
+      usedOld.add(cand.from.name);
+      usedNew.add(cand.to.name);
+      pairs.push({ from: cand.from, to: cand.to });
+      if (usedOld.size === olds.length || usedNew.size === news.length) break;
+    }
+  }
+
+  return pairs;
+}
+
+/**
+ * Dice similarity over character bigrams, in [0, 1]. Enough to tell
+ * `Space` apart from `Space_Tag` when pairing the property types of a
+ * renamed parent; nothing heavier is needed.
+ */
+function nameSimilarity(a: string, b: string): number {
+  if (a === b) return 1;
+  if (a.length < 2 || b.length < 2) return 0;
+  const bigrams = (s: string): Map<string, number> => {
+    const m = new Map<string, number>();
+    for (let i = 0; i < s.length - 1; i++) {
+      const bg = s.slice(i, i + 2);
+      m.set(bg, (m.get(bg) ?? 0) + 1);
+    }
+    return m;
+  };
+  const ba = bigrams(a);
+  const bb = bigrams(b);
+  let overlap = 0;
+  for (const [bg, n] of ba) {
+    const m = bb.get(bg);
+    if (m) overlap += Math.min(n, m);
+  }
+  return (2 * overlap) / (a.length - 1 + b.length - 1);
 }
 
 // ── Serialization ────────────────────────────────────────────────────
@@ -489,42 +649,19 @@ export function formatDelta(delta: SurfaceDelta): string {
     }
   }
 
+  if (delta.renamed.length > 0) {
+    lines.push(`Renamed (${delta.renamed.length}):`);
+    for (const r of delta.renamed) {
+      lines.push(`  ~ ${r.from} -> ${r.to} [${r.entry.kind}] (${r.entry.resourceType})`);
+      if (r.changes) lines.push(...formatChanges(r.changes));
+    }
+  }
+
   if (delta.changed.length > 0) {
     lines.push(`Changed (${delta.changed.length}):`);
     for (const c of delta.changed) {
       lines.push(`  ~ ${c.name}`);
-      if (c.resourceTypeChanged) {
-        lines.push(`      resourceType: ${c.resourceTypeChanged.before} -> ${c.resourceTypeChanged.after}`);
-      }
-      if (c.kindChanged) {
-        lines.push(`      kind: ${c.kindChanged.before} -> ${c.kindChanged.after}`);
-      }
-      if (c.removedProps?.length) {
-        lines.push(`      removed props: ${c.removedProps.join(", ")}`);
-      }
-      if (c.nowRequired?.length) {
-        lines.push(`      now required: ${c.nowRequired.join(", ")}`);
-      }
-      if (c.addedProps?.length) {
-        lines.push(`      added props: ${c.addedProps.join(", ")}`);
-      }
-      if (c.nowOptional?.length) {
-        lines.push(`      now optional: ${c.nowOptional.join(", ")}`);
-      }
-      if (c.removedAttrs?.length) {
-        lines.push(`      removed attrs: ${c.removedAttrs.join(", ")}`);
-      }
-      if (c.addedAttrs?.length) {
-        lines.push(`      added attrs: ${c.addedAttrs.join(", ")}`);
-      }
-      if (c.createOnlyChanged) {
-        const before = c.createOnlyChanged.before.join(", ") || "(none)";
-        const after = c.createOnlyChanged.after.join(", ") || "(none)";
-        lines.push(`      createOnly: [${before}] -> [${after}]`);
-      }
-      if (c.taggableChanged) {
-        lines.push(`      taggable: ${c.taggableChanged.before ?? "(unset)"} -> ${c.taggableChanged.after ?? "(unset)"}`);
-      }
+      lines.push(...formatChanges(c));
     }
   }
 
@@ -536,6 +673,44 @@ export function formatDelta(delta: SurfaceDelta): string {
   lines.push(`Severity: ${delta.severity}`);
 
   return lines.join("\n");
+}
+
+/** Indented detail lines for one entry's structural changes. */
+function formatChanges(c: EntryChanges): string[] {
+  const lines: string[] = [];
+  if (c.resourceTypeChanged) {
+    lines.push(`      resourceType: ${c.resourceTypeChanged.before} -> ${c.resourceTypeChanged.after}`);
+  }
+  if (c.kindChanged) {
+    lines.push(`      kind: ${c.kindChanged.before} -> ${c.kindChanged.after}`);
+  }
+  if (c.removedProps?.length) {
+    lines.push(`      removed props: ${c.removedProps.join(", ")}`);
+  }
+  if (c.nowRequired?.length) {
+    lines.push(`      now required: ${c.nowRequired.join(", ")}`);
+  }
+  if (c.addedProps?.length) {
+    lines.push(`      added props: ${c.addedProps.join(", ")}`);
+  }
+  if (c.nowOptional?.length) {
+    lines.push(`      now optional: ${c.nowOptional.join(", ")}`);
+  }
+  if (c.removedAttrs?.length) {
+    lines.push(`      removed attrs: ${c.removedAttrs.join(", ")}`);
+  }
+  if (c.addedAttrs?.length) {
+    lines.push(`      added attrs: ${c.addedAttrs.join(", ")}`);
+  }
+  if (c.createOnlyChanged) {
+    const before = c.createOnlyChanged.before.join(", ") || "(none)";
+    const after = c.createOnlyChanged.after.join(", ") || "(none)";
+    lines.push(`      createOnly: [${before}] -> [${after}]`);
+  }
+  if (c.taggableChanged) {
+    lines.push(`      taggable: ${c.taggableChanged.before ?? "(unset)"} -> ${c.taggableChanged.after ?? "(unset)"}`);
+  }
+  return lines;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────

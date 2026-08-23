@@ -428,6 +428,133 @@ describe("serializeSnapshot / parseSnapshot", () => {
 
 // ── formatDelta ───────────────────────────────────────────────────────
 
+describe("diffSurface — renames (#1460)", () => {
+  test("a removal and an addition with the same resourceType pair as one rename", () => {
+    const baseline = makeSnapshot({
+      MacieSession: { kind: "resource", resourceType: "AWS::Macie::Session", props: ["Status:false"] },
+    });
+    const fresh = makeSnapshot({
+      Session: { kind: "resource", resourceType: "AWS::Macie::Session", props: ["Status:false"] },
+    });
+    const delta = diffSurface(baseline, fresh);
+    expect(delta.added).toEqual([]);
+    expect(delta.removed).toEqual([]);
+    expect(delta.renamed).toEqual([
+      { from: "MacieSession", to: "Session", entry: fresh.entries.Session },
+    ]);
+    // The old import still breaks, so a rename stays breaking for 1.x.
+    expect(delta.severity).toBe("breaking");
+  });
+
+  test("property types rename the same way, and a same-kind match is required", () => {
+    const baseline = makeSnapshot({
+      BCMDataExportsExport_DataQuery: { kind: "property", resourceType: "AWS::BCMDataExports::Export.DataQuery" },
+      Thing: { kind: "resource", resourceType: "X::Thing" },
+    });
+    const fresh = makeSnapshot({
+      Export_DataQuery: { kind: "property", resourceType: "AWS::BCMDataExports::Export.DataQuery" },
+      Thing_Prop: { kind: "property", resourceType: "X::Thing" },
+    });
+    const delta = diffSurface(baseline, fresh);
+    expect(delta.renamed.map((r) => `${r.from} -> ${r.to}`)).toEqual([
+      "BCMDataExportsExport_DataQuery -> Export_DataQuery",
+    ]);
+    // A resource and a property under the same type string are not a rename.
+    expect(delta.removed.map((r) => r.name)).toEqual(["Thing"]);
+    expect(delta.added.map((a) => a.name)).toEqual(["Thing_Prop"]);
+    expect(delta.severity).toBe("breaking");
+  });
+
+  test("a rename that also changed shape carries the structural diff", () => {
+    const baseline = makeSnapshot({
+      PanoramaPackage: { kind: "resource", resourceType: "AWS::Panorama::Package", props: ["PackageName:true", "Tags:false"] },
+    });
+    const fresh = makeSnapshot({
+      Package: { kind: "resource", resourceType: "AWS::Panorama::Package", props: ["PackageName:true"], attrs: ["Arn"] },
+    });
+    const delta = diffSurface(baseline, fresh);
+    expect(delta.renamed).toHaveLength(1);
+    expect(delta.renamed[0].changes).toEqual({ removedProps: ["Tags"], addedAttrs: ["Arn"] });
+    expect(delta.changed).toEqual([]);
+  });
+
+  test("several old and new names under one resourceType pair by similarity; the rest stay add/remove", () => {
+    const rt = "AWS::SageMaker::Space";
+    const baseline = makeSnapshot({
+      Space_OwnershipSettings: { kind: "property", resourceType: rt },
+      Space_SpaceSettings: { kind: "property", resourceType: rt },
+      Space_Gone: { kind: "property", resourceType: rt },
+    });
+    const fresh = makeSnapshot({
+      SageMakerSpace_SpaceSettings: { kind: "property", resourceType: rt },
+      SageMakerSpace_OwnershipSettings: { kind: "property", resourceType: rt },
+    });
+    const delta = diffSurface(baseline, fresh);
+    expect(delta.renamed.map((r) => `${r.from} -> ${r.to}`)).toEqual([
+      "Space_OwnershipSettings -> SageMakerSpace_OwnershipSettings",
+      "Space_SpaceSettings -> SageMakerSpace_SpaceSettings",
+    ]);
+    expect(delta.removed.map((r) => r.name)).toEqual(["Space_Gone"]);
+    expect(delta.added).toEqual([]);
+  });
+
+  test("entries with an empty resourceType never pair", () => {
+    const baseline = makeSnapshot({ A: { kind: "property", resourceType: "" } });
+    const fresh = makeSnapshot({ B: { kind: "property", resourceType: "" } });
+    const delta = diffSurface(baseline, fresh);
+    expect(delta.renamed).toEqual([]);
+    expect(delta.removed).toHaveLength(1);
+    expect(delta.added).toHaveLength(1);
+  });
+
+  test("the #1423 shape: 28 renames among 148 removals and 83 additions", () => {
+    // 3 resources renamed, each dragging 25/3-ish property types with them —
+    // 28 renames in total, 120 plain removals, 55 plain additions.
+    const baseEntries: SurfaceSnapshot["entries"] = {};
+    const freshEntries: SurfaceSnapshot["entries"] = {};
+
+    const renamedResources: Array<[string, string, string]> = [
+      ["MacieSession", "Session", "AWS::Macie::Session"],
+      ["PanoramaPackage", "Package", "AWS::Panorama::Package"],
+      ["Space", "SageMakerSpace", "AWS::SageMaker::Space"],
+    ];
+    let renames = 0;
+    for (const [oldName, newName, rt] of renamedResources) {
+      baseEntries[oldName] = { kind: "resource", resourceType: rt };
+      freshEntries[newName] = { kind: "resource", resourceType: rt };
+      renames++;
+    }
+    // 25 property renames spread across the three parents
+    for (let i = 0; i < 25; i++) {
+      const [oldName, newName, rt] = renamedResources[i % 3];
+      baseEntries[`${oldName}_Prop${i}`] = { kind: "property", resourceType: `${rt}.Prop${i}` };
+      freshEntries[`${newName}_Prop${i}`] = { kind: "property", resourceType: `${rt}.Prop${i}` };
+      renames++;
+    }
+    expect(renames).toBe(28);
+
+    for (let i = 0; i < 120; i++) {
+      baseEntries[`Gone${i}`] = { kind: "resource", resourceType: `AWS::Gone::Type${i}` };
+    }
+    for (let i = 0; i < 55; i++) {
+      freshEntries[`Fresh${i}`] = { kind: "resource", resourceType: `AWS::Fresh::Type${i}` };
+    }
+
+    const delta = diffSurface(makeSnapshot(baseEntries), makeSnapshot(freshEntries));
+    expect(delta.renamed).toHaveLength(28);
+    expect(delta.removed).toHaveLength(120);
+    expect(delta.added).toHaveLength(55);
+    expect(delta.severity).toBe("breaking");
+
+    const text = formatDelta(delta);
+    expect(text).toContain("Renamed (28):");
+    expect(text).toContain("Removed (120):");
+    expect(text).toContain("Added (55):");
+    expect(text).toContain("  ~ MacieSession -> Session [resource] (AWS::Macie::Session)");
+    expect(text).toContain("Severity: breaking");
+  });
+});
+
 describe("formatDelta", () => {
   test("includes severity in output", () => {
     const delta = diffSurface(
@@ -457,5 +584,17 @@ describe("formatDelta", () => {
     expect(text).toContain("Added (1):");
     expect(text).toContain("Removed (1):");
     expect(text).toContain("Changed (1):");
+    expect(text).not.toContain("Renamed");
+  });
+
+  test("renames print as Old -> New with the shared resourceType", () => {
+    const baseline = makeSnapshot({ Old: { kind: "resource", resourceType: "X" } });
+    const fresh = makeSnapshot({ New: { kind: "resource", resourceType: "X" } });
+    const text = formatDelta(diffSurface(baseline, fresh));
+    expect(text).toContain("Renamed (1):");
+    expect(text).toContain("  ~ Old -> New [resource] (X)");
+    expect(text).not.toContain("Added (");
+    expect(text).not.toContain("Removed (");
+    expect(text).toContain("Severity: breaking");
   });
 });
