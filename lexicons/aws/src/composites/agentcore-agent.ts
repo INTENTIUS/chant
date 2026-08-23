@@ -30,6 +30,19 @@ export type AgentManagedRuntime =
   | "PYTHON_3_13"
   | "PYTHON_3_14";
 import { agentCoreTrustPolicy } from "./agentcore-trust-policy";
+import { Sub, type SubIntrinsic } from "../intrinsics";
+
+/**
+ * ARN of the managed `DEFAULT` endpoint AgentCore provisions with a Runtime,
+ * as an `Fn::Sub` over the Runtime's ARN. No CloudFormation attribute carries
+ * it (the Runtime schema exposes only `AgentRuntimeArn`/`AgentRuntimeId`/
+ * `AgentRuntimeVersion`/`Status`), but the format is fixed by the
+ * CreateAgentRuntimeEndpoint API:
+ * `arn:aws:bedrock-agentcore:<region>:<account>:runtime/<id>/runtime-endpoint/<name>`.
+ */
+export function agentCoreDefaultEndpointArn(runtime: InstanceType<typeof Runtime>): SubIntrinsic {
+  return Sub`${runtime.AgentRuntimeArn}/runtime-endpoint/DEFAULT`;
+}
 
 /**
  * AgentCore's `Runtime`/`RuntimeEndpoint`/`Memory` `Name`/`AgentRuntimeName`
@@ -70,7 +83,7 @@ export interface AgentCoreCodeArtifact {
 export interface AgentCoreAgentProps {
   /**
    * Base name for the agent's resources. `toRuntimeIdentifier(name)` derives
-   * the Runtime/RuntimeEndpoint/Memory names; Gateway/GatewayTarget/
+   * the Runtime/Memory (and any explicit endpoint) names; Gateway/GatewayTarget/
    * WorkloadIdentity use `name` as-is (hyphens are valid there).
    */
   name: string;
@@ -94,20 +107,16 @@ export interface AgentCoreAgentProps {
   protocolConfiguration?: "A2A" | "AGUI" | "HTTP" | "MCP";
   /** Environment variables passed to the Runtime container. */
   environmentVariables?: Record<string, string>;
-  /** RuntimeEndpoint name — the alias a version-promotion capability would repoint (deferred, see #882). Default: "DEFAULT". */
-  endpointName?: string;
   /**
-   * Create the `RuntimeEndpoint` in this template. **Default: false.** A
-   * RuntimeEndpoint can only be created once the Runtime's agent *version* is
-   * READY, which is asynchronous and is NOT gated by the Runtime resource's own
-   * CloudFormation `CREATE_COMPLETE` — so creating the endpoint in the same apply
-   * as the Runtime races and fails on a real deploy ("Agent version 1 must be in
-   * READY status. Current status: CREATING", #978). Leave this off and create the
-   * endpoint out-of-band once the runtime is READY — which is what Bedrock
-   * AgentCore's own tooling (and Loom's app) does. Opt in only when you know the
-   * Runtime will already be READY (e.g. a version-promotion flow on an existing runtime).
+   * Name of an explicit, non-`DEFAULT` `RuntimeEndpoint` to create alongside
+   * the Runtime (e.g. `"PROD"`), the alias a version-promotion flow would
+   * later repoint (deferred, see #882). Omit it and no endpoint resource is
+   * created: AgentCore provisions a managed `DEFAULT` endpoint with every
+   * Runtime, and it tracks the latest version on its own. `"DEFAULT"` is
+   * rejected, since a CloudFormation endpoint of that name duplicates the
+   * managed one and fails on a real apply (#978, see the composite doc).
    */
-  provisionEndpoint?: boolean;
+  endpointName?: string;
   /** Memory event retention, in days. CFN bounds: 3-365. Default: 30. */
   memoryEventExpiryDays?: number;
   /** Gateway authorizer. Mirrors the generated `BedrockAgentCoreGateway_AuthorizerType` CFN enum. Default: "AWS_IAM". */
@@ -134,7 +143,7 @@ export type AgentCoreAgentResult = {
   role: InstanceType<typeof Role>;
   gatewayRole: InstanceType<typeof Role>;
   runtime: InstanceType<typeof Runtime>;
-  /** Present only when `provisionEndpoint` is set — see that prop (#978). */
+  /** Present only when `endpointName` names an explicit non-DEFAULT endpoint (#978). */
   endpoint?: InstanceType<typeof RuntimeEndpoint>;
   memory: InstanceType<typeof Memory>;
   workloadIdentity: InstanceType<typeof WorkloadIdentity>;
@@ -144,7 +153,7 @@ export type AgentCoreAgentResult = {
 
 /**
  * A Bedrock AgentCore agent as one CloudFormation-serializable bundle — the
- * composite/base path from #882: `Runtime` + `RuntimeEndpoint` + `Memory` +
+ * composite/base path from #882: `Runtime` + `Memory` +
  * `Gateway`/`GatewayTarget` + `WorkloadIdentity` + IAM, deployable with
  * `cfn-deploy` + `wait-for-stack` and no bespoke verb.
  *
@@ -156,10 +165,18 @@ export type AgentCoreAgentResult = {
  * for workflows (e.g. a future credential-provider capability) that need an
  * explicit workload identity of their own.
  *
- * The `agentcore-deploy` version-promotion capability that would repoint
- * `endpoint`'s `TargetVersion`/`LiveVersion` is deferred (GA-gated, #882) —
- * this composite only wires the CloudFormation shape it would eventually
- * apply against.
+ * There is no `RuntimeEndpoint` in the bundle by default. AgentCore creates a
+ * managed `DEFAULT` endpoint with every Runtime and repoints it at each new
+ * version on its own, so a CloudFormation `DEFAULT` endpoint is redundant. It
+ * is also the race that sank a live deploy (#978): the Runtime resource's
+ * `CREATE_COMPLETE` fires while AgentCore is still turning the artifact into
+ * a READY agent version, and the endpoint's CREATE then fails with "Agent
+ * version 1 must be in READY status". Invoking the Runtime with no qualifier
+ * hits the managed DEFAULT endpoint; {@link agentCoreDefaultEndpointArn}
+ * builds its ARN from the Runtime's. `endpointName` adds an explicit
+ * non-DEFAULT endpoint for the `agentcore-deploy` version-promotion flow,
+ * which is deferred (GA-gated, #882) — this composite only wires the
+ * CloudFormation shape it would eventually apply against.
  */
 export const AgentCoreAgent = Composite<AgentCoreAgentProps, AgentCoreAgentResult>((props) => {
   const { defaults } = props;
@@ -241,12 +258,15 @@ export const AgentCoreAgent = Composite<AgentCoreAgentProps, AgentCoreAgentResul
     EnvironmentVariables: props.environmentVariables,
   }, defaults?.runtime));
 
-  // Opt-in only (#978): the endpoint races the Runtime's async version-READY when
-  // created in the same apply. Off by default; create it out-of-band post-READY.
-  const endpoint = props.provisionEndpoint
+  // Explicit endpoints only for a non-DEFAULT alias (#978): AgentCore owns
+  // DEFAULT, and creating it here races the Runtime's async version-READY.
+  if (props.endpointName === "DEFAULT") {
+    throw new Error("AgentCoreAgent endpointName must not be \"DEFAULT\": AgentCore provisions the managed DEFAULT endpoint itself");
+  }
+  const endpoint = props.endpointName !== undefined
     ? new RuntimeEndpoint(mergeDefaults({
         AgentRuntimeId: runtime.AgentRuntimeId,
-        Name: toRuntimeIdentifier(props.endpointName ?? "DEFAULT"),
+        Name: toRuntimeIdentifier(props.endpointName),
       }, defaults?.endpoint))
     : undefined;
 
