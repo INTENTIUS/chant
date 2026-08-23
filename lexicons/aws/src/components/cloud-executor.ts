@@ -393,9 +393,26 @@ async function cfnChangeSetType(stackName: string): Promise<"CREATE" | "UPDATE">
  * CloudFormation refuses without the acknowledgement.
  */
 export function awsDeployCapabilities(template: { Transform?: unknown }): string {
+  return awsDeployCapabilityList(template).join(" ");
+}
+
+/** {@link awsDeployCapabilities} as a list, for the CFN API's `Capabilities.member.N` params. */
+export function awsDeployCapabilityList(template: { Transform?: unknown }): string[] {
   return template.Transform !== undefined
-    ? "CAPABILITY_NAMED_IAM CAPABILITY_AUTO_EXPAND"
-    : "CAPABILITY_NAMED_IAM";
+    ? ["CAPABILITY_NAMED_IAM", "CAPABILITY_AUTO_EXPAND"]
+    : ["CAPABILITY_NAMED_IAM"];
+}
+
+/**
+ * {@link awsDeployCapabilityList} for a raw template body. A body that isn't
+ * JSON gets the default list; the deploy itself reports the real problem.
+ */
+export function awsDeployCapabilitiesForBody(body: string): string[] {
+  try {
+    return awsDeployCapabilityList(JSON.parse(body) as { Transform?: unknown });
+  } catch {
+    return ["CAPABILITY_NAMED_IAM"];
+  }
 }
 
 const realCloudFormation: CloudFormationClient = {
@@ -410,10 +427,11 @@ const realCloudFormation: CloudFormationClient = {
     // for one still in REVIEW_IN_PROGRESS (a prior CREATE change set never
     // executed), mirroring what `aws cloudformation deploy` does under the hood.
     const changeSetType = await cfnChangeSetType(args.stackName);
-    let capabilities = "CAPABILITY_NAMED_IAM";
+    let body = "";
     try {
-      capabilities = awsDeployCapabilities(JSON.parse(readFileSync(args.templatePath, "utf8")) as { Transform?: unknown });
-    } catch { /* unreadable/non-JSON template — keep the default capability */ }
+      body = readFileSync(args.templatePath, "utf8");
+    } catch { /* unreadable template — create-change-set reports it */ }
+    const capabilities = awsDeployCapabilitiesForBody(body).join(" ");
     await run(
       `aws cloudformation create-change-set --stack-name ${q(args.stackName)} --change-set-name ${q(changeSetName)} ` +
         `--change-set-type ${changeSetType} ` +

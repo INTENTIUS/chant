@@ -27,9 +27,26 @@
  */
 
 import { exec } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { promisify } from "node:util";
 
 const execAsync = promisify(exec);
+
+/**
+ * The `--capabilities` for a CloudFormation deploy of the template at `path`.
+ * `CAPABILITY_NAMED_IAM` always; `CAPABILITY_AUTO_EXPAND` as well when the
+ * template declares a top-level `Transform` macro, which CloudFormation refuses
+ * to expand without the acknowledgement (chant #980). An unreadable or non-JSON
+ * file gets the default; the deploy itself reports the real problem.
+ */
+export function cfnCapabilities(path: string): string {
+  try {
+    const template = JSON.parse(readFileSync(path, "utf8")) as { Transform?: unknown };
+    return template.Transform !== undefined ? "CAPABILITY_NAMED_IAM CAPABILITY_AUTO_EXPAND" : "CAPABILITY_NAMED_IAM";
+  } catch {
+    return "CAPABILITY_NAMED_IAM";
+  }
+}
 
 /** The native apply mechanism for a target. */
 export type ApplyTarget = "cloudformation" | "kubectl" | "arm" | "kustomize";
@@ -150,7 +167,7 @@ export function applyCommand(
       // The stack IS the ownership boundary — a resource chant never applied is
       // not in it — so this needs no marker scoping and `deleteMode` changes
       // nothing about the command.
-      return `aws cloudformation deploy --template-file ${output} --stack-name ${env} --capabilities CAPABILITY_NAMED_IAM`;
+      return `aws cloudformation deploy --template-file ${output} --stack-name ${env} --capabilities ${cfnCapabilities(output)}`;
   }
 }
 

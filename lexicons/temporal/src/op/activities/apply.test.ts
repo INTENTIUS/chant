@@ -1,6 +1,35 @@
 import { describe, test, expect } from "vitest";
-import { applyCommand, rollbackCommand, defaultOutput, applyEndpoint, nativeApply } from "./apply";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { applyCommand, cfnCapabilities, rollbackCommand, defaultOutput, applyEndpoint, nativeApply } from "./apply";
 import type { K8sApplier, AzureApplier } from "./apply";
+
+describe("cfnCapabilities (#980)", () => {
+  const dir = mkdtempSync(join(tmpdir(), "chant-cfn-caps-"));
+  const write = (name: string, body: string) => {
+    const p = join(dir, name);
+    writeFileSync(p, body);
+    return p;
+  };
+
+  test("plain template, missing file, or non-JSON → CAPABILITY_NAMED_IAM only", () => {
+    expect(cfnCapabilities(write("plain.json", JSON.stringify({ Resources: {} })))).toBe("CAPABILITY_NAMED_IAM");
+    expect(cfnCapabilities(join(dir, "absent.json"))).toBe("CAPABILITY_NAMED_IAM");
+    expect(cfnCapabilities(write("plain.yaml", "Resources: {}\n"))).toBe("CAPABILITY_NAMED_IAM");
+  });
+
+  test("a top-level Transform (string or list) → adds CAPABILITY_AUTO_EXPAND", () => {
+    const str = write("str.json", JSON.stringify({ Transform: "AWS::SecretsManager-2020-07-23", Resources: {} }));
+    const list = write("list.json", JSON.stringify({ Transform: ["AWS::LanguageExtensions"], Resources: {} }));
+    expect(cfnCapabilities(str)).toBe("CAPABILITY_NAMED_IAM CAPABILITY_AUTO_EXPAND");
+    expect(cfnCapabilities(list)).toBe("CAPABILITY_NAMED_IAM CAPABILITY_AUTO_EXPAND");
+    expect(applyCommand("cloudformation", "prod", str, "never")).toContain(
+      "--capabilities CAPABILITY_NAMED_IAM CAPABILITY_AUTO_EXPAND",
+    );
+    rmSync(dir, { recursive: true, force: true });
+  });
+});
 
 describe("applyCommand (#124)", () => {
   test("cloudformation deploys to the env stack", () => {
