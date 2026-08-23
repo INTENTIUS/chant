@@ -33,6 +33,9 @@ import { argo003 } from "./argo003";
 import { argo005 } from "./argo005";
 import { flux002 } from "./flux002";
 import { flux003 } from "./flux003";
+import { wk8501 } from "./wk8501";
+import { wk8502 } from "./wk8502";
+import { getCrdSchemaRegistry, setCrdSchemaRegistry, validateSpec } from "./crd-schema-helpers";
 
 function makeCtx(yaml: string): PostSynthContext {
   return {
@@ -1789,5 +1792,158 @@ describe("FLUX003: Kustomization dependsOn names declared Kustomizations", () =>
   test("skips a Kustomization without dependsOn", () => {
     const ctx = manifestsCtx(fluxKustomization("hello", gitSourceRef("flux-system")));
     expect(flux003.check(ctx).length).toBe(0);
+  });
+});
+
+// ── WK8501 / WK8502: custom-resource spec against the CRD schema (chant #1372) ──
+
+describe("WK8501/WK8502: custom resource spec validated against the shipped CRD schema", () => {
+  const hasLexicon = getCrdSchemaRegistry().size > 0;
+
+  function microVm(spec: Record<string, unknown>) {
+    return {
+      apiVersion: "lambda.aws.amazon.com/v1alpha1",
+      kind: "MicroVM",
+      metadata: { name: "agent-1", namespace: "vms" },
+      spec,
+    };
+  }
+
+  test("metadata", () => {
+    expect(wk8501.id).toBe("WK8501");
+    expect(wk8502.id).toBe("WK8502");
+  });
+
+  test.skipIf(!hasLexicon)("the lexicon ships a spec schema for every CRD-derived kind", () => {
+    const registry = getCrdSchemaRegistry();
+    for (const key of ["lambda.aws.amazon.com/v1alpha1/MicroVM", "cert-manager.io/v1/Certificate", "ray.io/v1/RayCluster"]) {
+      expect(registry.get(key)?.type, key).toBe("object");
+    }
+    // Built-in kinds are typed by the .d.ts and carry no schema.
+    expect(registry.has("apps/v1/Deployment")).toBe(false);
+  });
+
+  test.skipIf(!hasLexicon)("WK8501 flags a misspelled MicroVM field and suggests the real one", () => {
+    // The kubemicrovm-ops case from #1372: `classname` type-checks, applies
+    // cleanly, and the controller runs the VM with the default class.
+    const ctx = manifestsCtx(microVm({ classname: "large", imageRef: "img" }));
+    const diags = wk8501.check(ctx);
+    expect(diags.length).toBe(1);
+    expect(diags[0].severity).toBe("error");
+    expect(diags[0].entity).toBe("agent-1");
+    expect(diags[0].message).toContain('unknown field "spec.classname"');
+    expect(diags[0].message).toContain('did you mean "className"');
+    // WK8502 has nothing to say about a field the schema does not know.
+    expect(wk8502.check(ctx).length).toBe(0);
+  });
+
+  test.skipIf(!hasLexicon)("WK8502 flags a wrong-typed scalar and a value outside its enum", () => {
+    const ctx = manifestsCtx(microVm({
+      className: "large",
+      maxIdleDurationSeconds: "300",
+      desiredState: "Runing",
+      autoResumeEnabled: "yes",
+    }));
+    const diags = wk8502.check(ctx);
+    const messages = diags.map((d) => d.message);
+    expect(messages).toEqual([
+      expect.stringContaining('"spec.maxIdleDurationSeconds" expects an integer, got string "300"'),
+      expect.stringContaining('"spec.desiredState" must be one of "Running", "Suspended", "Terminated", got string "Runing"'),
+      expect.stringContaining('"spec.autoResumeEnabled" expects a boolean, got string "yes"'),
+    ]);
+    expect(diags.every((d) => d.checkId === "WK8502" && d.severity === "error")).toBe(true);
+    expect(wk8501.check(ctx).length).toBe(0);
+  });
+
+  test.skipIf(!hasLexicon)("a well-formed custom resource passes both checks", () => {
+    const ctx = manifestsCtx(
+      microVm({ className: "large", desiredState: "Running", maxIdleDurationSeconds: 300, tags: { team: "ml", any: 1 } }),
+      {
+        apiVersion: "cert-manager.io/v1",
+        kind: "Certificate",
+        metadata: { name: "web-tls" },
+        spec: {
+          secretName: "web-tls",
+          dnsNames: ["example.com"],
+          issuerRef: { name: "letsencrypt", kind: "ClusterIssuer" },
+          privateKey: { algorithm: "ECDSA", size: 256 },
+        },
+      },
+    );
+    expect(wk8501.check(ctx)).toEqual([]);
+    expect(wk8502.check(ctx)).toEqual([]);
+  });
+
+  test.skipIf(!hasLexicon)("walks nested objects and array elements", () => {
+    const ctx = manifestsCtx({
+      apiVersion: "cert-manager.io/v1",
+      kind: "Certificate",
+      metadata: { name: "web-tls" },
+      spec: {
+        secretName: "web-tls",
+        issuerRef: { nmae: "letsencrypt" },
+        additionalOutputFormats: [{ type: "DER" }, { type: "PEM" }],
+        privateKey: { algorithm: "DSA" },
+      },
+    });
+    expect(wk8501.check(ctx).map((d) => d.message)).toEqual([
+      expect.stringContaining('unknown field "spec.issuerRef.nmae" (did you mean "name"?)'),
+    ]);
+    expect(wk8502.check(ctx).map((d) => d.message)).toEqual([
+      expect.stringContaining('"spec.additionalOutputFormats[1].type" must be one of "DER", "CombinedPEM"'),
+      expect.stringContaining('"spec.privateKey.algorithm" must be one of "RSA", "ECDSA", "Ed25519"'),
+    ]);
+  });
+
+  test("built-in kinds and unknown apiVersion/kind pairs are never checked", () => {
+    const ctx = manifestsCtx(
+      { apiVersion: "apps/v1", kind: "Deployment", metadata: { name: "web" }, spec: { replicas: "2", bogus: true } },
+      { apiVersion: "example.com/v1", kind: "Widget", metadata: { name: "w" }, spec: { bogus: true } },
+    );
+    expect(wk8501.check(ctx)).toEqual([]);
+    expect(wk8502.check(ctx)).toEqual([]);
+  });
+
+  test("open objects and int-or-string accept anything (stub registry)", () => {
+    setCrdSchemaRegistry(new Map([[
+      "example.com/v1/Widget",
+      {
+        type: "object",
+        fields: {
+          labels: { type: "object", open: true },
+          port: { open: true },
+          replicas: { type: "integer" },
+          items: { type: "array", items: { type: "string" } },
+        },
+      },
+    ]]));
+    try {
+      const ok = manifestsCtx({
+        apiVersion: "example.com/v1", kind: "Widget", metadata: { name: "w" },
+        spec: { labels: { anything: { nested: true } }, port: "http", replicas: 2, items: ["a"] },
+      });
+      expect(wk8501.check(ok)).toEqual([]);
+      expect(wk8502.check(ok)).toEqual([]);
+
+      const bad = manifestsCtx({
+        apiVersion: "example.com/v1", kind: "Widget", metadata: { name: "w" },
+        spec: { replicas: 2.5, items: "a" },
+      });
+      expect(wk8502.check(bad).map((d) => d.message)).toEqual([
+        expect.stringContaining('"spec.replicas" expects an integer, got number 2.5'),
+        expect.stringContaining('"spec.items" expects an array, got string "a"'),
+      ]);
+    } finally {
+      setCrdSchemaRegistry(null);
+    }
+  });
+
+  test("validateSpec reports unknown fields and type mismatches with dotted paths", () => {
+    const schema = { type: "object" as const, fields: { a: { type: "object" as const, fields: { b: { type: "boolean" as const } } } } };
+    expect(validateSpec({ a: { b: "x", c: 1 }, d: 2 }, schema)).toEqual([
+      { kind: "type-mismatch", path: "spec.a.b", message: expect.stringContaining("expects a boolean") },
+      { kind: "unknown-field", path: "spec.a.c", message: expect.stringContaining('unknown field "spec.a.c"') },
+      { kind: "unknown-field", path: "spec.d", message: expect.stringContaining('unknown field "spec.d"') },
+    ]);
   });
 });
