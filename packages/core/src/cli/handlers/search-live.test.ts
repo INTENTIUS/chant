@@ -133,3 +133,85 @@ describe("search --live when the live read fails (#1263)", () => {
     expect(err.join("\n")).not.toContain("live read failed");
   });
 });
+
+// #1265 — a lexicon's run-level note ("ownership filter unavailable on this
+// path") printed once per stack, ahead of the rows. It is one fact about the
+// read, so it is said once, and it qualifies the answer, so it follows it.
+describe("search --live run-level notes (#1265)", () => {
+  const NOTE =
+    "ownership filter unavailable on describeResources (no tags from describe-stack-resources) — returning all, each with an explicit `unknown` verdict; use `chant import --from <env> --owned` for ownership-filtered export";
+  let out: string[];
+  let err: string[];
+  // One log of everything, in the order it was written, so the test can see
+  // whether the note came before or after the rows.
+  let all: string[];
+  const entities = new Map<string, Declarable>([
+    ["webServer", decl({ lexicon: "aws", entityType: "AWS::EC2::Instance", props: {} })],
+    ["privateServer", decl({ lexicon: "aws", entityType: "AWS::EC2::Instance", props: {} })],
+  ]);
+  const calls: string[] = [];
+
+  beforeEach(() => {
+    out = [];
+    err = [];
+    all = [];
+    calls.length = 0;
+    vi.spyOn(console, "log").mockImplementation((s: string) => { out.push(s); all.push(s); });
+    vi.spyOn(console, "error").mockImplementation((s: string) => { err.push(s); all.push(s); });
+    vi.spyOn(console, "warn").mockImplementation((s: string) => { all.push(s); });
+    discoverMock.mockReset();
+    discoverMock.mockResolvedValue({ entities, errors: [], sourceFiles: [] });
+    buildResultMock.mockReset();
+    buildResultMock.mockReturnValue({ errors: [], entities, outputs: new Map([["aws", ""]]), warnings: [] });
+    loadChantConfigMock.mockReset();
+    loadChantConfigMock.mockResolvedValue({
+      config: { stacks: [{ name: "net" }, { name: "data" }, { name: "app" }, { name: "edge" }] },
+    });
+    resolveLexMock.mockReset();
+    resolveLexMock.mockResolvedValue(["aws"]);
+    hasSnapshotMock.mockReset();
+    hasSnapshotMock.mockResolvedValue(false);
+    loadPluginsMock.mockResolvedValue([
+      createMockPlugin({
+        name: "aws",
+        describeResources: async (opts: { stack?: string }) => {
+          calls.push(opts.stack ?? "");
+          return {
+            observation: "v1" as const,
+            resources: {
+              webServer: { type: "AWS::EC2::Instance", physicalId: "i-1", status: "OK", ownership: "unknown" as const },
+              privateServer: { type: "AWS::EC2::Instance", physicalId: "i-2", status: "OK", ownership: "unknown" as const },
+            },
+            notes: [NOTE],
+          };
+        },
+      }),
+    ]);
+  });
+
+  test("four stacks, one note, after the rows and the provenance line", async () => {
+    const exit = await runSearch({ args: makeArgs(), plugins: [], serializers: [] });
+    expect(exit).toBe(0);
+    expect(calls).toEqual(["net", "data", "app", "edge"]);
+    const notes = all.filter((line) => line.includes("ownership filter unavailable"));
+    expect(notes).toHaveLength(1);
+    expect(notes[0]).toContain(`[aws] ${NOTE}`);
+    const noteAt = all.findIndex((line) => line.includes("ownership filter unavailable"));
+    const lastRow = all.findIndex((line) => line.startsWith("privateServer  AWS::EC2::Instance  i-2"));
+    const footer = all.findIndex((line) => line.includes("observed live · bound 2/2"));
+    expect(lastRow).toBeGreaterThanOrEqual(0);
+    expect(footer).toBeGreaterThan(lastRow);
+    expect(noteAt).toBeGreaterThan(footer);
+    // stderr, like every other warning; the rows stay clean on stdout.
+    expect(out.join("\n")).not.toContain("ownership filter unavailable");
+    expect(err.join("\n")).toContain("ownership filter unavailable");
+  });
+
+  test("a miss still says the note, after the miss", async () => {
+    const exit = await runSearch({ args: makeArgs({ path: "kind:Nope" }), plugins: [], serializers: [] });
+    expect(exit).toBe(0);
+    const notes = all.filter((line) => line.includes("ownership filter unavailable"));
+    expect(notes).toHaveLength(1);
+    expect(all.indexOf("(no matches)")).toBeLessThan(all.findIndex((l) => l.includes("ownership filter unavailable")));
+  });
+});
