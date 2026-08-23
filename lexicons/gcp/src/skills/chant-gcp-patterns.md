@@ -127,6 +127,7 @@ import { GkeCluster } from "@intentius/chant-lexicon-gcp";
 
 const { cluster, nodePool } = GkeCluster({
   name: "my-cluster",
+  projectId: "my-project",
   location: "us-central1",
   machineType: "e2-medium",
   minNodeCount: 1,
