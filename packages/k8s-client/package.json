@@ -43,7 +43,7 @@
     "prepack": "npm run build"
   },
   "dependencies": {
-    "@kubernetes/client-node": "^1.4.0"
+    "@kubernetes/client-node": "^2.0.0"
   },
   "devDependencies": {
     "typescript": "^5.9.3"
