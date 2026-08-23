@@ -62,10 +62,18 @@ export interface LexiconValidationConfig {
    * What must never happen is *publishing* a surface nobody reviewed. That is
    * a release-time property, so it is checked at release time.
    *
-   * Opt-in per lexicon because k8s and azure are currently adrift from their
-   * own baselines (393 and 483 entries, #1475).
+   * `"always"` drops the env half (#1475). It is for a lexicon whose upstream
+   * is pinned to an immutable ref — k8s generates from a kubernetes release
+   * tag plus vendored CRDs, azure from a commit sha of the
+   * resource-manager-schemas repo — so a fresh `generate` on a PR is
+   * deterministic and the only way the surface can move is a change in this
+   * repo. For those, drift on a PR is exactly the thing to fail on: the CRD
+   * batches #1319/#1320/#1321 left the k8s baseline 393 entries behind, and
+   * the #1144 pin left azure 483 behind, because nothing compared the two
+   * until a release was attempted. Never use `"always"` for a lexicon that
+   * fetches a moving upstream.
    */
-  checkSurfaceSnapshot?: boolean;
+  checkSurfaceSnapshot?: boolean | "always";
   /** Environment to read {@link RELEASE_GATE_ENV} from. Defaults to `process.env`; overridden in tests. */
   env?: NodeJS.ProcessEnv;
   /** Path to the generated directory (defaults to basePath/src/generated) */
@@ -194,8 +202,10 @@ export async function validateLexiconArtifacts(config: LexiconValidationConfig):
   // skipped for a lexicon with no committed snapshot, which is the case for a
   // new lexicon before its first baseline.
   const snapshotPath = join(config.basePath, "surface.snapshot.json");
-  const releaseGate = config.checkSurfaceSnapshot && (config.env ?? process.env)[RELEASE_GATE_ENV] === "1";
-  if (releaseGate && lexiconData && existsSync(snapshotPath) && existsSync(dtsPath)) {
+  const surfaceGate =
+    config.checkSurfaceSnapshot === "always" ||
+    (config.checkSurfaceSnapshot === true && (config.env ?? process.env)[RELEASE_GATE_ENV] === "1");
+  if (surfaceGate && lexiconData && existsSync(snapshotPath) && existsSync(dtsPath)) {
     try {
       const fresh = extractSurface(readFileSync(lexiconPath, "utf-8"), readFileSync(dtsPath, "utf-8"));
       const delta = diffSurface(parseSnapshot(readFileSync(snapshotPath, "utf-8")), fresh);
