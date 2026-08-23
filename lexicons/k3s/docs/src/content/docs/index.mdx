@@ -1,7 +1,10 @@
 ---
-title: Overview
-description: k3s host configuration — server/agent config.yaml and registries.yaml — as typed chant source
+title: "K3s"
+description: "k3s host configuration (server/agent config.yaml and registries.yaml) as typed chant source"
 ---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-k3s` — DO NOT EDIT.
+    Edit lexicons/k3s/src/codegen/docs.ts instead; changes here are overwritten. */}
 
 The k3s lexicon declares the files k3s itself consumes: `config.yaml` for
 `k3s server` / `k3s agent`, and `registries.yaml` for the embedded
@@ -54,3 +57,21 @@ k3s wrapped in Docker, config consumed by the `k3d` CLI. This lexicon
 declares k3s on real hosts: Lima VMs, bare metal, cloud instances. The
 acceptance test for both is the same idea — the native tool consuming the
 emitted file is the proof.
+
+
+## At a Glance
+
+| Metric | Count |
+|--------|-------|
+| Resources | 3 |
+| Property types | 4 |
+| Services | 3 |
+| Intrinsic functions | 0 |
+| Pseudo-parameters | 0 |
+| Lint rules | 6 |
+
+**Lexicon version:** 0.0.1  
+**Namespace:** `K3s`
+
+- [All Rules](./rules) — 6 rules
+- [Serialization](./serialization) — output format details

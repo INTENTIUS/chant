@@ -7,7 +7,7 @@ export const collections = {
     loader: docsLoader(),
     schema: docsSchema({
       extend: z.object({
-        // Diátaxis quadrant (https://diataxis.fr). chant #1731.
+        // Diátaxis quadrant (https://diataxis.fr), chant #1731.
         diataxis: z.enum(['tutorial', 'how-to', 'reference', 'explanation']).optional(),
       }),
     }),
