@@ -1,5 +1,6 @@
 // Central region (us-central1) configuration. Extends shared cluster config.
 
+import { params } from "@intentius/chant/params";
 import { CRDB_CLUSTER, CRDB_DOMAIN, GCP_PROJECT_ID } from "../shared/config";
 
 export const config = {
@@ -11,6 +12,6 @@ export const config = {
   locality: "cloud=gcp,region=us-central1",
   regionShort: "central",
   domain: `central.${CRDB_DOMAIN}`,
-  externalDnsGsaEmail: process.env.EXTERNAL_DNS_GSA_EMAIL_CENTRAL ?? `gke-crdb-central-dns@${GCP_PROJECT_ID}.iam.gserviceaccount.com`,
+  externalDnsGsaEmail: (params.externalDnsGsaEmailCentral as string | undefined) ?? `gke-crdb-central-dns@${GCP_PROJECT_ID}.iam.gserviceaccount.com`,
   crdbGsaEmail: `gke-crdb-central-crdb@${GCP_PROJECT_ID}.iam.gserviceaccount.com`,
 };
