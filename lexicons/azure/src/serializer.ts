@@ -140,11 +140,29 @@ export function resetApiVersionCache(): void {
   _apiVersions = undefined;
 }
 
-export function getApiVersion(resourceType: string): string {
+/**
+ * Registry lookup without the serializer's fallback: the pinned apiVersion for
+ * `resourceType`, or `undefined` when neither the overrides nor the generated
+ * registry know the type. ARM resource types are case-insensitive and the live
+ * listing does not always echo the casing the registry uses, so the match is
+ * case-insensitive too. Used by prune (#1472), which needs an apiVersion for a
+ * type the current template no longer declares.
+ */
+export function lookupApiVersion(resourceType: string): string | undefined {
   const override = API_VERSION_OVERRIDES.get(resourceType);
   if (override) return override;
   if (!_apiVersions) _apiVersions = loadApiVersions();
-  const version = _apiVersions.get(resourceType);
+  const exact = _apiVersions.get(resourceType);
+  if (exact) return exact;
+  const wanted = resourceType.toLowerCase();
+  for (const [type, version] of _apiVersions) {
+    if (type.toLowerCase() === wanted) return version;
+  }
+  return undefined;
+}
+
+export function getApiVersion(resourceType: string): string {
+  const version = lookupApiVersion(resourceType);
   if (version) return version;
   console.warn(
     `azure: no pinned apiVersion for ${resourceType} in the lexicon registry; falling back to 2023-01-01`,

@@ -94,6 +94,83 @@ describe("serializeOps()", () => {
       expect(wf).toContain("TEMPORAL_ACTIVITY_PROFILES.longInfra");
     });
 
+    it("binds one proxy per (activity, profile) pair with distinct identifiers (#1698)", () => {
+      const ops = new Map([
+        makeOp({
+          name: "deploy", overview: "o",
+          phases: [
+            { name: "Quick", steps: [{ kind: "activity", fn: "shellCmd", args: { cmd: "echo a" } }] },
+            { name: "Slow", steps: [{ kind: "activity", fn: "shellCmd", args: { cmd: "echo b" }, profile: "longInfra" }] },
+            { name: "Again", steps: [{ kind: "activity", fn: "shellCmd", args: { cmd: "echo c" } }] },
+          ],
+        }),
+      ]);
+      const wf = serializeOps(ops)["ops/deploy/workflow.ts"];
+      // No duplicate top-level const declarations.
+      const declared = [...wf.matchAll(/^const \{ ([^}]+) \} = proxyActivities/gm)]
+        .flatMap((m) => m[1].split(",").map((x) => x.trim().split(":").pop()!.trim()));
+      expect(new Set(declared).size).toBe(declared.length);
+      expect(declared).toEqual(["shellCmd", "shellCmd_longInfra"]);
+      expect(wf).toMatch(/const \{ shellCmd \} = proxyActivities<typeof activities>\(\s*TEMPORAL_ACTIVITY_PROFILES\.fastIdempotent,/);
+      expect(wf).toMatch(/const \{ shellCmd: shellCmd_longInfra \} = proxyActivities<typeof activities>\(\s*TEMPORAL_ACTIVITY_PROFILES\.longInfra,/);
+      // Each step calls the binding for its own profile.
+      expect(wf).toContain('await shellCmd({"cmd":"echo a"});');
+      expect(wf).toContain('await shellCmd_longInfra({"cmd":"echo b"});');
+      expect(wf).toContain('await shellCmd({"cmd":"echo c"});');
+    });
+
+    it("keeps the authored step order when a phase mixes gates and activities (#1698)", () => {
+      const ops = new Map([
+        makeOp({
+          name: "replay", overview: "o",
+          phases: [
+            {
+              name: "Replay",
+              steps: [
+                { kind: "activity", fn: "shellCmd", args: { cmd: "warm" } },
+                { kind: "gate", signalName: "approve-replay" },
+                { kind: "activity", fn: "shellCmd", args: { cmd: "measure" } },
+              ],
+            },
+          ],
+        }),
+      ]);
+      const wf = serializeOps(ops)["ops/replay/workflow.ts"];
+      const warm = wf.indexOf('await shellCmd({"cmd":"warm"});');
+      const gate = wf.indexOf("await condition(() => resumeApproveReplayCleared");
+      const measure = wf.indexOf('await shellCmd({"cmd":"measure"});');
+      expect(warm).toBeGreaterThan(-1);
+      expect(gate).toBeGreaterThan(warm);
+      expect(measure).toBeGreaterThan(gate);
+    });
+
+    it("splits a parallel phase into one Promise.all per run of activities around a gate (#1698)", () => {
+      const ops = new Map([
+        makeOp({
+          name: "par", overview: "o",
+          phases: [
+            {
+              name: "P", parallel: true,
+              steps: [
+                { kind: "activity", fn: "shellCmd", args: { cmd: "a" } },
+                { kind: "activity", fn: "shellCmd", args: { cmd: "b" } },
+                { kind: "gate", signalName: "go" },
+                { kind: "activity", fn: "shellCmd", args: { cmd: "c" } },
+              ],
+            },
+          ],
+        }),
+      ]);
+      const wf = serializeOps(ops)["ops/par/workflow.ts"];
+      const all = wf.indexOf("await Promise.all([");
+      const gate = wf.indexOf("await condition(() => resumeGoCleared");
+      const c = wf.indexOf('await shellCmd({"cmd":"c"});');
+      expect(all).toBeGreaterThan(-1);
+      expect(gate).toBeGreaterThan(all);
+      expect(c).toBeGreaterThan(gate);
+      expect(wf.match(/Promise\.all/g)).toHaveLength(1);
+    });
+
     it("passes the whole profile object to proxyActivities (carries every retry field, incl. nonRetryableErrorTypes)", () => {
       // The worker must spread the entire profile — not a hand-picked subset of
       // fields — so retry policy reaches Temporal's ActivityOptions intact. This

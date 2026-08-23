@@ -23,14 +23,14 @@ describe("serializeComponent()", () => {
   it("exports a camelCase workflow function named after the component, suffixed ComponentWorkflow", () => {
     const component: DriverComponent = { name: "search-service", dependsOn: [], deploy: [] };
     const wf = serializeComponent(component)["components/search-service/workflow.ts"];
-    expect(wf).toContain("export async function searchServiceComponentWorkflow()");
+    expect(wf).toContain("export async function searchServiceComponentWorkflow(input?: ComponentWorkflowInput)");
     expect(componentWorkflowFnName("search-service")).toBe("searchServiceComponentWorkflow");
   });
 
   it("activities.ts re-exports the generic capability-dispatch activities from the lexicon package", () => {
     const component: DriverComponent = { name: "svc", dependsOn: [], deploy: [] };
     const activities = serializeComponent(component)["components/svc/activities.ts"];
-    expect(activities).toContain("export { runCapabilityStep, rollbackCapabilityStep } from '@intentius/chant-lexicon-temporal/component-op/activities';");
+    expect(activities).toContain("export { runCapabilityStep, rollbackCapabilityStep, accumulateComponentOutputs } from '@intentius/chant-lexicon-temporal/component-op/activities';");
   });
 
   it("worker.ts bootstraps a Worker pointed at workflow.ts with the component name as the default task queue", () => {
@@ -116,7 +116,7 @@ describe("serializeComponent()", () => {
       const component: DriverComponent = { name: "3d-viewer", dependsOn: [], deploy: [] };
       const wf = serializeComponent(component)["components/3d-viewer/workflow.ts"];
       // Must not start with a digit — "3dViewerComponentWorkflow" is a syntax error.
-      expect(wf).toMatch(/export async function [A-Za-z_$][A-Za-z0-9_$]*\(\): Promise<ComponentWorkflowResult>/);
+      expect(wf).toMatch(/export async function [A-Za-z_$][A-Za-z0-9_$]*\(input\?: ComponentWorkflowInput\): Promise<ComponentWorkflowResult>/);
       expect(componentWorkflowFnName("3d-viewer")).toMatch(/^[A-Za-z_$]/);
     });
 
@@ -155,13 +155,19 @@ describe("serializeComponent()", () => {
     });
   });
 
-  // ── componentOutputs scope (#589 review: always empty — documented, not a bug) ──
+  // ── componentOutputs scope (#700: seeded from input, accumulated via core after deploy) ──
 
-  it("componentOutputs starts empty and the workflow never writes to it (single-component scope)", () => {
+  it("componentOutputs is seeded from the workflow input and folded in by the shared accumulator after the deploy phases", () => {
     const component: DriverComponent = { name: "svc", dependsOn: [], deploy: [{ phase: "Apply", steps: [{ kind: "cfn-deploy" }] }] };
     const wf = serializeComponent(component)["components/svc/workflow.ts"];
-    expect(wf).toContain("const componentOutputs: Record<string, Record<string, unknown>> = {};");
-    // No assignment into componentOutputs anywhere in the generated body.
+    expect(wf).toContain("let componentOutputs: Record<string, Record<string, unknown>> = { ...(input?.componentOutputs ?? {}) };");
+    // The workflow never derives outputs itself — the only write is the
+    // activity that calls core's accumulateComponentOutputs (driver.ts parity).
     expect(wf).not.toMatch(/componentOutputs\[.*\]\s*=/);
+    expect(wf).toContain('componentOutputs = await accumulateComponentOutputs({ component: "svc", phaseOutputs, componentOutputs });');
+    // ...and only on the success path: it sits inside the try, before the catch.
+    const accIdx = wf.indexOf("await accumulateComponentOutputs(");
+    expect(accIdx).toBeGreaterThan(wf.indexOf("  try {"));
+    expect(accIdx).toBeLessThan(wf.indexOf("  } catch (__compErr) {"));
   });
 });

@@ -75,7 +75,17 @@ export default defineConfig({
       // optional Kubernetes client package. Same corpus-walking shape as the
       // differentials above (no Docker, no cluster).
       "examples/k8s-client-boundary.test.ts",
+      // chant #1419 — unit tests for the missing-artifacts guard below.
+      "test/lexicon-artifacts.test.ts",
     ],
+    // chant #1419 — a fresh clone has no lexicon src/generated/ or
+    // dist/meta.json, and lexicon tests fail against their absence with
+    // module-not-found and plain assertion errors. `just test` builds them
+    // first (_ensure-gen); a direct `npx vitest run` gets one failure here
+    // naming the lexicons and the command instead. The check is a few
+    // hundred stat calls (~10ms); generation itself is ~55s cold, too slow
+    // to run implicitly.
+    globalSetup: ["test/lexicon-artifacts.setup.ts"],
     environment: "node",
     // Vitest 4 moved the per-worker node flags from poolOptions.forks.execArgv
     // to this top-level key; the default pool is still forks.

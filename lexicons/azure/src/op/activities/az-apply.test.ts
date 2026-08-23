@@ -19,7 +19,9 @@ import {
   type ArmEvalCtx,
   type ArmResource,
   type AzHttp,
+  providerApiVersion,
 } from "./az-apply";
+import { lookupApiVersion } from "../../serializer";
 
 const noHttp: AzHttp = async () => ({ status: 200, text: "{}" });
 
@@ -278,7 +280,7 @@ describe("pruneArmOrphans (#azure-prune)", () => {
         { id: "/1", name: "keep1", type: "Microsoft.Storage/storageAccounts", tags: { "managed-by": "chant" } }, // in template → keep
         { id: "/2", name: "orphan1", type: "Microsoft.Storage/storageAccounts", tags: { "managed-by": "chant" } }, // owned, not in template → prune
         { id: "/3", name: "foreign", type: "Microsoft.Storage/storageAccounts", tags: {} }, // not owned → skip
-        { id: "/4", name: "othertype", type: "Microsoft.Web/sites", tags: { "managed-by": "chant" } }, // type not templated → skip
+        { id: "/4", name: "othertype", type: "Microsoft.Web/sites", tags: { "managed-by": "chant" } }, // type not templated → registry apiVersion
       ],
     };
     const deletes: string[] = [];
@@ -287,15 +289,16 @@ describe("pruneArmOrphans (#azure-prune)", () => {
       return { status: 200, text: method === "GET" ? JSON.stringify(live) : "" };
     };
     const { pruned, notPrunable } = await pruneArmOrphans(desired, ctx(), http);
-    expect(pruned).toEqual([{ type: "Microsoft.Storage/storageAccounts", name: "orphan1", deleted: true }]);
-    expect(deletes).toHaveLength(1);
-    expect(deletes[0]).toContain("/storageAccounts/orphan1?api-version=2023-01-01"); // apiVersion from the template
-    // #1457: "othertype" is chant-owned and undeclared, and its TYPE is absent
-    // from the template — so there is no apiVersion to delete it with. It used
-    // to be dropped by the `!entry` guard in silence; now it is reported.
-    expect(notPrunable).toEqual([
-      { type: "Microsoft.Web/sites", name: "othertype", reason: "no-api-version" },
+    expect(pruned).toEqual([
+      { type: "Microsoft.Storage/storageAccounts", name: "orphan1", deleted: true },
+      { type: "Microsoft.Web/sites", name: "othertype", deleted: true },
     ]);
+    expect(deletes).toHaveLength(2);
+    expect(deletes[0]).toContain("/storageAccounts/orphan1?api-version=2023-01-01"); // apiVersion from the template
+    // #1472: "othertype" is chant-owned and undeclared, and its TYPE is absent
+    // from the template — the apiVersion comes from the lexicon registry instead.
+    expect(deletes[1]).toContain(`/sites/othertype?api-version=${lookupApiVersion("Microsoft.Web/sites")}`);
+    expect(notPrunable).toEqual([]);
   });
 
   // #1448 routes ApplyOp's `arm` target here, so this is now the delete scope for
@@ -412,7 +415,7 @@ describe("azDelete (#azure-prune)", () => {
  * unreachable by prune forever. Prune one of SEVERAL and it works, which is why
  * this survived testing.
  */
-describe("pruneArmOrphans: a type that left the template (#1457)", () => {
+describe("pruneArmOrphans: a type that left the template (#1457, #1472)", () => {
   const ctx = (): ArmEvalCtx => ({
     subscriptionId: "sub",
     resourceGroup: "rg",
@@ -422,30 +425,193 @@ describe("pruneArmOrphans: a type that left the template (#1457)", () => {
     base: "http://x",
   });
 
-  const liveHttp = (value: unknown[], deletes: string[]): AzHttp => async (method, url) => {
-    if (method === "DELETE") deletes.push(url);
-    return { status: 200, text: method === "GET" ? JSON.stringify({ value }) : "" };
-  };
+  // Only the resource-group listing answers; the provider-metadata endpoint
+  // 404s, the way floci-az does.
+  const liveHttp = (value: unknown[], deletes: string[], providers: string[] = []): AzHttp =>
+    async (method, url) => {
+      if (method === "DELETE") deletes.push(url);
+      if (method === "GET" && url.includes("/resources?")) return { status: 200, text: JSON.stringify({ value }) };
+      if (method === "GET" && url.includes("/providers/")) {
+        providers.push(url);
+        return { status: 404, text: "" };
+      }
+      return { status: 200, text: "" };
+    };
 
-  test("an owned orphan whose type is gone is reported, not silently skipped", async () => {
+  test("an owned orphan whose type is gone is deleted with the registry apiVersion", async () => {
     // The template now declares a DIFFERENT type entirely — the storage account
-    // was the last of its kind and has been removed from source.
+    // was the last of its kind and has been removed from source. #1457 only
+    // reported this; the registry the serializer pins from now supplies the
+    // apiVersion, so the orphan is actually deleted.
     const desired: ArmResource[] = [
       { type: "Microsoft.Web/sites", apiVersion: "2022-03-01", name: "site" },
     ];
     const deletes: string[] = [];
+    const providers: string[] = [];
     const http = liveHttp(
       [{ id: "/1", name: "leftover", type: "Microsoft.Storage/storageAccounts", tags: { "managed-by": "chant" } }],
       deletes,
+      providers,
+    );
+    const { pruned, notPrunable } = await pruneArmOrphans(desired, ctx(), http);
+    expect(pruned).toEqual([{ type: "Microsoft.Storage/storageAccounts", name: "leftover", deleted: true }]);
+    expect(notPrunable).toEqual([]);
+    const registryVersion = lookupApiVersion("Microsoft.Storage/storageAccounts");
+    expect(registryVersion).toBeDefined();
+    expect(deletes).toEqual([
+      `http://x/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Storage/storageAccounts/leftover?api-version=${registryVersion}`,
+    ]);
+    // The registry answered, so ARM's provider metadata was never consulted.
+    expect(providers).toEqual([]);
+  });
+
+  test("the live listing's type casing need not match the registry's", async () => {
+    const desired: ArmResource[] = [];
+    const deletes: string[] = [];
+    const http = liveHttp(
+      [{ id: "/1", name: "leftover", type: "microsoft.storage/storageaccounts", tags: { "managed-by": "chant" } }],
+      deletes,
+    );
+    const { pruned, notPrunable } = await pruneArmOrphans(desired, ctx(), http);
+    expect(pruned).toEqual([{ type: "microsoft.storage/storageaccounts", name: "leftover", deleted: true }]);
+    expect(notPrunable).toEqual([]);
+    expect(deletes[0]).toContain(`?api-version=${lookupApiVersion("Microsoft.Storage/storageAccounts")}`);
+  });
+
+  test("a type the registry does not know falls back to ARM provider metadata, newest stable", async () => {
+    const desired: ArmResource[] = [];
+    const deletes: string[] = [];
+    const gets: string[] = [];
+    const http: AzHttp = async (method, url) => {
+      if (method === "DELETE") deletes.push(url);
+      if (method === "GET") gets.push(url);
+      if (method === "GET" && url.includes("/resources?")) {
+        return {
+          status: 200,
+          text: JSON.stringify({
+            value: [
+              { id: "/1", name: "a", type: "Microsoft.Example/widgets", tags: { "managed-by": "chant" } },
+              { id: "/2", name: "b", type: "Microsoft.Example/widgets", tags: { "managed-by": "chant" } },
+            ],
+          }),
+        };
+      }
+      if (method === "GET" && url.includes("/providers/Microsoft.Example?")) {
+        return {
+          status: 200,
+          text: JSON.stringify({
+            namespace: "Microsoft.Example",
+            resourceTypes: [
+              { resourceType: "widgets", apiVersions: ["2024-05-01-preview", "2023-09-01", "2024-01-01", "2022-01-01"] },
+              { resourceType: "gadgets", apiVersions: ["2020-01-01"] },
+            ],
+          }),
+        };
+      }
+      return { status: 200, text: "" };
+    };
+    const { pruned, notPrunable } = await pruneArmOrphans(desired, ctx(), http);
+    expect(pruned).toEqual([
+      { type: "Microsoft.Example/widgets", name: "a", deleted: true },
+      { type: "Microsoft.Example/widgets", name: "b", deleted: true },
+    ]);
+    expect(notPrunable).toEqual([]);
+    // Newest STABLE wins over the newer preview.
+    expect(deletes).toEqual([
+      "http://x/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Example/widgets/a?api-version=2024-01-01",
+      "http://x/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Example/widgets/b?api-version=2024-01-01",
+    ]);
+    // One provider-metadata call per namespace per run, not per orphan.
+    expect(gets.filter((u) => u.includes("/providers/Microsoft.Example?api-version=2021-04-01"))).toHaveLength(1);
+    expect(gets.find((u) => u.includes("/providers/Microsoft.Example?"))).toBe(
+      "http://x/subscriptions/sub/providers/Microsoft.Example?api-version=2021-04-01",
+    );
+  });
+
+  test("no template, no registry entry, no provider metadata → still reported, never deleted", async () => {
+    const desired: ArmResource[] = [];
+    const deletes: string[] = [];
+    const providers: string[] = [];
+    const http = liveHttp(
+      [{ id: "/1", name: "mystery", type: "Microsoft.Nowhere/things", tags: { "managed-by": "chant" } }],
+      deletes,
+      providers,
     );
     const { pruned, notPrunable } = await pruneArmOrphans(desired, ctx(), http);
     expect(pruned).toEqual([]);
-    expect(notPrunable).toEqual([
-      { type: "Microsoft.Storage/storageAccounts", name: "leftover", reason: "no-api-version" },
-    ]);
-    // Still not deleted — the apiVersion genuinely is not available. The fix is
-    // that it is now visible rather than that it is now deleted.
+    expect(notPrunable).toEqual([{ type: "Microsoft.Nowhere/things", name: "mystery", reason: "no-api-version" }]);
     expect(deletes).toEqual([]);
+    // All three sources were tried; the last one is the provider endpoint.
+    expect(providers).toEqual(["http://x/subscriptions/sub/providers/Microsoft.Nowhere?api-version=2021-04-01"]);
+  });
+
+  test("providerApiVersion: preview-only types, missing types, and failed calls", async () => {
+    const cache = new Map<string, Map<string, string>>();
+    let calls = 0;
+    const http: AzHttp = async () => {
+      calls++;
+      return {
+        status: 200,
+        text: JSON.stringify({
+          resourceTypes: [{ resourceType: "previewOnly", apiVersions: ["2023-01-01-preview", "2024-01-01-preview"] }],
+        }),
+      };
+    };
+    expect(await providerApiVersion("Microsoft.P/previewOnly", ctx(), http, undefined, cache)).toBe("2024-01-01-preview");
+    expect(await providerApiVersion("Microsoft.P/absent", ctx(), http, undefined, cache)).toBeUndefined();
+    expect(calls).toBe(1);
+    expect(await providerApiVersion("notatype", ctx(), http)).toBeUndefined();
+    const failing: AzHttp = async () => { throw new Error("network"); };
+    expect(await providerApiVersion("Microsoft.P/previewOnly", ctx(), failing)).toBeUndefined();
+  });
+
+  test("azApply end to end: declare one storage account, apply, remove it, prune → deleted", async () => {
+    // The Floci-az style fake: PUT records the resource (with the ownership tag
+    // chant stamps), the group listing echoes what was recorded, DELETE removes
+    // it. The provider-metadata endpoint is absent, as on floci-az.
+    const store = new Map<string, { id: string; name: string; type: string; tags?: Record<string, string> }>();
+    const deletes: string[] = [];
+    const http: AzHttp = async (method, url, body) => {
+      const m = url.match(/\/providers\/([^/]+\/[^/]+)\/([^/?]+)\?api-version=([^&]+)$/);
+      if (method === "PUT" && m) {
+        const tags = (body as { tags?: Record<string, string> }).tags;
+        store.set(`${m[1]}/${m[2]}`, { id: `/${m[2]}`, name: m[2], type: m[1], tags });
+        return { status: 200, text: JSON.stringify({ properties: {} }) };
+      }
+      if (method === "DELETE" && m) {
+        deletes.push(url);
+        const had = store.delete(`${m[1]}/${m[2]}`);
+        return { status: had ? 200 : 404, text: "" };
+      }
+      if (method === "GET" && url.includes("/resources?")) {
+        return { status: 200, text: JSON.stringify({ value: [...store.values()] }) };
+      }
+      return { status: 404, text: "" };
+    };
+    const path = `/tmp/chant-1472-az-${process.pid}.json`;
+    const account = { type: "Microsoft.Storage/storageAccounts", apiVersion: "2023-01-01", name: "lastone" };
+    try {
+      writeFileSync(path, JSON.stringify({ resources: [account] }));
+      const first = await azApply({ templatePath: path, resourceGroup: "rg", endpoint: "http://x", prune: true }, undefined, http);
+      expect(first.applied).toEqual([{ type: account.type, name: "lastone" }]);
+      expect(store.size).toBe(1);
+
+      // Remove the only storage account from source: the template now declares
+      // no resource of that type at all.
+      writeFileSync(path, JSON.stringify({ resources: [] }));
+      const second = await azApply({ templatePath: path, resourceGroup: "rg", endpoint: "http://x", prune: true }, undefined, http);
+      expect(second.applied).toEqual([]);
+      expect(second.pruned).toEqual([{ type: account.type, name: "lastone", deleted: true }]);
+      expect(second.notPrunable).toEqual([]);
+      expect(store.size).toBe(0);
+      expect(deletes).toEqual([
+        `http://x/subscriptions/${"00000000-0000-0000-0000-000000000001"}/resourceGroups/rg/providers/Microsoft.Storage/storageAccounts/lastone?api-version=${lookupApiVersion(account.type)}`,
+      ]);
+      // Core's envelope agrees: nothing left over that could not be attempted.
+      expect(toApplyResult(second).notAttempted ?? []).toEqual([]);
+    } finally {
+      unlinkSync(path);
+    }
   });
 
   test("pruning one of several of a type still works — the case that hid this", async () => {

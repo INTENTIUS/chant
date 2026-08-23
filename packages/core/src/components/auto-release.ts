@@ -42,7 +42,7 @@ import type { DriverStepRecord } from "./driver";
  * `extract-config-bom` likewise *describes* an artifact rather than promoting
  * one. Those must not trigger a release record (#665) — a release means "we
  * promoted this by digest to a location", not "we hashed some bytes". The
- * driver's own `findPublishOutput` stays looser (uri/digest/key) because it
+ * driver's own `collectComponentOutputs` stays looser (uri/digest/key) because it
  * only feeds `@<component>.publish.*` wiring, where a false positive is harmless.
  */
 function isPromotedArtifact(output: unknown): output is { uri: string; digest?: string } {

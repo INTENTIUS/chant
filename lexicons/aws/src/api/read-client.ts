@@ -32,6 +32,14 @@
  *     against it would mean every local lane suddenly needs credentials to read
  *     what it just deployed. `signEndpointOverride` opts back in for an
  *     override that *is* real AWS — a VPC endpoint, a signing proxy.
+ *
+ * What counts as an override is one rule, {@link resolveEndpointOverride}: the
+ * `endpoint` option, else the ambient `AWS_ENDPOINT_URL_<SERVICE>` the AWS SDK
+ * honours per service, else `AWS_ENDPOINT_URL` (#1694). Cedar's AVP client
+ * (`lexicons/cedar/src/avp/client.ts`) applies the same rule; it restates it
+ * rather than importing it, because cedar does not depend on this lexicon and
+ * a lexicon build compiles against the published core, so a helper hoisted
+ * into core would not be visible to either until the next core release.
  */
 import { resolveCredentials, signRequest, type AwsCredentialSource } from "./sigv4";
 
@@ -67,7 +75,11 @@ export class AwsReadError extends Error {
 }
 
 export interface AwsReadClientOptions {
-  /** Endpoint override (Floci `http://localhost:4566`). Omit for real AWS hosts. */
+  /**
+   * Endpoint override (Floci `http://localhost:4566`). Omitted, the environment
+   * answers through {@link resolveEndpointOverride}; when it names nothing
+   * either, the target is the real AWS host.
+   */
   endpoint?: string;
   /** Region for the real-AWS host and the Query `Version` context. */
   region?: string;
@@ -85,6 +97,45 @@ export interface AwsReadClientOptions {
   signEndpointOverride?: boolean;
   /** Signing clock. Injected by tests so a signature is reproducible. */
   now?: Date;
+}
+
+/**
+ * The SDK's per-service endpoint variable for a signing-service name:
+ * `AWS_ENDPOINT_URL_<SERVICE ID>`, the service id upper-cased with every
+ * non-alphanumeric run replaced by `_`. The SDK keys that by the service id of
+ * its model, which is the signing name for every service here except Cloud
+ * Control (`cloudcontrolapi` signs, `CloudControl` is the id).
+ */
+const ENV_SERVICE_ID: Record<string, string> = { cloudcontrolapi: "cloudcontrol" };
+
+/** The name of the service-specific endpoint variable the AWS SDK reads for `service`. */
+export function serviceEndpointEnvVar(service: string): string {
+  const id = ENV_SERVICE_ID[service] ?? service;
+  return `AWS_ENDPOINT_URL_${id.toUpperCase().replace(/[^A-Z0-9]+/g, "_")}`;
+}
+
+/**
+ * The one rule for what an endpoint override is (#1694): the `endpoint` option
+ * when given, else the service-specific `AWS_ENDPOINT_URL_<SERVICE>`, else the
+ * ambient `AWS_ENDPOINT_URL` — the same precedence the AWS SDK applies. The
+ * result is the target the request goes to and, through {@link requestHeaders},
+ * the fact that decides whether it is signed. Returns `undefined` for real AWS.
+ */
+export function resolveEndpointOverride(
+  service: string,
+  endpoint: string | undefined,
+  env: Record<string, string | undefined> = process.env,
+): string | undefined {
+  return endpoint || env[serviceEndpointEnvVar(service)] || env.AWS_ENDPOINT_URL || undefined;
+}
+
+/**
+ * `options` with its endpoint settled by {@link resolveEndpointOverride}, so
+ * the URL builder and the signing decision read the same answer.
+ */
+export function withEndpointOverride(service: string, options: AwsReadClientOptions): AwsReadClientOptions {
+  const endpoint = resolveEndpointOverride(service, options.endpoint, options.env ?? process.env);
+  return endpoint ? { ...options, endpoint } : options;
 }
 
 /** Service host for `service`, honouring an endpoint override. */
@@ -141,6 +192,9 @@ function regionScope(
  * `agentcore/trace-fetch.ts` reads `bedrock-agentcore` through the same seam,
  * and a second copy of this would be a second place for the emulator carve-out
  * to drift.
+ *
+ * Callers pass options already settled by {@link withEndpointOverride}, so an
+ * override the environment named is skipped exactly like one the option did.
  */
 export function requestHeaders(
   service: string,
@@ -221,6 +275,7 @@ export async function cfnQuery(
   params: Record<string, string>,
   options: AwsReadClientOptions = {},
 ): Promise<string> {
+  options = withEndpointOverride("cloudformation", options);
   const http = options.http ?? defaultHttp;
   const url = serviceUrl("cloudformation", options.endpoint, options.region);
   const body = new URLSearchParams({ Action: action, Version: CFN_API_VERSION, ...params }).toString();
@@ -304,6 +359,7 @@ async function cloudControl(
   payload: Record<string, unknown>,
   options: AwsReadClientOptions = {},
 ): Promise<Record<string, unknown>> {
+  options = withEndpointOverride("cloudcontrolapi", options);
   const http = options.http ?? defaultHttp;
   const url = serviceUrl("cloudcontrolapi", options.endpoint, options.region);
   const payloadJson = JSON.stringify(payload);

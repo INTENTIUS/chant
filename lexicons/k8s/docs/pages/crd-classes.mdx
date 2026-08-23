@@ -6,7 +6,7 @@ diataxis: reference
 
 import { Aside } from '@astrojs/starlight/components';
 
-The k8s lexicon generates typed classes from the core Kubernetes OpenAPI spec **plus a curated list of third-party CRDs**. Each CRD in the list becomes a first-class `K8s::*` resource — with the serializer, LSP hover, type-checking, and MCP — the same as a built-in `Deployment`. No hand-written YAML, no `as any`.
+The k8s lexicon generates typed classes from the core Kubernetes OpenAPI spec **plus a curated list of third-party CRDs**. Each CRD in the list becomes a first-class `K8s::*` resource — with the serializer, LSP hover, and MCP — the same as a built-in `Deployment`. No hand-written YAML, no `as any`. The constructor's `spec` is an open record; its fields are checked against the CRD schema at lint time (see [Spec validation](#spec-validation)).
 
 <Aside type="note">
 The lexicon stays **runtime-agnostic** — it only emits manifests. Generated CRD classes describe the custom resource; you still install the upstream **controller/operator** (and its CRDs) in the cluster. Each section below includes the install command.
@@ -34,6 +34,15 @@ fluxcd.controlplane.io         Flux             K8s::Flux::FluxInstance
 ```
 
 The Flux and CNPG rows show the override at work: six distinct groups all map to one `Flux` namespace (see [Flux](#flux)), and CNPG's two groups both map to `Cnpg`, rather than each group's first segment.
+
+### Spec validation
+
+A generated CRD class takes `spec: Record<string, unknown>`. The field names, scalar types and enums from the CRD's `openAPIV3Schema` do not reach the TypeScript constructor; they ship in the lexicon JSON instead, as a `specSchema` on each custom resource's entry. Two post-synth checks read it at `chant lint` time:
+
+- `WK8501` flags a `spec` field the CRD does not declare, with a "did you mean" suggestion. The API server would prune it and the controller would never see it.
+- `WK8502` flags a scalar with the wrong type (`replicas: "2"`) or a value outside its enum (`desiredState: "Runing"`).
+
+Objects the CRD marks `x-kubernetes-preserve-unknown-fields` or `additionalProperties` accept any member; `x-kubernetes-int-or-string` accepts either. Nothing checks a built-in kind this way, because the generated `.d.ts` already does.
 
 ## Gateway API
 
@@ -433,7 +442,7 @@ const cert = new Certificate({
 cert.status; // Certificate_Status — notAfter, notBefore, renewalTime, revision, conditions
 ```
 
-The per-field status shape is generated from the CRD's `openAPIV3Schema` the same way `spec` field typing is — surfaced through LSP hover, validation, and MCP. Scalar leaves (`notAfter`, `revision`, a `RayCluster`'s `head.serviceIP`) are typed; deeply nested or `x-kubernetes-preserve-unknown-fields` status degrades to an opaque record. CRDs without a status schema (config-only kinds like a Prometheus `ServiceMonitor`) get no `status` accessor.
+The per-field status shape is generated from the CRD's `openAPIV3Schema`. Scalar leaves (`notAfter`, `revision`, a `RayCluster`'s `head.serviceIP`) are typed; deeply nested or `x-kubernetes-preserve-unknown-fields` status degrades to an opaque record. CRDs without a status schema (config-only kinds like a Prometheus `ServiceMonitor`) get no `status` accessor.
 
 <Aside type="caution">
 Status is a **runtime** value. chant synthesis is pure and stateless — a resource's `.status` does not exist at build time, so it cannot feed another resource's `spec`. Read it after apply inside an Op step (e.g. via the k8s lexicon's `waitForReady`), never as a build-time reference.

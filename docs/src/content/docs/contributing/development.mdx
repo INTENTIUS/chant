@@ -45,6 +45,17 @@ npx vitest run lexicons/aws       # AWS lexicon only
 npx vitest run lexicons/k8s       # K8s lexicon only
 ```
 
+### Lexicon artifacts on a fresh clone
+
+Lexicon tests import each lexicon's generated barrel (`src/generated/`) and bundled `dist/meta.json`. Neither is committed. `just test` builds whatever is missing before running vitest (about a minute the first time, nothing afterwards). If you run `npx vitest run` directly on a fresh clone, the run stops before any test with a message naming the lexicons that need generating. Build them with either of these:
+
+```bash
+just regen                        # every lexicon
+npm run generate -w lexicons/aws && npm run bundle -w lexicons/aws   # one lexicon
+```
+
+Set `CHANT_SKIP_ARTIFACT_CHECK=1` to bypass the check.
+
 #### Kubernetes roundtrip tests
 
 The K8s lexicon has additional integration tests that run against real manifests from `kubernetes/examples`:

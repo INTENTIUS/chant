@@ -62,6 +62,9 @@ import {
 import { AWS_TAG_OWNERSHIP_KEYS } from "./ownership";
 import { applyAwsEndpointArgv } from "./components/cloud-executor";
 import { toIngressRules } from "./dependencies";
+import { createRequire } from "node:module";
+
+const require = createRequire(import.meta.url);
 
 /**
  * Where each type's live model comes from.
@@ -226,6 +229,58 @@ function canonicalJson(value: unknown): string {
   ) ?? "";
 }
 
+/**
+ * The read-only properties of one type, as index-erased patterns, straight from
+ * the CloudFormation schema's `readOnlyProperties` (#1641).
+ *
+ * The codegen already turns that list into each class's GetAtt attributes
+ * (`attrs` in `lexicon-aws.json`), so this reads the same registry from the
+ * other side: a path the schema says only the service can write is an
+ * attribute, and an attribute the live read reports is not property drift. No
+ * declaration can contain one, so `<undeclared> -> value` is the shape every
+ * clean apply would otherwise produce. `AWS::IAM::ManagedPolicy.PolicyArn`,
+ * which is also the type's Cloud Control primary identifier, is the case that
+ * surfaced it.
+ *
+ * The manifest spells an array element `Subscribers.*.Status`; the
+ * normalization pass spells the same thing `Subscribers[].Status`.
+ *
+ * Complements {@link AWS_READ_ONLY_NAMES} rather than replacing it: the
+ * name-based list also covers translated models (an EC2 row mapped onto the
+ * CloudFormation shape) and nested documents the schema never enumerates.
+ */
+export function schemaReadOnlyPatterns(entityType: string): ReadonlySet<string> {
+  const cached = readOnlyByType.get(entityType);
+  if (cached) return cached;
+  const entry = manifestByType().get(entityType);
+  const patterns = new Set<string>();
+  for (const attr of Object.values(entry?.attrs ?? {})) {
+    patterns.add(attr.replace(/\.\*(?=\.|$)/g, "[]"));
+  }
+  readOnlyByType.set(entityType, patterns);
+  return patterns;
+}
+
+interface ManifestEntry {
+  resourceType: string;
+  kind: string;
+  attrs?: Record<string, string>;
+}
+
+const readOnlyByType = new Map<string, ReadonlySet<string>>();
+let manifestIndex: Map<string, ManifestEntry> | undefined;
+function manifestByType(): Map<string, ManifestEntry> {
+  if (!manifestIndex) {
+    const manifest = require("./generated/lexicon-aws.json") as Record<string, ManifestEntry>;
+    manifestIndex = new Map(
+      Object.values(manifest)
+        .filter((e) => e.kind === "resource")
+        .map((e) => [e.resourceType, e]),
+    );
+  }
+  return manifestIndex;
+}
+
 /** The final segment of an index-erased pattern (`Policies[].PolicyName` → `PolicyName`). */
 function lastSegment(pattern: string): string {
   const withoutIndex = pattern.replace(/\[\]$/, "");
@@ -243,7 +298,9 @@ export const awsDeepNormalizationHooks: DeepNormalizationHooks = {
   prune(node: DeepNode): boolean {
     // Read-only / server-populated. Pruned on both sides: if source somehow
     // declares an arn-shaped output, comparing it to the live one is still
-    // meaningless.
+    // meaningless. The schema's own `readOnlyProperties` first (#1641), then
+    // the name-based list for what the schema does not enumerate.
+    if (schemaReadOnlyPatterns(node.entityType).has(node.pattern)) return true;
     if (AWS_READ_ONLY_NAMES.has(lastSegment(node.pattern))) return true;
 
     // Provider defaults, on the live side only, and only where source is silent
@@ -424,7 +481,6 @@ export async function observeResourcesDeepAws(
 
   const stackName = options.stack ?? options.environment;
   const client: AwsReadClientOptions = {
-    ...(process.env.AWS_ENDPOINT_URL ? { endpoint: process.env.AWS_ENDPOINT_URL } : {}),
     ...(options.region ? { region: options.region } : {}),
     ...(options.http ? { http: options.http } : {}),
   };

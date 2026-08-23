@@ -1,5 +1,5 @@
 import { describe, test, expect } from "vitest";
-import { parseCRD, parseCRDSpec } from "./parser";
+import { parseCRD, parseCRDSpec, toFieldSchema } from "./parser";
 
 describe("parseCRD", () => {
   test("parses valid CRD YAML", () => {
@@ -451,5 +451,121 @@ describe("parseCRDSpec", () => {
     const results = parseCRDSpec(spec);
     expect(results[0].resource.attributes.some((a) => a.name === "status")).toBe(true);
     expect(results[0].propertyTypes.some((pt) => pt.name === "Widget_Status")).toBe(false);
+  });
+});
+
+// chant #1372 — the spec field schema that ships in the lexicon JSON.
+describe("specSchema (chant #1372)", () => {
+  const microVmImage = `
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: microvmimages.lambda.aws.amazon.com
+spec:
+  group: lambda.aws.amazon.com
+  names:
+    kind: MicroVMImage
+    plural: microvmimages
+  scope: Namespaced
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              required: [source]
+              properties:
+                desiredState:
+                  type: string
+                  enum: [Active, Inactive, Deleted]
+                  description: Lifecycle state wanted for the image.
+                memorySizeMiB:
+                  type: integer
+                  minimum: 128
+                  maximum: 10240
+                autoActivate:
+                  type: boolean
+                source:
+                  type: object
+                  properties:
+                    s3Bucket:
+                      type: string
+                    s3Key:
+                      type: string
+                layers:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      arn:
+                        type: string
+                annotations:
+                  type: object
+                  additionalProperties:
+                    type: string
+                extra:
+                  type: object
+                  x-kubernetes-preserve-unknown-fields: true
+                port:
+                  x-kubernetes-int-or-string: true
+            status:
+              type: object
+              properties:
+                phase:
+                  type: string
+`;
+
+  test("is the spec's field tree — names, scalar types, enums, required — with no prose or bounds", () => {
+    const [result] = parseCRD(microVmImage);
+    expect(result.specSchema).toEqual({
+      type: "object",
+      required: ["source"],
+      fields: {
+        desiredState: { type: "string", enum: ["Active", "Inactive", "Deleted"] },
+        memorySizeMiB: { type: "integer" },
+        autoActivate: { type: "boolean" },
+        source: { type: "object", fields: { s3Bucket: { type: "string" }, s3Key: { type: "string" } } },
+        layers: { type: "array", items: { type: "object", fields: { arn: { type: "string" } } } },
+        annotations: { type: "object", open: true },
+        extra: { type: "object", open: true },
+        port: { open: true },
+      },
+    });
+    // Status never rides along — it is server-owned, not something a spec validator checks.
+    expect(JSON.stringify(result.specSchema)).not.toContain("phase");
+  });
+
+  test("absent when the CRD declares no spec schema", () => {
+    const crd = `
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: bars.example.com
+spec:
+  group: example.com
+  names:
+    kind: Bar
+    plural: bars
+  scope: Namespaced
+  versions:
+    - name: v1
+      served: true
+      storage: true
+`;
+    const [result] = parseCRD(crd);
+    expect("specSchema" in result).toBe(false);
+  });
+
+  test("toFieldSchema infers object/array from structure when type is missing", () => {
+    expect(toFieldSchema({ properties: { a: { type: "string" } } })).toEqual({
+      type: "object",
+      fields: { a: { type: "string" } },
+    });
+    expect(toFieldSchema({ items: { type: "integer" } })).toEqual({ type: "array", items: { type: "integer" } });
+    expect(toFieldSchema({})).toEqual({});
   });
 });

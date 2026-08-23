@@ -9,6 +9,9 @@
 //     - webserviceReplicas, topology replicas: zero-downtime rolling update via Helm.
 //
 // "production" — full HA, ~$1600-1800/mo for 2 cells.
+
+import { params } from "@intentius/chant/params";
+
 export type DeploymentTier = "starter" | "production";
 
 // Returns HA-related field defaults for the given tier.
@@ -76,45 +79,49 @@ export interface CellConfig {
   runnerReplicas: number;
 }
 
+// Every per-deployment value is declared in ../chant.config.ts's buildParams.
+// Supply with --param, --params-file, or the env vars named there (.env.example).
+const projectId = params.projectId as string;
+
 export const shared = {
-  projectId: process.env.GCP_PROJECT_ID ?? "my-project",
-  region: process.env.GCP_REGION ?? "us-central1",
+  projectId,
+  region: params.region as string,
   clusterName: "gitlab-cells",
-  domain: process.env.DOMAIN ?? "gitlab.example.com",
+  domain: params.domain as string,
   gitlabChartVersion: "8.7.2",
-  machineType: process.env.MACHINE_TYPE ?? "e2-standard-8",
-  minNodeCount: Number(process.env.MIN_NODE_COUNT ?? "3"),
-  maxNodeCount: Number(process.env.MAX_NODE_COUNT ?? "20"),
-  nodeDiskSizeGb: Number(process.env.NODE_DISK_SIZE_GB ?? "200"),
+  machineType: params.machineType as string,
+  minNodeCount: params.minNodeCount as number,
+  maxNodeCount: params.maxNodeCount as number,
+  nodeDiskSizeGb: params.nodeDiskSizeGb as number,
   releaseChannel: "REGULAR",
   nodeSubnetCidr: "10.0.0.0/20",
   podSubnetCidr: "10.4.0.0/14",
   serviceSubnetCidr: "10.8.0.0/20",
-  ingressReplicas: Number(process.env.INGRESS_REPLICAS ?? "2"),
+  ingressReplicas: params.ingressReplicas as number,
   ingressHpaEnabled: true,
   ingressHpaMaxReplicas: 10,
-  smtpAddress: process.env.SMTP_ADDRESS ?? "smtp.sendgrid.net",
-  smtpPort: Number(process.env.SMTP_PORT ?? "587"),
-  smtpUser: process.env.SMTP_USER ?? "apikey",
-  smtpDomain: process.env.SMTP_DOMAIN ?? "gitlab.example.com",
-  letsEncryptEmail: process.env.LETSENCRYPT_EMAIL ?? "admin@example.com",
+  smtpAddress: params.smtpAddress as string,
+  smtpPort: params.smtpPort as number,
+  smtpUser: params.smtpUser as string,
+  smtpDomain: params.smtpDomain as string,
+  letsEncryptEmail: params.letsEncryptEmail as string,
   runnerImage: "gitlab/gitlab-runner:v17.8.0",
-  runnerReplicas: Number(process.env.RUNNER_REPLICAS ?? "2"),
-  runnerConcurrency: Number(process.env.RUNNER_CONCURRENCY ?? "10"),
-  runnerNodePoolEnabled: process.env.RUNNER_NODE_POOL_ENABLED === "true",
-  runnerNodePoolMachineType: process.env.RUNNER_NODE_POOL_MACHINE_TYPE ?? "e2-standard-4",
-  runnerNodePoolMaxCount: Number(process.env.RUNNER_NODE_POOL_MAX_COUNT ?? "10"),
+  runnerReplicas: params.runnerReplicas as number,
+  runnerConcurrency: params.runnerConcurrency as number,
+  runnerNodePoolEnabled: params.runnerNodePoolEnabled as boolean,
+  runnerNodePoolMachineType: params.runnerNodePoolMachineType as string,
+  runnerNodePoolMaxCount: params.runnerNodePoolMaxCount as number,
   topologyDbTier: "db-custom-1-3840",
   // Enable HA for the topology DB. The topology service is in the critical path for
   // path-based routing — a zonal failure makes all org-slug routing unavailable.
   // Upgrade: set to true, run `npm run build && kubectl apply -f dist/config.yaml`
   // (in-place, ~60s maintenance window, no data loss).
   topologyDbHighAvailability: false,
-  topologyServiceImage: process.env.TOPOLOGY_SERVICE_IMAGE ?? `gcr.io/${process.env.GCP_PROJECT_ID ?? "my-project"}/topology-service:latest`,
-  cellRouterImage: process.env.CELL_ROUTER_IMAGE ?? `gcr.io/${process.env.GCP_PROJECT_ID ?? "my-project"}/cell-router:latest`,
-  prometheusRemoteWriteUrl: process.env.PROMETHEUS_REMOTE_WRITE_URL ?? "",
+  topologyServiceImage: (params.topologyServiceImage as string | undefined) ?? `gcr.io/${projectId}/topology-service:latest`,
+  cellRouterImage: (params.cellRouterImage as string | undefined) ?? `gcr.io/${projectId}/cell-router:latest`,
+  prometheusRemoteWriteUrl: params.prometheusRemoteWriteUrl as string,
   // Health score threshold below which the cell router fails over to the next available cell
-  routerHealthThreshold: Number(process.env.ROUTER_HEALTH_THRESHOLD ?? "0.5"),
+  routerHealthThreshold: params.routerHealthThreshold as number,
 };
 
 // Both cells start as "starter" tier (non-HA, ~$400-500/mo total).

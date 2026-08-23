@@ -111,6 +111,28 @@ describe("generated output compile-smoke (#162)", () => {
     expect(diags).toEqual([]);
   });
 
+  test("same activity at two retry profiles plus a [gate, activity] phase type-checks (#1698)", () => {
+    const op: Map<string, Declarable> = new Map([
+      ["mixed", {
+        props: {
+          name: "mixed", overview: "o", taskQueue: "mixed",
+          phases: [
+            { name: "Quick", steps: [{ kind: "activity", fn: "shellCmd", args: { cmd: "echo a" } }] },
+            {
+              name: "Replay",
+              steps: [
+                { kind: "gate", signalName: "approve-replay" },
+                { kind: "activity", fn: "shellCmd", args: { cmd: "echo b" }, profile: "longInfra" },
+              ],
+            },
+          ],
+        },
+      } as unknown as Declarable],
+    ]);
+    const diags = compileGenerated("mixed", op);
+    expect(diags).toEqual([]);
+  });
+
   test("workflow.ts calls activities with their declared argument types", () => {
     // A hand-built Op that passes a WRONG arg shape must surface as a type
     // error — guards the smoke itself against false greens.
