@@ -75,6 +75,13 @@ export interface LifecycleSnapshot {
    * relationships recorded" rather than "no relationships existed".
    */
   edges?: IREdge[];
+  /**
+   * What the deployed stack publishes (#1279), keyed by stack name — a
+   * CloudFormation stack's outputs. Recorded once here rather than on every
+   * resource's `attributes`, which is where they used to be copied. Absent on
+   * every snapshot written before this, and on a lexicon with no such notion.
+   */
+  stackExports?: Record<string, Record<string, unknown>>;
   /** Build digest at snapshot time — what was declared when this snapshot was taken */
   digest?: BuildDigest;
 }

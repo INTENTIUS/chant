@@ -28,6 +28,7 @@ const { awsPlugin } = await import("./plugin");
 const { liveImportFromPlugins } = await import("@intentius/chant/cli/commands/import");
 const { buildChangeSet } = await import("@intentius/chant/lifecycle/change-set");
 const { normalizeObservation } = await import("@intentius/chant/observation");
+const { buildLiveGraphIr } = await import("@intentius/chant/graph-ir");
 const { liveEvidenceFromChangeSet, reconcileStatus } = await import("@intentius/chant/lifecycle/status");
 const { describeObservationConformance } = await import("@intentius/chant-test-utils");
 const { observeResources } = await import("@intentius/chant/lifecycle/observe");
@@ -143,6 +144,49 @@ describe("aws lifecycle integration (#163)", () => {
       observedThen: undefined,
     });
     expect(cs2.entries.find((e) => e.name === "MyBucket")!.action).toBe("noop");
+  });
+
+  // #1279 — a node's attributes are the resource's own. The stack's outputs
+  // used to be copied onto every member, so a VPC carried `expWebIp` and no
+  // `CidrBlock`; they now ride the envelope once, keyed by the stack.
+  test("an observed VPC carries its own properties; the stack carries the exports (#1279)", async () => {
+    stubCfn((action) =>
+      action === "DescribeStackResources"
+        ? { text: stackResourcesXml([{ logicalId: "vpc", type: "AWS::EC2::VPC", physicalId: "vpc-a5a41663" }]) }
+        : { text: stackOutputsXml({ expVpcId: "vpc-a5a41663", expWebIp: "54.1.2.3", expDbPassword: "hunter2" }) },
+    );
+    spawnMock.mockResolvedValue(
+      ok(JSON.stringify({ Vpcs: [{ VpcId: "vpc-a5a41663", CidrBlock: "10.0.0.0/16", IsDefault: false }] })),
+    );
+
+    const observed = normalizeObservation(
+      await awsPlugin.describeResources!({
+        environment: "prod",
+        buildOutput: "",
+        entityNames: ["vpc"],
+        entities: new Map(),
+      }),
+    );
+
+    const attrs = observed.resources.vpc?.attributes ?? {};
+    expect(attrs.CidrBlock).toBe("10.0.0.0/16");
+    expect(attrs.IsDefault).toBe(false);
+    expect(Object.keys(attrs).filter((k) => k.startsWith("exp"))).toEqual([]);
+
+    expect(observed.stackExports).toEqual({
+      prod: { expVpcId: "vpc-a5a41663", expWebIp: "54.1.2.3", expDbPassword: "[REDACTED]" },
+    });
+
+    // And through the graph: the exports land on the IR's `exports`, not on the node.
+    const ir = buildLiveGraphIr([{ lexicon: "aws", resources: observed.resources, stackExports: observed.stackExports }]);
+    const node = ir.nodes.find((n) => n.id === "vpc")!;
+    expect(node.attrs.CidrBlock).toBe("10.0.0.0/16");
+    expect(node.attrs.expVpcId).toBeUndefined();
+    expect(ir.exports).toEqual([
+      { name: "expDbPassword", value: "[REDACTED]", stack: "prod" },
+      { name: "expVpcId", value: "vpc-a5a41663", stack: "prod" },
+      { name: "expWebIp", value: "54.1.2.3", stack: "prod" },
+    ]);
   });
 
   // #1647 — the carve state, end to end: terraform applied the bucket, carve

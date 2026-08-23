@@ -633,19 +633,19 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
       stackOutputs = {};
     }
 
+    // The outputs are the stack's, not any member's (#1279). They used to be
+    // copied onto every resource's `attributes`, so a VPC carried the stack's
+    // `expWebIp` and no `CidrBlock`. They ride the envelope once, keyed by the
+    // stack, scrubbed of anything that looks secret.
+    const exports: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(stackOutputs)) {
+      exports[key] = /password|secret|token|key/i.test(key) ? "[REDACTED]" : value;
+    }
+    const stackExports = Object.keys(exports).length > 0 ? { [stackName]: exports } : undefined;
+
     for (const entityName of options.entityNames) {
       const stackResource = stackResourceMap.get(entityName);
       if (!stackResource) continue;
-
-      const attributes: Record<string, unknown> = {};
-      // Include stack outputs as attributes (scrub sensitive ones)
-      for (const [key, value] of Object.entries(stackOutputs)) {
-        if (/password|secret|token|key/i.test(key)) {
-          attributes[key] = "[REDACTED]";
-        } else {
-          attributes[key] = value;
-        }
-      }
 
       resources[entityName] = {
         type: stackResource.type,
@@ -657,7 +657,6 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
         // rather than leaving the field off and letting each consumer guess —
         // the change set never escalates `unknown` to a delete.
         ownership: "unknown",
-        attributes: Object.keys(attributes).length > 0 ? attributes : undefined,
       };
     }
 
@@ -669,9 +668,9 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
     const { observeByIdentity } = await import("./identity-observe");
     const identity = await observeByIdentity(options.entityNames, options.entities, resources, client);
 
-    // Each resource's OWN properties, on top of the stack outputs above (#1279).
-    // Until this, a node's `attrs` were the stack's exports replicated onto
-    // every member, so no instance carried its own `VpcId`.
+    // Each resource's OWN properties (#1279). Until this, a node's `attrs` were
+    // the stack's exports replicated onto every member, so no instance carried
+    // its own `VpcId`.
     const own = await describeOwnProperties(resources, options.region);
     const withProperties = stampProviderDefaults(stampRegion(own.resources, options.region));
 
@@ -701,13 +700,13 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
           detail: `the stack was read, but this resource's own properties were not — ${own.failures.get(type) ?? "the describe call failed"}`,
         };
       }
-      return observation({ ...described, ...identity.resources }, holes, identity.queried, notes);
+      return observation({ ...described, ...identity.resources }, holes, identity.queried, notes, stackExports);
     }
 
     // Every entity the stack answered for was answered for: an entity the
     // template doesn't carry is genuinely not in this stack, which is an
     // absence, not a hole — unless the identity fallback saw it live (#1647).
-    return observation({ ...withProperties, ...identity.resources }, undefined, identity.queried, notes);
+    return observation({ ...withProperties, ...identity.resources }, undefined, identity.queried, notes, stackExports);
   },
 
   /**

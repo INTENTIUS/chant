@@ -16,9 +16,10 @@
  * A deep read (Cloud Control) answers this properly but is a per-resource call
  * and is not available on every endpoint. This is the cheap middle: one describe
  * per kind for the whole observation, joined back by physical id. Stack outputs
- * are kept — they were the only attributes for a long time and queries lean on
- * them — but a resource's own properties win a name collision, because they are
- * the resource's.
+ * no longer ride the resource at all — they are the stack's, and travel on the
+ * observation envelope's `stackExports`. Whatever a resource already carries is
+ * kept underneath its own properties, which win a name collision because they
+ * are the resource's.
  */
 
 import { applyAwsEndpointArgv } from "./components/cloud-executor";
@@ -177,8 +178,8 @@ export async function describeOwnProperties(
         for (const name of byId.get(id) ?? []) {
           merged[name] = {
             ...merged[name],
-            // Own properties last: a resource's `VpcId` outranks a stack output
-            // that happens to share the name.
+            // Own properties last: a resource's `VpcId` outranks anything the
+            // entry already carried under the same name.
             attributes: { ...(merged[name].attributes ?? {}), ...row },
           };
         }

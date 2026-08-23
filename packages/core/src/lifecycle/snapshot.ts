@@ -140,6 +140,7 @@ export async function takeSnapshot(
     let resources: Record<string, ResourceMetadata> = {};
     let artifacts: Record<string, ArtifactMetadata> = {};
     let unobserved: Record<string, UnobservedEntity> = {};
+    let stackExports: Record<string, Record<string, unknown>> | undefined;
 
     try {
       if (plugin.describeResources) {
@@ -163,6 +164,7 @@ export async function takeSnapshot(
         // entity nobody could read must not be recorded as "was not there",
         // because the next diff would then read it back as absent.
         unobserved = observed.unobserved;
+        stackExports = observed.stackExports;
         for (const [name, entry] of Object.entries(unobserved)) {
           warnings.push(`${plugin.name}: not observed — ${formatUnobserved(name, entry)}`);
         }
@@ -258,6 +260,7 @@ export async function takeSnapshot(
         timestamp,
         resources: withDependencies,
         ...(dependencies.edges.length > 0 ? { edges: dependencies.edges } : {}),
+        ...(stackExports && Object.keys(stackExports).length > 0 ? { stackExports } : {}),
         ...(Object.keys(unobserved).length > 0 && { unobserved }),
         ...(Object.keys(artifacts).length > 0 && { artifacts }),
         // Only written when deep. An absent field means identity, which is what

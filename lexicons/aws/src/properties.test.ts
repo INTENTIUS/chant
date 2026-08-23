@@ -40,18 +40,18 @@ describe("describeOwnProperties (#1279)", () => {
     expect(spawnMock).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps stack outputs, and lets the resource's own property win the name", async () => {
-    const withOutputs = {
+  it("keeps what the entry already carried, and lets the resource's own property win the name", async () => {
+    const withPrior = {
       web: {
         type: "AWS::EC2::Instance",
         status: "OK",
         physicalId: "i-1",
-        attributes: { expVpcId: "vpc-exported", VpcId: "stale" },
+        attributes: { region: "us-east-1", VpcId: "stale" },
       },
     };
     spawnMock.mockResolvedValue(ok(reservations(instance("i-1", "vpc-a"))));
-    const { resources: merged } = await describeOwnProperties(withOutputs);
-    expect(merged.web.attributes?.expVpcId).toBe("vpc-exported");
+    const { resources: merged } = await describeOwnProperties(withPrior);
+    expect(merged.web.attributes?.region).toBe("us-east-1");
     expect(merged.web.attributes?.VpcId).toBe("vpc-a");
   });
 
