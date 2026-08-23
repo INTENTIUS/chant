@@ -87,7 +87,7 @@ describe("parameters.json build roundtrip", () => {
     const result = await build(srcDir, [awsSerializer]);
     expect(result.errors).toHaveLength(0);
 
-    const template = JSON.parse(result.outputs.get("aws")!);
+    const template = JSON.parse(result.outputs.get("aws") as string);
 
     // Verify parameters round-tripped correctly (names preserved as-is)
     for (const [name, param] of Object.entries(source.Parameters ?? {})) {

@@ -5,12 +5,12 @@
 
 import { describe, expect, it } from "vitest";
 import { serializeOps } from "./serializer";
-import { DECLARABLE_MARKER } from "@intentius/chant/declarable";
+import { DECLARABLE_MARKER, type Declarable } from "@intentius/chant/declarable";
 import type { OpConfig } from "@intentius/chant/op";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function makeOp(config: OpConfig): [string, Record<string, unknown>] {
+function makeOp(config: OpConfig): [string, Declarable] {
   return [
     config.name,
     {
@@ -20,7 +20,7 @@ function makeOp(config: OpConfig): [string, Record<string, unknown>] {
       kind: "resource",
       props: config,
       attributes: {},
-    },
+    } as unknown as Declarable,
   ];
 }
 

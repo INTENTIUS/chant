@@ -15,7 +15,7 @@ import { parseYAML } from "@intentius/chant/yaml";
 
 /** Serialize one declaration the way `chant build` would, and read it back. */
 function synth(logicalName: string, resource: unknown): any {
-  const yaml = k8sSerializer.serialize(new Map([[logicalName, resource as never]]));
+  const yaml = k8sSerializer.serialize(new Map([[logicalName, resource as never]])) as string;
   return parseYAML(yaml);
 }
 
