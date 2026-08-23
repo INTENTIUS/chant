@@ -195,6 +195,18 @@ jobs:
   validate:
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    # #1481 — arm the release gate here, so this job runs the prepack the
+    # publish workflow runs. `npm publish` re-runs each lexicon's prepack
+    # under CHANT_RELEASE_GATE=1, which adds the surface-snapshot check and
+    # (for aws) refuses a build that could not load the pinned spec. Before
+    # this, that gate ran only inside `npm publish`: release-preflight.sh
+    # trusted a green `chant` run that had never executed it, and two
+    # releases in a row died on a check CI was structurally unable to see.
+    # Every input the gate depends on is pinned (the aws spec by content,
+    # #1511; k8s by version tag), so arming it on PRs is deterministic —
+    # it moves only when a commit moves it.
+    env:
+      CHANT_RELEASE_GATE: "1"
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
