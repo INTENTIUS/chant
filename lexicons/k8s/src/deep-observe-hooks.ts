@@ -22,14 +22,18 @@
  * are sets addressed by a well-known identity (containers by name, ports by
  * containerPort+protocol). None of that needs a live object in hand.
  *
- * What does *not* live here is the managed-fields prune — whether one
- * specific field on one specific live object is chant-owned, foreign-owned,
- * or contested. That is inherently per-object (it depends on *that* object's
+ * What does *not* live here is the managed-fields ownership walk — which
+ * manager owns one specific field on one specific live object. That is
+ * inherently per-object (it depends on *that* object's
  * `metadata.managedFields`, which the declared tree never carries and which
  * differs between two Deployments of the same type), so it cannot be
  * expressed as a fixed rule keyed only by entity type and path — the shape
  * every other hook in this file takes. `./deep-observe.ts` computes it once
- * per resource and layers it on top of the rules below.
+ * per resource and attaches it to the observation as `fieldOwners`. Since
+ * chant #1191 ownership no longer prunes anything: a foreign-owned field
+ * nobody declared is reported as `undeclared` drift, and the only static
+ * subtraction for foreign writes is `K8S_SYSTEM_METADATA_PRUNE_PATTERNS`
+ * (core's `managed-fields`), applied below.
  *
  * The *entity-type-agnostic* half of these rules — which fields every
  * Kubernetes API object carries regardless of kind, and the well-known
@@ -45,7 +49,11 @@ import { existsSync, readFileSync } from "fs";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
 import type { DeepArrayElement, DeepNode, DeepNormalizationHooks } from "@intentius/chant/lexicon";
-import { K8S_OBJECT_ENVELOPE_PRUNE_PATTERNS, k8sListMapOrderKey } from "@intentius/chant/managed-fields";
+import {
+  K8S_OBJECT_ENVELOPE_PRUNE_PATTERNS,
+  K8S_SYSTEM_METADATA_PRUNE_PATTERNS,
+  k8sListMapOrderKey,
+} from "@intentius/chant/managed-fields";
 import { LABEL_OWNERSHIP_KEYS, OWNERSHIP_MANAGED_BY_VALUE } from "@intentius/chant/ownership";
 
 /**
@@ -303,6 +311,15 @@ export const k8sDeepNormalizationHooks: DeepNormalizationHooks = {
     if (K8S_OBJECT_ENVELOPE_PRUNE_PATTERNS.has(node.pattern)) return true;
 
     if (node.side !== "live" || node.counterpart !== "absent") return false;
+
+    // What Kubernetes' own controllers stamp on every object of a kind
+    // (rollout counters, selector hashes, client-side-apply bookkeeping) is
+    // not drift. This is the static allowlist that stands in for the
+    // managed-fields prune since #1191: any *other* foreign-owned field
+    // nobody declared — a `kubectl label` from the console — now reaches the
+    // diff and reports as `undeclared`, with the accepted baseline as the
+    // valve for the ones an estate has decided to live with.
+    if (K8S_SYSTEM_METADATA_PRUNE_PATTERNS.has(node.pattern)) return true;
 
     // chant's own ownership marker is not drift (see the sets' docs).
     if (K8S_OWNERSHIP_LABEL_PATTERNS.has(node.pattern)) return true;

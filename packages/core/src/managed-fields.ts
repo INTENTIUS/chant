@@ -142,17 +142,18 @@ export interface OwnershipSets {
   chantOwned: ReadonlySet<string>;
   /** Paths owned by a manager that is not chant. */
   foreignOwned: ReadonlySet<string>;
-  /** The subset of `foreignOwned` where the declared manifest also sets the path — drift-relevant despite foreign ownership. */
+  /** The subset of `foreignOwned` where the declared manifest also sets the path — a contested field. */
   foreignContested: ReadonlySet<string>;
   /**
    * Path → the name of the manager that owns it (#1189).
    *
-   * The three sets above answer *which category* owns a path, which is all the
-   * prune rule needs. A reader needs the other question — "owned by
-   * `kubectl-client-side-apply`" and "owned by `hpa-controller`" are the same
-   * category and mean very different things to an operator. Last writer wins
-   * where several managers touch one path, matching what the API server itself
-   * reports.
+   * The three sets above answer *which category* owns a path. A reader needs
+   * the other question — "owned by `kubectl-client-side-apply`" and "owned by
+   * `hpa-controller`" are the same category and mean very different things to
+   * an operator. Since chant #1191 no category is pruned from the diff, so
+   * this map is what tells the two apart in the report. Last writer wins
+   * where several managers touch one path, matching what the API server
+   * itself reports.
    */
   owners: ReadonlyMap<string, string>;
 }
@@ -323,25 +324,41 @@ export function buildOwnershipSets(
 }
 
 /**
- * The three-question managed-fields prune rule, as a predicate over a
- * {@link DeepNode} plus one object's precomputed {@link OwnershipSets} —
- * shared by every lexicon layering a per-resource managed-fields prune on
- * top of its own static rules (k8s's `perResourceHooks`, gcp's equivalent):
+ * Well-known metadata the control plane writes on an object regardless of
+ * who applied it — matched on the exact index-erased pattern, like
+ * {@link K8S_OBJECT_ENVELOPE_PRUNE_PATTERNS}, but gated by the caller on
+ * `side === "live" && counterpart === "absent"` so a manifest that *does*
+ * declare one of these (a hand-pinned `change-cause`, say) is still compared.
  *
- * 1. Chant owns the path (any chant manager) → never pruned by this rule.
- * 2. A different manager owns it, chant does not, and it is not declared →
- *    controller-managed noise, pruned.
- * 3. It is declared, regardless of who owns it live → never pruned by this
- *    rule, because chant's source is a statement of intent independent of
- *    which write currently holds the field.
+ * This list is the noise valve that replaced the managed-fields prune
+ * (chant #1191). Until then a foreign-owned, undeclared path was dropped
+ * before the diff ever saw it, which silenced `kubectl label deploy web
+ * team=platform` — the exact console-edit class the `undeclared` drift kind
+ * exists for. Now a foreign-owned path nobody declared is reported as
+ * `undeclared` (with its owner named, #1189) unless the accepted baseline
+ * already carries it — and what remains to subtract statically is only the
+ * handful of annotations and labels Kubernetes' own controllers stamp on
+ * every object of a kind. Widening this set is additive; each entry must be
+ * something *no* human writes out of band.
  *
- * Only applies to the live side — the declared tree carries no managedFields
- * to prune by.
+ * - `kubectl.kubernetes.io/last-applied-configuration` — client-side apply's
+ *   bookkeeping, a JSON copy of whatever was last applied.
+ * - `deployment.kubernetes.io/revision` (+ `revision-history`,
+ *   `desired-replicas`, `max-replicas`) — the Deployment controller's
+ *   rollout counters, written to Deployments and their ReplicaSets.
+ * - `pod-template-hash` / `controller-revision-hash` /
+ *   `statefulset.kubernetes.io/pod-name` — the selector labels the
+ *   ReplicaSet, DaemonSet and StatefulSet controllers add to what they own.
  */
-export function pruneByOwnership(node: DeepNode, sets: OwnershipSets): boolean {
-  if (node.side !== "live") return false;
-  if (sets.chantOwned.has(node.path)) return false;
-  if (!sets.foreignOwned.has(node.path)) return false;
-  if (sets.foreignContested.has(node.path)) return false;
-  return true;
-}
+export const K8S_SYSTEM_METADATA_PRUNE_PATTERNS: ReadonlySet<string> = new Set([
+  "metadata.annotations.kubectl.kubernetes.io/last-applied-configuration",
+  "metadata.annotations.deployment.kubernetes.io/revision",
+  "metadata.annotations.deployment.kubernetes.io/revision-history",
+  "metadata.annotations.deployment.kubernetes.io/desired-replicas",
+  "metadata.annotations.deployment.kubernetes.io/max-replicas",
+  "metadata.labels.pod-template-hash",
+  "metadata.labels.controller-revision-hash",
+  "metadata.labels.statefulset.kubernetes.io/pod-name",
+  "spec.template.metadata.labels.pod-template-hash",
+  "spec.template.metadata.labels.controller-revision-hash",
+]);
