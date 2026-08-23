@@ -107,6 +107,7 @@ For tooling, `--format json` emits a **versioned** envelope (stable contract). T
 {
   "schemaVersion": "1.0",
   "tool": { "name": "chant-audit", "version": "0.7.0" },
+  "status": "ok",
   "snapshot": { "target": "...", "host": "github.com", "repo": "owner/repo", "commit": "…", "files": ["..."], "generatedAt": "…", "toolVersion": "0.7.0" },
   "summary": { "total": 0, "quickWin": 0, "needsReview": 0, "reportOnly": 0, "errors": 0, "warnings": 0, "infos": 0, "security": 0, "correctness": 0, "bestPractice": 0 },
   "findings": [
@@ -122,6 +123,7 @@ For tooling, `--format json` emits a **versioned** envelope (stable contract). T
 - Additive changes (new fields) keep the same `schemaVersion`; renamed or removed fields bump it.
 - Consumers should check the **major** version and **ignore unknown fields**.
 - The `snapshot` anchors findings to an exact commit for reproducibility.
+- `status` is `"ok"` when at least one lexicon ran, `"no-lexicons"` when none could (see [Prerequisites](#prerequisites)). Check it before trusting an empty `findings`. An optional `unclaimed` list names files that wanted a lexicon that is not installed.
 - For maximum stability, integrate via `--format sarif` — an industry-standard, independently-versioned format.
 
 ## Tokens
@@ -153,7 +155,33 @@ npm i @intentius/chant-lexicon-azure    # ARM templates
 npm i @intentius/chant-lexicon-gcp      # Config Connector
 ```
 
-If a needed lexicon package is missing, the command tells you which package to install — either as a friendly error (CI files, detected by path) or, for content-detected file types, as a note when nothing was found.
+Without a project to install into, put every lexicon you need on the same `npx` path:
+
+```bash
+npx -p @intentius/chant -p @intentius/chant-lexicon-github -p @intentius/chant-lexicon-k8s chant audit .
+```
+
+A bare `npx @intentius/chant audit .` has no lexicons and cannot detect anything. It does not report clean in that case. It says it had nothing to look with, lists each file that looked like it wanted a lexicon (by path, filename, and a few content markers), prints the `npx -p ...` line that covers exactly those files, and exits with code 2:
+
+```
+chant audit had nothing to look with: no audit lexicon is installed, so nothing under . was inspected.
+This is not a clean result. Detection and checks live in the lexicon packages.
+
+Files that wanted a lexicon:
+  .github/workflows/ci.yml  ->  github
+  Dockerfile  ->  docker
+  infra/main.tf  ->  terraform (not audited; see chant carve)
+  k8s/deploy.yaml  ->  k8s
+
+Run it with the lexicons those files need:
+  npx -p @intentius/chant -p @intentius/chant-lexicon-github -p @intentius/chant-lexicon-docker -p @intentius/chant-lexicon-k8s chant audit .
+```
+
+With `--json` the same run emits `"status": "no-lexicons"` plus `unclaimed`, `missingLexicons`, and `install` fields, and no `findings`.
+
+When some lexicons are installed and files on disk look like they belong to one that is not, the report leads with a one-line note naming the skipped files and the `npm i` to fix it, and `--json` carries them in `unclaimed`. Terraform (`*.tf`) is listed the same way so you know the audit never reads HCL; see [the carve-out tutorial](/chant/tutorials/terraform-carve-out/) for that path.
+
+If a lexicon package is present for detection but its checks fail to load, the command surfaces that as an error naming the package.
 
 ## Usage
 
@@ -186,3 +214,5 @@ chant audit . --tier merge-worthy --json --fail-on merge-worthy
 | `none` (default) | never (read-only) |
 | `merge-worthy` | any merge-worthy finding exists |
 | `warning` | any error- or warning-severity finding exists |
+
+Independent of `--fail-on`, the command exits 2 when no audit lexicon is installed (nothing was inspected, see [Prerequisites](#prerequisites)) and 1 on a hard failure such as an unreachable repo or a missing path.

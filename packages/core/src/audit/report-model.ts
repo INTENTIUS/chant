@@ -6,6 +6,7 @@
  */
 
 import type { AuditFinding } from "./core";
+import type { UnclaimedFile } from "./discover";
 import { RULE_CATALOG, ruleDocUrl, type Authority, type Category, type FixKind, type RuleMeta, type Tier } from "./catalog";
 import { proveFix, unifiedDiff, type ProveOptions } from "./proof";
 import type { Severity } from "../lint/rule";
@@ -107,9 +108,17 @@ export interface SerializedFinding {
 export interface AuditReportJson {
   schemaVersion: string;
   tool: { name: string; version: string };
+  /**
+   * Whether the audit had lexicons to look with (#1623). `"ok"` when at least
+   * one audit lexicon resolved; `"no-lexicons"` means nothing was inspected and
+   * the report carries no findings by construction.
+   */
+  status: "ok" | "no-lexicons";
   snapshot?: AuditSnapshot;
   summary: ReportCounts;
   findings: SerializedFinding[];
+  /** Candidate files that looked like they wanted a lexicon that is not installed. */
+  unclaimed?: UnclaimedFile[];
 }
 
 export function metaFor(id: string, catalog: Record<string, RuleMeta> = RULE_CATALOG): RuleMeta {
@@ -270,13 +279,14 @@ export function buildReportModel(findings: AuditFinding[], opts: BuildModelOptio
 /** Build the versioned, machine-readable JSON report (stable contract). */
 export function buildReportJson(
   findings: AuditFinding[],
-  opts: { snapshot?: AuditSnapshot; toolVersion?: string; catalog?: Record<string, RuleMeta> } = {},
+  opts: { snapshot?: AuditSnapshot; toolVersion?: string; catalog?: Record<string, RuleMeta>; unclaimed?: UnclaimedFile[] } = {},
 ): AuditReportJson {
   const model = buildReportModel(findings, { catalog: opts.catalog });
   const version = opts.toolVersion ?? opts.snapshot?.toolVersion ?? "0.0.0";
   return {
     schemaVersion: REPORT_SCHEMA_VERSION,
     tool: { name: "chant-audit", version },
+    status: "ok",
     snapshot: opts.snapshot,
     summary: model.counts,
     findings: model.findings.map((f) => ({
@@ -294,5 +304,6 @@ export function buildReportJson(
       authority: f.meta.authority ?? [],
       docUrl: ruleDocUrl(f.checkId),
     })),
+    unclaimed: opts.unclaimed && opts.unclaimed.length > 0 ? opts.unclaimed : undefined,
   };
 }
