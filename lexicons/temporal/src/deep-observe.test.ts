@@ -88,7 +88,7 @@ function fakeConnection(opts: {
 function setupClientMock(connection: unknown, scheduleDescriptions: Record<string, () => unknown> = {}): void {
   loadTemporalClientMock.mockResolvedValue({
     Connection: { connect: vi.fn(async () => connection) },
-    Client: vi.fn(() => ({
+    Client: vi.fn(function () { return {
       scheduleClient: {
         getHandle: (scheduleId: string) => ({
           describe: async () => {
@@ -100,7 +100,7 @@ function setupClientMock(connection: unknown, scheduleDescriptions: Record<strin
           },
         }),
       },
-    })),
+    }; }),
   });
 }
 

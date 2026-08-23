@@ -101,7 +101,7 @@ function makeOp(name: string, depends: string[] = []): [string, { config: { name
 function setupTemporalClient(mock: ReturnType<typeof createMockTemporalClient>) {
   loadTemporalClientMock.mockResolvedValue({
     Connection: { connect: vi.fn(async () => ({})) },
-    Client: vi.fn(() => mock.client) as unknown as new () => unknown,
+    Client: vi.fn(function () { return mock.client; }) as unknown as new () => unknown,
   });
   loadChantConfigMock.mockResolvedValue({ config: {} });
   resolveProfileMock.mockReturnValue({ address: "localhost:7233", namespace: "default", taskQueue: "q" });
