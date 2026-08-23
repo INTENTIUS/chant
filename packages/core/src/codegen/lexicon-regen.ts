@@ -25,6 +25,7 @@
 import { existsSync, readFileSync, writeFileSync, readdirSync, type Dirent } from "fs";
 import { join } from "path";
 import { execSync } from "child_process";
+import { SNAPSHOT_UPDATE_ENV } from "./validate";
 import {
   extractSurface,
   diffSurface,
@@ -114,6 +115,17 @@ export interface RegenOptions {
    *   sha256:<64-hex-chars>  <relative-path-to-spec-file>
    */
   pinnedDigestPath?: string;
+  /**
+   * This run is about to rewrite the baseline snapshot (#1825).
+   *
+   * The `validate` step runs with {@link SNAPSHOT_UPDATE_ENV} set so its
+   * `surface-matches-snapshot` check is skipped. A lexicon whose snapshot gate
+   * runs in `"always"` mode (#1475) fails validate on a stale baseline, and a
+   * stale baseline is exactly what a re-baseline starts from — without this
+   * exemption the documented update flow deadlocks. Every other validate check
+   * still gates the run, so a broken generate cannot be baselined.
+   */
+  updatingSnapshot?: boolean;
 }
 
 // ── Pipeline ──────────────────────────────────────────────────────────
@@ -132,6 +144,7 @@ export async function regenLexicon(opts: RegenOptions): Promise<RegenResult> {
     skipBuild = false,
     skipLint = false,
     skipExamples = true,
+    updatingSnapshot = false,
   } = opts;
 
   const failures: RegenFailure[] = [];
@@ -177,7 +190,12 @@ export async function regenLexicon(opts: RegenOptions): Promise<RegenResult> {
   }
 
   // Step 4: validate
-  const validateFail = runScript(lexiconDir, "validate", process.env, verbose);
+  // A re-baseline run is exempt from the surface-matches-snapshot check only
+  // (#1825) — see RegenOptions.updatingSnapshot.
+  const validateEnv: NodeJS.ProcessEnv = updatingSnapshot
+    ? { ...process.env, [SNAPSHOT_UPDATE_ENV]: "1" }
+    : process.env;
+  const validateFail = runScript(lexiconDir, "validate", validateEnv, verbose);
   if (validateFail) {
     failures.push(validateFail);
   }

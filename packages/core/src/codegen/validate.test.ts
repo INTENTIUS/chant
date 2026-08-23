@@ -182,4 +182,37 @@ describe("surface snapshot gate (#1473)", () => {
     const check = result.checks.find((c) => c.name === "surface-matches-snapshot");
     expect(check?.ok).toBe(false);
   });
+
+  test("an update run skips the staleness check it is about to fix (#1825)", async () => {
+    // `--update-snapshot` sets CHANT_SNAPSHOT_UPDATE for its validate run.
+    // Without this, an "always" gate deadlocks the documented re-baseline flow:
+    // validate fails on the stale snapshot, and the update writes only after a
+    // green validate.
+    const stale = JSON.stringify({ schemaVersion: 1, generatedAt: "2026-01-01T00:00:00.000Z", entries: {} });
+    const result = await validateLexiconArtifacts({
+      lexiconJsonFilename: "lexicon-test.json",
+      requiredNames: [],
+      basePath: fixture({ snapshot: stale }),
+      checkSurfaceSnapshot: "always",
+      env: { CHANT_SNAPSHOT_UPDATE: "1" },
+    });
+    expect(result.checks.find((c) => c.name === "surface-matches-snapshot")).toBeUndefined();
+    expect(result.success).toBe(true);
+  });
+
+  test("an update run is exempt from the staleness check and nothing else", async () => {
+    // A failing check other than surface-matches-snapshot must still refuse
+    // the run, so a broken generate cannot be baselined.
+    const stale = JSON.stringify({ schemaVersion: 1, generatedAt: "2026-01-01T00:00:00.000Z", entries: {} });
+    const result = await validateLexiconArtifacts({
+      lexiconJsonFilename: "lexicon-test.json",
+      requiredNames: ["NotThere"],
+      basePath: fixture({ snapshot: stale }),
+      checkSurfaceSnapshot: "always",
+      env: { CHANT_SNAPSHOT_UPDATE: "1" },
+    });
+    expect(result.checks.find((c) => c.name === "surface-matches-snapshot")).toBeUndefined();
+    expect(result.checks.find((c) => c.name === "required-names")?.ok).toBe(false);
+    expect(result.success).toBe(false);
+  });
 });
