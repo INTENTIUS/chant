@@ -437,7 +437,7 @@ export async function runComponentsStatus(ctx: CommandContext): Promise<number> 
             observedNow: observed.resources,
             observedThen: undefined,
             unobserved: observed.unobserved,
-          });
+          }, { lexicon: plugin.name });
           merged.entries.push(...cs.entries);
         }
         liveEvidence = liveEvidenceFromChangeSet(merged, liveNameMapping);
