@@ -32,11 +32,32 @@ export const DEFAULT_SCHEMA_FILENAME = "default-schema.cedarschema";
 /** Map key used for the single schema entry, so `parseSchema` can tell them apart. */
 export const DEFAULT_SCHEMA_KEY = "<bundled-default>";
 
-const specDir = dirname(fileURLToPath(import.meta.url));
+let specDir: string | undefined;
+
+/**
+ * Directory this module lives in, resolved on first use.
+ *
+ * Kept lazy so importing the module never touches `import.meta.url`; edge
+ * bundles that pull this file in through the lint barrel have no such URL and
+ * would crash at module init otherwise.
+ */
+function resolveSpecDir(): string | undefined {
+  if (specDir !== undefined) return specDir;
+  try {
+    specDir = dirname(fileURLToPath(import.meta.url));
+  } catch {
+    return undefined;
+  }
+  return specDir;
+}
 
 /** Absolute path to the schema bundled with this package. */
 export function defaultSchemaPath(): string {
-  return join(specDir, DEFAULT_SCHEMA_FILENAME);
+  const dir = resolveSpecDir();
+  if (dir === undefined) {
+    throw new Error("cedar: the bundled default schema is not reachable from this runtime (no module URL).");
+  }
+  return join(dir, DEFAULT_SCHEMA_FILENAME);
 }
 
 export interface SchemaSource {

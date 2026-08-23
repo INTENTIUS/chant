@@ -14,10 +14,19 @@ import type { Declarable } from "@intentius/chant/declarable";
 import type { SerializerResult } from "@intentius/chant/serializer";
 import type { PostSynthContext } from "@intentius/chant/lint/post-synth";
 import { cedarPlugin } from "./plugin";
-import { cedarSerializer } from "./serializer";
-import { Policy } from "./generated/index";
+import { cedarSerializer, type CedarPolicyProps } from "./serializer";
+import { Policy, type PolicyProps } from "./generated/index";
 import { CEDAR_SCHEMA_ENTITY_NAME, CEDAR_SCHEMA_FILENAME, Schema, schemaBuildRoot } from "./schema-artifact";
 import { cede010 } from "./lint/post-synth/cede010";
+
+/**
+ * The package's `PolicyProps` narrows scopes to the bundled sample schema's
+ * names. These tests use the `Shop` schema above, so they build props as the
+ * string-typed `CedarPolicyProps` and widen at the constructor.
+ */
+function shopPolicy(props: CedarPolicyProps): InstanceType<typeof Policy> {
+  return new Policy(props as unknown as PolicyProps);
+}
 
 const SCHEMA = `namespace Shop {
   entity Customer = { "email": String };
@@ -49,7 +58,7 @@ describe("Schema declarable", () => {
       ["authz", new Schema({ text: SCHEMA })],
       [
         "viewOwn",
-        new Policy({
+        shopPolicy({
           effect: "permit",
           principal: { is: "Shop::Customer" },
           action: { in: ['Shop::Action::"view"'] },
@@ -81,7 +90,7 @@ describe("Schema declarable", () => {
   });
 
   it("turns CEDE010 from an advisory into validation", () => {
-    const badPolicy = new Policy({
+    const badPolicy = shopPolicy({
       effect: "permit",
       principal: { is: "Shop::Customer" },
       action: { in: ['Shop::Action::"view"'] },
