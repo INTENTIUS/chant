@@ -243,6 +243,63 @@ export function isCandidatePath(path: string): boolean {
   return /\.(ya?ml|json|template)$/i.test(name);
 }
 
+/**
+ * What a candidate file looks like it wants, judged cheaply by core alone
+ * (path, filename, a few content markers) with no lexicon plugin involved.
+ * Names the lexicon that would have claimed a file when that lexicon isn't
+ * installed (#1623). Deliberately coarse: precision comes from the plugin's
+ * `detectTemplate`, which is exactly what's missing in that case.
+ * `terraform` is not an audit lexicon; `*.tf` is surfaced so the user learns
+ * the audit never reads it (see `chant carve`).
+ */
+export type LexiconHint = AuditLexicon | "terraform";
+
+export function hintLexiconForFile(path: string, content: string): LexiconHint | undefined {
+  const name = basename(path);
+  const ci = ciLexiconForPath(path);
+  if (ci) return ci;
+  if (isDockerfileName(name)) return "docker";
+  if (name === "Chart.yaml") return "helm";
+  if (/\.tf$/i.test(name)) return "terraform";
+  const head = content.slice(0, 64 * 1024);
+  if (/cnrm\.cloud\.google\.com/.test(head)) return "gcp";
+  if (/AWSTemplateFormatVersion|["']?Type["']?\s*:\s*["']AWS::/.test(head)) return "aws";
+  if (/deploymentTemplate\.json/.test(head)) return "azure";
+  if (isYaml(name)) {
+    if (/^apiVersion:/m.test(head) && /^kind:/m.test(head)) return "k8s";
+    if (/^services:/m.test(head)) return "docker";
+  }
+  return undefined;
+}
+
+/** A candidate file that looked like it belonged to a lexicon the audit did not have. */
+export interface UnclaimedFile {
+  path: string;
+  lexicon: LexiconHint;
+}
+
+/**
+ * Files no loaded lexicon claimed, paired with the lexicon core guesses they
+ * wanted. Only files whose guessed lexicon is absent are reported; a file an
+ * installed lexicon declined is that plugin's call, not a coverage gap.
+ */
+export function unclaimedFiles(files: RepoFile[], inputs: AuditInput[], plugins: DetectPlugin[]): UnclaimedFile[] {
+  const loaded = new Set<string>(plugins.map((p) => p.name));
+  const claimed = new Set<string>();
+  for (const i of inputs) {
+    if (i.files) for (const rel of Object.keys(i.files)) claimed.add(i.path === "." ? rel : `${i.path}/${rel}`);
+    else claimed.add(i.path);
+  }
+  const out: UnclaimedFile[] = [];
+  for (const f of files) {
+    if (claimed.has(f.path)) continue;
+    const lexicon = hintLexiconForFile(f.path, f.content);
+    if (!lexicon || loaded.has(lexicon)) continue;
+    out.push({ path: f.path, lexicon });
+  }
+  return out;
+}
+
 /** Collect Helm charts as bundles from an in-memory file set; returns inputs + chart path-prefixes. */
 function classifyHelm(files: RepoFile[], plugin: DetectPlugin | undefined): { inputs: AuditInput[]; prefixes: string[] } {
   const inputs: AuditInput[] = [];
@@ -315,15 +372,26 @@ export function classifyFiles(files: RepoFile[], plugins: DetectPlugin[]): Audit
  * then handed to the shared `classifyFiles`. Detection is skipped for any
  * lexicon whose plugin isn't provided, so a caller can scope discovery.
  */
-export function discoverByDetection(root: string, plugins: LexiconPlugin[]): AuditInput[] {
+export function discoverByDetection(root: string, plugins: DetectPlugin[]): AuditInput[] {
+  return classifyFiles(collectCandidates(root), plugins);
+}
+
+/** The walk half of `discoverByDetection`: candidate files read into memory, paths relative to the root. */
+export function collectCandidates(root: string): RepoFile[] {
   const all: string[] = [];
   walkFiles(root, all);
   const files: RepoFile[] = [];
   for (const full of all) {
     const path = relative(root, full);
+    // Terraform is never audited; the path alone is enough to say so (#1623).
+    // Kept out of `isCandidatePath` so remote fetches never pull HCL.
+    if (/\.tf$/i.test(path)) {
+      files.push({ path, content: "" });
+      continue;
+    }
     if (!isCandidatePath(path)) continue;
     const content = readSafe(full);
     if (content !== undefined) files.push({ path, content });
   }
-  return classifyFiles(files, plugins);
+  return files;
 }
