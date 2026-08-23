@@ -197,7 +197,8 @@ describe("tryFoldFile", () => {
       file,
       `
         import { Bucket } from "./resources";
-        function computeName(): string { return "dynamic"; }
+        import { hostname } from "node:os";
+        function computeName(): string { return hostname(); }
         export const bucket = new Bucket({ name: computeName() });
       `,
     );
@@ -206,7 +207,12 @@ describe("tryFoldFile", () => {
 
     expect(result.ok).toBe(false);
     if (result.ok) return;
-    expect(result.reason).toContain("computeName");
+    // chant #1373 — a same-file function with a foldable body now folds
+    // (see the "project-local function calls" block below), so the
+    // unfoldable thing here is what the body DOES, and the reason names
+    // both the callee and that.
+    expect(result.reason).toContain('call to "computeName"');
+    expect(result.reason).toContain("hostname(...)");
   });
 
   test("falls back when the resource constructor is not a resolvable import", async () => {
@@ -2376,5 +2382,340 @@ describe("tryFoldFile — constructions as values (chant #1169)", () => {
       new Map([[file, result.liveSources]]),
     );
     expect(tainted.has(sharedPath)).toBe(true);
+  });
+});
+
+// chant #1373 — a call to a PROJECT-LOCAL function (imported from a sibling
+// project file, or declared in the file itself) folds when the callee's body
+// is itself foldable: arguments fold in the caller, the body folds in the
+// defining module's scope, nothing is imported or run. Before this, the
+// recommended "read build parameters through one helper" shape was exactly
+// the shape that demoted a parameter file — and every file importing it —
+// to run.
+describe("tryFoldFile — project-local function calls (chant #1373)", () => {
+  let testDir: string;
+
+  beforeEach(async () => {
+    testDir = join(tmpdir(), `chant-fold-import-1373-test-${Date.now()}-${Math.random()}`);
+    await mkdir(testDir, { recursive: true });
+    await mkdir(join(testDir, "lib"), { recursive: true });
+    await writeFile(
+      join(testDir, "resources.ts"),
+      `
+        import { createResource } from ${JSON.stringify(runtimePath)};
+        export const Bucket = createResource("Test::Bucket", "aws", { arn: "Arn" });
+      `,
+    );
+  });
+
+  afterEach(async () => {
+    await rm(testDir, { recursive: true, force: true });
+  });
+
+  /** The issue's own shape: a `lib/target.ts` helper, a `params.ts` that reads parameters through it, and a `plane.ts` that imports the result. */
+  async function writeIssueShape(targetBody: string): Promise<{ params: string; plane: string; target: string }> {
+    const target = join(testDir, "lib", "target.ts");
+    await writeFile(
+      target,
+      `
+        throw new Error("must never execute — sentinel for #1373 fold verification (target.ts)");
+        ${targetBody}
+      `,
+    );
+    const params = join(testDir, "params.ts");
+    await writeFile(
+      params,
+      `
+        import { params } from ${JSON.stringify(paramsPath)};
+        import { optionalAccountId } from "./lib/target";
+        throw new Error("must never execute — sentinel for #1373 fold verification (params.ts)");
+        export const namingParams = {
+          prefix: "kmv",
+          accountId: optionalAccountId(params.accountId),
+        };
+        export const bucketMode = namingParams.accountId === undefined ? "shared" : "per-account";
+      `,
+    );
+    const plane = join(testDir, "plane.ts");
+    await writeFile(
+      plane,
+      `
+        import { Bucket } from "./resources";
+        import { namingParams, bucketMode } from "./params";
+        throw new Error("must never execute — sentinel for #1373 fold verification (plane.ts)");
+        export const artifactBucket = new Bucket({
+          name: \`\${namingParams.prefix}-artifacts-\${namingParams.accountId ?? "shared"}\`,
+          mode: bucketMode,
+        });
+      `,
+    );
+    return { params, plane, target };
+  }
+
+  const OPTIONAL_ACCOUNT_ID = `
+    export function optionalAccountId(raw: string | undefined): string | undefined {
+      const trimmed = raw ?? "";
+      return trimmed === "" ? undefined : trimmed;
+    }
+  `;
+
+  test("the issue's shape folds end to end: params.ts through an imported helper, plane.ts through params.ts", async () => {
+    const { params, plane } = await writeIssueShape(OPTIONAL_ACCOUNT_ID);
+    const session = createFoldSession([], { accountId: "123456789012" });
+
+    const paramsResult = await tryFoldFile(params, [], session);
+    expect(paramsResult.ok, !paramsResult.ok ? paramsResult.reason : "").toBe(true);
+    if (!paramsResult.ok) return;
+    expect(paramsResult.exportedValues.get("namingParams")).toEqual({ prefix: "kmv", accountId: "123456789012" });
+    expect(paramsResult.exportedValues.get("bucketMode")).toBe("per-account");
+
+    const planeResult = await tryFoldFile(plane, [], session);
+    expect(planeResult.ok, !planeResult.ok ? planeResult.reason : "").toBe(true);
+    if (!planeResult.ok) return;
+    const [name, entity] = planeResult.entities[0];
+    expect(name).toBe("artifactBucket");
+    expect((entity as unknown as { props: unknown }).props).toEqual({
+      name: "kmv-artifacts-123456789012",
+      mode: "per-account",
+    });
+  });
+
+  test("an absent parameter takes the helper's own defaulting path", async () => {
+    const { params } = await writeIssueShape(OPTIONAL_ACCOUNT_ID);
+    const result = await tryFoldFile(params, [], createFoldSession([], {}));
+
+    expect(result.ok, !result.ok ? result.reason : "").toBe(true);
+    if (!result.ok) return;
+    expect(result.exportedValues.get("namingParams")).toEqual({ prefix: "kmv", accountId: undefined });
+    expect(result.exportedValues.get("bucketMode")).toBe("shared");
+  });
+
+  test("the taint chain is broken: nothing in the chain falls back, and the helper module is not a live-identity source", async () => {
+    const { params, plane, target } = await writeIssueShape(OPTIONAL_ACCOUNT_ID);
+    const session = createFoldSession([], { accountId: "123456789012" });
+    const files = [target, params, plane];
+    // Sequential, as `discover()`'s own per-file loop is.
+    const results = new Map<string, Awaited<ReturnType<typeof tryFoldFile>>>();
+    for (const f of files) results.set(f, await tryFoldFile(f, [], session));
+
+    for (const [file, result] of results) {
+      expect(result.ok, `${file}: ${!result.ok ? result.reason : ""}`).toBe(true);
+    }
+    const wouldFold = new Map(files.map((f) => [f, results.get(f)!.ok]));
+    const liveSources = new Map(
+      files.map((f) => {
+        const r = results.get(f)!;
+        return [f, r.ok ? r.liveSources : new Set<string>()] as const;
+      }),
+    );
+    const tainted = await planFoldTaint(files, wouldFold, liveSources);
+    expect([...tainted]).toEqual([]);
+    // A function marker is a description of source, not an object the run
+    // path could hold a different copy of — no identity edge to target.ts.
+    expect(liveSources.get(params)!.has(target)).toBe(false);
+  });
+
+  test("a body that reads process.env is not foldable, and the reason names the callee, its file, and the read", async () => {
+    const { params, target } = await writeIssueShape(`
+      export function optionalAccountId(raw: string | undefined): string | undefined {
+        return raw ?? process.env.AWS_ACCOUNT_ID;
+      }
+    `);
+    const result = await tryFoldFile(params, [], createFoldSession([], {}));
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toContain('"namingParams" is not foldable');
+    expect(result.reason).toContain('call to "optionalAccountId"');
+    expect(result.reason).toContain(target);
+    expect(result.reason).toContain('ambient "process" read is not foldable');
+    // The old, unactionable wording is gone.
+    expect(result.reason).not.toContain("function call as a value");
+  });
+
+  test("a body that does I/O is not foldable, and the reason names the callee and the call it makes", async () => {
+    const { params } = await writeIssueShape(`
+      import { readFileSync } from "node:fs";
+      export function optionalAccountId(raw: string | undefined): string | undefined {
+        return raw ?? readFileSync("/etc/account-id", "utf-8");
+      }
+    `);
+    const result = await tryFoldFile(params, [], createFoldSession([], {}));
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toContain('call to "optionalAccountId"');
+    expect(result.reason).toContain("function call as a value is not foldable: readFileSync(...)");
+  });
+
+  test("a body outside the statement subset is refused with the construct named", async () => {
+    const { params } = await writeIssueShape(`
+      export function optionalAccountId(raw: string | undefined): string | undefined {
+        if (raw === "") return undefined;
+        return raw;
+      }
+    `);
+    const result = await tryFoldFile(params, [], createFoldSession([], {}));
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toContain('call to "optionalAccountId"');
+    expect(result.reason).toContain("`IfStatement` in a function body is not foldable");
+  });
+
+  test("an unresolved name inside the body is reported as such", async () => {
+    const { params } = await writeIssueShape(`
+      import { DEFAULT_ACCOUNT } from "./missing";
+      export function optionalAccountId(raw: string | undefined): string | undefined {
+        return raw ?? DEFAULT_ACCOUNT;
+      }
+    `);
+    const result = await tryFoldFile(params, [], createFoldSession([], {}));
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toContain('call to "optionalAccountId"');
+    expect(result.reason).toContain("unresolved identifier: DEFAULT_ACCOUNT");
+  });
+
+  test("an arrow-function const, a destructured parameter, a default, and a sibling-function call all fold", async () => {
+    await writeFile(
+      join(testDir, "lib", "naming.ts"),
+      `
+        throw new Error("must never execute — sentinel for #1373 fold verification");
+        const SEPARATOR = "-";
+        function joinParts(parts: string[], sep = SEPARATOR) {
+          return parts[0] + sep + parts[1] + sep + parts[2];
+        }
+        export const loomName = ({ env, app }: { env: string; app: string }, suffix = "svc") =>
+          joinParts([env, app, suffix]);
+        export const nameOf = loomName;
+      `,
+    );
+    const file = join(testDir, "main.ts");
+    await writeFile(
+      file,
+      `
+        import { Bucket } from "./resources";
+        import { loomName, nameOf } from "./lib/naming";
+        export const bucket = new Bucket({
+          name: loomName({ env: "prod", app: "api" }),
+          alt: nameOf({ env: "dev", app: "web" }, "job"),
+        });
+      `,
+    );
+
+    const result = await tryFoldFile(file);
+
+    expect(result.ok, !result.ok ? result.reason : "").toBe(true);
+    if (!result.ok) return;
+    expect((result.entities[0][1] as unknown as { props: unknown }).props).toEqual({
+      name: "prod-api-svc",
+      alt: "dev-web-job",
+    });
+  });
+
+  test("a same-file function folds too, and a TOP-LEVEL call to a project function folds without importing its module", async () => {
+    await writeFile(
+      join(testDir, "lib", "target.ts"),
+      `
+        throw new Error("must never execute — sentinel for #1373 fold verification");
+        export function region(raw?: string) { return raw ?? "us-east-1"; }
+      `,
+    );
+    const file = join(testDir, "main.ts");
+    await writeFile(
+      file,
+      `
+        import { region } from "./lib/target";
+        const upper = (s: string) => s + "!";
+        export const REGION = region();
+        export const LOUD = upper(REGION);
+      `,
+    );
+
+    const result = await tryFoldFile(file);
+
+    expect(result.ok, !result.ok ? result.reason : "").toBe(true);
+    if (!result.ok) return;
+    expect(result.exportedValues.get("REGION")).toBe("us-east-1");
+    expect(result.exportedValues.get("LOUD")).toBe("us-east-1!");
+  });
+
+  test("a function used as a VALUE is refused — only a call to it folds", async () => {
+    await writeFile(
+      join(testDir, "lib", "target.ts"),
+      `export function region(raw?: string) { return raw ?? "us-east-1"; }`,
+    );
+    const file = join(testDir, "main.ts");
+    await writeFile(
+      file,
+      `
+        import { region } from "./lib/target";
+        export const config = { resolver: region };
+      `,
+    );
+
+    const result = await tryFoldFile(file);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toContain('function "region" used as a value is not foldable');
+  });
+
+  test("a `new` inside a function body is refused rather than revived against the wrong file's imports", async () => {
+    await writeFile(
+      join(testDir, "lib", "target.ts"),
+      `
+        import { Bucket } from "../resources";
+        export function makeBucket(name: string) { return new Bucket({ name }); }
+      `,
+    );
+    const file = join(testDir, "main.ts");
+    await writeFile(
+      file,
+      `
+        import { makeBucket } from "./lib/target";
+        export const config = { bucket: makeBucket("x") };
+      `,
+    );
+
+    const result = await tryFoldFile(file);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toContain("`new Bucket(...)` inside a folded function body is not foldable");
+  });
+
+  test("a recursive function terminates with a depth diagnostic instead of hanging", async () => {
+    await writeFile(
+      join(testDir, "lib", "target.ts"),
+      `export function loop(n: number): number { return n === 0 ? 0 : loop(n - 1); }`,
+    );
+    const file = join(testDir, "main.ts");
+    await writeFile(file, `import { loop } from "./lib/target"; export const x = { n: loop(1000) };`);
+
+    const result = await tryFoldFile(file);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toContain("call depth exceeded");
+  });
+
+  test("a package (node_modules) function is still not folded — only project files produce a callable", async () => {
+    const file = join(testDir, "main.ts");
+    await writeFile(
+      file,
+      `
+        import { basename } from "node:path";
+        export const x = { n: basename("/a/b") };
+      `,
+    );
+
+    const result = await tryFoldFile(file);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toContain("function call as a value is not foldable: basename(...)");
   });
 });
