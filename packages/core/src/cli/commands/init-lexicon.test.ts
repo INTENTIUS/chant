@@ -1,5 +1,6 @@
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
-import { existsSync, readFileSync, mkdirSync, writeFileSync, rmSync, readdirSync } from "fs";
+import { existsSync, readFileSync, mkdirSync, writeFileSync, rmSync, readdirSync, realpathSync } from "fs";
+import { execFileSync } from "child_process";
 import { join, dirname } from "path";
 import { tmpdir } from "os";
 import { fileURLToPath } from "url";
@@ -265,6 +266,45 @@ describe("scaffold content validation", () => {
   test("lint/rules/index.ts exports a `rules` array (plugin.ts imports it) (#749)", () => {
     const content = readFileSync(join(targetDir, "src/lint/rules/index.ts"), "utf-8");
     expect(content).toContain("export const rules");
+  });
+
+  // #1614: generate-cli.ts lives in src/codegen/, so the package root is three
+  // dirnames up. Two dirnames is src/, and the first `npm run generate` then
+  // writes src/src/generated/. Run the scaffolded CLI for real with generate.ts
+  // replaced by a stub that reports where it was told to write.
+  test("generate-cli.ts resolves pkgDir to the package root, so generate writes src/generated (#1614)", () => {
+    const cliPath = join(targetDir, "src/codegen/generate-cli.ts");
+    expect(readFileSync(cliPath, "utf-8")).toContain(
+      "dirname(dirname(dirname(fileURLToPath(import.meta.url))))",
+    );
+
+    writeFileSync(
+      join(targetDir, "src/codegen/generate.ts"),
+      [
+        'import { mkdirSync, writeFileSync } from "fs";',
+        'import { join } from "path";',
+        "export async function generate() { return {}; }",
+        "export function writeGeneratedFiles(_result: unknown, pkgDir: string) {",
+        '  const dir = join(pkgDir, "src/generated");',
+        "  mkdirSync(dir, { recursive: true });",
+        '  writeFileSync(join(dir, "lexicon.json"), "{}");',
+        "  process.stdout.write(pkgDir);",
+        "}",
+        "",
+      ].join("\n"),
+    );
+
+    const tsx = join(__dirname, "../../../../../node_modules/.bin/tsx");
+    const out = execFileSync(tsx, [cliPath], { cwd: targetDir, encoding: "utf-8" });
+
+    expect(realpathSync(out.trim())).toBe(realpathSync(targetDir));
+    expect(existsSync(join(targetDir, "src/generated/lexicon.json"))).toBe(true);
+    expect(existsSync(join(targetDir, "src/src"))).toBe(false);
+  });
+
+  test("generate.ts default pkgDir is also the package root (#1614)", () => {
+    const content = readFileSync(join(targetDir, "src/codegen/generate.ts"), "utf-8");
+    expect(content).toContain("pkgDir ?? dirname(dirname(dirname(fileURLToPath(import.meta.url))))");
   });
 });
 
