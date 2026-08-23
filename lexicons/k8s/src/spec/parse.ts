@@ -78,6 +78,33 @@ export interface ParsedOperation {
   verbs: string[];
 }
 
+/**
+ * Compact, recursive field schema for a custom resource's `spec` — chant #1372.
+ *
+ * Built-in kinds get their field typing from the generated `.d.ts`. A CRD's
+ * constructor takes `spec: Record<string, unknown>`, so its field names, enums
+ * and scalar types have to travel through the lexicon JSON instead. This is
+ * the shape that ships there: no descriptions, no numeric bounds, only what a
+ * validator needs to reject a misspelled field or a wrong-typed value.
+ */
+export interface CrdFieldSchema {
+  /** OpenAPI type; `integer` is kept distinct from `number`. Absent when the schema says nothing. */
+  type?: "string" | "integer" | "number" | "boolean" | "object" | "array";
+  enum?: string[];
+  /** Object members, keyed by field name. */
+  fields?: Record<string, CrdFieldSchema>;
+  /** Required member names of an object. */
+  required?: string[];
+  /** Element schema of an array. */
+  items?: CrdFieldSchema;
+  /**
+   * True when the object accepts members its `fields` do not list —
+   * `x-kubernetes-preserve-unknown-fields` or `additionalProperties`.
+   * `x-kubernetes-int-or-string` also sets it on a scalar, meaning either type passes.
+   */
+  open?: true;
+}
+
 export interface K8sParseResult {
   resource: ParsedResource;
   propertyTypes: ParsedPropertyType[];
@@ -87,6 +114,12 @@ export interface K8sParseResult {
   isProperty?: boolean;
   /** How the API addresses this resource. Absent for property types. */
   operation?: ParsedOperation;
+  /**
+   * The `spec` field schema of a custom resource (chant #1372). Present only
+   * for CRD-derived kinds whose `openAPIV3Schema` declares a `spec`; built-in
+   * kinds carry their typing in the `.d.ts` instead.
+   */
+  specSchema?: CrdFieldSchema;
 }
 
 // ── Swagger types ──────────────────────────────────────────────────

@@ -6,7 +6,7 @@ description: "Every lint rule and post-synth check provided by the Kubernetes le
 {/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-k8s` — DO NOT EDIT.
     Edit lexicons/k8s/src/codegen/docs.ts instead; changes here are overwritten. */}
 
-The Kubernetes lexicon provides **34** rules: 5 lint rules and 29 post-synth checks.
+The Kubernetes lexicon provides **39** rules: 6 lint rules and 33 post-synth checks.
 
 ## Lint Rules
 
@@ -14,6 +14,7 @@ The Kubernetes lexicon provides **34** rules: 5 lint rules and 29 post-synth che
 |----|----------|----------|-------------|
 | `ARGO001` | warning | correctness | Production Application must not enable automated prune |
 | `ARGO004` | warning | correctness | ApplicationSet template must scope to a single AppProject |
+| `FLUX001` | warning | correctness | GitRepository must pin spec.ref |
 | `WK8001` | warning | correctness | Hardcoded Namespace |
 | `WK8002` | warning | security | Latest Image Tag |
 | `WK8003` | warning | correctness | Missing Resource Limits |
@@ -27,6 +28,8 @@ Post-synth checks validate the serialized output after the build pipeline comple
 | `ARGO002` | Application.spec.project must reference a declared AppProject (or the built-in default) |
 | `ARGO003` | Application.spec.destination must reference a registered cluster or the in-cluster target |
 | `ARGO005` | Application source.path should resolve to an existing directory under the build root |
+| `FLUX002` | Kustomization.spec.sourceRef must reference a declared source (or the bootstrap flux-system repo) |
+| `FLUX003` | Kustomization.spec.dependsOn entries should name Kustomizations declared in the build |
 | `WK8005` | Hardcoded secrets in env vars — sensitive environment variables should use secretKeyRef |
 | `WK8006` | No :latest or untagged images — container images should use explicit version tags |
 | `WK8041` | Hardcoded API keys — detects well-known API key patterns in env var values |
@@ -53,3 +56,5 @@ Post-synth checks validate the serialized output after the build pipeline comple
 | `WK8401` | shmSize must not exceed the container memory limit — pod will not schedule if it does |
 | `WK8402` | RayCluster should set spec.rayVersion so KubeRay selects the correct autoscaler image |
 | `WK8403` | spec.rayVersion should match the Ray version in the head container image tag |
+| `WK8501` | Custom resource spec contains a field its CRD schema does not declare |
+| `WK8502` | Custom resource spec field has the wrong type or a value outside its enum |
