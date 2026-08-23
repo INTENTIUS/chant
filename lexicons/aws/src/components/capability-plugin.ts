@@ -69,8 +69,11 @@ export const awsCapabilityPlugin: CapabilityPlugin = {
   name: "aws",
   // The lexicon package's own version (#1505) — the "1.0.0" this shipped with
   // was the starter plugin's literal, copied along in the #681 extraction and
-  // never a real package version.
-  version: ownPackageVersion(import.meta.url),
+  // never a real package version. A getter, so the package.json read happens
+  // on first access rather than at import time.
+  get version(): string {
+    return ownPackageVersion(import.meta.url);
+  },
   capabilities: awsCapabilities,
   families: () => AWS_VERB_FAMILIES,
 };
