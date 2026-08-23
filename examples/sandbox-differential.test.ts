@@ -1,3 +1,5 @@
+import { readdirSync, readFileSync } from "node:fs";
+import { join, relative } from "node:path";
 import { afterAll, describe, expect, test, vi } from "vitest";
 import { sortedJsonReplacer } from "@intentius/chant/utils";
 import { parseYAML } from "@intentius/chant/yaml";
@@ -204,6 +206,47 @@ function canonicalize(content: string): string {
   }
 }
 
+/**
+ * chant #1728 — every `process.env` read under `srcDir`, as `file:line`.
+ *
+ * The sandboxed child sees no ambient environment by design; the in-process
+ * baseline sees the real one. A corpus entry that reads `process.env` in
+ * project source therefore drifts exactly when the variable is exported in
+ * the shell running the suite — and agrees only when it is not, which is a
+ * differential of two builds nobody deploys. That is not a sandbox defect,
+ * so a mismatch on such an entry is reported as the read it is (see the
+ * pointed error in the test body) rather than as output drift. The fix is
+ * always the same: declare the value in `chant.config.ts`'s `buildParams`
+ * (with an `env:` mapping) and read it as `params.<name>`, which both sides
+ * resolve through the same channel.
+ *
+ * Text scan, not AST: it cites Lambda-handler reads inside function bodies
+ * too (`lexicons/aws/examples/lambda-*`), which never execute at build time.
+ * That is fine — this list only turns into a failure message once an entry
+ * has ALREADY drifted, where a false citation costs a sentence, never a
+ * false failure.
+ */
+function ambientEnvReads(srcDir: string): string[] {
+  const hits: string[] = [];
+  const walk = (dir: string): void => {
+    for (const dirent of readdirSync(dir, { withFileTypes: true })) {
+      const path = join(dir, dirent.name);
+      if (dirent.isDirectory()) {
+        if (dirent.name !== "node_modules") walk(path);
+        continue;
+      }
+      if (!/\.[cm]?[jt]sx?$/.test(dirent.name)) continue;
+      readFileSync(path, "utf-8")
+        .split("\n")
+        .forEach((line, i) => {
+          if (/\bprocess\.env\b/.test(line)) hits.push(`${relative(srcDir, path)}:${i + 1}`);
+        });
+    }
+  };
+  walk(srcDir);
+  return hits;
+}
+
 function canonicalizeOutputs(normalized: NormalizedOutputs): NormalizedOutputs {
   const result: NormalizedOutputs = {};
   for (const [lexicon, { primary, files }] of Object.entries(normalized)) {
@@ -323,6 +366,24 @@ describe("sandbox differential — sandboxed-run output === in-process-run outpu
           sandboxMode: classifyMode(sandboxedResult.foldDecisions),
           demotedFileCount,
         });
+
+        // chant #1728 — a mismatch on an entry whose source reads
+        // `process.env` is that read showing, not the sandbox misbehaving:
+        // the child has no ambient environment by design, the baseline has
+        // the shell's. Say so, naming the reads, before the generic
+        // output-drift assertion gets to blame the sandbox.
+        if (!identical) {
+          const reads = ambientEnvReads(entry.srcDir);
+          if (reads.length > 0) {
+            throw new Error(
+              `${entry.name}: sandboxed and in-process output differ, and this entry reads the ambient ` +
+                `environment from project source (${reads.join(", ")}). The sandboxed child sees no ` +
+                `environment by design, so the two sides only agree when the variable is unset in the shell ` +
+                `running this suite. Declare the value in chant.config.ts's buildParams (with an env: mapping) ` +
+                `and read it as params.<name> instead — see examples/cockroachdb-multi-region-gke.`,
+            );
+          }
+        }
 
         expect(normalizeErrors(sandboxedResult.errors), `sandbox-vs-run error drift in ${entry.name}`).toEqual(
           normalizeErrors(runResult.errors),

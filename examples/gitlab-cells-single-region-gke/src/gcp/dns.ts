@@ -1,4 +1,5 @@
 import { DNSManagedZone, DNSRecordSet } from "@intentius/chant-lexicon-gcp";
+import { params } from "@intentius/chant/params";
 import { shared } from "../config";
 
 export const zone = new DNSManagedZone({
@@ -7,7 +8,8 @@ export const zone = new DNSManagedZone({
   description: "GitLab Cells DNS zone",
 });
 
-const ingressIp = process.env.INGRESS_IP ?? "0.0.0.0";
+// Build parameter (INGRESS_IP) — load-outputs.sh writes the real value to .env after deploy.
+const ingressIp = params.ingressIp as string;
 
 // Bare domain A record — user-facing entry point (e.g. gitlab.example.com).
 // A wildcard *.domain does NOT match the bare domain itself; both records are needed.
