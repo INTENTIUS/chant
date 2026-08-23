@@ -43,7 +43,13 @@ export interface ObserveResult {
 function qualifyObservation(obs: NormalizedObservation, stackName: string): NormalizedObservation {
   const q = <T>(m: Record<string, T>): Record<string, T> =>
     Object.fromEntries(Object.entries(m).map(([k, v]) => [`${stackName}::${k}`, v]));
-  return { resources: q(obs.resources), unobserved: q(obs.unobserved), queried: q(obs.queried) };
+  return {
+    resources: q(obs.resources),
+    unobserved: q(obs.unobserved),
+    queried: q(obs.queried),
+    // Exports are already keyed by stack (#1279); nothing to qualify.
+    ...(obs.stackExports ? { stackExports: obs.stackExports } : {}),
+  };
 }
 
 /**
@@ -451,5 +457,8 @@ function pushObservation(
       : observed.resources,
     ...(unobservedNames.length > 0 ? { unobserved: observed.unobserved } : {}),
     ...(dependencies.edges.length > 0 ? { edges: dependencies.edges } : {}),
+    ...(observed.stackExports && Object.keys(observed.stackExports).length > 0
+      ? { stackExports: observed.stackExports }
+      : {}),
   });
 }

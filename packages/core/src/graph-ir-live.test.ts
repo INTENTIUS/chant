@@ -82,6 +82,27 @@ describe("buildLiveGraphIr", () => {
       JSON.stringify(buildLiveGraphIr(observations)),
     );
   });
+
+  // #1279 — what a stack publishes is the stack's, not every member's. It lands
+  // on the IR's `exports` (where the declared graph keeps the same thing) and
+  // never on a node's attrs.
+  it("projects stack exports onto the IR's exports, not onto the nodes (#1279)", () => {
+    const ir = buildLiveGraphIr([
+      { ...observations[0], stackExports: { prod: { expVpcId: "vpc-0a1b", expWebIp: "54.1.2.3" } } },
+    ]);
+    expect(ir.exports).toEqual([
+      { name: "expVpcId", value: "vpc-0a1b", stack: "prod" },
+      { name: "expWebIp", value: "54.1.2.3", stack: "prod" },
+    ]);
+    for (const n of ir.nodes) {
+      expect(Object.keys(n.attrs).filter((k) => k.startsWith("exp"))).toEqual([]);
+    }
+    expect(ir.nodes.find((n) => n.id === "web-vpc")!.attrs).toEqual({ CidrBlock: "10.0.0.0/16" });
+  });
+
+  it("omits exports when no observation reported any", () => {
+    expect(buildLiveGraphIr(observations).exports).toBeUndefined();
+  });
 });
 
 describe("overlayGraphs (#780 drift overlay)", () => {
@@ -217,6 +238,27 @@ describe("sourceOverlayGraphs (#821 source-anchored overlay)", () => {
     const node = ir.nodes.find((x) => x.id === "planned-db")!;
     expect((node.attrs as { _status?: string })._status).toBe("neutral");
     expect((node.attrs as { _unobserved?: string })._unobserved).toBe("no-binding");
+  });
+
+  it("joins observed export values onto the declared exports by name (#1279)", () => {
+    const withExports: GraphIR = {
+      ...declared,
+      exports: [{ name: "VpcId", node: "web-vpc", attr: "VpcId" }],
+    };
+    const liveWithExports: GraphIR = {
+      ...live,
+      exports: [
+        { name: "VpcId", value: "vpc-0a1b", stack: "prod" },
+        { name: "WebIp", value: "54.1.2.3", stack: "prod" },
+      ],
+    };
+    const ir = sourceOverlayGraphs(withExports, liveWithExports);
+    expect(ir.exports).toEqual([
+      { name: "VpcId", node: "web-vpc", attr: "VpcId", value: "vpc-0a1b", stack: "prod" },
+      { name: "WebIp", value: "54.1.2.3", stack: "prod" },
+    ]);
+    // And the member node still carries none of them.
+    expect(ir.nodes.find((n) => n.id === "web-vpc")!.attrs.VpcId).toBeUndefined();
   });
 
   it("still paints a confirmed-absent declared node `accent`", () => {

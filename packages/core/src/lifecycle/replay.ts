@@ -177,6 +177,9 @@ export async function replaySnapshots(
       lexicon,
       resources,
       ...(edges.length > 0 ? { edges } : {}),
+      ...(snapshot.stackExports && Object.keys(snapshot.stackExports).length > 0
+        ? { stackExports: snapshot.stackExports }
+        : {}),
     });
     commit ||= snapshot.commit ?? "";
     // Report the OLDEST timestamp across stacks: a caller asking how stale this

@@ -134,6 +134,10 @@ export interface IRExport {
   node?: string;
   /** Producer-side attribute the output reads (e.g. "Arn"). */
   attr?: string;
+  /** The published value, when the graph was observed rather than declared (#1279). */
+  value?: unknown;
+  /** The deployed stack that publishes it, on an observed graph (#1279). */
+  stack?: string;
 }
 
 /** A cross-stack import this stack consumes — a `Parameter` fed from another
@@ -527,6 +531,14 @@ export interface LiveObservation {
    * keys, so an edge can only reference something the observation also reported.
    */
   edges?: IREdge[];
+  /**
+   * What each deployed stack publishes (#1279), keyed by stack name. Stack-level
+   * by nature, so it is carried here once and projected onto the IR's `exports`
+   * rather than copied onto every node's `attrs` — which is what the AWS
+   * observation used to do, leaving every VPC with the stack's `expWebIp` and
+   * no `CidrBlock` of its own.
+   */
+  stackExports?: Record<string, Record<string, unknown>>;
 }
 
 /**
@@ -602,7 +614,17 @@ export function buildLiveGraphIr(observations: LiveObservation[]): GraphIR {
       (a.viaAttr ?? "").localeCompare(b.viaAttr ?? ""),
   );
 
-  return { nodes, edges, groups };
+  // Stack exports (#1279) land on the IR's `exports`, the same place the
+  // declared graph keeps what a stack publishes — not on the member nodes.
+  const exports: IRExport[] = [];
+  for (const observation of observations) {
+    for (const [stack, values] of Object.entries(observation.stackExports ?? {})) {
+      for (const [name, value] of Object.entries(values)) exports.push({ name, value, stack });
+    }
+  }
+  exports.sort((a, b) => a.name.localeCompare(b.name) || (a.stack ?? "").localeCompare(b.stack ?? ""));
+
+  return { nodes, edges, groups, ...(exports.length > 0 ? { exports } : {}) };
 }
 
 /** How an overlay learns which declared nodes were never looked at (#1089). */
@@ -743,5 +765,23 @@ export function sourceOverlayGraphs(declared: GraphIR, live: GraphIR, opts?: Ove
   }
   edges.sort((a, b) => edgeKey(a).localeCompare(edgeKey(b)));
 
-  return { ...declared, nodes, edges };
+  // Observed export values (#1279) join the declared exports by name: the
+  // declaration says which node publishes it, the observation says what it
+  // currently is. An export only the stack carries is appended.
+  const liveExports = live.exports ?? [];
+  let exports = declared.exports;
+  if (liveExports.length > 0) {
+    const byName = new Map(liveExports.map((e) => [e.name, e]));
+    const merged: IRExport[] = (declared.exports ?? []).map((e) => {
+      const obs = byName.get(e.name);
+      if (!obs) return e;
+      byName.delete(e.name);
+      return { ...e, value: obs.value, ...(obs.stack ? { stack: obs.stack } : {}) };
+    });
+    for (const e of byName.values()) merged.push(e);
+    merged.sort((a, b) => a.name.localeCompare(b.name));
+    exports = merged;
+  }
+
+  return { ...declared, nodes, edges, ...(exports ? { exports } : {}) };
 }
