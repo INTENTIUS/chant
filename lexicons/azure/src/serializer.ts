@@ -18,6 +18,9 @@ import { AZURE_TAG_OWNERSHIP_KEYS } from "./ownership";
 import type { LexiconOutput } from "@intentius/chant/lexicon-output";
 import { walkValue, type SerializerVisitor } from "@intentius/chant/serializer-walker";
 import { isChildProject, type ChildProjectInstance } from "@intentius/chant/child-project";
+import { existsSync, readFileSync } from "fs";
+import { dirname, join } from "path";
+import { fileURLToPath } from "url";
 import { isStackOutput, type StackOutput } from "@intentius/chant/stack-output";
 import { isAttrRefLike } from "@intentius/chant/utils";
 import { resolveDependsOn } from "@intentius/chant/resource-attributes";
@@ -74,42 +77,48 @@ const RESOURCE_LEVEL_FIELDS = new Set([
 
 /**
  * Load apiVersion for a resource type from the lexicon registry.
+ *
+ * Reads the generated registry (src/generated/lexicon-azure.json in a dev
+ * checkout, dist/meta.json in the installed package). Resolves the package
+ * directory from import.meta.url so it works under pure ESM as well as
+ * tsx/vitest — the old `require()`-based resolver threw under ESM and the
+ * throw was swallowed, so every resource emitted the fallback apiVersion
+ * (#1581). A missing registry is now an error: a uniform fallback apiVersion
+ * silently bypasses the per-provider pins in spec/api-versions.ts.
  */
 function resolveDir(): string {
-  const { dirname } = require("path");
-  // Bun / ESM
-  try {
-    const { fileURLToPath } = require("url");
-    return dirname(fileURLToPath(import.meta.url));
-  } catch {}
-  // CJS / tsx fallback
-  if (typeof __dirname !== "undefined") return __dirname;
-  return dirname(require.resolve("./serializer"));
+  return dirname(fileURLToPath(import.meta.url));
 }
 
-function loadApiVersions(): Map<string, string> {
+export function apiVersionRegistryCandidates(dir: string = resolveDir()): string[] {
+  return [
+    join(dir, "generated", "lexicon-azure.json"),
+    join(dir, "..", "dist", "meta.json"),
+  ];
+}
+
+export function loadApiVersions(candidates: string[] = apiVersionRegistryCandidates()): Map<string, string> {
   const map = new Map<string, string>();
-  try {
-    const { readFileSync } = require("fs");
-    const { join } = require("path");
-    const dir = resolveDir();
-    // Try generated/ (dev) first, then dist/meta.json (installed package)
-    let content: string | undefined;
-    for (const candidate of [
-      join(dir, "generated", "lexicon-azure.json"),
-      join(dir, "..", "dist", "meta.json"),
-    ]) {
-      try { content = readFileSync(candidate, "utf-8"); break; } catch {}
+  let content: string | undefined;
+  for (const candidate of candidates) {
+    if (!existsSync(candidate)) continue;
+    content = readFileSync(candidate, "utf-8");
+    break;
+  }
+  if (content === undefined) {
+    throw new Error(
+      `azure: apiVersion registry not found (tried ${candidates.join(", ")}). ` +
+        "Run `npm run generate` (dev) or reinstall the package (dist/meta.json).",
+    );
+  }
+  const data = JSON.parse(content) as Record<string, { resourceType: string; apiVersion?: string }>;
+  for (const entry of Object.values(data)) {
+    if (entry.apiVersion && entry.resourceType) {
+      map.set(entry.resourceType, entry.apiVersion);
     }
-    if (!content) return map;
-    const data = JSON.parse(content) as Record<string, { resourceType: string; apiVersion?: string }>;
-    for (const entry of Object.values(data)) {
-      if (entry.apiVersion && entry.resourceType) {
-        map.set(entry.resourceType, entry.apiVersion);
-      }
-    }
-  } catch {
-    // Lexicon not available
+  }
+  if (map.size === 0) {
+    throw new Error("azure: apiVersion registry is empty — regenerate with `npm run generate`");
   }
   return map;
 }
@@ -126,11 +135,21 @@ const API_VERSION_OVERRIDES = new Map<string, string>([
 
 let _apiVersions: Map<string, string> | undefined;
 
-function getApiVersion(resourceType: string): string {
+/** Test hook: drop the cached registry so the next lookup reloads it. */
+export function resetApiVersionCache(): void {
+  _apiVersions = undefined;
+}
+
+export function getApiVersion(resourceType: string): string {
   const override = API_VERSION_OVERRIDES.get(resourceType);
   if (override) return override;
   if (!_apiVersions) _apiVersions = loadApiVersions();
-  return _apiVersions.get(resourceType) ?? "2023-01-01";
+  const version = _apiVersions.get(resourceType);
+  if (version) return version;
+  console.warn(
+    `azure: no pinned apiVersion for ${resourceType} in the lexicon registry; falling back to 2023-01-01`,
+  );
+  return "2023-01-01";
 }
 
 /**
