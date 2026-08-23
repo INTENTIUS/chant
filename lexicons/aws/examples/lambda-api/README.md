@@ -27,9 +27,10 @@ npm run build
 
 ## What It Does
 
-The stack creates 10 CloudFormation resources (1 S3 bucket + 3 composites × 3 members each):
+The stack creates 11 CloudFormation resources (1 S3 bucket + its TLS-only bucket policy + 3 composites × 3 members each):
 
 - **Data bucket** — encrypted S3 storage
+- **Bucket policy** — denies any request made without TLS (`aws:SecureTransport = false`)
 - **Health API** — minimal health-check endpoint (256 MB, 10s timeout)
 - **Upload API** — file upload endpoint with `s3:PutObject` on the data bucket (256 MB, 10s timeout)
 - **Process API** — data processing endpoint with `s3:GetObject` + `s3:PutObject` (1024 MB, 25s timeout)
@@ -42,6 +43,7 @@ Each API composite expands to an IAM Role + Lambda Function + API Gateway Lambda
 src/
 ├── defaults.ts         # Shared config: encryption, versioning, trust policy
 ├── data-bucket.ts      # Encrypted data bucket
+├── data-bucket-policy.ts # TLS-only bucket policy
 ├── lambda-api.ts       # Composite: LambdaApi, SecureApi, HighMemoryApi factories
 ├── health-api.ts       # Health endpoint (SecureApi preset)
 ├── upload-api.ts       # Upload endpoint with S3 write policy

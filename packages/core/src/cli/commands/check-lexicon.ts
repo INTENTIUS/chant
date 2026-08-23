@@ -254,12 +254,14 @@ export async function checkLexicon(dir: string): Promise<CheckResult> {
   // checks only ever counted example directories; none tried to build one,
   // so `lexicons/aws/examples/core-concepts` shipped with a discovery-time
   // "Duplicate export name" error while this tool reported "All tier-1
-  // checks passed." See ./check-lexicon-examples.ts for exactly what
-  // "builds" means here (discovery + serialization, not post-synth/lint).
+  // checks passed." chant #1400 — and the built output must pass the
+  // lexicon's own post-synth checks at error severity; three aws examples
+  // taught patterns (no TLS-only bucket policy, mutable ECR tags) the
+  // lexicon flags as errors. See ./check-lexicon-examples.ts.
   const exampleBuilds = await checkExamplesBuild(dir);
   const brokenExamples = exampleBuilds.filter((e) => !e.ok);
   items.push({
-    name: "Every shipped example builds",
+    name: "Every shipped example builds and passes its own post-synth checks",
     tier: 1,
     pass: brokenExamples.length === 0,
     detail:
