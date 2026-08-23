@@ -125,3 +125,43 @@ describe("loadPinnedSchemas (#1511)", () => {
     );
   });
 });
+
+// #1481 — the live fallback is the nondeterminism that made `chant` and
+// `publish` disagree about the same commit. Under the release gate it is a
+// refusal, and the refusal fires before any request to the live archive.
+describe("fetchSchemaZip under CHANT_RELEASE_GATE (#1481)", () => {
+  test("refuses to fall back to the live archive when the pinned asset is unavailable", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "chant-spec-pin-"));
+    try {
+      await expect(
+        fetchSchemaZip(false, {
+          env: { CHANT_RELEASE_GATE: "1" },
+          download: async () => undefined,
+          pinCacheDir: dir,
+        }),
+      ).rejects.toThrow(/CHANT_RELEASE_GATE=1 and the pinned spec asset could not be loaded/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("the gate goes through the pinned loader, never the live path", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "chant-spec-pin-"));
+    try {
+      const { zipSync } = await import("fflate");
+      const { AWS_SPEC_PIN } = await import("./pin");
+      // A zip that digests to the committed pin cannot be forged here, so use
+      // the verified-cache path: a cached asset that does NOT digest to the
+      // pin is refused by the loader, which is only reachable on the pinned
+      // path. The live path would have returned whatever upstream serves.
+      const bogus = Buffer.from(zipSync({ "x.json": Buffer.from(JSON.stringify({ typeName: "AWS::X::Y" })) }));
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, pinAssetName(AWS_SPEC_PIN)), bogus);
+      await expect(
+        fetchSchemaZip(false, { env: { CHANT_RELEASE_GATE: "1" }, pinCacheDir: dir }),
+      ).rejects.toThrow(/extracts to/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});

@@ -3,7 +3,6 @@
   "files": [
     "examples/alert-triage/activities/worker.ts",
     "examples/alert-triage/app/triage-client.ts",
-    "examples/bedrock-agentcore-agent/src/outputs.ts",
     "examples/fargate-lucene-efs/docker/e2e.test.ts",
     "examples/fargate-lucene-efs/docker/relay-dynamo.ts",
     "examples/fargate-lucene-efs/docker/relay-minio.ts",

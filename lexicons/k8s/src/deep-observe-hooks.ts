@@ -41,19 +41,12 @@
  * keyed by chant's own k8s entityType catalog.
  */
 
-import { createRequire } from "module";
+import { existsSync, readFileSync } from "fs";
+import { dirname, join } from "path";
+import { fileURLToPath } from "url";
 import type { DeepArrayElement, DeepNode, DeepNormalizationHooks } from "@intentius/chant/lexicon";
 import { K8S_OBJECT_ENVELOPE_PRUNE_PATTERNS, k8sListMapOrderKey } from "@intentius/chant/managed-fields";
 import { LABEL_OWNERSHIP_KEYS, OWNERSHIP_MANAGED_BY_VALUE } from "@intentius/chant/ownership";
-
-// This module ships as ESM (tsx strips types from src/ directly), where a bare
-// `require` is not defined — the same reason serializer.ts and the LSP modules
-// already build one. The bug only surfaced on a LIVE deep read that meets an
-// associative list (every k8s estate does: a Deployment's containers), so
-// `lifecycle diff --live` crashed with `require is not defined` on exactly the
-// estates the generated table exists for (#1441 regression, found on
-// kubemicrovm-ops).
-const require = createRequire(import.meta.url);
 
 /**
  * Kubernetes-defaulted fields, per entity type, as index-erased property
@@ -184,9 +177,61 @@ type ListMapKeyTable = Record<string, string[][]>;
 
 let cachedListMapKeys: ListMapKeyTable | undefined;
 
+/**
+ * Where the generated table lives: next to this module, resolved from
+ * `import.meta.url`. This module ships as ESM (tsx strips types from src/
+ * directly), where a bare `require` is not defined — the #1441 regression
+ * crashed `lifecycle diff --live` with `require is not defined` on every
+ * estate with a Deployment, and azure's apiVersion registry hit the same
+ * class of bug in #1581. A plain fs read has no module-system dependency.
+ */
+export function listMapKeyTablePath(): string {
+  return join(dirname(fileURLToPath(import.meta.url)), "generated", "list-map-keys.json");
+}
+
+/**
+ * Load the spec-derived table once. A missing or unreadable file degrades to
+ * an EMPTY table, which routes every list through `k8sListMapOrderKey`'s
+ * hand-written conventions — the same fallback an unlisted property already
+ * takes. The empty table is cached by the caller too, so an absent artifact
+ * costs one failed read and one warning, not one per array element
+ * (chant #1476).
+ *
+ * Degrading is the right call here, unlike azure's apiVersion registry
+ * (#1581) where a silent fallback bypasses correctness-bearing pins. Without
+ * the table, drift detection narrows back to the six hardcoded properties:
+ * less coverage, never wrong answers. The warning names the regen command so
+ * the narrowing is not silent.
+ */
+export function loadListMapKeyTable(path: string = listMapKeyTablePath()): ListMapKeyTable {
+  if (!existsSync(path)) {
+    warnMissingTable(path, "not found");
+    return {};
+  }
+  try {
+    return JSON.parse(readFileSync(path, "utf-8")) as ListMapKeyTable;
+  } catch (err) {
+    warnMissingTable(path, `unreadable: ${err instanceof Error ? err.message : String(err)}`);
+    return {};
+  }
+}
+
+function warnMissingTable(path: string, reason: string): void {
+  console.warn(
+    `k8s: list-map-keys table ${reason} (${path}); list identity falls back to the ` +
+      "hand-written conventions in @intentius/chant/managed-fields. Run `npm run generate` " +
+      "in lexicons/k8s (dev checkout) or reinstall @intentius/chant-lexicon-k8s.",
+  );
+}
+
 function listMapKeyTable(): ListMapKeyTable {
-  cachedListMapKeys ??= require("./generated/list-map-keys.json") as ListMapKeyTable;
+  cachedListMapKeys ??= loadListMapKeyTable();
   return cachedListMapKeys;
+}
+
+/** Test hook: replace (or drop) the cached table so the next lookup reloads it. */
+export function resetListMapKeyTableCache(table?: ListMapKeyTable): void {
+  cachedListMapKeys = table;
 }
 
 /** Last dotted segment of an index-erased path: `spec.template.spec.containers` → `containers`. */

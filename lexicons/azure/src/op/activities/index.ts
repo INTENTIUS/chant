@@ -23,6 +23,7 @@ export {
   azApply,
   azDelete,
   pruneArmOrphans,
+  providerApiVersion,
   toApplyResult,
   deleteArmResource,
   listGroupResources,

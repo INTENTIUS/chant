@@ -13,8 +13,6 @@ every other CloudFormation-backed component in chant uses — `cfn-deploy` and
 
 - `AWS::BedrockAgentCore::Runtime` — the agent's container, running on
   AgentCore Runtime.
-- `AWS::BedrockAgentCore::RuntimeEndpoint` — the alias a future
-  version-promotion step would repoint at a new `Runtime` version.
 - `AWS::BedrockAgentCore::Memory` — session/conversation memory.
 - `AWS::BedrockAgentCore::Gateway` + `GatewayTarget` — an MCP gateway whose
   default target routes back at this same agent's Runtime endpoint.
@@ -28,6 +26,18 @@ every other CloudFormation-backed component in chant uses — `cfn-deploy` and
 [`agent.component.ts`](agent.component.ts) deploys it: `Apply` runs
 `cfn-deploy` against the template `chant build` produced, `Verify` runs
 `wait-for-stack`. That's the whole release — no promotion phase.
+
+There is no `AWS::BedrockAgentCore::RuntimeEndpoint` in the stack. AgentCore
+provisions a managed `DEFAULT` endpoint with every Runtime and repoints it at
+each new version on its own, and invoking the Runtime with no qualifier uses
+it. Declaring a `DEFAULT` endpoint in CloudFormation duplicates that and fails
+on a real apply: the Runtime's `CREATE_COMPLETE` fires before its agent
+version is READY, so the endpoint's CREATE is rejected with "Agent version 1
+must be in READY status" ([#978](https://github.com/INTENTIUS/chant/issues/978)).
+No Runtime attribute carries the managed endpoint's ARN, so
+[`src/outputs.ts`](src/outputs.ts) derives it with `agentCoreDefaultEndpointArn`.
+An explicit, differently named endpoint (the alias a promotion flow would
+repoint) is available via the composite's `endpointName` prop.
 
 ## What's deferred
 

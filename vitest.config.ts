@@ -27,6 +27,14 @@ const forkHeapMb = Math.max(
   Math.min(4096, Math.floor(((totalmem() / 1024 / 1024) * 0.5) / Math.max(cpus().length, 1))),
 );
 
+/**
+ * Vitest is on the 4.x line for chant #1693. Vitest 3.x gave the worker side
+ * of the worker<->host RPC birpc's hardcoded 60s call timeout, so when a
+ * saturated CI runner was slow to drain "onTaskUpdate" during teardown the
+ * worker threw `[vitest-worker]: Timeout calling "onTaskUpdate"` after every
+ * test had passed and the job went red. vitest-dev/vitest#8297 (shipped in
+ * 4.0.0-beta.4) sets that timeout to -1; there is no 3.x option to raise it.
+ */
 export default defineConfig({
   plugins: [tsconfigPaths({ ignoreConfigErrors: true })],
   test: {
@@ -69,11 +77,9 @@ export default defineConfig({
       "examples/k8s-client-boundary.test.ts",
     ],
     environment: "node",
-    poolOptions: {
-      forks: {
-        execArgv: [`--max-old-space-size=${forkHeapMb}`],
-      },
-    },
+    // Vitest 4 moved the per-worker node flags from poolOptions.forks.execArgv
+    // to this top-level key; the default pool is still forks.
+    execArgv: [`--max-old-space-size=${forkHeapMb}`],
     // The Temporal runtime/compile-smoke suites bundle workflows with webpack
     // in-process, which loads the CI runner enough to push short-timeout tests
     // (e.g. build.test.ts discovery) past the 5s default under contention.

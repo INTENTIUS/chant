@@ -43,5 +43,5 @@ export { EksCluster } from "./eks-cluster";
 export type { EksClusterProps } from "./eks-cluster";
 export { MicrovmApp, MICROVM_LIMITS } from "./microvm-app";
 export type { MicrovmAppProps, MicrovmAppResult, MicrovmAppBuildConnectorProps, MicrovmMemoryMiB } from "./microvm-app";
-export { AgentCoreAgent } from "./agentcore-agent";
+export { AgentCoreAgent, agentCoreDefaultEndpointArn } from "./agentcore-agent";
 export type { AgentCoreAgentProps, AgentCoreAgentResult } from "./agentcore-agent";
