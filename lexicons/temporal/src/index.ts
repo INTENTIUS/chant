@@ -66,6 +66,7 @@ export {
   gitlabPipeline,
   lifecycleSnapshot,
   shell,
+  ensureSecret,
   teardown,
   envTeardown,
   k3dUp,

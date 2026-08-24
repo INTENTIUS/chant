@@ -41,6 +41,7 @@ import {
   waitEndpointCapability,
   healthGateCapability,
   shellCapability,
+  ensureSecretCapability,
 } from "./verbs/index";
 import { ownPackageVersion, type CapabilityPlugin } from "./capability-plugin";
 
@@ -64,6 +65,9 @@ export const STARTER_VERB_FAMILIES = {
   // cloud-specific waits (`wait-for-stack`/`wait-steady-state`/`wait-job`) are
   // contributed by the relevant lexicon (aws) — see docs/components/cloud-boundary.
   waitVerify: ["wait-cluster-healthy", "wait-endpoint", "health-gate"],
+  // generated-once secret materialization (#1829, epic #1365): read-then-write,
+  // present means done; the k8s store adapter is #1830.
+  secrets: ["ensure-secret"],
   escapeHatch: ["shell"],
 } as const;
 
@@ -88,6 +92,7 @@ function starterCapabilities(): Array<Capability<never, unknown>> {
     waitClusterHealthyCapability,
     waitEndpointCapability,
     healthGateCapability,
+    ensureSecretCapability,
     shellCapability,
   ] as unknown as Array<Capability<never, unknown>>;
 }

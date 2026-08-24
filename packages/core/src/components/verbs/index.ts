@@ -45,5 +45,6 @@ export * from "./license-policy";
 export * from "./vuln-gate";
 export * from "./wait-verify";
 export * from "./shell";
+export * from "./ensure-secret";
 export * from "./cloud-executor";
 export * from "./process-runner";

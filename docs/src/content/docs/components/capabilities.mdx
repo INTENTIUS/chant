@@ -31,6 +31,7 @@ The set is a plugin registry, not a closed enum. Verbs group into families. The 
 | **sbom** | `generate-sbom` | core | artifact-type-keyed software SBOM (native SPDX/CycloneDX, hermetic lockfile backend) into the build archive — see [Build Archive](/chant/components/build-archive/#sbom-format-agnostic-generated-at-build-time) |
 | **supply chain** | `sign`, `attest-provenance`, `verify`, `scan-vulnerabilities`, `vuln-gate` | core | keyless cosign signing/attestation + a deploy-time verify gate and vulnerability policy gate |
 | **wait / verify (agnostic)** | `wait-cluster-healthy`, `wait-endpoint`, `health-gate` | core | bolt-port cluster probe + HTTP readiness/health gates |
+| **secrets** | `ensure-secret` | core | generated-once materialization ([#1365](https://github.com/INTENTIUS/chant/issues/1365)): read-then-write — present means done, never mints over an existing value, never rotates implicitly; a presence / declared key-set / metadata mismatch stops the apply naming key names only; `needs-opt-out` rollback (COMP003); store adapters come from provider lexicons |
 | **escape hatch** | `shell` | core | typed, lint-flagged |
 | **sbom (config)** | `extract-config-bom` | aws | IaC config-BOM (declared resources / nested stacks / external refs) from the synthesized CloudFormation template into the build archive |
 | **publish** | `publish-image`, `load-image-on-host`, `publish-asset` / `publish-artifact` | aws | deploy-time, promote by identity; an interface with backends |
