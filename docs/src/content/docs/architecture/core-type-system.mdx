@@ -62,6 +62,31 @@ export const dbPassword = declareSecret({
 
 No declaration kind has a field that could hold secret material. `value`, `data`, and similar fields are typed `never` on every factory input and rejected at runtime, so a value is unrepresentable by construction. Declarations are ordinary entities to discovery (`isSecretDeclaration`, `collectSecretDeclarations` read them back), but they are serializer-neutral: no lexicon ever emits them. A fourth origin, committed-encrypted ciphertext in the repo, is part of the taxonomy but has no primitive yet.
 
+### EffectReceipt
+
+An **EffectReceipt** is the declared witness that an out-of-band effect (a migration, a seed job, a one-shot bootstrap) has run. Receipts come in two flavors:
+
+```typescript
+type EffectReceiptFlavor = "existence" | "hash";
+```
+
+- `existence` — presence is the witness; the expected value is a fixed marker constant (`EXISTENCE_EXPECTATION`).
+- `hash` — a `sha256:<hex>` digest over the canonical JSON of `{ effect, inputs }` is the witness, so changed inputs re-propose the fire.
+
+```typescript
+import { EffectReceipt } from "@intentius/chant";
+
+export const migrated = EffectReceipt("migrated", {
+  effect: "db-migrate",
+  flavor: "hash",
+  inputs: { schema: "v42", endpoint: dbCluster.endpoint },
+});
+```
+
+Static inputs hash at synthesis (`receiptExpectation`). Reference inputs — attr-refs and other intrinsics — are recorded in placeholder form and resolve in the plan engine and again in the effect step, via `resolveReceiptExpectation(receipt, resolver)`; synthesis resolves nothing, and `receiptExpectation` refuses a hash receipt that still carries references. Hashing is JCS-style canonical JSON (`canonicalJson`: sorted keys, standard number and string encoding) digested with sha256.
+
+A receipt carries a recognition marker (`Symbol.for("chant.effect-receipt")`) that core reads lexicon-independently (`isEffectReceipt`, `collectEffectReceipts`). Unlike a secret declaration the marker identifies rather than excludes: a receipt serializes, becoming a real observable resource through a per-lexicon materialization row that stamps the same marker. Receipts are observe-only to the generic apply path — the `effect()` step is the sole writer, on success, last.
+
 ## Intrinsics
 
 An **Intrinsic** represents a lexicon-provided function that will be resolved at build time. Intrinsics are placeholders for values that depend on other resources or runtime information.
