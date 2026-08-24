@@ -85,6 +85,10 @@ export interface ParsedArgs {
   namespace?: string;
   /** `chant lifecycle rollback --dry-run` — compute the rollback delta and print it; open no PR, push nothing, leave no branch. */
   dryRun?: boolean;
+  /** `chant lifecycle teardown <env> --yes` — confirm execution (#1222). The
+   * flag surface exists now; execution does not yet, and passing it errors
+   * loudly rather than pretending. */
+  yes?: boolean;
   /** `chant import --verbatim` — keep server-defaulted fields in live import */
   verbatim?: boolean;
   /** `chant lifecycle … --src <dir>` — build root override for lifecycle commands */
