@@ -56,9 +56,12 @@ import {
   AwsReadError,
   describeStackResources,
   getResource,
+  listResources,
   type AwsReadClientOptions,
   type AwsReadHttp,
+  type StackResource,
 } from "./api/read-client";
+import { declaredIdentifier } from "./identity-observe";
 import { AWS_TAG_OWNERSHIP_KEYS } from "./ownership";
 import { applyAwsEndpointArgv } from "./components/cloud-executor";
 import { toIngressRules } from "./dependencies";
@@ -113,6 +116,74 @@ export const DEEP_SOURCES: Record<string, DeepSource> = {
  * cannot drift apart — the shape of bug #1280 is about.
  */
 export const DEEP_READABLE_TYPES: ReadonlySet<string> = new Set(Object.keys(DEEP_SOURCES));
+
+/**
+ * A child type this reader enumerates under one declared parent (#1015's
+ * out-of-band case) — the console-added SNS subscription or inline role
+ * policy that no property diff can see, because it is not a property of
+ * anything declared: it is a whole resource CloudFormation never made.
+ *
+ * Cloud Control's `ListResources` takes the parent as a `ResourceModel`
+ * scope, which is what `model` builds from the physical id the stack read
+ * already resolved. Every listed child is then sorted into declared (it is
+ * some stack resource's physical id, or some declared entity's spelled
+ * identity) or out-of-band; the out-of-band ones ride into the observation
+ * as live resources nobody declared, which the deep diff reports as
+ * undeclared entities.
+ */
+export interface DeepChildSource {
+  /** The child's CloudFormation type — what `ListResources` is asked for. */
+  childType: string;
+  /** The `ResourceModel` scoping the listing to one parent. */
+  model: (parentPhysicalId: string) => Record<string, unknown>;
+  /**
+   * Legacy declared forms of the same live child. `AWS::IAM::Policy` attached
+   * to a role creates the same inline policy `AWS::IAM::RolePolicy` lists, but
+   * under its own physical id — the policy name, which is the second part of
+   * the RolePolicy identifier. Without this leg every legacy inline policy
+   * reads as out-of-band on a stack that declared it.
+   */
+  declaredVia?: Array<{
+    type: string;
+    /** The part of the child identifier that carries that type's physical id. */
+    part: (identifier: string) => string | undefined;
+  }>;
+}
+
+/**
+ * Parent type → the child types worth listing under it. Scoped like
+ * {@link DEEP_SOURCES}: the high-signal cases first — the issue's own
+ * examples — and widened per type, not by wildcard. A child type Cloud
+ * Control cannot list parent-scoped does not belong here.
+ */
+export const DEEP_CHILD_SOURCES: Record<string, readonly DeepChildSource[]> = {
+  "AWS::IAM::Role": [
+    {
+      childType: "AWS::IAM::RolePolicy",
+      model: (roleName) => ({ RoleName: roleName }),
+      // A RolePolicy identifier is `PolicyName|RoleName` — the schema's own
+      // primaryIdentifier order, which is what the manifest records and what
+      // `declaredIdentifier` joins by. The legacy type's physical id is the
+      // policy name, the first part.
+      declaredVia: [{ type: "AWS::IAM::Policy", part: (id) => id.split("|")[0] }],
+    },
+  ],
+  "AWS::SNS::Topic": [
+    {
+      childType: "AWS::SNS::Subscription",
+      model: (topicArn) => ({ TopicArn: topicArn }),
+    },
+  ],
+};
+
+/**
+ * The name an out-of-band child reports under. There is no chant entity name
+ * to use — nobody declared it — so the name has to carry the finding on its
+ * own: what kind of thing, and which one.
+ */
+export function outOfBandChildName(childType: string, identifier: string): string {
+  return `${childType}:${identifier}`;
+}
 
 /**
  * `describe-security-groups` -> the `AWS::EC2::SecurityGroup` resource model.
@@ -606,7 +677,117 @@ export async function observeResourcesDeepAws(
     };
   });
 
+  // The out-of-band pass (#1015): under each declared parent whose type names
+  // child sources, list what actually exists and keep what nothing declared.
+  // A parent `--owned` withheld keeps its children out too — reporting a
+  // foreign resource's children while withholding the resource itself would
+  // be the filter half-applied. A parent with no deep reader of its own
+  // (`unsupported-kind`) still gets its children enumerated: listing under it
+  // needs only the physical id the stack already resolved.
+  const parents: Array<{ resource: StackResource; sources: readonly DeepChildSource[] }> = [];
+  for (const entityName of options.entityNames) {
+    const resource = byLogicalId.get(entityName);
+    const sources = resource ? DEEP_CHILD_SOURCES[resource.type] : undefined;
+    if (!resource?.physicalId || !sources) continue;
+    if (unobserved[entityName]?.reason === "filtered") continue;
+    parents.push({ resource, sources });
+  }
+  const children = await enumerateOutOfBandChildren({
+    parents,
+    allStackResources: stackResources,
+    entities: options.entities,
+    client,
+    normalize: (childType, properties) =>
+      normalizeDeepProperties(properties, {
+        entityType: childType,
+        side: "live",
+        hooks: awsDeepNormalizationHooks,
+      }),
+    concurrently: boundedConcurrently,
+  });
+  for (const [name, child] of Object.entries(children)) {
+    if (!resources[name]) resources[name] = child;
+  }
+
   return deepObservation(resources, unobserved);
+}
+
+/**
+ * List every child-sourced type under its declared parents and return the
+ * resources nothing declared, named by {@link outOfBandChildName}.
+ *
+ * "Declared" is answered three ways, in order of how directly the stack says
+ * it: the child identifier is some stack resource's physical id (the normal
+ * case — a declared `AWS::SNS::Subscription` deploys under its ARN); a
+ * `declaredVia` legacy form's physical id is the identifier's relevant part;
+ * or a declared entity's props spell the identifier (`declaredIdentifier`,
+ * the carve case — declared in source, not yet in any stack).
+ *
+ * A listing that fails is silence about that parent's children, never a
+ * finding and never a hole: there is no declared entity to hang a hole on,
+ * and fabricating one would put an undeclared name in the unobserved report.
+ * `UnsupportedOperation` — an emulator without parent-scoped listing — lands
+ * here too, which is what keeps the Floci lanes quiet.
+ */
+async function enumerateOutOfBandChildren(args: {
+  parents: Array<{ resource: StackResource; sources: readonly DeepChildSource[] }>;
+  allStackResources: StackResource[];
+  entities?: Map<string, { entityType: string; props: Record<string, unknown> }>;
+  client: AwsReadClientOptions;
+  normalize: (childType: string, properties: Record<string, unknown>) => Record<string, unknown>;
+  concurrently: <T>(items: T[], fn: (item: T) => Promise<void>) => Promise<unknown>;
+}): Promise<Record<string, DeepResourceObservation>> {
+  const out: Record<string, DeepResourceObservation> = {};
+  if (args.parents.length === 0) return out;
+
+  // Physical ids by type, over the WHOLE stack — a stack resource that is not
+  // a declared chant entity (a nested stack's row, a resource another tool
+  // added to the same stack) is still stack-managed, not out-of-band.
+  const addTo = (map: Map<string, Set<string>>, key: string, value: string) => {
+    const set = map.get(key) ?? new Set<string>();
+    set.add(value);
+    map.set(key, set);
+  };
+  const stackIdsByType = new Map<string, Set<string>>();
+  for (const r of args.allStackResources) {
+    if (r.physicalId) addTo(stackIdsByType, r.type, r.physicalId);
+  }
+  const declaredIdsByType = new Map<string, Set<string>>();
+  for (const entity of args.entities?.values() ?? []) {
+    const id = declaredIdentifier(entity.entityType, entity.props ?? {});
+    if (id) addTo(declaredIdsByType, entity.entityType, id);
+  }
+
+  const isDeclared = (source: DeepChildSource, identifier: string): boolean => {
+    if (stackIdsByType.get(source.childType)?.has(identifier)) return true;
+    if (declaredIdsByType.get(source.childType)?.has(identifier)) return true;
+    for (const via of source.declaredVia ?? []) {
+      const part = via.part(identifier);
+      if (part && stackIdsByType.get(via.type)?.has(part)) return true;
+    }
+    return false;
+  };
+
+  const listings = args.parents.flatMap(({ resource, sources }) =>
+    sources.map((source) => ({ physicalId: resource.physicalId as string, source })),
+  );
+  await args.concurrently(listings, async ({ physicalId, source }) => {
+    let listed;
+    try {
+      listed = await listResources(source.childType, args.client, source.model(physicalId));
+    } catch {
+      return;
+    }
+    for (const child of listed) {
+      if (!child.identifier || isDeclared(source, child.identifier)) continue;
+      out[outOfBandChildName(source.childType, child.identifier)] = {
+        type: source.childType,
+        physicalId: child.identifier,
+        properties: args.normalize(source.childType, child.properties),
+      };
+    }
+  });
+  return out;
 }
 
 /**

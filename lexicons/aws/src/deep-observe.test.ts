@@ -25,9 +25,10 @@ const {
   awsDeepNormalizationHooks,
   hasOwnershipMarker,
   schemaReadOnlyPatterns,
+  outOfBandChildName,
 } = await import("./deep-observe");
 const { parseResourceDescription } = await import("./api/read-client");
-const { deepDiffForLexicon } = await import("@intentius/chant/lifecycle/deep-observe");
+const { deepDiffForLexicon, diffDeepObservation } = await import("@intentius/chant/lifecycle/deep-observe");
 const { normalizeDeepObservation, normalizeDeepProperties, flattenDeepProperties } = await import("@intentius/chant/deep-observation");
 
 const ok = (text: string) => ({ status: 200, text });
@@ -595,6 +596,205 @@ describe("observeResourcesDeepAws", () => {
     );
     expect(Object.keys(result.resources).sort()).toEqual(["A", "B", "C"]);
     expect(peak).toBeGreaterThan(1);
+  });
+});
+
+/**
+ * The out-of-band pass (#1015): child resources that exist live under a
+ * declared parent and correspond to nothing in the stack, in the estate, or
+ * in source — the console-added SNS subscription and inline role policy the
+ * issue names. Cloud Control's `ListResources` is scoped to one parent by
+ * `ResourceModel`, and everything the listing returns is sorted into
+ * declared or out-of-band.
+ */
+describe("out-of-band children (#1015)", () => {
+  /** A Cloud Control `ListResources` body — each model a JSON string, like `GetResource`. */
+  const list = (descriptions: Array<[string, Record<string, unknown>]>) =>
+    ok(
+      JSON.stringify({
+        ResourceDescriptions: descriptions.map(([id, props]) => ({
+          Identifier: id,
+          Properties: JSON.stringify(props),
+        })),
+      }),
+    );
+
+  test("a console-added inline policy surfaces as an entity nobody declared", async () => {
+    const fake = httpFake((_identifier, call) => {
+      if (!call.target) {
+        return stackResources([
+          ["AppRole", "AWS::IAM::Role", "app-role"],
+          // The stack's own inline policy, deployed under its Cloud Control
+          // identifier (`PolicyName|RoleName`, the schema's own order).
+          ["Inline", "AWS::IAM::RolePolicy", "declared-pol|app-role"],
+        ]);
+      }
+      if (call.target === "CloudApiService.ListResources") {
+        return list([
+          ["declared-pol|app-role", { RoleName: "app-role", PolicyName: "declared-pol" }],
+          [
+            "debug-access|app-role",
+            {
+              RoleName: "app-role",
+              PolicyName: "debug-access",
+              PolicyDocument: { Statement: [{ Sid: "Debug", Effect: "Allow", Action: ["s3:*"], Resource: "*" }] },
+            },
+          ],
+        ]);
+      }
+      return cloudControl("app-role", { RoleName: "app-role" });
+    });
+    const result = normalizeDeepObservation(
+      await observeResourcesDeepAws({ environment: "prod", entityNames: ["AppRole", "Inline"], http: fake.http }),
+    );
+
+    const name = outOfBandChildName("AWS::IAM::RolePolicy", "debug-access|app-role");
+    expect(result.resources[name]).toMatchObject({
+      type: "AWS::IAM::RolePolicy",
+      physicalId: "debug-access|app-role",
+    });
+    expect(result.resources[name].properties.PolicyName).toBe("debug-access");
+    // The stack's own inline policy is declared, not a finding.
+    expect(Object.keys(result.resources)).not.toContain(
+      outOfBandChildName("AWS::IAM::RolePolicy", "declared-pol|app-role"),
+    );
+    // The listing was scoped to the parent the stack read resolved.
+    const listing = fake.calls.find((c) => c.target === "CloudApiService.ListResources");
+    expect(JSON.parse(listing?.body ?? "{}")).toEqual({
+      TypeName: "AWS::IAM::RolePolicy",
+      ResourceModel: JSON.stringify({ RoleName: "app-role" }),
+    });
+  });
+
+  test("a console-added SNS subscription surfaces even though the topic has no deep reader", async () => {
+    const topicArn = "arn:aws:sns:us-east-1:111122223333:alerts";
+    const fake = httpFake((_identifier, call) => {
+      if (!call.target) {
+        return stackResources([
+          ["Alerts", "AWS::SNS::Topic", topicArn],
+          ["Mail", "AWS::SNS::Subscription", `${topicArn}:5d5a2c73`],
+        ]);
+      }
+      if (call.target === "CloudApiService.ListResources") {
+        return list([
+          [`${topicArn}:5d5a2c73`, { TopicArn: topicArn, Protocol: "email" }],
+          [`${topicArn}:rogue`, { TopicArn: topicArn, Protocol: "https", Endpoint: "https://n.example" }],
+        ]);
+      }
+      return apiError("ValidationException", "nothing else should be read");
+    });
+    const result = normalizeDeepObservation(
+      await observeResourcesDeepAws({ environment: "prod", entityNames: ["Alerts", "Mail"], http: fake.http }),
+    );
+
+    // The topic itself stays a hole — no deep reader — but the listing under
+    // it needs only the physical id the stack already resolved.
+    expect(result.unobserved.Alerts?.reason).toBe("unsupported-kind");
+    expect(Object.keys(result.resources)).toEqual([
+      outOfBandChildName("AWS::SNS::Subscription", `${topicArn}:rogue`),
+    ]);
+  });
+
+  test("a legacy AWS::IAM::Policy attachment is declared, not out-of-band", async () => {
+    const fake = httpFake((_identifier, call) => {
+      if (!call.target) {
+        return stackResources([
+          ["AppRole", "AWS::IAM::Role", "app-role"],
+          // The legacy inline form: its physical id is the policy name, which
+          // is the first part of the RolePolicy identifier the listing returns.
+          ["LegacyPol", "AWS::IAM::Policy", "stack-legacypol-1ABC"],
+        ]);
+      }
+      if (call.target === "CloudApiService.ListResources") {
+        return list([["stack-legacypol-1ABC|app-role", { RoleName: "app-role", PolicyName: "stack-legacypol-1ABC" }]]);
+      }
+      return cloudControl("app-role", { RoleName: "app-role" });
+    });
+    const result = normalizeDeepObservation(
+      await observeResourcesDeepAws({ environment: "prod", entityNames: ["AppRole", "LegacyPol"], http: fake.http }),
+    );
+    expect(Object.keys(result.resources)).toEqual(["AppRole"]);
+  });
+
+  test("an identity spelled in source counts as declared before it reaches any stack", async () => {
+    // The carve case: the policy is declared, its identity is spelled in
+    // props, and no stack carries it yet. Listing it is not a finding.
+    const declared = entities({
+      AppRole: { entityType: "AWS::IAM::Role", props: { RoleName: "app-role" } },
+      Carved: { entityType: "AWS::IAM::RolePolicy", props: { RoleName: "app-role", PolicyName: "carved" } },
+    });
+    const fake = httpFake((_identifier, call) => {
+      if (!call.target) return stackResources([["AppRole", "AWS::IAM::Role", "app-role"]]);
+      if (call.target === "CloudApiService.ListResources") {
+        return list([["carved|app-role", { RoleName: "app-role", PolicyName: "carved" }]]);
+      }
+      return cloudControl("app-role", { RoleName: "app-role" });
+    });
+    const result = normalizeDeepObservation(
+      await observeResourcesDeepAws({
+        environment: "prod",
+        entityNames: ["AppRole", "Carved"],
+        entities: declared,
+        http: fake.http,
+      }),
+    );
+    expect(Object.keys(result.resources)).toEqual(["AppRole"]);
+  });
+
+  test("a failed child listing is silence about children, never a fabricated finding", async () => {
+    const fake = httpFake((_identifier, call) => {
+      if (!call.target) return stackResources([["AppRole", "AWS::IAM::Role", "app-role"]]);
+      if (call.target === "CloudApiService.ListResources") {
+        // Floci's answer for an operation it does not serve.
+        return apiError("UnsupportedOperation", "ListResources is not supported for AWS::IAM::RolePolicy");
+      }
+      return cloudControl("app-role", { RoleName: "app-role" });
+    });
+    const result = normalizeDeepObservation(
+      await observeResourcesDeepAws({ environment: "prod", entityNames: ["AppRole"], http: fake.http }),
+    );
+    expect(Object.keys(result.resources)).toEqual(["AppRole"]);
+    expect(result.unobserved).toEqual({});
+  });
+
+  test("--owned: a withheld parent keeps its children out of the report too", async () => {
+    const fake = httpFake((_identifier, call) => {
+      if (!call.target) return stackResources([["AppRole", "AWS::IAM::Role", "app-role"]]);
+      if (call.target === "CloudApiService.ListResources") {
+        return list([["debug-access|app-role", { RoleName: "app-role", PolicyName: "debug-access" }]]);
+      }
+      // No ownership tag: the parent is not chant's.
+      return cloudControl("app-role", { RoleName: "app-role" });
+    });
+    const result = normalizeDeepObservation(
+      await observeResourcesDeepAws({ environment: "prod", entityNames: ["AppRole"], owned: true, http: fake.http }),
+    );
+    expect(result.unobserved.AppRole?.reason).toBe("filtered");
+    expect(Object.keys(result.resources)).toEqual([]);
+    expect(fake.calls.some((c) => c.target === "CloudApiService.ListResources")).toBe(false);
+  });
+
+  test("the deep diff reports the child as an undeclared entity, and the declared estate stays clean", async () => {
+    const declared = entities({ AppRole: { entityType: "AWS::IAM::Role", props: { RoleName: "app-role" } } });
+    const fake = httpFake((_identifier, call) => {
+      if (!call.target) return stackResources([["AppRole", "AWS::IAM::Role", "app-role"]]);
+      if (call.target === "CloudApiService.ListResources") {
+        return list([["debug-access|app-role", { RoleName: "app-role", PolicyName: "debug-access" }]]);
+      }
+      return cloudControl("app-role", { RoleName: "app-role" });
+    });
+    const live = normalizeDeepObservation(
+      await observeResourcesDeepAws({
+        environment: "prod",
+        entityNames: ["AppRole"],
+        entities: declared,
+        http: fake.http,
+      }),
+    );
+    const result = diffDeepObservation(declared, live, awsDeepNormalizationHooks);
+    expect(result.undeclaredEntities).toEqual([outOfBandChildName("AWS::IAM::RolePolicy", "debug-access|app-role")]);
+    expect(result.unchanged).toEqual(["AppRole"]);
+    expect(result.drifted).toEqual([]);
   });
 });
 
