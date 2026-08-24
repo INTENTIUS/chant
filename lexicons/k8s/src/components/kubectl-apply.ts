@@ -42,6 +42,11 @@ export interface KubectlApplyOutcome {
   applied: AppliedRef[];
   /** Objects deleted because they carried chant's marker and are no longer declared. */
   pruned: AppliedRef[];
+  /**
+   * Owned, undeclared, deliberately KEPT (#1830): generated-once Secrets never
+   * enter the prunable set. Present whenever the prune ran.
+   */
+  retained?: AppliedRef[];
 }
 
 interface ApplierArgs {

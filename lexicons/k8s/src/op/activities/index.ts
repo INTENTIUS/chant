@@ -20,6 +20,13 @@
 export { kubectlApply, applyManifest, readManifestDocuments } from "./kubectl";
 export type { KubectlApplyArgs, ApplyManifestResult, AppliedRef, ApplyDeleteMode } from "./kubectl";
 
+// Generated-once secret materialization (#1830) — the activity behind core's
+// `ensureSecret(...)` step builder (#1829). Read-then-write over the
+// namespace-scoped store adapter in ../../secret-store.ts; no output carries
+// secret material.
+export { ensureSecret } from "./ensure-secret";
+export type { EnsureSecretActivityArgs } from "./ensure-secret";
+
 export { waitForArgoSync, defaultArgoStatusFetcher, ArgoSyncFailedError } from "./argo";
 export type { WaitForArgoSyncArgs, ArgoAppStatus, ArgoStatusFetcher } from "./argo";
 

@@ -896,3 +896,92 @@ describe("the managed-fields twist: ownership names the writer, the declared tre
     expect(quiet.accepted.map((d) => d.name)).toEqual(["app"]);
   });
 });
+
+describe("secret masking — diff --live never holds a Secret data value (#1830, #1365 decision 6)", () => {
+  const DECLARED_VALUE = "ZGVjbGFyZWQtYnl0ZXM=";
+  const LIVE_VALUE = "bGl2ZS1ieXRlcy1kaWZmZXJlbnQ=";
+  const INJECTED_VALUE = "aW5qZWN0ZWQtb3V0LW9mLWJhbmQ=";
+
+  const secretEntities = makeEntities([
+    {
+      name: "master-key",
+      entityType: "K8s::Core::Secret",
+      props: {
+        metadata: { name: "master-key", namespace: "prod" },
+        // A declared value would never exist for a generated-once secret; it
+        // is here precisely to prove even a declared one cannot reach the diff.
+        data: { MASTER_KEY: DECLARED_VALUE, PENDING_KEY: DECLARED_VALUE },
+      },
+    },
+  ]);
+
+  const secretCluster = () =>
+    fakeCluster({
+      objects: {
+        [objectKey("v1", "Secret", "master-key", "prod")]: {
+          apiVersion: "v1",
+          kind: "Secret",
+          metadata: {
+            name: "master-key",
+            namespace: "prod",
+            uid: "uid-master-key",
+            resourceVersion: "5",
+            creationTimestamp: "2026-01-01T00:00:00Z",
+            labels: {
+              "app.kubernetes.io/managed-by": "chant",
+              "chant.intentius.io/generated-once": "true",
+            },
+          },
+          type: "Opaque",
+          // The declared key moved (a rotation done out of band), one declared
+          // key is gone, and one key was injected. All three classify — none
+          // by value.
+          data: { MASTER_KEY: LIVE_VALUE, INJECTED_KEY: INJECTED_VALUE },
+        },
+      },
+    });
+
+  test("presence and key-name drift classify; no value (declared or live) appears anywhere in the result", async () => {
+    const live = normalizeDeepObservation(
+      await observeResourcesDeepK8s(
+        { environment: "prod", entityNames: ["master-key"], entities: secretEntities },
+        secretCluster().connector,
+      ),
+    );
+    const result = diffDeepObservation(secretEntities, live, k8sDeepNormalizationHooks);
+
+    const changes = result.drifted.find((d) => d.name === "master-key")?.changes ?? [];
+    // MASTER_KEY is present on both sides: both values collapse to the mask,
+    // so a value-only difference is NOT drift — that is the contract, chant
+    // cannot know and must not learn whether the bytes moved.
+    expect(changes.map((c) => `${c.path}:${c.kind}`).sort()).toEqual([
+      "data.INJECTED_KEY:undeclared",
+      "data.PENDING_KEY:absent",
+    ]);
+
+    // The hard line, asserted over the whole serialized result: no data
+    // value — declared, live, or injected — anywhere, under any key.
+    const serialized = JSON.stringify(result);
+    expect(serialized).not.toContain(DECLARED_VALUE);
+    expect(serialized).not.toContain(LIVE_VALUE);
+    expect(serialized).not.toContain(INJECTED_VALUE);
+
+    // chant's own generated-once marker is its signature, not drift.
+    expect(serialized).not.toContain("generated-once");
+  });
+
+  test("type-level: the mask hook collapses Secret data on both sides, and only for Secrets", () => {
+    const masked = normalizeDeepProperties(
+      { data: { "app.conf": DECLARED_VALUE } },
+      { entityType: "K8s::Core::Secret", side: "declared", hooks: k8sDeepNormalizationHooks },
+    );
+    expect(masked).toEqual({ data: { "app.conf": "[REDACTED]" } });
+
+    // A ConfigMap's data is configuration, not material — untouched.
+    const untouched = normalizeDeepProperties(
+      { data: { "app.conf": "plain-config" } },
+      { entityType: "K8s::Core::ConfigMap", side: "live", hooks: k8sDeepNormalizationHooks },
+    );
+    expect(untouched).toEqual({ data: { "app.conf": "plain-config" } });
+  });
+});

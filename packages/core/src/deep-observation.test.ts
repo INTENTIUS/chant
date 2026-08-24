@@ -48,6 +48,25 @@ describe("normalizeDeepProperties", () => {
     expect(Object.keys(out.mid as Record<string, unknown>)).toEqual(["a", "z"]);
   });
 
+  test("the mask hook collapses a structural secret path to MASKED, on either side (#1830)", () => {
+    const hooks: DeepNormalizationHooks = {
+      mask: (n) => n.entityType === "K8s::Core::Secret" && n.pattern.startsWith("data."),
+    };
+    for (const side of ["declared", "live"] as const) {
+      const out = normalizeDeepProperties(
+        { data: { "app.conf": "c2VjcmV0LWJ5dGVz" }, type: "Opaque" },
+        { entityType: "K8s::Core::Secret", side, hooks },
+      );
+      expect(out).toEqual({ data: { "app.conf": MASKED }, type: "Opaque" });
+    }
+    // Another entity type sails through the same hook untouched.
+    const other = normalizeDeepProperties(
+      { data: { "app.conf": "plain" } },
+      { entityType: "K8s::Core::ConfigMap", side: "live", hooks },
+    );
+    expect(other).toEqual({ data: { "app.conf": "plain" } });
+  });
+
   test("leaves array order alone with no ordering hook", () => {
     const out = normalizeDeepProperties({ Tags: [{ Key: "z" }, { Key: "a" }] }, { entityType: "T", side: "live" });
     expect(out.Tags).toEqual([{ Key: "z" }, { Key: "a" }]);

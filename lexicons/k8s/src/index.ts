@@ -18,6 +18,10 @@ export { DEFAULT_LABELS_MARKER, DEFAULT_ANNOTATIONS_MARKER } from "./default-lab
 // Variables / label constants
 export { K8sLabels, K8sAnnotations } from "./variables";
 
+// Generated-once secret marker (#1830) — constants only; the store adapter
+// itself lives at the `/secret-store` subpath, off the build path (#1074).
+export { GENERATED_ONCE_LABEL_KEY, GENERATED_ONCE_LABEL_VALUE, isGeneratedOnce } from "./secret-labels";
+
 // MicroTime helpers — see micro-time.ts for why this exists.
 export { microTime, isMicroTimeFormatted } from "./micro-time";
 

@@ -55,6 +55,7 @@ import {
   k8sListMapOrderKey,
 } from "@intentius/chant/managed-fields";
 import { LABEL_OWNERSHIP_KEYS, OWNERSHIP_MANAGED_BY_VALUE } from "@intentius/chant/ownership";
+import { GENERATED_ONCE_LABEL_KEY } from "./secret-labels";
 
 /**
  * Kubernetes-defaulted fields, per entity type, as index-erased property
@@ -115,6 +116,10 @@ export const K8S_SERVICE_DEFAULTS: Record<string, Record<string, unknown>> = {
     "spec.ipFamilyPolicy": "SingleStack",
     "spec.ports[].protocol": "TCP",
   },
+  "K8s::Core::Secret": {
+    // The API server defaults an untyped Secret to Opaque (#1830).
+    "type": "Opaque",
+  },
 };
 
 /**
@@ -142,6 +147,9 @@ export const K8S_SERVER_ASSIGNED_PATTERNS: Record<string, ReadonlySet<string>> =
 const K8S_OWNERSHIP_LABEL_PATTERNS: ReadonlySet<string> = new Set([
   `metadata.labels.${LABEL_OWNERSHIP_KEYS.stack}`,
   `metadata.labels.${LABEL_OWNERSHIP_KEYS.env}`,
+  // The generated-once marker (#1830) is stamped by the secret store at
+  // mint time, never by a serializer — chant's own signature, not drift.
+  `metadata.labels.${GENERATED_ONCE_LABEL_KEY}`,
 ]);
 
 const K8S_MANAGED_BY_LABEL_PATTERN = `metadata.labels.${LABEL_OWNERSHIP_KEYS.managedBy}`;
@@ -306,7 +314,23 @@ function isRecordLike(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+/**
+ * The paths on a `K8s::Core::Secret` whose values are secret material —
+ * `data.<key>` (live and declared base64) and `stringData.<key>` (declared
+ * plaintext). Masked on BOTH sides by core's normalization pass, so presence
+ * and key names still classify as drift while no value (or value-derived
+ * comparison) ever reaches a diff row — #1365 decision 6, the contract #1830's
+ * generated-once secrets rely on. Key-name masking alone cannot do this:
+ * Secret keys are arbitrary (`app.conf`), not name-shaped.
+ */
+const K8S_SECRET_ENTITY_TYPE = "K8s::Core::Secret";
+const K8S_SECRET_VALUE_PATTERN = /^(?:data|stringData)\./;
+
 export const k8sDeepNormalizationHooks: DeepNormalizationHooks = {
+  mask(node: DeepNode): boolean {
+    return node.entityType === K8S_SECRET_ENTITY_TYPE && K8S_SECRET_VALUE_PATTERN.test(node.pattern);
+  },
+
   prune(node: DeepNode): boolean {
     if (K8S_OBJECT_ENVELOPE_PRUNE_PATTERNS.has(node.pattern)) return true;
 

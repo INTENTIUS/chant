@@ -191,11 +191,13 @@ export async function planTeardown(opts: PlanTeardownOptions): Promise<TeardownP
 export interface TeardownOutcomeEntry extends TeardownPlanEntry {
   /**
    * `skipped` is core's verdict for a candidate whose lexicon implements no
-   * `executeTeardown` yet; the other three come from the lexicon (see
-   * {@link TeardownOutcome}).
+   * `executeTeardown` yet; the others come from the lexicon (see
+   * {@link TeardownOutcome}). `retained` is the loud keep (#1365 decision 5):
+   * owned, no longer declared, deliberately not deleted — a `generated-once`
+   * secret survives every sweep and says so with a row.
    */
-  outcome: "deleted" | "failed" | "not-prunable" | "skipped";
-  /** The error for `failed`, the reason for `not-prunable`/`skipped`. */
+  outcome: "deleted" | "failed" | "not-prunable" | "retained" | "skipped";
+  /** The error for `failed`, the reason for `not-prunable`/`retained`/`skipped`. */
   detail?: string;
   /** True when this final outcome came from the bounded retry pass. */
   retried?: boolean;

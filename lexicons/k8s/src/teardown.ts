@@ -42,6 +42,7 @@ import type { K8sClient } from "@intentius/chant-k8s-client";
 import { DEFAULT_IMPORT_TYPES } from "./api/sweep-types";
 import { operationFor } from "./api/operation-surface";
 import { defaultK8sConnector, type K8sConnector } from "./api/connect";
+import { isGeneratedOnce } from "./secret-labels";
 
 const NAMESPACE_TYPE = "K8s::Core::Namespace";
 
@@ -213,6 +214,19 @@ async function deleteCandidate(
       ...base,
       outcome: "not-prunable",
       detail: "the live object no longer carries the requested marker identity",
+    };
+  }
+  // A generated-once Secret survives every sweep, env teardown included
+  // (#1830, epic #1365 decision 5): the stored bytes are the only copy of
+  // material chant never held. `retained` is the loud keep — the row says the
+  // env is not clean and why. Deletion is an explicit act (`kubectl delete
+  // secret <name>`, or a future gated op), never a teardown's.
+  if (operation.kind === "Secret" && isGeneratedOnce(live.metadata?.labels)) {
+    return {
+      ...base,
+      outcome: "retained",
+      detail:
+        "generated-once secret — deliberately kept, never swept; delete it explicitly (kubectl delete) if you mean to",
     };
   }
 

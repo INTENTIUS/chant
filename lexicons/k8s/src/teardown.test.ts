@@ -188,6 +188,42 @@ describe("executeTeardown — typed deletes, namespaces last", () => {
     expect(execution.outcomes[0].detail).toContain("RBAC says no");
   });
 
+  test("a generated-once secret survives the env sweep with a retained row; a plain owned secret still deletes (#1830)", async () => {
+    const cluster = fakeCluster({
+      objects: {
+        [objectKey("v1", "Secret", "master-key", "prod-ns")]: ownedObject("v1", "Secret", "master-key", "prod-ns", {
+          metadata: {
+            labels: {
+              ...markerLabels("shop", "dev"),
+              "chant.intentius.io/generated-once": "true",
+            },
+          },
+        }),
+        [objectKey("v1", "Secret", "plain", "prod-ns")]: ownedObject("v1", "Secret", "plain", "prod-ns", {
+          metadata: { labels: markerLabels("shop", "dev") },
+        }),
+      },
+    });
+
+    // Both are owned by this env, so both enumerate — the retained row is the
+    // execution's loud answer, not a silent hole in the plan.
+    const enumeration = await teardownOwned({ environment: "dev", marker: MARKER }, cluster.connector);
+    expect(enumeration.candidates.map((c) => c.name).sort()).toEqual(["prod-ns/master-key", "prod-ns/plain"]);
+
+    const execution = await executeTeardown(
+      { environment: "dev", marker: MARKER, candidates: enumeration.candidates },
+      cluster.connector,
+    );
+    const byName = new Map(execution.outcomes.map((o) => [o.name, o]));
+    expect(byName.get("prod-ns/master-key")!.outcome).toBe("retained");
+    expect(byName.get("prod-ns/master-key")!.detail).toContain("generated-once");
+    expect(byName.get("prod-ns/plain")!.outcome).toBe("deleted");
+
+    // Never deleted: the only DELETE is the plain secret's.
+    const deletes = cluster.layer.requests.filter((r) => r.method === "DELETE").map((r) => r.path);
+    expect(deletes).toEqual(["/api/v1/namespaces/prod-ns/secrets/plain"]);
+  });
+
   test("a candidate of an unmapped type is not-prunable, not a crash", async () => {
     const cluster = fakeCluster({ objects: {} });
     const execution = await executeTeardown(

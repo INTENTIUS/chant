@@ -96,6 +96,11 @@ export async function runApply(rawArgs: string[], deps: ApplyDeps = {}): Promise
   } else {
     console.log(`applied ${result.applied.length} object(s) as field manager "${result.fieldManager}"`);
     if (result.pruned.length > 0) console.log(`pruned ${result.pruned.length} chant-owned object(s) no longer declared`);
+    if ((result.retained ?? []).length > 0) {
+      console.log(
+        `retained ${result.retained!.length} generated-once secret(s) no longer declared — never pruned; delete explicitly if you mean to`,
+      );
+    }
   }
   return 0;
 }
