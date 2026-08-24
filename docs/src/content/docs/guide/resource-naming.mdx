@@ -55,6 +55,63 @@ TypeScript's native constructs replace the need for framework-level `count` or `
 
 Each destructured export (`devData`, `stagingData`, `prodData`) is a distinct named resource that can be referenced from other files via import.
 
+## Multi-environment coexistence
+
+Two builds of the same stack produce identical physical names, so deploying both into one account collides. When a project declares more than one environment, put the environment identity into the names. There are two working shapes.
+
+### One build per environment
+
+Declare an `env` build parameter, bind the ownership marker to it, and interpolate `params.env` into every name that must be unique per instance:
+
+```typescript
+// chant.config.ts
+export default {
+  ownership: { stack: "billing", env: { param: "env" } },
+  buildParams: {
+    env: { type: "string", default: "dev" },
+  },
+  environments: ["dev", "staging", "prod"],
+} satisfies ChantConfig;
+```
+
+```typescript
+// src/storage.ts
+import { params } from "@intentius/chant/params";
+
+export const uploadBucket = new Bucket({
+  bucketName: `billing-${params.env}-uploads`,
+});
+```
+
+`params.env` resolves before any file is imported, so the template literal folds to a plain string — `billing-staging-uploads` — with no new machinery. Build once per environment:
+
+```bash
+chant build --param env=staging
+chant build --param env=prod
+```
+
+The two builds yield disjoint physical names *and* disjoint ownership markers (`chant.intentius.io/env` follows the same parameter — see [Build-Time Parameters](/chant/concepts/build-time-parameters/#the-ownership-marker-follows-the-parameter)), so `--owned` filtering, drift, and delete stay scoped to one instance each.
+
+### All environments in one build
+
+The alternative keeps every environment in a single build and hand-threads the name per instance — instantiate the same composite once per environment, each call passing its own `name` (`web-dev`, `web-staging`, `web-prod`). This is the [layered configuration](/chant/guide/layered-configuration/) pattern: a base config, per-environment overrides via object spread, one manifest containing all instances.
+
+Choose per-env builds when environments deploy independently (separate accounts, separate pipelines, short-lived copies); choose the all-in-one shape when one apply should converge every environment at once.
+
+### `--env` feeds `params.env` through `CHANT_ENV`
+
+`chant build --env <name>` sets the `CHANT_ENV` environment variable before the project is discovered. A build parameter can declare that variable as its fallback, which turns `--env` into a validated way to supply `params.env`:
+
+```typescript
+// chant.config.ts
+buildParams: {
+  env: { type: "string", default: "dev", env: "CHANT_ENV" },
+},
+environments: ["dev", "staging", "prod"],
+```
+
+Now `chant build --env staging` and `chant build --param env=staging` bind the same value. The `--env` route has one extra property: the CLI rejects an `--env` value that is not among the declared `environments`, so a typo like `--env stagign` fails before anything builds. `--param env=` takes precedence over the `CHANT_ENV` fallback when both are supplied, per the normal [precedence rules](/chant/concepts/build-time-parameters/#supply).
+
 ## File organization
 
 Group related resources in the same file and keep unrelated ones separate. The lint rule **COR009** warns when a single file exports eight or more resources — a signal that it may be doing too much.
@@ -73,3 +130,5 @@ src/
 
 - [Cross-File References](/chant/guide/cross-file-references/) — import resources from other files
 - [Composite Resources](/chant/guide/composite-resources/) — group related resources into reusable units
+- [Build-Time Parameters](/chant/concepts/build-time-parameters/) — the `params.env` mechanism the multi-environment patterns build on
+- [Layered Configuration](/chant/guide/layered-configuration/) — the all-in-one multi-environment pattern in full
