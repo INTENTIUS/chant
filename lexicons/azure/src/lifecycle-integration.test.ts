@@ -164,5 +164,45 @@ describeObservationConformance({
         });
       },
     },
+    {
+      name: "a marker-stamped ARM envelope surfaces its stack/env identity (#1222)",
+      declared: ["myStore"],
+      expectPresent: ["myStore"],
+      expectMarker: { myStore: { stack: "shop", env: "prod" } },
+      run: () => {
+        stubArm(() => ({
+          status: 200,
+          text: JSON.stringify({
+            ...resourceShow,
+            tags: { "chant-managed-by": "chant", "chant-stack": "shop", "chant-env": "prod" },
+          }),
+        }));
+        return azurePlugin.describeResources!({
+          environment: "prod",
+          buildOutput: "",
+          entityNames: ["myStore"],
+          entities: new Map([
+            ["myStore", { entityType: "Microsoft.Storage/storageAccounts", props: { name: "mystore" } }],
+          ]),
+        });
+      },
+    },
+    {
+      name: "an untagged ARM envelope surfaces no marker — never a guess (#1222)",
+      declared: ["myStore"],
+      expectPresent: ["myStore"],
+      expectNoMarker: ["myStore"],
+      run: () => {
+        stubArm(() => ({ status: 200, text: JSON.stringify(resourceShow) }));
+        return azurePlugin.describeResources!({
+          environment: "prod",
+          buildOutput: "",
+          entityNames: ["myStore"],
+          entities: new Map([
+            ["myStore", { entityType: "Microsoft.Storage/storageAccounts", props: { name: "mystore" } }],
+          ]),
+        });
+      },
+    },
   ],
 });

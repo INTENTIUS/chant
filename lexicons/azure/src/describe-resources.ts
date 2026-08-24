@@ -27,6 +27,8 @@
 
 import type { ObservationResult, ResourceMetadata, UnobservedEntity, UnobservedReason } from "@intentius/chant/lexicon";
 import { boundedConcurrently, observation } from "@intentius/chant/observation";
+import { readOwnership } from "@intentius/chant/ownership";
+import { AZURE_TAG_OWNERSHIP_KEYS } from "./ownership";
 import { AzureReadError, getResource, isNotFound, type AzureReadClientOptions } from "./api/read-client";
 import type { AzHttp } from "./op/activities/az-apply";
 
@@ -187,6 +189,12 @@ export async function describeResources(options: {
         type: entityType,
         physicalId: body.id,
         status: (body.properties?.provisioningState as string | undefined) ?? "PRESENT",
+        // Marker identity (#1222): the ARM envelope carries the resource's
+        // tags, so the stamped stack/env identity is readable here even though
+        // this path declares no ownership channel (the verdict stays out —
+        // floci-az drops tags, so a verdict here would misreport under the
+        // emulator; the identity, when the tags are present, is verbatim).
+        marker: readOwnership(body.tags, AZURE_TAG_OWNERSHIP_KEYS),
         attributes: pruneUndefined({
           location: body.location,
           tags: body.tags,

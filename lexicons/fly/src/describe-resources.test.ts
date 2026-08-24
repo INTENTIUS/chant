@@ -259,5 +259,31 @@ describeObservationConformance({
           fakeHttp([liveMachine("web", "nginx:1")]),
         ),
     },
+    {
+      // Marker identity (#1222): machines carry the metadata channel and
+      // surface stack/env verbatim; the app's `owned` verdict is inferred at
+      // the boundary and carries no marker of its own — absent, not guessed.
+      name: "a stack/env-stamped machine surfaces its marker; the app surfaces none",
+      declared: ["app", "web"],
+      expectPresent: ["app", "web"],
+      expectMarker: { web: { stack: "shop", env: "prod" } },
+      expectNoMarker: ["app"],
+      run: () =>
+        describeResources(
+          { environment: "prod", buildOutput: PLAN, entityNames: ["app", "web"], entities: ENTS, endpoint: ENDPOINT },
+          fakeHttp([
+            {
+              id: "m-web",
+              name: "web",
+              state: "started",
+              instance_id: "INST0",
+              config: {
+                image: "nginx:1",
+                metadata: { ...OWNED_META, "chant-stack": "shop", "chant-env": "prod" },
+              },
+            },
+          ]),
+        ),
+    },
   ],
 });
