@@ -428,9 +428,13 @@ describeObservationConformance({
       },
     },
     {
+      // describe-stack-resources also carries no tags to read a stack/env
+      // identity from, so `marker` (#1222) stays absent here — stack-level
+      // handling reads the stack's own tags instead.
       name: "a healthy stack read",
       declared: ["MyBucket"],
       expectPresent: ["MyBucket"],
+      expectNoMarker: ["MyBucket"],
       run: () => {
         stubCfn((action) =>
           action === "DescribeStackResources"

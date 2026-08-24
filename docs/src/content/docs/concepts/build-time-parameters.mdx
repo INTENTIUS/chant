@@ -127,6 +127,8 @@ export default {
 
 A reference that cannot be satisfied, a parameter the config does not declare or one that resolved to no value, is a build error. The marker is what `--owned` filtering, drift and prune key on, so a marker stamped without an env is the quiet failure this exists to rule out.
 
+Interpolating the same parameter into physical names is what lets several instances of one stack coexist in one account — `chant build --param env=staging` and `--param env=prod` then produce disjoint names and disjoint markers from the same source. The parameter can also declare `env: "CHANT_ENV"` so `chant build --env <name>` supplies it, validated against the project's declared `environments`. Both patterns are worked through in [Resource Naming](/chant/guide/resource-naming/#multi-environment-coexistence).
+
 ## A pointed error for `process.env`
 
 `chant build --fold` rejects a bare `process` reference with a message naming this mechanism, not the generic "unresolved identifier":
@@ -144,3 +146,4 @@ rather than reading process.env directly
 - [Where Values Come From](/chant/concepts/where-values-come-from/) — how a build-time parameter fits among static data, deploy-time inputs, and refused runtime lookups
 - [Parameters & Outputs](/chant/getting-started/parameters-and-outputs/) — the deploy-time `Parameter()`, a different concept
 - [`chant build` CLI reference](/chant/cli/build/) — `--param`/`--params-file` flags
+- [Resource Naming](/chant/guide/resource-naming/#multi-environment-coexistence) — interpolating `params.env` into names so environments coexist in one account

@@ -56,7 +56,7 @@
 
 import type { ObservationResult, ResourceMetadata, UnobservedEntity, UnobservedReason } from "@intentius/chant/lexicon";
 import { observation, unobservedAll } from "@intentius/chant/observation";
-import { hasOwnershipMarker, classifyOwnership, LABEL_OWNERSHIP_KEYS } from "@intentius/chant/ownership";
+import { hasOwnershipMarker, classifyOwnership, readOwnership, LABEL_OWNERSHIP_KEYS } from "@intentius/chant/ownership";
 import type { K8sClient, K8sObject } from "@intentius/chant-k8s-client";
 import { defaultK8sConnector, type K8sConnector } from "./api/connect";
 import {
@@ -472,6 +472,9 @@ export async function describeResources(
         status: statusFromObject(obj),
         lastUpdated: obj.metadata?.creationTimestamp,
         ownership: classifyOwnership(obj.metadata?.labels, LABEL_OWNERSHIP_KEYS),
+        // Marker identity (#1222): the stack/env labels stamped at synthesis,
+        // read back verbatim. Undefined when the managed-by label is absent.
+        marker: readOwnership(obj.metadata?.labels, LABEL_OWNERSHIP_KEYS),
         attributes: pruneUndefined({
           namespace: obj.metadata?.namespace,
           labels: obj.metadata?.labels,
@@ -774,6 +777,8 @@ async function addRuntimeChildren(
         status: statusFromObject(obj),
         lastUpdated: obj.metadata?.creationTimestamp,
         ownership: classifyOwnership(obj.metadata?.labels, LABEL_OWNERSHIP_KEYS),
+        // Marker identity (#1222), same rule as the declared-entity read above.
+        marker: readOwnership(obj.metadata?.labels, LABEL_OWNERSHIP_KEYS),
         ownerChain,
         attributes: pruneUndefined({
           namespace,

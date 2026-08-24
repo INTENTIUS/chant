@@ -2,72 +2,49 @@
  * `nativeApply` — push declared source to the cloud through the target's own
  * mechanism. Authority stays with the platform; chant hosts no state file.
  *
- * ## Where the Kubernetes half went (chant #1075)
+ * ## Where the shell went (chant #1075, #1448, #1449)
  *
- * This used to build a shell command for all three targets, `kubectl apply -f`
- * among them. Two things were wrong with that. `kubectl apply` defaults to a
- * client-side three-way merge, which leaves field ownership implicit and gives
- * the diff engine nothing to key on — the defect chant #1075 exists to fix.
- * And the kubectl branch was Kubernetes product knowledge living in the
- * Temporal lexicon, against the one-lexicon-per-product rule that already
+ * This used to build a shell command for every target — `kubectl apply -f`,
+ * `az deployment group create`, `aws cloudformation deploy`. Two things were
+ * wrong with that. The shell commands carried product knowledge that belongs to
+ * each product's lexicon, against the one-lexicon-per-product rule that already
  * moved `kubectlApply`, `k3dUp`/`k3dDown` and `waitForArgoSync` out (chant
- * #809).
+ * #809). And each CLI's semantics diverged from what the docblocks promised —
+ * `kubectl apply`'s client-side merge gave the diff engine nothing to key on
+ * (#1075), and ARM Complete mode deleted resources chant never applied (#1448).
  *
- * So the kubectl branch moved to `@intentius/chant-lexicon-k8s`, where it is a
- * server-side apply over the typed client with chant's own field manager, and
- * the prune moved with it. **The dispatcher stayed here**, because "which
+ * So each branch moved to its product's lexicon: `kubectl`/`kustomize` are a
+ * server-side apply over the k8s lexicon's typed client (#1075, #1548), `arm`
+ * is the azure lexicon's per-resource `azApply` (#1448), and `cloudformation`
+ * is the aws lexicon's `awsApply` — the CloudFormation Query API directly, no
+ * CLI in the path (#1449). **The dispatcher stayed here**, because "which
  * mechanism applies this target" is not any one product's knowledge — and
  * because the activity keeps its name, its arguments and its place in
  * `ApplyOp`, so no existing Op changes shape.
  *
- * The k8s lexicon is reached by dynamic import at call time, never by a static
- * one: this package must not depend on that one. A project applying a kubectl
- * target already lists `k8s` in its lexicons, so the module is there; when it
- * is not, the failure names the package to install.
+ * The lexicons are reached by dynamic import at call time, never by a static
+ * one: this package must not depend on them. A project applying a target
+ * already lists that lexicon in its config, so the module is there; when it is
+ * not, the failure names the package to install.
  */
 
 import { exec } from "node:child_process";
-import { readFileSync } from "node:fs";
 import { promisify } from "node:util";
 
 const execAsync = promisify(exec);
-
-/**
- * The `--capabilities` for a CloudFormation deploy of the template at `path`.
- * `CAPABILITY_NAMED_IAM` always; `CAPABILITY_AUTO_EXPAND` as well when the
- * template declares a top-level `Transform` macro, which CloudFormation refuses
- * to expand without the acknowledgement (chant #980). An unreadable or non-JSON
- * file gets the default; the deploy itself reports the real problem.
- */
-export function cfnCapabilities(path: string): string {
-  try {
-    const template = JSON.parse(readFileSync(path, "utf8")) as { Transform?: unknown };
-    return template.Transform !== undefined ? "CAPABILITY_NAMED_IAM CAPABILITY_AUTO_EXPAND" : "CAPABILITY_NAMED_IAM";
-  } catch {
-    return "CAPABILITY_NAMED_IAM";
-  }
-}
 
 /** The native apply mechanism for a target. */
 export type ApplyTarget = "cloudformation" | "kubectl" | "arm" | "kustomize";
 
 /**
- * The targets that are still a shell command. `kubectl` left since chant #1075
- * (the k8s lexicon's typed client) and `arm` since #1448 (the azure lexicon's
- * per-resource applier), so CloudFormation is the last one — and the only one
- * where the platform's own deploy unit is already the ownership boundary.
- */
-export type ShellApplyTarget = "cloudformation";
-
-/**
  * How apply treats resources no longer declared.
  * - `never` — additive only; never deletes.
  * - `owned-only` — enables the target's own delete path. What bounds that path
- *   differs per target, and since chant #1448 all three are genuinely
- *   owned-only: `kubectl` sweeps by the ownership marker, `arm` prunes by the
- *   ownership tag (`isChantOwned`, via the azure lexicon's `azApply`), and
- *   `cloudformation` is bounded by the stack — which holds, because a resource
- *   CFN did not create is not in the stack.
+ *   differs per target, and all of them are genuinely owned-only: `kubectl`
+ *   sweeps by the ownership marker, `arm` prunes by the ownership tag
+ *   (`isChantOwned`, via the azure lexicon's `azApply`), and `cloudformation`
+ *   is bounded by the stack — which holds, because a resource CFN did not
+ *   create is not in the stack.
  * - `gated` — same delete scope as `owned-only`, but the workflow pauses for
  *   approval before the destructive apply (the gate lives in the composite).
  */
@@ -94,14 +71,18 @@ export interface NativeApplyArgs {
 
 /** What an apply did. Shaped by the target, since the targets differ. */
 export interface NativeApplyResult {
-  /** The shell command that ran — CloudFormation and ARM. */
-  command?: string;
-  /** Objects server-side applied — kubectl. */
+  /** Objects server-side applied — kubectl/kustomize; resources PUT — arm. */
   applied?: number;
-  /** Objects pruned because they carried chant's marker and are no longer declared — kubectl. */
+  /** Objects pruned because they carried chant's marker and are no longer declared — kubectl/arm. */
   pruned?: number;
   /** The field manager the apply claimed ownership as — kubectl. */
   fieldManager?: string;
+  /** The stack deployed — cloudformation. */
+  stackName?: string;
+  /** The settled stack status — cloudformation. */
+  status?: string;
+  /** What the deploy did to the stack — cloudformation. */
+  action?: "created" | "updated" | "unchanged";
 }
 
 /**
@@ -137,39 +118,29 @@ export type AzureApplier = (
 ) => Promise<{ applied: unknown[]; pruned: unknown[] }>;
 
 /**
- * Build the native apply command for the shell targets. Pure — exported for
- * testing.
+ * The aws lexicon's CloudFormation applier, as this module needs to call it
+ * (#1449). Structural, like {@link K8sApplier} and {@link AzureApplier}.
  *
- * Only CloudFormation is left here. Authority stays with the platform — the
- * stack — and chant hosts no state file. Owned-only needs no extra scoping on
- * this target because the stack IS the boundary: `deploy` deletes resources
- * removed from the template, and a resource CFN did not create is not in the
- * stack.
- *
- * The other two targets have no command:
- * - kubectl — server-side apply through the k8s lexicon (chant #1075), whose
- *   marker-scoped prune replaces `--prune --selector <managed-by>=chant`.
- * - arm — per-resource PUT through the azure lexicon's `azApply` (chant #1448),
- *   whose prune filters on the chant ownership tag before issuing any delete.
- *   This used to be `az deployment group create --mode Complete`, whose scope is
- *   the whole resource group: it deleted every resource in the group absent from
- *   the template, chant-owned or not, while the docblock promised the opposite.
+ * Deliberately narrow: no `endpoint`, because `awsApply` resolves
+ * `AWS_ENDPOINT_URL_CLOUDFORMATION` then `AWS_ENDPOINT_URL` itself (#1694) —
+ * the rule that used to live here as `applyEndpoint` (#926); and no
+ * `capabilities`, because `awsApply` derives them from the template body
+ * (`CAPABILITY_NAMED_IAM`, plus `CAPABILITY_AUTO_EXPAND` for a top-level
+ * `Transform` — #980), the rule that used to live here as `cfnCapabilities`.
  */
-export function applyCommand(
-  target: ShellApplyTarget,
-  env: string,
-  output: string,
-  _deleteMode: DeleteMode,
-): string {
-  switch (target) {
-    case "cloudformation":
-      // CFN deletes resources removed from the template within the stack itself.
-      // The stack IS the ownership boundary — a resource chant never applied is
-      // not in it — so this needs no marker scoping and `deleteMode` changes
-      // nothing about the command.
-      return `aws cloudformation deploy --template-file ${output} --stack-name ${env} --capabilities ${cfnCapabilities(output)}`;
-  }
-}
+export type AwsApplier = (
+  args: { templatePath: string; stackName: string },
+  signal?: AbortSignal,
+) => Promise<{ stackName: string; status: string; action: "created" | "updated" | "unchanged" }>;
+
+/**
+ * The aws lexicon's CloudFormation rollback (saga compensation), as
+ * {@link compensateApply} needs to call it. Structural, like the appliers.
+ */
+export type AwsRollback = (
+  args: { stackName: string },
+  signal?: AbortSignal,
+) => Promise<{ stackName: string; rolledBack: boolean; status?: string }>;
 
 /**
  * Render a kustomization directory to parsed documents (#1548): `kustomize
@@ -248,15 +219,53 @@ async function loadAzureApplier(): Promise<AzureApplier> {
 }
 
 /**
- * Inject `--endpoint-url <endpoint>` into a CloudFormation `aws …` command when an
- * endpoint is set (from AWS_ENDPOINT_URL), so `ApplyOp(target: "cloudformation")`
- * deploys to a local emulator (Floci) instead of real AWS — regardless of aws-CLI
- * version, which only reads AWS_ENDPOINT_URL itself on ≥2.13 (#926). Only the
- * cloudformation target uses the aws CLI; kubectl/arm pass through. Pure.
+ * Load the aws lexicon's `awsApply` (#1449). Same variable-specifier trick as
+ * {@link loadK8sApplier}, for the same reason.
  */
-export function applyEndpoint(command: string, target: ApplyTarget, endpoint: string | undefined): string {
-  if (target !== "cloudformation" || !endpoint || !/^aws\s/.test(command)) return command;
-  return command.replace(/^aws\s/, `aws --endpoint-url '${endpoint}' `);
+async function loadAwsApplier(): Promise<AwsApplier> {
+  const spec = "@intentius/chant-lexicon-aws/op/activities";
+  let mod: { awsApply?: AwsApplier };
+  try {
+    mod = (await import(spec)) as { awsApply?: AwsApplier };
+  } catch (err) {
+    throw new Error(
+      `apply target "cloudformation" needs @intentius/chant-lexicon-aws, which could not be loaded ` +
+        `(${err instanceof Error ? err.message : String(err)}). CloudFormation applies go through the ` +
+        `aws lexicon's native applier since chant #1449; install the aws lexicon and list it ` +
+        `in chant.config.ts.`,
+    );
+  }
+  if (typeof mod.awsApply !== "function") {
+    throw new Error(
+      "the installed @intentius/chant-lexicon-aws exports no awsApply — it predates chant #1446",
+    );
+  }
+  return mod.awsApply;
+}
+
+/**
+ * Load the aws lexicon's `rollbackStack` (#1449) — the compensation twin of
+ * {@link loadAwsApplier}.
+ */
+async function loadAwsRollback(): Promise<AwsRollback> {
+  const spec = "@intentius/chant-lexicon-aws/op/activities";
+  let mod: { rollbackStack?: AwsRollback };
+  try {
+    mod = (await import(spec)) as { rollbackStack?: AwsRollback };
+  } catch (err) {
+    throw new Error(
+      `rollback for target "cloudformation" needs @intentius/chant-lexicon-aws, which could not be ` +
+        `loaded (${err instanceof Error ? err.message : String(err)}). CloudFormation rollback goes ` +
+        `through the aws lexicon's rollbackStack since chant #1449; install the aws lexicon and ` +
+        `list it in chant.config.ts.`,
+    );
+  }
+  if (typeof mod.rollbackStack !== "function") {
+    throw new Error(
+      "the installed @intentius/chant-lexicon-aws exports no rollbackStack — it predates chant #1449",
+    );
+  }
+  return mod.rollbackStack;
 }
 
 /**
@@ -273,11 +282,14 @@ export function defaultOutput(target: ApplyTarget): string {
 /**
  * Apply declared source to the cloud via the target's native mechanism.
  * Deletes (when enabled) ride that mechanism's own delete path — marker-scoped
- * on `kubectl`, stack-scoped on `cloudformation`, and resource-group-scoped on
- * `arm`, which is NOT owned-only (chant #1448). See {@link DeleteMode}.
+ * on `kubectl`, tag-scoped on `arm`, and stack-scoped on `cloudformation`,
+ * where the deploy itself removes resources dropped from the template and
+ * `deleteMode` changes nothing: a resource CFN did not create is not in the
+ * stack. See {@link DeleteMode}.
  *
- * `applier` is injectable so this dispatcher can be tested without the k8s
- * lexicon present; production resolves it through {@link loadK8sApplier}.
+ * The appliers are injectable so this dispatcher can be tested without the
+ * product lexicons present; production resolves them through
+ * {@link loadK8sApplier} / {@link loadAzureApplier} / {@link loadAwsApplier}.
  */
 export async function nativeApply(
   args: NativeApplyArgs,
@@ -285,6 +297,7 @@ export async function nativeApply(
   applier?: K8sApplier,
   azureApplier?: AzureApplier,
   renderer: (dir: string) => Promise<Array<Record<string, unknown>>> = renderKustomization,
+  awsApplier?: AwsApplier,
 ): Promise<NativeApplyResult> {
   const output = args.output ?? defaultOutput(args.target);
   const deleteMode = args.deleteMode ?? "never";
@@ -339,34 +352,13 @@ export async function nativeApply(
     return { applied: result.applied.length, pruned: result.pruned.length };
   }
 
-  const command = applyEndpoint(
-    applyCommand(args.target, args.env, output, deleteMode),
-    args.target,
-    process.env.AWS_ENDPOINT_URL,
-  );
-  const { stdout, stderr } = await execAsync(command, { signal });
-  if (stdout) console.log(stdout);
-  if (stderr) console.error(stderr);
-  return { command };
-}
-
-/**
- * The native rollback command for a target, or undefined when the target has
- * no single-command rollback. Pure — exported for testing.
- *
- * Only CloudFormation has a native "return to last known good state" command.
- * For kubectl/ARM the caller must supply a rollback command; otherwise the
- * compensation degrades to a logged warning rather than silently doing nothing.
- */
-export function rollbackCommand(target: ApplyTarget, env: string): string | undefined {
-  switch (target) {
-    case "cloudformation":
-      return `aws cloudformation rollback-stack --stack-name ${env}`;
-    case "kubectl":
-    case "kustomize":
-    case "arm":
-      return undefined;
-  }
+  // cloudformation (#1449): the aws lexicon's native applier. env is the stack
+  // name and output the template path; endpoint resolution (#1694) and
+  // capability derivation (#980) are awsApply's own, so nothing else is passed.
+  const apply = awsApplier ?? (await loadAwsApplier());
+  const result = await apply({ templatePath: output, stackName: args.env }, signal);
+  console.log(`${result.action}: stack ${result.stackName} (${result.status})`);
+  return { stackName: result.stackName, status: result.status, action: result.action };
 }
 
 export interface CompensateApplyArgs {
@@ -378,22 +370,55 @@ export interface CompensateApplyArgs {
   command?: string;
 }
 
+/** What a compensation did. */
+export interface CompensateApplyResult {
+  /** The explicit rollback command that ran, when one was supplied. */
+  command?: string;
+  /** The stack rolled back — cloudformation. */
+  stackName?: string;
+  /** Whether the native rollback actually ran — cloudformation. `false` when
+   * the stack was absent or the target does not implement RollbackStack (Floci). */
+  rolledBack?: boolean;
+  /** The settled post-rollback stack status — cloudformation. */
+  status?: string;
+}
+
 /**
  * Compensation step (saga rollback) for a partial apply failure. Runs the
- * explicit `command` if given, else the target's native rollback. Where no
- * automatic rollback exists, it warns rather than silently no-op'ing — partial
- * state should never look reverted when it isn't.
+ * explicit `command` if given; otherwise `cloudformation` rolls back natively
+ * through the aws lexicon's `rollbackStack` (#1449 — CloudFormation
+ * `RollbackStack` over the Query API, no CLI in the path). Where no automatic
+ * rollback exists (kubectl/kustomize/arm without a `command`), it warns rather
+ * than silently no-op'ing — partial state should never look reverted when it
+ * isn't.
+ *
+ * `rollback` is injectable for tests; production resolves it through
+ * {@link loadAwsRollback}.
  */
-export async function compensateApply(args: CompensateApplyArgs, signal?: AbortSignal): Promise<{ command?: string }> {
-  const command = args.command ?? rollbackCommand(args.target, args.env);
-  if (!command) {
-    console.warn(
-      `[apply] no automatic rollback for target "${args.target}" — partial apply to ${args.env} was NOT reverted; supply compensate.command to enable rollback`,
-    );
-    return {};
+export async function compensateApply(
+  args: CompensateApplyArgs,
+  signal?: AbortSignal,
+  rollback?: AwsRollback,
+): Promise<CompensateApplyResult> {
+  if (args.command) {
+    const { stdout, stderr } = await execAsync(args.command, { signal });
+    if (stdout) console.log(stdout);
+    if (stderr) console.error(stderr);
+    return { command: args.command };
   }
-  const { stdout, stderr } = await execAsync(command, { signal });
-  if (stdout) console.log(stdout);
-  if (stderr) console.error(stderr);
-  return { command };
+
+  if (args.target === "cloudformation") {
+    const roll = rollback ?? (await loadAwsRollback());
+    const result = await roll({ stackName: args.env }, signal);
+    return {
+      stackName: result.stackName,
+      rolledBack: result.rolledBack,
+      ...(result.status !== undefined ? { status: result.status } : {}),
+    };
+  }
+
+  console.warn(
+    `[apply] no automatic rollback for target "${args.target}" — partial apply to ${args.env} was NOT reverted; supply compensate.command to enable rollback`,
+  );
+  return {};
 }

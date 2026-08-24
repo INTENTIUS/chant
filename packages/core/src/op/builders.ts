@@ -279,8 +279,8 @@ export const azDelete = (templatePath: string, opts?: Record<string, unknown>): 
  * Deploy a built CloudFormation template by calling the CloudFormation API
  * directly (create-or-update + poll) — the direct twin of {@link azApply} /
  * {@link gcpApply} for AWS, targeting a local Floci emulator or real AWS by
- * endpoint override. Speaks the CFN API over HTTP rather than shelling `aws`
- * (that path is still `nativeApply({ target: "cloudformation" })`). Provided by
+ * endpoint override. Speaks the CFN API over HTTP rather than shelling `aws` —
+ * `nativeApply({ target: "cloudformation" })` routes here too (#1449). Provided by
  * the aws lexicon; loaded when the project lists `aws`. Defaults to the
  * `longInfra` profile. `opts` requires `stackName`; accepts `endpoint`, `region`,
  * `capabilities`, `timeoutMs`, `intervalMs`.

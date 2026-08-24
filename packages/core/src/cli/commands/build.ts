@@ -4,9 +4,11 @@ import {
   resolveOwnershipMarker,
   resolveOwnershipEnv,
   ownershipEnvDisagreement,
+  isOwnershipParamRef,
   resolveFoldEnabled,
   resolveSandboxEnabled,
 } from "../../config";
+import { unknownEnvError } from "../../env";
 import type { OwnershipMarker } from "../../ownership";
 import { resolveCliBuildParams } from "../build-params-cli";
 import type { Serializer, SerializerResult } from "../../serializer";
@@ -257,6 +259,24 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
   // to something else is the silent divergence #1396 reports — say so.
   const disagreement = ownershipEnvDisagreement(config, paramsResolution.provenance);
   if (disagreement) warnings.push(formatWarning({ message: disagreement }));
+
+  // #1221 — dynamic-env legality. `--env` is validated against the declared
+  // `environments` in cli/main.ts; a param-bound `ownership.env` supplied via
+  // `--param env=<value>` reached here unchecked, so `--param env=pord`
+  // stamped a marker for an environment the project never declared. Same
+  // check, same site of truth: literal entries match by equality, entries
+  // containing `*` (e.g. `"pr-*"`) match as glob patterns, so an unbounded
+  // family like per-PR environments is declarable without listing each name.
+  if (isOwnershipParamRef(config.ownership?.env)) {
+    const dynamicEnvErr = unknownEnvError(env, config.environments);
+    if (dynamicEnvErr) {
+      errors.push(formatError({
+        message: dynamicEnvErr,
+        hint: 'Declare it in chant.config `environments` (a "pr-*" pattern entry covers a dynamic family), or pass a declared value.',
+      }));
+      return { success: false, resourceCount: 0, fileCount: 0, errors, warnings };
+    }
+  }
 
   // #1039 — thread each loaded plugin's registered intrinsics (e.g. AWS's
   // `Sub`) through to the fold path, so a file using a registered intrinsic

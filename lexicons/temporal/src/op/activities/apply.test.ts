@@ -1,87 +1,14 @@
 import { describe, test, expect } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { applyCommand, cfnCapabilities, rollbackCommand, defaultOutput, applyEndpoint, nativeApply } from "./apply";
-import type { K8sApplier, AzureApplier } from "./apply";
-
-describe("cfnCapabilities (#980)", () => {
-  const dir = mkdtempSync(join(tmpdir(), "chant-cfn-caps-"));
-  const write = (name: string, body: string) => {
-    const p = join(dir, name);
-    writeFileSync(p, body);
-    return p;
-  };
-
-  test("plain template, missing file, or non-JSON → CAPABILITY_NAMED_IAM only", () => {
-    expect(cfnCapabilities(write("plain.json", JSON.stringify({ Resources: {} })))).toBe("CAPABILITY_NAMED_IAM");
-    expect(cfnCapabilities(join(dir, "absent.json"))).toBe("CAPABILITY_NAMED_IAM");
-    expect(cfnCapabilities(write("plain.yaml", "Resources: {}\n"))).toBe("CAPABILITY_NAMED_IAM");
-  });
-
-  test("a top-level Transform (string or list) → adds CAPABILITY_AUTO_EXPAND", () => {
-    const str = write("str.json", JSON.stringify({ Transform: "AWS::SecretsManager-2020-07-23", Resources: {} }));
-    const list = write("list.json", JSON.stringify({ Transform: ["AWS::LanguageExtensions"], Resources: {} }));
-    expect(cfnCapabilities(str)).toBe("CAPABILITY_NAMED_IAM CAPABILITY_AUTO_EXPAND");
-    expect(cfnCapabilities(list)).toBe("CAPABILITY_NAMED_IAM CAPABILITY_AUTO_EXPAND");
-    expect(applyCommand("cloudformation", "prod", str, "never")).toContain(
-      "--capabilities CAPABILITY_NAMED_IAM CAPABILITY_AUTO_EXPAND",
-    );
-    rmSync(dir, { recursive: true, force: true });
-  });
-});
-
-describe("applyCommand (#124)", () => {
-  test("cloudformation deploys to the env stack", () => {
-    const cmd = applyCommand("cloudformation", "prod", "stack.json", "owned-only");
-    expect(cmd).toContain("aws cloudformation deploy");
-    expect(cmd).toContain("--stack-name prod");
-    expect(cmd).toContain("--template-file stack.json");
-  });
-
-  // Replaces "arm uses Complete mode only when deleting" (#1448). That test
-  // asserted the bug: `az deployment group create --mode Complete` deletes every
-  // resource in the group absent from the template, chant-owned or not, while
-  // this module's docblock promised deletes were "limited to chant-owned orphans
-  // by construction". arm no longer produces a command at all.
-  test("cloudformation is the only shell target left", () => {
-    // `deleteMode` changes nothing for CFN: the stack IS the ownership boundary,
-    // so `deploy` can only remove resources chant put in it.
-    const owned = applyCommand("cloudformation", "prod", "stack.json", "owned-only");
-    const never = applyCommand("cloudformation", "prod", "stack.json", "never");
-    expect(owned).toBe(never);
-    expect(owned).not.toContain("--mode");
-  });
-});
-
-describe("applyEndpoint (#926)", () => {
-  const url = "http://localhost:4566";
-
-  test("injects --endpoint-url into the cloudformation deploy when an endpoint is set", () => {
-    const cmd = applyEndpoint(applyCommand("cloudformation", "prod", "template.json", "never"), "cloudformation", url);
-    expect(cmd).toBe(
-      `aws --endpoint-url '${url}' cloudformation deploy --template-file template.json --stack-name prod --capabilities CAPABILITY_NAMED_IAM`,
-    );
-  });
-
-  test("passes through with no endpoint, or for non-cloudformation targets", () => {
-    const cfn = applyCommand("cloudformation", "prod", "template.json", "never");
-    expect(applyEndpoint(cfn, "cloudformation", undefined)).toBe(cfn);
-    expect(applyEndpoint(cfn, "cloudformation", "")).toBe(cfn);
-    // A non-cloudformation target passes through untouched. Written against a
-    // literal rather than `applyCommand("arm", …)`, which since #1448 returns
-    // undefined — comparing that to itself asserted nothing.
-    const arm = "az deployment group create --resource-group rg";
-    expect(applyEndpoint(arm, "arm", url)).toBe(arm);
-    expect(applyEndpoint("kubectl apply -f dist", "kubectl", url)).toBe("kubectl apply -f dist");
-  });
-});
+import { defaultOutput, nativeApply, compensateApply } from "./apply";
+import type { K8sApplier, AzureApplier, AwsApplier, AwsRollback } from "./apply";
 
 /**
- * The kubectl branch moved to the k8s lexicon in chant #1075. What is asserted
- * here is the dispatch — that a kubectl target never becomes a shell command
- * again, and that the arguments the composite emits reach the applier intact.
- * What the applier *does* is the k8s lexicon's own test.
+ * The kubectl branch moved to the k8s lexicon in chant #1075, the arm branch to
+ * the azure lexicon in #1448, and the cloudformation branch to the aws lexicon
+ * in #1449 — no shell target is left. What is asserted here is the dispatch —
+ * that a target never becomes a shell command again, and that the arguments the
+ * composite emits reach each applier intact. What the appliers *do* is their
+ * own lexicons' tests.
  */
 describe("nativeApply: kustomize renders, then dispatches to the SAME k8s applier (#1548)", () => {
   test("the rendered documents reach the applier inline, output as the render dir", async () => {
@@ -112,9 +39,8 @@ describe("nativeApply: kustomize renders, then dispatches to the SAME k8s applie
     expect(result.fieldManager).toBe("chant:web");
   });
 
-  test("defaultOutput and rollback: dist directory, no native rollback", async () => {
+  test("defaultOutput: dist directory", async () => {
     expect(defaultOutput("kustomize")).toBe("dist");
-    expect(rollbackCommand("kustomize", "prod")).toBeUndefined();
   });
 });
 
@@ -142,8 +68,6 @@ describe("nativeApply: kubectl dispatches to the k8s lexicon (chant #1075)", () 
       { manifest: "dist", environment: "prod", deleteMode: "owned-only" },
     ]);
     expect(result).toEqual({ applied: 3, pruned: 1, fieldManager: "chant:web" });
-    // The result is not a shell command, because no shell ran.
-    expect(result.command).toBeUndefined();
   });
 
   test("defaults the output to `dist` and the delete mode to never", async () => {
@@ -160,20 +84,6 @@ describe("nativeApply: kubectl dispatches to the k8s lexicon (chant #1075)", () 
     const on = applier();
     await nativeApply({ target: "kubectl", env: "prod", forceConflicts: true }, undefined, on.fn);
     expect(on.calls[0].force).toBe(true);
-  });
-
-  test("there is no kubectl shell command left to fall back to", () => {
-    // `applyCommand` only takes the shell targets now — the type says so, and
-    // at runtime a kubectl target falls off the end of the switch rather than
-    // producing `kubectl apply -f`. Nothing can shell out for kubectl again
-    // without this failing first.
-    const shellCommandForKubectl = (applyCommand as unknown as (
-      t: string,
-      e: string,
-      o: string,
-      d: string,
-    ) => string | undefined)("kubectl", "prod", "dist", "owned-only");
-    expect(shellCommandForKubectl).toBeUndefined();
   });
 
   test("with nothing injected it resolves the real k8s lexicon's applyManifest", async () => {
@@ -217,8 +127,7 @@ describe("nativeApply: arm dispatches to the azure lexicon (chant #1448)", () =>
     expect(calls[0].prune).toBe(true);
     expect(calls[0].resourceGroup).toBe("my-rg");
     expect(calls[0].templatePath).toBe("t.json");
-    // A command here would mean the shell path ran — the thing #1448 is about.
-    expect(result.command).toBeUndefined();
+    expect(result).toEqual({ applied: 0, pruned: 0 });
   });
 
   test("gated prunes too — same delete scope, the gate lives in the composite", async () => {
@@ -288,16 +197,129 @@ describe("nativeApply: arm dispatches to the azure lexicon (chant #1448)", () =>
   });
 });
 
-describe("rollbackCommand (#125)", () => {
-  test("cloudformation has a native rollback", () => {
-    expect(rollbackCommand("cloudformation", "prod")).toBe(
-      "aws cloudformation rollback-stack --stack-name prod",
-    );
+describe("nativeApply: cloudformation dispatches to the aws lexicon (chant #1449)", () => {
+  /** Records what the applier was handed, and reports a settled create. */
+  const spy = (): { calls: Array<Parameters<AwsApplier>[0]>; applier: AwsApplier } => {
+    const calls: Array<Parameters<AwsApplier>[0]> = [];
+    const applier: AwsApplier = async (args) => {
+      calls.push(args);
+      return { stackName: args.stackName, status: "CREATE_COMPLETE", action: "created" };
+    };
+    return { calls, applier };
+  };
+  /** nativeApply with only the aws applier injected. */
+  const applyCfn = (args: Parameters<typeof nativeApply>[0], applier: AwsApplier) =>
+    nativeApply(args, undefined, undefined, undefined, undefined, applier);
+
+  test("env maps to the stack name and output to the template path, and nothing else is passed", async () => {
+    const { calls, applier } = spy();
+    await applyCfn({ target: "cloudformation", env: "prod", output: "stack.json" }, applier);
+    // Exactly the mapped pair. No `capabilities` — awsApply derives them from
+    // the template body (#980, `awsDeployCapabilitiesForBody`); no `endpoint` —
+    // awsApply resolves AWS_ENDPOINT_URL[_CLOUDFORMATION] itself (#1694). Both
+    // rules used to be duplicated here as `cfnCapabilities`/`applyEndpoint`.
+    expect(calls).toEqual([{ templatePath: "stack.json", stackName: "prod" }]);
   });
 
-  test("kubectl / arm have no native single-command rollback", () => {
-    expect(rollbackCommand("kubectl", "prod")).toBeUndefined();
-    expect(rollbackCommand("arm", "rg")).toBeUndefined();
+  test("defaults the template path to template.json", async () => {
+    const { calls, applier } = spy();
+    await applyCfn({ target: "cloudformation", env: "prod" }, applier);
+    expect(calls[0].templatePath).toBe("template.json");
+    expect(defaultOutput("cloudformation")).toBe("template.json");
+  });
+
+  test("deleteMode changes nothing — the stack IS the ownership boundary", async () => {
+    // CFN removes resources dropped from the template within the stack itself,
+    // so owned-only and never hand the applier identical arguments.
+    const owned = spy();
+    await applyCfn({ target: "cloudformation", env: "prod", deleteMode: "owned-only" }, owned.applier);
+    const never = spy();
+    await applyCfn({ target: "cloudformation", env: "prod", deleteMode: "never" }, never.applier);
+    expect(owned.calls).toEqual(never.calls);
+  });
+
+  test("reports the stack, its settled status and the action — not a command", async () => {
+    const applier: AwsApplier = async () => ({ stackName: "prod", status: "UPDATE_COMPLETE", action: "updated" });
+    const result = await applyCfn({ target: "cloudformation", env: "prod" }, applier);
+    expect(result).toEqual({ stackName: "prod", status: "UPDATE_COMPLETE", action: "updated" });
+  });
+
+  test("with nothing injected it resolves the real aws lexicon's awsApply", async () => {
+    // Same shape as the kubectl case: a template path that does not exist fails
+    // inside awsApply's own template read — reachable only if the dynamic
+    // import found the lexicon — and it fails before any HTTP call, so nothing
+    // goes near AWS or an emulator.
+    const err = await nativeApply({
+      target: "cloudformation",
+      env: "prod",
+      output: "/nonexistent/chant-1449-template.json",
+    }).catch((e: unknown) => e);
+    expect(String(err)).toMatch(/ENOENT|no such file/);
+    expect(String(err)).not.toMatch(/could not be loaded/);
+  });
+});
+
+describe("compensateApply: cloudformation rolls back through the aws lexicon (chant #1449)", () => {
+  test("calls rollbackStack with the env as the stack name, and execs nothing", async () => {
+    const calls: Array<Parameters<AwsRollback>[0]> = [];
+    const rollback: AwsRollback = async (args) => {
+      calls.push(args);
+      return { stackName: args.stackName, rolledBack: true, status: "UPDATE_ROLLBACK_COMPLETE" };
+    };
+    const result = await compensateApply({ target: "cloudformation", env: "prod" }, undefined, rollback);
+    expect(calls).toEqual([{ stackName: "prod" }]);
+    expect(result).toEqual({ stackName: "prod", rolledBack: true, status: "UPDATE_ROLLBACK_COMPLETE" });
+    // A command in the result would mean the shell path ran.
+    expect(result.command).toBeUndefined();
+  });
+
+  test("a declined rollback (absent stack, or Floci's UnknownAction) is reported, not hidden", async () => {
+    const rollback: AwsRollback = async (args) => ({ stackName: args.stackName, rolledBack: false });
+    const result = await compensateApply({ target: "cloudformation", env: "prod" }, undefined, rollback);
+    expect(result).toEqual({ stackName: "prod", rolledBack: false });
+  });
+
+  test("an explicit command takes precedence over the native rollback", async () => {
+    let rolled = false;
+    const rollback: AwsRollback = async (args) => {
+      rolled = true;
+      return { stackName: args.stackName, rolledBack: true };
+    };
+    const result = await compensateApply(
+      { target: "cloudformation", env: "prod", command: "echo custom-rollback" },
+      undefined,
+      rollback,
+    );
+    expect(rolled).toBe(false);
+    expect(result).toEqual({ command: "echo custom-rollback" });
+  });
+
+  test("kubectl / kustomize / arm without a command warn and revert nothing", async () => {
+    for (const target of ["kubectl", "kustomize", "arm"] as const) {
+      const result = await compensateApply({ target, env: "prod" });
+      expect(result).toEqual({});
+    }
+  });
+
+  test("an explicit command still runs for targets without a native rollback", async () => {
+    const result = await compensateApply({ target: "arm", env: "rg", command: "echo arm-rollback" });
+    expect(result).toEqual({ command: "echo arm-rollback" });
+  });
+
+  test("with nothing injected it resolves the real aws lexicon's rollbackStack", async () => {
+    // Point the endpoint at a closed local port so the failure comes from inside
+    // rollbackStack's own transport — reachable only if the dynamic import found
+    // the lexicon — and never touches real AWS.
+    const prev = process.env.AWS_ENDPOINT_URL;
+    process.env.AWS_ENDPOINT_URL = "http://127.0.0.1:1";
+    try {
+      const err = await compensateApply({ target: "cloudformation", env: "prod" }).catch((e: unknown) => e);
+      expect(String(err)).not.toMatch(/could not be loaded/);
+      expect(String(err)).not.toMatch(/predates chant/);
+    } finally {
+      if (prev === undefined) delete process.env.AWS_ENDPOINT_URL;
+      else process.env.AWS_ENDPOINT_URL = prev;
+    }
   });
 });
 

@@ -309,6 +309,137 @@ export const testEntity = {
     });
   });
 
+  describe("#1221 — dynamic-env legality against declared environments", () => {
+    const thisDir = dirname(fileURLToPath(import.meta.url));
+    const runtimePath = resolvePath(thisDir, "../../runtime");
+    const paramsPath = resolvePath(thisDir, "../../params");
+
+    // Serializer exposing the physical name (from params.env interpolation)
+    // next to the ownership marker, so one test can assert both are disjoint
+    // across two builds.
+    const namingSerializer: Serializer = {
+      name: "aws",
+      rulePrefix: "TEST",
+      serialize: (entities, _outputs, context) =>
+        JSON.stringify(
+          [...entities.values()].map((e) => ({
+            name: (e as unknown as { props: { name: string } }).props.name,
+            marker: context?.ownership,
+          })),
+        ),
+    };
+
+    async function writeProject(environments: string) {
+      await writeFile(
+        join(testDir, "chant.config.ts"),
+        `
+          export default {
+            environments: ${environments},
+            ownership: { stack: "billing", env: { param: "env" } },
+            buildParams: {
+              env: { type: "string", default: "dev" },
+            },
+          };
+        `,
+      );
+      await writeFile(
+        join(testDir, "resources.ts"),
+        `
+          import { createResource } from ${JSON.stringify(runtimePath)};
+          export const Bucket = createResource("Test::Bucket", "aws", { arn: "Arn" });
+        `,
+      );
+      await writeFile(
+        join(testDir, "main.ts"),
+        `
+          import { Bucket } from "./resources";
+          import { params } from ${JSON.stringify(paramsPath)};
+          export const uploads = new Bucket({ name: \`billing-\${params.env}-uploads\` });
+        `,
+      );
+    }
+
+    function built(): Array<{ name: string; marker?: { stack: string; env?: string } }> {
+      return JSON.parse(readFileSync(outputFile, "utf-8"));
+    }
+
+    async function buildWithEnv(env: string) {
+      return buildCommand({
+        path: testDir,
+        output: outputFile,
+        format: "json",
+        serializers: [namingSerializer],
+        params: { env },
+      });
+    }
+
+    test("--param env=pr-42 is legal when a pr-* pattern entry is declared", async () => {
+      await writeProject(`["dev", "prod", "pr-*"]`);
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        const result = await buildWithEnv("pr-42");
+        expect(result.errors).toEqual([]);
+        expect(result.success).toBe(true);
+        expect(built()).toEqual([{ name: "billing-pr-42-uploads", marker: { stack: "billing", env: "pr-42" } }]);
+      } finally {
+        errorSpy.mockRestore();
+      }
+    });
+
+    test("--param env outside the declared entries (no pattern covers it) fails the build", async () => {
+      await writeProject(`["dev", "prod"]`);
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        const result = await buildWithEnv("pr-42");
+        expect(result.success).toBe(false);
+        expect(result.errors.some((e) => e.includes('Unknown environment "pr-42"'))).toBe(true);
+      } finally {
+        errorSpy.mockRestore();
+      }
+    });
+
+    test("a literal entry still matches by equality", async () => {
+      await writeProject(`["dev", "prod", "pr-*"]`);
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        const result = await buildWithEnv("prod");
+        expect(result.errors).toEqual([]);
+        expect(built()).toEqual([{ name: "billing-prod-uploads", marker: { stack: "billing", env: "prod" } }]);
+      } finally {
+        errorSpy.mockRestore();
+      }
+    });
+
+    test("two builds with different --param env yield disjoint names and disjoint markers", async () => {
+      await writeProject(`["dev", "prod", "pr-*"]`);
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        expect((await buildWithEnv("pr-1")).success).toBe(true);
+        const first = built();
+        expect((await buildWithEnv("pr-2")).success).toBe(true);
+        const second = built();
+        expect(first).toEqual([{ name: "billing-pr-1-uploads", marker: { stack: "billing", env: "pr-1" } }]);
+        expect(second).toEqual([{ name: "billing-pr-2-uploads", marker: { stack: "billing", env: "pr-2" } }]);
+        expect(first[0].name).not.toBe(second[0].name);
+        expect(first[0].marker?.env).not.toBe(second[0].marker?.env);
+      } finally {
+        errorSpy.mockRestore();
+      }
+    });
+
+    test("a project with no declared environments accepts any dynamic value, as before", async () => {
+      await writeProject(`undefined`);
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        const result = await buildWithEnv("anything-goes");
+        expect(result.errors).toEqual([]);
+        expect(built()).toEqual([{ name: "billing-anything-goes-uploads", marker: { stack: "billing", env: "anything-goes" } }]);
+      } finally {
+        errorSpy.mockRestore();
+      }
+    });
+  });
+
   test("#1064 — a declared build-time parameter binds to params.<name> and folds to a literal", async () => {
     const thisDir = dirname(fileURLToPath(import.meta.url));
     const runtimePath = resolvePath(thisDir, "../../runtime");

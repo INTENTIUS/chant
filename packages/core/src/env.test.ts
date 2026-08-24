@@ -52,6 +52,25 @@ describe("unknownEnvError", () => {
       unknownEnvError("stage", ["prod", { name: "floci", endpoint: "http://localhost:4566" }]),
     ).toMatch(/Unknown environment "stage".*prod, floci/);
   });
+
+  // #1221 — an entry containing `*` is a glob pattern, so an unbounded family
+  // (per-PR environments, per-suite test environments) is declarable without
+  // listing each name.
+  test("accepts an env covered by a declared glob pattern (#1221)", () => {
+    expect(unknownEnvError("pr-42", ["dev", "prod", "pr-*"])).toBeUndefined();
+    expect(unknownEnvError("test-suite-a", ["prod", { name: "test-*", endpoint: "http://localhost:4566" }])).toBeUndefined();
+  });
+
+  test("rejects an env no pattern covers, listing the patterns among the declared entries (#1221)", () => {
+    expect(unknownEnvError("stage", ["dev", "prod", "pr-*"])).toMatch(/Unknown environment "stage".*dev, prod, pr-\*/);
+    expect(unknownEnvError("pr", ["pr-*"])).toMatch(/Unknown environment "pr"/); // prefix alone is not covered
+  });
+
+  test("a literal entry still matches by equality, never as a pattern (#1221)", () => {
+    // `prod` contains no `*`: nothing about pattern support changes it.
+    expect(unknownEnvError("prod", ["prod", "pr-*"])).toBeUndefined();
+    expect(unknownEnvError("production", ["prod"])).toMatch(/Unknown environment "production"/);
+  });
 });
 
 describe("env-aware discovery (#505)", () => {

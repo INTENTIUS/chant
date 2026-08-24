@@ -2,8 +2,9 @@
  * AWS Op activities — resolved by the core activity registry when a project's
  * `chant.config.ts` lists the `aws` lexicon. Contributes the local Floci AWS
  * emulator lifecycle (`flociUp`/`flociDown`) and the native CloudFormation
- * applier (`awsApply`), which calls the CloudFormation API directly rather than
- * shelling `aws` — the direct twin of `azApply`/`gcpApply`.
+ * applier (`awsApply`, with `awsDelete` and the `rollbackStack` compensation),
+ * which calls the CloudFormation API directly rather than shelling `aws` — the
+ * direct twin of `azApply`/`gcpApply`.
  *
  * The registry keys every exported *function* here by its name, so only the
  * activities themselves belong in this barrel. `awsAgentCoreFetchTrace`'s
@@ -28,6 +29,7 @@ export type { FlociUpArgs, FlociDownArgs } from "./floci";
 export {
   awsApply,
   awsDelete,
+  rollbackStack,
   waitForStackSettled,
   cfnUrl,
   cfnForm,
@@ -42,7 +44,7 @@ export {
   isFailureStatus,
   isTerminalStatus,
 } from "./aws-apply";
-export type { AwsApplyArgs, AwsHttp } from "./aws-apply";
+export type { AwsApplyArgs, RollbackStackArgs, AwsHttp } from "./aws-apply";
 
 export { awsAgentCoreFetchTrace } from "../../agentcore/trace-fetch";
 export type {

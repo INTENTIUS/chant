@@ -1242,6 +1242,11 @@ Keep an organization CloudTrail with IsLogging: true and IsMultiRegionTrail: tru
 
 Authority: [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.com/wellarchitected/latest/security-pillar/welcome.html)
 
+### WAW059
+
+**Wildcard Resource where the declared graph enumerates the touched set** — report-only · guidance
+
+Tighten Resource from "*" to the Fn::GetAtt Arn list of the declared resources the role's consumers touch.
 ### WAW060
 
 **IAM policy attached to no principal** — report-only · guidance

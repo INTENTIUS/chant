@@ -38,7 +38,7 @@
 
 import type { ObservationResult, ResourceMetadata, UnobservedEntity } from "@intentius/chant/lexicon";
 import { observation } from "@intentius/chant/observation";
-import { hasOwnershipMarker, classifyOwnership, type ChannelKeys } from "@intentius/chant/ownership";
+import { hasOwnershipMarker, classifyOwnership, readOwnership, type ChannelKeys } from "@intentius/chant/ownership";
 import { getResource, mapperForKind, GcpReadError, isNotFound, type GcpReadClientOptions } from "./api/read-client";
 import { resolveGcpProject, parseManifest } from "./op/activities/gcp-apply";
 import { resolveGVK } from "./serializer";
@@ -272,6 +272,9 @@ export async function describeResources(options: {
         status: statusFromRest(obj),
         lastUpdated: obj.updated ?? obj.timeCreated,
         ownership: obj.labels == null ? "unknown" : classifyOwnership(obj.labels, GCP_OWNERSHIP_LABEL_KEYS),
+        // Marker identity (#1222): stack/env from the resource's own labels.
+        // Undefined when the payload carries no labels or no managed-by marker.
+        marker: readOwnership(obj.labels ?? undefined, GCP_OWNERSHIP_LABEL_KEYS),
         attributes: pruneUndefined({
           labels: obj.labels ?? undefined,
           selfLink: obj.selfLink,

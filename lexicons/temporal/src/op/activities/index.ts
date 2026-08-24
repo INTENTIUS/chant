@@ -46,10 +46,13 @@ export type {
   NativeApplyArgs,
   NativeApplyResult,
   CompensateApplyArgs,
+  CompensateApplyResult,
   ApplyTarget,
-  ShellApplyTarget,
   DeleteMode,
   K8sApplier,
+  AzureApplier,
+  AwsApplier,
+  AwsRollback,
 } from "./apply";
 
 // argo activity (waitForArgoSync) relocated to the k8s lexicon (#809) —

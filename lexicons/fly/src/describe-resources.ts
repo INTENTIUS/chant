@@ -29,6 +29,8 @@
 
 import type { ObservationResult, ResourceMetadata, UnobservedEntity } from "@intentius/chant/lexicon";
 import { normalizeObservation, observation, unobservedAll } from "@intentius/chant/observation";
+import { readOwnership } from "@intentius/chant/ownership";
+import { FLY_METADATA_OWNERSHIP_KEYS } from "./ownership";
 import {
   buildChangeSet,
   renderChangeSet,
@@ -311,6 +313,11 @@ export async function describeResources(
         physicalId: m.id,
         status: m.state,
         ownership: isOwned ? "owned" : "foreign",
+        // Marker identity (#1222): machines are the one fly type carrying the
+        // metadata channel, so only they surface stack/env. Apps and the
+        // boundary types (volumes/ips/certs) get their verdict inferred at the
+        // app boundary and carry no marker of their own — absent, not guessed.
+        marker: readOwnership(m.config?.metadata, FLY_METADATA_OWNERSHIP_KEYS),
         attributes: pruneUndefined({
           app,
           machineName: m.name,

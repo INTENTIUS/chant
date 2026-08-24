@@ -279,5 +279,47 @@ describeObservationConformance({
         });
       },
     },
+    {
+      name: "a marker-stamped object surfaces its stack/env identity; a foreign one surfaces none (#1222)",
+      declared: ["web", "legacy"],
+      expectPresent: ["web", "legacy"],
+      expectMarker: { web: { stack: "shop", env: "prod" } },
+      expectNoMarker: ["legacy"],
+      run: () => {
+        clusterState.fail = undefined;
+        clusterState.objects = {
+          [objectKey("apps/v1", "Deployment", "web", "default")]: {
+            apiVersion: "apps/v1",
+            kind: "Deployment",
+            metadata: {
+              name: "web",
+              namespace: "default",
+              uid: "uid-1",
+              labels: {
+                "app.kubernetes.io/managed-by": "chant",
+                "chant.intentius.io/stack": "shop",
+                "chant.intentius.io/env": "prod",
+              },
+            },
+            status: { readyReplicas: 1, replicas: 1 },
+          },
+          [objectKey("apps/v1", "Deployment", "legacy", "default")]: {
+            apiVersion: "apps/v1",
+            kind: "Deployment",
+            metadata: { name: "legacy", namespace: "default", uid: "uid-2" },
+            status: { readyReplicas: 1, replicas: 1 },
+          },
+        };
+        return k8sPlugin.describeResources!({
+          environment: "prod",
+          buildOutput: "",
+          entityNames: ["web", "legacy"],
+          entities: new Map([
+            ["web", { entityType: "K8s::Apps::Deployment", props: { metadata: { name: "web" } } }],
+            ["legacy", { entityType: "K8s::Apps::Deployment", props: { metadata: { name: "legacy" } } }],
+          ]),
+        });
+      },
+    },
   ],
 });
