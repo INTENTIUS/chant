@@ -2,13 +2,17 @@
  * The fountain lexicon's chant audit catalog — metadata for the FTN rules,
  * contributed via `fountainPlugin.auditCatalog()` (#687).
  *
- * Every entry carries `yamlBased: false`, which is not an oversight: all of
- * fountain's checks read the chant model (`ctx.entities`), not the emitted
- * manifests (`ctx.outputs`), because the facts they need — which Environment
- * an Agent references, which keys a Vault shadows — live in the typed graph
- * and are flattened by the time YAML exists. So they fire on `chant build`
- * and cannot fire on an audit of standalone fountain YAML. `auditRule()`
- * hardcodes `yamlBased: true`, so these are constructed directly.
+ * All of fountain's checks read the chant model (`ctx.entities`), not the
+ * emitted manifests (`ctx.outputs`), because the facts they need — which
+ * Environment an Agent references, which keys a Vault shadows — live in the
+ * typed graph and are flattened by the time YAML exists. They still fire on
+ * an audit of standalone fountain YAML: the audit parses classified
+ * `fountain.dev/v1` documents back into the entity graph via the plugin's
+ * `auditEntities` (parse-to-graph, #1567), so the post-synth entries are
+ * `yamlBased: true` — one rule implementation serves both paths. The one
+ * exception is FTN001, a declarative lint rule over TypeScript source that
+ * the audit never runs; it stays `yamlBased: false`. `auditRule()` hardcodes
+ * `yamlBased: true`, so these are constructed directly.
  */
 
 import type { Authority, RuleMeta } from "@intentius/chant/audit/catalog";
@@ -23,7 +27,11 @@ const OWASP_LLM_INJECTION: Authority = {
   url: "https://owasp.org/www-project-top-10-for-large-language-model-applications/",
 };
 
-/** Entity-based rule: everything fountain ships. */
+/**
+ * Entity-based rule. `yamlBased` defaults to true: the post-synth checks fire
+ * on audited standalone YAML via parse-to-graph (#1567). Pass false only for
+ * a rule the audit genuinely cannot run (FTN001, a source-level lint rule).
+ */
 function rule(
   id: string,
   tier: RuleMeta["tier"],
@@ -31,8 +39,9 @@ function rule(
   title: string,
   remediation: string,
   authority?: Authority[],
+  yamlBased = true,
 ): RuleMeta {
-  return { id, tier, fixKind: "guidance", category, title, remediation, authority, yamlBased: false };
+  return { id, tier, fixKind: "guidance", category, title, remediation, authority, yamlBased };
 }
 
 export const fountainAuditCatalog: Record<string, RuleMeta> = {
@@ -43,6 +52,7 @@ export const fountainAuditCatalog: Record<string, RuleMeta> = {
     "Literal credential in a fountain declaration",
     "Use a ${VAR} substitution reference or an environment secret; never a literal in source.",
     [OWASP_LLM_INJECTION],
+    false, // lint rule over TypeScript source — the audit never runs it
   ),
   FTN010: rule(
     "FTN010",

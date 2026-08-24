@@ -264,7 +264,11 @@ Two details worth knowing:
 - **`auditRule()` hardcodes `yamlBased: true`.** A check that reads the chant
   model (`ctx.entities`) rather than the emitted output (`ctx.outputs`) cannot
   fire on an audit of standalone YAML, so it must be constructed directly with
-  `yamlBased: false`. fly, temporal, and fountain all do this.
+  `yamlBased: false`. fly and temporal do this. The exception: a lexicon that
+  ships `auditEntities` (parse-to-graph) has its classified files parsed back
+  into the entity graph during an audit, so its entity-reading checks do fire
+  and stay `yamlBased: true` — fountain does this; only its source-level lint
+  rule (FTN001) is `yamlBased: false`.
 - **Cross-cutting core ids** (`COR*`, `EXT*`) belong to core's static catalog,
   not to any lexicon, and are excluded from both the check and the test.
 

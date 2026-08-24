@@ -45,7 +45,7 @@ export const helper = new Agent({
 
 ## The loop
 
-1. \`chant build\` — synthesize and lint. The FTN rules catch open networking, credential literals, and unresolvable \`\${VAR}\` references before review.
+1. \`chant build\` — synthesize and lint. The FTN rules catch open networking, credential literals, and unresolvable \`\${VAR}\` references before review. The same rules run via [\`chant audit\`](/chant/cli/audit/) over a repo of hand-written \`fountain apply\` manifests — no chant project needed; the documents are parsed back into the entity graph.
 2. \`chant run <apply op>\` or call \`fountainApply\` — reconcile against the API. Idempotent by name.
 3. \`chant lifecycle diff --live\` — drift. A UI edit to an owned Environment shows up here.
 4. \`chant import --from\` — adopt UI-built resources into typed files.

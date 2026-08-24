@@ -23,6 +23,12 @@ export function isFountainPlan(data: unknown): boolean {
   });
 }
 
+/**
+ * Canonical `detectTemplate` name under `@…/detect` — what edge callers
+ * (and core's detect-bundle guard) import for content detection.
+ */
+export { detectFountainTemplate as detectTemplate };
+
 /** Template detection for the plugin: raw string input (YAML or JSON). */
 export function detectFountainTemplate(data: unknown): boolean {
   if (typeof data === "string") {

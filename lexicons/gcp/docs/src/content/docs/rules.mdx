@@ -6,7 +6,7 @@ description: "Every lint rule and post-synth check provided by the GCP Config Co
 {/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-gcp` — DO NOT EDIT.
     Edit lexicons/gcp/src/codegen/docs.ts instead; changes here are overwritten. */}
 
-The GCP Config Connector lexicon provides **26** rules: 3 lint rules and 23 post-synth checks.
+The GCP Config Connector lexicon provides **29** rules: 3 lint rules and 26 post-synth checks.
 
 ## Lint Rules
 
@@ -45,3 +45,6 @@ Post-synth checks validate the serialized output after the build pipeline comple
 | `WGC401` | Config Connector resource spec contains unknown field |
 | `WGC402` | Config Connector resource is missing a required spec field |
 | `WGC403` | Config Connector resource spec field has wrong type or structure |
+| `WGC501` | Org Policy guardrail not enforced — a disabled policy constrains nothing |
+| `WGC502` | Org Policy guardrail defines no rules — it binds its constraint to nothing |
+| `WGC503` | IAMAuditConfig captures nothing or exempts members — the audit sink is scoped down |

@@ -47,11 +47,24 @@ describe("fountain plugin", () => {
     expect(ruleIds.sort()).toEqual(Object.keys(catalog).sort());
   });
 
-  it("marks its checks entity-based so audit does not claim they fire on YAML", () => {
+  it("marks exactly the checks the audit can run as yamlBased (#1567)", () => {
     const catalog = fountainPlugin.auditCatalog?.() ?? {};
-    // Every fountain check reads ctx.entities, so none can fire against
-    // standalone fountain YAML. Flipping one to true would misreport it.
-    expect(Object.values(catalog).every((m) => m.yamlBased === false)).toBe(true);
+    // Every post-synth check fires on standalone fountain YAML via
+    // parse-to-graph (auditEntities), so their entries are yamlBased. FTN001
+    // is a lint rule over TypeScript source the audit never runs — claiming
+    // it fires on YAML would misreport `chant audit --rules`.
+    const postSynthIds = new Set((fountainPlugin.postSynthChecks?.() ?? []).map((c) => c.id));
+    for (const [id, meta] of Object.entries(catalog)) {
+      expect(meta.yamlBased, id).toBe(postSynthIds.has(id));
+    }
+  });
+
+  it("parses standalone manifests into the entity graph via auditEntities (#1567)", () => {
+    const entities = fountainPlugin.auditEntities?.(
+      "apiVersion: fountain.dev/v1\nkind: Environment\nmetadata:\n  name: dev\nspec:\n  networking_type: limited\n",
+    );
+    expect(entities?.size).toBe(1);
+    expect(entities?.get("dev")?.entityType).toBe("Fountain::V1::Environment");
   });
 
   it("scaffolds a closed sandbox by default", () => {

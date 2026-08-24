@@ -187,4 +187,61 @@ describe("auditFiles", () => {
     });
     expect(findings.map((f) => f.checkId)).toEqual(["OK001"]);
   });
+
+  test("parse-to-graph: an injected entities parser lets entity-reading checks fire per file (#1567)", async () => {
+    const entityCheck: PostSynthCheck = {
+      id: "ENT001",
+      description: "reads ctx.entities, not ctx.outputs",
+      check: (ctx) =>
+        [...ctx.entities.keys()].map((name) => ({ checkId: "ENT001", severity: "warning" as const, message: `saw ${name}`, entity: name })),
+    };
+    const findings = await auditFiles(
+      [
+        { path: "a.yaml", content: "one", lexicon: "custom" },
+        { path: "b.yaml", content: "two", lexicon: "custom" },
+      ],
+      {
+        checksProvider: async () => [entityCheck],
+        entitiesProvider: async () => (content) => new Map([[content, { entityType: "T::X" } as never]]),
+      },
+    );
+    expect(findings.map((f) => `${f.file}:${f.entity}`).sort()).toEqual(["a.yaml:one", "b.yaml:two"]);
+  });
+
+  test("parse-to-graph merge: the same entity name in two files keeps both — a duplicate check sees the collision cross-file", async () => {
+    const dupCheck: PostSynthCheck = {
+      id: "DUP001",
+      description: "fires when more than one entity is present",
+      check: (ctx) => (ctx.entities.size > 1 ? [{ checkId: "DUP001", severity: "error" as const, message: "name declared twice" }] : []),
+    };
+    const findings = await auditFiles(
+      [
+        { path: "a.yaml", content: "x", lexicon: "custom" },
+        { path: "b.yaml", content: "y", lexicon: "custom" },
+      ],
+      {
+        checksProvider: async () => [dupCheck],
+        // both files declare the entity name "dev" — the merged pass must keep both
+        entitiesProvider: async () => () => new Map([["dev", { entityType: "T::X" } as never]]),
+      },
+    );
+    const dup = findings.find((f) => f.checkId === "DUP001");
+    expect(dup).toBeDefined();
+    expect(dup!.file).toBe(CROSS_FILE);
+  });
+
+  test("an entities parser that throws contributes no entities and does not abort the audit", async () => {
+    const entityCheck: PostSynthCheck = {
+      id: "ENT002",
+      description: "counts entities",
+      check: (ctx) => (ctx.entities.size > 0 ? [{ checkId: "ENT002", severity: "warning" as const, message: "saw entities" }] : []),
+    };
+    const findings = await auditFiles([{ path: "a.yaml", content: "x", lexicon: "custom" }], {
+      checksProvider: async () => [entityCheck],
+      entitiesProvider: async () => () => {
+        throw new Error("unparseable");
+      },
+    });
+    expect(findings).toEqual([]);
+  });
 });

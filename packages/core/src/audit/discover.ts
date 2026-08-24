@@ -22,7 +22,8 @@
  *   - Helm charts are a directory BUNDLE keyed by `Chart.yaml`; the helm checks
  *     read `output.files`, so the whole chart is one AuditInput.
  *   - k8s `detectTemplate` matches any `apiVersion`+`kind`, including GCP Config
- *     Connector (`cnrm.cloud.google.com`) resources, so gcp must be tried first.
+ *     Connector (`cnrm.cloud.google.com`) resources and fountain
+ *     (`fountain.dev/v1`) manifests, so gcp and fountain must be tried first.
  *   - aws/azure checks `JSON.parse` their input, so YAML/templated content is
  *     normalized to a JSON string here.
  */
@@ -34,7 +35,7 @@ import type { LexiconPlugin } from "../lexicon";
 import type { AuditInput, AuditLexicon } from "./core";
 
 /** Lexicons the auditor knows how to detect and run checks for. */
-export const AUDIT_LEXICONS = ["github", "gitlab", "forgejo", "k8s", "docker", "aws", "azure", "gcp", "helm"] as const;
+export const AUDIT_LEXICONS = ["github", "gitlab", "forgejo", "k8s", "docker", "aws", "azure", "gcp", "helm", "fountain"] as const;
 
 /**
  * Load the plugins used for detection. Each is loaded in isolation (no
@@ -171,6 +172,13 @@ const CONTENT_DETECTORS: ContentDetector[] = [
     detect: (plugin, _name, content) => (anyDoc(plugin, content) ? content : null),
   },
   {
+    // fountain (`apiVersion: fountain.dev/v1`) — must win over k8s, whose
+    // detectTemplate matches any apiVersion+kind document (#1566).
+    lexicon: "fountain",
+    accepts: isYaml,
+    detect: (plugin, _name, content) => (anyDoc(plugin, content) ? content : null),
+  },
+  {
     lexicon: "k8s",
     accepts: isYaml,
     detect: (plugin, _name, content) => (anyDoc(plugin, content) ? content : null),
@@ -263,6 +271,7 @@ export function hintLexiconForFile(path: string, content: string): LexiconHint |
   if (/\.tf$/i.test(name)) return "terraform";
   const head = content.slice(0, 64 * 1024);
   if (/cnrm\.cloud\.google\.com/.test(head)) return "gcp";
+  if (/fountain\.dev\/v1/.test(head)) return "fountain";
   if (/AWSTemplateFormatVersion|["']?Type["']?\s*:\s*["']AWS::/.test(head)) return "aws";
   if (/deploymentTemplate\.json/.test(head)) return "azure";
   if (isYaml(name)) {

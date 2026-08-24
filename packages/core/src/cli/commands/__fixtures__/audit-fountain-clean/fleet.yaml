@@ -1,0 +1,20 @@
+apiVersion: fountain.dev/v1
+kind: Environment
+metadata:
+  name: dev
+spec:
+  networking_type: limited
+  networking_config:
+    allowed_hosts:
+      - github.com
+  env_vars:
+    API_URL: https://api.example.com
+---
+apiVersion: fountain.dev/v1
+kind: Agent
+metadata:
+  name: researcher
+spec:
+  model: anthropic/claude-sonnet-4-6
+  runtime: claude
+  environment: dev
