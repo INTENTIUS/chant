@@ -60,6 +60,12 @@ import {
   type AwsReadHttp,
 } from "./api/read-client";
 import { AWS_TAG_OWNERSHIP_KEYS } from "./ownership";
+import {
+  AWS_DEEP_BLIND_SPOTS,
+  EC2_TOPOLOGY_GENERATED_NAMES,
+  EC2_TOPOLOGY_SERVICE_DEFAULTS,
+  EC2_TOPOLOGY_SOURCES,
+} from "./deep-topology";
 import { applyAwsEndpointArgv } from "./components/cloud-executor";
 import { toIngressRules } from "./dependencies";
 import { createRequire } from "node:module";
@@ -106,6 +112,9 @@ export const DEEP_SOURCES: Record<string, DeepSource> = {
     id: "GroupId",
     toModel: securityGroupToModel,
   },
+  // The EC2 topology types the folds fold over (#1269), sources and
+  // translations alongside their type in ./deep-topology.ts.
+  ...EC2_TOPOLOGY_SOURCES,
 };
 
 /**
@@ -205,6 +214,7 @@ export const AWS_SERVICE_DEFAULTS: Record<string, Record<string, unknown>> = {
     "SecurityGroupEgress[].CidrIp": "0.0.0.0/0",
     "SecurityGroupEgress[].IpProtocol": "-1",
   },
+  ...EC2_TOPOLOGY_SERVICE_DEFAULTS,
 };
 
 /**
@@ -218,6 +228,7 @@ export const AWS_SERVICE_DEFAULTS: Record<string, Record<string, unknown>> = {
  */
 export const AWS_GENERATED_NAMES: Record<string, ReadonlySet<string>> = {
   "AWS::EC2::SecurityGroup": new Set(["GroupName"]),
+  ...EC2_TOPOLOGY_GENERATED_NAMES,
 };
 
 /** Stable JSON with sorted keys — the fallback ordering key for a set-like array. */
@@ -302,6 +313,18 @@ export const awsDeepNormalizationHooks: DeepNormalizationHooks = {
     // the name-based list for what the schema does not enumerate.
     if (schemaReadOnlyPatterns(node.entityType).has(node.pattern)) return true;
     if (AWS_READ_ONLY_NAMES.has(lastSegment(node.pattern))) return true;
+
+    // A declared property this type's source cannot see (#1269). With nothing
+    // live to stand against it would report `value -> <absent>` on every clean
+    // apply — a blind spot rendered as drift. Counterpart-gated the other way
+    // round: a live tree that does carry the field is still compared.
+    if (
+      node.side === "declared" &&
+      node.counterpart === "absent" &&
+      AWS_DEEP_BLIND_SPOTS[node.entityType]?.has(node.pattern)
+    ) {
+      return true;
+    }
 
     // Provider defaults, on the live side only, and only where source is silent
     // about the property. `"unknown"` (a one-sided normalization) never prunes:
