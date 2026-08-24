@@ -1,0 +1,109 @@
+---
+title: Local Testing — The Test Harness
+description: Write vitest suites that deploy a real stack instance, assert against it, and tear it down — with deployStack from @intentius/chant/testing, against a local emulator or a real account.
+diataxis: how-to
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+`@intentius/chant/testing` turns "deploy my stack, assert against it, destroy it" into a vitest suite. One call deploys a real instance of your project into a per-run environment; the handle it returns carries the built outputs, the discovered entities, the environment name, and a `destroy()` that sweeps exactly what the deploy created. Locally the suite runs against an emulator for $0; in CI the identical suite can target a real account.
+
+```typescript
+import { beforeAll, afterAll, test, expect } from "vitest";
+import { deployStack, type DeployedStack } from "@intentius/chant/testing";
+
+let stack: DeployedStack;
+
+beforeAll(async () => {
+  stack = await deployStack({ dir: "src", suite: "my-service" });
+});
+
+afterAll(async () => {
+  if (stack) await stack.destroy();
+});
+
+test("the queue is declared and deployed", () => {
+  expect(stack.entities.has("taskQueue")).toBe(true);
+});
+```
+
+One deploy per suite, not per test: `beforeAll`/`afterAll`, with assertions in between running against the same live instance.
+
+<Aside type="tip">
+[`examples/testing-harness-aws`](https://github.com/INTENTIUS/chant/tree/main/examples/testing-harness-aws) is the worked example — the suite above in full, run against Floci by `just testing-harness-e2e`, including a proof that teardown survives a failing test.
+</Aside>
+
+## The API
+
+`deployStack(options)` takes:
+
+| Option | Meaning |
+|--------|---------|
+| `dir` | The chant project directory (where the infra source lives). Required. |
+| `suite` | Suite name folded into the derived environment name. Defaults to the directory's basename. |
+| `env` | Explicit environment name, overriding the derivation — for a shared long-lived test environment. Must be legal for the project's declared `environments`, exactly as `--env` would be. |
+| `params` | Build parameters, exactly as `--param name=value` flags would supply them. |
+
+It builds the project the way `chant build` would (build parameters, the ownership marker, build roots), then applies each built output additively through the local Op executor — the same `nativeApply` path `chant run` uses, with `deleteMode: "never"`. A build error, an unresolved parameter, or a failed apply rejects the promise; nothing is returned half-deployed.
+
+The resolved handle is a `DeployedStack`:
+
+- `outputs` — the built outputs, keyed by lexicon. What was deployed, available for template-level assertions.
+- `entities` — the discovered entities, keyed by name.
+- `env` — the environment this deploy targeted. The teardown key.
+- `destroy()` — the marker-scoped sweep of that environment, in-process. The same operation as [`chant lifecycle teardown <env> --yes`](/chant/guide/reconciling-lifecycle/).
+
+`destroy()` throws a `TeardownIncompleteError` when any candidate failed to delete or the plan had holes (something chant may own could not be read). An environment that cannot be called clean is a test failure, never a silent leak. It is safe to call again: teardown is stateless, and a second call over a clean environment plans nothing.
+
+## What the project must declare
+
+Two config requirements, both about identity:
+
+```typescript
+// chant.config.ts
+export default {
+  lexicons: ["aws"],
+  ownership: { stack: "my-service" },
+  environments: ["dev", "prod", { name: "test-*", endpoint: "http://localhost:4566" }],
+} satisfies ChantConfig;
+```
+
+`ownership.stack` is required. The harness stamps every deployed resource with the marker `{ stack, env }`, and `destroy()` selects on that marker and nothing else — a deploy that stamps nothing is a deploy nothing can sweep, so the harness refuses it up front.
+
+The `"test-*"` pattern entry legalizes the environment names the harness derives. A project that declares `environments` rejects unknown names, exactly as `--env` does; the pattern entry makes every `test-<anything>` name legal without listing each one. Without it, `deployStack` fails with the hint to add it.
+
+## Isolation naming
+
+The default environment for one run is `test-<suite>-<nonce>` — the suite name slugged, plus a six-character run nonce. Parallel CI jobs of the same suite get different environments, so they never collide. The environment name is also the deploy boundary's name where the target has one (the CloudFormation stack name on AWS), so physical names that fold in the stack name inherit the isolation:
+
+```typescript
+export const taskQueue = new Queue({
+  QueueName: Sub`${AWS.StackName}-tasks`,
+});
+```
+
+Pass `env` explicitly for a shared long-lived test environment instead — the derivation is a default, not a rule.
+
+## Emulator or real cloud
+
+The harness resolves its target the way `--live` reads do. In order:
+
+1. **Ambient endpoint variables win.** If `AWS_ENDPOINT_URL` (or the other lexicons' endpoint variables) is set, the apply and the teardown go there. This is what [`chant emulator up --json`](/chant/local-testing/overview/) reports and what the aws lexicon's `flociUp` activity exports, so a suite that boots its own emulator needs nothing else.
+2. **The environment's declared `endpoint` applies otherwise.** A `{ name: "test-*", endpoint: "http://localhost:4566" }` entry points every harness run at the local emulator by default, injected only for the duration of the call.
+3. **With neither, the real cloud.** CI pointing the identical suite at a real account just leaves both unset and provides credentials.
+
+Nothing about the suite text changes between the three.
+
+## Crashed-suite recovery
+
+Teardown is stateless: it reads live ownership markers, never a local record. If a suite crashes after deploying — the process was killed, `afterAll` never ran — nothing is lost except the sweep itself. Rerun destroy:
+
+```bash
+chant lifecycle teardown test-my-service-k3x9a2 --yes
+```
+
+The same marker-scoped sweep `destroy()` runs in-process, against whatever the crashed run left behind. `chant lifecycle teardown <env>` without `--yes` shows the plan first.
+
+## Where this sits
+
+The [local-testing overview](/chant/local-testing/overview/) covers the per-cloud apply paths and emulators the harness rides on; the per-cloud pages ([AWS](/chant/local-testing/aws/), [Azure](/chant/local-testing/azure/), [GCP](/chant/local-testing/gcp/)) walk each loop by hand. The harness packages that loop for a test runner: same build, same appliers, same teardown, one call each way.
