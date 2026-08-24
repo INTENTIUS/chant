@@ -434,17 +434,30 @@ export async function getResource(
   return parseResourceDescription(body.ResourceDescription);
 }
 
-/** `ListResources` — every live resource of one type, paginated to exhaustion. */
+/**
+ * `ListResources` — every live resource of one type, paginated to exhaustion.
+ *
+ * `resourceModel` is Cloud Control's `ResourceModel`: the scope a child-typed
+ * listing requires (`{ RoleName }` for `AWS::IAM::RolePolicy`,
+ * `{ TopicArn }` for `AWS::SNS::Subscription`). The API takes it as a JSON
+ * *string*, the same double encoding `GetResource` answers with; this takes
+ * the object and encodes it so no caller repeats that detail.
+ */
 export async function listResources(
   typeName: string,
   options: AwsReadClientOptions = {},
+  resourceModel?: Record<string, unknown>,
 ): Promise<CloudControlDescription[]> {
   const out: CloudControlDescription[] = [];
   let nextToken: string | undefined;
   do {
     const body = await cloudControl(
       "ListResources",
-      { TypeName: typeName, ...(nextToken ? { NextToken: nextToken } : {}) },
+      {
+        TypeName: typeName,
+        ...(resourceModel ? { ResourceModel: JSON.stringify(resourceModel) } : {}),
+        ...(nextToken ? { NextToken: nextToken } : {}),
+      },
       options,
     );
     const descriptions = Array.isArray(body.ResourceDescriptions) ? body.ResourceDescriptions : [];

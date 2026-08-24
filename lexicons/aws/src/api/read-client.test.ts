@@ -198,6 +198,15 @@ describe("Cloud Control", () => {
     expect(await listResources("AWS::S3::Bucket", { http })).toEqual([]);
   });
 
+  test("listResources scopes a child listing with ResourceModel, JSON-encoded as the API takes it", async () => {
+    const { http, calls } = recording(() => respond(JSON.stringify({ ResourceDescriptions: [] })));
+    await listResources("AWS::IAM::RolePolicy", { http }, { RoleName: "app-role" });
+    expect(JSON.parse(calls[0].body)).toEqual({
+      TypeName: "AWS::IAM::RolePolicy",
+      ResourceModel: JSON.stringify({ RoleName: "app-role" }),
+    });
+  });
+
   test("parseResourceDescription refuses anything that is not a model object", () => {
     expect(parseResourceDescription(null)).toBeNull();
     expect(parseResourceDescription({ Identifier: "a" })).toBeNull();
