@@ -1,0 +1,19 @@
+# Pinnability survey corpus (#1231, epic #1228). One chart per line:
+#   name repo chart version
+# Versions are pinned so the survey is reproducible; the harness pulls at run
+# time (network-gated) and never vendors tarballs into the repo. Charts that
+# need values to render carry a file in values/<name>.yaml (#1233) — a chart
+# that cannot render is a harness failure, not an omission.
+cert-manager https://charts.jetstack.io cert-manager v1.16.2
+ingress-nginx https://kubernetes.github.io/ingress-nginx ingress-nginx 4.11.3
+external-secrets https://charts.external-secrets.io external-secrets 0.10.4
+argo-cd https://argoproj.github.io/argo-helm argo-cd 7.7.5
+kube-prometheus-stack https://prometheus-community.github.io/helm-charts kube-prometheus-stack 65.5.1
+prometheus https://prometheus-community.github.io/helm-charts prometheus 25.30.0
+grafana https://grafana.github.io/helm-charts grafana 8.5.12
+loki https://grafana.github.io/helm-charts loki 6.21.0
+vault https://helm.releases.hashicorp.com vault 0.28.1
+traefik https://traefik.github.io/charts traefik 32.1.1
+metrics-server https://kubernetes-sigs.github.io/metrics-server metrics-server 3.12.2
+harbor https://helm.goharbor.io harbor 1.15.1
+kyverno https://kyverno.github.io/kyverno kyverno 3.3.4

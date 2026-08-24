@@ -1,0 +1,8 @@
+apiVersion: v2
+name: lookup-fixture
+description: >-
+  Survey fixture: `lookup` in control flow (an `if` action). Not closable
+  offline — which documents exist depends on cluster state, so the verdict is
+  unpinnable regardless of values.
+type: application
+version: 0.1.0
