@@ -18,6 +18,8 @@ import {
 import { computeBuildDigest, diffDigests } from "../../lifecycle/digest";
 import { diffLive, diffLiveArtifacts, diffSnapshots, type LiveDiffResult, type LiveArtifactDiffResult, type SnapshotDiffResult } from "../../lifecycle/live-diff";
 import { buildChangeSet, renderChangeSet, gitlabMrReport, summarize, type ChangeSet } from "../../lifecycle/change-set";
+import { mergeReceiptEntries, observedValueResolver, planReceipts, readReceiptValue, type ReceiptReading } from "../../lifecycle/receipt-plan";
+import { collectEffectReceipts, isEffectReceipt } from "../../effect-receipt";
 import {
   formatUnobserved,
   mergeObservations,
@@ -1126,6 +1128,15 @@ export async function runLifecyclePlan(ctx: CommandContext): Promise<number> {
   const merged: ChangeSet = { env: environment, entries: [] };
   let checked = 0;
 
+  // Effect receipts (#1832): declared, diffed, and observed like any resource,
+  // but observe-only to the generic apply path — the plan compares live value
+  // to resolved expectation and proposes the fire, never a create/update.
+  const receipts = collectEffectReceipts(buildResult.entities);
+  const receiptReadings = new Map<string, ReceiptReading>();
+  // Every lexicon's observed resources merged, for resolving a receipt's
+  // reference inputs against observed values / stack outputs at plan time.
+  const allObservedResources: Record<string, ResourceMetadata> = {};
+
   // #1166 — same self-sufficiency as `chant graph --live`: an environment can
   // declare its own endpoint, applied here unless the ambient shell already
   // set it. `chant lifecycle plan` is always a live read (no `--live` flag of
@@ -1156,11 +1167,14 @@ export async function runLifecyclePlan(ctx: CommandContext): Promise<number> {
       const declared = new Set<string>();
       const entities = new Map<string, { entityType: string; props: Record<string, unknown> }>();
       for (const [name, entity] of buildResult.entities) {
-        if (entity.lexicon === lexiconName && isResourceDeclarable(entity)) {
+        // A receipt has no `props` payload of its own but is declared, diffed,
+        // and observed like any resource (#1832) — it joins the declared axis
+        // so its lexicon's observation can confirm presence or absence.
+        if (entity.lexicon === lexiconName && (isResourceDeclarable(entity) || isEffectReceipt(entity))) {
           declared.add(name);
           entities.set(name, {
             entityType: entity.entityType,
-            props: (entity.props != null ? entity.props : {}) as Record<string, unknown>,
+            props: (isResourceDeclarable(entity) && entity.props != null ? entity.props : {}) as Record<string, unknown>,
           });
         }
       }
@@ -1184,6 +1198,37 @@ export async function runLifecyclePlan(ctx: CommandContext): Promise<number> {
         // that are running (#1629) — the same override the live diff takes.
         ...(args.namespace ? { namespace: args.namespace } : {}),
       });
+
+      Object.assign(allObservedResources, observed.resources);
+      for (const [receiptName, receipt] of receipts) {
+        if (receipt.lexicon !== lexiconName) continue;
+        const live = observed.resources[receiptName];
+        const hole = observed.unobserved[receiptName];
+        if (live) {
+          receiptReadings.set(receiptName, {
+            observed: true,
+            present: true,
+            value: readReceiptValue(live.attributes),
+            type: live.type,
+            ...(live.physicalId ? { physicalId: live.physicalId } : {}),
+            lexicon: lexiconName,
+          });
+        } else if (hole) {
+          receiptReadings.set(receiptName, {
+            observed: false,
+            present: false,
+            lexicon: lexiconName,
+            ...(hole.type ? { type: hole.type } : {}),
+            unobservedReason: hole.reason,
+            ...(hole.detail ? { unobservedDetail: hole.detail } : {}),
+          });
+        } else {
+          // Neither returned nor named unobserved: the lexicon looked and
+          // confirmed the receipt absent — the same claim the change set
+          // reads off a bare observation (#1089).
+          receiptReadings.set(receiptName, { observed: true, present: false, lexicon: lexiconName });
+        }
+      }
 
       const content = await readSnapshot(environment, lexiconName);
       const observedThen = content ? (JSON.parse(content) as LifecycleSnapshot).resources : undefined;
@@ -1212,6 +1257,16 @@ export async function runLifecyclePlan(ctx: CommandContext): Promise<number> {
       message: "No lexicons implement describeResources — nothing to plan",
     }));
     return 1;
+  }
+
+  // Receipt classification (#1832): live value vs resolved expectation.
+  // Absent/stale proposes the fire; unobservable is a loud hole; whatever the
+  // generic classification proposed for a receipt (a create, a delete) is
+  // replaced — the effect step is the sole writer, and a receipt is never a
+  // prune candidate.
+  if (receipts.size > 0) {
+    const receiptEntries = planReceipts(receipts, receiptReadings, observedValueResolver(allObservedResources));
+    mergeReceiptEntries(merged, receipts, receiptEntries);
   }
 
   merged.entries.sort((a, b) => a.name.localeCompare(b.name));

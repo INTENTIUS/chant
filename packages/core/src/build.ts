@@ -7,6 +7,7 @@ import type { BuildParamProvenance } from "./provenance";
 import { DiscoveryError, BuildError as BuildErrorClass } from "./errors";
 import { LexiconOutput, isLexiconOutput } from "./lexicon-output";
 import { isSecretDeclaration } from "./secret-provenance";
+import { splitReceiptEntities } from "./effect-receipt";
 import { AttrRef } from "./attrref";
 import { isAttrRefLike } from "./utils";
 import { isChildProject, type ChildProjectInstance } from "./child-project";
@@ -793,20 +794,34 @@ async function buildFromDiscoveryResult(
   const outputs = new Map<string, string | SerializerResult>();
   for (const [lexiconName, lexiconEntities] of partitions) {
     const serializer = serializersByName.get(lexiconName);
+    // #1832: effect receipts are withheld from the apply-bound entity set at
+    // this seam — the narrowest choke point every applier's input flows
+    // through, since appliers consume the serialized outputs assembled here.
+    // Receipts ride `SerializeContext.receipts` instead, so a lexicon can
+    // render them for visibility (#1835) without them ever entering the
+    // document an applier writes (or prunes) from. The `effect()` step is the
+    // sole receipt writer (epic #1703, decision 3).
+    const { applyBound, receipts } = splitReceiptEntities(lexiconEntities);
     if (serializer) {
       const lexiconLexiconOutputs = [
         ...(outputsByLexicon.get(lexiconName) ?? []),
         ...unassignedOutputs,
       ];
-      const serialized = serializer.serialize(lexiconEntities, lexiconLexiconOutputs, {
+      const serialized = serializer.serialize(applyBound, lexiconLexiconOutputs, {
         ownership: options?.ownership,
         config: options?.config,
+        ...(receipts.size > 0 ? { receipts } : {}),
       });
       // Collect any non-fatal serializer diagnostics into the build warnings.
       if (typeof serialized !== "string" && serialized.warnings) {
         for (const w of serialized.warnings) warnings.push(w);
       }
       outputs.set(lexiconName, serialized);
+    } else if (applyBound.size === 0 && receipts.size > 0) {
+      // A partition holding only receipts (the core factory's "chant"
+      // pseudo-lexicon) has nothing apply-bound to serialize; that is the
+      // designed shape until a lexicon materializes the receipt (#1835), not
+      // a missing-serializer problem.
     } else {
       warnings.push(`No serializer found for lexicon "${lexiconName}"`);
     }
