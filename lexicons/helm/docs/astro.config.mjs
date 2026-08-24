@@ -85,6 +85,10 @@ export default defineConfig({
                         {
                               "label": "Helm Concepts",
                               "slug": "helm-concepts"
+                        },
+                        {
+                              "label": "Live Observation",
+                              "slug": "observation"
                         }
                   ]
             }
