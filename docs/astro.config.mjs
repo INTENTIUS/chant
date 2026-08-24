@@ -51,6 +51,7 @@ export default defineConfig({
 						{ label: 'Azure AKS + Kubernetes', slug: 'tutorials/aks-kubernetes' },
 						{ label: 'AKS Composites', link: '/lexicons/k8s/aks-composites/' },
 						{ label: 'GitLab CI + AWS ALB', slug: 'tutorials/gitlab-aws-alb' },
+						{ label: 'Per-PR Preview Environments', slug: 'tutorials/github-pr-preview' },
 						{ label: 'CockroachDB Multi-Region', slug: 'tutorials/cockroachdb-multi-region' },
 						{ label: 'GitLab Cells on GKE', slug: 'tutorials/gitlab-cells' },
 						{ label: 'Durable Infrastructure Workflows', slug: 'tutorials/temporal-crdb-deploy' },

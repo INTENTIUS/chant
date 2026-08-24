@@ -1,0 +1,273 @@
+---
+title: Per-PR Preview Environments
+description: Open a PR, get an isolated live copy of the stack. Push, the copy updates and one sticky comment tells you where it is. Close the PR, a marker-scoped teardown removes it. The workflow itself is declared in chant and emitted by chant build.
+diataxis: tutorial
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+The [`github-pr-preview`](https://github.com/INTENTIUS/chant/tree/main/examples/github-pr-preview)
+example closes the loop on short-lived environments: **PR opened** → an
+isolated copy of the stack deploys and a sticky comment on the PR says where
+it is; **PR updated** → the same copy converges and the same comment updates
+in place; **PR closed** → the copy is swept away by its ownership marker.
+
+Nothing in the loop is a marketplace action or a shell script grown in the
+workflow file. The workload is chant, the CI workflow is chant output, the
+deploy is an Op, and the teardown is `chant lifecycle teardown` — the
+stateless, marker-scoped sweep from [Reconciling
+Lifecycle](/chant/guide/reconciling-lifecycle/).
+
+| Piece | Declared in | Becomes |
+|-------|-------------|---------|
+| Workload (Namespace + WebApp) | `src/app/` | `dist/manifests.yaml`, applied per env |
+| PR workflow | `src/ci/` | `.github/workflows/preview.yml` |
+| Deploy verb | `ops/preview-apply.op.ts` | build → plan → apply on the local executor |
+
+The github lexicon is the dialect shown here; the same shape works on the
+[forgejo lexicon](/lexicons/forgejo/getting-started/) unchanged (it emits the
+same workflow to `.forgejo/workflows/`), and GitLab users get the equivalent
+loop pre-packaged as the gitlab lexicon's `ReviewApp` composite.
+
+## Three declarations carry the whole loop
+
+Everything PR-specific reduces to one value: the environment name `pr-<n>`.
+`chant.config.ts` wires it in three places:
+
+```typescript
+export default {
+  lexicons: ["k8s", "github", "temporal"],
+  sourceDir: "src",
+  environments: ["local", "pr-*"],
+  ownership: { stack: "pr-preview", env: { param: "env" } },
+  buildParams: {
+    env: { type: "string", default: "local", env: "CHANT_ENV" },
+  },
+} satisfies ChantConfig;
+```
+
+**`environments: ["local", "pr-*"]`.** PR numbers are unbounded, so no static
+list can name every environment. A glob entry (chant #1221) declares the whole
+family: `pr-42` is as legal as `local` for `build`, `lifecycle`, and
+`teardown`, and a typo like `pr42` is still rejected. Nothing is edited per
+PR.
+
+**`buildParams.env` with the `CHANT_ENV` fallback.** The env name enters the
+build as a [build-time parameter](/chant/concepts/build-time-parameters/). The
+workflow exports `CHANT_ENV=pr-<n>` once at workflow level; every chant
+invocation in both jobs — the Op's inner `npm run build`, the teardown —
+resolves the same validated value. No flag threading.
+
+**`ownership.env: { param: "env" }`.** The ownership marker follows the
+parameter (chant #1396). A build with `env=pr-42` stamps every resource
+`chant.intentius.io/stack: pr-preview` + `chant.intentius.io/env: pr-42`.
+That marker is the entire teardown contract — no state file, no snapshot, the
+cluster's own labels are the record.
+
+The workload interpolates the same parameter into every physical name
+(`preview-pr-42`, `web-pr-42`), which is what lets two open PRs coexist —
+see [Resource Naming](/chant/guide/resource-naming/#multi-environment-coexistence)
+and lint rule COR021, which flags a name that forgot:
+
+```typescript
+// src/app/config.ts
+import { params } from "@intentius/chant/params";
+
+const env = params.env as string;
+
+export const config = {
+  env,
+  namespace: `preview-${env}`,
+  appName: `web-${env}`,
+  appImage: "nginxinc/nginx-unprivileged:1.27-alpine",
+  appPort: 8080,
+};
+```
+
+## The workflow is chant output
+
+`src/ci/` declares the workflow with the github lexicon's typed entities, and
+`npm run build:ci` emits `.github/workflows/preview.yml` — the workflow that
+builds the project is itself built from the project. One workflow, two jobs,
+gated on the PR action:
+
+```typescript
+export const preview = new Workflow({
+  name: "pr-preview",
+  on: { pull_request: { types: ["opened", "synchronize", "reopened", "closed"] } },
+  permissions: new Permissions({ contents: "read" }),
+  concurrency: new Concurrency({
+    group: "pr-preview-${{ github.event.number }}",
+    "cancel-in-progress": false,
+  }),
+  env: { CHANT_ENV: "pr-${{ github.event.number }}" },
+});
+```
+
+The concurrency group serializes runs per PR, and `cancel-in-progress:
+false` matters more than it looks: a close event racing a still-running
+deploy must queue behind it, not kill it halfway and leave orphans for the
+teardown to miss.
+
+The `deploy` job (`if: github.event.action != 'closed'`) checks out, installs,
+loads a kubeconfig from the `preview` [deployment
+environment](https://docs.github.com/en/actions/deployment/targeting-different-environments)'s
+`PREVIEW_KUBECONFIG` secret, and runs one verb:
+
+```yaml
+- name: Deploy preview environment
+  run: npx chant run preview-apply
+```
+
+`preview-apply` is an `ApplyOp` on the [local executor](/chant/guide/local-vs-temporal/)
+— build, live-diff plan, then a Kubernetes server-side apply as field manager
+`chant:pr-preview`, deletes scoped to owned resources only. The op reads the
+same `params.env`, so nothing about it is PR-specific:
+
+```typescript
+const apply = ApplyOp({
+  name: "preview-apply",
+  env: params.env as string,
+  target: "kubectl",
+  path: ".",
+  output: "dist/manifests.yaml",
+  delete: "owned-only",
+});
+```
+
+The `teardown` job (`if: github.event.action == 'closed'`) runs for every
+close, merged or abandoned:
+
+```yaml
+- name: Tear down preview environment
+  run: npx chant lifecycle teardown "$CHANT_ENV" --yes
+```
+
+Teardown enumerates live resources carrying stack `pr-preview` + env `pr-<n>`
+and deletes exactly those, reporting every outcome (deleted / failed /
+not-prunable / skipped — never silence). It works even when the PR rewrote
+the workflow or the workload sources, because it never consults the build:
+the marker lives on the resources. The prod guard does not fire for `pr-*`
+names, so `--yes` is enough to run non-interactively; a name like `prod`
+would additionally demand `--confirm-prod`.
+
+## The sticky comment
+
+A preview no one can find may as well not exist. The deploy job ends by
+posting the environment's coordinates to the PR — one comment, updated in
+place across pushes, keyed on a hidden HTML marker in the body:
+
+```yaml
+- name: Sticky PR comment
+  env:
+    GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    PR_NUMBER: ${{ github.event.number }}
+    REPO: ${{ github.repository }}
+    MARKER: <!-- chant-pr-preview -->
+  run: |
+    body="$MARKER
+    ..."
+    comment_id=$(gh api "repos/$REPO/issues/$PR_NUMBER/comments" --paginate \
+      --jq "map(select(.body | startswith(\"$MARKER\"))) | .[0].id // empty")
+    if [ -n "$comment_id" ]; then
+      gh api -X PATCH "repos/$REPO/issues/comments/$comment_id" -f body="$body" > /dev/null
+    else
+      gh api -X POST "repos/$REPO/issues/$PR_NUMBER/comments" -f body="$body" > /dev/null
+    fi
+```
+
+The marker is invisible in rendered Markdown but survives in the raw body, so
+the find-and-update is stable across any number of pushes. This is a scripted
+`gh api` step on purpose: `gh` ships on GitHub's hosted runners, so there is
+no marketplace action to vet, pin to a SHA, and re-audit on every bump — the
+github lexicon's own pinned-action lints (GHA019 and friends) stay quiet
+because there is nothing unpinned to flag.
+
+The job needs `pull-requests: write`, granted at job level, not
+workflow-wide. Note the fork boundary: on `pull_request` from a fork, GitHub
+hands the job a read-only token and no secrets, so the comment step (and the
+deploy itself, which needs the kubeconfig secret) runs only for same-repo
+PRs. Previews for forked PRs mean `pull_request_target` and a very different
+threat model — do not go there casually.
+
+## Run the loop by hand
+
+The workflow's two jobs are one command each, so you can play CI locally
+against any cluster your kubeconfig points at (k3d is the cheapest:
+`k3d cluster create preview`):
+
+```bash
+cd examples/github-pr-preview
+npm install
+
+# the deploy job, for an imaginary PR 42
+CHANT_ENV=pr-42 npx chant run preview-apply
+kubectl get all -n preview-pr-42
+
+# a second PR coexists with the first
+CHANT_ENV=pr-43 npx chant run preview-apply
+
+# the teardown job for PR 42 — PR 43 is untouched
+npx chant lifecycle teardown pr-42 --yes
+kubectl get ns preview-pr-42 preview-pr-43
+```
+
+The same two invocations are proven end to end — deploy on a PR-opened
+event, sweep on a PR-closed event, against a real runner and a live emulator
+— by the Forgejo runtime E2E (`just forgejo-preview-e2e`), which drives the
+chant-emitted workflow through `act` with stubbed PR events.
+
+## What a preview costs, and what not to clone
+
+Per-PR copies are real resources. The pattern is cheap exactly when the stack
+is cheap, and this example is built to stay cheap: one namespace, one
+single-replica Deployment (previews need availability for one reviewer, not
+HA), one ClusterIP Service, requests of 50m CPU / 64Mi memory. Ten open PRs
+cost ten small pods on a cluster you already run, plus about a minute of CI
+per push.
+
+Costs that scale with open PRs, not with merges:
+
+- **Compute and storage per copy.** Every open PR holds its copy alive.
+  Long-lived PRs are the expensive ones — the teardown fires on close, not on
+  staleness. If your team parks PRs for weeks, add a scheduled workflow that
+  tears down environments whose PR has gone quiet.
+- **CI minutes per push.** Deploy runs on every synchronize. The concurrency
+  group keeps it to one run at a time per PR, but a busy PR still redeploys
+  on each push.
+- **Shared-cluster headroom.** Previews share the cluster's capacity. A
+  `ResourceQuota` per preview namespace (the k8s lexicon's `NamespaceEnv`
+  composite bundles one) turns a runaway PR into a scheduling failure instead
+  of a cluster incident.
+
+Some resource kinds do not belong in a per-PR copy at all:
+
+- **Stateful stores with real data.** A database per PR is fine when it is
+  small, empty, and seeded by the deploy. Cloning production data into PR
+  copies multiplies your compliance surface by the number of open PRs; point
+  previews at fixtures instead.
+- **Slow or quota-bound infrastructure.** Anything that takes tens of minutes
+  to provision (managed clusters, cloud databases, VPCs) or draws from a hard
+  account quota (elastic IPs, load balancers, certificates) makes open ×
+  provision-time your PR feedback loop. Keep those in a long-lived
+  environment and clone only the app layer — namespaces, workloads, config.
+- **Globally named resources.** Anything whose name is a global singleton
+  (DNS records at a fixed hostname, storage buckets in a global namespace)
+  needs the env interpolated into the name or it cannot be cloned; that is
+  what COR021 enforces for the kinds chant builds.
+- **Third-party side effects.** Webhooks, external DNS, paid SaaS
+  integrations — a preview that registers itself with external systems needs
+  a teardown story for each of them. The marker-scoped sweep covers what
+  chant deployed, nothing else.
+
+The k8s target keeps the marginal cost of this example near zero. The same
+loop works with `target: "cloudformation"` or any other `ApplyOp` target —
+reread this section first, because the marginal cost of a stack of cloud
+resources is not near zero.
+
+<Aside type="note">
+`chant lifecycle teardown` executes its sweep through each lexicon's teardown
+capability — implemented today for the k8s and fly lexicons. For other
+lexicons the command still plans (and reports what it would need), but
+candidates are reported as skipped, not deleted.
+</Aside>
