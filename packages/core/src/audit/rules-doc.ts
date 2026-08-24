@@ -23,12 +23,21 @@ const GROUPS: Array<{ heading: string; prefixes: string[]; blurb: string }> = [
   { heading: "fountain (FTN)", prefixes: ["FTN"], blurb: "Run against fountain manifests (`apiVersion: fountain.dev/v1`) — standalone `fountain apply` YAML is parsed back into the entity graph, so the same rules fire on `chant build` and `chant audit`." },
 ];
 
+/**
+ * MDX treats `{expr}` as a JavaScript expression and `<x` as JSX, so rule
+ * text containing literal braces (`${VAR}` substitution references) or angle
+ * brackets must be escaped or the docs build fails at render time.
+ */
+function mdxEscape(text: string): string {
+  return text.replace(/\{/g, "\\{").replace(/</g, "\\<");
+}
+
 function ruleBlock(m: RuleMeta): string {
   const tags = `${m.tier} · ${m.fixKind}`;
   const authority = m.authority?.length
     ? `\n\nAuthority: ${m.authority.map((a) => `[${a.name}](${a.url})`).join(" · ")}`
     : "";
-  return `### ${m.id}\n\n**${m.title}** — ${tags}\n\n${m.remediation}${authority}`;
+  return `### ${m.id}\n\n**${mdxEscape(m.title)}** — ${tags}\n\n${mdxEscape(m.remediation)}${authority}`;
 }
 
 /**

@@ -6,7 +6,7 @@ description: "Every lint rule and post-synth check provided by the Azure Resourc
 {/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-azure` — DO NOT EDIT.
     Edit lexicons/azure/src/codegen/docs.ts instead; changes here are overwritten. */}
 
-The Azure Resource Manager lexicon provides **23** rules: 3 lint rules and 20 post-synth checks.
+The Azure Resource Manager lexicon provides **27** rules: 3 lint rules and 24 post-synth checks.
 
 ## Lint Rules
 
@@ -42,3 +42,7 @@ Post-synth checks validate the serialized output after the build pipeline comple
 | `AZR027` | Container Registry admin user enabled — disable admin and use Azure AD or service principals |
 | `AZR028` | Network interface missing NSG — associate an NSG to control network traffic |
 | `AZR029` | Managed disk missing encryption — enable encryption to protect data at rest |
+| `AZR030` | Resource deployed at an unsupported template scope — split scopes into separate templates |
+| `AZR031` | Policy assignment has enforcementMode DoNotEnforce — the guardrail is disabled |
+| `AZR032` | Custom policy definition assigned nowhere — a defined but unassigned guardrail enforces nothing |
+| `AZR033` | Tenant subscription policy does not block subscriptions from leaving |
