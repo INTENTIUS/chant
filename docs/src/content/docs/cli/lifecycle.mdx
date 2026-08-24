@@ -388,6 +388,27 @@ An environment whose name looks production-like (`prod`, `production`, `prod-eu`
 
 Both halves are exported from `@intentius/chant` for programmatic use (a test-environment harness tearing down in `afterAll`, for example): `planTeardown()` enumerates, `executeTeardown()` deletes and returns the same per-candidate report the CLI prints.
 
+#### As an Op step
+
+The same engine runs as a durable step with the `envTeardown` builder — an [Op](/chant/guide/ops/) that tears an environment down on Temporal (or the local executor) instead of from a terminal:
+
+```typescript
+import { Op, phase, gate, envTeardown } from "@intentius/chant-lexicon-temporal";
+
+export default Op({
+  name: "retire-staging",
+  overview: "Tear down the staging environment behind an approval",
+  phases: [
+    phase("Teardown", [
+      gate("approve-teardown", { description: "Release the staging teardown" }),
+      envTeardown("staging"),
+    ]),
+  ],
+});
+```
+
+Steps run in authored order, so a `gate(...)` placed before `envTeardown` holds the deletion until the signal arrives — the durable equivalent of pausing at the plan. The guards are the CLI's guards: an undeclared environment and a missing `ownership.stack` fail the step before any live read, and a production-like name needs `envTeardown("prod", { confirmProd: true })` — the authored counterpart of `--confirm-prod`, since an Op never prompts. The step fails when any candidate is still `failed` after the retry pass, naming the survivors; a fully clean run returns the same per-candidate report the CLI prints. See the [Ops reference](/chant/guide/ops-reference/#step-builders) for the builder row.
+
 ### `lifecycle log [env]`
 
 List the history of snapshots. Omit `env` to show all environments.

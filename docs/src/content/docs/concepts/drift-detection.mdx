@@ -104,6 +104,8 @@ An orphan is a resource in the cloud that source doesn't know about. Detection i
 - **Adopt it into source.** Regenerate the resource as chant TypeScript with [live import](/chant/guide/live-import/): `chant import --from <env> --name <orphan>`. The orphan stops being a surprise and starts being declared — the [`ReconcileOp`](/chant/guide/reconciling-lifecycle/) workflow automates this as a PR.
 - **Delete it.** Only ever for a *chant-owned* orphan — one carrying the [ownership marker](/chant/configuration/config-file/#ownership). A foreign orphan (no marker) is never auto-deleted; it escalates to adopt-or-review. `chant lifecycle plan` classifies which is which, and `ApplyOp` deletes only the owned ones.
 
+When a whole environment is done rather than one resource, [`chant lifecycle teardown <env>`](/chant/cli/lifecycle/#lifecycle-teardown-env) deletes everything carrying that environment's marker in one marker-scoped pass — also available as the [`envTeardown` Op step](/chant/guide/ops-reference/#step-builders) for a durable run behind a human gate.
+
 ### Artifacts (two-way diff)
 
 There's no "declared" axis, so the engine just compares now-vs-then:
