@@ -1,0 +1,5 @@
+apiVersion: v2
+name: opt
+description: Conditional dependency — disabled by default via `opt.enabled` in the parent values.
+type: application
+version: 0.1.0

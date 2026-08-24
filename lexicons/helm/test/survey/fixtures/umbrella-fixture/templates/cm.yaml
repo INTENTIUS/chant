@@ -1,0 +1,9 @@
+# The keys below are used to lookup values from the parent tree. This comment
+# is prose, not a template action — a text-matching classifier reads it as a
+# `lookup` hit and refuses a perfectly pinnable chart (epic finding 9).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-parent
+data:
+  who: parent
