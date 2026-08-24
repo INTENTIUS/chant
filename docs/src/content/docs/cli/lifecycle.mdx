@@ -379,8 +379,9 @@ Implemented today:
 
 - **k8s** — deletes by the marker label selector through the typed API client (the same delete the ownership-scoped prune uses), re-reading and re-verifying each object's marker immediately before deleting. Namespaces are deleted last, so their members get individual outcomes before the namespace cascade.
 - **fly** — destroys marker-carrying machines (lease → destroy → wait) first, then deletes whole apps last. An app is deleted whole only when every live machine in it carries the requested identity — the app-boundary rule from the fly ownership convention; volumes, IPs, and certificates go with their app. An app also hosting a foreign or other-env machine is never deleted whole.
+- **aws** — STACK granularity: CloudFormation's thin read returns no tags, so per-resource selection is impossible, and the stack is the deploy boundary anyway. The plan resolves the environment's stacks (the project's `stacks[]`, else the stack named after the environment), reads each stack's **own** tags via `DescribeStacks`, and admits only stacks whose tags carry the requested marker identity — one candidate of type `AWS::CloudFormation::Stack` per verified stack. Execution re-verifies the tags, then `DeleteStack` polled to `DELETE_COMPLETE`. The apply paths stamp the marker as stack tags on create/update (from the template's `Metadata["chant:ownership"]` block the build writes), so every stack deployed from a marked build is teardown-eligible; a stack deployed before stack tagging carries no tags to verify and is reported as a hole (`unverified-ownership`) — re-deploy it once to stamp it. It is never deleted.
 
-gcp, azure, and aws enumerate (via the fallback read) but do not execute yet — their candidates are reported as `skipped`.
+gcp and azure enumerate (via the fallback read) but do not execute yet — their candidates are reported as `skipped`.
 
 #### The prod guard
 

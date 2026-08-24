@@ -72,6 +72,13 @@ export interface PlanTeardownOptions {
   deployedStack?: string;
   /** Region that stack is deployed in. */
   region?: string;
+  /**
+   * Every deployed stack a multi-stack project declares (`stacks` in
+   * chant.config), for a lexicon whose teardown is stack-shaped (aws
+   * enumerates and deletes whole stacks). Forwarded to `teardownOwned` /
+   * `executeTeardown` as `stacks`.
+   */
+  deployedStacks?: Array<{ name: string; region?: string }>;
 }
 
 /** True when `marker` is exactly the identity this plan selects on. */
@@ -99,6 +106,7 @@ export async function planTeardown(opts: PlanTeardownOptions): Promise<TeardownP
           marker,
           ...(opts.deployedStack ? { stack: opts.deployedStack } : {}),
           ...(opts.region ? { region: opts.region } : {}),
+          ...(opts.deployedStacks && opts.deployedStacks.length > 0 ? { stacks: opts.deployedStacks } : {}),
         });
       } catch (err) {
         // A failed enumeration is a hole over the whole lexicon, not a clean
@@ -235,6 +243,7 @@ async function executePass(
       candidates,
       ...(opts.deployedStack ? { stack: opts.deployedStack } : {}),
       ...(opts.region ? { region: opts.region } : {}),
+      ...(opts.deployedStacks && opts.deployedStacks.length > 0 ? { stacks: opts.deployedStacks } : {}),
     });
     reported = execution.outcomes;
   } catch (err) {

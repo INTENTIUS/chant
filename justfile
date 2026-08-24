@@ -205,6 +205,12 @@ azure-drift-e2e:
 azure-cc-e2e:
     bash test/azure-cc-e2e.sh
 
+# AWS stack-level env teardown (#1222): deploy two envs + a foreign stack, tear one env
+# down, assert only that env's marker-verified stack is deleted
+# (Floci in Docker; on-demand, needs Docker only)
+aws-teardown-e2e:
+    bash test/aws-teardown-e2e.sh
+
 # Prove the adopt-alb-services GENERATED pipeline deploys multi-service across isolated jobs, with cross-stack outputs threaded as artifacts (Floci in Docker; on-demand, needs Docker + aws CLI)
 adopt-alb-services-e2e:
     bash test/adopt-alb-services-e2e.sh
