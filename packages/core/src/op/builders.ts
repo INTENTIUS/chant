@@ -138,6 +138,37 @@ export const teardown = (path: string): ActivityStep =>
   activity("chantTeardown", { path }, "longInfra");
 
 /**
+ * Tear down one environment's marker-owned resources — the durable form of
+ * `chant lifecycle teardown <env> --yes` (#1222). The activity runs core's
+ * teardown engine in-process: enumerate by ownership marker (this project's
+ * `ownership.stack` + `env`), delete through each lexicon's `executeTeardown`
+ * capability, retry failures once, and fail the step when any candidate is
+ * still failed. Distinct from {@link teardown}, which runs a project's own
+ * `npm run teardown` script.
+ *
+ * The CLI's guards apply unchanged, and a production-like environment name
+ * needs `confirmProd: true` in `opts` — the authored counterpart of
+ * `--confirm-prod`, since an Op never prompts. An ordinary {@link gate} step
+ * placed before this one composes as usual (steps run in authored order), so
+ * a human approval can precede the deletion:
+ *
+ * ```ts
+ * phase("Teardown", [
+ *   gate("approve-teardown", { description: "Release the staging teardown" }),
+ *   envTeardown("staging"),
+ * ]),
+ * ```
+ *
+ * `opts` also accepts `path` (the chant project directory, default the
+ * worker's cwd). Defaults to the `longInfra` profile (override via
+ * `opts.profile`).
+ */
+export const envTeardown = (env: string, opts?: Record<string, unknown>): ActivityStep => {
+  const { args, profile } = takeProfile(opts);
+  return activity("envTeardown", { env, ...args }, profile ?? "longInfra");
+};
+
+/**
  * Create a local k3d cluster (vanilla Kubernetes in Docker). Idempotent: skips
  * creation if a cluster of the same name already exists. Defaults to the
  * `longInfra` profile (creating a cluster may pull the k3s image); override via

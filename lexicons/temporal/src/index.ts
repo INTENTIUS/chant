@@ -67,6 +67,7 @@ export {
   lifecycleSnapshot,
   shell,
   teardown,
+  envTeardown,
   k3dUp,
   k3dDown,
   flociUp,

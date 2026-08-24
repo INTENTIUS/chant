@@ -21,7 +21,8 @@ Pre-built step builders:
 | `waitForStack(stackFile, opts?)` | Poll until a chant stack output file is ready |
 | `gitlabPipeline(projectId, ref, opts?)` | Trigger a GitLab pipeline and wait |
 | `lifecycleSnapshot(env, opts?)` | `chant lifecycle snapshot` |
-| `teardown(path, opts?)` | Build + destroy |
+| `teardown(path, opts?)` | Build + destroy via the project's own `npm run teardown` script |
+| `envTeardown(env, opts?)` | [`chant lifecycle teardown <env> --yes`](/chant/cli/lifecycle/#lifecycle-teardown-env) in-process: delete the environment's marker-owned resources. A prod-like name needs `confirmProd: true` in `opts`; precede with a `gate(...)` step for a human approval |
 
 ## Retry profiles
 

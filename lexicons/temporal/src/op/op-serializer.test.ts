@@ -6,6 +6,7 @@
 import { describe, expect, it } from "vitest";
 import { serializeOps } from "./serializer";
 import { DECLARABLE_MARKER, type Declarable } from "@intentius/chant/declarable";
+import { phase, gate, envTeardown } from "@intentius/chant/op";
 import type { OpConfig } from "@intentius/chant/op";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -142,6 +143,31 @@ describe("serializeOps()", () => {
       expect(warm).toBeGreaterThan(-1);
       expect(gate).toBeGreaterThan(warm);
       expect(measure).toBeGreaterThan(gate);
+    });
+
+    it("emits envTeardown with its env + confirmProd args, after a preceding gate (#1222, #1698)", () => {
+      // Authored with the real builders: a human gate composed before the
+      // teardown step must survive codegen in authored order, and the step's
+      // args must carry the env and the explicit prod confirmation.
+      const ops = new Map([
+        makeOp({
+          name: "env-down", overview: "o",
+          phases: [
+            phase("Teardown", [
+              gate("approve-teardown", { description: "Release the staging teardown" }),
+              envTeardown("staging", { confirmProd: true }),
+            ]),
+          ],
+        }),
+      ]);
+      const wf = serializeOps(ops)["ops/env-down/workflow.ts"];
+      expect(wf).toContain('await envTeardown({"env":"staging","confirmProd":true});');
+      // The builder defaults to the longInfra profile.
+      expect(wf).toMatch(/const \{ envTeardown \} = proxyActivities<typeof activities>\(\s*TEMPORAL_ACTIVITY_PROFILES\.longInfra,/);
+      const gateIdx = wf.indexOf("await condition(() => resumeApproveTeardownCleared");
+      const stepIdx = wf.indexOf("await envTeardown(");
+      expect(gateIdx).toBeGreaterThan(-1);
+      expect(stepIdx).toBeGreaterThan(gateIdx);
     });
 
     it("splits a parallel phase into one Promise.all per run of activities around a gate (#1698)", () => {
