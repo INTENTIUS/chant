@@ -49,6 +49,11 @@
       "types": "./dist/components/index.d.ts",
       "default": "./src/components/index.ts"
     },
+    "./pinnability": {
+      "development": "./src/pinnability/index.ts",
+      "types": "./dist/pinnability/index.d.ts",
+      "default": "./src/pinnability/index.ts"
+    },
     "./lint/post-synth": {
       "development": "./src/lint/post-synth/index.ts",
       "types": "./dist/lint/post-synth/index.d.ts",

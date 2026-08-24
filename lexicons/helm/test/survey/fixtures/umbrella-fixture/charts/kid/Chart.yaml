@@ -1,0 +1,5 @@
+apiVersion: v2
+name: kid
+description: Subchart carrying its own crds/ — arrives as charts/kid/crds/ in the parent render.
+type: application
+version: 0.1.0

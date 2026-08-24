@@ -1,0 +1,22 @@
+# Closed inputs for loki 6.21.0 (#1233). With default values the chart fails
+# to render — nil pointer on `loki.storage.bucketNames.chunks` — and a chart
+# silently excluded from the corpus reads as coverage it does not have.
+# Single-binary + filesystem storage + the chart's own test schema is the
+# smallest closure that renders.
+deploymentMode: SingleBinary
+loki:
+  commonConfig:
+    replication_factor: 1
+  storage:
+    type: filesystem
+  useTestSchema: true
+singleBinary:
+  replicas: 1
+# The scalable targets default to nonzero replicas; SingleBinary mode refuses
+# to render while any of them is set.
+read:
+  replicas: 0
+write:
+  replicas: 0
+backend:
+  replicas: 0

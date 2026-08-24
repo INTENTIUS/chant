@@ -1,0 +1,25 @@
+apiVersion: v2
+name: umbrella-fixture
+description: >-
+  Survey-corpus fixture (#1232, epic #1228): CRDs at BOTH levels (parent crds/
+  and a subchart crds/), an aliased dependency (emits duplicate CRD documents —
+  finding 11), and a conditional dependency (finding 12). A top-level-only CRD
+  fixture passes even when subchart CRD routing is broken (finding 10), which
+  is why this chart exists.
+type: application
+version: 0.1.0
+dependencies:
+  # The same local subchart twice: once plain, once under an alias. Each
+  # instance emits kid's crds/, so the render carries the kid CRD as two
+  # documents with one distinct name — canonicalization must tolerate that.
+  - name: kid
+    version: 0.1.0
+  - name: kid
+    version: 0.1.0
+    alias: kidtwo
+  # Values-driven condition, disabled by default in values.yaml. Unlike
+  # `lookup`, dependency conditions are closed inputs: pinnable by
+  # construction.
+  - name: opt
+    version: 0.1.0
+    condition: opt.enabled

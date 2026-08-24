@@ -17,6 +17,8 @@ import { helmSerializer } from "./serializer";
 import { helmCompletions } from "./lsp/completions";
 import { helmHover } from "./lsp/hover";
 import { helmConfigSchema } from "./config";
+import { helmDeepNormalizationHooks } from "./deep-observe-hooks";
+import { LABEL_OWNERSHIP_KEYS } from "@intentius/chant/ownership";
 
 export const helmPlugin: LexiconPlugin = {
   name: "helm",
@@ -24,6 +26,12 @@ export const helmPlugin: LexiconPlugin = {
   // Declaring the schema makes core validate the namespace at load, so a
   // typo'd profile field fails the build instead of silently unpinning.
   configSchema: helmConfigSchema,
+  // #1246 — helm resolves real ownership verdicts on the thin read (every row
+  // is release-scoped, so helm-managed = owned via release identity), and the
+  // deep read (#1247) delegates to the k8s reader, which resolves the shared
+  // label channel (`app.kubernetes.io/managed-by` + `chant.intentius.io/*`)
+  // on the live objects.
+  ownershipChannel: { keys: LABEL_OWNERSHIP_KEYS, reads: ["describeResources", "observeResourcesDeep"] },
   auditCatalog: () => helmAuditCatalog,
   serializer: helmSerializer,
 
@@ -387,6 +395,28 @@ export const service = new Service({
     const { listArtifacts } = await import("./list-artifacts");
     return listArtifacts(options);
   },
+
+  // #1246 — per-resource observation of what each declared chart's release
+  // holds (`helm get manifest` + `helm get hooks`, both channels), with total
+  // tri-state verdicts. This is what gives `lifecycle diff --live` helm rows.
+  async describeResources(options) {
+    const { describeResources } = await import("./describe-resources");
+    return describeResources(options);
+  },
+
+  // #1247 — deep property-level trees for the release's resources, read live
+  // through the k8s lexicon's typed client and normalized by its hooks.
+  // Dynamic import for the same reason k8s's is: the reader reaches
+  // `@intentius/chant-k8s-client`, which must stay off the build path.
+  async observeResourcesDeep(options) {
+    const { observeResourcesDeepHelm } = await import("./deep-observe");
+    return observeResourcesDeepHelm(options);
+  },
+
+  // The k8s lexicon's hooks by reference, not a copy (#1247) — the objects a
+  // release deploys are Kubernetes objects, and core normalizes the declared
+  // tree with the same rules the reader used.
+  deepNormalizationHooks: helmDeepNormalizationHooks,
 
   // #1495 piece 4 — the deploy-unit observer for helm-upgrade units: a
   // release's presence and native status, read back by the same name the
