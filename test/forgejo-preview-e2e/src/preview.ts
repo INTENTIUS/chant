@@ -8,7 +8,7 @@
  * `deploy` on open/synchronize/reopen, `teardown` on close. Each installs
  * chant from the tarballs the harness packs into ./packs (the runner copies
  * the whole fixture repo into the job container) and then runs the same two
- * verbs a real pipeline would: `chant run preview-apply` and
+ * verbs a real pipeline would: `chant run preview-apply-e2e` and
  * `chant lifecycle teardown pr-<n> --yes`.
  *
  * All env lives at workflow level: CHANT_ENV carries the PR's env name into
@@ -40,7 +40,7 @@ export const deploy = new Job({
     }),
     new Step({
       name: "Deploy preview environment",
-      run: 'npx chant run preview-apply && echo "DEPLOY-OK $CHANT_ENV"',
+      run: 'npx chant run preview-apply-e2e && echo "DEPLOY-OK $CHANT_ENV"',
     }),
   ],
 });
