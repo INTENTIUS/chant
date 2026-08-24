@@ -62,6 +62,7 @@ Every lexicon must implement these 4 methods to support the full generation and 
 | `generate` | `(options?) => Promise<void>` | Generate lexicon artifacts (types, registry, runtime) from upstream spec |
 | `validate` | `(options?) => Promise<void>` | Validate generated artifacts |
 | `coverage` | `(options?) => Promise<void>` | Analyze spec coverage across resource dimensions |
+| `coverageReport` | `() => Promise<{ unaccountedKinds?: string[] }>` | Offline kind accounting; check-lexicon fails when any kind is unaccounted |
 | `package` | `(options?) => Promise<void>` | Package lexicon into a distributable bundle |
 
 ### Optional members
@@ -110,6 +111,7 @@ family beyond the two best-known readers was missing from it.
 | `ambientKinds()` | `string[]` | Kinds this lexicon can enumerate beyond the declared estate, so a caller knows `--ambient` is relevant without paying for a scan |
 | `observeAmbient()` | `Record<string, ResourceMetadata>` | Resources of a managed kind that exist while being neither declared nor referenced — the unattached security group |
 | `describeStackStatus()` | `StackStatusObservation \| null` | Whether one deploy unit is present and healthy, by deployed name. For multi-stack component projects |
+| `teardownOwned()` | `TeardownEnumeration` | What this lexicon would delete for one marker identity (stack + env) — enumeration only; unreadable kinds report as holes |
 | `listArtifacts()` | `Record<string, ArtifactMetadata>` | Runtime artifacts rather than 1:1 resources — Helm releases, Docker containers |
 | `ownershipChannel` | `OwnershipChannel` | Where this lexicon can stamp and read chant's ownership marker, per read path |
 | `referenceCatalog` | `ReferenceCatalog` | How observed resources reference each other, so `chant graph --live` can rebuild edges from a bag of nodes |

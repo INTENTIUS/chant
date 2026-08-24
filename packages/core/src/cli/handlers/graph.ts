@@ -8,7 +8,7 @@ import { mergeProjectOps } from "../../graph-ops";
 import { reconstructEdges, mergeCatalogs, containmentGroups, type ReferenceCatalog, type ContainmentPair } from "../../graph-refs";
 import { observeResources } from "../../lifecycle/observe";
 import { replaySnapshots, hasSnapshot } from "../../lifecycle/replay";
-import { loadChantConfig, environmentNames, loadChantConfigUpward, type ChantConfig } from "../../config";
+import { loadChantConfig, environmentNames, matchesDeclaredEnvironment, loadChantConfigUpward, type ChantConfig } from "../../config";
 import { applyLiveEndpoint } from "../../live-endpoint";
 import { applyDetail, detailInertNotice, type DetailLevel } from "../../graph-detail";
 import { applyLens, parseLens } from "../../graph-lens";
@@ -210,7 +210,7 @@ async function runGraphLive(
   // observation plugins — load them here, mirroring the lifecycle handlers.
   const plugins = ctx.plugins.length > 0 ? ctx.plugins : await loadPlugins(await resolveProjectLexicons(projectPath));
   const declaredEnvNames = environmentNames(config.environments);
-  if (declaredEnvNames && !declaredEnvNames.includes(environment)) {
+  if (declaredEnvNames && !matchesDeclaredEnvironment(config.environments, environment)) {
     console.error(formatError({
       message: `Unknown environment "${environment}"`,
       hint: `Defined environments: ${declaredEnvNames.join(", ")}`,

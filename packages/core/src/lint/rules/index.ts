@@ -25,6 +25,7 @@ export { evl009CompositeNoConstantRule } from "./evl009-composite-no-constant";
 export { evl010CompositeNoTransformRule } from "./evl010-composite-no-transform";
 export { cor017CompositeNameMatchRule } from "./cor017-composite-name-match";
 export { cor018CompositePreferLexiconTypeRule } from "./cor018-composite-prefer-lexicon-type";
+export { cor021EnvLiteralNameRule } from "./cor021-env-literal-name";
 export { isInsideCompositeFactory } from "./composite-scope";
 
 import { flatDeclarationsRule } from "./flat-declarations";
@@ -48,9 +49,10 @@ import { evl009CompositeNoConstantRule } from "./evl009-composite-no-constant";
 import { evl010CompositeNoTransformRule } from "./evl010-composite-no-transform";
 import { cor017CompositeNameMatchRule } from "./cor017-composite-name-match";
 import { cor018CompositePreferLexiconTypeRule } from "./cor018-composite-prefer-lexicon-type";
+import { cor021EnvLiteralNameRule } from "./cor021-env-literal-name";
 
 /**
- * Load all 21 core lint rules (COR + EVL).
+ * Load all 22 core lint rules (COR + EVL).
  */
 export function loadCoreRules(): LintRule[] {
   return [
@@ -75,5 +77,6 @@ export function loadCoreRules(): LintRule[] {
     evl010CompositeNoTransformRule,
     cor017CompositeNameMatchRule,
     cor018CompositePreferLexiconTypeRule,
+    cor021EnvLiteralNameRule,
   ];
 }

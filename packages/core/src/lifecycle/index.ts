@@ -13,3 +13,4 @@ export * from "./build-ledger";
 export * from "./build-ledger-store";
 export * from "./oras-referrer-lookup";
 export * from "./status";
+export * from "./teardown";

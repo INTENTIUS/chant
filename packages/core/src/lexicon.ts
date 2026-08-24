@@ -16,7 +16,7 @@ import type { LexiconConfigSchema } from "./lexicon-config";
 import type { RuleMeta } from "./audit/catalog";
 import type { ReferenceCatalog } from "./graph-refs";
 import type { IREdge } from "./graph-ir";
-import type { DescribeResourcesResult } from "./observation";
+import type { DescribeResourcesResult, UnobservedReason } from "./observation";
 import type { DeepNormalizationHooks, DeepObservationResult } from "./deep-observation";
 import type { OwnerChainVerdict } from "./owner-chain";
 import type { CommandGroup } from "./cli/command-group";
@@ -540,6 +540,23 @@ export interface LexiconPlugin {
    */
   auditCatalog?(): Record<string, RuleMeta>;
 
+  /**
+   * Machine-readable spec-coverage accounting for `check-lexicon` (#1330).
+   *
+   * `coverage()` prints a report for humans; this returns the one fact the
+   * completeness gate cares about: which upstream spec kinds are neither
+   * modeled as declarables nor on the lexicon's exclusion list. fountain held
+   * this line in a lexicon-local vitest assertion (`coverage.test.ts`), which
+   * is a convention rather than a contract — the same class of gap #1342
+   * closed for LSP providers.
+   *
+   * Implementations must work offline from committed snapshots (fountain
+   * reads `spec/fountain-openapi.snapshot.json` plus its surface baseline):
+   * `check-lexicon` runs on every PR, so no network I/O. Omit when the
+   * lexicon has no kind-level spec accounting; the check passes vacuously.
+   */
+  coverageReport?(): Promise<{ unaccountedKinds?: string[] }>;
+
   /** Return intrinsic function definitions */
   intrinsics?(): IntrinsicDef[];
 
@@ -863,6 +880,43 @@ export interface LexiconPlugin {
   describeStackStatus?(options: { environment: string; stack: string }): Promise<StackStatusObservation | null>;
 
   /**
+   * Enumerate the resources this lexicon would delete for one marker identity
+   * (#1222). Opt-in, and read-only here: this method names the would-delete
+   * set, it never deletes. `chant lifecycle teardown <env>` calls it to plan;
+   * the execution half arrives in a later PR and will reuse the same
+   * enumeration.
+   *
+   * Selection is marker-scoped by construction. `marker` carries this
+   * project's ownership stack plus the requested environment, and every
+   * returned candidate must have been read carrying exactly that identity on
+   * this lexicon's marker channel — managed-by present, stack equal, env
+   * equal. A resource whose marker is absent, foreign-stack, or foreign-env is
+   * not a candidate, ever. Core re-checks each candidate's `marker` and drops
+   * mismatches, so a buggy implementation cannot widen the set.
+   *
+   * The #1089 discipline applies: a kind this lexicon stamps but cannot read
+   * back (no reader for the kind, the read errored, no credentials) is a
+   * `hole`, named with a total {@link UnobservedReason} — never silently
+   * absent, because "absent from the plan" reads as "safe", and an unreadable
+   * kind is unknown, not safe.
+   *
+   * A lexicon without this capability still takes part in teardown planning:
+   * core falls back to {@link describeResources} and filters on
+   * {@link ResourceMetadata.marker}. Implement this when that read is the
+   * wrong shape for deletion — aws, whose thin read carries no tags and whose
+   * teardown is stack-level, is the motivating case.
+   */
+  teardownOwned?(options: {
+    environment: string;
+    /** The identity to select on: this project's ownership stack + the env being torn down. */
+    marker: OwnershipMarker;
+    /** Deployed stack name, for a multi-stack project (see `stacks` in {@link ChantConfig}). */
+    stack?: string;
+    /** Region that stack is deployed in (#1261's contract). */
+    region?: string;
+  }): Promise<TeardownEnumeration>;
+
+  /**
    * Where this lexicon can stamp and read chant's ownership marker (#1348).
    * Data, not a method.
    *
@@ -960,6 +1014,48 @@ export interface LexiconPlugin {
     owned?: boolean;
     verbatim?: boolean;
   }): Promise<ExportedTemplate>;
+}
+
+/**
+ * One resource {@link LexiconPlugin.teardownOwned} would delete (#1222).
+ * Identity only — no delete happens on this path.
+ */
+export interface TeardownCandidate {
+  /** chant entity name where a declared mapping exists, else the provider-side name. */
+  name: string;
+  /** Resource type (e.g. "AWS::S3::Bucket", "K8s::Apps::Deployment"). */
+  type: string;
+  /** Provider-side identifier, when the read surfaces one. */
+  physicalId?: string;
+  /**
+   * The stack/env identity read off the resource's own marker — read back,
+   * never inferred. Core verifies it equals the requested identity and drops
+   * the candidate otherwise.
+   */
+  marker: OwnershipMarker;
+}
+
+/**
+ * One kind or entity a teardown enumeration could not read (#1089). A hole is
+ * a claim of ignorance, not of absence: the plan must print it loudly, and the
+ * execution half must refuse to call the env clean while holes exist.
+ */
+export interface TeardownHole {
+  /** The unreadable kind or entity name. */
+  name: string;
+  /** Resource type, when known. */
+  type?: string;
+  /** Total verdict — the same vocabulary the observation envelope uses. */
+  reason: UnobservedReason;
+  /** Human-readable detail: the failing command, the unsupported kind. */
+  detail?: string;
+}
+
+/** What {@link LexiconPlugin.teardownOwned} returns: the would-delete set plus its holes. */
+export interface TeardownEnumeration {
+  candidates: TeardownCandidate[];
+  /** Omit or leave empty when every stamped kind was readable. */
+  holes?: TeardownHole[];
 }
 
 /**

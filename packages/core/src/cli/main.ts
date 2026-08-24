@@ -23,7 +23,7 @@ import { runCarveAdvise, runCarveUnknown } from "./handlers/carve";
 import { runCarveEmit } from "./handlers/carve-emit";
 import { runCarveBridge } from "./handlers/carve-bridge";
 import { runCarveApply } from "./handlers/carve-apply";
-import { runLifecycleSnapshot, runLifecycleShow, runLifecycleDiff, runLifecycleRollback, runLifecyclePlan, runLifecycleAffected, runLifecycleLog, runLifecycleUnknown } from "./handlers/lifecycle";
+import { runLifecycleSnapshot, runLifecycleShow, runLifecycleDiff, runLifecycleRollback, runLifecyclePlan, runLifecycleAffected, runLifecycleLog, runLifecycleTeardown, runLifecycleUnknown } from "./handlers/lifecycle";
 import { runComponentsStatus, runComponentsReleaseRecord, runComponentsUnknown } from "./handlers/components";
 import { runGraph } from "./handlers/graph";
 import { runExplain } from "./handlers/explain";
@@ -78,6 +78,7 @@ const BOOLEAN_FLAGS = new Set([
   "--fold",
   "--no-fold",
   "--sandbox",
+  "--yes",
 ]);
 
 /**
@@ -228,6 +229,8 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.emit = args[++i];
     } else if (arg === "--dry-run") {
       result.dryRun = true;
+    } else if (arg === "--yes") {
+      result.yes = true;
     } else if (arg === "--strict") {
       result.strict = true;
     } else if (arg === "--validate") {
@@ -484,6 +487,9 @@ Lifecycle (alias: lc):
   lifecycle plan <env>      Typed change set (create/update/delete/adopt) vs live
   lifecycle affected        Stacks a change affects (--base <ref> [--include-dependents])
                             --json: emit the ChangeSet as JSON
+  lifecycle teardown <env>  Plan what deleting the environment would remove —
+                            marker-scoped (this project's stack + env), plan
+                            only; --yes (execution) is not implemented yet (#1222)
   lifecycle log [env]       History of lifecycle snapshots
 
 Component release ledger + status:
@@ -780,6 +786,7 @@ const registry: CommandDef[] = [
   { name: "lifecycle rollback", handler: runLifecycleRollback },
   { name: "lifecycle plan", requiresPlugins: true, handler: runLifecyclePlan },
   { name: "lifecycle affected", requiresPlugins: true, handler: runLifecycleAffected },
+  { name: "lifecycle teardown", requiresPlugins: true, handler: runLifecycleTeardown },
   { name: "lifecycle log", handler: runLifecycleLog },
 
   // Component release ledger + status surface (#568, epic #551)

@@ -1,4 +1,4 @@
-import type { LintRule, LintDiagnostic, LintContext } from "./rule";
+import type { LintRule, LintDiagnostic, LintContext, LintProjectConfig } from "./rule";
 import type { IntrinsicDef } from "../lexicon";
 import { parseFile } from "./parser";
 import { readFileSync } from "fs";
@@ -203,6 +203,10 @@ function isDiagnosticDisabled(
  *   `IntrinsicDef[]` into the fold path since #1039/#1105. Optional and
  *   defaulting to none, so a caller that hasn't resolved a project's
  *   lexicons (a unit test, `bench.test.ts`) is unaffected.
+ * @param projectConfig - chant #1221 — the project's config slice for
+ *   config-aware rules (COR021 reads `environments` + `ownership`), put on
+ *   every file's `LintContext.projectConfig`. Optional; without it those
+ *   rules stay silent.
  * @returns LintRunResult with diagnostics and suppressed items
  */
 export async function runLint(
@@ -210,6 +214,7 @@ export async function runLint(
   rules: LintRule[],
   ruleOptions?: Map<string, Record<string, unknown>>,
   intrinsics?: readonly IntrinsicDef[],
+  projectConfig?: LintProjectConfig,
 ): Promise<LintRunResult> {
   const allDiagnostics: LintDiagnostic[] = [];
   const allSuppressed: Array<LintDiagnostic & { reason?: string }> = [];
@@ -231,6 +236,7 @@ export async function runLint(
         filePath,
         lexicon: undefined,
         intrinsics,
+        projectConfig,
       };
 
       // Execute each rule

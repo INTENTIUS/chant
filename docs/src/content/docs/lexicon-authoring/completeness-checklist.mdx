@@ -40,6 +40,7 @@ These must all pass for the command to exit 0. Run for real via `just check-lexi
 | `At least 1 .mdx doc page` | Documentation exists |
 | `Every doc page is reachable from the sidebar` | Starlight has no auto-discovery, so a page missing from the sidebar is reachable only by direct URL (chant #1312) |
 | `Every authored doc page has a diataxis quadrant` | Pages under `docs/pages/` name their [Diátaxis](https://diataxis.fr) quadrant; the sidebar is grouped from it (chant #1731) |
+| `coverageReport() leaves no spec kind unaccounted` | A plugin declaring `coverageReport()` must account for every upstream spec kind — modeled or on its exclusion list, computed offline from committed snapshots (chant #1330); lexicons without the member pass vacuously |
 
 ### `chantVersion`
 
