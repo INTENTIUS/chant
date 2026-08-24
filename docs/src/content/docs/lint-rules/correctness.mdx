@@ -93,3 +93,30 @@ export const bucket = new _.Bucket({
 
 ---
 
+
+## COR021: Literal Name in a Multi-Environment Project
+
+When a project declares two or more `environments` and binds its ownership marker to a build parameter (`ownership.env: { param: "env" }`), it is built once per environment — and a name-bearing property holding a bare string literal produces the same physical name in every build. The collision is silent until apply time, when the second environment's deploy walks over the first's resources. Interpolate the env parameter into the name instead; the template folds to a per-environment literal because [build-time parameters](/chant/concepts/build-time-parameters/) resolve before any file is imported.
+
+**Severity:** warning
+
+```typescript
+// ❌ Triggers COR021 (config declares environments: ["dev", "prod"]
+//    and ownership: { env: { param: "env" } })
+export const uploads = new _.Bucket({
+  bucketName: "billing-uploads",
+});
+```
+
+```typescript
+// ✅ Fixed
+import { params } from "@intentius/chant/params";
+
+export const uploads = new _.Bucket({
+  bucketName: `billing-${params.env}-uploads`,
+});
+```
+
+The rule stays silent when `ownership.env` is a literal or absent — a project not doing per-environment builds from one source tree names its instances another way (the [layered configuration](/chant/guide/layered-configuration/) all-in-one pattern hand-names each instance), and warning there would be noise. See [Resource Naming](/chant/guide/resource-naming/#multi-environment-coexistence) for both patterns.
+
+---
