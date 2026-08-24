@@ -299,6 +299,20 @@ export { app, web };
     return describeResources(options);
   },
 
+  // Env teardown (#1222): enumeration + execution over the machine marker
+  // (`managed-by` + `chant-stack` + `chant-env`) and the app boundary (#743).
+  // Machines are destroyed first, whole apps last — an app hosting any machine
+  // outside the requested identity is never deleted whole. See ./teardown.ts.
+  async teardownOwned(options) {
+    const { teardownOwned } = await import("./teardown");
+    return teardownOwned(options);
+  },
+
+  async executeTeardown(options) {
+    const { executeTeardown } = await import("./teardown");
+    return executeTeardown(options);
+  },
+
   // Live export (cloud → code): read live flaps state and regenerate App/Machine
   // TypeScript. Strips server-written fields to the authored shape; honors the
   // `owned` filter (machine marker; app-boundary inference for the marker-less

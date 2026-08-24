@@ -79,6 +79,7 @@ const BOOLEAN_FLAGS = new Set([
   "--no-fold",
   "--sandbox",
   "--yes",
+  "--confirm-prod",
 ]);
 
 /**
@@ -231,6 +232,8 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.dryRun = true;
     } else if (arg === "--yes") {
       result.yes = true;
+    } else if (arg === "--confirm-prod") {
+      result.confirmProd = true;
     } else if (arg === "--strict") {
       result.strict = true;
     } else if (arg === "--validate") {
@@ -488,8 +491,9 @@ Lifecycle (alias: lc):
   lifecycle affected        Stacks a change affects (--base <ref> [--include-dependents])
                             --json: emit the ChangeSet as JSON
   lifecycle teardown <env>  Plan what deleting the environment would remove —
-                            marker-scoped (this project's stack + env), plan
-                            only; --yes (execution) is not implemented yet (#1222)
+                            marker-scoped (this project's stack + env); --yes
+                            executes the plan (production-like names also need
+                            --confirm-prod, or an interactive confirmation)
   lifecycle log [env]       History of lifecycle snapshots
 
 Component release ledger + status:

@@ -883,7 +883,7 @@ export interface LexiconPlugin {
    * Enumerate the resources this lexicon would delete for one marker identity
    * (#1222). Opt-in, and read-only here: this method names the would-delete
    * set, it never deletes. `chant lifecycle teardown <env>` calls it to plan;
-   * the execution half arrives in a later PR and will reuse the same
+   * the execution half ({@link executeTeardown}) deletes from the same
    * enumeration.
    *
    * Selection is marker-scoped by construction. `marker` carries this
@@ -915,6 +915,39 @@ export interface LexiconPlugin {
     /** Region that stack is deployed in (#1261's contract). */
     region?: string;
   }): Promise<TeardownEnumeration>;
+
+  /**
+   * Delete the teardown candidates core hands over — the execution half of
+   * `chant lifecycle teardown <env> --yes` (#1222). Opt-in, and the sibling of
+   * {@link teardownOwned}: that method names the would-delete set, this one
+   * deletes it. A lexicon that enumerates but does not implement this reports
+   * its candidates as skipped rather than pretending.
+   *
+   * `candidates` is the marker-verified set core computed from the plan — an
+   * implementation deletes those and only those, in whatever order its target
+   * requires (k8s deletes namespaces last; fly deletes apps last). It never
+   * re-widens the set: a live resource not in `candidates` is not this call's
+   * business, whatever its labels say.
+   *
+   * Every candidate gets exactly one outcome per call, keyed by `name`:
+   * `deleted` (including already-gone — deletion is idempotent), `failed`
+   * (the delete errored; core runs one bounded retry pass over these), or
+   * `not-prunable` with a reason (the live object no longer carries the
+   * requested identity, the kind cannot be addressed, the target refuses).
+   * A candidate the implementation says nothing about is reported as failed
+   * by core — silence is never success.
+   */
+  executeTeardown?(options: {
+    environment: string;
+    /** The identity everything was selected on: ownership stack + env. */
+    marker: OwnershipMarker;
+    /** The marker-verified candidates to delete — from {@link teardownOwned} / the plan. */
+    candidates: TeardownCandidate[];
+    /** Deployed stack name, for a multi-stack project (see `stacks` in {@link ChantConfig}). */
+    stack?: string;
+    /** Region that stack is deployed in (#1261's contract). */
+    region?: string;
+  }): Promise<TeardownExecution>;
 
   /**
    * Where this lexicon can stamp and read chant's ownership marker (#1348).
@@ -1056,6 +1089,32 @@ export interface TeardownEnumeration {
   candidates: TeardownCandidate[];
   /** Omit or leave empty when every stamped kind was readable. */
   holes?: TeardownHole[];
+}
+
+/**
+ * One candidate's fate after {@link LexiconPlugin.executeTeardown} (#1222).
+ * `name` keys it back to the candidate it answers for.
+ */
+export interface TeardownOutcome {
+  /** The candidate's `name`, verbatim. */
+  name: string;
+  /** Resource type, when the implementation carries it through. */
+  type?: string;
+  /** Provider-side identifier, when known. */
+  physicalId?: string;
+  /**
+   * - `deleted` — gone, including already-gone (deletion is idempotent);
+   * - `failed` — the delete errored (core retries these once);
+   * - `not-prunable` — deliberately not deleted; `detail` says why.
+   */
+  outcome: "deleted" | "failed" | "not-prunable";
+  /** The error for `failed`, the reason for `not-prunable`. */
+  detail?: string;
+}
+
+/** What {@link LexiconPlugin.executeTeardown} returns: one outcome per candidate. */
+export interface TeardownExecution {
+  outcomes: TeardownOutcome[];
 }
 
 /**

@@ -1259,12 +1259,113 @@ describe("runLifecycleTeardown (#1222 — plan only)", () => {
     expect(stderr).toContain("dev, prod");
   });
 
-  test("--yes errors — execution is not implemented yet", async () => {
-    const teardownOwned = vi.fn();
-    const plugin = createMockPlugin({ name: "k8s", teardownOwned });
+  test("--yes executes the planned set and prints per-candidate outcomes", async () => {
+    const executeTeardown = vi.fn(async () => ({
+      outcomes: [{ name: "web", outcome: "deleted" as const }],
+    }));
+    const plugin = createMockPlugin({
+      name: "k8s",
+      teardownOwned: async () => ({
+        candidates: [{ name: "web", type: "K8s::Apps::Deployment", marker: { stack: "shop", env: "dev" } }],
+      }),
+      executeTeardown,
+    });
+    expect(await run({ extraPositional: "dev", yes: true }, [plugin])).toBe(0);
+    expect(executeTeardown).toHaveBeenCalledWith({
+      environment: "dev",
+      marker: { stack: "shop", env: "dev" },
+      candidates: [{ name: "web", type: "K8s::Apps::Deployment", marker: { stack: "shop", env: "dev" } }],
+    });
+    const out = stdoutBuf.join("\n");
+    expect(out).toContain("Outcomes:");
+    expect(out).toContain("deleted");
+    expect(out).toContain("1 deleted, 0 failed, 0 not prunable, 0 skipped");
+    expect(out).not.toContain("plan only");
+  });
+
+  test("--yes exits nonzero when a candidate stays failed after the retry pass", async () => {
+    const executeTeardown = vi.fn(async () => ({
+      outcomes: [{ name: "web", outcome: "failed" as const, detail: "conflict" }],
+    }));
+    const plugin = createMockPlugin({
+      name: "k8s",
+      teardownOwned: async () => ({
+        candidates: [{ name: "web", type: "K8s::Apps::Deployment", marker: { stack: "shop", env: "dev" } }],
+      }),
+      executeTeardown,
+    });
     expect(await run({ extraPositional: "dev", yes: true }, [plugin])).toBe(1);
-    expect(stderrBuf.join("\n")).toContain("not yet implemented (#1222)");
-    expect(teardownOwned).not.toHaveBeenCalled();
+    expect(executeTeardown).toHaveBeenCalledTimes(2); // pass + bounded retry
+    expect(stderrBuf.join("\n")).toContain("failed to delete after the retry pass");
+  });
+
+  test("--yes with a lexicon that only enumerates reports skipped, not deleted", async () => {
+    const plugin = createMockPlugin({
+      name: "gcp",
+      teardownOwned: async () => ({
+        candidates: [{ name: "bucket", type: "GCP::Storage::Bucket", marker: { stack: "shop", env: "dev" } }],
+      }),
+    });
+    expect(await run({ extraPositional: "dev", yes: true }, [plugin])).toBe(0);
+    expect(stdoutBuf.join("\n")).toContain("skipped");
+    expect(stderrBuf.join("\n")).toContain("no teardown execution in these lexicons yet");
+  });
+
+  test("--yes on a production-like environment demands --confirm-prod when not interactive", async () => {
+    const executeTeardown = vi.fn();
+    const plugin = createMockPlugin({
+      name: "k8s",
+      teardownOwned: async () => ({ candidates: [] }),
+      executeTeardown,
+    });
+    expect(await run({ extraPositional: "prod", yes: true }, [plugin])).toBe(1);
+    expect(stderrBuf.join("\n")).toContain("--confirm-prod");
+    expect(executeTeardown).not.toHaveBeenCalled();
+  });
+
+  test("--yes --confirm-prod tears a production-like environment down non-interactively", async () => {
+    const executeTeardown = vi.fn(async () => ({
+      outcomes: [{ name: "web", outcome: "deleted" as const }],
+    }));
+    const plugin = createMockPlugin({
+      name: "k8s",
+      teardownOwned: async () => ({
+        candidates: [{ name: "web", type: "K8s::Apps::Deployment", marker: { stack: "shop", env: "prod" } }],
+      }),
+      executeTeardown,
+    });
+    expect(await run({ extraPositional: "prod", yes: true, confirmProd: true }, [plugin])).toBe(0);
+    expect(executeTeardown).toHaveBeenCalledTimes(1);
+  });
+
+  test("the prod guard never fires without --yes — planning production is safe", async () => {
+    const plugin = createMockPlugin({
+      name: "k8s",
+      teardownOwned: async () => ({ candidates: [] }),
+    });
+    expect(await run({ extraPositional: "prod" }, [plugin])).toBe(0);
+    expect(stderrBuf.join("\n")).not.toContain("--confirm-prod");
+  });
+
+  test("--yes --json emits the execution report", async () => {
+    const plugin = createMockPlugin({
+      name: "k8s",
+      teardownOwned: async () => ({
+        candidates: [{ name: "web", type: "K8s::Apps::Deployment", marker: { stack: "shop", env: "dev" } }],
+      }),
+      executeTeardown: async () => ({ outcomes: [{ name: "web", outcome: "deleted" as const }] }),
+    });
+    expect(await run({ extraPositional: "dev", yes: true, json: true }, [plugin])).toBe(0);
+    const parsed = JSON.parse(stdoutBuf.join("\n"));
+    expect(parsed.outcomes).toEqual([
+      {
+        lexicon: "k8s",
+        name: "web",
+        type: "K8s::Apps::Deployment",
+        marker: { stack: "shop", env: "dev" },
+        outcome: "deleted",
+      },
+    ]);
   });
 
   test("refuses when the project declares no ownership.stack", async () => {
@@ -1289,7 +1390,7 @@ describe("runLifecycleTeardown (#1222 — plan only)", () => {
     expect(out).toContain("web");
     expect(out).toContain("K8s::Apps::Deployment");
     expect(out).toContain("shop/dev");
-    expect(stderrBuf.join("\n")).toContain("execution (--yes) arrives in a later #1222 PR");
+    expect(stderrBuf.join("\n")).toContain("re-run with --yes to execute");
   });
 
   test("never selects foreign-stack or foreign-env resources on the fallback path", async () => {
