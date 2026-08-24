@@ -7,6 +7,7 @@
 export * from "./declarable";
 export * from "./composite";
 export * from "./provenance";
+export * from "./secret-provenance";
 export * from "./build-params";
 export * from "./intrinsic";
 export * from "./types";
