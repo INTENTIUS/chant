@@ -123,7 +123,7 @@ function renderNoLexicons(target: string, unclaimed: UnclaimedFile[]): string {
       lines.push(`  ${u.path}  ->  ${note}`);
     }
   } else {
-    lines.push("", "No file under the target looked like CI, Kubernetes, Helm, Docker, CloudFormation, ARM, or Config Connector either.");
+    lines.push("", "No file under the target looked like CI, Kubernetes, Helm, Docker, CloudFormation, ARM, Config Connector, or fountain either.");
   }
   lines.push("", "Run it with the lexicons those files need:");
   lines.push(`  ${installLine(wanted.length > 0 ? wanted : [...AUDIT_LEXICONS], target)}`);

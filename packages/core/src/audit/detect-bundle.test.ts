@@ -9,7 +9,7 @@ import { fileURLToPath } from "url";
  * service content-detect all lexicons on Workers.
  */
 const repoRoot = fileURLToPath(new URL("../../../../", import.meta.url));
-const LEXICONS = ["k8s", "docker", "aws", "azure", "gcp", "helm"];
+const LEXICONS = ["k8s", "docker", "aws", "azure", "gcp", "helm", "fountain"];
 
 describe("detectTemplate modules are edge-bundle clean", () => {
   test("importing every lexicon's /detect pulls in no typescript or plugin.ts", async () => {

@@ -1743,3 +1743,71 @@ Remove values defined but never referenced.
 **Deprecated/invalid Kubernetes API version** — merge-worthy · guidance
 
 Update to a supported apiVersion.
+
+## fountain (FTN)
+
+Run against fountain manifests (`apiVersion: fountain.dev/v1`) — standalone `fountain apply` YAML is parsed back into the entity graph, so the same rules fire on `chant build` and `chant audit`.
+
+### FTN001
+
+**Literal credential in a fountain declaration** — merge-worthy · guidance
+
+Use a ${VAR} substitution reference or an environment secret; never a literal in source.
+
+Authority: [OWASP Top 10 for LLM Applications — LLM01: Prompt Injection](https://owasp.org/www-project-top-10-for-large-language-model-applications/)
+
+### FTN010
+
+**Environment does not set networking_type explicitly** — merge-worthy · guidance
+
+Set networking_type — an open sandbox by silence is not a reviewed decision.
+
+Authority: [fountain — Environment, Vault, and Agent primitives](https://github.com/BinaryBourbon/fountain/blob/main/docs/primitives.md)
+
+### FTN011
+
+**Environment uses networking_type: unrestricted** — merge-worthy · guidance
+
+Prefer limited with an allowed_hosts allowlist; an empty list denies all egress.
+
+Authority: [fountain — Environment, Vault, and Agent primitives](https://github.com/BinaryBourbon/fountain/blob/main/docs/primitives.md)
+
+### FTN012
+
+**Cloud-credential-shaped key or value in Environment env_vars** — merge-worthy · guidance
+
+env_vars is plaintext config — move credentials to a secret, or serve the capability outside the sandbox.
+
+Authority: [OWASP Top 10 for LLM Applications — LLM01: Prompt Injection](https://owasp.org/www-project-top-10-for-large-language-model-applications/)
+
+### FTN013
+
+**Agent ${VAR} reference does not resolve against its environment** — report-only · guidance
+
+Declare the key on the environment, or confirm a vault supplies it at conversation create.
+
+### FTN014
+
+**Vault key shadows a declared Environment key** — report-only · guidance
+
+Vault values win on key collision silently — rename the key or confirm the override is intended.
+
+### FTN015
+
+**Secret-shaped MCP env key is a literal, not a ${VAR} reference** — merge-worthy · guidance
+
+Reference the value with ${VAR} so it resolves at spawn instead of living in source.
+
+Authority: [OWASP Top 10 for LLM Applications — LLM01: Prompt Injection](https://owasp.org/www-project-top-10-for-large-language-model-applications/)
+
+### FTN016
+
+**Agent runtime or model is not a valid value** — merge-worthy · guidance
+
+Use a known runtime and a canonical provider/model_id.
+
+### FTN017
+
+**Two declarations of one kind resolve to the same fountain name** — merge-worthy · guidance
+
+fountain reconciles by name — rename one, or the second silently overwrites the first.

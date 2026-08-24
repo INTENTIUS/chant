@@ -42,6 +42,29 @@ describe("discoverByDetection (unified, detectTemplate-driven)", () => {
     expect(found.some((i) => i.lexicon === "k8s")).toBe(false);
   });
 
+  test("fountain wins over k8s in a mixed repo — each manifest classifies to its own lexicon (#1566)", async () => {
+    const plugins = await loadAuditPlugins();
+    const found = discoverByDetection(fixture("audit-fountain"), plugins);
+    expect(targets(found)).toEqual(["fountain:agents/fleet.yaml", "k8s:k8s/deploy.yaml"]);
+  });
+
+  test("a multi-document fountain file classifies as one fountain input (no document dropped)", async () => {
+    const plugins = await loadAuditPlugins();
+    const found = discoverByDetection(fixture("audit-fountain"), plugins);
+    const fountain = found.find((i) => i.lexicon === "fountain")!;
+    // All three documents ride along in the input's content.
+    expect(fountain.content.match(/apiVersion: fountain\.dev\/v1/g)).toHaveLength(3);
+  });
+
+  test("without the fountain plugin, fountain YAML falls to k8s (not-installed convention)", () => {
+    const files = [{ path: "fleet.yaml", content: "apiVersion: fountain.dev/v1\nkind: Environment\nmetadata:\n  name: dev\n" }];
+    const k8s = { name: "k8s", detectTemplate: (d: unknown) => !!d && typeof d === "object" && "apiVersion" in (d as object) && "kind" in (d as object) };
+    expect(classifyFiles(files, [k8s]).map((i) => i.lexicon)).toEqual(["k8s"]);
+    // with a fountain plugin present, fountain claims it first
+    const fountain = { name: "fountain", detectTemplate: (d: unknown) => (d as { apiVersion?: unknown })?.apiVersion === "fountain.dev/v1" };
+    expect(classifyFiles(files, [k8s, fountain]).map((i) => i.lexicon)).toEqual(["fountain"]);
+  });
+
   test("detects a Helm chart as a bundle, not loose manifests", async () => {
     const plugins = await loadAuditPlugins();
     const found = discoverByDetection(fixture("audit-helm"), plugins);
@@ -80,6 +103,7 @@ describe("lexicon hints for unclaimed files (#1623)", () => {
     expect(hintLexiconForFile("charts/x/Chart.yaml", "name: x\n")).toBe("helm");
     expect(hintLexiconForFile("infra/main.tf", "resource {}\n")).toBe("terraform");
     expect(hintLexiconForFile("k8s/deploy.yaml", "apiVersion: apps/v1\nkind: Deployment\n")).toBe("k8s");
+    expect(hintLexiconForFile("agents/fleet.yaml", "apiVersion: fountain.dev/v1\nkind: Environment\n")).toBe("fountain");
     expect(hintLexiconForFile("gcp/bucket.yaml", "apiVersion: storage.cnrm.cloud.google.com/v1beta1\nkind: StorageBucket\n")).toBe("gcp");
     expect(hintLexiconForFile("cfn/stack.yaml", "AWSTemplateFormatVersion: '2010-09-09'\nResources: {}\n")).toBe("aws");
     expect(hintLexiconForFile("cfn/stack.json", '{"Resources":{"B":{"Type":"AWS::S3::Bucket"}}}')).toBe("aws");

@@ -105,6 +105,59 @@ describe("auditCommand", () => {
     expect([...ids].some((id) => id.startsWith("WK8"))).toBe(false);
   });
 
+  test("discovers and audits fountain manifests (not misclassified as k8s) — FTN rules fire (#1566/#1567)", async () => {
+    const repo = fileURLToPath(new URL("./__fixtures__/audit-fountain", import.meta.url));
+    const fountain = await discoverLexicon(repo, "fountain");
+    expect(fountain.map((f) => f.path)).toEqual(["agents/fleet.yaml"]);
+    // The fountain manifest is NOT also picked up as k8s; the plain k8s manifest still is.
+    expect((await discoverLexicon(repo, "k8s")).map((f) => f.path)).toEqual(["k8s/deploy.yaml"]);
+
+    const result = await auditCommand({ path: repo, format: "stylish" });
+    expect(result.success).toBe(true);
+    const ftn = result.findings.filter((f) => f.checkId.startsWith("FTN"));
+    const ids = new Set(ftn.map((f) => f.checkId));
+    expect(ids).toContain("FTN011"); // unrestricted networking
+    expect(ids).toContain("FTN012"); // credential-shaped env_vars key
+    expect(ids).toContain("FTN014"); // vault key shadows an environment key
+    expect(ftn.find((f) => f.checkId === "FTN012")!.severity).toBe("error");
+    for (const f of ftn) {
+      expect(f.lexicon).toBe("fountain");
+      expect(f.file).toBe("agents/fleet.yaml");
+    }
+    // No k8s check ran against the fountain manifest.
+    for (const f of result.findings.filter((f) => f.lexicon === "k8s")) {
+      expect(f.file).not.toBe("agents/fleet.yaml");
+    }
+  });
+
+  test("fountain findings carry their authority citations in json, sarif, and markdown", async () => {
+    const repo = fileURLToPath(new URL("./__fixtures__/audit-fountain", import.meta.url));
+
+    const json = await auditCommand({ path: repo, format: "json" });
+    const envelope = JSON.parse(json.output) as { findings: Array<{ checkId: string; authority: Array<{ url: string }>; severity: string }> };
+    const ftn11 = envelope.findings.find((f) => f.checkId === "FTN011")!;
+    expect(ftn11.authority.length).toBeGreaterThan(0);
+    expect(ftn11.authority[0].url).toContain("fountain");
+    expect(envelope.findings.find((f) => f.checkId === "FTN012")!.severity).toBe("error");
+
+    const sarif = await auditCommand({ path: repo, format: "sarif" });
+    const run = (JSON.parse(sarif.output) as { runs: Array<{ tool: { driver: { rules: Array<{ id: string; helpUri?: string }> } }; results: Array<{ ruleId: string }> }> }).runs[0];
+    expect(run.results.some((r) => r.ruleId === "FTN011")).toBe(true);
+    expect(run.tool.driver.rules.find((r) => r.id === "FTN011")!.helpUri).toContain("fountain");
+
+    const md = await auditCommand({ path: repo, format: "markdown" });
+    expect(md.output).toContain("FTN011");
+    expect(md.output).toContain("FTN014");
+  });
+
+  test("a clean fountain manifest set audits quiet", async () => {
+    const repo = fileURLToPath(new URL("./__fixtures__/audit-fountain-clean", import.meta.url));
+    const result = await auditCommand({ path: repo, format: "stylish" });
+    expect(result.success).toBe(true);
+    expect(result.findings).toEqual([]);
+    expect(result.scanned).toEqual(["fleet.yaml"]);
+  });
+
   test("discovers and audits a Helm chart (as a bundle, not loose manifests)", async () => {
     const repo = fileURLToPath(new URL("./__fixtures__/audit-helm", import.meta.url));
     const charts = await discoverLexicon(repo, "helm");

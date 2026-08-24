@@ -12,6 +12,7 @@ import { fountainSerializer } from "./serializer";
 import { rules } from "./lint/rules";
 import { postSynthChecks } from "./lint/post-synth";
 import { fountainAuditCatalog } from "./lint/audit-catalog";
+import { fountainAuditEntities } from "./audit-entities";
 import { fountainReferenceCatalog } from "./reference-catalog";
 import { detectFountainTemplate } from "./detect";
 import { fountainInitTemplates } from "./init-templates";
@@ -80,6 +81,10 @@ export const fountainPlugin: LexiconPlugin = {
   },
 
   auditCatalog: () => fountainAuditCatalog,
+
+  auditEntities(content: string) {
+    return fountainAuditEntities(content);
+  },
 
   skills: createSkillsLoader(import.meta.url, [
     {

@@ -80,6 +80,7 @@ family beyond the two best-known readers was missing from it.
 | `declarativeRules()` | `RuleSpec[]` | Declarative lint rules (compiled via `rule()`). No shipped lexicon uses this — see [Write Lint Rules](/chant/lexicon-authoring/lint-rules/) |
 | `postSynthChecks()` | `PostSynthCheck[]` | Post-build validation checks |
 | `auditCatalog()` | `Record<string, RuleMeta>` | Title, tier, fix kind and authority for this lexicon's checks, for `chant audit` — see [Post-Synth Checks](/chant/lexicon-authoring/post-synth-checks/) |
+| `auditEntities()` | `Map<string, Declarable>` | Parse standalone manifest content into the entity graph so entity-reading checks fire on `chant audit` (parse-to-graph). Must tolerate malformed input |
 
 **Language surface**
 

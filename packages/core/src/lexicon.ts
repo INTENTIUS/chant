@@ -541,6 +541,17 @@ export interface LexiconPlugin {
   auditCatalog?(): Record<string, RuleMeta>;
 
   /**
+   * Parse standalone template content (a file audit discovery classified for
+   * this lexicon) into the lexicon's entity graph, keyed the way `ctx.entities`
+   * is during a build. Lets entity-reading post-synth checks fire on
+   * `chant audit` of hand-written manifests — parse-to-graph rather than
+   * output-reading rule variants (#1567). Implementations must tolerate
+   * arbitrary external content: a malformed document yields no entities, never
+   * a throw. Omit for lexicons whose audit checks read `ctx.outputs`.
+   */
+  auditEntities?(content: string): Map<string, Declarable>;
+
+  /**
    * Machine-readable spec-coverage accounting for `check-lexicon` (#1330).
    *
    * `coverage()` prints a report for humans; this returns the one fact the

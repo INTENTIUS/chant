@@ -20,6 +20,7 @@ const GROUPS: Array<{ heading: string; prefixes: string[]; blurb: string }> = [
   { heading: "Azure ARM (AZR)", prefixes: ["AZR"], blurb: "Run against ARM deployment templates (JSON)." },
   { heading: "GCP Config Connector (WGC)", prefixes: ["WGC"], blurb: "Run against Config Connector (cnrm.cloud.google.com) manifests." },
   { heading: "Helm (WHM)", prefixes: ["WHM"], blurb: "Run against Helm charts (Chart.yaml + templates)." },
+  { heading: "fountain (FTN)", prefixes: ["FTN"], blurb: "Run against fountain manifests (`apiVersion: fountain.dev/v1`) — standalone `fountain apply` YAML is parsed back into the entity graph, so the same rules fire on `chant build` and `chant audit`." },
 ];
 
 function ruleBlock(m: RuleMeta): string {
