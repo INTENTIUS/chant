@@ -3,6 +3,7 @@ import { writeFileSync, unlinkSync } from "node:fs";
 import {
   awsApply,
   awsDelete,
+  rollbackStack,
   cfnUrl,
   cfnForm,
   capabilityParams,
@@ -175,5 +176,67 @@ describe("awsDelete (#awsApply)", () => {
     unlinkSync(p);
     expect(res).toEqual({ stackName: "s", deleted: true });
     expect(calls[0]).toBe("DeleteStack");
+  });
+});
+
+describe("rollbackStack (#1449)", () => {
+  test("RollbackStack then polls to UPDATE_ROLLBACK_COMPLETE", async () => {
+    const calls: string[] = [];
+    const http: AwsHttp = async (_url, form) => {
+      calls.push(form.Action);
+      if (form.Action === "DescribeStacks") return { status: 200, text: describe_("UPDATE_ROLLBACK_COMPLETE") };
+      return { status: 200, text: "<RollbackStackResponse/>" };
+    };
+    const res = await rollbackStack({ stackName: "s", endpoint: "http://x", intervalMs: 1 }, undefined, http);
+    expect(res).toEqual({ stackName: "s", rolledBack: true, status: "UPDATE_ROLLBACK_COMPLETE" });
+    expect(calls[0]).toBe("RollbackStack");
+    expect(calls[0]).not.toBe("DescribeStacks"); // no probe first — the action itself answers
+  });
+
+  test("posts the stack name on the Query API form", async () => {
+    const forms: Record<string, string>[] = [];
+    const http: AwsHttp = async (_url, form) => {
+      forms.push(form);
+      if (form.Action === "DescribeStacks") return { status: 200, text: describe_("ROLLBACK_COMPLETE") };
+      return { status: 200, text: "<RollbackStackResponse/>" };
+    };
+    await rollbackStack({ stackName: "prod", endpoint: "http://x", intervalMs: 1 }, undefined, http);
+    expect(forms[0]).toMatchObject({ Action: "RollbackStack", StackName: "prod" });
+    expect(forms[0].Version).toBeDefined();
+  });
+
+  test("an absent stack is nothing to roll back — rolledBack: false, no throw", async () => {
+    const http: AwsHttp = async () => ({ status: 400, text: MISSING });
+    const res = await rollbackStack({ stackName: "s", endpoint: "http://x" }, undefined, http);
+    expect(res).toEqual({ stackName: "s", rolledBack: false });
+  });
+
+  test("a target without RollbackStack (Floci's UnknownAction, #947) degrades, not crashes", async () => {
+    const http: AwsHttp = async () => ({
+      status: 400,
+      text: "<ErrorResponse><Error><Code>UnknownAction</Code><Message>Action RollbackStack is not supported.</Message></Error></ErrorResponse>",
+    });
+    const res = await rollbackStack({ stackName: "s", endpoint: "http://x" }, undefined, http);
+    expect(res).toEqual({ stackName: "s", rolledBack: false });
+  });
+
+  test("any other API error throws — a compensation must not fail silently", async () => {
+    const http: AwsHttp = async () => ({
+      status: 400,
+      text: "<ErrorResponse><Error><Message>Rollback requires a stack in UPDATE_FAILED state</Message></Error></ErrorResponse>",
+    });
+    await expect(rollbackStack({ stackName: "s", endpoint: "http://x" }, undefined, http)).rejects.toThrow(
+      /RollbackStack failed \(400\): Rollback requires/,
+    );
+  });
+
+  test("throws when the stack settles anywhere but *ROLLBACK_COMPLETE", async () => {
+    const http: AwsHttp = async (_url, form) => {
+      if (form.Action === "DescribeStacks") return { status: 200, text: describe_("UPDATE_ROLLBACK_FAILED") };
+      return { status: 200, text: "<RollbackStackResponse/>" };
+    };
+    await expect(rollbackStack({ stackName: "s", endpoint: "http://x", intervalMs: 1 }, undefined, http)).rejects.toThrow(
+      /rollback → UPDATE_ROLLBACK_FAILED/,
+    );
   });
 });
