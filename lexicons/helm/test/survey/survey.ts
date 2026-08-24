@@ -2,27 +2,27 @@
  * Runner side of the pinnability survey (#1231, epic #1228).
  *
  * Pulls each corpus chart at its pinned version (network), renders twice with
- * closed inputs, and classifies. Chart tarballs are never vendored into the
+ * closed inputs, and classifies with the production gate
+ * (`src/pinnability`, #1234). Chart tarballs are never vendored into the
  * repo: the corpus is `charts.txt` (the pins), `values/` (closed inputs for
  * charts that need them — #1233), and `expected.txt` (asserted verdicts).
+ *
+ * The harness imports only the pinnability module, which needs no generated
+ * lexicon artifacts — the survey CI job runs without a generation step.
  */
 
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 
 import {
-  classify,
-  countCapabilityRefs,
+  classifyChart,
   countDifferingLines,
-  extractActions,
   routeBySource,
-  scanLookups,
-  type Classification,
-  type LookupScan,
-  type TemplateAction,
-} from "./classify";
+  type PinnabilityReport,
+  type PinnabilityVerdict,
+} from "../../src/pinnability";
 
 /**
  * The kube version renders are pinned against. The epic's evidence ran
@@ -97,38 +97,6 @@ export function findChartDir(dest: string): string {
   throw new Error(`no Chart.yaml found under ${dest}`);
 }
 
-/**
- * Every template file in the chart, subcharts included. Finding 10 exists
- * because a scan (or a routing rule) that only sees the top level passes on
- * fixtures and fails on the umbrella charts people actually deploy.
- */
-export function collectTemplateFiles(chartDir: string): string[] {
-  const out: string[] = [];
-  const walk = (dir: string, underTemplates: boolean): void => {
-    for (const entry of readdirSync(dir)) {
-      const p = join(dir, entry);
-      if (statSync(p).isDirectory()) {
-        walk(p, underTemplates || entry === "templates");
-        continue;
-      }
-      if (!underTemplates) continue;
-      if (entry === "NOTES.txt") continue; // rendered for the console, not the cluster
-      if (/\.(ya?ml|tpl)$/.test(entry)) out.push(p);
-    }
-  };
-  walk(chartDir, false);
-  return out;
-}
-
-export function scanChart(chartDir: string): { actions: TemplateAction[]; lookups: LookupScan; capabilityRefs: number } {
-  const actions: TemplateAction[] = [];
-  for (const file of collectTemplateFiles(chartDir)) {
-    const rel = file.slice(chartDir.length + 1);
-    actions.push(...extractActions(readFileSync(file, "utf8"), rel));
-  }
-  return { actions, lookups: scanLookups(actions), capabilityRefs: countCapabilityRefs(actions) };
-}
-
 /** One closed-input render: pinned kube version, values file when present. */
 export function renderChart(chartDir: string, valuesFile?: string, extraArgs: string[] = []): string {
   const args = [
@@ -148,17 +116,21 @@ export function renderChart(chartDir: string, valuesFile?: string, extraArgs: st
   });
 }
 
+/** The survey's verdict labels, kept stable across the classifier promotion. */
+export const VERDICT_LABELS: Record<PinnabilityVerdict, string> = {
+  deterministic: "deterministic-as-is",
+  pinnable: "pinnable-with-closed-inputs",
+  unpinnable: "unpinnable",
+};
+
 export interface SurveyRow {
   name: string;
   version: string;
-  classification: Classification;
+  report: PinnabilityReport;
   /** Rendered documents routed to crds/ by the segment rule. */
   crdDocs: number;
   /** Rendered documents routed to templates/. */
   templateDocs: number;
-  capabilityRefs: number;
-  lookupControl: number;
-  lookupValue: number;
   /** Differing lines between the two renders (0 when stable). */
   unstableLines: number;
   valuesSupplied: boolean;
@@ -175,27 +147,20 @@ export function surveyChart(
   chartDir: string,
   valuesFile?: string,
 ): SurveyRow {
-  const { lookups, capabilityRefs } = scanChart(chartDir);
   const a = renderChart(chartDir, valuesFile);
   const b = renderChart(chartDir, valuesFile);
   const unstableLines = countDifferingLines(a, b);
   const routed = routeBySource(a);
-  const classification = classify({
-    lookups,
-    capabilityRefs,
-    stable: unstableLines === 0,
-    unstableLines,
-    valuesSupplied: valuesFile !== undefined,
+  const report = classifyChart(chartDir, {
+    valuesFiles: valuesFile !== undefined ? [valuesFile] : [],
+    renderEvidence: { stable: unstableLines === 0, unstableLines },
   });
   return {
     name,
     version,
-    classification,
+    report,
     crdDocs: routed.crds.length,
     templateDocs: routed.templates.length,
-    capabilityRefs,
-    lookupControl: lookups.controlFlow.length,
-    lookupValue: lookups.valuePosition.length,
     unstableLines,
     valuesSupplied: valuesFile !== undefined,
   };
@@ -203,17 +168,18 @@ export function surveyChart(
 
 /**
  * The asserted line for `expected.txt`. Everything on it is a survey output,
- * so any drift — verdict, CRD routing, lookup counts, stability — fails the
- * suite rather than merely printing differently.
+ * so any drift — verdict, CRD routing, lookup counts, hazards, stability —
+ * fails the suite rather than merely printing differently.
  */
 export function formatRow(row: SurveyRow): string {
   return [
     row.name,
-    row.classification.verdict,
+    VERDICT_LABELS[row.report.verdict],
     `crds=${row.crdDocs}`,
-    `caps=${row.capabilityRefs}`,
-    `lookup-control=${row.lookupControl}`,
-    `lookup-value=${row.lookupValue}`,
+    `caps=${row.report.requiresProfile.length}`,
+    `lookup-control=${row.report.lookups.controlFlow.length}`,
+    `lookup-value=${row.report.lookups.valuePosition.length}`,
+    `hazards=${row.report.hazards.length}`,
     `unstable-lines=${row.unstableLines}`,
     `values=${row.valuesSupplied ? "yes" : "no"}`,
   ].join(" ");
@@ -227,7 +193,7 @@ export function valuesFileFor(surveyDir: string, name: string): string | undefin
 
 /** Human-readable reasons, for the survey's printed report. */
 export function formatReasons(row: SurveyRow): string {
-  return row.classification.reasons.join("; ") || "none";
+  return row.report.reasons.join("; ") || "none";
 }
 
 export function chartLabel(chartDir: string): string {

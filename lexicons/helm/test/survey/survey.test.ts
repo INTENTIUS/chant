@@ -1,17 +1,17 @@
 /**
- * Pinnability survey harness (#1231, epic #1228 Phase 0).
+ * Pinnability survey harness (#1231, epic #1228 Phase 0), asserting the
+ * verdicts of the PRODUCTION classifier (`src/pinnability`, #1234) — the
+ * prototype it replaced lives on only as these regression surfaces.
  *
- * Three layers, gated independently:
+ * Two layers, gated independently:
  *
- *   1. Classifier unit tests — pure, no helm, always run. They pin the two
- *      prototype bugs the epic preserved on purpose: lookup detection must
- *      parse template actions, not text (finding 9), and CRD routing must
- *      match a `crds/` path segment, not prefix (finding 10).
- *   2. Fixture surveys — need helm on PATH, no network. The committed
+ *   1. Fixture surveys — need helm on PATH, no network. The committed
  *      umbrella fixture (#1232) exercises subchart CRDs, an aliased
  *      dependency and a conditional dependency; two more fixtures cover the
  *      control-flow-lookup refusal and the open-generated-input diff.
- *   3. The upstream-chart survey — needs helm AND network, so it is gated on
+ *      (Pure classifier unit tests are colocated with the classifier in
+ *      src/pinnability and run in the main suite.)
+ *   2. The upstream-chart survey — needs helm AND network, so it is gated on
  *      CHANT_HELM_SURVEY like the other external-dependency suites. Run it
  *      with `just helm-survey`. Verdicts are asserted against expected.txt —
  *      a survey that only prints is a report; one that asserts is a
@@ -25,19 +25,16 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
-  countDifferingLines,
-  extractActions,
+  classifyChart,
   isCrdSource,
-  routeBySource,
-  scanLookups,
   splitDocuments,
   sourcePath,
-} from "./classify";
+  routeBySource,
+} from "../../src/pinnability";
 import {
   parseCorpus,
   pullChart,
   renderChart,
-  scanChart,
   surveyChart,
   formatRow,
   valuesFileFor,
@@ -57,91 +54,6 @@ function helmAvailable(): boolean {
 
 const hasHelm = helmAvailable();
 const runNetworkSurvey = hasHelm && !!process.env.CHANT_HELM_SURVEY;
-
-describe("classifier: lookup detection parses template actions, not text (finding 9)", () => {
-  test("prose in YAML comments is not a lookup hit", () => {
-    // cert-manager has 52 textual "lookup" occurrences, all comment prose,
-    // real template-action count 0. A text-matching gate refuses a chart
-    // that is perfectly pinnable.
-    const src = [
-      "# the keys are used to lookup values from secrets",
-      "apiVersion: v1",
-      "kind: ConfigMap",
-      "metadata:",
-      "  name: {{ .Release.Name }}-cm",
-    ].join("\n");
-    const scan = scanLookups(extractActions(src, "cm.yaml"));
-    expect(scan.controlFlow).toEqual([]);
-    expect(scan.valuePosition).toEqual([]);
-  });
-
-  test("prose in template comment actions is not a lookup hit", () => {
-    const src = '{{/* lookup is documented here, not called */}}\nname: {{ .Values.name }}';
-    const scan = scanLookups(extractActions(src, "x.yaml"));
-    expect(scan.controlFlow).toEqual([]);
-    expect(scan.valuePosition).toEqual([]);
-  });
-
-  test("a value named lookup* is not a lookup call", () => {
-    // grafana's `persistence.lookupVolumeName` — the value is named after
-    // the feature; only the function call counts.
-    const src = "{{- if .Values.persistence.lookupVolumeName }}\nx: 1\n{{- end }}";
-    const scan = scanLookups(extractActions(src, "pvc.yaml"));
-    expect(scan.controlFlow).toEqual([]);
-    expect(scan.valuePosition).toEqual([]);
-  });
-
-  test("lookup in an if action is control flow; in an output action it is value position", () => {
-    const src = [
-      '{{- if not (lookup "v1" "ConfigMap" "ns" "seen") }}',
-      "kind: ConfigMap",
-      "{{- end }}",
-      'prior: {{ (lookup "v1" "Namespace" "" "default").metadata.name | default "none" }}',
-    ].join("\n");
-    const scan = scanLookups(extractActions(src, "cm.yaml"));
-    expect(scan.controlFlow).toHaveLength(1);
-    expect(scan.controlFlow[0].line).toBe(1);
-    expect(scan.valuePosition).toHaveLength(1);
-    expect(scan.valuePosition[0].line).toBe(4);
-  });
-});
-
-describe("classifier: CRD routing matches a crds/ segment, not prefix (finding 10)", () => {
-  test("subchart CRD paths are CRD sources", () => {
-    expect(isCrdSource("crds/topcrd.yaml")).toBe(true);
-    expect(isCrdSource("charts/kid/crds/kidcrd.yaml")).toBe(true);
-    expect(isCrdSource("charts/kidtwo/crds/kidcrd.yaml")).toBe(true);
-  });
-
-  test("templates paths are not, even when a directory is named crds", () => {
-    expect(isCrdSource("templates/cm.yaml")).toBe(false);
-    expect(isCrdSource("charts/kid/templates/cm.yaml")).toBe(false);
-    // A file merely named after crds does not match the segment rule.
-    expect(isCrdSource("templates/crds-readme.yaml")).toBe(false);
-  });
-
-  test("routeBySource splits a stream by origin", () => {
-    const rendered = [
-      "---",
-      "# Source: umb/crds/parent.yaml",
-      "kind: CustomResourceDefinition",
-      "---",
-      "# Source: umb/charts/kid/crds/kid.yaml",
-      "kind: CustomResourceDefinition",
-      "---",
-      "# Source: umb/templates/cm.yaml",
-      "kind: ConfigMap",
-    ].join("\n");
-    const routed = routeBySource(rendered);
-    expect(routed.crds).toHaveLength(2);
-    expect(routed.templates).toHaveLength(1);
-  });
-
-  test("countDifferingLines is 0 for identical renders and symmetric otherwise", () => {
-    expect(countDifferingLines("a\nb", "a\nb")).toBe(0);
-    expect(countDifferingLines("a\nx", "a\ny")).toBe(2);
-  });
-});
 
 describe.skipIf(!hasHelm)("fixture surveys (helm, offline)", () => {
   const umbrella = join(FIXTURES, "umbrella-fixture");
@@ -172,27 +84,36 @@ describe.skipIf(!hasHelm)("fixture surveys (helm, offline)", () => {
     expect(on).toContain("who: opt");
   });
 
-  test("umbrella fixture classifies deterministic-as-is despite lookup prose in comments (finding 9)", () => {
+  test("umbrella fixture classifies deterministic despite lookup prose in comments (finding 9)", () => {
     const row = surveyChart("umbrella-fixture", "0.1.0", umbrella);
-    expect(row.classification.verdict).toBe("deterministic-as-is");
-    expect(row.lookupControl).toBe(0);
-    expect(row.lookupValue).toBe(0);
+    expect(row.report.verdict).toBe("deterministic");
+    expect(row.report.lookups.controlFlow).toHaveLength(0);
+    expect(row.report.lookups.valuePosition).toHaveLength(0);
+    expect(row.report.hazards).toHaveLength(0);
     expect(row.unstableLines).toBe(0);
   });
 
   test("control-flow lookup is refused with the location named", () => {
     const row = surveyChart("lookup-fixture", "0.1.0", join(FIXTURES, "lookup-fixture"));
-    expect(row.classification.verdict).toBe("unpinnable");
-    expect(row.classification.reasons.join("\n")).toContain("templates/cm.yaml:1");
+    expect(row.report.verdict).toBe("unpinnable");
+    expect(row.report.reasons.join("\n")).toContain("templates/cm.yaml:1");
     // The value-position lookup in the same chart is not what refuses it.
-    expect(row.lookupControl).toBe(1);
-    expect(row.lookupValue).toBe(1);
+    expect(row.report.lookups.controlFlow).toHaveLength(1);
+    expect(row.report.lookups.controlFlow[0].status).toBe("refused");
+    expect(row.report.lookups.valuePosition).toHaveLength(1);
   });
 
   test("open generated input: unstable as-is, byte-identical once the value is supplied (finding 6)", () => {
     const chart = join(FIXTURES, "genvalues-fixture");
     const open = surveyChart("genvalues-fixture", "0.1.0", chart);
-    expect(open.classification.verdict).toBe("pinnable-with-closed-inputs");
+    expect(open.report.verdict).toBe("pinnable");
+    // The classifier names the open input statically — the suppliable path
+    // is what the pinned-render pipeline turns into a declared input.
+    const generated = open.report.closedInputs.filter((c) => c.kind === "generated-value");
+    expect(generated).toHaveLength(1);
+    expect(generated[0].fn).toBe("randAlphaNum");
+    expect(generated[0].valuesPath).toBe("adminPassword");
+    expect(generated[0].suppliable).toBe(true);
     // The secret line AND the derived checksum/secret annotation differ —
     // which is why hoisting the output instead of pinning the input breaks
     // the restart-on-change mechanism.
@@ -202,17 +123,43 @@ describe.skipIf(!hasHelm)("fixture surveys (helm, offline)", () => {
     writeFileSync(closed, "adminPassword: pinned-input\n");
     const pinned = surveyChart("genvalues-fixture", "0.1.0", chart, closed);
     expect(pinned.unstableLines).toBe(0);
-    expect(pinned.classification.verdict).toBe("pinnable-with-closed-inputs");
+    expect(pinned.report.verdict).toBe("pinnable");
+    // With the value supplied, the generator is dead: no open generated input.
+    expect(pinned.report.closedInputs.filter((c) => c.kind === "generated-value")).toHaveLength(0);
     expect(renderChart(chart, closed)).toBe(renderChart(chart, closed));
   });
 
-  test("scanChart sees subchart templates, not just the top level", () => {
+  test("gated control-flow lookup: hazard when the values leave it off, refusal when flipped on", () => {
+    // The kube-prometheus-stack shape (survey finding 1): the bundled
+    // grafana's control-flow lookup sits behind grafana.persistence.enabled,
+    // off by default — the static-refuse verdict costs the umbrella;
+    // values-aware reachability recovers it and records the hazard.
+    const chart = join(FIXTURES, "gated-lookup-fixture");
+    const off = classifyChart(chart);
+    expect(off.verdict).toBe("pinnable");
+    expect(off.hazards).toHaveLength(1);
+    expect(off.hazards[0].chart).toBe("kid");
+    expect(off.hazards[0].file).toBe("charts/kid/templates/pvc.yaml");
+    expect(off.hazards[0].gates.map((g) => g.path)).toEqual(["kid.persistence.enabled"]);
+
+    const on = classifyChart(chart, { values: { kid: { persistence: { enabled: true } } } });
+    expect(on.verdict).toBe("unpinnable");
+    expect(on.reasons.join("\n")).toContain("charts/kid/templates/pvc.yaml");
+
+    // The gated render itself is deterministic and helm agrees the document
+    // is absent — the hazard records a live construct, not a rendered one.
+    const rendered = renderChart(chart);
+    expect(rendered).not.toContain("PersistentVolumeClaim");
+  });
+
+  test("classifier sees subchart templates, not just the top level", () => {
     // The epic's prototype grepped only <chart>/templates and called
     // kube-prometheus-stack pinnable while its bundled grafana carries a
-    // control-flow lookup. Guard the harness against the same blind spot.
-    const kidChart = join(FIXTURES, "umbrella-fixture");
-    const { actions } = scanChart(kidChart);
-    expect(actions.some((a) => a.file.startsWith("charts/kid/templates/"))).toBe(true);
+    // control-flow lookup. Guard the classifier against the same blind spot.
+    const report = classifyChart(join(FIXTURES, "gated-lookup-fixture"));
+    expect(report.lookups.controlFlow.some((l) => l.file.startsWith("charts/kid/templates/"))).toBe(
+      true,
+    );
   });
 });
 
