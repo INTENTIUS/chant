@@ -1758,3 +1758,32 @@ describe("cockroachdb-multi-region-gke (#1704)", () => {
     }
   });
 });
+
+// ── Testing harness — testing-harness-aws (#1224) ────────────────────
+// Build-validated here (the live deploy/destroy runs against Floci via
+// `just testing-harness-e2e`, which Docker-gates itself). The build asserts
+// the two resources and the per-env naming the harness's isolation rides on:
+// every physical name folds in the stack name, which the harness sets to the
+// per-run `test-<suite>-<nonce>` environment.
+
+describeExample(
+  "testing-harness-aws",
+  {
+    lexicon: "aws",
+    serializer: awsSerializer,
+    outputKey: "aws",
+    examplesDir: import.meta.dirname,
+  },
+  {
+    checks: (output) => {
+      const template = JSON.parse(output) as {
+        Resources: Record<string, { Type: string; Properties: Record<string, unknown> }>;
+      };
+      const resources = Object.values(template.Resources);
+      expect(resources.map((r) => r.Type).sort()).toEqual(["AWS::S3::Bucket", "AWS::SQS::Queue"]);
+      // Stack-name-folded physical names — two parallel suites never collide.
+      expect(JSON.stringify(template.Resources.dataBucket.Properties.BucketName)).toContain("AWS::StackName");
+      expect(JSON.stringify(template.Resources.taskQueue.Properties.QueueName)).toContain("AWS::StackName");
+    },
+  },
+);

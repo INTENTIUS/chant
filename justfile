@@ -215,6 +215,13 @@ azure-cc-e2e:
 aws-teardown-e2e:
     bash test/aws-teardown-e2e.sh
 
+# Worked example for the @intentius/chant/testing live-stack harness (#1224):
+# deployStack into a nonce'd test env on Floci, assert output + live stack,
+# destroy in afterAll — including the teardown-survives-a-failing-test fixture
+# (Floci in Docker; on-demand, needs Docker only)
+testing-harness-e2e:
+    CHANT_HARNESS_E2E=1 npx vitest run examples/testing-harness-aws/harness.e2e.test.ts
+
 # Prove the adopt-alb-services GENERATED pipeline deploys multi-service across isolated jobs, with cross-stack outputs threaded as artifacts (Floci in Docker; on-demand, needs Docker + aws CLI)
 adopt-alb-services-e2e:
     bash test/adopt-alb-services-e2e.sh

@@ -76,6 +76,12 @@ export default defineConfig({
       // differentials above (no Docker, no cluster).
       "examples/k8s-client-boundary.test.ts",
       "examples/readme-counts.test.ts",
+      // chant #1224 — the testing-harness worked example and its survival
+      // fixture. Both are gated (CHANT_HARNESS_E2E; the fixture on the env
+      // vars the outer suite sets) and skip cleanly in a plain run — Docker
+      // and Floci come into play only via `just testing-harness-e2e`.
+      "examples/testing-harness-aws/harness.e2e.test.ts",
+      "examples/testing-harness-aws/fixtures/failing-suite.test.ts",
       // chant #1419 — unit tests for the missing-artifacts guard below.
       "test/lexicon-artifacts.test.ts",
     ],

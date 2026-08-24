@@ -115,6 +115,7 @@ export default defineConfig({
 								{ label: 'AWS (Floci)', slug: 'local-testing/aws' },
 								{ label: 'Azure (floci-az)', slug: 'local-testing/azure' },
 								{ label: 'GCP (floci-gcp)', slug: 'local-testing/gcp' },
+								{ label: 'Test Harness (vitest)', slug: 'local-testing/testing-harness' },
 							],
 						},
 						{
