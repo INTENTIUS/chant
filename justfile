@@ -173,6 +173,10 @@ gitlab-runtime-e2e:
 forgejo-runtime-e2e:
     bash test/forgejo-runtime-e2e.sh
 
+# Per-PR preview loop (#1223) on a real runner: deploy on PR open, teardown on PR close, against mudflaps (on-demand, needs Docker + network)
+forgejo-preview-e2e:
+    bash test/forgejo-preview-e2e.sh
+
 # Left-of-line proof capture (#1084): profile chant build --fold vs cdk synth on the matched pair, one measurement on both (on-demand, needs network for pinned installs; no cloud credentials)
 leftness-capture:
     bash test/leftness/capture.sh
