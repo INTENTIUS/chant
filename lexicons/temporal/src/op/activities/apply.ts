@@ -34,6 +34,7 @@
 
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
+import { normalizeApply, type ApplyResult } from "@intentius/chant/apply";
 
 const execAsync = promisify(exec);
 
@@ -84,24 +85,26 @@ export interface NativeApplyArgs {
   forceConflicts?: boolean;
 }
 
-/** What an apply did. Shaped by the target, since the targets differ. */
+/**
+ * What an apply did — one shape for every target: the count projection of
+ * core's `NormalizedApply` (#1446, collapsed here in #1449). The per-target
+ * shapes this used to carry (`fieldManager`, `stackName`/`status`/`action`,
+ * a separate `notPrunable`) belong to the appliers and stay in their lexicons;
+ * this activity's result is what a workflow can gate on regardless of target,
+ * and the target-specific detail still reaches the operator on the activity
+ * log.
+ */
 export interface NativeApplyResult {
-  /** Objects server-side applied — kubectl/kustomize; resources PUT — arm/gcp/fly. */
-  applied?: number;
-  /** Objects pruned because they carried chant's marker and are no longer declared — kubectl/arm/gcp/fly. */
-  pruned?: number;
-  /** Declared resources no call was made for (#1447) — gcp. Zero on a complete apply. */
-  notAttempted?: number;
-  /** Kinds the prune could not consider — gcp. Zero when the prune is off. */
-  notPrunable?: number;
-  /** The field manager the apply claimed ownership as — kubectl. */
-  fieldManager?: string;
-  /** The stack deployed — cloudformation. */
-  stackName?: string;
-  /** The settled stack status — cloudformation. */
-  status?: string;
-  /** What the deploy did to the stack — cloudformation. */
-  action?: "created" | "updated" | "unchanged";
+  /** Resources the provider was called for and which converged — created,
+   * updated or unchanged. On `cloudformation` the unit is the stack, so a
+   * settled deploy is `1`. */
+  applied: number;
+  /** Owned, no-longer-declared resources deleted. */
+  pruned: number;
+  /** Declared resources no provider call was made for (#1447), including
+   * kinds an owned-only prune could not consider (`not-prunable`). Zero on a
+   * complete apply. */
+  notAttempted: number;
 }
 
 /**
@@ -122,9 +125,10 @@ export type K8sApplier = (
 ) => Promise<{ applied: unknown[]; pruned: unknown[]; fieldManager: string }>;
 
 /**
- * The azure lexicon's per-resource ARM applier, as this module needs to call it.
- * Structural, so nothing here imports the azure lexicon's types — same shape as
- * {@link K8sApplier}.
+ * The azure lexicon's per-resource ARM applier, as this module needs to call
+ * it: `azApply` composed with the lexicon's own `toApplyResult` projection, so
+ * what crosses this seam is core's versioned apply envelope (#1446) and
+ * nothing ARM-shaped.
  */
 export type AzureApplier = (
   args: {
@@ -134,12 +138,14 @@ export type AzureApplier = (
     prune?: boolean;
   },
   signal?: AbortSignal,
-) => Promise<{ applied: unknown[]; pruned: unknown[] }>;
+) => Promise<ApplyResult>;
 
 /**
  * The gcp lexicon's per-resource applier, as this module needs to call it
- * (#1449). Structural, so nothing here imports the gcp lexicon's types — same
- * shape as {@link K8sApplier} and {@link AzureApplier}.
+ * (#1449): `gcpApply` composed with the lexicon's own `toApplyResult`
+ * projection, so what crosses this seam is core's versioned apply envelope
+ * (#1446) — the skips of #1447 ride it as NOT-ATTEMPTED entries, and a kind
+ * the prune could not consider rides it as `not-prunable`.
  *
  * Deliberately narrow: no `endpoint`, because `gcpApply` resolves
  * `GCP_ENDPOINT_URL` itself — the same variable gcp's read path honours, so an
@@ -153,21 +159,14 @@ export type GcpApplier = (
     prune?: boolean;
   },
   signal?: AbortSignal,
-) => Promise<{
-  applied: unknown[];
-  pruned: unknown[];
-  /** Declared resources no REST call was made for (#1447). */
-  notAttempted: unknown[];
-  /** Kinds the prune could not consider. */
-  notPrunable: unknown[];
-}>;
+) => Promise<ApplyResult>;
 
 /**
- * The fly lexicon's flaps applier, as this module needs to call it (#1449).
- * Structural, so nothing here imports the fly lexicon's types — same shape as
- * {@link K8sApplier} and {@link AzureApplier}. The eleven arrays are flyApply's
- * own contract: six entity classes applied, five pruned; this module only
- * counts them.
+ * The fly lexicon's flaps applier, as this module needs to call it (#1449):
+ * `flyApply` composed with the lexicon's own `toApplyResult` projection. The
+ * eleven arrays flyApply returns — six entity classes applied, five pruned —
+ * are its own contract and stay in the fly lexicon; what crosses this seam is
+ * core's versioned apply envelope (#1446).
  *
  * Deliberately narrow: no `endpoint`, because `flyApply` resolves
  * `FLY_FLAPS_BASE_URL` itself — mudflaps locally, real Fly when unset; and no
@@ -179,19 +178,7 @@ export type FlyApplier = (
     prune?: boolean;
   },
   signal?: AbortSignal,
-) => Promise<{
-  apps: unknown[];
-  machines: unknown[];
-  volumes: unknown[];
-  ips: unknown[];
-  certs: unknown[];
-  secrets: unknown[];
-  pruned: unknown[];
-  prunedVolumes: unknown[];
-  prunedIps: unknown[];
-  prunedCerts: unknown[];
-  prunedSecrets: unknown[];
-}>;
+) => Promise<ApplyResult>;
 
 /**
  * The aws lexicon's CloudFormation applier, as this module needs to call it
@@ -275,9 +262,13 @@ async function loadK8sApplier(): Promise<K8sApplier> {
  */
 async function loadAzureApplier(): Promise<AzureApplier> {
   const spec = "@intentius/chant-lexicon-azure/op/activities";
-  let mod: { azApply?: AzureApplier };
+  type AzureModule = {
+    azApply?: (args: Parameters<AzureApplier>[0], signal?: AbortSignal) => Promise<unknown>;
+    toApplyResult?: (result: unknown) => ApplyResult;
+  };
+  let mod: AzureModule;
   try {
-    mod = (await import(spec)) as { azApply?: AzureApplier };
+    mod = (await import(spec)) as AzureModule;
   } catch (err) {
     throw new Error(
       `apply target "arm" needs @intentius/chant-lexicon-azure, which could not be loaded ` +
@@ -286,12 +277,18 @@ async function loadAzureApplier(): Promise<AzureApplier> {
         `in chant.config.ts.`,
     );
   }
-  if (typeof mod.azApply !== "function") {
+  const { azApply, toApplyResult } = mod;
+  if (typeof azApply !== "function") {
     throw new Error(
       "the installed @intentius/chant-lexicon-azure exports no azApply — it predates chant #707",
     );
   }
-  return mod.azApply;
+  if (typeof toApplyResult !== "function") {
+    throw new Error(
+      "the installed @intentius/chant-lexicon-azure exports no toApplyResult — it predates chant #1449",
+    );
+  }
+  return async (args, signal) => toApplyResult(await azApply(args, signal));
 }
 
 /**
@@ -300,9 +297,13 @@ async function loadAzureApplier(): Promise<AzureApplier> {
  */
 async function loadGcpApplier(): Promise<GcpApplier> {
   const spec = "@intentius/chant-lexicon-gcp/op/activities";
-  let mod: { gcpApply?: GcpApplier };
+  type GcpModule = {
+    gcpApply?: (args: Parameters<GcpApplier>[0], signal?: AbortSignal) => Promise<unknown>;
+    toApplyResult?: (result: unknown) => ApplyResult;
+  };
+  let mod: GcpModule;
   try {
-    mod = (await import(spec)) as { gcpApply?: GcpApplier };
+    mod = (await import(spec)) as GcpModule;
   } catch (err) {
     throw new Error(
       `apply target "gcp" needs @intentius/chant-lexicon-gcp, which could not be loaded ` +
@@ -311,12 +312,18 @@ async function loadGcpApplier(): Promise<GcpApplier> {
         `in chant.config.ts.`,
     );
   }
-  if (typeof mod.gcpApply !== "function") {
+  const { gcpApply, toApplyResult } = mod;
+  if (typeof gcpApply !== "function") {
     throw new Error(
       "the installed @intentius/chant-lexicon-gcp exports no gcpApply — it predates chant #706",
     );
   }
-  return mod.gcpApply;
+  if (typeof toApplyResult !== "function") {
+    throw new Error(
+      "the installed @intentius/chant-lexicon-gcp exports no toApplyResult — it predates chant #1449",
+    );
+  }
+  return async (args, signal) => toApplyResult(await gcpApply(args, signal));
 }
 
 /**
@@ -325,9 +332,13 @@ async function loadGcpApplier(): Promise<GcpApplier> {
  */
 async function loadFlyApplier(): Promise<FlyApplier> {
   const spec = "@intentius/chant-lexicon-fly/op/activities";
-  let mod: { flyApply?: FlyApplier };
+  type FlyModule = {
+    flyApply?: (args: Parameters<FlyApplier>[0], signal?: AbortSignal) => Promise<unknown>;
+    toApplyResult?: (result: unknown) => ApplyResult;
+  };
+  let mod: FlyModule;
   try {
-    mod = (await import(spec)) as { flyApply?: FlyApplier };
+    mod = (await import(spec)) as FlyModule;
   } catch (err) {
     throw new Error(
       `apply target "fly" needs @intentius/chant-lexicon-fly, which could not be loaded ` +
@@ -336,12 +347,18 @@ async function loadFlyApplier(): Promise<FlyApplier> {
         `in chant.config.ts.`,
     );
   }
-  if (typeof mod.flyApply !== "function") {
+  const { flyApply, toApplyResult } = mod;
+  if (typeof flyApply !== "function") {
     throw new Error(
       "the installed @intentius/chant-lexicon-fly exports no flyApply — it predates chant #739",
     );
   }
-  return mod.flyApply;
+  if (typeof toApplyResult !== "function") {
+    throw new Error(
+      "the installed @intentius/chant-lexicon-fly exports no toApplyResult — it predates chant #1449",
+    );
+  }
+  return async (args, signal) => toApplyResult(await flyApply(args, signal));
 }
 
 /**
@@ -417,6 +434,36 @@ export function defaultOutput(target: ApplyTarget): string {
 }
 
 /**
+ * Collapse a #1446 apply envelope onto the one result shape this activity
+ * returns, logging the counts (and warning on skips) as it goes. The envelope
+ * is normalized through core's `normalizeApply`, so the counts are the lengths
+ * of `NormalizedApply`'s three arrays — nothing re-derived, nothing invented.
+ */
+function collapseEnvelope(envelope: ApplyResult, label: string): NativeApplyResult {
+  const n = normalizeApply(envelope);
+  console.log(
+    `[${label}] applied ${n.applied.length} resource(s)` +
+      (n.pruned.length > 0 ? `; pruned ${n.pruned.length}` : ""),
+  );
+  // #1447: a resource the applier made no call for is reported, not dropped —
+  // otherwise a partial apply reads as a full one. The per-resource reasons
+  // ride the envelope; the count is what the workflow can gate on.
+  if (n.notAttempted.length > 0) {
+    console.warn(`[${label}] NOT attempted: ${n.notAttempted.length} resource(s)`);
+    for (const skip of n.notAttempted) {
+      console.warn(
+        `[${label}]   ${skip.kind}/${skip.name}: ${skip.reason}${skip.detail ? ` (${skip.detail})` : ""}`,
+      );
+    }
+  }
+  return {
+    applied: n.applied.length,
+    pruned: n.pruned.length,
+    notAttempted: n.notAttempted.length,
+  };
+}
+
+/**
  * Apply declared source to the cloud via the target's native mechanism.
  * Deletes (when enabled) ride that mechanism's own delete path — marker-scoped
  * on `kubectl`, tag-scoped on `arm`, label-scoped on `gcp`, marker- and
@@ -461,6 +508,10 @@ export async function nativeApply(
       },
       signal,
     );
+    // The field manager is the operator's detail and stays on the log; the
+    // result is the count projection like every other target's. The k8s
+    // applier's contract has no skip path — a document it cannot classify
+    // throws — so NOT-ATTEMPTED is structurally zero here.
     console.log(
       `applied ${result.applied.length} object(s) as field manager "${result.fieldManager}"` +
         (result.pruned.length > 0 ? `; pruned ${result.pruned.length}` : ""),
@@ -468,13 +519,13 @@ export async function nativeApply(
     return {
       applied: result.applied.length,
       pruned: result.pruned.length,
-      fieldManager: result.fieldManager,
+      notAttempted: 0,
     };
   }
 
   if (args.target === "arm") {
     const apply = azureApplier ?? (await loadAzureApplier());
-    const result = await apply(
+    const envelope = await apply(
       {
         templatePath: output,
         resourceGroup: args.env,
@@ -486,11 +537,7 @@ export async function nativeApply(
       },
       signal,
     );
-    console.log(
-      `applied ${result.applied.length} resource(s)` +
-        (result.pruned.length > 0 ? `; pruned ${result.pruned.length}` : ""),
-    );
-    return { applied: result.applied.length, pruned: result.pruned.length };
+    return collapseEnvelope(envelope, args.env);
   }
 
   if (args.target === "gcp") {
@@ -500,25 +547,10 @@ export async function nativeApply(
     // env resolution, and `env` is a log label here: GCP has no stack or
     // resource-group equivalent for it to name.
     const apply = gcpApplier ?? (await loadGcpApplier());
-    const result = await apply({ manifestPath: output, prune: deleteMode !== "never" }, signal);
-    console.log(
-      `[${args.env}] applied ${result.applied.length} resource(s)` +
-        (result.pruned.length > 0 ? `; pruned ${result.pruned.length}` : ""),
-    );
-    // #1447: a kind the applier has no mapper (or list capability) for is
-    // reported, not dropped — otherwise a partial apply reads as a full one.
-    if (result.notAttempted.length > 0) {
-      console.warn(`[${args.env}] NOT applied (no mapper): ${result.notAttempted.length} resource(s)`);
-    }
-    if (result.notPrunable.length > 0) {
-      console.warn(`[${args.env}] not prunable (no list capability): ${result.notPrunable.length} kind(s)`);
-    }
-    return {
-      applied: result.applied.length,
-      pruned: result.pruned.length,
-      notAttempted: result.notAttempted.length,
-      notPrunable: result.notPrunable.length,
-    };
+    const envelope = await apply({ manifestPath: output, prune: deleteMode !== "never" }, signal);
+    // #1447's skips and the not-prunable kinds both ride the envelope as
+    // NOT-ATTEMPTED entries — one bucket, per-entry reasons, one count out.
+    return collapseEnvelope(envelope, args.env);
   }
 
   if (args.target === "fly") {
@@ -528,24 +560,10 @@ export async function nativeApply(
     // resolution, and `env` is a log label here: the app names live in the
     // plan itself.
     const apply = flyApplier ?? (await loadFlyApplier());
-    const result = await apply({ planPath: output, prune: deleteMode !== "never" }, signal);
-    const applied =
-      result.apps.length +
-      result.machines.length +
-      result.volumes.length +
-      result.ips.length +
-      result.certs.length +
-      result.secrets.length;
-    const pruned =
-      result.pruned.length +
-      result.prunedVolumes.length +
-      result.prunedIps.length +
-      result.prunedCerts.length +
-      result.prunedSecrets.length;
-    console.log(
-      `[${args.env}] applied ${applied} resource(s)` + (pruned > 0 ? `; pruned ${pruned}` : ""),
-    );
-    return { applied, pruned };
+    const envelope = await apply({ planPath: output, prune: deleteMode !== "never" }, signal);
+    // The six applied classes and five pruned classes are already flattened
+    // into the envelope by fly's own toApplyResult; here they are just counts.
+    return collapseEnvelope(envelope, args.env);
   }
 
   // cloudformation (#1449): the aws lexicon's native applier. env is the stack
@@ -553,8 +571,23 @@ export async function nativeApply(
   // capability derivation (#980) are awsApply's own, so nothing else is passed.
   const apply = awsApplier ?? (await loadAwsApplier());
   const result = await apply({ templatePath: output, stackName: args.env }, signal);
+  // The stack, its settled status and the action are the operator's detail and
+  // stay on the log. The result is the same count projection as every other
+  // target's, with the stack as the unit: one settled deploy, one applied.
   console.log(`${result.action}: stack ${result.stackName} (${result.status})`);
-  return { stackName: result.stackName, status: result.status, action: result.action };
+  return { applied: 1, pruned: 0, notAttempted: 0 };
+}
+
+/**
+ * Whether a target has a mapped native rollback for {@link compensateApply} to
+ * run without an explicit `compensate.command`. `cloudformation` is the only
+ * one today — the aws lexicon's `rollbackStack`. This is the totality
+ * predicate `ApplyOp` checks at build time (#1449): a target outside it with
+ * no command has nothing a compensation could run, so the op refuses to build
+ * with compensation on rather than warn at rollback time.
+ */
+export function hasNativeRollback(target: ApplyTarget): boolean {
+  return target === "cloudformation";
 }
 
 export interface CompensateApplyArgs {
@@ -583,10 +616,14 @@ export interface CompensateApplyResult {
  * Compensation step (saga rollback) for a partial apply failure. Runs the
  * explicit `command` if given; otherwise `cloudformation` rolls back natively
  * through the aws lexicon's `rollbackStack` (#1449 — CloudFormation
- * `RollbackStack` over the Query API, no CLI in the path). Where no automatic
- * rollback exists (kubectl/kustomize/arm/gcp/fly without a `command`), it warns rather
- * than silently no-op'ing — partial state should never look reverted when it
- * isn't.
+ * `RollbackStack` over the Query API, no CLI in the path).
+ *
+ * Compensation is total for built ops: `ApplyOp` refuses at build time to wire
+ * this activity for a target with neither a native rollback
+ * ({@link hasNativeRollback}) nor an explicit `command`, so the no-rollback
+ * branch below is unreachable from an op it built. It stays as a throw, not a
+ * warn — a hand-assembled op that reaches it must fail loudly, because partial
+ * state should never look reverted when it isn't.
  *
  * `rollback` is injectable for tests; production resolves it through
  * {@link loadAwsRollback}.
@@ -613,8 +650,12 @@ export async function compensateApply(
     };
   }
 
-  console.warn(
-    `[apply] no automatic rollback for target "${args.target}" — partial apply to ${args.env} was NOT reverted; supply compensate.command to enable rollback`,
+  // Defensive: unreachable from an ApplyOp, which refuses this combination at
+  // build time (#1449). Reaching it means the op was assembled without that
+  // check, and the honest outcome is a failure that says the state stands.
+  throw new Error(
+    `no automatic rollback for target "${args.target}" — the partial apply to ${args.env} was NOT ` +
+      `reverted and cannot be. ApplyOp refuses compensate for this target at build time; either ` +
+      `supply compensate.command or use a target with a mapped rollback (cloudformation).`,
   );
-  return {};
 }

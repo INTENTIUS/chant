@@ -41,7 +41,7 @@ export type { ChantTeardownArgs } from "./teardown";
 export { reconcilePr } from "./reconcile";
 export type { ReconcilePrArgs, ReconcileResult, ReconcileMode, ReconcileEntry } from "./reconcile";
 
-export { nativeApply, compensateApply } from "./apply";
+export { nativeApply, compensateApply, hasNativeRollback } from "./apply";
 export type {
   NativeApplyArgs,
   NativeApplyResult,

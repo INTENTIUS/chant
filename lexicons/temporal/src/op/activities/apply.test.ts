@@ -1,14 +1,16 @@
 import { describe, test, expect } from "vitest";
-import { defaultOutput, nativeApply, compensateApply } from "./apply";
+import { applyResult } from "@intentius/chant/apply";
+import { defaultOutput, nativeApply, compensateApply, hasNativeRollback } from "./apply";
 import type { K8sApplier, AzureApplier, GcpApplier, FlyApplier, AwsApplier, AwsRollback } from "./apply";
 
 /**
  * The kubectl branch moved to the k8s lexicon in chant #1075, the arm branch to
  * the azure lexicon in #1448, and the cloudformation branch to the aws lexicon
  * in #1449 — no shell target is left. What is asserted here is the dispatch —
- * that a target never becomes a shell command again, and that the arguments the
- * composite emits reach each applier intact. What the appliers *do* is their
- * own lexicons' tests.
+ * that a target never becomes a shell command again, that the arguments the
+ * composite emits reach each applier intact, and that every branch collapses
+ * onto the one normalized result (#1446 counts, collapsed in #1449). What the
+ * appliers *do* is their own lexicons' tests.
  */
 describe("nativeApply: kustomize renders, then dispatches to the SAME k8s applier (#1548)", () => {
   test("the rendered documents reach the applier inline, output as the render dir", async () => {
@@ -35,8 +37,8 @@ describe("nativeApply: kustomize renders, then dispatches to the SAME k8s applie
     expect(calls[0].documents).toBe(rendered);
     expect(calls[0].manifest).toBe("kustomize:overlays/prod"); // label, not a path
     expect(calls[0].deleteMode).toBe("owned-only");
-    expect(result.applied).toBe(1);
-    expect(result.fieldManager).toBe("chant:web");
+    // The field manager stays on the log; the result is the collapsed counts.
+    expect(result).toEqual({ applied: 1, pruned: 0, notAttempted: 0 });
   });
 
   test("defaultOutput: dist directory", async () => {
@@ -67,7 +69,9 @@ describe("nativeApply: kubectl dispatches to the k8s lexicon (chant #1075)", () 
     expect(k8s.calls).toEqual([
       { manifest: "dist", environment: "prod", deleteMode: "owned-only" },
     ]);
-    expect(result).toEqual({ applied: 3, pruned: 1, fieldManager: "chant:web" });
+    // Counts preserved from the k8s applier's arrays; the k8s contract has no
+    // skip path (an unclassifiable document throws), so notAttempted is 0.
+    expect(result).toEqual({ applied: 3, pruned: 1, notAttempted: 0 });
   });
 
   test("defaults the output to `dist` and the delete mode to never", async () => {
@@ -102,12 +106,12 @@ describe("nativeApply: kubectl dispatches to the k8s lexicon (chant #1075)", () 
 });
 
 describe("nativeApply: arm dispatches to the azure lexicon (chant #1448)", () => {
-  /** Records what the applier was handed, and reports nothing applied. */
+  /** Records what the applier was handed, and reports an empty envelope. */
   const spy = (): { calls: Array<Parameters<AzureApplier>[0]>; applier: AzureApplier } => {
     const calls: Array<Parameters<AzureApplier>[0]> = [];
     const applier: AzureApplier = async (args) => {
       calls.push(args);
-      return { applied: [], pruned: [] };
+      return applyResult([]);
     };
     return { calls, applier };
   };
@@ -127,7 +131,7 @@ describe("nativeApply: arm dispatches to the azure lexicon (chant #1448)", () =>
     expect(calls[0].prune).toBe(true);
     expect(calls[0].resourceGroup).toBe("my-rg");
     expect(calls[0].templatePath).toBe("t.json");
-    expect(result).toEqual({ applied: 0, pruned: 0 });
+    expect(result).toEqual({ applied: 0, pruned: 0, notAttempted: 0 });
   });
 
   test("gated prunes too — same delete scope, the gate lives in the composite", async () => {
@@ -174,10 +178,40 @@ describe("nativeApply: arm dispatches to the azure lexicon (chant #1448)", () =>
     }
   });
 
-  test("reports what was applied and pruned, not a command", async () => {
-    const applier: AzureApplier = async () => ({ applied: [{}, {}], pruned: [{}] });
+  test("counts are preserved from the applier's envelope, not a command", async () => {
+    const applier: AzureApplier = async () =>
+      applyResult(
+        [
+          { kind: "Microsoft.Storage/storageAccounts", name: "sa1", action: "updated" },
+          { kind: "Microsoft.Network/virtualNetworks", name: "vnet1", action: "updated" },
+        ],
+        [{ kind: "Microsoft.Storage/storageAccounts", name: "old", deleted: true }],
+      );
     const result = await nativeApply({ target: "arm", env: "rg" }, undefined, undefined, applier);
-    expect(result).toEqual({ applied: 2, pruned: 1 });
+    expect(result).toEqual({ applied: 2, pruned: 1, notAttempted: 0 });
+  });
+
+  test("a not-prunable orphan (#1457) surfaces in the notAttempted count", async () => {
+    const applier: AzureApplier = async () =>
+      applyResult(
+        [{ kind: "Microsoft.Storage/storageAccounts", name: "sa1", action: "updated" }],
+        [],
+        [
+          {
+            kind: "Microsoft.Custom/widgets",
+            name: "w1",
+            reason: "not-prunable",
+            detail: "no-api-version",
+          },
+        ],
+      );
+    const result = await nativeApply(
+      { target: "arm", env: "rg", deleteMode: "owned-only" },
+      undefined,
+      undefined,
+      applier,
+    );
+    expect(result).toEqual({ applied: 1, pruned: 0, notAttempted: 1 });
   });
 
   test("with nothing injected it resolves the real azure lexicon's azApply", async () => {
@@ -198,12 +232,12 @@ describe("nativeApply: arm dispatches to the azure lexicon (chant #1448)", () =>
 });
 
 describe("nativeApply: gcp dispatches to the gcp lexicon (chant #1449)", () => {
-  /** Records what the applier was handed, and reports nothing applied. */
+  /** Records what the applier was handed, and reports an empty envelope. */
   const spy = (): { calls: Array<Parameters<GcpApplier>[0]>; applier: GcpApplier } => {
     const calls: Array<Parameters<GcpApplier>[0]> = [];
     const applier: GcpApplier = async (args) => {
       calls.push(args);
-      return { applied: [], pruned: [], notAttempted: [], notPrunable: [] };
+      return applyResult([]);
     };
     return { calls, applier };
   };
@@ -251,15 +285,24 @@ describe("nativeApply: gcp dispatches to the gcp lexicon (chant #1449)", () => {
     expect(defaultOutput("gcp")).toBe("dist/gcp.yaml");
   });
 
-  test("reports counts, and surfaces what was NOT attempted (#1447)", async () => {
-    const applier: GcpApplier = async () => ({
-      applied: [{}, {}],
-      pruned: [{}],
-      notAttempted: [{ kind: "PubSubTopic", name: "x", reason: "unsupported-kind" }],
-      notPrunable: [{ kind: "PubSubTopic", reason: "no-list-capability" }],
-    });
+  test("counts are preserved from the applier's envelope, skips included (#1447)", async () => {
+    // The skips of #1447 and a kind the prune could not consider both ride the
+    // envelope as NOT-ATTEMPTED entries — the old separate notPrunable count
+    // folds into the one notAttempted count.
+    const applier: GcpApplier = async () =>
+      applyResult(
+        [
+          { kind: "StorageBucket", name: "b1", action: "created" },
+          { kind: "StorageBucket", name: "b2", action: "unchanged" },
+        ],
+        [{ kind: "StorageBucket", name: "old", deleted: true }],
+        [
+          { kind: "PubSubTopic", name: "x", reason: "unsupported-kind" },
+          { kind: "PubSubTopic", name: "*", reason: "not-prunable", detail: "no-list-capability" },
+        ],
+      );
     const result = await applyGcp({ target: "gcp", env: "prod" }, applier);
-    expect(result).toEqual({ applied: 2, pruned: 1, notAttempted: 1, notPrunable: 1 });
+    expect(result).toEqual({ applied: 2, pruned: 1, notAttempted: 2 });
   });
 
   test("with nothing injected it resolves the real gcp lexicon's gcpApply", async () => {
@@ -278,26 +321,12 @@ describe("nativeApply: gcp dispatches to the gcp lexicon (chant #1449)", () => {
 });
 
 describe("nativeApply: fly dispatches to the fly lexicon (chant #1449)", () => {
-  /** An empty eleven-array flyApply result. */
-  const empty = () => ({
-    apps: [],
-    machines: [],
-    volumes: [],
-    ips: [],
-    certs: [],
-    secrets: [],
-    pruned: [],
-    prunedVolumes: [],
-    prunedIps: [],
-    prunedCerts: [],
-    prunedSecrets: [],
-  });
-  /** Records what the applier was handed, and reports nothing applied. */
+  /** Records what the applier was handed, and reports an empty envelope. */
   const spy = (): { calls: Array<Parameters<FlyApplier>[0]>; applier: FlyApplier } => {
     const calls: Array<Parameters<FlyApplier>[0]> = [];
     const applier: FlyApplier = async (args) => {
       calls.push(args);
-      return empty();
+      return applyResult([]);
     };
     return { calls, applier };
   };
@@ -344,22 +373,31 @@ describe("nativeApply: fly dispatches to the fly lexicon (chant #1449)", () => {
     expect(defaultOutput("fly")).toBe("dist/fly.json");
   });
 
-  test("counts across all six applied classes and all five pruned classes", async () => {
-    const applier: FlyApplier = async () => ({
-      apps: [{}],
-      machines: [{}, {}],
-      volumes: [{}],
-      ips: [{}],
-      certs: [{}],
-      secrets: [{}],
-      pruned: [{}],
-      prunedVolumes: [{}],
-      prunedIps: [{}],
-      prunedCerts: [{}],
-      prunedSecrets: [{}],
-    });
+  test("counts are preserved from the applier's envelope", async () => {
+    // The six applied classes and five pruned classes are flattened into the
+    // envelope by fly's own toApplyResult (tested in the fly lexicon); this
+    // dispatcher only carries the counts through.
+    const applier: FlyApplier = async () =>
+      applyResult(
+        [
+          { kind: "app", name: "web", action: "created" },
+          { kind: "machine", name: "web-1", action: "created" },
+          { kind: "machine", name: "web-2", action: "updated" },
+          { kind: "volume", name: "data", action: "unchanged" },
+          { kind: "ip", name: "v4", action: "created" },
+          { kind: "cert", name: "example.com", action: "created" },
+          { kind: "secret", name: "API_KEY", action: "updated" },
+        ],
+        [
+          { kind: "machine", name: "old-1", deleted: true },
+          { kind: "volume", name: "old-data", deleted: true },
+          { kind: "ip", name: "1.2.3.4", deleted: true },
+          { kind: "cert", name: "old.example.com", deleted: true },
+          { kind: "secret", name: "OLD_KEY", deleted: true },
+        ],
+      );
     const result = await applyFly({ target: "fly", env: "prod" }, applier);
-    expect(result).toEqual({ applied: 7, pruned: 5 });
+    expect(result).toEqual({ applied: 7, pruned: 5, notAttempted: 0 });
   });
 
   test("with nothing injected it resolves the real fly lexicon's flyApply", async () => {
@@ -418,10 +456,13 @@ describe("nativeApply: cloudformation dispatches to the aws lexicon (chant #1449
     expect(owned.calls).toEqual(never.calls);
   });
 
-  test("reports the stack, its settled status and the action — not a command", async () => {
+  test("collapses onto the normalized counts — the stack is the unit", async () => {
+    // The stack name, settled status and action are the operator's detail and
+    // stay on the activity log; the result is the same count shape as every
+    // other target's. One settled deploy is one applied.
     const applier: AwsApplier = async () => ({ stackName: "prod", status: "UPDATE_COMPLETE", action: "updated" });
     const result = await applyCfn({ target: "cloudformation", env: "prod" }, applier);
-    expect(result).toEqual({ stackName: "prod", status: "UPDATE_COMPLETE", action: "updated" });
+    expect(result).toEqual({ applied: 1, pruned: 0, notAttempted: 0 });
   });
 
   test("with nothing injected it resolves the real aws lexicon's awsApply", async () => {
@@ -474,10 +515,22 @@ describe("compensateApply: cloudformation rolls back through the aws lexicon (ch
     expect(result).toEqual({ command: "echo custom-rollback" });
   });
 
-  test("kubectl / kustomize / arm / gcp / fly without a command warn and revert nothing", async () => {
+  test("kubectl / kustomize / arm / gcp / fly without a command throw — the defensive branch (#1449)", async () => {
+    // Unreachable from a built ApplyOp, which refuses this combination at
+    // build time. A hand-assembled op that reaches it fails loudly rather than
+    // returning a result that could read as a revert.
     for (const target of ["kubectl", "kustomize", "arm", "gcp", "fly"] as const) {
-      const result = await compensateApply({ target, env: "prod" });
-      expect(result).toEqual({});
+      const err = await compensateApply({ target, env: "prod" }).catch((e: unknown) => e);
+      expect(String(err)).toMatch(`no automatic rollback for target "${target}"`);
+      expect(String(err)).toMatch(/NOT\s+reverted/);
+      expect(String(err)).toMatch(/compensate\.command/);
+    }
+  });
+
+  test("hasNativeRollback: cloudformation only", () => {
+    expect(hasNativeRollback("cloudformation")).toBe(true);
+    for (const target of ["kubectl", "kustomize", "arm", "gcp", "fly"] as const) {
+      expect(hasNativeRollback(target)).toBe(false);
     }
   });
 
