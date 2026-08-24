@@ -105,7 +105,7 @@ export interface ChartInstance {
   /** Directory relative to the root chart ("" for the root). */
   relDir: string;
   /** Values scope from the root, e.g. ["grafana"] or ["kidtwo"]; [] for root. */
-  scope: string[];
+  scope: readonly string[];
   /** Effective values as this instance sees them. */
   values: unknown;
   /**
@@ -133,7 +133,7 @@ export function buildChartInstances(
   const visit = (
     dir: string,
     relDir: string,
-    scope: string[],
+    scope: readonly string[],
     values: unknown,
     disabledBy: string | undefined,
   ): void => {
