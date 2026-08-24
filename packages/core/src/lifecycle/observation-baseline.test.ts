@@ -97,3 +97,49 @@ describe("acceptDeviations", () => {
     expect(countAccepted(null)).toBe(0);
   });
 });
+
+describe("acceptDeviations refuses effect receipts (#1833)", () => {
+  const now = "2026-08-24T00:00:00.000Z";
+
+  test("refuses a deviation whose type is the core receipt entityType", () => {
+    expect(() =>
+      acceptDeviations(emptyBaseline("prod"), "chant", [
+        { entity: "seededReceipt", type: "Chant::EffectReceipt", path: "value", value: "gone" },
+      ], { now }),
+    ).toThrow(/effect receipt "seededReceipt"/);
+  });
+
+  test("refuses a deviation on an entity the caller recognized as a receipt (materialized row)", () => {
+    expect(() =>
+      acceptDeviations(emptyBaseline("prod"), "aws", [
+        { entity: "migratedReceipt", type: "AWS::SSM::Parameter", path: "Value", value: "stale" },
+      ], { now, receipts: new Set(["migratedReceipt"]) }),
+    ).toThrow(/effect receipt "migratedReceipt"/);
+  });
+
+  test("the refusal names the receipt and the effect step as sole writer, and records nothing", () => {
+    const before = emptyBaseline("prod");
+    let error: Error | undefined;
+    try {
+      acceptDeviations(before, "aws", [
+        { entity: "Role", type: "AWS::IAM::Role", path: "MaxSessionDuration", value: 7200 },
+        { entity: "migratedReceipt", type: "AWS::SSM::Parameter", path: "Value", value: "stale" },
+      ], { now, receipts: new Set(["migratedReceipt"]) });
+    } catch (e) {
+      error = e as Error;
+    }
+    expect(error).toBeDefined();
+    expect(error!.message).toContain('effect receipt "migratedReceipt"');
+    expect(error!.message).toContain("only writer");
+    expect(error!.message).toContain("defuse the effect");
+    // The whole acceptance aborts — the non-receipt row was not recorded either.
+    expect(before.lexicons).toEqual({});
+  });
+
+  test("passes: non-receipt deviations accept as before, receipts set present", () => {
+    const b = acceptDeviations(emptyBaseline("prod"), "aws", [
+      { entity: "Role", type: "AWS::IAM::Role", path: "MaxSessionDuration", value: 7200 },
+    ], { now, receipts: new Set(["migratedReceipt"]) });
+    expect(baselineForLexicon(b, "aws").Role.accepted).toHaveLength(1);
+  });
+});
