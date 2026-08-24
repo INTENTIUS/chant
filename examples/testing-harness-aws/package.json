@@ -1,0 +1,18 @@
+{
+  "name": "testing-harness-aws-example",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Worked example for the @intentius/chant/testing live-stack harness: deploy to Floci per suite, assert, destroy.",
+  "scripts": {
+    "build": "chant build src -o template.json",
+    "lint": "chant lint src"
+  },
+  "devDependencies": {
+    "@intentius/chant": "*",
+    "@intentius/chant-lexicon-aws": "*",
+    "@intentius/chant-lexicon-temporal": "*",
+    "typescript": "*",
+    "vitest": "*"
+  }
+}
