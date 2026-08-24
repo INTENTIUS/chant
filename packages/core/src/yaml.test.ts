@@ -226,6 +226,94 @@ describe("parseScalar", () => {
     expect(parseScalar("hello")).toBe("hello");
   });
 });
+// Quoted scalars (#1860) — stripping the delimiters is only half the job; the
+// escapes inside them have to be decoded too. A double-quoted `\n` that stayed
+// two literal characters is what sent a seven-line setup script to a shell as
+// one line.
+describe("parseScalar quoted scalars (#1860)", () => {
+  test("double-quoted escapes decode", () => {
+    expect(parseScalar(String.raw`"a\nb"`)).toBe("a\nb");
+    expect(parseScalar(String.raw`"a\tb"`)).toBe("a\tb");
+    expect(parseScalar(String.raw`"say \"hi\""`)).toBe('say "hi"');
+    expect(parseScalar(String.raw`"back\\slash"`)).toBe("back\\slash");
+    expect(parseScalar(String.raw`"a\/b"`)).toBe("a/b");
+  });
+
+  test("hex, unicode and 32-bit escapes", () => {
+    expect(parseScalar(String.raw`"\x41"`)).toBe("A");
+    expect(parseScalar(String.raw`"A"`)).toBe("A");
+    expect(parseScalar(String.raw`"\U0001F600"`)).toBe("\u{1F600}");
+  });
+
+  test("an escaped line break folds away with its indentation", () => {
+    expect(parseScalar('"a\\\n   b"')).toBe("ab");
+  });
+
+  test("single-quoted '' is one quote", () => {
+    expect(parseScalar("'it''s'")).toBe("it's");
+    expect(parseScalar("'''quoted'''")).toBe("'quoted'");
+  });
+
+  test("a lone quote character is not a quoted scalar", () => {
+    expect(parseScalar('"')).toBe('"');
+    expect(parseScalar("'")).toBe("'");
+  });
+
+  test("a body with a bare quote keeps the old strip-only behaviour", () => {
+    expect(parseScalar('"a" + "b"')).toBe('a" + "b');
+  });
+
+  test("an unknown or truncated escape keeps the old strip-only behaviour", () => {
+    expect(parseScalar(String.raw`"a\qb"`)).toBe(String.raw`a\qb`);
+    expect(parseScalar(String.raw`"\x4"`)).toBe(String.raw`\x4`);
+  });
+});
+
+// Round-trip parity for the scalars `emitYAML` quotes: what it writes,
+// `parseYAML` must read back unchanged. The single-quote half of #1860 was
+// invisible until this existed. Multiline strings are excluded on purpose —
+// the emitter sends those through a block scalar, which #910 already covers
+// and which does not preserve trailing newlines.
+describe("emitYAML/parseYAML round trip (#1860)", () => {
+  const values = [
+    "'quoted'",
+    "#hash's",
+    "it's a test",
+    "plain",
+    "yes",
+    "a: b",
+    "$VAR",
+    "",
+  ];
+
+  for (const v of values) {
+    test(`round-trips ${JSON.stringify(v)}`, () => {
+      expect(parseYAML(`k: ${emitYAML(v, 0)}\n`).k).toBe(v);
+    });
+  }
+});
+
+// The fountain lexicon emits multiline strings as `JSON.stringify(s)` — a
+// double-quoted scalar, not a block scalar — so this is the shape that
+// actually reached the applier (#1860).
+describe("double-quoted multiline manifest values (#1860)", () => {
+  test("a joined shell script keeps its newlines", () => {
+    const script = [
+      "set -e",
+      "sudo service postgresql start || true",
+      `sudo -u postgres psql -tc "ALTER USER postgres PASSWORD 'postgres'" || true`,
+      "cd /workspace/fountain",
+    ].join("\n");
+
+    const yaml = `spec:\n  setup_script: ${JSON.stringify(script)}\n`;
+    const parsed = parseYAML(yaml) as { spec: { setup_script: string } };
+
+    expect(parsed.spec.setup_script).toBe(script);
+    expect(parsed.spec.setup_script.split("\n")).toHaveLength(4);
+    expect(parsed.spec.setup_script).not.toContain(String.raw`\n`);
+  });
+});
+
 
 // Block scalars (#910) — round-trip parity with js-yaml for literal/folded/chomping,
 // including block scalars nested inside array items (the case that mis-parsed).

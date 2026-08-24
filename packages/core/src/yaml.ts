@@ -559,15 +559,85 @@ export function parseScalar(value: string): unknown {
   if (value === "" || value === "~" || value === "null") return null;
   if (value === "true" || value === "yes") return true;
   if (value === "false" || value === "no") return false;
-  // Strip quotes
-  if (
-    (value.startsWith("'") && value.endsWith("'")) ||
-    (value.startsWith('"') && value.endsWith('"'))
-  ) {
-    return value.slice(1, -1);
+  // Quoted scalars carry escapes, and stripping the quotes is only half the
+  // job: a double-quoted `\n` is a newline, a single-quoted `''` is one
+  // quote. Dropping that step leaves the escape sequence in the value as
+  // literal characters, which is how a multiline `setup_script` reached a
+  // shell as one line of `set -e\nsudo ...` (#1860).
+  if (value.length >= 2) {
+    if (value.startsWith('"') && value.endsWith('"')) {
+      const unescaped = unescapeDoubleQuoted(value.slice(1, -1));
+      // `null` means the body held a bare `"`, so this was never a single
+      // well-formed scalar (`"a" + "b"`). Keep the old behaviour there.
+      return unescaped ?? value.slice(1, -1);
+    }
+    if (value.startsWith("'") && value.endsWith("'")) {
+      return value.slice(1, -1).replace(/''/g, "'");
+    }
   }
   // Number
   const num = Number(value);
   if (!isNaN(num) && value !== "") return num;
   return value;
+}
+
+/** YAML double-quoted escapes, per the spec's escape table. */
+const DQ_ESCAPES: Record<string, string> = {
+  "0": "\0",
+  a: "\x07",
+  b: "\b",
+  t: "\t",
+  "\t": "\t",
+  n: "\n",
+  v: "\v",
+  f: "\f",
+  r: "\r",
+  e: "\x1b",
+  " ": " ",
+  '"': '"',
+  "/": "/",
+  "\\": "\\",
+  N: "\x85",
+  _: "\xa0",
+  L: "\u2028",
+  P: "\u2029",
+};
+
+/**
+ * Decode the body of a double-quoted YAML scalar.
+ *
+ * Returns `null` when the body holds an unescaped `"`, which means the caller
+ * was not looking at one quoted scalar after all.
+ */
+function unescapeDoubleQuoted(body: string): string | null {
+  let out = "";
+  for (let i = 0; i < body.length; i++) {
+    const ch = body[i];
+    if (ch === '"') return null;
+    if (ch !== "\\") {
+      out += ch;
+      continue;
+    }
+    const esc = body[++i];
+    if (esc === undefined) return null;
+    // \xXX, \uXXXX, \UXXXXXXXX
+    const width = esc === "x" ? 2 : esc === "u" ? 4 : esc === "U" ? 8 : 0;
+    if (width > 0) {
+      const hex = body.slice(i + 1, i + 1 + width);
+      if (hex.length < width || !/^[0-9a-fA-F]+$/.test(hex)) return null;
+      out += String.fromCodePoint(parseInt(hex, 16));
+      i += width;
+      continue;
+    }
+    // An escaped line break is a line continuation: it and the following
+    // indentation fold away to nothing.
+    if (esc === "\n") {
+      while (body[i + 1] === " " || body[i + 1] === "\t") i++;
+      continue;
+    }
+    const mapped = DQ_ESCAPES[esc];
+    if (mapped === undefined) return null;
+    out += mapped;
+  }
+  return out;
 }
