@@ -51,6 +51,28 @@ export function findResourceRefs(value: unknown): Set<string> {
 }
 
 /**
+ * Build the reverse of `findResourceRefs` for a whole template: logical id →
+ * the set of logical ids whose Properties reference it via Ref/Fn::GetAtt.
+ * Lets a check walk the graph consumer-ward (who uses this role?) instead of
+ * dependency-ward. Used by WAW059.
+ */
+export function buildReverseRefIndex(template: CFTemplate): Map<string, Set<string>> {
+  const index = new Map<string, Set<string>>();
+  for (const [logicalId, resource] of Object.entries(template.Resources ?? {})) {
+    for (const target of findResourceRefs(resource.Properties)) {
+      if (target === logicalId) continue;
+      let consumers = index.get(target);
+      if (!consumers) {
+        consumers = new Set();
+        index.set(target, consumers);
+      }
+      consumers.add(logicalId);
+    }
+  }
+  return index;
+}
+
+/**
  * Check if a value is a CloudFormation intrinsic function (Ref, Fn::*, etc.)
  * that cannot be statically evaluated.
  */
