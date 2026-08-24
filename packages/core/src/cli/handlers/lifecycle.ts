@@ -38,7 +38,6 @@ import { planTeardown, executeTeardown, type TeardownPlan, type TeardownReport }
 import { collectBuildRootContributors } from "../plugins";
 import { applyLiveEndpoint } from "../../live-endpoint";
 import { isResourceDeclarable } from "../../declarable";
-import { collectEffectReceipts } from "../../effect-receipt";
 import { formatError, formatWarning, formatSuccess, formatBold } from "../format";
 import type { CommandContext } from "../registry";
 import type { LifecycleSnapshot } from "../../lifecycle/types";
