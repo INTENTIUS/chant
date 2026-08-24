@@ -204,7 +204,7 @@ describe("deep-reading an EC2 topology stack", () => {
 
     // Four types, four describes — never one call per resource.
     expect(spawnMock).toHaveBeenCalledTimes(4);
-    const commands = spawnMock.mock.calls.map((c: [string[]]) => c[0][2]).sort();
+    const commands = spawnMock.mock.calls.map((c) => (c[0] as string[])[2]).sort();
     expect(commands).toEqual([
       "describe-internet-gateways",
       "describe-route-tables",
