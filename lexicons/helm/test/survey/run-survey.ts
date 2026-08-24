@@ -15,8 +15,10 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import {
+  formatLocalization,
   formatReasons,
   formatRow,
+  localizeChart,
   parseCorpus,
   pullChart,
   surveyChart,
@@ -33,10 +35,16 @@ const failures: string[] = [];
 for (const entry of corpus) {
   try {
     const chartDir = pullChart(entry);
-    const row = surveyChart(entry.name, entry.version, chartDir, valuesFileFor(surveyDir, entry.name));
+    const valuesFile = valuesFileFor(surveyDir, entry.name);
+    const row = surveyChart(entry.name, entry.version, chartDir, valuesFile);
     rows.push(row);
     console.log(formatRow(row));
     console.log(`  why: ${formatReasons(row)}`);
+    if (row.unstableLines > 0) {
+      // The double-render localizer (#1236): map every unstable line to the
+      // open generated input that produced it.
+      console.log(formatLocalization(localizeChart(chartDir, valuesFile)));
+    }
   } catch (err) {
     failures.push(`${entry.name}: ${err instanceof Error ? err.message : String(err)}`);
     console.error(`${entry.name} FAILED: ${err instanceof Error ? err.message : String(err)}`);

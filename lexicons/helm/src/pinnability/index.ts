@@ -63,3 +63,15 @@ export {
   countDifferingLines,
   type RoutedDocuments,
 } from "./render-stream";
+
+export {
+  localizeOpenInputs,
+  diffRenderPair,
+  type RenderFn,
+  type PinStyle,
+  type CandidatePin,
+  type LocalizedOccurrence,
+  type LocalizedInput,
+  type LocalizationReport,
+  type LocalizeOptions,
+} from "./localize";

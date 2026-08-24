@@ -418,7 +418,15 @@ export function classifyChart(
           // rediscovers it.
           if (a.reachable !== false) {
             const valuesRef = action.body.match(VALUES_PATH_IN_ACTION);
-            const relPath = valuesRef ? valuesRef[1].slice(1).split(".") : undefined;
+            // A value closes a generator only through the `x | default
+            // (rand)` shape, where a truthy x discards the generated result.
+            // A generator that CONSUMES values (`htpasswd .Values.user
+            // .Values.password` — random salt per render) stays open no
+            // matter what the values hold, so the path it reads is not a
+            // suppliable slot; the localizer (#1236) finds the real pin
+            // (harbor's `registry.credentials.htpasswdString` else-branch).
+            const closable = valuesRef !== null && /\bdefault\b/.test(action.body);
+            const relPath = closable && valuesRef ? valuesRef[1].slice(1).split(".") : undefined;
             // Open unless the suppliable value is already set (a truthy
             // value makes `x | default (randAlphaNum ...)` deterministic).
             const open =

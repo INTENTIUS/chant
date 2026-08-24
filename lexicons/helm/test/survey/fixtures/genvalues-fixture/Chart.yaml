@@ -2,8 +2,10 @@ apiVersion: v2
 name: genvalues-fixture
 description: >-
   Survey fixture: an open generated input (`randAlphaNum`) that cascades into a
-  derived checksum annotation (epic finding 6). Unstable across renders as-is;
-  byte-identical once the password is supplied as a values input. Pin the
-  input, not the output.
+  derived checksum annotation in ANOTHER template file (epic finding 6, the
+  grafana shape). Unstable across renders as-is; byte-identical once the
+  password is supplied as a values input. Pin the input, not the output. The
+  double-render localizer (#1236) must group the checksum line under the
+  secret input.
 type: application
 version: 0.1.0
