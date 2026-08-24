@@ -30,7 +30,7 @@ import { discoverComponents } from "../../components/discover";
 import { cfnDeployStacks } from "./components";
 import { affectedStacks } from "../../lifecycle/affected";
 import { rollbackToRevision } from "../../lifecycle/rollback";
-import { loadChantConfig, environmentNames, resolveOwnershipStack } from "../../config";
+import { loadChantConfig, environmentNames, matchesDeclaredEnvironment, resolveOwnershipStack } from "../../config";
 import { unknownEnvError } from "../../env";
 import { planTeardown } from "../../lifecycle/teardown";
 import { collectBuildRootContributors } from "../plugins";
@@ -111,7 +111,7 @@ export async function runLifecycleSnapshot(ctx: CommandContext): Promise<number>
   const declaredParams = await commandBuildParams(config.buildParams, args);
   if (!declaredParams) return 1;
   const declaredEnvNames = environmentNames(config.environments);
-  if (declaredEnvNames && !declaredEnvNames.includes(environment)) {
+  if (declaredEnvNames && !matchesDeclaredEnvironment(config.environments, environment)) {
     console.error(formatError({
       message: `Unknown environment "${environment}"`,
       hint: `Defined environments: ${declaredEnvNames.join(", ")}`,

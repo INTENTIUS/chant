@@ -67,6 +67,14 @@ environments: ["local", "staging", "prod"],
 
 `--env <name>` selects one and defaults to `local` when omitted. The selected environment is what [`chant lifecycle`](/chant/cli/lifecycle/) diffs against, the environment organizational policy evaluates against during `chant build`, and the key the [component release ledger](/chant/components/observability/) records each deploy under — as in `chant run --components <name> --env <env>` and `chant components status <env>`. The `env` stamped into the [ownership](#ownership) marker is a separate setting, `ownership.env`, which can reference a build parameter so the two stay one value.
 
+An entry containing `*` is a glob pattern, declaring an unbounded family of environments at once — per-PR previews, per-suite test copies:
+
+```typescript
+environments: ["staging", "prod", "pr-*"],
+```
+
+`--env pr-42` (and, with a param-bound `ownership.env`, `--param env=pr-42`) is then legal; any name no entry covers is still rejected. Matching is literal first, then by pattern; `*` matches any run of characters and is the whole pattern syntax — no `?`, no character classes, no regex. A pattern entry can carry an `endpoint` like any other entry, and a literal entry always wins over a pattern for the same name.
+
 An entry can also carry the endpoint that environment's `--live` reads should target, instead of a bare name:
 
 ```typescript
