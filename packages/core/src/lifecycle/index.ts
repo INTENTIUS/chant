@@ -7,6 +7,7 @@ export * from "./deep-diff";
 export * from "./deep-observe";
 export * from "./observation-baseline";
 export * from "./change-set";
+export * from "./receipt-plan";
 export * from "./affected";
 export * from "./release-ledger";
 export * from "./build-ledger";

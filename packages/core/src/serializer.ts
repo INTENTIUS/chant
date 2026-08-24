@@ -20,6 +20,18 @@ export interface SerializeContext {
    * ad-hoc builds (e.g. context tools) that pass no config.
    */
   config?: Record<string, unknown>;
+
+  /**
+   * Effect receipts (#1832, epic #1703) declared in this lexicon's partition.
+   * Withheld from the `entities` map by the build: receipts are observe-only
+   * to the generic apply path, and the serialized output is what feeds
+   * appliers, so a receipt must never enter the apply-bound document. A
+   * serializer that wants to render receipts for visibility (#1835) reads
+   * them here and puts them anywhere BUT the section an applier writes from;
+   * a serializer that ignores this field emits nothing for them, which is the
+   * safe default.
+   */
+  receipts?: ReadonlyMap<string, Declarable>;
 }
 
 /**

@@ -179,9 +179,12 @@ chant lifecycle plan prod --json   # emit the ChangeSet as JSON
 | **delete** | A chant-owned resource that is live but no longer declared |
 | **adopt** | Live but undeclared, ownership not established — a candidate to pull back into source, never an auto-delete |
 | **noop** | Declared and live with no drift, or already reconciled |
+| **effect** | A declared [effect receipt](https://github.com/INTENTIUS/chant/issues/1703) whose live value is absent or stale — rendered as `effect will fire: <effect>` |
 | **unobserved** | Declared, and chant could not read live state — no action is proposed, and the reason is printed |
 
 `unobserved` is not a proposal; it is the plan admitting a hole. A resource chant could not look at is never a `create` and never a `delete` — a plan is only as complete as the read behind it, and when entities are unobserved the command says so on stderr (including under `--json` and `--report gitlab-mr`, whose shapes have no column for it).
+
+`effect` is the receipt row. An effect receipt is declared, diffed, and observed like any resource, but it is **observe-only to the generic apply path**: the `effect()` step is the sole writer, on success, last. The plan resolves the receipt's expectation (references resolve against observed values at plan time) and compares it to the live value — absent or differing renders `effect will fire: <effect>`, with the reason (`receipt-absent`, `receipt-stale`, or `unresolved-input` when a reference could not resolve — the fire is proposed rather than guessed away). A matching receipt is a clean `noop`; a receipt nobody could read is `unobserved`, loudly. A receipt is never a `create`, never an `update`, and never a prune candidate: a stale receipt after a crash between the effect and its write re-proposes the fire on the next plan, which is the at-least-once guarantee the whole classification exists to preserve.
 
 `create` and `update` are precise from declared-vs-live. `delete` is only ever proposed for an undeclared resource whose **live ownership marker** ([ownership marking](/chant/configuration/config-file/#ownership)) confirms it is chant's; a foreign orphan is `adopt`, and an orphan with no marker data is `adopt`, never `delete`. Pass `--owned` to restrict the query to chant-owned resources.
 
