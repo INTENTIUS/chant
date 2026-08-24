@@ -806,6 +806,21 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
     return { stack: options.stack, present: true, status, healthy };
   },
 
+  // Env teardown at STACK granularity (#1222): `describeResources` carries no
+  // tags, so per-resource marker selection is impossible here — the env's
+  // stacks are enumerated instead (`stacks[]`, else the env-named default) and
+  // ownership is verified on each stack's own DescribeStacks tags. Execution
+  // is DeleteStack via the applier's `awsDelete`. See ./teardown.ts.
+  async teardownOwned(options) {
+    const { teardownOwned } = await import("./teardown");
+    return teardownOwned(options);
+  },
+
+  async executeTeardown(options) {
+    const { executeTeardown } = await import("./teardown");
+    return executeTeardown(options);
+  },
+
   async exportResources(options: {
     environment: string;
     stack?: string;

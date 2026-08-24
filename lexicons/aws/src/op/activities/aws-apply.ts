@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { safeHeartbeat, sleep } from "@intentius/chant/op";
 import { awsDeployCapabilitiesForBody } from "../../components/cloud-executor.js";
 import { resolveEndpointOverride } from "../../api/read-client.js";
+import { ownershipStackTagsForBody } from "../../ownership.js";
 
 const DEFAULT_REGION = "us-east-1";
 const CFN_API_VERSION = "2010-05-15";
@@ -67,6 +68,22 @@ export function cfnForm(action: string, params: Record<string, string>): Record<
 export function capabilityParams(capabilities: string[]): Record<string, string> {
   const out: Record<string, string> = {};
   capabilities.forEach((c, i) => (out[`Capabilities.member.${i + 1}`] = c));
+  return out;
+}
+
+/**
+ * Stack tags as the CFN `Tags.member.N.Key/Value` list params (#1222). Sorted
+ * so the request is deterministic. Empty in, empty out — a template without an
+ * ownership marker adds no `Tags` parameter at all.
+ */
+export function tagParams(tags: Record<string, string>): Record<string, string> {
+  const out: Record<string, string> = {};
+  Object.keys(tags)
+    .sort()
+    .forEach((key, i) => {
+      out[`Tags.member.${i + 1}.Key`] = key;
+      out[`Tags.member.${i + 1}.Value`] = tags[key];
+    });
   return out;
 }
 
@@ -149,7 +166,17 @@ export async function awsApply(
   }
   const exists = desc.status < 300;
 
-  const params = { StackName: args.stackName, TemplateBody: templateBody, ...capabilityParams(capabilities) };
+  // Stamp the template's ownership marker as the STACK's own tags (#1222):
+  // stack-level teardown verifies ownership on DescribeStacks tags, and this
+  // is the write that makes every future stack teardown-eligible. A template
+  // carrying no marker adds nothing.
+  const stackTags = ownershipStackTagsForBody(templateBody);
+  const params = {
+    StackName: args.stackName,
+    TemplateBody: templateBody,
+    ...capabilityParams(capabilities),
+    ...tagParams(stackTags),
+  };
   let action: "created" | "updated";
   if (!exists) {
     const res = await http(url, cfnForm("CreateStack", params), signal);
@@ -177,12 +204,18 @@ export async function awsApply(
   return { stackName: args.stackName, status, action };
 }
 
+/** {@link awsDelete}'s arguments: {@link AwsApplyArgs} minus the template — a
+ * delete needs no body, so teardown (#1222) can call it with a stack name
+ * alone. Op builders that thread `templatePath` through keep working; it is
+ * simply unused here. */
+export type AwsDeleteArgs = Omit<AwsApplyArgs, "templatePath"> & { templatePath?: string };
+
 /**
  * The inverse of {@link awsApply} — DeleteStack, then poll until the stack is
  * gone. Idempotent: an already-absent stack is a no-op. `http` is injectable.
  */
 export async function awsDelete(
-  args: AwsApplyArgs,
+  args: AwsDeleteArgs,
   signal?: AbortSignal,
   http: AwsHttp = defaultHttp,
 ): Promise<{ stackName: string; deleted: boolean }> {

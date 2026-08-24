@@ -483,3 +483,55 @@ describe("executeTeardown — the execution half (#1222)", () => {
     expect(report.outcomes[0].detail).toContain("aws");
   });
 });
+
+describe("deployedStacks — a multi-stack project's declared stacks reach the lexicon (#1222)", () => {
+  const STACKS = [{ name: "net" }, { name: "app", region: "eu-west-1" }];
+
+  test("planTeardown forwards them to teardownOwned as `stacks`", async () => {
+    const teardownOwned = vi.fn(async (): Promise<TeardownEnumeration> => ({ candidates: [] }));
+    await planTeardown({
+      environment: "dev",
+      stack: "shop",
+      plugins: [createMockPlugin({ name: "aws", teardownOwned })],
+      deployedStacks: STACKS,
+    });
+    expect(teardownOwned).toHaveBeenCalledWith({
+      environment: "dev",
+      marker: { stack: "shop", env: "dev" },
+      stacks: STACKS,
+    });
+  });
+
+  test("executeTeardown forwards them to the execution half too", async () => {
+    const candidates = [
+      { name: "net", type: "AWS::CloudFormation::Stack", marker: { stack: "shop", env: "dev" } },
+    ];
+    const teardownOwned = vi.fn(async (): Promise<TeardownEnumeration> => ({ candidates }));
+    const execute = vi.fn(async (): Promise<TeardownExecution> => ({
+      outcomes: [{ name: "net", outcome: "deleted" }],
+    }));
+    await executeTeardown({
+      environment: "dev",
+      stack: "shop",
+      plugins: [createMockPlugin({ name: "aws", teardownOwned, executeTeardown: execute })],
+      deployedStacks: STACKS,
+    });
+    expect(execute).toHaveBeenCalledWith(
+      expect.objectContaining({ candidates, stacks: STACKS }),
+    );
+  });
+
+  test("an empty list is not forwarded — the single-stack convention stays the lexicon's", async () => {
+    const teardownOwned = vi.fn(async (): Promise<TeardownEnumeration> => ({ candidates: [] }));
+    await planTeardown({
+      environment: "dev",
+      stack: "shop",
+      plugins: [createMockPlugin({ name: "aws", teardownOwned })],
+      deployedStacks: [],
+    });
+    expect(teardownOwned).toHaveBeenCalledWith({
+      environment: "dev",
+      marker: { stack: "shop", env: "dev" },
+    });
+  });
+});

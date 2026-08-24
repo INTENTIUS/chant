@@ -914,6 +914,13 @@ export interface LexiconPlugin {
     stack?: string;
     /** Region that stack is deployed in (#1261's contract). */
     region?: string;
+    /**
+     * Every deployed stack a multi-stack project declares (see `stacks` in
+     * {@link ChantConfig}), for a lexicon whose enumeration is stack-shaped
+     * (aws). When absent or empty, the single-stack convention applies:
+     * `stack`, else the stack named after the environment.
+     */
+    stacks?: Array<{ name: string; region?: string }>;
   }): Promise<TeardownEnumeration>;
 
   /**
@@ -947,6 +954,9 @@ export interface LexiconPlugin {
     stack?: string;
     /** Region that stack is deployed in (#1261's contract). */
     region?: string;
+    /** Every declared deployed stack, mirroring {@link teardownOwned} — how a
+     * stack-shaped execution (aws) finds each candidate's region. */
+    stacks?: Array<{ name: string; region?: string }>;
   }): Promise<TeardownExecution>;
 
   /**

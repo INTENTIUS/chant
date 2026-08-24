@@ -1314,9 +1314,27 @@ export async function runLifecycleTeardown(ctx: CommandContext): Promise<number>
   let plan: TeardownPlan;
   let report: TeardownReport | undefined;
   try {
-    plan = await planTeardown({ environment, stack, plugins });
+    // A multi-stack project's declared stacks, for stack-shaped teardowns
+    // (aws enumerates and deletes whole CloudFormation stacks). A single-stack
+    // project passes nothing and the env-named default convention applies.
+    const deployedStacks = (config.stacks ?? []).map((s) => ({
+      name: s.name,
+      ...(s.region ? { region: s.region } : {}),
+    }));
+    plan = await planTeardown({
+      environment,
+      stack,
+      plugins,
+      ...(deployedStacks.length > 0 ? { deployedStacks } : {}),
+    });
     if (args.yes) {
-      report = await executeTeardown({ environment, stack, plugins, plan });
+      report = await executeTeardown({
+        environment,
+        stack,
+        plugins,
+        plan,
+        ...(deployedStacks.length > 0 ? { deployedStacks } : {}),
+      });
     }
   } finally {
     endpointResult.restore();

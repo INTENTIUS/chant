@@ -2,7 +2,7 @@ import type { Declarable, CoreParameter } from "@intentius/chant/declarable";
 import { isPropertyDeclarable, isResourceDeclarable } from "@intentius/chant/declarable";
 import type { Serializer, SerializerResult, SerializeContext } from "@intentius/chant/serializer";
 import { ownershipEntries, type OwnershipMarker } from "@intentius/chant/ownership";
-import { AWS_TAG_OWNERSHIP_KEYS } from "./ownership";
+import { AWS_TAG_OWNERSHIP_KEYS, OWNERSHIP_METADATA_KEY } from "./ownership";
 import type { LexiconOutput } from "@intentius/chant/lexicon-output";
 import { walkValue, type SerializerVisitor } from "@intentius/chant/serializer-walker";
 import { isChildProject, type ChildProjectInstance } from "@intentius/chant/child-project";
@@ -26,6 +26,7 @@ function isCoreParameter(entity: Declarable): entity is CoreParameter {
 interface CFTemplate {
   AWSTemplateFormatVersion: "2010-09-09";
   Description?: string;
+  Metadata?: Record<string, unknown>;
   Transform?: string | string[];
   Parameters?: Record<string, CFParameter>;
   Resources: Record<string, CFResource>;
@@ -187,6 +188,13 @@ function serializeToTemplate(
     for (const [Key, Value] of Object.entries(ownershipEntries(AWS_TAG_OWNERSHIP_KEYS, ownership))) {
       defaultTagEntries.push({ Key, Value });
     }
+    // Also carry the marker at the template level (#1222): stack tags are a
+    // CreateStack/UpdateStack API parameter, not a template section, so the
+    // apply paths read this Metadata block and stamp it as the stack's own
+    // tags — what stack-level teardown verifies ownership on.
+    template.Metadata = {
+      [OWNERSHIP_METADATA_KEY]: ownershipEntries(AWS_TAG_OWNERSHIP_KEYS, ownership),
+    };
   }
   for (const [, entity] of entities) {
     if (isDefaultTags(entity)) {
