@@ -94,7 +94,7 @@ describe("createCapabilityRegistry", () => {
 
   test("family table lists exactly the agnostic starter families (cloud leaves moved to lexicons)", () => {
     expect(Object.keys(STARTER_VERB_FAMILIES).sort()).toEqual(
-      ["build", "escapeHatch", "sbom", "supplyChainPolicy", "supplyChainSecurity", "waitVerify"].sort(),
+      ["build", "escapeHatch", "sbom", "secrets", "supplyChainPolicy", "supplyChainSecurity", "waitVerify"].sort(),
     );
   });
 

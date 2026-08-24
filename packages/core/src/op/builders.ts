@@ -133,6 +133,28 @@ export const shell = (
 ): ActivityStep =>
   activity("shellCmd", { cmd, ...(opts?.env ? { env: opts.env } : {}) }, opts?.profile);
 
+/**
+ * Ensure a `generated-once` secret exists in the target store (#1829, epic
+ * #1365). The op-step surface over the same engine as the `ensure-secret`
+ * capability verb (`ensureSecretMaterialization`, core's
+ * secret-materialization module): read-then-write — if the secret exists, its
+ * declared key-set and any declared `metadata` are verified and the step
+ * stops (present means done); if absent, one value per key is minted at
+ * apply time and written straight to the store. Never mints over an existing
+ * value, never rotates implicitly; a mismatch fails the step loudly, naming
+ * key names and metadata keys — never values. No output of the activity
+ * carries secret material. The backing activity is provided by the store's
+ * lexicon (k8s, #1830).
+ */
+export const ensureSecret = (
+  name: string,
+  keys: string[],
+  opts?: { metadata?: Record<string, string>; profile?: ActivityStep["profile"]; [k: string]: unknown },
+): ActivityStep => {
+  const { args, profile } = takeProfile(opts);
+  return activity("ensureSecret", { name, keys, ...args }, profile);
+};
+
 /** Run `chant teardown` in the given project directory. Uses `longInfra` profile. */
 export const teardown = (path: string): ActivityStep =>
   activity("chantTeardown", { path }, "longInfra");
