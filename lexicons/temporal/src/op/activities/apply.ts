@@ -17,10 +17,11 @@
  * server-side apply over the k8s lexicon's typed client (#1075, #1548), `arm`
  * is the azure lexicon's per-resource `azApply` (#1448), `cloudformation`
  * is the aws lexicon's `awsApply` — the CloudFormation Query API directly, no
- * CLI in the path (#1449) — and `gcp` is the gcp lexicon's per-resource
- * `gcpApply`, which never had a CLI to shell out to in the first place: GCP
- * has no native deploy service, so the lexicon maps each CNRM kind to its
- * REST API itself. **The dispatcher stayed here**, because "which
+ * CLI in the path (#1449) — and `gcp`/`fly` are the gcp lexicon's
+ * per-resource `gcpApply` and the fly lexicon's `flyApply`, which never had a
+ * CLI in the path to begin with: gcp maps each CNRM kind to its REST API
+ * itself, and fly speaks the Machines API (flaps) directly, no flyctl.
+ * **The dispatcher stayed here**, because "which
  * mechanism applies this target" is not any one product's knowledge — and
  * because the activity keeps its name, its arguments and its place in
  * `ApplyOp`, so no existing Op changes shape.
@@ -37,7 +38,7 @@ import { promisify } from "node:util";
 const execAsync = promisify(exec);
 
 /** The native apply mechanism for a target. */
-export type ApplyTarget = "cloudformation" | "kubectl" | "arm" | "kustomize" | "gcp";
+export type ApplyTarget = "cloudformation" | "kubectl" | "arm" | "kustomize" | "gcp" | "fly";
 
 /**
  * How apply treats resources no longer declared.
@@ -47,9 +48,11 @@ export type ApplyTarget = "cloudformation" | "kubectl" | "arm" | "kustomize" | "
  *   sweeps by the ownership marker, `arm` prunes by the ownership tag
  *   (`isChantOwned`, via the azure lexicon's `azApply`), `gcp` prunes by the
  *   ownership label (via the gcp lexicon's `gcpApply` — only kinds it can
- *   list; the rest are reported not-prunable), and `cloudformation` is
- *   bounded by the stack — which holds, because a resource CFN did not
- *   create is not in the stack.
+ *   list; the rest are reported not-prunable), `fly` prunes machines by the
+ *   metadata marker and the metadata-less types (volumes/ips/certs/secrets)
+ *   app-scoped under a managed app (via the fly lexicon's `flyApply`), and
+ *   `cloudformation` is bounded by the stack — which holds, because a
+ *   resource CFN did not create is not in the stack.
  * - `gated` — same delete scope as `owned-only`, but the workflow pauses for
  *   approval before the destructive apply (the gate lives in the composite).
  */
@@ -60,13 +63,15 @@ export interface NativeApplyArgs {
   target: ApplyTarget;
   /** Environment. What it means is per target: the CFN stack name on
    * `cloudformation`, the ARM resource group on `arm`, the chant environment
-   * on `kubectl`/`kustomize`. On `gcp` it is a log label only — the applier
-   * resolves the project (`GOOGLE_CLOUD_PROJECT` env / CNRM annotation) and
-   * endpoint (`GCP_ENDPOINT_URL` env) itself. */
+   * on `kubectl`/`kustomize`. On `gcp` and `fly` it is a log label only — the
+   * gcp applier resolves the project (`GOOGLE_CLOUD_PROJECT` env / CNRM
+   * annotation) and endpoint (`GCP_ENDPOINT_URL` env) itself, and the fly
+   * applier resolves its endpoint (`FLY_FLAPS_BASE_URL` env) and token
+   * (`FLY_API_TOKEN` env) itself, with the app names coming from the plan. */
   env: string;
   /** Built manifest/template path. Default per target ({@link defaultOutput}):
    * `dist` (a dir) for kubectl, `template.json` (a file) for
-   * CloudFormation/ARM, `dist/gcp.yaml` for gcp. */
+   * CloudFormation/ARM, `dist/gcp.yaml` for gcp, `dist/fly.json` for fly. */
   output?: string;
   /** Delete handling. Default: never. */
   deleteMode?: DeleteMode;
@@ -81,9 +86,9 @@ export interface NativeApplyArgs {
 
 /** What an apply did. Shaped by the target, since the targets differ. */
 export interface NativeApplyResult {
-  /** Objects server-side applied — kubectl/kustomize; resources PUT — arm/gcp. */
+  /** Objects server-side applied — kubectl/kustomize; resources PUT — arm/gcp/fly. */
   applied?: number;
-  /** Objects pruned because they carried chant's marker and are no longer declared — kubectl/arm/gcp. */
+  /** Objects pruned because they carried chant's marker and are no longer declared — kubectl/arm/gcp/fly. */
   pruned?: number;
   /** Declared resources no call was made for (#1447) — gcp. Zero on a complete apply. */
   notAttempted?: number;
@@ -155,6 +160,37 @@ export type GcpApplier = (
   notAttempted: unknown[];
   /** Kinds the prune could not consider. */
   notPrunable: unknown[];
+}>;
+
+/**
+ * The fly lexicon's flaps applier, as this module needs to call it (#1449).
+ * Structural, so nothing here imports the fly lexicon's types — same shape as
+ * {@link K8sApplier} and {@link AzureApplier}. The eleven arrays are flyApply's
+ * own contract: six entity classes applied, five pruned; this module only
+ * counts them.
+ *
+ * Deliberately narrow: no `endpoint`, because `flyApply` resolves
+ * `FLY_FLAPS_BASE_URL` itself — mudflaps locally, real Fly when unset; and no
+ * `token`, because it resolves `FLY_API_TOKEN` itself.
+ */
+export type FlyApplier = (
+  args: {
+    planPath: string;
+    prune?: boolean;
+  },
+  signal?: AbortSignal,
+) => Promise<{
+  apps: unknown[];
+  machines: unknown[];
+  volumes: unknown[];
+  ips: unknown[];
+  certs: unknown[];
+  secrets: unknown[];
+  pruned: unknown[];
+  prunedVolumes: unknown[];
+  prunedIps: unknown[];
+  prunedCerts: unknown[];
+  prunedSecrets: unknown[];
 }>;
 
 /**
@@ -284,6 +320,31 @@ async function loadGcpApplier(): Promise<GcpApplier> {
 }
 
 /**
+ * Load the fly lexicon's `flyApply` (#1449). Same variable-specifier trick as
+ * {@link loadK8sApplier}, for the same reason.
+ */
+async function loadFlyApplier(): Promise<FlyApplier> {
+  const spec = "@intentius/chant-lexicon-fly/op/activities";
+  let mod: { flyApply?: FlyApplier };
+  try {
+    mod = (await import(spec)) as { flyApply?: FlyApplier };
+  } catch (err) {
+    throw new Error(
+      `apply target "fly" needs @intentius/chant-lexicon-fly, which could not be loaded ` +
+        `(${err instanceof Error ? err.message : String(err)}). Fly applies go through the fly ` +
+        `lexicon's native flaps applier since chant #1449; install the fly lexicon and list it ` +
+        `in chant.config.ts.`,
+    );
+  }
+  if (typeof mod.flyApply !== "function") {
+    throw new Error(
+      "the installed @intentius/chant-lexicon-fly exports no flyApply — it predates chant #739",
+    );
+  }
+  return mod.flyApply;
+}
+
+/**
  * Load the aws lexicon's `awsApply` (#1449). Same variable-specifier trick as
  * {@link loadK8sApplier}, for the same reason.
  */
@@ -338,7 +399,8 @@ async function loadAwsRollback(): Promise<AwsRollback> {
  * manifests), so `dist`; kustomize's "output" is the kustomization DIRECTORY
  * the render reads. The file targets take the file their lexicon's build
  * conventionally emits: `template.json` for CloudFormation/ARM, `dist/gcp.yaml`
- * (the CNRM manifest) for gcp. Pure — exported for testing.
+ * (the CNRM manifest) for gcp, `dist/fly.json` (the serialized plan) for fly.
+ * Pure — exported for testing.
  */
 export function defaultOutput(target: ApplyTarget): string {
   switch (target) {
@@ -347,6 +409,8 @@ export function defaultOutput(target: ApplyTarget): string {
       return "dist";
     case "gcp":
       return "dist/gcp.yaml";
+    case "fly":
+      return "dist/fly.json";
     default:
       return "template.json";
   }
@@ -355,15 +419,16 @@ export function defaultOutput(target: ApplyTarget): string {
 /**
  * Apply declared source to the cloud via the target's native mechanism.
  * Deletes (when enabled) ride that mechanism's own delete path — marker-scoped
- * on `kubectl`, tag-scoped on `arm`, label-scoped on `gcp`, and stack-scoped
- * on `cloudformation`, where the deploy itself removes resources dropped from
- * the template and `deleteMode` changes nothing: a resource CFN did not create
- * is not in the stack. See {@link DeleteMode}.
+ * on `kubectl`, tag-scoped on `arm`, label-scoped on `gcp`, marker- and
+ * app-scoped on `fly`, and stack-scoped on `cloudformation`, where the deploy
+ * itself removes resources dropped from the template and `deleteMode` changes
+ * nothing: a resource CFN did not create is not in the stack. See
+ * {@link DeleteMode}.
  *
  * The appliers are injectable so this dispatcher can be tested without the
  * product lexicons present; production resolves them through
  * {@link loadK8sApplier} / {@link loadAzureApplier} / {@link loadAwsApplier} /
- * {@link loadGcpApplier}.
+ * {@link loadGcpApplier} / {@link loadFlyApplier}.
  */
 export async function nativeApply(
   args: NativeApplyArgs,
@@ -373,6 +438,7 @@ export async function nativeApply(
   renderer: (dir: string) => Promise<Array<Record<string, unknown>>> = renderKustomization,
   awsApplier?: AwsApplier,
   gcpApplier?: GcpApplier,
+  flyApplier?: FlyApplier,
 ): Promise<NativeApplyResult> {
   const output = args.output ?? defaultOutput(args.target);
   const deleteMode = args.deleteMode ?? "never";
@@ -455,6 +521,33 @@ export async function nativeApply(
     };
   }
 
+  if (args.target === "fly") {
+    // fly (#1449): the fly lexicon's flaps applier. Only the plan path and the
+    // prune switch cross this seam — the endpoint (`FLY_FLAPS_BASE_URL`,
+    // mudflaps locally) and token (`FLY_API_TOKEN`) are flyApply's own env
+    // resolution, and `env` is a log label here: the app names live in the
+    // plan itself.
+    const apply = flyApplier ?? (await loadFlyApplier());
+    const result = await apply({ planPath: output, prune: deleteMode !== "never" }, signal);
+    const applied =
+      result.apps.length +
+      result.machines.length +
+      result.volumes.length +
+      result.ips.length +
+      result.certs.length +
+      result.secrets.length;
+    const pruned =
+      result.pruned.length +
+      result.prunedVolumes.length +
+      result.prunedIps.length +
+      result.prunedCerts.length +
+      result.prunedSecrets.length;
+    console.log(
+      `[${args.env}] applied ${applied} resource(s)` + (pruned > 0 ? `; pruned ${pruned}` : ""),
+    );
+    return { applied, pruned };
+  }
+
   // cloudformation (#1449): the aws lexicon's native applier. env is the stack
   // name and output the template path; endpoint resolution (#1694) and
   // capability derivation (#980) are awsApply's own, so nothing else is passed.
@@ -491,7 +584,7 @@ export interface CompensateApplyResult {
  * explicit `command` if given; otherwise `cloudformation` rolls back natively
  * through the aws lexicon's `rollbackStack` (#1449 — CloudFormation
  * `RollbackStack` over the Query API, no CLI in the path). Where no automatic
- * rollback exists (kubectl/kustomize/arm/gcp without a `command`), it warns rather
+ * rollback exists (kubectl/kustomize/arm/gcp/fly without a `command`), it warns rather
  * than silently no-op'ing — partial state should never look reverted when it
  * isn't.
  *

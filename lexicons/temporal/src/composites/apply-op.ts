@@ -9,9 +9,10 @@
  * prune path, whose bound is per target: the ownership marker on `kubectl`,
  * the ownership tag on `arm` (chant #1448 — previously `--mode Complete`, which
  * removed resources chant never applied), the ownership label on `gcp`
- * (chant #1449), and the stack itself on `cloudformation`, which a resource
- * CFN did not create is not in. All of them are owned-only. See
- * {@link DeleteMode}.
+ * (chant #1449), the metadata marker (machines) and managed app
+ * (volumes/ips/certs/secrets) on `fly` (chant #1449), and the stack itself on
+ * `cloudformation`, which a resource CFN did not create is not in. All of
+ * them are owned-only. See {@link DeleteMode}.
  *
  * An ungated apply may run on the local Op executor; a gated apply needs
  * Temporal for the durable approval wait (added in #125).
@@ -41,13 +42,13 @@ export interface ApplyOpConfig {
   /** Op name (kebab-case). */
   name: string;
   /** Environment — CFN stack name / ARM resource group / kube context env;
-   * a log label on `gcp`. */
+   * a log label on `gcp` and `fly`. */
   env: string;
   /** Native apply mechanism. Default: "kubectl". */
   target?: ApplyTarget;
   /** Built manifest/template path. Default per target: `dist` (dir) for kubectl,
-   * `template.json` (file) for CloudFormation/ARM, `dist/gcp.yaml` for gcp.
-   * Must match your build output. */
+   * `template.json` (file) for CloudFormation/ARM, `dist/gcp.yaml` for gcp,
+   * `dist/fly.json` for fly. Must match your build output. */
   output?: string;
   /** Project directory to build. Default: ".". */
   path?: string;
