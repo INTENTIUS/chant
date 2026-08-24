@@ -1,6 +1,6 @@
 ---
 skill: chant-aws-carve-terraform
-description: Demo carving a resource out of Terraform into native chant — advise, emit, bridge, apply — fully offline
+description: Demo carving a resource out of Terraform into native chant — advise, emit, audit, bridge, apply — fully offline
 user-invocable: true
 ---
 
@@ -15,7 +15,7 @@ graduation.
 ## When to use
 
 - Someone asks "how does chant move things off Terraform?"
-- You want to show the advise → emit → bridge → apply loop end to end.
+- You want to show the advise → emit → audit → bridge → apply loop end to end.
 - You are evaluating whether a Terraform estate is worth carving.
 
 ## Preconditions
@@ -27,7 +27,7 @@ graduation.
 ## The fastest path: run the bundled demo
 
 The `examples/terraform-carve-out` example ships a runnable estate + state and a
-script that runs all four steps with commentary:
+script that runs all five steps with commentary:
 
 ```bash
 cd examples/terraform-carve-out
@@ -54,28 +54,30 @@ From `examples/terraform-carve-out`, with `TF=./terraform`:
      --state ./terraform/terraform.tfstate --output ./carveout
    ```
    Show `./carveout/src/assets.ts` — a real `new Bucket({ BucketName, Tags })` with
-   CloudFormation-style properties mapped from the Terraform state attributes.
-   Emit also scaffolds `./carveout` into a buildable chant project
-   (`chant.config.ts`, `package.json`), so `npm install && npm run build` works
-   there as-is. Explain: a Terraform-managed resource is not in any
-   CloudFormation stack, so the correct source of its live shape is the state
-   file, not a cloud read.
+   CloudFormation-style properties mapped from the Terraform state attributes,
+   and the `aws_s3_bucket_versioning` sub-resource folded into
+   `VersioningConfiguration`. Emit also scaffolds `./carveout` into a buildable
+   chant project (`chant.config.ts`, `package.json`) and persists a carve
+   manifest (`*.carve.json`) — bridge and apply read the target from it, so
+   `--select` is only needed once. Explain: a Terraform-managed resource is not
+   in any CloudFormation stack, so the correct source of its live shape is the
+   state file, not a cloud read.
 
-3. **Lint the inherited resource — optional, offer it.**
+3. **Audit the inherited resource.**
    ```bash
-   chant lint ./carveout/src --lexicon aws
+   chant build ./carveout/src --lexicon aws
    ```
-   After emit, offer to lint the carved source. chant audits the resource you
-   inherited from Terraform against the AWS lexicon's rules. Findings have a
-   severity: `error` (must fix before `chant build` will emit — e.g. an S3
-   bucket with no public-access block) and `warning`/`info` (advisory — e.g.
-   DynamoDB point-in-time recovery). This is a feature of carving: chant
-   immediately tells the person what is wrong with what they adopted. Whether to
-   fix an advisory finding is their call; errors block the build until resolved.
+   The first build fails, deliberately: the post-synth audit refuses the
+   adopted bucket because Terraform managed it without a public-access block or
+   a TLS-only policy. This is a feature of carving: chant immediately tells the
+   person what is wrong with what they adopted. Show the fix (add
+   `PublicAccessBlockConfiguration` and a companion `S3BucketPolicy` with an
+   `aws:SecureTransport = false` Deny — the tutorial page has the exact code),
+   then re-run the build and show the valid CloudFormation template.
 
 4. **Bridge — patch the surviving Terraform.**
    ```bash
-   chant carve bridge --from ./terraform --select aws_s3_bucket.assets --output ./carveout
+   chant carve bridge --from ./terraform --output ./carveout
    ```
    Show the generated `data "aws_s3_bucket" "assets"` and the rewired survivor.
    Emphasize it is dry-run: nothing in `./terraform` changed. `--apply-rewrites`
@@ -83,11 +85,12 @@ From `examples/terraform-carve-out`, with `TF=./terraform`:
 
 5. **Apply — graduation plan.**
    ```bash
-   chant carve apply --from ./terraform --select aws_s3_bucket.assets --env prod --stack assets
+   chant carve apply --from ./terraform --output ./carveout --env prod --stack assets
    ```
    Show the ownership marker (`chant:managed-by/stack/env`) and the finalized
-   runbook. Stress this makes no cloud call — the apply is the person's own
-   lifecycle; chant just plans it.
+   runbook. `--write-source` additionally stamps the marker tags into the
+   emitted source. Stress this makes no cloud call — the apply is the person's
+   own lifecycle; chant just plans it.
 
 ## Key points to land
 

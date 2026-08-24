@@ -505,7 +505,7 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
     {
       file: "chant-aws-carve-terraform.md",
       name: "chant-aws-carve-terraform",
-      description: "Demo carving a resource out of Terraform into native chant — advise, emit, bridge, apply — fully offline",
+      description: "Demo carving a resource out of Terraform into native chant — advise, emit, audit, bridge, apply — fully offline",
       triggers: [
         { type: "context", value: "terraform" },
         { type: "context", value: "carve" },
