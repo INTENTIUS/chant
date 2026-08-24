@@ -309,6 +309,7 @@ export default defineConfig({
 								{ label: 'State and Governance', slug: 'concepts/governance' },
 								{ label: 'Drift Detection', slug: 'concepts/drift-detection' },
 								{ label: 'Reconciliation', slug: 'concepts/reconciliation' },
+								{ label: 'Effect Receipts', slug: 'concepts/effect-receipts' },
 								{ label: 'Durable Workflows', slug: 'concepts/durable-workflows' },
 								{ label: 'Local vs Temporal', slug: 'guide/local-vs-temporal' },
 								{ label: 'Agent Integration', slug: 'guide/agent-integration' },
