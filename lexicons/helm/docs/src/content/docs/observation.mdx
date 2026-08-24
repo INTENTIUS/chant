@@ -1,0 +1,46 @@
+---
+title: "Live Observation"
+description: "How the helm lexicon observes releases — per-resource rows from both release channels, deep property trees through the k8s machinery, and total verdicts"
+diataxis: explanation
+---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-helm` — DO NOT EDIT.
+    Edit lexicons/helm/docs/pages/observation.mdx instead; changes here are overwritten. */}
+
+The helm lexicon participates in `chant lifecycle diff <env> --live` on three levels.
+
+`listArtifacts` reports release metadata. It runs `helm list -A -o json` and returns one artifact per release in the environment's cluster, whether or not this project declares it. That catches a manual `helm install` or `helm rollback` that slipped past CI, and nothing more — it says a release changed, not what changed.
+
+`describeResources` reads what each declared release holds. `observeResourcesDeep` reads the live property trees of the resources it found. Together they give a Helm-managed estate the same drift surface a plain Kubernetes estate has.
+
+## The release is the unit
+
+A chant project declares a `Helm::Chart`. The runtime equivalent is the release `helm upgrade --install` created from it. Observation resolves each declared chart to its release through `helm list`, matching the release named after the chart, the deploy unit's release name in a component project, or the unique release whose `chart` field carries the chart's identity.
+
+The chart entity reports as a `Helm::Release` row with the release's status, revision and namespace. Chart-authoring entities such as `Helm::Values` and `Helm::Notes` have no runtime identity of their own. Helm stores the applied values and rendered notes in the release record, so in a single-chart project they follow the release's verdict.
+
+## Both channels
+
+A release stores its rendered manifests in two places. `helm get manifest` returns the non-hook documents. `helm get hooks` returns the hook resources, which are excluded from the manifest channel. `describeResources` reads both. Reading one channel would report every hook resource as drift.
+
+Each rendered document becomes a row keyed `<Kind>/<namespace>/<name>` (`cluster:<Kind>/<name>` for cluster-scoped kinds), with the release, the channel it came from, and any `helm.sh/hook` annotations in its attributes. Documents that name no namespace inherit the release namespace, the same defaulting helm applies.
+
+## Ownership and classification
+
+Every row from a release read is `ownership: "owned"`. The read is scoped to a release this project declares, so everything it returns is helm-managed via release identity. Where the rendered labels carry chant's stack/env marker, the row surfaces that identity verbatim.
+
+Rendered resources are not declared chant entities, so without further evidence the diff engine would classify them as orphans. Each row carries an owner chain pointing at its chart entity, and the engine classifies them as `runtime` instead. An unpinned release is not reported as drift. Controller-created children — the Pods under a chart's Deployment — are the k8s lexicon's rows, and its owner-reference walk classifies them.
+
+## Total verdicts
+
+The read follows the observation contract. A release `helm list` was asked about and did not report is an absence, and only that becomes a `create`. A missing helm binary or an unusable kubeconfig is `no-credentials` for every declared entity. A release that exists but whose contents could not be read is `read-failed`. None of these produce a clean empty snapshot, so a failed read never turns into a list of creates.
+
+## Deep observation through the k8s machinery
+
+The objects a release deploys are Kubernetes objects, so the deep read composes instead of reimplementing. The helm half resolves the release and parses its stored manifests. Each document becomes a synthetic declared entity — what the release applied is what the cluster is supposed to hold. The k8s half reads the live property tree for each one over the typed API client, resolves per-field ownership from `metadata.managedFields`, and normalizes with the k8s lexicon's `deepNormalizationHooks`.
+
+The helm plugin exposes those same hooks, by reference rather than as a copy. Secret-value masking and the managed-fields noise rules therefore apply to helm rows exactly as they do to k8s rows, and a rule added on one side cannot drift from the other.
+
+## Cluster selection
+
+All three reads resolve the cluster the same way the k8s lexicon does. The environment's declared binding (`k8s.profiles.<env>.context`) rides as `--kube-context` when present, and the ambient kubeconfig context otherwise. A Helm release lives on the same cluster the k8s half observes, so it rides the same binding.
