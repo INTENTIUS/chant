@@ -119,8 +119,9 @@ upsertSearchAttributes({ "Drift": [String(__r0?.drifted)] });
 | `arm` | `pruneArmOrphans`, which lists the resource group and deletes only resources carrying chant's ownership tag | the ownership tag — an untagged resource is never touched |
 | `cloudformation` | the stack deletes resources removed from its template | the stack — a resource CloudFormation did not create is not in it |
 | `gcp` | `gcpApply`'s prune, which lists each manifested kind and deletes only resources carrying chant's ownership label | the ownership label — an unlabeled resource is never touched; a kind the lexicon cannot list is reported not-prunable rather than pruned |
+| `fly` | `flyApply`'s prune: machines by chant's metadata marker; volumes/ips/certs/secrets app-scoped — anything the plan no longer declares under a managed app | the metadata marker for machines (an unmarked machine is never touched); the managed app for the metadata-less types, which carry no marker of their own |
 
-All of them are owned-only by construction.
+All of them are owned-only by construction — bounded by a marker, tag, label, stack, or (for fly's metadata-less types) the managed app itself.
 
 <Aside type="note" title="`arm` used to delete at resource-group scope">
 Before [#1448](https://github.com/INTENTIUS/chant/issues/1448), the ARM target ran `az deployment group create --mode Complete`, which removes every resource in the resource group the template does not declare — including resources chant never applied. Both `owned-only` and `gated` selected it, so neither was owned-only on that target.
