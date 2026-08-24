@@ -180,6 +180,36 @@ describe("githubSerializer.serialize", () => {
     expect(output).toContain("continue-on-error: true");
   });
 
+  test("env / with map keys pass through verbatim (chant #1223)", () => {
+    const entities = new Map<string, Declarable>();
+    entities.set("workflow", new MockWorkflow({
+      name: "CI",
+      on: { push: null },
+    }));
+    entities.set("job", new MockJob({
+      "runs-on": "ubuntu-latest",
+      env: { CHANT_ENV: "pr-1", kubeConfigPath: "/tmp/kc" },
+      steps: [
+        new MockStep({
+          uses: "actions/setup-node@abc",
+          with: { "node-version": "22", checkLatest: "true" },
+          env: { GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}" },
+        }),
+      ],
+    }));
+
+    const output = githubSerializer.serialize(entities) as string;
+    // Env var names are user identifiers — kebab-casing renames what the
+    // script reads. They must survive exactly as written.
+    expect(output).toContain("CHANT_ENV: pr-1");
+    expect(output).toContain("kubeConfigPath: /tmp/kc");
+    expect(output).toContain("GH_TOKEN:");
+    // Action inputs are the action's declared names, also not chant's to touch.
+    expect(output).toContain("checkLatest: 'true'");
+    expect(output).not.toContain("gh-token");
+    expect(output).not.toContain("chant-env");
+  });
+
   test("serializes trigger entities", () => {
     const entities = new Map<string, Declarable>();
     entities.set("workflow", new MockWorkflow({

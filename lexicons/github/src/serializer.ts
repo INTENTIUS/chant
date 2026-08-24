@@ -184,6 +184,15 @@ function buildStandaloneJobsSection(
 // ── Key conversion for YAML output ────────────────────────────────
 
 /**
+ * Map keys whose entries are user-named, not schema properties. `env` names
+ * environment variables (`KUBECONFIG_DATA` must stay `KUBECONFIG_DATA`, not
+ * become `kubeconfig_data`), `with` names an action's declared inputs,
+ * `outputs`/`secrets`/`variables` name user identifiers referenced elsewhere
+ * by exact spelling. Kebab-casing inside these silently renames them.
+ */
+const VERBATIM_KEY_MAPS = new Set(["env", "with", "outputs", "secrets", "variables"]);
+
+/**
  * Convert a props object keys from camelCase to kebab-case for job/step properties.
  */
 function convertKeys(obj: Record<string, unknown>): Record<string, unknown> {
@@ -192,21 +201,22 @@ function convertKeys(obj: Record<string, unknown>): Record<string, unknown> {
     if (value === undefined || value === null) continue;
     // Zero and false are valid values, but undefined/null should be omitted
     const yamlKey = toKebabCase(key);
-    result[yamlKey] = convertValueKeys(value);
+    result[yamlKey] = convertValueKeys(value, VERBATIM_KEY_MAPS.has(yamlKey));
   }
   return result;
 }
 
-function convertValueKeys(value: unknown): unknown {
+function convertValueKeys(value: unknown, verbatim = false): unknown {
   if (value === null || value === undefined) return value;
   if (typeof value !== "object") return value;
-  if (Array.isArray(value)) return value.map(convertValueKeys);
+  if (Array.isArray(value)) return value.map((v) => convertValueKeys(v, verbatim));
 
   const obj = value as Record<string, unknown>;
   const result: Record<string, unknown> = {};
   for (const [key, v] of Object.entries(obj)) {
     if (v === undefined || v === null) continue;
-    result[toKebabCase(key)] = convertValueKeys(v);
+    const yamlKey = verbatim ? key : toKebabCase(key);
+    result[yamlKey] = convertValueKeys(v, verbatim || VERBATIM_KEY_MAPS.has(yamlKey));
   }
   return result;
 }
