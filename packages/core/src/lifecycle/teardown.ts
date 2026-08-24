@@ -25,13 +25,14 @@
  * Whichever path ran, core re-checks every candidate's marker and drops
  * mismatches — an implementation bug can narrow the set, never widen it.
  *
- * Deletion does not happen anywhere in this module. The execution half is a
- * later PR (#1222); #1224's test-env harness will call {@link planTeardown}
- * in-process, which is why it is exported as a function and not only a verb.
+ * The execution half is {@link executeTeardown}: it drives each lexicon's
+ * `executeTeardown` capability over the planned set, then runs one bounded
+ * retry pass over the failures. Both halves are exported as functions —
+ * #1224's test-env harness calls them in-process, not only through the verb.
  */
 
 import { normalizeObservation, unobservedAll } from "../observation";
-import type { ObservationLexicon, TeardownCandidate, TeardownHole } from "../lexicon";
+import type { ObservationLexicon, TeardownCandidate, TeardownHole, TeardownOutcome } from "../lexicon";
 import type { OwnershipMarker } from "../ownership";
 
 /** One would-delete row in a teardown plan, attributed to its lexicon. */
@@ -176,4 +177,172 @@ export async function planTeardown(opts: PlanTeardownOptions): Promise<TeardownP
 
   entries.sort((a, b) => a.lexicon.localeCompare(b.lexicon) || a.name.localeCompare(b.name));
   return { environment: opts.environment, stack: opts.stack, entries, holes, skipped };
+}
+
+/** One planned entry's fate after execution, attributed to its lexicon. */
+export interface TeardownOutcomeEntry extends TeardownPlanEntry {
+  /**
+   * `skipped` is core's verdict for a candidate whose lexicon implements no
+   * `executeTeardown` yet; the other three come from the lexicon (see
+   * {@link TeardownOutcome}).
+   */
+  outcome: "deleted" | "failed" | "not-prunable" | "skipped";
+  /** The error for `failed`, the reason for `not-prunable`/`skipped`. */
+  detail?: string;
+  /** True when this final outcome came from the bounded retry pass. */
+  retried?: boolean;
+}
+
+/** What `chant lifecycle teardown <env> --yes` prints and #1224 consumes. */
+export interface TeardownReport {
+  environment: string;
+  stack: string;
+  /** The plan that was executed — holes and skipped lexicons included. */
+  plan: TeardownPlan;
+  /** One row per planned entry. Never fewer: silence is never success. */
+  outcomes: TeardownOutcomeEntry[];
+  /** Lexicons whose candidates were skipped for lack of an `executeTeardown`. */
+  unimplemented: string[];
+}
+
+export interface ExecuteTeardownOptions extends PlanTeardownOptions {
+  /**
+   * A plan already computed (the one just shown to the user). Recomputed from
+   * a fresh live read when omitted.
+   */
+  plan?: TeardownPlan;
+}
+
+/**
+ * Run one execution pass over a lexicon's candidates and return exactly one
+ * outcome per candidate: what the lexicon reported, `failed` for anything it
+ * stayed silent about, and `failed` across the board when the call threw.
+ * Outcomes the lexicon volunteers for names core never asked about are
+ * dropped — an implementation cannot widen the set by reporting on it.
+ */
+async function executePass(
+  plugin: ObservationLexicon,
+  candidates: TeardownCandidate[],
+  opts: ExecuteTeardownOptions,
+  marker: OwnershipMarker,
+): Promise<Map<string, TeardownOutcome>> {
+  const byName = new Map<string, TeardownOutcome>();
+  let reported: TeardownOutcome[];
+  try {
+    const execution = await plugin.executeTeardown!({
+      environment: opts.environment,
+      marker,
+      candidates,
+      ...(opts.deployedStack ? { stack: opts.deployedStack } : {}),
+      ...(opts.region ? { region: opts.region } : {}),
+    });
+    reported = execution.outcomes;
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    for (const candidate of candidates) {
+      byName.set(candidate.name, { name: candidate.name, outcome: "failed", detail });
+    }
+    return byName;
+  }
+  const asked = new Set(candidates.map((c) => c.name));
+  for (const outcome of reported) {
+    if (!asked.has(outcome.name)) continue;
+    byName.set(outcome.name, outcome);
+  }
+  for (const candidate of candidates) {
+    if (byName.has(candidate.name)) continue;
+    byName.set(candidate.name, {
+      name: candidate.name,
+      outcome: "failed",
+      detail: "the lexicon reported no outcome for this candidate",
+    });
+  }
+  return byName;
+}
+
+/**
+ * Execute a teardown: delete every planned candidate through its lexicon's
+ * `executeTeardown`, then retry the failures once. Per-lexicon ordering only —
+ * each lexicon deletes its own set in the order its target requires (k8s
+ * deletes namespaces last, fly deletes apps last); there is no global
+ * reverse-dependency ordering in v1, the bounded retry pass covers the
+ * cross-lexicon cases it would.
+ *
+ * Every planned entry comes back with an outcome. A lexicon that enumerates
+ * but implements no execution reports its candidates as `skipped` — loudly,
+ * never as clean. Failures that survive the retry stay `failed` in the
+ * report; nothing here ever swallows one.
+ */
+export async function executeTeardown(opts: ExecuteTeardownOptions): Promise<TeardownReport> {
+  const marker: OwnershipMarker = { stack: opts.stack, env: opts.environment };
+  const plan = opts.plan ?? (await planTeardown(opts));
+
+  const byLexicon = new Map<string, TeardownPlanEntry[]>();
+  for (const entry of plan.entries) {
+    const list = byLexicon.get(entry.lexicon) ?? [];
+    list.push(entry);
+    byLexicon.set(entry.lexicon, list);
+  }
+
+  const outcomes: TeardownOutcomeEntry[] = [];
+  const unimplemented: string[] = [];
+
+  // Plugin registration order, so a project's lexicon ordering is stable.
+  for (const plugin of opts.plugins) {
+    const entries = byLexicon.get(plugin.name);
+    if (!entries) continue;
+    byLexicon.delete(plugin.name);
+
+    if (!plugin.executeTeardown) {
+      unimplemented.push(plugin.name);
+      for (const entry of entries) {
+        outcomes.push({
+          ...entry,
+          outcome: "skipped",
+          detail: `the ${plugin.name} lexicon does not implement teardown execution yet`,
+        });
+      }
+      continue;
+    }
+
+    const candidates: TeardownCandidate[] = entries.map(({ lexicon: _lexicon, ...candidate }) => candidate);
+    const first = await executePass(plugin, candidates, opts, marker);
+
+    // One bounded retry pass over this lexicon's failures — transient errors
+    // and ordering hiccups get a second chance, nothing gets an infinite one.
+    const failedNames = new Set(
+      [...first.values()].filter((o) => o.outcome === "failed").map((o) => o.name),
+    );
+    const retried =
+      failedNames.size > 0
+        ? await executePass(plugin, candidates.filter((c) => failedNames.has(c.name)), opts, marker)
+        : new Map<string, TeardownOutcome>();
+
+    for (const entry of entries) {
+      const second = retried.get(entry.name);
+      const outcome = second ?? first.get(entry.name)!;
+      outcomes.push({
+        ...entry,
+        outcome: outcome.outcome,
+        ...(outcome.detail !== undefined ? { detail: outcome.detail } : {}),
+        ...(second !== undefined ? { retried: true } : {}),
+      });
+    }
+  }
+
+  // A planned entry attributed to a lexicon that is not in `plugins` at
+  // execution time (a plan handed in from elsewhere). Nobody can delete it,
+  // and silence is never success.
+  for (const entries of byLexicon.values()) {
+    for (const entry of entries) {
+      outcomes.push({
+        ...entry,
+        outcome: "skipped",
+        detail: `no loaded lexicon named "${entry.lexicon}" to execute this candidate`,
+      });
+    }
+  }
+
+  outcomes.sort((a, b) => a.lexicon.localeCompare(b.lexicon) || a.name.localeCompare(b.name));
+  return { environment: opts.environment, stack: opts.stack, plan, outcomes, unimplemented };
 }

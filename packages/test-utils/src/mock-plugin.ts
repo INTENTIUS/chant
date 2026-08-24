@@ -19,6 +19,8 @@ export interface MockPluginOptions {
   observeDependencies?: LexiconPlugin["observeDependencies"];
   /** #1222 — enumerate the would-delete set for one marker identity (plan only). */
   teardownOwned?: LexiconPlugin["teardownOwned"];
+  /** #1222 — delete handed-over candidates, one outcome per candidate. */
+  executeTeardown?: LexiconPlugin["executeTeardown"];
   /** Deep observation (#1014) — the lexicon's pruning/ordering rules. */
   deepNormalizationHooks?: DeepNormalizationHooks;
   /**
@@ -45,6 +47,7 @@ export function createMockPlugin(options: MockPluginOptions = {}): LexiconPlugin
     ...(options.observeResourcesDeep && { observeResourcesDeep: options.observeResourcesDeep }),
     ...(options.observeDependencies && { observeDependencies: options.observeDependencies }),
     ...(options.teardownOwned && { teardownOwned: options.teardownOwned }),
+    ...(options.executeTeardown && { executeTeardown: options.executeTeardown }),
     ...(options.deepNormalizationHooks && { deepNormalizationHooks: options.deepNormalizationHooks }),
     ...(options.emulator && { emulator: options.emulator }),
   };

@@ -31,8 +31,8 @@ import { cfnDeployStacks } from "./components";
 import { affectedStacks } from "../../lifecycle/affected";
 import { rollbackToRevision } from "../../lifecycle/rollback";
 import { loadChantConfig, environmentNames, matchesDeclaredEnvironment, resolveOwnershipStack } from "../../config";
-import { unknownEnvError } from "../../env";
-import { planTeardown } from "../../lifecycle/teardown";
+import { unknownEnvError, isProdLikeEnvironment } from "../../env";
+import { planTeardown, executeTeardown, type TeardownPlan, type TeardownReport } from "../../lifecycle/teardown";
 import { collectBuildRootContributors } from "../plugins";
 import { applyLiveEndpoint } from "../../live-endpoint";
 import { isResourceDeclarable } from "../../declarable";
@@ -1243,14 +1243,16 @@ export async function runLifecyclePlan(ctx: CommandContext): Promise<number> {
 }
 
 /**
- * chant lifecycle teardown <environment> (#1222) — plan only.
+ * chant lifecycle teardown <environment> (#1222).
  *
  * Enumerates what deleting the environment would remove: every live resource
  * carrying this project's ownership marker (managed-by + `ownership.stack`)
  * with the requested env identity. Stateless — live markers only, no build, no
- * snapshot. Nothing is deleted on this path; `--yes` is reserved for the
- * execution half and errors loudly until that exists, so the flag surface is
- * stable now.
+ * snapshot. Without `--yes` nothing is deleted; with it the planned set is
+ * executed per lexicon with one bounded retry pass over failures, and every
+ * candidate's outcome is reported (deleted / failed / not-prunable / skipped —
+ * never silence). A production-like environment name additionally requires an
+ * interactive confirmation, or `--confirm-prod` non-interactively.
  */
 export async function runLifecycleTeardown(ctx: CommandContext): Promise<number> {
   const { args, plugins } = ctx;
@@ -1272,14 +1274,6 @@ export async function runLifecycleTeardown(ctx: CommandContext): Promise<number>
     return 1;
   }
 
-  if (args.yes) {
-    console.error(formatError({
-      message: "--yes: teardown execution is not yet implemented (#1222)",
-      hint: "Run without --yes to see the plan. The flag is reserved for the execution half.",
-    }));
-    return 1;
-  }
-
   // Teardown selects on the ownership marker; a project that stamps none has
   // nothing to key on, and "delete what looks like mine" is not a fallback.
   const stack = resolveOwnershipStack(config);
@@ -1291,25 +1285,53 @@ export async function runLifecycleTeardown(ctx: CommandContext): Promise<number>
     return 1;
   }
 
-  // #1166 — teardown planning is always a live read, so an environment's
-  // declared endpoint applies here too, unless the ambient shell already set it.
-  const readingPlugins = plugins.filter((p) => p.teardownOwned || p.describeResources);
+  // The prod guard (#1222): a production-like name never falls to `--yes`
+  // alone. Interactive runs re-type the environment name; non-interactive
+  // runs say `--confirm-prod` explicitly. Checked before any live read so a
+  // refused teardown touches nothing at all.
+  if (args.yes && isProdLikeEnvironment(environment) && !args.confirmProd) {
+    if (!process.stdin.isTTY) {
+      console.error(formatError({
+        message: `"${environment}" looks like a production environment — --yes alone is not enough`,
+        hint: "Re-run with --yes --confirm-prod to tear it down non-interactively.",
+      }));
+      return 1;
+    }
+    const confirmed = await promptProdTeardown(environment);
+    if (!confirmed) {
+      console.error(formatError({ message: "Confirmation did not match — nothing was deleted." }));
+      return 1;
+    }
+  }
+
+  // #1166 — teardown is always a live read (and with --yes, a live write), so
+  // an environment's declared endpoint applies here too, unless the ambient
+  // shell already set it.
+  const readingPlugins = plugins.filter((p) => p.teardownOwned || p.describeResources || p.executeTeardown);
   const endpointResult = applyLiveEndpoint(config.environments, environment, readingPlugins);
   if (endpointResult.notice) console.error(formatWarning({ message: endpointResult.notice }));
 
-  let plan;
+  let plan: TeardownPlan;
+  let report: TeardownReport | undefined;
   try {
     plan = await planTeardown({ environment, stack, plugins });
+    if (args.yes) {
+      report = await executeTeardown({ environment, stack, plugins, plan });
+    }
   } finally {
     endpointResult.restore();
   }
 
   if (args.json) {
-    console.log(JSON.stringify(plan, null, 2));
-    return 0;
+    console.log(JSON.stringify(report ?? plan, null, 2));
+    return report && report.outcomes.some((o) => o.outcome === "failed") ? 1 : 0;
   }
 
-  console.log(formatBold(`Teardown plan — environment: ${environment}, stack: ${stack} (plan only — nothing is deleted)`));
+  console.log(formatBold(
+    args.yes
+      ? `Teardown — environment: ${environment}, stack: ${stack}`
+      : `Teardown plan — environment: ${environment}, stack: ${stack} (plan only — nothing is deleted)`,
+  ));
 
   if (plan.entries.length === 0) {
     console.error(formatWarning({
@@ -1350,8 +1372,70 @@ export async function runLifecycleTeardown(ctx: CommandContext): Promise<number>
     }));
   }
 
-  console.error(formatWarning({ message: "Plan only — execution (--yes) arrives in a later #1222 PR." }));
+  if (!report) {
+    console.error(formatWarning({ message: "Plan only — re-run with --yes to execute." }));
+    return 0;
+  }
+
+  if (report.outcomes.length > 0) {
+    console.log(formatBold("\nOutcomes:"));
+    console.log("RESOURCE".padEnd(28) + "OUTCOME".padEnd(14) + "LEXICON".padEnd(12) + "DETAIL");
+    console.log("-".repeat(96));
+    for (const o of report.outcomes) {
+      console.log(
+        o.name.padEnd(28) +
+        o.outcome.padEnd(14) +
+        o.lexicon.padEnd(12) +
+        (o.detail ?? "") +
+        (o.retried ? " (after retry)" : ""),
+      );
+    }
+  }
+
+  const counts = { deleted: 0, failed: 0, "not-prunable": 0, skipped: 0 };
+  for (const o of report.outcomes) counts[o.outcome]++;
+  console.log(
+    `\n${counts.deleted} deleted, ${counts.failed} failed, ${counts["not-prunable"]} not prunable, ${counts.skipped} skipped`,
+  );
+
+  if (report.unimplemented.length > 0) {
+    console.error(formatWarning({
+      message: `Not executed (no teardown execution in these lexicons yet): ${report.unimplemented.join(", ")} — their candidates are reported as skipped, not deleted.`,
+    }));
+  }
+  if (plan.holes.length > 0) {
+    console.error(formatWarning({
+      message: "This teardown ran over an incomplete plan (holes above) — the environment cannot be called clean.",
+    }));
+  }
+  if (counts.failed > 0) {
+    console.error(formatError({
+      message: `${counts.failed} candidate(s) failed to delete after the retry pass — see the outcomes above.`,
+    }));
+    return 1;
+  }
+
   return 0;
+}
+
+/**
+ * The interactive half of the prod guard: the operator re-types the
+ * environment name. Anything else — including EOF — refuses.
+ */
+async function promptProdTeardown(environment: string): Promise<boolean> {
+  const { createInterface } = await import("node:readline");
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  return new Promise((resolvePrompt) => {
+    rl.question(
+      `"${environment}" looks like a production environment. Type the environment name to confirm teardown: `,
+      (answer) => {
+        resolvePrompt(answer.trim() === environment);
+        rl.close();
+      },
+    );
+    // EOF (Ctrl-D) closes the interface without answering — that is a refusal.
+    rl.on("close", () => resolvePrompt(false));
+  });
 }
 
 /**

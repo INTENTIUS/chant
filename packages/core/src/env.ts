@@ -47,3 +47,15 @@ export function unknownEnvError(
   const names = environmentNames(declared) ?? [];
   return `Unknown environment "${requested}". Declared environments: ${names.join(", ")}.`;
 }
+
+/**
+ * True when an environment name looks like production — `prod`, `production`,
+ * and separator-delimited variants (`prod-eu`, `us-prod`, `production2`).
+ * `chant lifecycle teardown <env> --yes` demands an extra confirmation for
+ * these (#1222): a typo that survives the declared-environments check should
+ * still not delete production on one flag. Name-shaped, deliberately — chant
+ * has no other signal for which environment is the one that pays the bills.
+ */
+export function isProdLikeEnvironment(name: string): boolean {
+  return /(^|[-_./])prod(uction)?([-_./0-9]|$)/i.test(name);
+}

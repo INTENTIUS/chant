@@ -1,8 +1,8 @@
 import { describe, test, expect, vi } from "vitest";
 import { createMockPlugin, staticObservation } from "@intentius/chant-test-utils";
-import { planTeardown } from "./teardown";
+import { planTeardown, executeTeardown } from "./teardown";
 import { observation } from "../observation";
-import type { ResourceMetadata, TeardownEnumeration } from "../lexicon";
+import type { ResourceMetadata, TeardownEnumeration, TeardownExecution } from "../lexicon";
 
 const meta = (overrides: Partial<ResourceMetadata> = {}): ResourceMetadata => ({
   type: "K8s::Apps::Deployment",
@@ -242,5 +242,244 @@ describe("planTeardown — aggregation", () => {
     expect(plan.skipped).toEqual(["helm"]);
     expect(plan.environment).toBe("dev");
     expect(plan.stack).toBe("shop");
+  });
+});
+
+describe("executeTeardown — the execution half (#1222)", () => {
+  const candidateWeb = { name: "web", type: "K8s::Apps::Deployment", marker: { stack: "shop", env: "dev" } };
+  const candidateCache = { name: "cache", type: "K8s::Core::Service", marker: { stack: "shop", env: "dev" } };
+
+  test("hands each lexicon its own candidates and reports the outcomes, attributed", async () => {
+    const execute = vi.fn(async (): Promise<TeardownExecution> => ({
+      outcomes: [
+        { name: "cache", outcome: "deleted" },
+        { name: "web", outcome: "not-prunable", detail: "identity changed under us" },
+      ],
+    }));
+    const report = await executeTeardown({
+      environment: "dev",
+      stack: "shop",
+      plugins: [
+        createMockPlugin({
+          name: "k8s",
+          teardownOwned: async () => ({ candidates: [candidateWeb, candidateCache] }),
+          executeTeardown: execute,
+        }),
+      ],
+    });
+
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(execute).toHaveBeenCalledWith({
+      environment: "dev",
+      marker: { stack: "shop", env: "dev" },
+      candidates: [candidateCache, candidateWeb],
+    });
+    expect(report.outcomes).toEqual([
+      { lexicon: "k8s", ...candidateCache, outcome: "deleted" },
+      { lexicon: "k8s", ...candidateWeb, outcome: "not-prunable", detail: "identity changed under us" },
+    ]);
+    expect(report.unimplemented).toEqual([]);
+  });
+
+  test("reuses a handed-in plan instead of re-reading", async () => {
+    const teardownOwned = vi.fn();
+    const execute = vi.fn(async (): Promise<TeardownExecution> => ({
+      outcomes: [{ name: "web", outcome: "deleted" }],
+    }));
+    const plan = {
+      environment: "dev",
+      stack: "shop",
+      entries: [{ lexicon: "k8s", ...candidateWeb }],
+      holes: [],
+      skipped: [],
+    };
+    const report = await executeTeardown({
+      environment: "dev",
+      stack: "shop",
+      plan,
+      plugins: [createMockPlugin({ name: "k8s", teardownOwned, executeTeardown: execute })],
+    });
+    expect(teardownOwned).not.toHaveBeenCalled();
+    expect(report.plan).toBe(plan);
+    expect(report.outcomes[0].outcome).toBe("deleted");
+  });
+
+  test("a failure gets exactly one retry pass, and a retry success is marked", async () => {
+    let calls = 0;
+    const execute = vi.fn(async (options: { candidates: Array<{ name: string }> }): Promise<TeardownExecution> => {
+      calls++;
+      if (calls === 1) {
+        return {
+          outcomes: [
+            { name: "cache", outcome: "deleted" },
+            { name: "web", outcome: "failed", detail: "conflict" },
+          ],
+        };
+      }
+      // The retry pass gets only the failures.
+      expect(options.candidates.map((c) => c.name)).toEqual(["web"]);
+      return { outcomes: [{ name: "web", outcome: "deleted" }] };
+    });
+    const report = await executeTeardown({
+      environment: "dev",
+      stack: "shop",
+      plugins: [
+        createMockPlugin({
+          name: "k8s",
+          teardownOwned: async () => ({ candidates: [candidateWeb, candidateCache] }),
+          executeTeardown: execute as never,
+        }),
+      ],
+    });
+    expect(calls).toBe(2);
+    const web = report.outcomes.find((o) => o.name === "web")!;
+    expect(web.outcome).toBe("deleted");
+    expect(web.retried).toBe(true);
+    const cache = report.outcomes.find((o) => o.name === "cache")!;
+    expect(cache.outcome).toBe("deleted");
+    expect(cache.retried).toBeUndefined();
+  });
+
+  test("a failure that survives the retry stays failed — reported, never silent", async () => {
+    const execute = vi.fn(async (): Promise<TeardownExecution> => ({
+      outcomes: [{ name: "web", outcome: "failed", detail: "still refused" }],
+    }));
+    const report = await executeTeardown({
+      environment: "dev",
+      stack: "shop",
+      plugins: [
+        createMockPlugin({
+          name: "k8s",
+          teardownOwned: async () => ({ candidates: [candidateWeb] }),
+          executeTeardown: execute,
+        }),
+      ],
+    });
+    expect(execute).toHaveBeenCalledTimes(2); // one pass + one bounded retry, never a third
+    expect(report.outcomes).toEqual([
+      { lexicon: "k8s", ...candidateWeb, outcome: "failed", detail: "still refused", retried: true },
+    ]);
+  });
+
+  test("a thrown execution fails all its candidates, then retries them once", async () => {
+    let calls = 0;
+    const execute = vi.fn(async (): Promise<TeardownExecution> => {
+      calls++;
+      if (calls === 1) throw new Error("api down");
+      return { outcomes: [{ name: "web", outcome: "deleted" }, { name: "cache", outcome: "deleted" }] };
+    });
+    const report = await executeTeardown({
+      environment: "dev",
+      stack: "shop",
+      plugins: [
+        createMockPlugin({
+          name: "k8s",
+          teardownOwned: async () => ({ candidates: [candidateWeb, candidateCache] }),
+          executeTeardown: execute,
+        }),
+      ],
+    });
+    expect(report.outcomes.every((o) => o.outcome === "deleted" && o.retried)).toBe(true);
+  });
+
+  test("a candidate the lexicon stays silent about is failed — silence is never success", async () => {
+    const execute = vi.fn(async (): Promise<TeardownExecution> => ({
+      outcomes: [{ name: "cache", outcome: "deleted" }],
+    }));
+    const report = await executeTeardown({
+      environment: "dev",
+      stack: "shop",
+      plugins: [
+        createMockPlugin({
+          name: "k8s",
+          teardownOwned: async () => ({ candidates: [candidateWeb, candidateCache] }),
+          executeTeardown: execute,
+        }),
+      ],
+    });
+    const web = report.outcomes.find((o) => o.name === "web")!;
+    expect(web.outcome).toBe("failed");
+    expect(web.detail).toContain("no outcome");
+  });
+
+  test("an outcome for a name core never asked about is dropped", async () => {
+    const execute = vi.fn(async (): Promise<TeardownExecution> => ({
+      outcomes: [
+        { name: "web", outcome: "deleted" },
+        { name: "somebody-elses", outcome: "deleted" },
+      ],
+    }));
+    const report = await executeTeardown({
+      environment: "dev",
+      stack: "shop",
+      plugins: [
+        createMockPlugin({
+          name: "k8s",
+          teardownOwned: async () => ({ candidates: [candidateWeb] }),
+          executeTeardown: execute,
+        }),
+      ],
+    });
+    expect(report.outcomes.map((o) => o.name)).toEqual(["web"]);
+  });
+
+  test("a lexicon with candidates but no executeTeardown reports them skipped, loudly", async () => {
+    const report = await executeTeardown({
+      environment: "dev",
+      stack: "shop",
+      plugins: [
+        createMockPlugin({
+          name: "gcp",
+          teardownOwned: async () => ({
+            candidates: [{ name: "bucket", type: "GCP::Storage::Bucket", marker: { stack: "shop", env: "dev" } }],
+          }),
+        }),
+      ],
+    });
+    expect(report.unimplemented).toEqual(["gcp"]);
+    expect(report.outcomes).toHaveLength(1);
+    expect(report.outcomes[0].outcome).toBe("skipped");
+    expect(report.outcomes[0].detail).toContain("gcp");
+  });
+
+  test("per-lexicon isolation: one lexicon's failure never blocks another's deletes", async () => {
+    const report = await executeTeardown({
+      environment: "dev",
+      stack: "shop",
+      plugins: [
+        createMockPlugin({
+          name: "fly",
+          teardownOwned: async () => ({
+            candidates: [{ name: "app", type: "Fly::Machines::App", marker: { stack: "shop", env: "dev" } }],
+          }),
+          executeTeardown: async () => { throw new Error("flaps down"); },
+        }),
+        createMockPlugin({
+          name: "k8s",
+          teardownOwned: async () => ({ candidates: [candidateWeb] }),
+          executeTeardown: async () => ({ outcomes: [{ name: "web", outcome: "deleted" as const }] }),
+        }),
+      ],
+    });
+    expect(report.outcomes.find((o) => o.lexicon === "fly")!.outcome).toBe("failed");
+    expect(report.outcomes.find((o) => o.lexicon === "k8s")!.outcome).toBe("deleted");
+  });
+
+  test("a plan entry naming a lexicon that is not loaded is skipped, not lost", async () => {
+    const report = await executeTeardown({
+      environment: "dev",
+      stack: "shop",
+      plan: {
+        environment: "dev",
+        stack: "shop",
+        entries: [{ lexicon: "aws", name: "vpc", type: "AWS::EC2::VPC", marker: { stack: "shop", env: "dev" } }],
+        holes: [],
+        skipped: [],
+      },
+      plugins: [],
+    });
+    expect(report.outcomes).toHaveLength(1);
+    expect(report.outcomes[0].outcome).toBe("skipped");
+    expect(report.outcomes[0].detail).toContain("aws");
   });
 });

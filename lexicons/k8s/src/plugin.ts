@@ -678,6 +678,19 @@ const { deployment, service, serviceMonitor, prometheusRule } = MonitoredService
     return describeResources(options);
   },
 
+  // Env teardown (#1222): enumeration + execution over the marker label
+  // selector (managed-by + stack + env), through the same typed client the
+  // prune uses. Execution deletes namespaces last. See ./teardown.ts.
+  async teardownOwned(options) {
+    const { teardownOwned } = await import("./teardown");
+    return teardownOwned(options);
+  },
+
+  async executeTeardown(options) {
+    const { executeTeardown } = await import("./teardown");
+    return executeTeardown(options);
+  },
+
   /**
    * Deploy-unit presence + health for `chant components status --live`
    * (#1495 piece 3): a Kubernetes deploy unit is the label selector chant's

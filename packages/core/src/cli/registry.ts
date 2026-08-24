@@ -85,10 +85,13 @@ export interface ParsedArgs {
   namespace?: string;
   /** `chant lifecycle rollback --dry-run` — compute the rollback delta and print it; open no PR, push nothing, leave no branch. */
   dryRun?: boolean;
-  /** `chant lifecycle teardown <env> --yes` — confirm execution (#1222). The
-   * flag surface exists now; execution does not yet, and passing it errors
-   * loudly rather than pretending. */
+  /** `chant lifecycle teardown <env> --yes` — execute the planned deletion
+   * (#1222). Without it the command plans and stops. */
   yes?: boolean;
+  /** `chant lifecycle teardown <env> --yes --confirm-prod` — the non-interactive
+   * form of the extra confirmation a production-like environment name demands
+   * (#1222). Meaningless without `--yes`. */
+  confirmProd?: boolean;
   /** `chant import --verbatim` — keep server-defaulted fields in live import */
   verbatim?: boolean;
   /** `chant lifecycle … --src <dir>` — build root override for lifecycle commands */

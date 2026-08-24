@@ -13,7 +13,7 @@ chant lifecycle diff <env> [--live] [--src <dir>]
 chant lifecycle diff <env> --between <refA> <refB> [lexicon] [--json]
 chant lifecycle plan <env> [lexicon] [--json] [--owned] [--report gitlab-mr] [--src <dir>]
 chant lifecycle affected --base <ref> [--head <ref>] [--include-dependents] [--json]
-chant lifecycle teardown <env> [--json]
+chant lifecycle teardown <env> [--yes] [--confirm-prod] [--json]
 chant lifecycle log [env]
 ```
 
@@ -354,11 +354,13 @@ The same shape works from an Op you write — `affected` is the primitive; the f
 
 ### `lifecycle teardown <env>`
 
-Plan what deleting an environment would remove. **Plan only for now** — this command enumerates and prints; the execution half (`--yes`) is forthcoming under [#1222](https://github.com/INTENTIUS/chant/issues/1222) and currently errors.
+Plan — and with `--yes`, execute — the deletion of an environment's marker-scoped resources.
 
 ```bash
-chant lifecycle teardown dev
+chant lifecycle teardown dev            # plan only: print the would-delete set
 chant lifecycle teardown dev --json
+chant lifecycle teardown dev --yes      # execute the planned set
+chant lifecycle teardown prod --yes --confirm-prod
 ```
 
 Selection is marker-scoped by construction: a resource is in the plan only when its own [ownership marker](/chant/configuration/config-file/#ownership) carries this project's `ownership.stack` **and** the requested environment. Unmarked resources, another stack's resources, and another environment's resources are never candidates. The read is stateless — live markers only, no build, no snapshot.
@@ -367,7 +369,24 @@ The environment must be declared in `chant.config.ts` under `environments`; an u
 
 Per lexicon, the plan comes from the `teardownOwned` capability where a lexicon implements one, falling back to `describeResources` plus the per-resource marker identity otherwise. Kinds a lexicon stamps but cannot read back are reported as **holes** — a plan with holes is incomplete, not clean, and says so. An empty would-delete set is also reported loudly rather than exiting silently.
 
-The same enumeration is exported as `planTeardown()` from `@intentius/chant` for programmatic use (a test-environment harness tearing down in `afterAll`, for example).
+#### Execution (`--yes`)
+
+`--yes` deletes the planned set through each lexicon's `executeTeardown` capability and prints one outcome per candidate: `deleted` (already-gone counts — teardown is idempotent), `failed` (the delete errored), `not-prunable` (deliberately refused, with the reason — for example the live object's marker changed since planning), or `skipped` (the lexicon enumerates but does not implement execution yet). Nothing is ever silent: every planned entry gets a row, and the command exits nonzero when any candidate is still `failed` after the retry pass.
+
+Ordering is per lexicon, and each lexicon deletes in the order its target requires — there is no global reverse-dependency ordering. After the first pass, core runs **one bounded retry pass** over that lexicon's failures, which covers most ordering hiccups (a dependent that had not finished deleting yet). Failures that survive the retry are reported as failures.
+
+Implemented today:
+
+- **k8s** — deletes by the marker label selector through the typed API client (the same delete the ownership-scoped prune uses), re-reading and re-verifying each object's marker immediately before deleting. Namespaces are deleted last, so their members get individual outcomes before the namespace cascade.
+- **fly** — destroys marker-carrying machines (lease → destroy → wait) first, then deletes whole apps last. An app is deleted whole only when every live machine in it carries the requested identity — the app-boundary rule from the fly ownership convention; volumes, IPs, and certificates go with their app. An app also hosting a foreign or other-env machine is never deleted whole.
+
+gcp, azure, and aws enumerate (via the fallback read) but do not execute yet — their candidates are reported as `skipped`.
+
+#### The prod guard
+
+An environment whose name looks production-like (`prod`, `production`, `prod-eu`, `us-prod`, ...) is never torn down on `--yes` alone. Interactively, chant asks you to re-type the environment name; non-interactively (CI, scripts), pass `--yes --confirm-prod` explicitly. Planning a production environment needs no confirmation — only deletion does.
+
+Both halves are exported from `@intentius/chant` for programmatic use (a test-environment harness tearing down in `afterAll`, for example): `planTeardown()` enumerates, `executeTeardown()` deletes and returns the same per-candidate report the CLI prints.
 
 ### `lifecycle log [env]`
 
