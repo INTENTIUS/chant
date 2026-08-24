@@ -76,6 +76,14 @@ Every CRD-generated class ships its `spec` field schema in the lexicon JSON (`sp
 | WK8501 | Custom resource `spec` has a field the CRD schema does not declare (with a "did you mean" suggestion) |
 | WK8502 | Custom resource `spec` field has the wrong scalar type, or a value outside its enum |
 
+### Secret provenance
+
+WK8503 is the consumption side of the [secret provenance vocabulary](/chant/architecture/core-type-system/): every secret reference in a pod spec (`envFrom.secretRef`, `env[].valueFrom.secretKeyRef`, secret volumes, projected secret sources, `imagePullSecrets`) must resolve to a Secret the same output produces — a literal `Secret`, an `ExternalSecret` target, an `InfisicalSecret` / `InfisicalDynamicSecret` managed secret reference, or a cert-manager `Certificate` `secretName`. A secret that legitimately lives outside the build (minted by a human, an operator, a `just` target) is declared, not suppressed: a `declareSecret({ name, provenance: "referenced" | "from-provider" | "generated-once" })` declaration covering the name waives the check. References marked `optional: true` are skipped. There is no suppression comment; demote via `lint.rules` if you must.
+
+| Rule | Description |
+|------|-------------|
+| WK8503 | Workload consumes a Secret nothing in the output produces (error; waived by a `SecretProvenance` declaration) |
+
 ### Argo CD
 
 Quality checks for the [Argo CD composites](/chant/lexicons/k8s/argo-composites/). ARGO001/ARGO004 are declarative (source AST); ARGO002/003/005 are post-synth (cross-resource / filesystem).

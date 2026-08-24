@@ -35,6 +35,8 @@ import { flux002 } from "./flux002";
 import { flux003 } from "./flux003";
 import { wk8501 } from "./wk8501";
 import { wk8502 } from "./wk8502";
+import { wk8503 } from "./wk8503";
+import { declareSecret, type SecretDeclarationInput } from "@intentius/chant/secret-provenance";
 import { getCrdSchemaRegistry, setCrdSchemaRegistry, validateSpec } from "./crd-schema-helpers";
 
 function makeCtx(yaml: string): PostSynthContext {
@@ -1945,5 +1947,255 @@ describe("WK8501/WK8502: custom resource spec validated against the shipped CRD 
       { kind: "unknown-field", path: "spec.a.c", message: expect.stringContaining('unknown field "spec.a.c"') },
       { kind: "unknown-field", path: "spec.d", message: expect.stringContaining('unknown field "spec.d"') },
     ]);
+  });
+});
+
+// ── WK8503: consumed-but-unproduced Secret ──────────────────────────
+
+describe("WK8503: workload consumes a Secret nothing in the output produces", () => {
+  function appConsuming(name: string) {
+    return {
+      apiVersion: "apps/v1",
+      kind: "Deployment",
+      metadata: { name: "app", namespace: "web" },
+      spec: {
+        template: {
+          spec: {
+            containers: [
+              { name: "app", image: "app:1.0", envFrom: [{ secretRef: { name } }] },
+            ],
+          },
+        },
+      },
+    };
+  }
+
+  /** Like manifestsCtx, but with SecretProvenance declarations discovered as entities. */
+  function ctxWithDeclarations(decls: SecretDeclarationInput[], ...objs: unknown[]): PostSynthContext {
+    const ctx = manifestsCtx(...objs);
+    decls.forEach((d, i) => ctx.entities.set(`secretDecl${i}`, declareSecret(d as never)));
+    return ctx;
+  }
+
+  test("metadata", () => {
+    expect(wk8503.id).toBe("WK8503");
+  });
+
+  test("fires when nothing produces the consumed Secret", () => {
+    const diags = wk8503.check(manifestsCtx(appConsuming("fountain-secrets")));
+    expect(diags.length).toBe(1);
+    expect(diags[0].checkId).toBe("WK8503");
+    expect(diags[0].severity).toBe("error");
+    expect(diags[0].entity).toBe("app");
+    expect(diags[0].message).toContain('Secret "fountain-secrets"');
+    expect(diags[0].message).toContain("envFrom.secretRef");
+  });
+
+  test("quiet when a Secret manifest in the output produces it", () => {
+    const ctx = manifestsCtx(
+      appConsuming("fountain-secrets"),
+      { apiVersion: "v1", kind: "Secret", metadata: { name: "fountain-secrets", namespace: "web" }, stringData: {} },
+    );
+    expect(wk8503.check(ctx)).toEqual([]);
+  });
+
+  test("quiet when an ExternalSecret materializes the target name", () => {
+    const ctx = manifestsCtx(
+      appConsuming("fountain-secrets"),
+      {
+        apiVersion: "external-secrets.io/v1",
+        kind: "ExternalSecret",
+        metadata: { name: "fountain-secrets-eso", namespace: "web" },
+        spec: {
+          secretStoreRef: { name: "store", kind: "ClusterSecretStore" },
+          target: { name: "fountain-secrets", creationPolicy: "Owner" },
+          data: [],
+        },
+      },
+    );
+    expect(wk8503.check(ctx)).toEqual([]);
+  });
+
+  test("an ExternalSecret with no explicit target produces its own name", () => {
+    const ctx = manifestsCtx(
+      appConsuming("fountain-secrets"),
+      {
+        apiVersion: "external-secrets.io/v1",
+        kind: "ExternalSecret",
+        metadata: { name: "fountain-secrets", namespace: "web" },
+        spec: { secretStoreRef: { name: "store", kind: "ClusterSecretStore" }, data: [] },
+      },
+    );
+    expect(wk8503.check(ctx)).toEqual([]);
+  });
+
+  test("quiet when an InfisicalSecret's managedSecretReference produces it", () => {
+    const ctx = manifestsCtx(
+      appConsuming("fountain-secrets"),
+      {
+        apiVersion: "secrets.infisical.com/v1alpha1",
+        kind: "InfisicalSecret",
+        metadata: { name: "fountain-sync", namespace: "infisical-operator" },
+        spec: {
+          managedSecretReference: { secretName: "fountain-secrets", secretNamespace: "web" },
+        },
+      },
+    );
+    expect(wk8503.check(ctx)).toEqual([]);
+  });
+
+  test("an InfisicalSecret targeting a different namespace does not cover the consumer", () => {
+    const ctx = manifestsCtx(
+      appConsuming("fountain-secrets"),
+      {
+        apiVersion: "secrets.infisical.com/v1alpha1",
+        kind: "InfisicalSecret",
+        metadata: { name: "fountain-sync", namespace: "web" },
+        spec: {
+          managedSecretReference: { secretName: "fountain-secrets", secretNamespace: "other" },
+        },
+      },
+    );
+    expect(wk8503.check(ctx).length).toBe(1);
+  });
+
+  test("quiet when a cert-manager Certificate materializes the secretName", () => {
+    const consumer = {
+      apiVersion: "apps/v1",
+      kind: "StatefulSet",
+      metadata: { name: "db", namespace: "web" },
+      spec: {
+        template: {
+          spec: {
+            containers: [{ name: "db", image: "db:1" }],
+            volumes: [{ name: "tls", secret: { secretName: "db-tls" } }],
+          },
+        },
+      },
+    };
+    const ctx = manifestsCtx(consumer, {
+      apiVersion: "cert-manager.io/v1",
+      kind: "Certificate",
+      metadata: { name: "db-cert", namespace: "web" },
+      spec: { secretName: "db-tls", issuerRef: { name: "issuer" } },
+    });
+    expect(wk8503.check(ctx)).toEqual([]);
+  });
+
+  test("a `referenced` provenance declaration waives the check", () => {
+    const ctx = ctxWithDeclarations(
+      [{ name: "fountain-secrets", provenance: "referenced", scope: "minted by `just secret`" }],
+      appConsuming("fountain-secrets"),
+    );
+    expect(wk8503.check(ctx)).toEqual([]);
+  });
+
+  test("a `generated-once` provenance declaration waives the check", () => {
+    const ctx = ctxWithDeclarations(
+      [{ name: "fountain-secrets", provenance: "generated-once", keys: ["token"] }],
+      appConsuming("fountain-secrets"),
+    );
+    expect(wk8503.check(ctx)).toEqual([]);
+  });
+
+  test("a declaration covering a different name does not waive the check", () => {
+    const ctx = ctxWithDeclarations(
+      [{ name: "some-other-secret", provenance: "referenced" }],
+      appConsuming("fountain-secrets"),
+    );
+    const diags = wk8503.check(ctx);
+    expect(diags.length).toBe(1);
+    expect(diags[0].message).toContain('"fountain-secrets"');
+  });
+
+  test("optional references are skipped", () => {
+    const ctx = manifestsCtx({
+      apiVersion: "apps/v1",
+      kind: "Deployment",
+      metadata: { name: "app", namespace: "web" },
+      spec: {
+        template: {
+          spec: {
+            containers: [
+              {
+                name: "app",
+                image: "app:1.0",
+                envFrom: [{ secretRef: { name: "maybe-env", optional: true } }],
+                env: [{ name: "TOKEN", valueFrom: { secretKeyRef: { name: "maybe-key", key: "t", optional: true } } }],
+              },
+            ],
+            volumes: [{ name: "v", secret: { secretName: "maybe-vol", optional: true } }],
+          },
+        },
+      },
+    });
+    expect(wk8503.check(ctx)).toEqual([]);
+  });
+
+  test("covers secretKeyRef, projected sources, imagePullSecrets, and initContainers", () => {
+    const ctx = manifestsCtx({
+      apiVersion: "batch/v1",
+      kind: "CronJob",
+      metadata: { name: "sync", namespace: "web" },
+      spec: {
+        jobTemplate: {
+          spec: {
+            template: {
+              spec: {
+                imagePullSecrets: [{ name: "registry-creds" }],
+                initContainers: [
+                  { name: "init", image: "i:1", env: [{ name: "T", valueFrom: { secretKeyRef: { name: "api-token", key: "t" } } }] },
+                ],
+                containers: [{ name: "sync", image: "s:1" }],
+                volumes: [
+                  { name: "p", projected: { sources: [{ secret: { name: "projected-secret" } }] } },
+                ],
+              },
+            },
+          },
+        },
+      },
+    });
+    const secrets = wk8503.check(ctx).map((d) => d.message.match(/consumes Secret "([^"]+)"/)?.[1]).sort();
+    expect(secrets).toEqual(["api-token", "projected-secret", "registry-creds"]);
+  });
+
+  test("a Secret in an explicit different namespace does not cover the consumer", () => {
+    const ctx = manifestsCtx(
+      appConsuming("fountain-secrets"),
+      { apiVersion: "v1", kind: "Secret", metadata: { name: "fountain-secrets", namespace: "other" }, stringData: {} },
+    );
+    expect(wk8503.check(ctx).length).toBe(1);
+  });
+
+  test("a Secret with no namespace covers a namespaced consumer", () => {
+    const ctx = manifestsCtx(
+      appConsuming("fountain-secrets"),
+      { apiVersion: "v1", kind: "Secret", metadata: { name: "fountain-secrets" }, stringData: {} },
+    );
+    expect(wk8503.check(ctx)).toEqual([]);
+  });
+
+  test("reports a missing Secret once per workload even when referenced twice", () => {
+    const ctx = manifestsCtx({
+      apiVersion: "apps/v1",
+      kind: "Deployment",
+      metadata: { name: "app", namespace: "web" },
+      spec: {
+        template: {
+          spec: {
+            containers: [
+              {
+                name: "app",
+                image: "app:1.0",
+                envFrom: [{ secretRef: { name: "fountain-secrets" } }],
+                env: [{ name: "T", valueFrom: { secretKeyRef: { name: "fountain-secrets", key: "t" } } }],
+              },
+            ],
+          },
+        },
+      },
+    });
+    expect(wk8503.check(ctx).length).toBe(1);
   });
 });
