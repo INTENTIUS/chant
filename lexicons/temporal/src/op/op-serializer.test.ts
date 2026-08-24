@@ -6,8 +6,9 @@
 import { describe, expect, it } from "vitest";
 import { serializeOps } from "./serializer";
 import { DECLARABLE_MARKER, type Declarable } from "@intentius/chant/declarable";
-import { phase, gate, envTeardown } from "@intentius/chant/op";
+import { phase, gate, effect, envTeardown, shell } from "@intentius/chant/op";
 import type { OpConfig } from "@intentius/chant/op";
+import { EffectReceipt, receiptExpectation } from "@intentius/chant/effect-receipt";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -702,6 +703,124 @@ describe("serializeOps()", () => {
       expect(wf).toContain("const [__r0, __r1] = await Promise.all([");
       expect(wf).toContain('upsertSearchAttributes({ "AlphaOk": [String(__r0?.ok)] });');
       expect(wf).toContain('upsertSearchAttributes({ "BetaOk": [String(__r1?.ok)] });');
+    });
+  });
+
+  describe("effect steps (#1834)", () => {
+    const seeded = EffectReceipt("seeded", {
+      effect: "db-seed",
+      flavor: "hash",
+      inputs: { file: "seed.sql" },
+    });
+
+    const seedOps = () =>
+      new Map([
+        makeOp({
+          name: "seed",
+          overview: "o",
+          phases: [phase("Seed", [effect(seeded, [shell("npm run db:seed")])])],
+        }),
+      ]);
+
+    it("emits read-compare-run-write with the receipt identity and expectation as data", () => {
+      const wf = serializeOps(seedOps())["ops/seed/workflow.ts"];
+      const readArgs = JSON.stringify({
+        receipt: { name: "seeded", effect: "db-seed", flavor: "hash", inputs: { file: "seed.sql" } },
+        expectation: receiptExpectation(seeded),
+      });
+      expect(wf).toContain(`const __eff0 = await receiptRead(${readArgs});`);
+      expect(wf).toContain("if (__eff0.current === __eff0.expectation) {");
+      expect(wf).toContain('log.info("effect already applied: seeded");');
+      expect(wf).toContain("import { proxyActivities, condition, defineSignal, setHandler, upsertSearchAttributes, log } from '@temporalio/workflow';");
+    });
+
+    it("nests the wrapped steps inside the mismatch branch and writes the receipt last", () => {
+      const wf = serializeOps(seedOps())["ops/seed/workflow.ts"];
+      const read = wf.indexOf("const __eff0 = await receiptRead(");
+      const elseBranch = wf.indexOf("} else {");
+      const nested = wf.indexOf('await shellCmd({"cmd":"npm run db:seed"});');
+      const write = wf.indexOf("await receiptWrite({ receipt: ");
+      const close = wf.indexOf("\n  }", write);
+      expect(read).toBeGreaterThan(-1);
+      expect(elseBranch).toBeGreaterThan(read);
+      expect(nested).toBeGreaterThan(elseBranch);
+      expect(write).toBeGreaterThan(nested);
+      expect(close).toBeGreaterThan(write);
+      // The write carries the receipt as data and the run-resolved expectation.
+      expect(wf).toContain("expectation: __eff0.expectation });");
+      // Sole writer: exactly one write emitted.
+      expect(wf.match(/await receiptWrite\(/g)).toHaveLength(1);
+    });
+
+    it("binds receiptRead/receiptWrite once, at the fastIdempotent profile (#1698)", () => {
+      const wf = serializeOps(seedOps())["ops/seed/workflow.ts"];
+      expect(wf).toMatch(
+        /const \{ receiptRead, shellCmd, receiptWrite \} = proxyActivities<typeof activities>\(\s*TEMPORAL_ACTIVITY_PROFILES\.fastIdempotent,/,
+      );
+    });
+
+    it("keeps authored order around a phase-level gate (gate first, effect after) (#1698)", () => {
+      const ops = new Map([
+        makeOp({
+          name: "gated-seed",
+          overview: "o",
+          phases: [
+            phase("Seed", [
+              gate("approve-seed"),
+              effect(seeded, [shell("npm run db:seed")]),
+            ]),
+          ],
+        }),
+      ]);
+      const wf = serializeOps(ops)["ops/gated-seed/workflow.ts"];
+      const gateIdx = wf.indexOf("await condition(() => resumeApproveSeedCleared");
+      const readIdx = wf.indexOf("await receiptRead(");
+      expect(gateIdx).toBeGreaterThan(-1);
+      expect(readIdx).toBeGreaterThan(gateIdx);
+    });
+
+    it("a gate nested inside the effect pauses only on the effect-will-fire path", () => {
+      const ops = new Map([
+        makeOp({
+          name: "inner-gate",
+          overview: "o",
+          phases: [
+            phase("Seed", [
+              effect(seeded, [gate("approve-fire"), shell("npm run db:seed")]),
+            ]),
+          ],
+        }),
+      ]);
+      const wf = serializeOps(ops)["ops/inner-gate/workflow.ts"];
+      expect(wf).toContain('const resumeApproveFire = defineSignal<[{ approver?: string }?]>("approve-fire");');
+      const elseBranch = wf.indexOf("} else {");
+      const gateIdx = wf.indexOf("await condition(() => resumeApproveFireCleared");
+      const nested = wf.indexOf('await shellCmd({"cmd":"npm run db:seed"});');
+      expect(gateIdx).toBeGreaterThan(elseBranch);
+      expect(nested).toBeGreaterThan(gateIdx);
+    });
+
+    it("refuses an effect step in a parallel phase", () => {
+      const ops = new Map([
+        makeOp({
+          name: "par-effect",
+          overview: "o",
+          phases: [phase("P", [effect(seeded, [shell("x")])], { parallel: true })],
+        }),
+      ]);
+      expect(() => serializeOps(ops)).toThrow(/parallel phase/);
+    });
+
+    it("ops without effect steps do not import log (unchanged emission)", () => {
+      const ops = new Map([
+        makeOp({
+          name: "plain",
+          overview: "o",
+          phases: [phase("P", [shell("x")])],
+        }),
+      ]);
+      const wf = serializeOps(ops)["ops/plain/workflow.ts"];
+      expect(wf).toContain("import { proxyActivities, condition, defineSignal, setHandler, upsertSearchAttributes } from '@temporalio/workflow';");
     });
   });
 });

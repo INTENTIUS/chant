@@ -1,5 +1,7 @@
 import { OpResource } from "./resource";
-import type { OpConfig, PhaseDefinition, StepDefinition, ActivityStep, GateStep } from "./types";
+import type { OpConfig, PhaseDefinition, StepDefinition, ActivityStep, GateStep, EffectStep } from "./types";
+import { isEffectReceipt, type EffectReceiptDeclaration } from "../effect-receipt";
+import { receiptCheckInput } from "./receipt-store";
 
 // ── Core builders ─────────────────────────────────────────────────────────────
 
@@ -54,6 +56,62 @@ export function gate(
     kind: "gate",
     signalName,
     ...(opts?.timeout ? { timeout: opts.timeout } : {}),
+    ...(opts?.description ? { description: opts.description } : {}),
+  };
+}
+
+/**
+ * Wrap nested steps in read-compare-run-write over an effect receipt (#1834,
+ * epic #1703). At run: read the live receipt through the receipt store,
+ * compare it against the resolved expectation, and on a match skip the nested
+ * steps ("effect already applied"). On a mismatch the nested steps run in
+ * authored order, and ONLY when every one of them succeeds is the receipt
+ * written — last, once. This step is the sole writer of a receipt (decision
+ * 3); a nested-step failure leaves the receipt untouched (stale), so the next
+ * run re-proposes the effect.
+ *
+ * `receipt` is the typed EffectReceipt declaration — import the const from
+ * your receipts module. There is no string form: a receipt named by string
+ * would sever the step from the declaration that lint, plan, and the lexicon
+ * row all key on.
+ *
+ * A gate authored inside `steps` pauses only when the effect will fire (the
+ * matched path never reaches it). The receipt-store activities (`receiptRead`,
+ * `receiptWrite`) are provided by the receipt row's lexicon (#1835, aws).
+ *
+ * @example
+ * ```ts
+ * import { seededReceipt } from "./receipts";
+ * phase("Seed", [
+ *   effect(seededReceipt, [
+ *     shell("npm run db:seed"),
+ *   ]),
+ * ]),
+ * ```
+ */
+export function effect(
+  receipt: EffectReceiptDeclaration,
+  steps: Array<ActivityStep | GateStep>,
+  opts?: { description?: string },
+): EffectStep {
+  if (!isEffectReceipt(receipt)) {
+    throw new Error(
+      "effect(): `receipt` must be the EffectReceipt declaration itself — import the const; there is no string form",
+    );
+  }
+  for (const step of steps) {
+    if ((step as { kind?: unknown }).kind === "effect") {
+      throw new Error(
+        `effect("${receipt.name}"): effect steps do not nest — one receipt witnesses one effect`,
+      );
+    }
+  }
+  const { receipt: ref, expectation } = receiptCheckInput(receipt);
+  return {
+    kind: "effect",
+    receipt: ref,
+    ...(expectation !== undefined ? { expectation } : {}),
+    steps,
     ...(opts?.description ? { description: opts.description } : {}),
   };
 }

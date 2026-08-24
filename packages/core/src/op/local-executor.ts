@@ -11,8 +11,9 @@
  * so core never statically depends on `@intentius/chant-lexicon-temporal`.
  */
 
-import type { OpConfig, PhaseDefinition, ActivityStep, GateStep, StepDefinition } from "./types";
+import type { OpConfig, PhaseDefinition, ActivityStep, GateStep, EffectStep, StepDefinition } from "./types";
 import { resolveActivity, type ActivityFn, type ActivityProfile } from "./activity-registry";
+import type { ReceiptReadResult } from "./receipt-store";
 
 // ── Records ─────────────────────────────────────────────────────────────────
 
@@ -69,6 +70,7 @@ const FALLBACK_TIMEOUT_MS = 5 * 60_000;
 
 const isActivity = (s: StepDefinition): s is ActivityStep => s.kind === "activity";
 const isGate = (s: StepDefinition): s is GateStep => s.kind === "gate";
+const isEffect = (s: StepDefinition): s is EffectStep => s.kind === "effect";
 
 /** Parse a Temporal duration string ("5m", "30s", "1h30m", "100ms") to ms. */
 export function parseDuration(s: string): number {
@@ -92,12 +94,18 @@ function resolvePath(value: unknown, path?: string): unknown {
   );
 }
 
-/** Find the first gate step anywhere in the Op (phases + onFailure), if any. */
+/** Find the first gate step anywhere in the Op (phases + onFailure, including
+ * gates nested inside effect steps), if any. */
 export function findGate(config: OpConfig): GateStep | undefined {
   const all = [...config.phases, ...(config.onFailure ?? [])];
   for (const phase of all) {
-    const gate = phase.steps.find(isGate);
-    if (gate) return gate;
+    for (const step of phase.steps) {
+      if (isGate(step)) return step;
+      if (isEffect(step)) {
+        const nested = step.steps.find(isGate);
+        if (nested) return nested;
+      }
+    }
   }
   return undefined;
 }
@@ -145,6 +153,13 @@ async function callWithTimeout(
 
 // ── Step + phase execution ────────────────────────────────────────────────��─
 
+/** A finished step: its record plus (on success) the activity's return value —
+ * the effect-step path needs `receiptRead`'s result, not just its status. */
+interface RanStep {
+  record: StepRecord;
+  result?: unknown;
+}
+
 /** Run one activity step with retry + timeout. Never throws — returns a record. */
 async function runStep(
   step: ActivityStep,
@@ -152,7 +167,7 @@ async function runStep(
   activities: Map<string, ActivityFn>,
   profiles: Record<string, ActivityProfile>,
   signal?: AbortSignal,
-): Promise<StepRecord> {
+): Promise<RanStep> {
   const args = step.args ?? {};
   const base = { phase: phaseName, fn: step.fn, args };
   const start = Date.now();
@@ -161,7 +176,7 @@ async function runStep(
   try {
     fn = resolveActivity(activities, step.fn);
   } catch (err) {
-    return { ...base, status: "fail", durationMs: 0, error: errMessage(err) };
+    return { record: { ...base, status: "fail", durationMs: 0, error: errMessage(err) } };
   }
 
   const profile = profiles[step.profile ?? DEFAULT_PROFILE] ?? {};
@@ -190,7 +205,7 @@ async function runStep(
           value: resolvePath(result, step.outcomeAttribute.from),
         };
       }
-      return record;
+      return { record, result };
     } catch (err) {
       lastErr = err;
       // Stop retrying on abort (Ctrl-C / timeout cascade) or a non-retryable error.
@@ -204,7 +219,105 @@ async function runStep(
       break;
     }
   }
-  return { ...base, status: "fail", durationMs: Date.now() - start, error: errMessage(lastErr) };
+  return { record: { ...base, status: "fail", durationMs: Date.now() - start, error: errMessage(lastErr) } };
+}
+
+// ── Effect steps (#1834) ──────────────────────────────────────────────────────
+
+/** The step data the executor synthesizes to read a receipt through the store
+ * activities (`receiptRead`/`receiptWrite` — provided by the receipt row's
+ * lexicon, #1835, or a mock store in tests via `receiptActivities`). */
+function receiptReadStep(step: EffectStep): ActivityStep {
+  return {
+    kind: "activity",
+    fn: "receiptRead",
+    args: {
+      receipt: step.receipt,
+      ...(step.expectation !== undefined ? { expectation: step.expectation } : {}),
+    },
+    profile: "fastIdempotent",
+    outcomeAttribute: { name: "EffectApplied", from: "applied" },
+  };
+}
+
+/** A skipped-record for a step that will not run. */
+function skippedRecord(phaseName: string, fn: string, args?: Record<string, unknown>): StepRecord {
+  return { phase: phaseName, fn, args: args ?? {}, status: "skipped", durationMs: 0 };
+}
+
+/**
+ * Run one effect step: read-compare-run-write. On a match the nested steps are
+ * recorded as skipped ("effect already applied") and nothing is written. On a
+ * mismatch the nested steps run in authored order; only when every one
+ * succeeds is the receipt written — last, once (the sole writer, #1703
+ * decision 3). Any failure leaves the receipt untouched (stale), so the next
+ * run re-proposes the effect.
+ */
+async function runEffectStep(
+  step: EffectStep,
+  phaseName: string,
+  activities: Map<string, ActivityFn>,
+  profiles: Record<string, ActivityProfile>,
+  signal?: AbortSignal,
+): Promise<{ records: StepRecord[]; failed: boolean }> {
+  const records: StepRecord[] = [];
+
+  const read = await runStep(receiptReadStep(step), phaseName, activities, profiles, signal);
+  records.push(read.record);
+  if (read.record.status === "fail") return { records, failed: true };
+
+  const result = read.result as Partial<ReceiptReadResult> | undefined;
+  if (typeof result?.expectation !== "string") {
+    records.push({
+      phase: phaseName,
+      fn: `effect:${step.receipt.name}`,
+      args: {},
+      status: "fail",
+      durationMs: 0,
+      error: "receiptRead returned no expectation — the receipt store activity must return { current, expectation }",
+    });
+    return { records, failed: true };
+  }
+  const expectation = result.expectation;
+
+  if (result.current === expectation) {
+    // Effect already applied — skip the nested steps, write nothing.
+    for (const nested of step.steps) {
+      if (nested.kind === "activity") records.push(skippedRecord(phaseName, nested.fn, nested.args));
+    }
+    return { records, failed: false };
+  }
+
+  // Gates are pre-flighted by findGate; only activities remain here.
+  const nestedActivities = step.steps.filter(isActivity);
+  for (let i = 0; i < nestedActivities.length; i++) {
+    const ran = await runStep(nestedActivities[i], phaseName, activities, profiles, signal);
+    records.push(ran.record);
+    if (ran.record.status === "fail") {
+      // Receipt left untouched (stale) — the next run re-proposes the effect.
+      for (const skipped of nestedActivities.slice(i + 1)) {
+        records.push(skippedRecord(phaseName, skipped.fn, skipped.args));
+      }
+      records.push(skippedRecord(phaseName, "receiptWrite"));
+      return { records, failed: true };
+    }
+  }
+
+  // Sole writer of the receipt: on success of every nested step, last.
+  const wrote = await runStep(
+    {
+      kind: "activity",
+      fn: "receiptWrite",
+      args: { receipt: step.receipt, expectation },
+      profile: "fastIdempotent",
+    },
+    phaseName,
+    activities,
+    profiles,
+    signal,
+  );
+  records.push(wrote.record);
+  return { records, failed: wrote.record.status === "fail" };
 }
 
 /** Run a phase. Throws PhaseFailure (with records so far) if any step fails. */
@@ -214,35 +327,57 @@ async function runPhase(
   profiles: Record<string, ActivityProfile>,
   signal?: AbortSignal,
 ): Promise<StepRecord[]> {
-  // Defensive: gates are pre-flighted, but never execute one if it slips through.
-  const gate = phase.steps.find(isGate);
+  // Defensive: gates are pre-flighted, but never execute one if it slips
+  // through — including a gate nested inside an effect step.
+  const gate =
+    phase.steps.find(isGate) ??
+    phase.steps.filter(isEffect).flatMap((e) => e.steps).find(isGate);
   if (gate) throw new LocalGateUnsupportedError(gate.signalName);
 
-  const steps = phase.steps.filter(isActivity);
-
   if (phase.parallel) {
-    const records = await Promise.all(
-      steps.map((s) => runStep(s, phase.name, activities, profiles, signal)),
-    );
+    const eff = phase.steps.find(isEffect);
+    if (eff) {
+      throw new Error(
+        `effect step "${eff.receipt.name}" cannot run in a parallel phase — read-compare-run-write is ordered`,
+      );
+    }
+    const steps = phase.steps.filter(isActivity);
+    const records = (
+      await Promise.all(steps.map((s) => runStep(s, phase.name, activities, profiles, signal)))
+    ).map((r) => r.record);
     if (records.some((r) => r.status === "fail")) throw new PhaseFailure(records);
     return records;
   }
 
+  const steps = phase.steps.filter((s): s is ActivityStep | EffectStep => !isGate(s));
   const records: StepRecord[] = [];
+
+  const skipRemaining = (from: number) => {
+    for (const skipped of steps.slice(from)) {
+      if (isEffect(skipped)) {
+        records.push(skippedRecord(phase.name, `effect:${skipped.receipt.name}`));
+      } else {
+        records.push(skippedRecord(phase.name, skipped.fn, skipped.args));
+      }
+    }
+  };
+
   for (let i = 0; i < steps.length; i++) {
-    const record = await runStep(steps[i], phase.name, activities, profiles, signal);
+    const step = steps[i];
+    if (isEffect(step)) {
+      const { records: effRecords, failed } = await runEffectStep(step, phase.name, activities, profiles, signal);
+      records.push(...effRecords);
+      if (failed) {
+        skipRemaining(i + 1);
+        throw new PhaseFailure(records);
+      }
+      continue;
+    }
+    const { record } = await runStep(step, phase.name, activities, profiles, signal);
     records.push(record);
     if (record.status === "fail") {
       // Mark the remaining steps in this phase as skipped, then abort.
-      for (const skipped of steps.slice(i + 1)) {
-        records.push({
-          phase: phase.name,
-          fn: skipped.fn,
-          args: skipped.args ?? {},
-          status: "skipped",
-          durationMs: 0,
-        });
-      }
+      skipRemaining(i + 1);
       throw new PhaseFailure(records);
     }
   }
@@ -265,6 +400,18 @@ export async function runOpLocally(
 ): Promise<OpRunResult> {
   const gate = findGate(config);
   if (gate) throw new LocalGateUnsupportedError(gate.signalName);
+
+  // Effect steps are ordered (read-compare-run-write): refuse them in a
+  // parallel phase up front, with the phase named, rather than mid-run.
+  for (const phase of [...config.phases, ...(config.onFailure ?? [])]) {
+    const eff = phase.parallel ? phase.steps.find(isEffect) : undefined;
+    if (eff) {
+      throw new Error(
+        `phase "${phase.name}": effect step "${eff.receipt.name}" cannot run in a ` +
+          `parallel phase — read-compare-run-write is ordered`,
+      );
+    }
+  }
 
   const records: StepRecord[] = [];
   const start = Date.now();

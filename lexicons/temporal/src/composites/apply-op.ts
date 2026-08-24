@@ -55,6 +55,15 @@ export interface ApplyOpConfig {
   /** Delete handling. Default: "never". */
   delete?: DeleteMode;
   /**
+   * Effect handling (#1834, epic #1703 decision 6). `"gated"` pauses the run
+   * at the approval gate whenever the plan proposes an effect, so the Plan
+   * phase's effect-will-fire rows (#1832) are reviewed before any effect
+   * runs — the same durable-signal shape as `delete: "gated"`. The generic
+   * apply itself never writes a receipt regardless (#1832); only an
+   * `effect()` step does, on success, last.
+   */
+  effects?: "gated";
+  /**
    * Approval gate before the apply. Implied when `delete: "gated"`; may also be
    * set explicitly. Omit `signalName` to default to `approve-<name>`.
    */
@@ -100,7 +109,7 @@ export function ApplyOp(config: ApplyOpConfig): ApplyOpResources {
   const target = config.target ?? "kubectl";
   const output = config.output ?? defaultOutput(target);
   const deleteMode = config.delete ?? "never";
-  const gated = deleteMode === "gated" || config.gate !== undefined;
+  const gated = deleteMode === "gated" || config.effects === "gated" || config.gate !== undefined;
 
   const phases = [
     phase("Build", [activity("chantBuild", { path: config.path ?? "." })]),
@@ -120,7 +129,9 @@ export function ApplyOp(config: ApplyOpConfig): ApplyOpResources {
         gate(config.gate?.signalName ?? `approve-${config.name}`, {
           ...(config.gate?.timeout ? { timeout: config.gate.timeout } : {}),
           description:
-            config.gate?.description ?? `Approve apply to ${config.env} (delete mode: ${deleteMode})`,
+            config.gate?.description ??
+            `Approve apply to ${config.env} (delete mode: ${deleteMode}` +
+              `${config.effects === "gated" ? ", effects: gated" : ""})`,
         }),
       ]),
     );

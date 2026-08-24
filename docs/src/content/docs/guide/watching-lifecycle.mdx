@@ -61,6 +61,8 @@ The two phases compile down to a workflow that, on each tick:
 
 Set `live: false` on the composite to use digest-only diff (faster, no cloud queries) for environments without `describeResources()` coverage. With `live: true` (the default) you get external-mutation detection. (See the [Runtime observation coverage matrix](/chant/lexicons/overview/#runtime-observation-coverage) for which lexicons report what.)
 
+`receipts: [myReceipt, ...]` (typed `EffectReceipt` references) adds a read-only `Receipts` phase that reads each effect receipt through the receipt store and reports absent or differing receipts as findings, surfaced as a `StaleReceipts` search attribute — it never runs an effect and never writes a receipt.
+
 ## The Temporal UI experience
 
 Each generated workflow opens with:

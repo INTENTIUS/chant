@@ -23,6 +23,7 @@ Pre-built step builders:
 | `lifecycleSnapshot(env, opts?)` | `chant lifecycle snapshot` |
 | `teardown(path, opts?)` | Build + destroy via the project's own `npm run teardown` script |
 | `envTeardown(env, opts?)` | [`chant lifecycle teardown <env> --yes`](/chant/cli/lifecycle/#lifecycle-teardown-env) in-process: delete the environment's marker-owned resources. A prod-like name needs `confirmProd: true` in `opts`; precede with a `gate(...)` step for a human approval |
+| `effect(receipt, steps, opts?)` | Read-compare-run-write over an effect receipt: read the live receipt, skip the wrapped steps when it matches the expectation ("effect already applied"), otherwise run them and write the receipt only on their success, last. `receipt` is the typed `EffectReceipt` declaration — there is no string form. See [Effects](#effects) |
 
 ## Retry profiles
 
@@ -133,6 +134,15 @@ One caveat that is not a chant limitation: **floci-az drops resource tags**, so 
 </Aside>
 
 An ARM delete needs an `apiVersion`, and the resource-group listing does not return one per resource. `pruneArmOrphans` takes it from the template when the template still declares the type, then from the lexicon's pinned apiVersion registry (the same one the serializer stamps into the template), then from ARM's provider metadata (`GET /subscriptions/{sub}/providers/{namespace}?api-version=2021-04-01`, newest stable version, one call per namespace per run). Removing the last resource of a type from source therefore still prunes it ([#1472](https://github.com/INTENTIUS/chant/issues/1472)). Only a type none of the three sources know is reported as `not-prunable` with detail `no-api-version`.
+
+## Effects
+
+The `effect(receipt, steps)` builder wraps its steps in read-compare-run-write over an effect receipt. On each run the workflow reads the receipt through the receipt store (provided by the receipt row's lexicon), compares it against the expectation, and skips the wrapped steps on a match. On a mismatch the steps run in authored order, and the receipt is written only when every one of them succeeded — the effect step is the sole writer of a receipt, and the write is always last. A failed step leaves the receipt untouched (stale), so the next run proposes the effect again. A `gate(...)` authored inside the wrapped steps pauses only when the effect will actually fire.
+
+| Config | What it does |
+|--------|-------------|
+| `effects: "gated"` on `ApplyOp` | Insert the durable approval gate before the apply (beside `delete: "gated"`, same signal shape) so the Plan phase's effect-will-fire rows are reviewed before any effect runs |
+| `receipts: [...]` on `WatchOp` | Add a read-only `Receipts` phase reporting absent or differing receipts as findings (`StaleReceipts` search attribute) — nothing runs, nothing is written |
 
 ## Codegen
 

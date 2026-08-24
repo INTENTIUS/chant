@@ -10,6 +10,7 @@ import { ReconcileOp } from "./reconcile-op";
 import { ApplyOp } from "./apply-op";
 import { serializeOps } from "../op/serializer";
 import { DECLARABLE_MARKER } from "@intentius/chant/declarable";
+import { EffectReceipt, receiptExpectation } from "@intentius/chant/effect-receipt";
 
 function getProps(entity: unknown): Record<string, unknown> {
   return (entity as { props: Record<string, unknown> }).props;
@@ -434,5 +435,96 @@ describe("ApplyOp: compensation (#125, total-or-refused in #1449)", () => {
       const step = (onFailure[0].steps as Array<Record<string, unknown>>)[0];
       expect((step.args as Record<string, unknown>).command).toBe("echo rollback");
     }
+  });
+});
+
+// ── ApplyOp: gated effects (#1834) ───────────────────────────────────
+
+describe("ApplyOp: effects gated (#1834, #1703 decision 6)", () => {
+  test("effects: gated inserts the Approve gate phase before Apply, like delete: gated", () => {
+    const { op } = ApplyOp({ name: "p", env: "prod", effects: "gated" });
+    const phases = getProps(op).phases as Array<Record<string, unknown>>;
+    expect(phases.map((p) => p.name)).toEqual(["Build", "Plan", "Approve", "Apply"]);
+    const gateStep = (phases[2].steps as Array<Record<string, unknown>>)[0];
+    expect(gateStep.kind).toBe("gate");
+    expect(gateStep.signalName).toBe("approve-p");
+    expect(gateStep.description).toBe("Approve apply to prod (delete mode: never, effects: gated)");
+  });
+
+  test("effects: gated does not change the delete mode riding into nativeApply", () => {
+    const { op } = ApplyOp({ name: "p", env: "prod", effects: "gated" });
+    const phases = getProps(op).phases as Array<Record<string, unknown>>;
+    const applyStep = (phases.find((p) => p.name === "Apply")!.steps as Array<Record<string, unknown>>)[0];
+    expect((applyStep.args as Record<string, unknown>).deleteMode).toBe("never");
+  });
+
+  test("effects: gated composes with delete: gated in one Approve gate", () => {
+    const { op } = ApplyOp({ name: "p", env: "prod", delete: "gated", effects: "gated" });
+    const phases = getProps(op).phases as Array<Record<string, unknown>>;
+    expect(phases.map((p) => p.name)).toEqual(["Build", "Plan", "Approve", "Apply"]);
+    const gateStep = (phases[2].steps as Array<Record<string, unknown>>)[0];
+    expect(gateStep.description).toBe("Approve apply to prod (delete mode: gated, effects: gated)");
+  });
+
+  test("gated effects serialize to a durable condition wait before the apply", () => {
+    const { op } = ApplyOp({ name: "prod-apply", env: "prod", effects: "gated" });
+    const ops = new Map([["prod-apply", op]]) as unknown as Parameters<typeof serializeOps>[0];
+    const wf = serializeOps(ops)["ops/prod-apply/workflow.ts"];
+    const gateIdx = wf.indexOf("await condition(() => resumeApproveProdApplyCleared");
+    const applyIdx = wf.indexOf("await nativeApply(");
+    expect(gateIdx).toBeGreaterThan(-1);
+    expect(applyIdx).toBeGreaterThan(gateIdx);
+  });
+});
+
+// ── WatchOp: receipt staleness (#1834) ───────────────────────────────
+
+describe("WatchOp: receipt staleness (#1834)", () => {
+  const seeded = EffectReceipt("seeded", {
+    effect: "db-seed",
+    flavor: "hash",
+    inputs: { file: "seed.sql" },
+  });
+
+  test("without receipts the op is unchanged (no Receipts phase)", () => {
+    const { op } = WatchOp({ name: "p", env: "prod", schedule: "* * * * *" });
+    const phases = getProps(op).phases as Array<Record<string, unknown>>;
+    expect(phases.map((p) => p.name)).toEqual(["Snapshot", "Diff"]);
+  });
+
+  test("receipts add a read-only Receipts phase carrying identity + expectation data", () => {
+    const { op } = WatchOp({ name: "p", env: "prod", schedule: "* * * * *", receipts: [seeded] });
+    const phases = getProps(op).phases as Array<Record<string, unknown>>;
+    expect(phases.map((p) => p.name)).toEqual(["Snapshot", "Diff", "Receipts"]);
+    const step = (phases[2].steps as Array<Record<string, unknown>>)[0];
+    expect(step.fn).toBe("receiptStaleness");
+    expect(step.args).toEqual({
+      receipts: [
+        {
+          receipt: { name: "seeded", effect: "db-seed", flavor: "hash", inputs: { file: "seed.sql" } },
+          expectation: receiptExpectation(seeded),
+        },
+      ],
+    });
+    // Staleness surfaces as a workflow search attribute, like Drift.
+    expect(step.outcomeAttribute).toEqual({ name: "StaleReceipts", from: "stale" });
+  });
+
+  test("the Receipts phase runs nothing: its only step is the staleness read", () => {
+    const { op } = WatchOp({ name: "p", env: "prod", schedule: "* * * * *", receipts: [seeded] });
+    const phases = getProps(op).phases as Array<Record<string, unknown>>;
+    const steps = phases[2].steps as Array<Record<string, unknown>>;
+    expect(steps).toHaveLength(1);
+    expect(steps.map((s) => s.fn)).toEqual(["receiptStaleness"]);
+  });
+
+  test("serializes into a staleness read with a StaleReceipts upsert and no receiptWrite", () => {
+    const { op } = WatchOp({ name: "prod-watch", env: "prod", schedule: "* * * * *", receipts: [seeded] });
+    const ops = new Map([["prod-watch", op]]) as unknown as Parameters<typeof serializeOps>[0];
+    const wf = serializeOps(ops)["ops/prod-watch/workflow.ts"];
+    expect(wf).toContain('upsertSearchAttributes({ Phase: ["Receipts"] });');
+    expect(wf).toContain("await receiptStaleness(");
+    expect(wf).toContain('upsertSearchAttributes({ "StaleReceipts": [String(__r1?.stale)] });');
+    expect(wf).not.toContain("receiptWrite");
   });
 });

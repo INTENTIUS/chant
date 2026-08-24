@@ -5,6 +5,8 @@
  * in core without pulling in @temporalio/* as a dependency.
  */
 
+import type { EffectReceiptRef } from "./receipt-store";
+
 export interface OpConfig {
   /** Kebab-case identifier. Used as the workflow function name (camelCase) and output directory name. */
   name: string;
@@ -33,7 +35,7 @@ export interface PhaseDefinition {
   parallel?: boolean;
 }
 
-export type StepDefinition = ActivityStep | GateStep;
+export type StepDefinition = ActivityStep | GateStep | EffectStep;
 
 export interface ActivityStep {
   kind: "activity";
@@ -59,6 +61,36 @@ export interface ActivityStep {
    * stringified.
    */
   outcomeAttribute?: { name: string; from?: string };
+}
+
+/**
+ * Read-compare-run-write over an effect receipt (#1834, epic #1703). The
+ * runtime reads the live receipt through the receipt store, compares it
+ * against the resolved expectation, skips the nested steps on a match, and
+ * otherwise runs them — writing the receipt only when every nested step
+ * succeeded, last. A nested-step failure leaves the receipt untouched
+ * (stale), so the next run re-proposes the effect.
+ *
+ * Authored via the `effect()` builder, which takes the typed EffectReceipt
+ * declaration only — there is no string form.
+ */
+export interface EffectStep {
+  kind: "effect";
+  /** Receipt identity + declaration data (references in placeholder form). */
+  receipt: EffectReceiptRef;
+  /**
+   * The expectation stamped at synthesis when the receipt is fully static;
+   * absent when reference inputs resolve at run (#1703 decision 5).
+   */
+  expectation?: string;
+  /**
+   * Steps run when the live receipt does not match, in authored order. A gate
+   * authored here pauses only when the effect will fire. Effect steps do not
+   * nest.
+   */
+  steps: Array<ActivityStep | GateStep>;
+  /** Annotation carried into the generated workflow as a comment. */
+  description?: string;
 }
 
 export interface GateStep {
