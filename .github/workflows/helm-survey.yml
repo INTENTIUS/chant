@@ -57,9 +57,10 @@ jobs:
           sudo install /tmp/linux-amd64/helm /usr/local/bin/helm
           helm version --short
 
-      # The survey needs no generated lexicon artifacts — the harness is
-      # self-contained — so the artifact check is skipped instead of paying
-      # ~55s of generation for nothing.
+      # The survey needs no generated lexicon artifacts — the harness imports
+      # only src/pinnability, which loads without a generation step — so the
+      # artifact check is skipped instead of paying ~55s of generation for
+      # nothing.
       - name: Run the pinnability survey
         env:
           CHANT_HELM_SURVEY: '1'

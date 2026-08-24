@@ -1,0 +1,5 @@
+persistence:
+  enabled: false
+  # Named after the feature, exactly like grafana's value — the classifier
+  # must read this as a value, never as a `lookup` call (survey finding 2).
+  lookupVolumeName: true

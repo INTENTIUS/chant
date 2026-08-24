@@ -113,6 +113,19 @@ export { HelmGenerator } from "./import/generator";
 export { stripTemplateExpressions, classifyExpression } from "./import/template-stripper";
 export type { StrippedExpression, StripResult, ExpressionKind } from "./import/template-stripper";
 
+// Pinnability gate (#1234, epic #1228) — what the pinned-render pipeline
+// consults before anything is pinned
+export { classifyChart } from "./pinnability";
+export type {
+  PinnabilityVerdict,
+  PinnabilityReport,
+  ClassifyChartOptions,
+  CapabilityRequirement,
+  ClosedInput,
+  ConditionalHazard,
+  RenderEvidence,
+} from "./pinnability";
+
 // LSP providers
 export { helmCompletions } from "./lsp/completions";
 export { helmHover } from "./lsp/hover";
