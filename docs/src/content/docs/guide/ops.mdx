@@ -167,9 +167,9 @@ Run `chant run prod-reconcile` for a one-shot reconcile on the local executor; g
 
 The `ApplyOp` composite is the other direction: compute the plan, then apply it. Authority stays with the platform; chant hosts no state file.
 
-`target` picks the mechanism, and there are three: `kubectl` is a server-side apply through the k8s lexicon's typed client, while `cloudformation` and `arm` shell out to `aws cloudformation deploy` and `az deployment group create`.
+`target` picks the mechanism, and every one of them is native — no cloud CLI in the path: `kubectl` and `kustomize` are a server-side apply through the k8s lexicon's typed client, `arm` is the azure lexicon's per-resource `azApply`, and `cloudformation` is the aws lexicon's `awsApply`, which speaks the CloudFormation API directly. Each is loaded from its lexicon at apply time, so a project using a target lists that lexicon in `chant.config.ts`.
 
-chant also ships four **native per-resource appliers** that speak each provider's own API directly, with no CLI in the path and an endpoint override so the same step targets a real account or an emulator: `awsApply`, `azApply` and `gcpApply` (typed step builders, like the ones in [Ops Reference](/chant/guide/ops-reference/#step-builders)), and `flyApply` (an activity the fly lexicon contributes, reached by name). None of them is reachable through `ApplyOp` — `target` has no value for GCP or Fly, and the two shell targets do not route to their applier ([#1449](https://github.com/INTENTIUS/chant/issues/1449)). Until that changes, use them as steps in a hand-written Op.
+chant also ships four **native per-resource appliers** that speak each provider's own API directly, with no CLI in the path and an endpoint override so the same step targets a real account or an emulator: `awsApply`, `azApply` and `gcpApply` (typed step builders, like the ones in [Ops Reference](/chant/guide/ops-reference/#step-builders)), and `flyApply` (an activity the fly lexicon contributes, reached by name). `awsApply` and `azApply` are exactly what `ApplyOp` runs for the `cloudformation` and `arm` targets. GCP and Fly have no `target` value yet ([#1449](https://github.com/INTENTIUS/chant/issues/1449)); until they do, use `gcpApply`/`flyApply` as steps in a hand-written Op.
 
 ```typescript
 import { ApplyOp } from "@intentius/chant-lexicon-temporal";

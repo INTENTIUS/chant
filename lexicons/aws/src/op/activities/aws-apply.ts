@@ -127,10 +127,10 @@ export async function waitForStackSettled(
  * CloudFormation API directly (create-or-update + poll to a settled stack),
  * targeting a local Floci emulator or real AWS by endpoint override. The direct
  * twin of `azApply`/`gcpApply`: it speaks the CloudFormation Query API over HTTP
- * rather than shelling `aws cloudformation deploy` (that CLI path is still
- * available via `nativeApply({ target: "cloudformation" })`). The stack is the
- * ownership boundary, so deletes ride CloudFormation itself — no separate prune.
- * `http` is injectable for tests.
+ * rather than shelling `aws cloudformation deploy` — and since chant #1449 it is
+ * also what `nativeApply({ target: "cloudformation" })` runs, so no CLI path
+ * remains. The stack is the ownership boundary, so deletes ride CloudFormation
+ * itself — no separate prune. `http` is injectable for tests.
  */
 export async function awsApply(
   args: AwsApplyArgs,
@@ -207,4 +207,65 @@ export async function awsDelete(
     await sleep(intervalMs, signal);
   }
   throw new Error(`CloudFormation stack ${args.stackName} delete did not complete within ${timeoutMs}ms`);
+}
+
+export interface RollbackStackArgs {
+  /** CloudFormation stack name to roll back. */
+  stackName: string;
+  /** CFN endpoint override — same resolution rule as {@link AwsApplyArgs.endpoint} (#1694). */
+  endpoint?: string;
+  /** Region (real CFN host). Default: `us-east-1`. */
+  region?: string;
+  /** Stack-settle timeout in ms. Default: `300000`. */
+  timeoutMs?: number;
+  /** Poll interval in ms. Default: `3000`. */
+  intervalMs?: number;
+}
+
+/**
+ * The saga compensation for {@link awsApply} — CloudFormation `RollbackStack`
+ * via the same Query-API client, then poll until the stack settles. Returns the
+ * stack to its last known stable state after a failed update (#1449 — this
+ * replaces the Temporal lexicon exec-ing `aws cloudformation rollback-stack`).
+ *
+ * Degrades rather than crashes in two cases where there is nothing to do:
+ * an absent stack (nothing applied, nothing to revert) and a target that does
+ * not implement the action — Floci answers `UnknownAction` (#947). Both return
+ * `rolledBack: false` with a logged warning; every other API error throws,
+ * because a compensation that silently fails leaves partial state looking
+ * reverted when it isn't. `http` is injectable for tests.
+ */
+export async function rollbackStack(
+  args: RollbackStackArgs,
+  signal?: AbortSignal,
+  http: AwsHttp = defaultHttp,
+): Promise<{ stackName: string; rolledBack: boolean; status?: string }> {
+  const url = cfnUrl(args.endpoint, args.region);
+  const timeoutMs = args.timeoutMs ?? 300_000;
+  const intervalMs = args.intervalMs ?? 3_000;
+
+  const res = await http(url, cfnForm("RollbackStack", { StackName: args.stackName }), signal);
+  if (res.status >= 300) {
+    if (isStackMissing(res.text)) {
+      console.warn(`rollbackStack: stack ${args.stackName} does not exist — nothing to roll back`);
+      return { stackName: args.stackName, rolledBack: false };
+    }
+    // Local emulators (Floci) don't implement RollbackStack → `UnknownAction` (#947).
+    if (/UnknownAction|not supported/i.test(res.text)) {
+      console.warn(
+        `rollbackStack: the target doesn't support RollbackStack (a local emulator such as Floci) — skipping automated rollback of ${args.stackName}`,
+      );
+      return { stackName: args.stackName, rolledBack: false };
+    }
+    throw new Error(`CloudFormation RollbackStack failed (${res.status}): ${cfnErrorMessage(res.text) ?? res.text}`);
+  }
+
+  const status = await waitForStackSettled(url, args.stackName, http, { timeoutMs, intervalMs }, signal);
+  // A settled rollback ends in `ROLLBACK_COMPLETE`/`UPDATE_ROLLBACK_COMPLETE` —
+  // classified a failure by the deploy-path matcher, but the success state here.
+  if (!/ROLLBACK_COMPLETE$/.test(status)) {
+    throw new Error(`CloudFormation stack ${args.stackName} rollback → ${status}`);
+  }
+  console.log(`rolled back: ${args.stackName} (${status}) [${url}]`);
+  return { stackName: args.stackName, rolledBack: true, status };
 }
