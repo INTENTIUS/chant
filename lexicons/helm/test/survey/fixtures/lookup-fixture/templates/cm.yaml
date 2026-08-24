@@ -1,0 +1,17 @@
+{{- if not (lookup "v1" "ConfigMap" "default" "seen-before") }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-first-run
+data:
+  firstRun: "true"
+{{- end }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-always
+data:
+  # Value-position lookup: closable by declaring the value as an input.
+  # (Offline it renders from the empty result — the field is wrong, not absent.)
+  prior: {{ lookup "v1" "Namespace" "" "default" | toYaml | sha256sum | trunc 8 | quote }}
