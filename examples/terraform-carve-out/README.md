@@ -11,10 +11,13 @@ cloud, no Terraform binary.
 ./demo.sh
 ```
 
-That runs all four steps (advise → emit → bridge → apply) with commentary.
-Agents can drive the same demo via the `chant-aws-carve-terraform` skill.
+That runs the full flow (advise → emit → audit → bridge → apply) with
+commentary. Agents can drive the same demo via the `chant-aws-carve-terraform`
+skill.
 
-The steps individually are below.
+The steps individually are below. The
+[carve tutorial](https://intentius.io/chant/tutorials/terraform-carve-out/)
+walks them with full output.
 
 ## Prerequisites
 
@@ -42,38 +45,55 @@ chant carve emit --from ./terraform --select aws_s3_bucket.assets \
   --state ./terraform/terraform.tfstate --output ./carveout
 ```
 
-Writes `./carveout/src/assets.ts` — a real `new Bucket({ BucketName, Tags })` with
-CloudFormation-style properties mapped from the Terraform state attributes — and
-scaffolds `./carveout` into a buildable chant project (`chant.config.ts`,
-`package.json`, `tsconfig.json`), so `npm install && npm run build` works there
-as-is. A Terraform-managed resource is not in any CloudFormation stack, so the
-state file is the correct source of its live shape. (`--env <env>` adopts a
-CloudFormation-managed resource live instead.)
+Writes `./carveout/src/assets.ts` — a real `new Bucket({ ... })` with
+CloudFormation-style properties mapped from the Terraform state attributes, the
+`aws_s3_bucket_versioning` sub-resource folded into `VersioningConfiguration` —
+and scaffolds `./carveout` into a buildable chant project (`chant.config.ts`,
+`package.json`, `tsconfig.json`). It also persists a carve manifest
+(`aws_s3_bucket-assets.carve.json`): the later steps read the target from it,
+so `--select` is only needed once. A Terraform-managed resource is not in any
+CloudFormation stack, so the state file is the correct source of its live
+shape. (`--env <env>` adopts a CloudFormation-managed resource live instead.)
 
-## 3. Bridge the boundary
+## 3. Audit what you adopted
 
 ```bash
-chant carve bridge --from ./terraform --select aws_s3_bucket.assets --output ./carveout
+chant build ./carveout/src --lexicon aws
+```
+
+The first build **fails, deliberately**: the adopted bucket faithfully carries
+Terraform's missing security posture, and chant's post-synth audit refuses an
+S3 bucket without a public-access block and a TLS-only policy. Add both to
+`src/assets.ts` (the tutorial shows the exact code) and the build produces a
+valid CloudFormation template. That audit is part of the value: chant tells
+you what is wrong with what you adopted.
+
+## 4. Bridge the boundary
+
+```bash
+chant carve bridge --from ./terraform --output ./carveout
 ```
 
 Writes the `data "aws_s3_bucket" "assets"` block the surviving Lambda will read,
-the rewritten `main.tf` (references rewired to the data source), a reversible
+the rewritten `main.tf` (references rewired to the data source, the carved
+`resource` block and its folded versioning sub-resource excised), a reversible
 runbook, and one git-applyable `*-bridge.patch` carrying the whole edit.
 Nothing in `./terraform` changes. Add `--apply-rewrites` to edit the survivor
 `.tf` in place.
 
-## 4. Graduate
+## 5. Graduate
 
 ```bash
-chant carve apply --from ./terraform --select aws_s3_bucket.assets --env prod --stack assets
+chant carve apply --from ./terraform --output ./carveout --env prod --stack assets --write-source
 ```
 
-Resolves the ownership marker + finalized runbook. No cloud call — the apply is
-your lifecycle.
+Resolves the ownership marker + graduation runbook, and stamps the
+`chant:managed-by` / `chant:stack` / `chant:env` tags into the emitted source.
+No cloud call — the apply is your lifecycle.
 
 ## Going live
 
-The real handoff adds three Terraform commands between steps 3 and 4:
+The real handoff adds three Terraform commands between steps 4 and 5:
 
 ```bash
 terraform state rm aws_s3_bucket.assets   # stop managing it — does NOT destroy

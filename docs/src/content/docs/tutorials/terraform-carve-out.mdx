@@ -1,6 +1,6 @@
 ---
 title: "Carve a resource out of Terraform"
-description: "Incrementally move a resource from a Terraform estate into native chant — advise, bridge, emit, graduate — reversibly."
+description: "Incrementally move a resource from a Terraform estate into native chant — advise, emit, audit, bridge, graduate — reversibly."
 diataxis: tutorial
 ---
 
@@ -17,7 +17,7 @@ to follow along.
 
 The runnable estate is in
 [`examples/terraform-carve-out`](https://github.com/intentius/chant/tree/main/examples/terraform-carve-out).
-To watch all four steps at once:
+To watch the steps run end to end:
 
 ```bash
 cd examples/terraform-carve-out
@@ -47,41 +47,31 @@ chant carve advise --from ./terraform
 The estate is ranked into three bands:
 
 ```
-CLEAN LEAF — carve now
+CLEAN LEAF — carve now  (6)
   100  aws_cloudwatch_log_group.api -> AWS::Logs::LogGroup
+       clean 1:1 native map, no boundary edges
    96  aws_subnet.a -> AWS::EC2::Subnet
+       1 outbound (deferred input each)
+   ...
    88  aws_s3_bucket.assets -> AWS::S3::Bucket
+       1 inbound (data-source patch each)
    81  aws_lambda_function.api -> AWS::Lambda::Function
-CARVABLE — has boundary work
+       1 outbound (deferred input each), tier 2 map
+
+CARVABLE — has boundary work  (1)
    64  aws_vpc.main -> AWS::EC2::VPC
-LEAVE IN TERRAFORM
+       3 inbound (data-source patch each)
+
+LEAVE IN TERRAFORM  (1)
     0  random_pet.suffix
+       no known native mapping (unsupported provider/type)
 ```
 
 The bucket is a clean leaf held back one notch by the one Lambda that reads it.
 The VPC is carvable, but three subnets hang off it. `random_pet` has no native
 mapping, so it stays.
 
-## 2. Bridge the boundary
-
-Carving the bucket cuts one edge: the Lambda reads it. Generate the edits to the
-surviving Terraform so its plan stays valid.
-
-```bash
-chant carve bridge --from ./terraform --select aws_s3_bucket.assets --output ./carveout
-```
-
-This writes to `./carveout/`: a `data "aws_s3_bucket" "assets"` block, a
-rewritten `main.tf` with the bucket's own `resource` block (and its folded
-versioning sub-resource) removed and the Lambda's references rewired to
-`data.aws_s3_bucket.assets.*`, a reversible runbook, and one git-applyable
-patch carrying the whole edit
-(`git apply --directory=terraform carveout/aws_s3_bucket-assets-bridge.patch`
-from the repo root — the patch's paths are relative to the Terraform dir).
-Nothing in `./terraform` changes. `--apply-rewrites` edits the survivor `.tf`
-in place instead.
-
-## 3. Adopt the bucket into chant source (offline, from state)
+## 2. Adopt the bucket into chant source (offline, from state)
 
 ```bash
 chant carve emit --from ./terraform --select aws_s3_bucket.assets \
@@ -89,18 +79,38 @@ chant carve emit --from ./terraform --select aws_s3_bucket.assets \
 ```
 
 This writes `./carveout/src/assets.ts` and scaffolds `./carveout` into a
-buildable chant project (`chant.config.ts`, `package.json`, `tsconfig.json` —
-`npm install && npm run build` works there as-is):
+buildable chant project (`chant.config.ts`, `package.json`, `tsconfig.json`):
 
 ```ts
 // Adopted from Terraform state: aws_s3_bucket.assets -> AWS::S3::Bucket
+// Properties mapped from Terraform attributes (CloudFormation PascalCase).
+// Folded in aws_s3_bucket_versioning.assets -> VersioningConfiguration
 import { Bucket } from "@intentius/chant-lexicon-aws";
 
 export const assets = new Bucket({
   BucketName: "myapp-assets-prod",
   Tags: [{"Key":"Team","Value":"web"},{"Key":"Env","Value":"prod"}],
+  VersioningConfiguration: {"Status":"Enabled"},
 });
+
+/* Unmapped Terraform attributes (reconcile to native props before building):
+{
+  "region": "us-east-1",
+  "force_destroy": false
+}
+*/
 ```
+
+Three things happened here beyond the property mapping:
+
+- The Terraform `aws_s3_bucket_versioning` sub-resource **folded into** the
+  bucket's own `VersioningConfiguration` — CloudFormation models it as one
+  resource, so chant does too.
+- Attributes with no native spelling landed in the trailing comment instead of
+  being dropped. You reconcile or delete them.
+- Emit persisted a **carve manifest**
+  (`carveout/aws_s3_bucket-assets.carve.json`). The later steps read the target
+  from it, so `--select` is only needed once.
 
 A Terraform-managed resource is created through the provider API, not
 CloudFormation, so it is not in any CFN stack — its resolved shape lives in the
@@ -109,15 +119,107 @@ already in a CloudFormation stack can be adopted live with `--env <env>`
 instead.) The resource now sits at the observe position: emitted, reversible,
 nothing applied.
 
-## 4. Graduate
+## 3. Audit what you adopted
+
+Build the scaffolded project:
 
 ```bash
-chant carve apply --from ./terraform --select aws_s3_bucket.assets --env prod --stack assets
+chant build ./carveout/src --lexicon aws
 ```
 
-`carve apply` resolves the ownership marker (`chant:managed-by/stack/env`) and
-prints the finalized runbook. It makes no cloud call — the apply is whatever
-lifecycle you brought, which stamps the marker the emitted source carries.
+It fails, and that is the point:
+
+```
+error: [assets] S3 bucket "assets" is missing PublicAccessBlockConfiguration — all public access should be blocked (aws)
+error: [assets] S3 bucket "assets" has no bucket policy denying non-TLS requests — add a Deny statement on aws:SecureTransport = false (aws)
+```
+
+The emitted source is a faithful copy of what Terraform managed — including its
+missing security posture. chant's post-synth audit refuses to build an S3
+bucket that allows public access or plaintext transport. This audit is part of
+the value: chant tells you what is wrong with what you adopted, before you ever
+apply it.
+
+Fix it in `carveout/src/assets.ts` — block public access on the bucket and add
+a companion TLS-only policy:
+
+```ts
+import { Bucket, S3BucketPolicy, Ref } from "@intentius/chant-lexicon-aws";
+
+export const assets = new Bucket({
+  BucketName: "myapp-assets-prod",
+  Tags: [{"Key":"Team","Value":"web"},{"Key":"Env","Value":"prod"}],
+  VersioningConfiguration: {"Status":"Enabled"},
+  PublicAccessBlockConfiguration: {
+    BlockPublicAcls: true,
+    BlockPublicPolicy: true,
+    IgnorePublicAcls: true,
+    RestrictPublicBuckets: true,
+  },
+});
+
+export const assetsTlsOnly = new S3BucketPolicy({
+  Bucket: Ref(assets),
+  PolicyDocument: {
+    Version: "2012-10-17",
+    Statement: [
+      {
+        Sid: "DenyInsecureTransport",
+        Effect: "Deny",
+        Principal: "*",
+        Action: "s3:*",
+        Resource: "*",
+        Condition: { Bool: { "aws:SecureTransport": "false" } },
+      },
+    ],
+  },
+});
+```
+
+Now the build produces a valid CloudFormation template:
+
+```bash
+chant build ./carveout/src --lexicon aws
+```
+
+(Delete the unmapped-attributes comment once you have reconciled it —
+`region` is where the stack deploys; `force_destroy` was a Terraform-only
+behavior with no CFN equivalent.)
+
+## 4. Bridge the boundary
+
+Carving the bucket cuts one edge: the Lambda reads it. Generate the edits to
+the surviving Terraform so its plan stays valid. The target comes from the
+carve manifest, so there is nothing to select:
+
+```bash
+chant carve bridge --from ./terraform --output ./carveout
+```
+
+This writes to `./carveout/`: a `data "aws_s3_bucket" "assets"` block, a
+rewritten `main.tf` with the bucket's own `resource` block (and its folded
+versioning sub-resource) excised and the Lambda's references rewired to
+`data.aws_s3_bucket.assets.*`, a reversible runbook, and one git-applyable
+patch carrying the whole edit
+(`git apply --directory=<terraform-dir> carveout/aws_s3_bucket-assets-bridge.patch`
+— the patch's paths are relative to the Terraform dir, and `--directory` is
+that dir relative to your repo root). Nothing in `./terraform` changes.
+`--apply-rewrites` edits the survivor `.tf` in place instead.
+
+The excision matters: without it, the next `terraform apply` would re-create
+the resource that `terraform state rm` released.
+
+## 5. Graduate
+
+```bash
+chant carve apply --from ./terraform --output ./carveout --env prod --stack assets --write-source
+```
+
+`carve apply` resolves the ownership marker (`chant:managed-by` /
+`chant:stack` / `chant:env`), prints the graduation runbook, and — with
+`--write-source` — stamps the marker tags into the emitted source, so the
+built template carries them. It makes no cloud call — the apply is whatever
+lifecycle you brought.
 
 The one genuinely live part, when you are ready to hand off for real:
 
@@ -135,9 +237,9 @@ myapp-assets-prod` up until graduation.
 
 ## Try it on your own estate
 
-Point it at your own Terraform. Two of the four steps work on any tree today;
-the other two have narrower coverage, so it is worth knowing what to expect
-before you run them.
+Point it at your own Terraform. Two of the five steps work on any tree today;
+the emit/apply half has narrower coverage, so it is worth knowing what to
+expect before you run them.
 
 - **`carve advise` and `carve bridge` — any Terraform tree.** Both are offline,
   read-only, and lexicon-agnostic. Run them against your real estate right now:
@@ -147,25 +249,22 @@ before you run them.
   ```
 
 - **`carve emit` and `carve apply` — AWS.** Emit produces native chant source
-  for the AWS lexicon across ~50 common carve targets: S3, IAM (role / policy /
-  instance profile / user / group), DynamoDB, SNS, SQS, Lambda, KMS, Secrets
-  Manager, SSM, ECR, CloudWatch (log groups / alarms / event rules), Route 53
-  (zones / records), EFS, EC2 (instances, VPC, subnet, security group, route
-  table, internet/NAT gateway, EIP, EBS volumes, launch templates), autoscaling
-  groups, ELBv2 (load balancers / target groups / listeners), RDS (instances /
-  subnet groups), ElastiCache, API Gateway (REST / HTTP), Step Functions, ACM
-  certificates, and ECS (clusters / services / task definitions). Advise and
-  emit cover exactly the same AWS types, so anything advise ranks, emit can
-  produce. A type outside that set reports the supported list. Other clouds are
-  not carved yet.
-
-<Aside type="note">
-After emit, run `chant lint ./carveout --lexicon aws`: chant audits the resource
-you inherited from Terraform. Some findings are advisory (warnings you may
-choose to fix); some are errors that block `chant build` until resolved — for
-example a carved S3 bucket with no public-access block. That audit is part of
-the value: chant tells you what is wrong with what you adopted. Kubernetes carve
-support is tracked in [#999](https://github.com/intentius/chant/issues/999).
-</Aside>
+  for the AWS lexicon across ~80 common carve targets: S3, IAM (role / policy /
+  instance profile / user / group), DynamoDB, SNS, SQS, Lambda (functions,
+  permissions, layers, aliases, event source mappings), KMS, Secrets Manager,
+  SSM, ECR, CloudWatch (log groups / alarms / event rules / dashboards),
+  CloudTrail, Kinesis (streams / Firehose), Route 53 (zones / records), EFS
+  (file systems / mount targets / access points), EC2 (instances, VPC, subnet,
+  security group, route table, routes, internet/NAT/egress-only gateways, EIP,
+  EBS volumes, launch templates, VPC endpoints, peering, flow logs, key pairs),
+  autoscaling groups, ELBv2 (load balancers / target groups / listeners /
+  rules), RDS (instances / clusters / subnet + parameter groups), ElastiCache,
+  API Gateway (REST / HTTP, stages, deployments), Step Functions, ACM
+  certificates, Cognito user pools, EKS (clusters / node groups), and ECS
+  (clusters / services / task definitions). Advise and emit cover the same AWS
+  types, so anything advise ranks, emit can produce. A type outside that set
+  reports the supported list. Other clouds are not carved yet — Kubernetes
+  carve support is tracked in
+  [#999](https://github.com/intentius/chant/issues/999).
 
 See the [carve CLI reference](/chant/cli/carve-out/) for every flag.
