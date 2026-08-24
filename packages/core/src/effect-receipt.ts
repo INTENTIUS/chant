@@ -73,8 +73,10 @@ export const EXISTENCE_EXPECTATION = "chant.effect-receipt:exists";
  */
 export interface EffectReceiptDeclaration extends Declarable {
   readonly [EFFECT_RECEIPT_MARKER]: true;
-  readonly lexicon: "chant";
-  readonly entityType: typeof EFFECT_RECEIPT_ENTITY_TYPE;
+  /** `"chant"` for the plain factory; a lexicon row (#1835) declares its own. */
+  readonly lexicon: string;
+  /** The core factory stamps EFFECT_RECEIPT_ENTITY_TYPE; a lexicon row uses its materialized kind. */
+  readonly entityType: string;
   /** The receipt's own name (the export-level identity of the witness). */
   readonly name: string;
   /** The effect this receipt witnesses — the identity the `effect()` step
