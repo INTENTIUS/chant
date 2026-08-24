@@ -35,6 +35,8 @@ Drift can mean two structurally different things, and chant tracks them through 
 
 The diff engine treats them differently because they *are* different. Resources have a "declared" axis to compare against; artifacts don't.
 
+A lexicon can implement both. The helm lexicon lists every release in the cluster as an artifact, and *also* resolves each declared `Helm::Chart` to its release and reports what that release holds as per-resource rows — `helm get manifest` plus `helm get hooks` (chant #1246). See [Helm — Live Observation](/chant/lexicons/helm/observation/).
+
 For the implementer-side walkthrough, see [Implementing Observation](/chant/lexicon-authoring/observation/).
 
 ## The diff categories
