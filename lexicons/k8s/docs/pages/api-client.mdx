@@ -146,6 +146,19 @@ export const { op } = ApplyOp({
 - **Namespace-scoped to the apply.** Namespaced kinds are swept only in the namespaces the apply set touched. A manifest that mentions `prod` never reaches into `staging`.
 - **Kind-scoped to the union** of the kinds in the apply set and chant's default sweep set. The union is what lets a kind deleted from source entirely still be pruned — it appears nowhere in the apply set.
 
+### Generated-once secrets and the `retained` outcome
+
+The `ensure-secret` capability and the `ensureSecret(...)` op step ([#1829](https://github.com/INTENTIUS/chant/issues/1829)) have a Kubernetes store: `k8sSecretStore(namespace, client?)` from `@intentius/chant-lexicon-k8s/secret-store`, plus `k8sEnsureSecretCapability(...)` to build the registered capability over it. The contract is read-then-write — if the Secret exists, its key NAMES and metadata are verified and nothing is written; if absent, one value per declared key is minted at the write and never travels back. `describe` projects key names and labels/annotations only; no code path returns, logs, or compares a `data` value ([#1365](https://github.com/INTENTIUS/chant/issues/1365) decision 6).
+
+A minted Secret carries the ownership marker plus `chant.intentius.io/generated-once: "true"`, and that label puts it outside every prunable set:
+
+- The owned-only prune above skips it and reports it under `retained` in the apply result, with a console line saying so.
+- `chant lifecycle teardown <env> --yes` reports it as a `retained` row — the env sweep deletes everything else and says loudly that the environment is not clean while the Secret exists.
+
+Both are deliberate: the stored bytes are the only copy of material chant never held, so no sweep may destroy them. Deleting a generated-once Secret is an explicit act — `kubectl delete secret <name>` today, a gated op later — never a side effect of "no longer declared".
+
+Drift keeps the same line. Deep observation masks every `data.*`/`stringData.*` value on a `K8s::Core::Secret` on both sides of the diff, so `chant lifecycle diff --live` classifies presence and key-name drift (a key injected out of band, a declared key gone) without ever holding a value — a value-only change is invisible by design.
+
 ### managedFields as a read surface
 
 `@intentius/chant-k8s-client` exports the decoding primitives, since `fieldsV1` is not a shape a caller should have to parse:

@@ -1250,7 +1250,7 @@ export async function runLifecyclePlan(ctx: CommandContext): Promise<number> {
  * with the requested env identity. Stateless — live markers only, no build, no
  * snapshot. Without `--yes` nothing is deleted; with it the planned set is
  * executed per lexicon with one bounded retry pass over failures, and every
- * candidate's outcome is reported (deleted / failed / not-prunable / skipped —
+ * candidate's outcome is reported (deleted / failed / not-prunable / retained / skipped —
  * never silence). A production-like environment name additionally requires an
  * interactive confirmation, or `--confirm-prod` non-interactively.
  */
@@ -1410,15 +1410,22 @@ export async function runLifecycleTeardown(ctx: CommandContext): Promise<number>
     }
   }
 
-  const counts = { deleted: 0, failed: 0, "not-prunable": 0, skipped: 0 };
+  const counts = { deleted: 0, failed: 0, "not-prunable": 0, retained: 0, skipped: 0 };
   for (const o of report.outcomes) counts[o.outcome]++;
   console.log(
-    `\n${counts.deleted} deleted, ${counts.failed} failed, ${counts["not-prunable"]} not prunable, ${counts.skipped} skipped`,
+    `\n${counts.deleted} deleted, ${counts.failed} failed, ${counts["not-prunable"]} not prunable, ` +
+    `${counts.retained} retained, ${counts.skipped} skipped`,
   );
 
   if (report.unimplemented.length > 0) {
     console.error(formatWarning({
       message: `Not executed (no teardown execution in these lexicons yet): ${report.unimplemented.join(", ")} — their candidates are reported as skipped, not deleted.`,
+    }));
+  }
+  if (counts.retained > 0) {
+    console.error(formatWarning({
+      message: `${counts.retained} resource(s) retained — owned by this env but deliberately kept (generated-once secrets are never swept). ` +
+        `The environment is NOT clean while they exist; delete them explicitly (e.g. kubectl delete) if you mean to.`,
     }));
   }
   if (plan.holes.length > 0) {

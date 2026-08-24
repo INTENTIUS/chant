@@ -266,6 +266,20 @@ export interface DeepNormalizationHooks {
    * reads as permanent drift.
    */
   unresolved?(node: DeepNode): boolean;
+  /**
+   * Return true when this value is secret material the diff must never hold —
+   * it is collapsed to {@link MASKED} on BOTH sides (the hook runs over the
+   * declared and the live tree alike), so presence and key names still
+   * classify while values never reach a diff row, a log line, or a snapshot.
+   *
+   * The pass masks by key name on its own ({@link isSensitiveKey}); this hook
+   * exists for the lexicons whose secret-bearing paths are structural rather
+   * than name-shaped — a Kubernetes Secret's `data` carries arbitrary key
+   * names (`app.conf`), and #1365 decision 6 draws the hard line: drift on a
+   * secret observes presence, declared key-set, and metadata — never a value
+   * or a value-derived hash.
+   */
+  mask?(node: DeepNode): boolean;
 }
 
 /** Everything the pass needs besides the tree itself. */
@@ -405,6 +419,9 @@ export function normalizeDeepProperties(
 
   const normalizeValue = (value: unknown, path: string, pattern: string, key: string): unknown => {
     if (isSensitiveKey(key)) return MASKED;
+    // The lexicon's structural mask — same collapse, path-shaped rather than
+    // key-named (a k8s Secret's `data.*` no matter what the key is called).
+    if (hooks?.mask?.(nodeOf(path, pattern, key, value))) return MASKED;
     // A value the lexicon says cannot be known without deploying — an
     // expression-string reference — collapses exactly like a class-instance
     // intrinsic does below.

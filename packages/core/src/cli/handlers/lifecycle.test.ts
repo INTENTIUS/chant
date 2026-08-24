@@ -1279,7 +1279,7 @@ describe("runLifecycleTeardown (#1222 — plan only)", () => {
     const out = stdoutBuf.join("\n");
     expect(out).toContain("Outcomes:");
     expect(out).toContain("deleted");
-    expect(out).toContain("1 deleted, 0 failed, 0 not prunable, 0 skipped");
+    expect(out).toContain("1 deleted, 0 failed, 0 not prunable, 0 retained, 0 skipped");
     expect(out).not.toContain("plan only");
   });
 

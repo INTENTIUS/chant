@@ -1126,10 +1126,15 @@ export interface TeardownOutcome {
   /**
    * - `deleted` — gone, including already-gone (deletion is idempotent);
    * - `failed` — the delete errored (core retries these once);
-   * - `not-prunable` — deliberately not deleted; `detail` says why.
+   * - `not-prunable` — deliberately not deleted; `detail` says why;
+   * - `retained` — owned and no longer declared, but deliberately kept
+   *   (#1365 decision 5): a `generated-once` secret never enters the prunable
+   *   set, because deleting it would destroy the only copy of material chant
+   *   never held. Reported loudly, never deleted; deletion is an explicit act
+   *   (`kubectl delete`, or a future gated op), never a sweep's.
    */
-  outcome: "deleted" | "failed" | "not-prunable";
-  /** The error for `failed`, the reason for `not-prunable`. */
+  outcome: "deleted" | "failed" | "not-prunable" | "retained";
+  /** The error for `failed`, the reason for `not-prunable`/`retained`. */
   detail?: string;
 }
 

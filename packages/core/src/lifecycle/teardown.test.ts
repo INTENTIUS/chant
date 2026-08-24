@@ -281,6 +281,37 @@ describe("executeTeardown — the execution half (#1222)", () => {
     expect(report.unimplemented).toEqual([]);
   });
 
+  test("a retained outcome (#1830) passes through as the loud keep — reported, never retried, never counted failed", async () => {
+    const candidateSecret = { name: "prod/master-key", type: "K8s::Core::Secret", marker: { stack: "shop", env: "dev" } };
+    const execute = vi.fn(async (): Promise<TeardownExecution> => ({
+      outcomes: [
+        { name: "prod/master-key", outcome: "retained", detail: "generated-once secret — deliberately kept, never swept" },
+      ],
+    }));
+    const report = await executeTeardown({
+      environment: "dev",
+      stack: "shop",
+      plugins: [
+        createMockPlugin({
+          name: "k8s",
+          teardownOwned: async () => ({ candidates: [candidateSecret] }),
+          executeTeardown: execute,
+        }),
+      ],
+    });
+
+    // One pass only: retained is a verdict, not a failure to retry.
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(report.outcomes).toEqual([
+      {
+        lexicon: "k8s",
+        ...candidateSecret,
+        outcome: "retained",
+        detail: "generated-once secret — deliberately kept, never swept",
+      },
+    ]);
+  });
+
   test("reuses a handed-in plan instead of re-reading", async () => {
     const teardownOwned = vi.fn();
     const execute = vi.fn(async (): Promise<TeardownExecution> => ({
