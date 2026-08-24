@@ -1,0 +1,94 @@
+---
+title: Effect Receipts
+description: Cross-run memory for effects with no live twin — a declared resource whose value is the proof an effect ran, written by the effect step alone, readable without chant.
+diataxis: explanation
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Some operations leave nothing behind. A database migration, a cache purge, a one-shot bootstrap call — each changes the world, and nothing in the live system records that it happened. There is no resource to observe, no marker to read back, no attribute to diff. The effect has no live twin.
+
+chant Ops run exactly these effects today: `shell` steps, migrations, pipeline triggers. Temporal history remembers them *within* a run, but nothing remembers across runs. The [release ledger](/chant/components/observability/#the-release-ledger) records what deployed but never gates anything. So before receipts, every Op run re-ran every effect, or teams hand-rolled guards in scripts, and nothing at plan time could say "this apply will fire db-migration."
+
+An **effect receipt** closes that gap. It is a declared resource — discovered, diffed, and observed like any other — whose stored value is the proof that one effect ran. The memory lives in the live system, not in chant.
+
+## The receipt model
+
+A receipt is declared with the [`EffectReceipt`](/chant/architecture/core-type-system/#effectreceipt) factory:
+
+```typescript
+import { EffectReceipt } from "@intentius/chant";
+
+export const dbMigration = EffectReceipt("dbMigration", {
+  effect: "db-migration",
+  flavor: "hash",
+  inputs: { schemaDir: "migrations/", version: "0042" },
+});
+```
+
+Two flavors. **Existence** — the receipt's presence is the witness; "will be created" means "will fire." **Hash** — the witness is a digest of the inputs, so changed inputs re-propose the effect: bump `version` and the next plan shows the migration firing again.
+
+The declaration is core, but the storage is per lexicon. A materialization row turns the declaration into a real resource in the estate — the aws row materializes an `AWS::SSM::Parameter`, plain `String`, at `/chant-receipts/<stack>/<env>/<effect>`. The path derives from the same ownership-block fields that stamp [ownership markers](/chant/configuration/config-file/#ownership), with the environment explicit, so receipt identity and resource identity come from one source. A lexicon that cannot observe its receipt type reports staleness as `unobserved`, loudly — never a wrong answer.
+
+Staleness is then an ordinary observation: the live value differs from the expected one, or the receipt is absent. [`lifecycle plan`](/chant/cli/lifecycle/#lifecycle-plan-env) renders that as an `effect` row — "effect will fire: db-migration" — the reviewable signal that an apply is about to run something, not just write something.
+
+## At-least-once, by construction
+
+The receipt is written on success only, and last. The [`effect()` step](/chant/guide/ops-reference/#step-builders) wraps its nested steps in a read-compare-run-write cycle: read the live receipt, skip the steps on a match, otherwise run them and write the receipt only after every one succeeded.
+
+The ordering is the semantics. A crash between the effect and the write leaves the receipt stale, so the next plan proposes the same fire again and the next run re-runs the effect. That is deliberate: the failure mode is running an effect twice, never skipping one silently. Under-running does not happen. The price is that effects wrapped in `effect()` should tolerate a re-run — which a migration runner or an idempotent bootstrap already does.
+
+## Receipts and the release ledger are not the same thing
+
+They sit at opposite corners of one contrast. A receipt gates one effect and audits nothing — it exists so the next run knows whether to fire, and it says nothing about what deployed when. The [release ledger](/chant/components/observability/#the-release-ledger) records deploys and gates nothing — it exists so you can answer "what is running where," and no run ever consults it before acting. Collapsing them would give you a record that both blocks execution and claims audit authority, which is a state file with extra steps. They stay distinct.
+
+## The resolution split
+
+Where a receipt's expected value is computed follows the [Where Values Come From](/chant/concepts/where-values-come-from/) boundary exactly:
+
+- **Static inputs hash at synthesis.** A fully static receipt's expectation — a sha256 over the canonical JSON of the effect name and its inputs — is stamped when the artifact is written. Same source, same digest.
+- **Reference inputs resolve at plan and at run.** An attr-ref or other intrinsic is kept in placeholder form at synthesis and resolved in the plan engine (which is already the impure layer and already reads live) and again in the effect step at execution. Synthesis resolves nothing: the core factory refuses to hash a receipt that still carries references, rather than hashing a placeholder and producing a digest that could never match.
+
+A reference the plan cannot resolve yet is rendered as an `effect` row with an unresolved-input note — never a guessed digest.
+
+## Observe-only to the generic apply
+
+Receipts are declared, diffed, and observed like any resource, but the generic apply path never writes one. The `effect()` step is the sole writer, on success, last. At serialization, receipts are split out of the apply-bound documents before any lexicon code runs — a receipt can never appear in a template an applier writes from, and no desired-vs-live prune can sweep one in. In the plan, a receipt is never a `create`, never an `update`, never a prune candidate — only an `effect` row or a clean `noop`.
+
+The rule exists because any other writer breaks the semantics. If the generic apply "repaired" an absent receipt the way it creates any other declared-but-absent resource, it would record an effect that never ran — and the next run would skip the migration forever. Anything other than write-on-success-last silently converts at-least-once into never.
+
+## The guards
+
+Four guards keep a receipt from becoming state:
+
+- **Leaf rule ([COR022](/chant/lint-rules/correctness/))** — nothing may reference a receipt's attributes, const indirection included. The moment another resource's plan depends on a receipt value, the receipt is authoritative state again.
+- **Plain store ([COR023](/chant/lint-rules/correctness/))** — a receipt never materializes into a Secret kind or a secret-capable variant (SSM `SecureString` is the canonical refusal). A hash is not a secret, and storing it as one invites treating it as one.
+- **Secrets by pointer ([COR024](/chant/lint-rules/correctness/))** — receipt inputs reference a secret's name and version, never its value. No chant code path hashes or compares secret material; a rotation re-proposes the effect through an explicit version bump.
+- **Baseline refusal** — the accepted-deviation baseline refuses receipt paths outright. Blessing a stale migration receipt would silently skip a migration forever, so the acceptance aborts before anything is recorded.
+
+## The walk-away story
+
+A receipt is a readable parameter in your own account, not an entry in a tool's database. With the aws row:
+
+```bash
+aws ssm get-parameter --name /chant-receipts/my-stack/prod/db-migration
+```
+
+Read-only IAM, no chant binary, no export step. Delete chant tomorrow and every receipt is still there, still legible, still telling you which effects ran against which inputs. The same walk-away-zero property the rest of the lifecycle model holds.
+
+## Boundaries, kept deliberately
+
+From the epic ([#1703](https://github.com/INTENTIUS/chant/issues/1703)), verbatim:
+
+> - no `chant receipt` verbs, ever. A receipt is a plain declared resource, inspected and fixed like any other. Receipt-specific tooling is state operations under a new name.
+> - receipts never enter a chant-internal store. Memory lives in the live system.
+> - the ledger and the receipt stay distinct: the release ledger records what deployed and gates nothing, a receipt gates one effect and audits nothing.
+> - the invariant extends rather than bends: a mutation reads ownership, and now staleness, only from live.
+
+## See also
+
+- [Where Values Come From](/chant/concepts/where-values-come-from/) — the determinism boundary the resolution split follows, and the secret-provenance taxonomy COR024 composes with
+- [`lifecycle plan`](/chant/cli/lifecycle/#lifecycle-plan-env) — the plan actions, including the `effect` row and its reasons
+- [Ops Reference](/chant/guide/ops-reference/#step-builders) — the `effect()` step builder, `effects: "gated"` on `ApplyOp`, and `WatchOp` staleness reporting
+- [EffectReceipt](/chant/architecture/core-type-system/#effectreceipt) and [SecretDeclaration](/chant/architecture/core-type-system/#secretdeclaration) — the type reference for both declaration shapes
+- [Observability](/chant/components/observability/) — the release ledger receipts stay distinct from
