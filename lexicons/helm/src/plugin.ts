@@ -16,9 +16,14 @@ import { fileURLToPath } from "url";
 import { helmSerializer } from "./serializer";
 import { helmCompletions } from "./lsp/completions";
 import { helmHover } from "./lsp/hover";
+import { helmConfigSchema } from "./config";
 
 export const helmPlugin: LexiconPlugin = {
   name: "helm",
+  // The `helm` namespace in chant.config.ts — capability profiles (#1235).
+  // Declaring the schema makes core validate the namespace at load, so a
+  // typo'd profile field fails the build instead of silently unpinning.
+  configSchema: helmConfigSchema,
   auditCatalog: () => helmAuditCatalog,
   serializer: helmSerializer,
 

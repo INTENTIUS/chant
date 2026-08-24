@@ -1,10 +1,10 @@
-import { describe, test, expect, beforeAll } from "vitest";
-import { mkdirSync, writeFileSync, rmSync, existsSync } from "node:fs";
-import { join } from "node:path";
+import { describe, test, expect, beforeAll, beforeEach, afterEach } from "vitest";
+import { mkdirSync, writeFileSync, rmSync, existsSync, readFileSync, mkdtempSync } from "node:fs";
+import { delimiter, join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 
-import { HelmRender } from "./render";
+import { HelmRender, getHelmRenderRecords, clearHelmRenderRecords } from "./render";
 
 const FIXTURE_DIR = join(tmpdir(), "chant-helm-render-fixture");
 const CHART_DIR = join(FIXTURE_DIR, "tiny-chart");
@@ -254,5 +254,174 @@ describe.skipIf(!fixtureAvailable)("HelmRender", () => {
     } finally {
       process.env.PATH = origPath;
     }
+  });
+});
+
+/**
+ * Capability-profile plumbing (#1235) — asserted against a scripted `helm`
+ * double that records its argv, so these tests need no real helm binary, no
+ * network, and no chart. The double answers any `helm template` with one
+ * minimal manifest.
+ */
+describe("HelmRender capability profiles", () => {
+  const FAKE_BIN = join(tmpdir(), "chant-helm-render-fake-bin");
+  let argvFile: string;
+  let origPath: string | undefined;
+  let origCwd: string;
+
+  beforeAll(() => {
+    mkdirSync(FAKE_BIN, { recursive: true });
+    writeFileSync(
+      join(FAKE_BIN, "helm"),
+      `#!/bin/sh
+printf '%s\\n' "$@" > "$CHANT_TEST_HELM_ARGV"
+cat <<'EOF'
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fake-render
+EOF
+`,
+      { mode: 0o755 },
+    );
+  });
+
+  beforeEach(() => {
+    argvFile = join(mkdtempSync(join(tmpdir(), "chant-helm-argv-")), "argv.txt");
+    process.env.CHANT_TEST_HELM_ARGV = argvFile;
+    origPath = process.env.PATH;
+    process.env.PATH = FAKE_BIN + delimiter + (origPath ?? "");
+    origCwd = process.cwd();
+    clearHelmRenderRecords();
+  });
+
+  afterEach(() => {
+    process.env.PATH = origPath;
+    delete process.env.CHANT_TEST_HELM_ARGV;
+    process.chdir(origCwd);
+  });
+
+  function renderedArgv(): string[] {
+    return readFileSync(argvFile, "utf8")
+      .split("\n")
+      .filter((l) => l.length > 0);
+  }
+
+  test("an inline profile pins --kube-version and one --api-versions per entry", () => {
+    HelmRender({
+      name: "rel",
+      chart: "/dev/null/some-chart",
+      noCache: true,
+      capabilityProfile: {
+        name: "prod",
+        kubeVersion: "1.33.6",
+        apiVersions: ["monitoring.coreos.com/v1", "cert-manager.io/v1"],
+      },
+    } as Parameters<typeof HelmRender>[0]);
+
+    const argv = renderedArgv();
+    const kvIdx = argv.indexOf("--kube-version");
+    expect(kvIdx).toBeGreaterThan(-1);
+    expect(argv[kvIdx + 1]).toBe("1.33.6");
+    const apiIdxs = argv.map((a, i) => (a === "--api-versions" ? i : -1)).filter((i) => i >= 0);
+    expect(apiIdxs.length).toBe(2);
+    expect(argv[apiIdxs[0] + 1]).toBe("monitoring.coreos.com/v1");
+    expect(argv[apiIdxs[1] + 1]).toBe("cert-manager.io/v1");
+  });
+
+  test("no profile means no capability flags — today's unpinned behavior", () => {
+    HelmRender({
+      name: "rel",
+      chart: "/dev/null/some-chart",
+      noCache: true,
+    } as Parameters<typeof HelmRender>[0]);
+
+    const argv = renderedArgv();
+    expect(argv).not.toContain("--kube-version");
+    expect(argv).not.toContain("--api-versions");
+  });
+
+  test("a profile named in chant.config.json resolves and pins the render", () => {
+    const projectDir = mkdtempSync(join(tmpdir(), "chant-helm-render-project-"));
+    writeFileSync(
+      join(projectDir, "chant.config.json"),
+      JSON.stringify({
+        helm: {
+          capabilityProfiles: {
+            prod: { kubeVersion: "v1.31.4", apiVersions: ["batch/v1"] },
+          },
+        },
+      }),
+    );
+    process.chdir(projectDir);
+
+    HelmRender({
+      name: "rel",
+      chart: "/dev/null/some-chart",
+      noCache: true,
+      capabilityProfile: "prod",
+    } as Parameters<typeof HelmRender>[0]);
+
+    const argv = renderedArgv();
+    const kvIdx = argv.indexOf("--kube-version");
+    expect(argv[kvIdx + 1]).toBe("v1.31.4");
+    const apiIdx = argv.indexOf("--api-versions");
+    expect(argv[apiIdx + 1]).toBe("batch/v1");
+  });
+
+  test("an undeclared profile reference is an error naming it, before helm runs", () => {
+    const projectDir = mkdtempSync(join(tmpdir(), "chant-helm-render-project-"));
+    writeFileSync(
+      join(projectDir, "chant.config.json"),
+      JSON.stringify({ helm: { capabilityProfiles: { staging: { kubeVersion: "1.31.4" } } } }),
+    );
+    process.chdir(projectDir);
+
+    expect(() =>
+      HelmRender({
+        name: "rel",
+        chart: "/dev/null/some-chart",
+        noCache: true,
+        capabilityProfile: "prod",
+      } as Parameters<typeof HelmRender>[0]),
+    ).toThrow(/capability profile "prod" is not declared/);
+    // Failed before any render: the double never ran.
+    expect(existsSync(argvFile)).toBe(false);
+  });
+
+  test("an invalid inline profile is an error naming the field", () => {
+    expect(() =>
+      HelmRender({
+        name: "rel",
+        chart: "/dev/null/some-chart",
+        noCache: true,
+        capabilityProfile: { name: "prod", kubeVersion: "latest" },
+      } as Parameters<typeof HelmRender>[0]),
+    ).toThrow(/kubeVersion/);
+  });
+
+  test("the render record carries the profile identity for pinned renders, and none for unpinned", () => {
+    HelmRender({
+      name: "pinned",
+      chart: "/dev/null/some-chart",
+      noCache: true,
+      capabilityProfile: { name: "prod", kubeVersion: "1.33.6", apiVersions: ["batch/v1"] },
+    } as Parameters<typeof HelmRender>[0]);
+    HelmRender({
+      name: "unpinned",
+      chart: "/dev/null/some-chart",
+      noCache: true,
+    } as Parameters<typeof HelmRender>[0]);
+
+    const records = getHelmRenderRecords();
+    expect(records.length).toBe(2);
+    expect(records[0].name).toBe("pinned");
+    expect(records[0].capabilityProfile).toEqual({
+      name: "prod",
+      kubeVersion: "1.33.6",
+      apiVersions: ["batch/v1"],
+    });
+    expect(records[1].name).toBe("unpinned");
+    expect(records[1].capabilityProfile).toBeUndefined();
   });
 });

@@ -44,6 +44,8 @@ import { Composite } from "@intentius/chant";
 import { Deployment } from "@intentius/chant-lexicon-k8s/generated/index";
 import yaml from "js-yaml";
 
+import { resolveCapabilityProfile, type HelmCapabilityProfile, type HelmCapabilityProfileRef } from "./config";
+
 export interface HelmRenderProps {
   /** Logical name for the render (used in cache key + composite name). */
   name: string;
@@ -64,6 +66,45 @@ export interface HelmRenderProps {
    * fresh render.
    */
   noCache?: boolean;
+  /**
+   * Capability profile the render is pinned against (#1235, epic #1228).
+   *
+   * A string names a profile declared in `chant.config.ts`'s
+   * `helm.capabilityProfiles` (per cluster — see `./config.ts`); an inline
+   * object carries the same facts directly. When set, `helm template` runs
+   * with `--kube-version` and `--api-versions` from the profile, so
+   * `.Capabilities` reflects the declared cluster instead of whatever the
+   * helm binary defaults to. A named profile the config does not declare is
+   * an error at synth, never a silent fallback. Absent, rendering is
+   * unpinned — exactly today's behavior.
+   */
+  capabilityProfile?: HelmCapabilityProfileRef;
+}
+
+/**
+ * What one `HelmRender` invocation recorded about itself — the seam #1237's
+ * render digest builds on. `capabilityProfile` is the profile identity the
+ * render was pinned against; `undefined` means the render was unpinned and
+ * its bytes depend on the local helm binary's defaults.
+ */
+export interface HelmRenderRecord {
+  /** The render's logical name (`HelmRenderProps.name`). */
+  name: string;
+  chart: string;
+  version?: string;
+  capabilityProfile?: HelmCapabilityProfile;
+}
+
+const renderRecords: HelmRenderRecord[] = [];
+
+/** Every render recorded in this process, in invocation order. */
+export function getHelmRenderRecords(): readonly HelmRenderRecord[] {
+  return renderRecords;
+}
+
+/** Reset the record list (test isolation). */
+export function clearHelmRenderRecords(): void {
+  renderRecords.length = 0;
 }
 
 interface RenderedDoc {
@@ -75,22 +116,35 @@ interface RenderedDoc {
 
 const CACHE_ROOT = join(homedir(), ".chant", "helm-renders");
 
-function cacheKey(props: HelmRenderProps): string {
+function cacheKey(props: HelmRenderProps, profile?: HelmCapabilityProfile): string {
   const stable = JSON.stringify({
     repo: props.repo,
     chart: props.chart,
     version: props.version,
     namespace: props.namespace ?? null,
     values: props.values ?? null,
+    // Only present for pinned renders, so unpinned cache keys are unchanged
+    // and existing caches stay valid. A pinned render must never reuse an
+    // unpinned render's bytes (or another profile's) — the profile is a real
+    // render input (#1235).
+    ...(profile
+      ? {
+          capabilityProfile: {
+            name: profile.name,
+            kubeVersion: profile.kubeVersion,
+            apiVersions: profile.apiVersions ?? [],
+          },
+        }
+      : {}),
   });
   return createHash("sha256").update(stable).digest("hex").slice(0, 16);
 }
 
-function renderViaHelm(props: HelmRenderProps): string {
+function renderViaHelm(props: HelmRenderProps, profile?: HelmCapabilityProfile): string {
   // Write values overrides to a tempfile if any.
   let valuesArgs: string[] = [];
   if (props.values && Object.keys(props.values).length > 0) {
-    const valuesPath = join(tmpdir(), `chant-helm-values-${cacheKey(props)}.yaml`);
+    const valuesPath = join(tmpdir(), `chant-helm-values-${cacheKey(props, profile)}.yaml`);
     writeFileSync(valuesPath, yaml.dump(props.values));
     valuesArgs = ["--values", valuesPath];
   }
@@ -124,6 +178,17 @@ function renderViaHelm(props: HelmRenderProps): string {
     // Without this, `helm template` silently drops manifests shipped in the
     // chart's (or a subchart's) crds/ directory.
     "--include-crds",
+    // Pin .Capabilities to the declared cluster profile. Without these, the
+    // kube version defaults to one baked into the helm binary and APIVersions
+    // is empty — both silently, both making the rendered bytes a function of
+    // the local toolchain (#1235).
+    ...(profile
+      ? [
+          "--kube-version",
+          profile.kubeVersion,
+          ...(profile.apiVersions ?? []).flatMap((v) => ["--api-versions", v]),
+        ]
+      : []),
     ...fetchArgs,
     ...isolationArgs,
     ...(props.namespace ? ["--namespace", props.namespace] : []),
@@ -149,16 +214,16 @@ function renderViaHelm(props: HelmRenderProps): string {
   }
 }
 
-function loadOrRender(props: HelmRenderProps): string {
+function loadOrRender(props: HelmRenderProps, profile?: HelmCapabilityProfile): string {
   if (props.noCache) {
-    return renderViaHelm(props);
+    return renderViaHelm(props, profile);
   }
-  const cacheDir = join(CACHE_ROOT, cacheKey(props));
+  const cacheDir = join(CACHE_ROOT, cacheKey(props, profile));
   const cachePath = join(cacheDir, "manifests.yaml");
   if (existsSync(cachePath)) {
     return readFileSync(cachePath, "utf8");
   }
-  const out = renderViaHelm(props);
+  const out = renderViaHelm(props, profile);
   try {
     mkdirSync(cacheDir, { recursive: true });
     writeFileSync(cachePath, out);
@@ -184,8 +249,20 @@ function safeKey(input: string): string {
 }
 
 export const HelmRender = Composite<HelmRenderProps>((props) => {
-  const yamlText = loadOrRender(props);
+  // Resolve first: a named profile the config does not declare must fail the
+  // build here, before any helm invocation could silently render against the
+  // binary's default capabilities.
+  const profile = props.capabilityProfile !== undefined ? resolveCapabilityProfile(props.capabilityProfile) : undefined;
+
+  const yamlText = loadOrRender(props, profile);
   const docs = parseMultiDoc(yamlText);
+
+  renderRecords.push({
+    name: props.name,
+    chart: props.chart,
+    version: props.version,
+    capabilityProfile: profile,
+  });
 
   const out: Record<string, InstanceType<typeof Deployment>> = {};
 
