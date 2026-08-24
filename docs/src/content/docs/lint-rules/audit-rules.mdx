@@ -1248,6 +1248,12 @@ Authority: [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.
 
 Tighten Resource from "*" to the Fn::GetAtt Arn list of the declared resources the role's consumers touch.
 
+### WAW060
+
+**IAM policy attached to no principal** — report-only · guidance
+
+Attach the policy via Roles/Users/Groups or reference it from a principal's ManagedPolicyArns — unattached it grants nothing.
+
 ## Azure ARM (AZR)
 
 Run against ARM deployment templates (JSON).

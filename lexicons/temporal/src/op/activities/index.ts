@@ -55,6 +55,7 @@ export type {
   K8sApplier,
   AzureApplier,
   GcpApplier,
+  FlyApplier,
   AwsApplier,
   AwsRollback,
 } from "./apply";

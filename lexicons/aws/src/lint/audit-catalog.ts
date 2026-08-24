@@ -71,4 +71,5 @@ export const awsAuditCatalog: Record<string, RuleMeta> = {
   // #1225 — least-privilege tightening the declared graph can prove. Report-only,
   // so no authority citation (those are reserved for merge-worthy entries).
   WAW059: auditRule("WAW059", "report-only", "guidance", "Wildcard Resource where the declared graph enumerates the touched set", "Tighten Resource from \"*\" to the Fn::GetAtt Arn list of the declared resources the role's consumers touch.", { category: "security" }),
+  WAW060: auditRule("WAW060", "report-only", "guidance", "IAM policy attached to no principal", "Attach the policy via Roles/Users/Groups or reference it from a principal's ManagedPolicyArns — unattached it grants nothing.", { category: "security" }),
 };
