@@ -842,6 +842,12 @@ Fix the field name; the API server prunes unknown fields and the controller neve
 
 Match the CRD schema: use the declared scalar type and one of the enum values.
 
+### WK8503
+
+**Workload consumes a Secret nothing in the output produces** — merge-worthy · guidance
+
+Produce the Secret in the same build (Secret, ExternalSecret, InfisicalSecret, cert-manager Certificate), or declare its provenance with declareSecret() if it exists out of band.
+
 ## Docker (DKRD)
 
 Run against Dockerfiles and Compose files.
