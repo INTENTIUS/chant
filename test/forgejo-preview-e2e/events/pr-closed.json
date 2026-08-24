@@ -1,0 +1,17 @@
+{
+  "action": "closed",
+  "number": 7,
+  "pull_request": {
+    "number": 7,
+    "state": "closed",
+    "merged": false,
+    "title": "fixture PR",
+    "head": { "ref": "feature/preview", "sha": "1111111111111111111111111111111111111111" },
+    "base": { "ref": "main" }
+  },
+  "repository": {
+    "name": "forgejo-preview-e2e",
+    "full_name": "chant/forgejo-preview-e2e",
+    "default_branch": "main"
+  }
+}

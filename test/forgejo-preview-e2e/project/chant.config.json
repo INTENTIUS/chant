@@ -1,0 +1,14 @@
+{
+  "lexicons": ["fly"],
+  "sourceDir": "src",
+  "environments": ["local", "pr-*"],
+  "ownership": { "stack": "preview-e2e", "env": { "param": "env" } },
+  "buildParams": {
+    "env": {
+      "type": "string",
+      "default": "local",
+      "env": "CHANT_ENV",
+      "description": "Environment identity - 'local' or a per-PR 'pr-<n>' name"
+    }
+  }
+}
