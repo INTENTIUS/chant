@@ -191,6 +191,32 @@ export function collectEffectReceipts(
   return out;
 }
 
+/**
+ * Split an entity map into the apply-bound set and the receipts (#1832).
+ *
+ * The write-exclusion seam: receipts are observe-only to the generic apply
+ * path — the `effect()` step is the sole writer (epic #1703, decision 3), and
+ * a receipt the generic apply stamped would silently convert at-least-once
+ * into never. The build calls this at serializer-input assembly, the one core
+ * choke point every applier's input flows through (appliers consume serialized
+ * build outputs), so no lexicon's serialized apply document ever contains a
+ * receipt and no applier's desired or prune set can. Receipts still reach the
+ * serializer — for visibility rendering outside the apply-bound document
+ * (#1835) — via `SerializeContext.receipts`, never in the entity map.
+ */
+export function splitReceiptEntities(entities: ReadonlyMap<string, Declarable>): {
+  applyBound: Map<string, Declarable>;
+  receipts: Map<string, EffectReceiptDeclaration>;
+} {
+  const applyBound = new Map<string, Declarable>();
+  const receipts = new Map<string, EffectReceiptDeclaration>();
+  for (const [name, entity] of entities) {
+    if (isEffectReceipt(entity)) receipts.set(name, entity);
+    else applyBound.set(name, entity);
+  }
+  return { applyBound, receipts };
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 // Canonical hashing — JCS-style canonical JSON + sha256.
 // ─────────────────────────────────────────────────────────────────────────

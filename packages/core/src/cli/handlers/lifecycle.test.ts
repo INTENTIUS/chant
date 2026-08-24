@@ -821,6 +821,120 @@ describe("runLifecyclePlan", () => {
     expect(byName["sg-0abc123"].name).toBe("sg-0abc123");
   });
 
+  // #1832 — effect receipts are declared, diffed, and observed like any
+  // resource, but observe-only to the generic apply path: the plan compares
+  // live value to resolved expectation and proposes the fire, never a create.
+  describe("effect receipts (#1832)", () => {
+    const receiptEntity = (lexicon: string) => ({
+      lexicon,
+      entityType: lexicon === "chant" ? "Chant::EffectReceipt" : `${lexicon}::Receipt`,
+      name: "dbMigrated",
+      effect: "db-migrate",
+      flavor: "existence" as const,
+      inputs: {},
+      [Symbol.for("chant.declarable")]: true,
+      [Symbol.for("chant.effect-receipt")]: true,
+    });
+
+    const buildWithReceipt = (lexicon: string): BuildResult => {
+      const base = makeBuildResult({ aws: ["bucket"] });
+      base.entities.set("dbMigrated", receiptEntity(lexicon) as unknown as Parameters<typeof base.entities.set>[1]);
+      if (lexicon !== "aws") (base.manifest.lexicons as string[]).push(lexicon);
+      return base;
+    };
+
+    test("an absent receipt is an effect row, never a create", async () => {
+      buildMock.mockResolvedValue(buildWithReceipt("aws"));
+      const plugins: LexiconPlugin[] = [
+        createMockPlugin({
+          name: "aws",
+          emulator: awsEmulatorStub,
+          describeResources: async () => ({
+            observation: "v1" as const,
+            resources: { bucket: meta() },
+            // dbMigrated neither returned nor unobserved: confirmed absent.
+          }),
+        }),
+      ];
+      const exit = await runLifecyclePlan({
+        args: makeArgs({ path: "plan", extraPositional: "prod", json: true }),
+        plugins,
+        serializers: plugins.map((p) => p.serializer),
+      });
+      expect(exit).toBe(0);
+      const plan = JSON.parse(stdoutBuf.join("\n"));
+      const row = plan.entries.find((e: { name: string }) => e.name === "dbMigrated");
+      expect(row).toMatchObject({ action: "effect", effect: "db-migrate", effectReason: "receipt-absent", lexicon: "aws" });
+      expect(plan.entries.filter((e: { name: string; action: string }) => e.name === "dbMigrated")).toHaveLength(1);
+    });
+
+    test("a live receipt carrying the existence marker is a clean noop, and the render says nothing fires", async () => {
+      buildMock.mockResolvedValue(buildWithReceipt("aws"));
+      const plugins: LexiconPlugin[] = [
+        createMockPlugin({
+          name: "aws",
+          emulator: awsEmulatorStub,
+          describeResources: async () => ({
+            observation: "v1" as const,
+            resources: {
+              bucket: meta(),
+              dbMigrated: meta({ type: "aws::Receipt", attributes: { value: "chant.effect-receipt:exists" } }),
+            },
+          }),
+        }),
+      ];
+      const exit = await runLifecyclePlan({
+        args: makeArgs({ path: "plan", extraPositional: "prod" }),
+        plugins,
+        serializers: plugins.map((p) => p.serializer),
+      });
+      expect(exit).toBe(0);
+      expect(stdoutBuf.join("\n")).toContain("0 effect");
+      expect(stdoutBuf.join("\n")).not.toContain("effect will fire");
+    });
+
+    test("a stale receipt renders effect will fire", async () => {
+      buildMock.mockResolvedValue(buildWithReceipt("aws"));
+      const plugins: LexiconPlugin[] = [
+        createMockPlugin({
+          name: "aws",
+          emulator: awsEmulatorStub,
+          describeResources: async () => ({
+            observation: "v1" as const,
+            resources: {
+              bucket: meta(),
+              dbMigrated: meta({ type: "aws::Receipt", attributes: { value: "something-else" } }),
+            },
+          }),
+        }),
+      ];
+      const exit = await runLifecyclePlan({
+        args: makeArgs({ path: "plan", extraPositional: "prod" }),
+        plugins,
+        serializers: plugins.map((p) => p.serializer),
+      });
+      expect(exit).toBe(0);
+      expect(stdoutBuf.join("\n")).toContain("effect will fire: db-migrate");
+    });
+
+    test("a receipt no loaded lexicon observes is unobserved, loudly", async () => {
+      buildMock.mockResolvedValue(buildWithReceipt("chant"));
+      const plugins: LexiconPlugin[] = [
+        createMockPlugin({ name: "aws", emulator: awsEmulatorStub, describeResources: staticDescribeResources({ bucket: meta() }) }),
+      ];
+      const exit = await runLifecyclePlan({
+        args: makeArgs({ path: "plan", extraPositional: "prod", json: true }),
+        plugins,
+        serializers: plugins.map((p) => p.serializer),
+      });
+      expect(exit).toBe(0);
+      const plan = JSON.parse(stdoutBuf.join("\n"));
+      const row = plan.entries.find((e: { name: string }) => e.name === "dbMigrated");
+      expect(row).toMatchObject({ action: "unobserved", unobservedReason: "unsupported-kind" });
+      expect(stderrBuf.join("\n")).toContain("could not be observed");
+    });
+  });
+
   // #1166 — plan is always a live read (no `--live` flag of its own), so a
   // declared environment endpoint applies here exactly as it does for
   // `chant graph --live` / `chant lifecycle diff --live`.

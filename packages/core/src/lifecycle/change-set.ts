@@ -31,11 +31,30 @@ import { unobservedReasonText, type UnobservedReason } from "../observation";
  *   not drift, just the runtime doing its job. `runtimeOwner` names the
  *   declared entity it belongs to.
  * - `noop` — declared and live with no drift, or already reconciled.
+ * - `effect` — a declared effect receipt (#1832) whose live value is absent or
+ *   differs from the resolved expectation: the effect step will fire. Never a
+ *   `create` or `update` — the generic apply path is observe-only to receipts,
+ *   and the `effect()` step is the sole writer (epic #1703, decision 3). Read
+ *   `effect` for the effect's identity and `effectReason` for why it fires.
  * - `unobserved` — declared, and the lexicon could not look (#1089). Not a
  *   proposal at all: it is the plan admitting a hole. Never a create, never a
  *   delete. Read `unobservedReason` for which hole.
  */
-export type ChangeAction = "create" | "update" | "delete" | "adopt" | "runtime" | "noop" | "unobserved";
+export type ChangeAction = "create" | "update" | "delete" | "adopt" | "runtime" | "noop" | "effect" | "unobserved";
+
+/**
+ * Why an `effect` entry proposes a fire (#1832).
+ *
+ * - `receipt-absent` — the provider confirmed the receipt absent: the effect
+ *   has never recorded a run (or the run crashed before the write — the
+ *   at-least-once case this classification exists to preserve).
+ * - `receipt-stale` — the receipt is live but its value differs from the
+ *   resolved expectation: the effect's inputs changed since the last run.
+ * - `unresolved-input` — a reference input could not resolve at plan time, so
+ *   the expectation cannot be computed. The fire is proposed rather than
+ *   guessed away; the effect step resolves again at run.
+ */
+export type EffectFireReason = "receipt-absent" | "receipt-stale" | "unresolved-input";
 
 /**
  * Who answers "is this resource chant's?". `unknown` until a live ownership
@@ -100,6 +119,16 @@ export interface ChangeSetEntry {
   queried?: string;
   /** The declared entity this resource's owner chain resolves to, for `action: "runtime"` (#1077). */
   runtimeOwner?: string;
+  /**
+   * The effect a receipt witnesses (#1832), for entries derived from an effect
+   * receipt. On `action: "effect"` it names what will fire; on a receipt's
+   * `noop`/`unobserved` rows it keeps the attribution.
+   */
+  effect?: string;
+  /** Why the effect fires, for `action: "effect"` (#1832). */
+  effectReason?: EffectFireReason;
+  /** Human-readable backing for `effectReason` (the digests that differ, the unresolved path). */
+  effectDetail?: string;
 }
 
 export interface ChangeSet {
@@ -234,13 +263,14 @@ export function buildChangeSet(env: string, input: DiffLiveInput, options?: Chan
   return { env, entries };
 }
 
-const ACTION_ORDER: ChangeAction[] = ["create", "update", "delete", "adopt", "runtime", "noop", "unobserved"];
+const ACTION_ORDER: ChangeAction[] = ["create", "update", "effect", "delete", "adopt", "runtime", "noop", "unobserved"];
 
 /** Count entries per action. */
 export function summarize(cs: ChangeSet): Record<ChangeAction, number> {
   const counts: Record<ChangeAction, number> = {
     create: 0,
     update: 0,
+    effect: 0,
     delete: 0,
     adopt: 0,
     runtime: 0,
@@ -257,10 +287,10 @@ export function summarize(cs: ChangeSet): Record<ChangeAction, number> {
  * GitLab renders an `artifacts:reports:terraform` artifact in the merge-request
  * UI as "N to add, M to change, K to delete". The format is generic — any tool
  * that emits this JSON gets the widget — and the chant plan maps onto it
- * directly. Only the mutating actions count: `adopt`, `runtime`, `noop` and
- * `unobserved` are excluded, since the widget has no column for "live but
- * undeclared", "expected runtime child" (#1077), "no change", or "could not
- * look" (#1089). The widget is therefore a floor, not a complete plan: read
+ * directly. Only the mutating actions count: `adopt`, `runtime`, `noop`,
+ * `effect` and `unobserved` are excluded, since the widget has no column for
+ * "live but undeclared", "expected runtime child" (#1077), "no change", "an
+ * effect will fire" (#1832), or "could not look" (#1089). The widget is therefore a floor, not a complete plan: read
  * the full change set when entities are unobserved or classified runtime.
  *
  * The widget label reads "Terraform" regardless of producer; that is GitLab's
@@ -292,9 +322,18 @@ export function renderChangeSet(cs: ChangeSet): string {
         ? "\nUNOBSERVED (declared; chant could not read live state — no action proposed):"
         : action === "runtime"
           ? "\nRUNTIME (owned by a declared resource; not drift, never a delete/adopt candidate):"
-          : `\n${action.toUpperCase()}:`,
+          : action === "effect"
+            ? "\nEFFECT (receipt absent or stale; the effect step fires — the generic apply never writes a receipt):"
+            : `\n${action.toUpperCase()}:`,
     );
     for (const e of group) {
+      if (e.action === "effect") {
+        lines.push(
+          `  effect will fire: ${e.effect ?? e.name} — receipt ${e.name}${e.type ? ` (${e.type})` : ""}` +
+            `${e.effectDetail ? ` — ${e.effectDetail}` : ""}`,
+        );
+        continue;
+      }
       const own = e.ownership === "unknown" ? "" : ` [${e.ownership}]`;
       const why = e.unobservedReason
         ? ` — ${unobservedReasonText(e.unobservedReason)}${e.unobservedDetail ? `: ${e.unobservedDetail}` : ""}`
