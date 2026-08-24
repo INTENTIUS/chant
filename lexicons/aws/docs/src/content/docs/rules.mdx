@@ -6,7 +6,7 @@ description: "Every lint rule and post-synth check provided by the AWS CloudForm
 {/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-aws` — DO NOT EDIT.
     Edit lexicons/aws/src/codegen/docs.ts instead; changes here are overwritten. */}
 
-The AWS CloudFormation lexicon provides **50** rules: 3 lint rules and 47 post-synth checks.
+The AWS CloudFormation lexicon provides **54** rules: 3 lint rules and 51 post-synth checks.
 
 ## Lint Rules
 
@@ -69,3 +69,7 @@ Post-synth checks validate the serialized output after the build pipeline comple
 | `WAW053` | ECR repository does not scan images on push |
 | `WAW054` | ECR repository does not have immutable image tags |
 | `WAW055` | CloudWatch Logs log group has no retention period set |
+| `WAW056` | SCP guardrail has no Deny statement — it constrains nothing |
+| `WAW057` | SCP guardrail is attached to no targets — it enforces nothing |
+| `WAW058` | Organization audit trail missing, not logging, or scoped down to a single region |
+| `WAW059` | Wildcard Resource where the declared graph enumerates the touched set — tighten to the consumers' declared Arns |

@@ -63,6 +63,14 @@ export const fountainPlugin: LexiconPlugin = {
 
   // ── Optional extensions ────────────────────────────────────
 
+  // #1330 — the fact check-lexicon gates on, computed offline from the
+  // committed spec snapshot + surface baseline. Never fetchSchemas():
+  // check-lexicon runs per-PR, no network.
+  async coverageReport(): Promise<{ unaccountedKinds?: string[] }> {
+    const { coverageReportFromSnapshots } = await import("./coverage");
+    return { unaccountedKinds: coverageReportFromSnapshots().unaccountedKinds };
+  },
+
   lintRules() {
     return rules;
   },

@@ -67,4 +67,8 @@ export const awsAuditCatalog: Record<string, RuleMeta> = {
   WAW056: auditRule("WAW056", "merge-worthy", "guidance", "SCP guardrail has no Deny statement", "Add a Deny statement — SCPs only filter permissions, so a Deny-less SCP guards nothing.", { authority: [AWS_SEC] }),
   WAW057: auditRule("WAW057", "merge-worthy", "guidance", "SCP guardrail attached to no targets", "Attach the SCP to the organization root or an OU via TargetIds.", { authority: [AWS_SEC] }),
   WAW058: auditRule("WAW058", "merge-worthy", "guidance", "Organization audit trail dropped or scoped down", "Keep an organization CloudTrail with IsLogging: true and IsMultiRegionTrail: true.", { authority: [AWS_SEC] }),
+
+  // #1225 — least-privilege tightening the declared graph can prove. Report-only,
+  // so no authority citation (those are reserved for merge-worthy entries).
+  WAW059: auditRule("WAW059", "report-only", "guidance", "Wildcard Resource where the declared graph enumerates the touched set", "Tighten Resource from \"*\" to the Fn::GetAtt Arn list of the declared resources the role's consumers touch.", { category: "security" }),
 };

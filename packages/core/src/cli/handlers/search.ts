@@ -9,7 +9,7 @@ import { discover } from "../../discovery/index";
 import { observeResources } from "../../lifecycle/observe";
 import { replaySnapshots, hasSnapshot } from "../../lifecycle/replay";
 import type { LiveObservation } from "../../graph-ir";
-import { loadChantConfig } from "../../config";
+import { loadChantConfig, matchesDeclaredEnvironment } from "../../config";
 import { loadPlugins, resolveProjectLexicons } from "../plugins";
 import { formatError, formatWarning } from "../format";
 import type { CommandContext } from "../registry";
@@ -89,7 +89,10 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
       }));
       return 1;
     }
-    if (config.environments && !config.environments.includes(environment)) {
+    // Membership via matchesDeclaredEnvironment (#1221): handles `{ name,
+    // endpoint }` entries (#1166) — a plain `.includes` never matched those —
+    // and glob-pattern entries like `"pr-*"`.
+    if (config.environments && config.environments.length > 0 && !matchesDeclaredEnvironment(config.environments, environment)) {
       console.error(formatError({ message: `Unknown environment "${environment}"` }));
       return 1;
     }

@@ -6,6 +6,7 @@ import { auditDocsClassification, auditDocsReachability } from "./check-lexicon-
 import { auditMcpNames, lexiconNameFor } from "./check-lexicon-mcp";
 import { loadLexiconFromDir, registers, safeList } from "./check-lexicon-plugin";
 import { RULE_CATALOG } from "../../audit/catalog";
+import type { LexiconPlugin } from "../../lexicon";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -64,6 +65,45 @@ function countSubdirs(dir: string): number {
       return contents.length > 0 && !(contents.length === 1 && contents[0] === ".gitkeep");
     })
     .length;
+}
+
+/**
+ * #1330 — gate on the plugin's own spec-coverage accounting.
+ *
+ * fountain's `coverage.test.ts` asserts `unaccountedKinds == []` in CI, but a
+ * lexicon-local test is a convention, not a check-lexicon contract — the same
+ * class of gap #1342 closed for LSP providers. `coverageReport()` gives core
+ * the one fact to gate on: which upstream spec kinds are neither modeled nor
+ * on the lexicon's exclusion list. A lexicon without the member passes
+ * vacuously, the same conditional shape as the docs-reachability and
+ * Diátaxis checks; a report that throws fails, for the same reason `safeList`
+ * treats a throw as worse than absence.
+ */
+export async function coverageReportCheck(plugin: LexiconPlugin | undefined): Promise<CheckItem> {
+  const report = plugin?.coverageReport;
+  const hasReport = typeof report === "function";
+  let unaccounted: string[] = [];
+  let error: string | undefined;
+  if (hasReport) {
+    try {
+      unaccounted = (await report.call(plugin))?.unaccountedKinds ?? [];
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+    }
+  }
+  return {
+    name: "coverageReport() leaves no spec kind unaccounted",
+    tier: 1,
+    pass: !hasReport || (error === undefined && unaccounted.length === 0),
+    detail:
+      error !== undefined
+        ? `threw: ${error}`
+        : unaccounted.length > 0
+          ? `${unaccounted.length} unaccounted: ${unaccounted.join(", ")}`
+          : hasReport
+            ? "all spec kinds accounted for"
+            : undefined,
+  };
 }
 
 // ── Check runner ─────────────────────────────────────────────────────
@@ -388,6 +428,11 @@ export async function checkLexicon(dir: string): Promise<CheckResult> {
         ? `${docsClass.unclassified.length} unclassified: ${docsClass.unclassified.join(", ")}`
         : undefined,
   });
+
+  // #1330 — fountain's spec-coverage gate lived in a lexicon-local vitest
+  // assertion, a convention rather than a check-lexicon contract. The plugin
+  // now states the fact directly via `coverageReport()`.
+  items.push(await coverageReportCheck(plugin));
 
   // ── Tier 2: Recommended ────────────────────────────────────────
 

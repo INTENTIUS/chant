@@ -20,6 +20,8 @@ import { GENERATED_MARKER } from "../../discovery/files";
 
 // Import config loader
 import { loadConfig, resolveRulesForFile, resolveConfiguredSeverity, findProjectRoot } from "../../lint/config";
+import { loadChantConfig } from "../../config";
+import type { LintProjectConfig } from "../../lint/rule";
 
 /**
  * Type guard to check if a value conforms to the LintRule interface.
@@ -447,6 +449,17 @@ export async function lintCommand(options: LintOptions): Promise<LintResult> {
   const config = loadConfig(projectRoot);
   const hasOverrides = config.overrides && config.overrides.length > 0;
 
+  // chant #1221 — the project's chant.config slice for config-aware rules
+  // (COR021 reads `environments` + `ownership`), threaded into every
+  // runLint() call below via LintContext.projectConfig. Best-effort: a
+  // directory with no project config lints with those rules silent.
+  let projectConfig: LintProjectConfig | undefined;
+  try {
+    projectConfig = (await loadChantConfig(projectRoot)).config as LintProjectConfig;
+  } catch {
+    projectConfig = undefined;
+  }
+
   // Load all rules from lexicon plugins (core "chant" + lexicon-specific)
   const loaded = await loadAllPluginRules(projectRoot);
   let allRules = loaded.rules;
@@ -470,7 +483,7 @@ export async function lintCommand(options: LintOptions): Promise<LintResult> {
   let diagnostics: LintDiagnostic[];
   let suppressed: Array<LintDiagnostic & { reason?: string }> = [];
   if (options.rules) {
-    const result = await runLint(files, options.rules, undefined, intrinsics);
+    const result = await runLint(files, options.rules, undefined, intrinsics, projectConfig);
     diagnostics = result.diagnostics;
     suppressed = result.suppressed;
   } else if (hasOverrides) {
@@ -478,13 +491,13 @@ export async function lintCommand(options: LintOptions): Promise<LintResult> {
     for (const file of files) {
       const relativePath = relative(projectRoot, file);
       const { rules: fileRules, ruleOptions } = getDefaultRules(projectRoot, relativePath, allRules);
-      const result = await runLint([file], fileRules, ruleOptions, intrinsics);
+      const result = await runLint([file], fileRules, ruleOptions, intrinsics, projectConfig);
       diagnostics.push(...result.diagnostics);
       suppressed.push(...result.suppressed);
     }
   } else {
     const { rules, ruleOptions } = getDefaultRules(projectRoot, undefined, allRules);
-    const result = await runLint(files, rules, ruleOptions, intrinsics);
+    const result = await runLint(files, rules, ruleOptions, intrinsics, projectConfig);
     diagnostics = result.diagnostics;
     suppressed = result.suppressed;
   }
@@ -518,7 +531,7 @@ export async function lintCommand(options: LintOptions): Promise<LintResult> {
 
     // Re-lint after fixes to get updated diagnostics
     if (options.rules) {
-      const postResult = await runLint(files, options.rules, undefined, intrinsics);
+      const postResult = await runLint(files, options.rules, undefined, intrinsics, projectConfig);
       diagnostics = postResult.diagnostics;
       suppressed = postResult.suppressed;
     } else if (hasOverrides) {
@@ -527,13 +540,13 @@ export async function lintCommand(options: LintOptions): Promise<LintResult> {
       for (const file of files) {
         const relativePath = relative(projectRoot, file);
         const { rules: fileRules, ruleOptions } = getDefaultRules(projectRoot, relativePath, allRules);
-        const postResult = await runLint([file], fileRules, ruleOptions, intrinsics);
+        const postResult = await runLint([file], fileRules, ruleOptions, intrinsics, projectConfig);
         diagnostics.push(...postResult.diagnostics);
         suppressed.push(...postResult.suppressed);
       }
     } else {
       const { rules, ruleOptions } = getDefaultRules(projectRoot, undefined, allRules);
-      const postResult = await runLint(files, rules, ruleOptions, intrinsics);
+      const postResult = await runLint(files, rules, ruleOptions, intrinsics, projectConfig);
       diagnostics = postResult.diagnostics;
       suppressed = postResult.suppressed;
     }
