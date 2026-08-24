@@ -9,6 +9,7 @@ export * from "./composite";
 export * from "./provenance";
 export * from "./secret-provenance";
 export * from "./secret-materialization";
+export * from "./effect-receipt";
 export * from "./build-params";
 export * from "./intrinsic";
 export * from "./types";
