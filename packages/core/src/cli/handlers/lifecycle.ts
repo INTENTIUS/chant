@@ -30,7 +30,9 @@ import { discoverComponents } from "../../components/discover";
 import { cfnDeployStacks } from "./components";
 import { affectedStacks } from "../../lifecycle/affected";
 import { rollbackToRevision } from "../../lifecycle/rollback";
-import { loadChantConfig, environmentNames, matchesDeclaredEnvironment } from "../../config";
+import { loadChantConfig, environmentNames, matchesDeclaredEnvironment, resolveOwnershipStack } from "../../config";
+import { unknownEnvError } from "../../env";
+import { planTeardown } from "../../lifecycle/teardown";
 import { collectBuildRootContributors } from "../plugins";
 import { applyLiveEndpoint } from "../../live-endpoint";
 import { isResourceDeclarable } from "../../declarable";
@@ -1241,6 +1243,118 @@ export async function runLifecyclePlan(ctx: CommandContext): Promise<number> {
 }
 
 /**
+ * chant lifecycle teardown <environment> (#1222) — plan only.
+ *
+ * Enumerates what deleting the environment would remove: every live resource
+ * carrying this project's ownership marker (managed-by + `ownership.stack`)
+ * with the requested env identity. Stateless — live markers only, no build, no
+ * snapshot. Nothing is deleted on this path; `--yes` is reserved for the
+ * execution half and errors loudly until that exists, so the flag surface is
+ * stable now.
+ */
+export async function runLifecycleTeardown(ctx: CommandContext): Promise<number> {
+  const { args, plugins } = ctx;
+  const environment = args.extraPositional;
+
+  if (!environment) {
+    console.error(formatError({ message: "Environment is required: chant lifecycle teardown <environment>" }));
+    return 1;
+  }
+
+  const { config } = await loadChantConfig(resolve("."));
+
+  // Refuse an env the project does not declare — a typo here is the difference
+  // between tearing down `dev` and tearing down `prod`. Literal `environments`
+  // entries only (#1221's pattern entries would extend this same check).
+  const envErr = unknownEnvError(environment, config.environments);
+  if (envErr) {
+    console.error(formatError({ message: envErr }));
+    return 1;
+  }
+
+  if (args.yes) {
+    console.error(formatError({
+      message: "--yes: teardown execution is not yet implemented (#1222)",
+      hint: "Run without --yes to see the plan. The flag is reserved for the execution half.",
+    }));
+    return 1;
+  }
+
+  // Teardown selects on the ownership marker; a project that stamps none has
+  // nothing to key on, and "delete what looks like mine" is not a fallback.
+  const stack = resolveOwnershipStack(config);
+  if (stack === undefined) {
+    console.error(formatError({
+      message: "This project declares no ownership.stack — teardown is marker-scoped and has nothing to select on",
+      hint: 'Set `ownership: { stack: "<name>" }` in chant.config.ts and deploy, so resources carry the marker teardown keys on.',
+    }));
+    return 1;
+  }
+
+  // #1166 — teardown planning is always a live read, so an environment's
+  // declared endpoint applies here too, unless the ambient shell already set it.
+  const readingPlugins = plugins.filter((p) => p.teardownOwned || p.describeResources);
+  const endpointResult = applyLiveEndpoint(config.environments, environment, readingPlugins);
+  if (endpointResult.notice) console.error(formatWarning({ message: endpointResult.notice }));
+
+  let plan;
+  try {
+    plan = await planTeardown({ environment, stack, plugins });
+  } finally {
+    endpointResult.restore();
+  }
+
+  if (args.json) {
+    console.log(JSON.stringify(plan, null, 2));
+    return 0;
+  }
+
+  console.log(formatBold(`Teardown plan — environment: ${environment}, stack: ${stack} (plan only — nothing is deleted)`));
+
+  if (plan.entries.length === 0) {
+    console.error(formatWarning({
+      message: `No live resources carry the marker stack "${stack}" + env "${environment}" — nothing would be deleted.` +
+        (plan.holes.length > 0
+          ? " But this plan has holes (below) — parts of the estate could not be read, so \"nothing\" is a claim about what was readable, not about the environment."
+          : " If this environment is deployed, check that its resources were stamped (ownership marking on, and the env identity resolved at build time)."),
+    }));
+  } else {
+    console.log(`\n${plan.entries.length} resource(s) would be deleted:`);
+    console.log("RESOURCE".padEnd(28) + "TYPE".padEnd(32) + "MARKER".padEnd(24) + "LEXICON");
+    console.log("-".repeat(96));
+    for (const entry of plan.entries) {
+      console.log(
+        entry.name.padEnd(28) +
+        entry.type.padEnd(32) +
+        `${entry.marker.stack}/${entry.marker.env}`.padEnd(24) +
+        entry.lexicon,
+      );
+    }
+  }
+
+  // Holes are loud (#1089): an unreadable kind is unknown, not absent, and the
+  // execution half must not treat this plan as the whole delete set.
+  if (plan.holes.length > 0) {
+    console.error(formatWarning({
+      message: `${plan.holes.length} hole(s) — resources chant may own but could not read. This plan is incomplete, not clean.`,
+    }));
+    console.log(formatBold("\nHOLES (stamped kinds the read could not cover):"));
+    for (const hole of plan.holes) {
+      console.log(`  ? ${hole.lexicon}: ${hole.name}${hole.type ? ` (${hole.type})` : ""} — ${hole.reason}${hole.detail ? `: ${hole.detail}` : ""}`);
+    }
+  }
+
+  if (plan.skipped.length > 0) {
+    console.error(formatWarning({
+      message: `Skipped (no teardown enumeration and no describeResources): ${plan.skipped.join(", ")} — those lexicons' resources are not in this plan.`,
+    }));
+  }
+
+  console.error(formatWarning({ message: "Plan only — execution (--yes) arrives in a later #1222 PR." }));
+  return 0;
+}
+
+/**
  * chant lifecycle log [environment]
  */
 export async function runLifecycleLog(ctx: CommandContext): Promise<number> {
@@ -1268,7 +1382,7 @@ export async function runLifecycleLog(ctx: CommandContext): Promise<number> {
 export async function runLifecycleUnknown(ctx: CommandContext): Promise<number> {
   console.error(formatError({
     message: `Unknown state subcommand: ${ctx.args.extraPositional ?? ctx.args.path}`,
-    hint: "Available: chant lifecycle snapshot, chant lifecycle show, chant lifecycle diff, chant lifecycle plan, chant lifecycle log",
+    hint: "Available: chant lifecycle snapshot, chant lifecycle show, chant lifecycle diff, chant lifecycle plan, chant lifecycle teardown, chant lifecycle log",
   }));
   return 1;
 }

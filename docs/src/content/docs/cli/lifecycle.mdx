@@ -13,6 +13,7 @@ chant lifecycle diff <env> [--live] [--src <dir>]
 chant lifecycle diff <env> --between <refA> <refB> [lexicon] [--json]
 chant lifecycle plan <env> [lexicon] [--json] [--owned] [--report gitlab-mr] [--src <dir>]
 chant lifecycle affected --base <ref> [--head <ref>] [--include-dependents] [--json]
+chant lifecycle teardown <env> [--json]
 chant lifecycle log [env]
 ```
 
@@ -350,6 +351,23 @@ The same shape works from an Op you write — `affected` is the primitive; the f
 | `--head <ref>` | Head ref (default: the working tree). |
 | `--include-dependents` | Add downstream consumers of changed stacks. |
 | `--json` | Emit the result as JSON. |
+
+### `lifecycle teardown <env>`
+
+Plan what deleting an environment would remove. **Plan only for now** — this command enumerates and prints; the execution half (`--yes`) is forthcoming under [#1222](https://github.com/INTENTIUS/chant/issues/1222) and currently errors.
+
+```bash
+chant lifecycle teardown dev
+chant lifecycle teardown dev --json
+```
+
+Selection is marker-scoped by construction: a resource is in the plan only when its own [ownership marker](/chant/configuration/config-file/#ownership) carries this project's `ownership.stack` **and** the requested environment. Unmarked resources, another stack's resources, and another environment's resources are never candidates. The read is stateless — live markers only, no build, no snapshot.
+
+The environment must be declared in `chant.config.ts` under `environments`; an unknown name exits nonzero. A project with no `ownership.stack` is refused: teardown has nothing to select on.
+
+Per lexicon, the plan comes from the `teardownOwned` capability where a lexicon implements one, falling back to `describeResources` plus the per-resource marker identity otherwise. Kinds a lexicon stamps but cannot read back are reported as **holes** — a plan with holes is incomplete, not clean, and says so. An empty would-delete set is also reported loudly rather than exiting silently.
+
+The same enumeration is exported as `planTeardown()` from `@intentius/chant` for programmatic use (a test-environment harness tearing down in `afterAll`, for example).
 
 ### `lifecycle log [env]`
 

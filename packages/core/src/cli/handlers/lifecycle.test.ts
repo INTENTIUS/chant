@@ -53,7 +53,7 @@ vi.mock("../../config", async () => {
   };
 });
 
-const { runLifecycleDiff, runLifecyclePlan, runLifecycleSnapshot, runLifecycleShow, runLifecycleLog, runLifecycleUnknown } = await import("./lifecycle");
+const { runLifecycleDiff, runLifecyclePlan, runLifecycleSnapshot, runLifecycleShow, runLifecycleLog, runLifecycleTeardown, runLifecycleUnknown } = await import("./lifecycle");
 
 function makeArgs(overrides: Partial<ParsedArgs>): ParsedArgs {
   return {
@@ -1218,5 +1218,134 @@ describe("runLifecycleUnknown", () => {
     expect(stderr).toContain("show");
     expect(stderr).toContain("diff");
     expect(stderr).toContain("log");
+  });
+});
+
+describe("runLifecycleTeardown (#1222 — plan only)", () => {
+  let stdoutBuf: string[];
+  let stderrBuf: string[];
+
+  beforeEach(() => {
+    stdoutBuf = [];
+    stderrBuf = [];
+    vi.spyOn(console, "log").mockImplementation((s: string) => { stdoutBuf.push(s); });
+    vi.spyOn(console, "error").mockImplementation((s: string) => { stderrBuf.push(s); });
+    loadChantConfigMock.mockReset();
+    loadChantConfigMock.mockResolvedValue({
+      config: { environments: ["dev", "prod"], ownership: { stack: "shop", env: "dev" } },
+    });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  const run = (overrides: Partial<ParsedArgs>, plugins: LexiconPlugin[]) =>
+    runLifecycleTeardown({
+      args: makeArgs({ command: "lifecycle", path: "teardown", ...overrides }),
+      plugins,
+      serializers: [],
+    });
+
+  test("requires an environment", async () => {
+    expect(await run({}, [])).toBe(1);
+    expect(stderrBuf.join("\n")).toContain("Environment is required");
+  });
+
+  test("exits nonzero on an environment the project does not declare", async () => {
+    expect(await run({ extraPositional: "staging" }, [])).toBe(1);
+    const stderr = stderrBuf.join("\n");
+    expect(stderr).toContain('Unknown environment "staging"');
+    expect(stderr).toContain("dev, prod");
+  });
+
+  test("--yes errors — execution is not implemented yet", async () => {
+    const teardownOwned = vi.fn();
+    const plugin = createMockPlugin({ name: "k8s", teardownOwned });
+    expect(await run({ extraPositional: "dev", yes: true }, [plugin])).toBe(1);
+    expect(stderrBuf.join("\n")).toContain("not yet implemented (#1222)");
+    expect(teardownOwned).not.toHaveBeenCalled();
+  });
+
+  test("refuses when the project declares no ownership.stack", async () => {
+    loadChantConfigMock.mockResolvedValue({ config: { environments: ["dev"] } });
+    expect(await run({ extraPositional: "dev" }, [])).toBe(1);
+    expect(stderrBuf.join("\n")).toContain("no ownership.stack");
+  });
+
+  test("prints the would-delete set with resource, type, and marker identity", async () => {
+    const plugin = createMockPlugin({
+      name: "k8s",
+      teardownOwned: async () => ({
+        candidates: [
+          { name: "web", type: "K8s::Apps::Deployment", physicalId: "web-1", marker: { stack: "shop", env: "dev" } },
+        ],
+      }),
+    });
+    expect(await run({ extraPositional: "dev" }, [plugin])).toBe(0);
+    const out = stdoutBuf.join("\n");
+    expect(out).toContain("Teardown plan");
+    expect(out).toContain("plan only");
+    expect(out).toContain("web");
+    expect(out).toContain("K8s::Apps::Deployment");
+    expect(out).toContain("shop/dev");
+    expect(stderrBuf.join("\n")).toContain("execution (--yes) arrives in a later #1222 PR");
+  });
+
+  test("never selects foreign-stack or foreign-env resources on the fallback path", async () => {
+    const plugin = createMockPlugin({
+      name: "k8s",
+      describeResources: staticObservation({
+        mine: { type: "K8s::Apps::Deployment", status: "READY", marker: { stack: "shop", env: "dev" } },
+        theirs: { type: "K8s::Apps::Deployment", status: "READY", marker: { stack: "blog", env: "dev" } },
+        prodTwin: { type: "K8s::Apps::Deployment", status: "READY", marker: { stack: "shop", env: "prod" } },
+        unmarked: { type: "K8s::Apps::Deployment", status: "READY" },
+      }),
+    });
+    expect(await run({ extraPositional: "dev" }, [plugin])).toBe(0);
+    const out = stdoutBuf.join("\n");
+    expect(out).toContain("mine");
+    expect(out).not.toContain("theirs");
+    expect(out).not.toContain("prodTwin");
+    expect(out).not.toContain("unmarked");
+  });
+
+  test("an empty would-delete set is loud, not silent", async () => {
+    const plugin = createMockPlugin({
+      name: "k8s",
+      teardownOwned: async () => ({ candidates: [] }),
+    });
+    expect(await run({ extraPositional: "dev" }, [plugin])).toBe(0);
+    expect(stderrBuf.join("\n")).toContain("nothing would be deleted");
+  });
+
+  test("holes are surfaced loudly (#1089)", async () => {
+    const plugin = createMockPlugin({
+      name: "k8s",
+      teardownOwned: async () => ({
+        candidates: [],
+        holes: [{ name: "crds", type: "K8s::CRD", reason: "unsupported-kind" as const, detail: "no reader" }],
+      }),
+    });
+    expect(await run({ extraPositional: "dev" }, [plugin])).toBe(0);
+    expect(stderrBuf.join("\n")).toContain("incomplete, not clean");
+    const out = stdoutBuf.join("\n");
+    expect(out).toContain("HOLES");
+    expect(out).toContain("crds");
+    expect(out).toContain("unsupported-kind");
+  });
+
+  test("--json emits the plan as JSON", async () => {
+    const plugin = createMockPlugin({
+      name: "k8s",
+      teardownOwned: async () => ({
+        candidates: [{ name: "web", type: "K8s::Apps::Deployment", marker: { stack: "shop", env: "dev" } }],
+      }),
+    });
+    expect(await run({ extraPositional: "dev", json: true }, [plugin])).toBe(0);
+    const parsed = JSON.parse(stdoutBuf.join("\n"));
+    expect(parsed.environment).toBe("dev");
+    expect(parsed.stack).toBe("shop");
+    expect(parsed.entries).toHaveLength(1);
   });
 });
