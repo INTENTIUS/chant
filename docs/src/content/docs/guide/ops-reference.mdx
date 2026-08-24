@@ -118,8 +118,9 @@ upsertSearchAttributes({ "Drift": [String(__r0?.drifted)] });
 | `kubectl` | a sweep filtered by `app.kubernetes.io/managed-by=chant` (and by the stack when `ownership.stack` is set), restricted to the namespaces the apply touched | the ownership marker — an unmarked object is never touched |
 | `arm` | `pruneArmOrphans`, which lists the resource group and deletes only resources carrying chant's ownership tag | the ownership tag — an untagged resource is never touched |
 | `cloudformation` | the stack deletes resources removed from its template | the stack — a resource CloudFormation did not create is not in it |
+| `gcp` | `gcpApply`'s prune, which lists each manifested kind and deletes only resources carrying chant's ownership label | the ownership label — an unlabeled resource is never touched; a kind the lexicon cannot list is reported not-prunable rather than pruned |
 
-All three are owned-only by construction.
+All of them are owned-only by construction.
 
 <Aside type="note" title="`arm` used to delete at resource-group scope">
 Before [#1448](https://github.com/INTENTIUS/chant/issues/1448), the ARM target ran `az deployment group create --mode Complete`, which removes every resource in the resource group the template does not declare — including resources chant never applied. Both `owned-only` and `gated` selected it, so neither was owned-only on that target.

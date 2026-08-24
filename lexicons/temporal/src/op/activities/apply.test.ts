@@ -1,6 +1,6 @@
 import { describe, test, expect } from "vitest";
 import { defaultOutput, nativeApply, compensateApply } from "./apply";
-import type { K8sApplier, AzureApplier, AwsApplier, AwsRollback } from "./apply";
+import type { K8sApplier, AzureApplier, GcpApplier, AwsApplier, AwsRollback } from "./apply";
 
 /**
  * The kubectl branch moved to the k8s lexicon in chant #1075, the arm branch to
@@ -197,6 +197,86 @@ describe("nativeApply: arm dispatches to the azure lexicon (chant #1448)", () =>
   });
 });
 
+describe("nativeApply: gcp dispatches to the gcp lexicon (chant #1449)", () => {
+  /** Records what the applier was handed, and reports nothing applied. */
+  const spy = (): { calls: Array<Parameters<GcpApplier>[0]>; applier: GcpApplier } => {
+    const calls: Array<Parameters<GcpApplier>[0]> = [];
+    const applier: GcpApplier = async (args) => {
+      calls.push(args);
+      return { applied: [], pruned: [], notAttempted: [], notPrunable: [] };
+    };
+    return { calls, applier };
+  };
+  /** nativeApply with only the gcp applier injected. */
+  const applyGcp = (args: Parameters<typeof nativeApply>[0], applier: GcpApplier) =>
+    nativeApply(args, undefined, undefined, undefined, undefined, undefined, applier);
+
+  test("output maps to the manifest path, and nothing else is passed", async () => {
+    const { calls, applier } = spy();
+    await applyGcp({ target: "gcp", env: "prod", output: "dist/gcp.yaml" }, applier);
+    // Exactly the mapped pair. No `endpoint` — gcpApply resolves
+    // GCP_ENDPOINT_URL itself, the same variable its read path honours; no
+    // `project` — gcpApply resolves GOOGLE_CLOUD_PROJECT / the CNRM
+    // annotation itself; and no `env` — GCP has no stack or resource-group
+    // equivalent, so env is only a log label on this target.
+    expect(calls).toEqual([{ manifestPath: "dist/gcp.yaml", prune: false }]);
+  });
+
+  test("owned-only asks the gcp applier to prune, and issues no shell command", async () => {
+    const { calls, applier } = spy();
+    await applyGcp({ target: "gcp", env: "prod", deleteMode: "owned-only" }, applier);
+    expect(calls[0].prune).toBe(true);
+  });
+
+  test("gated prunes too — same delete scope, the gate lives in the composite", async () => {
+    const { calls, applier } = spy();
+    await applyGcp({ target: "gcp", env: "prod", deleteMode: "gated" }, applier);
+    expect(calls[0].prune).toBe(true);
+  });
+
+  test("never (and the default) do not prune", async () => {
+    const explicit = spy();
+    await applyGcp({ target: "gcp", env: "prod", deleteMode: "never" }, explicit.applier);
+    expect(explicit.calls[0].prune).toBe(false);
+
+    const defaulted = spy();
+    await applyGcp({ target: "gcp", env: "prod" }, defaulted.applier);
+    expect(defaulted.calls[0].prune).toBe(false);
+  });
+
+  test("defaults the manifest path to dist/gcp.yaml", async () => {
+    const { calls, applier } = spy();
+    await applyGcp({ target: "gcp", env: "prod" }, applier);
+    expect(calls[0].manifestPath).toBe("dist/gcp.yaml");
+    expect(defaultOutput("gcp")).toBe("dist/gcp.yaml");
+  });
+
+  test("reports counts, and surfaces what was NOT attempted (#1447)", async () => {
+    const applier: GcpApplier = async () => ({
+      applied: [{}, {}],
+      pruned: [{}],
+      notAttempted: [{ kind: "PubSubTopic", name: "x", reason: "unsupported-kind" }],
+      notPrunable: [{ kind: "PubSubTopic", reason: "no-list-capability" }],
+    });
+    const result = await applyGcp({ target: "gcp", env: "prod" }, applier);
+    expect(result).toEqual({ applied: 2, pruned: 1, notAttempted: 1, notPrunable: 1 });
+  });
+
+  test("with nothing injected it resolves the real gcp lexicon's gcpApply", async () => {
+    // Same shape as the kubectl and cloudformation cases: a manifest path that
+    // does not exist fails inside gcpApply's own manifest read — reachable only
+    // if the dynamic import found the lexicon — and it fails before any HTTP
+    // call, so nothing goes near GCP or an emulator.
+    const err = await nativeApply({
+      target: "gcp",
+      env: "prod",
+      output: "/nonexistent/chant-1449-gcp.yaml",
+    }).catch((e: unknown) => e);
+    expect(String(err)).toMatch(/ENOENT|no such file/);
+    expect(String(err)).not.toMatch(/could not be loaded/);
+  });
+});
+
 describe("nativeApply: cloudformation dispatches to the aws lexicon (chant #1449)", () => {
   /** Records what the applier was handed, and reports a settled create. */
   const spy = (): { calls: Array<Parameters<AwsApplier>[0]>; applier: AwsApplier } => {
@@ -294,8 +374,8 @@ describe("compensateApply: cloudformation rolls back through the aws lexicon (ch
     expect(result).toEqual({ command: "echo custom-rollback" });
   });
 
-  test("kubectl / kustomize / arm without a command warn and revert nothing", async () => {
-    for (const target of ["kubectl", "kustomize", "arm"] as const) {
+  test("kubectl / kustomize / arm / gcp without a command warn and revert nothing", async () => {
+    for (const target of ["kubectl", "kustomize", "arm", "gcp"] as const) {
       const result = await compensateApply({ target, env: "prod" });
       expect(result).toEqual({});
     }
@@ -324,9 +404,10 @@ describe("compensateApply: cloudformation rolls back through the aws lexicon (ch
 });
 
 describe('defaultOutput (target-aware apply output)', () => {
-  test('kubectl → dist (dir); cloudformation/arm → template.json (file)', () => {
+  test('kubectl → dist (dir); cloudformation/arm → template.json (file); gcp → dist/gcp.yaml', () => {
     expect(defaultOutput('kubectl')).toBe('dist');
     expect(defaultOutput('cloudformation')).toBe('template.json');
     expect(defaultOutput('arm')).toBe('template.json');
+    expect(defaultOutput('gcp')).toBe('dist/gcp.yaml');
   });
 });

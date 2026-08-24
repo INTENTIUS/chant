@@ -8,9 +8,10 @@
  * Phases: build → plan → [approve] → apply. Deletes ride the native
  * prune path, whose bound is per target: the ownership marker on `kubectl`,
  * the ownership tag on `arm` (chant #1448 — previously `--mode Complete`, which
- * removed resources chant never applied), and the stack itself on
- * `cloudformation`, which a resource CFN did not create is not in. All three
- * are owned-only. See {@link DeleteMode}.
+ * removed resources chant never applied), the ownership label on `gcp`
+ * (chant #1449), and the stack itself on `cloudformation`, which a resource
+ * CFN did not create is not in. All of them are owned-only. See
+ * {@link DeleteMode}.
  *
  * An ungated apply may run on the local Op executor; a gated apply needs
  * Temporal for the durable approval wait (added in #125).
@@ -39,12 +40,14 @@ import { defaultOutput, type ApplyTarget, type DeleteMode } from "../op/activiti
 export interface ApplyOpConfig {
   /** Op name (kebab-case). */
   name: string;
-  /** Environment — CFN stack name / ARM resource group / kube context env. */
+  /** Environment — CFN stack name / ARM resource group / kube context env;
+   * a log label on `gcp`. */
   env: string;
   /** Native apply mechanism. Default: "kubectl". */
   target?: ApplyTarget;
   /** Built manifest/template path. Default per target: `dist` (dir) for kubectl,
-   * `template.json` (file) for CloudFormation/ARM. Must match your build output. */
+   * `template.json` (file) for CloudFormation/ARM, `dist/gcp.yaml` for gcp.
+   * Must match your build output. */
   output?: string;
   /** Project directory to build. Default: ".". */
   path?: string;

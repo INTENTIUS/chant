@@ -32,6 +32,7 @@ export {
   type GcpNotPrunable,
   chantOwnershipLabels,
   isChantOwned,
+  resolveGcpEndpoint,
   resolveGcpProject,
   parseManifest,
 } from "./gcp-apply";

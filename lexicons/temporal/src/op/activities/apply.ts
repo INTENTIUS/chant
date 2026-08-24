@@ -15,9 +15,12 @@
  *
  * So each branch moved to its product's lexicon: `kubectl`/`kustomize` are a
  * server-side apply over the k8s lexicon's typed client (#1075, #1548), `arm`
- * is the azure lexicon's per-resource `azApply` (#1448), and `cloudformation`
+ * is the azure lexicon's per-resource `azApply` (#1448), `cloudformation`
  * is the aws lexicon's `awsApply` — the CloudFormation Query API directly, no
- * CLI in the path (#1449). **The dispatcher stayed here**, because "which
+ * CLI in the path (#1449) — and `gcp` is the gcp lexicon's per-resource
+ * `gcpApply`, which never had a CLI to shell out to in the first place: GCP
+ * has no native deploy service, so the lexicon maps each CNRM kind to its
+ * REST API itself. **The dispatcher stayed here**, because "which
  * mechanism applies this target" is not any one product's knowledge — and
  * because the activity keeps its name, its arguments and its place in
  * `ApplyOp`, so no existing Op changes shape.
@@ -34,7 +37,7 @@ import { promisify } from "node:util";
 const execAsync = promisify(exec);
 
 /** The native apply mechanism for a target. */
-export type ApplyTarget = "cloudformation" | "kubectl" | "arm" | "kustomize";
+export type ApplyTarget = "cloudformation" | "kubectl" | "arm" | "kustomize" | "gcp";
 
 /**
  * How apply treats resources no longer declared.
@@ -42,8 +45,10 @@ export type ApplyTarget = "cloudformation" | "kubectl" | "arm" | "kustomize";
  * - `owned-only` — enables the target's own delete path. What bounds that path
  *   differs per target, and all of them are genuinely owned-only: `kubectl`
  *   sweeps by the ownership marker, `arm` prunes by the ownership tag
- *   (`isChantOwned`, via the azure lexicon's `azApply`), and `cloudformation`
- *   is bounded by the stack — which holds, because a resource CFN did not
+ *   (`isChantOwned`, via the azure lexicon's `azApply`), `gcp` prunes by the
+ *   ownership label (via the gcp lexicon's `gcpApply` — only kinds it can
+ *   list; the rest are reported not-prunable), and `cloudformation` is
+ *   bounded by the stack — which holds, because a resource CFN did not
  *   create is not in the stack.
  * - `gated` — same delete scope as `owned-only`, but the workflow pauses for
  *   approval before the destructive apply (the gate lives in the composite).
@@ -53,10 +58,15 @@ export type DeleteMode = "never" | "owned-only" | "gated";
 export interface NativeApplyArgs {
   /** Native mechanism to delegate to. */
   target: ApplyTarget;
-  /** Environment — CFN stack name / ARM resource group / chant environment. */
+  /** Environment. What it means is per target: the CFN stack name on
+   * `cloudformation`, the ARM resource group on `arm`, the chant environment
+   * on `kubectl`/`kustomize`. On `gcp` it is a log label only — the applier
+   * resolves the project (`GOOGLE_CLOUD_PROJECT` env / CNRM annotation) and
+   * endpoint (`GCP_ENDPOINT_URL` env) itself. */
   env: string;
   /** Built manifest/template path. Default per target ({@link defaultOutput}):
-   * `dist` (a dir) for kubectl, `template.json` (a file) for CloudFormation/ARM. */
+   * `dist` (a dir) for kubectl, `template.json` (a file) for
+   * CloudFormation/ARM, `dist/gcp.yaml` for gcp. */
   output?: string;
   /** Delete handling. Default: never. */
   deleteMode?: DeleteMode;
@@ -71,10 +81,14 @@ export interface NativeApplyArgs {
 
 /** What an apply did. Shaped by the target, since the targets differ. */
 export interface NativeApplyResult {
-  /** Objects server-side applied — kubectl/kustomize; resources PUT — arm. */
+  /** Objects server-side applied — kubectl/kustomize; resources PUT — arm/gcp. */
   applied?: number;
-  /** Objects pruned because they carried chant's marker and are no longer declared — kubectl/arm. */
+  /** Objects pruned because they carried chant's marker and are no longer declared — kubectl/arm/gcp. */
   pruned?: number;
+  /** Declared resources no call was made for (#1447) — gcp. Zero on a complete apply. */
+  notAttempted?: number;
+  /** Kinds the prune could not consider — gcp. Zero when the prune is off. */
+  notPrunable?: number;
   /** The field manager the apply claimed ownership as — kubectl. */
   fieldManager?: string;
   /** The stack deployed — cloudformation. */
@@ -116,6 +130,32 @@ export type AzureApplier = (
   },
   signal?: AbortSignal,
 ) => Promise<{ applied: unknown[]; pruned: unknown[] }>;
+
+/**
+ * The gcp lexicon's per-resource applier, as this module needs to call it
+ * (#1449). Structural, so nothing here imports the gcp lexicon's types — same
+ * shape as {@link K8sApplier} and {@link AzureApplier}.
+ *
+ * Deliberately narrow: no `endpoint`, because `gcpApply` resolves
+ * `GCP_ENDPOINT_URL` itself — the same variable gcp's read path honours, so an
+ * apply lands wherever `--live` is already looking (floci-gcp, or real GCP
+ * when unset); and no `project`, because `gcpApply` resolves
+ * `GOOGLE_CLOUD_PROJECT` / the CNRM project-id annotation itself.
+ */
+export type GcpApplier = (
+  args: {
+    manifestPath: string;
+    prune?: boolean;
+  },
+  signal?: AbortSignal,
+) => Promise<{
+  applied: unknown[];
+  pruned: unknown[];
+  /** Declared resources no REST call was made for (#1447). */
+  notAttempted: unknown[];
+  /** Kinds the prune could not consider. */
+  notPrunable: unknown[];
+}>;
 
 /**
  * The aws lexicon's CloudFormation applier, as this module needs to call it
@@ -219,6 +259,31 @@ async function loadAzureApplier(): Promise<AzureApplier> {
 }
 
 /**
+ * Load the gcp lexicon's `gcpApply` (#1449). Same variable-specifier trick as
+ * {@link loadK8sApplier}, for the same reason.
+ */
+async function loadGcpApplier(): Promise<GcpApplier> {
+  const spec = "@intentius/chant-lexicon-gcp/op/activities";
+  let mod: { gcpApply?: GcpApplier };
+  try {
+    mod = (await import(spec)) as { gcpApply?: GcpApplier };
+  } catch (err) {
+    throw new Error(
+      `apply target "gcp" needs @intentius/chant-lexicon-gcp, which could not be loaded ` +
+        `(${err instanceof Error ? err.message : String(err)}). GCP applies go through the gcp ` +
+        `lexicon's native applier since chant #1449; install the gcp lexicon and list it ` +
+        `in chant.config.ts.`,
+    );
+  }
+  if (typeof mod.gcpApply !== "function") {
+    throw new Error(
+      "the installed @intentius/chant-lexicon-gcp exports no gcpApply — it predates chant #706",
+    );
+  }
+  return mod.gcpApply;
+}
+
+/**
  * Load the aws lexicon's `awsApply` (#1449). Same variable-specifier trick as
  * {@link loadK8sApplier}, for the same reason.
  */
@@ -269,27 +334,36 @@ async function loadAwsRollback(): Promise<AwsRollback> {
 }
 
 /**
- * Sensible default build output per target. kubectl `apply -f` takes a directory
- * (all manifests), so `dist`. CloudFormation/ARM `--template-file` needs a single
- * template *file* — a directory is rejected ("Invalid template path") — so the
- * conventional `template.json`. Pure — exported for testing.
+ * Sensible default build output per target. kubectl takes a directory (all
+ * manifests), so `dist`; kustomize's "output" is the kustomization DIRECTORY
+ * the render reads. The file targets take the file their lexicon's build
+ * conventionally emits: `template.json` for CloudFormation/ARM, `dist/gcp.yaml`
+ * (the CNRM manifest) for gcp. Pure — exported for testing.
  */
 export function defaultOutput(target: ApplyTarget): string {
-  // kustomize's "output" is the kustomization DIRECTORY the render reads.
-  return target === "kubectl" || target === "kustomize" ? "dist" : "template.json";
+  switch (target) {
+    case "kubectl":
+    case "kustomize":
+      return "dist";
+    case "gcp":
+      return "dist/gcp.yaml";
+    default:
+      return "template.json";
+  }
 }
 
 /**
  * Apply declared source to the cloud via the target's native mechanism.
  * Deletes (when enabled) ride that mechanism's own delete path — marker-scoped
- * on `kubectl`, tag-scoped on `arm`, and stack-scoped on `cloudformation`,
- * where the deploy itself removes resources dropped from the template and
- * `deleteMode` changes nothing: a resource CFN did not create is not in the
- * stack. See {@link DeleteMode}.
+ * on `kubectl`, tag-scoped on `arm`, label-scoped on `gcp`, and stack-scoped
+ * on `cloudformation`, where the deploy itself removes resources dropped from
+ * the template and `deleteMode` changes nothing: a resource CFN did not create
+ * is not in the stack. See {@link DeleteMode}.
  *
  * The appliers are injectable so this dispatcher can be tested without the
  * product lexicons present; production resolves them through
- * {@link loadK8sApplier} / {@link loadAzureApplier} / {@link loadAwsApplier}.
+ * {@link loadK8sApplier} / {@link loadAzureApplier} / {@link loadAwsApplier} /
+ * {@link loadGcpApplier}.
  */
 export async function nativeApply(
   args: NativeApplyArgs,
@@ -298,6 +372,7 @@ export async function nativeApply(
   azureApplier?: AzureApplier,
   renderer: (dir: string) => Promise<Array<Record<string, unknown>>> = renderKustomization,
   awsApplier?: AwsApplier,
+  gcpApplier?: GcpApplier,
 ): Promise<NativeApplyResult> {
   const output = args.output ?? defaultOutput(args.target);
   const deleteMode = args.deleteMode ?? "never";
@@ -352,6 +427,34 @@ export async function nativeApply(
     return { applied: result.applied.length, pruned: result.pruned.length };
   }
 
+  if (args.target === "gcp") {
+    // gcp (#1449): the gcp lexicon's per-resource applier. Only the manifest
+    // path and the prune switch cross this seam — endpoint (`GCP_ENDPOINT_URL`)
+    // and project (`GOOGLE_CLOUD_PROJECT` / CNRM annotation) are gcpApply's own
+    // env resolution, and `env` is a log label here: GCP has no stack or
+    // resource-group equivalent for it to name.
+    const apply = gcpApplier ?? (await loadGcpApplier());
+    const result = await apply({ manifestPath: output, prune: deleteMode !== "never" }, signal);
+    console.log(
+      `[${args.env}] applied ${result.applied.length} resource(s)` +
+        (result.pruned.length > 0 ? `; pruned ${result.pruned.length}` : ""),
+    );
+    // #1447: a kind the applier has no mapper (or list capability) for is
+    // reported, not dropped — otherwise a partial apply reads as a full one.
+    if (result.notAttempted.length > 0) {
+      console.warn(`[${args.env}] NOT applied (no mapper): ${result.notAttempted.length} resource(s)`);
+    }
+    if (result.notPrunable.length > 0) {
+      console.warn(`[${args.env}] not prunable (no list capability): ${result.notPrunable.length} kind(s)`);
+    }
+    return {
+      applied: result.applied.length,
+      pruned: result.pruned.length,
+      notAttempted: result.notAttempted.length,
+      notPrunable: result.notPrunable.length,
+    };
+  }
+
   // cloudformation (#1449): the aws lexicon's native applier. env is the stack
   // name and output the template path; endpoint resolution (#1694) and
   // capability derivation (#980) are awsApply's own, so nothing else is passed.
@@ -388,7 +491,7 @@ export interface CompensateApplyResult {
  * explicit `command` if given; otherwise `cloudformation` rolls back natively
  * through the aws lexicon's `rollbackStack` (#1449 — CloudFormation
  * `RollbackStack` over the Query API, no CLI in the path). Where no automatic
- * rollback exists (kubectl/kustomize/arm without a `command`), it warns rather
+ * rollback exists (kubectl/kustomize/arm/gcp without a `command`), it warns rather
  * than silently no-op'ing — partial state should never look reverted when it
  * isn't.
  *

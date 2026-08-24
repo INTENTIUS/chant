@@ -51,6 +51,7 @@ export type {
   DeleteMode,
   K8sApplier,
   AzureApplier,
+  GcpApplier,
   AwsApplier,
   AwsRollback,
 } from "./apply";

@@ -297,13 +297,15 @@ export const awsDelete = (templatePath: string, opts?: Record<string, unknown>):
 };
 
 /**
- * Apply chant's built GCP (CNRM) resources directly to the GCS REST API,
+ * Apply chant's built GCP (CNRM) resources directly to their GCP REST APIs,
  * targeting a local floci-gcp emulator or real GCP by endpoint override — the
- * native GCP applier (#706 starter #711), currently handling `StorageBucket`.
- * Defaults to the `longInfra` profile (override via `opts.profile`).
+ * native GCP applier (#706 starter #711). `nativeApply({ target: "gcp" })`
+ * routes here too (#1449). Defaults to the `longInfra` profile (override via
+ * `opts.profile`).
  *
- * `opts` accepts `endpoint` (default `STORAGE_EMULATOR_HOST` env / real GCS) and
- * `project` (default `GOOGLE_CLOUD_PROJECT` env / the CNRM project-id annotation).
+ * `opts` accepts `endpoint` (default `GCP_ENDPOINT_URL` env / each kind's
+ * real-GCP host) and `project` (default `GOOGLE_CLOUD_PROJECT` env / the CNRM
+ * project-id annotation).
  */
 export const gcpApply = (manifestPath: string, opts?: Record<string, unknown>): ActivityStep => {
   const { args, profile } = takeProfile(opts);
