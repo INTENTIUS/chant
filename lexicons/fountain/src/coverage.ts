@@ -190,6 +190,23 @@ export function formatVerbose(report: FountainCoverageReport): string {
 }
 
 /** Run coverage analysis for the fountain lexicon. */
+/**
+ * The offline path behind `coverageReport()` (#1330): the same computation
+ * `coverage.test.ts` runs, over the committed spec snapshot and surface
+ * baseline. Never `fetchSchemas()` — check-lexicon runs on every PR and must
+ * not do network I/O.
+ */
+export function coverageReportFromSnapshots(basePath?: string): FountainCoverageReport {
+  const base = basePath ?? dirname(dirname(fileURLToPath(import.meta.url)));
+
+  const spec = readFileSync(join(base, "src", "spec", "fountain-openapi.snapshot.json"), "utf-8");
+  const surface = JSON.parse(
+    readFileSync(join(base, "surface.snapshot.json"), "utf-8"),
+  ) as SurfaceSnapshot;
+
+  return computeFountainCoverage(spec, surface);
+}
+
 export async function analyzeFountainCoverage(opts?: {
   basePath?: string;
   verbose?: boolean;

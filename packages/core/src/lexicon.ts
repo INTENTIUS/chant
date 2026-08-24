@@ -540,6 +540,23 @@ export interface LexiconPlugin {
    */
   auditCatalog?(): Record<string, RuleMeta>;
 
+  /**
+   * Machine-readable spec-coverage accounting for `check-lexicon` (#1330).
+   *
+   * `coverage()` prints a report for humans; this returns the one fact the
+   * completeness gate cares about: which upstream spec kinds are neither
+   * modeled as declarables nor on the lexicon's exclusion list. fountain held
+   * this line in a lexicon-local vitest assertion (`coverage.test.ts`), which
+   * is a convention rather than a contract — the same class of gap #1342
+   * closed for LSP providers.
+   *
+   * Implementations must work offline from committed snapshots (fountain
+   * reads `spec/fountain-openapi.snapshot.json` plus its surface baseline):
+   * `check-lexicon` runs on every PR, so no network I/O. Omit when the
+   * lexicon has no kind-level spec accounting; the check passes vacuously.
+   */
+  coverageReport?(): Promise<{ unaccountedKinds?: string[] }>;
+
   /** Return intrinsic function definitions */
   intrinsics?(): IntrinsicDef[];
 
