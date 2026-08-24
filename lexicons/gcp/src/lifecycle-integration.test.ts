@@ -176,5 +176,33 @@ describeObservationConformance({
         });
       },
     },
+    {
+      name: "a marker-stamped resource surfaces its stack/env identity; a foreign one surfaces none (#1222)",
+      declared: ["ownedBucket", "dataBucket"],
+      expectPresent: ["ownedBucket", "dataBucket"],
+      expectMarker: { ownedBucket: { stack: "shop", env: "prod" } },
+      expectNoMarker: ["dataBucket"],
+      run: () => {
+        fetchMock.mockImplementation((url: string) =>
+          Promise.resolve(
+            String(url).includes("owned-bucket")
+              ? restReply(200, {
+                  id: "b/owned-bucket",
+                  labels: { "managed-by": "chant", "chant-stack": "shop", "chant-env": "prod" },
+                })
+              : restReply(200, { id: "b/data-bucket", labels: { team: "data" } }),
+          ),
+        );
+        return gcpPlugin.describeResources!({
+          environment: "prod",
+          buildOutput: "",
+          entityNames: ["ownedBucket", "dataBucket"],
+          entities: new Map([
+            ["ownedBucket", { entityType: "GCP::Storage::Bucket", props: { metadata: { name: "owned-bucket" } } }],
+            ["dataBucket", { entityType: "GCP::Storage::Bucket", props: { metadata: { name: "data-bucket" } } }],
+          ]),
+        });
+      },
+    },
   ],
 });

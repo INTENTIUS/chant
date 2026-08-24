@@ -16,13 +16,18 @@
  *   3. **Total ownership** — every returned resource's `ownership`, when
  *      present, is `owned` / `foreign` / `unknown`. A lexicon that cannot read
  *      the marker on this path says `unknown` instead of degrading silently.
- *   4. **Unobservable ≠ absent** — the case that motivated the issue. Given a
+ *   4. **Marker identity** (#1222) — a lexicon that stamps stack/env markers
+ *      surfaces them on reads: markers are well-formed, a marker-carrying
+ *      resource on a declared describeResources channel classifies `owned`,
+ *      and scenario expectations (`expectMarker`/`expectNoMarker`) pin the
+ *      identity verbatim — absent channel, absent field.
+ *   5. **Unobservable ≠ absent** — the case that motivated the issue. Given a
  *      scenario the lexicon cannot read (an unsupported kind, a failing
  *      transport, missing credentials), the entity appears in `unobserved`,
  *      does NOT appear in `resources`, and — run through the real
  *      `buildChangeSet` — classifies as `unobserved` rather than `create`.
  *
- * Point 4 is the whole suite's reason to exist: it runs the lexicon's output
+ * Point 5 is the whole suite's reason to exist: it runs the lexicon's output
  * through core's actual change-set classifier, so a lexicon cannot pass by
  * returning a well-shaped result that still ends up proposing a create.
  */
@@ -34,7 +39,7 @@ import {
   normalizeObservation,
   type DescribeResourcesResult,
 } from "../../core/src/observation";
-import { resolvesOwnershipOn, type OwnershipChannel } from "../../core/src/ownership";
+import { resolvesOwnershipOn, type OwnershipChannel, type OwnershipMarker } from "../../core/src/ownership";
 
 /** One scenario: run the lexicon's `describeResources` under its own mocks. */
 export interface ObservationScenario {
@@ -64,6 +69,19 @@ export interface ObservationScenario {
    * `unknown` where it does not.
    */
   owned?: boolean;
+  /**
+   * Expected marker identity per entity name (#1222). A lexicon that stamps
+   * stack/env markers must also surface them on reads: each entity listed here
+   * must come back with exactly this `ResourceMetadata.marker`. The identity is
+   * verbatim — what the tags/labels carry, not what the caller wishes.
+   */
+  expectMarker?: Record<string, OwnershipMarker>;
+  /**
+   * Entity names that must surface NO marker (#1222) — the live model carries
+   * no marker channel for them, or the managed-by marker is absent. Absent
+   * channel means absent field, never a guess or an app-boundary inference.
+   */
+  expectNoMarker?: string[];
 }
 
 export interface ObservationConformanceConfig {
@@ -130,6 +148,60 @@ export function describeObservationConformance(config: ObservationConformanceCon
             ).toContain(meta.ownership);
           }
         });
+
+        it("surfaces only well-formed marker identity (#1222)", async () => {
+          const { resources } = normalizeObservation(await scenario.run());
+          for (const [name, meta] of Object.entries(resources)) {
+            if (meta.marker === undefined) continue; // absent channel → absent field
+            expect(typeof meta.marker.stack, `${name}: marker.stack must be a string`).toBe("string");
+            if (meta.marker.env !== undefined) {
+              expect(typeof meta.marker.env, `${name}: marker.env must be a string when set`).toBe("string");
+            }
+          }
+        });
+
+        if (resolvesOwnershipOn(config.ownershipChannel, "describeResources")) {
+          it("classifies every marker-carrying resource as owned, since the marker IS the channel (#1222)", async () => {
+            // On a declared describeResources channel, a surfaced marker is the
+            // managed-by stamp itself — a resource carrying one that still
+            // reads `foreign`/`unknown` read the channel and ignored it.
+            const { resources } = normalizeObservation(await scenario.run());
+            for (const [name, meta] of Object.entries(resources)) {
+              if (meta.marker === undefined) continue;
+              expect(
+                meta.ownership,
+                `${name}: surfaces a marker on ${config.lexicon}'s declared describeResources channel but classifies as "${meta.ownership ?? "unknown"}"`,
+              ).toBe("owned");
+            }
+          });
+        }
+
+        if (scenario.expectMarker && Object.keys(scenario.expectMarker).length > 0) {
+          it("surfaces the stamped stack/env identity verbatim (#1222)", async () => {
+            const { resources } = normalizeObservation(await scenario.run());
+            for (const [name, expected] of Object.entries(scenario.expectMarker!)) {
+              const meta = resources[name];
+              expect(meta, `${name} should be observed present to carry a marker`).toBeDefined();
+              expect(meta!.marker, `${name}: the live model carries the channel, so the marker must be surfaced`).toBeDefined();
+              expect(meta!.marker!.stack).toBe(expected.stack);
+              expect(meta!.marker!.env).toBe(expected.env);
+            }
+          });
+        }
+
+        if (scenario.expectNoMarker?.length) {
+          it("leaves the marker absent where the live model carries none — never a guess (#1222)", async () => {
+            const { resources } = normalizeObservation(await scenario.run());
+            for (const name of scenario.expectNoMarker!) {
+              const meta = resources[name];
+              expect(meta, `${name} should be observed present`).toBeDefined();
+              expect(
+                meta!.marker,
+                `${name} carries no marker channel in the live model but surfaced one`,
+              ).toBeUndefined();
+            }
+          });
+        }
 
         if (scenario.owned) {
           const resolves = resolvesOwnershipOn(config.ownershipChannel, "describeResources");

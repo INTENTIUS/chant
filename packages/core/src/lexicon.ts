@@ -11,7 +11,7 @@ import type { CompletionContext, CompletionItem, HoverContext, HoverInfo, CodeAc
 import type { McpToolContribution, McpResourceContribution } from "./mcp/types";
 import type { DriverComponent } from "./components/driver";
 import type { EmulatorDeclaration } from "./op/emulator-lifecycle";
-import type { OwnershipChannel } from "./ownership";
+import type { OwnershipChannel, OwnershipMarker } from "./ownership";
 import type { LexiconConfigSchema } from "./lexicon-config";
 import type { RuleMeta } from "./audit/catalog";
 import type { ReferenceCatalog } from "./graph-refs";
@@ -1047,6 +1047,21 @@ export interface ResourceMetadata {
    * a delete, and never escalates `unknown` to one.
    */
   ownership?: "owned" | "foreign" | "unknown";
+  /**
+   * The stack/env identity read off the resource's own ownership marker
+   * (#1222) — the tags/labels/metadata chant stamped at synthesis, read back
+   * verbatim on the same channel. This is what marker-scoped selection keys
+   * on: {@link ownership} says "chant's", `marker` says *which* stack and env.
+   *
+   * Set only when the live model actually carries the channel and the
+   * managed-by marker is present — an absent channel means an absent field,
+   * never a guess. In particular aws's thin read is sourced from
+   * `describe-stack-resources`, which returns no tags at all, so aws never
+   * populates this here; aws teardown is stack-level and reads the stack's own
+   * tags instead (later PR). A populated `marker` does not by itself imply an
+   * {@link ownership} verdict on paths that do not declare a marker channel.
+   */
+  marker?: OwnershipMarker;
   /**
    * Where this resource's owner-reference chain leads, for a live resource
    * that is not itself declared (#1077). A lexicon that maintains an

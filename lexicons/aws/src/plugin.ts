@@ -656,6 +656,9 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
         // this path cannot read the ownership marker. Say `unknown` explicitly
         // rather than leaving the field off and letting each consumer guess —
         // the change set never escalates `unknown` to a delete.
+        // For the same reason `marker` (#1222) stays absent here: no tags, no
+        // stack/env identity to read, and absent means absent — never a guess.
+        // aws teardown is stack-level and reads the stack's own tags instead.
         ownership: "unknown",
       };
     }
