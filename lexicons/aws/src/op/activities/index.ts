@@ -46,6 +46,21 @@ export {
 } from "./aws-apply";
 export type { AwsApplyArgs, RollbackStackArgs, AwsHttp } from "./aws-apply";
 
+// Effect-receipt activities (#1835) — core's receipt seam (#1834) bound to
+// the SSM store, the way the k8s lexicon binds `ensureSecret` (#1830). The
+// registry keys exported functions by name, so the three bound activities are
+// re-exported individually: `receiptRead`/`receiptWrite` serve the `effect()`
+// step's read-compare-run-write, `receiptStaleness` serves WatchOp's
+// read-only phase. The store resolves its path identity and endpoint lazily
+// at first use, so this module stays cheap to load.
+import { receiptActivities } from "@intentius/chant/op/receipt-store";
+import { awsReceiptStore } from "../../receipt-store";
+
+const boundReceiptActivities = receiptActivities(awsReceiptStore());
+export const receiptRead = boundReceiptActivities.receiptRead;
+export const receiptWrite = boundReceiptActivities.receiptWrite;
+export const receiptStaleness = boundReceiptActivities.receiptStaleness;
+
 export { awsAgentCoreFetchTrace } from "../../agentcore/trace-fetch";
 export type {
   AgentCoreTraceSource,

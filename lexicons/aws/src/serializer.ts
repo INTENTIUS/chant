@@ -2,7 +2,19 @@ import type { Declarable, CoreParameter } from "@intentius/chant/declarable";
 import { isPropertyDeclarable, isResourceDeclarable } from "@intentius/chant/declarable";
 import type { Serializer, SerializerResult, SerializeContext } from "@intentius/chant/serializer";
 import { ownershipEntries, type OwnershipMarker } from "@intentius/chant/ownership";
+import {
+  isEffectReceipt,
+  receiptExpectation,
+  referenceInputPaths,
+  type EffectReceiptDeclaration,
+} from "@intentius/chant/effect-receipt";
 import { AWS_TAG_OWNERSHIP_KEYS, OWNERSHIP_METADATA_KEY } from "./ownership";
+import {
+  AWS_EFFECT_RECEIPT_ENTITY_TYPE,
+  EFFECT_RECEIPTS_METADATA_KEY,
+  RECEIPT_UNRESOLVED_VALUE_NOTE,
+  receiptParameterName,
+} from "./effect-receipt-row";
 import type { LexiconOutput } from "@intentius/chant/lexicon-output";
 import { walkValue, type SerializerVisitor } from "@intentius/chant/serializer-walker";
 import { isChildProject, type ChildProjectInstance } from "@intentius/chant/child-project";
@@ -154,6 +166,80 @@ function toProperties(
 }
 
 
+/** One rendered receipt row — a CFN-resource-shaped object that lives in the
+ * template's `Metadata`, never in `Resources` (#1832: the applier writes from
+ * `Resources`, and the `effect()` step is a receipt's sole writer). */
+interface ReceiptRow {
+  Type: typeof AWS_EFFECT_RECEIPT_ENTITY_TYPE;
+  Properties: {
+    Name: string;
+    Type: "String";
+    Value: string;
+    Tags: Array<{ Key: string; Value: string }>;
+  };
+}
+
+/** The rendered `Value`: the synthesis-time expectation when the receipt is
+ * fully static, a placeholder note when reference inputs resolve later —
+ * never a digest hashed over placeholders (epic #1703, decision 5). */
+function receiptRowValue(receipt: EffectReceiptDeclaration): string {
+  if (receipt.flavor === "hash" && referenceInputPaths(receipt).length > 0) {
+    return RECEIPT_UNRESOLVED_VALUE_NOTE;
+  }
+  return receiptExpectation(receipt);
+}
+
+/**
+ * Render the effect receipts (#1835) the build withheld from the apply-bound
+ * entity set (`SerializeContext.receipts`, #1832) as `AWS::SSM::Parameter`
+ * rows: plain `String`, named `/chant-receipts/<stack>/<env>/<effect>` from
+ * the resolved ownership marker (epic decision 4 — the same fields that stamp
+ * tags), carrying the ownership tags. Visibility only: the rows go under the
+ * template's `Metadata`, and the receipt store (./receipt-store.ts) is what
+ * actually writes the parameter — through the `effect()` step, on success,
+ * last.
+ *
+ * The env segment is explicit: a receipt with no resolved `ownership.env` is
+ * an error here, never a guessed path.
+ */
+function renderReceiptRows(
+  receipts: ReadonlyMap<string, Declarable>,
+  ownership: OwnershipMarker | undefined,
+): Record<string, ReceiptRow> {
+  const rows: Record<string, ReceiptRow> = {};
+  const names = [...receipts.keys()].join(", ");
+  if (!ownership) {
+    throw new Error(
+      `aws receipts (${names}): no ownership marker resolved — the receipt path is ` +
+        `/chant-receipts/<stack>/<env>/<effect>, derived from the same ownership fields that ` +
+        `stamp markers (chant #1703, decision 4). Set ownership: { stack, env } in chant.config.ts.`,
+    );
+  }
+  if (!ownership.env) {
+    throw new Error(
+      `aws receipts (${names}): ownership resolved no env — the receipt path's <env> segment is ` +
+        `explicit (chant #1703, decision 4). Set ownership.env in chant.config.ts (a literal, or ` +
+        `{ param: "env" } with --param env=<name>).`,
+    );
+  }
+  const tags = Object.entries(ownershipEntries(AWS_TAG_OWNERSHIP_KEYS, ownership)).map(
+    ([Key, Value]) => ({ Key, Value }),
+  );
+  for (const [name, entity] of receipts) {
+    if (!isEffectReceipt(entity)) continue;
+    rows[name] = {
+      Type: AWS_EFFECT_RECEIPT_ENTITY_TYPE,
+      Properties: {
+        Name: receiptParameterName(ownership.stack, ownership.env, entity.effect),
+        Type: "String",
+        Value: receiptRowValue(entity),
+        Tags: tags,
+      },
+    };
+  }
+  return rows;
+}
+
 /**
  * Serialize a set of entities into a CFTemplate object (without JSON.stringify).
  */
@@ -163,6 +249,7 @@ function serializeToTemplate(
   extraParameters?: Record<string, CFParameter>,
   extraOutputs?: Record<string, CFOutput>,
   ownership?: OwnershipMarker,
+  receiptRows?: Record<string, ReceiptRow>,
 ): CFTemplate {
   const template: CFTemplate = {
     AWSTemplateFormatVersion: "2010-09-09",
@@ -195,6 +282,14 @@ function serializeToTemplate(
     template.Metadata = {
       [OWNERSHIP_METADATA_KEY]: ownershipEntries(AWS_TAG_OWNERSHIP_KEYS, ownership),
     };
+  }
+  // Effect receipt rows (#1835) — visibility only, deliberately outside
+  // `Resources`: the applier's desired and prune sets both read `Resources`,
+  // and the `effect()` step is a receipt's sole writer (#1832, epic #1703
+  // decision 3). The observation leg (plugin.ts) reads the paths back from
+  // this block, so the identity is derived exactly once, here.
+  if (receiptRows && Object.keys(receiptRows).length > 0) {
+    template.Metadata = { ...(template.Metadata ?? {}), [EFFECT_RECEIPTS_METADATA_KEY]: receiptRows };
   }
   for (const [, entity] of entities) {
     if (isDefaultTags(entity)) {
@@ -412,6 +507,14 @@ export const awsSerializer: Serializer = {
   serialize(entities: Map<string, Declarable>, outputs?: LexiconOutput[], context?: SerializeContext): string | SerializerResult {
     const ownership = context?.ownership;
 
+    // Effect receipts (#1835): withheld from `entities` by the build (#1832),
+    // rendered here as Metadata rows — never as `Resources` an applier would
+    // write. Env-less ownership is an error, not a guessed path segment.
+    const receiptRows =
+      context?.receipts && context.receipts.size > 0
+        ? renderReceiptRows(context.receipts, ownership)
+        : undefined;
+
     // Check if any entities are child projects (nested stacks)
     const childProjects = new Map<string, ChildProjectInstance>();
     let hasChildProjects = false;
@@ -425,7 +528,7 @@ export const awsSerializer: Serializer = {
 
     // No nested stacks — use the simple path
     if (!hasChildProjects) {
-      const template = serializeToTemplate(entities, outputs, undefined, undefined, ownership);
+      const template = serializeToTemplate(entities, outputs, undefined, undefined, ownership, receiptRows);
       return JSON.stringify(template, null, 2);
     }
 
@@ -465,7 +568,7 @@ export const awsSerializer: Serializer = {
     }
 
     // Serialize the parent template (ChildProjectInstance entities become CF::Stack resources)
-    const parentTemplate = serializeToTemplate(entities, outputs, parentParams, undefined, ownership);
+    const parentTemplate = serializeToTemplate(entities, outputs, parentParams, undefined, ownership, receiptRows);
     const primary = JSON.stringify(parentTemplate, null, 2);
 
     return {

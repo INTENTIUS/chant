@@ -32,6 +32,8 @@ import flyDurableDeployOp from "./fly-durable-deploy/ops/fly-durable-deploy.op";
 import flyRollbackOp from "./fly-deploy-rollback/ops/fly-deploy.op";
 import flyRollbackGuardedOp from "./fly-deploy-rollback/ops/fly-deploy-guarded.op";
 import deployGatedOp from "./getting-started/deploy-gated.op";
+import localAwsMigrateOp from "./local-op-quickstart/ops/local-aws-migrate.op";
+import { schemaSeeded } from "./local-op-quickstart/ops/receipts";
 import observeOp from "./getting-started/observe.op";
 import reconcileOp from "./getting-started/reconcile.op";
 import applyOp from "./getting-started/apply.op";
@@ -1787,3 +1789,45 @@ describeExample(
     },
   },
 );
+
+// ── Gated migration effect — local-op-quickstart (#1835) ─────────────
+// The live loop (Floci + `--temporal`) is documented in the example README;
+// CI shape-validates the Op and the receipt row it rides on. The SSM
+// materialization, store, and observation leg have their own coverage under
+// lexicons/aws/src/{effect-receipt-row,receipt-store}.test.ts.
+
+describe("local-op-quickstart gated migration (#1835)", () => {
+  test("the receipt is an aws-materialized SSM row with a static expectation", () => {
+    expect(schemaSeeded.lexicon).toBe("aws");
+    expect(schemaSeeded.entityType).toBe("AWS::SSM::Parameter");
+    expect(schemaSeeded.effect).toBe("demo-schema-seed");
+    expect(schemaSeeded.props.Type).toBe("String");
+  });
+
+  test("local-aws-migrate wraps the gated seed in an effect step, receipt as data", () => {
+    const props = (localAwsMigrateOp as unknown as {
+      props: {
+        name: string;
+        phases: Array<{
+          name: string;
+          steps: Array<{
+            kind?: string;
+            fn?: string;
+            receipt?: { name: string; effect: string };
+            expectation?: string;
+            steps?: Array<{ kind: string; signalName?: string; fn?: string }>;
+          }>;
+        }>;
+      };
+    }).props;
+    expect(props.name).toBe("local-aws-migrate");
+    expect(props.phases.map((p) => p.name)).toEqual(["Emulator", "Build", "Deploy", "Migrate"]);
+    const migrate = props.phases.find((p) => p.name === "Migrate")!.steps[0];
+    expect(migrate.kind).toBe("effect");
+    expect(migrate.receipt).toMatchObject({ name: "schemaSeeded", effect: "demo-schema-seed" });
+    // Fully static inputs — the expectation is stamped at synthesis (#1703 d5).
+    expect(migrate.expectation).toMatch(/^sha256:/);
+    // The gate pauses only when the effect will fire; the seed runs after it.
+    expect(migrate.steps!.map((s) => s.kind)).toEqual(["gate", "activity"]);
+  });
+});

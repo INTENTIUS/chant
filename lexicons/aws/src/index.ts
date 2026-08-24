@@ -7,6 +7,21 @@ export type { DefaultTags, TagEntry } from "./default-tags";
 export { templateTransform, isTemplateTransform, TEMPLATE_TRANSFORM_MARKER } from "./template-transform";
 export type { TemplateTransform } from "./template-transform";
 
+// Effect receipts (#1835, epic #1703): the aws materialization row
+// (`AWS::SSM::Parameter`, plain String, path derived from the ownership
+// marker) and the SSM-backed receipt store behind the `effect()` op step.
+export {
+  EffectReceipt,
+  receiptParameterName,
+  AWS_EFFECT_RECEIPT_ENTITY_TYPE,
+  EFFECT_RECEIPTS_METADATA_KEY,
+  RECEIPT_PATH_PREFIX,
+  RECEIPT_UNRESOLVED_VALUE_NOTE,
+} from "./effect-receipt-row";
+export type { AwsEffectReceiptDeclaration } from "./effect-receipt-row";
+export { awsReceiptStore, observeReceiptRows, ssmGetParameter, ssmPutParameter } from "./receipt-store";
+export type { AwsReceiptStoreOptions, ReceiptRowObservation } from "./receipt-store";
+
 // Serializer
 export { awsSerializer } from "./serializer";
 
