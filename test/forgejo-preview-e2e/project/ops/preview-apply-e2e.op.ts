@@ -8,9 +8,9 @@ import { Op, phase, activity, build } from "@intentius/chant-lexicon-temporal";
 import { params } from "@intentius/chant/params";
 
 export default Op({
-  name: "preview-apply",
+  name: "preview-apply-e2e",
   overview: "build → flyApply: deploy one PR's preview copy to the env's flaps endpoint",
-  taskQueue: "preview-apply",
+  taskQueue: "preview-apply-e2e",
   phases: [
     phase("Build", [build(".")]),
     phase("Apply", [
