@@ -9,6 +9,8 @@ import {
   environmentName,
   environmentNames,
   environmentEndpoint,
+  matchesEnvironmentPattern,
+  matchesDeclaredEnvironment,
 } from "./config";
 import { writeFileSync, mkdirSync, rmSync } from "fs";
 import { join } from "path";
@@ -335,6 +337,44 @@ describe("environmentName / environmentNames / environmentEndpoint (#1166)", () 
     expect(environmentEndpoint(environments, "staging")).toBeUndefined(); // object, but no endpoint set
     expect(environmentEndpoint(environments, "unknown")).toBeUndefined(); // not declared at all
     expect(environmentEndpoint(undefined, "floci")).toBeUndefined();
+  });
+
+  test("environmentEndpoint resolves through a pattern entry, literal entry winning (#1221)", () => {
+    const environments = [
+      { name: "pr-special", endpoint: "http://special:1111" },
+      { name: "pr-*", endpoint: "http://preview:4566" },
+    ];
+    expect(environmentEndpoint(environments, "pr-42")).toBe("http://preview:4566");
+    expect(environmentEndpoint(environments, "pr-special")).toBe("http://special:1111"); // literal wins over the pattern
+    expect(environmentEndpoint(environments, "prod")).toBeUndefined();
+  });
+});
+
+describe("environment glob patterns (#1221)", () => {
+  test("matchesEnvironmentPattern: a * matches any run of characters, anchored", () => {
+    expect(matchesEnvironmentPattern("pr-*", "pr-42")).toBe(true);
+    expect(matchesEnvironmentPattern("pr-*", "pr-")).toBe(true); // empty run is a run
+    expect(matchesEnvironmentPattern("pr-*", "pr")).toBe(false);
+    expect(matchesEnvironmentPattern("pr-*", "xpr-42")).toBe(false); // anchored at the start
+    expect(matchesEnvironmentPattern("*-preview", "42-preview")).toBe(true);
+    expect(matchesEnvironmentPattern("*-preview", "42-preview-old")).toBe(false); // anchored at the end
+    expect(matchesEnvironmentPattern("test-*-eu", "test-a-eu")).toBe(true);
+    expect(matchesEnvironmentPattern("test-*-eu", "test-a-us")).toBe(false);
+  });
+
+  test("matchesEnvironmentPattern without a * is plain equality", () => {
+    expect(matchesEnvironmentPattern("prod", "prod")).toBe(true);
+    expect(matchesEnvironmentPattern("prod", "prod2")).toBe(false);
+  });
+
+  test("matchesDeclaredEnvironment: literal first, then pattern, across entry forms", () => {
+    const environments = ["dev", "prod", "pr-*", { name: "test-*", endpoint: "http://localhost:4566" }];
+    expect(matchesDeclaredEnvironment(environments, "prod")).toBe(true);
+    expect(matchesDeclaredEnvironment(environments, "pr-42")).toBe(true);
+    expect(matchesDeclaredEnvironment(environments, "test-suite-a")).toBe(true); // object-form pattern entry
+    expect(matchesDeclaredEnvironment(environments, "stage")).toBe(false);
+    expect(matchesDeclaredEnvironment(undefined, "prod")).toBe(false);
+    expect(matchesDeclaredEnvironment([], "prod")).toBe(false);
   });
 });
 

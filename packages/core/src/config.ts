@@ -45,15 +45,72 @@ export function environmentNames(environments: EnvironmentDeclaration[] | undefi
 }
 
 /**
+ * Whether a declared environment name is a glob pattern rather than a literal
+ * (#1221) — it contains at least one `*`.
+ */
+export function isEnvironmentPattern(declaredName: string): boolean {
+  return declaredName.includes("*");
+}
+
+/**
+ * Anchored `*`-glob match (#1221): each `*` in `pattern` matches any run of
+ * characters (possibly empty); everything else matches itself. Deliberately
+ * the whole surface — no `?`, no character classes, no regex. A pattern with
+ * no `*` degenerates to string equality.
+ */
+export function matchesEnvironmentPattern(pattern: string, name: string): boolean {
+  const parts = pattern.split("*");
+  if (parts.length === 1) return pattern === name;
+  const first = parts[0];
+  const last = parts[parts.length - 1];
+  if (!name.startsWith(first)) return false;
+  let cursor = first.length;
+  for (let i = 1; i < parts.length - 1; i++) {
+    const part = parts[i];
+    if (part === "") continue;
+    const at = name.indexOf(part, cursor);
+    if (at === -1) return false;
+    cursor = at + part.length;
+  }
+  return name.length - cursor >= last.length && name.endsWith(last);
+}
+
+/**
+ * Environment-membership test (#1221): is `name` covered by this project's
+ * declared `environments`? A literal entry matches by equality; an entry
+ * containing `*` matches as a glob pattern (`"pr-*"` covers `pr-42`).
+ * Literals are checked first across the whole list, then patterns — so a
+ * name that is declared outright never depends on pattern order. `undefined`
+ * / empty `environments` returns `false`; callers that treat "no declared
+ * environments" as "anything goes" (e.g. {@link unknownEnvError} in
+ * `./env.ts`) guard that case themselves.
+ */
+export function matchesDeclaredEnvironment(
+  environments: EnvironmentDeclaration[] | undefined,
+  name: string,
+): boolean {
+  const names = environmentNames(environments) ?? [];
+  if (names.includes(name)) return true;
+  return names.some((declared) => isEnvironmentPattern(declared) && matchesEnvironmentPattern(declared, name));
+}
+
+/**
  * The endpoint `name` declares (chant #1166) — `undefined` for a bare-string
  * entry, an entry with no `endpoint` set, or a name this project doesn't
  * declare at all. `./live-endpoint.ts`'s `applyLiveEndpoint` is the consumer:
  * it injects this into the ambient env var each observing lexicon's CLI
  * shell-out reads (e.g. `AWS_ENDPOINT_URL`), unless that var is already set —
  * ambient always wins.
+ *
+ * A pattern entry (#1221) can carry an endpoint too: `{ name: "pr-*",
+ * endpoint }` supplies the endpoint for every `pr-<n>` environment. A literal
+ * entry always wins over a pattern — declaring `pr-special` alongside
+ * `pr-*` resolves `pr-special` to the literal entry's endpoint (or none).
  */
 export function environmentEndpoint(environments: EnvironmentDeclaration[] | undefined, name: string): string | undefined {
-  const found = environments?.find((e) => environmentName(e) === name);
+  const found =
+    environments?.find((e) => environmentName(e) === name) ??
+    environments?.find((e) => isEnvironmentPattern(environmentName(e)) && matchesEnvironmentPattern(environmentName(e), name));
   return found && typeof found !== "string" ? found.endpoint : undefined;
 }
 
