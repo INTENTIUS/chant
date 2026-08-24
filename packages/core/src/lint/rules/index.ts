@@ -26,6 +26,8 @@ export { evl010CompositeNoTransformRule } from "./evl010-composite-no-transform"
 export { cor017CompositeNameMatchRule } from "./cor017-composite-name-match";
 export { cor018CompositePreferLexiconTypeRule } from "./cor018-composite-prefer-lexicon-type";
 export { cor021EnvLiteralNameRule } from "./cor021-env-literal-name";
+export { cor022ReceiptLeafRule, collectReceiptVariables, receiptFactoryCall } from "./cor022-receipt-leaf";
+export { cor024ReceiptSecretPointerRule } from "./cor024-receipt-secret-pointer";
 export { isInsideCompositeFactory } from "./composite-scope";
 
 import { flatDeclarationsRule } from "./flat-declarations";
@@ -50,9 +52,11 @@ import { evl010CompositeNoTransformRule } from "./evl010-composite-no-transform"
 import { cor017CompositeNameMatchRule } from "./cor017-composite-name-match";
 import { cor018CompositePreferLexiconTypeRule } from "./cor018-composite-prefer-lexicon-type";
 import { cor021EnvLiteralNameRule } from "./cor021-env-literal-name";
+import { cor022ReceiptLeafRule } from "./cor022-receipt-leaf";
+import { cor024ReceiptSecretPointerRule } from "./cor024-receipt-secret-pointer";
 
 /**
- * Load all 22 core lint rules (COR + EVL).
+ * Load all 24 core lint rules (COR + EVL).
  */
 export function loadCoreRules(): LintRule[] {
   return [
@@ -78,5 +82,7 @@ export function loadCoreRules(): LintRule[] {
     cor017CompositeNameMatchRule,
     cor018CompositePreferLexiconTypeRule,
     cor021EnvLiteralNameRule,
+    cor022ReceiptLeafRule,
+    cor024ReceiptSecretPointerRule,
   ];
 }

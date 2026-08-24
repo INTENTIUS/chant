@@ -36,6 +36,7 @@ import { planTeardown, executeTeardown, type TeardownPlan, type TeardownReport }
 import { collectBuildRootContributors } from "../plugins";
 import { applyLiveEndpoint } from "../../live-endpoint";
 import { isResourceDeclarable } from "../../declarable";
+import { collectEffectReceipts } from "../../effect-receipt";
 import { formatError, formatWarning, formatSuccess, formatBold } from "../format";
 import type { CommandContext } from "../registry";
 import type { LifecycleSnapshot } from "../../lifecycle/types";
@@ -358,6 +359,10 @@ export async function runLifecycleDiff(ctx: CommandContext): Promise<number> {
   // committed set. Absent is the normal state (nothing accepted yet).
   const baseline = args.live ? await readObservationBaseline(environment) : null;
   const accepted: Record<string, DeviationToAccept[]> = {};
+  // Effect receipts across every target's build (#1833) — `--update-baseline`
+  // refuses to accept drift on them (the effect step is their only writer),
+  // and recognition is marker-based so materialized lexicon rows are caught.
+  const receiptEntities = new Set<string>();
 
   // #1166 — an environment can declare its own endpoint (a local emulator like
   // Floci), so `--live` is self-sufficient even when the ambient shell never
@@ -430,6 +435,9 @@ export async function runLifecycleDiff(ctx: CommandContext): Promise<number> {
         for (const [lexicon, deviations] of Object.entries(r.toAccept)) {
           (accepted[lexicon] ??= []).push(...deviations);
         }
+        if (args.updateBaseline) {
+          for (const name of collectEffectReceipts(buildResult.entities).keys()) receiptEntities.add(name);
+        }
         if (json) {
           if (target.stack) perStackJson[target.stack] = r.byLexicon;
           else combinedLexiconsJson = r.byLexicon;
@@ -443,7 +451,7 @@ export async function runLifecycleDiff(ctx: CommandContext): Promise<number> {
     // accepted, so it stops re-alerting. Runs before the summary lines so the
     // "no drift" verdict below still describes the run that produced it.
     if (args.live && args.updateBaseline) {
-      await recordAcceptedBaseline(environment, baseline, accepted, json);
+      await recordAcceptedBaseline(environment, baseline, accepted, json, receiptEntities);
     }
 
     if (args.live) {
@@ -495,6 +503,7 @@ async function recordAcceptedBaseline(
   existing: ObservationBaseline | null,
   accepted: Record<string, DeviationToAccept[]>,
   json: boolean,
+  receipts?: ReadonlySet<string>,
 ): Promise<void> {
   const total = Object.values(accepted).reduce((n, d) => n + d.length, 0);
   if (total === 0) {
@@ -505,11 +514,14 @@ async function recordAcceptedBaseline(
     }
     return;
   }
-  let next = existing ?? emptyBaseline(environment);
-  for (const [lexicon, deviations] of Object.entries(accepted)) {
-    next = acceptDeviations(next, lexicon, deviations);
-  }
   try {
+    // `acceptDeviations` throws on an effect-receipt deviation (#1833) —
+    // inside the try so the refusal reaches the operator as a formatted
+    // error, with no baseline written at all.
+    let next = existing ?? emptyBaseline(environment);
+    for (const [lexicon, deviations] of Object.entries(accepted)) {
+      next = acceptDeviations(next, lexicon, deviations, { receipts });
+    }
     await writeObservationBaseline(next);
     const pushed = await pushLifecycle();
     if (!json) {
@@ -520,7 +532,7 @@ async function recordAcceptedBaseline(
     }
   } catch (err) {
     console.error(formatError({
-      message: `--update-baseline: could not write the baseline — ${err instanceof Error ? err.message : String(err)}`,
+      message: `--update-baseline: baseline not updated — ${err instanceof Error ? err.message : String(err)}`,
     }));
   }
 }

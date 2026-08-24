@@ -15,6 +15,7 @@ import type { Serializer, SerializerResult } from "../../serializer";
 import type { LexiconPlugin } from "../../lexicon";
 import { resolveLexiconVersions, collectBuildRootContributors } from "../plugins";
 import { runPostSynthChecks } from "../../lint/post-synth";
+import { coreReceiptChecks } from "../../lint/receipt-checks";
 import { applyConfiguredSeverity } from "../../lint/config";
 import { loadPolicyChecks } from "../../lint/policy";
 import { armSandboxPolicyExecution, runProjectPolicies } from "../../lint/policy-sandbox";
@@ -382,6 +383,26 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
   // finding just as it suppresses a pre-synth one. A finding it suppresses is
   // counted, not dropped silently — see `suppressedPostSynthCount` below.
   let suppressedPostSynthCount = 0;
+
+  // Core-owned post-synth checks over effect receipts (#1833). Receipts are
+  // recognized by marker, lexicon-independently, so this set runs over the
+  // FULL build result — unscoped, and regardless of which plugins loaded.
+  // Same severity-resolution funnel as every other post-synth finding.
+  if (result.errors.length === 0) {
+    const receiptDiags = runPostSynthChecks(coreReceiptChecks(), result, env);
+    const { diagnostics: activeDiags, suppressed } = applyConfiguredSeverity(receiptDiags, config.lint?.rules);
+    suppressedPostSynthCount += suppressed.length;
+    for (const diag of activeDiags) {
+      const prefix = diag.entity ? `[${diag.entity}] ` : "";
+      const lexiconSuffix = diag.lexicon ? ` (${diag.lexicon})` : "";
+      if (diag.severity === "error") {
+        errors.push(formatError({ message: `${prefix}${diag.message}${lexiconSuffix}` }));
+      } else {
+        warnings.push(formatWarning({ message: `${prefix}${diag.message}${lexiconSuffix}` }));
+      }
+    }
+  }
+
   if (result.errors.length === 0 && options.plugins) {
     for (const plugin of options.plugins) {
       if (!plugin.postSynthChecks) continue;
