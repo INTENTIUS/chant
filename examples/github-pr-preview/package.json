@@ -1,0 +1,20 @@
+{
+  "name": "github-pr-preview-example",
+  "version": "0.0.1",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "npm run build:app && npm run build:ci",
+    "build:app": "chant build src/app --lexicon k8s -o dist/manifests.yaml",
+    "build:ci": "chant build src/ci --lexicon github -o .github/workflows/preview.yml",
+    "lint": "chant lint src",
+    "deploy": "chant run preview-apply",
+    "teardown": "chant lifecycle teardown local --yes"
+  },
+  "dependencies": {
+    "@intentius/chant": "*",
+    "@intentius/chant-lexicon-github": "*",
+    "@intentius/chant-lexicon-k8s": "*",
+    "@intentius/chant-lexicon-temporal": "*"
+  }
+}

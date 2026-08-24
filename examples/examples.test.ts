@@ -16,6 +16,7 @@ import { gcpSerializer } from "@intentius/chant-lexicon-gcp";
 import { azureSerializer } from "@intentius/chant-lexicon-azure";
 import { k8sSerializer } from "@intentius/chant-lexicon-k8s";
 import { gitlabSerializer } from "@intentius/chant-lexicon-gitlab";
+import { githubSerializer } from "@intentius/chant-lexicon-github";
 import { helmSerializer } from "@intentius/chant-lexicon-helm";
 import { flySerializer } from "@intentius/chant-lexicon-fly";
 import type { PostSynthContext } from "@intentius/chant/lint/post-synth";
@@ -120,6 +121,52 @@ describeExample("gitlab-aws-alb-ui", {
   outputKey: ["aws", "gitlab"],
   examplesDir: import.meta.dirname,
 });
+
+// ── GitHub per-PR preview environments (#1223) ───────────────────────
+// One source tree, two lexicon outputs: the k8s workload a PR gets a live
+// copy of, and the GitHub Actions workflow that deploys it on PR open and
+// sweeps it on close. `environments` mixes a literal with a `pr-*` pattern
+// (#1221), and the ownership marker follows the env build parameter (#1396),
+// which is what makes `chant lifecycle teardown pr-<n> --yes` selective.
+// Built here with the default env (`local`); CI supplies CHANT_ENV=pr-<n>.
+
+describeExample(
+  "github-pr-preview",
+  {
+    lexicon: "k8s+github",
+    serializer: [k8sSerializer, githubSerializer],
+    outputKey: ["github", "k8s"],
+    examplesDir: import.meta.dirname,
+  },
+  {
+    checks: (workflow) => {
+      // One workflow, both halves of the loop, gated on the PR action.
+      expect(workflow).toContain("name: pr-preview");
+      expect(workflow).toContain("if: github.event.action != 'closed'");
+      expect(workflow).toContain("if: github.event.action == 'closed'");
+      // The env identity is set once, at workflow level, from the PR number.
+      expect(workflow).toContain("CHANT_ENV: pr-${{ github.event.number }}");
+      // Deploy applies through the local Op executor; teardown is the
+      // marker-scoped sweep with the non-interactive flag.
+      expect(workflow).toContain("npx chant run preview-apply");
+      expect(workflow).toContain('npx chant lifecycle teardown "$CHANT_ENV" --yes');
+      // The sticky comment is keyed on the hidden marker and is a scripted
+      // gh api find-and-update — no marketplace action to pin.
+      expect(workflow).toContain("<!-- chant-pr-preview -->");
+      expect(workflow).toContain("gh api -X PATCH");
+      expect(workflow).toContain("gh api -X POST");
+      // Every uses: is pinned to a full commit SHA (GHA's pinned-action lints).
+      const uses = [...workflow.matchAll(/uses:\s*(\S+)/g)].map((m) => m[1]);
+      expect(uses.length).toBeGreaterThan(0);
+      for (const ref of uses) {
+        expect(ref).toMatch(/@[0-9a-f]{40}$/);
+      }
+      // Env var names survive serialization verbatim (the #1223 serializer fix).
+      expect(workflow).toContain("KUBECONFIG_DATA:");
+      expect(workflow).not.toContain("kubeconfig_data");
+    },
+  },
+);
 
 // ── Bedrock AgentCore agent — composite/base path (#882) ─────────────
 // AgentCoreAgent wires Runtime + Memory + Gateway/
