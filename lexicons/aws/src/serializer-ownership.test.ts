@@ -34,4 +34,22 @@ describe("awsSerializer ownership stamping (#119)", () => {
     const tags = (template.Resources.MyBucket.Properties?.Tags ?? []) as Array<{ Key: string }>;
     expect(tags.some((t) => t.Key.startsWith("chant:"))).toBe(false);
   });
+
+  test("carries the marker at the template level too — Metadata[chant:ownership], the stack-tag source (#1222)", () => {
+    const entities = new Map<string, Declarable>([["MyBucket", new MockBucket({ BucketName: "b" })]]);
+    const out = awsSerializer.serialize(entities, [], { ownership: { stack: "billing", env: "prod" } });
+    const template = JSON.parse(out as string);
+    expect(template.Metadata["chant:ownership"]).toEqual({
+      "chant:managed-by": "chant",
+      "chant:stack": "billing",
+      "chant:env": "prod",
+    });
+  });
+
+  test("no ownership context → no template Metadata block", () => {
+    const entities = new Map<string, Declarable>([["MyBucket", new MockBucket({ BucketName: "b" })]]);
+    const out = awsSerializer.serialize(entities, []);
+    const template = JSON.parse(out as string);
+    expect(template.Metadata).toBeUndefined();
+  });
 });

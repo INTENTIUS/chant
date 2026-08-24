@@ -24,6 +24,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { realDocker, type DockerClient } from "@intentius/chant/components/verbs/cloud-executor";
 import { q } from "@intentius/chant/components/verbs/process-runner";
+import { ownershipStackTagsForBody } from "../ownership.js";
 
 export type { DockerClient };
 
@@ -432,10 +433,18 @@ const realCloudFormation: CloudFormationClient = {
       body = readFileSync(args.templatePath, "utf8");
     } catch { /* unreadable template — create-change-set reports it */ }
     const capabilities = awsDeployCapabilitiesForBody(body).join(" ");
+    // The template's ownership marker becomes the STACK's own tags (#1222) —
+    // the identity stack-level teardown verifies before a DeleteStack. Same
+    // source as the applier's `Tags.member.N`: `Metadata["chant:ownership"]`.
+    const stackTags = Object.entries(ownershipStackTagsForBody(body))
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([k, v]) => q(`Key=${k},Value=${v}`))
+      .join(" ");
+    const tagsFlag = stackTags ? ` --tags ${stackTags}` : "";
     await run(
       `aws cloudformation create-change-set --stack-name ${q(args.stackName)} --change-set-name ${q(changeSetName)} ` +
         `--change-set-type ${changeSetType} ` +
-        `--template-body file://${args.templatePath} --capabilities ${capabilities}${paramFlag}`,
+        `--template-body file://${args.templatePath} --capabilities ${capabilities}${paramFlag}${tagsFlag}`,
     );
     await run(
       `aws cloudformation wait change-set-create-complete --stack-name ${q(args.stackName)} --change-set-name ${q(changeSetName)}`,

@@ -114,6 +114,54 @@ describe("awsApply flow (#awsApply)", () => {
     expect(sent[2]["Capabilities.member.2"]).toBeUndefined();
   });
 
+  test("the template's ownership Metadata becomes the STACK's own tags on create AND update (#1222)", async () => {
+    const sent: Array<Record<string, string>> = [];
+    let described = 0;
+    const createHttp: AwsHttp = async (_url, form) => {
+      if (form.Action === "DescribeStacks") return described++ === 0 ? { status: 400, text: MISSING } : { status: 200, text: describe_("CREATE_COMPLETE") };
+      sent.push(form);
+      return { status: 200, text: CREATE_OK };
+    };
+    const p = tmpl({
+      Metadata: { "chant:ownership": { "chant:managed-by": "chant", "chant:stack": "shop", "chant:env": "dev" } },
+    });
+    await awsApply({ templatePath: p, stackName: "s", endpoint: "http://x", intervalMs: 1 }, undefined, createHttp);
+
+    expect(sent[0].Action).toBe("CreateStack");
+    expect(sent[0]["Tags.member.1.Key"]).toBe("chant:env");
+    expect(sent[0]["Tags.member.1.Value"]).toBe("dev");
+    expect(sent[0]["Tags.member.2.Key"]).toBe("chant:managed-by");
+    expect(sent[0]["Tags.member.2.Value"]).toBe("chant");
+    expect(sent[0]["Tags.member.3.Key"]).toBe("chant:stack");
+    expect(sent[0]["Tags.member.3.Value"]).toBe("shop");
+
+    // Update path re-stamps the same tags.
+    let updDescribed = 0;
+    const updateHttp: AwsHttp = async (_url, form) => {
+      if (form.Action === "DescribeStacks") return { status: 200, text: describe_(updDescribed++ === 0 ? "CREATE_COMPLETE" : "UPDATE_COMPLETE") };
+      sent.push(form);
+      return { status: 200, text: UPDATE_OK };
+    };
+    await awsApply({ templatePath: p, stackName: "s", endpoint: "http://x", intervalMs: 1 }, undefined, updateHttp);
+    unlinkSync(p);
+    expect(sent[1].Action).toBe("UpdateStack");
+    expect(sent[1]["Tags.member.2.Key"]).toBe("chant:managed-by");
+  });
+
+  test("a template without the ownership Metadata sends no Tags parameter at all", async () => {
+    const sent: Array<Record<string, string>> = [];
+    let described = 0;
+    const http: AwsHttp = async (_url, form) => {
+      if (form.Action === "DescribeStacks") return described++ === 0 ? { status: 400, text: MISSING } : { status: 200, text: describe_("CREATE_COMPLETE") };
+      sent.push(form);
+      return { status: 200, text: CREATE_OK };
+    };
+    const p = tmpl();
+    await awsApply({ templatePath: p, stackName: "s", endpoint: "http://x", intervalMs: 1 }, undefined, http);
+    unlinkSync(p);
+    expect(Object.keys(sent[0]).some((k) => k.startsWith("Tags."))).toBe(false);
+  });
+
   test("update path: existing stack → UpdateStack → UPDATE_COMPLETE", async () => {
     let described = 0;
     const http: AwsHttp = async (_url, form) => {
