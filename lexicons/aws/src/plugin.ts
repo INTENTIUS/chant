@@ -581,6 +581,17 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
     // single-stack convention is the stack named after the environment (#932).
     const stackName = options.stack ?? `${options.environment}`;
 
+    // Effect receipt rows (#1835): a receipt is never a stack member (the
+    // applier never writes it, #1832), so the stack read honestly reports it
+    // absent even while the parameter exists — which would arrive downstream
+    // as "the effect never ran". The serializer rendered each receipt's
+    // derived path into the template Metadata; read those parameters directly,
+    // and report a failed read as an `unobserved` hole rather than a wrong
+    // answer.
+    const { observeReceiptRows } = await import("./receipt-store");
+    const receiptObs = await observeReceiptRows(options.entityNames, options.buildOutput, client);
+    const receiptHoles = Object.keys(receiptObs.unobserved).length > 0 ? receiptObs.unobserved : undefined;
+
     // Describe stack resources. The endpoint override rides the client, so a
     // local emulator (Floci) is observed instead of real AWS (#926) — behold
     // serve --local relies on this for the overlay.
@@ -598,7 +609,12 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
       if (err instanceof AwsReadError && stackDoesNotExist(err.message)) {
         const { observeByIdentity } = await import("./identity-observe");
         const identity = await observeByIdentity(options.entityNames, options.entities, resources, client);
-        return observation({ ...resources, ...identity.resources }, undefined, identity.queried, notes);
+        return observation(
+          { ...resources, ...identity.resources, ...receiptObs.resources },
+          receiptHoles,
+          identity.queried,
+          notes,
+        );
       }
       // Any other failure (credentials, throttling, a region that can't be
       // reached) establishes nothing about what is deployed. Reporting every
@@ -608,13 +624,16 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
       const reason = /credential|token|expired|AccessDenied|not authorized|Unauthorized/i.test(detail)
         ? "no-credentials"
         : "read-failed";
+      // A receipt row the leg above did read stays read: its answer came from
+      // GetParameter, not from the failed stack call, so it is not a hole.
+      const stackHoles = unobservedAll(
+        options.entityNames.filter((n) => !(n in receiptObs.resources)),
+        reason,
+        `DescribeStackResources failed for stack "${stackName}": ${detail}`,
+      );
       return observation(
-        {},
-        unobservedAll(
-          options.entityNames,
-          reason,
-          `DescribeStackResources failed for stack "${stackName}": ${detail}`,
-        ),
+        { ...receiptObs.resources },
+        { ...stackHoles, ...receiptObs.unobserved },
         undefined,
         notes,
       );
@@ -703,13 +722,25 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
           detail: `the stack was read, but this resource's own properties were not — ${own.failures.get(type) ?? "the describe call failed"}`,
         };
       }
-      return observation({ ...described, ...identity.resources }, holes, identity.queried, notes, stackExports);
+      return observation(
+        { ...described, ...identity.resources, ...receiptObs.resources },
+        { ...holes, ...receiptObs.unobserved },
+        identity.queried,
+        notes,
+        stackExports,
+      );
     }
 
     // Every entity the stack answered for was answered for: an entity the
     // template doesn't carry is genuinely not in this stack, which is an
     // absence, not a hole — unless the identity fallback saw it live (#1647).
-    return observation({ ...withProperties, ...identity.resources }, undefined, identity.queried, notes, stackExports);
+    return observation(
+      { ...withProperties, ...identity.resources, ...receiptObs.resources },
+      receiptHoles,
+      identity.queried,
+      notes,
+      stackExports,
+    );
   },
 
   /**

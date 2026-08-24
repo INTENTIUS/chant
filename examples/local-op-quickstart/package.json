@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@intentius/chant": "*",
+    "@intentius/chant-lexicon-aws": "*",
     "@intentius/chant-lexicon-temporal": "*"
   }
 }
