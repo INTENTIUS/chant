@@ -36,7 +36,7 @@
  */
 
 import { Op, phase, activity, gate, OpResource } from "@intentius/chant/op";
-import { defaultOutput, type ApplyTarget, type DeleteMode } from "../op/activities/apply";
+import { defaultOutput, hasNativeRollback, type ApplyTarget, type DeleteMode } from "../op/activities/apply";
 
 export interface ApplyOpConfig {
   /** Op name (kebab-case). */
@@ -61,9 +61,17 @@ export interface ApplyOpConfig {
   gate?: { signalName?: string; timeout?: string; description?: string };
   /**
    * Saga-style rollback on partial apply failure, run as an `onFailure` phase.
-   * Defaults on whenever the apply is destructive (`delete !== "never"`). Pass
-   * `{ command }` to supply a rollback command for targets without a native one
-   * (kubectl, ARM); `false` to disable.
+   *
+   * Compensation is total or refused (#1449): it only builds when the target
+   * has a rollback to run — a mapped native one (`cloudformation`, the aws
+   * lexicon's `rollbackStack`) or an explicit `{ command }`. Asking for it
+   * (`true`, or an object without a `command`) on any other target fails at
+   * build time rather than warning at rollback time.
+   *
+   * Defaults on for a destructive apply (`delete !== "never"`) when the target
+   * has a native rollback; a destructive apply on a target without one gets no
+   * compensation phase unless a `{ command }` supplies the rollback. Pass
+   * `false` to disable.
    */
   compensate?: boolean | { command?: string };
   /**
@@ -136,12 +144,28 @@ export function ApplyOp(config: ApplyOpConfig): ApplyOpResources {
     ]),
   );
 
-  // Compensation defaults on for destructive applies — a partial failure should
-  // unwind rather than leave the cloud half-applied.
-  const compensateDefault = deleteMode !== "never";
-  const compensateEnabled = config.compensate === undefined ? compensateDefault : config.compensate !== false;
+  // Compensation is total or refused (#1449). A rollback path is either the
+  // target's mapped native rollback (cloudformation's rollbackStack) or an
+  // explicit command; without one there is nothing a Rollback phase could run,
+  // so asking for one is refused here — at build time, with the op named —
+  // rather than surfacing as a warn when the rollback is already needed.
   const compensateCommand =
     typeof config.compensate === "object" ? config.compensate.command : undefined;
+  const rollbackAvailable = hasNativeRollback(target) || compensateCommand !== undefined;
+  if (config.compensate !== undefined && config.compensate !== false && !rollbackAvailable) {
+    throw new Error(
+      `ApplyOp "${config.name}": compensate is enabled, but target "${target}" has no automatic ` +
+        `rollback — the only mapped one today is cloudformation's rollbackStack. Either supply ` +
+        `compensate: { command: "..." } with a rollback of your own, or set compensate: false.`,
+    );
+  }
+
+  // Compensation defaults on for destructive applies — a partial failure should
+  // unwind rather than leave the cloud half-applied — but only where a rollback
+  // path exists; a destructive apply on a rollback-less target gets no
+  // compensation phase rather than one that could only warn.
+  const compensateDefault = deleteMode !== "never" && rollbackAvailable;
+  const compensateEnabled = config.compensate === undefined ? compensateDefault : config.compensate !== false;
 
   const op = Op({
     name: config.name,
