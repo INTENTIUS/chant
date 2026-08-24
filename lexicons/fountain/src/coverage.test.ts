@@ -1,8 +1,15 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { readFileSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
-import { computeFountainCoverage, formatVerbose, EXCLUDED_KINDS, UNSPECIFIED_ENDPOINTS } from "./coverage";
+import {
+  computeFountainCoverage,
+  coverageReportFromSnapshots,
+  formatVerbose,
+  EXCLUDED_KINDS,
+  UNSPECIFIED_ENDPOINTS,
+} from "./coverage";
+import { fountainPlugin } from "./plugin";
 import { fetchSchemas } from "./spec/fetch";
 
 const srcDir = dirname(fileURLToPath(import.meta.url));
@@ -59,6 +66,30 @@ describe("fountain coverage", () => {
     for (const [name, reason] of Object.entries(EXCLUDED_KINDS)) {
       expect(text).toContain(name);
       expect(text).toContain(reason);
+    }
+  });
+});
+
+// chant #1330 — the same accounting, exposed to check-lexicon through the
+// plugin contract. It must agree with the direct computation above and must
+// stay offline: check-lexicon runs on every PR.
+describe("coverageReport plugin contract", () => {
+  it("reports no unaccounted kinds over the committed snapshots", async () => {
+    const report = await fountainPlugin.coverageReport!();
+    expect(report.unaccountedKinds).toEqual([]);
+    expect(report.unaccountedKinds).toEqual(
+      computeFountainCoverage(spec, surface).unaccountedKinds,
+    );
+  });
+
+  it("does no network I/O", async () => {
+    const spy = vi.spyOn(globalThis, "fetch");
+    try {
+      await fountainPlugin.coverageReport!();
+      coverageReportFromSnapshots();
+      expect(spy).not.toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
     }
   });
 });
