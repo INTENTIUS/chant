@@ -1,4 +1,4 @@
-export { Op, phase, activity, gate, build, kubectlApply, helmInstall, waitForStack, waitForReady,
+export { Op, phase, activity, gate, effect, build, kubectlApply, helmInstall, waitForStack, waitForReady,
          gitlabPipeline, lifecycleSnapshot, shell, ensureSecret, teardown, envTeardown, k3dUp, k3dDown, flociUp, flociDown,
          flociAzUp, flociAzDown, flociGcpUp, flociGcpDown, httpCheck,
          azGroupEnsure, azGroupDelete, azApply, azDelete, awsApply, awsDelete, gcpApply, gcpDelete, policyGate,
@@ -13,7 +13,13 @@ export { emulatorLifecycle, emulatorsOf, endpointEnvVars } from "./emulator-life
 export type { EmulatorSpec, EmulatorCapability, EmulatorDeclaration, EmulatorUpArgs, EmulatorLifecycle } from "./emulator-lifecycle";
 export { checkFreshness, compare, formatResult, latestRelease, parseVersion, unpinned } from "./emulator-freshness";
 export type { FreshnessResult } from "./emulator-freshness";
-export type { OpConfig, PhaseDefinition, StepDefinition, ActivityStep, GateStep } from "./types";
+export type { OpConfig, PhaseDefinition, StepDefinition, ActivityStep, GateStep, EffectStep } from "./types";
+export { receiptActivities, receiptCheckInput } from "./receipt-store";
+export type {
+  ReceiptStore, EffectReceiptRef, ReceiptCheckInput, ReceiptActivities, ReceiptActivityOptions,
+  ReceiptReadArgs, ReceiptReadResult, ReceiptWriteArgs,
+  ReceiptStalenessArgs, ReceiptStalenessResult, ReceiptStaleFinding,
+} from "./receipt-store";
 export { discoverOps } from "./discover";
 export type { DiscoveredOp, OpDiscoveryResult } from "./discover";
 export { loadActivities, loadProfiles, resolveActivity } from "./activity-registry";

@@ -58,6 +58,7 @@ export {
   phase,
   activity,
   gate,
+  effect,
   build,
   kubectlApply,
   helmInstall,
@@ -88,4 +89,4 @@ export {
   gcpDelete,
   policyGate,
 } from "@intentius/chant/op";
-export type { OpConfig, PhaseDefinition, StepDefinition, ActivityStep, GateStep } from "@intentius/chant/op";
+export type { OpConfig, PhaseDefinition, StepDefinition, ActivityStep, GateStep, EffectStep } from "@intentius/chant/op";
