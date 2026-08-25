@@ -1,13 +1,14 @@
 /**
- * `chant helm classify` / `chant helm localize` / `chant helm renders`
- * (#1248, epic #1228 Phase 6).
+ * `chant helm classify` / `chant helm localize` / `chant helm renders` /
+ * `chant helm diff` (#1248, epic #1228 Phase 6; `diff` itself is #1249).
  *
  * Handler-level, the way core's dispatcher drives them: cwd pointed at a
  * fixture, rawArgs handed over unparsed, exit code and printed output
  * asserted. `classify` is static analysis and needs no helm binary; the
  * verbs that render (`localize`) or discover a project whose `HelmRender`
  * shells out (`renders`) sit behind the same skipIf discipline as
- * render.test.ts.
+ * render.test.ts. `diff` reads only the render store (render-store.ts) so it
+ * needs neither helm nor a chart — its own fixtures persist renders directly.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -18,9 +19,11 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { RESERVED_COMMAND_NAMES } from "@intentius/chant/cli/command-group";
-import { formatRenderRecords, helmCommandGroup } from "./commands";
+import { formatRenderDiff, formatRenderRecords, helmCommandGroup } from "./commands";
 import { helmPlugin } from "./plugin";
 import { renderStability } from "./render-digest";
+import { persistHelmRender } from "./render-store";
+import type { HelmCapabilityProfile } from "./config";
 
 function helmOnPath(): boolean {
   try {
@@ -79,7 +82,7 @@ describe("the helm command group", () => {
     const group = helmCommandGroup();
     expect(group.name).toBe("helm");
     expect(RESERVED_COMMAND_NAMES.has(group.name)).toBe(false);
-    expect(group.commands.map((c) => c.name)).toEqual(["classify", "localize", "renders"]);
+    expect(group.commands.map((c) => c.name)).toEqual(["classify", "localize", "renders", "diff"]);
     expect(helmPlugin.commands?.().name).toBe("helm");
   });
 
@@ -269,6 +272,148 @@ describe.skipIf(!helmAvailable)("chant helm renders", () => {
   it("refuses outside a chant project instead of discovering an arbitrary directory", async () => {
     process.chdir(mkTree({ "readme.txt": "not a chant project" }));
     await expect(verb("renders").handler({ verb: "renders", rawArgs: [] })).rejects.toThrow(/Not a chant project/);
+  });
+});
+
+describe("chant helm diff", () => {
+  const PROFILE: HelmCapabilityProfile = { name: "prod", kubeVersion: "1.33.6" };
+  const RENDERED_A = [
+    "---",
+    "# Source: tiny/templates/configmap.yaml",
+    "apiVersion: v1",
+    "kind: ConfigMap",
+    "metadata:",
+    "  name: tiny-config",
+    "  namespace: web",
+    "data:",
+    "  color: blue",
+    "",
+  ].join("\n");
+  const RENDERED_B = RENDERED_A.replace("color: blue", "color: green");
+
+  function freshRoot(): string {
+    const dir = mkdtempSync(join(tmpdir(), "chant-helm-diff-cli-"));
+    cleanupDirs.push(dir);
+    return dir;
+  }
+
+  it("rejects anything other than exactly two digest positionals", async () => {
+    await expect(verb("diff").handler({ verb: "diff", rawArgs: [] })).rejects.toThrow(
+      /Usage: chant helm diff <from-digest> <to-digest>/,
+    );
+    await expect(verb("diff").handler({ verb: "diff", rawArgs: ["only-one"] })).rejects.toThrow(
+      /Usage: chant helm diff <from-digest> <to-digest>/,
+    );
+  });
+
+  it("rejects flags it does not know", async () => {
+    await expect(
+      verb("diff").handler({ verb: "diff", rawArgs: ["a", "b", "--bogus"] }),
+    ).rejects.toThrow(/Unknown flag: --bogus[\s\S]*--json/);
+  });
+
+  it("reports the field change between two stored renders, text and --json", async () => {
+    const root = freshRoot();
+    const { manifest: from } = persistHelmRender({
+      rendered: RENDERED_A,
+      releaseName: "rel",
+      chart: "tiny",
+      namespace: "web",
+      capabilityProfile: PROFILE,
+      root,
+    });
+    const { manifest: to } = persistHelmRender({
+      rendered: RENDERED_B,
+      releaseName: "rel",
+      chart: "tiny",
+      namespace: "web",
+      capabilityProfile: PROFILE,
+      root,
+    });
+
+    const origRoot = process.env.CHANT_HELM_RENDER_ROOT;
+    process.env.CHANT_HELM_RENDER_ROOT = root;
+    try {
+      expect(
+        await verb("diff").handler({ verb: "diff", rawArgs: [from.contentDigest, to.contentDigest] }),
+      ).toBe(0);
+      const out = logged.join("\n");
+      expect(out).toContain("CHANGED  ConfigMap web/tiny-config");
+      expect(out).toContain("changed data.color: \"blue\" -> \"green\"");
+
+      logged = [];
+      expect(
+        await verb("diff").handler({ verb: "diff", rawArgs: [from.contentDigest, to.contentDigest, "--json"] }),
+      ).toBe(0);
+      const payload = JSON.parse(logged.join("\n"));
+      expect(payload.changed).toHaveLength(1);
+      expect(payload.changed[0].changes).toEqual([
+        { path: "data.color", kind: "changed", before: "blue", after: "green" },
+      ]);
+      expect(payload.unindexed).toEqual({ from: 0, to: 0 });
+    } finally {
+      if (origRoot === undefined) delete process.env.CHANT_HELM_RENDER_ROOT;
+      else process.env.CHANT_HELM_RENDER_ROOT = origRoot;
+    }
+  });
+
+  it("surfaces the store's own error when a digest was never persisted", async () => {
+    const root = freshRoot();
+    const origRoot = process.env.CHANT_HELM_RENDER_ROOT;
+    process.env.CHANT_HELM_RENDER_ROOT = root;
+    try {
+      await expect(
+        verb("diff").handler({
+          verb: "diff",
+          rawArgs: [`sha256:${"0".repeat(64)}`, `sha256:${"1".repeat(64)}`],
+        }),
+      ).rejects.toThrow(/no stored render for sha256:0{64}/);
+    } finally {
+      if (origRoot === undefined) delete process.env.CHANT_HELM_RENDER_ROOT;
+      else process.env.CHANT_HELM_RENDER_ROOT = origRoot;
+    }
+  });
+});
+
+describe("formatRenderDiff", () => {
+  it("prints added, removed, and changed documents with field-level lines", () => {
+    const out = formatRenderDiff({
+      from: { contentDigest: `sha256:${"a".repeat(64)}`, chart: "tiny", releaseName: "rel-a" },
+      to: { contentDigest: `sha256:${"b".repeat(64)}`, chart: "tiny", releaseName: "rel-b" },
+      added: [{ kind: "Secret", namespace: "web", name: "new-secret", source: null, digest: `sha256:${"c".repeat(64)}` }],
+      removed: [{ kind: "ConfigMap", namespace: "web", name: "old-cm", source: null, digest: `sha256:${"d".repeat(64)}` }],
+      changed: [
+        {
+          kind: "Deployment",
+          namespace: "web",
+          name: "app",
+          source: null,
+          beforeDigest: `sha256:${"e".repeat(64)}`,
+          afterDigest: `sha256:${"f".repeat(64)}`,
+          changes: [{ path: "spec.replicas", kind: "changed", before: 2, after: 3 }],
+        },
+      ],
+      unchanged: [{ kind: "ServiceAccount", namespace: "web", name: "sa", source: null }],
+      unindexed: { from: 0, to: 0 },
+    });
+    expect(out).toContain("REMOVED  ConfigMap web/old-cm");
+    expect(out).toContain("ADDED    Secret web/new-secret");
+    expect(out).toContain("CHANGED  Deployment web/app (1 field change(s))");
+    expect(out).toContain("changed spec.replicas: 2 -> 3");
+    expect(out).toContain("1 unchanged document(s)");
+  });
+
+  it("says so plainly when there are no differences", () => {
+    const out = formatRenderDiff({
+      from: { contentDigest: `sha256:${"a".repeat(64)}`, chart: "tiny", releaseName: "rel" },
+      to: { contentDigest: `sha256:${"a".repeat(64)}`, chart: "tiny", releaseName: "rel" },
+      added: [],
+      removed: [],
+      changed: [],
+      unchanged: [{ kind: "ServiceAccount", namespace: "web", name: "sa", source: null }],
+      unindexed: { from: 0, to: 0 },
+    });
+    expect(out).toContain("no differences — identical documents on both sides");
   });
 });
 
