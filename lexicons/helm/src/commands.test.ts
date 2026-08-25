@@ -78,7 +78,7 @@ afterEach(() => {
 });
 
 describe("the helm command group", () => {
-  it("mounts under a name core does not reserve, with classify, localize, and renders", () => {
+  it("mounts under a name core does not reserve, with classify, localize, renders, and diff", () => {
     const group = helmCommandGroup();
     expect(group.name).toBe("helm");
     expect(RESERVED_COMMAND_NAMES.has(group.name)).toBe(false);
@@ -416,6 +416,47 @@ describe("formatRenderDiff", () => {
     expect(out).toContain("no differences — identical documents on both sides");
   });
 });
+
+describe("chant helm diff --live (#1250)", () => {
+  it("requires a content digest and an environment", async () => {
+    await expect(verb("diff").handler({ verb: "diff", rawArgs: ["--live"] })).rejects.toThrow(
+      /Usage: chant helm diff <content-digest> <environment> --live/,
+    );
+    await expect(verb("diff").handler({ verb: "diff", rawArgs: ["sha256:abc", "--live"] })).rejects.toThrow(
+      /Usage: chant helm diff <content-digest> <environment> --live/,
+    );
+    await expect(
+      verb("diff").handler({ verb: "diff", rawArgs: ["sha256:abc", "prod", "extra", "--live"] }),
+    ).rejects.toThrow(/Usage: chant helm diff <content-digest> <environment> --live/);
+  });
+
+  it("without --live, two positionals dispatch to the offline render-to-render diff instead of refusing", async () => {
+    // Neither digest is in the store, so the offline path's own refusal fires —
+    // proof this reaches diffRenders, not a "needs --live" rejection.
+    const missing = `sha256:${"0".repeat(64)}`;
+    await expect(
+      verb("diff").handler({ verb: "diff", rawArgs: [missing, "prod"] }),
+    ).rejects.toThrow(new RegExp(`no stored render for ${missing}`));
+  });
+
+  it("refuses a digest the render store has never seen, rather than reporting a false clean diff", async () => {
+    const missing = `sha256:${"0".repeat(64)}`;
+    const code = await verb("diff").handler({ verb: "diff", rawArgs: [missing, "prod", "--live"] });
+    expect(code).toBe(1);
+    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining("no stored render"));
+  });
+
+  it("rejects flags it does not know", async () => {
+    await expect(verb("diff").handler({ verb: "diff", rawArgs: ["--bogus"] })).rejects.toThrow(
+      /Unknown flag: --bogus[\s\S]*--live/,
+    );
+  });
+});
+
+// The full drift-reporting path (a real stored render vs a fake live
+// cluster) is covered at the render-diff.ts unit level — render-diff.test.ts
+// — the same split describe-resources.test.ts / lifecycle-integration.test.ts
+// keep for the release-scoped read: CLI dispatch here, cluster behavior there.
 
 describe("formatRenderRecords", () => {
   it("prints unpinned renders honestly and flags unstable groups", () => {

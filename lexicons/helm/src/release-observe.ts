@@ -107,7 +107,7 @@ interface HelmListEntry {
  * cluster-scoped CRD instance this set does not name defaults to the release
  * namespace, which affects the row's address, never its verdict.
  */
-const CLUSTER_SCOPED_KINDS = new Set([
+export const CLUSTER_SCOPED_KINDS = new Set([
   "Namespace",
   "CustomResourceDefinition",
   "ClusterRole",
