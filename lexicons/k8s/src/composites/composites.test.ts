@@ -3475,6 +3475,36 @@ describe("FluxAppFor", () => {
     expect(spec.timeout).toBe("3m");
     expect(spec.serviceAccountName).toBe("flux-applier");
   });
+
+  test("omits decryption when the option is not set", () => {
+    const spec = p(FluxAppFor("hello", { source: "flux-system", path: "./k8s" }).kustomization).spec as any;
+    expect(spec.decryption).toBeUndefined();
+  });
+
+  test('decryption: "sops" defaults the secretRef to sops-age', () => {
+    const spec = p(
+      FluxAppFor("hello", { source: "flux-system", path: "./k8s", decryption: "sops" }).kustomization,
+    ).spec as any;
+    expect(spec.decryption).toEqual({ provider: "sops", secretRef: { name: "sops-age" } });
+  });
+
+  test("decryption object form names a custom secretRef", () => {
+    const spec = p(
+      FluxAppFor("hello", {
+        source: "flux-system",
+        path: "./k8s",
+        decryption: { provider: "sops", secretRef: "my-age-identity" },
+      }).kustomization,
+    ).spec as any;
+    expect(spec.decryption).toEqual({ provider: "sops", secretRef: { name: "my-age-identity" } });
+  });
+
+  test("decryption object form with no secretRef still defaults to sops-age", () => {
+    const spec = p(
+      FluxAppFor("hello", { source: "flux-system", path: "./k8s", decryption: { provider: "sops" } }).kustomization,
+    ).spec as any;
+    expect(spec.decryption).toEqual({ provider: "sops", secretRef: { name: "sops-age" } });
+  });
 });
 
 // ── InferenceService ─────────────────────────────────────────────────

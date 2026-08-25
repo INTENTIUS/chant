@@ -29,6 +29,10 @@ import {
 /** The namespace the Flux controllers run in and watch by default. */
 const FLUX_NAMESPACE = "flux-system";
 
+/** knr-ops's name for the bootstrap-injected age identity Secret, and the
+ * name `flux bootstrap` documentation uses. */
+const SOPS_AGE_SECRET_NAME = "sops-age";
+
 /** Source kinds a Kustomization can reconcile from. */
 export type FluxSourceKind = "GitRepository" | "OCIRepository" | "Bucket";
 
@@ -154,6 +158,15 @@ export interface FluxAppForOptions {
   suspend?: boolean;
   /** ServiceAccount the kustomize-controller impersonates for this app. */
   serviceAccountName?: string;
+  /**
+   * SOPS decryption for the reconciled path. `"sops"` is shorthand for the
+   * default age Secret name (`sops-age`); pass an object to name a different
+   * one. Never inferred — the path this Kustomization reconciles is usually
+   * the output of a *different* `chant build`, so the composite cannot know
+   * whether it contains SOPS ciphertext. See WK8505 for the build-time check
+   * that catches a committed-encrypted secret with no wiring here.
+   */
+  decryption?: "sops" | { provider: "sops"; secretRef?: string };
   /** Namespace the Kustomization object itself lives in (default "flux-system"). */
   fluxNamespace?: string;
   /** Extra labels applied to the Kustomization. */
@@ -210,12 +223,21 @@ const FluxKustomization = Composite<{ target: string } & FluxAppForOptions, Flux
       timeout,
       suspend,
       serviceAccountName,
+      decryption,
       fluxNamespace = FLUX_NAMESPACE,
       labels = {},
       defaults,
     } = props;
 
     const sourceRef = resolveSourceRef(target, source);
+    const decryptionSpec = decryption === undefined
+      ? undefined
+      : {
+        provider: "sops",
+        secretRef: {
+          name: typeof decryption === "string" ? SOPS_AGE_SECRET_NAME : decryption.secretRef ?? SOPS_AGE_SECRET_NAME,
+        },
+      };
 
     // The Kustomization's namespace also scopes the sourceRef: an in-spec
     // sourceRef without a namespace resolves in the Kustomization's own.
@@ -240,6 +262,7 @@ const FluxKustomization = Composite<{ target: string } & FluxAppForOptions, Flux
         ...(timeout !== undefined && { timeout }),
         ...(suspend !== undefined && { suspend }),
         ...(serviceAccountName !== undefined && { serviceAccountName }),
+        ...(decryptionSpec !== undefined && { decryption: decryptionSpec }),
       },
     }, defaults?.kustomization));
 
