@@ -1,0 +1,24 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: genvalues
+  template:
+    metadata:
+      labels:
+        app: genvalues
+      annotations:
+        # Derived CROSS-FILE from the generated value (grafana's shape): the
+        # checksum re-renders secret.yaml, so it varies whenever the password
+        # does. Hoisting the secret after render leaves this checksum
+        # pointing at bytes that never deploy — pin the input, not the
+        # output (epic finding 6).
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+    spec:
+      containers:
+        - name: app
+          image: nginx

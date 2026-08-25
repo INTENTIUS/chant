@@ -32,12 +32,15 @@ import {
   routeBySource,
 } from "../../src/pinnability";
 import {
+  formatLocalization,
+  formatRow,
+  localizeChart,
   parseCorpus,
   pullChart,
   renderChart,
   surveyChart,
-  formatRow,
   valuesFileFor,
+  type CorpusEntry,
 } from "./survey";
 
 const SURVEY_DIR = join(import.meta.dirname);
@@ -129,6 +132,32 @@ describe.skipIf(!hasHelm)("fixture surveys (helm, offline)", () => {
     expect(renderChart(chart, closed)).toBe(renderChart(chart, closed));
   });
 
+  test("double-render localizer groups the derived checksum under the secret input (#1236, finding 6)", () => {
+    const chart = join(FIXTURES, "genvalues-fixture");
+    const loc = localizeChart(chart);
+    expect(loc.deterministic).toBe(false);
+    expect(loc.inputs).toHaveLength(1);
+    const input = loc.inputs[0];
+    expect(input.fn).toBe("randAlphaNum");
+    expect(input.file).toBe("templates/secret.yaml");
+    expect(input.suppliable).toBe(true);
+    expect(input.valuesPath).toBe("adminPassword");
+    expect(input.suggestedPin).toBe("adminPassword: <generate once and supply>");
+    // The secret line, in the generator's own template.
+    const secret = input.occurrences.find((o) => o.key === "admin-password");
+    expect(secret?.doc).toBe("templates/secret.yaml");
+    expect(secret?.derived).toBe(false);
+    // The checksum annotation, derived CROSS-FILE from the same value —
+    // grouped under the same root input rather than reported as its own
+    // instability. This is why pinning the input beats hoisting the output.
+    const checksum = input.occurrences.find((o) => o.key === "checksum/secret");
+    expect(checksum?.doc).toBe("templates/deployment.yaml");
+    expect(checksum?.derived).toBe(true);
+    // Every differing line mapped; the chart closes fully with the pin.
+    expect(loc.unlocalized).toEqual([]);
+    expect(loc.stableWithAllPins).toBe(true);
+  });
+
   test("gated control-flow lookup: hazard when the values leave it off, refusal when flipped on", () => {
     // The kube-prometheus-stack shape (survey finding 1): the bundled
     // grafana's control-flow lookup sits behind grafana.persistence.enabled,
@@ -186,20 +215,85 @@ describe.skipIf(!runNetworkSurvey)(
     for (const entry of corpus) {
       test(
         `${entry.name}@${entry.version} verdict matches expected.txt`,
-        { timeout: 180_000 },
+        { timeout: 300_000 },
         () => {
           // A chart that cannot pull or render throws here: a harness
           // failure, never a silent omission (#1233).
           const chartDir = pullChart(entry);
-          const row = surveyChart(
-            entry.name,
-            entry.version,
-            chartDir,
-            valuesFileFor(SURVEY_DIR, entry.name),
-          );
+          const valuesFile = valuesFileFor(SURVEY_DIR, entry.name);
+          const row = surveyChart(entry.name, entry.version, chartDir, valuesFile);
           expect(formatRow(row)).toBe(expectedByName.get(entry.name));
+
+          // An unstable chart gets the double-render localizer (#1236):
+          // every differing line must map to a named open input — differing
+          // lines with no mapped generator would be unlocalized instability,
+          // and this corpus has none. The table is emitted for the survey
+          // report.
+          if (row.unstableLines > 0) {
+            const loc = localizeChart(chartDir, valuesFile);
+            console.log(`localization — ${entry.name}:\n${formatLocalization(loc)}`);
+            expect(loc.deterministic).toBe(false);
+            expect(loc.unlocalized).toEqual([]);
+            const fired = loc.inputs.filter((i) => i.occurrences.length > 0);
+            expect(fired.length).toBeGreaterThan(0);
+            // Finding 6 at corpus scale: generated values cascade into
+            // derived fields (checksum annotations), grouped under their
+            // root input rather than reported as independent instability.
+            expect(fired.some((i) => i.occurrences.some((o) => o.derived))).toBe(true);
+          }
         },
       );
     }
+
+    test("grafana's generated admin password localizes to its supply slot (finding 6)", { timeout: 300_000 }, () => {
+      const chartDir = pullChart(corpus.find((e) => e.name === "grafana") as CorpusEntry);
+      const loc = localizeChart(chartDir);
+      const fired = loc.inputs.filter((i) => i.occurrences.length > 0);
+      expect(fired).toHaveLength(1);
+      const input = fired[0];
+      expect(input.fn).toBe("randAlphaNum");
+      expect(input.file).toBe("templates/_helpers.tpl");
+      // Statically unsuppliable (the generator sits in a bare helper); the
+      // localizer recovers the pin from the helper's include chain.
+      expect(input.valuesPath).toBe("adminPassword");
+      expect(input.suggestedPin).toBe("adminPassword: <generate once and supply>");
+      expect(input.existingSlots).toContain("admin.existingSecret");
+      // The secret line plus the checksum/secret annotation derived from it.
+      const keys = input.occurrences.map((o) => o.key).sort();
+      expect(keys).toEqual(["admin-password", "checksum/secret"]);
+      expect(loc.stableWithAllPins).toBe(true);
+    });
+
+    test("harbor's cascades group under their root inputs, htpasswd included", { timeout: 300_000 }, () => {
+      const chartDir = pullChart(corpus.find((e) => e.name === "harbor") as CorpusEntry);
+      const loc = localizeChart(chartDir);
+      expect(loc.unlocalized).toEqual([]);
+      const byPin = new Map(loc.inputs.map((i) => [i.valuesPath, i]));
+      // The classic `x | default (randAlphaNum ..)` slots.
+      for (const path of ["core.secret", "jobservice.secret", "registry.secret"]) {
+        const input = byPin.get(path);
+        expect(input?.suppliable).toBe(true);
+        // Each secret's checksum annotation groups under the same input.
+        expect(input?.occurrences.some((o) => o.derived && o.key.startsWith("checksum/"))).toBe(
+          true,
+        );
+      }
+      // htpasswd salts per render regardless of the supplied password — the
+      // real pin is the else-branch slot, found dynamically.
+      const htpasswd = loc.inputs.find((i) => i.fn === "htpasswd");
+      expect(htpasswd?.valuesPath).toBe("registry.credentials.htpasswdString");
+      // Ingress certs have no values slot: localized by source, not pinnable.
+      const ingressCa = loc.inputs.find(
+        (i) => i.fn === "genCA" && i.file === "templates/ingress/secret.yaml",
+      );
+      expect(ingressCa?.suppliable).toBe(false);
+      expect(ingressCa?.occurrences.map((o) => o.key).sort()).toEqual([
+        "ca.crt",
+        "tls.crt",
+        "tls.key",
+      ]);
+      // Which is exactly why the chart does NOT close on values pins alone.
+      expect(loc.stableWithAllPins).toBe(false);
+    });
   },
 );

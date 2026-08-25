@@ -19,7 +19,9 @@ import { basename, join } from "node:path";
 import {
   classifyChart,
   countDifferingLines,
+  localizeOpenInputs,
   routeBySource,
+  type LocalizationReport,
   type PinnabilityReport,
   type PinnabilityVerdict,
 } from "../../src/pinnability";
@@ -183,6 +185,62 @@ export function formatRow(row: SurveyRow): string {
     `unstable-lines=${row.unstableLines}`,
     `values=${row.valuesSupplied ? "yes" : "no"}`,
   ].join(" ");
+}
+
+/** `--set-string` args for the localizer's pin probes. */
+export function pinArgs(pins: Record<string, string>): string[] {
+  // Values keys with literal dots would need helm's backslash escaping; no
+  // corpus chart has one, and a probe that misses merely fails to validate.
+  return Object.entries(pins).flatMap(([path, value]) => [
+    "--set-string",
+    `${path}=${value}`,
+  ]);
+}
+
+/**
+ * Run the double-render localizer (#1236) for one chart: classify, then map
+ * every unstable output line to the open generated input that produced it.
+ */
+export function localizeChart(
+  chartDir: string,
+  valuesFile?: string,
+): LocalizationReport {
+  const valuesFiles = valuesFile !== undefined ? [valuesFile] : [];
+  const report = classifyChart(chartDir, { valuesFiles });
+  return localizeOpenInputs(chartDir, report, {
+    valuesFiles,
+    render: (pins) => renderChart(chartDir, valuesFile, pinArgs(pins)),
+  });
+}
+
+/** The printed localization table: one block per open input, then leftovers. */
+export function formatLocalization(loc: LocalizationReport): string {
+  if (loc.deterministic) return "deterministic (double render byte-stable)";
+  const lines: string[] = [
+    `unstable: ${loc.differingLines} differing line(s), ${loc.renders} renders used` +
+      (loc.stableWithAllPins === undefined
+        ? ""
+        : `, stable with all pins: ${loc.stableWithAllPins ? "yes" : "no"}`),
+  ];
+  for (const input of loc.inputs) {
+    lines.push(
+      `  ${input.fn} at ${input.file}:${input.line}` +
+        ` suppliable=${input.suppliable ? "yes" : "no"}` +
+        (input.suggestedPin !== undefined ? ` pin: ${input.suggestedPin}` : "") +
+        (input.existingSlots.length > 0
+          ? ` existing-slots: ${input.existingSlots.join(", ")}`
+          : ""),
+    );
+    for (const occ of input.occurrences) {
+      lines.push(
+        `    ${occ.derived ? "derived " : ""}${occ.docId} ${occ.doc}:${occ.line} ${occ.key}`,
+      );
+    }
+  }
+  for (const occ of loc.unlocalized) {
+    lines.push(`  UNLOCALIZED ${occ.docId} ${occ.doc}:${occ.line} ${occ.key}`);
+  }
+  return lines.join("\n");
 }
 
 /** The values file for a corpus chart, when the corpus ships one (#1233). */
