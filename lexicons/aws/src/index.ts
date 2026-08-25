@@ -145,6 +145,7 @@ export {
   MicrovmApp, MICROVM_LIMITS,
   AgentCoreAgent, agentCoreDefaultEndpointArn, AGENTCORE_LIMITS,
   OrganizationRoot, GovernanceFoundation, RegionRestriction, OrganizationTrail,
+  StepFunctionsWorkflow,
   MonitoringStack,
 } from "./composites/index";
 export type {
@@ -157,6 +158,7 @@ export type {
   MicrovmAppProps, MicrovmAppResult, MicrovmAppBuildConnectorProps, MicrovmMemoryMiB,
   AgentCoreAgentProps, AgentCoreAgentResult,
   OrganizationRootProps, GovernanceFoundationProps, RegionRestrictionProps, OrganizationTrailProps,
+  StepFunctionsWorkflowProps,
   MonitoringStackProps, MonitoringMetricSpec,
 } from "./composites/index";
 
