@@ -42,6 +42,7 @@ export {
   AgicIngress, AzureDiskStorageClass, AzureFileStorageClass, AzureMonitorCollector,
   AksWorkloadIdentityServiceAccount,
   GkeFluentBitAgent, GkeOtelCollector, GkeExternalDnsAgent, AksExternalDnsAgent,
+  Model, resolveModelStorageUri,
 } from "./composites/index";
 export type {
   WebAppProps, WebAppResult, StatefulAppProps, StatefulAppResult, CronWorkloadProps, CronWorkloadResult,
@@ -81,6 +82,7 @@ export type {
   GkeOtelCollectorProps, GkeOtelCollectorResult,
   GkeExternalDnsAgentProps, GkeExternalDnsAgentResult,
   AksExternalDnsAgentProps, AksExternalDnsAgentResult,
+  ModelSource, ModelProps, ModelResult,
 } from "./composites/index";
 
 // RBAC verb constants
