@@ -78,6 +78,14 @@ export interface ReleaseRecord {
   approver?: string;
   /** Optional: the archive's own manifest digest (../components/verbs/build-archive.ts's `manifestDigest`), when the caller has it — lets a reader recover full build contents/provenance, not just the promoted image digest. */
   manifestDigest?: string;
+  /**
+   * Optional: set when the deploy's capability-profile assertion (chant
+   * #1244, helm lexicon) was deliberately overridden — carries the named
+   * divergences that were bypassed (declared vs live), so the ledger shows
+   * this release knowingly skewed from its declared profile. Absent for a
+   * deploy whose target matched, and for deploys with no declared profile.
+   */
+  profileOverride?: string;
 }
 
 /** Required, non-empty-string fields every `ReleaseRecord` must carry. */

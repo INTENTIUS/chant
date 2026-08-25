@@ -3,6 +3,11 @@ import { readFileSync } from "node:fs";
 import { promisify } from "node:util";
 import { load } from "js-yaml";
 import { helmInputDigest } from "../../render-digest";
+import {
+  ClusterProbeError,
+  compareCapabilityProfile,
+  probeClusterCapabilities,
+} from "./cluster-probe";
 import { safeHeartbeat } from "@intentius/chant/op";
 import {
   maybeRecordAutoRelease,
@@ -18,6 +23,8 @@ const execAsync = promisify(exec);
  * be part of a stable identity. When declared it joins the input digest.
  */
 export interface HelmCapabilityProfile {
+  /** The profile's declared name (its `helm.capabilityProfiles` key), used in assertion messages. Not part of the digest — only the declared facts are. */
+  name?: string;
   /** Kubernetes version the render targets (`--kube-version`). */
   kubeVersion?: string;
   /** Extra API versions the render assumes (`--api-versions`). Order-insensitive for the digest. */
@@ -37,8 +44,18 @@ export interface HelmInstallArgs {
   namespace?: string;
   /** Additional --set arguments. */
   set?: Record<string, string>;
-  /** Capability profile the deploy is declared against, if any. Part of the input digest when declared. */
+  /** Capability profile the deploy is declared against, if any. Part of the input digest when declared, and asserted against the live target cluster before any helm mutation (#1244). */
   capabilityProfile?: HelmCapabilityProfile;
+  /**
+   * Deliberate escape hatch for the capability-profile assertion (#1244).
+   * When the live cluster diverges from the declared profile — or cannot be
+   * probed at all — the deploy normally refuses before any helm mutation.
+   * Set `true` to deploy anyway; the bypassed divergences are warned about
+   * and recorded in the release record (`profileOverride`), so the ledger
+   * shows the release knowingly skewed from its declared profile. Has no
+   * effect when the cluster matches, and none when no profile is declared.
+   */
+  overrideProfileAssertion?: boolean;
   /** Component name for the release record. Defaults to the release `name` — a chart's release is its deploy unit. */
   component?: string;
   /** Environment for the release record. Defaults to `"local"`, the same default `chant run --components` applies. */
@@ -63,6 +80,43 @@ export interface HelmInstallResult {
   inputDigest?: string;
   /** Outcome of the ledger append — `recorded: true` carries the `ReleaseRecord` written. */
   release: AutoReleaseResult;
+  /**
+   * Outcome of the deploy-time capability-profile assertion (#1244). Present
+   * exactly when the deploy declared a profile with assertable facts. A
+   * mismatch without the override never reaches a result — the activity
+   * throws before any helm mutation — so a present outcome is either a
+   * verified match or a deliberate, recorded override.
+   */
+  profileAssertion?: HelmProfileAssertionOutcome;
+}
+
+/** How the deploy-time profile assertion (#1244) concluded, when a profile was declared. */
+export type HelmProfileAssertionOutcome =
+  | { matched: true }
+  | { matched: false; divergences: string[]; overridden: true };
+
+/**
+ * Thrown before any helm mutation when the target cluster does not match the
+ * deploy's declared capability profile (#1244). The message names every
+ * divergence — declared vs live — so the refusal is specific, never a shrug.
+ */
+export class CapabilityProfileMismatchError extends Error {
+  constructor(
+    release: string,
+    profileName: string | undefined,
+    public readonly divergences: string[],
+  ) {
+    const profile = profileName ? ` "${profileName}"` : "";
+    super(
+      `helm release "${release}": target cluster does not match the declared capability profile${profile}:\n` +
+        divergences.map((d) => `  - ${d}`).join("\n") +
+        `\nThe deploy's identity was pinned against the declared profile; deploying to a diverging cluster ` +
+        `breaks the per-cluster guarantee that the same rendered bytes reach every cluster sharing a profile. ` +
+        `Fix the profile or retarget the deploy — or pass overrideProfileAssertion: true for a deliberate ` +
+        `override, which is recorded in the release record. Nothing was deployed.`,
+    );
+    this.name = "CapabilityProfileMismatchError";
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -127,6 +181,55 @@ export function helmInstallInputDigest(args: HelmInstallArgs): string {
 }
 
 /**
+ * Assert the target cluster matches the deploy's declared capability profile
+ * (#1244), before any helm mutation. Returns the assertion outcome, or
+ * `undefined` when there was nothing to assert (no profile, or a profile
+ * declaring no facts) — that path never touches kubectl, keeping the
+ * no-profile deploy exactly what it was.
+ *
+ * A mismatch throws `CapabilityProfileMismatchError` naming every divergence.
+ * An unprobeable cluster throws too — a deploy that cannot verify its
+ * guarantee must not silently proceed. `overrideProfileAssertion: true`
+ * turns both refusals into a warned, recorded override.
+ */
+async function assertCapabilityProfile(
+  args: HelmInstallArgs,
+  signal?: AbortSignal,
+): Promise<HelmProfileAssertionOutcome | undefined> {
+  const profile = args.capabilityProfile;
+  if (!profile || (!profile.kubeVersion && !(profile.apiVersions?.length))) return undefined;
+
+  let divergences: string[];
+  try {
+    const live = await probeClusterCapabilities(signal);
+    divergences = compareCapabilityProfile(profile, live);
+  } catch (err) {
+    const why = err instanceof Error ? err.message : String(err);
+    if (!args.overrideProfileAssertion) {
+      throw new ClusterProbeError(
+        `helm release "${args.name}": the deploy declares capability profile` +
+          `${profile.name ? ` "${profile.name}"` : ""} but the target cluster's capabilities could not ` +
+          `be verified — ${why}. A deploy that cannot verify its declared profile does not proceed. ` +
+          `Nothing was deployed. Pass overrideProfileAssertion: true only for a deliberate override.`,
+      );
+    }
+    divergences = [`capability probe failed: ${why}`];
+  }
+
+  if (divergences.length === 0) return { matched: true };
+  if (!args.overrideProfileAssertion) {
+    throw new CapabilityProfileMismatchError(args.name, profile.name, divergences);
+  }
+  console.error(
+    `warning: helm release "${args.name}" deploying despite capability profile` +
+      `${profile.name ? ` "${profile.name}"` : ""} divergence (overrideProfileAssertion):\n` +
+      divergences.map((d) => `  - ${d}`).join("\n") +
+      `\nThe override is recorded in the release record.`,
+  );
+  return { matched: false, divergences, overridden: true };
+}
+
+/**
  * Append the deploy's release record, best-effort (#1243). Called only after
  * `helm upgrade --install` succeeded — a failed deploy writes nothing, by
  * construction, because this function is never reached.
@@ -143,6 +246,7 @@ async function recordHelmRelease(
   args: HelmInstallArgs,
   inputDigest: string | undefined,
   digestError: string | undefined,
+  profileOverride: string | undefined,
 ): Promise<AutoReleaseResult> {
   if (args.recordRelease === false) return { recorded: false, reason: "opted-out" };
   if (!inputDigest) {
@@ -156,6 +260,7 @@ async function recordHelmRelease(
     success: true,
     digest: inputDigest,
     runId,
+    profileOverride,
   });
 }
 
@@ -186,6 +291,11 @@ export async function helmInstall(
     digestError = `could not compute input digest: ${err instanceof Error ? err.message : String(err)}`;
   }
 
+  // Deploy-time profile assertion (#1244): when a profile is declared, the
+  // live cluster must match it before helm mutates anything. A refusal (or
+  // an unprobeable cluster) throws here, so no helm command has run yet.
+  const profileAssertion = await assertCapabilityProfile(args, signal);
+
   const parts = ["helm", "upgrade", "--install", "--wait", args.name, args.chart];
   if (args.chartVersion) parts.push("--version", args.chartVersion);
   if (args.namespace) parts.push("--namespace", args.namespace, "--create-namespace");
@@ -204,7 +314,9 @@ export async function helmInstall(
     clearInterval(heartbeatInterval);
   }
 
-  const release = await recordHelmRelease(args, inputDigest, digestError);
+  const profileOverride =
+    profileAssertion && !profileAssertion.matched ? profileAssertion.divergences.join("; ") : undefined;
+  const release = await recordHelmRelease(args, inputDigest, digestError, profileOverride);
   if (!release.recorded && release.reason !== "opted-out") {
     const why =
       release.reason === "error"
@@ -215,5 +327,5 @@ export async function helmInstall(
         `The deploy succeeded; the ledger write is best-effort observability and never fails a finished deploy.`,
     );
   }
-  return { inputDigest, release };
+  return { inputDigest, release, ...(profileAssertion ? { profileAssertion } : {}) };
 }
