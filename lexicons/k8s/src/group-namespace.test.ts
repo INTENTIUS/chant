@@ -31,6 +31,14 @@ describe("namespaceSegmentForGroup", () => {
   test("serving.kserve.io takes the KServe override", () => {
     expect(namespaceSegmentForGroup("serving.kserve.io")).toBe("KServe");
   });
+
+  test("cluster.x-k8s.io takes the CAPI override, avoiding the Cluster::Cluster stutter", () => {
+    expect(namespaceSegmentForGroup("cluster.x-k8s.io")).toBe("CAPI");
+  });
+
+  test("infrastructure.cluster.x-k8s.io is not overridden — first segment reads fine", () => {
+    expect(namespaceSegmentForGroup("infrastructure.cluster.x-k8s.io")).toBe("Infrastructure");
+  });
 });
 
 // #1628: rendered and imported entityTypes used to bypass the overrides, so a

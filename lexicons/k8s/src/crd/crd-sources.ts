@@ -341,6 +341,55 @@ const K3S_API_CRD_BASE = `https://raw.githubusercontent.com/k3s-io/api/${K3S_API
 const KSERVE_VERSION = "v0.15.2";
 const KSERVE_CRD_BASE = `https://raw.githubusercontent.com/kserve/kserve/${KSERVE_VERSION}/config/crd/full`;
 
+/**
+ * Cluster API (CAPI) core CRDs — cluster.x-k8s.io/v1beta2
+ *
+ * The provider-agnostic cluster-lifecycle surface CAPA, CAAPH, and every
+ * other CAPI provider build on. Only the two kinds a project actually
+ * declares are taken; `ClusterClass`, `MachineDeployment`, `MachineSet`,
+ * `MachineHealthCheck`, `MachineDrainRule`, the `ipam.cluster.x-k8s.io` pair,
+ * and `ExtensionConfig` are deliberately left out (the scale note at the top
+ * of this file: add the kinds a project uses). `ClusterResourceSet`, CAPI
+ * core's other addons.cluster.x-k8s.io kind, is a separate source below —
+ * see the CAAPH block for why it's grouped there. Produces (the group takes
+ * the `CAPI` override — see GROUP_NAMESPACE_OVERRIDES in group-namespace.ts,
+ * which avoids the `K8s::Cluster::Cluster` stutter):
+ *   K8s::CAPI::Cluster      → cluster.x-k8s.io/v1beta2, kind: Cluster
+ *   K8s::CAPI::MachinePool  → cluster.x-k8s.io/v1beta2, kind: MachinePool
+ *
+ * Controller install: kubectl apply -f
+ *   https://github.com/kubernetes-sigs/cluster-api/releases/download/v1.14.0/cluster-api-components.yaml
+ */
+const CAPI_VERSION = "v1.14.0";
+const CAPI_CRD_BASE = `https://raw.githubusercontent.com/kubernetes-sigs/cluster-api/${CAPI_VERSION}/core/config/crd/bases`;
+
+/**
+ * Cluster API Provider AWS (CAPA) CRDs — infrastructure.cluster.x-k8s.io + controlplane.cluster.x-k8s.io
+ *
+ * The AWS infrastructure and EKS control-plane providers for CAPI. Produces
+ * (first-segment rule, no override — the `AWS` kind prefix already keeps
+ * these from reading like anything else in the file):
+ *   K8s::Infrastructure::AWSManagedCluster            → infrastructure.cluster.x-k8s.io/v1beta2
+ *   K8s::Infrastructure::AWSManagedMachinePool         → infrastructure.cluster.x-k8s.io/v1beta2
+ *   K8s::Infrastructure::AWSClusterControllerIdentity  → infrastructure.cluster.x-k8s.io/v1beta2
+ *   K8s::Controlplane::AWSManagedControlPlane          → controlplane.cluster.x-k8s.io/v1beta2
+ *
+ * Contradicts chant #10's own text: the issue describes AWSManagedControlPlane
+ * as an `infrastructure.cluster.x-k8s.io` kind alongside the other three. The
+ * shipped CRD (`config/crd/bases/controlplane.cluster.x-k8s.io_awsmanagedcontrolplanes.yaml`
+ * in the v2.13.0 tag) puts it under `controlplane.cluster.x-k8s.io` instead —
+ * CAPA's EKS control-plane provider is a `controlplane.*` provider like
+ * kubeadm's, not an infra one. The parser reads `spec.group` from the fetched
+ * CRD document itself (`parseCRDSpec` in `crd/parser.ts`), so the source list
+ * below only needs the right URL; the resulting type name follows upstream's
+ * actual group, not the issue text's.
+ *
+ * Operator install: with clusterctl,
+ *   clusterctl init --infrastructure aws:v2.13.0
+ */
+const CAPA_VERSION = "v2.13.0";
+const CAPA_CRD_BASE = `https://raw.githubusercontent.com/kubernetes-sigs/cluster-api-provider-aws/${CAPA_VERSION}/config/crd/bases`;
+
 export const CRD_SOURCES: CRDSource[] = [
   { type: "url", url: `${KUBERAY_CRD_BASE}/ray.io_rayclusters.yaml` },
   { type: "url", url: `${KUBERAY_CRD_BASE}/ray.io_rayjobs.yaml` },
@@ -411,4 +460,10 @@ export const CRD_SOURCES: CRDSource[] = [
   { type: "url", url: `${KSERVE_CRD_BASE}/serving.kserve.io_inferenceservices.yaml` },
   { type: "url", url: `${KSERVE_CRD_BASE}/serving.kserve.io_servingruntimes.yaml` },
   { type: "url", url: `${KSERVE_CRD_BASE}/serving.kserve.io_clusterservingruntimes.yaml` },
+  { type: "url", url: `${CAPI_CRD_BASE}/cluster.x-k8s.io_clusters.yaml` },
+  { type: "url", url: `${CAPI_CRD_BASE}/cluster.x-k8s.io_machinepools.yaml` },
+  { type: "url", url: `${CAPA_CRD_BASE}/controlplane.cluster.x-k8s.io_awsmanagedcontrolplanes.yaml` },
+  { type: "url", url: `${CAPA_CRD_BASE}/infrastructure.cluster.x-k8s.io_awsmanagedclusters.yaml` },
+  { type: "url", url: `${CAPA_CRD_BASE}/infrastructure.cluster.x-k8s.io_awsmanagedmachinepools.yaml` },
+  { type: "url", url: `${CAPA_CRD_BASE}/infrastructure.cluster.x-k8s.io_awsclustercontrolleridentities.yaml` },
 ];

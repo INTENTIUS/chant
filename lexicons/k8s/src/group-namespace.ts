@@ -62,6 +62,16 @@ export const GROUP_NAMESPACE_OVERRIDES: Record<string, string> = {
   // The first-segment rule would give `Serving`, which reads like a generic
   // core concept rather than the KServe operator that owns it.
   "serving.kserve.io": "KServe",
+  // The first-segment rule would give `Cluster`, which stutters against the
+  // CAPI `Cluster` kind itself (`K8s::Cluster::Cluster`) the same way the
+  // rejected `K8s::MicroVM::MicroVM` reads above. `infrastructure.cluster.x-k8s.io`
+  // (CAPA's AWSManagedCluster, AWSManagedMachinePool, AWSClusterControllerIdentity)
+  // and `controlplane.cluster.x-k8s.io` (CAPA's AWSManagedControlPlane) are left on
+  // the first-segment rule — their kinds already carry an `AWS` prefix, so
+  // `K8s::Infrastructure::AWSManagedCluster` / `K8s::Controlplane::AWSManagedControlPlane`
+  // don't need the same rescue. `addons.cluster.x-k8s.io` (CAAPH's HelmChartProxy,
+  // core CAPI's ClusterResourceSet) likewise stays `Addons`.
+  "cluster.x-k8s.io": "CAPI",
 };
 
 /**
