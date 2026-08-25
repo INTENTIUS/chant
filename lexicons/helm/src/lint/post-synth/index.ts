@@ -21,6 +21,7 @@ import { whm406 } from "./whm406";
 import { whm407 } from "./whm407";
 import { whm501 } from "./whm501";
 import { whm502 } from "./whm502";
+import { whm503 } from "./whm503";
 
 export const postSynthChecks: PostSynthCheck[] = [
   whm005,
@@ -44,4 +45,5 @@ export const postSynthChecks: PostSynthCheck[] = [
   whm407,
   whm501,
   whm502,
+  whm503,
 ];
