@@ -1,5 +1,5 @@
 import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";
-import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { DECLARABLE_MARKER, type Declarable } from "../../declarable";
@@ -89,5 +89,74 @@ describe("runExplain", () => {
     discoverMock.mockResolvedValue({ ...discoveryResult(), errors: [new Error("boom")] });
     const code = await runExplain(ctx({ format: "okf" }));
     expect(code).toBe(1);
+  });
+
+  describe("knowledge sections (#1867)", () => {
+    let projectDir: string;
+
+    beforeEach(async () => {
+      projectDir = await mkdtemp(join(tmpdir(), "chant-explain-knowledge-"));
+    });
+
+    afterEach(async () => {
+      await rm(projectDir, { recursive: true, force: true });
+    });
+
+    test("omits the Knowledge section cleanly when no bundle exists", async () => {
+      const code = await runExplain(ctx({ path: projectDir }));
+      expect(code).toBe(0);
+      expect(logSpy.mock.calls[0][0]).not.toContain("## Knowledge");
+    });
+
+    test("json omits the knowledge field cleanly when no bundle exists", async () => {
+      const code = await runExplain(ctx({ path: projectDir, format: "json" }));
+      expect(code).toBe(0);
+      const parsed = JSON.parse(logSpy.mock.calls[0][0] as string);
+      expect(parsed.knowledge).toBeUndefined();
+    });
+
+    test("markdown includes a per-entity Knowledge section for bound concepts", async () => {
+      await mkdir(join(projectDir, "knowledge", "decisions"), { recursive: true });
+      await writeFile(
+        join(projectDir, "knowledge", "decisions", "public-vpc.md"),
+        "---\ntype: decision\ntitle: Public VPC\nbinds: vpc\n---\nWhy the VPC is public.\n",
+      );
+
+      const code = await runExplain(ctx({ path: projectDir }));
+      expect(code).toBe(0);
+      const out = logSpy.mock.calls[0][0] as string;
+      expect(out).toContain("## Knowledge");
+      expect(out).toContain("### `vpc`");
+      expect(out).toContain("decision: Public VPC (`decisions/public-vpc.md`)");
+      expect(out).not.toContain("### `subnet`");
+    });
+
+    test("json carries type/title/path per bound entity", async () => {
+      await mkdir(join(projectDir, "knowledge", "decisions"), { recursive: true });
+      await writeFile(
+        join(projectDir, "knowledge", "decisions", "public-vpc.md"),
+        "---\ntype: decision\ntitle: Public VPC\nbinds: vpc\n---\nWhy the VPC is public.\n",
+      );
+
+      const code = await runExplain(ctx({ path: projectDir, format: "json" }));
+      expect(code).toBe(0);
+      const parsed = JSON.parse(logSpy.mock.calls[0][0] as string);
+      expect(parsed.knowledge).toEqual({
+        vpc: [{ type: "decision", title: "Public VPC", path: "decisions/public-vpc.md" }],
+      });
+    });
+
+    test("--format okf output is untouched by a present bundle", async () => {
+      await mkdir(join(projectDir, "knowledge"), { recursive: true });
+      await writeFile(
+        join(projectDir, "knowledge", "note.md"),
+        "---\ntype: decision\ntitle: Note\nbinds: vpc\n---\nBody.\n",
+      );
+
+      const code = await runExplain(ctx({ path: projectDir, format: "okf" }));
+      expect(code).toBe(0);
+      const parsed = JSON.parse(logSpy.mock.calls[0][0] as string);
+      expect(Object.keys(parsed.files).sort()).toEqual(["gcp/subnet.md", "gcp/vpc.md", "index.md"]);
+    });
   });
 });
