@@ -41,6 +41,7 @@ import { wk8501 } from "./wk8501";
 import { wk8502 } from "./wk8502";
 import { wk8503 } from "./wk8503";
 import { wk8504 } from "./wk8504";
+import { wk8505 } from "./wk8505";
 import { declareSecret, type SecretDeclarationInput } from "@intentius/chant/secret-provenance";
 import type { Declarable } from "@intentius/chant/declarable";
 import type { SerializerResult } from "@intentius/chant/serializer";
@@ -2660,5 +2661,115 @@ describe("WK8504: committed-encrypted secret declaration does not resolve", () =
       expect(wk8504.check(ctx).length).toBe(1);
       expect(wk8503.check(ctx).length).toBe(1);
     });
+  });
+});
+
+// ── WK8505: committed-encrypted secret with no Flux decryption wiring ─────
+//
+// Reuses the FLUX002 fixture helpers (fluxKustomization, gitSourceRef) and
+// the same real sops-shaped ciphertext fixture WK8504 validates against.
+
+describe("WK8505: committed-encrypted secret with no Flux decryption wiring", () => {
+  const CIPHERTEXT = readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), "..", "..", "testdata", "sops", "db-credentials.sops.yaml"),
+    "utf-8",
+  );
+
+  /**
+   * A context carrying one committed-encrypted declaration (resolved to its
+   * sidecar unless `omitSidecar`) plus whatever Flux/other manifests are
+   * passed in the primary output.
+   */
+  function sopsCtx(opts: { manifests?: unknown[]; omitSidecar?: boolean } = {}): PostSynthContext {
+    const primary = (opts.manifests ?? []).map((o) => JSON.stringify(o)).join("\n---\n");
+    const output: SerializerResult = {
+      primary,
+      files: opts.omitSidecar ? {} : { "db-credentials.sops.yaml": CIPHERTEXT },
+    };
+    const outputs = new Map<string, string | SerializerResult>([["k8s", output]]);
+    const entities = new Map<string, Declarable>([
+      [
+        "dbCredentials",
+        declareSecret({
+          name: "db-credentials",
+          provenance: "committed-encrypted",
+          file: "secrets/db-credentials.sops.yaml",
+          keys: ["POSTGRES_USER", "POSTGRES_PASSWORD"],
+        }),
+      ],
+    ]);
+    return {
+      outputs,
+      entities,
+      buildResult: { outputs, entities, warnings: [], errors: [], sourceFileCount: 1 },
+    };
+  }
+
+  test("metadata", () => {
+    expect(wk8505.id).toBe("WK8505");
+  });
+
+  test("quiet when the build has no Flux Kustomization at all", () => {
+    expect(wk8505.check(sopsCtx())).toEqual([]);
+  });
+
+  test("quiet when the build declares no committed-encrypted secret", () => {
+    const ctx = manifestsCtx(fluxKustomization("app", gitSourceRef("flux-system")));
+    expect(wk8505.check(ctx)).toEqual([]);
+  });
+
+  test("fires when a Kustomization exists but none sets spec.decryption", () => {
+    const ctx = sopsCtx({ manifests: [fluxKustomization("app", gitSourceRef("flux-system"))] });
+    const diags = wk8505.check(ctx);
+    expect(diags.length).toBe(1);
+    expect(diags[0].checkId).toBe("WK8505");
+    expect(diags[0].severity).toBe("warning");
+    expect(diags[0].entity).toBe("db-credentials");
+    expect(diags[0].message).toContain("spec.decryption");
+  });
+
+  test("quiet when a Kustomization sets spec.decryption", () => {
+    const ctx = sopsCtx({
+      manifests: [
+        fluxKustomization("app", {
+          ...gitSourceRef("flux-system"),
+          decryption: { provider: "sops", secretRef: { name: "sops-age" } },
+        }),
+      ],
+    });
+    expect(wk8505.check(ctx)).toEqual([]);
+  });
+
+  test("a decrypting Kustomization elsewhere in the build satisfies every declaration", () => {
+    const ctx = sopsCtx({
+      manifests: [
+        fluxKustomization("infra", gitSourceRef("flux-system")),
+        fluxKustomization("secrets", {
+          ...gitSourceRef("flux-system"),
+          decryption: { provider: "sops", secretRef: { name: "sops-age" } },
+        }),
+      ],
+    });
+    expect(wk8505.check(ctx)).toEqual([]);
+  });
+
+  test("an unresolved declaration does not also fire WK8505 — WK8504 already reports it", () => {
+    const ctx = sopsCtx({ omitSidecar: true, manifests: [fluxKustomization("app", gitSourceRef("flux-system"))] });
+    expect(wk8504.check(ctx).length).toBe(1);
+    expect(wk8505.check(ctx)).toEqual([]);
+  });
+
+  test("skips kustomize.config.k8s.io Kustomizations (not Flux CRs)", () => {
+    const ctx = sopsCtx({
+      manifests: [
+        {
+          apiVersion: "kustomize.config.k8s.io/v1beta1",
+          kind: "Kustomization",
+          metadata: { name: "overlay" },
+          spec: {},
+        },
+      ],
+    });
+    expect(wk8505.check(ctx)).toEqual([]);
   });
 });
