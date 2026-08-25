@@ -6,7 +6,7 @@ description: "Every lint rule and post-synth check provided by the K3s lexicon"
 {/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-k3s` — DO NOT EDIT.
     Edit lexicons/k3s/src/codegen/docs.ts instead; changes here are overwritten. */}
 
-The K3s lexicon provides **6** rules: 1 lint rule and 5 post-synth checks.
+The K3s lexicon provides **8** rules: 1 lint rule and 7 post-synth checks.
 
 ## Lint Rules
 
@@ -25,3 +25,5 @@ Post-synth checks validate the serialized output after the build pipeline comple
 | `K3S103` | An agent config declares no server to join |
 | `K3S104` | write-kubeconfig-mode is wider than 0644 |
 | `K3S105` | registries.yaml disables TLS verification for a registry |
+| `K3S106` | tls-san is missing while bind-address or advertise-address is declared |
+| `K3S107` | disable names a component the config also configures |

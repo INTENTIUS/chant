@@ -28,7 +28,7 @@ RUN npm install
 
 # Validate that dist/ artifacts exist — codegen runs on the host before docker build.
 # Run: just prepack  (or npm run --prefix lexicons/<lex> prepack) before building this Dockerfile.
-RUN for lex in aws azure gcp gitlab k8s docker cedar; do \
+RUN for lex in aws azure gcp gitlab k8s docker cedar k3s; do \
       if [ ! -f "lexicons/$lex/dist/manifest.json" ]; then \
         echo "ERROR: lexicons/$lex/dist/ not found. Run codegen first: npm run --prefix lexicons/$lex prepack" >&2; \
         exit 1; \

@@ -5,6 +5,8 @@ import { k3s102 } from "./k3s102";
 import { k3s103 } from "./k3s103";
 import { k3s104 } from "./k3s104";
 import { k3s105 } from "./k3s105";
+import { k3s106 } from "./k3s106";
+import { k3s107 } from "./k3s107";
 
 export const postSynthChecks: PostSynthCheck[] = [
   k3s101,
@@ -12,4 +14,6 @@ export const postSynthChecks: PostSynthCheck[] = [
   k3s103,
   k3s104,
   k3s105,
+  k3s106,
+  k3s107,
 ];
