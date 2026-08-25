@@ -81,6 +81,13 @@ export { RayJob } from "./ray-job";
 export type { RayJobProps, RayJobResult } from "./ray-job";
 export { RayService } from "./ray-service";
 export type { RayServiceProps, RayServiceResult } from "./ray-service";
+export { InferenceService } from "./inference-service";
+export type {
+  InferenceServiceProps,
+  InferenceServiceResult,
+  ModelReference,
+  ScaleMetric,
+} from "./inference-service";
 export { ArgoAppFor, ArgoAppSetForRegions, registerArgoCluster } from "./argo-app";
 export type {
   ArgoDestination,
