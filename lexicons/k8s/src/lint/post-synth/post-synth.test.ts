@@ -40,7 +40,13 @@ import { flux003 } from "./flux003";
 import { wk8501 } from "./wk8501";
 import { wk8502 } from "./wk8502";
 import { wk8503 } from "./wk8503";
+import { wk8504 } from "./wk8504";
 import { declareSecret, type SecretDeclarationInput } from "@intentius/chant/secret-provenance";
+import type { Declarable } from "@intentius/chant/declarable";
+import type { SerializerResult } from "@intentius/chant/serializer";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { getCrdSchemaRegistry, setCrdSchemaRegistry, validateSpec } from "./crd-schema-helpers";
 
 function makeCtx(yaml: string): PostSynthContext {
@@ -2505,5 +2511,154 @@ describe("WK8503: workload consumes a Secret nothing in the output produces", ()
       },
     });
     expect(wk8503.check(ctx).length).toBe(1);
+  });
+});
+
+// ── WK8504: committed-encrypted declaration does not resolve ─────────
+//
+// The fixture is a real sops-shaped document (cleartext structure, ENC[...]
+// values, an age recipient block, a mac). Nothing here decrypts anything.
+
+describe("WK8504: committed-encrypted secret declaration does not resolve", () => {
+  const CIPHERTEXT = readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), "..", "..", "testdata", "sops", "db-credentials.sops.yaml"),
+    "utf-8",
+  );
+
+  /**
+   * A context whose k8s output carries `manifests` in the primary document and
+   * the ciphertext as a SIDECAR — the only place the check can find it.
+   */
+  function sopsCtx(
+    opts: { ciphertext?: string; file?: string; declaredName?: string; manifests?: unknown[]; omitSidecar?: boolean } = {},
+  ): PostSynthContext {
+    const primary = (opts.manifests ?? []).map((o) => JSON.stringify(o)).join("\n---\n");
+    const file = opts.file ?? "secrets/db-credentials.sops.yaml";
+    const output: SerializerResult = {
+      primary,
+      files: opts.omitSidecar
+        ? {}
+        : { "db-credentials.sops.yaml": opts.ciphertext ?? CIPHERTEXT },
+    };
+    const outputs = new Map<string, string | SerializerResult>([["k8s", output]]);
+    const entities = new Map<string, Declarable>([
+      [
+        "dbCredentials",
+        declareSecret({
+          name: opts.declaredName ?? "db-credentials",
+          provenance: "committed-encrypted",
+          file,
+          keys: ["POSTGRES_USER", "POSTGRES_PASSWORD"],
+        }),
+      ],
+    ]);
+    return {
+      outputs,
+      entities,
+      buildResult: { outputs, entities, warnings: [], errors: [], sourceFileCount: 1 },
+    };
+  }
+
+  test("metadata", () => {
+    expect(wk8504.id).toBe("WK8504");
+  });
+
+  test("quiet when the declared file resolved to encrypted ciphertext", () => {
+    expect(wk8504.check(sopsCtx())).toEqual([]);
+  });
+
+  test("quiet when the project declares no committed-encrypted secret", () => {
+    expect(wk8504.check(manifestsCtx({ apiVersion: "v1", kind: "ConfigMap", metadata: { name: "c" } }))).toEqual([]);
+  });
+
+  test("fires when the build emitted no file for the declaration", () => {
+    const diags = wk8504.check(sopsCtx({ omitSidecar: true }));
+    expect(diags.length).toBe(1);
+    expect(diags[0].checkId).toBe("WK8504");
+    expect(diags[0].severity).toBe("error");
+    expect(diags[0].entity).toBe("db-credentials");
+    expect(diags[0].message).toContain("secrets/db-credentials.sops.yaml");
+    expect(diags[0].message).toContain("did not resolve");
+  });
+
+  test("fires when metadata.name disagrees with the declaration", () => {
+    const diags = wk8504.check(sopsCtx({ declaredName: "other-credentials" }));
+    // The name mismatch; the sidecar filename still matches, so it is found.
+    expect(diags.some((d) => /metadata\.name "db-credentials"/.test(d.message))).toBe(true);
+  });
+
+  test("fires when the document carries no sops block", () => {
+    const decrypted = CIPHERTEXT.slice(0, CIPHERTEXT.indexOf("sops:"));
+    const diags = wk8504.check(sopsCtx({ ciphertext: decrypted }));
+    expect(diags.some((d) => /no top-level `sops` block/.test(d.message))).toBe(true);
+  });
+
+  test("fires when a data value is not ENC[...], naming the key and not the value", () => {
+    const leaked = CIPHERTEXT.replace(/POSTGRES_PASSWORD: ENC\[[^\]]*\]/, "POSTGRES_PASSWORD: hunter2");
+    const diags = wk8504.check(sopsCtx({ ciphertext: leaked }));
+    expect(diags.length).toBe(1);
+    expect(diags[0].message).toContain('stringData."POSTGRES_PASSWORD" is not encrypted');
+    expect(diags[0].message).not.toContain("hunter2");
+  });
+
+  test("reports every problem on a declaration at once", () => {
+    const broken = CIPHERTEXT.replace("kind: Secret", "kind: ConfigMap").replace(
+      /POSTGRES_USER: ENC\[[^\]]*\]/,
+      "POSTGRES_USER: postgres",
+    );
+    expect(wk8504.check(sopsCtx({ ciphertext: broken })).length).toBeGreaterThanOrEqual(2);
+  });
+
+  test("post-synth checks that read only the primary output stay blind to the sidecar", () => {
+    // The ciphertext must never reach the primary output — that is what makes
+    // applying an undecrypted Secret structurally impossible — so the rules
+    // that look for hardcoded material see nothing here.
+    const ctx = sopsCtx({ manifests: [{ apiVersion: "apps/v1", kind: "Deployment", metadata: { name: "app" } }] });
+    expect(wk8005.check(ctx)).toEqual([]);
+    expect(wk8041.check(ctx)).toEqual([]);
+    expect(wk8042.check(ctx)).toEqual([]);
+  });
+
+  describe("WK8503 is satisfied through the producer set, not the waiver set", () => {
+    function consumerIn(namespace: string) {
+      return {
+        apiVersion: "apps/v1",
+        kind: "Deployment",
+        metadata: { name: "api", namespace },
+        spec: {
+          template: {
+            spec: {
+              containers: [
+                { name: "api", image: "api:1.0", envFrom: [{ secretRef: { name: "db-credentials" } }] },
+              ],
+            },
+          },
+        },
+      };
+    }
+
+    test("a resolved declaration produces the Secret in its own namespace", () => {
+      // The fixture is `namespace: apps`, read from the ciphertext itself.
+      expect(wk8503.check(sopsCtx({ manifests: [consumerIn("apps")] }))).toEqual([]);
+    });
+
+    test("namespace matching applies — another namespace is not covered", () => {
+      const diags = wk8503.check(sopsCtx({ manifests: [consumerIn("platform")] }));
+      expect(diags.length).toBe(1);
+      expect(diags[0].message).toContain('Secret "db-credentials"');
+    });
+
+    test("a declaration whose file did not resolve waives nothing", () => {
+      const ctx = sopsCtx({ omitSidecar: true, manifests: [consumerIn("apps")] });
+      expect(wk8504.check(ctx).length).toBe(1);
+      expect(wk8503.check(ctx).length).toBe(1);
+    });
+
+    test("a declaration whose ciphertext is not encrypted waives nothing", () => {
+      const leaked = CIPHERTEXT.replace(/POSTGRES_USER: ENC\[[^\]]*\]/, "POSTGRES_USER: postgres");
+      const ctx = sopsCtx({ ciphertext: leaked, manifests: [consumerIn("apps")] });
+      expect(wk8504.check(ctx).length).toBe(1);
+      expect(wk8503.check(ctx).length).toBe(1);
+    });
   });
 });

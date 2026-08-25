@@ -34,6 +34,21 @@ export function getPrimaryOutput(output: string | SerializerResult): string {
 }
 
 /**
+ * Extract the ADDITIONAL files from a serializer output — everything
+ * {@link getPrimaryOutput} discards.
+ *
+ * Every post-synth check shipped before this one reads the primary output
+ * only, which means a sidecar file (a nested stack template, committed SOPS
+ * ciphertext) is invisible to all of them. That is the right default — the
+ * primary output is what appliers read — but a rule ABOUT a sidecar has to
+ * be able to see it, and `PostSynthContext.outputs` has carried the data all
+ * along. WK8504 (k8s) is the first caller.
+ */
+export function getAdditionalFiles(output: string | SerializerResult): Record<string, string> {
+  return typeof output === "string" ? {} : (output.files ?? {});
+}
+
+/**
  * A diagnostic from a post-synthesis check.
  *
  * chant #1138 — deliberately carries no `file`/`line` the way `LintDiagnostic`

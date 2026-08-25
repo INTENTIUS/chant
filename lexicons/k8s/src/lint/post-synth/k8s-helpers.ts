@@ -6,7 +6,7 @@
  */
 
 import { parseYAML } from "@intentius/chant/yaml";
-export { getPrimaryOutput } from "@intentius/chant/lint/post-synth";
+export { getPrimaryOutput, getAdditionalFiles } from "@intentius/chant/lint/post-synth";
 
 /**
  * A parsed Kubernetes manifest (loosely typed).

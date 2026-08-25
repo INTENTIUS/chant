@@ -24,11 +24,21 @@
  * ship at error severity with no suppression comment — a secret minted out of
  * band is declared, not ignored. References marked `optional: true` are
  * skipped (the author already said it may not exist).
+ *
+ * `committed-encrypted` is deliberately NOT in that waiver set. The other
+ * three kinds are promises about something outside the build; a
+ * committed-encrypted declaration is a claim about an artifact inside it, and
+ * the build emits that artifact. So it joins the PRODUCER set instead, with
+ * its namespace read from the emitted ciphertext (SOPS leaves metadata
+ * cleartext) — which means namespace matching applies to it exactly as it
+ * does to a literal Secret, and a declaration whose file is broken fails
+ * WK8504 rather than silently waiving this check.
  */
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
 import { collectSecretDeclarations } from "@intentius/chant/secret-provenance";
 import { extractPodSpec, type K8sManifest } from "./k8s-helpers";
 import { allManifests } from "./argo-helpers";
+import { resolveEncryptedSecretClaims } from "./sops-helpers";
 
 /** A Secret some manifest in the output materializes. */
 interface ProducedSecret {
@@ -161,9 +171,21 @@ export const wk8503: PostSynthCheck = {
     const manifests = allManifests(ctx);
     const produced = collectProducedSecrets(manifests);
 
-    // The typed waiver: any SecretProvenance declaration covering the name.
+    // Committed ciphertext produces a Secret as surely as a Secret manifest
+    // does — Flux decrypts the emitted sidecar straight into the cluster — so
+    // it joins the producer set, namespace and all. A claim whose file did
+    // not resolve produces nothing: WK8504 reports why, and this check still
+    // fires, which is the point of not treating it as a waiver.
+    for (const claim of resolveEncryptedSecretClaims(ctx)) {
+      if (claim.problems.length > 0) continue;
+      produced.push({ name: claim.declaration.name, namespace: claim.document?.namespace });
+    }
+
+    // The typed waiver: a SecretProvenance declaration covering the name, for
+    // the three kinds whose value genuinely comes from outside this build.
     const declaredNames = new Set<string>();
     for (const decl of collectSecretDeclarations(ctx.entities).values()) {
+      if (decl.provenance === "committed-encrypted") continue;
       declaredNames.add(decl.name);
     }
 

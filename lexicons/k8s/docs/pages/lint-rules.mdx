@@ -76,9 +76,14 @@ Every CRD-generated class ships its `spec` field schema in the lexicon JSON (`sp
 
 WK8503 is the consumption side of the [secret provenance vocabulary](/chant/architecture/core-type-system/): every secret reference in a pod spec (`envFrom.secretRef`, `env[].valueFrom.secretKeyRef`, secret volumes, projected secret sources, `imagePullSecrets`) must resolve to a Secret the same output produces — a literal `Secret`, an `ExternalSecret` target, an `InfisicalSecret` / `InfisicalDynamicSecret` managed secret reference, or a cert-manager `Certificate` `secretName`. A secret that legitimately lives outside the build (minted by a human, an operator, a `just` target) is declared, not suppressed: a `declareSecret({ name, provenance: "referenced" | "from-provider" | "generated-once" })` declaration covering the name waives the check. References marked `optional: true` are skipped. There is no suppression comment; demote via `lint.rules` if you must.
 
+A `committed-encrypted` declaration is the exception to that waiver, on purpose. The other three kinds are promises about something outside the build; `declareSecret({ name, provenance: "committed-encrypted", file })` is a claim about an artifact inside it — sops ciphertext committed to the repo, which the build emits as a sidecar file for Flux to decrypt. So it joins the producer set instead, with its namespace read from the ciphertext's own (cleartext) metadata, and namespace matching applies to it exactly as it does to a literal `Secret`.
+
+WK8504 makes that claim falsifiable. It reads the emitted sidecar — not the primary output, which never carries ciphertext — and fires when the declared file produced no file at all, when the document is not a `v1` Secret of the declared name, when it has no top-level `sops` block, or when any `data`/`stringData` value is not `ENC[...]`-shaped. The last case is the one that matters: someone edits the file by hand, forgets `sops -e`, and commits plaintext. Only the offending key name reaches the message. A declaration that fails WK8504 produces nothing, so WK8503 fires too rather than being quietly waived by a broken claim.
+
 | Rule | Description |
 |------|-------------|
 | WK8503 | Workload consumes a Secret nothing in the output produces (error; waived by a `SecretProvenance` declaration) |
+| WK8504 | `committed-encrypted` declaration does not resolve — missing file, wrong `metadata.name`, no `sops` block, or an unencrypted `data`/`stringData` value (error) |
 
 ### Argo CD
 

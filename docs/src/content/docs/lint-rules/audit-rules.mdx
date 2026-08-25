@@ -872,6 +872,14 @@ Match the CRD schema: use the declared scalar type and one of the enum values.
 
 Produce the Secret in the same build (Secret, ExternalSecret, InfisicalSecret, cert-manager Certificate), or declare its provenance with declareSecret() if it exists out of band.
 
+### WK8504
+
+**committed-encrypted secret declaration does not resolve** — merge-worthy · guidance
+
+Point `file` at the committed ciphertext, make its metadata.name match the declaration, and re-run `sops -e -i` so every data/stringData value is ENC[...].
+
+Authority: [Kubernetes — Good practices for Secrets](https://kubernetes.io/docs/concepts/security/secrets-good-practices/)
+
 ## Docker (DKRD)
 
 Run against Dockerfiles and Compose files.
