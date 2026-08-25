@@ -3,7 +3,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { Op, phase, activity, gate, build, kubectlApply, helmInstall,
+import { Op, phase, activity, gate, build, kubectlApply, helmInstall, helmInstallPinned,
          waitForStack, gitlabPipeline, lifecycleSnapshot, shell, ensureSecret, teardown, policyGate } from "./builders";
 import { DECLARABLE_MARKER, type Declarable } from "../declarable";
 
@@ -160,6 +160,16 @@ describe("pre-built shortcuts", () => {
     expect(a.fn).toBe("helmInstall");
     expect(a.args?.name).toBe("my-release");
     expect(a.args?.chart).toBe("charts/app");
+    expect(a.profile).toBe("longInfra");
+  });
+
+  it("helmInstallPinned() produces a helmInstall activity keyed by contentDigest, no chart", () => {
+    const a = helmInstallPinned("my-release", "sha256:abc", { namespace: "web" });
+    expect(a.fn).toBe("helmInstall");
+    expect(a.args?.name).toBe("my-release");
+    expect(a.args?.contentDigest).toBe("sha256:abc");
+    expect(a.args?.namespace).toBe("web");
+    expect(a.args?.chart).toBeUndefined();
     expect(a.profile).toBe("longInfra");
   });
 

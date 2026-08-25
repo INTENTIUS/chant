@@ -220,3 +220,25 @@ The record is keyed by an input digest. That is a `sha256:` digest over the depl
 Record fields follow the auto-release convention. `component` defaults to the release name and `env` to `local`. The actor resolves from `GITHUB_ACTOR`, `GITLAB_USER_LOGIN`, or `USER`. The git sha resolves from `HEAD`. The run id resolves from `GITHUB_RUN_ID` or `CI_PIPELINE_ID` unless passed explicitly. A field that cannot be resolved is never faked. The append is skipped and a warning explains why.
 
 A ledger-append failure never fails the deploy. The deploy already happened, so the activity warns and still succeeds. Pass `recordRelease: false` to opt out. The activity returns the input digest and the record, so a workflow can carry both.
+
+## Pinned installs
+
+`helmInstall` can also deploy a recorded render's exact bytes. Pass `contentDigest` instead of a chart reference and the activity takes the pinned path. It loads the render from [the render store](#the-render-store), verifies the stored bytes still hash to the digest, routes them (see [Render routing](#render-routing)), and installs them as a structure-preserving wrapper chart. Helm renders nothing at deploy time.
+
+```ts
+import { Op, phase, helmInstallPinned } from "@intentius/chant/op";
+
+export const promoteWeb = Op("promote-web", {
+  phases: [
+    phase("Deploy", [
+      helmInstallPinned("web", "sha256:...", { env: "prod" }),
+    ]),
+  ],
+});
+```
+
+The wrapper preserves lifecycle semantics. Documents whose origin has a `crds/` segment land in the wrapper's `crds/`, so `helm uninstall` leaves them alone, exactly as it would for the source chart. Every other document ships byte-for-byte through a `.Files.Get` shim rather than sitting in `templates/` directly. Rendered output can legitimately contain template-looking text (an alertmanager rule's `{{ $labels }}`, for example), and the shim keeps helm from templating recorded bytes a second time. Hook annotations are part of the recorded bytes, so hooks fire with unchanged ordering and delete-policy behavior. The wrapper inherits the source chart's name and version, so `helm history` and `helm rollback` keep working, and an existing unpinned release migrates to pinned by an in-place `helm upgrade` under the same release name.
+
+Refusals are specific and fire before any helm mutation. A digest the store does not hold refuses. Stored bytes that no longer hash to their digest refuse. Passing `chart`, `values`, `set`, or `chartVersion` alongside `contentDigest` refuses, because those inputs were closed at render time. A release name other than the one the bytes were rendered for refuses, because `.Release.Name` is baked into the bytes. A declared `capabilityProfile` that disagrees with the profile recorded in the render's manifest refuses offline. And the deploy-time assertion described under [Capability profiles](#capability-profiles) always runs on this path, against the manifest's recorded profile, so a diverging live cluster refuses too unless deliberately overridden.
+
+The result carries the deploy's full identity. `pinned: true`, the `contentDigest`, the stored render's `inputDigest`, the release revision read from `helm get metadata -o json`, and the document counts `crdsApplied`, `docsApplied`, and `hooksRun`. The release record for a pinned deploy is keyed by the content digest, what this cluster actually received, and carries the input digest alongside. Profiles are per cluster, so two environments legitimately render different bytes. Cross-environment questions join on the input digest, while the content digest proves the exact bytes each cluster got.
