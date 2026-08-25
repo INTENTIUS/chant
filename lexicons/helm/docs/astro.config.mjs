@@ -37,6 +37,10 @@ export default defineConfig({
                               "slug": "best-practices"
                         },
                         {
+                              "label": "chant helm",
+                              "slug": "cli"
+                        },
+                        {
                               "label": "Examples",
                               "slug": "examples"
                         },

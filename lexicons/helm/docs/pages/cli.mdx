@@ -1,0 +1,57 @@
+---
+title: "chant helm"
+description: "The pinned-render command surface — classify a chart's pinnability, localize unstable output lines to their inputs, list recorded renders"
+diataxis: how-to
+---
+
+`chant helm` is the terminal surface over the pinned-renders machinery. It mounts through the lexicon command seam, so it exists only in projects whose config loads the `helm` lexicon.
+
+Every verb accepts `--json` for the full report as machine-readable output.
+
+## The verbs
+
+| Verb | What it does |
+| --- | --- |
+| `classify <chart-dir>` | Run the pinnability gate over a chart directory. Prints the verdict (`deterministic` / `pinnable` / `unpinnable`) with every finding located — `.Capabilities` references that require a capability profile, open generated inputs and the values path that closes each, conditional hazards, `lookup` sites. `--values <file>` (repeatable) merges overrides the way `helm template --values` would, and re-classifies the `(chart, values)` pair. **Exits 1 when the verdict is `unpinnable`**, so CI can refuse to pin on it. |
+| `localize <chart-dir>` | Run the double-render localizer. Renders the chart twice, maps every unstable output line back to the open generated input that produced it (cascades included — a checksum annotation derived from a generated secret groups under that secret's input), and prints the validated pin that closes each one. A differing line nothing explains prints as `UNLOCALIZED`, never silently. `--values <file>` (repeatable), `--kube-version <v>`, `--max-probes <n>`. Needs the `helm` binary on PATH. |
+| `renders` | Discover the current project and list every `HelmRender` record — chart, version, capability profile, `inputDigest`, `contentDigest` — plus the stability report grouping renders by input identity. Two renders with the same input digest and different content digests print as `UNSTABLE`: the render is not a function of its declared inputs. Unpinned renders list with no digests, honestly, rather than a digest that would differ across machines. |
+
+## Classify a chart before pinning it
+
+```bash
+chant helm classify ./charts/my-app
+chant helm classify ./charts/my-app --values prod-values.yaml
+chant helm classify ./charts/my-app --json | jq .verdict
+```
+
+The verdict is a property of the `(chart, values)` pair, not the chart alone. A control-flow `lookup` the supplied values gate off is a recorded hazard, not a refusal — flipping that value re-classifies the pair, and `classify` with the flipped values file shows exactly that.
+
+## Find what makes a render unstable
+
+```bash
+chant helm localize ./charts/my-app
+```
+
+The classifier names generator sites statically. `localize` proves which of them actually fire, and validates the pin. Output like
+
+```
+unstable: 2 differing line(s), 8 renders used, stable with all pins: yes
+  randAlphaNum at templates/secret.yaml:6 suppliable=yes pin: adminPassword: <generate once and supply>
+    Secret/rel-admin templates/secret.yaml:6 password
+    derived Deployment/rel templates/deployment.yaml:14 checksum/secret
+```
+
+says supplying `adminPassword` closes the input, and closes the derived checksum line with it.
+
+## List what the project rendered
+
+```bash
+chant helm renders
+chant helm renders --json
+```
+
+Runs discovery over the project source (the same import pass `chant build` starts with), so every `HelmRender` executes and records itself, then prints the table. The digests are the identities from the render pipeline — `inputDigest` joins renders and deploys of the same inputs, `contentDigest` names the exact bytes.
+
+## What lands here next
+
+Render-to-render offline diff and render-to-live diff mount on this same verb group. Until then, the recorded digests are already comparable by hand — two renders whose `contentDigest` match would put the same bytes on the cluster.
