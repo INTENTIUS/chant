@@ -88,3 +88,5 @@ with any kubectl.
 | K3S103 | error | an Agent with no `server` to join |
 | K3S104 | warning | kubeconfig written wider than 0644 |
 | K3S105 | warning | registry TLS verification disabled |
+| K3S106 | warning | tls-san missing for a declared bind/advertise address |
+| K3S107 | warning | disable names a component the config also configures |

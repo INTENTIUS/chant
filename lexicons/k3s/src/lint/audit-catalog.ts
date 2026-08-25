@@ -4,7 +4,7 @@
  * post-synth check has an entry, or the check contributes nothing to
  * `chant audit`, silently.
  *
- * All five checks read the chant model (`ctx.entities`) rather than the
+ * All checks read the chant model (`ctx.entities`) rather than the
  * emitted YAML — an emitted config.yaml carries no marker naming its own
  * role — so every entry is constructed directly with `yamlBased: false`.
  */
@@ -49,5 +49,17 @@ export const k3sAuditCatalog: Record<string, RuleMeta> = {
     "security",
     "Registry TLS verification disabled",
     "Remove `insecure_skip_verify`; pin the registry CA via `ca_file`.",
+  ),
+  K3S106: entityRule(
+    "K3S106",
+    "correctness",
+    "tls-san missing for a declared bind/advertise address",
+    "Add the bind-address / advertise-address value to `tls-san`.",
+  ),
+  K3S107: entityRule(
+    "K3S107",
+    "correctness",
+    "Disabled component still configured",
+    "Remove the component's config key, or drop it from `disable`.",
   ),
 };
