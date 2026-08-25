@@ -77,7 +77,7 @@ async function graphBuildParams(
 async function graphBuildRootContributors(
   ctx: CommandContext,
   projectPath: string,
-): Promise<Array<() => Promise<import("../../lexicon").BuildRootContribution>>> {
+): Promise<Array<import("../../lexicon").BuildRootContributor>> {
   const { config, configPath } = await loadChantConfigUpward(projectPath).catch(
     () => ({ config: {} as ChantConfig, configPath: undefined }),
   );
@@ -109,7 +109,7 @@ async function graphBuildRootContributors(
  */
 async function mergeGraphBuildRoots(
   entities: Map<string, import("../../declarable").Declarable>,
-  contributors: Array<() => Promise<import("../../lexicon").BuildRootContribution>>,
+  contributors: Array<import("../../lexicon").BuildRootContributor>,
 ): Promise<boolean> {
   if (contributors.length === 0) return true;
   const merged = await mergeBuildRootEntities(entities, contributors);

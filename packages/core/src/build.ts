@@ -2,7 +2,7 @@ import type { Declarable } from "./declarable";
 import type { Serializer, SerializerResult } from "./serializer";
 import type { OwnershipMarker } from "./ownership";
 import type { BuildError, DiscoveryErrorType } from "./errors";
-import type { IntrinsicDef, BuildRootContribution } from "./lexicon";
+import type { IntrinsicDef, BuildRootContribution, BuildRootContributor } from "./lexicon";
 import type { BuildParamProvenance } from "./provenance";
 import { DiscoveryError, BuildError as BuildErrorClass } from "./errors";
 import { LexiconOutput, isLexiconOutput } from "./lexicon-output";
@@ -233,7 +233,7 @@ export interface BuildOptions {
    * binaries); a contributed name colliding with a discovered entity is a
    * build error, never a silent overwrite.
    */
-  buildRoots?: Array<() => Promise<BuildRootContribution>>;
+  buildRoots?: BuildRootContributor[];
 }
 
 export interface BuildResult {
@@ -599,13 +599,18 @@ export interface BuildRootMergeResult {
  */
 export async function mergeBuildRootEntities(
   entities: Map<string, Declarable>,
-  contributors: ReadonlyArray<() => Promise<BuildRootContribution>>,
+  contributors: ReadonlyArray<BuildRootContributor>,
 ): Promise<BuildRootMergeResult> {
   const warnings: string[] = [];
   const errors: string[] = [];
   for (const contribute of contributors) {
     try {
-      const contribution = await contribute();
+      // The discovered set, read-only, so a contributor can react to what the
+      // project DECLARED (a committed-encrypted `declareSecret()` naming a
+      // ciphertext file to resolve). Contributors run in order, so this also
+      // carries what earlier contributors added; the merge below is still the
+      // only writer, which is what keeps the collision refusal meaningful.
+      const contribution = await contribute({ entities });
       warnings.push(...(contribution.warnings ?? []));
       for (const [name, entity] of contribution.entities) {
         if (entities.has(name)) {

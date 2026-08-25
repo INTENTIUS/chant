@@ -439,6 +439,24 @@ export interface BuildRootContext {
   projectRoot: string;
   /** The resolved project configuration, for the lexicon's own namespace. */
   config: Record<string, unknown>;
+  /**
+   * The discovered entities, read-only (#1828 / SOPS provenance). A
+   * contributor that reacts to what the project DECLARED — rather than to
+   * what its config listed — reads them here: the committed-encrypted
+   * `declareSecret()` hook resolves each declaration's `file` into a sidecar
+   * entity, and any future declaration-driven contributor needs the same.
+   *
+   * Read-only on purpose. The merge that follows is the only thing that adds
+   * to the entity set, and it refuses a name collision rather than
+   * overwriting; a contributor mutating the map directly would slip past
+   * that. Contributors run in order, so a contributor also sees entities
+   * earlier contributors added.
+   *
+   * Optional: a caller that has no entity set (a plugin hook invoked
+   * directly, a graph mode that never discovered) omits it, and a hook must
+   * treat an absent map as an empty one.
+   */
+  entities?: ReadonlyMap<string, Declarable>;
 }
 
 /**
@@ -449,6 +467,17 @@ export interface BuildRootContribution {
   entities: Map<string, Declarable>;
   warnings?: string[];
 }
+
+/**
+ * A plugin's `buildRoots` hook, already bound to this invocation's project
+ * root and config (`collectBuildRootContributors`, ./cli/plugins.ts). What is
+ * NOT bindable that early is the entity set — discovery has not run yet — so
+ * the merge supplies it when it calls the closure. A contributor that ignores
+ * the argument is still assignable, which is what every pre-#1828 hook does.
+ */
+export type BuildRootContributor = (
+  ctx: Pick<BuildRootContext, "entities">,
+) => Promise<BuildRootContribution>;
 
 export interface LexiconPlugin {
   // ── Required ──────────────────────────────────────────────
