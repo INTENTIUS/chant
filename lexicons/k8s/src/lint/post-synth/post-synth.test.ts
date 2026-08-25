@@ -2044,6 +2044,28 @@ describe("WK8501/WK8502: custom resource spec validated against the shipped CRD 
     };
   }
 
+  // chant #13 — CAPI's own Cluster (K8s::CAPI::Cluster) and ACK's S3 Bucket
+  // (K8s::S3::Bucket), the CAPI/CAPA and ACK kinds this suite's WK8501/WK8502
+  // coverage exercises. Same shape as `microVm` above: a bare manifest, spec
+  // supplied per test.
+  function capiCluster(spec: Record<string, unknown>) {
+    return {
+      apiVersion: "cluster.x-k8s.io/v1beta2",
+      kind: "Cluster",
+      metadata: { name: "prod-cluster", namespace: "capi-system" },
+      spec,
+    };
+  }
+
+  function ackBucket(spec: Record<string, unknown>) {
+    return {
+      apiVersion: "s3.services.k8s.aws/v1alpha1",
+      kind: "Bucket",
+      metadata: { name: "build-artifacts", namespace: "aws-system" },
+      spec,
+    };
+  }
+
   test("metadata", () => {
     expect(wk8501.id).toBe("WK8501");
     expect(wk8502.id).toBe("WK8502");
@@ -2128,6 +2150,59 @@ describe("WK8501/WK8502: custom resource spec validated against the shipped CRD 
       expect.stringContaining('"spec.additionalOutputFormats[1].type" must be one of "DER", "CombinedPEM"'),
       expect.stringContaining('"spec.privateKey.algorithm" must be one of "RSA", "ECDSA", "Ed25519"'),
     ]);
+  });
+
+  // chant #13 — coverage proving the epic's actual point: the CAPI/CAPA and
+  // ACK sources added in #10/#11/#12 carry the same WK8501/WK8502 schema
+  // guarantee as every other CRD source, not just types with no lint behind
+  // them.
+
+  test.skipIf(!hasLexicon)("WK8501 flags a misspelled CAPI Cluster field and suggests the real one", () => {
+    const ctx = manifestsCtx(capiCluster({ paused: true, clusterNetwok: { serviceDomain: "cluster.local" } }));
+    const diags = wk8501.check(ctx);
+    expect(diags.length).toBe(1);
+    expect(diags[0].severity).toBe("error");
+    expect(diags[0].entity).toBe("prod-cluster");
+    expect(diags[0].message).toContain('unknown field "spec.clusterNetwok"');
+    expect(diags[0].message).toContain('did you mean "clusterNetwork"');
+    // WK8502 has nothing to say about a field the schema does not know.
+    expect(wk8502.check(ctx).length).toBe(0);
+  });
+
+  test.skipIf(!hasLexicon)("WK8502 flags a wrong-typed scalar and an out-of-enum value on CAPI Cluster", () => {
+    const ctx = manifestsCtx(capiCluster({
+      paused: "yes",
+      availabilityGates: [{ conditionType: "Ready", polarity: "Postive" }],
+    }));
+    const diags = wk8502.check(ctx);
+    const messages = diags.map((d) => d.message);
+    expect(messages).toEqual([
+      expect.stringContaining('"spec.paused" expects a boolean, got string "yes"'),
+      expect.stringContaining('"spec.availabilityGates[0].polarity" must be one of "Positive", "Negative", got string "Postive"'),
+    ]);
+    expect(diags.every((d) => d.checkId === "WK8502" && d.severity === "error")).toBe(true);
+    expect(wk8501.check(ctx).length).toBe(0);
+  });
+
+  test.skipIf(!hasLexicon)("WK8501 flags a misspelled ACK S3 Bucket field and suggests the real one", () => {
+    const ctx = manifestsCtx(ackBucket({ nmae: "build-artifacts", objectLockEnabledForBucket: true }));
+    const diags = wk8501.check(ctx);
+    expect(diags.length).toBe(1);
+    expect(diags[0].severity).toBe("error");
+    expect(diags[0].entity).toBe("build-artifacts");
+    expect(diags[0].message).toContain('unknown field "spec.nmae"');
+    expect(diags[0].message).toContain('did you mean "name"');
+    expect(wk8502.check(ctx).length).toBe(0);
+  });
+
+  test.skipIf(!hasLexicon)("WK8502 flags a wrong-typed scalar on ACK S3 Bucket", () => {
+    const ctx = manifestsCtx(ackBucket({ name: "build-artifacts", objectLockEnabledForBucket: "true" }));
+    const diags = wk8502.check(ctx);
+    expect(diags.length).toBe(1);
+    expect(diags[0].checkId).toBe("WK8502");
+    expect(diags[0].severity).toBe("error");
+    expect(diags[0].message).toContain('"spec.objectLockEnabledForBucket" expects a boolean, got string "true"');
+    expect(wk8501.check(ctx).length).toBe(0);
   });
 
   test("built-in kinds and unknown apiVersion/kind pairs are never checked", () => {

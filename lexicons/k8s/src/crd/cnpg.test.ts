@@ -9,7 +9,12 @@
  */
 
 import { describe, test, expect } from "vitest";
-import { Cluster, ScheduledBackup, ObjectStore } from "../generated";
+// chant #10 — CAPI's own `Cluster` kind (K8s::CAPI::Cluster) collides with
+// CNPG's `Cluster` (K8s::Cnpg::Cluster) on the bare class name, so codegen's
+// disambiguation now exports this one as `CnpgCluster`. The generated
+// resource type name (K8s::Cnpg::Cluster) and the serialized `kind: Cluster`
+// are unaffected — only the TS identifier changed.
+import { CnpgCluster, ScheduledBackup, ObjectStore } from "../generated";
 import { k8sSerializer } from "../serializer";
 import { parseYAML } from "@intentius/chant/yaml";
 
@@ -20,7 +25,7 @@ function synth(logicalName: string, resource: unknown): any {
 }
 
 describe("CNPG Cluster", () => {
-  const cluster = new Cluster({
+  const cluster = new CnpgCluster({
     metadata: { name: "fountain-pg", namespace: "fountain", labels: { app: "fountain" } },
     spec: {
       instances: 1,
@@ -166,7 +171,7 @@ describe("barman-cloud ObjectStore", () => {
     // not exist.
     const clusterDoc = synth(
       "fountainPg",
-      new Cluster({
+      new CnpgCluster({
         metadata: { name: "fountain-pg", namespace: "fountain" },
         spec: {
           instances: 1,
