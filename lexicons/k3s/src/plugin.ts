@@ -6,6 +6,7 @@ import type { McpToolContribution, McpResourceContribution } from "@intentius/ch
 import { readFileSync } from "fs";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
+import { LABEL_OWNERSHIP_KEYS } from "@intentius/chant/ownership";
 import { k3sSerializer } from "./serializer";
 import { rules } from "./lint/rules";
 import { postSynthChecks } from "./lint/post-synth";
@@ -32,6 +33,22 @@ export const k3sPlugin: LexiconPlugin = {
     pattern: /export const K3S_VERSION\s*=\s*"([^"]+)"/,
     replace: (v: string, line: string) => line.replace(/= "[^"]+"/, `= "${v}"`),
     upstream: { owner: "k3s-io", repo: "k3s", kind: "releases" },
+  },
+
+  /**
+   * The marker rides `node-label` (the serializer stamps it there when a
+   * build carries ownership) and lands on the registered Node as ordinary
+   * Kubernetes labels — read back the same way every label-based lexicon
+   * does. See `./describe-resources.ts` (#1603).
+   */
+  ownershipChannel: {
+    keys: LABEL_OWNERSHIP_KEYS,
+    reads: ["describeResources"],
+  },
+
+  async describeResources(options) {
+    const { describeResources } = await import("./describe-resources");
+    return describeResources(options);
   },
 
   // ── Required lifecycle methods ────────────────────────────────
