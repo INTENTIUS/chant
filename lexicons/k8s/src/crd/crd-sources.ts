@@ -390,6 +390,30 @@ const CAPI_CRD_BASE = `https://raw.githubusercontent.com/kubernetes-sigs/cluster
 const CAPA_VERSION = "v2.13.0";
 const CAPA_CRD_BASE = `https://raw.githubusercontent.com/kubernetes-sigs/cluster-api-provider-aws/${CAPA_VERSION}/config/crd/bases`;
 
+/**
+ * Cluster API Addon Provider for Helm (CAAPH) CRD, plus CAPI core's own
+ * addon-binding kind — both addons.cluster.x-k8s.io/v1alpha1|v1beta2
+ *
+ * `HelmChartProxy` is CAAPH's kind — installs a Helm chart across every
+ * cluster a label selector matches. `ClusterResourceSet` ships in CAPI
+ * core's own `core/` component (same CAPI_VERSION/CAPI_CRD_BASE pin as the
+ * `Cluster`/`MachinePool` source above), not a separate provider — it binds
+ * a set of raw manifests (ConfigMaps/Secrets) to matching clusters. They're
+ * grouped in one source block because both are what the RegionCluster
+ * composite's flux-addon wiring needs (chant#11) and both share the
+ * `addons.cluster.x-k8s.io` group, so both land under `K8s::Addons::*`:
+ *   K8s::Addons::HelmChartProxy      → addons.cluster.x-k8s.io/v1alpha1, kind: HelmChartProxy
+ *   K8s::Addons::ClusterResourceSet  → addons.cluster.x-k8s.io/v1beta2,  kind: ClusterResourceSet
+ *
+ * `HelmReleaseProxy` (CAAPH's per-cluster status-tracking CR, never authored
+ * directly) is deliberately left out.
+ *
+ * Operator install: with clusterctl,
+ *   clusterctl init --addon helm:v0.6.4
+ */
+const CAAPH_VERSION = "v0.6.4";
+const CAAPH_CRD_BASE = `https://raw.githubusercontent.com/kubernetes-sigs/cluster-api-addon-provider-helm/${CAAPH_VERSION}/config/crd/bases`;
+
 export const CRD_SOURCES: CRDSource[] = [
   { type: "url", url: `${KUBERAY_CRD_BASE}/ray.io_rayclusters.yaml` },
   { type: "url", url: `${KUBERAY_CRD_BASE}/ray.io_rayjobs.yaml` },
@@ -466,4 +490,6 @@ export const CRD_SOURCES: CRDSource[] = [
   { type: "url", url: `${CAPA_CRD_BASE}/infrastructure.cluster.x-k8s.io_awsmanagedclusters.yaml` },
   { type: "url", url: `${CAPA_CRD_BASE}/infrastructure.cluster.x-k8s.io_awsmanagedmachinepools.yaml` },
   { type: "url", url: `${CAPA_CRD_BASE}/infrastructure.cluster.x-k8s.io_awsclustercontrolleridentities.yaml` },
+  { type: "url", url: `${CAAPH_CRD_BASE}/addons.cluster.x-k8s.io_helmchartproxies.yaml` },
+  { type: "url", url: `${CAPI_CRD_BASE}/addons.cluster.x-k8s.io_clusterresourcesets.yaml` },
 ];
