@@ -16,6 +16,7 @@ These are a diagnostic layer over one specific enforcement mechanism, not a guar
 - **Spread-source runtime type** — EVL (via EVL004) checks that a spread source is traceable to a `const`; `fold()` additionally rejects it if that const turns out not to be an object or array at all.
 - **A nested `new Type(...)` used as a property value** — shape-valid to EVL either way, but `fold()` rejects a nested resource constructor (as opposed to the top-level one being folded) as a value, because it can't be represented without actually constructing it — the file falls back to run.
 - **Short-circuit laziness** — `fold()` evaluates `&&`/`||`/`??`/`? :` lazily, so an unfoldable *untaken* branch doesn't reject. EVL has no notion of "taken" and requires every branch to be shape-valid — a false positive relative to `fold()`, never the reverse.
+- **Composite step access** (chant #1544) — `Checkout({...}).step` and the same shape from any other single-action `Composite()` wrapper (a call immediately narrowed to `.step`) is the documented idiom for embedding one inline in a `Job`'s `steps:` array. EVL001 treats it as shape-valid; `fold()` still can't fold it (a call is not a value it can reduce) and falls the file back to the run path, exactly as documented — that fallback was never an error, only EVL001's flagging of it was.
 
 None of these change what EVL catches in practice; they're the edge cases where a passing lint doesn't guarantee a fold, or a stricter EVL flag doesn't mean `fold()` would actually have rejected the code.
 
@@ -41,6 +42,15 @@ const tags = { ...baseTags, env: "prod" };
 export const bucket = new _.Resource({
   bucketName: name,
   tags: tags,
+});
+```
+
+```typescript
+// ✅ Also allowed — a Composite() wrapper's `.step` output embedded inline
+// (chant #1544; see "Where EVL and fold() diverge" above)
+export const build = new Job({
+  "runs-on": "ubuntu-latest",
+  steps: [Checkout({}).step, new Step({ name: "Test", run: "npm test" })],
 });
 ```
 

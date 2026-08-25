@@ -76,6 +76,40 @@ describe("readiness model", () => {
     expect(firstTerminal(ready([{ type: "Ready", status: "False", reason: "AuthenticationFailed" } as never]), git)).toBeDefined();
   });
 
+  test("CNRM overrides fail fast on Ready=False wedge reasons, DependencyNotReady is not terminal (#1725)", () => {
+    // ContainerCluster and ContainerNodePool back examples/cockroachdb-multi-region-gke's
+    // `longInfra` waits — a cluster wedged at UpdateFailed used to poll out
+    // the whole timeout instead of failing fast.
+    const cluster = readinessFor("container.cnrm.cloud.google.com", "ContainerCluster");
+    expect(cluster).not.toBe(DEFAULT_READINESS);
+    expect(isReady(ready([{ type: "Ready", status: "True" }]), cluster)).toBe(true);
+
+    const updateFailed = ready([{ type: "Ready", status: "False", reason: "UpdateFailed" } as never]);
+    expect(isReady(updateFailed, cluster)).toBe(false);
+    expect(firstTerminal(updateFailed, cluster)).toBeDefined();
+
+    const managementConflict = ready([{ type: "Ready", status: "False", reason: "ManagementConflict" } as never]);
+    expect(firstTerminal(managementConflict, cluster)).toBeDefined();
+
+    // DependencyNotReady is the ordinary "still waiting on another CNRM
+    // resource" state (e.g. a cluster waiting on its network) — not a wedge.
+    const dependencyNotReady = ready([{ type: "Ready", status: "False", reason: "DependencyNotReady" } as never]);
+    expect(firstTerminal(dependencyNotReady, cluster)).toBeUndefined();
+
+    // In-progress reconciles are not terminal either.
+    const updating = ready([{ type: "Ready", status: "False", reason: "Updating" } as never]);
+    expect(firstTerminal(updating, cluster)).toBeUndefined();
+
+    const nodePool = readinessFor("container.cnrm.cloud.google.com", "ContainerNodePool");
+    expect(nodePool).not.toBe(DEFAULT_READINESS);
+    expect(
+      firstTerminal(ready([{ type: "Ready", status: "False", reason: "UpdateFailed" } as never]), nodePool),
+    ).toBeDefined();
+    expect(
+      firstTerminal(ready([{ type: "Ready", status: "False", reason: "DependencyNotReady" } as never]), nodePool),
+    ).toBeUndefined();
+  });
+
   test("Argo override uses health/sync, not a Ready condition", () => {
     const spec = readinessFor("argoproj.io", "Application");
     expect(spec).not.toBe(DEFAULT_READINESS);

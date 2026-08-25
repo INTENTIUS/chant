@@ -7,6 +7,7 @@
 
 import type { LintRule, LintDiagnostic, LintContext } from "@intentius/chant/lint/rule";
 import * as ts from "typescript";
+import { isJobFromAnotherLexicon } from "./import-source";
 
 export const missingStageRule: LintRule = {
   id: "WGL003",
@@ -26,6 +27,13 @@ export const missingStageRule: LintRule = {
           isJob = true;
         } else if (ts.isPropertyAccessExpression(expression) && expression.name.text === "Job") {
           isJob = true;
+        }
+
+        // chant #1544 — same cross-lexicon rule bleed as WGL002 (see
+        // missing-script.ts): a github/forgejo `Job` must not be judged
+        // against gitlab's `stage` convention.
+        if (isJob && isJobFromAnotherLexicon(sourceFile, expression)) {
+          isJob = false;
         }
 
         if (isJob && node.arguments && node.arguments.length > 0) {

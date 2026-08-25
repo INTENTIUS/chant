@@ -104,6 +104,33 @@ describe("EVL001: non-literal-expression", () => {
     expect(diags[0].ruleId).toBe("EVL001");
   });
 
+  // chant #1544 — the single-action Composite() wrapper idiom
+  // (`Checkout({...}).step`) every lexicon's own docs/examples embed inline
+  // inside a `Job`'s `steps:` array must not trip EVL001.
+  test("allows a composite call's .step access embedded in an array", () => {
+    const ctx = createContext(`new Job({ "runs-on": "ubuntu-latest", steps: [Checkout({}).step] });`);
+    const diags = evl001NonLiteralExpressionRule.check(ctx);
+    expect(diags).toHaveLength(0);
+  });
+
+  test("allows a composite call's .step access as a direct property value", () => {
+    const ctx = createContext(`new Job({ step: Checkout({ ref: "main" }).step });`);
+    const diags = evl001NonLiteralExpressionRule.check(ctx);
+    expect(diags).toHaveLength(0);
+  });
+
+  test("still flags a call accessing a non-.step property", () => {
+    const ctx = createContext(`new Job({ steps: [Checkout({}).output] });`);
+    const diags = evl001NonLiteralExpressionRule.check(ctx);
+    expect(diags).toHaveLength(1);
+  });
+
+  test("still flags a bare call (no trailing .step access)", () => {
+    const ctx = createContext(`new Bucket({ name: getName() });`);
+    const diags = evl001NonLiteralExpressionRule.check(ctx);
+    expect(diags).toHaveLength(1);
+  });
+
   test("flags multiple violations", () => {
     const ctx = createContext(`new Bucket({ a: foo(), b: bar() });`);
     const diags = evl001NonLiteralExpressionRule.check(ctx);

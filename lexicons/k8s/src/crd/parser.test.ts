@@ -286,6 +286,20 @@ describe("parseCRDSpec", () => {
     expect(results[0].resource.typeName).toBe("K8s::Argo::Application");
   });
 
+  test("serving.kserve.io group maps to the KServe namespace (override)", () => {
+    const spec = {
+      group: "serving.kserve.io",
+      names: { kind: "InferenceService", plural: "inferenceservices" },
+      scope: "Namespaced" as const,
+      versions: [
+        { name: "v1beta1", served: true, storage: true },
+      ],
+    };
+
+    const results = parseCRDSpec(spec);
+    expect(results[0].resource.typeName).toBe("K8s::KServe::InferenceService");
+  });
+
   test("all Flux toolkit + operator groups collapse to the Flux namespace", () => {
     const cases: Array<[string, string]> = [
       ["source.toolkit.fluxcd.io", "GitRepository"],

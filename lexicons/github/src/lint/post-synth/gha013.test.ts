@@ -50,6 +50,23 @@ jobs:
     expect(diags[0].message).toContain("deploy");
   });
 
+  test("does not flag a job that declares job-level permissions (#1544)", () => {
+    const yaml = `name: Deploy
+on:
+  workflow_dispatch:
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - run: echo deploy
+`;
+    const diags = gha013.check(makeCtx(yaml));
+    expect(diags).toHaveLength(0);
+  });
+
   test("does not flag when trigger is not sensitive", () => {
     const yaml = `name: CI
 on:

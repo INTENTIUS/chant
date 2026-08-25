@@ -258,6 +258,32 @@ describe("documented divergences — NOT unified by design (see subset.ts module
     expect(evl001NonLiteralExpressionRule.check(context)).toHaveLength(0);
   });
 
+  test("composite step access: fold still rejects a call as a value; EVL001 accepts .step access (chant #1544, opt-in only)", () => {
+    // `Checkout({...}).step` — the single-action Composite() wrapper idiom
+    // every lexicon's own docs/examples embed inline inside a Job's
+    // `steps:` array. fold() has no way to invoke an arbitrary composite
+    // factory, so it still rejects this shape and falls the file back to
+    // the run path (documented, correct behavior — never an error). EVL001
+    // now opts INTO treating it as shape-valid via `allowCompositeStepAccess`
+    // — a caller of `findSubsetViolation` that does not pass that flag
+    // (fold(), or this very call below) is completely unaffected.
+    const source = `const bad = new Thing({ x: Checkout({}).step });`;
+    const sourceFile = ts.createSourceFile("t.ts", source, ts.ScriptTarget.Latest, true);
+    const consts = collectConsts(sourceFile);
+    const badInit = consts.get("bad") as ts.NewExpression;
+
+    expect(() => foldResource(badInit, consts, [])).toThrow(FoldError);
+
+    // findSubsetViolation with no third argument (fold()'s own answer, and
+    // every pre-#1544 caller) is unchanged — still a violation.
+    const bareCallExpr = (badInit.arguments![0] as ts.ObjectLiteralExpression).properties[0];
+    expect(findSubsetViolation(bareCallExpr)).toBeDefined();
+
+    // EVL001 itself opts in and stops flagging it.
+    const context: LintContext = { sourceFile, entities: [], filePath: "t.ts", lexicon: undefined };
+    expect(evl001NonLiteralExpressionRule.check(context)).toHaveLength(0);
+  });
+
   test("nested resource construction: NO LONGER a divergence (chant #1169) — both fold and EVL001 accept it", () => {
     // This was the largest divergence in the table until #1169: a nested
     // `new Type()` as a property value could only fold to a {__resource, props}

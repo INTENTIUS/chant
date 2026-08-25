@@ -88,6 +88,49 @@ describe("WGL002: missing-script", () => {
     const diags = missingScriptRule.check(ctx);
     expect(diags).toHaveLength(0);
   });
+
+  // chant #1544 — cross-lexicon rule bleed: a github/forgejo `Job` imported
+  // from its own lexicon package must not be judged by gitlab's `script`/
+  // `trigger`/`run` requirement.
+  test("does not flag a Job imported from the github lexicon", () => {
+    const ctx = createContext(
+      `import { Job } from "@intentius/chant-lexicon-github";\nconst j = new Job({ "runs-on": "ubuntu-latest", steps: [] });`,
+    );
+    const diags = missingScriptRule.check(ctx);
+    expect(diags).toHaveLength(0);
+  });
+
+  test("does not flag a Job imported from the forgejo lexicon", () => {
+    const ctx = createContext(
+      `import { Job } from "@intentius/chant-lexicon-forgejo";\nconst j = new Job({ "runs-on": "ubuntu-latest", steps: [] });`,
+    );
+    const diags = missingScriptRule.check(ctx);
+    expect(diags).toHaveLength(0);
+  });
+
+  test("still flags a Job imported from the gitlab lexicon", () => {
+    const ctx = createContext(
+      `import { Job } from "@intentius/chant-lexicon-gitlab";\nconst j = new Job({ stage: "test" });`,
+    );
+    const diags = missingScriptRule.check(ctx);
+    expect(diags).toHaveLength(1);
+  });
+
+  test("still flags a namespace-imported gl.Job() from the gitlab lexicon", () => {
+    const ctx = createContext(
+      `import * as gl from "@intentius/chant-lexicon-gitlab";\nconst j = new gl.Job({ stage: "build" });`,
+    );
+    const diags = missingScriptRule.check(ctx);
+    expect(diags).toHaveLength(1);
+  });
+
+  test("does not flag a namespace-imported Job from another lexicon", () => {
+    const ctx = createContext(
+      `import * as gh from "@intentius/chant-lexicon-github";\nconst j = new gh.Job({ "runs-on": "ubuntu-latest", steps: [] });`,
+    );
+    const diags = missingScriptRule.check(ctx);
+    expect(diags).toHaveLength(0);
+  });
 });
 
 // ── WGL003: missing stage ───────────────────────────────────────────
@@ -106,6 +149,23 @@ describe("WGL003: missing-stage", () => {
     const ctx = createContext(`const j = new Job({ stage: "build", script: ["make"] });`);
     const diags = missingStageRule.check(ctx);
     expect(diags).toHaveLength(0);
+  });
+
+  // chant #1544 — same cross-lexicon rule bleed as WGL002.
+  test("does not flag a Job imported from the github lexicon", () => {
+    const ctx = createContext(
+      `import { Job } from "@intentius/chant-lexicon-github";\nconst j = new Job({ "runs-on": "ubuntu-latest", steps: [] });`,
+    );
+    const diags = missingStageRule.check(ctx);
+    expect(diags).toHaveLength(0);
+  });
+
+  test("still flags a Job imported from the gitlab lexicon", () => {
+    const ctx = createContext(
+      `import { Job } from "@intentius/chant-lexicon-gitlab";\nconst j = new Job({ script: ["test"] });`,
+    );
+    const diags = missingStageRule.check(ctx);
+    expect(diags).toHaveLength(1);
   });
 });
 

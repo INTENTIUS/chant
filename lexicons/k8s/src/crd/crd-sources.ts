@@ -311,6 +311,36 @@ const K3S_API_VERSION = "v0.1.4"; // vendored by k3s v1.36.3+k3s1
 const K3S_HELM_CONTROLLER_CRD_BASE = `https://raw.githubusercontent.com/k3s-io/helm-controller/${K3S_HELM_CONTROLLER_VERSION}/pkg/crds/yaml/generated`;
 const K3S_API_CRD_BASE = `https://raw.githubusercontent.com/k3s-io/api/${K3S_API_VERSION}/pkg/crds/yaml/generated`;
 
+/**
+ * KServe CRDs — serving.kserve.io
+ *
+ * The model-serving control plane chant #982 builds vLLM composites on top
+ * of. Produces (the `serving.kserve.io` group maps to the `KServe` namespace
+ * — see GROUP_NAMESPACE_OVERRIDES in group-namespace.ts; the first-segment
+ * rule would otherwise give `K8s::Serving::*`):
+ *   K8s::KServe::InferenceService       → serving.kserve.io/v1beta1, kind: InferenceService
+ *   K8s::KServe::ServingRuntime         → serving.kserve.io/v1alpha1, kind: ServingRuntime
+ *   K8s::KServe::ClusterServingRuntime  → serving.kserve.io/v1alpha1, kind: ClusterServingRuntime
+ *
+ * Sourced from `config/crd/full`, not `config/crd/minimal` — `full` is what
+ * the release's own kustomization.yaml (and `kubectl apply -k config/crd`)
+ * actually installs; `minimal` is a stripped, non-validating variant with no
+ * OpenAPI schema to speak of. `full`'s InferenceService schema is the entire
+ * spec-true predictor/transformer/explainer union (~1MB of YAML) — see
+ * schemaPatches in codegen/patches.ts if generation trips on its recursion
+ * depth.
+ *
+ * Pinned to the last patch of the 0.15 line rather than latest (0.20.0,
+ * weeks old at pin time) — a release that's had over a year to settle,
+ * matching the CNPG precedent above of tracking what a real operator runs
+ * rather than the newest tag.
+ *
+ * Operator install: kubectl apply --server-side -k
+ *   "github.com/kserve/kserve/config/default?ref=v0.15.2"
+ */
+const KSERVE_VERSION = "v0.15.2";
+const KSERVE_CRD_BASE = `https://raw.githubusercontent.com/kserve/kserve/${KSERVE_VERSION}/config/crd/full`;
+
 export const CRD_SOURCES: CRDSource[] = [
   { type: "url", url: `${KUBERAY_CRD_BASE}/ray.io_rayclusters.yaml` },
   { type: "url", url: `${KUBERAY_CRD_BASE}/ray.io_rayjobs.yaml` },
@@ -378,4 +408,7 @@ export const CRD_SOURCES: CRDSource[] = [
     version: KUBEMICROVM_VERSION,
     kinds: ["MicroVM", "MicroVMImage", "MicroVMNetwork", "MicroVMClass", "MicroVMReplicaSet"],
   },
+  { type: "url", url: `${KSERVE_CRD_BASE}/serving.kserve.io_inferenceservices.yaml` },
+  { type: "url", url: `${KSERVE_CRD_BASE}/serving.kserve.io_servingruntimes.yaml` },
+  { type: "url", url: `${KSERVE_CRD_BASE}/serving.kserve.io_clusterservingruntimes.yaml` },
 ];

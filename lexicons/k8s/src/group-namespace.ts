@@ -59,6 +59,9 @@ export const GROUP_NAMESPACE_OVERRIDES: Record<string, string> = {
   // and would split HelmChart from the Addon that tracks its deployment.
   "helm.cattle.io": "K3s",
   "k3s.cattle.io": "K3s",
+  // The first-segment rule would give `Serving`, which reads like a generic
+  // core concept rather than the KServe operator that owns it.
+  "serving.kserve.io": "KServe",
 };
 
 /**
