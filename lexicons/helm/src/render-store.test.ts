@@ -355,7 +355,7 @@ EOF
       namespace: "web",
       values: { replicaCount: 2 },
       capabilityProfile: { ...PROFILE },
-    }) as Parameters<typeof HelmRender>[0];
+    }) as unknown as Parameters<typeof HelmRender>[0];
 
   test("a pinned render persists by default, and an identical render is a store cache hit", () => {
     HelmRender(pinnedProps());
