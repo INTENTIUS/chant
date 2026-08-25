@@ -16,6 +16,7 @@ import type { LexiconPlugin } from "../../lexicon";
 import { resolveLexiconVersions, collectBuildRootContributors } from "../plugins";
 import { runPostSynthChecks } from "../../lint/post-synth";
 import { coreReceiptChecks } from "../../lint/receipt-checks";
+import { coreOutputChecks } from "../../lint/output-checks";
 import { applyConfiguredSeverity } from "../../lint/config";
 import { loadPolicyChecks } from "../../lint/policy";
 import { armSandboxPolicyExecution, runProjectPolicies } from "../../lint/policy-sandbox";
@@ -391,6 +392,25 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
   if (result.errors.length === 0) {
     const receiptDiags = runPostSynthChecks(coreReceiptChecks(), result, env);
     const { diagnostics: activeDiags, suppressed } = applyConfiguredSeverity(receiptDiags, config.lint?.rules);
+    suppressedPostSynthCount += suppressed.length;
+    for (const diag of activeDiags) {
+      const prefix = diag.entity ? `[${diag.entity}] ` : "";
+      const lexiconSuffix = diag.lexicon ? ` (${diag.lexicon})` : "";
+      if (diag.severity === "error") {
+        errors.push(formatError({ message: `${prefix}${diag.message}${lexiconSuffix}` }));
+      } else {
+        warnings.push(formatWarning({ message: `${prefix}${diag.message}${lexiconSuffix}` }));
+      }
+    }
+  }
+
+  // Core-owned post-synth check over serialized output text (#1526). The
+  // "[object Object]" marker means a reference got stringified instead of
+  // resolved; it can appear in any lexicon's emitted text, so this runs over
+  // the FULL build result the same way the receipt checks above do.
+  if (result.errors.length === 0) {
+    const outputDiags = runPostSynthChecks(coreOutputChecks(), result, env);
+    const { diagnostics: activeDiags, suppressed } = applyConfiguredSeverity(outputDiags, config.lint?.rules);
     suppressedPostSynthCount += suppressed.length;
     for (const diag of activeDiags) {
       const prefix = diag.entity ? `[${diag.entity}] ` : "";
