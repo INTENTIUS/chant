@@ -26,6 +26,11 @@
  * `ProvenanceLink` material. `verify` (#622, ./verify.ts) is the matching
  * deploy-time gate — `cosign verify`/`verify-attestation` against a
  * configured identity policy, mirroring ../../lint/policy.ts's `policyGate`.
+ * `wrangler-deploy`/`wrangler-versions-promote` (#1293, epic #1296,
+ * ./wrangler.ts) and `r2-sync` (#1293, ./r2-sync.ts) are the Cloudflare
+ * Workers apply leaves — real implementations over the same injectable
+ * `ProcessRunner` `sign` uses, shelling to `wrangler`/`rclone` rather than an
+ * AWS-shaped SDK client.
  */
 
 export * from "./build-archive";
@@ -39,6 +44,8 @@ export * from "./component-bom";
 export * from "./reproducibility";
 export * from "./sign";
 export * from "./verify";
+export * from "./wrangler";
+export * from "./r2-sync";
 export * from "./vuln-scan";
 export * from "./vex";
 export * from "./license-policy";

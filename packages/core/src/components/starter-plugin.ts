@@ -42,6 +42,9 @@ import {
   healthGateCapability,
   shellCapability,
   ensureSecretCapability,
+  wranglerDeployCapability,
+  wranglerVersionsPromoteCapability,
+  r2SyncCapability,
 } from "./verbs/index";
 import { ownPackageVersion, type CapabilityPlugin } from "./capability-plugin";
 
@@ -69,6 +72,12 @@ export const STARTER_VERB_FAMILIES = {
   // present means done; the k8s store adapter is #1830.
   secrets: ["ensure-secret"],
   escapeHatch: ["shell"],
+  // The Cloudflare Workers apply leaves (#1293, epic #1296) — placed in core
+  // rather than a cloudflare lexicon (decided explicitly, see ./verbs/wrangler.ts's
+  // module doc): the epic cedes the Workers plane to `wrangler` entirely, and
+  // there is no cloudflare lexicon for these three verbs to live in. Revisit
+  // if/when the zone-plane lexicon (#1294) lands.
+  cloudflare: ["wrangler-deploy", "wrangler-versions-promote", "r2-sync"],
 } as const;
 
 /**
@@ -94,6 +103,9 @@ function starterCapabilities(): Array<Capability<never, unknown>> {
     healthGateCapability,
     ensureSecretCapability,
     shellCapability,
+    wranglerDeployCapability,
+    wranglerVersionsPromoteCapability,
+    r2SyncCapability,
   ] as unknown as Array<Capability<never, unknown>>;
 }
 
