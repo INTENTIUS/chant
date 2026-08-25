@@ -202,3 +202,32 @@ export const seeded = EffectReceipt("seeded", {
 ```
 
 ---
+
+## COR025: Stringified Reference in Serialized Output
+
+A serialized output (a CloudFormation template, a Kubernetes manifest, ...) containing the literal substring `[object Object]` is always an authoring error: a reference got coerced to a string — typically by a template literal or string concatenation over an object like an `AttrRef` — instead of resolved to its actual value. No lexicon's serializer emits this on purpose, and no provider's schema ever expects it, so this check is cheap, universal across lexicons, and free of meaningful false positives.
+
+This is a post-synth check run by `chant build` over the whole build result's emitted text, scanning every lexicon's primary output plus any nested files (e.g. nested stack templates). It flags each distinct offending line once, quoting it in the diagnostic so the emitting declaration is easy to spot.
+
+**Severity:** error
+
+```typescript
+// ❌ Triggers COR025 — bucket.arn is an AttrRef, not a string;
+// the template literal stringifies it via Object.prototype.toString
+export const policy = new BucketPolicy({
+  bucket,
+  statement: [{ effect: "Allow", resource: `${bucket.arn}/*` }],
+});
+```
+
+```typescript
+// ✅ Fixed — join the reference instead of interpolating it
+import { Join } from "@intentius/chant-lexicon-aws";
+
+export const policy = new BucketPolicy({
+  bucket,
+  statement: [{ effect: "Allow", resource: Join("", [bucket.arn, "/*"]) }],
+});
+```
+
+---
