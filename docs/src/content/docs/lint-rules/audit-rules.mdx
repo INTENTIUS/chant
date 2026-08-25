@@ -880,6 +880,12 @@ Point `file` at the committed ciphertext, make its metadata.name match the decla
 
 Authority: [Kubernetes — Good practices for Secrets](https://kubernetes.io/docs/concepts/security/secrets-good-practices/)
 
+### WK8505
+
+**committed-encrypted secret with no Flux decryption wiring** — report-only · guidance
+
+Add decryption: "sops" to the FluxAppFor reconciling the path that carries the ciphertext sidecar, or ignore if that Kustomization is declared in a different build.
+
 ## Docker (DKRD)
 
 Run against Dockerfiles and Compose files.

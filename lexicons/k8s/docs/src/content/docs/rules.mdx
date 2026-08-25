@@ -6,7 +6,7 @@ description: "Every lint rule and post-synth check provided by the Kubernetes le
 {/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-k8s` — DO NOT EDIT.
     Edit lexicons/k8s/src/codegen/docs.ts instead; changes here are overwritten. */}
 
-The Kubernetes lexicon provides **45** rules: 6 lint rules and 39 post-synth checks.
+The Kubernetes lexicon provides **46** rules: 6 lint rules and 40 post-synth checks.
 
 ## Lint Rules
 
@@ -64,3 +64,4 @@ Post-synth checks validate the serialized output after the build pipeline comple
 | `WK8502` | Custom resource spec field has the wrong type or a value outside its enum |
 | `WK8503` | Workload consumes a Secret nothing in the output produces — produce it (Secret, ExternalSecret, InfisicalSecret, Certificate) or declare its provenance with declareSecret() |
 | `WK8504` | committed-encrypted secret declaration does not resolve — the declared file is missing, is not the named Secret, or is not encrypted |
+| `WK8505` | committed-encrypted secret with no Flux decryption wiring — add decryption: 'sops' to the FluxAppFor reconciling the path that carries it |
