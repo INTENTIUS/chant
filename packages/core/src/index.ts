@@ -46,6 +46,7 @@ export * from "./lint/selectors";
 export * from "./lint/named-checks";
 export * from "./lint/post-synth";
 export * from "./lint/policy";
+export * from "./lint/pipeline-change-gate";
 export * from "./lint/rule-loader";
 export * from "./lint/discover";
 export * from "./import/parser";
