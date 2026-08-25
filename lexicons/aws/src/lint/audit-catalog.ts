@@ -72,4 +72,10 @@ export const awsAuditCatalog: Record<string, RuleMeta> = {
   // so no authority citation (those are reserved for merge-worthy entries).
   WAW059: auditRule("WAW059", "report-only", "guidance", "Wildcard Resource where the declared graph enumerates the touched set", "Tighten Resource from \"*\" to the Fn::GetAtt Arn list of the declared resources the role's consumers touch.", { category: "security" }),
   WAW060: auditRule("WAW060", "report-only", "guidance", "IAM policy attached to no principal", "Attach the policy via Roles/Users/Groups or reference it from a principal's ManagedPolicyArns — unattached it grants nothing.", { category: "security" }),
+
+  // #1140 — error-injection benchmark family (companion to epic #1139): static
+  // catches for the deploy-time/runtime failure class stock CDK can't see pre-synth.
+  WAW061: auditRule("WAW061", "merge-worthy", "guidance", "Subnet CidrBlock not contained in its VPC's CidrBlock", "Fix the subnet's CidrBlock so it falls within the VPC's CidrBlock range.", { category: "correctness" }),
+  WAW062: auditRule("WAW062", "merge-worthy", "guidance", "Duplicate export name or explicit resource name within a template", "Give each duplicated Export/name a distinct literal value.", { category: "correctness" }),
+  WAW063: auditRule("WAW063", "merge-worthy", "guidance", "IAM policy denies an action another attached policy on the same role allows", "Remove or narrow the Deny, or move the Allow off this role — the explicit Deny always wins.", { category: "correctness" }),
 };
