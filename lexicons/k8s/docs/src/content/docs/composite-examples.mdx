@@ -139,6 +139,20 @@ const { daemonSet, serviceAccount, clusterRole, clusterRoleBinding, configMap } 
 });
 ```
 
+## Other composites
+
+Not yet documented on this page or its vendor-specific neighbors (chant #1723's audit of
+`lexicons/k8s/src/composites/index.ts` against the docs):
+
+- **Generic:** `StatefulApp`, `BatchJob`, `SecureIngress`, `ConfiguredApp`, `SidecarApp`,
+  `MonitoredService`, `NetworkIsolatedApp`, `MetricsServer`
+- **CockroachDB:** `CockroachDbCluster` — the self-managed, multi-region StatefulSet pattern
+  that [`CockroachDbRegionStack`](../gke-composites/#cockroachdbregionstack) builds on; see the
+  [CockroachDB Multi-Region tutorial](/chant/tutorials/cockroachdb-multi-region/) in the
+  meantime
+- **Ray:** `RayCluster`, `RayJob`, `RayService` — see the
+  [Ray + KubeRay tutorial](/chant/tutorials/ray-kuberay-gke/) in the meantime
+
 ## Deploying composites
 
 Composites produce plain prop objects. To deploy them, write each resource to a `.k8s.ts` file then use the standard chant build → kubectl apply workflow.
