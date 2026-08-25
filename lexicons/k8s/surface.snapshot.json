@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-08-25T05:16:47.807Z",
+  "generatedAt": "2026-08-25T16:51:35.600Z",
   "entries": {
     "APIGroup": {
       "kind": "resource",
@@ -51,6 +51,158 @@
         "versions:true"
       ]
     },
+    "AWSClusterControllerIdentity": {
+      "kind": "resource",
+      "resourceType": "K8s::Infrastructure::AWSClusterControllerIdentity",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "AWSClusterControllerIdentity_AllowedNamespaces": {
+      "kind": "property",
+      "resourceType": "K8s::Infrastructure::AWSClusterControllerIdentity.allowedNamespaces"
+    },
+    "AWSManagedCluster": {
+      "kind": "resource",
+      "resourceType": "K8s::Infrastructure::AWSManagedCluster",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "AWSManagedCluster_ControlPlaneEndpoint": {
+      "kind": "property",
+      "resourceType": "K8s::Infrastructure::AWSManagedCluster.controlPlaneEndpoint"
+    },
+    "AWSManagedCluster_Status": {
+      "kind": "property",
+      "resourceType": "K8s::Infrastructure::AWSManagedCluster.status"
+    },
+    "AWSManagedControlPlane": {
+      "kind": "resource",
+      "resourceType": "K8s::Controlplane::AWSManagedControlPlane",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "AWSManagedControlPlane_AccessConfig": {
+      "kind": "property",
+      "resourceType": "K8s::Controlplane::AWSManagedControlPlane.accessConfig"
+    },
+    "AWSManagedControlPlane_AccessEntry": {
+      "kind": "property",
+      "resourceType": "K8s::Controlplane::AWSManagedControlPlane.accessEntries"
+    },
+    "AWSManagedControlPlane_Addon": {
+      "kind": "property",
+      "resourceType": "K8s::Controlplane::AWSManagedControlPlane.addons"
+    },
+    "AWSManagedControlPlane_Bastion": {
+      "kind": "property",
+      "resourceType": "K8s::Controlplane::AWSManagedControlPlane.bastion"
+    },
+    "AWSManagedControlPlane_ControlPlaneEndpoint": {
+      "kind": "property",
+      "resourceType": "K8s::Controlplane::AWSManagedControlPlane.controlPlaneEndpoint"
+    },
+    "AWSManagedControlPlane_EncryptionConfig": {
+      "kind": "property",
+      "resourceType": "K8s::Controlplane::AWSManagedControlPlane.encryptionConfig"
+    },
+    "AWSManagedControlPlane_EndpointAccess": {
+      "kind": "property",
+      "resourceType": "K8s::Controlplane::AWSManagedControlPlane.endpointAccess"
+    },
+    "AWSManagedControlPlane_IamAuthenticatorConfig": {
+      "kind": "property",
+      "resourceType": "K8s::Controlplane::AWSManagedControlPlane.iamAuthenticatorConfig"
+    },
+    "AWSManagedControlPlane_IdentityRef": {
+      "kind": "property",
+      "resourceType": "K8s::Controlplane::AWSManagedControlPlane.identityRef"
+    },
+    "AWSManagedControlPlane_KubeProxy": {
+      "kind": "property",
+      "resourceType": "K8s::Controlplane::AWSManagedControlPlane.kubeProxy"
+    },
+    "AWSManagedControlPlane_Logging": {
+      "kind": "property",
+      "resourceType": "K8s::Controlplane::AWSManagedControlPlane.logging"
+    },
+    "AWSManagedControlPlane_Network": {
+      "kind": "property",
+      "resourceType": "K8s::Controlplane::AWSManagedControlPlane.network"
+    },
+    "AWSManagedControlPlane_OidcIdentityProviderConfig": {
+      "kind": "property",
+      "resourceType": "K8s::Controlplane::AWSManagedControlPlane.oidcIdentityProviderConfig"
+    },
+    "AWSManagedControlPlane_Status": {
+      "kind": "property",
+      "resourceType": "K8s::Controlplane::AWSManagedControlPlane.status"
+    },
+    "AWSManagedControlPlane_VpcCni": {
+      "kind": "property",
+      "resourceType": "K8s::Controlplane::AWSManagedControlPlane.vpcCni"
+    },
+    "AWSManagedMachinePool": {
+      "kind": "resource",
+      "resourceType": "K8s::Infrastructure::AWSManagedMachinePool",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "AWSManagedMachinePool_AwsLaunchTemplate": {
+      "kind": "property",
+      "resourceType": "K8s::Infrastructure::AWSManagedMachinePool.awsLaunchTemplate"
+    },
+    "AWSManagedMachinePool_LifecycleHook": {
+      "kind": "property",
+      "resourceType": "K8s::Infrastructure::AWSManagedMachinePool.lifecycleHooks"
+    },
+    "AWSManagedMachinePool_NodeRepairConfig": {
+      "kind": "property",
+      "resourceType": "K8s::Infrastructure::AWSManagedMachinePool.nodeRepairConfig"
+    },
+    "AWSManagedMachinePool_RemoteAccess": {
+      "kind": "property",
+      "resourceType": "K8s::Infrastructure::AWSManagedMachinePool.remoteAccess"
+    },
+    "AWSManagedMachinePool_Scaling": {
+      "kind": "property",
+      "resourceType": "K8s::Infrastructure::AWSManagedMachinePool.scaling"
+    },
+    "AWSManagedMachinePool_Status": {
+      "kind": "property",
+      "resourceType": "K8s::Infrastructure::AWSManagedMachinePool.status"
+    },
+    "AWSManagedMachinePool_Taint": {
+      "kind": "property",
+      "resourceType": "K8s::Infrastructure::AWSManagedMachinePool.taints"
+    },
+    "AWSManagedMachinePool_UpdateConfig": {
+      "kind": "property",
+      "resourceType": "K8s::Infrastructure::AWSManagedMachinePool.updateConfig"
+    },
+    "Abac": {
+      "kind": "property",
+      "resourceType": "K8s::S3::Bucket.abac"
+    },
+    "Accelerate": {
+      "kind": "property",
+      "resourceType": "K8s::S3::Bucket.accelerate"
+    },
+    "AccessConfig": {
+      "kind": "property",
+      "resourceType": "K8s::Controlplane::AWSManagedControlPlane.accessConfig"
+    },
+    "AccessEntry": {
+      "kind": "property",
+      "resourceType": "K8s::Controlplane::AWSManagedControlPlane.accessEntries"
+    },
     "AddPrefix": {
       "kind": "property",
       "resourceType": "K8s::Traefik::Middleware.addPrefix"
@@ -90,6 +242,14 @@
     "Alert_ProviderRef": {
       "kind": "property",
       "resourceType": "K8s::Flux::Alert.providerRef"
+    },
+    "AllowedNamespaces": {
+      "kind": "property",
+      "resourceType": "K8s::Infrastructure::AWSClusterControllerIdentity.allowedNamespaces"
+    },
+    "Analytic": {
+      "kind": "property",
+      "resourceType": "K8s::S3::Bucket.analytics"
     },
     "AppProject": {
       "kind": "resource",
@@ -228,6 +388,14 @@
       "kind": "property",
       "resourceType": "K8s::Ray::RayCluster.autoscalerOptions"
     },
+    "AvailabilityGate": {
+      "kind": "property",
+      "resourceType": "K8s::CAPI::Cluster.availabilityGates"
+    },
+    "AwsLaunchTemplate": {
+      "kind": "property",
+      "resourceType": "K8s::Infrastructure::AWSManagedMachinePool.awsLaunchTemplate"
+    },
     "Backup": {
       "kind": "resource",
       "resourceType": "K8s::Cnpg::Backup",
@@ -256,6 +424,10 @@
       "kind": "property",
       "resourceType": "K8s::Traefik::Middleware.basicAuth"
     },
+    "Bastion": {
+      "kind": "property",
+      "resourceType": "K8s::Controlplane::AWSManagedControlPlane.bastion"
+    },
     "BatchJob": {
       "kind": "resource",
       "resourceType": "K8s::Batch::Job",
@@ -276,37 +448,45 @@
       "kind": "property",
       "resourceType": "K8s::Cnpg::Cluster.bootstrap"
     },
-    "Bucket": {
-      "kind": "resource",
-      "resourceType": "K8s::Flux::Bucket",
-      "props": [
-        "metadata:false",
-        "spec:false"
-      ]
-    },
-    "Bucket_CertSecretRef": {
-      "kind": "property",
-      "resourceType": "K8s::Flux::Bucket.certSecretRef"
-    },
-    "Bucket_ProxySecretRef": {
-      "kind": "property",
-      "resourceType": "K8s::Flux::Bucket.proxySecretRef"
-    },
-    "Bucket_SecretRef": {
-      "kind": "property",
-      "resourceType": "K8s::Flux::Bucket.secretRef"
-    },
-    "Bucket_Status": {
-      "kind": "property",
-      "resourceType": "K8s::Flux::Bucket.status"
-    },
-    "Bucket_Sts": {
-      "kind": "property",
-      "resourceType": "K8s::Flux::Bucket.sts"
-    },
     "Buffering": {
       "kind": "property",
       "resourceType": "K8s::Traefik::Middleware.buffering"
+    },
+    "CAPICluster": {
+      "kind": "resource",
+      "resourceType": "K8s::CAPI::Cluster",
+      "props": [
+        "metadata:false",
+        "spec:true"
+      ]
+    },
+    "CAPICluster_AvailabilityGate": {
+      "kind": "property",
+      "resourceType": "K8s::CAPI::Cluster.availabilityGates"
+    },
+    "CAPICluster_ClusterNetwork": {
+      "kind": "property",
+      "resourceType": "K8s::CAPI::Cluster.clusterNetwork"
+    },
+    "CAPICluster_ControlPlaneEndpoint": {
+      "kind": "property",
+      "resourceType": "K8s::CAPI::Cluster.controlPlaneEndpoint"
+    },
+    "CAPICluster_ControlPlaneRef": {
+      "kind": "property",
+      "resourceType": "K8s::CAPI::Cluster.controlPlaneRef"
+    },
+    "CAPICluster_InfrastructureRef": {
+      "kind": "property",
+      "resourceType": "K8s::CAPI::Cluster.infrastructureRef"
+    },
+    "CAPICluster_Status": {
+      "kind": "property",
+      "resourceType": "K8s::CAPI::Cluster.status"
+    },
+    "CAPICluster_Topology": {
+      "kind": "property",
+      "resourceType": "K8s::CAPI::Cluster.topology"
     },
     "CM": {
       "kind": "resource",
@@ -495,14 +675,6 @@
       "kind": "property",
       "resourceType": "K8s::Traefik::TLSOption.clientAuth"
     },
-    "Cluster": {
-      "kind": "resource",
-      "resourceType": "K8s::Cnpg::Cluster",
-      "props": [
-        "metadata:false",
-        "spec:true"
-      ]
-    },
     "ClusterIssuer": {
       "kind": "resource",
       "resourceType": "K8s::CertManager::ClusterIssuer",
@@ -535,9 +707,37 @@
       "kind": "property",
       "resourceType": "K8s::CertManager::ClusterIssuer.venafi"
     },
+    "ClusterNetwork": {
+      "kind": "property",
+      "resourceType": "K8s::CAPI::Cluster.clusterNetwork"
+    },
+    "ClusterRef": {
+      "kind": "property",
+      "resourceType": "K8s::Eks::PodIdentityAssociation.clusterRef"
+    },
     "ClusterResourceBlacklist": {
       "kind": "property",
       "resourceType": "K8s::Argo::AppProject.clusterResourceBlacklist"
+    },
+    "ClusterResourceSet": {
+      "kind": "resource",
+      "resourceType": "K8s::Addons::ClusterResourceSet",
+      "props": [
+        "metadata:false",
+        "spec:true"
+      ]
+    },
+    "ClusterResourceSet_ClusterSelector": {
+      "kind": "property",
+      "resourceType": "K8s::Addons::ClusterResourceSet.clusterSelector"
+    },
+    "ClusterResourceSet_Resource": {
+      "kind": "property",
+      "resourceType": "K8s::Addons::ClusterResourceSet.resources"
+    },
+    "ClusterResourceSet_Status": {
+      "kind": "property",
+      "resourceType": "K8s::Addons::ClusterResourceSet.status"
     },
     "ClusterResourceWhitelist": {
       "kind": "property",
@@ -637,135 +837,143 @@
         "metadata:false"
       ]
     },
-    "Cluster_Affinity": {
+    "CnpgCluster": {
+      "kind": "resource",
+      "resourceType": "K8s::Cnpg::Cluster",
+      "props": [
+        "metadata:false",
+        "spec:true"
+      ]
+    },
+    "CnpgCluster_Affinity": {
       "kind": "property",
       "resourceType": "K8s::Cnpg::Cluster.affinity"
     },
-    "Cluster_Backup": {
+    "CnpgCluster_Backup": {
       "kind": "property",
       "resourceType": "K8s::Cnpg::Cluster.backup"
     },
-    "Cluster_Bootstrap": {
+    "CnpgCluster_Bootstrap": {
       "kind": "property",
       "resourceType": "K8s::Cnpg::Cluster.bootstrap"
     },
-    "Cluster_Certificates": {
+    "CnpgCluster_Certificates": {
       "kind": "property",
       "resourceType": "K8s::Cnpg::Cluster.certificates"
     },
-    "Cluster_Env": {
+    "CnpgCluster_Env": {
       "kind": "property",
       "resourceType": "K8s::Cnpg::Cluster.env"
     },
-    "Cluster_EnvFrom": {
+    "CnpgCluster_EnvFrom": {
       "kind": "property",
       "resourceType": "K8s::Cnpg::Cluster.envFrom"
     },
-    "Cluster_EphemeralVolumeSource": {
+    "CnpgCluster_EphemeralVolumeSource": {
       "kind": "property",
       "resourceType": "K8s::Cnpg::Cluster.ephemeralVolumeSource"
     },
-    "Cluster_EphemeralVolumesSizeLimit": {
+    "CnpgCluster_EphemeralVolumesSizeLimit": {
       "kind": "property",
       "resourceType": "K8s::Cnpg::Cluster.ephemeralVolumesSizeLimit"
     },
-    "Cluster_ExternalCluster": {
+    "CnpgCluster_ExternalCluster": {
       "kind": "property",
       "resourceType": "K8s::Cnpg::Cluster.externalClusters"
     },
-    "Cluster_ImageCatalogRef": {
+    "CnpgCluster_ImageCatalogRef": {
       "kind": "property",
       "resourceType": "K8s::Cnpg::Cluster.imageCatalogRef"
     },
-    "Cluster_ImagePullSecret": {
+    "CnpgCluster_ImagePullSecret": {
       "kind": "property",
       "resourceType": "K8s::Cnpg::Cluster.imagePullSecrets"
     },
-    "Cluster_InheritedMetadata": {
+    "CnpgCluster_InheritedMetadata": {
       "kind": "property",
       "resourceType": "K8s::Cnpg::Cluster.inheritedMetadata"
     },
-    "Cluster_Managed": {
+    "CnpgCluster_Managed": {
       "kind": "property",
       "resourceType": "K8s::Cnpg::Cluster.managed"
     },
-    "Cluster_Monitoring": {
+    "CnpgCluster_Monitoring": {
       "kind": "property",
       "resourceType": "K8s::Cnpg::Cluster.monitoring"
     },
-    "Cluster_NodeMaintenanceWindow": {
+    "CnpgCluster_NodeMaintenanceWindow": {
       "kind": "property",
       "resourceType": "K8s::Cnpg::Cluster.nodeMaintenanceWindow"
     },
-    "Cluster_Plugin": {
+    "CnpgCluster_Plugin": {
       "kind": "property",
       "resourceType": "K8s::Cnpg::Cluster.plugins"
     },
-    "Cluster_PodSecurityContext": {
+    "CnpgCluster_PodSecurityContext": {
       "kind": "property",
       "resourceType": "K8s::Cnpg::Cluster.podSecurityContext"
     },
-    "Cluster_PodSelectorRef": {
+    "CnpgCluster_PodSelectorRef": {
       "kind": "property",
       "resourceType": "K8s::Cnpg::Cluster.podSelectorRefs"
     },
-    "Cluster_Postgresql": {
+    "CnpgCluster_Postgresql": {
       "kind": "property",
       "resourceType": "K8s::Cnpg::Cluster.postgresql"
     },
-    "Cluster_Probes": {
+    "CnpgCluster_Probes": {
       "kind": "property",
       "resourceType": "K8s::Cnpg::Cluster.probes"
     },
-    "Cluster_ProjectedVolumeTemplate": {
+    "CnpgCluster_ProjectedVolumeTemplate": {
       "kind": "property",
       "resourceType": "K8s::Cnpg::Cluster.projectedVolumeTemplate"
     },
-    "Cluster_Replica": {
+    "CnpgCluster_Replica": {
       "kind": "property",
       "resourceType": "K8s::Cnpg::Cluster.replica"
     },
-    "Cluster_ReplicationSlots": {
+    "CnpgCluster_ReplicationSlots": {
       "kind": "property",
       "resourceType": "K8s::Cnpg::Cluster.replicationSlots"
     },
-    "Cluster_Resources": {
+    "CnpgCluster_Resources": {
       "kind": "property",
       "resourceType": "K8s::Cnpg::Cluster.resources"
     },
-    "Cluster_SeccompProfile": {
+    "CnpgCluster_SeccompProfile": {
       "kind": "property",
       "resourceType": "K8s::Cnpg::Cluster.seccompProfile"
     },
-    "Cluster_SecurityContext": {
+    "CnpgCluster_SecurityContext": {
       "kind": "property",
       "resourceType": "K8s::Cnpg::Cluster.securityContext"
     },
-    "Cluster_ServiceAccountTemplate": {
+    "CnpgCluster_ServiceAccountTemplate": {
       "kind": "property",
       "resourceType": "K8s::Cnpg::Cluster.serviceAccountTemplate"
     },
-    "Cluster_Status": {
+    "CnpgCluster_Status": {
       "kind": "property",
       "resourceType": "K8s::Cnpg::Cluster.status"
     },
-    "Cluster_Storage": {
+    "CnpgCluster_Storage": {
       "kind": "property",
       "resourceType": "K8s::Cnpg::Cluster.storage"
     },
-    "Cluster_SuperuserSecret": {
+    "CnpgCluster_SuperuserSecret": {
       "kind": "property",
       "resourceType": "K8s::Cnpg::Cluster.superuserSecret"
     },
-    "Cluster_Tablespace": {
+    "CnpgCluster_Tablespace": {
       "kind": "property",
       "resourceType": "K8s::Cnpg::Cluster.tablespaces"
     },
-    "Cluster_TopologySpreadConstraint": {
+    "CnpgCluster_TopologySpreadConstraint": {
       "kind": "property",
       "resourceType": "K8s::Cnpg::Cluster.topologySpreadConstraints"
     },
-    "Cluster_WalStorage": {
+    "CnpgCluster_WalStorage": {
       "kind": "property",
       "resourceType": "K8s::Cnpg::Cluster.walStorage"
     },
@@ -831,6 +1039,10 @@
       "kind": "property",
       "resourceType": "K8s::Traefik::Middleware.contentType"
     },
+    "ControlPlaneRef": {
+      "kind": "property",
+      "resourceType": "K8s::CAPI::Cluster.controlPlaneRef"
+    },
     "ControllerRevision": {
       "kind": "resource",
       "resourceType": "K8s::Apps::ControllerRevision",
@@ -855,6 +1067,10 @@
         "items:true",
         "metadata:false"
       ]
+    },
+    "Cors": {
+      "kind": "property",
+      "resourceType": "K8s::S3::Bucket.cors"
     },
     "CrdbCluster": {
       "kind": "resource",
@@ -900,6 +1116,14 @@
       "kind": "property",
       "resourceType": "K8s::Crdb::CrdbCluster.topologySpreadConstraints"
     },
+    "CreateBucketConfiguration": {
+      "kind": "property",
+      "resourceType": "K8s::S3::Bucket.createBucketConfiguration"
+    },
+    "Credentials": {
+      "kind": "property",
+      "resourceType": "K8s::Addons::HelmChartProxy.credentials"
+    },
     "CronJob": {
       "kind": "resource",
       "resourceType": "K8s::Batch::CronJob",
@@ -932,6 +1156,58 @@
         "metadata:false"
       ]
     },
+    "DBInstance": {
+      "kind": "resource",
+      "resourceType": "K8s::Rds::DBInstance",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "DBInstance_DbParameterGroupRef": {
+      "kind": "property",
+      "resourceType": "K8s::Rds::DBInstance.dbParameterGroupRef"
+    },
+    "DBInstance_DbSubnetGroupRef": {
+      "kind": "property",
+      "resourceType": "K8s::Rds::DBInstance.dbSubnetGroupRef"
+    },
+    "DBInstance_KmsKeyRef": {
+      "kind": "property",
+      "resourceType": "K8s::Rds::DBInstance.kmsKeyRef"
+    },
+    "DBInstance_MasterUserPassword": {
+      "kind": "property",
+      "resourceType": "K8s::Rds::DBInstance.masterUserPassword"
+    },
+    "DBInstance_MasterUserSecretKMSKeyRef": {
+      "kind": "property",
+      "resourceType": "K8s::Rds::DBInstance.masterUserSecretKMSKeyRef"
+    },
+    "DBInstance_MonitoringRoleRef": {
+      "kind": "property",
+      "resourceType": "K8s::Rds::DBInstance.monitoringRoleRef"
+    },
+    "DBInstance_PerformanceInsightsKMSKeyRef": {
+      "kind": "property",
+      "resourceType": "K8s::Rds::DBInstance.performanceInsightsKMSKeyRef"
+    },
+    "DBInstance_ProcessorFeature": {
+      "kind": "property",
+      "resourceType": "K8s::Rds::DBInstance.processorFeatures"
+    },
+    "DBInstance_Status": {
+      "kind": "property",
+      "resourceType": "K8s::Rds::DBInstance.status"
+    },
+    "DBInstance_Tag": {
+      "kind": "property",
+      "resourceType": "K8s::Rds::DBInstance.tags"
+    },
+    "DBInstance_VpcSecurityGroupRef": {
+      "kind": "property",
+      "resourceType": "K8s::Rds::DBInstance.vpcSecurityGroupRefs"
+    },
     "DS": {
       "kind": "resource",
       "resourceType": "K8s::Apps::DaemonSet",
@@ -959,6 +1235,14 @@
     "DataStore": {
       "kind": "property",
       "resourceType": "K8s::Crdb::CrdbCluster.dataStore"
+    },
+    "DbParameterGroupRef": {
+      "kind": "property",
+      "resourceType": "K8s::Rds::DBInstance.dbParameterGroupRef"
+    },
+    "DbSubnetGroupRef": {
+      "kind": "property",
+      "resourceType": "K8s::Rds::DBInstance.dbSubnetGroupRef"
     },
     "Decryption": {
       "kind": "property",
@@ -1068,9 +1352,21 @@
       "kind": "property",
       "resourceType": "K8s::Traefik::Middleware.encodedCharacters"
     },
+    "Encryption": {
+      "kind": "property",
+      "resourceType": "K8s::S3::Bucket.encryption"
+    },
+    "EncryptionConfig": {
+      "kind": "property",
+      "resourceType": "K8s::Controlplane::AWSManagedControlPlane.encryptionConfig"
+    },
     "Endpoint": {
       "kind": "property",
       "resourceType": "K8s::Monitoring::ServiceMonitor.endpoints"
+    },
+    "EndpointAccess": {
+      "kind": "property",
+      "resourceType": "K8s::Controlplane::AWSManagedControlPlane.endpointAccess"
     },
     "EndpointSlice": {
       "kind": "resource",
@@ -1243,6 +1539,34 @@
         "items:true",
         "metadata:false"
       ]
+    },
+    "FluxBucket": {
+      "kind": "resource",
+      "resourceType": "K8s::Flux::Bucket",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "FluxBucket_CertSecretRef": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::Bucket.certSecretRef"
+    },
+    "FluxBucket_ProxySecretRef": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::Bucket.proxySecretRef"
+    },
+    "FluxBucket_SecretRef": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::Bucket.secretRef"
+    },
+    "FluxBucket_Status": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::Bucket.status"
+    },
+    "FluxBucket_Sts": {
+      "kind": "property",
+      "resourceType": "K8s::Flux::Bucket.sts"
     },
     "FluxHelmChart": {
       "kind": "resource",
@@ -1524,6 +1848,34 @@
       "kind": "property",
       "resourceType": "K8s::K3s::HelmChartConfig.valuesSecrets"
     },
+    "HelmChartProxy": {
+      "kind": "resource",
+      "resourceType": "K8s::Addons::HelmChartProxy",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "HelmChartProxy_ClusterSelector": {
+      "kind": "property",
+      "resourceType": "K8s::Addons::HelmChartProxy.clusterSelector"
+    },
+    "HelmChartProxy_Credentials": {
+      "kind": "property",
+      "resourceType": "K8s::Addons::HelmChartProxy.credentials"
+    },
+    "HelmChartProxy_Options": {
+      "kind": "property",
+      "resourceType": "K8s::Addons::HelmChartProxy.options"
+    },
+    "HelmChartProxy_Status": {
+      "kind": "property",
+      "resourceType": "K8s::Addons::HelmChartProxy.status"
+    },
+    "HelmChartProxy_TlsConfig": {
+      "kind": "property",
+      "resourceType": "K8s::Addons::HelmChartProxy.tlsConfig"
+    },
     "HelmRelease": {
       "kind": "resource",
       "resourceType": "K8s::Flux::HelmRelease",
@@ -1663,6 +2015,38 @@
         "items:true",
         "metadata:false"
       ]
+    },
+    "IamAuthenticatorConfig": {
+      "kind": "property",
+      "resourceType": "K8s::Controlplane::AWSManagedControlPlane.iamAuthenticatorConfig"
+    },
+    "IamRole": {
+      "kind": "resource",
+      "resourceType": "K8s::Iam::Role",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "IamRole_PermissionsBoundaryRef": {
+      "kind": "property",
+      "resourceType": "K8s::Iam::Role.permissionsBoundaryRef"
+    },
+    "IamRole_PolicyRef": {
+      "kind": "property",
+      "resourceType": "K8s::Iam::Role.policyRefs"
+    },
+    "IamRole_Status": {
+      "kind": "property",
+      "resourceType": "K8s::Iam::Role.status"
+    },
+    "IamRole_Tag": {
+      "kind": "property",
+      "resourceType": "K8s::Iam::Role.tags"
+    },
+    "IdentityRef": {
+      "kind": "property",
+      "resourceType": "K8s::Controlplane::AWSManagedControlPlane.identityRef"
     },
     "Ignore": {
       "kind": "property",
@@ -1900,6 +2284,10 @@
       "kind": "property",
       "resourceType": "K8s::Gateway::Gateway.infrastructure"
     },
+    "InfrastructureRef": {
+      "kind": "property",
+      "resourceType": "K8s::CAPI::Cluster.infrastructureRef"
+    },
     "Ing": {
       "kind": "resource",
       "resourceType": "K8s::Networking::Ingress",
@@ -2024,6 +2412,14 @@
       "kind": "property",
       "resourceType": "K8s::Cnpg::ObjectStore.instanceSidecarConfiguration"
     },
+    "IntelligentTiering": {
+      "kind": "property",
+      "resourceType": "K8s::S3::Bucket.intelligentTiering"
+    },
+    "Inventory": {
+      "kind": "property",
+      "resourceType": "K8s::S3::Bucket.inventory"
+    },
     "Issuer": {
       "kind": "resource",
       "resourceType": "K8s::CertManager::Issuer",
@@ -2115,6 +2511,14 @@
     "Keystores": {
       "kind": "property",
       "resourceType": "K8s::CertManager::Certificate.keystores"
+    },
+    "KmsKeyRef": {
+      "kind": "property",
+      "resourceType": "K8s::Rds::DBInstance.kmsKeyRef"
+    },
+    "KubeProxy": {
+      "kind": "property",
+      "resourceType": "K8s::Controlplane::AWSManagedControlPlane.kubeProxy"
     },
     "Kustomization": {
       "kind": "resource",
@@ -2220,6 +2624,14 @@
         "metadata:false"
       ]
     },
+    "Lifecycle": {
+      "kind": "property",
+      "resourceType": "K8s::S3::Bucket.lifecycle"
+    },
+    "LifecycleHook": {
+      "kind": "property",
+      "resourceType": "K8s::Infrastructure::AWSManagedMachinePool.lifecycleHooks"
+    },
     "LimitRange": {
       "kind": "resource",
       "resourceType": "K8s::Core::LimitRange",
@@ -2252,6 +2664,22 @@
         "spec:true"
       ]
     },
+    "MachinePool": {
+      "kind": "resource",
+      "resourceType": "K8s::CAPI::MachinePool",
+      "props": [
+        "metadata:false",
+        "spec:true"
+      ]
+    },
+    "MachinePool_Status": {
+      "kind": "property",
+      "resourceType": "K8s::CAPI::MachinePool.status"
+    },
+    "MachinePool_Template": {
+      "kind": "property",
+      "resourceType": "K8s::CAPI::MachinePool.template"
+    },
     "Managed": {
       "kind": "property",
       "resourceType": "K8s::Cnpg::Cluster.managed"
@@ -2263,6 +2691,18 @@
     "ManagedKubeSecretReference": {
       "kind": "property",
       "resourceType": "K8s::Infisical::InfisicalSecret.managedKubeSecretReferences"
+    },
+    "MasterUserPassword": {
+      "kind": "property",
+      "resourceType": "K8s::Rds::DBInstance.masterUserPassword"
+    },
+    "MasterUserSecretKMSKeyRef": {
+      "kind": "property",
+      "resourceType": "K8s::Rds::DBInstance.masterUserSecretKMSKeyRef"
+    },
+    "Metric": {
+      "kind": "property",
+      "resourceType": "K8s::S3::Bucket.metrics"
     },
     "MetricSpec": {
       "kind": "property",
@@ -2468,6 +2908,10 @@
       "kind": "property",
       "resourceType": "K8s::Traefik::TraefikService.mirroring"
     },
+    "MonitoringRoleRef": {
+      "kind": "property",
+      "resourceType": "K8s::Rds::DBInstance.monitoringRoleRef"
+    },
     "MutatingAdmissionPolicy": {
       "kind": "resource",
       "resourceType": "K8s::Admissionregistration::MutatingAdmissionPolicy",
@@ -2564,6 +3008,10 @@
         "spec:false"
       ]
     },
+    "Network": {
+      "kind": "property",
+      "resourceType": "K8s::Controlplane::AWSManagedControlPlane.network"
+    },
     "NetworkPolicy": {
       "kind": "resource",
       "resourceType": "K8s::Networking::NetworkPolicy",
@@ -2616,6 +3064,14 @@
       "kind": "property",
       "resourceType": "K8s::Cnpg::Cluster.nodeMaintenanceWindow"
     },
+    "NodeRepairConfig": {
+      "kind": "property",
+      "resourceType": "K8s::Infrastructure::AWSManagedMachinePool.nodeRepairConfig"
+    },
+    "Notification": {
+      "kind": "property",
+      "resourceType": "K8s::S3::Bucket.notification"
+    },
     "OCIRepository": {
       "kind": "resource",
       "resourceType": "K8s::Flux::OCIRepository",
@@ -2652,6 +3108,10 @@
       "kind": "property",
       "resourceType": "K8s::Flux::OCIRepository.verify"
     },
+    "ObjectLockConfiguration": {
+      "kind": "property",
+      "resourceType": "K8s::S3::Bucket.objectLockConfiguration"
+    },
     "ObjectMeta": {
       "kind": "property",
       "resourceType": "K8s::Meta::ObjectMeta"
@@ -2680,6 +3140,10 @@
       "kind": "property",
       "resourceType": "K8s::Cnpg::ObjectStore.status"
     },
+    "OidcIdentityProviderConfig": {
+      "kind": "property",
+      "resourceType": "K8s::Controlplane::AWSManagedControlPlane.oidcIdentityProviderConfig"
+    },
     "OidcProvider": {
       "kind": "property",
       "resourceType": "K8s::Flux::Receiver.oidcProviders"
@@ -2687,6 +3151,10 @@
     "Operator": {
       "kind": "property",
       "resourceType": "K8s::Flux::FluxReport.operator"
+    },
+    "Options": {
+      "kind": "property",
+      "resourceType": "K8s::Addons::HelmChartProxy.options"
     },
     "Order": {
       "kind": "resource",
@@ -2711,6 +3179,10 @@
     "OtherName": {
       "kind": "property",
       "resourceType": "K8s::CertManager::Certificate.otherNames"
+    },
+    "OwnershipControls": {
+      "kind": "property",
+      "resourceType": "K8s::S3::Bucket.ownershipControls"
     },
     "PDB": {
       "kind": "resource",
@@ -2747,6 +3219,10 @@
     "Patche": {
       "kind": "property",
       "resourceType": "K8s::Flux::Kustomization.patches"
+    },
+    "PerformanceInsightsKMSKeyRef": {
+      "kind": "property",
+      "resourceType": "K8s::Rds::DBInstance.performanceInsightsKMSKeyRef"
     },
     "PersistentVolume": {
       "kind": "resource",
@@ -2840,6 +3316,30 @@
       "kind": "property",
       "resourceType": "K8s::Crdb::CrdbCluster.podEnvVariables"
     },
+    "PodIdentityAssociation": {
+      "kind": "resource",
+      "resourceType": "K8s::Eks::PodIdentityAssociation",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "PodIdentityAssociation_ClusterRef": {
+      "kind": "property",
+      "resourceType": "K8s::Eks::PodIdentityAssociation.clusterRef"
+    },
+    "PodIdentityAssociation_RoleRef": {
+      "kind": "property",
+      "resourceType": "K8s::Eks::PodIdentityAssociation.roleRef"
+    },
+    "PodIdentityAssociation_Status": {
+      "kind": "property",
+      "resourceType": "K8s::Eks::PodIdentityAssociation.status"
+    },
+    "PodIdentityAssociation_TargetRoleRef": {
+      "kind": "property",
+      "resourceType": "K8s::Eks::PodIdentityAssociation.targetRoleRef"
+    },
     "PodList": {
       "kind": "resource",
       "resourceType": "K8s::Core::PodList",
@@ -2881,8 +3381,12 @@
       "resourceType": "K8s::Core::PodTemplateSpec"
     },
     "Policy": {
-      "kind": "property",
-      "resourceType": "K8s::Flux::ImagePolicy.policy"
+      "kind": "resource",
+      "resourceType": "K8s::Iam::Policy",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
     },
     "PolicyRule": {
       "kind": "property",
@@ -2891,6 +3395,14 @@
     "PolicySelector": {
       "kind": "property",
       "resourceType": "K8s::Flux::ImageUpdateAutomation.policySelector"
+    },
+    "Policy_Status": {
+      "kind": "property",
+      "resourceType": "K8s::Iam::Policy.status"
+    },
+    "Policy_Tag": {
+      "kind": "property",
+      "resourceType": "K8s::Iam::Policy.tags"
     },
     "Pooler": {
       "kind": "resource",
@@ -2995,6 +3507,10 @@
       "kind": "property",
       "resourceType": "K8s::Cnpg::Cluster.probes"
     },
+    "ProcessorFeature": {
+      "kind": "property",
+      "resourceType": "K8s::Rds::DBInstance.processorFeatures"
+    },
     "ProjectedVolumeTemplate": {
       "kind": "property",
       "resourceType": "K8s::Cnpg::Cluster.projectedVolumeTemplate"
@@ -3038,6 +3554,10 @@
     "ProxyProtocol": {
       "kind": "property",
       "resourceType": "K8s::Traefik::ServersTransportTCP.proxyProtocol"
+    },
+    "PublicAccessBlock": {
+      "kind": "property",
+      "resourceType": "K8s::S3::Bucket.publicAccessBlock"
     },
     "Push": {
       "kind": "property",
@@ -3183,6 +3703,10 @@
       "kind": "property",
       "resourceType": "K8s::Gateway::ReferenceGrant.to"
     },
+    "RemoteAccess": {
+      "kind": "property",
+      "resourceType": "K8s::Infrastructure::AWSManagedMachinePool.remoteAccess"
+    },
     "ReplacePath": {
       "kind": "property",
       "resourceType": "K8s::Traefik::Middleware.replacePath"
@@ -3211,6 +3735,10 @@
         "metadata:false"
       ]
     },
+    "Replication": {
+      "kind": "property",
+      "resourceType": "K8s::S3::Bucket.replication"
+    },
     "ReplicationController": {
       "kind": "resource",
       "resourceType": "K8s::Core::ReplicationController",
@@ -3235,9 +3763,9 @@
       "kind": "property",
       "resourceType": "K8s::K3s::HelmChart.repoCAConfigMap"
     },
-    "Resource": {
+    "RequestPayment": {
       "kind": "property",
-      "resourceType": "K8s::Flux::Receiver.resources"
+      "resourceType": "K8s::S3::Bucket.requestPayment"
     },
     "ResourceClaim": {
       "kind": "resource",
@@ -3443,6 +3971,98 @@
         "metadata:false"
       ]
     },
+    "S3Bucket": {
+      "kind": "resource",
+      "resourceType": "K8s::S3::Bucket",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "S3Bucket_Abac": {
+      "kind": "property",
+      "resourceType": "K8s::S3::Bucket.abac"
+    },
+    "S3Bucket_Accelerate": {
+      "kind": "property",
+      "resourceType": "K8s::S3::Bucket.accelerate"
+    },
+    "S3Bucket_Analytic": {
+      "kind": "property",
+      "resourceType": "K8s::S3::Bucket.analytics"
+    },
+    "S3Bucket_Cors": {
+      "kind": "property",
+      "resourceType": "K8s::S3::Bucket.cors"
+    },
+    "S3Bucket_CreateBucketConfiguration": {
+      "kind": "property",
+      "resourceType": "K8s::S3::Bucket.createBucketConfiguration"
+    },
+    "S3Bucket_Encryption": {
+      "kind": "property",
+      "resourceType": "K8s::S3::Bucket.encryption"
+    },
+    "S3Bucket_IntelligentTiering": {
+      "kind": "property",
+      "resourceType": "K8s::S3::Bucket.intelligentTiering"
+    },
+    "S3Bucket_Inventory": {
+      "kind": "property",
+      "resourceType": "K8s::S3::Bucket.inventory"
+    },
+    "S3Bucket_Lifecycle": {
+      "kind": "property",
+      "resourceType": "K8s::S3::Bucket.lifecycle"
+    },
+    "S3Bucket_Logging": {
+      "kind": "property",
+      "resourceType": "K8s::S3::Bucket.logging"
+    },
+    "S3Bucket_Metric": {
+      "kind": "property",
+      "resourceType": "K8s::S3::Bucket.metrics"
+    },
+    "S3Bucket_Notification": {
+      "kind": "property",
+      "resourceType": "K8s::S3::Bucket.notification"
+    },
+    "S3Bucket_ObjectLockConfiguration": {
+      "kind": "property",
+      "resourceType": "K8s::S3::Bucket.objectLockConfiguration"
+    },
+    "S3Bucket_OwnershipControls": {
+      "kind": "property",
+      "resourceType": "K8s::S3::Bucket.ownershipControls"
+    },
+    "S3Bucket_PublicAccessBlock": {
+      "kind": "property",
+      "resourceType": "K8s::S3::Bucket.publicAccessBlock"
+    },
+    "S3Bucket_Replication": {
+      "kind": "property",
+      "resourceType": "K8s::S3::Bucket.replication"
+    },
+    "S3Bucket_RequestPayment": {
+      "kind": "property",
+      "resourceType": "K8s::S3::Bucket.requestPayment"
+    },
+    "S3Bucket_Status": {
+      "kind": "property",
+      "resourceType": "K8s::S3::Bucket.status"
+    },
+    "S3Bucket_Tagging": {
+      "kind": "property",
+      "resourceType": "K8s::S3::Bucket.tagging"
+    },
+    "S3Bucket_Versioning": {
+      "kind": "property",
+      "resourceType": "K8s::S3::Bucket.versioning"
+    },
+    "S3Bucket_Website": {
+      "kind": "property",
+      "resourceType": "K8s::S3::Bucket.website"
+    },
     "SA": {
       "kind": "resource",
       "resourceType": "K8s::Core::ServiceAccount",
@@ -3472,6 +4092,10 @@
     "ScaleDown": {
       "kind": "property",
       "resourceType": "K8s::KubeMicroVM::MicroVMReplicaSet.scaleDown"
+    },
+    "Scaling": {
+      "kind": "property",
+      "resourceType": "K8s::Infrastructure::AWSManagedMachinePool.scaling"
     },
     "Schedule": {
       "kind": "property",
@@ -3929,9 +4553,25 @@
       "kind": "property",
       "resourceType": "K8s::Cnpg::Cluster.tablespaces"
     },
+    "Tagging": {
+      "kind": "property",
+      "resourceType": "K8s::S3::Bucket.tagging"
+    },
+    "Taint": {
+      "kind": "property",
+      "resourceType": "K8s::Infrastructure::AWSManagedMachinePool.taints"
+    },
+    "TargetRoleRef": {
+      "kind": "property",
+      "resourceType": "K8s::Eks::PodIdentityAssociation.targetRoleRef"
+    },
     "Test": {
       "kind": "property",
       "resourceType": "K8s::Flux::HelmRelease.test"
+    },
+    "TlsConfig": {
+      "kind": "property",
+      "resourceType": "K8s::Addons::HelmChartProxy.tlsConfig"
     },
     "To": {
       "kind": "property",
@@ -3960,6 +4600,10 @@
     "Toleration": {
       "kind": "property",
       "resourceType": "K8s::Core::Toleration"
+    },
+    "Topology": {
+      "kind": "property",
+      "resourceType": "K8s::CAPI::Cluster.topology"
     },
     "TopologySpreadConstraint": {
       "kind": "property",
@@ -4001,6 +4645,10 @@
       "kind": "property",
       "resourceType": "K8s::Flux::ImageUpdateAutomation.update"
     },
+    "UpdateConfig": {
+      "kind": "property",
+      "resourceType": "K8s::Infrastructure::AWSManagedMachinePool.updateConfig"
+    },
     "Upgrade": {
       "kind": "property",
       "resourceType": "K8s::Flux::HelmRelease.upgrade"
@@ -4008,6 +4656,30 @@
     "UpgradeStrategy": {
       "kind": "property",
       "resourceType": "K8s::Ray::RayService.upgradeStrategy"
+    },
+    "User": {
+      "kind": "resource",
+      "resourceType": "K8s::Iam::User",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "User_PermissionsBoundaryRef": {
+      "kind": "property",
+      "resourceType": "K8s::Iam::User.permissionsBoundaryRef"
+    },
+    "User_PolicyRef": {
+      "kind": "property",
+      "resourceType": "K8s::Iam::User.policyRefs"
+    },
+    "User_Status": {
+      "kind": "property",
+      "resourceType": "K8s::Iam::User.status"
+    },
+    "User_Tag": {
+      "kind": "property",
+      "resourceType": "K8s::Iam::User.tags"
     },
     "ValidatingAdmissionPolicy": {
       "kind": "resource",
@@ -4061,6 +4733,10 @@
       "kind": "property",
       "resourceType": "K8s::Flux::HelmRelease.valuesFrom"
     },
+    "Versioning": {
+      "kind": "property",
+      "resourceType": "K8s::S3::Bucket.versioning"
+    },
     "Volume": {
       "kind": "property",
       "resourceType": "K8s::Core::Volume"
@@ -4102,6 +4778,14 @@
       "kind": "property",
       "resourceType": "K8s::Core::VolumeMount"
     },
+    "VpcCni": {
+      "kind": "property",
+      "resourceType": "K8s::Controlplane::AWSManagedControlPlane.vpcCni"
+    },
+    "VpcSecurityGroupRef": {
+      "kind": "property",
+      "resourceType": "K8s::Rds::DBInstance.vpcSecurityGroupRefs"
+    },
     "WaitStrategy": {
       "kind": "property",
       "resourceType": "K8s::Flux::HelmRelease.waitStrategy"
@@ -4117,6 +4801,10 @@
         "object:true",
         "type:true"
       ]
+    },
+    "Website": {
+      "kind": "property",
+      "resourceType": "K8s::S3::Bucket.website"
     },
     "Weighted": {
       "kind": "property",
