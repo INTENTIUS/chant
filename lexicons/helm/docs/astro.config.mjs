@@ -45,6 +45,10 @@ export default defineConfig({
                               "slug": "examples"
                         },
                         {
+                              "label": "Migrating to Pinned Installs",
+                              "slug": "migration"
+                        },
+                        {
                               "label": "Security",
                               "slug": "security"
                         }

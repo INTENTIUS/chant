@@ -1,0 +1,56 @@
+---
+title: "Migrating to Pinned Installs"
+description: "Moving an existing unpinned release onto a pinned render in place, with no adoption tooling and no downtime"
+diataxis: how-to
+---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-helm` — DO NOT EDIT.
+    Edit lexicons/helm/docs/pages/migration.mdx instead; changes here are overwritten. */}
+
+
+A release deployed by the [unpinned path](/chant/lexicons/helm/best-practices/) can move onto a [pinned render](/chant/lexicons/helm/helm-concepts/) with an ordinary `helm upgrade --install` — the same command the pinned path already runs. No adoption tooling, no `helm uninstall`, no resource recreation.
+
+## The one rule
+
+Deploy the pinned render under **the same release name** the unpinned release already runs under.
+
+```typescript
+// Was:
+await helmInstall({ name: "web", chart: "./chart", chartVersion: "1.2.0" });
+
+// Migrates to:
+await helmInstall({ name: "web", contentDigest, renderStoreRoot });
+```
+
+`helm upgrade --install` targets a release by name. When a release named `web` already exists, it upgrades that release in place — same object, next revision, `helm history web` continuous across the switch. There is no separate "adopt" step because there is nothing to adopt: the release already exists, and this is just its next revision.
+
+The wrapper chart the pinned path materializes keeps the source chart's name and version (`RoutedRender.chart` / `chartVersion` — see [Helm Concepts](/chant/lexicons/helm/helm-concepts/)), so `helm history` shows a continuous line of the same chart, not a swap to some synthetic wrapper identity.
+
+## Why a new release name fails
+
+Installing the pinned render under a **different** name looks like a safer, more explicit migration — a fresh `helm install web-v2 <wrapper>` next to the existing `web`. It fails instead, with an ownership-metadata error: the resources `web` already owns (their `meta.helm.sh/release-name` / `meta.helm.sh/release-namespace` annotations) belong to `web`, and helm refuses to let a second release claim them.
+
+`helmInstall` refuses this earlier and offline, before any helm command runs. A `contentDigest` is rendered for exactly one release name (`RenderManifest.releaseName` — `.Release.Name` is baked into the recorded bytes, labels and resource names included), and a deploy that targets a different name throws `PinnedInstallInputError` naming both:
+
+```
+pinned install refused: render sha256:... was rendered for release "web" but the deploy
+targets release "other". `.Release.Name` is baked into the recorded bytes (labels, resource
+names), so installing them under another name deploys bytes that claim a different release.
+Deploy under "web", or render for "other". Nothing was deployed.
+```
+
+Render the migration target under the release's own name (`HelmRender` with `releaseName: "web"`), then deploy that digest — never a digest rendered for a different name.
+
+## What stays, what changes
+
+- **CRDs stay untouched.** Helm applies `crds/` only on `helm install`, never on `helm upgrade` (see [Best Practices](/chant/lexicons/helm/best-practices/)). Migrating an existing release is an upgrade of that release, so its already-installed CRDs — including ones a subchart shipped — are left exactly as they are. The wrapper still carries them in `crds/`, uninstall-safe, for the release's next fresh install.
+- **Hooks still fire.** Hook documents route separately from the main manifest but ship through the same wrapper templates, so helm registers and runs them on the upgrade exactly as it would for any other revision.
+- **Unrelated resources are unchanged.** A ConfigMap (or any other resource) whose rendered bytes did not change between the unpinned and pinned renders reaches the cluster byte-identical — the pinned path installs the render store's recorded bytes verbatim, never re-templating them.
+- **The revision advances by one**, same as any other `helm upgrade`. Nothing is deleted and recreated to make the switch.
+
+## Checklist
+
+1. Render the chart for pinning with `HelmRender`, passing the **exact `releaseName` the live release already runs under**.
+2. Persist the render and note its `contentDigest`.
+3. Deploy with `helmInstall({ name: <same release name>, contentDigest, ... })` — drop `chart`, `chartVersion`, `values` and `set`, which the pinned path refuses alongside `contentDigest`.
+4. Confirm with `helm history <release>`: the revision after the deploy is one more than before, same chart name, no gap.
