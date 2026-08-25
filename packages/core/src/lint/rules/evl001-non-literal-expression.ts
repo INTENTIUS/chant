@@ -31,7 +31,14 @@ function checkNode(node: ts.Node, context: LintContext, diagnostics: LintDiagnos
       const firstArg = node.arguments[0];
       if (ts.isObjectLiteralExpression(firstArg)) {
         for (const prop of firstArg.properties) {
-          const violation = checkObjectMember(prop, context.intrinsics);
+          // chant #1544 — `allowCompositeStepAccess: true` opts EVL001 (and
+          // only EVL001; `fold()` never sets this) into treating
+          // `Checkout({...}).step` — the single-action Composite()-wrapper
+          // idiom every lexicon's own docs/examples embed inline inside a
+          // Job's `steps:` array — as shape-valid. See findSubsetViolation's
+          // doc comment (../../fold/subset.ts) for why this is a documented,
+          // EVL-only, more-permissive divergence rather than a shared one.
+          const violation = checkObjectMember(prop, context.intrinsics, true);
           if (violation) {
             const { line, character } = context.sourceFile.getLineAndCharacterOfPosition(
               violation.node.getStart(context.sourceFile),

@@ -7,6 +7,7 @@
 
 import type { LintRule, LintDiagnostic, LintContext } from "@intentius/chant/lint/rule";
 import * as ts from "typescript";
+import { isJobFromAnotherLexicon } from "./import-source";
 
 const VALID_EXECUTION_PROPS = new Set(["script", "trigger", "run"]);
 
@@ -29,6 +30,18 @@ export const missingScriptRule: LintRule = {
           isJob = true;
         } else if (ts.isPropertyAccessExpression(expression) && expression.name.text === "Job") {
           isJob = true;
+        }
+
+        // chant #1544 — cross-lexicon rule bleed: `new Job(...)` matches
+        // ANY lexicon's `Job` class by bare name alone (github's, forgejo's,
+        // ...), so a multi-lexicon project got WGL002 (gitlab-only) applied
+        // to github/forgejo jobs that were never missing anything — they
+        // just don't use `script`/`trigger`/`run`. Skip when the import
+        // resolves to a lexicon other than gitlab; an unresolved import
+        // (no `import` statement — most unit-test fixtures, a re-export) is
+        // "can't tell", so it keeps the previous, conservative behavior.
+        if (isJob && isJobFromAnotherLexicon(sourceFile, expression)) {
+          isJob = false;
         }
 
         if (isJob && node.arguments && node.arguments.length > 0) {
