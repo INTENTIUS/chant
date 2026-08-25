@@ -10,9 +10,9 @@
 
 import {
   GkeCluster,
+  GpuNodePool,
   GCPServiceAccount,
   IAMPolicyMember,
-  NodePool,
 } from "@intentius/chant-lexicon-gcp";
 import { config } from "../config";
 
@@ -40,34 +40,15 @@ export const { cluster, nodePool } = GkeCluster({
 // Tainted with nvidia.com/gpu=present:NoSchedule — only pods with the
 // matching toleration (set by RayCluster workerGroups with gpuTolerations: true)
 // will be scheduled here.
+//
+// All other fields (machineType, accelerator, disk, taint, workload identity,
+// management) use the GpuNodePool composite's defaults, which match this
+// pool's original hand-wired config exactly.
 
-export const gpuNodePool = new NodePool({
-  metadata: {
-    name: `${config.clusterName}-gpu`,
-    labels: { "app.kubernetes.io/managed-by": "chant" },
-  },
+export const { nodePool: gpuNodePool } = GpuNodePool({
+  name: `${config.clusterName}-gpu`,
   clusterRef: { name: config.clusterName },
   location: config.region,
-  initialNodeCount: 0,
-  autoscaling: {
-    minNodeCount: 0,
-    maxNodeCount: 4,
-    locationPolicy: "ANY",
-  },
-  nodeConfig: {
-    machineType: "n1-standard-8",
-    diskSizeGb: 200,
-    diskType: "pd-ssd",
-    guestAccelerator: [
-      { count: 1, type: "nvidia-tesla-t4" },
-    ],
-    taint: [
-      { key: "nvidia.com/gpu", value: "present", effect: "NO_SCHEDULE" },
-    ],
-    workloadMetadataConfig: { mode: "GKE_METADATA" },
-    oauthScopes: ["https://www.googleapis.com/auth/cloud-platform"],
-  },
-  management: { autoRepair: true, autoUpgrade: true },
 });
 
 // ── Ray Workload Identity ─────────────────────────────────────────────────
