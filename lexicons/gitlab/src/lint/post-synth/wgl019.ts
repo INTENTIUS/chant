@@ -28,7 +28,12 @@ export const wgl019: PostSynthCheck = {
       const stage = props.stage as string | undefined;
       if (!stage || !DEPLOY_STAGES.has(stage.toLowerCase())) continue;
 
-      if (!props.retry) {
+      // chant #1544 — `!props.retry` treated an explicit `retry: 0` the same
+      // as no `retry` at all, warning on a job that stated its policy
+      // ("retrying a deploy without a human is deliberate") as if it hadn't.
+      // `retry: 0` is falsy but present — only an actually-absent key means
+      // "no retry strategy".
+      if (props.retry === undefined) {
         diagnostics.push({
           checkId: "WGL019",
           severity: "info",

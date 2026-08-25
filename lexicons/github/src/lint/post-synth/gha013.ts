@@ -6,7 +6,7 @@
  */
 
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
-import { getPrimaryOutput, extractJobs, extractTriggers } from "./yaml-helpers";
+import { getPrimaryOutput, extractJobs, extractTriggers, extractJobPermissions } from "./yaml-helpers";
 
 export const gha013: PostSynthCheck = {
   id: "GHA013",
@@ -21,9 +21,16 @@ export const gha013: PostSynthCheck = {
 
       if (!triggers["pull_request_target"] && !triggers["workflow_dispatch"]) continue;
 
+      // chant #1544 — `extractJobs`' `ParsedJob.permissions` field is never
+      // populated (its regex-based per-job scan only fills `needs`/`steps`),
+      // so this rule read `job.permissions` as always undefined and warned
+      // on every job regardless of whether it declared one. `extractJobPermissions`
+      // (below) is the structural, `parseYAML`-backed extractor that other
+      // permissions-aware checks already use — it actually sees the block.
       const jobs = extractJobs(yaml);
-      for (const [jobName, job] of jobs) {
-        if (!job.permissions) {
+      const jobPermissions = extractJobPermissions(yaml);
+      for (const [jobName] of jobs) {
+        if (!jobPermissions.has(jobName)) {
           diagnostics.push({
             checkId: "GHA013",
             severity: "warning",
