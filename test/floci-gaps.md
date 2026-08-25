@@ -399,3 +399,67 @@ a reconcile regenerates the networking estate but cannot carry the AKS
 cluster; the authored cluster source stays as-is. `test/azure-cc-e2e.sh`
 asserts exactly that split. Entry stands until the listing includes modeled
 providers.
+
+## 11. `AWS::CloudWatch::Dashboard` deploys via CloudFormation but the CloudWatch API refuses to read it back
+
+**Status:** confirmed 2026-08-24 against `floci/floci:latest`, unfiled. Found
+while building the `MonitoringStack` composite (chant#1139).
+
+```
+$ aws cloudformation deploy --stack-name monitoring-stack-check --template-file template.json
+Successfully created/updated stack - monitoring-stack-check
+
+$ aws cloudformation describe-stack-resources --stack-name monitoring-stack-check \
+    --query 'StackResources[?ResourceType==`AWS::CloudWatch::Dashboard`]'
+[{"LogicalResourceId":"monitoringDashboard","PhysicalResourceId":"monitoringDashboard-28e4fce3",
+  "ResourceType":"AWS::CloudWatch::Dashboard","ResourceStatus":"CREATE_COMPLETE"}]
+
+$ aws cloudwatch list-dashboards
+An error occurred (UnsupportedOperation) when calling the ListDashboards operation:
+Operation ListDashboards is not supported by CloudWatch JSON.
+
+$ aws cloudwatch get-dashboard --dashboard-name floci-check-dashboard
+An error occurred (UnsupportedOperation) when calling the GetDashboard operation:
+Operation GetDashboard is not supported by CloudWatch JSON.
+```
+
+CloudFormation's own resource-type handler accepts the create and reports
+`CREATE_COMPLETE` (`monitoring` shows `"running"` on `/_localstack/health`),
+but the CloudWatch service surface behind that same emulator has no
+dashboard-reading operations at all — not partial, absent.
+
+**Effect on chant:** synthesis and `cfn-deploy` for a `CwDashboard` resource
+(via the new `MonitoringStack` composite or a bare declaration) both work
+end-to-end on Floci, so the write half of the composite's Floci coverage is
+real. What cannot be exercised here is reading the dashboard back — a
+`lifecycle snapshot --deep`/live-diff over a Dashboard degrades exactly like
+entry 1's Cloud Control gap, for the same underlying reason (the emulator
+reports a service `running` that only partially implements it). The
+`AWS::CloudWatch::Alarm` half has no such gap — `describe-alarms` returns the
+alarm with every property (`Namespace`, `MetricName`, `Dimensions`,
+`Threshold`, `ComparisonOperator`, `EvaluationPeriods`) round-tripped exactly.
+
+**Priority:** low. Real AWS serves both operations; the composite's write
+path (the half a `cfn-deploy` estate depends on) is unaffected.
+
+## 12. `AWS::CloudWatch::Dashboard`'s physical id ignores the declared `DashboardName`
+
+**Status:** confirmed 2026-08-24 against `floci/floci:latest`, unfiled. Same
+deploy as entry 11.
+
+The CloudFormation schema for `AWS::CloudWatch::Dashboard` declares
+`DashboardName` as `createOnly` and its `primaryIdentifier` — on real AWS the
+physical resource id is the dashboard name you set (or a generated one only
+when you omit it). Here, with `DashboardName: "floci-check-dashboard"`
+explicit in the deployed template, `describe-stack-resources` still reports
+`PhysicalResourceId: "monitoringDashboard-28e4fce3"` — the logical id plus a
+random suffix, not the name that was declared.
+
+**Effect on chant:** nothing observed yet — nothing in the composite or its
+tests depends on the dashboard's physical id, and the property itself
+(`DashboardName`) round-trips correctly in the template and (per entry 11) is
+unreadable back from the API either way. Filed because a future live-read or
+drift check over dashboards would trip on it: the physical id a `describe-
+stack-resources` call reports would not match the name an estate declared.
+
+**Priority:** low, same reasoning as entry 11.
