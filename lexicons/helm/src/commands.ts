@@ -2,7 +2,7 @@
  * `chant helm <verb>` — the pinned-renders surface (#1248, epic #1228
  * Phase 6), mounted through the command-group seam (#1078).
  *
- * Three verbs over machinery that already exists but had no CLI reach:
+ * Four verbs over machinery that already exists but had no CLI reach:
  *
  * - `classify` runs the pinnability gate (#1234) over a chart directory and
  *   prints the verdict with every finding located — capability references,
@@ -13,12 +13,15 @@
  * - `renders` discovers the current project and lists every `HelmRender`
  *   record with its digests (#1237) and capability profile, plus the
  *   stability report grouping renders by input identity.
+ * - `diff` resolves two content digests from the render store (#1238) and
+ *   reports what changed between them — added/removed/changed documents,
+ *   field-level changes inside each changed one — with no cluster and no
+ *   credentials (#1249). Render-to-live is #1250, a separate verb.
  *
- * The diff verbs land separately: render-to-render is #1249, render-to-live
- * is #1250. This module is plain data reachable from plugin.ts — every
- * implementation (classifier, localizer, discovery) sits behind a dynamic
- * import, following `lexicons/k8s/src/kube/group.ts`'s discipline, so
- * loading the plugin never pays for machinery no verb was asked to run.
+ * This module is plain data reachable from plugin.ts — every implementation
+ * (classifier, localizer, discovery, differ) sits behind a dynamic import,
+ * following `lexicons/k8s/src/kube/group.ts`'s discipline, so loading the
+ * plugin never pays for machinery no verb was asked to run.
  */
 
 import type { CommandGroup, CommandGroupContext } from "@intentius/chant/cli/command-group";
@@ -28,6 +31,7 @@ import type { PinnabilityReport } from "./pinnability/classify";
 import type { LocalizationReport } from "./pinnability/localize";
 import type { HelmRenderRecord } from "./render";
 import type { RenderStabilityReport } from "./render-digest";
+import type { RenderDiffResult } from "./render-diff";
 
 const BOOLEAN_FLAGS = new Set(["--json"]);
 
@@ -75,6 +79,16 @@ function requireChartDir(verb: string, parsed: ParsedArgs): string {
     throw new Error(`chant helm ${verb} takes one chart directory, got: ${parsed.positionals.join(", ")}`);
   }
   return parsed.positionals[0];
+}
+
+function requireTwoDigests(verb: string, parsed: ParsedArgs): [string, string] {
+  if (parsed.positionals.length !== 2) {
+    throw new Error(
+      `Usage: chant helm ${verb} <from-digest> <to-digest> [flags]\n` +
+        `Two content digests (sha256:<64 hex>, from "chant helm renders") are required, got ${parsed.positionals.length}.`,
+    );
+  }
+  return [parsed.positionals[0], parsed.positionals[1]];
 }
 
 function shortDigest(digest: string | undefined): string {
@@ -168,6 +182,38 @@ export function formatRenderRecords(
       `  UNSTABLE ${group.names[0]}: ${group.contentDigests.length} distinct content digests for input ${shortDigest(group.inputDigest)}`,
     );
   }
+  return lines.join("\n");
+}
+
+/** The printed render-diff report: one line per added/removed document, a block per changed one. */
+export function formatRenderDiff(diff: RenderDiffResult): string {
+  const lines: string[] = [
+    `${shortDigest(diff.from.contentDigest)} (${diff.from.chart}/${diff.from.releaseName}) -> ` +
+      `${shortDigest(diff.to.contentDigest)} (${diff.to.chart}/${diff.to.releaseName})`,
+  ];
+  if (diff.added.length === 0 && diff.removed.length === 0 && diff.changed.length === 0) {
+    lines.push("no differences — identical documents on both sides");
+  }
+  for (const doc of diff.removed) {
+    lines.push(`  REMOVED  ${doc.kind} ${doc.namespace ?? "-"}/${doc.name}`);
+  }
+  for (const doc of diff.added) {
+    lines.push(`  ADDED    ${doc.kind} ${doc.namespace ?? "-"}/${doc.name}`);
+  }
+  for (const doc of diff.changed) {
+    lines.push(`  CHANGED  ${doc.kind} ${doc.namespace ?? "-"}/${doc.name} (${doc.changes.length} field change(s))`);
+    for (const change of doc.changes) {
+      const before = "before" in change ? JSON.stringify(change.before) : "-";
+      const after = "after" in change ? JSON.stringify(change.after) : "-";
+      lines.push(`    ${change.kind} ${change.path}: ${before} -> ${after}`);
+    }
+  }
+  lines.push(
+    `${diff.unchanged.length} unchanged document(s)` +
+      (diff.unindexed.from > 0 || diff.unindexed.to > 0
+        ? `; unindexed: ${diff.unindexed.from} (from), ${diff.unindexed.to} (to) — not diffable by identity`
+        : ""),
+  );
   return lines.join("\n");
 }
 
@@ -267,11 +313,24 @@ async function rendersHandler(ctx: CommandGroupContext): Promise<number> {
   return 0;
 }
 
+async function diffHandler(ctx: CommandGroupContext): Promise<number> {
+  const parsed = parseVerbArgs("diff", ctx.rawArgs, new Set(["--json"]));
+  const [from, to] = requireTwoDigests("diff", parsed);
+  const { diffRenders } = await import("./render-diff");
+  const diff = diffRenders(from, to);
+  if (parsed.json) {
+    console.log(JSON.stringify(diff, null, 2));
+    return 0;
+  }
+  console.log(formatRenderDiff(diff));
+  return 0;
+}
+
 /** The `chant helm` verb group (#1248). */
 export function helmCommandGroup(): CommandGroup {
   return {
     name: "helm",
-    description: "Pinned-render surface for helm charts: classify pinnability, localize unstable inputs, list recorded renders",
+    description: "Pinned-render surface for helm charts: classify pinnability, localize unstable inputs, list recorded renders, diff two stored renders",
     commands: [
       {
         name: "classify",
@@ -287,6 +346,11 @@ export function helmCommandGroup(): CommandGroup {
         name: "renders",
         description: "Discover the project and list every HelmRender record with digests, capability profile, and render stability",
         handler: rendersHandler,
+      },
+      {
+        name: "diff",
+        description: "Diff two stored renders by content digest, offline — added/removed/changed documents and field-level changes",
+        handler: diffHandler,
       },
     ],
   };
