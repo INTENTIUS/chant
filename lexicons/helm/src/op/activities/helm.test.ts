@@ -18,6 +18,7 @@ import { createHash } from "node:crypto";
 import { appendFileSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { load } from "js-yaml";
 
 const helm = vi.hoisted(() => ({
   calls: [] as string[],
@@ -668,5 +669,156 @@ describe("pinned install path (#1242)", () => {
     expect(result.pinned).toBe(false);
     expect(result.contentDigest).toBeUndefined();
     expect(result.releaseName).toBe("web");
+  });
+});
+
+describe("migration: unpinned release adopts a pinned render in place (#1245)", () => {
+  // Shaped after the umbrella-fixture survey corpus (#1232): a parent CRD, a
+  // subchart CRD, and the SAME subchart included a second time under an
+  // alias — the aliased instance emits a duplicate CRD document for one
+  // distinct CRD (epic finding 11), which the wrapper must dedupe. A
+  // pre-upgrade hook and two ConfigMaps (parent + subchart) round it out, so
+  // the fixture exercises the full "CRD intact, hook fired, configmaps
+  // unchanged" claim (epic finding 7) rather than just one document each.
+  const rendered = [
+    "---",
+    "# Source: umbrella-fixture/crds/parentcrd.yaml",
+    "apiVersion: apiextensions.k8s.io/v1",
+    "kind: CustomResourceDefinition",
+    "metadata:",
+    "  name: parentthings.example.com",
+    "spec:",
+    "  group: example.com",
+    "  names: { kind: ParentThing }",
+    "---",
+    "# Source: umbrella-fixture/charts/kid/crds/kidcrd.yaml",
+    "apiVersion: apiextensions.k8s.io/v1",
+    "kind: CustomResourceDefinition",
+    "metadata:",
+    "  name: kidthings.example.com",
+    "spec:",
+    "  group: example.com",
+    "  names: { kind: KidThing }",
+    "---",
+    // Same CRD again via the `kidtwo` alias (#1232's aliased-dependency
+    // case) — one distinct CRD, two source documents.
+    "# Source: umbrella-fixture/charts/kidtwo/crds/kidcrd.yaml",
+    "apiVersion: apiextensions.k8s.io/v1",
+    "kind: CustomResourceDefinition",
+    "metadata:",
+    "  name: kidthings.example.com",
+    "spec:",
+    "  group: example.com",
+    "  names: { kind: KidThing }",
+    "---",
+    // Annotated pre-upgrade (not just pre-install): the migration deploy is
+    // itself an upgrade of the pre-existing unpinned release, so only a hook
+    // registered for pre-upgrade actually runs on it.
+    "# Source: umbrella-fixture/templates/hook-job.yaml",
+    "apiVersion: batch/v1",
+    "kind: Job",
+    "metadata:",
+    "  name: setup",
+    "  annotations:",
+    '    "helm.sh/hook": pre-upgrade',
+    "---",
+    "# Source: umbrella-fixture/templates/cm.yaml",
+    "apiVersion: v1",
+    "kind: ConfigMap",
+    "metadata:",
+    "  name: web-parent",
+    "data:",
+    "  who: parent",
+    "---",
+    "# Source: umbrella-fixture/charts/kid/templates/cm.yaml",
+    "apiVersion: v1",
+    "kind: ConfigMap",
+    "metadata:",
+    "  name: web-kid",
+    "data:",
+    "  who: kid",
+  ].join("\n");
+
+  function pinForMigration(): { manifest: RenderManifest; root: string } {
+    const root = join(dir, "render-store");
+    const { manifest } = persistHelmRender({
+      rendered,
+      releaseName: "web",
+      chart: "umbrella-fixture",
+      chartVersion: "0.1.0",
+      values: { replicas: 1 },
+      capabilityProfile: { name: "k3d-local", kubeVersion: "1.33.6", apiVersions: ["apps/v1"] },
+      root,
+    });
+    return { manifest, root };
+  }
+
+  test("in-place: same release name, one `helm upgrade --install`, revision advances — never install-under-a-new-name or uninstall+install", async () => {
+    // The release already exists from a prior unpinned deploy — revision 1.
+    helm.metadata = { name: "web", revision: 1, version: "0.1.0" };
+    await helmInstall({ name: "web", chart: "./umbrella-fixture", chartVersion: "0.1.0" });
+    expect(helm.calls).toEqual(["helm upgrade --install --wait web ./umbrella-fixture --version 0.1.0"]);
+
+    // Migrate it onto the pinned render, same name, revision 2 — helm's own
+    // upgrade of the same release, not a fresh install under another name.
+    const { manifest, root } = pinForMigration();
+    helm.calls = [];
+    helm.metadata = { name: "web", revision: 2, version: "umbrella-fixture@0.1.0" };
+    const result = await helmInstall({ name: "web", contentDigest: manifest.contentDigest, renderStoreRoot: root });
+
+    const upgrades = helm.calls.filter((c) => c.startsWith("helm upgrade") || c.startsWith("helm install"));
+    expect(upgrades).toHaveLength(1); // exactly one mutating helm call — no uninstall, no separate install
+    expect(upgrades[0]).toMatch(/^helm upgrade --install --wait web \S*chant-helm-pinned-/);
+    expect(result.releaseName).toBe("web");
+    expect(result.pinned).toBe(true);
+    expect(result.revision).toBe(2); // one more than the pre-existing unpinned release's revision
+
+    // The wrapper keeps the source chart's identity, so `helm history` reads
+    // as one continuous chart, not a swap to a synthetic wrapper chart.
+    expect(helm.wrapperFiles!["Chart.yaml"]).toContain("name: umbrella-fixture");
+    expect(helm.wrapperFiles!["Chart.yaml"]).toContain("version: 0.1.0");
+  });
+
+  test("CRDs intact, deduped across the aliased subchart — helm never re-applies crds/ on an upgrade of an existing release", async () => {
+    const { manifest, root } = pinForMigration();
+    helm.metadata = { name: "web", revision: 2, version: "0.1.0" };
+    const result = await helmInstall({ name: "web", contentDigest: manifest.contentDigest, renderStoreRoot: root });
+
+    // One distinct CRD survives the aliased duplicate (parent CRD + deduped
+    // kid CRD), still routed to crds/ — carried for a future fresh install,
+    // but this call is an upgrade of an existing release, so helm's own
+    // install-only handling of crds/ leaves the already-installed CRDs
+    // untouched (documented in the migration guide).
+    expect(result.crdsApplied).toBe(2);
+    const crdFiles = Object.keys(helm.wrapperFiles!).filter((f) => f.startsWith("crds/"));
+    expect(crdFiles).toHaveLength(2);
+    const crdNames = crdFiles.map((f) => (load(helm.wrapperFiles![f]) as { metadata: { name: string } }).metadata.name);
+    expect(new Set(crdNames)).toEqual(new Set(["parentthings.example.com", "kidthings.example.com"]));
+  });
+
+  test("hook still fires, configmaps ship byte-identical to the unpinned render's output", async () => {
+    const { manifest, root } = pinForMigration();
+    helm.metadata = { name: "web", revision: 2, version: "0.1.0" };
+    const result = await helmInstall({ name: "web", contentDigest: manifest.contentDigest, renderStoreRoot: root });
+
+    expect(result.hooksRun).toBe(1);
+    const files = helm.wrapperFiles!;
+    const manifestFiles = Object.keys(files).filter((f) => f.startsWith("manifests/"));
+    const canonical = loadRenderContent(manifest.contentDigest, { root })!;
+    const routed = routeRender(canonical, { chart: manifest.chart, chartVersion: manifest.chartVersion });
+    // Both ConfigMaps — parent and subchart — reach the cluster as exactly
+    // the bytes the render store recorded, never re-templated.
+    for (const cm of routed.main.filter((d) => d.kind === "ConfigMap")) {
+      expect(manifestFiles.map((f) => files[f])).toContain(cm.text + "\n");
+    }
+    expect(routed.main.filter((d) => d.kind === "ConfigMap")).toHaveLength(2);
+  });
+
+  test("a flat wrapper under a new release name is refused before any mutation — migrate under the release's own name instead", async () => {
+    const { manifest, root } = pinForMigration();
+    await expect(
+      helmInstall({ name: "web-v2", contentDigest: manifest.contentDigest, renderStoreRoot: root }),
+    ).rejects.toThrow(/rendered for release "web".*Deploy under "web"/s);
+    expect(helm.calls).toHaveLength(0); // refused offline, before the ownership-metadata error helm itself would raise
   });
 });
