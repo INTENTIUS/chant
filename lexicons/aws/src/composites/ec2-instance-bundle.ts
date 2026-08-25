@@ -98,6 +98,14 @@ export const Ec2InstanceBundle = Composite((props: Ec2InstanceBundleProps) => {
     Roles: [Ref(role)],
   }, defaults?.instanceProfile));
 
+  // The list-length is dynamic (a caller-supplied array of rules, unlike the
+  // fixed one-or-zero-rule shape RdsInstance's ternary handles), so this
+  // `.map()` — and the `ingressSource(rule)` spread inside it — has to live
+  // in the factory rather than be pre-computed as a const above it. Both are
+  // the accepted, already-shipped shape for this in the codebase: EVL004
+  // exempts spreads inside the Composite factory precisely for this case,
+  // and EVL010's warning on the `.map()` here matches the same warning on
+  // FargateAlb, FargateService, and EksCluster's per-item resource lists.
   const ingressRules = ingress.map((rule) => new SecurityGroup_Ingress({
     IpProtocol: rule.protocol ?? "tcp",
     FromPort: rule.fromPort,
