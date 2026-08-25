@@ -52,6 +52,7 @@ import {
   persistHelmRender,
   renderCacheKey,
 } from "./render-store";
+import { probeCoalescedValues, type CoalescedValuesProbe } from "./values-probe";
 
 export interface HelmRenderProps {
   /** Logical name for the render (used in cache key + composite name). */
@@ -144,6 +145,12 @@ export interface HelmRenderRecord {
   inputDigest?: string;
   /** Content-side identity over canonical rendered bytes (#1237). Present only for pinned renders. */
   contentDigest?: string;
+  /**
+   * The build-time coalesced-values probe's digest (#1251), present only
+   * when the probe ran — a pinned render of a local chart (the probe needs
+   * the chart source on disk, so a repo-fetched chart never gets one).
+   */
+  coalescedValuesDigest?: string;
 }
 
 const renderRecords: HelmRenderRecord[] = [];
@@ -311,6 +318,43 @@ function loadOrRender(props: HelmRenderProps, profile?: HelmCapabilityProfile): 
 }
 
 /**
+ * Best-effort coalesced-values probe (#1251) for a `HelmRender` invocation.
+ *
+ * The probe (`./values-probe.ts`) needs the chart source on disk — the same
+ * requirement the pinnability classifier (#1234) has — so it only runs for
+ * a local chart (`props.repo` unset, `props.chart` a directory with a
+ * `Chart.yaml`). A repo-fetched chart's source is never kept on disk here,
+ * so it gets no probe, the same v1 gate `render.ts`'s digest recording
+ * already documents.
+ *
+ * Never fatal: a probe failure (a chart the probe's template injection
+ * can't render, `helm` briefly unavailable, ...) must not break the actual
+ * render it is only observing. `undefined` means "no probe result" — never
+ * fabricated, and WHM504 simply has nothing to report for this render.
+ */
+function runValuesProbeBestEffort(props: HelmRenderProps): CoalescedValuesProbe | undefined {
+  if (props.repo) return undefined;
+  if (!existsSync(join(props.chart, "Chart.yaml"))) return undefined;
+  try {
+    return probeCoalescedValues({
+      chartDir: props.chart,
+      name: props.name,
+      releaseName: props.name,
+      namespace: props.namespace,
+      supplied:
+        props.values && Object.keys(props.values).length > 0
+          ? [{ origin: "supplied file", values: props.values }]
+          : [],
+    });
+  } catch {
+    // Non-fatal — see the docstring above. The main render already ran (or
+    // is about to) via its own `helm template` invocation; this extra,
+    // probe-only render observing the same chart is never load-bearing.
+    return undefined;
+  }
+}
+
+/**
  * The pinned render path (#1238): the content-addressed store is both the
  * cache and the durable record.
  *
@@ -327,7 +371,11 @@ function loadOrRender(props: HelmRenderProps, profile?: HelmCapabilityProfile): 
  * the default path is non-fatal like a legacy cache-write failure, but an
  * explicit `persist: true` surfaces it.
  */
-function loadOrRenderPinned(props: HelmRenderProps, profile: HelmCapabilityProfile): string {
+function loadOrRenderPinned(
+  props: HelmRenderProps,
+  profile: HelmCapabilityProfile,
+  valuesProbe?: CoalescedValuesProbe,
+): string {
   const chartRef = props.repo ? `${props.repo}/${props.chart}` : props.chart;
   const storeRead = !props.noCache && props.persist !== false;
   const storeWrite = props.persist === true || (!props.noCache && props.persist !== false);
@@ -363,6 +411,8 @@ function loadOrRenderPinned(props: HelmRenderProps, profile: HelmCapabilityProfi
         capabilityProfile: profile,
         helmVersion: helmBinaryVersion(),
         sourceRef: props.sourceRef,
+        coalescedValuesDigest: valuesProbe?.digest,
+        valueSources: valuesProbe?.valueSources,
       });
     } catch (err) {
       if (props.persist === true) throw err;
@@ -403,7 +453,17 @@ export const HelmRender = Composite<HelmRenderProps>((props) => {
     );
   }
 
-  const yamlText = profile ? loadOrRenderPinned(props, profile) : loadOrRender(props, undefined);
+  // Build-time coalesced-values probe (#1251/#1252). Runs (best-effort) for
+  // a pinned render of a local chart — the same gate the digests below use,
+  // since the probe needs the chart source on disk and only a pinned render
+  // has a RenderManifest to carry its digest. `probeCoalescedValues` records
+  // itself into the WHM504 surface (`getValuesProbeRecords`) as part of
+  // running — no separate `recordValuesProbe` call needed here, and any
+  // dead assignment it found is worth reporting whether or not this render
+  // ultimately persists.
+  const valuesProbe = profile ? runValuesProbeBestEffort(props) : undefined;
+
+  const yamlText = profile ? loadOrRenderPinned(props, profile, valuesProbe) : loadOrRender(props, undefined);
   const docs = parseMultiDoc(yamlText);
 
   // Digests are recorded only for pinned renders (#1237). Profile presence
@@ -426,6 +486,7 @@ export const HelmRender = Composite<HelmRenderProps>((props) => {
           },
         }),
         contentDigest: helmContentDigest(yamlText),
+        ...(valuesProbe ? { coalescedValuesDigest: valuesProbe.digest } : {}),
       }
     : {};
 

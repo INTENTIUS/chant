@@ -4,8 +4,13 @@ import { delimiter, join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 
+import type { PostSynthContext } from "@intentius/chant/lint/post-synth";
+
 import { HelmRender, getHelmRenderRecords, clearHelmRenderRecords } from "./render";
 import { helmContentDigest, helmInputDigest, renderStability } from "./render-digest";
+import { loadRenderManifest } from "./render-store";
+import { clearValuesProbeRecords, getValuesProbeRecords } from "./values-probe";
+import { whm504 } from "./lint/post-synth/whm504";
 
 const FIXTURE_DIR = join(tmpdir(), "chant-helm-render-fixture");
 const CHART_DIR = join(FIXTURE_DIR, "tiny-chart");
@@ -539,5 +544,94 @@ describe.skipIf(!fixtureAvailable)("HelmRender digests (real helm)", () => {
     expect(report.unstable.length).toBe(1);
     expect(report.unstable[0].inputDigest).toBe(genuine.inputDigest);
     expect(report.unstable[0].contentDigests).toEqual([genuine.contentDigest, divergent.contentDigest]);
+  });
+});
+
+/**
+ * End-to-end coalesced-values wiring (#1251, #1252): a real pinned build of
+ * the fixture chart carries the probe's digest and valueSources into its
+ * persisted `RenderManifest` (issue #1252 AC1), and a dead assignment in
+ * the supplied values produces a WHM504 finding through the same real
+ * build — not a hand-built probe record (AC3).
+ */
+describe.skipIf(!fixtureAvailable)("coalesced-values probe wired into the render path (#1251, #1252)", () => {
+  const PROFILE = { name: "test", kubeVersion: "1.33.6" };
+  let storeRoot: string;
+  let origRoot: string | undefined;
+
+  function makeCtx(): PostSynthContext {
+    const outputs = new Map<string, string>();
+    return {
+      outputs,
+      entities: new Map(),
+      buildResult: { outputs, entities: new Map(), warnings: [], errors: [], sourceFileCount: 1 },
+    };
+  }
+
+  beforeEach(() => {
+    clearHelmRenderRecords();
+    clearValuesProbeRecords();
+    storeRoot = mkdtempSync(join(tmpdir(), "chant-helm-render-store-"));
+    origRoot = process.env.CHANT_HELM_RENDER_ROOT;
+    process.env.CHANT_HELM_RENDER_ROOT = storeRoot;
+  });
+
+  afterEach(() => {
+    if (origRoot === undefined) delete process.env.CHANT_HELM_RENDER_ROOT;
+    else process.env.CHANT_HELM_RENDER_ROOT = origRoot;
+    rmSync(storeRoot, { recursive: true, force: true });
+  });
+
+  test("a pinned build of a clean chart records a digest and valueSources in the persisted RenderManifest", () => {
+    HelmRender({
+      name: "rel",
+      chart: CHART_DIR,
+      persist: true,
+      values: { replicaCount: 3 },
+      capabilityProfile: PROFILE,
+    } as Parameters<typeof HelmRender>[0]);
+
+    const [record] = getHelmRenderRecords();
+    expect(record.coalescedValuesDigest).toMatch(/^sha256:[0-9a-f]{64}$/);
+
+    const manifest = loadRenderManifest(record.contentDigest!, { root: storeRoot });
+    expect(manifest).toBeDefined();
+    expect(manifest!.coalescedValuesDigest).toBe(record.coalescedValuesDigest);
+    expect(manifest!.valueSources).toBeTruthy();
+    // The supplied override is attributed to the values layer that won it.
+    expect(manifest!.valueSources!["replicaCount"]).toBe("supplied file");
+
+    // No dead assignments in this build — WHM504 has nothing to say.
+    expect(getValuesProbeRecords()).toHaveLength(1);
+    expect(whm504.check(makeCtx())).toEqual([]);
+  });
+
+  test("a dead assignment in a real pinned build fires WHM504 end-to-end", () => {
+    HelmRender({
+      name: "rel",
+      chart: CHART_DIR,
+      persist: true,
+      // "totallyUnknownSubchart" names no dependency of the fixture chart
+      // (which has the "tiny-sub" subchart, so it does have dependencies)
+      // and no root default — the classic silently-ignored subchart typo.
+      values: { totallyUnknownSubchart: { replicas: 9 } },
+      capabilityProfile: PROFILE,
+    } as Parameters<typeof HelmRender>[0]);
+
+    const [record] = getHelmRenderRecords();
+    expect(record.coalescedValuesDigest).toMatch(/^sha256:[0-9a-f]{64}$/);
+
+    const manifest = loadRenderManifest(record.contentDigest!, { root: storeRoot });
+    expect(manifest!.coalescedValuesDigest).toBe(record.coalescedValuesDigest);
+
+    // The real build path recorded the probe — WHM504 fires without any
+    // test constructing a probe record by hand.
+    expect(getValuesProbeRecords()).toHaveLength(1);
+    const diags = whm504.check(makeCtx());
+    expect(diags).toHaveLength(1);
+    expect(diags[0].checkId).toBe("WHM504");
+    expect(diags[0].entity).toBe("rel");
+    expect(diags[0].message).toContain("totallyUnknownSubchart");
+    expect(diags[0].message).toContain("target no subchart");
   });
 });

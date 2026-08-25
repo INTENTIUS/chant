@@ -1758,6 +1758,12 @@ Declare the value with runtimeSlot() or replace the Secret with HelmExternalSecr
 
 Authority: [Kubernetes — Good practices for Secrets](https://kubernetes.io/docs/concepts/security/secrets-good-practices/)
 
+### WHM504
+
+**Dead value assignment** — merge-worthy · guidance
+
+Remove supplied values that never survive coalescing (shadowed, disabled subchart, or unknown subchart).
+
 ## fountain (FTN)
 
 Run against fountain manifests (`apiVersion: fountain.dev/v1`) — standalone `fountain apply` YAML is parsed back into the entity graph, so the same rules fire on `chant build` and `chant audit`.
