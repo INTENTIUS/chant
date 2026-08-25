@@ -590,6 +590,7 @@ describe("McpServer", () => {
       expect(uris).toContain("chant://ops");
       expect(uris).toContain("chant://ops/{name}/runs");
       expect(uris).toContain("chant://ops/{name}/runs/latest");
+      expect(uris).toContain("chant://knowledge");
 
       // Each resource has required fields
       for (const resource of result.resources) {
@@ -733,6 +734,62 @@ describe("McpServer", () => {
         const result = response.result as { contents: Array<{ text: string }> };
         const data = JSON.parse(result.contents[0].text);
         expect(data.error).toBeDefined();
+      });
+    });
+
+    describe("chant://knowledge", () => {
+      test("empty gracefully when no bundle exists", async () => {
+        const originalCwd = process.cwd();
+        process.chdir(testDir);
+        try {
+          const response = await server.handleRequest({
+            jsonrpc: "2.0",
+            id: 1,
+            method: "resources/read",
+            params: { uri: "chant://knowledge" },
+          });
+          expect(response.error).toBeUndefined();
+          const result = response.result as { contents: Array<{ text: string; mimeType: string }> };
+          expect(result.contents[0].mimeType).toBe("application/json");
+          const data = JSON.parse(result.contents[0].text);
+          expect(data.index).toBeNull();
+          expect(data.concepts).toEqual([]);
+        } finally {
+          process.chdir(originalCwd);
+        }
+      });
+
+      test("serves the bundle index and concepts when present", async () => {
+        const originalCwd = process.cwd();
+        process.chdir(testDir);
+        try {
+          await mkdir(join(testDir, "knowledge", "decisions"), { recursive: true });
+          await writeFile(join(testDir, "knowledge", "index.md"), "# Knowledge index\n");
+          await writeFile(
+            join(testDir, "knowledge", "decisions", "public-assets.md"),
+            "---\ntype: decision\ntitle: Public assets\nbinds: bucket\n---\nBody text.\n",
+          );
+
+          const response = await server.handleRequest({
+            jsonrpc: "2.0",
+            id: 1,
+            method: "resources/read",
+            params: { uri: "chant://knowledge" },
+          });
+          expect(response.error).toBeUndefined();
+          const result = response.result as { contents: Array<{ text: string }> };
+          const data = JSON.parse(result.contents[0].text);
+          expect(data.index).toBe("# Knowledge index\n");
+          expect(data.concepts).toHaveLength(1);
+          expect(data.concepts[0]).toMatchObject({
+            path: "decisions/public-assets.md",
+            type: "decision",
+            title: "Public assets",
+            binds: ["bucket"],
+          });
+        } finally {
+          process.chdir(originalCwd);
+        }
       });
     });
   });
@@ -1157,7 +1214,7 @@ describe("McpServer", () => {
 
       const resourcesRes = await s.handleRequest({ jsonrpc: "2.0", id: 3, method: "resources/list" });
       const resources = (resourcesRes.result as { resources: Array<{ uri: string }> }).resources;
-      expect(resources).toHaveLength(7);
+      expect(resources).toHaveLength(8);
     });
 
     test("server with empty plugins array works", async () => {
