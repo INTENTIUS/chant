@@ -30,3 +30,5 @@ export { MultiRegionVpc } from "./multi-region-vpc";
 export type { MultiRegionVpcConfig, MultiRegionVpcRegion } from "./multi-region-vpc";
 export { GkeCrdbRegion } from "./gke-crdb-region";
 export type { GkeCrdbRegionConfig, GkeCrdbRegionNodeConfig } from "./gke-crdb-region";
+export { GpuNodePool } from "./gpu-node-pool";
+export type { GpuNodePoolProps, GpuNodePoolTaint } from "./gpu-node-pool";
