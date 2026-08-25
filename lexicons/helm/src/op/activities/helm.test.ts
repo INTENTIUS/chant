@@ -8,8 +8,10 @@
  * successful deploy, via the same `maybeRecordAutoRelease` convention the
  * `chant run --components` post-run step uses.
  *
- * The helm binary is a scripted double (promisify-aware exec mock) and the
- * ledger append is a captured mock — no cluster, no git, no helm.
+ * The helm and kubectl binaries are scripted doubles (promisify-aware exec
+ * mock) and the ledger append is a captured mock — no cluster, no git, no
+ * helm. The kubectl double is what the deploy-time capability-profile
+ * assertion (#1244) probes as the "live cluster".
  */
 import { describe, test, expect, beforeEach, afterEach, vi } from "vitest";
 import { createHash } from "node:crypto";
@@ -20,6 +22,13 @@ import { join } from "node:path";
 const helm = vi.hoisted(() => ({
   calls: [] as string[],
   fail: false,
+}));
+
+/** Scripted kubectl double for the capability probe (#1244) — what the "live cluster" reports. */
+const cluster = vi.hoisted(() => ({
+  serverVersion: { major: "1", minor: "33", gitVersion: "v1.33.6+k3s1" } as Record<string, unknown>,
+  apiVersions: ["v1", "apps/v1", "batch/v1"],
+  probeFail: false,
 }));
 
 const ledger = vi.hoisted(() => ({
@@ -34,6 +43,21 @@ vi.mock("node:child_process", () => {
   }) as unknown as Record<symbol, unknown>;
   exec[custom] = async (cmd: string) => {
     helm.calls.push(cmd);
+    if (cmd.startsWith("kubectl")) {
+      if (cluster.probeFail) {
+        throw new Error("The connection to the server localhost:8080 was refused");
+      }
+      if (cmd.startsWith("kubectl version")) {
+        return {
+          stdout: JSON.stringify({ clientVersion: {}, serverVersion: cluster.serverVersion }),
+          stderr: "",
+        };
+      }
+      if (cmd.startsWith("kubectl api-versions")) {
+        return { stdout: cluster.apiVersions.join("\n") + "\n", stderr: "" };
+      }
+      throw new Error(`unscripted kubectl invocation: ${cmd}`);
+    }
     if (helm.fail) throw new Error("Error: UPGRADE FAILED: context deadline exceeded");
     return { stdout: "Release deployed\n", stderr: "" };
   };
@@ -70,6 +94,9 @@ beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "chant-helm-activity-"));
   helm.calls = [];
   helm.fail = false;
+  cluster.serverVersion = { major: "1", minor: "33", gitVersion: "v1.33.6+k3s1" };
+  cluster.apiVersions = ["v1", "apps/v1", "batch/v1"];
+  cluster.probeFail = false;
   ledger.calls = [];
   ledger.outcome = undefined;
 });
@@ -228,5 +255,161 @@ describe("helmInstall release recording (#1243)", () => {
     expect(warn.mock.calls.map((c) => String(c[0]))).not.toContainEqual(
       expect.stringContaining("no release record"),
     );
+  });
+});
+
+describe("capability profile assertion at deploy time (#1244)", () => {
+  const prod = { name: "prod", kubeVersion: "1.33.6", apiVersions: ["apps/v1", "batch/v1"] };
+
+  function helmMutations(): string[] {
+    return helm.calls.filter((cmd) => cmd.startsWith("helm "));
+  }
+
+  function kubectlProbes(): string[] {
+    return helm.calls.filter((cmd) => cmd.startsWith("kubectl "));
+  }
+
+  test("a matching profile deploys, probing before any helm mutation", async () => {
+    const result = await helmInstall({ name: "web", chart: "./chart", capabilityProfile: prod });
+
+    expect(kubectlProbes().sort()).toEqual(["kubectl api-versions", "kubectl version -o json"]);
+    expect(helmMutations()).toHaveLength(1);
+    const firstHelm = helm.calls.findIndex((cmd) => cmd.startsWith("helm "));
+    for (const probe of kubectlProbes()) {
+      expect(helm.calls.indexOf(probe)).toBeLessThan(firstHelm);
+    }
+    expect(result.profileAssertion).toEqual({ matched: true });
+    expect(ledger.calls[0]).not.toHaveProperty("profileOverride", expect.anything());
+  });
+
+  test("patch skew within the declared major.minor is not a divergence", async () => {
+    cluster.serverVersion = { major: "1", minor: "33", gitVersion: "v1.33.1" };
+    const result = await helmInstall({
+      name: "web",
+      chart: "./chart",
+      capabilityProfile: { kubeVersion: "1.33.6" },
+    });
+    expect(result.profileAssertion).toEqual({ matched: true });
+  });
+
+  test("a kubeVersion mismatch refuses before any helm mutation, naming both versions", async () => {
+    await expect(
+      helmInstall({
+        name: "web",
+        chart: "./chart",
+        capabilityProfile: { name: "staging", kubeVersion: "1.31.4" },
+      }),
+    ).rejects.toThrow(/profile declares 1\.31\.4 \(1\.31\).*cluster runs v1\.33\.6\+k3s1 \(1\.33\)/s);
+
+    expect(helmMutations()).toHaveLength(0);
+    expect(ledger.calls).toHaveLength(0);
+  });
+
+  test("the mismatch names the profile and offers the recorded override", async () => {
+    const args = {
+      name: "web",
+      chart: "./chart",
+      capabilityProfile: { name: "staging", kubeVersion: "1.31.4" },
+    };
+    await expect(helmInstall(args)).rejects.toThrow('capability profile "staging"');
+    await expect(helmInstall(args)).rejects.toThrow("overrideProfileAssertion");
+  });
+
+  test("a profile-declared apiVersion the cluster does not serve refuses, naming it", async () => {
+    await expect(
+      helmInstall({
+        name: "web",
+        chart: "./chart",
+        capabilityProfile: {
+          kubeVersion: "1.33.6",
+          apiVersions: ["apps/v1", "monitoring.coreos.com/v1"],
+        },
+      }),
+    ).rejects.toThrow(
+      "apiVersion monitoring.coreos.com/v1: declared by the profile, not served by the cluster",
+    );
+    expect(helmMutations()).toHaveLength(0);
+  });
+
+  test("an unreachable cluster refuses — a deploy that cannot verify its profile does not proceed", async () => {
+    cluster.probeFail = true;
+    await expect(
+      helmInstall({ name: "web", chart: "./chart", capabilityProfile: prod }),
+    ).rejects.toThrow(/capabilities could not be verified.*connection to the server/s);
+    expect(helmMutations()).toHaveLength(0);
+    expect(ledger.calls).toHaveLength(0);
+  });
+
+  test("no declared profile probes nothing — today's behavior, kubectl never invoked", async () => {
+    await helmInstall({ name: "web", chart: "./chart" });
+    expect(kubectlProbes()).toHaveLength(0);
+    expect(helm.calls).toHaveLength(1);
+  });
+
+  test("a profile declaring no facts probes nothing", async () => {
+    const result = await helmInstall({
+      name: "web",
+      chart: "./chart",
+      capabilityProfile: { apiVersions: [] },
+    });
+    expect(kubectlProbes()).toHaveLength(0);
+    expect(result.profileAssertion).toBeUndefined();
+  });
+
+  test("overrideProfileAssertion deploys through a mismatch, warns, and records the override in the release record", async () => {
+    const warn = vi.spyOn(console, "error").mockImplementation(() => {});
+    const result = await helmInstall({
+      name: "web",
+      chart: "./chart",
+      capabilityProfile: { name: "staging", kubeVersion: "1.31.4", apiVersions: ["missing.io/v1"] },
+      overrideProfileAssertion: true,
+    });
+
+    expect(helmMutations()).toHaveLength(1);
+    expect(result.profileAssertion).toEqual({
+      matched: false,
+      overridden: true,
+      divergences: [
+        "kubeVersion: profile declares 1.31.4 (1.31), cluster runs v1.33.6+k3s1 (1.33)",
+        "apiVersion missing.io/v1: declared by the profile, not served by the cluster",
+      ],
+    });
+
+    const warning = warn.mock.calls
+      .map((c) => String(c[0]))
+      .find((m) => m.includes("despite capability profile"));
+    expect(warning).toContain('"staging"');
+    expect(warning).toContain("kubeVersion: profile declares 1.31.4");
+
+    expect(ledger.calls).toHaveLength(1);
+    expect(ledger.calls[0].profileOverride).toBe(
+      "kubeVersion: profile declares 1.31.4 (1.31), cluster runs v1.33.6+k3s1 (1.33); " +
+        "apiVersion missing.io/v1: declared by the profile, not served by the cluster",
+    );
+  });
+
+  test("overrideProfileAssertion also covers an unprobeable cluster, recording the probe failure", async () => {
+    cluster.probeFail = true;
+    const warn = vi.spyOn(console, "error").mockImplementation(() => {});
+    const result = await helmInstall({
+      name: "web",
+      chart: "./chart",
+      capabilityProfile: prod,
+      overrideProfileAssertion: true,
+    });
+    expect(helmMutations()).toHaveLength(1);
+    expect(result.profileAssertion).toMatchObject({ matched: false, overridden: true });
+    expect(String(ledger.calls[0].profileOverride)).toContain("capability probe failed:");
+    expect(warn.mock.calls.map((c) => String(c[0])).join("\n")).toContain("capability probe failed:");
+  });
+
+  test("a match with the override flag set records no override", async () => {
+    await helmInstall({
+      name: "web",
+      chart: "./chart",
+      capabilityProfile: prod,
+      overrideProfileAssertion: true,
+    });
+    expect(ledger.calls[0].profileOverride).toBeUndefined();
   });
 });

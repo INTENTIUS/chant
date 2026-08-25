@@ -91,6 +91,33 @@ Referencing a profile the config does not declare is a build error naming the pr
 
 Profiles are a cluster fact, not a chart fact. Keep one per cluster or environment, named the way `k8s.profiles` names cluster bindings, and update `kubeVersion` when the cluster upgrades.
 
+The profile is also asserted at deploy time. When `helmInstall` is given a `capabilityProfile`, it reads the target cluster's real capabilities before any helm mutation — `kubectl version -o json` for the server version, `kubectl api-versions` for the served API set, through the same ambient kubeconfig the deploy itself will use. The declared `kubeVersion` must match the live cluster on major.minor (patch skew changes no capability a chart can probe), and every declared apiVersion must be served. A divergence refuses the deploy with each difference named, declared against live. A cluster that cannot be probed refuses too — a deploy that cannot verify its declared profile does not proceed. Nothing runs a probe when no profile is declared.
+
+`overrideProfileAssertion: true` is the deliberate escape hatch. The deploy proceeds through the divergence, the bypassed differences are warned about, and they are recorded verbatim in the release record's `profileOverride` field — so the ledger shows the release knowingly skewed from its declared profile.
+
+## Render digests
+
+A pinned render records two digests. Each answers a different question.
+
+`inputDigest` is a `sha256:` digest over the canonical JSON of the render's declared inputs. Those are the chart reference, the chart version, the resolved values, and the capability facts. It answers "same inputs?" without touching any rendered bytes. It is the same digest `helmInstall` records in the release ledger, computed by the same helper, so a render and a deploy of the same inputs share one identity.
+
+`contentDigest` is a `sha256:` digest over the canonical rendered bytes. It answers "same bytes on the cluster?". This is the artifact identity.
+
+The two diverge exactly when a render is not a function of its declared inputs. Two renders with the same `inputDigest` and different `contentDigest`s mean the chart is unstable or an input escaped declaration. That divergence is itself a signal. `renderStability` reads the recorded renders and names it.
+
+```typescript
+import { getHelmRenderRecords, renderStability } from "@intentius/chant-lexicon-helm";
+
+const report = renderStability(getHelmRenderRecords());
+// report.unstable — same inputs produced different bytes; the render is not pinned down
+// report.stable — every render of these inputs produced the same bytes
+// report.unassessed — unpinned renders, which carry no digests
+```
+
+Canonicalization normalizes render noise and nothing else. Mapping keys are sorted, since Kubernetes treats mappings as unordered. List order is never touched, since it is meaningful. Document order is preserved as helm emitted it. Duplicate documents are kept, because an aliased dependency legitimately emits the same CRD twice. The `# Source:` header survives as each document's leading line. CRLF endings, trailing whitespace, and other comments do not.
+
+Only pinned renders carry digests. An unpinned render's bytes depend on the local helm binary's defaulted capabilities, so a digest over them would assert an identity the render does not have. Unpinned renders record neither digest.
+
 ## List merge workaround
 
 Helm's strategic merge patch does not merge lists — it replaces them. Use map-of-maps instead:
@@ -113,3 +140,29 @@ WHM501 detects values keys that are defined but never referenced in templates. T
 ## Deprecated API versions
 
 WHM502 detects deprecated Kubernetes API versions (like `extensions/v1beta1` for Ingress) and suggests current replacements.
+
+## Deploying through an Op
+
+The `helmInstall` op activity runs `helm upgrade --install --wait`. Since chant #1243 it also records the deploy in the [release ledger](/chant/components/observability/#the-release-ledger), so charts join the same digest-keyed queries the ledger answers for components.
+
+```ts
+import { Op, phase, helmInstall } from "@intentius/chant/op";
+
+export const deployWeb = Op("deploy-web", {
+  phases: [
+    phase("Deploy", [
+      helmInstall("web", "./dist", {
+        values: "values-prod.yaml",
+        chartVersion: "1.2.3",
+        env: "prod",
+      }),
+    ]),
+  ],
+});
+```
+
+The record is keyed by an input digest. That is a `sha256:` digest over the deploy's inputs — the chart reference, the chart version, the resolved values (values file with `--set` entries applied), and the declared capability profile when one is given. Canonical JSON makes it stable across value key order. It is not a digest of the rendered manifests. Rendered-output identity is the `contentDigest` a pinned render records — see [Render digests](#render-digests).
+
+Record fields follow the auto-release convention. `component` defaults to the release name and `env` to `local`. The actor resolves from `GITHUB_ACTOR`, `GITLAB_USER_LOGIN`, or `USER`. The git sha resolves from `HEAD`. The run id resolves from `GITHUB_RUN_ID` or `CI_PIPELINE_ID` unless passed explicitly. A field that cannot be resolved is never faked. The append is skipped and a warning explains why.
+
+A ledger-append failure never fails the deploy. The deploy already happened, so the activity warns and still succeeds. Pass `recordRelease: false` to opt out. The activity returns the input digest and the record, so a workflow can carry both.

@@ -117,6 +117,8 @@ export interface AutoReleaseRunInfo {
   digest?: string;
   /** Orchestrator run identifier — a Temporal `runId`, or a locally generated id for the local executor (mirrors `runComponentsReleaseRecord`'s `--run-id` default). */
   runId: string;
+  /** The bypassed capability-profile divergences, when the caller deliberately overrode a deploy-time profile assertion (chant #1244) — recorded verbatim as the release record's `profileOverride`. */
+  profileOverride?: string;
 }
 
 /** Opt-out + field-override knobs for auto-release recording, threaded from CLI flags/config (#597: "opt-out-able (flag/config), documented default"). */
@@ -202,6 +204,7 @@ export async function maybeRecordAutoRelease(
         runId: run.runId,
         timestamp,
         actor,
+        ...(run.profileOverride ? { profileOverride: run.profileOverride } : {}),
       },
       { cwd: options.cwd },
     );
