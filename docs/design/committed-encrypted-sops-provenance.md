@@ -6,6 +6,11 @@ current tree and proposes a sequenced set of follow-up issues.
 Tracked externally: `lex00/iac-cd-bench#31`, epic `lex00/iac-cd-bench#6`. There is no chant issue
 number yet, hence the descriptive filename rather than the `365-` prefix the neighbouring doc uses.
 
+**Status: follow-ups 1–4 are implemented** (`lex00/iac-cd-bench#32`). Where the implementation
+diverged from what is written below, §10 records the delta and the rest of the doc is left as it was
+written, so the two can be compared. Follow-ups 5 (Flux `decryption` pass-through + WK8505) and 6
+(the remaining docs) are open as `lex00/iac-cd-bench#33`; 7 (helm) is unfiled upstream.
+
 Reference estate: knr-ops, a Flux GitOps repo that encrypts only the `data`/`stringData` fields of
 `*.sops.yaml` files against one age recipient via a repo-root `.sops.yaml`, lists those files as
 plain kustomize resources, and sets `spec.decryption.provider: sops` plus `secretRef: sops-age` on
@@ -559,3 +564,62 @@ everything.
 - `lexicons/k8s/src/lint/audit-catalog.ts` — catalog entries (§5)
 - `docs/src/content/docs/concepts/where-values-come-from.mdx` — the taxonomy row (§7 of that doc)
 - `lexicons/k8s/docs/pages/flux-composites.mdx`, `lexicons/k8s/docs/pages/lint-rules.mdx` (§9.6)
+
+## 10. Implementation deltas
+
+What follow-ups 1–4 actually landed, where it differs from the design above. Nothing here changes a
+decision; each is a place the design underspecified the mechanism and reality supplied it.
+
+**`BuildRootContext.entities` needed a second change the design missed.** §3 describes widening the
+context object, and says the ordering is already correct. Both are true, but the contributors reach
+`mergeBuildRootEntities` as already-bound closures — `collectBuildRootContributors`
+(`cli/plugins.ts`) binds `{ projectRoot, config }` before `build()` runs, so the entity map does not
+exist yet and cannot be bound with them. So the thunk type changed too: `BuildRootContributor` now
+takes a context argument the merge supplies at call time. A zero-argument hook stays assignable, so
+no existing contributor or call site changed. `entities` is optional on `BuildRootContext` for the
+same reason — a caller with no discovered set (an existing plugin test, a graph mode) omits it, and
+a hook treats absent as empty.
+
+**The `.yaml`/`.yml` restriction is enforced in `declareSecret`, and the writer skips the round trip
+anyway.** §3 recommended the extension restriction for v1 and filed a `verbatimFiles` channel as a
+follow-up. The restriction landed in the factory (pure, no filesystem), and the CLI writer
+additionally names the declared basenames and skips its `JSON.parse` round trip for them. YAML is a
+JSON superset, so "the parse happens to fail" was never a guarantee; naming the files makes byte
+identity structural. A general `SerializerResult.verbatimFiles` channel is still worth having and is
+still unfiled.
+
+**Sidecar basename collisions refuse rather than warn.** §3 noted that `additionalFiles` is one flat
+map with last-writer-wins and said the general gap should be filed. Within this feature the
+resolution stage refuses two declarations whose paths share a basename, naming both — silently
+emitting one file for two declared Secrets is the exact shape of failure this feature exists to
+remove. The general gap (any two lexicons colliding on an additional-file name) is untouched and
+still worth filing.
+
+**The entity is split across two modules.** §3 and open question 6 describe one internal
+`EncryptedSecretFile` declarable. It ships as `sops/entity.ts` (marker, shape, type guard) and
+`sops/encrypted-secret-file.ts` (the filesystem read, the validation, the `buildRoots` contribution),
+because the serializer only needs to RECOGNISE the entity and must not pull `node:fs` and a YAML
+parser into its module graph to do so.
+
+**One validation implementation, two surfaces.** §3's stage-2 checks and §5's WK8504 are described
+separately and are the same checks; they ship as one `validateEncryptedSecretDocument()` returning
+every problem it found. The build-root stage turns that list into a refusal (nothing is emitted);
+WK8504 turns it into one diagnostic per problem. From lint's side the "missing file" case reads as
+"the build emitted no file for this declaration", since lint sees the emitted sidecars rather than
+the filesystem.
+
+**The k8s `buildRoots` hook merges two contributions.** A plugin has exactly one `buildRoots` hook,
+so the kustomize-roots render and the ciphertext resolution are merged inside it rather than
+registered separately.
+
+**The serializer's `SerializerResult` also carries warnings.** §3 mentions only `files`. The widened
+return also uses `warnings`, for a duplicate sidecar filename. Resolution refuses that case first, so
+the warning is defence in depth rather than a path anything reaches today — but it is why the
+bare-string fast path checks for warnings as well as files.
+
+**Post-synth blindness was asserted, not just reasoned.** §5 argues WK8005/WK8041/WK8042 cannot see
+a SOPS Secret. That argument is now a test: the three checks run against a context whose sidecar
+carries the fixture ciphertext and return nothing.
+
+Not implemented here, unchanged in scope: §4's `FluxAppFor.decryption` pass-through and §5's WK8505,
+both `lex00/iac-cd-bench#33`.
