@@ -37,6 +37,8 @@ export { SolrFargateService } from "./solr-fargate-service";
 export type { SolrFargateServiceProps } from "./solr-fargate-service";
 export { Ec2InstanceRole } from "./ec2-instance-role";
 export type { Ec2InstanceRoleProps } from "./ec2-instance-role";
+export { Ec2InstanceBundle } from "./ec2-instance-bundle";
+export type { Ec2InstanceBundleProps, Ec2InstanceBundleIngressRule } from "./ec2-instance-bundle";
 export { MinimalVpc } from "./minimal-vpc";
 export type { MinimalVpcProps } from "./minimal-vpc";
 export { EksCluster } from "./eks-cluster";

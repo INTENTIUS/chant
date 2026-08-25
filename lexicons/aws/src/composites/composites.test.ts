@@ -15,6 +15,7 @@ import { AlbShared } from "./alb-shared";
 import { FargateService } from "./fargate-service";
 import { RdsInstance } from "./rds-instance";
 import { Ec2InstanceRole } from "./ec2-instance-role";
+import { Ec2InstanceBundle } from "./ec2-instance-bundle";
 import { MinimalVpc } from "./minimal-vpc";
 import { StepFunctionsWorkflow } from "./step-functions-workflow";
 
@@ -895,6 +896,140 @@ describe("Ec2InstanceRole", () => {
     expect(expanded.size).toBe(2);
     expect(expanded.has("myRoleRole")).toBe(true);
     expect(expanded.has("myRoleInstanceProfile")).toBe(true);
+  });
+});
+
+describe("Ec2InstanceBundle", () => {
+  const instanceProps = {
+    imageId: "ami-0abcdef1234567890",
+    vpcId: "vpc-123",
+    subnetId: "subnet-456",
+  };
+
+  test("returns role, instanceProfile, sg, instance members", () => {
+    const instance = Ec2InstanceBundle(instanceProps);
+    expect(Object.keys(instance.members)).toEqual(["role", "instanceProfile", "sg", "instance"]);
+  });
+
+  test("expandComposite produces correct logical names", () => {
+    const expanded = expandComposite("web", Ec2InstanceBundle(instanceProps));
+    expect(expanded.has("webRole")).toBe(true);
+    expect(expanded.has("webInstanceProfile")).toBe(true);
+    expect(expanded.has("webSg")).toBe(true);
+    expect(expanded.has("webInstance")).toBe(true);
+    expect(expanded.size).toBe(4);
+  });
+
+  test("role has EC2 trust policy", () => {
+    const instance = Ec2InstanceBundle(instanceProps);
+    const roleProps = (instance.role as any).props;
+    expect(roleProps.AssumeRolePolicyDocument.Statement[0].Principal.Service).toBe("ec2.amazonaws.com");
+  });
+
+  test("instanceProfile references the role", () => {
+    const instance = Ec2InstanceBundle(instanceProps);
+    const profileProps = (instance.instanceProfile as any).props;
+    expect(profileProps.Roles).toHaveLength(1);
+  });
+
+  test("ManagedPolicyArns and Policies pass through to the role", () => {
+    const arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore";
+    const instance = Ec2InstanceBundle({
+      ...instanceProps,
+      ManagedPolicyArns: [arn],
+      Policies: [{ PolicyName: "extra", PolicyDocument: { Version: "2012-10-17", Statement: [] } }],
+    });
+    const roleProps = (instance.role as any).props;
+    expect(roleProps.ManagedPolicyArns).toContain(arn);
+    expect(roleProps.Policies).toHaveLength(1);
+  });
+
+  test("instance wires ImageId, InstanceType default, subnet, SG, and instance profile", () => {
+    const instance = Ec2InstanceBundle(instanceProps);
+    const instanceProps_ = (instance.instance as any).props;
+    expect(instanceProps_.ImageId).toBe("ami-0abcdef1234567890");
+    expect(instanceProps_.InstanceType).toBe("t3.micro");
+    expect(instanceProps_.SubnetId).toBe("subnet-456");
+    expect(instanceProps_.SecurityGroupIds).toHaveLength(1);
+    expect(instanceProps_.IamInstanceProfile).toBeDefined();
+  });
+
+  test("custom instanceType is respected", () => {
+    const instance = Ec2InstanceBundle({ ...instanceProps, instanceType: "m5.large" });
+    expect((instance.instance as any).props.InstanceType).toBe("m5.large");
+  });
+
+  test("keyName is passed through when provided", () => {
+    const instance = Ec2InstanceBundle({ ...instanceProps, keyName: "my-key" });
+    expect((instance.instance as any).props.KeyName).toBe("my-key");
+  });
+
+  test("keyName is omitted by default", () => {
+    const instance = Ec2InstanceBundle(instanceProps);
+    expect((instance.instance as any).props.KeyName).toBeUndefined();
+  });
+
+  test("userData is wrapped in Fn::Base64", () => {
+    const instance = Ec2InstanceBundle({ ...instanceProps, userData: "#!/bin/bash\necho hi" });
+    const userData = (instance.instance as any).props.UserData;
+    expect(JSON.stringify(userData)).toContain("Fn::Base64");
+  });
+
+  test("no ingress rules by default", () => {
+    const instance = Ec2InstanceBundle(instanceProps);
+    expect((instance.sg as any).props.SecurityGroupIngress).toBeUndefined();
+  });
+
+  test("ingress with cidr produces a CidrIp rule", () => {
+    const instance = Ec2InstanceBundle({
+      ...instanceProps,
+      ingress: [{ fromPort: 22, cidr: "10.0.0.0/16", description: "ssh" }],
+    });
+    const rules = (instance.sg as any).props.SecurityGroupIngress;
+    expect(rules).toHaveLength(1);
+    const rule = (rules[0] as any).props;
+    expect(rule.CidrIp).toBe("10.0.0.0/16");
+    expect(rule.FromPort).toBe(22);
+    expect(rule.ToPort).toBe(22);
+    expect(rule.IpProtocol).toBe("tcp");
+    expect(rule.Description).toBe("ssh");
+  });
+
+  test("ingress with sourceSecurityGroupId produces a SG-sourced rule", () => {
+    const instance = Ec2InstanceBundle({
+      ...instanceProps,
+      ingress: [{ fromPort: 80, toPort: 8080, sourceSecurityGroupId: "sg-abc123" }],
+    });
+    const rule = ((instance.sg as any).props.SecurityGroupIngress[0] as any).props;
+    expect(rule.SourceSecurityGroupId).toBe("sg-abc123");
+    expect(rule.FromPort).toBe(80);
+    expect(rule.ToPort).toBe(8080);
+  });
+
+  test("ingress with cidrIpv6 produces an IPv6 rule", () => {
+    const instance = Ec2InstanceBundle({
+      ...instanceProps,
+      ingress: [{ fromPort: 443, cidrIpv6: "::/0" }],
+    });
+    const rule = ((instance.sg as any).props.SecurityGroupIngress[0] as any).props;
+    expect(rule.CidrIpv6).toBe("::/0");
+  });
+
+  test("ingress rule with no source throws", () => {
+    expect(() =>
+      Ec2InstanceBundle({ ...instanceProps, ingress: [{ fromPort: 22 }] }),
+    ).toThrow(/needs one of cidr, cidrIpv6, or sourceSecurityGroupId/);
+  });
+
+  test("multiple ingress rules are all applied", () => {
+    const instance = Ec2InstanceBundle({
+      ...instanceProps,
+      ingress: [
+        { fromPort: 22, cidr: "10.0.0.0/16" },
+        { fromPort: 443, cidr: "0.0.0.0/0" },
+      ],
+    });
+    expect((instance.sg as any).props.SecurityGroupIngress).toHaveLength(2);
   });
 });
 
