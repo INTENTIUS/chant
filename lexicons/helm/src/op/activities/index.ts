@@ -6,7 +6,15 @@
  * The `helmInstall` step builder stays in core (@intentius/chant/op), re-exported
  * from the temporal Op-authoring barrel like the other core builders.
  */
-export { helmInstall, helmInstallInputDigest, CapabilityProfileMismatchError } from "./helm";
+export {
+  helmInstall,
+  helmInstallInputDigest,
+  CapabilityProfileMismatchError,
+  PinnedRenderNotFoundError,
+  PinnedRenderIntegrityError,
+  PinnedInstallInputError,
+  PinnedProfileMismatchError,
+} from "./helm";
 export type {
   HelmInstallArgs,
   HelmInstallResult,

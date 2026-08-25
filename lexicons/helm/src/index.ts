@@ -54,6 +54,10 @@ export type {
   RouteRenderOptions,
 } from "./render-wrapper";
 
+// #1242 — pinned install path: wrapper-chart materialization.
+export { materializeWrapperChart, wrapperChartName } from "./wrapper-chart";
+export type { MaterializedWrapperChart } from "./wrapper-chart";
+
 // Capability profiles — per-cluster render inputs (#1235, epic #1228)
 export {
   helmConfigSchema,

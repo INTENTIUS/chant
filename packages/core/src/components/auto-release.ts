@@ -119,6 +119,8 @@ export interface AutoReleaseRunInfo {
   runId: string;
   /** The bypassed capability-profile divergences, when the caller deliberately overrode a deploy-time profile assertion (chant #1244) — recorded verbatim as the release record's `profileOverride`. */
   profileOverride?: string;
+  /** The deploy's input-side digest, when `digest` is a rendered-content identity (a pinned helm deploy, chant #1242) — recorded as the release record's `inputDigest` so ledger queries can still join on inputs across clusters whose bytes legitimately differ. */
+  inputDigest?: string;
 }
 
 /** Opt-out + field-override knobs for auto-release recording, threaded from CLI flags/config (#597: "opt-out-able (flag/config), documented default"). */
@@ -205,6 +207,7 @@ export async function maybeRecordAutoRelease(
         timestamp,
         actor,
         ...(run.profileOverride ? { profileOverride: run.profileOverride } : {}),
+        ...(run.inputDigest ? { inputDigest: run.inputDigest } : {}),
       },
       { cwd: options.cwd },
     );

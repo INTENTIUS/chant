@@ -15,13 +15,22 @@
  */
 import { describe, test, expect, beforeEach, afterEach, vi } from "vitest";
 import { createHash } from "node:crypto";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const helm = vi.hoisted(() => ({
   calls: [] as string[],
   fail: false,
+  /** Scripted `helm get metadata -o json` body (pinned path, #1242). */
+  metadata: undefined as Record<string, unknown> | undefined,
+  metadataFail: false,
+  /**
+   * Wrapper-chart snapshot captured at `helm upgrade` time (#1242) — the
+   * activity deletes its temp dir afterwards, so the double reads the files
+   * the moment helm would. Keys are chart-relative paths.
+   */
+  wrapperFiles: undefined as Record<string, string> | undefined,
 }));
 
 /** Scripted kubectl double for the capability probe (#1244) — what the "live cluster" reports. */
@@ -36,13 +45,41 @@ const ledger = vi.hoisted(() => ({
   outcome: undefined as unknown,
 }));
 
-vi.mock("node:child_process", () => {
+vi.mock("node:child_process", async () => {
+  const { readFileSync, readdirSync, statSync } = await import("node:fs");
+  const { join } = await import("node:path");
+  const snapshotDir = (dir: string, rel = ""): Record<string, string> => {
+    const files: Record<string, string> = {};
+    for (const entry of readdirSync(join(dir, rel))) {
+      const relPath = rel ? `${rel}/${entry}` : entry;
+      if (statSync(join(dir, relPath)).isDirectory()) {
+        Object.assign(files, snapshotDir(dir, relPath));
+      } else {
+        files[relPath] = readFileSync(join(dir, relPath), "utf8");
+      }
+    }
+    return files;
+  };
   const custom = Symbol.for("nodejs.util.promisify.custom");
   const exec = ((_cmd: string, _opts: unknown, cb?: (...a: unknown[]) => void) => {
     cb?.(new Error("unmocked exec path"));
   }) as unknown as Record<symbol, unknown>;
   exec[custom] = async (cmd: string) => {
     helm.calls.push(cmd);
+    if (cmd.startsWith("helm get metadata")) {
+      if (helm.metadataFail) throw new Error("Error: release: not found");
+      return { stdout: JSON.stringify(helm.metadata ?? {}), stderr: "" };
+    }
+    if (cmd.startsWith("helm upgrade")) {
+      // Pinned installs pass a chart directory; snapshot it before the
+      // activity's cleanup so tests can assert the exact bytes helm saw.
+      const chartArg = cmd.split(" ")[5];
+      try {
+        helm.wrapperFiles = snapshotDir(chartArg);
+      } catch {
+        helm.wrapperFiles = undefined; // unpinned: chart ref is not a local dir
+      }
+    }
     if (cmd.startsWith("kubectl")) {
       if (cluster.probeFail) {
         throw new Error("The connection to the server localhost:8080 was refused");
@@ -86,7 +123,16 @@ vi.mock("@intentius/chant/components/auto-release", () => ({
   },
 }));
 
-import { helmInstall, helmInstallInputDigest } from "./helm";
+import {
+  helmInstall,
+  helmInstallInputDigest,
+  PinnedInstallInputError,
+  PinnedProfileMismatchError,
+  PinnedRenderIntegrityError,
+  PinnedRenderNotFoundError,
+} from "./helm";
+import { loadRenderContent, persistHelmRender, type RenderManifest } from "../../render-store";
+import { routeRender } from "../../render-wrapper";
 
 let dir: string;
 
@@ -94,6 +140,9 @@ beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "chant-helm-activity-"));
   helm.calls = [];
   helm.fail = false;
+  helm.metadata = undefined;
+  helm.metadataFail = false;
+  helm.wrapperFiles = undefined;
   cluster.serverVersion = { major: "1", minor: "33", gitVersion: "v1.33.6+k3s1" };
   cluster.apiVersions = ["v1", "apps/v1", "batch/v1"];
   cluster.probeFail = false;
@@ -411,5 +460,213 @@ describe("capability profile assertion at deploy time (#1244)", () => {
       overrideProfileAssertion: true,
     });
     expect(ledger.calls[0].profileOverride).toBeUndefined();
+  });
+});
+
+// ── pinned install path (#1242) ───────────────────────────────────────────
+
+describe("pinned install path (#1242)", () => {
+  const rendered = [
+    "---",
+    "# Source: umb/charts/kid/crds/kidcrd.yaml",
+    "apiVersion: apiextensions.k8s.io/v1",
+    "kind: CustomResourceDefinition",
+    "metadata:",
+    "  name: kidthings.example.com",
+    "spec:",
+    "  group: example.com",
+    "  names:",
+    "    kind: KidThing",
+    "---",
+    "# Source: umb/templates/hook-job.yaml",
+    "apiVersion: batch/v1",
+    "kind: Job",
+    "metadata:",
+    "  name: setup",
+    "  annotations:",
+    '    "helm.sh/hook": pre-install',
+    "---",
+    "# Source: umb/templates/cm.yaml",
+    "apiVersion: v1",
+    "kind: ConfigMap",
+    "metadata:",
+    "  name: alerts",
+    "data:",
+    '  template: "summary: {{ $labels.instance }} down"',
+  ].join("\n");
+
+  /** Persist the fixture render into a per-test store and return its manifest. */
+  function storeRender(overrides?: { releaseName?: string }): { manifest: RenderManifest; root: string } {
+    const root = join(dir, "render-store");
+    const { manifest } = persistHelmRender({
+      rendered,
+      releaseName: overrides?.releaseName ?? "web",
+      chart: "umb",
+      chartVersion: "0.1.0",
+      values: { replicas: 3 },
+      capabilityProfile: { name: "k3d-local", kubeVersion: "1.33.6", apiVersions: ["apps/v1"] },
+      root,
+    });
+    return { manifest, root };
+  }
+
+  test("installs the recorded bytes: wrapper argv, CRDs in crds/, docs shipped verbatim through .Files.Get shims", async () => {
+    const { manifest, root } = storeRender();
+    helm.metadata = { name: "web", revision: 2, version: "0.1.0", namespace: "default" };
+
+    const result = await helmInstall({ name: "web", contentDigest: manifest.contentDigest, renderStoreRoot: root });
+
+    // argv: the wrapper directory is the install input — no chart ref, no
+    // values, no --set, no --version; nothing helm could re-render from.
+    const upgrade = helm.calls.find((c) => c.startsWith("helm upgrade"));
+    expect(upgrade).toMatch(/^helm upgrade --install --wait web \S*chant-helm-pinned-[^ ]+$/);
+
+    // The bytes helm saw are the stored canonical documents, routed: the CRD
+    // verbatim in crds/, every other doc verbatim in manifests/ with a
+    // .Files.Get shim in templates/ (never re-templated — the ConfigMap
+    // carries literal `{{ $labels }}` bytes).
+    const files = helm.wrapperFiles!;
+    const canonical = loadRenderContent(manifest.contentDigest, { root })!;
+    const routed = routeRender(canonical, { chart: manifest.chart, chartVersion: manifest.chartVersion });
+    const crdFile = Object.keys(files).find((f) => f.startsWith("crds/"))!;
+    expect(files[crdFile]).toBe(routed.crds[0].text + "\n");
+    const manifestFiles = Object.keys(files).filter((f) => f.startsWith("manifests/"));
+    const shims = Object.keys(files).filter((f) => f.startsWith("templates/"));
+    expect(manifestFiles).toHaveLength(2);
+    expect(shims).toHaveLength(2);
+    for (const doc of [...routed.main, ...routed.hooks]) {
+      expect(manifestFiles.map((f) => files[f])).toContain(doc.text + "\n");
+    }
+    for (const shim of shims) {
+      expect(files[shim]).toMatch(/^\{\{ \.Files\.Get "manifests\/[a-z0-9-]+\.yaml" \}\}\n$/);
+    }
+    expect(files["Chart.yaml"]).toContain("name: umb");
+    expect(files["Chart.yaml"]).toContain("version: 0.1.0");
+
+    // Result fields, complete.
+    expect(result.pinned).toBe(true);
+    expect(result.contentDigest).toBe(manifest.contentDigest);
+    expect(result.inputDigest).toBe(manifest.inputDigest);
+    expect(result.releaseName).toBe("web");
+    expect(result.namespace).toBeNull();
+    expect(result.revision).toBe(2);
+    expect(result.chartVersion).toBe("0.1.0");
+    expect(result.crdsApplied).toBe(1);
+    expect(result.docsApplied).toBe(2);
+    expect(result.hooksRun).toBe(1);
+    expect(result.profileAssertion).toEqual({ matched: true });
+    expect(result.release.recorded).toBe(true);
+  });
+
+  test("the ReleaseRecord is keyed by the content digest and carries the input digest alongside", async () => {
+    const { manifest, root } = storeRender();
+    helm.metadata = { name: "web", revision: 1, version: "0.1.0" };
+
+    await helmInstall({ name: "web", contentDigest: manifest.contentDigest, renderStoreRoot: root, env: "prod" });
+
+    expect(ledger.calls).toHaveLength(1);
+    expect(ledger.calls[0].digest).toBe(manifest.contentDigest);
+    expect(ledger.calls[0].inputDigest).toBe(manifest.inputDigest);
+    expect(ledger.calls[0].env).toBe("prod");
+    expect(ledger.calls[0].component).toBe("web");
+  });
+
+  test("the live #1244 assertion runs against the manifest's recorded profile, before the install", async () => {
+    const { manifest, root } = storeRender();
+    cluster.serverVersion = { major: "1", minor: "30", gitVersion: "v1.30.0" }; // diverges from recorded 1.33.6
+    await expect(
+      helmInstall({ name: "web", contentDigest: manifest.contentDigest, renderStoreRoot: root }),
+    ).rejects.toThrow(/does not match the declared capability profile "k3d-local"/);
+    expect(helm.calls.filter((c) => c.startsWith("helm"))).toHaveLength(0);
+  });
+
+  test("refuses a digest the store does not hold, before any exec", async () => {
+    const { root } = storeRender();
+    await expect(
+      helmInstall({ name: "web", contentDigest: "sha256:" + "0".repeat(64), renderStoreRoot: root }),
+    ).rejects.toThrow(PinnedRenderNotFoundError);
+    expect(helm.calls).toHaveLength(0);
+    expect(ledger.calls).toHaveLength(0);
+  });
+
+  test("verifies the stored bytes against the digest before any mutation — a corrupt entry refuses", async () => {
+    const { manifest, root } = storeRender();
+    const contentFile = join(root, manifest.contentDigest.replace("sha256:", "sha256-"), "content.yaml");
+    appendFileSync(contentFile, "# tampered\n");
+    await expect(
+      helmInstall({ name: "web", contentDigest: manifest.contentDigest, renderStoreRoot: root }),
+    ).rejects.toThrow(PinnedRenderIntegrityError);
+    expect(helm.calls).toHaveLength(0);
+  });
+
+  test("refuses deploy-time render inputs alongside contentDigest, naming them", async () => {
+    const { manifest, root } = storeRender();
+    await expect(
+      helmInstall({
+        name: "web",
+        chart: "./chart",
+        set: { a: "1" },
+        contentDigest: manifest.contentDigest,
+        renderStoreRoot: root,
+      }),
+    ).rejects.toThrow(/render input\(s\) `chart`, `set`/);
+    expect(helm.calls).toHaveLength(0);
+  });
+
+  test("refuses a release name the bytes were not rendered for", async () => {
+    const { manifest, root } = storeRender();
+    await expect(
+      helmInstall({ name: "other", contentDigest: manifest.contentDigest, renderStoreRoot: root }),
+    ).rejects.toThrow(PinnedInstallInputError);
+    await expect(
+      helmInstall({ name: "other", contentDigest: manifest.contentDigest, renderStoreRoot: root }),
+    ).rejects.toThrow(/rendered for release "web"/);
+    expect(helm.calls).toHaveLength(0);
+  });
+
+  test("refuses a declared profile that disagrees with the recorded one, offline, before any probe", async () => {
+    const { manifest, root } = storeRender();
+    await expect(
+      helmInstall({
+        name: "web",
+        contentDigest: manifest.contentDigest,
+        renderStoreRoot: root,
+        capabilityProfile: { name: "prod", kubeVersion: "1.30.0" },
+      }),
+    ).rejects.toThrow(PinnedProfileMismatchError);
+    expect(helm.calls).toHaveLength(0); // not even the kubectl probe ran
+  });
+
+  test("a matching declared profile composes with the live assertion and deploys", async () => {
+    const { manifest, root } = storeRender();
+    helm.metadata = { name: "web", revision: 3, version: "0.1.0" };
+    const result = await helmInstall({
+      name: "web",
+      contentDigest: manifest.contentDigest,
+      renderStoreRoot: root,
+      capabilityProfile: { name: "k3d-local", kubeVersion: "1.33.6", apiVersions: ["apps/v1"] },
+    });
+    expect(result.pinned).toBe(true);
+    expect(result.revision).toBe(3);
+  });
+
+  test("a metadata read failure after a successful install warns and leaves revision unset", async () => {
+    const { manifest, root } = storeRender();
+    helm.metadataFail = true;
+    const warn = vi.spyOn(console, "error").mockImplementation(() => {});
+    const result = await helmInstall({ name: "web", contentDigest: manifest.contentDigest, renderStoreRoot: root });
+    expect(result.revision).toBeUndefined();
+    expect(result.chartVersion).toBe("0.1.0"); // falls back to the stored render's
+    expect(result.release.recorded).toBe(true); // the deploy and its record still happened
+    expect(warn.mock.calls.map((c) => String(c[0])).join("\n")).toContain("helm get metadata");
+    warn.mockRestore();
+  });
+
+  test("the unpinned path is unchanged: same argv as before #1242, pinned: false, no store access", async () => {
+    const result = await helmInstall({ name: "web", chart: "./chart" });
+    expect(helm.calls).toEqual(["helm upgrade --install --wait web ./chart"]);
+    expect(result.pinned).toBe(false);
+    expect(result.contentDigest).toBeUndefined();
+    expect(result.releaseName).toBe("web");
   });
 });
