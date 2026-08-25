@@ -86,6 +86,18 @@ export interface ReleaseRecord {
    * deploy whose target matched, and for deploys with no declared profile.
    */
   profileOverride?: string;
+  /**
+   * Optional: the deploy's input-side digest, when `digest` is a
+   * rendered-content identity rather than an input identity. A pinned helm
+   * deploy (chant #1242) records the render's `contentDigest` as `digest` —
+   * what this cluster actually received — and carries the input digest
+   * (chart, chart version, resolved values, capability facts; chant #1243)
+   * here, because profiles are per cluster: two environments legitimately
+   * render to different bytes, so cross-environment "is prod running what
+   * staging tested" joins on this field while `digest` proves the exact
+   * bytes each cluster got. Absent when `digest` is already input-side.
+   */
+  inputDigest?: string;
 }
 
 /** Required, non-empty-string fields every `ReleaseRecord` must carry. */

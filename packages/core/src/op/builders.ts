@@ -158,6 +158,22 @@ export const helmInstall = (
   return activity("helmInstall", { name, chart, ...args }, profile ?? "longInfra");
 };
 
+/**
+ * Deploy a recorded pinned render by its `sha256:` content digest (chant
+ * #1242): the helm lexicon's `helmInstall` activity loads the render from
+ * the render store, verifies the digest, and installs those exact bytes as
+ * a structure-preserving wrapper chart — no deploy-time render. Defaults to
+ * the `longInfra` profile (override via `opts.profile`).
+ */
+export const helmInstallPinned = (
+  name: string,
+  contentDigest: string,
+  opts?: { namespace?: string; profile?: ActivityStep["profile"]; [k: string]: unknown },
+): ActivityStep => {
+  const { args, profile } = takeProfile(opts);
+  return activity("helmInstall", { name, contentDigest, ...args }, profile ?? "longInfra");
+};
+
 /** Poll for stack readiness (kubectl rollout, CloudFormation complete, etc). Defaults to the `k8sWait` profile (override via `opts.profile`). */
 export const waitForStack = (name: string, opts?: Record<string, unknown>): ActivityStep => {
   const { args, profile } = takeProfile(opts);
