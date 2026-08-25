@@ -1260,6 +1260,24 @@ Tighten Resource from "*" to the Fn::GetAtt Arn list of the declared resources t
 
 Attach the policy via Roles/Users/Groups or reference it from a principal's ManagedPolicyArns — unattached it grants nothing.
 
+### WAW061
+
+**Subnet CidrBlock not contained in its VPC's CidrBlock** — merge-worthy · guidance
+
+Fix the subnet's CidrBlock so it falls within the VPC's CidrBlock range.
+
+### WAW062
+
+**Duplicate export name or explicit resource name within a template** — merge-worthy · guidance
+
+Give each duplicated Export/name a distinct literal value.
+
+### WAW063
+
+**IAM policy denies an action another attached policy on the same role allows** — merge-worthy · guidance
+
+Remove or narrow the Deny, or move the Allow off this role — the explicit Deny always wins.
+
 ## Azure ARM (AZR)
 
 Run against ARM deployment templates (JSON).
