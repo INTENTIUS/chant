@@ -61,11 +61,13 @@ function toProvisionedThroughput(capacity: DynamoDBCapacity): InstanceType<typeo
 }
 
 function toKeySchema(partitionKey: DynamoDBKey, sortKey?: DynamoDBKey): InstanceType<typeof Table_KeySchema>[] {
-  // Conditional entries via spread keep the `new`s out of the `if` (EVL002).
-  return [
-    new Table_KeySchema({ AttributeName: partitionKey.name, KeyType: "HASH" }),
-    ...(sortKey ? [new Table_KeySchema({ AttributeName: sortKey.name, KeyType: "RANGE" })] : []),
-  ];
+  // A ternary (not an `if`) keeps the `new`s unconditional per EVL002, and
+  // returning array literals directly from each branch — no spread — sidesteps
+  // EVL004 (outside a Composite factory, EVL004 only traces a spread source to a
+  // module-top-level const or a literal, not a local variable).
+  const partitionEntry = new Table_KeySchema({ AttributeName: partitionKey.name, KeyType: "HASH" });
+  const sortEntry = sortKey ? new Table_KeySchema({ AttributeName: sortKey.name, KeyType: "RANGE" }) : undefined;
+  return sortEntry ? [partitionEntry, sortEntry] : [partitionEntry];
 }
 
 export const DynamoDBTable = Composite((props: DynamoDBTableProps) => {
