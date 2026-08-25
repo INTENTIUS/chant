@@ -28,6 +28,10 @@ import { wk8306 } from "./wk8306";
 import { wk8401 } from "./wk8401";
 import { wk8402 } from "./wk8402";
 import { wk8403 } from "./wk8403";
+import { wk8404 } from "./wk8404";
+import { wk8405 } from "./wk8405";
+import { wk8406 } from "./wk8406";
+import { wk8407 } from "./wk8407";
 import { argo002 } from "./argo002";
 import { argo003 } from "./argo003";
 import { argo005 } from "./argo005";
@@ -1549,6 +1553,235 @@ describe("WK8403: spec.rayVersion does not match image tag", () => {
     const ctx = makeCtx(makeRayCluster({ rayVersion: "2.40.0", headImage: "rayproject/ray:latest" }));
     const diags = wk8403.check(ctx);
     expect(diags.filter((d) => d.checkId === "WK8403").length).toBe(0);
+  });
+});
+
+// ── WK8404: GPU request without a matching toleration ─────────────────────────
+
+function servingRuntime(opts: {
+  resources?: Record<string, unknown>;
+  tolerations?: unknown[];
+  kind?: string;
+}) {
+  return {
+    apiVersion: "serving.kserve.io/v1alpha1",
+    kind: opts.kind ?? "ServingRuntime",
+    metadata: { name: "vllm-runtime", namespace: "models" },
+    spec: {
+      containers: [
+        {
+          name: "kserve-container",
+          image: "vllm/vllm-openai:v0.7.0",
+          ...(opts.resources && { resources: opts.resources }),
+        },
+      ],
+      ...(opts.tolerations && { tolerations: opts.tolerations }),
+    },
+  };
+}
+
+describe("WK8404: GPU request without a matching toleration", () => {
+  test("flags a GPU request with no toleration", () => {
+    const ctx = makeCtx(JSON.stringify(servingRuntime({
+      resources: { requests: { "nvidia.com/gpu": "1" }, limits: { "nvidia.com/gpu": "1" } },
+    })));
+    const diags = wk8404.check(ctx);
+    expect(diags.length).toBe(1);
+    expect(diags[0].checkId).toBe("WK8404");
+    expect(diags[0].severity).toBe("error");
+    expect(diags[0].message).toContain("nvidia.com/gpu");
+  });
+
+  test("passes with an explicit nvidia.com/gpu toleration", () => {
+    const ctx = makeCtx(JSON.stringify(servingRuntime({
+      resources: { requests: { "nvidia.com/gpu": "1" }, limits: { "nvidia.com/gpu": "1" } },
+      tolerations: [{ key: "nvidia.com/gpu", operator: "Exists", effect: "NoSchedule" }],
+    })));
+    expect(wk8404.check(ctx).length).toBe(0);
+  });
+
+  test("passes with a wildcard Exists toleration (no key)", () => {
+    const ctx = makeCtx(JSON.stringify(servingRuntime({
+      resources: { requests: { "nvidia.com/gpu": "1" } },
+      tolerations: [{ operator: "Exists" }],
+    })));
+    expect(wk8404.check(ctx).length).toBe(0);
+  });
+
+  test("skips containers that don't request a GPU", () => {
+    const ctx = makeCtx(JSON.stringify(servingRuntime({
+      resources: { requests: { cpu: "2" }, limits: { cpu: "2" } },
+    })));
+    expect(wk8404.check(ctx).length).toBe(0);
+  });
+
+  test("also flags a plain Deployment requesting a GPU with no toleration", () => {
+    const ctx = makeCtx(JSON.stringify({
+      apiVersion: "apps/v1",
+      kind: "Deployment",
+      metadata: { name: "gpu-app" },
+      spec: {
+        template: {
+          spec: {
+            containers: [
+              { name: "app", image: "app:1.0", resources: { requests: { "nvidia.com/gpu": "2" }, limits: { "nvidia.com/gpu": "2" } } },
+            ],
+          },
+        },
+      },
+    }));
+    const diags = wk8404.check(ctx);
+    expect(diags.length).toBe(1);
+    expect(diags[0].entity).toBe("gpu-app");
+  });
+});
+
+// ── WK8405: Serving workload without a PodDisruptionBudget ─────────────────────
+
+function inferenceService(opts: { name?: string; labels?: Record<string, string> }) {
+  return {
+    apiVersion: "serving.kserve.io/v1beta1",
+    kind: "InferenceService",
+    metadata: {
+      name: opts.name ?? "llama-3-8b",
+      namespace: "serving",
+      labels: { "app.kubernetes.io/component": "inference-service", ...opts.labels },
+    },
+    spec: {
+      predictor: {
+        model: { runtime: "vllm-runtime", storageUri: "gs://my-models/llama-3-8b/v1" },
+      },
+    },
+  };
+}
+
+function pdb(matchLabels: Record<string, string>) {
+  return {
+    apiVersion: "policy/v1",
+    kind: "PodDisruptionBudget",
+    metadata: { name: "pdb" },
+    spec: { minAvailable: 1, selector: { matchLabels } },
+  };
+}
+
+describe("WK8405: Serving workload without a PDB", () => {
+  test("flags an InferenceService with no covering PDB", () => {
+    const ctx = makeCtx(JSON.stringify(inferenceService({})));
+    const diags = wk8405.check(ctx);
+    expect(diags.length).toBe(1);
+    expect(diags[0].checkId).toBe("WK8405");
+    expect(diags[0].severity).toBe("info");
+  });
+
+  test("passes when a PDB selector covers the InferenceService's labels", () => {
+    const ctx = manifestsCtx(
+      inferenceService({}),
+      pdb({ "app.kubernetes.io/component": "inference-service" }),
+    );
+    expect(wk8405.check(ctx).length).toBe(0);
+  });
+
+  test("flags a Deployment labeled as a serving component with no PDB", () => {
+    const ctx = makeCtx(JSON.stringify({
+      apiVersion: "apps/v1",
+      kind: "Deployment",
+      metadata: { name: "serving-dep", labels: { "app.kubernetes.io/component": "vllm-serving-runtime" } },
+      spec: { replicas: 1, template: { spec: { containers: [{ name: "app", image: "app:1.0" }] } } },
+    }));
+    const diags = wk8405.check(ctx);
+    expect(diags.length).toBe(1);
+    expect(diags[0].entity).toBe("serving-dep");
+  });
+
+  test("ignores a plain Deployment with no serving component label", () => {
+    const ctx = makeCtx(JSON.stringify({
+      apiVersion: "apps/v1",
+      kind: "Deployment",
+      metadata: { name: "other-dep", labels: { "app.kubernetes.io/component": "web" } },
+      spec: { replicas: 1, template: { spec: { containers: [{ name: "app", image: "app:1.0" }] } } },
+    }));
+    expect(wk8405.check(ctx).length).toBe(0);
+  });
+});
+
+// ── WK8406: No resource limits on a GPU pod ─────────────────────────────────
+
+describe("WK8406: GPU container missing resource limits", () => {
+  test("flags a GPU-requesting container with no limits", () => {
+    const ctx = makeCtx(JSON.stringify(servingRuntime({
+      resources: { requests: { "nvidia.com/gpu": "1" } },
+    })));
+    const diags = wk8406.check(ctx);
+    expect(diags.length).toBe(1);
+    expect(diags[0].checkId).toBe("WK8406");
+    expect(diags[0].severity).toBe("warning");
+    expect(diags[0].message).toContain("cpu, memory");
+  });
+
+  test("flags a GPU-requesting container missing only memory limit", () => {
+    const ctx = makeCtx(JSON.stringify(servingRuntime({
+      resources: { requests: { "nvidia.com/gpu": "1" }, limits: { cpu: "4", "nvidia.com/gpu": "1" } },
+    })));
+    const diags = wk8406.check(ctx);
+    expect(diags.length).toBe(1);
+    expect(diags[0].message).toContain("memory");
+    expect(diags[0].message).not.toContain("cpu,");
+  });
+
+  test("passes with full cpu/memory limits on the GPU container", () => {
+    const ctx = makeCtx(JSON.stringify(servingRuntime({
+      resources: { requests: { "nvidia.com/gpu": "1" }, limits: { cpu: "4", memory: "16Gi", "nvidia.com/gpu": "1" } },
+    })));
+    expect(wk8406.check(ctx).length).toBe(0);
+  });
+
+  test("ignores containers with no GPU request even without limits", () => {
+    const ctx = makeCtx(JSON.stringify(servingRuntime({})));
+    expect(wk8406.check(ctx).length).toBe(0);
+  });
+});
+
+// ── WK8407: Unpinned model version ──────────────────────────────────────────
+
+describe("WK8407: Unpinned model version", () => {
+  test("flags a storageUri with no version segment", () => {
+    const manifest = inferenceService({});
+    manifest.spec.predictor.model.storageUri = "gs://my-models-bucket";
+    const diags = wk8407.check(makeCtx(JSON.stringify(manifest)));
+    expect(diags.length).toBe(1);
+    expect(diags[0].checkId).toBe("WK8407");
+    expect(diags[0].severity).toBe("warning");
+  });
+
+  test("flags a floating tag (latest) as unpinned", () => {
+    const manifest = inferenceService({});
+    manifest.spec.predictor.model.storageUri = "gs://my-models-bucket/llama-3-8b/latest";
+    const diags = wk8407.check(makeCtx(JSON.stringify(manifest)));
+    expect(diags.length).toBe(1);
+  });
+
+  test("passes a pinned storageUri (scheme://id/version)", () => {
+    const manifest = inferenceService({});
+    manifest.spec.predictor.model.storageUri = "gs://my-models/llama-3-8b/2024-07-01";
+    const diags = wk8407.check(makeCtx(JSON.stringify(manifest)));
+    expect(diags.length).toBe(0);
+  });
+
+  test("passes a pinned storageUri with a semver version", () => {
+    const manifest = inferenceService({});
+    manifest.spec.predictor.model.storageUri = "hf://meta-llama/Llama-3-8B/v1.0.0";
+    const diags = wk8407.check(makeCtx(JSON.stringify(manifest)));
+    expect(diags.length).toBe(0);
+  });
+
+  test("ignores non-InferenceService manifests", () => {
+    const ctx = makeCtx(JSON.stringify({
+      apiVersion: "apps/v1",
+      kind: "Deployment",
+      metadata: { name: "app" },
+      spec: { template: { spec: { containers: [{ name: "app", image: "app:1.0" }] } } },
+    }));
+    expect(wk8407.check(ctx).length).toBe(0);
   });
 });
 
