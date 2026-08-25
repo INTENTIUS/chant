@@ -51,3 +51,5 @@ export { StepFunctionsWorkflow } from "./step-functions-workflow";
 export type { StepFunctionsWorkflowProps } from "./step-functions-workflow";
 export { MonitoringStack } from "./monitoring-stack";
 export type { MonitoringStackProps, MonitoringMetricSpec } from "./monitoring-stack";
+export { BucketDeployment } from "./bucket-deployment";
+export type { BucketDeploymentProps, BucketDeploymentResult } from "./bucket-deployment";

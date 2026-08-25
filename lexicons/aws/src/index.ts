@@ -147,6 +147,7 @@ export {
   OrganizationRoot, GovernanceFoundation, RegionRestriction, OrganizationTrail,
   StepFunctionsWorkflow,
   MonitoringStack,
+  BucketDeployment,
 } from "./composites/index";
 export type {
   LambdaFunctionProps, LambdaApiProps, ScheduledLambdaProps,
@@ -160,6 +161,7 @@ export type {
   OrganizationRootProps, GovernanceFoundationProps, RegionRestrictionProps, OrganizationTrailProps,
   StepFunctionsWorkflowProps,
   MonitoringStackProps, MonitoringMetricSpec,
+  BucketDeploymentProps, BucketDeploymentResult,
 } from "./composites/index";
 
 // Code generation pipeline

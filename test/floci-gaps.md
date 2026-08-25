@@ -524,3 +524,73 @@ asserting post-apply state through Floci; the manual repro above is the
 closest this got to emulator coverage. Unblocked by switching the assertion
 to the raw ECR `create-repository` API instead of describe-after-CFN, which
 is not representative of how these repositories are actually deployed.
+
+## 14. CloudFormation drops most declared `AWS::S3::Bucket` sub-configuration, and `AWS::S3::BucketPolicy` applies nothing at all
+
+**Status:** confirmed 2026-08-24 against `floci/floci:1.5.34`, unfiled. Same
+class as entry 4 (CloudFormation not applying a declared resource's
+properties) — S3, not EC2 security groups, this time. Found building the
+`BucketDeployment` composite (chant#1139) — a bucket declaring encryption,
+a public-access-block, a website configuration and a tag through
+CloudFormation, plus a sibling `AWS::S3::BucketPolicy`.
+
+```
+$ aws cloudformation create-stack --stack-name probe --template-body file://template.json
+# template.json declares one AWS::S3::Bucket with BucketEncryption,
+# PublicAccessBlockConfiguration (open, for the website case),
+# WebsiteConfiguration and one Tag, plus one AWS::S3::BucketPolicy
+# (Bucket: {Ref: bucket}) granting public s3:GetObject.
+$ aws cloudformation describe-stacks --stack-name probe --query 'Stacks[0].StackStatus'
+"CREATE_COMPLETE"
+$ aws cloudformation describe-stack-resources --stack-name probe
+# both siteBucket and siteBucketPolicy report CREATE_COMPLETE
+
+$ aws s3api get-bucket-encryption --bucket chant-bucket-deployment-probe
+{"ServerSideEncryptionConfiguration":{"Rules":[{"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"},...}]}}   # <- correct
+
+$ aws s3api get-bucket-website --bucket chant-bucket-deployment-probe
+An error occurred (NoSuchWebsiteConfiguration) …                 # <- declared, not applied
+$ aws s3api get-bucket-tagging --bucket chant-bucket-deployment-probe
+{"TagSet":[]}                                                     # <- declared one tag, applied none
+$ aws s3api get-public-access-block --bucket chant-bucket-deployment-probe
+An error occurred (NoSuchPublicAccessBlockConfiguration) …       # <- declared, not applied
+$ aws s3api get-bucket-policy --bucket chant-bucket-deployment-probe
+An error occurred (NoSuchBucketPolicy) …                          # <- CREATE_COMPLETE, applies nothing
+```
+
+Every one of the four round-trips through the plain S3 API once put there
+directly instead of through CloudFormation:
+
+```
+$ aws s3api put-bucket-website --bucket ... --website-configuration '{"IndexDocument":{"Suffix":"index.html"}}'
+$ aws s3api get-bucket-website --bucket ...
+{"IndexDocument":{"Suffix":"index.html"}}                         # <- round-trips
+$ aws s3api put-bucket-tagging --bucket ... --tagging '{"TagSet":[{"Key":"env","Value":"prod"}]}'
+$ aws s3api get-bucket-tagging --bucket ...
+{"TagSet":[{"Key":"env","Value":"prod"}]}                          # <- round-trips
+$ aws s3api put-public-access-block --bucket ... --public-access-block-configuration BlockPublicAcls=true,...
+$ aws s3api get-public-access-block --bucket ...
+{"PublicAccessBlockConfiguration":{"BlockPublicAcls":true,...}}   # <- round-trips
+$ aws s3api put-bucket-policy --bucket ... --policy '{"Version":"2012-10-17","Statement":[...]}'
+$ aws s3api get-bucket-policy --bucket ...
+{"Policy":"{...}"}                                                 # <- round-trips
+```
+
+So the S3 API itself is fine on this emulator (encryption also round-trips
+correctly through CloudFormation, singling it out as the one sub-resource
+the provider does forward) — the gap is `CloudFormationResourceProvisioner`'s
+S3 bucket path calling only the encryption API and silently skipping
+`WebsiteConfiguration`, `PublicAccessBlockConfiguration` and `Tags`, and its
+`AWS::S3::BucketPolicy` provisioner not calling `PutBucketPolicy` at all
+despite reporting `CREATE_COMPLETE`.
+
+**Effect on chant:** `BucketDeployment` (chant#1139) declares all four on
+Floci and a clean apply will read back as if none of them were ever asked
+for — the composite itself is correct (`aws cloudformation get-template`
+still shows every property; this is purely an apply-time gap), so the
+composite's tests exercise the generated template's shape directly rather
+than a Floci round-trip. A drift-acceptance estate built on this composite
+would report false `absent` drift on all four properties until this lands,
+the same shape as entry 4's SG rules — actual out-of-band drift (a rule
+added on top of what CloudFormation *did* apply) would still surface
+correctly for `BucketEncryption`, the one property this path forwards.
