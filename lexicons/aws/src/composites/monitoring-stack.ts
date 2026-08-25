@@ -89,7 +89,15 @@ export interface MonitoringStackProps {
 
 /** A CloudWatch dashboard "metric" widget, stacked full-width below the last. */
 function widget(spec: MonitoringMetricSpec, index: number) {
-  const dims = spec.dimension ? [spec.dimension.name, spec.dimension.value] : [];
+  // Two literal-array branches, not a spread — EVL004 only traces a spread
+  // source to a *module-level* const (packages/core/src/lint/rules/
+  // evl004-spread-non-const.ts's isConstIdentifier walks sourceFile.statements
+  // only), so a same-function `const dims = [...]` here reads as non-const
+  // even though it is one. A ternary between two literals sidesteps the gap
+  // instead of fighting it.
+  const metricTuple = spec.dimension
+    ? [spec.namespace, spec.metricName, spec.dimension.name, spec.dimension.value]
+    : [spec.namespace, spec.metricName];
   return {
     type: "metric",
     x: 0,
@@ -98,7 +106,7 @@ function widget(spec: MonitoringMetricSpec, index: number) {
     height: 6,
     properties: {
       title: spec.title,
-      metrics: [[spec.namespace, spec.metricName, ...dims]],
+      metrics: [metricTuple],
       period: spec.period ?? 300,
       stat: spec.statistic ?? "Sum",
       view: "timeSeries",
