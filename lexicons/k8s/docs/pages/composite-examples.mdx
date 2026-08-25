@@ -148,6 +148,9 @@ Not yet documented on this page or its vendor-specific neighbors (chant #1723's 
   meantime
 - **Ray:** `RayCluster`, `RayJob`, `RayService` — see the
   [Ray + KubeRay tutorial](/chant/tutorials/ray-kuberay-gke/) in the meantime
+- **KServe:** `InferenceService` — spec-true predictor (model ref + `ServingRuntime`
+  name) with autoscaling bounds and canary traffic split; pairs with a
+  `ServingRuntime` (e.g. vLLM) and a resolved model `storageUri`
 
 ## Deploying composites
 

@@ -35,6 +35,7 @@ import { GcePdStorageClass } from "./gce-pd-storage-class";
 import { FilestoreStorageClass } from "./filestore-storage-class";
 import { GkeGateway } from "./gke-gateway";
 import { ConfigConnectorContext } from "./config-connector-context";
+import { InferenceService } from "./inference-service";
 
 // ── WebApp ──────────────────────────────────────────────────────────
 
@@ -3472,6 +3473,185 @@ describe("FluxAppFor", () => {
     expect(spec.suspend).toBe(true);
     expect(spec.timeout).toBe("3m");
     expect(spec.serviceAccountName).toBe("flux-applier");
+  });
+});
+
+// ── InferenceService ─────────────────────────────────────────────────
+
+describe("InferenceService", () => {
+  test("emits a valid InferenceService referencing the runtime and storageUri", () => {
+    const result = InferenceService({
+      name: "llama-3-8b",
+      namespace: "serving",
+      model: "gs://my-models/llama-3-8b/v1",
+      runtime: "vllm-runtime",
+    });
+    expect(result.inferenceService).toBeDefined();
+    const spec = p(result.inferenceService).spec as any;
+    expect(spec.predictor.model.runtime).toBe("vllm-runtime");
+    expect(spec.predictor.model.storageUri).toBe("gs://my-models/llama-3-8b/v1");
+  });
+
+  test("accepts a resolved model ref ({ storageUri }) in place of a raw string", () => {
+    const result = InferenceService({
+      name: "svc",
+      namespace: "ns",
+      model: { storageUri: "s3://bucket/model/v2" },
+      runtime: "vllm-runtime",
+    });
+    const spec = p(result.inferenceService).spec as any;
+    expect(spec.predictor.model.storageUri).toBe("s3://bucket/model/v2");
+  });
+
+  test("modelFormat is omitted unless explicitly set", () => {
+    const result = InferenceService({
+      name: "svc",
+      namespace: "ns",
+      model: "gs://bucket/model",
+      runtime: "vllm-runtime",
+    });
+    const spec = p(result.inferenceService).spec as any;
+    expect(spec.predictor.model.modelFormat).toBeUndefined();
+  });
+
+  test("modelFormat.name flows through when set", () => {
+    const result = InferenceService({
+      name: "svc",
+      namespace: "ns",
+      model: "gs://bucket/model",
+      runtime: "vllm-runtime",
+      modelFormat: "vLLM",
+    });
+    const spec = p(result.inferenceService).spec as any;
+    expect(spec.predictor.model.modelFormat).toEqual({ name: "vLLM" });
+  });
+
+  test("autoscaling bounds (minReplicas/maxReplicas/scaleTarget/scaleMetric) are expressible and present", () => {
+    const result = InferenceService({
+      name: "svc",
+      namespace: "ns",
+      model: "gs://bucket/model",
+      runtime: "vllm-runtime",
+      minReplicas: 1,
+      maxReplicas: 4,
+      scaleTarget: 8,
+      scaleMetric: "concurrency",
+    });
+    const spec = p(result.inferenceService).spec as any;
+    expect(spec.predictor.minReplicas).toBe(1);
+    expect(spec.predictor.maxReplicas).toBe(4);
+    expect(spec.predictor.scaleTarget).toBe(8);
+    expect(spec.predictor.scaleMetric).toBe("concurrency");
+  });
+
+  test("raw-HPA scaleMetric values (cpu/memory/rps) pass through", () => {
+    const result = InferenceService({
+      name: "svc",
+      namespace: "ns",
+      model: "gs://bucket/model",
+      runtime: "vllm-runtime",
+      scaleMetric: "cpu",
+    });
+    const spec = p(result.inferenceService).spec as any;
+    expect(spec.predictor.scaleMetric).toBe("cpu");
+  });
+
+  test("autoscaling fields are absent when not set", () => {
+    const result = InferenceService({
+      name: "svc",
+      namespace: "ns",
+      model: "gs://bucket/model",
+      runtime: "vllm-runtime",
+    });
+    const spec = p(result.inferenceService).spec as any;
+    expect(spec.predictor.minReplicas).toBeUndefined();
+    expect(spec.predictor.maxReplicas).toBeUndefined();
+    expect(spec.predictor.scaleTarget).toBeUndefined();
+    expect(spec.predictor.scaleMetric).toBeUndefined();
+  });
+
+  test("canary traffic split is expressible and present", () => {
+    const result = InferenceService({
+      name: "svc",
+      namespace: "ns",
+      model: "gs://bucket/model",
+      runtime: "vllm-runtime",
+      canaryTrafficPercent: 10,
+    });
+    const spec = p(result.inferenceService).spec as any;
+    expect(spec.predictor.canaryTrafficPercent).toBe(10);
+  });
+
+  test("canary traffic split is absent when not set", () => {
+    const result = InferenceService({
+      name: "svc",
+      namespace: "ns",
+      model: "gs://bucket/model",
+      runtime: "vllm-runtime",
+    });
+    const spec = p(result.inferenceService).spec as any;
+    expect(spec.predictor.canaryTrafficPercent).toBeUndefined();
+  });
+
+  test("includes common labels and metadata", () => {
+    const result = InferenceService({
+      name: "svc",
+      namespace: "ns",
+      model: "gs://bucket/model",
+      runtime: "vllm-runtime",
+      labels: { team: "ml-platform" },
+    });
+    const meta = p(result.inferenceService).metadata as any;
+    expect(meta.name).toBe("svc");
+    expect(meta.namespace).toBe("ns");
+    expect(meta.labels["app.kubernetes.io/name"]).toBe("svc");
+    expect(meta.labels["app.kubernetes.io/managed-by"]).toBe("chant");
+    expect(meta.labels.team).toBe("ml-platform");
+  });
+
+  test("golden: full spec shape with predictor, model, autoscaling, and canary", () => {
+    const result = InferenceService({
+      name: "llama-3-8b",
+      namespace: "serving",
+      model: "gs://my-models/llama-3-8b/v1",
+      runtime: "vllm-runtime",
+      modelFormat: "vLLM",
+      minReplicas: 1,
+      maxReplicas: 4,
+      scaleTarget: 8,
+      scaleMetric: "concurrency",
+      canaryTrafficPercent: 10,
+    });
+    const spec = p(result.inferenceService).spec as any;
+    expect(spec).toEqual({
+      predictor: {
+        model: {
+          runtime: "vllm-runtime",
+          storageUri: "gs://my-models/llama-3-8b/v1",
+          modelFormat: { name: "vLLM" },
+        },
+        minReplicas: 1,
+        maxReplicas: 4,
+        scaleTarget: 8,
+        scaleMetric: "concurrency",
+        canaryTrafficPercent: 10,
+      },
+    });
+  });
+
+  test("defaults passthrough merges into the InferenceService", () => {
+    const result = InferenceService({
+      name: "svc",
+      namespace: "ns",
+      model: "gs://bucket/model",
+      runtime: "vllm-runtime",
+      defaults: {
+        inferenceService: { spec: { predictor: { model: { protocolVersion: "v2" } } } },
+      },
+    });
+    const spec = p(result.inferenceService).spec as any;
+    expect(spec.predictor.model.protocolVersion).toBe("v2");
+    expect(spec.predictor.model.runtime).toBe("vllm-runtime");
   });
 });
 
