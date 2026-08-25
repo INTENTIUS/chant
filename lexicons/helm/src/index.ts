@@ -21,6 +21,29 @@ export type { HelmRenderProps, HelmRenderRecord } from "./render";
 export { canonicalizeRender, helmContentDigest, helmInputDigest, renderStability } from "./render-digest";
 export type { HelmInputDigestSource, RenderStabilityGroup, RenderStabilityReport } from "./render-digest";
 
+// #1238 — RenderManifest + content-addressed render storage.
+export {
+  helmValuesDigest,
+  indexRenderDocuments,
+  renderCacheKey,
+  renderStoreRoot,
+  persistHelmRender,
+  loadRenderManifest,
+  loadRenderContent,
+  listRenderManifests,
+  findRenderByCacheKey,
+  readRenderDocument,
+} from "./render-store";
+export type {
+  RenderManifest,
+  RenderDocumentEntry,
+  RenderDocumentRef,
+  RenderCacheKeySource,
+  RenderInputsIndexEntry,
+  PersistHelmRenderInput,
+  PersistedHelmRender,
+} from "./render-store";
+
 // Capability profiles — per-cluster render inputs (#1235, epic #1228)
 export {
   helmConfigSchema,
