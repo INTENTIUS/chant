@@ -91,6 +91,10 @@ Referencing a profile the config does not declare is a build error naming the pr
 
 Profiles are a cluster fact, not a chart fact. Keep one per cluster or environment, named the way `k8s.profiles` names cluster bindings, and update `kubeVersion` when the cluster upgrades.
 
+The profile is also asserted at deploy time. When `helmInstall` is given a `capabilityProfile`, it reads the target cluster's real capabilities before any helm mutation — `kubectl version -o json` for the server version, `kubectl api-versions` for the served API set, through the same ambient kubeconfig the deploy itself will use. The declared `kubeVersion` must match the live cluster on major.minor (patch skew changes no capability a chart can probe), and every declared apiVersion must be served. A divergence refuses the deploy with each difference named, declared against live. A cluster that cannot be probed refuses too — a deploy that cannot verify its declared profile does not proceed. Nothing runs a probe when no profile is declared.
+
+`overrideProfileAssertion: true` is the deliberate escape hatch. The deploy proceeds through the divergence, the bypassed differences are warned about, and they are recorded verbatim in the release record's `profileOverride` field — so the ledger shows the release knowingly skewed from its declared profile.
+
 ## Render digests
 
 A pinned render records two digests. Each answers a different question.
