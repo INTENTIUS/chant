@@ -6,6 +6,8 @@
  */
 
 import type { LexiconPlugin, IntrinsicDef, InitTemplateSet } from "@intentius/chant/lexicon";
+import type { CommandGroup } from "@intentius/chant/cli/command-group";
+import { helmCommandGroup } from "./commands";
 import { detectTemplate } from "./detect";
 import { discoverLintRules } from "@intentius/chant/lint/discover";
 import { postSynthChecks as postSynthCheckList } from "./lint/post-synth";
@@ -34,6 +36,15 @@ export const helmPlugin: LexiconPlugin = {
   ownershipChannel: { keys: LABEL_OWNERSHIP_KEYS, reads: ["describeResources", "observeResourcesDeep"] },
   auditCatalog: () => helmAuditCatalog,
   serializer: helmSerializer,
+
+  // #1248 (epic #1228 Phase 6, via the #1078 seam) — `chant helm` mounts the
+  // pinned-render surface: the pinnability gate (#1234), the double-render
+  // localizer (#1236), and the recorded-render listing with digests (#1237).
+  // See ./commands.ts for the verb list; this plugin only mounts it. The
+  // diff verbs (#1249 render-to-render, #1250 render-to-live) land there.
+  commands(): CommandGroup {
+    return helmCommandGroup();
+  },
 
   lintRules() {
     const rulesDir = join(dirname(fileURLToPath(import.meta.url)), "lint", "rules");
