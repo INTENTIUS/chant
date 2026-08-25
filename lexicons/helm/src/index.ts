@@ -44,6 +44,16 @@ export type {
   PersistedHelmRender,
 } from "./render-store";
 
+// #1239 — structure-preserving render wrapper: segment-based CRD routing.
+export { routeRender, routeStoredRender } from "./render-wrapper";
+export type {
+  RoutedRender,
+  RoutedDocument,
+  RoutedRenderWarning,
+  RoutedRenderWarningCode,
+  RouteRenderOptions,
+} from "./render-wrapper";
+
 // Capability profiles — per-cluster render inputs (#1235, epic #1228)
 export {
   helmConfigSchema,
