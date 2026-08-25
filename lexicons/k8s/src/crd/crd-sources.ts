@@ -414,6 +414,69 @@ const CAPA_CRD_BASE = `https://raw.githubusercontent.com/kubernetes-sigs/cluster
 const CAAPH_VERSION = "v0.6.4";
 const CAAPH_CRD_BASE = `https://raw.githubusercontent.com/kubernetes-sigs/cluster-api-addon-provider-helm/${CAAPH_VERSION}/config/crd/bases`;
 
+/**
+ * AWS Controllers for Kubernetes (ACK) — S3 controller CRD — s3.services.k8s.aws/v1alpha1
+ *
+ * Each ACK service controller is its own release train with its own CRDs, so
+ * (per the docs' "add the specific kinds a project uses" guidance, and
+ * matching how the ACK IAM group below stays split from EKS/RDS/S3) it is
+ * its own scoped source rather than one entry per AWS "provider". Produces:
+ *   K8s::S3::Bucket  → s3.services.k8s.aws/v1alpha1, kind: Bucket
+ *
+ * Controller install: helm install ack-s3-controller
+ *   oci://public.ecr.aws/aws-controllers-k8s/s3-chart --version 1.10.0
+ */
+const ACK_S3_VERSION = "v1.10.0";
+const ACK_S3_CRD_BASE = `https://raw.githubusercontent.com/aws-controllers-k8s/s3-controller/${ACK_S3_VERSION}/config/crd/bases`;
+
+/**
+ * ACK RDS controller CRD — rds.services.k8s.aws/v1alpha1
+ *
+ * Only `DBInstance` — the standalone-instance kind a project provisions
+ * directly. `DBCluster` and its endpoint/parameter-group/snapshot satellites
+ * are left out (no known consumer; add them when one shows up). Produces:
+ *   K8s::Rds::DBInstance  → rds.services.k8s.aws/v1alpha1, kind: DBInstance
+ *
+ * Controller install: helm install ack-rds-controller
+ *   oci://public.ecr.aws/aws-controllers-k8s/rds-chart --version 1.11.1
+ */
+const ACK_RDS_VERSION = "v1.11.1";
+const ACK_RDS_CRD_BASE = `https://raw.githubusercontent.com/aws-controllers-k8s/rds-controller/${ACK_RDS_VERSION}/config/crd/bases`;
+
+/**
+ * ACK IAM controller CRDs — iam.services.k8s.aws/v1alpha1
+ *
+ * `Role`, `User`, `Policy` — the three IAM primitives a cluster workload
+ * needing AWS access declares (a Role's trust policy, a User's access keys,
+ * a Policy document attached to either). `Group`, `InstanceProfile`,
+ * `OpenIDConnectProvider`, and `ServiceLinkedRole` are left out. Produces:
+ *   K8s::Iam::Role    → iam.services.k8s.aws/v1alpha1, kind: Role
+ *   K8s::Iam::User    → iam.services.k8s.aws/v1alpha1, kind: User
+ *   K8s::Iam::Policy  → iam.services.k8s.aws/v1alpha1, kind: Policy
+ *
+ * Controller install: helm install ack-iam-controller
+ *   oci://public.ecr.aws/aws-controllers-k8s/iam-chart --version 1.8.1
+ */
+const ACK_IAM_VERSION = "v1.8.1";
+const ACK_IAM_CRD_BASE = `https://raw.githubusercontent.com/aws-controllers-k8s/iam-controller/${ACK_IAM_VERSION}/config/crd/bases`;
+
+/**
+ * ACK EKS controller CRD — eks.services.k8s.aws/v1alpha1
+ *
+ * Only `PodIdentityAssociation` — EKS Pod Identity is the modern replacement
+ * for IRSA, and the ACK-managed way to bind a Kubernetes ServiceAccount to
+ * an IAM role without a webhook. `Cluster`, `Addon`, `Nodegroup`,
+ * `FargateProfile`, `AccessEntry`, `IdentityProviderConfig`, and
+ * `Capability` are left out (this k8s lexicon doesn't provision the EKS
+ * cluster itself). Produces:
+ *   K8s::Eks::PodIdentityAssociation  → eks.services.k8s.aws/v1alpha1, kind: PodIdentityAssociation
+ *
+ * Controller install: helm install ack-eks-controller
+ *   oci://public.ecr.aws/aws-controllers-k8s/eks-chart --version 1.20.0
+ */
+const ACK_EKS_VERSION = "v1.20.0";
+const ACK_EKS_CRD_BASE = `https://raw.githubusercontent.com/aws-controllers-k8s/eks-controller/${ACK_EKS_VERSION}/config/crd/bases`;
+
 export const CRD_SOURCES: CRDSource[] = [
   { type: "url", url: `${KUBERAY_CRD_BASE}/ray.io_rayclusters.yaml` },
   { type: "url", url: `${KUBERAY_CRD_BASE}/ray.io_rayjobs.yaml` },
@@ -492,4 +555,10 @@ export const CRD_SOURCES: CRDSource[] = [
   { type: "url", url: `${CAPA_CRD_BASE}/infrastructure.cluster.x-k8s.io_awsclustercontrolleridentities.yaml` },
   { type: "url", url: `${CAAPH_CRD_BASE}/addons.cluster.x-k8s.io_helmchartproxies.yaml` },
   { type: "url", url: `${CAPI_CRD_BASE}/addons.cluster.x-k8s.io_clusterresourcesets.yaml` },
+  { type: "url", url: `${ACK_S3_CRD_BASE}/s3.services.k8s.aws_buckets.yaml` },
+  { type: "url", url: `${ACK_RDS_CRD_BASE}/rds.services.k8s.aws_dbinstances.yaml` },
+  { type: "url", url: `${ACK_IAM_CRD_BASE}/iam.services.k8s.aws_roles.yaml` },
+  { type: "url", url: `${ACK_IAM_CRD_BASE}/iam.services.k8s.aws_users.yaml` },
+  { type: "url", url: `${ACK_IAM_CRD_BASE}/iam.services.k8s.aws_policies.yaml` },
+  { type: "url", url: `${ACK_EKS_CRD_BASE}/eks.services.k8s.aws_podidentityassociations.yaml` },
 ];
