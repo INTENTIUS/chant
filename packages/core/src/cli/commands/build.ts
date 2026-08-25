@@ -17,6 +17,7 @@ import type { Serializer, SerializerResult } from "../../serializer";
 import type { LexiconPlugin } from "../../lexicon";
 import { resolveLexiconVersions, collectBuildRootContributors } from "../plugins";
 import { runPostSynthChecks } from "../../lint/post-synth";
+import { collectSecretDeclarations } from "../../secret-provenance";
 import { coreReceiptChecks } from "../../lint/receipt-checks";
 import { coreOutputChecks } from "../../lint/output-checks";
 import { coreKnowledgeChecks } from "../../lint/knowledge-checks";
@@ -547,6 +548,20 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
     // Extract primary content and collect additional files from SerializerResult
     const additionalFiles = new Map<string, string>();
 
+    // Sidecar files that must reach disk BYTE-FOR-BYTE: committed ciphertext
+    // (`declareSecret({ provenance: "committed-encrypted", file })`). The
+    // additional-file writer below round-trips anything JSON.parse accepts,
+    // key-sorting it and possibly re-emitting it as YAML — which would break
+    // the `sops` MAC. `file` is restricted to .yaml/.yml, so that parse fails
+    // in practice, but naming the files here makes byte identity structural
+    // rather than a lucky accident.
+    const verbatimFiles = new Set<string>();
+    for (const decl of collectSecretDeclarations(result.entities).values()) {
+      if (decl.provenance === "committed-encrypted") {
+        verbatimFiles.add(decl.file.split(/[\\/]/).pop()!);
+      }
+    }
+
     function getPrimaryContent(raw: string | SerializerResult): string {
       if (typeof raw === "string") return raw;
       if (raw.files) {
@@ -652,15 +667,18 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
           const outputDir = dirname(outputPath);
           for (const [filename, content] of additionalFiles) {
             let fileContent = content;
-            // Format additional files consistently
-            try {
-              const fileParsed = JSON.parse(content);
-              fileContent = JSON.stringify(fileParsed, sortedJsonReplacer, 2);
-              if (options.format === "yaml") {
-                fileContent = jsonToYaml(JSON.parse(fileContent));
+            // Format additional files consistently — except the ones declared
+            // verbatim, which are copied exactly as they were committed.
+            if (!verbatimFiles.has(filename)) {
+              try {
+                const fileParsed = JSON.parse(content);
+                fileContent = JSON.stringify(fileParsed, sortedJsonReplacer, 2);
+                if (options.format === "yaml") {
+                  fileContent = jsonToYaml(JSON.parse(fileContent));
+                }
+              } catch {
+                // If not JSON, write as-is
               }
-            } catch {
-              // If not JSON, write as-is
             }
             const targetPath = join(outputDir, filename);
             mkdirSync(dirname(targetPath), { recursive: true });
@@ -674,6 +692,21 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
           })
         );
       }
+    } else if (verbatimFiles.size > 0) {
+      // A build carrying committed ciphertext and no --output has nowhere to
+      // put the sidecar. Echoing it to a terminal is not useful and dropping
+      // it silently is worse: the primary output would reference a Secret
+      // whose file never got written, and the miss would surface as a pod
+      // failing to start, far from its cause. Refuse, naming the flag.
+      const names = [...verbatimFiles].sort().join(", ");
+      errors.push(
+        formatError({
+          message:
+            `This build emits committed-encrypted secret file(s) (${names}) as sidecars, ` +
+            `which need a directory to be written into. Re-run with --output <path> ` +
+            `(the sidecars land beside it).`,
+        }),
+      );
     } else {
       // Print to stdout
       console.log(output);

@@ -705,6 +705,86 @@ export const testEntity = {
     expect(existsSync(join(testDir, "dist", "ops", "alb-deploy", "worker.ts"))).toBe(true);
   });
 
+  describe("committed-encrypted secret sidecars", () => {
+    const CIPHERTEXT = 'apiVersion: v1\nkind: Secret\nstringData:\n  T: ENC[AES256_GCM,data:xx]\nsops:\n  version: 3.9.4\n';
+
+    /** A serializer standing in for the k8s one: a sidecar plus a primary doc. */
+    const sidecarSerializer: Serializer = {
+      name: "multi",
+      rulePrefix: "MULTI",
+      serialize: () => ({ primary: "kind: Deployment\n", files: { "db.sops.yaml": CIPHERTEXT } }),
+    };
+
+    async function writeProject(fileValue: string): Promise<void> {
+      const modulePath = resolvePath(
+        dirname(fileURLToPath(import.meta.url)),
+        "..",
+        "..",
+        "secret-provenance",
+      );
+      await writeFile(
+        join(testDir, "infra.ts"),
+        `import { declareSecret } from ${JSON.stringify(modulePath)};
+export const dbCredentials = declareSecret({ name: "db-credentials", provenance: "committed-encrypted", file: ${JSON.stringify(fileValue)} });
+export const x = { [Symbol.for("chant.declarable")]: true, entityType: "X", lexicon: "multi", kind: "resource", props: {}, attributes: {} };`,
+      );
+    }
+
+    test("a build with no --output refuses, naming the flag", async () => {
+      await writeProject("secrets/db.sops.yaml");
+
+      const result = await buildCommand({
+        path: testDir,
+        format: "yaml",
+        serializers: [sidecarSerializer],
+        // no `output` — the sidecar would be echoed to stderr and lost
+      } as BuildOptions);
+
+      expect(result.success).toBe(false);
+      expect(result.errors.join("\n")).toContain("--output");
+      expect(result.errors.join("\n")).toContain("db.sops.yaml");
+    });
+
+    test("with --output the sidecar lands beside the primary, byte for byte", async () => {
+      await writeProject("secrets/db.sops.yaml");
+      const outputPath = join(testDir, "dist", "manifests.yaml");
+
+      const result = await buildCommand({
+        path: testDir,
+        output: outputPath,
+        format: "yaml",
+        serializers: [sidecarSerializer],
+      });
+
+      expect(result.errors).toEqual([]);
+      expect(readFileSync(join(testDir, "dist", "db.sops.yaml"), "utf-8")).toBe(CIPHERTEXT);
+    });
+
+    test("a declared sidecar is never round-tripped through JSON.parse", async () => {
+      // YAML is a JSON superset, so a ciphertext file that happens to parse as
+      // JSON would otherwise be rewritten key-sorted (or re-emitted as YAML),
+      // breaking the `sops` MAC. Declared files skip that path entirely.
+      const jsonish = '{"b": 1, "a": 2}\n';
+      const jsonSidecar: Serializer = {
+        name: "multi",
+        rulePrefix: "MULTI",
+        serialize: () => ({ primary: "kind: Deployment\n", files: { "db.sops.yaml": jsonish } }),
+      };
+      await writeProject("secrets/db.sops.yaml");
+      const outputPath = join(testDir, "dist", "manifests.yaml");
+
+      const result = await buildCommand({
+        path: testDir,
+        output: outputPath,
+        format: "yaml",
+        serializers: [jsonSidecar],
+      });
+
+      expect(result.errors).toEqual([]);
+      expect(readFileSync(join(testDir, "dist", "db.sops.yaml"), "utf-8")).toBe(jsonish);
+    });
+  });
+
   test("op worker files go to <project>/dist/ops even with no --output (#878)", async () => {
     // The generated Op worker must land where `chant run <op> --temporal` reads it
     // (`<project>/dist/ops/<name>/worker.ts`) even when the build has no --output
