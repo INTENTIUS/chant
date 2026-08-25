@@ -16,6 +16,7 @@ import { FargateService } from "./fargate-service";
 import { RdsInstance } from "./rds-instance";
 import { Ec2InstanceRole } from "./ec2-instance-role";
 import { MinimalVpc } from "./minimal-vpc";
+import { StepFunctionsWorkflow } from "./step-functions-workflow";
 
 const baseProps = {
   name: "TestFunc",
@@ -928,5 +929,87 @@ describe("MinimalVpc", () => {
   test("expandComposite produces 8 entries", () => {
     const expanded = expandComposite("net", MinimalVpc({}));
     expect(expanded.size).toBe(8);
+  });
+});
+
+describe("StepFunctionsWorkflow", () => {
+  const passDefinition = { StartAt: "Hello", States: { Hello: { Type: "Pass", End: true } } };
+
+  test("returns role, logGroup, stateMachine members", () => {
+    const instance = StepFunctionsWorkflow({ definition: passDefinition });
+    expect(Object.keys(instance.members)).toEqual(["role", "logGroup", "stateMachine"]);
+  });
+
+  test("role has states.amazonaws.com trust policy", () => {
+    const instance = StepFunctionsWorkflow({ definition: passDefinition });
+    const roleProps = (instance.role as any).props;
+    expect(roleProps.AssumeRolePolicyDocument.Statement[0].Principal.Service).toBe("states.amazonaws.com");
+  });
+
+  test("role always carries the log-delivery policy", () => {
+    const instance = StepFunctionsWorkflow({ definition: passDefinition });
+    const roleProps = (instance.role as any).props;
+    const names = roleProps.Policies.map((p: any) => p.props.PolicyName);
+    expect(names).toContain("StepFunctionsLogDelivery");
+  });
+
+  test("lambdaFunctionArns grants InvokeFunction on those ARNs", () => {
+    const instance = StepFunctionsWorkflow({
+      definition: passDefinition,
+      lambdaFunctionArns: ["arn:aws:lambda:us-east-1:123456789012:function:worker"],
+    });
+    const roleProps = (instance.role as any).props;
+    const invokePolicy = roleProps.Policies.find((p: any) => p.props.PolicyName === "InvokeLambdaTasks");
+    expect(invokePolicy).toBeDefined();
+    expect(invokePolicy.props.PolicyDocument.Statement[0].Resource).toEqual([
+      "arn:aws:lambda:us-east-1:123456789012:function:worker",
+    ]);
+  });
+
+  test("without lambdaFunctionArns, no InvokeLambdaTasks policy", () => {
+    const instance = StepFunctionsWorkflow({ definition: passDefinition });
+    const roleProps = (instance.role as any).props;
+    const names = roleProps.Policies.map((p: any) => p.props.PolicyName);
+    expect(names).not.toContain("InvokeLambdaTasks");
+  });
+
+  test("stateMachine carries the definition object as Definition (not a string)", () => {
+    const instance = StepFunctionsWorkflow({ definition: passDefinition });
+    const smProps = (instance.stateMachine as any).props;
+    expect(smProps.Definition).toEqual(passDefinition);
+    expect(smProps.DefinitionString).toBeUndefined();
+  });
+
+  test("stateMachine references role.Arn and defaults to STANDARD", () => {
+    const instance = StepFunctionsWorkflow({ definition: passDefinition });
+    const smProps = (instance.stateMachine as any).props;
+    expect(smProps.RoleArn).toBeInstanceOf(AttrRef);
+    expect(smProps.StateMachineType).toBe("STANDARD");
+  });
+
+  test("logGroup defaults to 14-day retention, overridable", () => {
+    const defaultInstance = StepFunctionsWorkflow({ definition: passDefinition });
+    expect((defaultInstance.logGroup as any).props.RetentionInDays).toBe(14);
+
+    const overridden = StepFunctionsWorkflow({ definition: passDefinition, logRetentionDays: 30 });
+    expect((overridden.logGroup as any).props.RetentionInDays).toBe(30);
+  });
+
+  test("LoggingConfiguration wires the log group and defaults level to ALL", () => {
+    const instance = StepFunctionsWorkflow({ definition: passDefinition });
+    const smProps = (instance.stateMachine as any).props;
+    const loggingProps = (smProps.LoggingConfiguration as any).props;
+    expect(loggingProps.Level).toBe("ALL");
+    const destProps = (loggingProps.Destinations[0] as any).props;
+    const cwProps = (destProps.CloudWatchLogsLogGroup as any).props;
+    expect(cwProps.LogGroupArn).toBeInstanceOf(AttrRef);
+  });
+
+  test("expandComposite produces 3 entries", () => {
+    const expanded = expandComposite("workflow", StepFunctionsWorkflow({ definition: passDefinition }));
+    expect(expanded.has("workflowRole")).toBe(true);
+    expect(expanded.has("workflowLogGroup")).toBe(true);
+    expect(expanded.has("workflowStateMachine")).toBe(true);
+    expect(expanded.size).toBe(3);
   });
 });

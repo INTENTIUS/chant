@@ -45,3 +45,5 @@ export { MicrovmApp, MICROVM_LIMITS } from "./microvm-app";
 export type { MicrovmAppProps, MicrovmAppResult, MicrovmAppBuildConnectorProps, MicrovmMemoryMiB } from "./microvm-app";
 export { AgentCoreAgent, agentCoreDefaultEndpointArn } from "./agentcore-agent";
 export type { AgentCoreAgentProps, AgentCoreAgentResult } from "./agentcore-agent";
+export { StepFunctionsWorkflow } from "./step-functions-workflow";
+export type { StepFunctionsWorkflowProps } from "./step-functions-workflow";

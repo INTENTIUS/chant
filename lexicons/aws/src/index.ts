@@ -145,6 +145,7 @@ export {
   MicrovmApp, MICROVM_LIMITS,
   AgentCoreAgent, agentCoreDefaultEndpointArn,
   OrganizationRoot, GovernanceFoundation, RegionRestriction, OrganizationTrail,
+  StepFunctionsWorkflow,
 } from "./composites/index";
 export type {
   LambdaFunctionProps, LambdaApiProps, ScheduledLambdaProps,
@@ -156,6 +157,7 @@ export type {
   MicrovmAppProps, MicrovmAppResult, MicrovmAppBuildConnectorProps, MicrovmMemoryMiB,
   AgentCoreAgentProps, AgentCoreAgentResult,
   OrganizationRootProps, GovernanceFoundationProps, RegionRestrictionProps, OrganizationTrailProps,
+  StepFunctionsWorkflowProps,
 } from "./composites/index";
 
 // Code generation pipeline
