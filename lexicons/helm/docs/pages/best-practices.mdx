@@ -110,6 +110,35 @@ Canonicalization normalizes render noise and nothing else. Mapping keys are sort
 
 Only pinned renders carry digests. An unpinned render's bytes depend on the local helm binary's defaulted capabilities, so a digest over them would assert an identity the render does not have. Unpinned renders record neither digest.
 
+## The render store
+
+A pinned render is durable, not just identified. By default it persists to a content-addressed store under `~/.chant/helm-renders/` (override with `CHANT_HELM_RENDER_ROOT`):
+
+```
+sha256-<hex>/           one entry per distinct contentDigest
+  content.yaml          the canonical rendered bytes
+  manifest.json         the RenderManifest
+inputs/<hex>.json       inputs index — full render inputs -> digests
+```
+
+The `RenderManifest` is the record of what the bytes are and what produced them. It carries the chart identity (`chart`, `chartVersion`, `repo`), the release name and namespace baked into the bytes, the capability profile the render was pinned against, both identity sides (`inputDigest` with `valuesDigest` as its values-only component, and `contentDigest` as the storage key), a document index, `renderedAt`, the chant version, an optional `sourceRef`, and `helmVersion`. The helm version is load-bearing. The defaulted kube version is a property of the binary, so this field is what explains a digest mismatch between two machines.
+
+The document index maps each identifiable document to its kind, namespace, name, `# Source:` origin, byte span, and per-document digest. `readRenderDocument` resolves one document to its exact bytes and verifies the slice against its digest before returning it.
+
+```typescript
+import { listRenderManifests, loadRenderManifest, readRenderDocument } from "@intentius/chant-lexicon-helm";
+
+const manifests = listRenderManifests();
+const manifest = loadRenderManifest("sha256:...");
+const doc = readRenderDocument("sha256:...", { kind: "ConfigMap", namespace: "web", name: "app-config" });
+```
+
+Entries are immutable and deduplicated: two renders producing the same bytes share one entry, written once. The inputs index is what makes a repeat render a cache hit — it keys on everything that changes the bytes, including the release name and namespace, which `inputDigest` deliberately excludes because the ledger uses that digest as a cross-environment join key.
+
+Persistence follows the cache knob. A pinned render persists unless `noCache` is set; `persist: true` forces the write even with `noCache`; `persist: false` turns the store off. `persist: true` on an unpinned render is a build error naming the reason — an unpinned render has no content identity to store under.
+
+The store has no retention policy, matching the build archive it is modeled on. Entries accumulate until removed by hand. Renders cached under the older truncated-hash entries are left in place — unpinned renders still use them — and pinned renders write to the `sha256-` entries instead. Nothing is migrated.
+
 ## List merge workaround
 
 Helm's strategic merge patch does not merge lists — it replaces them. Use map-of-maps instead:
