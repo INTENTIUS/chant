@@ -231,3 +231,35 @@ export const policy = new BucketPolicy({
 ```
 
 ---
+
+## COR026: Stale Knowledge Binding
+
+A knowledge concept's `binds` frontmatter key (an OKF v0.2 bundle read from the project's `knowledge/` directory, or wherever `knowledge.dir` points) must name a discovered entity's logical name. A name that resolves to nothing is a stale binding — the entity was renamed or removed, or the concept was authored against a name that never existed.
+
+This is a post-synth check run by `chant build` over the whole build result, alongside COR023/COR024. Per the OKF binding design (#1059), the spec permits broken links, so a stale binding warns rather than fails the build — knowledge is deliberately softer than the typed graph it describes. A concept with no `binds` at all is orphaned knowledge, not an omission, and never triggers this check; a project with no knowledge bundle triggers nothing either.
+
+**Severity:** warning
+
+```markdown
+<!-- ❌ Triggers COR026 — knowledge/decisions/example.md -->
+---
+type: decision
+title: Use a managed queue
+binds: ghostQueue
+---
+
+No entity named `ghostQueue` exists in this project anymore.
+```
+
+```markdown
+<!-- ✅ Fixed — binds the current logical name -->
+---
+type: decision
+title: Use a managed queue
+binds: jobQueue
+---
+
+`jobQueue` is a declared entity in this project.
+```
+
+---
