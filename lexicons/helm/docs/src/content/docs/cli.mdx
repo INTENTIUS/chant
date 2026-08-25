@@ -19,6 +19,8 @@ Every verb accepts `--json` for the full report as machine-readable output.
 | `classify <chart-dir>` | Run the pinnability gate over a chart directory. Prints the verdict (`deterministic` / `pinnable` / `unpinnable`) with every finding located — `.Capabilities` references that require a capability profile, open generated inputs and the values path that closes each, conditional hazards, `lookup` sites. `--values <file>` (repeatable) merges overrides the way `helm template --values` would, and re-classifies the `(chart, values)` pair. **Exits 1 when the verdict is `unpinnable`**, so CI can refuse to pin on it. |
 | `localize <chart-dir>` | Run the double-render localizer. Renders the chart twice, maps every unstable output line back to the open generated input that produced it (cascades included — a checksum annotation derived from a generated secret groups under that secret's input), and prints the validated pin that closes each one. A differing line nothing explains prints as `UNLOCALIZED`, never silently. `--values <file>` (repeatable), `--kube-version <v>`, `--max-probes <n>`. Needs the `helm` binary on PATH. |
 | `renders` | Discover the current project and list every `HelmRender` record — chart, version, capability profile, `inputDigest`, `contentDigest` — plus the stability report grouping renders by input identity. Two renders with the same input digest and different content digests print as `UNSTABLE`: the render is not a function of its declared inputs. Unpinned renders list with no digests, honestly, rather than a digest that would differ across machines. |
+| `diff <from-digest> <to-digest>` | Diff two stored renders against each other, fully offline — no cluster, no credentials. Reports added/removed/changed documents by identity (kind, namespace, name), with field-level changes inside each changed one. A digest that isn't in the store is refused rather than reported as a false "no differences". |
+| `diff <content-digest> <environment> --live` | Resolve a stored render from the content-addressed render store and diff every one of its documents against the live cluster the environment targets, property by property. A digest that isn't in the store (an unpinned render, never persisted) is refused rather than reported as a false "no drift". |
 
 ## Classify a chart before pinning it
 
@@ -56,6 +58,21 @@ chant helm renders --json
 
 Runs discovery over the project source (the same import pass `chant build` starts with), so every `HelmRender` executes and records itself, then prints the table. The digests are the identities from the render pipeline — `inputDigest` joins renders and deploys of the same inputs, `contentDigest` names the exact bytes.
 
-## What lands here next
+## Diff two renders, offline
 
-Render-to-render offline diff and render-to-live diff mount on this same verb group. Until then, the recorded digests are already comparable by hand — two renders whose `contentDigest` match would put the same bytes on the cluster.
+```bash
+chant helm diff sha256:1a2b… sha256:9f0e…
+chant helm diff sha256:1a2b… sha256:9f0e… --json
+```
+
+Resolves both content digests from the render store and pairs documents by identity (kind, namespace, name) — a document present on both sides with the same per-document digest is unchanged and never re-parsed; one whose digest differs is parsed on both sides and diffed field by field. Prints `ADDED`/`REMOVED`/`CHANGED` lines, a block of field changes under each changed document, and a count of unindexed documents on either side (never silently dropped). No cluster, no credentials — every byte compared comes from the archive.
+
+## Check a pinned render against the live cluster
+
+```bash
+chant helm diff sha256:6f2c… prod --live
+```
+
+Reads the render's document index — kind, namespace, name for everything it rendered, hook resources included, since `helm template` renders them as ordinary documents — and reads the live property tree for each one, by identity, through the same k8s-typed reader `describeResources`/`observeResourcesDeep` use. Reports property-level drift per document. A digest the store has never seen (an unpinned render — those are never persisted, see `renders` above) is refused with that reason, never silently reported clean.
+
+Both `diff` modes dispatch off the same verb: two positional digests with no `--live` run the offline render-to-render comparison above; a digest plus an environment with `--live` runs the live comparison.

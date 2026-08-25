@@ -13,10 +13,15 @@
  * - `renders` discovers the current project and lists every `HelmRender`
  *   record with its digests (#1237) and capability profile, plus the
  *   stability report grouping renders by input identity.
- * - `diff` resolves two content digests from the render store (#1238) and
- *   reports what changed between them — added/removed/changed documents,
- *   field-level changes inside each changed one — with no cluster and no
- *   credentials (#1249). Render-to-live is #1250, a separate verb.
+ * - `diff` (#1238) reports what changed between two renders, dispatching on
+ *   its arguments and `--live`: `diff <from-digest> <to-digest>` resolves
+ *   two content digests from the render store and reports added/removed/
+ *   changed documents with field-level changes inside each changed one —
+ *   no cluster, no credentials (#1249, render-to-render, offline).
+ *   `diff <content-digest> <environment> --live` resolves a single stored
+ *   render and diffs every one of its documents against the live cluster,
+ *   property by property (#1250, render-to-live). Both modes share
+ *   ./render-diff.ts and this file's formatting.
  *
  * This module is plain data reachable from plugin.ts — every implementation
  * (classifier, localizer, discovery, differ) sits behind a dynamic import,
@@ -31,25 +36,29 @@ import type { PinnabilityReport } from "./pinnability/classify";
 import type { LocalizationReport } from "./pinnability/localize";
 import type { HelmRenderRecord } from "./render";
 import type { RenderStabilityReport } from "./render-digest";
+import type { DeepDiffResult } from "@intentius/chant/lifecycle/deep-diff";
 import type { RenderDiffResult } from "./render-diff";
 
-const BOOLEAN_FLAGS = new Set(["--json"]);
+const BOOLEAN_FLAGS = new Set(["--json", "--live"]);
 
 interface ParsedArgs {
   positionals: string[];
   valuesFiles: string[];
   json: boolean;
+  live: boolean;
   kubeVersion?: string;
   maxProbes?: number;
 }
 
 function parseVerbArgs(verb: string, raw: string[], accept: ReadonlySet<string>): ParsedArgs {
   const args = splitJoinedFlags(raw, BOOLEAN_FLAGS);
-  const parsed: ParsedArgs = { positionals: [], valuesFiles: [], json: false };
+  const parsed: ParsedArgs = { positionals: [], valuesFiles: [], json: false, live: false };
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a === "--json" && accept.has("--json")) {
       parsed.json = true;
+    } else if (a === "--live" && accept.has("--live")) {
+      parsed.live = true;
     } else if (a === "--values" && accept.has("--values")) {
       const value = args[++i];
       if (!value) throw new Error(`--values needs a file path.`);
@@ -84,8 +93,11 @@ function requireChartDir(verb: string, parsed: ParsedArgs): string {
 function requireTwoDigests(verb: string, parsed: ParsedArgs): [string, string] {
   if (parsed.positionals.length !== 2) {
     throw new Error(
-      `Usage: chant helm ${verb} <from-digest> <to-digest> [flags]\n` +
-        `Two content digests (sha256:<64 hex>, from "chant helm renders") are required, got ${parsed.positionals.length}.`,
+      `Usage: chant helm ${verb} <from-digest> <to-digest> [--json]\n` +
+        `       chant helm ${verb} <content-digest> <environment> --live [--json]\n` +
+        `Two content digests (sha256:<64 hex>, from "chant helm renders") are required for the offline ` +
+        `render-to-render diff, got ${parsed.positionals.length}. Pass --live to diff one stored render ` +
+        `against a live cluster instead.`,
     );
   }
   return [parsed.positionals[0], parsed.positionals[1]];
@@ -313,8 +325,83 @@ async function rendersHandler(ctx: CommandGroupContext): Promise<number> {
   return 0;
 }
 
+function formatDeepValue(v: unknown): string {
+  if (v === undefined) return "<unset>";
+  const json = JSON.stringify(v);
+  return json.length > 60 ? json.slice(0, 57) + "..." : json;
+}
+
+/** The printed render-to-live diff report: property drift per document, then holes. */
+export function formatRenderLiveDiff(contentDigest: string, environment: string, diff: DeepDiffResult): string {
+  const driftCount = diff.drifted.reduce((n, e) => n + e.changes.length, 0);
+  const lines: string[] = [
+    `render ${contentDigest} vs live (${environment})`,
+    `${driftCount} property drift across ${diff.drifted.length} document(s), ` +
+      `${diff.accepted.length} accepted, ${diff.unchanged.length} unchanged` +
+      (diff.unobserved.length > 0 ? `, ${diff.unobserved.length} unobserved` : "") +
+      (diff.undeclaredEntities.length > 0 ? `, ${diff.undeclaredEntities.length} undeclared` : ""),
+  ];
+  if (diff.unobserved.length > 0) {
+    lines.push("", "UNOBSERVED (in the render; the live read could not look):");
+    for (const u of diff.unobserved) lines.push(`  ? ${u.name}${u.detail ? ` — ${u.detail}` : ` (${u.reason})`}`);
+  }
+  if (diff.drifted.length > 0) {
+    lines.push("", "DRIFT (render vs live):");
+    for (const entity of diff.drifted) {
+      lines.push(`  - ${entity.name} (${entity.type})`);
+      for (const change of entity.changes) {
+        const rendered = "declared" in change ? formatDeepValue(change.declared) : "<absent from render>";
+        const live = "live" in change ? formatDeepValue(change.live) : "<absent live>";
+        lines.push(`      ${change.path}: ${rendered} → ${live}`);
+      }
+    }
+  }
+  if (diff.undeclaredEntities.length > 0) {
+    lines.push("", "UNDECLARED (live, not in this render):");
+    for (const name of diff.undeclaredEntities) lines.push(`  - ${name}`);
+  }
+  return lines.join("\n");
+}
+
+/**
+ * `chant helm diff` dispatches on `--live`: with it, exactly two
+ * positionals are `<content-digest> <environment>` and the render-to-live
+ * path runs (#1250); without it, they are `<from-digest> <to-digest>` and
+ * the offline render-to-render path runs (#1249). Both refuse a missing
+ * digest rather than report a false clean/empty diff — the offline path by
+ * throwing (`diffRenders`'s `requireManifest`), the live path by returning
+ * `found: false`, printed here as an error exit.
+ */
 async function diffHandler(ctx: CommandGroupContext): Promise<number> {
-  const parsed = parseVerbArgs("diff", ctx.rawArgs, new Set(["--json"]));
+  const parsed = parseVerbArgs("diff", ctx.rawArgs, new Set(["--live", "--json"]));
+
+  if (parsed.live) {
+    if (parsed.positionals.length !== 2) {
+      throw new Error(
+        `Usage: chant helm diff <content-digest> <environment> --live [--json]\n` +
+          `Diffs a stored render (see "chant helm renders") against the live cluster it targets. ` +
+          `The digest is a render's contentDigest; the environment resolves the cluster binding ` +
+          `(k8s.profiles.<environment>.context), same as any other live read.`,
+      );
+    }
+    const [contentDigest, environment] = parsed.positionals;
+    const { diffRenderLive } = await import("./render-diff");
+    const outcome = await diffRenderLive({ contentDigest, environment });
+    if (!outcome.found) {
+      console.error(
+        `no stored render for ${contentDigest} — only a PINNED render persists to the store ` +
+          `(see "chant helm renders"); an unpinned render has no stable bytes to diff against`,
+      );
+      return 1;
+    }
+    if (parsed.json) {
+      console.log(JSON.stringify({ contentDigest, environment, manifest: outcome.manifest, diff: outcome.diff }, null, 2));
+      return 0;
+    }
+    console.log(formatRenderLiveDiff(contentDigest, environment, outcome.diff));
+    return 0;
+  }
+
   const [from, to] = requireTwoDigests("diff", parsed);
   const { diffRenders } = await import("./render-diff");
   const diff = diffRenders(from, to);
@@ -349,7 +436,8 @@ export function helmCommandGroup(): CommandGroup {
       },
       {
         name: "diff",
-        description: "Diff two stored renders by content digest, offline — added/removed/changed documents and field-level changes",
+        description:
+          "Diff two stored renders by content digest, offline; or diff one against the live cluster with --live",
         handler: diffHandler,
       },
     ],

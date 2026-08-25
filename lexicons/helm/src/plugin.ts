@@ -41,7 +41,8 @@ export const helmPlugin: LexiconPlugin = {
   // pinned-render surface: the pinnability gate (#1234), the double-render
   // localizer (#1236), and the recorded-render listing with digests (#1237).
   // See ./commands.ts for the verb list; this plugin only mounts it. The
-  // diff verbs (#1249 render-to-render, #1250 render-to-live) land there.
+  // diff verbs (#1249 render-to-render, #1250 render-to-live, both mounted on
+  // "diff") land there.
   commands(): CommandGroup {
     return helmCommandGroup();
   },
