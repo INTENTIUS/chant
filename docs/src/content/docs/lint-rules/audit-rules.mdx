@@ -1750,6 +1750,14 @@ Remove values defined but never referenced.
 
 Update to a supported apiVersion.
 
+### WHM503
+
+**Pinned render carries Secret data** — merge-worthy · guidance
+
+Declare the value with runtimeSlot() or replace the Secret with HelmExternalSecret.
+
+Authority: [Kubernetes — Good practices for Secrets](https://kubernetes.io/docs/concepts/security/secrets-good-practices/)
+
 ## fountain (FTN)
 
 Run against fountain manifests (`apiVersion: fountain.dev/v1`) — standalone `fountain apply` YAML is parsed back into the entity graph, so the same rules fire on `chant build` and `chant audit`.
