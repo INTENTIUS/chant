@@ -289,6 +289,13 @@ const lifecycle = HelmCRDLifecycle({
 | WHM407 | post-synth | Secret with inline data |
 | WHM501 | post-synth | Unused values keys |
 | WHM502 | post-synth | Deprecated K8s API versions |
+| WHM503 | pinned-render | Pinned render artifact carries populated Secret data/stringData — use `runtimeSlot()` or `HelmExternalSecret` |
+
+WHM503 is a different stage from the rest: it scans the STORED, rendered
+artifact a pinned `HelmRender` writes to the render store (#1238), not the
+chart source `WHM005`-`WHM502` validate. `WHM407` catches an inline literal
+in a chart TEMPLATE before rendering; WHM503 catches a resolved credential
+that made it into a durable, promotable artifact.
 
 ## OCI registry workflow
 
