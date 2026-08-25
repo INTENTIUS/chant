@@ -41,6 +41,7 @@ The AWS lexicon ships ready-to-use composites for common patterns. Import them f
 | `FargateService` | `taskRole`, `logGroup`, `taskDef`, `taskSg`, `targetGroup`, `rule`, `service` | Per-service Fargate resources with listener rule routing. Wire to an `AlbShared` instance for multi-service ALB patterns. |
 | `RdsInstance` | `subnetGroup`, `sg`, `db` (+ `parameterGroup` if configured) | RDS instance (postgres, mysql, mariadb) in private subnets. Creates DB subnet group, security group, and optionally a parameter group. Engine-specific defaults for port, username, and version. Encrypted by default. |
 | `StepFunctionsWorkflow` | `role`, `logGroup`, `stateMachine` | IAM Role (states.amazonaws.com trust) + CloudWatch log group + Step Functions state machine. `definition` takes the ASL as a plain object (CFN's `Definition` property, not `DefinitionString`), so task `Resource` fields can carry `Ref`/`Fn::GetAtt` intrinsics directly. `lambdaFunctionArns` auto-grants `lambda:InvokeFunction` for Lambda-backed tasks. |
+| `Ec2InstanceBundle` | `role`, `instanceProfile`, `sg`, `instance` | EC2 instance + security group + instance role/profile, placed into a given VPC/subnet. Inbound rules are opt-in per port (CIDR, IPv6 CIDR, or source security group); no inbound traffic by default. |
 
 All built-in composites accept `ManagedPolicyArns` and `Policies` for adding IAM permissions to the auto-created role.
 
