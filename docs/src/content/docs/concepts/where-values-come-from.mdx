@@ -51,14 +51,14 @@ If a value can change without the source changing, it is not static data. It is 
 
 ## The secret-provenance taxonomy
 
-Provisioned state is where secrets live, and secrets get their own vocabulary. A [`SecretDeclaration`](/chant/architecture/core-type-system/#secretdeclaration) records where a secret's value comes from — never what the value is. Declarations are ordinary entities to discovery (`chant list` shows them, lint reads them), and no serializer ever emits them. Three kinds have a primitive today. The fourth is a taxonomy row with no primitive yet.
+Provisioned state is where secrets live, and secrets get their own vocabulary. A [`SecretDeclaration`](/chant/architecture/core-type-system/#secretdeclaration) records where a secret's value comes from — never what the value is. Declarations are ordinary entities to discovery (`chant list` shows them, lint reads them), and no serializer ever emits them. Four kinds, each with a primitive.
 
 | Kind | What is declared | What never appears |
 |---|---|---|
 | `referenced` | The name, and optionally a `scope` saying where consumers find it. The value exists out of band — a human or an external process put it there. | The value, or anything that resolves to it at build. |
 | `from-provider` | The name, plus a `provider` ref naming the binding declarable that materializes it (e.g. a `K8s::Infisical::InfisicalSecret`). The declaration points at the seam; it does not re-model it. | The provider's payload, credentials for the provider, the delivered value. |
 | `generated-once` | The name and the declared key-set (`keys`). Minted at first materialization, never regenerated. | Mint parameters carrying material, the minted value, any hash of it. |
-| `committed-encrypted` | Nothing yet — this row is documentation only. Ciphertext lives in the repo (sops-style) and is decrypted straight into the target. | The plaintext, at every stage. No primitive exists for this kind today. |
+| `committed-encrypted` | The name and a `file` — a repo-relative path to sops-style ciphertext committed alongside the source — plus the optional `encryption` tool, public `recipients`, and declared key-set. Flux decrypts it on the way into the cluster. | The plaintext, at every stage. The ciphertext bytes never enter the primary output an applier reads; they are copied out as a sidecar file. |
 
 A `referenced` declaration is the typed waiver that makes a consumed-but-unproduced check possible: a resource that consumes a secret nothing declares is an error, and the declaration is how you say "produced elsewhere, on purpose."
 

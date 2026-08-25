@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import {
   declareSecret,
   isSecretDeclaration,
+  isCommittedEncryptedSecret,
   collectSecretDeclarations,
   SECRET_DECLARATION_MARKER,
   SECRET_DECLARATION_ENTITY_TYPE,
@@ -71,12 +72,163 @@ describe("declareSecret — generated-once", () => {
   });
 });
 
+describe("declareSecret — committed-encrypted", () => {
+  test("records a path and nothing else — the bytes stay on disk", () => {
+    const decl = declareSecret({
+      name: "db-credentials",
+      provenance: "committed-encrypted",
+      file: "secrets/db-credentials.sops.yaml",
+      encryption: "sops",
+      recipients: ["age1ql3z7hjy54pw3hyww5ayyfg7zqgvc7w3j2elw8zmrj2kg5sfn9aqmcac8p"],
+      keys: ["POSTGRES_USER", "POSTGRES_PASSWORD"],
+    });
+    expect(decl.provenance).toBe("committed-encrypted");
+    expect(decl.file).toBe("secrets/db-credentials.sops.yaml");
+    expect(decl.encryption).toBe("sops");
+    expect(decl.keys).toEqual(["POSTGRES_USER", "POSTGRES_PASSWORD"]);
+    expect(Object.isFrozen(decl.keys)).toBe(true);
+    expect(Object.isFrozen(decl.recipients)).toBe(true);
+    expect(Object.keys(decl).sort()).toEqual([
+      "encryption",
+      "entityType",
+      "file",
+      "keys",
+      "lexicon",
+      "name",
+      "provenance",
+      "recipients",
+    ]);
+    expect(isCommittedEncryptedSecret(decl)).toBe(true);
+  });
+
+  test("encryption defaults to sops; recipients and keys are optional", () => {
+    const decl = declareSecret({
+      name: "db-credentials",
+      provenance: "committed-encrypted",
+      file: "secrets/db.sops.yaml",
+    });
+    expect(decl.encryption).toBe("sops");
+    expect("recipients" in decl).toBe(false);
+    expect("keys" in decl).toBe(false);
+  });
+
+  test("the factory is pure — it never touches the filesystem", () => {
+    // A path that does not exist anywhere declares fine: existence is checked
+    // at buildRoots(), not here, which is what keeps the factory foldable.
+    const decl = declareSecret({
+      name: "nope",
+      provenance: "committed-encrypted",
+      file: "no/such/dir/nothing-here.sops.yaml",
+    });
+    expect(decl.file).toBe("no/such/dir/nothing-here.sops.yaml");
+    expect(isSecretDeclaration(decl)).toBe(true);
+  });
+
+  test("the same input twice yields equal declarations (foldable)", () => {
+    const input = {
+      name: "db-credentials",
+      provenance: "committed-encrypted",
+      file: "secrets/db.sops.yaml",
+      keys: ["A"],
+    } as const;
+    const a = declareSecret({ ...input });
+    const b = declareSecret({ ...input });
+    expect({ ...a }).toEqual({ ...b });
+  });
+
+  test("rejects a missing, absolute, or escaping path", () => {
+    expect(() =>
+      // @ts-expect-error — `file` is required
+      declareSecret({ name: "x", provenance: "committed-encrypted" }),
+    ).toThrow(/`file`/);
+    expect(() =>
+      declareSecret({ name: "x", provenance: "committed-encrypted", file: "" }),
+    ).toThrow(/`file`/);
+    expect(() =>
+      declareSecret({ name: "x", provenance: "committed-encrypted", file: "/etc/shadow.yaml" }),
+    ).toThrow(/repo-relative/);
+    expect(() =>
+      declareSecret({ name: "x", provenance: "committed-encrypted", file: "../../secrets/x.yaml" }),
+    ).toThrow(/\.\./);
+  });
+
+  test("v1 restricts the path to .yaml/.yml", () => {
+    expect(() =>
+      declareSecret({ name: "x", provenance: "committed-encrypted", file: "secrets/x.sops.json" }),
+    ).toThrow(/YAML/);
+    expect(
+      declareSecret({ name: "x", provenance: "committed-encrypted", file: "secrets/x.sops.YML" })
+        .file,
+    ).toBe("secrets/x.sops.YML");
+  });
+
+  test("rejects an unknown encryption tool", () => {
+    expect(() =>
+      declareSecret({
+        name: "x",
+        provenance: "committed-encrypted",
+        file: "secrets/x.yaml",
+        // @ts-expect-error — the encryption union is closed
+        encryption: "gpg",
+      }),
+    ).toThrow(/unknown encryption/);
+  });
+
+  test("refuses a private key pasted into recipients, without echoing it", () => {
+    const identity =
+      "AGE-SECRET-KEY-1QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ";
+    let thrown: Error | undefined;
+    try {
+      declareSecret({
+        name: "x",
+        provenance: "committed-encrypted",
+        file: "secrets/x.yaml",
+        recipients: [identity],
+      });
+    } catch (e) {
+      thrown = e as Error;
+    }
+    expect(thrown).toBeDefined();
+    expect(thrown!.message).toContain("recipients[0]");
+    expect(thrown!.message).not.toContain(identity);
+
+    expect(() =>
+      declareSecret({
+        name: "x",
+        provenance: "committed-encrypted",
+        file: "secrets/x.yaml",
+        recipients: ["-----BEGIN OPENSSH PRIVATE KEY-----"],
+      }),
+    ).toThrow(/PRIVATE key/);
+  });
+
+  test("`ciphertext` is still forbidden — the declaration points at bytes, never carries them", () => {
+    const input = {
+      name: "x",
+      provenance: "committed-encrypted",
+      file: "secrets/x.yaml",
+      ciphertext: "ENC[AES256_GCM,data:xxxx]",
+    };
+    let thrown: Error | undefined;
+    try {
+      // @ts-expect-error — `ciphertext` must not compile
+      declareSecret(input);
+    } catch (e) {
+      thrown = e as Error;
+    }
+    expect(thrown).toBeDefined();
+    expect(thrown!.message).toContain('"ciphertext"');
+    expect(thrown!.message).not.toContain("AES256_GCM");
+  });
+});
+
 describe("declareSecret — value unrepresentable", () => {
   test("no declaration kind has a field that could hold material", () => {
     const decls: SecretDeclaration[] = [
       declareSecret({ name: "a", provenance: "referenced" }),
       declareSecret({ name: "b", provenance: "from-provider", provider: { binding: "p" } }),
       declareSecret({ name: "c", provenance: "generated-once", keys: ["k"] }),
+      declareSecret({ name: "d", provenance: "committed-encrypted", file: "s/d.sops.yaml" }),
     ];
     for (const decl of decls) {
       for (const field of ["value", "data", "stringData", "material", "plaintext", "ciphertext"]) {
@@ -123,7 +275,7 @@ describe("declareSecret — value unrepresentable", () => {
   test("rejects an empty name and an unknown kind", () => {
     expect(() => declareSecret({ name: "", provenance: "referenced" })).toThrow(/name/);
     // @ts-expect-error — the union is closed
-    expect(() => declareSecret({ name: "x", provenance: "committed-encrypted" })).toThrow(/unknown provenance/);
+    expect(() => declareSecret({ name: "x", provenance: "sealed-secret" })).toThrow(/unknown provenance/);
   });
 });
 
@@ -134,7 +286,12 @@ describe("secret declarations and the entity map", () => {
     expect(isSecretDeclaration(decl)).toBe(true);
     expect(isSecretDeclaration({ name: "a", provenance: "referenced" })).toBe(false);
     expect((decl as unknown as Record<symbol, unknown>)[SECRET_DECLARATION_MARKER]).toBe(true);
-    expect(SECRET_PROVENANCE_KINDS).toEqual(["referenced", "from-provider", "generated-once"]);
+    expect(SECRET_PROVENANCE_KINDS).toEqual([
+      "referenced",
+      "from-provider",
+      "generated-once",
+      "committed-encrypted",
+    ]);
   });
 
   test("collectSecretDeclarations extracts declarations by entity name", () => {

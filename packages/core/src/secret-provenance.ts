@@ -25,9 +25,14 @@
  *   only — e.g. the declared key-set — never mint parameters holding
  *   material. `generated-once` secrets never enter the prunable set (#1365
  *   decision 5).
- *
- * A fourth taxonomy row, committed-encrypted (sops-style ciphertext in the
- * repo), is documented but has no primitive yet — see the epic.
+ * - `committed-encrypted` — sops-style ciphertext committed in the repo,
+ *   decrypted by the delivery system (Flux) straight into the target. The
+ *   declaration records a repo-relative PATH to the ciphertext, never the
+ *   bytes: the factory is pure and touches no filesystem, so it still folds
+ *   under `--sandbox`. The bytes are read at `buildRoots()` — the one
+ *   sanctioned impure seam — and emitted as a sidecar file, never as a
+ *   document in the primary output. See
+ *   `docs/design/committed-encrypted-sops-provenance.md`.
  *
  * Declarations are serializer-neutral: discovery collects them like any
  * entity (they are Declarables), but `partitionByLexicon` (../build.ts)
@@ -39,14 +44,49 @@
 import { DECLARABLE_MARKER, type Declarable } from "./declarable";
 
 /** The closed union of secret origins. */
-export type SecretProvenance = "referenced" | "from-provider" | "generated-once";
+export type SecretProvenance =
+  | "referenced"
+  | "from-provider"
+  | "generated-once"
+  | "committed-encrypted";
 
 /** Every provenance kind, for exhaustiveness checks. */
 export const SECRET_PROVENANCE_KINDS: readonly SecretProvenance[] = [
   "referenced",
   "from-provider",
   "generated-once",
+  "committed-encrypted",
 ];
+
+/**
+ * Encryption tools a {@link CommittedEncryptedSecretDeclaration} understands.
+ * A closed union with one member, not a free string: a second tool later is a
+ * deliberate widening with a detection rule attached, not an unvalidated
+ * string that silently means nothing.
+ */
+export type SecretEncryption = "sops";
+
+/** Every encryption tool, for exhaustiveness checks. */
+export const SECRET_ENCRYPTION_TOOLS: readonly SecretEncryption[] = ["sops"];
+
+/**
+ * File extensions a committed ciphertext path may carry (v1).
+ *
+ * The CLI writer round-trips every additional file through `JSON.parse` and
+ * re-emits it key-sorted when the parse succeeds
+ * (`./cli/commands/build.ts`), which would silently rewrite a `.sops.json`
+ * file and break the byte-for-byte guarantee. v1 refuses anything but YAML;
+ * the writer additionally skips the round trip for these files, so byte
+ * identity is structural rather than a happy accident of JSON.parse failing.
+ */
+const CIPHERTEXT_FILE_EXTENSIONS = [".yaml", ".yml"] as const;
+
+/**
+ * Patterns that mean a PRIVATE key was pasted where a public recipient
+ * belongs. Matched against `recipients` entries; the thrown message names the
+ * field and the index, never the value.
+ */
+const PRIVATE_KEY_MARKERS = [/AGE-SECRET-KEY-/i, /-----BEGIN [A-Z ]*PRIVATE KEY-----/];
 
 /** Marker symbol identifying a secret provenance declaration. `Symbol.for` so
  * it survives the entity-wire codec (../discovery/entity-wire-codec.ts). */
@@ -134,11 +174,49 @@ export interface GeneratedOnceSecretDeclaration extends SecretDeclarationBase {
   readonly keys?: readonly string[];
 }
 
+/**
+ * A secret whose ciphertext is committed to the repo and decrypted by the
+ * delivery system on the way into the target.
+ *
+ * The declaration is a POINTER: `file` is a repo-relative path, and nothing
+ * here carries bytes. That is what keeps the factory pure — the ciphertext is
+ * read at `buildRoots()` and emitted as a sidecar, never inlined into the
+ * primary output an applier reads.
+ */
+export interface CommittedEncryptedSecretDeclaration extends SecretDeclarationBase {
+  readonly provenance: "committed-encrypted";
+  /** Repo-relative path to the committed ciphertext file. */
+  readonly file: string;
+  /** Encryption tool. Defaults to `"sops"` when omitted. */
+  readonly encryption: SecretEncryption;
+  /**
+   * Public recipient identifiers — age recipients or PGP fingerprints. Public
+   * by definition, which is the opposite of material; a private key here is
+   * refused by the factory.
+   */
+  readonly recipients?: readonly string[];
+  /**
+   * The declared key-set of the decrypted Secret — the same contract meaning
+   * as {@link GeneratedOnceSecretDeclaration.keys}: presence and key names,
+   * never values. SOPS leaves key NAMES cleartext, so this is checkable
+   * against the file itself.
+   */
+  readonly keys?: readonly string[];
+}
+
 /** A secret provenance declaration — the discriminant is `provenance`. */
 export type SecretDeclaration =
   | ReferencedSecretDeclaration
   | FromProviderSecretDeclaration
-  | GeneratedOnceSecretDeclaration;
+  | GeneratedOnceSecretDeclaration
+  | CommittedEncryptedSecretDeclaration;
+
+/** Narrow a declaration to the committed-encrypted kind. */
+export function isCommittedEncryptedSecret(
+  decl: SecretDeclaration,
+): decl is CommittedEncryptedSecretDeclaration {
+  return decl.provenance === "committed-encrypted";
+}
 
 /** Factory input for a `referenced` secret. */
 export interface ReferencedSecretInput extends NoSecretMaterial {
@@ -161,10 +239,29 @@ export interface GeneratedOnceSecretInput extends NoSecretMaterial {
   readonly keys?: readonly string[];
 }
 
+/** Factory input for a `committed-encrypted` secret. */
+export interface CommittedEncryptedSecretInput extends NoSecretMaterial {
+  readonly name: string;
+  readonly provenance: "committed-encrypted";
+  /**
+   * Repo-relative path to the committed ciphertext file — `file`, never
+   * `ciphertext`: the declaration points at bytes, it does not carry them,
+   * and `ciphertext` is a forbidden material field.
+   */
+  readonly file: string;
+  /** Encryption tool. Closed union; `"sops"` is its only member today. */
+  readonly encryption?: SecretEncryption;
+  /** Public recipient identifiers — age recipients or PGP fingerprints. */
+  readonly recipients?: readonly string[];
+  /** The declared key-set of the decrypted Secret. Names only, never values. */
+  readonly keys?: readonly string[];
+}
+
 export type SecretDeclarationInput =
   | ReferencedSecretInput
   | FromProviderSecretInput
-  | GeneratedOnceSecretInput;
+  | GeneratedOnceSecretInput
+  | CommittedEncryptedSecretInput;
 
 /**
  * Declare a secret's provenance. The returned object is a locked Declarable:
@@ -179,6 +276,9 @@ export type SecretDeclarationInput =
 export function declareSecret(input: ReferencedSecretInput): ReferencedSecretDeclaration;
 export function declareSecret(input: FromProviderSecretInput): FromProviderSecretDeclaration;
 export function declareSecret(input: GeneratedOnceSecretInput): GeneratedOnceSecretDeclaration;
+export function declareSecret(
+  input: CommittedEncryptedSecretInput,
+): CommittedEncryptedSecretDeclaration;
 export function declareSecret(input: SecretDeclarationInput): SecretDeclaration {
   if (typeof input.name !== "string" || input.name.length === 0) {
     throw new Error("declareSecret: `name` must be a non-empty string");
@@ -246,7 +346,94 @@ export function declareSecret(input: SecretDeclarationInput): SecretDeclaration 
       };
       return lockDeclaredFields(decl);
     }
+    case "committed-encrypted": {
+      const decl: CommittedEncryptedSecretDeclaration = {
+        ...base,
+        provenance: "committed-encrypted",
+        file: validateCiphertextPath(input.name, input.file),
+        encryption: validateEncryption(input.name, input.encryption),
+        ...(input.recipients !== undefined
+          ? { recipients: Object.freeze(validateRecipients(input.name, input.recipients)) }
+          : {}),
+        ...(input.keys !== undefined ? { keys: Object.freeze([...input.keys]) } : {}),
+      };
+      return lockDeclaredFields(decl);
+    }
   }
+}
+
+/**
+ * Validate the repo-relative ciphertext path. Pure and offline — the factory
+ * never stats the file, because discovery folds project source statically
+ * under `--sandbox` and a factory that touched the filesystem would either
+ * break folding or reintroduce the trust boundary that suite defends. The
+ * file's existence and shape are checked at `buildRoots()` instead.
+ */
+function validateCiphertextPath(name: string, file: unknown): string {
+  if (typeof file !== "string" || file.length === 0) {
+    throw new Error(
+      `declareSecret("${name}"): committed-encrypted requires \`file\`, a non-empty ` +
+        `repo-relative path to the committed ciphertext`,
+    );
+  }
+  if (file.startsWith("/") || /^[A-Za-z]:[\\/]/.test(file)) {
+    throw new Error(
+      `declareSecret("${name}"): \`file\` must be repo-relative, not absolute — got "${file}"`,
+    );
+  }
+  const segments = file.split(/[\\/]/);
+  if (segments.includes("..")) {
+    throw new Error(
+      `declareSecret("${name}"): \`file\` must not escape the project with a ".." segment — ` +
+        `got "${file}"`,
+    );
+  }
+  const dot = file.lastIndexOf(".");
+  const extension = dot === -1 ? "" : file.slice(dot).toLowerCase();
+  if (!(CIPHERTEXT_FILE_EXTENSIONS as readonly string[]).includes(extension)) {
+    throw new Error(
+      `declareSecret("${name}"): \`file\` must be a YAML file ` +
+        `(${CIPHERTEXT_FILE_EXTENSIONS.join(", ")}) — got "${extension || "no extension"}". ` +
+        `Other formats are not emitted byte-for-byte yet.`,
+    );
+  }
+  return file;
+}
+
+/** Validate the encryption tool, defaulting to `"sops"`. */
+function validateEncryption(name: string, encryption: unknown): SecretEncryption {
+  if (encryption === undefined) return "sops";
+  if (!(SECRET_ENCRYPTION_TOOLS as readonly unknown[]).includes(encryption)) {
+    throw new Error(
+      `declareSecret("${name}"): unknown encryption "${String(encryption)}" — ` +
+        `expected one of ${SECRET_ENCRYPTION_TOOLS.join(", ")}`,
+    );
+  }
+  return encryption as SecretEncryption;
+}
+
+/**
+ * Copy `recipients`, refusing a private key pasted where a public recipient
+ * belongs. The message names the field and the index — never the value, the
+ * same discipline the forbidden-material check above uses.
+ */
+function validateRecipients(name: string, recipients: readonly string[]): string[] {
+  const copied = [...recipients];
+  copied.forEach((recipient, index) => {
+    if (typeof recipient !== "string" || recipient.length === 0) {
+      throw new Error(
+        `declareSecret("${name}"): \`recipients[${index}]\` must be a non-empty string`,
+      );
+    }
+    if (PRIVATE_KEY_MARKERS.some((pattern) => pattern.test(recipient))) {
+      throw new Error(
+        `declareSecret("${name}"): \`recipients[${index}]\` looks like a PRIVATE key — ` +
+          `recipients are public identifiers (age recipients, PGP fingerprints). ` +
+          `Rotate it: it has been in a source file.`,
+      );
+    }
+  });
+  return copied;
 }
 
 /**
