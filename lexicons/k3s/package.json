@@ -38,7 +38,7 @@
     "@intentius/chant": "*",
     "tsc-alias": "^1.8.17",
     "typescript": "^5.9.3",
-    "js-yaml": "^4.1.0",
+    "js-yaml": "^4.3.1",
     "@types/js-yaml": "^4.0.9"
   },
   "publishConfig": {

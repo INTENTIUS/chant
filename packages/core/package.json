@@ -91,5 +91,8 @@
   "devDependencies": {
     "@cdktf/hcl2json": "^0.21.0",
     "ajv": "^8.20.0"
+  },
+  "overrides": {
+    "esbuild": "^0.28.1"
   }
 }

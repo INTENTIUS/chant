@@ -60,7 +60,7 @@
   },
   "dependencies": {
     "@temporalio/common": "^1.17.2",
-    "js-yaml": "^4.1.1"
+    "js-yaml": "^4.3.1"
   },
   "devDependencies": {
     "@intentius/chant": "*",
