@@ -63,22 +63,30 @@ const DEFAULT_LIFECYCLE_RULES: EcrLifecycleRule[] = [
   },
 ];
 
+function toJsonRule(rule: EcrLifecycleRule): Record<string, unknown> {
+  // Plain conditional assignment (not spread) keeps this traceable for EVL004 —
+  // that rule only exempts spreads inside a Composite factory, and this helper
+  // runs outside one.
+  const selection: Record<string, unknown> = {
+    tagStatus: rule.tagStatus ?? "any",
+    countType: rule.countType,
+    countNumber: rule.countNumber,
+  };
+  if (rule.tagPrefixList) selection.tagPrefixList = rule.tagPrefixList;
+  if (rule.tagPatternList) selection.tagPatternList = rule.tagPatternList;
+  if (rule.countUnit) selection.countUnit = rule.countUnit;
+
+  const jsonRule: Record<string, unknown> = {
+    rulePriority: rule.rulePriority,
+    selection,
+    action: { type: "expire" },
+  };
+  if (rule.description) jsonRule.description = rule.description;
+  return jsonRule;
+}
+
 function toLifecyclePolicyText(rules: EcrLifecycleRule[]): string {
-  return JSON.stringify({
-    rules: rules.map((rule) => ({
-      rulePriority: rule.rulePriority,
-      ...(rule.description ? { description: rule.description } : {}),
-      selection: {
-        tagStatus: rule.tagStatus ?? "any",
-        ...(rule.tagPrefixList ? { tagPrefixList: rule.tagPrefixList } : {}),
-        ...(rule.tagPatternList ? { tagPatternList: rule.tagPatternList } : {}),
-        countType: rule.countType,
-        ...(rule.countUnit ? { countUnit: rule.countUnit } : {}),
-        countNumber: rule.countNumber,
-      },
-      action: { type: "expire" },
-    })),
-  });
+  return JSON.stringify({ rules: rules.map(toJsonRule) });
 }
 
 export const EcrRepository = Composite((props: EcrRepositoryProps) => {
