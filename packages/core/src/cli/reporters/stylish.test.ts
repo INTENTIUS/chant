@@ -1,6 +1,17 @@
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import { formatStylish, formatSummary, formatJson, formatSarif } from "./stylish";
 import type { LintDiagnostic, LintRule } from "../../lint/rule";
+import type { OkfBundle, OkfConcept } from "../../okf-read";
+
+function concept(overrides: Partial<OkfConcept> & { path: string }): OkfConcept {
+  return {
+    type: "decision",
+    binds: [],
+    frontmatter: {},
+    body: "",
+    ...overrides,
+  };
+}
 
 describe("formatStylish", () => {
   const originalNoColor = process.env.NO_COLOR;
@@ -120,6 +131,149 @@ describe("formatStylish", () => {
     expect(diagLines[0]).toContain("Line 10 col 1");
     expect(diagLines[1]).toContain("Line 10 col 5");
     expect(diagLines[2]).toContain("Line 20");
+  });
+});
+
+describe("formatStylish suppressed section (#1866, design #1059)", () => {
+  beforeEach(() => {
+    process.env.NO_COLOR = "1";
+  });
+  afterEach(() => {
+    delete process.env.NO_COLOR;
+  });
+
+  const suppressedDiag: LintDiagnostic & { reason?: string } = {
+    file: "src/storage.ts",
+    line: 12,
+    column: 1,
+    ruleId: "AWS021",
+    severity: "warning",
+    message: "Bucket ACL is public-read",
+  };
+
+  test("no section when there are no suppressed diagnostics", () => {
+    const result = formatStylish([], []);
+    expect(result).not.toContain("Suppressed");
+  });
+
+  test("renders a Suppressed section when suppressed diagnostics exist", () => {
+    const result = formatStylish([], [{ ...suppressedDiag, reason: "backwards compat" }]);
+
+    expect(result).toContain("Suppressed");
+    expect(result).toContain("src/storage.ts");
+    expect(result).toContain("AWS021");
+    expect(result).toContain("backwards compat");
+  });
+
+  test("renders the section even when there are no active diagnostics", () => {
+    const result = formatStylish([], [suppressedDiag]);
+    expect(result).toContain("Suppressed");
+    // No active errors/warnings were counted from a suppressed diagnostic
+    expect(result).toContain("No problems found");
+  });
+
+  test("an okf: citation resolves to the concept's title and bundle-relative path", () => {
+    const bundle: OkfBundle = {
+      concepts: [
+        concept({
+          path: "decisions/public-assets.md",
+          title: "Public asset bucket stays world-readable",
+        }),
+      ],
+    };
+
+    const result = formatStylish(
+      [],
+      [{ ...suppressedDiag, reason: "okf:/decisions/public-assets.md" }],
+      bundle,
+    );
+
+    expect(result).toContain("Public asset bucket stays world-readable");
+    expect(result).toContain("decisions/public-assets.md");
+    expect(result).not.toContain("okf:/decisions/public-assets.md");
+  });
+
+  test("also resolves a citation without a leading slash", () => {
+    const bundle: OkfBundle = {
+      concepts: [concept({ path: "decisions/public-assets.md", title: "Public assets" })],
+    };
+
+    const result = formatStylish(
+      [],
+      [{ ...suppressedDiag, reason: "okf:decisions/public-assets.md" }],
+      bundle,
+    );
+
+    expect(result).toContain("Public assets");
+  });
+
+  test("an unresolvable citation prints the raw reason with a warning", () => {
+    const bundle: OkfBundle = { concepts: [] };
+
+    const result = formatStylish(
+      [],
+      [{ ...suppressedDiag, reason: "okf:/decisions/does-not-exist.md" }],
+      bundle,
+    );
+
+    expect(result).toContain("okf:/decisions/does-not-exist.md");
+    expect(result).toContain("unresolved okf citation");
+  });
+
+  test("an okf: citation with no bundle loaded prints the raw reason with a warning", () => {
+    const result = formatStylish([], [{ ...suppressedDiag, reason: "okf:/decisions/public-assets.md" }]);
+
+    expect(result).toContain("okf:/decisions/public-assets.md");
+    expect(result).toContain("unresolved okf citation");
+  });
+
+  test("a plain (non-okf) reason renders as-is, unaffected by a loaded bundle", () => {
+    const bundle: OkfBundle = {
+      concepts: [concept({ path: "decisions/public-assets.md", title: "Public assets" })],
+    };
+
+    const result = formatStylish([], [{ ...suppressedDiag, reason: "grandfathered, see #412" }], bundle);
+
+    expect(result).toContain("grandfathered, see #412");
+    expect(result).not.toContain("Public assets");
+  });
+
+  test("a suppressed diagnostic with no reason still renders", () => {
+    const result = formatStylish([], [suppressedDiag]);
+    expect(result).toContain("AWS021");
+    expect(result).toContain("suppressed");
+  });
+
+  test("active diagnostics and the suppressed section coexist", () => {
+    const active: LintDiagnostic = {
+      file: "src/other.ts",
+      line: 1,
+      column: 1,
+      ruleId: "COR001",
+      severity: "error",
+      message: "Active problem",
+    };
+
+    const result = formatStylish([active], [{ ...suppressedDiag, reason: "okf:/decisions/public-assets.md" }], {
+      concepts: [concept({ path: "decisions/public-assets.md", title: "Public assets" })],
+    });
+
+    expect(result).toContain("src/other.ts");
+    expect(result).toContain("Active problem");
+    expect(result).toContain("1 error");
+    expect(result).toContain("Suppressed");
+    expect(result).toContain("Public assets");
+  });
+
+  test("a title-less resolved concept falls back to its path as the label", () => {
+    const bundle: OkfBundle = {
+      concepts: [concept({ path: "decisions/public-assets.md" })],
+    };
+
+    const result = formatStylish([], [{ ...suppressedDiag, reason: "okf:/decisions/public-assets.md" }], bundle);
+
+    expect(result).toContain("decisions/public-assets.md");
+    expect(result).not.toContain("unresolved");
   });
 });
 
