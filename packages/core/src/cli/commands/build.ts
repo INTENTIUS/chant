@@ -7,7 +7,9 @@ import {
   isOwnershipParamRef,
   resolveFoldEnabled,
   resolveSandboxEnabled,
+  resolveKnowledgeDir,
 } from "../../config";
+import { loadOkfBundle } from "../../okf-read";
 import { unknownEnvError } from "../../env";
 import type { OwnershipMarker } from "../../ownership";
 import { resolveCliBuildParams } from "../build-params-cli";
@@ -17,6 +19,7 @@ import { resolveLexiconVersions, collectBuildRootContributors } from "../plugins
 import { runPostSynthChecks } from "../../lint/post-synth";
 import { coreReceiptChecks } from "../../lint/receipt-checks";
 import { coreOutputChecks } from "../../lint/output-checks";
+import { coreKnowledgeChecks } from "../../lint/knowledge-checks";
 import { applyConfiguredSeverity } from "../../lint/config";
 import { loadPolicyChecks } from "../../lint/policy";
 import { armSandboxPolicyExecution, runProjectPolicies } from "../../lint/policy-sandbox";
@@ -411,6 +414,27 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
   if (result.errors.length === 0) {
     const outputDiags = runPostSynthChecks(coreOutputChecks(), result, env);
     const { diagnostics: activeDiags, suppressed } = applyConfiguredSeverity(outputDiags, config.lint?.rules);
+    suppressedPostSynthCount += suppressed.length;
+    for (const diag of activeDiags) {
+      const prefix = diag.entity ? `[${diag.entity}] ` : "";
+      const lexiconSuffix = diag.lexicon ? ` (${diag.lexicon})` : "";
+      if (diag.severity === "error") {
+        errors.push(formatError({ message: `${prefix}${diag.message}${lexiconSuffix}` }));
+      } else {
+        warnings.push(formatWarning({ message: `${prefix}${diag.message}${lexiconSuffix}` }));
+      }
+    }
+  }
+
+  // Core-owned post-synth check over the project's OKF knowledge bundle
+  // (#1865, design #1059): a concept's `binds` naming no discovered entity is
+  // a stale binding, surfaced as a COR026 warning. `resolveKnowledgeDir` +
+  // `loadOkfBundle` never fail — a missing/absent `knowledge/` directory
+  // loads an empty bundle, so this is a no-op for a project that has none.
+  if (result.errors.length === 0) {
+    const bundle = await loadOkfBundle(resolveKnowledgeDir(config, configDir));
+    const knowledgeDiags = runPostSynthChecks(coreKnowledgeChecks(bundle), result, env);
+    const { diagnostics: activeDiags, suppressed } = applyConfiguredSeverity(knowledgeDiags, config.lint?.rules);
     suppressedPostSynthCount += suppressed.length;
     for (const diag of activeDiags) {
       const prefix = diag.entity ? `[${diag.entity}] ` : "";
