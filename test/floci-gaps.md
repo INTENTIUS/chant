@@ -594,3 +594,70 @@ would report false `absent` drift on all four properties until this lands,
 the same shape as entry 4's SG rules — actual out-of-band drift (a rule
 added on top of what CloudFormation *did* apply) would still surface
 correctly for `BucketEncryption`, the one property this path forwards.
+
+## 15. CloudFormation `AWS::DynamoDB::Table` drops StreamSpecification and TimeToLiveSpecification, ignores custom ProvisionedThroughput
+
+**Status:** confirmed 2026-08-24 against `ghcr.io/lex00/floci:main-20260825a`
+(`latest`), unfiled. Found while building the `DynamoDBTable` composite
+(chant #1139).
+
+```
+$ docker run -d --rm --name chant-floci-dynamo -p 4599:4566 ghcr.io/lex00/floci:latest
+$ export AWS_ENDPOINT_URL=http://localhost:4599 AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_REGION=us-east-1
+
+$ cat > template.json <<'JSON'
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Resources": {
+    "T": {
+      "Type": "AWS::DynamoDB::Table",
+      "Properties": {
+        "TableName": "chant-dynamo-verify",
+        "BillingMode": "PROVISIONED",
+        "AttributeDefinitions": [{"AttributeName": "pk", "AttributeType": "S"}],
+        "KeySchema": [{"AttributeName": "pk", "KeyType": "HASH"}],
+        "ProvisionedThroughput": {"ReadCapacityUnits": 2, "WriteCapacityUnits": 2},
+        "StreamSpecification": {"StreamViewType": "NEW_AND_OLD_IMAGES"},
+        "TimeToLiveSpecification": {"Enabled": true, "AttributeName": "expiresAt"}
+      }
+    }
+  }
+}
+JSON
+$ aws cloudformation create-stack --stack-name dynamo-verify --template-body file://template.json
+$ aws cloudformation wait stack-create-complete --stack-name dynamo-verify
+
+$ aws dynamodb describe-table --table-name chant-dynamo-verify \
+    --query 'Table.{Prov:ProvisionedThroughput,Stream:StreamSpecification}'
+{
+    "Prov": {"NumberOfDecreasesToday": 0, "ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
+    "Stream": null
+}
+$ aws dynamodb describe-time-to-live --table-name chant-dynamo-verify
+{"TimeToLiveDescription": {"TimeToLiveStatus": "DISABLED"}}
+```
+
+The template asked for `ReadCapacityUnits`/`WriteCapacityUnits` of 2/2, a
+stream, and TTL on `expiresAt`. The table that comes back has the emulator's
+default 5/5 capacity, no `StreamSpecification` at all (so no `StreamArn`
+either), and TTL still disabled. A GSI's own `ProvisionedThroughput` in the
+same template comes back as `0/0` rather than the value given.
+
+The raw DynamoDB API is not at fault — `create-table` with the same
+`--provisioned-throughput`/`--stream-specification`, followed by
+`update-time-to-live`, applies all three correctly on the same emulator (see
+repro in the PR that added this entry, chant #1139). So this is specifically
+the CloudFormation resource-provider glue for `AWS::DynamoDB::Table` silently
+dropping three of its documented properties, not a DynamoDB gap.
+
+**Effect on chant:** any composite or hand-authored template that sets
+`Table.StreamSpecification`, `Table.TimeToLiveSpecification`, or a non-default
+`ProvisionedThroughput` (table- or GSI-level) synthesizes correctly and the
+generated CloudFormation is right, but a Floci-backed `cfn-deploy`/apply loop
+cannot be used to assert those settings took effect — `describe-table` and
+`describe-time-to-live` read back the pre-gap state. The `DynamoDBTable`
+composite's own tests therefore stay unit-level (construct the template,
+assert its shape) rather than asserting post-apply state through Floci; the
+manual repro above is the closest this got to emulator coverage. Unblocked by
+switching the assertion to the raw DynamoDB API instead of describe-after-CFN,
+which is not representative of how these tables are actually deployed.
