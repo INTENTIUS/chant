@@ -10,6 +10,7 @@ function p(member: unknown): Record<string, unknown> {
 import { StatefulApp } from "./stateful-app";
 import { ArgoAppFor, ArgoAppSetForRegions, registerArgoCluster } from "./argo-app";
 import { FluxGitSource, FluxAppFor } from "./flux-app";
+import { Model, resolveModelStorageUri } from "./model";
 import { CronWorkload } from "./cron-workload";
 import { AutoscaledService } from "./autoscaled-service";
 import { WorkerPool } from "./worker-pool";
@@ -3655,6 +3656,62 @@ describe("InferenceService", () => {
   });
 });
 
+// ── Model ─────────────────────────────────────────────────────────
+
+describe("Model", () => {
+  test("resolves a gcs source to a gs:// storageUri pinned to version", () => {
+    const result = Model({ id: "llama-3-8b", version: "2024-07-01", source: "gcs" });
+    expect(result.storageUri).toBe("gs://llama-3-8b/2024-07-01");
+  });
+
+  test("resolves an s3 source to an s3:// storageUri pinned to version", () => {
+    const result = Model({ id: "llama-3-8b", version: "2024-07-01", source: "s3" });
+    expect(result.storageUri).toBe("s3://llama-3-8b/2024-07-01");
+  });
+
+  test("resolves a pvc source to a pvc:// storageUri pinned to version", () => {
+    const result = Model({ id: "llama-3-8b", version: "2024-07-01", source: "pvc" });
+    expect(result.storageUri).toBe("pvc://llama-3-8b/2024-07-01");
+  });
+
+  test("resolves an hf source to an hf:// storageUri pinned to version", () => {
+    const result = Model({ id: "llama-3-8b", version: "2024-07-01", source: "hf" });
+    expect(result.storageUri).toBe("hf://llama-3-8b/2024-07-01");
+  });
+
+  test("an explicit uri overrides the id-derived path but version is still appended", () => {
+    const result = Model({
+      id: "llama-3-8b",
+      version: "2024-07-01",
+      source: "gcs",
+      uri: "my-models-bucket/llama-3-8b-instruct",
+    });
+    expect(result.storageUri).toBe("gs://my-models-bucket/llama-3-8b-instruct/2024-07-01");
+  });
+
+  test("no cache PVC by default", () => {
+    const result = Model({ id: "llama-3-8b", version: "2024-07-01", source: "gcs" });
+    expect(result.cache).toBeUndefined();
+  });
+
+  test("emits a cache PVC named `${id}-${version}` when cache is set", () => {
+    const result = Model({
+      id: "llama-3-8b",
+      version: "2024-07-01",
+      source: "gcs",
+      cache: { storageClass: "premium-rwo", size: "200Gi" },
+    });
+    expect(result.cache).toBeDefined();
+    expect((p(result.cache) as any).metadata.name).toBe("llama-3-8b-2024-07-01");
+    expect((p(result.cache) as any).spec.storageClassName).toBe("premium-rwo");
+    expect((p(result.cache) as any).spec.resources.requests.storage).toBe("200Gi");
+  });
+
+  test("resolveModelStorageUri is the same resolution the composite uses", () => {
+    expect(resolveModelStorageUri({ id: "m", version: "v1", source: "s3" })).toBe("s3://m/v1");
+  });
+});
+
 describe("package index re-exports (regression guard)", () => {
   test("Argo composites are reachable from the package entry", async () => {
     const pkg: any = await import("../index");
@@ -3667,5 +3724,11 @@ describe("package index re-exports (regression guard)", () => {
     const pkg: any = await import("../index");
     expect(typeof pkg.FluxGitSource).toBe("function");
     expect(typeof pkg.FluxAppFor).toBe("function");
+  });
+
+  test("Model is reachable from the package entry", async () => {
+    const pkg: any = await import("../index");
+    expect(typeof pkg.Model).toBe("function");
+    expect(typeof pkg.resolveModelStorageUri).toBe("function");
   });
 });

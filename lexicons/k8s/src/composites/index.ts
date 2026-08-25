@@ -111,3 +111,5 @@ export type {
 } from "./flux-app";
 export { VllmServingRuntime } from "./vllm-serving-runtime";
 export type { VllmServingRuntimeProps, VllmServingRuntimeResult, VllmResourceSpec } from "./vllm-serving-runtime";
+export { Model, resolveModelStorageUri } from "./model";
+export type { ModelSource, ModelProps, ModelResult } from "./model";
