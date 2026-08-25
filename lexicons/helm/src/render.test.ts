@@ -5,6 +5,7 @@ import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 
 import { HelmRender, getHelmRenderRecords, clearHelmRenderRecords } from "./render";
+import { helmContentDigest, helmInputDigest, renderStability } from "./render-digest";
 
 const FIXTURE_DIR = join(tmpdir(), "chant-helm-render-fixture");
 const CHART_DIR = join(FIXTURE_DIR, "tiny-chart");
@@ -423,5 +424,120 @@ EOF
     });
     expect(records[1].name).toBe("unpinned");
     expect(records[1].capabilityProfile).toBeUndefined();
+  });
+
+  test("digests are recorded only for pinned renders — unpinned renders record neither (#1237)", () => {
+    HelmRender({
+      name: "pinned",
+      chart: "/dev/null/some-chart",
+      noCache: true,
+      capabilityProfile: { name: "prod", kubeVersion: "1.33.6" },
+    } as Parameters<typeof HelmRender>[0]);
+    HelmRender({
+      name: "unpinned",
+      chart: "/dev/null/some-chart",
+      noCache: true,
+    } as Parameters<typeof HelmRender>[0]);
+
+    const [pinned, unpinned] = getHelmRenderRecords();
+    expect(pinned.contentDigest).toMatch(/^sha256:[0-9a-f]{64}$/);
+    expect(pinned.inputDigest).toMatch(/^sha256:[0-9a-f]{64}$/);
+    // The double's output is fixed, so the content digest is the canonical
+    // digest of that one ConfigMap — assert it against the canonicalizer.
+    expect(pinned.contentDigest).toBe(
+      helmContentDigest("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: fake-render\n"),
+    );
+    expect(unpinned.contentDigest).toBeUndefined();
+    expect(unpinned.inputDigest).toBeUndefined();
+  });
+
+  test("a pinned render's inputDigest is #1243's input digest for the same inputs", () => {
+    HelmRender({
+      name: "rel",
+      chart: "/dev/null/some-chart",
+      noCache: true,
+      values: { replicaCount: 3 },
+      capabilityProfile: { name: "prod", kubeVersion: "1.33.6", apiVersions: ["batch/v1"] },
+    } as Parameters<typeof HelmRender>[0]);
+
+    const [record] = getHelmRenderRecords();
+    expect(record.inputDigest).toBe(
+      helmInputDigest({
+        chart: "/dev/null/some-chart",
+        chartVersion: undefined,
+        values: { replicaCount: 3 },
+        capabilityProfile: { kubeVersion: "1.33.6", apiVersions: ["batch/v1"] },
+      }),
+    );
+  });
+});
+
+/**
+ * Digest behavior against real helm renders of the deterministic fixture
+ * (#1237). Pinning uses an inline profile so `helm template` runs with
+ * `--kube-version` — the same invocation shape a config-declared profile
+ * produces.
+ */
+describe.skipIf(!fixtureAvailable)("HelmRender digests (real helm)", () => {
+  const PROFILE = { name: "test", kubeVersion: "1.33.6" };
+
+  beforeEach(() => {
+    clearHelmRenderRecords();
+  });
+
+  test("two pinned renders of the deterministic fixture agree on both digests", () => {
+    for (const name of ["rel", "rel"]) {
+      HelmRender({
+        name,
+        chart: CHART_DIR,
+        noCache: true,
+        capabilityProfile: PROFILE,
+      } as Parameters<typeof HelmRender>[0]);
+    }
+    const [first, second] = getHelmRenderRecords();
+    expect(first.contentDigest).toMatch(/^sha256:[0-9a-f]{64}$/);
+    expect(first.contentDigest).toBe(second.contentDigest);
+    expect(first.inputDigest).toBe(second.inputDigest);
+
+    const report = renderStability(getHelmRenderRecords());
+    expect(report.unstable).toEqual([]);
+    expect(report.stable.length).toBe(1);
+    expect(report.stable[0].names).toEqual(["rel", "rel"]);
+  });
+
+  test("a values change moves contentDigest and inputDigest together", () => {
+    for (const replicaCount of [1, 3]) {
+      HelmRender({
+        name: "rel",
+        chart: CHART_DIR,
+        noCache: true,
+        values: { replicaCount },
+        capabilityProfile: PROFILE,
+      } as Parameters<typeof HelmRender>[0]);
+    }
+    const [one, three] = getHelmRenderRecords();
+    expect(one.contentDigest).not.toBe(three.contentDigest);
+    expect(one.inputDigest).not.toBe(three.inputDigest);
+    // Different inputs — no stability claim to make, and no false alarm.
+    expect(renderStability(getHelmRenderRecords()).unstable).toEqual([]);
+  });
+
+  test("same inputs, different bytes — renderStability names the divergence", () => {
+    HelmRender({
+      name: "rel",
+      chart: CHART_DIR,
+      noCache: true,
+      capabilityProfile: PROFILE,
+    } as Parameters<typeof HelmRender>[0]);
+    const [genuine] = getHelmRenderRecords();
+    // A second record with the same inputs but different bytes — the shape an
+    // unstable chart (randAlphaNum, timestamps) produces. The fixture is
+    // deliberately deterministic, so fabricate the divergent twin.
+    const divergent = { ...genuine, contentDigest: "sha256:" + "0".repeat(64) };
+    const report = renderStability([genuine, divergent]);
+    expect(report.stable).toEqual([]);
+    expect(report.unstable.length).toBe(1);
+    expect(report.unstable[0].inputDigest).toBe(genuine.inputDigest);
+    expect(report.unstable[0].contentDigests).toEqual([genuine.contentDigest, divergent.contentDigest]);
   });
 });

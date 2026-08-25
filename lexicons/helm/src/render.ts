@@ -45,6 +45,7 @@ import { Deployment } from "@intentius/chant-lexicon-k8s/generated/index";
 import yaml from "js-yaml";
 
 import { resolveCapabilityProfile, type HelmCapabilityProfile, type HelmCapabilityProfileRef } from "./config";
+import { helmContentDigest, helmInputDigest } from "./render-digest";
 
 export interface HelmRenderProps {
   /** Logical name for the render (used in cache key + composite name). */
@@ -82,17 +83,41 @@ export interface HelmRenderProps {
 }
 
 /**
- * What one `HelmRender` invocation recorded about itself — the seam #1237's
- * render digest builds on. `capabilityProfile` is the profile identity the
- * render was pinned against; `undefined` means the render was unpinned and
- * its bytes depend on the local helm binary's defaults.
+ * What one `HelmRender` invocation recorded about itself. `capabilityProfile`
+ * is the profile identity the render was pinned against; `undefined` means
+ * the render was unpinned and its bytes depend on the local helm binary's
+ * defaults.
+ *
+ * Pinned renders (profile present — the v1 gate, see #1237) also carry the
+ * digest pair:
+ *
+ * - `inputDigest` — `sha256:` over the canonical JSON of the declared inputs
+ *   (chart reference, version, values, capability facts). Shared with the
+ *   release-ledger digest #1243 records on deploy, via `helmInputDigest`.
+ *   Answers "same inputs?" without touching any bytes.
+ * - `contentDigest` — `sha256:` over the canonical rendered bytes
+ *   (`canonicalizeRender`). The artifact identity: answers "same bytes on
+ *   the cluster?".
+ *
+ * They diverge exactly when the render is not a function of its declared
+ * inputs — `renderStability` in ./render-digest.ts names that.
+ *
+ * Unpinned renders record neither digest. Their bytes are a function of the
+ * local helm binary's defaulted capabilities, so a digest over them would
+ * assert an identity the render does not have — it would differ across
+ * machines that did nothing differently, and equal digests would still
+ * prove nothing about a cluster. No digest is the honest record.
  */
 export interface HelmRenderRecord {
-  /** The render's logical name (`HelmRenderProps.name`). */
+  /** The render's logical name (`HelmRenderProps.name`) — also the helm release name baked into the bytes. */
   name: string;
   chart: string;
   version?: string;
   capabilityProfile?: HelmCapabilityProfile;
+  /** Input-side identity (#1237/#1243). Present only for pinned renders. */
+  inputDigest?: string;
+  /** Content-side identity over canonical rendered bytes (#1237). Present only for pinned renders. */
+  contentDigest?: string;
 }
 
 const renderRecords: HelmRenderRecord[] = [];
@@ -257,11 +282,35 @@ export const HelmRender = Composite<HelmRenderProps>((props) => {
   const yamlText = loadOrRender(props, profile);
   const docs = parseMultiDoc(yamlText);
 
+  // Digests are recorded only for pinned renders (#1237). Profile presence
+  // is the v1 gate: the classifier (#1234) needs the chart source on disk,
+  // which a repo-fetched render does not keep, so the gate here is the
+  // declared-inputs property, not a template analysis. An unpinned render's
+  // digest would be a function of the local helm binary — meaningless as an
+  // identity — so unpinned renders record neither digest.
+  const digests = profile
+    ? {
+        inputDigest: helmInputDigest({
+          // Same chart-reference convention helmInstall digests: a local
+          // path stays itself; a repo-fetched chart is `<repo-url>/<chart>`.
+          chart: props.repo ? `${props.repo}/${props.chart}` : props.chart,
+          chartVersion: props.version,
+          values: props.values ?? {},
+          capabilityProfile: {
+            kubeVersion: profile.kubeVersion,
+            apiVersions: profile.apiVersions,
+          },
+        }),
+        contentDigest: helmContentDigest(yamlText),
+      }
+    : {};
+
   renderRecords.push({
     name: props.name,
     chart: props.chart,
     version: props.version,
     capabilityProfile: profile,
+    ...digests,
   });
 
   const out: Record<string, InstanceType<typeof Deployment>> = {};

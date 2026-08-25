@@ -17,6 +17,10 @@ export { Chart, Values, ValuesOverride, HelmTest, HelmNotes, HelmHook, HelmDepen
 export { HelmRender, getHelmRenderRecords, clearHelmRenderRecords } from "./render";
 export type { HelmRenderProps, HelmRenderRecord } from "./render";
 
+// #1237 — render canonicalization + the contentDigest/inputDigest split.
+export { canonicalizeRender, helmContentDigest, helmInputDigest, renderStability } from "./render-digest";
+export type { HelmInputDigestSource, RenderStabilityGroup, RenderStabilityReport } from "./render-digest";
+
 // Capability profiles — per-cluster render inputs (#1235, epic #1228)
 export {
   helmConfigSchema,
