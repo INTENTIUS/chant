@@ -118,6 +118,60 @@ Canonicalization normalizes render noise and nothing else. Mapping keys are sort
 
 Only pinned renders carry digests. An unpinned render's bytes depend on the local helm binary's defaulted capabilities, so a digest over them would assert an identity the render does not have. Unpinned renders record neither digest.
 
+## The render store
+
+A pinned render is durable, not just identified. By default it persists to a content-addressed store under `~/.chant/helm-renders/` (override with `CHANT_HELM_RENDER_ROOT`):
+
+```
+sha256-<hex>/           one entry per distinct contentDigest
+  content.yaml          the canonical rendered bytes
+  manifest.json         the RenderManifest
+inputs/<hex>.json       inputs index — full render inputs -> digests
+```
+
+The `RenderManifest` is the record of what the bytes are and what produced them. It carries the chart identity (`chart`, `chartVersion`, `repo`), the release name and namespace baked into the bytes, the capability profile the render was pinned against, both identity sides (`inputDigest` with `valuesDigest` as its values-only component, and `contentDigest` as the storage key), a document index, `renderedAt`, the chant version, an optional `sourceRef`, and `helmVersion`. The helm version is load-bearing. The defaulted kube version is a property of the binary, so this field is what explains a digest mismatch between two machines.
+
+The document index maps each identifiable document to its kind, namespace, name, `# Source:` origin, byte span, and per-document digest. `readRenderDocument` resolves one document to its exact bytes and verifies the slice against its digest before returning it.
+
+```typescript
+import { listRenderManifests, loadRenderManifest, readRenderDocument } from "@intentius/chant-lexicon-helm";
+
+const manifests = listRenderManifests();
+const manifest = loadRenderManifest("sha256:...");
+const doc = readRenderDocument("sha256:...", { kind: "ConfigMap", namespace: "web", name: "app-config" });
+```
+
+Entries are immutable and deduplicated: two renders producing the same bytes share one entry, written once. The inputs index is what makes a repeat render a cache hit — it keys on everything that changes the bytes, including the release name and namespace, which `inputDigest` deliberately excludes because the ledger uses that digest as a cross-environment join key.
+
+Persistence follows the cache knob. A pinned render persists unless `noCache` is set; `persist: true` forces the write even with `noCache`; `persist: false` turns the store off. `persist: true` on an unpinned render is a build error naming the reason — an unpinned render has no content identity to store under.
+
+The store has no retention policy, matching the build archive it is modeled on. Entries accumulate until removed by hand. Renders cached under the older truncated-hash entries are left in place — unpinned renders still use them — and pinned renders write to the `sha256-` entries instead. Nothing is migrated.
+
+## Render routing
+
+A stored render deploys through a structure-preserving wrapper: a small chart tree, not a flat manifest stream. `routeRender` splits the recorded stream into the groups the wrapper preserves, and it only routes and labels. Every routed document is byte-identical to the recorded one. Nothing is re-serialized, reordered, or edited.
+
+```typescript
+import { routeStoredRender } from "@intentius/chant-lexicon-helm";
+
+const routed = routeStoredRender("sha256:...");
+// routed.chart, routed.chartVersion — inherited from the source chart
+// routed.crds    — documents whose # Source: path has a crds/ segment
+// routed.hooks   — helm.sh/hook-annotated documents, annotations intact
+// routed.main    — everything else (the wrapper's templates/)
+// routed.warnings — dropped duplicates and template-rendered CRDs, each named
+```
+
+Routing keys on each document's `# Source:` origin, and the CRD rule matches a `crds/` **segment** (`(^|/)crds/`), never a prefix. A subchart's CRDs arrive as `charts/<child>/crds/<file>`, so a prefix rule would route every one of them into `templates/`. That distinction is what keeps `helm uninstall` safe: a CRD shipped in `crds/` survives uninstall, while the same CRD flattened into `templates/` is deleted along with every custom resource of its type.
+
+The segment is the discriminator, not the kind. A `CustomResourceDefinition` rendered from `templates/` stays in the main group, because that chart opted into template lifecycle semantics — upgrades and deletes apply to it. The routing notes it with a `template-crd` warning so the choice is visible.
+
+An aliased dependency emits the same CRD once per instance. The store keeps both documents; the routed CRD group holds each CRD once, deduplicated by `(group, kind)` with the first occurrence winning and a `duplicate-crd` warning naming both sources. A CRD document the routing cannot identify is kept as-is. Routing never silently drops what it cannot name.
+
+Hook-annotated documents route to their own group rather than being folded into the main set or dropped. Hooks survive pinning with unchanged ordering and delete-policy behavior, and surfacing them separately lets the install path account for them.
+
+The wrapper inherits the source chart's name and version, so `helm history` reads continuously across the migration from an unpinned release to a pinned one.
+
 ## List merge workaround
 
 Helm's strategic merge patch does not merge lists — it replaces them. Use map-of-maps instead:

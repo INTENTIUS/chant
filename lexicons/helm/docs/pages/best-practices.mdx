@@ -143,6 +143,31 @@ Persistence follows the cache knob. A pinned render persists unless `noCache` is
 
 The store has no retention policy, matching the build archive it is modeled on. Entries accumulate until removed by hand. Renders cached under the older truncated-hash entries are left in place — unpinned renders still use them — and pinned renders write to the `sha256-` entries instead. Nothing is migrated.
 
+## Render routing
+
+A stored render deploys through a structure-preserving wrapper: a small chart tree, not a flat manifest stream. `routeRender` splits the recorded stream into the groups the wrapper preserves, and it only routes and labels. Every routed document is byte-identical to the recorded one. Nothing is re-serialized, reordered, or edited.
+
+```typescript
+import { routeStoredRender } from "@intentius/chant-lexicon-helm";
+
+const routed = routeStoredRender("sha256:...");
+// routed.chart, routed.chartVersion — inherited from the source chart
+// routed.crds    — documents whose # Source: path has a crds/ segment
+// routed.hooks   — helm.sh/hook-annotated documents, annotations intact
+// routed.main    — everything else (the wrapper's templates/)
+// routed.warnings — dropped duplicates and template-rendered CRDs, each named
+```
+
+Routing keys on each document's `# Source:` origin, and the CRD rule matches a `crds/` **segment** (`(^|/)crds/`), never a prefix. A subchart's CRDs arrive as `charts/<child>/crds/<file>`, so a prefix rule would route every one of them into `templates/`. That distinction is what keeps `helm uninstall` safe: a CRD shipped in `crds/` survives uninstall, while the same CRD flattened into `templates/` is deleted along with every custom resource of its type.
+
+The segment is the discriminator, not the kind. A `CustomResourceDefinition` rendered from `templates/` stays in the main group, because that chart opted into template lifecycle semantics — upgrades and deletes apply to it. The routing notes it with a `template-crd` warning so the choice is visible.
+
+An aliased dependency emits the same CRD once per instance. The store keeps both documents; the routed CRD group holds each CRD once, deduplicated by `(group, kind)` with the first occurrence winning and a `duplicate-crd` warning naming both sources. A CRD document the routing cannot identify is kept as-is. Routing never silently drops what it cannot name.
+
+Hook-annotated documents route to their own group rather than being folded into the main set or dropped. Hooks survive pinning with unchanged ordering and delete-policy behavior, and surfacing them separately lets the install path account for them.
+
+The wrapper inherits the source chart's name and version, so `helm history` reads continuously across the migration from an unpinned release to a pinned one.
+
 ## List merge workaround
 
 Helm's strategic merge patch does not merge lists — it replaces them. Use map-of-maps instead:

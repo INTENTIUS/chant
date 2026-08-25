@@ -1,0 +1,8 @@
+apiVersion: v2
+name: hook-fixture
+description: >-
+  Wrapper-routing fixture (#1239, epic #1228): a hook-annotated Job next to a
+  plain ConfigMap. Hooks survive pinning (finding 5); the routing must surface
+  them as their own group with annotations intact, never silently dropped.
+type: application
+version: 0.1.0
