@@ -6,6 +6,7 @@ import {
   resolveAutoReleaseDisabled,
   resolveFoldEnabled,
   resolveSbomFormat,
+  resolveKnowledgeDir,
   environmentName,
   environmentNames,
   environmentEndpoint,
@@ -431,5 +432,19 @@ describe("resolveSbomFormat (#606)", () => {
   test("a step-level format always wins over project config", () => {
     expect(resolveSbomFormat({ sbom: { format: "cyclonedx" } }, "spdx")).toBe("spdx");
     expect(resolveSbomFormat({}, "cyclonedx")).toBe("cyclonedx");
+  });
+});
+
+describe("resolveKnowledgeDir (#1864, design #1059)", () => {
+  test("convention: knowledge/ beside the project root when config is silent", () => {
+    expect(resolveKnowledgeDir({}, "/proj")).toBe(join("/proj", "knowledge"));
+  });
+
+  test("config override honored", () => {
+    expect(resolveKnowledgeDir({ knowledge: { dir: "docs/knowledge" } }, "/proj")).toBe(join("/proj", "docs/knowledge"));
+  });
+
+  test("an empty knowledge object still falls back to the convention name", () => {
+    expect(resolveKnowledgeDir({ knowledge: {} }, "/proj")).toBe(join("/proj", "knowledge"));
   });
 });

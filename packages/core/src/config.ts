@@ -181,6 +181,9 @@ export const ChantConfigSchema = z.object({
     scanner: z.enum(["grype", "trivy"]).optional(),
     vexSources: z.array(z.string()).optional(),
   }).optional(),
+  knowledge: z.object({
+    dir: z.string().min(1).optional(),
+  }).optional(),
 }).passthrough();
 
 /**
@@ -399,6 +402,21 @@ export interface ChantConfig {
     scanner?: "grype" | "trivy";
     /** Default VEX document paths (OpenVEX/CycloneDX) applied to every gate. Read where the gate step is composed. */
     vexSources?: string[];
+  };
+
+  /**
+   * OKF knowledge bundle location (#1864, design #1059, epic #1057) — the
+   * *input* side of `chant explain --format okf` (#1058): a project may
+   * author knowledge as an OKF v0.2 bundle (a directory of markdown files
+   * with YAML frontmatter) that `./okf-read.ts`'s `loadOkfBundle` reads and
+   * binds to discovered entities via each concept's `binds` frontmatter key.
+   * Convention-first: `knowledge/` beside `chant.config.ts` is used when this
+   * is unset. Set `dir` only when that name is already taken by something
+   * else in the project. See {@link resolveKnowledgeDir}.
+   */
+  knowledge?: {
+    /** Bundle directory, relative to the project root. Defaults to `"knowledge"`. */
+    dir?: string;
   };
 }
 
@@ -781,6 +799,18 @@ export function resolveVulnPolicy(config: ChantConfig): Partial<VulnPolicy> {
   if (v.exploitabilityFixableOnly !== undefined) out.exploitabilityFixableOnly = v.exploitabilityFixableOnly;
   if (v.license) out.license = v.license;
   return out;
+}
+
+/**
+ * Resolve the OKF knowledge bundle directory (#1864, design #1059):
+ * `knowledge.dir` relative to `projectPath` when configured, else the
+ * `knowledge/` convention beside `chant.config.ts`. Never checks existence —
+ * a project with no bundle yet resolves a path all the same, and
+ * `okf-read.ts`'s `loadOkfBundle` treats a missing directory as an empty
+ * bundle rather than an error.
+ */
+export function resolveKnowledgeDir(config: ChantConfig, projectPath: string): string {
+  return join(projectPath, config.knowledge?.dir ?? "knowledge");
 }
 
 /**
