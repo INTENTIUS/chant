@@ -17,6 +17,8 @@ export { LambdaEventBridge } from "./lambda-eventbridge";
 export type { LambdaEventBridgeProps } from "./lambda-eventbridge";
 export { LambdaDynamoDB } from "./lambda-dynamodb";
 export type { LambdaDynamoDBProps } from "./lambda-dynamodb";
+export { EcrRepository } from "./ecr-repository";
+export type { EcrRepositoryProps, EcrLifecycleRule, EcrEncryption } from "./ecr-repository";
 export { LambdaS3 } from "./lambda-s3";
 export type { LambdaS3Props } from "./lambda-s3";
 export { LambdaSns } from "./lambda-sns";

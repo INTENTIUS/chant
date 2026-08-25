@@ -32,6 +32,7 @@ The AWS lexicon ships ready-to-use composites for common patterns. Import them f
 | `LambdaSqs` | `queue`, `role`, `func` | SQS Queue + Lambda + EventSourceMapping. Auto-attaches SQS receive policy. |
 | `LambdaEventBridge` | `rule`, `role`, `func`, `permission` | EventBridge Rule + Lambda. Supports `schedule` and/or `eventPattern`. |
 | `LambdaDynamoDB` | `table`, `role`, `func` | DynamoDB Table + Lambda. Auto-attaches DynamoDB policy and injects `TABLE_NAME` env var. |
+| `EcrRepository` | `repository` | ECR repository with scan-on-push enabled and a lifecycle policy by default (expires untagged images after 14 days). Both are configurable; pass `lifecycleRules: []` to ship the repository with no lifecycle policy at all. |
 | `LambdaS3` | `bucket`, `role`, `func` | S3 Bucket (encrypted, public access blocked) + Lambda. Auto-attaches S3 policy and injects `BUCKET_NAME` env var. |
 | `LambdaSns` | `topic`, `role`, `func`, `subscription`, `permission` | SNS Topic + Lambda via Subscription. Auto-attaches invoke permission for SNS. |
 | `VpcDefault` | `vpc`, `igw`, `igwAttachment`, `publicSubnet1`, `publicSubnet2`, `privateSubnet1`, `privateSubnet2`, `publicRouteTable`, `publicRoute`, `publicRta1`, `publicRta2`, `privateRouteTable`, `privateRta1`, `privateRta2`, `natEip`, `natGateway`, `privateRoute` | Production-ready VPC: 2 public + 2 private subnets across 2 AZs, internet gateway, single NAT gateway. |

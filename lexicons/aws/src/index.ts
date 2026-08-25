@@ -137,7 +137,7 @@ export {
   LambdaFunction, LambdaNode, LambdaPython, NodeLambda, PythonLambda,
   LambdaApi,
   LambdaScheduled, ScheduledLambda,
-  LambdaSqs, LambdaEventBridge, LambdaDynamoDB, LambdaS3, LambdaSns,
+  LambdaSqs, LambdaEventBridge, LambdaDynamoDB, EcrRepository, LambdaS3, LambdaSns,
   VpcDefault, FargateAlb, AlbShared, FargateService, FARGATE_SERVICE_LIMITS, RdsInstance, RdsPostgres,
   EfsWithAccessPoint,
   Ec2InstanceRole, MinimalVpc, EksCluster,
@@ -150,7 +150,7 @@ export {
 } from "./composites/index";
 export type {
   LambdaFunctionProps, LambdaApiProps, ScheduledLambdaProps,
-  LambdaSqsProps, LambdaEventBridgeProps, LambdaDynamoDBProps, LambdaS3Props, LambdaSnsProps,
+  LambdaSqsProps, LambdaEventBridgeProps, LambdaDynamoDBProps, EcrRepositoryProps, EcrLifecycleRule, EcrEncryption, LambdaS3Props, LambdaSnsProps,
   VpcDefaultProps, FargateAlbProps, AlbSharedProps, FargateServiceProps, RdsInstanceProps, RdsPostgresProps,
   EfsWithAccessPointProps,
   Ec2InstanceRoleProps, MinimalVpcProps, EksClusterProps,
