@@ -31,6 +31,8 @@ export { AlbShared } from "./alb-shared";
 export type { AlbSharedProps } from "./alb-shared";
 export { FargateService, FARGATE_SERVICE_LIMITS } from "./fargate-service";
 export type { FargateServiceProps } from "./fargate-service";
+export { NlbService } from "./nlb-service";
+export type { NlbServiceProps } from "./nlb-service";
 export { RdsInstance, RdsInstance as RdsPostgres } from "./rds-instance";
 export type { RdsInstanceProps, RdsInstanceProps as RdsPostgresProps } from "./rds-instance";
 export { EfsWithAccessPoint } from "./efs-with-access-point";

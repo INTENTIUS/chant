@@ -13,6 +13,7 @@ import { VpcDefault } from "./vpc-default";
 import { FargateAlb } from "./fargate-alb";
 import { AlbShared } from "./alb-shared";
 import { FargateService } from "./fargate-service";
+import { NlbService } from "./nlb-service";
 import { RdsInstance } from "./rds-instance";
 import { Ec2InstanceRole } from "./ec2-instance-role";
 import { Ec2InstanceBundle } from "./ec2-instance-bundle";
@@ -638,6 +639,112 @@ describe("FargateService", () => {
 
     const svcProps = (instance.service as any).props;
     expect(svcProps.DesiredCount).toBe(2);
+  });
+});
+
+describe("NlbService", () => {
+  const nlbProps = {
+    vpcId: "vpc-123",
+    subnetIds: ["subnet-pub1", "subnet-pub2"],
+  };
+
+  test("returns 3 members with correct names", () => {
+    const instance = NlbService(nlbProps);
+    const names = Object.keys(instance.members);
+    expect(names).toEqual(["nlb", "targetGroup", "listener"]);
+  });
+
+  test("expandComposite produces correct logical names", () => {
+    const expanded = expandComposite("app", NlbService(nlbProps));
+    expect(expanded.has("appNlb")).toBe(true);
+    expect(expanded.has("appTargetGroup")).toBe(true);
+    expect(expanded.has("appListener")).toBe(true);
+    expect(expanded.size).toBe(3);
+  });
+
+  test("NLB has Type network and given subnets", () => {
+    const instance = NlbService(nlbProps);
+    const nlbResourceProps = (instance.nlb as any).props;
+    expect(nlbResourceProps.Type).toBe("network");
+    expect(nlbResourceProps.Scheme).toBe("internet-facing");
+    expect(nlbResourceProps.Subnets).toEqual(["subnet-pub1", "subnet-pub2"]);
+  });
+
+  test("no security group is created", () => {
+    const instance = NlbService(nlbProps);
+    expect(Object.keys(instance.members)).not.toContain("albSg");
+    expect(Object.keys(instance.members)).not.toContain("nlbSg");
+  });
+
+  test("defaults: TCP protocol, port 80, ip target type", () => {
+    const instance = NlbService(nlbProps);
+    const tgProps = (instance.targetGroup as any).props;
+    expect(tgProps.Protocol).toBe("TCP");
+    expect(tgProps.Port).toBe(80);
+    expect(tgProps.TargetType).toBe("ip");
+    expect(tgProps.HealthCheckProtocol).toBe("TCP");
+
+    const listenerProps = (instance.listener as any).props;
+    expect(listenerProps.Protocol).toBe("TCP");
+    expect(listenerProps.Port).toBe(80);
+  });
+
+  test("targetPort defaults to listenerPort but can be overridden", () => {
+    const instance = NlbService({ ...nlbProps, listenerPort: 443, targetPort: 8443 });
+    const tgProps = (instance.targetGroup as any).props;
+    expect(tgProps.Port).toBe(8443);
+    const listenerProps = (instance.listener as any).props;
+    expect(listenerProps.Port).toBe(443);
+  });
+
+  test("listener forwards to the target group", () => {
+    const instance = NlbService(nlbProps);
+    const listenerProps = (instance.listener as any).props;
+    expect(listenerProps.DefaultActions).toHaveLength(1);
+    const action = (listenerProps.DefaultActions[0] as any).props;
+    expect(action.Type).toBe("forward");
+  });
+
+  test("static targets are registered on the target group", () => {
+    const instance = NlbService({
+      ...nlbProps,
+      targetType: "instance",
+      targets: [{ id: "i-0123456789abcdef0", port: 8080 }],
+    });
+    const tgProps = (instance.targetGroup as any).props;
+    expect(tgProps.TargetType).toBe("instance");
+    expect(tgProps.Targets).toHaveLength(1);
+    const target = (tgProps.Targets[0] as any).props;
+    expect(target.Id).toBe("i-0123456789abcdef0");
+    expect(target.Port).toBe(8080);
+  });
+
+  test("internal scheme is respected", () => {
+    const instance = NlbService({ ...nlbProps, scheme: "internal" });
+    const nlbResourceProps = (instance.nlb as any).props;
+    expect(nlbResourceProps.Scheme).toBe("internal");
+  });
+
+  test("TLS protocol adds certificate to listener", () => {
+    const instance = NlbService({
+      ...nlbProps,
+      protocol: "TLS",
+      certificateArn: "arn:aws:acm:us-east-1:123:certificate/abc",
+    });
+    const listenerProps = (instance.listener as any).props;
+    expect(listenerProps.Protocol).toBe("TLS");
+    expect(listenerProps.Certificates).toHaveLength(1);
+    const cert = (listenerProps.Certificates[0] as any).props;
+    expect(cert.CertificateArn).toBe("arn:aws:acm:us-east-1:123:certificate/abc");
+
+    const tgProps = (instance.targetGroup as any).props;
+    expect(tgProps.Protocol).toBe("TLS");
+  });
+
+  test("throws when protocol is TLS without a certificateArn", () => {
+    expect(() =>
+      NlbService({ ...nlbProps, protocol: "TLS" }),
+    ).toThrow("NlbService requires certificateArn when protocol is TLS");
   });
 });
 

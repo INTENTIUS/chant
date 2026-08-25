@@ -138,7 +138,7 @@ export {
   LambdaApi,
   LambdaScheduled, ScheduledLambda,
   LambdaSqs, LambdaEventBridge, LambdaDynamoDB, EcrRepository, LambdaS3, LambdaSns,
-  VpcDefault, FargateAlb, AlbShared, FargateService, FARGATE_SERVICE_LIMITS, RdsInstance, RdsPostgres,
+  VpcDefault, FargateAlb, AlbShared, FargateService, FARGATE_SERVICE_LIMITS, NlbService, RdsInstance, RdsPostgres,
   EfsWithAccessPoint,
   Ec2InstanceRole, Ec2InstanceBundle, MinimalVpc, EksCluster,
   SolrFargateService,
@@ -151,7 +151,7 @@ export {
 export type {
   LambdaFunctionProps, LambdaApiProps, ScheduledLambdaProps,
   LambdaSqsProps, LambdaEventBridgeProps, LambdaDynamoDBProps, EcrRepositoryProps, EcrLifecycleRule, EcrEncryption, LambdaS3Props, LambdaSnsProps,
-  VpcDefaultProps, FargateAlbProps, AlbSharedProps, FargateServiceProps, RdsInstanceProps, RdsPostgresProps,
+  VpcDefaultProps, FargateAlbProps, AlbSharedProps, FargateServiceProps, NlbServiceProps, RdsInstanceProps, RdsPostgresProps,
   EfsWithAccessPointProps,
   Ec2InstanceRoleProps, Ec2InstanceBundleProps, Ec2InstanceBundleIngressRule, MinimalVpcProps, EksClusterProps,
   SolrFargateServiceProps,
