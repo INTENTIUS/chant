@@ -45,19 +45,36 @@ export function agentCoreDefaultEndpointArn(runtime: InstanceType<typeof Runtime
 }
 
 /**
- * AgentCore's `Runtime`/`RuntimeEndpoint`/`Memory` `Name`/`AgentRuntimeName`
- * fields are all bound to the CFN registry pattern
- * `^[a-zA-Z][a-zA-Z0-9_]{0,47}$` (spot-checked against the CloudFormation
- * schema for #882 — no hyphens, unlike chant's usual kebab-case component
- * names). `Gateway`/`GatewayTarget`/`WorkloadIdentity` names accept hyphens,
- * so only the Runtime family needs sanitizing. Non-identifier characters
- * become `_`, and a leading digit/underscore gets an `A` prefix so the result
- * always starts with a letter.
+ * Bedrock AgentCore's real limits, verified against the CloudFormation
+ * registry schema for `AWS::BedrockAgentCore::{Runtime,RuntimeEndpoint,Memory}`
+ * (#882).
+ *
+ * Exported for the same reason as `MICROVM_LIMITS` (#1374, #1420): a
+ * consumer driving AgentCore through another control plane needs the same
+ * numbers, and copying them is how two sources of truth start.
+ */
+export const AGENTCORE_LIMITS = {
+  /**
+   * `Runtime`/`RuntimeEndpoint`/`Memory` `Name`/`AgentRuntimeName` fields
+   * are bound to this pattern — no hyphens, unlike chant's usual kebab-case
+   * component names. `Gateway`/`GatewayTarget`/`WorkloadIdentity` names
+   * accept hyphens, so only the Runtime family needs sanitizing.
+   */
+  runtimeNamePattern: /^[a-zA-Z][a-zA-Z0-9_]{0,47}$/,
+  maxRuntimeNameLength: 48,
+  /** `Memory` event retention bounds, in days. */
+  memoryEventExpiryDays: { min: 3, max: 365, default: 30 },
+} as const;
+
+/**
+ * Non-identifier characters become `_`, and a leading digit/underscore gets
+ * an `A` prefix so the result always starts with a letter — then truncated
+ * to {@link AGENTCORE_LIMITS}'s `maxRuntimeNameLength`.
  */
 function toRuntimeIdentifier(name: string): string {
   const cleaned = name.replace(/[^a-zA-Z0-9_]/g, "_");
   const identifier = /^[a-zA-Z]/.test(cleaned) ? cleaned : `A${cleaned}`;
-  return identifier.slice(0, 48);
+  return identifier.slice(0, AGENTCORE_LIMITS.maxRuntimeNameLength);
 }
 
 /**
@@ -117,7 +134,7 @@ export interface AgentCoreAgentProps {
    * managed one and fails on a real apply (#978, see the composite doc).
    */
   endpointName?: string;
-  /** Memory event retention, in days. CFN bounds: 3-365. Default: 30. */
+  /** Memory event retention, in days. Bounds: {@link AGENTCORE_LIMITS.memoryEventExpiryDays}. */
   memoryEventExpiryDays?: number;
   /** Gateway authorizer. Mirrors the generated `BedrockAgentCoreGateway_AuthorizerType` CFN enum. Default: "AWS_IAM". */
   gatewayAuthorizerType?: "CUSTOM_JWT" | "AWS_IAM" | "NONE" | "AUTHENTICATE_ONLY";
@@ -194,9 +211,14 @@ export const AgentCoreAgent = Composite<AgentCoreAgentProps, AgentCoreAgentResul
   if (networkMode === "VPC" && (props.vpcSubnetIds === undefined || props.vpcSecurityGroupIds === undefined)) {
     throw new Error("AgentCoreAgent requires vpcSubnetIds and vpcSecurityGroupIds when networkMode is \"VPC\"");
   }
-  const memoryEventExpiryDays = props.memoryEventExpiryDays ?? 30;
-  if (memoryEventExpiryDays < 3 || memoryEventExpiryDays > 365) {
-    throw new Error("AgentCoreAgent memoryEventExpiryDays must be between 3 and 365");
+  const memoryEventExpiryDays = props.memoryEventExpiryDays ?? AGENTCORE_LIMITS.memoryEventExpiryDays.default;
+  if (
+    memoryEventExpiryDays < AGENTCORE_LIMITS.memoryEventExpiryDays.min ||
+    memoryEventExpiryDays > AGENTCORE_LIMITS.memoryEventExpiryDays.max
+  ) {
+    throw new Error(
+      `AgentCoreAgent memoryEventExpiryDays must be between ${AGENTCORE_LIMITS.memoryEventExpiryDays.min} and ${AGENTCORE_LIMITS.memoryEventExpiryDays.max}`,
+    );
   }
 
   const runtimeName = toRuntimeIdentifier(props.name);

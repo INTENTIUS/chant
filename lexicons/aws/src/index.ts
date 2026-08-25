@@ -138,12 +138,12 @@ export {
   LambdaApi,
   LambdaScheduled, ScheduledLambda,
   LambdaSqs, LambdaEventBridge, LambdaDynamoDB, LambdaS3, LambdaSns,
-  VpcDefault, FargateAlb, AlbShared, FargateService, RdsInstance, RdsPostgres,
+  VpcDefault, FargateAlb, AlbShared, FargateService, FARGATE_SERVICE_LIMITS, RdsInstance, RdsPostgres,
   EfsWithAccessPoint,
   Ec2InstanceRole, MinimalVpc, EksCluster,
   SolrFargateService,
   MicrovmApp, MICROVM_LIMITS,
-  AgentCoreAgent, agentCoreDefaultEndpointArn,
+  AgentCoreAgent, agentCoreDefaultEndpointArn, AGENTCORE_LIMITS,
   OrganizationRoot, GovernanceFoundation, RegionRestriction, OrganizationTrail,
 } from "./composites/index";
 export type {
