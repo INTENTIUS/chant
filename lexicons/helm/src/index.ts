@@ -58,6 +58,10 @@ export type {
 export { materializeWrapperChart, wrapperChartName } from "./wrapper-chart";
 export type { MaterializedWrapperChart } from "./wrapper-chart";
 
+// #1240 — addArchiveHelmRender: fold a pinned render into a build archive.
+export { addArchiveHelmRender, HELM_RENDER_MEDIA_TYPE } from "./archive-render";
+export type { AddArchiveHelmRenderInput, AddArchiveHelmRenderOutput } from "./archive-render";
+
 // Capability profiles — per-cluster render inputs (#1235, epic #1228)
 export {
   helmConfigSchema,
