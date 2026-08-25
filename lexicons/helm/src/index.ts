@@ -62,6 +62,29 @@ export type { MaterializedWrapperChart } from "./wrapper-chart";
 export { addArchiveHelmRender, HELM_RENDER_MEDIA_TYPE } from "./archive-render";
 export type { AddArchiveHelmRenderInput, AddArchiveHelmRenderOutput } from "./archive-render";
 
+// #1251/#1252 — build-time coalesced-values probe and its provenance products.
+export {
+  probeCoalescedValues,
+  coalescedValuesDigest,
+  computeValueSources,
+  findDeadAssignments,
+  rootCoalescedValues,
+  getValuesProbeRecords,
+  recordValuesProbe,
+  clearValuesProbeRecords,
+} from "./values-probe";
+export type {
+  ValuesProbeOptions,
+  CoalescedValuesProbe,
+  CoalescedChartValues,
+  DisabledDependency,
+  SuppliedValuesLayer,
+  ValueOrigin,
+  ValuesAttributionInput,
+  DeadAssignment,
+  HelmValuesProbeRecord,
+} from "./values-probe";
+
 // Capability profiles — per-cluster render inputs (#1235, epic #1228)
 export {
   helmConfigSchema,

@@ -61,6 +61,7 @@ import yaml from "js-yaml";
 
 import type { HelmCapabilityProfile } from "./config";
 import { canonicalizeRender, helmContentDigest, helmInputDigest } from "./render-digest";
+import type { ValueOrigin } from "./values-probe";
 
 // ── manifest shape ────────────────────────────────────────────────────────
 
@@ -145,6 +146,20 @@ export interface RenderManifest {
   chantVersion: string;
   /** Source ref/commit the render was produced from, when the caller supplied one. */
   sourceRef: string | null;
+  /**
+   * `sha256:` over the canonical JSON of the coalesced values the
+   * build-time probe (#1251) observed for every chart instance, keyed by
+   * scope path — `coalescedValuesDigest` from `./values-probe.ts`. `null`
+   * when the probe did not run for this render (a repo-fetched chart, whose
+   * source the probe needs on disk, or a probe failure — never fabricated).
+   */
+  coalescedValuesDigest: string | null;
+  /**
+   * Each coalesced value's winning layer (#1252), dot-joined root-coordinate
+   * path to `ValueOrigin` — `computeValueSources` from `./values-probe.ts`.
+   * `null` under the same conditions as `coalescedValuesDigest`.
+   */
+  valueSources: Record<string, ValueOrigin> | null;
 }
 
 /** What `inputs/<key>.json` holds: the digests a full-inputs cache key resolves to. */
@@ -383,6 +398,15 @@ export interface PersistHelmRenderInput {
   helmVersion?: string;
   /** Source ref/commit, when the caller has one. Never fabricated. */
   sourceRef?: string;
+  /**
+   * The build-time coalesced-values probe's digest (#1251), when the caller
+   * ran one for this render. Absent (not merely `undefined`-passed) records
+   * `null` in the manifest — the probe needs the chart source on disk, so a
+   * repo-fetched render legitimately has none.
+   */
+  coalescedValuesDigest?: string;
+  /** The probe's value-source attribution (#1252), alongside `coalescedValuesDigest`. */
+  valueSources?: Record<string, ValueOrigin>;
   /** Clock override for tests. */
   now?: () => Date;
   /** Store root override; defaults to `renderStoreRoot()`. */
@@ -470,6 +494,8 @@ export function persistHelmRender(input: PersistHelmRenderInput): PersistedHelmR
       helmVersion: input.helmVersion ?? "unknown",
       chantVersion: chantVersion(),
       sourceRef: input.sourceRef ?? null,
+      coalescedValuesDigest: input.coalescedValuesDigest ?? null,
+      valueSources: input.valueSources ?? null,
     };
     mkdirSync(dir, { recursive: true });
     writeFileSync(contentPath(root, contentDigest), canonical);

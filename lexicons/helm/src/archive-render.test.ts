@@ -40,6 +40,8 @@ function fixtureRenderManifest(overrides: Partial<RenderManifest> = {}): RenderM
     helmVersion: "3.14.0",
     chantVersion: "0.46.0",
     sourceRef: null,
+    coalescedValuesDigest: null,
+    valueSources: null,
     ...overrides,
   };
 }

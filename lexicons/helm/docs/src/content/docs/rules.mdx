@@ -6,7 +6,7 @@ description: "Every lint rule and post-synth check provided by the Helm lexicon"
 {/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-helm` — DO NOT EDIT.
     Edit lexicons/helm/src/codegen/docs.ts instead; changes here are overwritten. */}
 
-The Helm lexicon provides **25** rules: 4 lint rules and 21 post-synth checks.
+The Helm lexicon provides **26** rules: 4 lint rules and 22 post-synth checks.
 
 ## Lint Rules
 
@@ -44,3 +44,4 @@ Post-synth checks validate the serialized output after the build pipeline comple
 | `WHM407` | Secrets with inline data should use ExternalSecret or SealedSecret |
 | `WHM501` | Detect values keys that are defined but never referenced in templates |
 | `WHM502` | Detect deprecated or invalid Kubernetes API versions |
+| `WHM504` | Detect supplied values that never survive coalescing (shadowed, disabled subchart, unknown subchart) |
