@@ -46,6 +46,12 @@ import yaml from "js-yaml";
 
 import { resolveCapabilityProfile, type HelmCapabilityProfile, type HelmCapabilityProfileRef } from "./config";
 import { helmContentDigest, helmInputDigest } from "./render-digest";
+import {
+  findRenderByCacheKey,
+  loadRenderContent,
+  persistHelmRender,
+  renderCacheKey,
+} from "./render-store";
 
 export interface HelmRenderProps {
   /** Logical name for the render (used in cache key + composite name). */
@@ -80,6 +86,26 @@ export interface HelmRenderProps {
    * unpinned — exactly today's behavior.
    */
   capabilityProfile?: HelmCapabilityProfileRef;
+  /**
+   * Whether this render persists to the content-addressed render store
+   * (#1238) — canonical bytes under their `contentDigest` plus a
+   * `RenderManifest`, in `~/.chant/helm-renders/sha256-<hex>/` (see
+   * ./render-store.ts).
+   *
+   * Only a pinned render (capabilityProfile present) can persist — an
+   * unpinned render has no content identity, and `persist: true` on one is
+   * a synth error naming that reason. For pinned renders the default
+   * follows the cache knob: persistence is on unless `noCache` is set
+   * (`noCache: true` + `persist: true` forces a fresh render that is still
+   * persisted; `persist: false` turns the store off entirely).
+   */
+  persist?: boolean;
+  /**
+   * Source ref/commit to record in the persisted `RenderManifest`, when the
+   * caller has one. Never resolved implicitly and never fabricated — absent
+   * means the manifest records `sourceRef: null`.
+   */
+  sourceRef?: string;
 }
 
 /**
@@ -141,6 +167,14 @@ interface RenderedDoc {
 
 const CACHE_ROOT = join(homedir(), ".chant", "helm-renders");
 
+/**
+ * Legacy cache key — truncated, unprefixed, input-derived. Since #1238 this
+ * keys only *unpinned* renders (and names the values tempfile): pinned
+ * renders live in the content-addressed store (./render-store.ts) under
+ * their full `sha256:` contentDigest, with the inputs index providing cache
+ * hits. Existing truncated-hash entries stay where they are — a new root,
+ * not a migration.
+ */
 function cacheKey(props: HelmRenderProps, profile?: HelmCapabilityProfile): string {
   const stable = JSON.stringify({
     repo: props.repo,
@@ -148,10 +182,10 @@ function cacheKey(props: HelmRenderProps, profile?: HelmCapabilityProfile): stri
     version: props.version,
     namespace: props.namespace ?? null,
     values: props.values ?? null,
-    // Only present for pinned renders, so unpinned cache keys are unchanged
-    // and existing caches stay valid. A pinned render must never reuse an
-    // unpinned render's bytes (or another profile's) — the profile is a real
-    // render input (#1235).
+    // Only present for pinned renders (which no longer read this cache but
+    // still name their values tempfile with this key). A pinned render must
+    // never reuse an unpinned render's bytes (or another profile's) — the
+    // profile is a real render input (#1235).
     ...(profile
       ? {
           capabilityProfile: {
@@ -163,6 +197,24 @@ function cacheKey(props: HelmRenderProps, profile?: HelmCapabilityProfile): stri
       : {}),
   });
   return createHash("sha256").update(stable).digest("hex").slice(0, 16);
+}
+
+/**
+ * Version of the local helm binary, for the persisted `RenderManifest`.
+ * Load-bearing there — the defaulted kube version is a property of the
+ * binary, so this field explains a digest mismatch between machines. Never
+ * fails a build: `"unknown"` when helm cannot answer.
+ */
+function helmBinaryVersion(): string {
+  try {
+    const out = execFileSync("helm", ["version", "--template", "{{.Version}}"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    return out.trim().split("\n")[0] || "unknown";
+  } catch {
+    return "unknown";
+  }
 }
 
 function renderViaHelm(props: HelmRenderProps, profile?: HelmCapabilityProfile): string {
@@ -258,6 +310,69 @@ function loadOrRender(props: HelmRenderProps, profile?: HelmCapabilityProfile): 
   return out;
 }
 
+/**
+ * The pinned render path (#1238): the content-addressed store is both the
+ * cache and the durable record.
+ *
+ * Read: unless `noCache` (or `persist: false`) is set, the full-inputs
+ * cache key resolves through the store's inputs index to canonical bytes a
+ * previous identical render stored — semantically identical to helm's
+ * output (canonicalization only normalizes render noise) and byte-stable
+ * under re-canonicalization, so digests recompute identically.
+ *
+ * Write: a fresh render persists { canonical bytes, RenderManifest } unless
+ * the caller opted out — the manifest is written alongside every pinned
+ * render by default. `persist: true` with `noCache` still persists (a
+ * forced-fresh render is still a durable artifact); a persist failure on
+ * the default path is non-fatal like a legacy cache-write failure, but an
+ * explicit `persist: true` surfaces it.
+ */
+function loadOrRenderPinned(props: HelmRenderProps, profile: HelmCapabilityProfile): string {
+  const chartRef = props.repo ? `${props.repo}/${props.chart}` : props.chart;
+  const storeRead = !props.noCache && props.persist !== false;
+  const storeWrite = props.persist === true || (!props.noCache && props.persist !== false);
+  const key = renderCacheKey({
+    chart: chartRef,
+    chartVersion: props.version,
+    releaseName: props.name,
+    namespace: props.namespace,
+    values: props.values,
+    capabilityProfile: profile,
+  });
+
+  if (storeRead) {
+    const hit = findRenderByCacheKey(key);
+    if (hit) {
+      const content = loadRenderContent(hit.contentDigest);
+      if (content !== undefined) return content;
+      // Index points at pruned/corrupt content — fall through and re-render.
+    }
+  }
+
+  const out = renderViaHelm(props, profile);
+  if (storeWrite) {
+    try {
+      persistHelmRender({
+        rendered: out,
+        releaseName: props.name,
+        chart: props.chart,
+        repo: props.repo || undefined,
+        chartVersion: props.version,
+        namespace: props.namespace,
+        values: props.values,
+        capabilityProfile: profile,
+        helmVersion: helmBinaryVersion(),
+        sourceRef: props.sourceRef,
+      });
+    } catch (err) {
+      if (props.persist === true) throw err;
+      // Default-on persistence degrades like a legacy cache-write failure:
+      // the render is still in memory and the build goes on.
+    }
+  }
+  return out;
+}
+
 function parseMultiDoc(text: string): RenderedDoc[] {
   const docs = yaml.loadAll(text);
   return docs
@@ -279,7 +394,16 @@ export const HelmRender = Composite<HelmRenderProps>((props) => {
   // binary's default capabilities.
   const profile = props.capabilityProfile !== undefined ? resolveCapabilityProfile(props.capabilityProfile) : undefined;
 
-  const yamlText = loadOrRender(props, profile);
+  if (!profile && props.persist === true) {
+    throw new Error(
+      `HelmRender "${props.name}": persist requires a pinned render, and this one is unpinned ` +
+        `(no capabilityProfile declared). An unpinned render's bytes are a function of the local ` +
+        `helm binary's defaulted capabilities, so they have no stable content identity to store ` +
+        `under. Declare capabilityProfile to pin the render (#1235), or drop persist.`,
+    );
+  }
+
+  const yamlText = profile ? loadOrRenderPinned(props, profile) : loadOrRender(props, undefined);
   const docs = parseMultiDoc(yamlText);
 
   // Digests are recorded only for pinned renders (#1237). Profile presence
