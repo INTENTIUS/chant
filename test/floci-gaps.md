@@ -463,3 +463,64 @@ drift check over dashboards would trip on it: the physical id a `describe-
 stack-resources` call reports would not match the name an estate declared.
 
 **Priority:** low, same reasoning as entry 11.
+
+## 13. CloudFormation `AWS::ECR::Repository` drops `ImageScanningConfiguration`
+
+**Status:** confirmed 2026-08-24 against `ghcr.io/lex00/floci:latest`,
+unfiled. Found while building the `EcrRepository` composite (chant #1139).
+
+```
+$ docker run -d --rm --name chant-floci-ecr -p 4600:4566 ghcr.io/lex00/floci:latest
+$ export AWS_ENDPOINT_URL=http://localhost:4600 AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_REGION=us-east-1
+
+$ cat > template.json <<'JSON'
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Resources": {
+    "Repo": {
+      "Type": "AWS::ECR::Repository",
+      "Properties": {
+        "RepositoryName": "chant-ecr-verify",
+        "ImageTagMutability": "MUTABLE",
+        "ImageScanningConfiguration": {"ScanOnPush": true},
+        "LifecyclePolicy": {"LifecyclePolicyText": "{\"rules\":[{\"rulePriority\":1,\"selection\":{\"tagStatus\":\"untagged\",\"countType\":\"sinceImagePushed\",\"countUnit\":\"days\",\"countNumber\":14},\"action\":{\"type\":\"expire\"}}]}"}
+      }
+    }
+  }
+}
+JSON
+$ aws cloudformation create-stack --stack-name ecr-verify --template-body file://template.json
+$ aws cloudformation wait stack-create-complete --stack-name ecr-verify
+
+$ aws ecr describe-repositories --repository-names chant-ecr-verify \
+    --query 'repositories[0].imageScanningConfiguration'
+{"scanOnPush": false}
+
+$ aws ecr get-lifecycle-policy --repository-name chant-ecr-verify
+{"lifecyclePolicyText": "{\"rules\":[{\"rulePriority\":1,\"selection\": …}]}", …}
+```
+
+The template asked for `ScanOnPush: true`; the repository that comes back
+has scanning off. `LifecyclePolicy`, `ImageTagMutability`, and
+`EncryptionConfiguration` all round-trip correctly through the same
+CloudFormation create — only `ImageScanningConfiguration` is dropped.
+
+The raw ECR API is not at fault — `create-repository
+--image-scanning-configuration scanOnPush=true` against the same emulator
+returns `{"scanOnPush": true}` immediately. (The companion
+`put-image-scanning-configuration` call is a dead end for isolating this
+further: AWS itself deprecated that operation in favor of registry-level
+scanning config, and Floci returns `UnsupportedOperation` for it — consistent
+with real ECR, not a gap.) So this is specifically the CloudFormation
+resource-provider glue for `AWS::ECR::Repository` silently dropping one
+documented property, not an ECR gap.
+
+**Effect on chant:** the `EcrRepository` composite (defaults `scanOnPush` to
+`true`) synthesizes correct CloudFormation, but a Floci-backed
+`cfn-deploy`/apply loop cannot assert scan-on-push took effect —
+`describe-repositories` reads back the pre-gap `false`. The composite's own
+tests stay unit-level (construct the template, assert its shape) rather than
+asserting post-apply state through Floci; the manual repro above is the
+closest this got to emulator coverage. Unblocked by switching the assertion
+to the raw ECR `create-repository` API instead of describe-after-CFN, which
+is not representative of how these repositories are actually deployed.
