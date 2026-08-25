@@ -830,6 +830,30 @@ Set spec.rayVersion so KubeRay picks the right autoscaler image.
 
 Align spec.rayVersion with the Ray version in the head container image.
 
+### WK8404
+
+**GPU request without a matching toleration** — merge-worthy · guidance
+
+Add a toleration for the nvidia.com/gpu taint (or a wildcard Exists toleration) so the pod can schedule onto a GPU node pool.
+
+### WK8405
+
+**Serving workload has no PodDisruptionBudget** — report-only · guidance
+
+Add a PDB selecting the InferenceService/serving Deployment so a node drain can't take down every replica at once.
+
+### WK8406
+
+**GPU container missing resource limits** — merge-worthy · guidance
+
+Set CPU and memory limits on GPU-requesting containers to avoid starving the (scarce, expensive) GPU node.
+
+### WK8407
+
+**Unpinned model version** — merge-worthy · guidance
+
+Pin the InferenceService model storageUri to an explicit version segment (e.g. via the Model composite's required version) instead of a floating tag.
+
 ### WK8501
 
 **Custom resource spec has a field its CRD does not declare** — merge-worthy · guidance

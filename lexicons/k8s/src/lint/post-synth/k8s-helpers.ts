@@ -103,6 +103,13 @@ export function extractPodSpec(
       return (template?.spec as Record<string, unknown>) ?? null;
     }
 
+    // KServe ServingRuntime/ClusterServingRuntime carry `containers` and
+    // `tolerations` directly on spec — no template wrapper, unlike the
+    // built-in workload kinds above.
+    case "ServingRuntime":
+    case "ClusterServingRuntime":
+      return spec;
+
     default:
       return null;
   }
@@ -147,6 +154,53 @@ export const WORKLOAD_KINDS = new Set([
   "Job",
   "CronJob",
 ]);
+
+/**
+ * Workload kinds that can request `nvidia.com/gpu` — the built-in workload
+ * kinds plus KServe's ServingRuntime/ClusterServingRuntime, which declare
+ * `containers`/`tolerations` directly on spec (see `extractPodSpec`).
+ */
+export const GPU_POD_KINDS = new Set([
+  ...WORKLOAD_KINDS,
+  "ServingRuntime",
+  "ClusterServingRuntime",
+]);
+
+/** A Kubernetes toleration (loosely typed). */
+export interface K8sToleration {
+  key?: string;
+  operator?: "Exists" | "Equal";
+  value?: string;
+  effect?: string;
+  [key: string]: unknown;
+}
+
+/** Resource name used for GPU requests/limits across the lexicon. */
+export const NVIDIA_GPU_RESOURCE = "nvidia.com/gpu";
+
+/**
+ * True when any container in `containers` requests or limits
+ * `nvidia.com/gpu`.
+ */
+export function requestsGpu(containers: K8sContainer[]): boolean {
+  return containers.some((c) => {
+    const requests = c.resources?.requests as Record<string, unknown> | undefined;
+    const limits = c.resources?.limits as Record<string, unknown> | undefined;
+    return Boolean(requests?.[NVIDIA_GPU_RESOURCE]) || Boolean(limits?.[NVIDIA_GPU_RESOURCE]);
+  });
+}
+
+/**
+ * True when `tolerations` includes one that tolerates the `nvidia.com/gpu`
+ * taint — either an explicit `key: "nvidia.com/gpu"` toleration, or a
+ * wildcard `{ operator: "Exists" }` with no key (tolerates every taint).
+ */
+export function toleratesGpu(tolerations: unknown): boolean {
+  if (!Array.isArray(tolerations)) return false;
+  return (tolerations as K8sToleration[]).some(
+    (t) => t.key === NVIDIA_GPU_RESOURCE || (t.operator === "Exists" && !t.key),
+  );
+}
 
 /**
  * Parse a Kubernetes memory string to bytes.
