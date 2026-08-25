@@ -70,6 +70,49 @@ export const registries = new Registries({
 Literal `auth.password` / `auth.token` fail K3S102; `insecure_skip_verify`
 warns via K3S105 — pin the CA instead.
 
+## Op lifecycle (reachable-host case)
+
+`k3sInstall` / `k3sUninstall` (chant#1601) drive a k3s installer against a
+host the Op runs on or can reach directly — the same boundary `k3dUp`/
+`k3dDown` draw (chant#1410): no host provisioning, no SSH orchestration.
+Requires `"k3s"` in the project's `chant.config.ts` `lexicons`.
+
+```typescript
+import { Op, phase, k3sInstall, k3sUninstall } from "@intentius/chant-lexicon-temporal";
+
+export default Op({
+  name: "k3s-controlplane",
+  phases: [
+    phase("Install", [
+      k3sInstall("server", { configFile: "/etc/rancher/k3s/config.yaml" }),
+    ]),
+  ],
+});
+```
+
+`k3sInstall` runs the pinned `get.k3s.io` installer (`INSTALL_K3S_VERSION`
+from the lexicon's pin, or an explicit `version` override) with `--config`
+pointing at a config.yaml already on the host — a build/apply step upstream
+puts it there. It is idempotent on an already-installed matching version:
+`k3s --version` is checked first, and a match skips the install entirely.
+`k3sUninstall` runs the matching uninstall script; a host where k3s was
+never installed is a no-op success.
+
+**The token boundary carries through to the Op surface.** There is no
+`token` option on `k3sInstall` — only `tokenFile`, a path passed to the
+installer as `K3S_TOKEN_FILE`. The join secret's value never appears in
+Op-authored TypeScript (which is committed source, same as a config.yaml
+declaration), is never logged, and is never interpolated into the installer
+command string — it travels only as an environment variable set on the
+child process at install time.
+
+```typescript
+k3sInstall("agent", {
+  configFile: "/etc/rancher/k3s/config.yaml",
+  tokenFile: "/etc/rancher/k3s/agent-token", // a path, not the secret
+});
+```
+
 ## Output shape
 
 One file per declared entity. The first Server/Agent config is the primary

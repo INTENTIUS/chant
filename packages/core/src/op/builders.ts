@@ -297,6 +297,48 @@ export const k3dDown = (name: string, opts?: Record<string, unknown>): ActivityS
 };
 
 /**
+ * Run the pinned k3s installer against a reachable host (`role`: `"server"`
+ * or `"agent"`). Idempotent on an already-installed matching version.
+ * Defaults to the `longInfra` profile (the installer downloads and starts
+ * the binary); override via `opts.profile`.
+ *
+ * The implementation lives in the k3s lexicon (chant #1601) — the project's
+ * `chant.config.ts` must list `"k3s"` in `lexicons` for the activity to load.
+ * Bounded exactly as `k3dUp`/`k3dDown` (chant #1410): drives the reachable-host
+ * case only, no host provisioning, no SSH orchestration.
+ *
+ * `opts` accepts `configFile` (required — path to the chant-emitted
+ * config.yaml, passed as `--config`), `version` (overrides the lexicon's
+ * pinned `INSTALL_K3S_VERSION`), and `tokenFile` (path to a file holding the
+ * join token, passed to the installer as `K3S_TOKEN_FILE`). There is no
+ * `token` option — the join secret's value never travels through this step;
+ * only a file path does (the #1601 token boundary, same stance as #1365).
+ */
+export const k3sInstall = (
+  role: "server" | "agent",
+  opts: { configFile: string; version?: string; tokenFile?: string; profile?: ActivityStep["profile"]; [k: string]: unknown },
+): ActivityStep => {
+  const { args, profile } = takeProfile(opts);
+  return activity("k3sInstall", { role, ...args }, profile ?? "longInfra");
+};
+
+/**
+ * Uninstall k3s from a reachable host (`role`: `"server"` or `"agent"`).
+ * Defaults to the `fastIdempotent` profile (override via `opts.profile`).
+ * Implementation lives in the k3s lexicon (chant #1601) — requires `"k3s"`
+ * in the project's `lexicons`. A host where k3s was never installed is a
+ * no-op success, the same shape as `k3dDown` against an already-gone
+ * cluster.
+ */
+export const k3sUninstall = (
+  role: "server" | "agent",
+  opts?: Record<string, unknown>,
+): ActivityStep => {
+  const { args, profile } = takeProfile(opts);
+  return activity("k3sUninstall", { role, ...args }, profile ?? "fastIdempotent");
+};
+
+/**
  * Boot a local Floci AWS emulator in Docker and point subsequent steps at it —
  * sets `AWS_ENDPOINT_URL` + test creds in the process env so a following
  * `cloudformation` apply targets the emulator (local executor). Idempotent:

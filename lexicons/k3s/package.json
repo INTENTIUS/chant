@@ -17,6 +17,11 @@
       "types": "./dist/*.d.ts",
       "default": "./src/*.ts"
     },
+    "./op/activities": {
+      "development": "./src/op/activities/index.ts",
+      "types": "./dist/op/activities/index.d.ts",
+      "default": "./src/op/activities/index.ts"
+    },
     "./lint/post-synth": {
       "development": "./src/lint/post-synth/index.ts",
       "types": "./dist/lint/post-synth/index.d.ts",

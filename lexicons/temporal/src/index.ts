@@ -73,6 +73,8 @@ export {
   envTeardown,
   k3dUp,
   k3dDown,
+  k3sInstall,
+  k3sUninstall,
   flociUp,
   flociDown,
   flociAzUp,
