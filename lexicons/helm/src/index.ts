@@ -21,6 +21,29 @@ export type { HelmRenderProps, HelmRenderRecord } from "./render";
 export { canonicalizeRender, helmContentDigest, helmInputDigest, renderStability } from "./render-digest";
 export type { HelmInputDigestSource, RenderStabilityGroup, RenderStabilityReport } from "./render-digest";
 
+// #1251/#1252 — build-time coalesced-values probe and its provenance products.
+export {
+  probeCoalescedValues,
+  coalescedValuesDigest,
+  computeValueSources,
+  findDeadAssignments,
+  rootCoalescedValues,
+  getValuesProbeRecords,
+  recordValuesProbe,
+  clearValuesProbeRecords,
+} from "./values-probe";
+export type {
+  ValuesProbeOptions,
+  CoalescedValuesProbe,
+  CoalescedChartValues,
+  DisabledDependency,
+  SuppliedValuesLayer,
+  ValueOrigin,
+  ValuesAttributionInput,
+  DeadAssignment,
+  HelmValuesProbeRecord,
+} from "./values-probe";
+
 // Capability profiles — per-cluster render inputs (#1235, epic #1228)
 export {
   helmConfigSchema,
