@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-08-09T05:28:53.518Z",
+  "generatedAt": "2026-08-25T05:16:47.807Z",
   "entries": {
     "APIGroup": {
       "kind": "resource",
@@ -576,6 +576,50 @@
         "items:true",
         "metadata:false"
       ]
+    },
+    "ClusterServingRuntime": {
+      "kind": "resource",
+      "resourceType": "K8s::KServe::ClusterServingRuntime",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "ClusterServingRuntime_Affinity": {
+      "kind": "property",
+      "resourceType": "K8s::KServe::ClusterServingRuntime.affinity"
+    },
+    "ClusterServingRuntime_BuiltInAdapter": {
+      "kind": "property",
+      "resourceType": "K8s::KServe::ClusterServingRuntime.builtInAdapter"
+    },
+    "ClusterServingRuntime_Container": {
+      "kind": "property",
+      "resourceType": "K8s::KServe::ClusterServingRuntime.containers"
+    },
+    "ClusterServingRuntime_ImagePullSecret": {
+      "kind": "property",
+      "resourceType": "K8s::KServe::ClusterServingRuntime.imagePullSecrets"
+    },
+    "ClusterServingRuntime_StorageHelper": {
+      "kind": "property",
+      "resourceType": "K8s::KServe::ClusterServingRuntime.storageHelper"
+    },
+    "ClusterServingRuntime_SupportedModelFormat": {
+      "kind": "property",
+      "resourceType": "K8s::KServe::ClusterServingRuntime.supportedModelFormats"
+    },
+    "ClusterServingRuntime_Toleration": {
+      "kind": "property",
+      "resourceType": "K8s::KServe::ClusterServingRuntime.tolerations"
+    },
+    "ClusterServingRuntime_Volume": {
+      "kind": "property",
+      "resourceType": "K8s::KServe::ClusterServingRuntime.volumes"
+    },
+    "ClusterServingRuntime_WorkerSpec": {
+      "kind": "property",
+      "resourceType": "K8s::KServe::ClusterServingRuntime.workerSpec"
     },
     "ClusterTrustBundle": {
       "kind": "resource",
@@ -1164,6 +1208,10 @@
       "kind": "property",
       "resourceType": "K8s::Core::ExecAction"
     },
+    "Explainer": {
+      "kind": "property",
+      "resourceType": "K8s::KServe::InferenceService.explainer"
+    },
     "ExternalCluster": {
       "kind": "property",
       "resourceType": "K8s::Cnpg::Cluster.externalClusters"
@@ -1656,10 +1704,6 @@
       "kind": "property",
       "resourceType": "K8s::Flux::ImagePolicy.status"
     },
-    "ImagePullSecret": {
-      "kind": "property",
-      "resourceType": "K8s::Cnpg::Cluster.imagePullSecrets"
-    },
     "ImageRepository": {
       "kind": "resource",
       "resourceType": "K8s::Flux::ImageRepository",
@@ -1731,6 +1775,26 @@
     "Include": {
       "kind": "property",
       "resourceType": "K8s::Flux::GitRepository.include"
+    },
+    "InferenceService": {
+      "kind": "resource",
+      "resourceType": "K8s::KServe::InferenceService",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "InferenceService_Explainer": {
+      "kind": "property",
+      "resourceType": "K8s::KServe::InferenceService.explainer"
+    },
+    "InferenceService_Predictor": {
+      "kind": "property",
+      "resourceType": "K8s::KServe::InferenceService.predictor"
+    },
+    "InferenceService_Transformer": {
+      "kind": "property",
+      "resourceType": "K8s::KServe::InferenceService.transformer"
     },
     "InfisicalDynamicSecret": {
       "kind": "resource",
@@ -2876,6 +2940,10 @@
       "kind": "property",
       "resourceType": "K8s::Cnpg::Cluster.postgresql"
     },
+    "Predictor": {
+      "kind": "property",
+      "resourceType": "K8s::KServe::InferenceService.predictor"
+    },
     "PreservedFields": {
       "kind": "property",
       "resourceType": "K8s::Argo::ApplicationSet.preservedFields"
@@ -3636,6 +3704,50 @@
       "kind": "property",
       "resourceType": "K8s::Cnpg::Pooler.serviceTemplate"
     },
+    "ServingRuntime": {
+      "kind": "resource",
+      "resourceType": "K8s::KServe::ServingRuntime",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "ServingRuntime_Affinity": {
+      "kind": "property",
+      "resourceType": "K8s::KServe::ServingRuntime.affinity"
+    },
+    "ServingRuntime_BuiltInAdapter": {
+      "kind": "property",
+      "resourceType": "K8s::KServe::ServingRuntime.builtInAdapter"
+    },
+    "ServingRuntime_Container": {
+      "kind": "property",
+      "resourceType": "K8s::KServe::ServingRuntime.containers"
+    },
+    "ServingRuntime_ImagePullSecret": {
+      "kind": "property",
+      "resourceType": "K8s::KServe::ServingRuntime.imagePullSecrets"
+    },
+    "ServingRuntime_StorageHelper": {
+      "kind": "property",
+      "resourceType": "K8s::KServe::ServingRuntime.storageHelper"
+    },
+    "ServingRuntime_SupportedModelFormat": {
+      "kind": "property",
+      "resourceType": "K8s::KServe::ServingRuntime.supportedModelFormats"
+    },
+    "ServingRuntime_Toleration": {
+      "kind": "property",
+      "resourceType": "K8s::KServe::ServingRuntime.tolerations"
+    },
+    "ServingRuntime_Volume": {
+      "kind": "property",
+      "resourceType": "K8s::KServe::ServingRuntime.volumes"
+    },
+    "ServingRuntime_WorkerSpec": {
+      "kind": "property",
+      "resourceType": "K8s::KServe::ServingRuntime.workerSpec"
+    },
     "Sharding": {
       "kind": "property",
       "resourceType": "K8s::Flux::FluxInstance.sharding"
@@ -3876,6 +3988,10 @@
     "TraefikService_Weighted": {
       "kind": "property",
       "resourceType": "K8s::Traefik::TraefikService.weighted"
+    },
+    "Transformer": {
+      "kind": "property",
+      "resourceType": "K8s::KServe::InferenceService.transformer"
     },
     "Uninstall": {
       "kind": "property",
