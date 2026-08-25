@@ -102,3 +102,5 @@ export type {
   FluxAppForOptions,
   FluxAppForResult,
 } from "./flux-app";
+export { VllmServingRuntime } from "./vllm-serving-runtime";
+export type { VllmServingRuntimeProps, VllmServingRuntimeResult, VllmResourceSpec } from "./vllm-serving-runtime";
