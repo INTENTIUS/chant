@@ -14,8 +14,27 @@ export { helmUpgradeCapability, createHelmUpgradeCapability, type HelmUpgradeInp
 export { Chart, Values, ValuesOverride, HelmTest, HelmNotes, HelmHook, HelmDependency, HelmMaintainer, HelmCRD } from "./resources";
 
 // HelmRender — render an upstream chart at chant build time
-export { HelmRender } from "./render";
-export type { HelmRenderProps } from "./render";
+export { HelmRender, getHelmRenderRecords, clearHelmRenderRecords } from "./render";
+export type { HelmRenderProps, HelmRenderRecord } from "./render";
+
+// #1237 — render canonicalization + the contentDigest/inputDigest split.
+export { canonicalizeRender, helmContentDigest, helmInputDigest, renderStability } from "./render-digest";
+export type { HelmInputDigestSource, RenderStabilityGroup, RenderStabilityReport } from "./render-digest";
+
+// Capability profiles — per-cluster render inputs (#1235, epic #1228)
+export {
+  helmConfigSchema,
+  helmCapabilityProfileSchema,
+  resolveCapabilityProfile,
+  validateCapabilityProfile,
+  KUBE_VERSION_PATTERN,
+} from "./config";
+export type {
+  HelmChantConfig,
+  HelmCapabilityProfile,
+  HelmCapabilityProfileConfig,
+  HelmCapabilityProfileRef,
+} from "./config";
 
 // Intrinsics
 export {

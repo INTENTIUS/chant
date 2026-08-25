@@ -16,11 +16,16 @@ import { fileURLToPath } from "url";
 import { helmSerializer } from "./serializer";
 import { helmCompletions } from "./lsp/completions";
 import { helmHover } from "./lsp/hover";
+import { helmConfigSchema } from "./config";
 import { helmDeepNormalizationHooks } from "./deep-observe-hooks";
 import { LABEL_OWNERSHIP_KEYS } from "@intentius/chant/ownership";
 
 export const helmPlugin: LexiconPlugin = {
   name: "helm",
+  // The `helm` namespace in chant.config.ts — capability profiles (#1235).
+  // Declaring the schema makes core validate the namespace at load, so a
+  // typo'd profile field fails the build instead of silently unpinning.
+  configSchema: helmConfigSchema,
   // #1246 — helm resolves real ownership verdicts on the thin read (every row
   // is release-scoped, so helm-managed = owned via release identity), and the
   // deep read (#1247) delegates to the k8s reader, which resolves the shared

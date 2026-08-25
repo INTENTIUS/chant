@@ -1,9 +1,8 @@
 import { exec } from "node:child_process";
-import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { promisify } from "node:util";
 import { load } from "js-yaml";
-import { canonicalJson } from "@intentius/chant/effect-receipt";
+import { helmInputDigest } from "../../render-digest";
 import { safeHeartbeat } from "@intentius/chant/op";
 import {
   maybeRecordAutoRelease,
@@ -113,20 +112,18 @@ function resolveValues(args: HelmInstallArgs): Record<string, unknown> {
  * so the digest is stable across value key order; `apiVersions` is sorted
  * for the same reason. The digest changes when any actual input changes —
  * the chart, its version, a value, the declared profile.
+ *
+ * Delegates to `helmInputDigest` (#1237) — the same helper `HelmRender`
+ * records as a pinned render's `inputDigest` — so a deploy and a render of
+ * the same inputs share their identity by construction.
  */
 export function helmInstallInputDigest(args: HelmInstallArgs): string {
-  const input: Record<string, unknown> = {
+  return helmInputDigest({
     chart: args.chart,
-    chartVersion: args.chartVersion ?? null,
+    chartVersion: args.chartVersion,
     values: resolveValues(args),
-  };
-  if (args.capabilityProfile) {
-    input.capabilityProfile = {
-      kubeVersion: args.capabilityProfile.kubeVersion ?? null,
-      apiVersions: [...(args.capabilityProfile.apiVersions ?? [])].sort(),
-    };
-  }
-  return `sha256:${createHash("sha256").update(canonicalJson(input), "utf8").digest("hex")}`;
+    capabilityProfile: args.capabilityProfile,
+  });
 }
 
 /**

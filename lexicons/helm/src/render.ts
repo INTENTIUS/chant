@@ -44,6 +44,9 @@ import { Composite } from "@intentius/chant";
 import { Deployment } from "@intentius/chant-lexicon-k8s/generated/index";
 import yaml from "js-yaml";
 
+import { resolveCapabilityProfile, type HelmCapabilityProfile, type HelmCapabilityProfileRef } from "./config";
+import { helmContentDigest, helmInputDigest } from "./render-digest";
+
 export interface HelmRenderProps {
   /** Logical name for the render (used in cache key + composite name). */
   name: string;
@@ -64,6 +67,69 @@ export interface HelmRenderProps {
    * fresh render.
    */
   noCache?: boolean;
+  /**
+   * Capability profile the render is pinned against (#1235, epic #1228).
+   *
+   * A string names a profile declared in `chant.config.ts`'s
+   * `helm.capabilityProfiles` (per cluster — see `./config.ts`); an inline
+   * object carries the same facts directly. When set, `helm template` runs
+   * with `--kube-version` and `--api-versions` from the profile, so
+   * `.Capabilities` reflects the declared cluster instead of whatever the
+   * helm binary defaults to. A named profile the config does not declare is
+   * an error at synth, never a silent fallback. Absent, rendering is
+   * unpinned — exactly today's behavior.
+   */
+  capabilityProfile?: HelmCapabilityProfileRef;
+}
+
+/**
+ * What one `HelmRender` invocation recorded about itself. `capabilityProfile`
+ * is the profile identity the render was pinned against; `undefined` means
+ * the render was unpinned and its bytes depend on the local helm binary's
+ * defaults.
+ *
+ * Pinned renders (profile present — the v1 gate, see #1237) also carry the
+ * digest pair:
+ *
+ * - `inputDigest` — `sha256:` over the canonical JSON of the declared inputs
+ *   (chart reference, version, values, capability facts). Shared with the
+ *   release-ledger digest #1243 records on deploy, via `helmInputDigest`.
+ *   Answers "same inputs?" without touching any bytes.
+ * - `contentDigest` — `sha256:` over the canonical rendered bytes
+ *   (`canonicalizeRender`). The artifact identity: answers "same bytes on
+ *   the cluster?".
+ *
+ * They diverge exactly when the render is not a function of its declared
+ * inputs — `renderStability` in ./render-digest.ts names that.
+ *
+ * Unpinned renders record neither digest. Their bytes are a function of the
+ * local helm binary's defaulted capabilities, so a digest over them would
+ * assert an identity the render does not have — it would differ across
+ * machines that did nothing differently, and equal digests would still
+ * prove nothing about a cluster. No digest is the honest record.
+ */
+export interface HelmRenderRecord {
+  /** The render's logical name (`HelmRenderProps.name`) — also the helm release name baked into the bytes. */
+  name: string;
+  chart: string;
+  version?: string;
+  capabilityProfile?: HelmCapabilityProfile;
+  /** Input-side identity (#1237/#1243). Present only for pinned renders. */
+  inputDigest?: string;
+  /** Content-side identity over canonical rendered bytes (#1237). Present only for pinned renders. */
+  contentDigest?: string;
+}
+
+const renderRecords: HelmRenderRecord[] = [];
+
+/** Every render recorded in this process, in invocation order. */
+export function getHelmRenderRecords(): readonly HelmRenderRecord[] {
+  return renderRecords;
+}
+
+/** Reset the record list (test isolation). */
+export function clearHelmRenderRecords(): void {
+  renderRecords.length = 0;
 }
 
 interface RenderedDoc {
@@ -75,22 +141,35 @@ interface RenderedDoc {
 
 const CACHE_ROOT = join(homedir(), ".chant", "helm-renders");
 
-function cacheKey(props: HelmRenderProps): string {
+function cacheKey(props: HelmRenderProps, profile?: HelmCapabilityProfile): string {
   const stable = JSON.stringify({
     repo: props.repo,
     chart: props.chart,
     version: props.version,
     namespace: props.namespace ?? null,
     values: props.values ?? null,
+    // Only present for pinned renders, so unpinned cache keys are unchanged
+    // and existing caches stay valid. A pinned render must never reuse an
+    // unpinned render's bytes (or another profile's) — the profile is a real
+    // render input (#1235).
+    ...(profile
+      ? {
+          capabilityProfile: {
+            name: profile.name,
+            kubeVersion: profile.kubeVersion,
+            apiVersions: profile.apiVersions ?? [],
+          },
+        }
+      : {}),
   });
   return createHash("sha256").update(stable).digest("hex").slice(0, 16);
 }
 
-function renderViaHelm(props: HelmRenderProps): string {
+function renderViaHelm(props: HelmRenderProps, profile?: HelmCapabilityProfile): string {
   // Write values overrides to a tempfile if any.
   let valuesArgs: string[] = [];
   if (props.values && Object.keys(props.values).length > 0) {
-    const valuesPath = join(tmpdir(), `chant-helm-values-${cacheKey(props)}.yaml`);
+    const valuesPath = join(tmpdir(), `chant-helm-values-${cacheKey(props, profile)}.yaml`);
     writeFileSync(valuesPath, yaml.dump(props.values));
     valuesArgs = ["--values", valuesPath];
   }
@@ -124,6 +203,17 @@ function renderViaHelm(props: HelmRenderProps): string {
     // Without this, `helm template` silently drops manifests shipped in the
     // chart's (or a subchart's) crds/ directory.
     "--include-crds",
+    // Pin .Capabilities to the declared cluster profile. Without these, the
+    // kube version defaults to one baked into the helm binary and APIVersions
+    // is empty — both silently, both making the rendered bytes a function of
+    // the local toolchain (#1235).
+    ...(profile
+      ? [
+          "--kube-version",
+          profile.kubeVersion,
+          ...(profile.apiVersions ?? []).flatMap((v) => ["--api-versions", v]),
+        ]
+      : []),
     ...fetchArgs,
     ...isolationArgs,
     ...(props.namespace ? ["--namespace", props.namespace] : []),
@@ -149,16 +239,16 @@ function renderViaHelm(props: HelmRenderProps): string {
   }
 }
 
-function loadOrRender(props: HelmRenderProps): string {
+function loadOrRender(props: HelmRenderProps, profile?: HelmCapabilityProfile): string {
   if (props.noCache) {
-    return renderViaHelm(props);
+    return renderViaHelm(props, profile);
   }
-  const cacheDir = join(CACHE_ROOT, cacheKey(props));
+  const cacheDir = join(CACHE_ROOT, cacheKey(props, profile));
   const cachePath = join(cacheDir, "manifests.yaml");
   if (existsSync(cachePath)) {
     return readFileSync(cachePath, "utf8");
   }
-  const out = renderViaHelm(props);
+  const out = renderViaHelm(props, profile);
   try {
     mkdirSync(cacheDir, { recursive: true });
     writeFileSync(cachePath, out);
@@ -184,8 +274,44 @@ function safeKey(input: string): string {
 }
 
 export const HelmRender = Composite<HelmRenderProps>((props) => {
-  const yamlText = loadOrRender(props);
+  // Resolve first: a named profile the config does not declare must fail the
+  // build here, before any helm invocation could silently render against the
+  // binary's default capabilities.
+  const profile = props.capabilityProfile !== undefined ? resolveCapabilityProfile(props.capabilityProfile) : undefined;
+
+  const yamlText = loadOrRender(props, profile);
   const docs = parseMultiDoc(yamlText);
+
+  // Digests are recorded only for pinned renders (#1237). Profile presence
+  // is the v1 gate: the classifier (#1234) needs the chart source on disk,
+  // which a repo-fetched render does not keep, so the gate here is the
+  // declared-inputs property, not a template analysis. An unpinned render's
+  // digest would be a function of the local helm binary — meaningless as an
+  // identity — so unpinned renders record neither digest.
+  const digests = profile
+    ? {
+        inputDigest: helmInputDigest({
+          // Same chart-reference convention helmInstall digests: a local
+          // path stays itself; a repo-fetched chart is `<repo-url>/<chart>`.
+          chart: props.repo ? `${props.repo}/${props.chart}` : props.chart,
+          chartVersion: props.version,
+          values: props.values ?? {},
+          capabilityProfile: {
+            kubeVersion: profile.kubeVersion,
+            apiVersions: profile.apiVersions,
+          },
+        }),
+        contentDigest: helmContentDigest(yamlText),
+      }
+    : {};
+
+  renderRecords.push({
+    name: props.name,
+    chart: props.chart,
+    version: props.version,
+    capabilityProfile: profile,
+    ...digests,
+  });
 
   const out: Record<string, InstanceType<typeof Deployment>> = {};
 

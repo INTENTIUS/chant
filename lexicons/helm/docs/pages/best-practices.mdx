@@ -49,6 +49,67 @@ values-prod.yaml    ← Override for production
 
 Use `helm install -f values-prod.yaml` to merge environment-specific values.
 
+## Capability profiles
+
+`helm template` does not fail when it cannot see a cluster — it renders against a Kubernetes version baked into the helm binary, and `.Capabilities.APIVersions` is empty. The default differs by binary (helm 3.16.2 assumes v1.31.0, helm 4.1.1 assumes v1.35.0), so two machines can render different bytes from the same chart and values without any error.
+
+A capability profile closes those inputs. Declare one per cluster in `chant.config.ts`:
+
+```typescript
+export default {
+  lexicons: ["helm", "k8s"],
+  helm: {
+    capabilityProfiles: {
+      prod: { kubeVersion: "1.33.6", apiVersions: ["monitoring.coreos.com/v1"] },
+      staging: { kubeVersion: "1.31.4", apiVersions: [] },
+    },
+  },
+};
+```
+
+Reference it from a `HelmRender`:
+
+```typescript
+import { HelmRender } from "@intentius/chant-lexicon-helm";
+
+export const eso = HelmRender({
+  name: "external-secrets",
+  repo: "https://charts.external-secrets.io",
+  chart: "external-secrets",
+  version: "0.10.4",
+  capabilityProfile: "prod",
+});
+```
+
+The render then runs with `--kube-version` and `--api-versions` from the profile, so `.Capabilities` reflects the declared cluster rather than the local toolchain. Every render pinned to the same profile produces the same bytes on every machine — a per-cluster guarantee, since clusters legitimately differ in version and installed API groups.
+
+Referencing a profile the config does not declare is a build error naming the profile. Omitting `capabilityProfile` keeps the unpinned behavior.
+
+Profiles are a cluster fact, not a chart fact. Keep one per cluster or environment, named the way `k8s.profiles` names cluster bindings, and update `kubeVersion` when the cluster upgrades.
+
+## Render digests
+
+A pinned render records two digests. Each answers a different question.
+
+`inputDigest` is a `sha256:` digest over the canonical JSON of the render's declared inputs. Those are the chart reference, the chart version, the resolved values, and the capability facts. It answers "same inputs?" without touching any rendered bytes. It is the same digest `helmInstall` records in the release ledger, computed by the same helper, so a render and a deploy of the same inputs share one identity.
+
+`contentDigest` is a `sha256:` digest over the canonical rendered bytes. It answers "same bytes on the cluster?". This is the artifact identity.
+
+The two diverge exactly when a render is not a function of its declared inputs. Two renders with the same `inputDigest` and different `contentDigest`s mean the chart is unstable or an input escaped declaration. That divergence is itself a signal. `renderStability` reads the recorded renders and names it.
+
+```typescript
+import { getHelmRenderRecords, renderStability } from "@intentius/chant-lexicon-helm";
+
+const report = renderStability(getHelmRenderRecords());
+// report.unstable — same inputs produced different bytes; the render is not pinned down
+// report.stable — every render of these inputs produced the same bytes
+// report.unassessed — unpinned renders, which carry no digests
+```
+
+Canonicalization normalizes render noise and nothing else. Mapping keys are sorted, since Kubernetes treats mappings as unordered. List order is never touched, since it is meaningful. Document order is preserved as helm emitted it. Duplicate documents are kept, because an aliased dependency legitimately emits the same CRD twice. The `# Source:` header survives as each document's leading line. CRLF endings, trailing whitespace, and other comments do not.
+
+Only pinned renders carry digests. An unpinned render's bytes depend on the local helm binary's defaulted capabilities, so a digest over them would assert an identity the render does not have. Unpinned renders record neither digest.
+
 ## List merge workaround
 
 Helm's strategic merge patch does not merge lists — it replaces them. Use map-of-maps instead:
@@ -92,7 +153,7 @@ export const deployWeb = Op("deploy-web", {
 });
 ```
 
-The record is keyed by an input digest. That is a `sha256:` digest over the deploy's inputs — the chart reference, the chart version, the resolved values (values file with `--set` entries applied), and the declared capability profile when one is given. Canonical JSON makes it stable across value key order. It is not a digest of the rendered manifests. Rendered-output identity is the pinned-render work of epic #1228.
+The record is keyed by an input digest. That is a `sha256:` digest over the deploy's inputs — the chart reference, the chart version, the resolved values (values file with `--set` entries applied), and the declared capability profile when one is given. Canonical JSON makes it stable across value key order. It is not a digest of the rendered manifests. Rendered-output identity is the `contentDigest` a pinned render records — see [Render digests](#render-digests).
 
 Record fields follow the auto-release convention. `component` defaults to the release name and `env` to `local`. The actor resolves from `GITHUB_ACTOR`, `GITLAB_USER_LOGIN`, or `USER`. The git sha resolves from `HEAD`. The run id resolves from `GITHUB_RUN_ID` or `CI_PIPELINE_ID` unless passed explicitly. A field that cannot be resolved is never faked. The append is skipped and a warning explains why.
 
