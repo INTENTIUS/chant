@@ -1,5 +1,6 @@
 import { describe, test, expect } from "vitest";
 import { fileURLToPath } from "url";
+import Ajv from "ajv";
 import { auditCommand, tokenForHost, coverageNotes, installLine, NO_LEXICONS_EXIT_CODE } from "./audit";
 import { discoverByDetection, loadAuditPlugins } from "../../audit/discover";
 import { MissingLexiconError, type AuditInput, type AuditLexicon } from "../../audit/core";
@@ -14,6 +15,12 @@ import { join } from "path";
 import { fingerprintSecret } from "../../audit/secrets";
 
 const REPO = fileURLToPath(new URL("./__fixtures__/audit-repo", import.meta.url));
+
+/** The real, vendored SARIF 2.1.0 JSON Schema — same structural-validation convention as component-bom.test.ts. */
+function loadSarifSchema(): unknown {
+  const path = fileURLToPath(new URL("./__fixtures__/schemas/sarif-2.1.0.schema.json", import.meta.url));
+  return JSON.parse(readFileSync(path, "utf-8"));
+}
 
 describe("auditCommand", () => {
   test("selects a host-specific token (no cross-host leakage)", () => {
@@ -400,6 +407,51 @@ describe("auditCommand", () => {
     expect(sarif.version).toBe("2.1.0");
     expect(sarif.runs[0].results.length).toBeGreaterThan(0);
   });
+
+  test("sarif carries tier on results and dimension/category + remediation help on rules (#442)", async () => {
+    const result = await auditCommand({ path: REPO, format: "sarif" });
+    const sarif = JSON.parse(result.output) as {
+      runs: Array<{
+        tool: { driver: { rules: Array<{ id: string; helpUri?: string; help?: { text: string }; properties?: { category?: string; dimension?: string } }> } };
+        results: Array<{ ruleId: string; properties?: { tier?: string } }>;
+      }>;
+    };
+    const run = sarif.runs[0];
+    // Every result carries the finding's tier so a consumer can triage merge-worthy vs. report-only without a second lookup.
+    expect(run.results.length).toBeGreaterThan(0);
+    for (const r of run.results) {
+      expect(r.properties?.tier).toMatch(/^(merge-worthy|report-only)$/);
+    }
+    // Every rule carries its dimension/category and remediation text (mapped from the catalog, #351) as help.
+    expect(run.tool.driver.rules.length).toBeGreaterThan(0);
+    for (const rule of run.tool.driver.rules) {
+      expect(rule.properties?.category).toMatch(/^(security|correctness|best-practice)$/);
+      expect(rule.properties?.dimension).toBe(rule.properties?.category);
+      expect(rule.help?.text.length).toBeGreaterThan(0);
+    }
+  });
+
+  test("sarif output validates against the real, vendored SARIF 2.1.0 JSON Schema", async () => {
+    const result = await auditCommand({ path: REPO, format: "sarif" });
+    const doc = JSON.parse(result.output);
+    const ajv = new Ajv({ strict: false, allErrors: true });
+    const validate = ajv.compile(loadSarifSchema() as object);
+    const valid = validate(doc);
+    if (!valid) throw new Error(ajv.errorsText(validate.errors));
+    expect(valid).toBe(true);
+  });
+
+  test("sarif schema validation also holds for the empty-result case (no findings)", async () => {
+    const repo = fileURLToPath(new URL("./__fixtures__/audit-fountain-clean", import.meta.url));
+    const result = await auditCommand({ path: repo, format: "sarif" });
+    const doc = JSON.parse(result.output);
+    expect(doc.runs[0].results).toEqual([]);
+    const ajv = new Ajv({ strict: false, allErrors: true });
+    const validate = ajv.compile(loadSarifSchema() as object);
+    const valid = validate(doc);
+    if (!valid) throw new Error(ajv.errorsText(validate.errors));
+    expect(valid).toBe(true);
+  });
 });
 
 describe("secrets detection (#443)", () => {
@@ -423,6 +475,34 @@ describe("secrets detection (#443)", () => {
     expect(result.status).toBe("no-lexicons"); // no lexicon installed — still not a clean miss
     expect(result.findings.map((f) => f.checkId)).toContain("SEC001");
     expect(JSON.stringify(result.findings)).not.toContain(FAKE_AWS_KEY); // redaction
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("sarif output never carries the raw secret value for a planted fake credential (#442)", async () => {
+    // `plugins: []` takes the "no-lexicons" diagnostic branch regardless of
+    // format, so a real lexicon (github) has to be installed for `format:
+    // "sarif"` to actually render SARIF here — same setup as the JSON
+    // round-trip test below.
+    const dir = tmpRepo();
+    mkdirSync(join(dir, ".github", "workflows"), { recursive: true });
+    writeFileSync(
+      join(dir, ".github", "workflows", "ci.yml"),
+      "name: CI\non:\n  push:\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo hi\n",
+    );
+    writeFileSync(join(dir, ".env"), `AWS_ACCESS_KEY_ID=${FAKE_AWS_KEY}\nSTRIPE_KEY=${FAKE_STRIPE_LIVE}\n`);
+    const all = await loadAuditPlugins();
+    const result = await auditCommand({ path: dir, plugins: all.filter((p) => p.name === "github"), format: "sarif" });
+    expect(result.status).toBe("ok");
+    expect(result.output).not.toContain(FAKE_AWS_KEY);
+    expect(result.output).not.toContain(FAKE_STRIPE_LIVE);
+    const sarif = JSON.parse(result.output) as { runs: Array<{ results: Array<{ ruleId: string; message: { text: string } }> }> };
+    const ruleIds = sarif.runs[0].results.map((r) => r.ruleId);
+    expect(ruleIds).toContain("SEC001");
+    expect(ruleIds).toContain("SEC006");
+    for (const r of sarif.runs[0].results) {
+      expect(r.message.text).not.toContain(FAKE_AWS_KEY);
+      expect(r.message.text).not.toContain(FAKE_STRIPE_LIVE);
+    }
     rmSync(dir, { recursive: true, force: true });
   });
 
