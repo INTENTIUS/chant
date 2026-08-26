@@ -25,7 +25,7 @@ npm install --save-dev @intentius/chant-lexicon-github
 
 {{file:docs-snippets/src/quickstart.ts}}
 
-The lexicon provides **3 resources** (Workflow, Job, Dependabot config), **14 composites** (Checkout, SetupNode, SetupGo, SetupPython, CacheAction, UploadArtifact, DownloadArtifact, NodeCI, NodePipeline, PythonCI, DockerBuild, DeployEnvironment, GoCI, Dependabot) + **3 presets** (BunPipeline, PnpmPipeline, YarnPipeline), a typed **Expression** system with 24 GitHub and 5 Runner context variables, and **13 lint rules** + **45 post-synth checks** (including a CI/CD supply-chain security pass, GHA029–058).
+The lexicon provides **3 resources** (Workflow, Job, Dependabot config), **14 composites** (Checkout, SetupNode, SetupGo, SetupPython, CacheAction, UploadArtifact, DownloadArtifact, NodeCI, NodePipeline, PythonCI, DockerBuild, DeployEnvironment, GoCI, Dependabot) + **3 presets** (BunPipeline, PnpmPipeline, YarnPipeline), a typed **Expression** system with 24 GitHub and 5 Runner context variables, and **13 lint rules** + **49 post-synth checks** (including a CI/CD supply-chain security pass, GHA029–062).
 `;
 
 const outputFormat = `The GitHub Actions lexicon serializes resources into **\`.github/workflows/*.yml\`** YAML files.

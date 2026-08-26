@@ -2,7 +2,7 @@
  * The github lexicon's chant audit catalog — metadata for its post-synth rules
  * (GHA GitHub Actions rules). Contributed via githubPlugin.auditCatalog() (#687).
  */
-import { auditRule, GH_INJECTION, GH_PWN, GH_SECRETS, GH_THIRD_PARTY, GH_TOKEN, SCORECARD_PINNED, SCORECARD_TOKEN, type RuleMeta } from "@intentius/chant/audit/catalog";
+import { auditRule, GH_INJECTION, GH_PWN, GH_SECRETS, GH_THIRD_PARTY, GH_TOKEN, SCORECARD_PINNED, SCORECARD_TOKEN, SCORECARD_VULN, type RuleMeta } from "@intentius/chant/audit/catalog";
 
 export const githubAuditCatalog: Record<string, RuleMeta> = {
   GHA006: auditRule("GHA006", "report-only", "guidance", "Duplicate workflow name", "Give each workflow a unique `name:`.", { category: "correctness" }),
@@ -50,4 +50,10 @@ export const githubAuditCatalog: Record<string, RuleMeta> = {
   GHA056: auditRule("GHA056", "report-only", "guidance", "Workflow without a name", "Add a `name:` to the workflow.", { category: "best-practice" }),
   GHA057: auditRule("GHA057", "merge-worthy", "guidance", "Dependency update can execute untrusted code", "Disable the option that lets dependency updates run external code.", { authority: [GH_PWN] }),
   GHA058: auditRule("GHA058", "report-only", "guidance", "Dependency update has no cooldown window", "Add a cooldown so new releases aren't merged instantly.", { category: "best-practice" }),
+
+  // Supply-chain and token-scoping expansion (#445).
+  GHA059: auditRule("GHA059", "merge-worthy", "guidance", "Stale or missing pin annotation", "Add or correct the trailing version comment on the SHA-pinned reference so it matches the digest.", { authority: [SCORECARD_PINNED, GH_THIRD_PARTY] }),
+  GHA060: auditRule("GHA060", "merge-worthy", "guidance", "Over-scoped generated token", "Narrow the GitHub App token's permission-* inputs to the scopes its consuming steps actually use, or remove the unused ones.", { authority: [SCORECARD_TOKEN, GH_TOKEN] }),
+  GHA061: auditRule("GHA061", "merge-worthy", "guidance", "Action reference outside the configured usage policy", "Replace the reference with one from the approved allowlist, or get it added if it should be trusted.", { category: "security" }),
+  GHA062: auditRule("GHA062", "merge-worthy", "guidance", "Pinned reference matches a known-vulnerability advisory", "Bump the reference to a patched ref/commit named by the advisory.", { authority: [SCORECARD_VULN] }),
 };

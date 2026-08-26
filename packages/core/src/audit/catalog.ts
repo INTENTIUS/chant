@@ -100,6 +100,10 @@ export const GH_SECRET_SCANNING: Authority = {
   name: "GitHub — About secret scanning",
   url: "https://docs.github.com/en/code-security/secret-scanning/introduction/about-secret-scanning",
 };
+export const SCORECARD_VULN: Authority = {
+  name: "OSSF Scorecard — Vulnerabilities",
+  url: "https://github.com/ossf/scorecard/blob/main/docs/checks.md#vulnerabilities",
+};
 
 function meta(
   id: string,
