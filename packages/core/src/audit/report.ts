@@ -111,7 +111,7 @@ export function renderMarkdown(findings: AuditFinding[], opts: RenderOptions = {
       `${counts.quickWin} quick-win, ${counts.needsReview} needs-review, ${counts.reportOnly} report-only ` +
       `(${counts.errors} error, ${counts.warnings} warning, ${counts.infos} info).`,
     "",
-    `By category: ${counts.security} security, ${counts.correctness} correctness, ${counts.bestPractice} best-practice.`,
+    `By category: ${counts.security} security, ${counts.correctness} correctness, ${counts.bestPractice} best-practice, ${counts.efficiency} efficiency.`,
     "",
   );
 

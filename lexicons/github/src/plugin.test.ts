@@ -24,7 +24,7 @@ describe("githubPlugin", () => {
 
   test("provides post-synth checks", () => {
     const checks = githubPlugin.postSynthChecks!();
-    expect(checks.length).toBe(49);
+    expect(checks.length).toBe(55);
 
     const checkIds = checks.map((c) => c.id);
     expect(checkIds).toContain("GHA006");

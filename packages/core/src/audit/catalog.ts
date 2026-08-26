@@ -26,10 +26,13 @@ export type FixKind = "deterministic" | "guidance";
  * What kind of finding this is — orthogonal to `tier` (fix confidence). Lets the
  * report say "N security, M best-practice, K correctness" instead of branding
  * everything "security." `security` = exposure/vuln/supply-chain; `correctness`
- * = a structural bug (broken reference, invalid schema, never-runs); everything
- * else is `best-practice` (hygiene/style/deprecation/reliability).
+ * = a structural bug (broken reference, invalid schema, never-runs); `efficiency`
+ * (#444) = waste — redundant work, an oversized execution environment,
+ * unintended fan-out, unbounded retention — never a safety/correctness issue,
+ * so it is excluded from the security and correctness tallies; everything else
+ * is `best-practice` (hygiene/style/deprecation/reliability).
  */
-export type Category = "security" | "correctness" | "best-practice";
+export type Category = "security" | "correctness" | "best-practice" | "efficiency";
 
 export interface Authority {
   name: string;

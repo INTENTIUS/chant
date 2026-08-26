@@ -91,7 +91,7 @@ describe("RULE_CATALOG (aggregated: core static + lexicon-contributed, #687)", (
       expect(m.remediation.length, `${id} has remediation`).toBeGreaterThan(0);
       expect(["merge-worthy", "report-only"]).toContain(m.tier);
       expect(["deterministic", "guidance"]).toContain(m.fixKind);
-      expect(["security", "correctness", "best-practice"], `${id} has a valid category`).toContain(m.category);
+      expect(["security", "correctness", "best-practice", "efficiency"], `${id} has a valid category`).toContain(m.category);
     }
   });
 

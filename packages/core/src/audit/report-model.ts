@@ -62,6 +62,8 @@ export interface ReportCounts {
   security: number;
   correctness: number;
   bestPractice: number;
+  /** Waste findings (#444) — excluded from `security`/`correctness` by construction (disjoint categories). */
+  efficiency: number;
 }
 
 export interface ReportModel {
@@ -269,6 +271,7 @@ export function buildReportModel(findings: AuditFinding[], opts: BuildModelOptio
     security: shown.filter((f) => f.meta.category === "security").length,
     correctness: shown.filter((f) => f.meta.category === "correctness").length,
     bestPractice: shown.filter((f) => f.meta.category === "best-practice").length,
+    efficiency: shown.filter((f) => f.meta.category === "efficiency").length,
   };
 
   return {

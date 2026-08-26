@@ -111,7 +111,7 @@ function renderReportOnly(findings: EnrichedFinding[], n: number): string {
 function renderHeader(counts: ReportCounts, snapshot: AuditSnapshot | undefined, notes: string[]): string {
   const sev = `<span class="sev error"></span>${counts.errors} error <span class="sev warning"></span>${counts.warnings} warning <span class="sev info"></span>${counts.infos} info`;
   const tiers = `<span class="chip">${counts.quickWin} quick-win</span> <span class="chip">${counts.needsReview} needs-review</span> <span class="chip">${counts.reportOnly} hygiene</span>`;
-  const cats = `<span class="chip">${counts.security} security</span> <span class="chip">${counts.correctness} correctness</span> <span class="chip">${counts.bestPractice} best-practice</span>`;
+  const cats = `<span class="chip">${counts.security} security</span> <span class="chip">${counts.correctness} correctness</span> <span class="chip">${counts.bestPractice} best-practice</span> <span class="chip">${counts.efficiency} efficiency</span>`;
   const meta: string[] = [];
   if (snapshot) {
     if (snapshot.host) meta.push(esc(snapshot.host));

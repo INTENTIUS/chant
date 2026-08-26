@@ -49,6 +49,12 @@ import { gha059 } from "./gha059";
 import { gha060 } from "./gha060";
 import { gha061 } from "./gha061";
 import { gha062 } from "./gha062";
+import { gha063 } from "./gha063";
+import { gha064 } from "./gha064";
+import { gha065 } from "./gha065";
+import { gha066 } from "./gha066";
+import { gha067 } from "./gha067";
+import { gha068 } from "./gha068";
 
 export const postSynthChecks: PostSynthCheck[] = [
   gha006,
@@ -100,4 +106,10 @@ export const postSynthChecks: PostSynthCheck[] = [
   gha060,
   gha061,
   gha062,
+  gha063,
+  gha064,
+  gha065,
+  gha066,
+  gha067,
+  gha068,
 ];
