@@ -258,6 +258,8 @@ export const k8sSerializer: Serializer = {
     const otherDocs: string[] = [];
     /** Sidecar files — committed ciphertext, copied byte-for-byte. */
     const files: Record<string, string> = {};
+    /** Basenames within `files` that must never be JSON.parse round-tripped (chant#1937). */
+    const verbatimFiles: string[] = [];
     const warnings: string[] = [];
 
     for (const [name, entity] of entities) {
@@ -280,6 +282,7 @@ export const k8sSerializer: Serializer = {
           );
         }
         files[entity.filename] = entity.text;
+        if (!verbatimFiles.includes(entity.filename)) verbatimFiles.push(entity.filename);
         continue;
       }
 
@@ -417,7 +420,12 @@ export const k8sSerializer: Serializer = {
     // A bare string when there is nothing extra to write, so the common case
     // stays byte-identical to what every existing consumer already reads.
     if (Object.keys(files).length === 0 && warnings.length === 0) return primary;
-    return { primary, files, ...(warnings.length > 0 ? { warnings } : {}) };
+    return {
+      primary,
+      files,
+      ...(verbatimFiles.length > 0 ? { verbatimFiles } : {}),
+      ...(warnings.length > 0 ? { warnings } : {}),
+    };
   },
 };
 

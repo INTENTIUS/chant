@@ -712,7 +712,11 @@ export const testEntity = {
     const sidecarSerializer: Serializer = {
       name: "multi",
       rulePrefix: "MULTI",
-      serialize: () => ({ primary: "kind: Deployment\n", files: { "db.sops.yaml": CIPHERTEXT } }),
+      serialize: () => ({
+        primary: "kind: Deployment\n",
+        files: { "db.sops.yaml": CIPHERTEXT },
+        verbatimFiles: ["db.sops.yaml"],
+      }),
     };
 
     async function writeProject(fileValue: string): Promise<void> {
@@ -768,7 +772,11 @@ export const x = { [Symbol.for("chant.declarable")]: true, entityType: "X", lexi
       const jsonSidecar: Serializer = {
         name: "multi",
         rulePrefix: "MULTI",
-        serialize: () => ({ primary: "kind: Deployment\n", files: { "db.sops.yaml": jsonish } }),
+        serialize: () => ({
+          primary: "kind: Deployment\n",
+          files: { "db.sops.yaml": jsonish },
+          verbatimFiles: ["db.sops.yaml"],
+        }),
       };
       await writeProject("secrets/db.sops.yaml");
       const outputPath = join(testDir, "dist", "manifests.yaml");
@@ -782,6 +790,98 @@ export const x = { [Symbol.for("chant.declarable")]: true, entityType: "X", lexi
 
       expect(result.errors).toEqual([]);
       expect(readFileSync(join(testDir, "dist", "db.sops.yaml"), "utf-8")).toBe(jsonish);
+    });
+  });
+
+  describe("SerializerResult.verbatimFiles — general channel (#1937)", () => {
+    test("a verbatim file whose content happens to be valid JSON survives byte-identical", async () => {
+      // Deliberately not key-sorted or 2-space indented — content the JSON
+      // round trip below would reformat. The old workaround (skip the round
+      // trip only because a file happens to fail JSON.parse, true for the
+      // committed-encrypted `.sops.yaml` case but never a real guarantee)
+      // could not protect this case. `verbatimFiles` can, structurally.
+      const raw = '{"b":1,"a":2,   "nested":{"z":true}}';
+      const verbatimSerializer: Serializer = {
+        name: "multi",
+        rulePrefix: "MULTI",
+        serialize: () => ({
+          primary: "{}",
+          files: { "raw.json": raw },
+          verbatimFiles: ["raw.json"],
+        }),
+      };
+      await writeFile(
+        join(testDir, "infra.ts"),
+        `export const x = { [Symbol.for("chant.declarable")]: true, entityType: "X", lexicon: "multi", kind: "resource", props: {}, attributes: {} };`,
+      );
+      const outputPath = join(testDir, "dist", "manifest.json");
+
+      const result = await buildCommand({
+        path: testDir,
+        output: outputPath,
+        format: "json",
+        serializers: [verbatimSerializer],
+      });
+
+      expect(result.errors).toEqual([]);
+      expect(readFileSync(join(testDir, "dist", "raw.json"), "utf-8")).toBe(raw);
+    });
+  });
+
+  describe("additional-file basename collisions across lexicons (#1937)", () => {
+    const lexASerializer = (content: string): Serializer => ({
+      name: "lexa",
+      rulePrefix: "LEXA",
+      serialize: () => ({ primary: "{}", files: { "shared.yaml": content } }),
+    });
+    const lexBSerializer = (content: string): Serializer => ({
+      name: "lexb",
+      rulePrefix: "LEXB",
+      serialize: () => ({ primary: "{}", files: { "shared.yaml": content } }),
+    });
+
+    async function writeTwoLexiconProject(): Promise<void> {
+      await writeFile(
+        join(testDir, "infra.ts"),
+        [
+          `export const a = { [Symbol.for("chant.declarable")]: true, entityType: "A", lexicon: "lexa", kind: "resource", props: {}, attributes: {} };`,
+          `export const b = { [Symbol.for("chant.declarable")]: true, entityType: "B", lexicon: "lexb", kind: "resource", props: {}, attributes: {} };`,
+        ].join("\n"),
+      );
+    }
+
+    test("differing content at the same basename fails the build, naming the basename and both sources", async () => {
+      await writeTwoLexiconProject();
+      const outputPath = join(testDir, "dist", "manifest.json");
+
+      const result = await buildCommand({
+        path: testDir,
+        output: outputPath,
+        format: "json",
+        serializers: [lexASerializer("from lexa\n"), lexBSerializer("from lexb\n")],
+      });
+
+      expect(result.success).toBe(false);
+      const message = result.errors.join("\n");
+      expect(message).toContain("shared.yaml");
+      expect(message).toContain("lexa");
+      expect(message).toContain("lexb");
+    });
+
+    test("identical content at the same basename passes", async () => {
+      await writeTwoLexiconProject();
+      const outputPath = join(testDir, "dist", "manifest.json");
+      const shared = "same content for both\n";
+
+      const result = await buildCommand({
+        path: testDir,
+        output: outputPath,
+        format: "json",
+        serializers: [lexASerializer(shared), lexBSerializer(shared)],
+      });
+
+      expect(result.errors).toEqual([]);
+      expect(readFileSync(join(testDir, "dist", "shared.yaml"), "utf-8")).toBe(shared);
     });
   });
 

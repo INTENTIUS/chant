@@ -43,6 +43,24 @@ export interface SerializerResult {
   /** Additional files keyed by filename (e.g. "network.template.json" → content) */
   files?: Record<string, string>;
   /**
+   * Basenames from `files` that must reach disk byte-for-byte — never
+   * `JSON.parse`d, key-sorted, or reformatted to YAML by the build's
+   * additional-file writer (chant#1937).
+   *
+   * A separate field rather than a per-file flag on `files` (e.g. widening
+   * its value to `string | { content: string; verbatim: boolean }`) so every
+   * existing lexicon serializer that returns `files: Record<string, string>`
+   * keeps compiling and behaving unchanged: this list defaults to empty, and
+   * only a serializer that actually carries opaque/pre-formatted bytes
+   * (committed ciphertext, a vendored file) needs to populate it.
+   *
+   * Before this field existed, "JSON.parse fails on this content" was the
+   * only way to opt out of round-tripping — true for YAML that happens not to
+   * parse as JSON, but never a structural guarantee (YAML is a JSON
+   * superset).
+   */
+  verbatimFiles?: string[];
+  /**
    * Non-fatal diagnostics produced during serialization (e.g. a dialect
    * dropping keys the target platform ignores). The build pipeline collects
    * these into its `warnings` array.

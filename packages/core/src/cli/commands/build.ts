@@ -17,7 +17,6 @@ import type { Serializer, SerializerResult } from "../../serializer";
 import type { LexiconPlugin } from "../../lexicon";
 import { resolveLexiconVersions, collectBuildRootContributors } from "../plugins";
 import { runPostSynthChecks } from "../../lint/post-synth";
-import { collectSecretDeclarations } from "../../secret-provenance";
 import { coreReceiptChecks } from "../../lint/receipt-checks";
 import { coreOutputChecks } from "../../lint/output-checks";
 import { coreKnowledgeChecks } from "../../lint/knowledge-checks";
@@ -545,28 +544,55 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
 
   // Handle output
   if (result.errors.length === 0 && errors.length === 0) {
-    // Extract primary content and collect additional files from SerializerResult
-    const additionalFiles = new Map<string, string>();
+    // Extract primary content and collect additional files from SerializerResult.
+    // Each entry remembers which lexicon produced it, so a same-basename
+    // collision between two sources (below) can name both.
+    const additionalFiles = new Map<string, { content: string; source: string }>();
 
-    // Sidecar files that must reach disk BYTE-FOR-BYTE: committed ciphertext
+    // Basenames (from some SerializerResult.files) that must reach disk
+    // BYTE-FOR-BYTE — e.g. committed ciphertext
     // (`declareSecret({ provenance: "committed-encrypted", file })`). The
     // additional-file writer below round-trips anything JSON.parse accepts,
-    // key-sorting it and possibly re-emitting it as YAML — which would break
-    // the `sops` MAC. `file` is restricted to .yaml/.yml, so that parse fails
-    // in practice, but naming the files here makes byte identity structural
-    // rather than a lucky accident.
+    // key-sorting it and possibly re-emitting it as YAML, which would break
+    // e.g. the `sops` MAC on committed ciphertext. A serializer opts a file
+    // out of that round trip structurally, via `SerializerResult.verbatimFiles`
+    // (chant#1937) — "the parse happens to fail" is not a safety guarantee.
     const verbatimFiles = new Set<string>();
-    for (const decl of collectSecretDeclarations(result.entities).values()) {
-      if (decl.provenance === "committed-encrypted") {
-        verbatimFiles.add(decl.file.split(/[\\/]/).pop()!);
+
+    // A same basename emitted by two sources with different content would
+    // otherwise silently overwrite (last-writer-wins, since `additionalFiles`
+    // is keyed by basename alone). Identical content from two sources is
+    // fine — dedup — but differing content is refused, naming both sources,
+    // the same way the committed-encrypted resolution stage refuses a
+    // basename collision among its own declarations.
+    function addAdditionalFile(filename: string, content: string, source: string): void {
+      const existing = additionalFiles.get(filename);
+      if (existing === undefined) {
+        additionalFiles.set(filename, { content, source });
+        return;
       }
+      if (existing.content === content) return;
+      errors.push(
+        formatError({
+          message:
+            `Additional file "${filename}" collides: "${existing.source}" and "${source}" ` +
+            `both emit it with different content — additional files share one flat ` +
+            `namespace, so two sources whose filenames match would otherwise silently ` +
+            `overwrite each other.`,
+        }),
+      );
     }
 
-    function getPrimaryContent(raw: string | SerializerResult): string {
+    function getPrimaryContent(raw: string | SerializerResult, source: string): string {
       if (typeof raw === "string") return raw;
       if (raw.files) {
         for (const [filename, content] of Object.entries(raw.files)) {
-          additionalFiles.set(filename, content);
+          addAdditionalFile(filename, content, source);
+        }
+      }
+      if (raw.verbatimFiles) {
+        for (const filename of raw.verbatimFiles) {
+          verbatimFiles.add(filename);
         }
       }
       return raw.primary;
@@ -585,8 +611,8 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
     // Multiple lexicons: wrap in lexicon keys
     let output: string = "{}";
     if (result.outputs.size === 1) {
-      const [, raw] = [...result.outputs.entries()][0];
-      const content = getPrimaryContent(raw);
+      const [lexiconName, raw] = [...result.outputs.entries()][0];
+      const content = getPrimaryContent(raw, lexiconName);
       const parsed = tryParseJson(content);
       if ("json" in parsed) {
         output = JSON.stringify(parsed.json, sortedJsonReplacer, 2);
@@ -603,7 +629,7 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
       const nonJsonSections: string[] = [];
       const sortedLexiconNames = [...result.outputs.keys()].sort();
       for (const lexiconName of sortedLexiconNames) {
-        const content = getPrimaryContent(result.outputs.get(lexiconName)!);
+        const content = getPrimaryContent(result.outputs.get(lexiconName)!, lexiconName);
         const parsed = tryParseJson(content);
         if ("json" in parsed) {
           combined[lexiconName] = parsed.json;
@@ -634,13 +660,13 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
     // `foo.yaml`, so the durable-run worker was never where `run --temporal` looks.
     const projectDist = resolve(options.path ?? ".", "dist");
     let opsWritten = 0;
-    for (const [filename, content] of [...additionalFiles]) {
+    for (const [filename, entry] of [...additionalFiles]) {
       if (!filename.startsWith("ops/")) continue;
       additionalFiles.delete(filename);
       try {
         const targetPath = join(projectDist, filename);
         mkdirSync(dirname(targetPath), { recursive: true });
-        writeFileSync(targetPath, content);
+        writeFileSync(targetPath, entry.content);
         opsWritten += 1;
       } catch (err) {
         errors.push(
@@ -665,13 +691,13 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
         // Write additional files (e.g. nested stack templates) alongside the primary output
         if (additionalFiles.size > 0) {
           const outputDir = dirname(outputPath);
-          for (const [filename, content] of additionalFiles) {
-            let fileContent = content;
+          for (const [filename, entry] of additionalFiles) {
+            let fileContent = entry.content;
             // Format additional files consistently — except the ones declared
             // verbatim, which are copied exactly as they were committed.
             if (!verbatimFiles.has(filename)) {
               try {
-                const fileParsed = JSON.parse(content);
+                const fileParsed = JSON.parse(entry.content);
                 fileContent = JSON.stringify(fileParsed, sortedJsonReplacer, 2);
                 if (options.format === "yaml") {
                   fileContent = jsonToYaml(JSON.parse(fileContent));
@@ -711,9 +737,9 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
       // Print to stdout
       console.log(output);
       // Log additional files to stderr if any
-      for (const [filename, content] of additionalFiles) {
+      for (const [filename, entry] of additionalFiles) {
         console.error(`\n--- ${filename} ---`);
-        console.error(content);
+        console.error(entry.content);
       }
     }
   }
