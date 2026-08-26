@@ -51,6 +51,8 @@ export { LexiconUpgradeOp, IN_SCOPE_LEXICONS } from "./composites/lexicon-upgrad
 export type { LexiconUpgradeOpConfig, LexiconUpgradeOpResources } from "./composites/lexicon-upgrade-op";
 export { ApplyOp } from "./composites/apply-op";
 export type { ApplyOpConfig, ApplyOpResources } from "./composites/apply-op";
+export { ConvergeOp } from "./composites/converge-op";
+export type { ConvergeOpConfig, ConvergeOpResources, ConvergeDial } from "./composites/converge-op";
 
 // Op builders (re-exported from core for single-import convenience)
 //

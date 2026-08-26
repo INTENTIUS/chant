@@ -89,6 +89,9 @@ export type {
   PipelineRefResolution,
 } from "./pipeline-audit";
 
+export { convergeTick, planConvergeTick } from "./converge";
+export type { ConvergeTickArgs, ConvergeTickResult, ConvergeTickPlan, SerializedConvergeRule } from "./converge";
+
 export {
   lexiconUpgrade,
   isPinned,

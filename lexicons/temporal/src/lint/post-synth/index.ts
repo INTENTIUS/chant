@@ -6,6 +6,7 @@ import { tmp010 } from "./tmp010-cron-syntax";
 import { tmp011 } from "./tmp011-namespace-reference";
 import { tmp012 } from "./tmp012-activity-contract";
 import { tmp013 } from "./tmp013-step-output-ref";
+import { tmp014 } from "./tmp014-converge-rule-refusals";
 
 export const postSynthChecks: PostSynthCheck[] = [
   tmp001,
@@ -14,4 +15,5 @@ export const postSynthChecks: PostSynthCheck[] = [
   tmp011,
   tmp012,
   tmp013,
+  tmp014,
 ];
