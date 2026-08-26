@@ -115,6 +115,16 @@ function isSecretBearingName(name: string): boolean {
   return /\.(pem|key|crt|cer|pfx|p12)$/i.test(name);
 }
 
+/**
+ * `wrangler.toml` (#446) — Cloudflare Workers' declarative deploy config.
+ * Native TOML, so it rides along the same way secret-bearing filenames do:
+ * `wrangler.ts` reads it directly (no lexicon plugin, no authoring surface),
+ * so it only needs to be a candidate path, not a `detectTemplate` entry.
+ */
+function isWranglerConfigName(name: string): boolean {
+  return name === "wrangler.toml";
+}
+
 /** Split a possibly multi-document YAML string into per-doc parsed objects. */
 function parseDocs(content: string): Record<string, unknown>[] {
   const docs: Record<string, unknown>[] = [];
@@ -264,6 +274,7 @@ export function isCandidatePath(path: string): boolean {
   if (isDockerfileName(name)) return true;
   if (name === "Chart.yaml") return true;
   if (isSecretBearingName(name)) return true;
+  if (isWranglerConfigName(name)) return true;
   return /\.(ya?ml|json|template)$/i.test(name);
 }
 

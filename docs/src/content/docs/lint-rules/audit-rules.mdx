@@ -2031,3 +2031,53 @@ Authority: [GitHub — About secret scanning](https://docs.github.com/en/code-se
 Confirm whether this is a live credential; if so, remove it from source and rotate it. If it's a false positive, suppress with a `chant-audit-ignore` comment or an allowlist entry.
 
 Authority: [GitHub — About secret scanning](https://docs.github.com/en/code-security/secret-scanning/introduction/about-secret-scanning)
+
+## Wrangler config (WRG)
+
+Lexicon-independent, audit-only (#446) — scans `wrangler.toml`, Cloudflare Workers' native deploy config, which the engine cannot otherwise parse (it is not YAML/JSON). No authoring surface: chant does not write Wrangler config, it only reads it for these checks.
+
+### WRG001
+
+**Production environment exposed on *.workers.dev** — merge-worthy · guidance
+
+Remove workers_dev (or set it to false) for this environment and rely on its custom domain/route instead of the shared public subdomain.
+
+Authority: [Cloudflare Workers — workers.dev](https://developers.cloudflare.com/workers/configuration/routing/workers-dev/)
+
+### WRG002
+
+**Credential-shaped key stored in [vars]** — merge-worthy · guidance
+
+Move the value out of [vars] and into `wrangler secret put \<name>` so it isn't committed to source or visible in `wrangler dev`/the dashboard.
+
+Authority: [Cloudflare Workers — Secrets](https://developers.cloudflare.com/workers/configuration/secrets/)
+
+### WRG003
+
+**Observability explicitly disabled** — report-only · guidance
+
+Set observability.enabled = true (or remove the override) so Workers Logs are recorded for this deployment.
+
+### WRG004
+
+**Unscoped wildcard route** — merge-worthy · guidance
+
+Scope the route pattern to the intended zone (e.g. "example.com/*") instead of a bare "*" or "*/*" that matches every zone on the account.
+
+Authority: [Cloudflare Workers — Routes](https://developers.cloudflare.com/workers/configuration/routing/routes/)
+
+### WRG005
+
+**Non-production environment shares a data store with production** — merge-worthy · guidance
+
+Give the non-production environment its own KV namespace/R2 bucket/D1 database id instead of reusing production's.
+
+Authority: [Cloudflare Workers — Wrangler environments](https://developers.cloudflare.com/workers/wrangler/configuration/#environments)
+
+### WRG006
+
+**Static assets served from the project root** — merge-worthy · guidance
+
+Point [site].bucket / [assets].directory at a dedicated public output folder, not the project root, so non-public files (config, source maps, .git) aren't served.
+
+Authority: [Cloudflare Workers — Static assets](https://developers.cloudflare.com/workers/static-assets/)

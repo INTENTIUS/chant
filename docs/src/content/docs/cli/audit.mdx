@@ -30,6 +30,7 @@ What it scans:
 - Helm charts — any directory with a `Chart.yaml`, for a local path — runs the `WHM*` checks (privileged/root containers, `:latest` images, inline Secrets, chart structure, …). The whole chart is audited as one unit.
 - fountain manifests — `*.{yml,yaml}` with `apiVersion: fountain.dev/v1` (`fountain apply` files, single or multi-document), for a local path — runs the `FTN*` checks (unrestricted networking, credential-shaped `env_vars`, vault shadowing, unresolvable `${VAR}` references, …). The documents are parsed back into the entity graph, so these are the same rules `chant build` runs — and a fountain document is never misread as a Kubernetes manifest.
 - Secrets & credentials (`SEC*`) — every file above, plus `.env*`, `.pem`, `.key`, `.crt`, `.cer`, `.pfx`, and `.p12` files, are scanned for likely secrets regardless of which lexicons are installed. See [Secrets & credentials detection](#secrets--credentials-detection) below.
+- Wrangler config (`WRG*`) — `wrangler.toml`, Cloudflare Workers' native deploy config. TOML is not a format any lexicon parses, so this is audit-only (#446): no lexicon package to install, no authoring surface — chant never writes Wrangler config, it only reads it for these checks. Runs regardless of which lexicons are installed, the same as `SEC*`. See [Wrangler config detection](#wrangler-config-detection) below.
 
 Every rule a finding cites links to its entry in the [audit rules reference](/chant/lint-rules/audit-rules/).
 
@@ -240,6 +241,14 @@ Two ways, matching the other false-positive escape hatches in the tool:
   ```
 
   Copy the `fingerprint` straight from the finding's message or JSON output — it's a hash of the value, so allowlisting a false positive never means writing the secret into the config. An allow entry needs `ruleId` and/or `fingerprint`; `file` alone never blanket-suppresses everything in a file.
+
+## Wrangler config detection
+
+The `WRG*` rules (see the [rules reference](/chant/lint-rules/audit-rules/)) read `wrangler.toml` — parsed with a small dependency-free TOML parser built for this (`packages/core/src/toml.ts`), not a full spec implementation, but enough for real deploy configs (tables, arrays of tables, dotted/nested `[env.<name>]` blocks, inline tables). Like `SEC*`, this runs independent of lexicon — it does not need any `@intentius/chant-lexicon-*` package installed, since Wrangler config is audit-only: chant has no authoring surface or serializer for it.
+
+Checks cover: a production-named environment exposed on the public `*.workers.dev` subdomain (`WRG001`), a credential-shaped key committed in `[vars]` instead of `wrangler secret` (`WRG002`), observability explicitly disabled (`WRG003`), an unscoped wildcard route matching every zone on the account (`WRG004`), a non-production environment sharing a KV/R2/D1 binding id with production (`WRG005`), and static assets served from the project root (`WRG006`).
+
+A file that fails to parse (or isn't found) contributes no findings rather than failing the audit — same tolerance as the rest of the engine.
 
 ## Usage
 
