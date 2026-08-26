@@ -48,7 +48,7 @@ Either way, `chant scenario check` (below) reads the fixture and substitutes it 
 
 Every clause is independently optional, and clauses compose in one `expect` object — at least one is required:
 
-- **`noop: true`** — the plan proposes no create, update, or delete. Probably the majority-value case on its own: refactors, lexicon upgrades, no-op deploys should all show `noop`, and a scenario turns "should" into "does, checked on every PR."
+- **`noop: true`** — the plan proposes no create, update, or delete, and no declared [effect receipt](/chant/concepts/effect-receipts/) classifies as `effect` (a pending fire — see [below](#effect-receipts-in-a-scenario)). Probably the majority-value case on its own: refactors, lexicon upgrades, no-op deploys should all show `noop`, and a scenario turns "should" into "does, checked on every PR."
 - **`create` / `update` / `delete`: `<number>`** — an exact count for that action. Omitted means unconstrained; `0` is a real assertion, not "don't check this."
 - **`deletes: [{ name, ownership }]`** — exactly these resources must be proposed for deletion, each with the stated ownership verdict, and no *other* delete may be proposed. This is arguably the single highest-value assertion in the vocabulary: "this plan deletes nothing foreign" — and it's meaningful specifically because chant's ownership marker is a live read, not a state-file record. A resource the fixture marks `foreign` is never classified as a delete by `buildChangeSet` in the first place (only `adopt`), so a `deletes` expectation against one fails loudly as "not proposed" — the safety property is structural, upstream of the scenario check.
 - **`unobserved: "refuse" | { allow: [names] }`** — how the scenario treats the change set's unobserved rows. `"refuse"` fails on any hole; `{ allow: [...] }` names the specific entities allowed to be unobserved (by entity name, not by [`UnobservedReason`](/chant/concepts/drift-detection/) — a scenario is written against one fixture, and "this resource has no data in it" is a per-resource fact, not a class of reason to trust everywhere).
@@ -56,6 +56,16 @@ Every clause is independently optional, and clauses compose in one `expect` obje
 ### The `update` count's real limit
 
 A scenario has exactly one fixture — not a before-and-after pair. `chant lifecycle plan`'s `update` action means *drift since the last recorded snapshot* (the live read now vs. the live read then), and a single-fixture scenario has no "then" to diff against. In practice this means `update` in a scenario's `expect` is only ever meaningfully `0`. That's not a placeholder gap to be filled in later — it's what a single-fixture model can express. `create`, `delete`, and ownership are fully expressive; drift since an *earlier* live read isn't, because there is no earlier live read here, only the one fixture standing in for "now."
+
+### Effect receipts in a scenario
+
+A declared [`EffectReceipt`](/chant/concepts/effect-receipts/) joins a scenario's change set the same way it joins `chant lifecycle plan`'s: pulled out of the generic create/update/delete axis entirely and classified on its own terms — absent or stale proposes an `effect` row ("the fire is pending"), a live value matching the resolved expectation is a clean `noop`, and a receipt the fixture can't answer for is `unobserved`, loudly, never guessed. `chant scenario check` builds that classification from the SAME fixture data that stands in for a live read everywhere else in this model:
+
+- **Presence** comes from the fixture's `resources` — a receipt named there is "live," the same as any other resource; a receipt confirmed absent (not in `resources`, not named in `unobserved`) reads as "looked, and it's not there," the same claim a live read makes.
+- **Value** comes off the live entry's `attributes.value` (or `attributes.Value`, the same fallback the live path accepts) — the stored digest or existence marker a real receipt row would carry.
+- **Reference inputs** (an attr-ref into another declared entity's attribute) resolve against the fixture's OWN recorded resources, merged across every lexicon the fixture covers — exactly the pool `chant lifecycle plan` resolves against, just fixture data standing in for the live one. A reference the fixture doesn't carry an answer for doesn't fail the scenario outright: the receipt proposes its fire with an "unresolved input" note, the same non-guessing `resolveReceiptExpectation` does at plan time — never a digest hashed over a placeholder.
+
+The two failure modes this closes: a receipt that hasn't fired yet is not a `create` (there is nothing to create — a receipt is observe-only to the generic apply path), and a receipt present in the fixture with the WRONG value is not a clean `noop` either, even though a scenario has no `observedThen` to detect drift with — its live value simply doesn't match what the receipt's inputs resolve to. `noop: true` fails on either: an unfired or stale receipt classifies as `effect`, and `effect` is not "nothing," even though it never joins the `create`/`update`/`delete` triad the `deletes` and exact-count clauses read.
 
 ## `chant scenario check`
 
@@ -71,7 +81,7 @@ Output is per-scenario pass/fail, with a legible detail on every failing clause 
 
 ```
 extracting the WebApp composite is plan-neutral [compositeIsNeutral] — given fixtures/prod-baseline.json, env prod: FAIL
-  noop: expected noop (no create/update/delete) but the plan proposes 1 create, 0 update, 0 delete — newDatabase (AWS::RDS::DBInstance) [create]
+  noop: expected noop (no create/update/delete/effect) but the plan proposes 1 create, 0 update, 0 delete, 0 effect — newDatabase (AWS::RDS::DBInstance) [create]
 ```
 
 `--json` emits the same verdicts as structured data. The command exits nonzero if any scenario fails — the shape a CI gate needs.

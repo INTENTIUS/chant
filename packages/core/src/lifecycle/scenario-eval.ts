@@ -49,8 +49,14 @@ export function evaluateScenario(cs: ChangeSet, expect: ScenarioExpect): Scenari
   const checks: ScenarioCheckResult[] = [];
 
   if (expect.noop) {
-    const offenders = { create: counts.create, update: counts.update, delete: counts.delete };
-    const clean = offenders.create === 0 && offenders.update === 0 && offenders.delete === 0;
+    // An effect receipt's fire (#1832) is a real proposed action — a
+    // migration or seed job about to run — even though it never counts
+    // toward the create/update/delete triad `buildChangeSet` classifies
+    // ordinary resources into. `noop: true` claims the plan does nothing;
+    // a pending effect fire is something, so it offends the claim exactly
+    // like a create/update/delete would.
+    const offenders = { create: counts.create, update: counts.update, delete: counts.delete, effect: counts.effect };
+    const clean = offenders.create === 0 && offenders.update === 0 && offenders.delete === 0 && offenders.effect === 0;
     checks.push({
       clause: "noop",
       pass: clean,
@@ -58,9 +64,9 @@ export function evaluateScenario(cs: ChangeSet, expect: ScenarioExpect): Scenari
         ? {}
         : {
             detail:
-              `expected noop (no create/update/delete) but the plan proposes ` +
-              `${offenders.create} create, ${offenders.update} update, ${offenders.delete} delete — ` +
-              nameList(cs, ["create", "update", "delete"]),
+              `expected noop (no create/update/delete/effect) but the plan proposes ` +
+              `${offenders.create} create, ${offenders.update} update, ${offenders.delete} delete, ${offenders.effect} effect — ` +
+              nameList(cs, ["create", "update", "delete", "effect"]),
           }),
     });
   }

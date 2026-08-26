@@ -3,7 +3,15 @@ import { readFile } from "node:fs/promises";
 import { commandBuildParams } from "../build-params-cli";
 import { build, type BuildResult } from "../../build";
 import { readEnvironmentSnapshots, fetchLifecycle } from "../../lifecycle/git";
-import { buildChangeSet, type ChangeSetEntry } from "../../lifecycle/change-set";
+import { buildChangeSet, type ChangeSet, type ChangeSetEntry } from "../../lifecycle/change-set";
+import {
+  planReceipts,
+  mergeReceiptEntries,
+  observedValueResolver,
+  readReceiptValue,
+  type ReceiptReading,
+} from "../../lifecycle/receipt-plan";
+import { collectEffectReceipts, isEffectReceipt, type EffectReceiptDeclaration } from "../../effect-receipt";
 import { evaluateScenario, type ScenarioVerdict } from "../../lifecycle/scenario-eval";
 import { collectScenarios, type ScenarioDeclaration, type ScenarioGiven } from "../../lifecycle/scenario";
 import { isResourceDeclarable } from "../../declarable";
@@ -15,6 +23,7 @@ import { formatError, formatSuccess, formatBold } from "../format";
 import type { CommandContext } from "../registry";
 import type { LifecycleSnapshot } from "../../lifecycle/types";
 import type { UnobservedEntity } from "../../observation";
+import type { ResourceMetadata } from "../../lexicon";
 
 /**
  * `chant scenario check` (#1292) — evaluate every declared `Scenario`
@@ -34,6 +43,21 @@ import type { UnobservedEntity } from "../../observation";
  * (`create`/`delete`/`noop`) and ownership are fully expressive here; drift
  * since a prior read is not, because there is no prior read in this model,
  * only the one fixture.
+ *
+ * Effect receipts (#1832) get the same replacement `runLifecyclePlan` gives
+ * them: `collectEffectReceipts` pulls every declared receipt out of the
+ * generic axis, `evaluateOneScenario` builds a {@link ReceiptReading} per
+ * receipt from the SAME fixture data that stands in for `observed.resources`/
+ * `observed.unobserved` elsewhere in this function, and `planReceipts` +
+ * `mergeReceiptEntries` (../../lifecycle/receipt-plan.ts) replace whatever the
+ * generic classification proposed for a receipt with its real `effect`
+ * classification — never a bare create/noop. A receipt whose reading can't be
+ * derived from the fixture (its lexicon has no fixture data, or a reference
+ * input the receipt depends on isn't among the fixture's recorded attributes)
+ * is classified exactly the way `runLifecyclePlan` classifies it: an
+ * unreadable receipt lands `unobserved`, loudly; a receipt whose reference
+ * input can't resolve still proposes the fire, with an "unresolved input"
+ * note, never a guessed digest.
  */
 export async function runScenarioCheck(ctx: CommandContext): Promise<number> {
   const { args, plugins, serializers } = ctx;
@@ -57,6 +81,11 @@ export async function runScenarioCheck(ctx: CommandContext): Promise<number> {
     return 0;
   }
 
+  // Same read surface `runLifecyclePlan` uses (lifecycle.ts) — computed once,
+  // ahead of the per-scenario loop, since it's a property of the build, not
+  // of any one scenario's fixture.
+  const receipts = collectEffectReceipts(buildResult.entities);
+
   // `snapshot(env)` reads the chant/lifecycle orphan branch — fetch once,
   // up front, the same pre-read `runLifecyclePlan` does, rather than once per
   // scenario that needs it.
@@ -78,7 +107,7 @@ export async function runScenarioCheck(ctx: CommandContext): Promise<number> {
         continue;
       }
     }
-    const { verdict, env } = await evaluateOneScenario(scenario, buildResult);
+    const { verdict, env } = await evaluateOneScenario(scenario, buildResult, receipts);
     results.push({ entityName, scenario, verdict, env });
   }
 
@@ -175,10 +204,21 @@ async function resolveGiven(given: ScenarioGiven): Promise<GivenResolution> {
  * fixture has no data for is never silently read as "nothing declared, all
  * absent" — every entity it declares is marked `unobserved` (#1089's own
  * discipline: a hole the fixture cannot fill is a hole, not a guess).
+ *
+ * Effect receipts (#1832) get the same treatment `runLifecyclePlan` gives
+ * them (lifecycle.ts:1145,1184,1213-1242,1278-1280): a receipt joins the
+ * declared axis alongside ordinary resources, a {@link ReceiptReading} is
+ * built per receipt from the SAME fixture data (`observedNow`/`unobserved`)
+ * every other entity in this loop reads, and `planReceipts` +
+ * `mergeReceiptEntries` replace whatever the generic classification proposed
+ * for the receipt with the real `effect` classification before the change set
+ * ever reaches `evaluateScenario` — an unfired receipt never reads as a bare
+ * `create`, and a stale one never reads as a clean `noop`.
  */
 async function evaluateOneScenario(
   scenario: ScenarioDeclaration,
   buildResult: BuildResult,
+  receipts: ReadonlyMap<string, EffectReceiptDeclaration>,
 ): Promise<{ verdict: ScenarioVerdict; env: string }> {
   const resolved = await resolveGiven(scenario.given);
   if (resolved.error) {
@@ -190,10 +230,20 @@ async function evaluateOneScenario(
 
   const declaredByLexicon = new Map<string, Set<string>>();
   for (const [name, entity] of buildResult.entities) {
-    if (!isResourceDeclarable(entity)) continue;
+    // A receipt has no `props` payload of its own but is declared, diffed,
+    // and observed like any resource (#1832) — it joins the declared axis so
+    // its lexicon's fixture data can confirm presence, absence, or a hole,
+    // the same as `runLifecyclePlan` (lifecycle.ts:1184).
+    if (!isResourceDeclarable(entity) && !isEffectReceipt(entity)) continue;
     if (!declaredByLexicon.has(entity.lexicon)) declaredByLexicon.set(entity.lexicon, new Set());
     declaredByLexicon.get(entity.lexicon)!.add(name);
   }
+
+  // Every fixture lexicon's `resources` merged, for resolving a receipt's
+  // reference inputs against the fixture the same way `runLifecyclePlan`
+  // resolves them against its merged live observation (lifecycle.ts:1149,1213).
+  const allObservedResources: Record<string, ResourceMetadata> = {};
+  const receiptReadings = new Map<string, ReceiptReading>();
 
   const lexicons = new Set<string>([...declaredByLexicon.keys(), ...resolved.perLexicon.keys()]);
   const entries: ChangeSetEntry[] = [];
@@ -212,6 +262,39 @@ async function evaluateOneScenario(
         }
       }
     }
+
+    Object.assign(allObservedResources, observedNow);
+    for (const [receiptName, receipt] of receipts) {
+      if (receipt.lexicon !== lexiconName) continue;
+      const live = observedNow[receiptName];
+      const hole = unobserved[receiptName];
+      if (live) {
+        receiptReadings.set(receiptName, {
+          observed: true,
+          present: true,
+          value: readReceiptValue(live.attributes),
+          type: live.type,
+          ...(live.physicalId ? { physicalId: live.physicalId } : {}),
+          lexicon: lexiconName,
+        });
+      } else if (hole) {
+        receiptReadings.set(receiptName, {
+          observed: false,
+          present: false,
+          lexicon: lexiconName,
+          ...(hole.type ? { type: hole.type } : {}),
+          unobservedReason: hole.reason,
+          ...(hole.detail ? { unobservedDetail: hole.detail } : {}),
+        });
+      } else {
+        // Neither in the fixture's resources nor named unobserved: the
+        // fixture stands in for a live read that confirmed the receipt
+        // absent — the same claim `buildChangeSet` reads off a bare
+        // observation (#1089).
+        receiptReadings.set(receiptName, { observed: true, present: false, lexicon: lexiconName });
+      }
+    }
+
     // No `observedThen`: a scenario has one fixture, standing in for live
     // observation only — never a second, prior read to diff against. See this
     // module's top comment on what that means for `update`.
@@ -224,7 +307,17 @@ async function evaluateOneScenario(
   }
   entries.sort((a, b) => a.name.localeCompare(b.name));
 
-  return { env: resolved.env, verdict: evaluateScenario({ env: resolved.env, entries }, scenario.expect) };
+  const merged: ChangeSet = { env: resolved.env, entries };
+  // Receipt classification (#1832): replace whatever the generic pass above
+  // proposed for a receipt — a `create` for one confirmed absent, a `noop`
+  // for one present but stale — with the real `effect` classification, the
+  // same replacement `runLifecyclePlan` performs (lifecycle.ts:1278-1280).
+  if (receipts.size > 0) {
+    const receiptEntries = planReceipts(receipts, receiptReadings, observedValueResolver(allObservedResources));
+    mergeReceiptEntries(merged, receipts, receiptEntries);
+  }
+
+  return { env: resolved.env, verdict: evaluateScenario(merged, scenario.expect) };
 }
 
 /** Fallback for `chant scenario <unknown subcommand>` — mirrors `runLifecycleUnknown`. */

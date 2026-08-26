@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import type { BuildResult } from "../../build";
 import type { ParsedArgs } from "../registry";
 import { Scenario, snapshot } from "../../lifecycle/scenario";
+import { EffectReceipt, receiptExpectation, type EffectReceiptDeclaration } from "../../effect-receipt";
 import type { ResourceMetadata } from "../../lexicon";
 import type { LifecycleSnapshot } from "../../lifecycle/types";
 
@@ -50,12 +51,14 @@ function makeArgs(overrides: Partial<ParsedArgs> = {}): ParsedArgs {
 function makeBuildResult(
   resourcesByLexicon: Record<string, string[]>,
   scenarios: Record<string, ReturnType<typeof Scenario>>,
+  receipts: Record<string, EffectReceiptDeclaration> = {},
 ): BuildResult {
   const entities = new Map<string, unknown>();
   for (const [lexicon, names] of Object.entries(resourcesByLexicon)) {
     for (const name of names) entities.set(name, { lexicon, entityType: `${lexicon}::Mock`, props: {} });
   }
   for (const [name, decl] of Object.entries(scenarios)) entities.set(name, decl);
+  for (const [name, decl] of Object.entries(receipts)) entities.set(name, decl);
   return {
     outputs: new Map(Object.keys(resourcesByLexicon).map((l) => [l, "{}"])),
     entities,
@@ -65,6 +68,33 @@ function makeBuildResult(
     manifest: { lexicons: Object.keys(resourcesByLexicon), outputs: {}, deployOrder: Object.keys(resourcesByLexicon) },
     sourceFileCount: 1,
   } as unknown as BuildResult;
+}
+
+/**
+ * An aws-materialized effect receipt shaped exactly like
+ * lexicons/aws/src/effect-receipt-row.ts's real factory (an `AWS::SSM::Parameter`
+ * row with `props: { Type: "String" }`) — built inline off the core
+ * `EffectReceipt` factory rather than importing the lexicon package, the same
+ * "minimal test EffectReceipt" pattern receipt-plan.test.ts uses. Carrying
+ * `props` is the load-bearing detail: it is what made the reviewer's bug
+ * reproducible — `isResourceDeclarable` (packages/core/src/declarable.ts) key
+ * on `"props" in value`, so an aws-materialized receipt WAS swept into
+ * `evaluateOneScenario`'s old isResourceDeclarable-only declared axis and
+ * generically misclassified, exactly as a bare `AWS::S3::Bucket` would be.
+ */
+function makeAwsReceipt(
+  name: string,
+  effect: string,
+  flavor: "existence" | "hash",
+  inputs?: Record<string, unknown>,
+): EffectReceiptDeclaration {
+  const core = EffectReceipt(name, { effect, flavor, inputs });
+  return {
+    ...core,
+    lexicon: "aws",
+    entityType: "AWS::SSM::Parameter",
+    props: { Type: "String" },
+  } as unknown as EffectReceiptDeclaration;
 }
 
 const meta = (overrides: Partial<ResourceMetadata> = {}): ResourceMetadata => ({
@@ -271,6 +301,82 @@ describe("runScenarioCheck", () => {
     expect(exit).toBe(0);
     const parsed = JSON.parse(stdoutBuf[0]);
     expect(parsed).toEqual([{ name: "plan-neutral", entity: "plan", env: "prod", pass: true, checks: [{ clause: "noop", pass: true }] }]);
+  });
+
+  // ───────────────────────────────────────────────────────────────────────
+  // Effect receipts (#1832 parity): the reviewer's two reproductions against
+  // `evaluateOneScenario`, now that it routes receipts through the same
+  // collectEffectReceipts → planReceipts → mergeReceiptEntries pipeline
+  // `runLifecyclePlan` uses (lifecycle.ts), instead of classifying them
+  // through isResourceDeclarable + buildChangeSet alone.
+  // ───────────────────────────────────────────────────────────────────────
+
+  test("a declared-but-unfired receipt classifies as effect, never as a generic create", async () => {
+    // Confirmed absent: the fixture's aws lexicon has no "dbMigrated" entry
+    // in `resources` and names nothing `unobserved` for it — the same
+    // "looked and it's not there" claim a live read makes.
+    const receipt = makeAwsReceipt("dbMigrated", "db-migrate", "existence");
+    const fixturePath = await writeFixture(snap({ lexicon: "aws", resources: {} }));
+    const scenario = Scenario("nothing pending", { given: snapshot(fixturePath), expect: { noop: true } });
+    buildMock.mockResolvedValue(makeBuildResult({}, { check: scenario }, { dbMigrated: receipt }));
+
+    const exit = await runScenarioCheck({ args: makeArgs(), plugins: [], serializers: [] });
+
+    // Before the fix, isResourceDeclarable(receipt) is true (the aws row
+    // carries `props`), so the generic classification proposed a `create` —
+    // exactly the reviewer's "false noop FAILURE" reproduction. Fixed, the
+    // receipt pipeline reclassifies it as `effect` (the fire is pending),
+    // which never reads as a `create`.
+    expect(exit).toBe(1);
+    const out = combined();
+    expect(out).toContain("FAIL");
+    expect(out).not.toContain("1 create");
+    expect(out).toContain("0 create");
+    expect(out).toContain("1 effect");
+    expect(out).toContain("dbMigrated");
+  });
+
+  test("a stale receipt in the fixture never reads as a clean noop pass", async () => {
+    // hash-flavor, static inputs: `receiptExpectation` is computable offline,
+    // no reference resolver needed. The fixture's live value is a DIFFERENT
+    // digest — a stale receipt, present but wrong, exactly the reviewer's
+    // "false noop PASS" reproduction (observedThen is always undefined for a
+    // scenario, so the generic pass sees no drift and calls it `noop`).
+    const receipt = makeAwsReceipt("seeded", "seed", "hash", { rows: 10 });
+    const staleValue = receiptExpectation(makeAwsReceipt("seeded", "seed", "hash", { rows: 9 }));
+    const fixturePath = await writeFixture(
+      snap({ lexicon: "aws", resources: { seeded: meta({ type: "AWS::SSM::Parameter", attributes: { value: staleValue } }) } }),
+    );
+    const scenario = Scenario("seed already ran", { given: snapshot(fixturePath), expect: { noop: true } });
+    buildMock.mockResolvedValue(makeBuildResult({}, { check: scenario }, { seeded: receipt }));
+
+    const exit = await runScenarioCheck({ args: makeArgs(), plugins: [], serializers: [] });
+
+    expect(exit).toBe(1);
+    const out = combined();
+    expect(out).toContain("FAIL");
+    expect(out).toContain("1 effect");
+    expect(out).toContain("seeded");
+  });
+
+  test("a receipt whose live value matches its expectation is a genuine noop pass", async () => {
+    // The positive control for the two reproductions above: a receipt that
+    // HAS fired, with the right value, is still a clean noop — the pipeline
+    // doesn't just fail every scenario touching a receipt.
+    const receipt = makeAwsReceipt("bootstrapped", "bootstrap", "existence");
+    const fixturePath = await writeFixture(
+      snap({
+        lexicon: "aws",
+        resources: { bootstrapped: meta({ type: "AWS::SSM::Parameter", attributes: { value: receiptExpectation(receipt) } }) },
+      }),
+    );
+    const scenario = Scenario("already bootstrapped", { given: snapshot(fixturePath), expect: { noop: true } });
+    buildMock.mockResolvedValue(makeBuildResult({}, { check: scenario }, { bootstrapped: receipt }));
+
+    const exit = await runScenarioCheck({ args: makeArgs(), plugins: [], serializers: [] });
+
+    expect(exit).toBe(0);
+    expect(combined()).toContain("PASS");
   });
 });
 

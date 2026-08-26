@@ -115,9 +115,12 @@ export type ScenarioUnobservedPolicy = "refuse" | { readonly allow: readonly str
  * `expect` asserts nothing and is refused as a likely mistake.
  */
 export interface ScenarioExpect {
-  /** The plan proposes no create, update, or delete — the majority-value case
-   * (refactors, upgrades, no-op deploys). Equivalent to `{ create: 0, update:
-   * 0, delete: 0 }` but reads as the specific claim it is. */
+  /** The plan proposes no create, update, or delete, and no declared effect
+   * receipt (#1832) fires — the majority-value case (refactors, upgrades,
+   * no-op deploys). Equivalent to `{ create: 0, update: 0, delete: 0 }` plus
+   * "no receipt classifies as `effect`", but reads as the specific claim it
+   * is: a pending effect fire is a real proposed action even though it never
+   * joins the create/update/delete triad. */
   readonly noop?: true;
   /** Exact count of `create` rows the plan must propose. Omitted = unconstrained. */
   readonly create?: number;

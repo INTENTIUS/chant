@@ -18,6 +18,8 @@ The resulting change set is checked against the scenario's `expect` clauses. Out
 
 A lexicon the fixture has no data for is never silently read as "nothing declared, all absent" — every entity it declares lands in the change set as `unobserved`, same as a live read that could not look (#1089). A hole the fixture can't fill is reported as a hole.
 
+A declared [effect receipt](/chant/concepts/effect-receipts/) gets the same treatment `chant lifecycle plan` gives it: its own `effect` classification against the fixture, not the generic create/update/delete axis. An unfired receipt never reads as a bare `create`; a receipt present in the fixture with a stale or mismatched value never reads as a clean `noop` — see [Plan Scenarios](/chant/concepts/plan-scenarios/#effect-receipts-in-a-scenario) for what a fixture needs to carry for a receipt to resolve offline.
+
 See [Plan Scenarios](/chant/concepts/plan-scenarios/) for the `Scenario`/`snapshot()` declaration API and the full `expect` vocabulary.
 
 ## Flags
@@ -50,7 +52,7 @@ A declaration that changes the plan against the same fixture fails, with the fai
 
 ```
 extracting the composite is plan-neutral [composeIsNeutral] — given fixtures/prod-baseline.json, env prod: FAIL
-  noop: expected noop (no create/update/delete) but the plan proposes 1 create, 0 update, 0 delete — newDatabase (AWS::RDS::DBInstance) [create]
+  noop: expected noop (no create/update/delete/effect) but the plan proposes 1 create, 0 update, 0 delete, 0 effect — newDatabase (AWS::RDS::DBInstance) [create]
 
 1/1 scenario(s) failed
 ```
