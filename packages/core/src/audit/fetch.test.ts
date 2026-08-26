@@ -54,15 +54,28 @@ function gitTreeMock(files: Record<string, string>, sizes: Record<string, number
   return { impl, calls };
 }
 
+/** A full root-level tree page (>=100 entries) — the "large repo" signal `listTreeGitLab` probes for. */
+const LARGE_ROOT_PAGE = Array.from({ length: 100 }, (_, i) => ({ path: `dir${i}`, type: "tree" }));
+/** A small root-level tree page (<100 entries) — the "small repo" signal, keeps the walk. */
+const SMALL_ROOT_PAGE: Array<{ path: string; type: string }> = [];
+
 /**
  * GitLab mock for authenticated search-based discovery. `searchMap` maps search
  * term → array of blob paths the search API returns. `files` maps path → content.
- * Pass `token` to fetchRepoFiles when using this mock so the code takes the
- * search path (unauthenticated calls fall back to BFS).
+ * The root tree probe reports a large repo by default (`rootPage`
+ * overridable) so these mocks exercise the search path; pass `token` to
+ * `fetchRepoFiles` too, since search additionally requires authentication.
  */
-function gitlabMock(searchMap: Record<string, string[]>, files: Record<string, string>) {
+function gitlabMock(searchMap: Record<string, string[]>, files: Record<string, string>, rootPage: Array<{ path: string; type: string }> = LARGE_ROOT_PAGE) {
   const impl = (async (url: string | URL | Request) => {
     const u = String(url);
+    if (u.includes("/repository/tree")) {
+      const params = new URL(u).searchParams;
+      const path = params.get("path") ?? "";
+      const page = Number(params.get("page") ?? "1");
+      const entries = path === "" && page === 1 ? rootPage : [];
+      return new Response(JSON.stringify(entries), { status: 200 });
+    }
     if (u.includes("/search")) {
       const params = new URL(u).searchParams;
       const term = params.get("search") ?? "";
@@ -110,6 +123,85 @@ function gitlabBfsMock(
     return new Response("not found", { status: 404 });
   }) as unknown as typeof fetch;
   return { impl };
+}
+
+/**
+ * A GitHub-shaped mock for large-repo (search-first) discovery: `fillerCount`
+ * inflates the recursive tree past `LARGE_REPO_TREE_ENTRIES` so `listTree`
+ * switches strategies; `searchMap` maps a bare search term (no `repo:` qualifier)
+ * to the paths GitHub's code search returns for it, paginated 100/page.
+ */
+function githubCodeSearchMock(fillerCount: number, files: Record<string, string>, searchMap: Record<string, string[]>) {
+  const calls: Array<{ url: string }> = [];
+  const impl = (async (url: string | URL | Request) => {
+    const u = String(url);
+    calls.push({ url: u });
+    if (u.includes("/git/trees/")) {
+      const filler = Array.from({ length: fillerCount }, (_, i) => ({ path: `filler/file${i}.md`, type: "blob", size: 10 }));
+      const real = Object.keys(files).map((path) => ({ path, type: "blob", size: files[path].length }));
+      return new Response(JSON.stringify({ tree: [...filler, ...real] }), { status: 200 });
+    }
+    if (u.includes("/search/code")) {
+      const params = new URL(u).searchParams;
+      const term = (params.get("q") ?? "").replace(/\s*repo:.*/, "");
+      const page = Number(params.get("page") ?? "1");
+      const all = searchMap[term] ?? [];
+      const start = (page - 1) * 100;
+      const items = all.slice(start, start + 100).map((path) => ({ path }));
+      return new Response(JSON.stringify({ items, total_count: all.length }), { status: 200 });
+    }
+    const rawm = u.match(/raw\.githubusercontent\.com\/[^/]+\/[^/]+\/[^/]+\/(.+)$/);
+    if (rawm) {
+      const path = decodeURIComponent(rawm[1]);
+      if (files[path] === undefined) return new Response("not found", { status: 404 });
+      return new Response(files[path], { status: 200 });
+    }
+    const cm = u.match(/\/contents\/(.+?)\?/);
+    if (cm) {
+      const path = decodeURIComponent(cm[1]);
+      if (files[path] === undefined) return new Response("not found", { status: 404 });
+      return new Response(JSON.stringify({ path, type: "file", content: b64(files[path]), encoding: "base64" }), { status: 200 });
+    }
+    if (/\/repos\/[^/]+\/[^/]+(\?|$)/.test(u)) return new Response(JSON.stringify({ default_branch: "main" }), { status: 200 });
+    return new Response("not found", { status: 404 });
+  }) as unknown as typeof fetch;
+  return { impl, calls };
+}
+
+/**
+ * A Forgejo/Gitea-shaped mock for large-repo discovery. `searchMap` maps a bare
+ * search term to the paths its (best-effort, `{ok, data}`-enveloped) search
+ * endpoint returns, paginated 100/page.
+ */
+function forgejoCodeSearchMock(fillerCount: number, files: Record<string, string>, searchMap: Record<string, string[]>) {
+  const calls: Array<{ url: string }> = [];
+  const impl = (async (url: string | URL | Request) => {
+    const u = String(url);
+    calls.push({ url: u });
+    if (u.includes("/git/trees/")) {
+      const filler = Array.from({ length: fillerCount }, (_, i) => ({ path: `filler/file${i}.md`, type: "blob", size: 10 }));
+      const real = Object.keys(files).map((path) => ({ path, type: "blob", size: files[path].length }));
+      return new Response(JSON.stringify({ tree: [...filler, ...real] }), { status: 200 });
+    }
+    if (u.includes("/search")) {
+      const params = new URL(u).searchParams;
+      const term = params.get("q") ?? "";
+      const page = Number(params.get("page") ?? "1");
+      const all = searchMap[term] ?? [];
+      const start = (page - 1) * 100;
+      const data = all.slice(start, start + 100).map((path) => ({ path }));
+      return new Response(JSON.stringify({ ok: true, data }), { status: 200 });
+    }
+    const cm = u.match(/\/contents\/(.+?)\?/);
+    if (cm) {
+      const path = decodeURIComponent(cm[1]);
+      if (files[path] === undefined) return new Response("not found", { status: 404 });
+      return new Response(JSON.stringify({ path, type: "file", content: b64(files[path]), encoding: "base64" }), { status: 200 });
+    }
+    if (/\/repos\/[^/]+\/[^/]+(\?|$)/.test(u)) return new Response(JSON.stringify({ default_branch: "main" }), { status: 200 });
+    return new Response("not found", { status: 404 });
+  }) as unknown as typeof fetch;
+  return { impl, calls };
 }
 
 describe("parseRepoUrl", () => {
@@ -285,10 +377,131 @@ describe("fetchRepoFiles", () => {
     expect(files.map((f) => f.path)).toContain(".gitlab-ci.yml");
   });
 
+  // ── Strategy selection: small repo → walk, large repo → search (#520) ────
+
+  test("gitlab: a small repo uses the walk even when a token is present (no search call)", async () => {
+    // The root page has one blob and no filler dirs — well under the large-repo
+    // threshold — so the walk is used regardless of the token, and the search
+    // API is never called.
+    const rootPage = [{ path: ".gitlab-ci.yml", type: "blob" }];
+    const { impl } = gitlabMock({ "stages:": [".gitlab-ci.yml"] }, { ".gitlab-ci.yml": "stages:\n  - build\n" }, rootPage);
+    const calls: string[] = [];
+    const spy = (async (url: string | URL | Request, init?: RequestInit) => {
+      calls.push(String(url));
+      return impl(url, init);
+    }) as unknown as typeof fetch;
+    const files = await fetchRepoFiles("https://gitlab.com/acme/widgets", { fetchImpl: spy, token: "tok" });
+    expect(files.map((f) => f.path)).toEqual([".gitlab-ci.yml"]);
+    expect(calls.some((c) => c.includes("/search"))).toBe(false);
+  });
+
+  test("gitlab: a large repo without a token falls back to the BFS walk (search needs auth)", async () => {
+    const dirEntries = {
+      "": [{ path: ".gitlab-ci.yml", type: "blob" as const }, ...Array.from({ length: 99 }, (_, i) => ({ path: `dir${i}`, type: "tree" as const }))],
+    };
+    const { impl } = gitlabBfsMock(dirEntries, { ".gitlab-ci.yml": "stages:\n  - build\n" });
+    const files = await fetchRepoFiles("https://gitlab.com/acme/widgets", { fetchImpl: impl }); // no token
+    expect(files.map((f) => f.path)).toContain(".gitlab-ci.yml");
+  });
+
+  test("gitlab: search failure on a large repo falls back to the BFS walk (#520)", async () => {
+    const dirEntries = {
+      "": [{ path: ".gitlab-ci.yml", type: "blob" as const }, ...Array.from({ length: 99 }, (_, i) => ({ path: `dir${i}`, type: "tree" as const }))],
+    };
+    const { impl: bfsImpl } = gitlabBfsMock(dirEntries, { ".gitlab-ci.yml": "stages:\n  - build\n" });
+    const impl = (async (url: string | URL | Request, init?: RequestInit) => {
+      if (String(url).includes("/search")) return new Response("rate limited", { status: 429 });
+      return bfsImpl(url, init);
+    }) as unknown as typeof fetch;
+    const files = await fetchRepoFiles("https://gitlab.com/acme/widgets", { fetchImpl: impl, token: "tok" });
+    expect(files.map((f) => f.path)).toContain(".gitlab-ci.yml");
+  });
+
+  test("github: a small repo never calls the code search API", async () => {
+    const { impl, calls } = gitTreeMock({ ".github/workflows/ci.yml": CI_YAML, "k8s/deploy.yaml": "apiVersion: apps/v1\nkind: Deployment\n" });
+    await fetchRepoFiles("https://github.com/acme/widgets", { fetchImpl: impl });
+    expect(calls.some((c) => c.url.includes("/search/code"))).toBe(false);
+  });
+
+  test("github: a large repo switches to per-lexicon search; known-path CI bypasses search entirely", async () => {
+    const files = { ".github/workflows/ci.yml": CI_YAML, "infra/eks.yaml": "apiVersion: v1\nkind: ConfigMap\n" };
+    const { impl, calls } = githubCodeSearchMock(600, files, { apiVersion: ["infra/eks.yaml"] });
+    const found = await fetchRepoFiles("https://github.com/acme/monorepo", { fetchImpl: impl, maxFiles: 100 });
+    const paths = found.map((f) => f.path);
+    expect(paths).toContain(".github/workflows/ci.yml");
+    expect(paths).toContain("infra/eks.yaml");
+    // The workflow came straight from the tree already in hand — no search
+    // query was needed (or issued) to find it.
+    expect(calls.some((c) => c.url.includes("/search/code") && c.url.includes("workflows"))).toBe(false);
+  });
+
+  test("github: search results paginate past 100 until a short page", async () => {
+    const manyPaths = Array.from({ length: 150 }, (_, i) => `k8s/deploy${i}.yaml`);
+    const files: Record<string, string> = {};
+    for (const p of manyPaths) files[p] = "apiVersion: apps/v1\nkind: Deployment\n";
+    const { impl, calls } = githubCodeSearchMock(600, files, { apiVersion: manyPaths });
+    const found = await fetchRepoFiles("https://github.com/acme/monorepo", { fetchImpl: impl, maxFiles: 1000 });
+    expect(found.length).toBe(150);
+    const searchCalls = calls.filter((c) => c.url.includes("/search/code") && c.url.includes("q=apiVersion"));
+    expect(searchCalls.some((c) => c.url.includes("page=1"))).toBe(true);
+    expect(searchCalls.some((c) => c.url.includes("page=2"))).toBe(true);
+  });
+
+  test("github: search failure (rate limit) on a large repo falls back to the full tree", async () => {
+    const files = { ".github/workflows/ci.yml": CI_YAML, "infra/eks.yaml": "apiVersion: v1\nkind: ConfigMap\n" };
+    const { impl: base } = githubCodeSearchMock(600, files, {});
+    const impl = (async (url: string | URL | Request, init?: RequestInit) => {
+      if (String(url).includes("/search/code")) return new Response("rate limited", { status: 403 });
+      return base(url, init);
+    }) as unknown as typeof fetch;
+    const found = await fetchRepoFiles("https://github.com/acme/monorepo", { fetchImpl: impl, maxFiles: 1000 });
+    const paths = found.map((f) => f.path);
+    expect(paths).toContain(".github/workflows/ci.yml");
+    expect(paths).toContain("infra/eks.yaml");
+  });
+
   test("forgejo (codeberg): gitea tree + contents", async () => {
     const { impl } = gitTreeMock({ ".forgejo/workflows/ci.yml": CI_YAML });
     const files = await fetchRepoFiles("https://codeberg.org/acme/widgets", { fetchImpl: impl });
     expect(files.map((f) => f.path)).toEqual([".forgejo/workflows/ci.yml"]);
+  });
+
+  test("forgejo: a large repo switches to search; known-path CI bypasses search entirely", async () => {
+    const files = { ".forgejo/workflows/ci.yml": CI_YAML, "charts/app/Chart.yaml": "apiVersion: v2\nname: app\nversion: 1.0.0\n" };
+    const { impl, calls } = forgejoCodeSearchMock(600, files, { "apiVersion: v2": ["charts/app/Chart.yaml"] });
+    const found = await fetchRepoFiles("https://codeberg.org/acme/monorepo", { fetchImpl: impl, maxFiles: 100 });
+    const paths = found.map((f) => f.path);
+    expect(paths).toContain(".forgejo/workflows/ci.yml");
+    expect(paths).toContain("charts/app/Chart.yaml");
+    expect(calls.some((c) => c.url.includes("/search") && c.url.includes("workflows"))).toBe(false);
+  });
+
+  test("forgejo: search paginates past 100 until a short page", async () => {
+    const manyPaths = Array.from({ length: 120 }, (_, i) => `k8s/deploy${i}.yaml`);
+    const files: Record<string, string> = {};
+    for (const p of manyPaths) files[p] = "apiVersion: apps/v1\nkind: Deployment\n";
+    const { impl, calls } = forgejoCodeSearchMock(600, files, { apiVersion: manyPaths });
+    const found = await fetchRepoFiles("https://codeberg.org/acme/monorepo", { fetchImpl: impl, maxFiles: 1000 });
+    expect(found.length).toBe(120);
+    const searchCalls = calls.filter((c) => c.url.includes("/search") && c.url.includes("q=apiVersion"));
+    expect(searchCalls.some((c) => c.url.includes("page=1"))).toBe(true);
+    expect(searchCalls.some((c) => c.url.includes("page=2"))).toBe(true);
+  });
+
+  test("forgejo: an instance with no code search (404) falls back to the full tree", async () => {
+    // Forgejo's code-search availability/shape is undocumented (#520) — an
+    // instance without a code indexer, or with a different API shape, must
+    // still produce a full audit via the fallback, not an empty/failed one.
+    const files = { ".forgejo/workflows/ci.yml": CI_YAML, "charts/app/Chart.yaml": "apiVersion: v2\nname: app\nversion: 1.0.0\n" };
+    const { impl: base } = forgejoCodeSearchMock(600, files, {});
+    const impl = (async (url: string | URL | Request, init?: RequestInit) => {
+      if (String(url).includes("/search")) return new Response("not found", { status: 404 });
+      return base(url, init);
+    }) as unknown as typeof fetch;
+    const found = await fetchRepoFiles("https://codeberg.org/acme/monorepo", { fetchImpl: impl, maxFiles: 1000 });
+    const paths = found.map((f) => f.path);
+    expect(paths).toContain(".forgejo/workflows/ci.yml");
+    expect(paths).toContain("charts/app/Chart.yaml");
   });
 
   test("an empty repo returns []", async () => {
