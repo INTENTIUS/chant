@@ -606,7 +606,9 @@ export function computeTranscriptDigest(params: {
     stdoutDigest: sha256Digest(params.stdout),
     stderrDigest: sha256Digest(params.stderr),
     artifacts: [...params.artifacts.files]
-      .sort((a, b) => a.path.localeCompare(b.path))
+      // Code-point ordering, not localeCompare: the digest must be identical
+      // across machines regardless of ICU/locale configuration.
+      .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))
       .map((f) => ({ path: f.path, digest: f.digest })),
     diffDigest: sha256Digest(params.artifacts.diff ?? ""),
   };

@@ -253,8 +253,8 @@ export interface BuildProvenanceStatementInput {
    * `{ sourceRef }` default (#1943: `run-agent`'s provenance statement folds
    * in the fountain-supplied *declared* facts — the agent selector today,
    * more once fountain `Agent` resolution lands — without run-agent needing
-   * its own predicate builder). A caller-supplied key never collides with
-   * `sourceRef` since that key is reserved by this function; any other key
+   * its own predicate builder). `sourceRef` is reserved by this function: a
+   * caller-supplied `sourceRef` is overridden, never signed; any other key
    * name is the caller's choice.
    */
   externalParameters?: Record<string, unknown>;
@@ -293,8 +293,10 @@ export function buildProvenanceStatement(input: BuildProvenanceStatementInput): 
     predicate: {
       buildDefinition: {
         buildType: input.buildType ?? DEFAULT_BUILD_TYPE,
-        externalParameters: { sourceRef: input.provenance.sourceRef, ...input.externalParameters },
-        internalParameters: { artifactDigest: input.provenance.artifactDigest, ...input.internalParameters },
+        // Reserved keys spread LAST so a caller-supplied key can never clobber
+        // them into a signed statement that disagrees with resolvedDependencies.
+        externalParameters: { ...input.externalParameters, sourceRef: input.provenance.sourceRef },
+        internalParameters: { ...input.internalParameters, artifactDigest: input.provenance.artifactDigest },
         resolvedDependencies: [{ uri: input.provenance.sourceRef, digest: { sha256: digest } }],
       },
       runDetails: {
