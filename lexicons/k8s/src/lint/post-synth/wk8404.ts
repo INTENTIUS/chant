@@ -10,8 +10,7 @@
 
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
 import {
-  getPrimaryOutput,
-  parseK8sManifests,
+  docsToManifests,
   extractContainers,
   extractPodSpec,
   requestsGpu,
@@ -26,28 +25,23 @@ export const wk8404: PostSynthCheck = {
   check(ctx: PostSynthContext): PostSynthDiagnostic[] {
     const diagnostics: PostSynthDiagnostic[] = [];
 
-    for (const [, output] of ctx.outputs) {
-      const yaml = getPrimaryOutput(output);
-      const manifests = parseK8sManifests(yaml);
+    for (const manifest of docsToManifests(ctx)) {
+      if (!manifest.kind || !GPU_POD_KINDS.has(manifest.kind)) continue;
 
-      for (const manifest of manifests) {
-        if (!manifest.kind || !GPU_POD_KINDS.has(manifest.kind)) continue;
+      const containers = extractContainers(manifest);
+      if (!requestsGpu(containers)) continue;
 
-        const containers = extractContainers(manifest);
-        if (!requestsGpu(containers)) continue;
+      const podSpec = extractPodSpec(manifest);
+      if (toleratesGpu(podSpec?.tolerations)) continue;
 
-        const podSpec = extractPodSpec(manifest);
-        if (toleratesGpu(podSpec?.tolerations)) continue;
-
-        const resourceName = manifest.metadata?.name ?? manifest.kind;
-        diagnostics.push({
-          checkId: "WK8404",
-          severity: "error",
-          message: `${manifest.kind} "${resourceName}" requests nvidia.com/gpu but has no toleration for the nvidia.com/gpu taint — it will not schedule onto a tainted GPU node pool`,
-          entity: resourceName,
-          lexicon: "k8s",
-        });
-      }
+      const resourceName = manifest.metadata?.name ?? manifest.kind;
+      diagnostics.push({
+        checkId: "WK8404",
+        severity: "error",
+        message: `${manifest.kind} "${resourceName}" requests nvidia.com/gpu but has no toleration for the nvidia.com/gpu taint — it will not schedule onto a tainted GPU node pool`,
+        entity: resourceName,
+        lexicon: "k8s",
+      });
     }
 
     return diagnostics;

@@ -10,7 +10,7 @@
  */
 
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
-import { getPrimaryOutput, parseK8sManifests } from "./k8s-helpers";
+import { docsToManifests } from "./k8s-helpers";
 import type { K8sManifest } from "./k8s-helpers";
 
 /** `app.kubernetes.io/component` values this lexicon's composites use for serving workloads. */
@@ -30,27 +30,24 @@ export const wk8405: PostSynthCheck = {
   check(ctx: PostSynthContext): PostSynthDiagnostic[] {
     const diagnostics: PostSynthDiagnostic[] = [];
 
-    for (const [, output] of ctx.outputs) {
-      const yaml = getPrimaryOutput(output);
-      const manifests = parseK8sManifests(yaml);
+    const manifests = docsToManifests(ctx);
 
-      const pdbSelectors = collectPdbSelectors(manifests);
+    const pdbSelectors = collectPdbSelectors(manifests);
 
-      for (const manifest of manifests) {
-        if (!isServingWorkload(manifest)) continue;
+    for (const manifest of manifests) {
+      if (!isServingWorkload(manifest)) continue;
 
-        const labels = manifest.metadata?.labels;
-        const resourceName = manifest.metadata?.name ?? manifest.kind ?? "workload";
+      const labels = manifest.metadata?.labels;
+      const resourceName = manifest.metadata?.name ?? manifest.kind ?? "workload";
 
-        if (!labels || !hasCoveringPdb(labels, pdbSelectors)) {
-          diagnostics.push({
-            checkId: "WK8405",
-            severity: "info",
-            message: `${manifest.kind} "${resourceName}" is a serving workload with no PodDisruptionBudget — add a PDB so a node drain or cluster upgrade cannot take down every replica at once`,
-            entity: resourceName,
-            lexicon: "k8s",
-          });
-        }
+      if (!labels || !hasCoveringPdb(labels, pdbSelectors)) {
+        diagnostics.push({
+          checkId: "WK8405",
+          severity: "info",
+          message: `${manifest.kind} "${resourceName}" is a serving workload with no PodDisruptionBudget — add a PDB so a node drain or cluster upgrade cannot take down every replica at once`,
+          entity: resourceName,
+          lexicon: "k8s",
+        });
       }
     }
 

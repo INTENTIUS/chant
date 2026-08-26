@@ -273,7 +273,7 @@ The helpers do the parsing so the check stays about the rule, not YAML wrangling
 |---|---|
 | `allManifests(ctx)` | every parsed manifest across all lexicon outputs |
 | `manifestsOfKind(manifests, kind)` | the manifests of one kind |
-| `getPrimaryOutput(output)` / `parseK8sManifests(yaml)` | the lower-level parse, from `k8s-helpers.ts` |
+| `docsToManifests(ctx)` | the `ctx.docs` → `K8sManifest[]` bridge, from `k8s-helpers.ts` |
 
 Keep helpers in a `*-helpers.ts` file — the barrel generator skips them (they export no check), so a shared-utility module never registers as a rule.
 
