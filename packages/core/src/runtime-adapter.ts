@@ -81,7 +81,15 @@ class NodeRuntimeAdapter implements RuntimeAdapter {
       );
       // Content is written verbatim (utf-8) — no shell involved, so nothing
       // reinterprets backslash-escape sequences or needs quote-escaping.
-      child.stdin?.end(opts?.stdin ?? "");
+      // The error handler is load-bearing: a child that exits without reading
+      // stdin (any command that ignores it) makes this write race the pipe
+      // teardown, and an unhandled EPIPE 'error' event crashes the process.
+      if (child.stdin) {
+        child.stdin.on("error", () => {
+          /* EPIPE: child exited without consuming stdin — harmless */
+        });
+        child.stdin.end(opts?.stdin ?? "");
+      }
     });
   }
 }
