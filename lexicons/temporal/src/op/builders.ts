@@ -29,6 +29,12 @@
  * works even where the original builder had no way to name the step at all
  * (`lifecycleSnapshot`, `teardown`) — additive, since omitting `id` behaves
  * exactly as before.
+ *
+ * `guardValidate` (chant #522) has no core untyped precedent to mirror byte-
+ * for-byte the way the rest of this file does — it is a brand-new activity,
+ * introduced directly with its typed wrapper, following `policyGate`'s own
+ * shape (fixed `policyCheck` profile, opts type sourced from the activity's
+ * own `*Args` interface) rather than a pre-existing untyped one.
  */
 
 import {
@@ -46,6 +52,7 @@ import type { ChantTeardownArgs } from "./activities/teardown";
 import type { EnvTeardownArgs } from "./activities/env-teardown";
 import type { HttpCheckArgs } from "./activities/http-check";
 import type { PolicyGateArgs } from "./activities/policy";
+import type { GuardValidateArgs } from "./activities/guard-validate";
 
 /** Extra opts every wrapper below accepts alongside its activity's own fields. */
 type StepOpts = { profile?: ActivityStep["profile"]; id?: string };
@@ -153,4 +160,22 @@ export const policyGate = (opts?: WithStepRefs<PolicyGateArgs> & { id?: string }
     { path, ...(env !== undefined ? { env } : {}) },
     { profile: "policyCheck", ...(opts?.id ? { id: opts.id } : {}) },
   );
+};
+
+/**
+ * Run an external CloudFormation Guard rules pack against the project's
+ * built CloudFormation template (chant #522) — the typed step-builder twin
+ * of this lexicon's own `guardValidate` activity (`./activities/
+ * guard-validate.ts`). `opts` is {@link GuardValidateArgs} itself, minus the
+ * positional `rules`; `template` defaults (inside the activity) to
+ * `<path>/template.json`. Uses the fixed `policyCheck` profile — same
+ * reasoning as `policyGate`: a deterministic policy check is single-attempt,
+ * not worth retrying — and is not overridable, exactly like `policyGate`.
+ */
+export const guardValidate = (
+  rules: string,
+  opts?: WithStepRefs<Omit<GuardValidateArgs, "rules">> & { id?: string },
+): NamedActivityStep => {
+  const { id, ...rest } = (opts ?? {}) as Omit<GuardValidateArgs, "rules"> & { id?: string };
+  return activity("guardValidate", { rules, ...rest }, { profile: "policyCheck", ...(id ? { id } : {}) });
 };

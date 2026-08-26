@@ -38,6 +38,10 @@ export default defineConfig({
                         {
                               "label": "Nested Stacks",
                               "slug": "nested-stacks"
+                        },
+                        {
+                              "label": "Policy Validation",
+                              "slug": "policy-validation"
                         }
                   ]
             },

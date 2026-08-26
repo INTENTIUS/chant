@@ -1,0 +1,79 @@
+---
+title: "Policy Validation"
+description: "Run cfn-guard, OPA/conftest, Checkov, and cfn-lint against chant's build output — zero integration required"
+diataxis: how-to
+---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-aws` — DO NOT EDIT.
+    Edit lexicons/aws/docs/pages/policy-validation.mdx instead; changes here are overwritten. */}
+
+
+chant emits **standard CloudFormation JSON** — `chant build` writes exactly what `aws cloudformation deploy` accepts, nothing chant-specific. That means the whole CloudFormation policy ecosystem already reads chant's output as-is: `cfn-guard`, `OPA`/`conftest`, `Checkov`, and `cfn-lint` all validate `template.json` unchanged, the same way they validate a template written by hand or emitted by CDK's `CfnInclude` escape hatch.
+
+There is no chant-specific rule format to learn and no translation step. An org's existing `.guard` files, Rego policies, or Checkov custom checks run against a chant project on day one.
+
+## CloudFormation Guard
+
+[`cfn-guard`](https://github.com/aws-cloudformation/cloudformation-guard) validates a template against `.guard` rule files — the same engine behind CDK's `CfnGuardValidator`.
+
+```bash
+chant build src -o t.json
+cfn-guard validate -r rules.guard -d t.json
+```
+
+`rules.guard` is an ordinary cfn-guard rules file (or directory of them) — nothing about it names or knows about chant. A named compliance pack (NIST 800-53, PCI DSS, CIS) distributed as `.guard` files works unchanged.
+
+## OPA / conftest
+
+[`conftest`](https://www.conftest.dev/) runs [Open Policy Agent](https://www.openpolicyagent.org/) Rego policies against structured data, CloudFormation JSON included:
+
+```bash
+chant build src -o t.json
+conftest test t.json --policy policy/
+```
+
+## Checkov and cfn-lint
+
+[Checkov](https://www.checkov.io/) and [cfn-lint](https://github.com/aws-cloudformation/cfn-lint) both accept a template path directly — no flags beyond what you'd already pass for a hand-written or CDK-synthesized template:
+
+```bash
+chant build src -o t.json
+checkov -f t.json
+cfn-lint t.json
+```
+
+## Running it as a chant Op step
+
+The recipes above run standalone in any CI job. To make the check a first-class step in a chant [Op](/chant/guide/ops/) — gate-able the same way [`policyGate`](/chant/guide/organizational-policy/#gating-an-apply) gates an apply — use `guardValidate` from the temporal lexicon:
+
+```ts
+import { Op, phase, build, guardValidate, awsApply } from "@intentius/chant-lexicon-temporal";
+
+export default Op({
+  name: "deploy",
+  phases: [
+    // The project's own `npm run build` script writes `template.json`
+    // (`chant build src --lexicon aws -o template.json`).
+    phase("Build", [build(".")]),
+    // Runs `cfn-guard validate -r rules.guard -d template.json`.
+    // A violation fails the workflow here, so nothing is applied.
+    phase("Policy", [guardValidate("rules.guard")]),
+    phase("Apply", [awsApply("template.json", { stackName: "prod" })]),
+  ],
+});
+```
+
+`guardValidate(rules, opts?)` shells `cfn-guard` through the same runtime-adapter `spawn` seam every other Op activity uses — never inside `chant build` itself, which stays dependency-free and offline. `template` defaults to `<path>/template.json`, the convention `chant build -o template.json` writes to; pass an explicit `template` if your project writes elsewhere. A non-compliant rule throws (non-retryable), so:
+
+- `chant run deploy` (the local executor, no Temporal) exits non-zero and fails the CI job.
+- Placed before an apply phase in a Temporal-orchestrated Op, the same violation blocks the apply.
+
+Only `report` mode ships today — it prints a summary of every violation and fails the run. `issue`/`pull-request` finding-modes (opening a tracking issue or PR comment instead of just failing) are a follow-up.
+
+## Where this fits next to `lint.policies`
+
+This page is about **reusing an external engine** against the finished artifact. For **project-authored** rules written in TypeScript — "no public buckets in prod," "every bucket must be encrypted" — see [Organizational Policy](/chant/guide/organizational-policy/): the same `PostSynthCheck` shape lexicons ship as domain lint, authored by your org and run inside `chant build` with no subprocess at all. The two compose: `lint.policies` catches what's cheap to express as a resolved-resource check, an external engine's named compliance pack catches everything else, and both gate the same way.
+
+## Limitations
+
+Like CDK's own synthesis-time `Validations`, this is advisory build/CI-time validation against the declared template — it never touches a live stack. It catches drift between your source and the compliance pack before a deploy, not after one; runtime enforcement (a resource changed outside chant, or drifted after deploy) is [`chant lifecycle`](/chant/cli/lifecycle/), AWS Config, or CloudFormation hooks, not this.
