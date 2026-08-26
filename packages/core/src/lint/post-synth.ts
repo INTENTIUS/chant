@@ -1,6 +1,9 @@
 import type { Declarable } from "../declarable";
 import type { SerializerResult } from "../serializer";
 import type { Severity } from "./rule";
+import { parseOutputDocs, type OutputDoc } from "./output-docs";
+
+export { parseOutputDocs, pick, get, type OutputDoc } from "./output-docs";
 
 /**
  * Context provided to post-synthesis checks.
@@ -16,6 +19,25 @@ export interface PostSynthContext {
    * e.g. "no public buckets in prod". Undefined when no environment is set.
    */
   env?: string;
+  /**
+   * Parsed output documents (chant #975) — `ctx.outputs` run through
+   * `parseOutputDocs` once and cached. A lazy `readonly` getter, not a plain
+   * field: computed on first access and shared across every check in the
+   * run, so a check that only reads `entities` pays nothing, and no two
+   * checks re-parse the same YAML/JSON. See `./output-docs.ts`.
+   *
+   * Optional at the type level — NOT because it can be absent from a real
+   * build. Every context chant itself constructs (`runPostSynthChecks`
+   * below, `@intentius/chant-test-utils`'s `createPostSynthContext` and
+   * `makePostSynthCtx*`) wires it up via `createDocsAccessor` and it is
+   * always present there. It is typed optional only so the many lexicon
+   * tests that build a `PostSynthContext` object literal by hand (predating
+   * this field) keep compiling unchanged, per this issue's own "existing
+   * checks compile unchanged" constraint — a new check that wants `ctx.docs`
+   * should still get a real array from every context chant builds; guard
+   * with `ctx.docs ?? []` only when a context's provenance is unknown.
+   */
+  readonly docs?: OutputDoc[];
   /** Raw build result object */
   buildResult: {
     outputs: Map<string, string | SerializerResult>;
@@ -23,6 +45,25 @@ export interface PostSynthContext {
     warnings: string[];
     errors: Array<{ message: string; name: string }>;
     sourceFileCount: number;
+  };
+}
+
+/**
+ * Build the lazy, memoized `docs` accessor shared by `runPostSynthChecks`
+ * (below) and `@intentius/chant-test-utils`'s `createPostSynthContext` — the
+ * two places a `PostSynthContext` gets constructed. Returns a zero-arg
+ * function suitable for a `get docs()` object-literal accessor; the first
+ * call parses, every later call returns the same cached array.
+ */
+export function createDocsAccessor(
+  outputs: Map<string, string | SerializerResult>,
+): () => OutputDoc[] {
+  let cached: OutputDoc[] | undefined;
+  return () => {
+    if (cached === undefined) {
+      cached = parseOutputDocs(outputs);
+    }
+    return cached;
   };
 }
 
@@ -115,11 +156,15 @@ export function runPostSynthChecks(
   buildResult: PostSynthContext["buildResult"],
   env?: string,
 ): PostSynthDiagnostic[] {
+  const getDocs = createDocsAccessor(buildResult.outputs);
   const ctx: PostSynthContext = {
     outputs: buildResult.outputs,
     entities: buildResult.entities,
     env,
     buildResult,
+    get docs(): OutputDoc[] {
+      return getDocs();
+    },
   };
 
   const diagnostics: PostSynthDiagnostic[] = [];
