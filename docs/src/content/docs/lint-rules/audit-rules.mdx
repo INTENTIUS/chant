@@ -334,6 +334,36 @@ Authority: [GitHub Security Lab — Preventing pwn requests](https://securitylab
 
 Add a cooldown so new releases aren't merged instantly.
 
+### GHA059
+
+**Stale or missing pin annotation** — merge-worthy · guidance
+
+Add or correct the trailing version comment on the SHA-pinned reference so it matches the digest.
+
+Authority: [OSSF Scorecard — Pinned-Dependencies](https://github.com/ossf/scorecard/blob/main/docs/checks.md#pinned-dependencies) · [GitHub — Using third-party actions](https://docs.github.com/en/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions#using-third-party-actions)
+
+### GHA060
+
+**Over-scoped generated token** — merge-worthy · guidance
+
+Narrow the GitHub App token's permission-* inputs to the scopes its consuming steps actually use, or remove the unused ones.
+
+Authority: [OSSF Scorecard — Token-Permissions](https://github.com/ossf/scorecard/blob/main/docs/checks.md#token-permissions) · [GitHub — Automatic token authentication](https://docs.github.com/en/actions/security-for-github-actions/security-guides/automatic-token-authentication)
+
+### GHA061
+
+**Action reference outside the configured usage policy** — merge-worthy · guidance
+
+Replace the reference with one from the approved allowlist, or get it added if it should be trusted.
+
+### GHA062
+
+**Pinned reference matches a known-vulnerability advisory** — merge-worthy · guidance
+
+Bump the reference to a patched ref/commit named by the advisory.
+
+Authority: [OSSF Scorecard — Vulnerabilities](https://github.com/ossf/scorecard/blob/main/docs/checks.md#vulnerabilities)
+
 ## GitLab CI (WGL)
 
 ### WGL010
