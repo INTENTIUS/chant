@@ -96,6 +96,10 @@ export const K8S_SECRETS: Authority = {
   name: "Kubernetes — Good practices for Secrets",
   url: "https://kubernetes.io/docs/concepts/security/secrets-good-practices/",
 };
+export const GH_SECRET_SCANNING: Authority = {
+  name: "GitHub — About secret scanning",
+  url: "https://docs.github.com/en/code-security/secret-scanning/introduction/about-secret-scanning",
+};
 
 function meta(
   id: string,
@@ -127,6 +131,16 @@ const G = "guidance" as const;
 export const RULE_CATEGORY: Record<string, Category> = {
   COR020: "correctness",
   EXT001: "correctness",
+  SEC001: "security",
+  SEC002: "security",
+  SEC003: "security",
+  SEC004: "security",
+  SEC005: "security",
+  SEC006: "security",
+  SEC007: "security",
+  SEC008: "security",
+  SEC009: "security",
+  SEC010: "security",
 };
 
 /**
@@ -139,6 +153,21 @@ export const RULE_CATEGORY: Record<string, Category> = {
 export const RULE_CATALOG: Record<string, RuleMeta> = {
   COR020: meta("COR020", M, G, "Circular resource dependency", "Break the dependency cycle between resources."),
   EXT001: meta("EXT001", M, G, "Extension constraint violation", "Fix the cross-property constraint flagged by the cfn-lint extension schema."),
+
+  // Secrets & credentials (#443) — lexicon-independent: `secrets.ts` scans the
+  // raw text of every candidate file, so these ids apply regardless of which
+  // (if any) audit lexicons are installed. `fixKind` is `guidance`: removing
+  // a hardcoded credential and rotating it needs a human, never an auto-fix.
+  SEC001: meta("SEC001", M, G, "AWS access key ID found", "Remove the key from source, rotate it in IAM, and load it from a secret store or environment variable instead.", [GH_SECRET_SCANNING]),
+  SEC002: meta("SEC002", M, G, "AWS secret access key found", "Remove the key from source, rotate it in IAM, and load it from a secret store or environment variable instead.", [GH_SECRET_SCANNING]),
+  SEC003: meta("SEC003", M, G, "GitHub token found", "Remove the token from source and revoke it at github.com/settings/tokens; use a GitHub Actions secret instead.", [GH_SECRET_SCANNING]),
+  SEC004: meta("SEC004", M, G, "Slack token found", "Remove the token from source and revoke it in the Slack app's OAuth settings.", [GH_SECRET_SCANNING]),
+  SEC005: meta("SEC005", M, G, "Google API key found", "Remove the key from source and regenerate it in the Google Cloud Console credentials page.", [GH_SECRET_SCANNING]),
+  SEC006: meta("SEC006", M, G, "Stripe live secret key found", "Remove the key from source and roll it in the Stripe dashboard immediately — this is a live-mode key.", [GH_SECRET_SCANNING]),
+  SEC007: meta("SEC007", M, G, "Private key block found", "Remove the private key from source, rotate the keypair, and load the key from a secret store instead.", [GH_SECRET_SCANNING]),
+  SEC008: meta("SEC008", M, G, "Bearer/authorization token found", "Remove the token from source; if it's long-lived, revoke and reissue it via the issuing service.", [GH_SECRET_SCANNING]),
+  SEC009: meta("SEC009", M, G, "Credentials embedded in a connection string", "Move the username/password out of the URI into a secret store, and rotate the credential.", [GH_SECRET_SCANNING]),
+  SEC010: meta("SEC010", M, G, "High-entropy string — possible secret", "Confirm whether this is a live credential; if so, remove it from source and rotate it. If it's a false positive, suppress with a `chant-audit-ignore` comment or an allowlist entry.", [GH_SECRET_SCANNING]),
 };
 
 /**

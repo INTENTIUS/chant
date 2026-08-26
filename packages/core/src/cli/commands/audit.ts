@@ -5,10 +5,12 @@
  * directly and runs the real post-synth checks via the audit core.
  */
 
-import { existsSync, statSync, writeFileSync } from "fs";
+import { existsSync, readFileSync, statSync, writeFileSync } from "fs";
+import { join } from "path";
 import { auditFiles, type AuditInput, type AuditFinding, type ChecksProvider } from "../../audit/core";
 import { AUDIT_LEXICONS, classifyFiles, collectCandidates, loadAuditPlugins, unclaimedFiles, type DetectPlugin, type RepoFile, type UnclaimedFile } from "../../audit/discover";
 import { RULE_CATALOG, resolveAuditCatalog, type RuleMeta } from "../../audit/catalog";
+import { scanForSecrets, parseSecretsConfig, type SecretsScanOptions } from "../../audit/secrets";
 import { renderMarkdown } from "../../audit/report";
 import { renderHtml, type ReportTheme } from "../../audit/report-html";
 import { buildReportJson, REPORT_SCHEMA_VERSION, type AuditSnapshot } from "../../audit/report-model";
@@ -47,6 +49,12 @@ export interface AuditCommandOptions {
   toolVersion?: string;
   /** Injectable detection plugins (testing); defaults to every installed audit lexicon. */
   plugins?: DetectPlugin[];
+  /**
+   * Secrets-detection options (#443) — entropy threshold/min-length and an
+   * allowlist. Merged over a `.chant-audit.json` at the local target root, if
+   * present (URL targets have no local config file to read).
+   */
+  secretsScan?: SecretsScanOptions;
 }
 
 export interface AuditCommandResult {
@@ -194,6 +202,26 @@ function sarifLevel(sev: Severity): string {
   return sev === "error" ? "error" : sev === "warning" ? "warning" : "note";
 }
 
+/** `.chant-audit.json`'s `secrets` section at the local target root, if present (tolerant of a missing/malformed file). */
+function readLocalSecretsConfig(root: string): SecretsScanOptions {
+  const file = join(root, ".chant-audit.json");
+  if (!existsSync(file)) return {};
+  try {
+    return parseSecretsConfig(readFileSync(file, "utf-8"));
+  } catch {
+    return {};
+  }
+}
+
+/** Merge the local `.chant-audit.json` config under any explicitly-passed options (options win). */
+function resolveSecretsOptions(fileConfig: SecretsScanOptions, explicit?: SecretsScanOptions): SecretsScanOptions {
+  return {
+    entropyThreshold: explicit?.entropyThreshold ?? fileConfig.entropyThreshold,
+    entropyMinLength: explicit?.entropyMinLength ?? fileConfig.entropyMinLength,
+    allow: [...(fileConfig.allow ?? []), ...(explicit?.allow ?? [])],
+  };
+}
+
 /** Coverage caveats about what the audit could and couldn't see. */
 export function coverageNotes(inputs: AuditInput[]): string[] {
   const notes: string[] = [];
@@ -221,7 +249,8 @@ function renderStylish(findings: AuditFinding[], scanned: string[], notes: strin
     if (list.length === 0) return;
     lines.push("", title);
     for (const f of list) {
-      const where = f.entity ? `${f.file} (${f.entity})` : f.file;
+      const loc = f.line ? `${f.file}:${f.line}` : f.file;
+      const where = f.entity ? `${loc} (${f.entity})` : loc;
       const title = catalog[f.checkId]?.title ?? f.checkId;
       lines.push(`  [${f.checkId}] ${f.severity}  ${where}  — ${title}`);
     }
@@ -246,7 +275,14 @@ function renderSarif(findings: AuditFinding[], catalog: Record<string, RuleMeta>
     ruleId: f.checkId,
     level: sarifLevel(f.severity),
     message: { text: f.message },
-    locations: [{ physicalLocation: { artifactLocation: { uri: f.file } } }],
+    locations: [
+      {
+        physicalLocation: {
+          artifactLocation: { uri: f.file },
+          ...(f.line ? { region: { startLine: f.line } } : {}),
+        },
+      },
+    ],
   }));
   return JSON.stringify(
     {
@@ -327,28 +363,41 @@ export async function auditCommand(options: AuditCommandOptions): Promise<AuditC
   const unclaimed = unclaimedFiles(candidates, inputs, plugins);
   const scanned = inputs.map((i) => i.path);
 
+  // Secrets detection (#443) is independent of lexicon: it scans every
+  // candidate file's raw text, not just the ones a lexicon claimed, and runs
+  // even when no lexicon is installed at all. `.chant-audit.json` at a local
+  // target's root supplies the entropy threshold / allowlist; a URL target
+  // has no local config file to read.
+  const secretsConfig = isUrl ? {} : readLocalSecretsConfig(options.path);
+  const secretsFindings = scanForSecrets(candidates, resolveSecretsOptions(secretsConfig, options.secretsScan));
+
   if (plugins.length === 0) {
     const output = format === "json" ? renderNoLexiconsJson(options.path, unclaimed) : renderNoLexicons(options.path, unclaimed);
-    return { success: true, status: "no-lexicons", output, findings: [], scanned: [], unclaimed, exitCode: NO_LEXICONS_EXIT_CODE, stream: format === "json" ? "stdout" : "stderr" };
+    return { success: true, status: "no-lexicons", output, findings: secretsFindings, scanned: [], unclaimed, exitCode: NO_LEXICONS_EXIT_CODE, stream: format === "json" ? "stdout" : "stderr" };
   }
 
   const missingLexiconNote = missingLexiconHint(unclaimed);
 
-  if (inputs.length === 0) {
+  if (inputs.length === 0 && secretsFindings.length === 0) {
     const output = `No auditable files found under ${options.path}.${missingLexiconNote ? ` ${missingLexiconNote}` : ""}`;
     return { success: true, status: "ok", output, findings: [], scanned: [], unclaimed, exitCode: 0 };
   }
 
-  let findings: AuditFinding[];
-  try {
-    findings = await auditFiles(inputs, { checksProvider: options.checksProvider });
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return { success: false, output: "", findings: [], scanned, exitCode: 1, error: msg };
+  let findings: AuditFinding[] = [];
+  if (inputs.length > 0) {
+    try {
+      findings = await auditFiles(inputs, { checksProvider: options.checksProvider });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return { success: false, output: "", findings: [], scanned, exitCode: 1, error: msg };
+    }
   }
+  findings = [...findings, ...secretsFindings];
   // Resolve the audit catalog once, aggregating the audited lexicons' own
   // metadata over core's static catalog (#687). The lexicons are already loaded
-  // by `auditFiles` above, so this is cheap.
+  // by `auditFiles` above, so this is cheap. Core's static catalog (always
+  // included) carries the SEC* secrets rules, so they resolve even when
+  // `inputs` claimed nothing.
   const catalog = await resolveAuditCatalog([...new Set(inputs.map((i) => i.lexicon))]);
 
   if (tier === "merge-worthy") findings = findings.filter((f) => isMergeWorthy(f, catalog));

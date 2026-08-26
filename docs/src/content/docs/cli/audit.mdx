@@ -29,6 +29,7 @@ What it scans:
 - GCP Config Connector — `*.{yml,yaml}` with a `cnrm.cloud.google.com` apiVersion, for a local path — runs the `WGC*` checks (public IAM, open firewalls, public Cloud SQL, missing encryption, Workload Identity, …)
 - Helm charts — any directory with a `Chart.yaml`, for a local path — runs the `WHM*` checks (privileged/root containers, `:latest` images, inline Secrets, chart structure, …). The whole chart is audited as one unit.
 - fountain manifests — `*.{yml,yaml}` with `apiVersion: fountain.dev/v1` (`fountain apply` files, single or multi-document), for a local path — runs the `FTN*` checks (unrestricted networking, credential-shaped `env_vars`, vault shadowing, unresolvable `${VAR}` references, …). The documents are parsed back into the entity graph, so these are the same rules `chant build` runs — and a fountain document is never misread as a Kubernetes manifest.
+- Secrets & credentials (`SEC*`) — every file above, plus `.env*`, `.pem`, `.key`, `.crt`, `.cer`, `.pfx`, and `.p12` files, are scanned for likely secrets regardless of which lexicons are installed. See [Secrets & credentials detection](#secrets--credentials-detection) below.
 
 Every rule a finding cites links to its entry in the [audit rules reference](/chant/lint-rules/audit-rules/).
 
@@ -184,6 +185,41 @@ With `--json` the same run emits `"status": "no-lexicons"` plus `unclaimed`, `mi
 When some lexicons are installed and files on disk look like they belong to one that is not, the report leads with a one-line note naming the skipped files and the `npm i` to fix it, and `--json` carries them in `unclaimed`. Terraform (`*.tf`) is listed the same way so you know the audit never reads HCL; see [the carve-out tutorial](/chant/tutorials/terraform-carve-out/) for that path.
 
 If a lexicon package is present for detection but its checks fail to load, the command surfaces that as an error naming the package.
+
+## Secrets & credentials detection
+
+The `SEC*` rules (see the [rules reference](/chant/lint-rules/audit-rules/)) scan the raw text of every scanned file for likely credentials — independent of lexicon, so they run even for file types no installed lexicon claims. Two layers:
+
+- **Pattern detectors** for well-known credential shapes: `SEC001` AWS access key ID, `SEC002` AWS secret access key, `SEC003` GitHub token, `SEC004` Slack token, `SEC005` Google API key, `SEC006` Stripe live secret key, `SEC007` PEM private key block, `SEC008` bearer/authorization token, `SEC009` credentials embedded in a connection string (`scheme://user:pass@host`).
+- **`SEC010`, a high-entropy heuristic** — a catch-all for a random-looking token (real character-class diversity, not a pure-hex run like a git SHA) that doesn't match a known shape. Its entropy threshold defaults to a conservative `4.0` bits/char and is tunable via `.chant-audit.json` (below).
+
+**Redaction is unconditional.** A secrets finding's message, JSON, SARIF, and HTML report output carry only the rule id, the kind of secret, the file/line location, and a non-reversible fingerprint of the value — never the matched value itself.
+
+### Suppressing a secrets finding
+
+Two ways, matching the other false-positive escape hatches in the tool:
+
+- **Inline marker** — a comment containing `chant-audit-ignore` on the flagged line (or the line immediately above it, for a PEM block whose `-----BEGIN…-----` line can't carry a trailing comment) suppresses every secrets finding on that line. Scope it to specific rules with `chant-audit-ignore: SEC001,SEC010`; bare `chant-audit-ignore` suppresses all of them.
+
+  ```yaml
+  # chant-audit-ignore: SEC010
+  fixture_token: "not-a-real-secret-just-looks-random-9f3k2"
+  ```
+
+- **Config allowlist** — a `.chant-audit.json` at the audited root:
+
+  ```json
+  {
+    "secrets": {
+      "entropyThreshold": 4.5,
+      "allow": [
+        { "ruleId": "SEC010", "file": "fixtures/example.env", "fingerprint": "a1b2c3d4e5f6a1b2" }
+      ]
+    }
+  }
+  ```
+
+  Copy the `fingerprint` straight from the finding's message or JSON output — it's a hash of the value, so allowlisting a false positive never means writing the secret into the config. An allow entry needs `ruleId` and/or `fingerprint`; `file` alone never blanket-suppresses everything in a file.
 
 ## Usage
 

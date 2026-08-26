@@ -104,6 +104,17 @@ function isDockerfileName(name: string): boolean {
   return name === "Dockerfile" || name.startsWith("Dockerfile.") || name.endsWith(".Dockerfile") || name.endsWith(".dockerfile");
 }
 
+/**
+ * Filenames the secrets scan (#443) wants that no lexicon otherwise reads —
+ * dotenv files and key/cert material. Included in `isCandidatePath` so both
+ * the local walk and the remote fetch pick them up; `classifyFiles` doesn't
+ * claim them for any lexicon, they just ride along for `scanForSecrets`.
+ */
+function isSecretBearingName(name: string): boolean {
+  if (/^\.env(\..+)?$/i.test(name)) return true;
+  return /\.(pem|key|crt|cer|pfx|p12)$/i.test(name);
+}
+
 /** Split a possibly multi-document YAML string into per-doc parsed objects. */
 function parseDocs(content: string): Record<string, unknown>[] {
   const docs: Record<string, unknown>[] = [];
@@ -248,6 +259,7 @@ export function isCandidatePath(path: string): boolean {
   if (ciLexiconForPath(path)) return true;
   if (isDockerfileName(name)) return true;
   if (name === "Chart.yaml") return true;
+  if (isSecretBearingName(name)) return true;
   return /\.(ya?ml|json|template)$/i.test(name);
 }
 

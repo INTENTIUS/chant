@@ -73,6 +73,15 @@ export interface AuditFinding {
   lexicon: string;
   /** Optional entity (e.g. job name) the check attached. */
   entity?: string;
+  /** 1-based line number within `file`, when the check can pin one (e.g. secrets detection, #443). */
+  line?: number;
+  /**
+   * A redaction-safe fingerprint of the flagged value (see
+   * `secrets.ts`'s `fingerprintSecret`), so a finding can be referenced —
+   * for an allowlist entry, for dedup — without ever carrying the value
+   * itself.
+   */
+  fingerprint?: string;
 }
 
 /**

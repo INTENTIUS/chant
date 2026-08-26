@@ -72,7 +72,8 @@ function renderNeedsReview(clusters: GuidanceCluster[]): string[] {
     for (const { meta, findings } of cluster.rules) {
       lines.push(`- **${ruleLink(meta.id)}** — ${meta.title} (${findings[0].severity}). ${meta.remediation}${authorityLinks(meta)}`);
       for (const f of findings) {
-        const where = f.entity ? `\`${f.file}\` (\`${f.entity}\`)` : `\`${f.file}\``;
+        const loc = f.line ? `${f.file}:${f.line}` : f.file;
+        const where = f.entity ? `\`${loc}\` (\`${f.entity}\`)` : `\`${loc}\``;
         lines.push(`  - ${where} — ${escapeCell(f.message)}`);
       }
     }
