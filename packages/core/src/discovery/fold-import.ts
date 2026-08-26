@@ -22,6 +22,7 @@ import {
   type FoldedIntrinsic,
   type FoldedHelperCall,
   type SymbolicValue,
+  type FoldedCompositeStepCall,
 } from "../fold/fold";
 import { isChantOwnedSpecifier, isFoldableHelperName } from "../fold/foldable-helpers";
 import {
@@ -1415,19 +1416,19 @@ async function resolveImportedCall(
 }
 
 /**
- * Arm 2 — import the module the callee came from and call it, in this process.
- * Unchanged from #1022 in both behavior and ORDER (refusal, resolve, import,
- * callable check, arguments, call); #1023 only factored it out so the
- * interpretation arm above can fall back into it.
- *
- * @param args - Already-evaluated arguments, when the caller has them.
+ * Arm 2 — import the module the callee came from and call it, in this
+ * process, given ALREADY-RESOLVED argument values. Factored out of
+ * {@link invokeImportedCallee} (chant #1174) so a caller with no raw
+ * `ts.CallExpression` node — {@link resolveCompositeCall}, the nested-value
+ * counterpart to {@link resolveCallExpression} — can reach the identical
+ * refusal/resolve/import/callable-check/call sequence #1022 established,
+ * without inventing a second copy of it.
  */
-async function invokeImportedCallee(
-  node: ts.CallExpression,
+async function invokeResolvedCallee(
   calleeName: string,
   binding: ImportBinding,
   ctx: ResolveCtx,
-  args?: readonly unknown[],
+  args: readonly unknown[],
 ): Promise<unknown> {
   // chant #1093 — THE gap this check exists for. Invoking the callee runs
   // project code (the factory body, and its whole module's top level) in the
@@ -1473,12 +1474,67 @@ async function invokeImportedCallee(
     throw cheapError(`"${binding.imported}" from "${binding.specifier}" is not a function`);
   }
 
-  const callArgs = args ?? (await resolveCallArguments(node, calleeName, ctx));
-
   executionCounts.factoryInvocations += 1;
   if (isProjectFileSpecifier(binding.specifier)) executionCounts.projectFactoryInvocations += 1;
 
-  return (Fn as (...fnArgs: unknown[]) => unknown)(...callArgs);
+  return (Fn as (...fnArgs: unknown[]) => unknown)(...args);
+}
+
+/**
+ * Arm 2's original entry point — a raw call-expression node in hand. Resolves
+ * arguments (unless the caller already has them) and delegates to
+ * {@link invokeResolvedCallee}. Unchanged from #1022 in both behavior and
+ * ORDER (refusal, resolve, import, callable check, arguments, call); #1023
+ * factored the body out once already, #1174 a second time.
+ *
+ * @param args - Already-evaluated arguments, when the caller has them.
+ */
+async function invokeImportedCallee(
+  node: ts.CallExpression,
+  calleeName: string,
+  binding: ImportBinding,
+  ctx: ResolveCtx,
+  args?: readonly unknown[],
+): Promise<unknown> {
+  const callArgs = args ?? (await resolveCallArguments(node, calleeName, ctx));
+  return invokeResolvedCallee(calleeName, binding, ctx, callArgs);
+}
+
+/**
+ * Resolve a composite-factory call used as a NESTED value — chant #1174's
+ * `<Identifier>(...).step` idiom ({@link FoldedCompositeStepCall}) — given
+ * its callee NAME and already-REVIVED argument values. The nested-value
+ * counterpart to {@link resolveCallExpression}, which the top-level
+ * declarator path (`export const x = Checkout({...})`) already used: the
+ * raw `ts.CallExpression` node isn't needed here because
+ * {@link resolveInterpretableFactory} only needs the import `binding`, and
+ * {@link interpretCompositeFactory}/{@link invokeResolvedCallee} only need
+ * the resolved argument values — which `fold()`'s envelope already folded
+ * and {@link reviveFoldedValue} has already revived by the time this runs.
+ *
+ * Same two arms, same order, as the top-level path: interpret a project-file
+ * registered `Composite` (chant #1023) when its body qualifies, otherwise
+ * import and invoke for real — which is the arm every lexicon-package
+ * composite (`Checkout`, `SetupNode`, …) always takes, exactly as it does
+ * today for a top-level `export const x = Checkout({...})`. An unbound
+ * callee name throws the same "function call as a value" message `fold()`
+ * itself would have, for a caller with no `FoldedCompositeStepCall` special
+ * case to fall into.
+ */
+async function resolveCompositeCall(calleeName: string, args: readonly unknown[], ctx: ResolveCtx): Promise<unknown> {
+  const binding = ctx.imports.get(calleeName);
+  if (!binding) throw cheapError(`unresolved identifier: ${calleeName}`);
+
+  const factory = await resolveInterpretableFactory(binding, ctx);
+  if (factory) {
+    const interpreted = await interpretCompositeFactory(factory, args, ctx);
+    if (interpreted) return interpreted.value;
+    // Declined — falls through to arm 2 with the SAME arguments, so a nested
+    // composite-call argument (or a live cross-file reference) is not
+    // resolved a second time. Identical discipline to `resolveImportedCall`.
+  }
+
+  return invokeResolvedCallee(calleeName, binding, ctx, args);
 }
 
 /**
@@ -2500,6 +2556,24 @@ async function reviveFoldedValue(value: FoldedValue, ctx: ResolveCtx, requireLiv
 
   if ("__helper" in value) {
     return reviveHelperCall(value as FoldedHelperCall, ctx);
+  }
+
+  if ("__compositeStep" in value) {
+    // chant #1174 — `<Identifier>(...).step`, see {@link FoldedCompositeStepCall}.
+    // Arguments revive with `requireLiveRefs: false` — the same rule
+    // `resolveCallArguments` applies to a NON-helper callee's arguments
+    // (a composite factory stores its props, it doesn't inspect them the way
+    // an intrinsic/helper does), so a `{__attrRef}` among them stays the
+    // symbolic envelope the composite's own resource construction resolves
+    // by name, exactly as a top-level resource's props would.
+    const call = value as FoldedCompositeStepCall;
+    const revivedArgs: unknown[] = [];
+    for (const a of call.args) revivedArgs.push(await reviveFoldedValue(a, ctx, false));
+    const result = await resolveCompositeCall(call.__compositeStep, revivedArgs, ctx);
+    if (!isIndexableObject(result)) {
+      throw cheapError(`composite call \`${call.__compositeStep}(...)\` did not resolve to an object with a "step" member`);
+    }
+    return (result as Record<string, unknown>).step;
   }
 
   if ("__attrRef" in value) {
