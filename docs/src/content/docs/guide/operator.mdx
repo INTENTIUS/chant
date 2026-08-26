@@ -73,6 +73,8 @@ There is no special crash-recovery code path — restarting is ticking. A killed
 
 All operator state — ticks, gates, leases — lives on git. `rm -rf` of any local scratch directory changes nothing: the tick history is on the `chant/lifecycle` orphan branch, and the lease is a ref, both re-fetchable from the remote.
 
+**One crash needs a human, not just a TTL.** If the killed process was interrupted mid-write — between `git update-ref` creating its lock file and renaming it into place — that lock file can be left behind, and it blocks every future write to that op's lease ref until it's removed; TTL expiry alone doesn't help, since the ref update itself can't land while the lock file sits there. `chant operator` never mistakes this for ordinary lease contention (a live holder elsewhere): a round reports it per-op as its own outcome — `error=1(lease acquire failed — ...)`, naming the `.lock` path and the fix — logs it, and moves on to every other discovered op rather than aborting the whole round. Once the file is removed (`rm <path>.lock`), the next round acquires normally.
+
 ## Gate-as-fact
 
 A gate suspends a Temporal workflow until signaled — there's nothing to suspend in a converge tick with no durable runtime underneath it. When a tick's `run()` dispatch hits a target Op that declares a gate, the local executor still refuses to run it (the same `LocalGateUnsupportedError` any gated Op hits locally), but the tick no longer treats that as an ordinary dispatch failure. It records a **terminal, durable fact** instead:

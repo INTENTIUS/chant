@@ -170,6 +170,33 @@ describe("runOperatorRound — lease + tick execution over a fixture ConvergeOp 
     });
   });
 
+  test("a stale lease .lock file reports lease-error for that op — never a thrown exception out of the round, never misread as lease-held (#1959 finding 2)", async () => {
+    await withTestDir(async (dir) => {
+      await initRepo(dir);
+      writeFixtureConvergeOp(dir, "staging-converge", "staging");
+      const activities = fakeTickActivities(dir, "staging", "staging-converge");
+
+      // A previous `chant operator` acquired the lease, then was killed
+      // mid-renewal — its `.lock` file is still sitting there, blocking
+      // every future write to this op's lease ref.
+      const { acquireLease } = await import("../lifecycle/lease");
+      await acquireLease("staging-converge", "holder-a", { cwd: dir, ttlMs: 60_000 });
+      mkdirSync(join(dir, ".git", "refs", "chant", "lease"), { recursive: true });
+      writeFileSync(join(dir, ".git", "refs", "chant", "lease", "staging-converge.lock"), "");
+
+      // holder-a itself tries to renew next round — it owns the lease, so
+      // acquireLease attempts the write and hits the lock file.
+      const events = await runOperatorRound({ cwd: dir, holder: "holder-a", activities, profiles: PROFILES });
+      expect(events).toHaveLength(1);
+      expect(events[0]).toMatchObject({ kind: "lease-error", op: "staging-converge", env: "staging" });
+      expect((events[0] as { error: string }).error).toContain("staging-converge.lock");
+
+      // Nothing ticked.
+      const { records } = await readConvergeLedger("staging", { cwd: dir });
+      expect(records).toHaveLength(0);
+    });
+  });
+
   test("a failing tick reports tick-failed, not a thrown exception out of the round", async () => {
     await withTestDir(async (dir) => {
       await initRepo(dir);
@@ -313,5 +340,7 @@ describe("formatRoundLine", () => {
       .toContain('error="boom"');
     expect(formatRoundLine({ kind: "fenced", op: "x", env: "staging" }))
       .toContain("fenced=1");
+    expect(formatRoundLine({ kind: "lease-error", op: "x", env: "staging", error: "stale lock at .../x.lock" }))
+      .toContain("stale lock at .../x.lock");
   });
 });

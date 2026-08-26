@@ -26,7 +26,9 @@ import {
   readBlobBySha,
   pushRef,
   fetchRef,
+  fetchRefInto,
   RefCASConflictError,
+  StaleLockError,
 } from "./git";
 
 function git(args: string[], cwd: string): { stdout: string; exitCode: number } {
@@ -161,6 +163,84 @@ describe("lifecycle/git", () => {
         expect(await readSnapshot("prod", "aws", { cwd: dir })).toBeTruthy();
         const out = await readBlobFromPath("_builds", "sha256_abc.json", { cwd: dir });
         expect(JSON.parse(out!)).toEqual({ b: 2 });
+      });
+    });
+  });
+
+  // ── Concurrent writers (#1959 finding 1) ────────────────────────────────
+  //
+  // writeBlobToPath's own CAS-guarded ref update (#1485) closed the silent
+  // clobber two concurrent local writers used to hit, but replaced it with
+  // an outright throw on ANY conflict — breaking every pre-existing caller
+  // that never learned to retry the moment a live `chant operator` (or any
+  // other concurrent writer) touched the orphan branch in between. These
+  // tests pin the fix: a conflict caused by a DIFFERENT path is absorbed
+  // internally (every caller — even ones with no retry logic of their own —
+  // is safe); a conflict on the SAME path a read-modify-write caller is
+  // writing is NOT blindly retried (that would silently drop data), so it
+  // still surfaces for a content-aware caller's own retry to handle.
+  describe("writeBlobToPath — concurrent writers on the same branch tip (#1959 finding 1)", () => {
+    test("two interleaved writers to DIFFERENT paths both survive with no caller-level retry needed", async () => {
+      await withTestDir(async (dir) => {
+        await initRepo(dir);
+        // Seed the branch so both writers race against a real, non-null parent tip.
+        await writeBlobToPath("_seed", "seed.json", "{}", "seed", { cwd: dir });
+
+        // Two "callers" that — like writeObservationBaseline/writeSnapshot/
+        // persistBuildManifest — pass a self-contained `content`, computed
+        // before either write starts, and have NO retry loop of their own.
+        const [shaA, shaB] = await Promise.all([
+          writeBlobToPath("prod", "baseline.json", '{"owner":"A"}', "A's write", { cwd: dir }),
+          writeBlobToPath("staging", "baseline.json", '{"owner":"B"}', "B's write", { cwd: dir }),
+        ]);
+        expect(shaA).toMatch(/^[0-9a-f]{40}$/);
+        expect(shaB).toMatch(/^[0-9a-f]{40}$/);
+
+        // Both landed — neither writer's tree update was lost to the other's race.
+        expect(await readBlobFromPath("prod", "baseline.json", { cwd: dir })).toBe('{"owner":"A"}');
+        expect(await readBlobFromPath("staging", "baseline.json", { cwd: dir })).toBe('{"owner":"B"}');
+      });
+    });
+
+    test("a caller with no retry loop still throws RefCASConflictError (not a silent clobber) when TWO writers race the exact same path", async () => {
+      await withTestDir(async (dir) => {
+        await initRepo(dir);
+        await writeBlobToPath("prod", "solo.json", '{"v":0}', "seed", { cwd: dir });
+
+        // Both writers read the SAME starting content and race to replace it —
+        // exactly the scenario a bare (non-retrying) caller cannot safely
+        // resolve on its own, since neither knows about the other's write.
+        const results = await Promise.allSettled([
+          writeBlobToPath("prod", "solo.json", '{"v":"A"}', "A", { cwd: dir }),
+          writeBlobToPath("prod", "solo.json", '{"v":"B"}', "B", { cwd: dir }),
+        ]);
+
+        const fulfilled = results.filter((r) => r.status === "fulfilled");
+        const rejected = results.filter((r) => r.status === "rejected");
+        // At least one must land; if both raced hard enough that one lost,
+        // it must fail loudly as a RefCASConflictError, never silently.
+        expect(fulfilled.length).toBeGreaterThanOrEqual(1);
+        for (const r of rejected) {
+          expect((r as PromiseRejectedResult).reason).toBeInstanceOf(RefCASConflictError);
+        }
+      });
+    });
+
+    test("appendReleaseRecordLine: two interleaved writers appending to the SAME env's ledger both survive (#1959 finding 1)", async () => {
+      await withTestDir(async (dir) => {
+        await initRepo(dir);
+        const recordA = JSON.stringify({ version: 1, component: "svc-a", digest: "sha256:a" });
+        const recordB = JSON.stringify({ version: 1, component: "svc-b", digest: "sha256:b" });
+
+        await Promise.all([
+          appendReleaseRecordLine("prod", recordA, { cwd: dir }),
+          appendReleaseRecordLine("prod", recordB, { cwd: dir }),
+        ]);
+
+        const lines = await readReleaseLedgerLines("prod", { cwd: dir });
+        expect(lines).toHaveLength(2);
+        expect(lines).toContain(recordA);
+        expect(lines).toContain(recordB);
       });
     });
   });
@@ -503,6 +583,88 @@ describe("lifecycle/git", () => {
     });
   });
 
+  // ── Failure classification (#1959 finding 2) ────────────────────────────
+  //
+  // Before this fix, updateRefCAS/deleteRefCAS turned ANY nonzero git exit
+  // into RefCASConflictError. That's wrong for at least two other real
+  // failure modes git itself distinguishes: a stale `.lock` file (what a
+  // killed process leaves behind — the exact crash this feature must
+  // recover from) and an outright bad ref name. These tests pin the
+  // corrected classification.
+  describe("updateRefCAS / deleteRefCAS — classifying real git failures, not just any nonzero exit (#1959 finding 2)", () => {
+    test("a stale .lock file is reported as StaleLockError, never as RefCASConflictError", async () => {
+      await withTestDir(async (dir) => {
+        await initRepo(dir);
+        const ref = "refs/chant/lease/stale-lock-op";
+        const blobSha = await writeBlob('{"holder":"a"}', { cwd: dir });
+        await updateRefCAS(ref, blobSha, null, { cwd: dir });
+
+        // Simulate a `chant operator` killed mid-write: git's own
+        // lockfile-then-rename never completed, so the `.lock` file it
+        // created is still sitting there.
+        const { mkdirSync, writeFileSync: write } = await import("node:fs");
+        mkdirSync(join(dir, ".git", "refs", "chant", "lease"), { recursive: true });
+        write(join(dir, ".git", "refs", "chant", "lease", "stale-lock-op.lock"), "");
+
+        const renewed = await writeBlob('{"holder":"a","renewed":true}', { cwd: dir });
+        const err = await updateRefCAS(ref, renewed, blobSha, { cwd: dir }).catch((e) => e);
+        expect(err).toBeInstanceOf(StaleLockError);
+        expect(err).not.toBeInstanceOf(RefCASConflictError);
+        expect((err as StaleLockError).lockPath).toContain("stale-lock-op.lock");
+        expect((err as StaleLockError).message).toContain("stale-lock-op.lock");
+
+        // The ref itself is untouched — the write never happened.
+        expect(await readRefSha(ref, { cwd: dir })).toBe(blobSha);
+      });
+    });
+
+    test("deleteRefCAS also reports a stale .lock file as StaleLockError", async () => {
+      await withTestDir(async (dir) => {
+        await initRepo(dir);
+        const ref = "refs/chant/lease/stale-lock-delete-op";
+        const blobSha = await writeBlob('{"holder":"a"}', { cwd: dir });
+        await updateRefCAS(ref, blobSha, null, { cwd: dir });
+
+        const { mkdirSync, writeFileSync: write } = await import("node:fs");
+        mkdirSync(join(dir, ".git", "refs", "chant", "lease"), { recursive: true });
+        write(join(dir, ".git", "refs", "chant", "lease", "stale-lock-delete-op.lock"), "");
+
+        const err = await deleteRefCAS(ref, blobSha, { cwd: dir }).catch((e) => e);
+        expect(err).toBeInstanceOf(StaleLockError);
+        expect(err).not.toBeInstanceOf(RefCASConflictError);
+      });
+    });
+
+    test("a genuine value mismatch is still RefCASConflictError (no lock file involved)", async () => {
+      await withTestDir(async (dir) => {
+        await initRepo(dir);
+        const ref = "refs/chant/lease/mismatch-op";
+        const first = await writeBlob('{"holder":"a"}', { cwd: dir });
+        await updateRefCAS(ref, first, null, { cwd: dir });
+        const interloper = await writeBlob('{"holder":"b"}', { cwd: dir });
+        await updateRefCAS(ref, interloper, first, { cwd: dir });
+
+        const staleWrite = await writeBlob('{"holder":"a","stale":true}', { cwd: dir });
+        const err = await updateRefCAS(ref, staleWrite, first, { cwd: dir }).catch((e) => e);
+        expect(err).toBeInstanceOf(RefCASConflictError);
+        expect(err).not.toBeInstanceOf(StaleLockError);
+      });
+    });
+
+    test("a bad ref name is a plain Error, not RefCASConflictError or StaleLockError — the ref's value never actually diverged from oldValue", async () => {
+      await withTestDir(async (dir) => {
+        await initRepo(dir);
+        const badRef = "refs/chant/lease/bad..name";
+        const blobSha = await writeBlob('{"holder":"a"}', { cwd: dir });
+
+        const err = await updateRefCAS(badRef, blobSha, null, { cwd: dir }).catch((e) => e);
+        expect(err).toBeInstanceOf(Error);
+        expect(err).not.toBeInstanceOf(RefCASConflictError);
+        expect(err).not.toBeInstanceOf(StaleLockError);
+      });
+    });
+  });
+
   describe("pushRef / fetchRef — a lease ref survives a round trip through a shared remote", () => {
     test("pushRef pushes a non-branch ref; a second clone sees it via fetchRef", async () => {
       const { clonePath: cloneA, remotePath, cleanup } = await setupClonePair();
@@ -534,6 +696,37 @@ describe("lifecycle/git", () => {
         expect(await pushRef(ref, { cwd: dir })).toBe(false);
         expect(await fetchRef(ref, { cwd: dir })).toBe(false);
       });
+    });
+
+    test("fetchRefInto lands the remote's value under a DIFFERENT local ref name, leaving the same-named local ref (if any) untouched (#1959 finding 3)", async () => {
+      const { clonePath: cloneA, remotePath, cleanup } = await setupClonePair();
+      const cloneB = join(tmpdir(), `chant-lease-clone-b-${Date.now()}-${Math.random()}`);
+      try {
+        git(["clone", "-q", remotePath, cloneB], tmpdir());
+
+        const ref = "refs/chant/lease/fountain-converge";
+        const remoteBlobSha = await writeBlob('{"holder":"a","token":"t1"}', { cwd: cloneA });
+        await updateRefCAS(ref, remoteBlobSha, null, { cwd: cloneA });
+        expect(await pushRef(ref, { cwd: cloneA })).toBe(true);
+
+        // cloneB already has its OWN local value at `ref` — simulating a
+        // just-acquired, not-yet-pushed local lease. fetchRefInto must not
+        // touch it.
+        const localBlobSha = await writeBlob('{"holder":"b","token":"t2"}', { cwd: cloneB });
+        await updateRefCAS(ref, localBlobSha, null, { cwd: cloneB });
+
+        const trackingRef = "refs/chant/lease-remote/fountain-converge";
+        expect(await fetchRefInto(ref, trackingRef, { cwd: cloneB })).toBe(true);
+
+        // The tracking ref reflects the remote's value...
+        expect(await readRefSha(trackingRef, { cwd: cloneB })).toBe(remoteBlobSha);
+        // ...but cloneB's own local `ref` is completely untouched.
+        expect(await readRefSha(ref, { cwd: cloneB })).toBe(localBlobSha);
+      } finally {
+        await cleanup();
+        const { rm } = await import("node:fs/promises");
+        await rm(cloneB, { recursive: true, force: true });
+      }
     });
   });
 

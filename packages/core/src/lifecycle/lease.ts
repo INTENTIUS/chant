@@ -33,9 +33,21 @@
  */
 import { hostname } from "node:os";
 import { randomUUID } from "node:crypto";
-import { readRefSha, updateRefCAS, deleteRefCAS, writeBlob, readBlobBySha, pushRef, fetchRef, RefCASConflictError } from "./git";
+import { readRefSha, updateRefCAS, deleteRefCAS, writeBlob, readBlobBySha, pushRef, fetchRefInto, RefCASConflictError } from "./git";
 
 export const LEASE_REF_PREFIX = "refs/chant/lease/";
+
+/**
+ * Side namespace `readLease` fetches remote lease state into (#1959 finding
+ * 3), rather than into `refs/chant/lease/<op>` itself. That ref is the CAS
+ * write path's alone (`acquireLease`/`releaseLease`, both via
+ * `updateRefCAS`/`deleteRefCAS`); a read path force-fetching directly into
+ * it would risk clobbering a just-acquired, not-yet-pushed local lease with
+ * the still-stale remote value — the exact race a concurrent `chant operator
+ * status` in the same clone could hit during the acquire→push window. See
+ * `readLease`'s doc for how the two are reconciled without that risk.
+ */
+export const LEASE_REMOTE_TRACKING_PREFIX = "refs/chant/lease-remote/";
 
 /**
  * Default lease TTL — long enough that a normal tick (observe, classify,
@@ -49,6 +61,24 @@ export const DEFAULT_LEASE_TTL_MS = 5 * 60_000;
 
 export function leaseRef(opName: string): string {
   return `${LEASE_REF_PREFIX}${opName}`;
+}
+
+function leaseRemoteTrackingRef(opName: string): string {
+  return `${LEASE_REMOTE_TRACKING_PREFIX}${opName}`;
+}
+
+/**
+ * Sort key for "which of two lease records is more current" — a plain
+ * string comparison works because `acquiredAt`/`expiresAt` are always
+ * `Date.prototype.toISOString()` output (fixed-width, UTC), which sorts
+ * lexicographically in time order. Compares `acquiredAt` first (a genuine
+ * handoff to a new holder always mints a strictly later one; see
+ * `acquireLease`), falling back to `expiresAt` to break a tie between two
+ * renewals of the *same* holder/token, which share `acquiredAt` by design.
+ * `undefined` sorts before every real record.
+ */
+function leaseFreshnessKey(record?: LeaseRecord): string {
+  return record ? `${record.acquiredAt} ${record.expiresAt}` : "";
 }
 
 /** One lease's live state — the entire durable record; there is no history, only the current holder (see this module's doc on why no separate ledger). */
@@ -95,13 +125,40 @@ export interface ReadLeaseResult {
   record?: LeaseRecord;
 }
 
-/** Read the live lease for `opName`, fetching the remote ref first (best-effort — see `fetchRef`) so a lease held by another machine is visible before deciding whether to acquire. */
+/**
+ * Read the live lease for `opName`, fetching the remote ref first (best-
+ * effort) so a lease held by another machine is visible before deciding
+ * whether to acquire.
+ *
+ * The fetch lands in a side tracking ref (`refs/chant/lease-remote/<op>`),
+ * never directly into `refs/chant/lease/<op>` itself (#1959 finding 3) — the
+ * canonical local ref is written *only* by the CAS path
+ * (`acquireLease`/`releaseLease`), so a read (this function is called
+ * before every `acquireLease`, and directly by `chant operator status`) can
+ * never force it back to a stale remote value out from under a concurrent
+ * local acquirer. The returned `record` is whichever of the local/remote
+ * views is more current by `leaseFreshnessKey` (ties keep local): this
+ * still gives full cross-machine visibility — a genuinely newer remote
+ * holder wins — while a just-acquired, not-yet-pushed local lease (freshest
+ * by construction) always survives a same-clone concurrent read. `sha`
+ * — the CAS anchor a subsequent `acquireLease`/`releaseLease` writes
+ * against — is always the local ref's own actual value; only the local
+ * canonical ref is ever a valid basis for a `updateRefCAS`/`deleteRefCAS`
+ * call against it, regardless of what the comparison decided about `record`.
+ */
 export async function readLease(opName: string, opts?: { cwd?: string }): Promise<ReadLeaseResult> {
-  await fetchRef(leaseRef(opName), opts).catch(() => undefined);
-  const sha = await readRefSha(leaseRef(opName), opts);
-  if (!sha) return { sha: null };
-  const raw = await readBlobBySha(sha, opts);
-  return { sha, record: raw ? parseLease(raw) : undefined };
+  const ref = leaseRef(opName);
+  const trackingRef = leaseRemoteTrackingRef(opName);
+  await fetchRefInto(ref, trackingRef, opts).catch(() => undefined);
+
+  const sha = await readRefSha(ref, opts);
+  const localRecord = sha ? parseLease((await readBlobBySha(sha, opts)) ?? "") : undefined;
+
+  const remoteSha = await readRefSha(trackingRef, opts);
+  const remoteRecord = remoteSha ? parseLease((await readBlobBySha(remoteSha, opts)) ?? "") : undefined;
+
+  const record = leaseFreshnessKey(remoteRecord) > leaseFreshnessKey(localRecord) ? remoteRecord : localRecord;
+  return { sha, record };
 }
 
 export interface AcquireLeaseResult {
@@ -112,14 +169,23 @@ export interface AcquireLeaseResult {
 }
 
 /**
- * Acquire or renew the lease for `opName` as `holder`. Succeeds (never
- * throws) when the ref doesn't exist yet, is expired, or is already held by
- * `holder` (a renewal: same token, pushed-out expiry). Fails — returns
- * `acquired: false`, still never throws — when it's live-held by someone
- * else, or when a concurrent CAS write is lost to a race that happened
- * between this call's read and its write; both read identically to a
- * caller deciding whether to tick this round ("someone else has it right
- * now, skip").
+ * Acquire or renew the lease for `opName` as `holder`. Succeeds when the ref
+ * doesn't exist yet, is expired, or is already held by `holder` (a renewal:
+ * same token, pushed-out expiry). Fails — returns `acquired: false`, without
+ * throwing — when it's live-held by someone else, or when a concurrent CAS
+ * write is lost to a race that happened between this call's read and its
+ * write ({@link RefCASConflictError}); both read identically to a caller
+ * deciding whether to tick this round ("someone else has it right now,
+ * skip").
+ *
+ * Deliberately does NOT swallow a `StaleLockError` (./git.ts) into that same
+ * "someone else has it" outcome (#1959 finding 2): a leftover `.lock` file
+ * from a killed process is not contention, it's wreckage, and treating it as
+ * "held by someone else" would make `chant operator` back off forever
+ * against a lease nobody can ever actually acquire again without manual
+ * intervention. It propagates instead, so the caller (`../op/operator.ts`'s
+ * `runOperatorRound`) can surface it as its own distinct, diagnosable event
+ * rather than a silent, permanent skip.
  */
 export async function acquireLease(
   opName: string,
@@ -154,6 +220,9 @@ export async function acquireLease(
       const retry = await readLease(opName, opts);
       return { acquired: false, heldBy: retry.record };
     }
+    // A StaleLockError (or any other non-CAS failure) is NOT "someone else
+    // has it" — propagate it as its own distinct error rather than folding
+    // it into `heldBy`, per this function's doc.
     throw err;
   }
   await pushRef(leaseRef(opName), opts).catch(() => undefined);

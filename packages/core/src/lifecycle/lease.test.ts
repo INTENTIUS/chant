@@ -1,7 +1,7 @@
 import { describe, test, expect } from "vitest";
 import { withTestDir } from "@intentius/chant-test-utils";
 import { spawnSync } from "node:child_process";
-import { writeFileSync } from "node:fs";
+import { writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -13,6 +13,7 @@ import {
   leaseRef,
   LEASE_REF_PREFIX,
 } from "./lease";
+import { writeBlob, updateRefCAS, readRefSha, pushRef, StaleLockError, RefCASConflictError } from "./git";
 
 function git(args: string[], cwd: string): { stdout: string; exitCode: number } {
   const r = spawnSync("git", args, { cwd, encoding: "utf-8" });
@@ -104,6 +105,65 @@ describe("lifecycle/lease", () => {
         expect(second.acquired).toBe(true);
         expect(second.lease?.holder).toBe("holder-b");
         expect(second.lease?.token).not.toBe(first.lease?.token);
+      });
+    });
+
+    // ── #1959 finding 2 ──────────────────────────────────────────────────
+    //
+    // Before this fix, `updateRefCAS` turned ANY nonzero git exit —
+    // including a stale `.lock` file left by a killed process — into
+    // RefCASConflictError, and `acquireLease` folded that straight into
+    // "someone else holds it" (`heldBy`). That's wrong: a stale lock isn't
+    // contention, it's wreckage from the exact crash this feature must
+    // recover from, and TTL expiry never fixes it (the ref update itself
+    // can't land while the lock file sits there) — so a project would get
+    // permanently, silently stuck acquiring that op's lease.
+    test("a stale .lock file surfaces as StaleLockError, NOT as \"lease held by someone else\" (#1959 finding 2)", async () => {
+      await withTestDir(async (dir) => {
+        await initRepo(dir);
+        // Acquire once for real, so the ref exists.
+        const first = await acquireLease("fountain-converge", "holder-a", { cwd: dir, ttlMs: 60_000 });
+        expect(first.acquired).toBe(true);
+
+        // Simulate holder-a's own process getting killed mid-renewal: git's
+        // lockfile-then-rename never completed, so the `.lock` file it
+        // created is still there.
+        mkdirSync(join(dir, ".git", "refs", "chant", "lease"), { recursive: true });
+        writeFileSync(join(dir, ".git", "refs", "chant", "lease", "fountain-converge.lock"), "");
+
+        // The SAME holder trying to renew must actually attempt the write
+        // (it owns the lease, so acquireLease doesn't short-circuit before
+        // touching git) — and hit the lock file. It must not read this as
+        // "held by someone else": it must throw a diagnosable
+        // StaleLockError, distinct from the ordinary
+        // `{ acquired: false, heldBy }` contention outcome.
+        const err = await acquireLease("fountain-converge", "holder-a", { cwd: dir, ttlMs: 60_000 }).catch((e) => e);
+        expect(err).toBeInstanceOf(StaleLockError);
+        expect(err).not.toBeInstanceOf(RefCASConflictError);
+        expect((err as StaleLockError).message).toContain("fountain-converge.lock");
+      });
+    });
+
+    test("a stale .lock file also blocks a FRESH holder once the previous lease has expired — surfaced as StaleLockError, not misread as expiry succeeding or as contention (#1959 finding 2)", async () => {
+      await withTestDir(async (dir) => {
+        await initRepo(dir);
+        const t0 = new Date("2026-01-01T00:00:00.000Z");
+        const first = await acquireLease("fountain-converge", "holder-a", { cwd: dir, ttlMs: 1_000, now: () => t0 });
+        expect(first.acquired).toBe(true);
+
+        mkdirSync(join(dir, ".git", "refs", "chant", "lease"), { recursive: true });
+        writeFileSync(join(dir, ".git", "refs", "chant", "lease", "fountain-converge.lock"), "");
+
+        // holder-a's lease has since expired — a normal crash-recovery
+        // acquire should be able to proceed to a CAS write here (nothing is
+        // "held" any more), but the same leftover lock file still blocks
+        // the write itself.
+        const tExpired = new Date("2026-01-01T00:00:05.000Z");
+        const err = await acquireLease("fountain-converge", "holder-b", { cwd: dir, ttlMs: 1_000, now: () => tExpired }).catch(
+          (e) => e,
+        );
+        expect(err).toBeInstanceOf(StaleLockError);
+        expect(err).not.toBeInstanceOf(RefCASConflictError);
       });
     });
   });
@@ -222,6 +282,61 @@ describe("lifecycle/lease", () => {
         await cleanup();
         const { rm } = await import("node:fs/promises");
         await rm(cloneB, { recursive: true, force: true });
+      }
+    });
+
+    // ── #1959 finding 3 ──────────────────────────────────────────────────
+    //
+    // `readLease` used to fetch the remote lease ref directly into the same
+    // local ref name (`+ref:ref`) before every read — including the read
+    // `chant operator status` does. That force-overwrites the local ref, so
+    // a concurrent `status` call landing in the exact acquire→push window
+    // (the local CAS write has landed, but the push to remote hasn't yet)
+    // would revert the just-acquired local lease back to whatever the
+    // remote still had — silently, in the SAME clone, with no other process
+    // racing at all. `readLease` now fetches into a side tracking ref
+    // instead, so the canonical local ref is never touched by a read.
+    test("a concurrent read in the SAME clone, during the acquire→push window, must not clobber the just-acquired local lease (#1959 finding 3)", async () => {
+      const { clonePath, remotePath, cleanup } = await setupClonePair();
+      try {
+        // An older, now-stale lease already sits on the remote (some earlier holder, long expired).
+        const stale = {
+          op: "fountain-converge",
+          holder: "old-holder",
+          token: "old-token",
+          acquiredAt: "2020-01-01T00:00:00.000Z",
+          expiresAt: "2020-01-01T00:05:00.000Z",
+        };
+        const staleBlobSha = await writeBlob(JSON.stringify(stale), { cwd: clonePath });
+        await updateRefCAS(leaseRef("fountain-converge"), staleBlobSha, null, { cwd: clonePath });
+        expect(await pushRef(leaseRef("fountain-converge"), { cwd: clonePath })).toBe(true);
+
+        // Simulate the local half of a fresh acquire that has landed the
+        // local CAS write but has NOT pushed yet — the exact acquire→push
+        // window this finding is about (acquireLease itself always pushes
+        // right after its own CAS write; this reproduces the in-between
+        // moment deterministically rather than racing real concurrency).
+        const fresh = {
+          op: "fountain-converge",
+          holder: "new-holder",
+          token: "new-token",
+          acquiredAt: new Date().toISOString(),
+          expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        };
+        const freshBlobSha = await writeBlob(JSON.stringify(fresh), { cwd: clonePath });
+        await updateRefCAS(leaseRef("fountain-converge"), freshBlobSha, staleBlobSha, { cwd: clonePath });
+
+        // A concurrent `chant operator status` in the SAME clone reads the lease now.
+        const { record } = await readLease("fountain-converge", { cwd: clonePath });
+        expect(record?.holder).toBe("new-holder");
+        expect(record?.token).toBe("new-token");
+
+        // And the canonical local ref itself must still hold the
+        // freshly-acquired value — not force-reverted to the stale remote
+        // one readLease's own fetch pulled down.
+        expect(await readRefSha(leaseRef("fountain-converge"), { cwd: clonePath })).toBe(freshBlobSha);
+      } finally {
+        await cleanup();
       }
     });
   });
