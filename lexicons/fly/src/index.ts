@@ -1,6 +1,11 @@
 // Plugin
 export { flyPlugin } from "./plugin";
 
+// Component/release capabilities — run-agent, the sprite-lifecycle leaf
+// contributed to core's capability-plugin seam (#1942). Core loads
+// `flyCapabilityPlugin` when a project's chant.config lists this lexicon.
+export { flyCapabilityPlugin, FLY_VERB_FAMILIES } from "./components/capability-plugin";
+
 // Serializer
 export { flySerializer } from "./serializer";
 
