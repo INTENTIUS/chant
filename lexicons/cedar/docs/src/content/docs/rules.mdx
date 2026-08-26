@@ -24,7 +24,7 @@ Post-synth checks validate the serialized output after the build pipeline comple
 | `CEDC011` | Every when/unless condition expression in an emitted policy must parse as a Cedar expression |
 | `CEDC012` | No two emitted Cedar policies may claim the same policy id |
 | `CEDC013` | An emitted policy's @id annotation must match its policy id, and annotation values must be non-empty strings |
-| `CEDC014` | An entity reference in a policy scope must be a well-formed Namespace::Type::\ |
+| `CEDC014` | An entity reference in a policy scope must be a well-formed Namespace::Type::"id" UID |
 | `CEDE010` | Every emitted Cedar policy set validates clean against the project schema (cedar-wasm validate) |
 | `CEDE011` | Cedar validation warnings (impossible policies, shadowed conditions) on an emitted policy set |
 | `CEDS010` | A bare permit(principal, action, resource) with no scope constraints and no conditions grants everything |
