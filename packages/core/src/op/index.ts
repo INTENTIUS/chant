@@ -34,5 +34,6 @@ export {
 } from "./activity-contract";
 export type { ActivityContract, ActivityContractIssue } from "./activity-contract";
 export { stepOutput, isStepOutputRef, collectStepOutputRefs, validateStepOutputRefs, validateStepOutputRefScope, makeOutProxy } from "./step-output-ref";
-export type { StepOutputRef } from "./step-output-ref";
+export type { StepOutputRef, WithStepRefs } from "./step-output-ref";
 export type { NamedActivityStep } from "./builders";
+export { takeProfileAndId } from "./builders";

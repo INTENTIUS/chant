@@ -4,6 +4,15 @@ export { k8sSerializer } from "./serializer";
 // Plugin
 export { k8sPlugin } from "./plugin";
 
+// Typed Op step-builder wrappers (chant #1288 Stage 2) — kubectlApply/
+// waitForReady/ensureSecret — are deliberately NOT re-exported here: their
+// types derive from the activities' own *Args interfaces, which name the API
+// client and therefore sit behind the #1074 dynamic-import boundary this
+// entry point must never reach, even type-only
+// (examples/k8s-client-boundary.test.ts). Import them via the subpath
+// `@intentius/chant-lexicon-k8s/op/builders`, the same way workers import
+// `@intentius/chant-lexicon-k8s/op/activities`.
+
 // The capability plugin core's loader discovers on this package (#1495 piece 2)
 // — the kubectl-apply leaf a component composes, the way aws contributes
 // cfn-deploy.
