@@ -169,14 +169,48 @@ function unwrap(schema: z.ZodTypeAny): z.ZodTypeAny {
  * a valid reference target.
  */
 export function pathExistsInSchema(schema: z.ZodTypeAny, path: string): boolean {
+  return schemaAtPath(schema, path.split(".")) !== undefined;
+}
+
+/**
+ * The zod schema at property-key path `path` inside `schema`, walking
+ * through `z.ZodObject` shapes only (unwrapping optional/nullable/default at
+ * each level, same as {@link pathExistsInSchema}). `undefined` when a
+ * segment doesn't resolve, or an intermediate schema isn't a `z.ZodObject` —
+ * same record/array hard-stop {@link pathExistsInSchema} documents. An empty
+ * `path` returns `schema` itself (unwrapped).
+ */
+export function schemaAtPath(schema: z.ZodTypeAny, path: ReadonlyArray<string>): z.ZodTypeAny | undefined {
   let current = unwrap(schema);
-  for (const segment of path.split(".")) {
-    if (!(current instanceof z.ZodObject)) return false;
+  for (const segment of path) {
+    if (!(current instanceof z.ZodObject)) return undefined;
     const shape = current.shape as Record<string, z.ZodTypeAny>;
-    if (!(segment in shape)) return false;
+    if (!(segment in shape)) return undefined;
     current = unwrap(shape[segment]);
   }
-  return true;
+  return current;
+}
+
+/**
+ * A primitive-shape classification of a zod schema — `string`/`number`/
+ * `boolean`/`object`/`array`, or `undefined` for anything else (a union,
+ * enum, literal, `z.any()`/`z.unknown()`, a transform, …). Used by the
+ * step-output-ref cross-contract type check (chant #1950-3) to compare a
+ * producer's declared return type against a consumer's declared arg type at
+ * the same structural position — deliberately shallow: it bails (returns
+ * `undefined`) on anything fancier than these five kinds rather than trying
+ * to reason about it, per that check's "bail out silently" design.
+ */
+export type PrimitiveSchemaKind = "string" | "number" | "boolean" | "object" | "array";
+
+export function primitiveKindOf(schema: z.ZodTypeAny): PrimitiveSchemaKind | undefined {
+  const s = unwrap(schema);
+  if (s instanceof z.ZodString) return "string";
+  if (s instanceof z.ZodNumber) return "number";
+  if (s instanceof z.ZodBoolean) return "boolean";
+  if (s instanceof z.ZodObject) return "object";
+  if (s instanceof z.ZodArray) return "array";
+  return undefined;
 }
 
 /**

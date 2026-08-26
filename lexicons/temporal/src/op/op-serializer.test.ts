@@ -859,6 +859,52 @@ describe("serializeOps()", () => {
       expect(wf).toContain("const __r1 = await diffIt({});");
       expect(wf).toContain('await applyStacks({"x":__r1?.x});');
     });
+
+    // ── defense-in-depth against scope-invalid refs (#1950 finding 2) ─────────
+    //
+    // `validateStepOutputRefs` (TMP013) is what's supposed to keep these out
+    // of `serializeOps`, but `serializeOps` is itself a public export a
+    // caller can invoke directly, bypassing `chant build`'s lint pass. Both
+    // of these reproduced a real bug: the reference resolved by "was this
+    // producer ever captured" alone, with no notion of scope, so the
+    // generated code referenced a `const __rN` from outside the block it was
+    // declared in (TS2304).
+
+    it("throws, not emits, for an onFailure ref to a main-phase step", () => {
+      const ops = new Map([
+        makeOp({
+          name: "reconcile",
+          overview: "reconcile",
+          phases: [{ name: "Diff", steps: [{ kind: "activity", fn: "lifecycleDiff", args: { env: "prod" }, id: "diff" }] }],
+          onFailure: [
+            { name: "Rollback", steps: [{ kind: "activity", fn: "applyStacks", args: { x: stepOutput("diff", "driftedStacks") } }] },
+          ],
+        }),
+      ]);
+      expect(() => serializeOps(ops)).toThrow(/reconcile/);
+      expect(() => serializeOps(ops)).toThrow(/onFailure/);
+    });
+
+    it("throws, not emits, for a reference nested inside an effect step's nested steps", () => {
+      const seeded = EffectReceipt("seeded", { effect: "db-seed", flavor: "hash", inputs: { file: "seed.sql" } });
+      const ops = new Map([
+        makeOp({
+          name: "reconcile",
+          overview: "reconcile",
+          phases: [
+            {
+              name: "P",
+              steps: [
+                { kind: "activity", fn: "lifecycleDiff", args: { env: "prod" }, id: "diff" },
+                effect(seeded, [{ kind: "activity", fn: "applyStacks", args: { x: stepOutput("diff", "driftedStacks") } }]),
+              ],
+            },
+          ],
+        }),
+      ]);
+      expect(() => serializeOps(ops)).toThrow(/reconcile/);
+      expect(() => serializeOps(ops)).toThrow(/nested inside an effect step/);
+    });
   });
 
   describe("effect steps (#1834)", () => {

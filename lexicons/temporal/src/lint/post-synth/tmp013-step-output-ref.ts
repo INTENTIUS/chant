@@ -17,7 +17,21 @@
  * (`../../op/serializer.ts`) to compile every reference it finds
  * unconditionally: `chant build` blocks file output while an error-severity
  * post-synth finding stands, so a workflow.ts referencing an unresolved
- * step never reaches disk.
+ * step never reaches disk. `serializeOps` also runs its own scope-only
+ * subset of this same check directly (`validateStepOutputRefScope`) as
+ * defense-in-depth — it's a public export a caller can invoke without going
+ * through `chant build` at all (chant #1950 pre-merge review, finding 2).
+ *
+ * Cross-contract type compatibility (chant #1950 pre-merge review, finding
+ * 3): as of that review, this rule also compares a producer's declared
+ * return type at `path` against the consumer's declared arg type at the same
+ * position (`string`/`number`/`boolean`/`object`/`array` only) and flags a
+ * mismatch — a string-returning path feeding a number-typed arg, for
+ * example. Deliberately shallow: a union, enum, literal, `z.any()`/
+ * `z.unknown()`, a transform, or a reference sitting inside an array in
+ * `args` all bail silently rather than being reasoned about. See
+ * `@intentius/chant/op`'s `step-output-ref.ts` module doc for the full
+ * writeup of what this catches and what it defers (to #1288 Stage 2).
  */
 
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";

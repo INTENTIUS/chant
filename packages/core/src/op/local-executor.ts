@@ -14,6 +14,7 @@
 import type { OpConfig, PhaseDefinition, ActivityStep, GateStep, EffectStep, StepDefinition } from "./types";
 import { resolveActivity, type ActivityFn, type ActivityProfile } from "./activity-registry";
 import type { ReceiptReadResult } from "./receipt-store";
+import { isStepOutputRef } from "./step-output-ref";
 
 // ── Records ─────────────────────────────────────────────────────────────────
 
@@ -94,6 +95,25 @@ function resolvePath(value: unknown, path?: string): unknown {
   );
 }
 
+/**
+ * Deep-walk `value`, replacing every {@link StepOutputRef} with the recorded
+ * result of its producer step, resolved through the ref's optional dot-path
+ * exactly like the serializer's compiled `__rN?.path?.segments` (chant #1290)
+ * — `resolvePath` gives the same "undefined intermediate resolves to
+ * undefined, never throws" semantics. A reference to a step whose result
+ * isn't in `resultsById` (never ran, or ran out of the scope
+ * `validateStepOutputRefs` allows) resolves to `undefined`, the same way a
+ * producer whose declared field is absent would.
+ */
+function resolveStepOutputRefs(value: unknown, resultsById: ReadonlyMap<string, unknown>): unknown {
+  if (isStepOutputRef(value)) return resolvePath(resultsById.get(value.step), value.path);
+  if (Array.isArray(value)) return value.map((v) => resolveStepOutputRefs(v, resultsById));
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, resolveStepOutputRefs(v, resultsById)]));
+  }
+  return value;
+}
+
 /** Find the first gate step anywhere in the Op (phases + onFailure, including
  * gates nested inside effect steps), if any. */
 export function findGate(config: OpConfig): GateStep | undefined {
@@ -160,15 +180,22 @@ interface RanStep {
   result?: unknown;
 }
 
-/** Run one activity step with retry + timeout. Never throws — returns a record. */
+/**
+ * Run one activity step with retry + timeout. Never throws — returns a
+ * record. Any {@link StepOutputRef} in `step.args` is resolved against
+ * `resultsById` before the activity is called (#1290) — the local executor
+ * is a first-class peer of the Temporal path, so an unresolved placeholder
+ * must never reach an activity function; see `resolveStepOutputRefs`.
+ */
 async function runStep(
   step: ActivityStep,
   phaseName: string,
   activities: Map<string, ActivityFn>,
   profiles: Record<string, ActivityProfile>,
+  resultsById: Map<string, unknown>,
   signal?: AbortSignal,
 ): Promise<RanStep> {
-  const args = step.args ?? {};
+  const args = resolveStepOutputRefs(step.args ?? {}, resultsById) as Record<string, unknown>;
   const base = { phase: phaseName, fn: step.fn, args };
   const start = Date.now();
 
@@ -198,6 +225,7 @@ async function runStep(
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
       const result = await callWithTimeout(fn, args, timeoutMs, signal);
+      if (step.id) resultsById.set(step.id, result);
       const record: StepRecord = { ...base, status: "ok", durationMs: Date.now() - start };
       if (step.outcomeAttribute) {
         record.outcome = {
@@ -258,11 +286,12 @@ async function runEffectStep(
   phaseName: string,
   activities: Map<string, ActivityFn>,
   profiles: Record<string, ActivityProfile>,
+  resultsById: Map<string, unknown>,
   signal?: AbortSignal,
 ): Promise<{ records: StepRecord[]; failed: boolean }> {
   const records: StepRecord[] = [];
 
-  const read = await runStep(receiptReadStep(step), phaseName, activities, profiles, signal);
+  const read = await runStep(receiptReadStep(step), phaseName, activities, profiles, resultsById, signal);
   records.push(read.record);
   if (read.record.status === "fail") return { records, failed: true };
 
@@ -291,7 +320,7 @@ async function runEffectStep(
   // Gates are pre-flighted by findGate; only activities remain here.
   const nestedActivities = step.steps.filter(isActivity);
   for (let i = 0; i < nestedActivities.length; i++) {
-    const ran = await runStep(nestedActivities[i], phaseName, activities, profiles, signal);
+    const ran = await runStep(nestedActivities[i], phaseName, activities, profiles, resultsById, signal);
     records.push(ran.record);
     if (ran.record.status === "fail") {
       // Receipt left untouched (stale) — the next run re-proposes the effect.
@@ -314,6 +343,7 @@ async function runEffectStep(
     phaseName,
     activities,
     profiles,
+    resultsById,
     signal,
   );
   records.push(wrote.record);
@@ -325,6 +355,7 @@ async function runPhase(
   phase: PhaseDefinition,
   activities: Map<string, ActivityFn>,
   profiles: Record<string, ActivityProfile>,
+  resultsById: Map<string, unknown>,
   signal?: AbortSignal,
 ): Promise<StepRecord[]> {
   // Defensive: gates are pre-flighted, but never execute one if it slips
@@ -343,7 +374,7 @@ async function runPhase(
     }
     const steps = phase.steps.filter(isActivity);
     const records = (
-      await Promise.all(steps.map((s) => runStep(s, phase.name, activities, profiles, signal)))
+      await Promise.all(steps.map((s) => runStep(s, phase.name, activities, profiles, resultsById, signal)))
     ).map((r) => r.record);
     if (records.some((r) => r.status === "fail")) throw new PhaseFailure(records);
     return records;
@@ -365,7 +396,7 @@ async function runPhase(
   for (let i = 0; i < steps.length; i++) {
     const step = steps[i];
     if (isEffect(step)) {
-      const { records: effRecords, failed } = await runEffectStep(step, phase.name, activities, profiles, signal);
+      const { records: effRecords, failed } = await runEffectStep(step, phase.name, activities, profiles, resultsById, signal);
       records.push(...effRecords);
       if (failed) {
         skipRemaining(i + 1);
@@ -373,7 +404,7 @@ async function runPhase(
       }
       continue;
     }
-    const { record } = await runStep(step, phase.name, activities, profiles, signal);
+    const { record } = await runStep(step, phase.name, activities, profiles, resultsById, signal);
     records.push(record);
     if (record.status === "fail") {
       // Mark the remaining steps in this phase as skipped, then abort.
@@ -416,10 +447,15 @@ export async function runOpLocally(
   const records: StepRecord[] = [];
   const start = Date.now();
 
+  // Completed step id → its activity result (#1290). Populated as main-phase
+  // steps finish, so a later step's step-output references resolve to real
+  // values before reaching an activity function — see `runStep`.
+  const resultsById = new Map<string, unknown>();
+
   try {
     for (const phase of config.phases) {
       if (signal?.aborted) throw new PhaseFailure([]);
-      records.push(...(await runPhase(phase, activities, profiles, signal)));
+      records.push(...(await runPhase(phase, activities, profiles, resultsById, signal)));
     }
   } catch (err) {
     if (err instanceof PhaseFailure) records.push(...err.records);
@@ -429,7 +465,7 @@ export async function runOpLocally(
     if (!signal?.aborted) {
       for (const phase of [...(config.onFailure ?? [])].reverse()) {
         try {
-          records.push(...(await runPhase(phase, activities, profiles, signal)));
+          records.push(...(await runPhase(phase, activities, profiles, resultsById, signal)));
         } catch (compErr) {
           if (compErr instanceof PhaseFailure) records.push(...compErr.records);
         }

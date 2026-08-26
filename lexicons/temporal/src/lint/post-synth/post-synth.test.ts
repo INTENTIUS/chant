@@ -347,7 +347,8 @@ describe("TMP013: step-output-ref", () => {
     const ctx = makeCtxFromEntities(new Map([
       ["op", opEntity("reconcile", [
         { kind: "activity", fn: "lifecycleDiff", args: { env: "prod" }, id: "diff" },
-        { kind: "activity", fn: "httpCheck", args: { url: "http://x", contains: stepOutput("diff", "drifted") } },
+        // "output" (string) into "contains" (string) — a type-compatible reference (#1950-3).
+        { kind: "activity", fn: "httpCheck", args: { url: "http://x", contains: stepOutput("diff", "output") } },
       ])],
     ]));
     expect(tmp013.check(ctx)).toHaveLength(0);
@@ -402,6 +403,29 @@ describe("TMP013: step-output-ref", () => {
   test("ignores non-Op entities", () => {
     const ctx = makeCtxFromEntities(new Map([
       ["ns", makeEntity("Temporal::Namespace", { name: "default", retention: "30d" })],
+    ]));
+    expect(tmp013.check(ctx)).toHaveLength(0);
+  });
+
+  // ── cross-contract type compatibility (#1950-3) ──────────────────────────
+
+  test("errors when a boolean-returning path feeds a string-typed arg", () => {
+    const ctx = makeCtxFromEntities(new Map([
+      ["op", opEntity("reconcile", [
+        { kind: "activity", fn: "lifecycleDiff", args: { env: "prod" }, id: "diff" },
+        { kind: "activity", fn: "httpCheck", args: { url: "http://x", contains: stepOutput("diff", "drifted") } },
+      ])],
+    ]));
+    const diags = tmp013.check(ctx);
+    expect(diags.some((d) => d.message.includes("type mismatch") && d.message.includes("boolean") && d.message.includes("string"))).toBe(true);
+  });
+
+  test("a matching type (string into string) passes", () => {
+    const ctx = makeCtxFromEntities(new Map([
+      ["op", opEntity("reconcile", [
+        { kind: "activity", fn: "lifecycleDiff", args: { env: "prod" }, id: "diff" },
+        { kind: "activity", fn: "httpCheck", args: { url: "http://x", contains: stepOutput("diff", "output") } },
+      ])],
     ]));
     expect(tmp013.check(ctx)).toHaveLength(0);
   });

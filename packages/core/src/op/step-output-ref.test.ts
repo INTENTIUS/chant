@@ -283,3 +283,52 @@ describe("validateStepOutputRefs() — structural coverage", () => {
     expect(issues.some((i) => i.message.includes("nope2"))).toBe(true);
   });
 });
+
+// ── validateStepOutputRefs() — cross-contract primitive-type check (#1950-3) ──
+
+describe("validateStepOutputRefs() — cross-contract type compatibility", () => {
+  const takeCountContract = activityContract("takeCount", z.strictObject({ count: z.number() }));
+
+  it("flags a string-returning path fed into a number-typed arg", () => {
+    const diff = activity("lifecycleDiff", { env: "prod" }, { id: "diff" });
+    const consume = activity("takeCount", { count: stepOutput("diff", "output") });
+    const config = opWith({ phases: [phase("P", [diff, consume])] });
+    const contracts = new Map<string, ActivityContract>([
+      ["lifecycleDiff", lifecycleDiffContract],
+      ["takeCount", takeCountContract],
+    ]);
+    const issues = validateStepOutputRefs(config, contracts);
+    expect(issues.some((i) => i.message.includes("type mismatch") && i.message.includes("string") && i.message.includes("number"))).toBe(true);
+  });
+
+  it("a matching type (array of strings into array of strings) passes", () => {
+    const diff = activity("lifecycleDiff", { env: "prod" }, { id: "diff" });
+    const apply = activity("applyStacks", { stacks: stepOutput("diff", "driftedStacks") });
+    const config = opWith({ phases: [phase("P", [diff, apply])] });
+    const contracts = new Map<string, ActivityContract>([
+      ["lifecycleDiff", lifecycleDiffContract],
+      ["applyStacks", applyStacksContract],
+    ]);
+    expect(validateStepOutputRefs(config, contracts)).toEqual([]);
+  });
+
+  it("bails silently when the consumer has no registered contract", () => {
+    const diff = activity("lifecycleDiff", { env: "prod" }, { id: "diff" });
+    const consume = activity("takeCount", { count: stepOutput("diff", "output") });
+    const config = opWith({ phases: [phase("P", [diff, consume])] });
+    // No contract registered for "takeCount" — nothing to compare the consumer's arg type against.
+    const issues = validateStepOutputRefs(config, new Map([["lifecycleDiff", lifecycleDiffContract]]));
+    expect(issues.some((i) => i.message.includes("type mismatch"))).toBe(false);
+  });
+
+  it("bails silently on a whole-value reference (no path)", () => {
+    const diff = activity("lifecycleDiff", { env: "prod" }, { id: "diff" });
+    const consume = activity("takeCount", { count: stepOutput("diff") });
+    const config = opWith({ phases: [phase("P", [diff, consume])] });
+    const contracts = new Map<string, ActivityContract>([
+      ["lifecycleDiff", lifecycleDiffContract],
+      ["takeCount", takeCountContract],
+    ]);
+    expect(validateStepOutputRefs(config, contracts).some((i) => i.message.includes("type mismatch"))).toBe(false);
+  });
+});

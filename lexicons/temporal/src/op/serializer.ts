@@ -22,7 +22,7 @@
 import type { Declarable } from "@intentius/chant/declarable";
 import { isResourceDeclarable } from "@intentius/chant/declarable";
 import type { OpConfig, PhaseDefinition, StepDefinition, ActivityStep, GateStep, EffectStep } from "@intentius/chant/op";
-import { isStepOutputRef, collectStepOutputRefs } from "@intentius/chant/op";
+import { isStepOutputRef, collectStepOutputRefs, validateStepOutputRefScope } from "@intentius/chant/op";
 import { kebabToCamel, signalVarName, generateWorkerBootstrap } from "../codegen-shared";
 
 // ── Name helpers ──────────────────────────────────────────────────────────────
@@ -113,7 +113,39 @@ function bindActivities(steps: ActivityStep[]): ActivityBindings {
   };
 }
 
+/**
+ * Defense-in-depth against a scope-invalid step-output reference (chant
+ * #1290 pre-merge review, finding 2): `validateStepOutputRefs` (TMP013) is
+ * what's *supposed* to keep a reference like this from ever reaching this
+ * file — `chant build` blocks file output while an error-severity post-synth
+ * finding stands. But `serializeOps` is itself a public export a caller can
+ * invoke directly, bypassing `chant build`'s lint pass entirely. Without
+ * this check, a reference authored inside an `onFailure` phase (or nested
+ * inside an `EffectStep`) that happens to name a step id captured elsewhere
+ * in the Op silently compiles: the reference resolves by "was this producer
+ * ever captured" alone, with no notion of *scope* — the captured `const
+ * __rN` may live inside a `try` block the reference's own render site (a
+ * `catch` block, or a sibling `if`/`else` branch) can't see, producing
+ * generated TypeScript that fails to compile (TS2304, reproduced in the
+ * review). This runs the same scope/ordering validation TMP013 does
+ * (`validateStepOutputRefScope` — the contract-independent half of
+ * `validateStepOutputRefs`) and refuses to emit anything for an Op that
+ * fails it, regardless of caller.
+ */
+function assertStepOutputRefsInScope(config: OpConfig): void {
+  const issues = validateStepOutputRefScope(config);
+  if (issues.length === 0) return;
+  throw new Error(
+    `Op "${config.name}": ${issues.length} scope-invalid step-output reference(s) — ` +
+      `refusing to emit generated code that would reference an out-of-scope variable ` +
+      `(run \`chant build\` for the full TMP013 report):\n` +
+      issues.map((i) => `  - phase "${i.phase}", step "${i.fn}": ${i.message}`).join("\n"),
+  );
+}
+
 function generateWorkflow(config: OpConfig): string {
+  assertStepOutputRefsInScope(config);
+
   const allActivitySteps = [
     ...collectActivitySteps(config.phases),
     ...(config.onFailure ? collectActivitySteps(config.onFailure) : []),

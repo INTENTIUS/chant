@@ -39,6 +39,36 @@
  *    against, and it degrades into the same stringly path `outcomeAttribute`
  *    already had (chant #1288 comment on this issue).
  *
+ * Cross-contract type compatibility (chant #1950 pre-merge review, finding
+ * 3): `validateStepOutputRefs` checks the producer side (a registered
+ * contract with a `returns` schema, and — when `path` is set — that the path
+ * resolves on it) and, separately, `validateActivitySteps`/TMP012 checks a
+ * step's `args` against its own contract's `args` schema — but a
+ * {@link StepOutputRef} sitting in `args` is a placeholder object at build
+ * time, not the value it resolves to, so TMP012 skips it (see
+ * `activity-contract.ts`'s `isStepOutputRefValue` guard) rather than
+ * false-positive on it. Nothing before this compared the *consumer's*
+ * declared type at that position against the *producer's* declared type at
+ * `path` — a string-returning path could feed a number-typed arg and both
+ * checks would pass. `validateStepOutputRefs` now adds one more check for
+ * exactly this: when `path` is set, and both the producer's and the
+ * consumer's contracts are registered, it compares the zod schema at the
+ * producer's `path` against the zod schema at the consumer's arg position by
+ * primitive shape (`string`/`number`/`boolean`/`object`/`array` — see
+ * `activity-contract.ts`'s `primitiveKindOf`) and flags a mismatch. This is
+ * deliberately shallow, the same "hard stop rather than guess" posture
+ * `pathExistsInSchema`'s doc above takes for a record/array root: a union, an
+ * enum, a literal, `z.any()`/`z.unknown()`, a transform, or a ref sitting
+ * inside an array in `args` (no stable position to look up an arg schema
+ * against) all bail silently — no issue raised, not a false negative
+ * reported as clean, just genuinely out of this check's reach. A more
+ * complete version (real zod-schema subtyping/union-aware comparison) is
+ * exactly the kind of thing #1288 Stage 2 (typed step builders, deriving
+ * from contracts instead of restating them) would need anyway; deferred
+ * there rather than grown ad hoc here. A whole-value reference (no `path`)
+ * is skipped by this check for the same reason it's skipped by the
+ * path-existence check: there's no single field to compare.
+ *
  * References only, no expressions: the issue asks for this to be "enforced
  * by a lint rule rather than left as a convention." What's here instead is
  * a runtime-on-load guard — `diff.out.count > 0` or a template literal over
@@ -55,7 +85,7 @@
 
 import { z } from "zod";
 import type { ActivityStep, OpConfig, PhaseDefinition } from "./types";
-import { pathExistsInSchema, type ActivityContract, type ActivityContractIssue } from "./activity-contract";
+import { pathExistsInSchema, schemaAtPath, primitiveKindOf, type ActivityContract, type ActivityContractIssue } from "./activity-contract";
 
 const STEP_OUTPUT_REF_BRAND = Symbol.for("chant.op.stepOutputRef");
 
@@ -156,6 +186,25 @@ export function collectStepOutputRefs(value: unknown): StepOutputRef[] {
   return [];
 }
 
+/**
+ * The property-key path from `value`'s root down to `target` (found by
+ * reference identity), or `undefined` if it isn't found or sits inside an
+ * array — an array index isn't a stable position to look up a declared arg
+ * schema against (chant #1950-3's cross-contract type check skips these,
+ * same "bail on anything fancier" policy as the rest of that check).
+ */
+function locateStepOutputRefPath(value: unknown, target: StepOutputRef, path: string[] = []): string[] | undefined {
+  if (value === target) return path;
+  if (Array.isArray(value)) return undefined;
+  if (value && typeof value === "object" && !isStepOutputRef(value)) {
+    for (const [k, v] of Object.entries(value)) {
+      const found = locateStepOutputRefPath(v, target, [...path, k]);
+      if (found) return found;
+    }
+  }
+  return undefined;
+}
+
 // ── Validation ──────────────────────────────────────────────────────────────
 
 interface StepLocation {
@@ -186,11 +235,33 @@ function producerPrecedes(producer: StepLocation, consumer: StepLocation): boole
   return producer.stepIndex < consumer.stepIndex;
 }
 
+function effectNestedActivitySteps(phase: PhaseDefinition): ActivityStep[] {
+  return phase.steps.flatMap((s) => (s.kind === "effect" ? s.steps.filter((n) => n.kind === "activity") : []));
+}
+
+/** `byId`/`duplicateIds` over an Op's top-level main-phase activity steps — shared by {@link validateStepOutputRefScope} and {@link validateStepOutputRefs}. */
+function indexById(locations: StepLocation[]): { byId: Map<string, StepLocation>; duplicateIds: Set<string> } {
+  const byId = new Map<string, StepLocation>();
+  const duplicateIds = new Set<string>();
+  for (const loc of locations) {
+    if (!loc.step.id) continue;
+    if (byId.has(loc.step.id)) duplicateIds.add(loc.step.id);
+    else byId.set(loc.step.id, loc);
+  }
+  return { byId, duplicateIds };
+}
+
 /**
- * Validate every step-output reference in an Op's main phases against a
- * contract map and the Op's own step ordering. Scope: `config.phases` only
- * (never `onFailure`, never a step nested inside an `EffectStep` — see the
- * module doc).
+ * Validate every step-output reference in an Op against scope and ordering
+ * alone — no contract needed. This is the subset of {@link
+ * validateStepOutputRefs}'s checks that don't depend on a contract map, kept
+ * as its own export so a caller with no contracts on hand (or that wants to
+ * defend against exactly this class of bug regardless of what contracts are
+ * registered) can still refuse a scope-invalid reference. The temporal
+ * lexicon's serializer (`serializeOps`) is exactly this caller: TMP013 (which
+ * calls the fuller {@link validateStepOutputRefs}) protects `chant build`,
+ * but `serializeOps` is a public export a caller can invoke directly,
+ * bypassing that lint pass — this is its own defense-in-depth.
  *
  * Flags:
  *  - a reference authored inside `onFailure`, or inside an `EffectStep`'s
@@ -200,16 +271,10 @@ function producerPrecedes(producer: StepLocation, consumer: StepLocation): boole
  *  - a duplicate step id (ambiguous producer),
  *  - a reference to a step that does not precede the referencing step
  *    (a later phase, a later step in the same phase, itself, or a step in
- *    the same parallel phase),
- *  - a reference into a step whose `fn` has no registered
- *    {@link ActivityContract}, or whose contract declares no `returns`
- *    schema — nothing to validate the reference against,
- *  - a `path` that does not resolve on the producer's declared return
- *    schema (an empty `path` — the whole return value — is always valid).
+ *    the same parallel phase).
  */
-export function validateStepOutputRefs(
+export function validateStepOutputRefScope(
   config: Pick<OpConfig, "name" | "phases" | "onFailure">,
-  contracts: ReadonlyMap<string, ActivityContract>,
 ): ActivityContractIssue[] {
   const issues: ActivityContractIssue[] = [];
 
@@ -225,8 +290,6 @@ export function validateStepOutputRefs(
       }
     }
   };
-  const effectNestedActivitySteps = (phase: PhaseDefinition): ActivityStep[] =>
-    phase.steps.flatMap((s) => (s.kind === "effect" ? s.steps.filter((n) => n.kind === "activity") : []));
   for (const phase of config.onFailure ?? []) {
     const steps = phase.steps.filter((s): s is ActivityStep => s.kind === "activity").concat(effectNestedActivitySteps(phase));
     flagOutOfScope(steps, phase.name, "step-output references are not supported in onFailure compensation phases");
@@ -236,15 +299,7 @@ export function validateStepOutputRefs(
   }
 
   const locations = locateActivitySteps(config.phases);
-
-  const byId = new Map<string, StepLocation>();
-  const duplicateIds = new Set<string>();
-  for (const loc of locations) {
-    if (!loc.step.id) continue;
-    if (byId.has(loc.step.id)) duplicateIds.add(loc.step.id);
-    else byId.set(loc.step.id, loc);
-  }
-
+  const { byId, duplicateIds } = indexById(locations);
   const phaseNameOf = (loc: StepLocation): string => config.phases[loc.phaseIndex]!.name;
 
   for (const consumer of locations) {
@@ -284,8 +339,45 @@ export function validateStepOutputRefs(
           fn: consumer.step.fn,
           message: `references ${reason} — a step can only reference an earlier step's output`,
         });
-        continue;
       }
+    }
+  }
+
+  return issues;
+}
+
+/**
+ * Validate every step-output reference in an Op's main phases against a
+ * contract map and the Op's own step ordering. Scope: `config.phases` only
+ * (never `onFailure`, never a step nested inside an `EffectStep` — see the
+ * module doc). Layers contract-based checks on top of {@link
+ * validateStepOutputRefScope}'s scope/ordering checks.
+ *
+ * Flags everything {@link validateStepOutputRefScope} does, plus:
+ *  - a reference into a step whose `fn` has no registered
+ *    {@link ActivityContract}, or whose contract declares no `returns`
+ *    schema — nothing to validate the reference against,
+ *  - a `path` that does not resolve on the producer's declared return
+ *    schema (an empty `path` — the whole return value — is always valid).
+ */
+export function validateStepOutputRefs(
+  config: Pick<OpConfig, "name" | "phases" | "onFailure">,
+  contracts: ReadonlyMap<string, ActivityContract>,
+): ActivityContractIssue[] {
+  const issues = validateStepOutputRefScope(config);
+
+  const locations = locateActivitySteps(config.phases);
+  const { byId, duplicateIds } = indexById(locations);
+  const phaseNameOf = (loc: StepLocation): string => config.phases[loc.phaseIndex]!.name;
+
+  for (const consumer of locations) {
+    const refs = collectStepOutputRefs(consumer.step.args);
+    for (const ref of refs) {
+      // Already flagged by validateStepOutputRefScope — nothing to validate
+      // a contract-based check against.
+      if (duplicateIds.has(ref.step)) continue;
+      const producer = byId.get(ref.step);
+      if (!producer || !producerPrecedes(producer, consumer)) continue;
 
       const producerContract = contracts.get(producer.step.fn);
       if (!producerContract) {
@@ -313,6 +405,35 @@ export function validateStepOutputRefs(
           fn: consumer.step.fn,
           message: `references step "${ref.step}"'s output path "${ref.path}", which does not exist on "${producer.step.fn}"'s declared return type`,
         });
+        continue;
+      }
+
+      // Finding #1950-3: cross-contract primitive-type compatibility. Only
+      // meaningful for a field reference (`ref.path` set) against a
+      // registered consumer contract's arg schema at the same position in
+      // `args` — a whole-value reference (no path) is intentionally left
+      // unchecked (see the "whole-value reference... passes even without
+      // checking the producer's return shape" test/doc above). Bails
+      // silently (no issue) on anything not a plain string/number/boolean/
+      // object/array — a union, enum, literal, transform, `z.any()`, etc. —
+      // there's no cheap structural comparison for those.
+      if (ref.path) {
+        const consumerContract = contracts.get(consumer.step.fn);
+        const argPath = consumerContract && locateStepOutputRefPath(consumer.step.args, ref);
+        if (consumerContract && argPath) {
+          const consumerFieldSchema = schemaAtPath(consumerContract.args as z.ZodTypeAny, argPath);
+          const producerFieldSchema = schemaAtPath(producerContract.returns as z.ZodTypeAny, ref.path.split("."));
+          const consumerKind = consumerFieldSchema && primitiveKindOf(consumerFieldSchema);
+          const producerKind = producerFieldSchema && primitiveKindOf(producerFieldSchema);
+          if (consumerKind && producerKind && consumerKind !== producerKind) {
+            issues.push({
+              opName: config.name,
+              phase: phaseNameOf(consumer),
+              fn: consumer.step.fn,
+              message: `references step "${ref.step}"'s output path "${ref.path}" (${producerKind}), but arg "${argPath.join(".")}" on "${consumer.step.fn}" declares ${consumerKind} — type mismatch`,
+            });
+          }
+        }
       }
     }
   }
