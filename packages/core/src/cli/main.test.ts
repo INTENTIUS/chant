@@ -383,6 +383,29 @@ describe("parseArgs", () => {
     expect(() => parseArgs(["run", "myop", "--json=1"])).toThrow(/--json is a boolean flag/);
   });
 
+  test("--fold-rank has the same context-sensitive bare-vs-path behavior as --report (#1083)", () => {
+    // Bare --fold-rank is the boolean (print the ranked report); --fold-rank
+    // <path> is the collapsed-format export destination.
+    const bare = parseArgs(["build", "src", "--fold", "--fold-rank"]);
+    expect(bare.foldRank).toBe(true);
+    expect(bare.foldRankCollapsedFile).toBeUndefined();
+
+    const withPath = parseArgs(["build", "src", "--fold", "--fold-rank", "out.collapsed"]);
+    expect(withPath.foldRankCollapsedFile).toBe("out.collapsed");
+    expect(withPath.foldRank).toBeUndefined();
+
+    // A following flag (not a path) keeps the bare-boolean reading.
+    const beforeFlag = parseArgs(["build", "src", "--fold-rank", "--verbose"]);
+    expect(beforeFlag.foldRank).toBe(true);
+    expect(beforeFlag.verbose).toBe(true);
+  });
+
+  test("--fold-rank=<path> (joined form) resolves the same as the space-separated one", () => {
+    const result = parseArgs(["build", "src", "--fold-rank=out.collapsed"]);
+    expect(result.foldRankCollapsedFile).toBe("out.collapsed");
+    expect(result.foldRank).toBeUndefined();
+  });
+
   test("--report keeps its context-sensitive bare-vs-value behavior when joined", () => {
     // --report is deliberately not in the boolean-reject set: bare --report is
     // a boolean (`run`), but --report <path> is a SARIF destination (migrate).

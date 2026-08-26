@@ -85,6 +85,21 @@ export interface FoldDecision {
   reason?: string;
   /** Number of entities the fold produced. Present only when `mode === "fold"`. */
   resourceCount?: number;
+  /**
+   * chant #1083 — true when this file's OWN fold attempt succeeded (it would
+   * fold cleanly in isolation) but it was forced to `"run"` anyway by
+   * {@link planFoldTaint}'s REVERSE rule (chant #1044): some other file that
+   * imports it, directly or transitively, itself falls back to run, so
+   * folding this one independently would create a duplicate, non-identical
+   * instance. Present only when `mode === "run"`.
+   *
+   * The fold-blocker dominator ranking (`./fold-rank.ts`) keys on this: a
+   * reverse-tainted file is not a forward-contagion blocker (fixing it
+   * unblocks nothing — it was never the cause), and the tree can't express
+   * the edge that DOES hold it back (an importer, not something it imports).
+   * It's reported in a separate bucket instead of a dominator subtree.
+   */
+  reverseTainted?: boolean;
 }
 
 /**
@@ -295,7 +310,7 @@ export async function discover(path: string, options?: DiscoveryOptions): Promis
       const reason = !folded.ok
         ? folded.reason
         : `would fold in isolation, but a file that imports it (directly or transitively) falls back to run — folding independently would create a duplicate, non-identical instance`;
-      foldDecisions.push({ file, mode: "run", reason });
+      foldDecisions.push({ file, mode: "run", reason, reverseTainted: folded.ok });
     }
 
     if (options?.sandbox) {

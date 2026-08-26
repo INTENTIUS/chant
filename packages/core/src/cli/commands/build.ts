@@ -24,6 +24,7 @@ import { applyConfiguredSeverity } from "../../lint/config";
 import { loadPolicyChecks } from "../../lint/policy";
 import { armSandboxPolicyExecution, runProjectPolicies } from "../../lint/policy-sandbox";
 import { sortedJsonReplacer } from "../../utils";
+import { rankFoldBlockers, toCollapsedFormat, type FoldRankResult } from "../../discovery/fold-rank";
 import { formatError, formatWarning, formatSuccess, formatBold, formatInfo } from "../format";
 import { writeFileSync, mkdirSync } from "fs";
 import { resolve, dirname, join, relative } from "path";
@@ -84,6 +85,23 @@ export interface BuildOptions {
    * after {@link params}.
    */
   paramsFile?: string;
+
+  /**
+   * chant #1083 — `chant build --fold --fold-rank`: after the build, rank
+   * `"run"`-mode files by dominator retained-count over the forward
+   * import-failure graph (see `../../discovery/fold-rank.ts`), and report
+   * the reverse-taint bucket (#1044) separately. Printed to stderr,
+   * independent of `--verbose`'s per-file listing. No-op without `fold`.
+   */
+  foldRank?: boolean;
+
+  /**
+   * chant #1083 — `chant build --fold --fold-rank <path>`: as {@link
+   * foldRank}, and ALSO writes the ranking as a Brendan Gregg collapsed
+   * stack export (weighted by retained count) to this path, so it opens in
+   * any flame/icicle viewer with no chant-specific tooling.
+   */
+  foldRankCollapsedFile?: string;
 }
 
 /**
@@ -343,6 +361,23 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
       }
     } else {
       console.error(formatInfo(summarizeFoldDecisions(result.foldDecisions)));
+    }
+  }
+
+  // chant #1083 — rank fold blockers by dominator retained-count over the
+  // forward import-failure graph, and report the reverse-taint bucket
+  // (#1044) separately. Opt-in (`--fold-rank`) and independent of
+  // `--verbose`: the per-file listing above says WHAT ran; this says WHICH
+  // of those files is worth fixing first.
+  if (fold && (options.foldRank || options.foldRankCollapsedFile) && result.foldDecisions.length > 0) {
+    const ranking = await rankFoldBlockers(result.foldDecisions);
+    console.error(formatInfo(formatFoldRanking(ranking, infraPath)));
+    if (options.foldRankCollapsedFile) {
+      const collapsedPath = resolve(options.foldRankCollapsedFile);
+      mkdirSync(dirname(collapsedPath), { recursive: true });
+      const lines = toCollapsedFormat(ranking, { relativeTo: infraPath });
+      writeFileSync(collapsedPath, lines.length > 0 ? `${lines.join("\n")}\n` : "");
+      console.error(formatInfo(`[fold-rank] collapsed-format export: ${collapsedPath} (${lines.length} line(s))`));
     }
   }
 
@@ -781,6 +816,36 @@ export function summarizeFoldDecisions(decisions: readonly { mode: string }[]): 
   const files = (n: number) => `${n} file${n === 1 ? "" : "s"}`;
   const hint = ran > 0 ? " (--verbose for reasons)" : "";
   return `fold: ${files(folded)} folded, ${ran} ran${hint}`;
+}
+
+/**
+ * `chant build --fold --fold-rank`'s text report (chant #1083): blockers
+ * ranked by dominator retained-count, highest first, then the reverse-taint
+ * bucket (#1044) called out separately since the tree can't express that
+ * edge (see `../../discovery/fold-rank.ts`'s module doc).
+ */
+export function formatFoldRanking(ranking: FoldRankResult, infraPath: string): string {
+  const rel = (file: string): string => relative(infraPath, file) || file;
+  const lines: string[] = [];
+  if (ranking.blockers.length === 0) {
+    lines.push("fold-rank: no run-mode files to rank");
+  } else {
+    lines.push(`fold-rank: ${ranking.blockers.length} blocker(s), ${ranking.totalBlocked} file(s) blocked`);
+    for (const b of ranking.blockers) {
+      const via = b.topLevel ? "" : ` (behind ${rel(b.dominatedBy!)})`;
+      const reason = b.reason ? ` — ${b.reason}` : "";
+      lines.push(`  retained ${b.retained}: ${rel(b.file)}${via}${reason}`);
+    }
+  }
+  if (ranking.reverseTainted.length > 0) {
+    lines.push(
+      `fold-rank: ${ranking.reverseTainted.length} file(s) held back only by the reverse rule (#1044) — would fold in isolation, blocked by a run-mode importer, not modeled in the tree above:`,
+    );
+    for (const t of ranking.reverseTainted) {
+      lines.push(`  ${rel(t.file)}`);
+    }
+  }
+  return lines.join("\n");
 }
 
 /**

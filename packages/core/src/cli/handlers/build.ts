@@ -148,6 +148,8 @@ export async function runBuild(ctx: CommandContext): Promise<number> {
     env: args.env,
     fold: args.fold,
     sandbox: args.sandbox,
+    foldRank: args.foldRank,
+    foldRankCollapsedFile: args.foldRankCollapsedFile,
     params,
     paramsFile: args.paramsFile,
   });

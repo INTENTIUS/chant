@@ -3626,22 +3626,21 @@ export async function tryFoldFile(
  * so the exact same forced-taint safety net still applies to that remaining
  * boundary, unchanged.
  */
-export async function planFoldTaint(
-  files: readonly string[],
-  wouldFold: ReadonlyMap<string, boolean>,
-  liveSources?: ReadonlyMap<string, ReadonlySet<string>>,
-): Promise<Set<string>> {
+/**
+ * file -> set of OTHER files in `files` that it relatively imports OR
+ * re-exports from, regardless of that file's own fold outcome. Extracted
+ * from {@link planFoldTaint} (chant #1083) so a second consumer — the fold
+ * blocker dominator ranking (`./fold-rank.ts`) — can walk the exact same
+ * project-file edges instead of re-parsing every file with its own
+ * specifier-resolution logic. chant #1020 — this counts a namespace import
+ * (`import * as ns from "./x"`, previously skipped — see `collectImports`)
+ * and a re-export (`export { x } from "./y"`, which `collectImports` never
+ * saw at all, since it only looks at `import` declarations): both are real
+ * cross-file value dependencies fold's own resolution follows, so both need
+ * the same edge an ordinary named import already gets.
+ */
+export async function buildProjectImportEdges(files: readonly string[]): Promise<Map<string, Set<string>>> {
   const fileSet = new Set(files);
-
-  // file -> set of OTHER discovered files it relatively imports OR re-exports
-  // from, regardless of that file's own fold outcome (taint needs the full
-  // edge set to propagate transitively). chant #1020 — this now ALSO counts
-  // a namespace import (`import * as ns from "./x"`, previously skipped —
-  // see `collectImports`) and a re-export (`export { x } from "./y"`, which
-  // `collectImports` never saw at all, since it only looks at `import`
-  // declarations): both are real cross-file value dependencies my own new
-  // resolution follows, so both need the same identity guarantee an
-  // ordinary named import already got.
   const edges = new Map<string, Set<string>>();
   for (const file of files) {
     const targets = new Set<string>();
@@ -3674,10 +3673,24 @@ export async function planFoldTaint(
     } catch {
       // Unreadable/unparseable — no edges contributed; tryFoldFile's own
       // top-level catch already turns this into a "run" decision for the
-      // file itself, which is enough to seed it as tainted below.
+      // file itself, which is enough to seed it as tainted below (or, for
+      // the dominator ranking, leaves it a childless node).
     }
     edges.set(file, targets);
   }
+  return edges;
+}
+
+export async function planFoldTaint(
+  files: readonly string[],
+  wouldFold: ReadonlyMap<string, boolean>,
+  liveSources?: ReadonlyMap<string, ReadonlySet<string>>,
+): Promise<Set<string>> {
+  const fileSet = new Set(files);
+
+  // file -> set of OTHER discovered files it relatively imports OR re-exports
+  // from — see {@link buildProjectImportEdges}.
+  const edges = await buildProjectImportEdges(files);
 
   // chant #1044 — reverse edges: consumed-file -> the folded files that
   // captured its objects. Same taint set, same fixpoint walk; see this

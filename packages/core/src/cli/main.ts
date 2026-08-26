@@ -337,6 +337,17 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.fold = false;
     } else if (arg === "--sandbox") {
       result.sandbox = true;
+    } else if (arg === "--fold-rank") {
+      // chant #1083 — same context-sensitive shape as --report above:
+      // `--fold-rank` alone prints the ranked-blocker report; `--fold-rank
+      // <path>` ALSO writes the Brendan Gregg collapsed-format export there.
+      const next = args[i + 1];
+      if (next && !next.startsWith("-")) {
+        result.foldRankCollapsedFile = next;
+        i++;
+      } else {
+        result.foldRank = true;
+      }
     } else if (arg === "--param") {
       // chant #1118/#1127 — `--param name=value` (space-separated) and
       // `--param=name=value` (joined, split above at its first `=` into flag
@@ -625,6 +636,14 @@ Options:
   --no-fold             (build) Opt out of folding for this invocation: every
                         source module is imported and run, the pre-#1134
                         behavior. Beats chant.config.ts's build.fold.
+  --fold-rank [<path>]  (build, with --fold) Rank run-mode files by dominator
+                        retained-count over the forward import-failure graph
+                        (#1083) — fixing the top blocker unblocks the most
+                        files. Files held back only by the reverse rule
+                        (#1044) are reported separately, never folded into
+                        the ranking. With a path argument, also writes a
+                        Brendan Gregg collapsed-format export (weighted by
+                        retained count) there, for any flame/icicle viewer.
   --sandbox             (build) Run run-fallback source files (or every
                         file, without --fold) together, isolated, in one
                         sandboxed child process instead of in-process
