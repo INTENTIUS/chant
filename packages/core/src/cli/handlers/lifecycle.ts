@@ -55,7 +55,7 @@ import type { ChantConfig } from "../../config";
  * then `config.sourceDir`, then "." (the root). Snapshot/diff/plan all use this
  * so their build digests stay consistent.
  */
-function resolveBuildRoot(args: ParsedArgs, config: ChantConfig): string {
+export function resolveBuildRoot(args: ParsedArgs, config: ChantConfig): string {
   return resolve(args.src ?? config.sourceDir ?? ".");
 }
 

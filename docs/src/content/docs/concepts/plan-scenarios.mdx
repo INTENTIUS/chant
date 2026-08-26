@@ -1,0 +1,90 @@
+---
+title: Plan Scenarios
+description: A declared, checkable claim about what a change should DO — not just whether it's well-formed — evaluated offline against a fixture snapshot standing in for live observation.
+diataxis: explanation
+---
+
+Everything chant validates before this feature is about shape. Lint rules, post-synth checks, EVL — all of it answers "is this declaration well-formed." None of it answers "what will this change do." A composite refactor that was supposed to be plan-neutral can quietly propose replacing a database, and nothing catches it until someone runs `chant lifecycle plan` and reads the output — or worse, until `chant lifecycle apply` runs it.
+
+A **plan scenario** closes that gap: a declared expectation about the resulting change set, checkable without a cluster, without credentials, in CI, on every PR.
+
+## The three inputs, and which one moves
+
+A plan is a function of three inputs: declared source, the prior snapshot, and a live observation. Two of the three are already inert, versioned data chant controls — declared source is deterministic by construction (EVL), and snapshots are already stored as data on the `chant/lifecycle` orphan branch. The third — live observation — is the only impure one, and it arrives through one substitutable interface: `describeResources()`. Feed that interface a fixture instead of a cluster, and the whole plan becomes a pure function of data.
+
+That's the property that makes this possible: not a new capability bolted onto chant's plan engine, but the existing one run against recorded data instead of a live read.
+
+## Declaring a scenario
+
+```typescript
+import { Scenario, snapshot } from "@intentius/chant";
+
+export const compositeIsNeutral = Scenario("extracting the WebApp composite is plan-neutral", {
+  given: snapshot("fixtures/prod-baseline.json"),
+  expect: { noop: true },
+});
+
+export const legacyBucketDrop = Scenario("dropping the legacy bucket deletes exactly one owned resource", {
+  given: snapshot("prod"),
+  expect: {
+    deletes: [{ name: "legacyBucket", ownership: "owned" }],
+    create: 0,
+  },
+});
+```
+
+A `Scenario` is a Declarable, modeled on [`EffectReceipt`](/chant/architecture/core-type-system/#effectreceipt) and [`SecretDeclaration`](/chant/architecture/core-type-system/#secretdeclaration): discovery collects it and `chant list` shows it, but it carries no resource payload, so no serializer ever emits it. `partitionByLexicon` excludes it from every lexicon's output the same way it excludes a secret declaration — a scenario is data core and the CLI read, never something a lexicon writes.
+
+### `given`: what stands in for live observation
+
+`snapshot()` takes one string and classifies it structurally, offline — no filesystem access, no git, at declaration time:
+
+- A string with a path separator or a `.json` suffix (`"fixtures/prod-baseline.json"`) is a **fixture file** — a checked-in JSON file in the same shape `chant lifecycle snapshot` writes. Copy a snapshot out of the `chant/lifecycle` branch and commit it, and it's a valid fixture.
+- Anything else (`"prod"`) is an **environment name** — replayed from the last snapshot recorded for that environment on the `chant/lifecycle` branch, read the same way `chant lifecycle plan` reads its own prior snapshot.
+
+Either way, `chant scenario check` (below) reads the fixture and substitutes it for `observeLexicon`'s live call. No plugin ever makes a network request; no credentials are ever asked for.
+
+### `expect`: the assertion vocabulary
+
+Every clause is independently optional, and clauses compose in one `expect` object — at least one is required:
+
+- **`noop: true`** — the plan proposes no create, update, or delete. Probably the majority-value case on its own: refactors, lexicon upgrades, no-op deploys should all show `noop`, and a scenario turns "should" into "does, checked on every PR."
+- **`create` / `update` / `delete`: `<number>`** — an exact count for that action. Omitted means unconstrained; `0` is a real assertion, not "don't check this."
+- **`deletes: [{ name, ownership }]`** — exactly these resources must be proposed for deletion, each with the stated ownership verdict, and no *other* delete may be proposed. This is arguably the single highest-value assertion in the vocabulary: "this plan deletes nothing foreign" — and it's meaningful specifically because chant's ownership marker is a live read, not a state-file record. A resource the fixture marks `foreign` is never classified as a delete by `buildChangeSet` in the first place (only `adopt`), so a `deletes` expectation against one fails loudly as "not proposed" — the safety property is structural, upstream of the scenario check.
+- **`unobserved: "refuse" | { allow: [names] }`** — how the scenario treats the change set's unobserved rows. `"refuse"` fails on any hole; `{ allow: [...] }` names the specific entities allowed to be unobserved (by entity name, not by [`UnobservedReason`](/chant/concepts/drift-detection/) — a scenario is written against one fixture, and "this resource has no data in it" is a per-resource fact, not a class of reason to trust everywhere).
+
+### The `update` count's real limit
+
+A scenario has exactly one fixture — not a before-and-after pair. `chant lifecycle plan`'s `update` action means *drift since the last recorded snapshot* (the live read now vs. the live read then), and a single-fixture scenario has no "then" to diff against. In practice this means `update` in a scenario's `expect` is only ever meaningfully `0`. That's not a placeholder gap to be filled in later — it's what a single-fixture model can express. `create`, `delete`, and ownership are fully expressive; drift since an *earlier* live read isn't, because there is no earlier live read here, only the one fixture standing in for "now."
+
+## `chant scenario check`
+
+```bash
+chant scenario check
+```
+
+Builds the project, then for every declared `Scenario`: resolves `given`'s fixture data per lexicon, builds a `ChangeSet` exactly the way `chant lifecycle plan` does — substituting the fixture for `observeLexicon`'s live call — and evaluates `expect` against it. Fully offline: no plugin's `describeResources` ever runs, no credentials are read.
+
+A lexicon the fixture has no data for is never silently read as "nothing declared, all absent" — every entity it declares lands in the change set as `unobserved`, the same [#1089 discipline](/chant/concepts/drift-detection/) the rest of the plan engine follows. A hole the fixture can't fill is a hole, not a guess.
+
+Output is per-scenario pass/fail, with a legible detail on every failing clause — what was expected, what the plan actually proposes, and the resource names for a `deletes` or `unobserved` failure:
+
+```
+extracting the WebApp composite is plan-neutral [compositeIsNeutral] — given fixtures/prod-baseline.json, env prod: FAIL
+  noop: expected noop (no create/update/delete) but the plan proposes 1 create, 0 update, 0 delete — newDatabase (AWS::RDS::DBInstance) [create]
+```
+
+`--json` emits the same verdicts as structured data. The command exits nonzero if any scenario fails — the shape a CI gate needs.
+
+## What this is not
+
+A scenario is not a state file. It asserts against the SAME three-input plan model every other lifecycle feature here reads from — declared source, a recorded snapshot, live observation — with the third substituted for a checked-in fixture. Delete chant tomorrow and the fixture is still a plain JSON file, still legible, still telling you what was recorded.
+
+It's also not a full declarative diff engine. `chant lifecycle plan`'s thin change set doesn't compare declared properties against live config either — that's [deep drift detection](/chant/concepts/drift-detection/)'s job, opt-in and separate. A scenario inherits the same shape and the same limit.
+
+## See also
+
+- [Drift Detection](/chant/concepts/drift-detection/) — the change-set model, the unobserved gate, and the thin-vs-deep diff distinction a scenario inherits
+- [`lifecycle plan`](/chant/cli/lifecycle/#lifecycle-plan-env) — the live command a scenario mirrors offline
+- [`scenario check`](/chant/cli/scenario/) — the CLI reference
+- [Effect Receipts](/chant/concepts/effect-receipts/) and [Core Type System](/chant/architecture/core-type-system/#scenariodeclaration) — the other non-resource Declarables `Scenario` is modeled on
