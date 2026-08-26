@@ -133,6 +133,27 @@ async function getJsonAt(
   return { status: res.status, body: await res.json() };
 }
 
+/**
+ * Like `getJsonAt`, but for search endpoints specifically: a 404 here means
+ * "this endpoint doesn't exist" (an unsupported/misconfigured search API — the
+ * real-world case for Forgejo, whose code-search availability is undocumented,
+ * #520), not "zero results" the way a missing *file* would be. Zero results are
+ * a 200 with an empty array/list, so treating 404 as an error (rather than
+ * `getJsonAt`'s "return null" leniency) lets a genuinely unsupported search API
+ * fall back to the walk instead of silently reporting no matches.
+ */
+async function getSearchJsonAt(url: string, headers: Record<string, string>, doFetch: typeof fetch, timeoutMs: number): Promise<unknown> {
+  let res: Response;
+  try {
+    res = await doFetch(url, { headers, redirect: "manual", signal: timeoutSignal(timeoutMs) });
+  } catch (err) {
+    throw new FetchError(`Request failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  if (res.status >= 300 && res.status < 400) throw new FetchError(`Refusing to follow redirect from ${url}`);
+  if (!res.ok) throw new FetchError(`${url} returned ${res.status}`);
+  return res.json();
+}
+
 function projectId(owner: string, repo: string): string {
   return encodeURIComponent(`${owner}/${repo}`);
 }
@@ -154,73 +175,263 @@ interface TreeEntry {
   size?: number;
 }
 
-/** List every blob path in the repo (recursive), with size where the host reports it. */
-async function listTree(host: HostConfig, owner: string, repo: string, ref: string, doFetch: typeof fetch, headers: Record<string, string>, ms: number): Promise<TreeEntry[]> {
-  if (host.kind === "gitlab") {
-    // GitLab search API requires authentication even for public projects. When a
-    // token is present, use content search — one query per lexicon finds only
-    // relevant files regardless of repo size, and catches non-canonical CI paths
-    // that path-based detection misses (#518, #520). Without a token, fall back
-    // to the non-recursive BFS which works for public repos.
-    if ("PRIVATE-TOKEN" in headers) {
-      const out: TreeEntry[] = [];
-      const seen = new Set<string>();
-      const addPath = (p: string) => { if (typeof p === "string" && !seen.has(p)) { seen.add(p); out.push({ path: p, type: "blob" }); } };
-      // Ordered most → least selective so the seen-set dedup reduces noise from
-      // broader terms (e.g. `apiVersion` won't re-add files already found by
-      // the more specific `apiVersion: v2`).
-      const SEARCH_TERMS = [
-        "AWSTemplateFormatVersion", // CloudFormation
-        "deploymentTemplate",        // Azure ARM ($schema substring)
-        "cnrm.cloud.google.com",     // GCP Config Connector
-        "apiVersion: v2",            // Helm Chart.yaml
-        "stages:",                   // GitLab CI — root file + non-canonical includes (#520)
-        "FROM ",                     // Dockerfiles (content-based; space avoids false matches)
-        "services:",                 // Docker Compose
-        "apiVersion",                // k8s manifests (broad; runs last)
-      ];
-      for (const term of SEARCH_TERMS) {
-        for (let page = 1; page <= 3; page++) {
-          const url = `${host.api}/projects/${projectId(owner, repo)}/search?scope=blobs&search=${encodeURIComponent(term)}&per_page=100&page=${page}&ref=${encodeURIComponent(ref)}`;
-          const { body } = await getJsonAt(url, headers, doFetch, ms);
-          if (!Array.isArray(body) || body.length === 0) break;
-          for (const e of body as Array<{ path: string }>) addPath(e.path);
-          if (body.length < 100) break;
-        }
-      }
-      return out;
+// ── Search-first discovery for large repos (#520) ───────────────────────────
+//
+// A full tree walk + extension filter over-fetches badly on a large monorepo
+// (thousands of `.yml`/`.json` candidates, almost all irrelevant) and still
+// misses IaC/CI content living at non-canonical paths. Above a size threshold,
+// switch from "walk everything `isCandidatePath` allows" to "search for each
+// content-detected lexicon's characteristic signature, download only hits":
+//
+//   - Known-path lexicons (github, forgejo, and gitlab's canonical file) never
+//     need a search query — their location is fixed, so a plain path/tree
+//     lookup already finds them for any repo size. GitHub/Forgejo Actions
+//     *must* live under `.github`/`.forgejo` workflows (the platform enforces
+//     it), so no search term is listed for them at all. GitLab's `include:`
+//     can pull in CI files from anywhere, so its canonical file is still
+//     backed by a `stages:` search term to catch those satellites (#518).
+//   - Content-detected lexicons (k8s, aws, azure, gcp, docker, helm) have no
+//     fixed path, so at scale the only cheap way to find them is a search for
+//     the grep-equivalent of their `detectTemplate` signature.
+//   - Search is additive, never load-bearing: any error, rate limit, or
+//     unsupported/unavailable API degrades to the walk rather than failing
+//     the audit.
+
+/** Repos above this many tree entries switch from the walk to search-first
+ * discovery. Cheap to evaluate — it's the size of a call already being made
+ * (GitHub/Forgejo's one-shot recursive tree; GitLab's first root-tree page,
+ * see below) — and keeps small repos on the walk, which needs no search API
+ * at all and so works even where search is unavailable (e.g. a Forgejo
+ * instance with no code indexer). */
+const LARGE_REPO_TREE_ENTRIES = 500;
+
+/** How many result pages to pull per search term. GitLab's basic (non-
+ * Elasticsearch) blob search returns at most ~20 results per query regardless
+ * of `per_page` and doesn't paginate past them; GitHub code search is rate-
+ * limited (~10 req/min unauthenticated) and caps at 1000 results/query. Either
+ * way, a short page (`< per_page`) already stops the loop early — this is just
+ * a hard ceiling on round trips per term. */
+const MAX_SEARCH_PAGES = 3;
+
+/**
+ * Content-detected lexicons: no canonical path, so search-first discovery
+ * needs one characteristic content term per lexicon, taken from that lexicon's
+ * own `detectTemplate` signature. One row per lexicon — docker gets two
+ * (Dockerfile and Compose share nothing in content) — so adding a new
+ * content-detected lexicon here is the only step needed to search for it.
+ * Ordered most → least selective; the caller de-duplicates by path, so a
+ * broader later term (`apiVersion`) adds nothing for files the more specific
+ * earlier term (`apiVersion: v2`) already found.
+ */
+const CONTENT_SEARCH_TERMS: Array<{ lexicon: AuditLexicon; term: string }> = [
+  { lexicon: "aws", term: "AWSTemplateFormatVersion" }, // CloudFormation
+  { lexicon: "azure", term: "deploymentTemplate" }, // ARM $schema substring
+  { lexicon: "gcp", term: "cnrm.cloud.google.com" }, // GCP Config Connector
+  { lexicon: "helm", term: "apiVersion: v2" }, // Chart.yaml
+  { lexicon: "docker", term: "FROM " }, // Dockerfiles (space avoids false hits)
+  { lexicon: "docker", term: "services:" }, // Docker Compose
+  { lexicon: "k8s", term: "apiVersion" }, // any k8s resource (broad; runs last)
+];
+
+/** GitLab-only: `include:` can pull a CI file in from anywhere, so the
+ * canonical-path lexicon still gets a search term (#518, #520). GitHub and
+ * Forgejo Actions have no such mechanism, so they need none. */
+const GITLAB_CI_TERM = "stages:";
+
+/** One page of GitLab's blob search (`scope=blobs`) for a single term. */
+async function gitlabSearchPage(host: HostConfig, owner: string, repo: string, ref: string, term: string, page: number, doFetch: typeof fetch, headers: Record<string, string>, ms: number): Promise<string[]> {
+  const url = `${host.api}/projects/${projectId(owner, repo)}/search?scope=blobs&search=${encodeURIComponent(term)}&per_page=100&page=${page}&ref=${encodeURIComponent(ref)}`;
+  const body = await getSearchJsonAt(url, headers, doFetch, ms);
+  if (!Array.isArray(body)) return [];
+  return (body as Array<{ path?: string }>).map((e) => e.path).filter((p): p is string => typeof p === "string");
+}
+
+/**
+ * GitLab content search across every term (CI + content-detected lexicons),
+ * de-duplicated by path. Throws on the first request error (a 401 with a bad
+ * or absent token, a rate limit, a transient failure) — the caller catches
+ * that and falls back to the BFS walk (#520).
+ */
+async function gitlabSearch(host: HostConfig, owner: string, repo: string, ref: string, doFetch: typeof fetch, headers: Record<string, string>, ms: number): Promise<TreeEntry[]> {
+  const out: TreeEntry[] = [];
+  const seen = new Set<string>();
+  const terms = [GITLAB_CI_TERM, ...CONTENT_SEARCH_TERMS.map((t) => t.term)];
+  for (const term of terms) {
+    for (let page = 1; page <= MAX_SEARCH_PAGES; page++) {
+      const hits = await gitlabSearchPage(host, owner, repo, ref, term, page, doFetch, headers, ms);
+      if (hits.length === 0) break;
+      for (const p of hits) if (!seen.has(p)) { seen.add(p); out.push({ path: p, type: "blob" }); }
+      if (hits.length < 100) break;
     }
-    // Unauthenticated fallback: non-recursive BFS. GitLab's recursive tree API
-    // lists ALL directories before any blobs for large repos (#518), so we walk
-    // directories breadth-first to ensure root blobs appear on the first request.
-    const out: TreeEntry[] = [];
-    const queue: string[] = [""]; // "" = repo root
-    const MAX_DIRS = 30;
-    const MAX_BLOBS = 200;
-    let dirs = 0;
-    while (queue.length > 0 && dirs < MAX_DIRS && out.length < MAX_BLOBS) {
-      const dir = queue.shift()!;
-      dirs++;
-      const pathParam = dir ? `&path=${encodeURIComponent(dir)}` : "";
-      for (let page = 1; page <= 5; page++) {
-        const url = `${host.api}/projects/${projectId(owner, repo)}/repository/tree?per_page=100&page=${page}&ref=${encodeURIComponent(ref)}${pathParam}`;
-        const { body } = await getJsonAt(url, headers, doFetch, ms);
-        if (!Array.isArray(body) || body.length === 0) break;
-        for (const e of body as Array<{ path: string; type: string }>) {
-          if (e.type === "blob") out.push({ path: e.path, type: "blob" });
-          else if (e.type === "tree") queue.push(e.path);
-        }
-        if (body.length < 100) break;
-      }
-    }
-    return out;
   }
-  // GitHub / Forgejo (Gitea) share the git/trees recursive API.
+  return out;
+}
+
+/**
+ * Non-recursive BFS over a bounded directory frontier. GitLab's recursive tree
+ * API lists ALL directories before any blobs for large repos (#518), so this
+ * walks directories breadth-first to ensure root blobs appear on the first
+ * request regardless of how many subdirectories follow. `seedRootPage1`, when
+ * given, is the root's page-1 entries already fetched by the size probe below
+ * — reused here so the small-repo path never double-fetches it.
+ */
+async function gitlabBfsWalk(host: HostConfig, owner: string, repo: string, ref: string, doFetch: typeof fetch, headers: Record<string, string>, ms: number, seedRootPage1?: Array<{ path: string; type: string }>): Promise<TreeEntry[]> {
+  const out: TreeEntry[] = [];
+  const queue: string[] = [""]; // "" = repo root
+  const MAX_DIRS = 30;
+  const MAX_BLOBS = 200;
+  let dirs = 0;
+  while (queue.length > 0 && dirs < MAX_DIRS && out.length < MAX_BLOBS) {
+    const dir = queue.shift()!;
+    dirs++;
+    const pathParam = dir ? `&path=${encodeURIComponent(dir)}` : "";
+    for (let page = 1; page <= 5; page++) {
+      let body: unknown;
+      if (dir === "" && page === 1 && seedRootPage1) {
+        body = seedRootPage1;
+      } else {
+        const url = `${host.api}/projects/${projectId(owner, repo)}/repository/tree?per_page=100&page=${page}&ref=${encodeURIComponent(ref)}${pathParam}`;
+        ({ body } = await getJsonAt(url, headers, doFetch, ms));
+      }
+      if (!Array.isArray(body) || body.length === 0) break;
+      for (const e of body as Array<{ path: string; type: string }>) {
+        if (e.type === "blob") out.push({ path: e.path, type: "blob" });
+        else if (e.type === "tree") queue.push(e.path);
+      }
+      if (body.length < 100) break;
+    }
+  }
+  return out;
+}
+
+/**
+ * GitLab tree discovery: a cheap size probe (the root's first tree page, which
+ * every path below needs anyway) decides walk vs. search. GitLab's own
+ * recursive-tree endpoint can't be used to size the repo up front — that's the
+ * exact pagination trap #518 fixed (directories dominate the page cap before
+ * any blob appears) — so "is the root itself large" (a full 100-entry page)
+ * stands in for "is the repo large".
+ */
+async function listTreeGitLab(host: HostConfig, owner: string, repo: string, ref: string, doFetch: typeof fetch, headers: Record<string, string>, ms: number): Promise<TreeEntry[]> {
+  const rootUrl = `${host.api}/projects/${projectId(owner, repo)}/repository/tree?per_page=100&page=1&ref=${encodeURIComponent(ref)}`;
+  const { body: rootBody } = await getJsonAt(rootUrl, headers, doFetch, ms);
+  const rootPage1 = Array.isArray(rootBody) ? (rootBody as Array<{ path: string; type: string }>) : [];
+  const isLarge = rootPage1.length >= 100;
+
+  if (isLarge && "PRIVATE-TOKEN" in headers) {
+    // GitLab's search API requires authentication even for public projects, so
+    // this branch only ever runs with a token. Any failure — no search access,
+    // a rate limit, a transient error — falls back to the walk (#520) rather
+    // than failing the audit.
+    try {
+      return await gitlabSearch(host, owner, repo, ref, doFetch, headers, ms);
+    } catch {
+      // fall through to the walk below
+    }
+  }
+  return gitlabBfsWalk(host, owner, repo, ref, doFetch, headers, ms, rootPage1);
+}
+
+/** One page of GitHub's code search (`GET /search/code`) for a single term. */
+async function githubSearchPage(host: HostConfig, owner: string, repo: string, term: string, page: number, doFetch: typeof fetch, headers: Record<string, string>, ms: number): Promise<string[]> {
+  const q = encodeURIComponent(`${term} repo:${owner}/${repo}`);
+  const url = `${host.api}/search/code?q=${q}&per_page=100&page=${page}`;
+  const body = await getSearchJsonAt(url, { ...headers, Accept: "application/vnd.github+json" }, doFetch, ms);
+  const items = (body as { items?: Array<{ path?: string }> } | null)?.items;
+  if (!Array.isArray(items)) return [];
+  return items.map((e) => e.path).filter((p): p is string => typeof p === "string");
+}
+
+/**
+ * GitHub code search across the content-detected lexicons. Rate-limited to
+ * ~10 req/min unauthenticated (#520) — a 403/422/429 throws (via `getSearchJsonAt`)
+ * and the caller falls back to the already-fetched full tree.
+ */
+async function githubCodeSearch(host: HostConfig, owner: string, repo: string, doFetch: typeof fetch, headers: Record<string, string>, ms: number): Promise<TreeEntry[]> {
+  const out: TreeEntry[] = [];
+  const seen = new Set<string>();
+  for (const { term } of CONTENT_SEARCH_TERMS) {
+    for (let page = 1; page <= MAX_SEARCH_PAGES; page++) {
+      const hits = await githubSearchPage(host, owner, repo, term, page, doFetch, headers, ms);
+      if (hits.length === 0) break;
+      for (const p of hits) if (!seen.has(p)) { seen.add(p); out.push({ path: p, type: "blob" }); }
+      if (hits.length < 100) break;
+    }
+  }
+  return out;
+}
+
+/**
+ * One page of a Forgejo/Gitea repo code search. The shape here mirrors Gitea's
+ * `{ok, data}` search envelope (also used by `GET /repos/search`), tolerating
+ * a bare array too — Forgejo's code-search REST surface (and whether an
+ * instance even runs a code indexer) isn't consistently documented across
+ * versions (#520), so this is best-effort: any unexpected shape/status throws
+ * and the caller falls back to the full tree, never breaking the audit.
+ */
+async function forgejoSearchPage(host: HostConfig, owner: string, repo: string, term: string, page: number, doFetch: typeof fetch, headers: Record<string, string>, ms: number): Promise<string[]> {
+  const url = `${host.api}/repos/${owner}/${repo}/search?q=${encodeURIComponent(term)}&page=${page}&limit=100`;
+  const body = await getSearchJsonAt(url, headers, doFetch, ms);
+  const data = Array.isArray(body) ? body : (body as { data?: unknown } | null)?.data;
+  if (!Array.isArray(data)) return [];
+  return (data as Array<{ path?: string }>).map((e) => e.path).filter((p): p is string => typeof p === "string");
+}
+
+/** Forgejo/Gitea code search across the content-detected lexicons. See `forgejoSearchPage`. */
+async function forgejoCodeSearch(host: HostConfig, owner: string, repo: string, doFetch: typeof fetch, headers: Record<string, string>, ms: number): Promise<TreeEntry[]> {
+  const out: TreeEntry[] = [];
+  const seen = new Set<string>();
+  for (const { term } of CONTENT_SEARCH_TERMS) {
+    for (let page = 1; page <= MAX_SEARCH_PAGES; page++) {
+      const hits = await forgejoSearchPage(host, owner, repo, term, page, doFetch, headers, ms);
+      if (hits.length === 0) break;
+      for (const p of hits) if (!seen.has(p)) { seen.add(p); out.push({ path: p, type: "blob" }); }
+      if (hits.length < 100) break;
+    }
+  }
+  return out;
+}
+
+/**
+ * GitHub/Forgejo tree discovery: their `git/trees?recursive=1` API returns the
+ * whole tree in one call (no GitLab-style ordering trap), so the entry count
+ * from that single call is a free large-repo signal. Below the threshold,
+ * behavior is unchanged — the full blob list, later filtered by
+ * `isCandidatePath`. Above it, known-path lexicons (CI) are kept straight from
+ * the tree we already have — free, no search needed — and the content-detected
+ * lexicons are found by search instead of downloaded wholesale.
+ */
+async function listTreeGitHubLike(host: HostConfig, owner: string, repo: string, ref: string, doFetch: typeof fetch, headers: Record<string, string>, ms: number): Promise<TreeEntry[]> {
   const url = `${host.api}/repos/${owner}/${repo}/git/trees/${encodeURIComponent(ref)}?recursive=1`;
   const { body } = await getJsonAt(url, headers, doFetch, ms);
-  const tree = (body as { tree?: TreeEntry[] } | null)?.tree;
+  const treeBody = body as { tree?: TreeEntry[]; truncated?: boolean } | null;
+  const tree = treeBody?.tree;
   if (!Array.isArray(tree)) return [];
-  return tree.filter((e) => e.type === "blob").map((e) => ({ path: e.path, type: "blob", size: e.size }));
+  const blobs = tree.filter((e) => e.type === "blob").map((e) => ({ path: e.path, type: "blob", size: e.size }));
+
+  const isLarge = blobs.length > LARGE_REPO_TREE_ENTRIES || treeBody?.truncated === true;
+  if (!isLarge) return blobs;
+
+  const { ciLexiconForPath } = await import("./discover");
+  const known = blobs.filter((e) => ciLexiconForPath(e.path));
+  try {
+    const hits = host.kind === "github"
+      ? await githubCodeSearch(host, owner, repo, doFetch, headers, ms)
+      : await forgejoCodeSearch(host, owner, repo, doFetch, headers, ms);
+    const knownPaths = new Set(known.map((e) => e.path));
+    return [...known, ...hits.filter((h) => !knownPaths.has(h.path))];
+  } catch {
+    // Search unavailable/errored/rate-limited — degrade to the full tree we
+    // already have, filtered by isCandidatePath downstream, same as a small
+    // repo (#520: search is additive, never load-bearing).
+    return blobs;
+  }
+}
+
+/** List blob paths worth considering for download (all lexicons), choosing walk vs. search-first per host (#520). */
+async function listTree(host: HostConfig, owner: string, repo: string, ref: string, doFetch: typeof fetch, headers: Record<string, string>, ms: number): Promise<TreeEntry[]> {
+  if (host.kind === "gitlab") return listTreeGitLab(host, owner, repo, ref, doFetch, headers, ms);
+  return listTreeGitHubLike(host, owner, repo, ref, doFetch, headers, ms);
 }
 
 /**

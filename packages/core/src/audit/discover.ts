@@ -231,8 +231,12 @@ export interface DetectPlugin {
   detectTemplate?: (data: unknown) => boolean;
 }
 
-/** Which CI lexicon a path belongs to (by location — content can't disambiguate github vs forgejo). */
-function ciLexiconForPath(path: string): AuditLexicon | undefined {
+/**
+ * Which CI lexicon a path belongs to (by location — content can't disambiguate
+ * github vs forgejo). Exported for the fetch module: known-path lexicons stay a
+ * direct path match even in search-first (large-repo) discovery (#520).
+ */
+export function ciLexiconForPath(path: string): AuditLexicon | undefined {
   if (/^\.github\/workflows\/[^/]+\.ya?ml$/.test(path)) return "github";
   if (/^\.forgejo\/workflows\/[^/]+\.ya?ml$/.test(path)) return "forgejo";
   if (path === ".gitlab-ci.yml") return "gitlab";
