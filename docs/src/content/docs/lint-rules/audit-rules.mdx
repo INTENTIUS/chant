@@ -1316,6 +1316,36 @@ Give each duplicated Export/name a distinct literal value.
 
 Remove or narrow the Deny, or move the Allow off this role — the explicit Deny always wins.
 
+### WAW064
+
+**Transit Gateway route table declares a Blackhole route** — report-only · guidance
+
+Confirm the traffic drop is intentional; remove the route if it isn't.
+
+### WAW065
+
+**Transit Gateway route table wiring is incomplete** — report-only · guidance
+
+Add the missing TransitGatewayRouteTablePropagation, or wire the orphaned attachment into a route table.
+
+### WAW066
+
+**Private subnet's route table has no working default route** — merge-worthy · guidance
+
+Add a 0.0.0.0/0 route to a NAT gateway/Transit Gateway that exists in the template.
+
+### WAW067
+
+**Single-AZ NAT gateway serves multi-AZ private subnets** — report-only · guidance
+
+Add one NAT gateway per Availability Zone and point each AZ's subnets at its own.
+
+### WAW068
+
+**VPN Gateway or Transit Gateway has only one attached VPN Connection** — report-only · guidance
+
+Attach a second VPNConnection (ideally to a separate Customer Gateway) for redundancy.
+
 ## Azure ARM (AZR)
 
 Run against ARM deployment templates (JSON).
