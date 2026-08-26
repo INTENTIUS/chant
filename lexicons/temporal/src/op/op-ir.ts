@@ -27,6 +27,11 @@
  *    TMP012 does it — only activities this lexicon has a contract for are
  *    covered; a step calling an activity from another lexicon (or one with
  *    no registered contract yet) simply has no entry here.
+ *    JSON-Schema-incompatible contracts (schemas containing transforms or
+ *    custom types that zod cannot serialize) are skipped gracefully: the
+ *    activity appears in the Op's step graph but has no entry in
+ *    activityContracts, consistent with the decentralized and partial
+ *    coverage philosophy.
  *
  * Resolving defaults does not change the generated `workflow.ts`: parsing
  * `op.json` back into an `OpConfig`-shaped object and re-running the
@@ -213,10 +218,19 @@ export function buildOpIR(config: OpConfig): OpIR {
     if (!contracts.has(step.fn)) {
       const contract = OWN_CONTRACTS.get(step.fn);
       if (contract) {
-        contracts.set(step.fn, {
-          args: z.toJSONSchema(contract.args) as Record<string, unknown>,
-          ...(contract.returns ? { returns: z.toJSONSchema(contract.returns) as Record<string, unknown> } : {}),
-        });
+        try {
+          const args = z.toJSONSchema(contract.args) as Record<string, unknown>;
+          const returns = contract.returns ? (z.toJSONSchema(contract.returns) as Record<string, unknown>) : undefined;
+          contracts.set(step.fn, {
+            args,
+            ...(returns ? { returns } : {}),
+          });
+        } catch {
+          // zod 4's toJSONSchema throws on schemas containing transforms or custom types.
+          // Gracefully skip this contract — the activity remains in the step graph but
+          // has no entry in activityContracts. Consistent with the decentralized and
+          // partial coverage philosophy.
+        }
       }
     }
   }
@@ -287,6 +301,12 @@ function opPhaseFromIR(phase: OpIRPhase): PhaseDefinition {
 
 /** Reconstruct an `OpConfig` from its op.json IR. */
 export function opConfigFromIR(ir: OpIR): OpConfig {
+  if (ir.formatVersion !== OP_IR_FORMAT_VERSION) {
+    throw new Error(
+      `op.json IR format mismatch: expected "${OP_IR_FORMAT_VERSION}", got "${ir.formatVersion}". ` +
+      `This op.json may be stale or from a newer chant version.`,
+    );
+  }
   return {
     name: ir.name,
     overview: ir.overview,

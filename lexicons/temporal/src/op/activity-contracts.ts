@@ -59,3 +59,13 @@ export const chantTeardownContract = activityContract(
   "chantTeardown",
   z.strictObject({ path: z.string() }),
 );
+
+/**
+ * Test-only contract for op-ir.test.ts: a schema with a transform,
+ * which z.toJSONSchema cannot handle. Used to verify buildOpIR
+ * gracefully skips JSON-Schema-incompatible contracts.
+ */
+export const testTransformContract = activityContract(
+  "testTransformActivity",
+  z.strictObject({ value: z.string().transform((s) => s.length) }),
+);

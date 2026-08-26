@@ -13,7 +13,7 @@ import { phase, gate, effect, shell, kubectlApply, httpCheck } from "@intentius/
 import type { OpConfig } from "@intentius/chant/op";
 import { EffectReceipt, receiptExpectation } from "@intentius/chant/effect-receipt";
 import { serializeOps } from "./serializer";
-import { buildOpIR, serializeOpIR, opConfigFromIR, OP_IR_FORMAT_VERSION, type OpIR } from "./op-ir";
+import { buildOpIR, serializeOpIR, opConfigFromIR, OP_IR_FORMAT_VERSION, type OpIR, type OpIRActivityStep } from "./op-ir";
 
 function makeOp(config: OpConfig): [string, Declarable] {
   return [
@@ -159,5 +159,61 @@ describe("op.json IR (#1289)", () => {
     expect(() => JSON.parse(text)).not.toThrow();
     expect(text.endsWith("\n")).toBe(true);
     expect(text).toContain('  "formatVersion"');
+  });
+
+  it("handles contracts with transforms gracefully (skips JSON-Schema-incompatible activities)", () => {
+    // Build an Op that uses both a compatible activity (shellCmd) and one with a
+    // transform schema (testTransformActivity). The compatible one should appear
+    // in activityContracts; the transform-based one should be skipped gracefully
+    // but still present in the step graph.
+    const config: OpConfig = {
+      name: "test-with-transform",
+      overview: "Test Op using a schema with transform and a normal schema",
+      phases: [
+        phase("Run", [
+          shell("echo compatible"),
+          { kind: "activity", fn: "testTransformActivity", args: { value: "test" } },
+        ]),
+      ],
+    };
+
+    const ir = buildOpIR(config);
+
+    // shellCmd should be in activityContracts (it has a normal contract).
+    expect(ir.activityContracts.shellCmd).toBeDefined();
+    expect(ir.activityContracts.shellCmd.args).toMatchObject({ type: "object" });
+
+    // testTransformActivity should NOT be in activityContracts because its schema
+    // contains a transform, which z.toJSONSchema cannot serialize. But the step
+    // itself should still be in the phases (the activity is not removed from the IR).
+    expect(ir.activityContracts.testTransformActivity).toBeUndefined();
+
+    // Verify the step itself is still present in the IR.
+    const runPhase = ir.phases.find((p) => p.name === "Run");
+    expect(runPhase).toBeDefined();
+    const transformStep = runPhase?.steps.find(
+      (s): s is OpIRActivityStep => s.kind === "activity" && (s as OpIRActivityStep).fn === "testTransformActivity",
+    );
+    expect(transformStep).toBeDefined();
+    expect(transformStep?.args).toEqual({ value: "test" });
+  });
+
+  it("opConfigFromIR throws on formatVersion mismatch", () => {
+    const staleIR: OpIR = {
+      formatVersion: "0.9",
+      name: "stale-op",
+      overview: "A stale op.json from an older chant version",
+      taskQueue: "stale-op",
+      depends: [],
+      searchAttributes: {},
+      phases: [{ name: "Run", parallel: false, steps: [] }],
+      onFailure: [],
+      activityProfiles: {},
+      activityContracts: {},
+    };
+
+    expect(() => opConfigFromIR(staleIR)).toThrow(
+      /op\.json IR format mismatch: expected "1\.0", got "0\.9"/,
+    );
   });
 });
