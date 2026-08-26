@@ -12,6 +12,7 @@ import type { Declarable } from "@intentius/chant/declarable";
 import { isResourceDeclarable } from "@intentius/chant/declarable";
 import type { OpConfig, PhaseDefinition, StepDefinition, ActivityStep, GateStep, EffectStep } from "@intentius/chant/op";
 import { kebabToCamel, signalVarName, generateWorkerBootstrap } from "../codegen-shared";
+import { serializeOpIR } from "./op-ir";
 
 // ── Name helpers ──────────────────────────────────────────────────────────────
 
@@ -433,6 +434,10 @@ export function serializeOps(ops: Map<string, Declarable>): Record<string, strin
     files[`${dir}/workflow.ts`] = generateWorkflow(config);
     files[`${dir}/activities.ts`] = generateActivities();
     files[`${dir}/worker.ts`] = generateWorker(config);
+    // op.json IR (chant #1289): a portable, engine-neutral restatement of the
+    // step graph, so a foreign Temporal SDK (or anything else) can read what
+    // this Op does without importing chant or parsing generated TypeScript.
+    files[`${dir}/op.json`] = serializeOpIR(config);
   }
 
   return files;

@@ -199,13 +199,52 @@ chant graph
 
 ## Codegen output
 
-`chant build` emits three files per Op under `dist/ops/<name>/`:
+`chant build` emits four files per Op under `dist/ops/<name>/`:
 
 | File | Contents |
 |---|---|
 | `workflow.ts` | Temporal workflow function — orchestrates phases, gates, onFailure |
 | `activities.ts` | Re-exports all pre-built activities from the lexicon package |
 | `worker.ts` | Worker bootstrap — reads profile from `chant.config.js`, connects to Temporal |
+| `op.json` | Portable, engine-neutral IR of the Op — see below |
+
+### op.json IR
+
+An `OpConfig` is already inert data — no functions, no closures, no runtime references. `op.json` restates it as deterministic JSON: the same phase/step graph `workflow.ts` is generated from, plus enough resolved detail that a third party can read (or re-implement) the Op without importing chant or parsing generated TypeScript.
+
+```json
+{
+  "formatVersion": "1.0",
+  "name": "alb-deploy",
+  "overview": "...",
+  "taskQueue": "alb-deploy",
+  "depends": [],
+  "searchAttributes": {},
+  "phases": [
+    {
+      "name": "Deploy",
+      "parallel": false,
+      "steps": [
+        { "kind": "activity", "fn": "shellCmd", "args": { "cmd": "..." }, "profile": "fastIdempotent" }
+      ]
+    }
+  ],
+  "onFailure": [],
+  "activityProfiles": {
+    "fastIdempotent": { "startToCloseTimeout": "5m", "retry": { "maximumAttempts": 3, "initialInterval": "5s", "backoffCoefficient": 2 } }
+  },
+  "activityContracts": {
+    "shellCmd": { "args": { "type": "object", "properties": { "cmd": { "type": "string" } }, "required": ["cmd"] } }
+  }
+}
+```
+
+- **`formatVersion`** — versions this JSON shape. Bumped only on a breaking change to the shape itself.
+- **Steps** are restated with their defaults resolved (`profile` defaults to `fastIdempotent`, a gate's `timeout` defaults to `48h`) so nothing depends on knowing chant's own defaults.
+- **`activityProfiles`** carries the actual retry/timeout policy (from `TEMPORAL_ACTIVITY_PROFILES`) for every profile referenced by a step — not just its name.
+- **`activityContracts`** embeds JSON Schema (derived from the activity contracts introduced in [#1288](https://github.com/INTENTIUS/chant/issues/1288)) for every referenced activity that has one registered in this lexicon. Coverage is partial by design — an activity without a registered contract simply has no entry.
+
+`op.json` parsed back into an `OpConfig`-shaped object and re-serialized produces byte-identical `workflow.ts` output to the original — the round trip a foreign Temporal SDK worker (or any other consumer) can rely on.
 
 ## Pre-built Op composites
 
