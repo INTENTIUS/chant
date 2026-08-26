@@ -7,10 +7,49 @@ import { explainTool, handleExplain } from "./tools/explain";
 import { scaffoldTool, createScaffoldHandler } from "./tools/scaffold";
 import { searchTool, createSearchHandler } from "./tools/search";
 import type { LexiconPlugin } from "../../lexicon";
-import type { McpRequest, McpResponse, ToolDefinition, ToolHandler, ResourceDefinition } from "./types";
+import type { McpRequest, McpResponse, McpRequestMeta, ToolDefinition, ToolHandler, ResourceDefinition } from "./types";
 import { createSnapshotTool, createDiffTool } from "./lifecycle-tools";
 import { createOpListTool, createOpRunTool, createOpStatusTool, createOpSignalTool, createOpReportTool } from "./op-tools";
 import { buildResourcesList, handleResourcesRead } from "./resource-handlers";
+
+/**
+ * Protocol versions this server understands, newest first. `initialize` and
+ * `server/discover` both negotiate against this list rather than assuming
+ * the client's revision (#1194).
+ */
+const SUPPORTED_PROTOCOL_VERSIONS = ["2026-07-28", "2024-11-05"] as const;
+const LATEST_PROTOCOL_VERSION = SUPPORTED_PROTOCOL_VERSIONS[0];
+
+/**
+ * Pick the protocol version to answer with: the client's requested version
+ * when we support it, otherwise our latest. A 2024-11-05 client that asks
+ * for `2024-11-05` gets it back unchanged; a 2026-07-28 client — or one
+ * that never says — gets the latest revision (#1194).
+ */
+export function negotiateProtocolVersion(requested: string | undefined): string {
+  if (requested && (SUPPORTED_PROTOCOL_VERSIONS as readonly string[]).includes(requested)) {
+    return requested;
+  }
+  return LATEST_PROTOCOL_VERSION;
+}
+
+/**
+ * Parse the `_meta` envelope the 2026-07-28 revision puts on every request
+ * (client identity, requested protocol version), falling back to the
+ * top-level `protocolVersion`/`clientInfo` fields a prior-revision client
+ * sends on `initialize`. Read-side only — the server holds no handshake
+ * state to update (#1194).
+ */
+export function parseMeta(params: Record<string, unknown>): { protocolVersion?: string; clientInfo?: { name: string; version?: string } } {
+  const meta = (params._meta ?? {}) as McpRequestMeta;
+  const protocolVersion =
+    (typeof meta.protocolVersion === "string" ? meta.protocolVersion : undefined) ??
+    (typeof params.protocolVersion === "string" ? params.protocolVersion : undefined);
+  const clientInfo =
+    meta["io.modelcontextprotocol/clientInfo"] ??
+    (params.clientInfo as { name: string; version?: string } | undefined);
+  return { protocolVersion, clientInfo };
+}
 
 /**
  * The name a lexicon's MCP tool is registered under: `<lexicon>:<verb>`,
@@ -135,9 +174,19 @@ export class McpServer {
   }
 
   /**
-   * Handle incoming MCP request
+   * Handle incoming MCP request.
+   *
+   * A message with no `id` is a notification — `notifications/initialized`
+   * being the one every client sends — and gets no response in any
+   * protocol revision (#1194). Returns `null` for those; callers (see
+   * {@link start}) simply skip writing anything back.
    */
-  async handleRequest(request: McpRequest): Promise<McpResponse> {
+  async handleRequest(request: McpRequest & { id: string | number }): Promise<McpResponse>;
+  async handleRequest(request: McpRequest): Promise<McpResponse | null>;
+  async handleRequest(request: McpRequest): Promise<McpResponse | null> {
+    if (request.id === undefined) {
+      return null;
+    }
     try {
       const result = await this.dispatch(request.method, request.params ?? {});
       return {
@@ -158,15 +207,34 @@ export class McpServer {
   }
 
   /**
+   * The `initialize` result — also the basis of `server/discover` below.
+   */
+  private buildInitializeResult(params: Record<string, unknown>): Record<string, unknown> {
+    const { protocolVersion } = parseMeta(params);
+    return {
+      protocolVersion: negotiateProtocolVersion(protocolVersion),
+      capabilities: { tools: {}, resources: {} },
+      serverInfo: { name: "chant", version: "0.1.0" },
+    };
+  }
+
+  /**
    * Dispatch request to appropriate handler
    */
   private async dispatch(method: string, params: Record<string, unknown>): Promise<unknown> {
     switch (method) {
       case "initialize":
+        // Answered for prior-revision clients too — negotiated, not hard-coded (#1194).
+        return this.buildInitializeResult(params);
+
+      case "server/discover":
+        // On-demand capability discovery (#1194): the initialize result
+        // merged with the tools/resources listings, so a 2026-07-28 client
+        // never has to call `initialize` at all.
         return {
-          protocolVersion: "2024-11-05",
-          capabilities: { tools: {}, resources: {} },
-          serverInfo: { name: "chant", version: "0.1.0" },
+          ...this.buildInitializeResult(params),
+          tools: Array.from(this.tools.values()),
+          resources: buildResourcesList(this.pluginResources).resources,
         };
 
       case "tools/list":
@@ -203,6 +271,7 @@ export class McpServer {
 
     try {
       const result = await handler(toolParams);
+      const isStructured = typeof result === "object" && result !== null;
       return {
         content: [
           {
@@ -210,6 +279,11 @@ export class McpServer {
             text: typeof result === "string" ? result : JSON.stringify(result, null, 2),
           },
         ],
+        // Structured output (2025-06-18+): handlers already return plain
+        // objects that get stringified above, so agents that want the
+        // parsed shape directly get it here too, alongside the text block
+        // kept for backward compatibility (#1194).
+        ...(isStructured ? { structuredContent: result } : {}),
       };
     } catch (error) {
       return {
@@ -238,7 +312,10 @@ export class McpServer {
       try {
         const request = JSON.parse(line) as McpRequest;
         const response = await this.handleRequest(request);
-        console.log(JSON.stringify(response));
+        // Notifications (#1194) get no response at all — not even an empty one.
+        if (response !== null) {
+          console.log(JSON.stringify(response));
+        }
       } catch (error) {
         const errorResponse: McpResponse = {
           jsonrpc: "2.0",
