@@ -1887,3 +1887,87 @@ Use a known runtime and a canonical provider/model_id.
 **Two declarations of one kind resolve to the same fountain name** — merge-worthy · guidance
 
 fountain reconciles by name — rename one, or the second silently overwrites the first.
+
+## Secrets & credentials (SEC)
+
+Lexicon-independent — scans the raw text of every scanned file for likely credentials, regardless of which audit lexicons are installed. Matched values are always redacted; see [suppressing false positives](/chant/cli/audit/#suppressing-a-secrets-finding).
+
+### SEC001
+
+**AWS access key ID found** — merge-worthy · guidance
+
+Remove the key from source, rotate it in IAM, and load it from a secret store or environment variable instead.
+
+Authority: [GitHub — About secret scanning](https://docs.github.com/en/code-security/secret-scanning/introduction/about-secret-scanning)
+
+### SEC002
+
+**AWS secret access key found** — merge-worthy · guidance
+
+Remove the key from source, rotate it in IAM, and load it from a secret store or environment variable instead.
+
+Authority: [GitHub — About secret scanning](https://docs.github.com/en/code-security/secret-scanning/introduction/about-secret-scanning)
+
+### SEC003
+
+**GitHub token found** — merge-worthy · guidance
+
+Remove the token from source and revoke it at github.com/settings/tokens; use a GitHub Actions secret instead.
+
+Authority: [GitHub — About secret scanning](https://docs.github.com/en/code-security/secret-scanning/introduction/about-secret-scanning)
+
+### SEC004
+
+**Slack token found** — merge-worthy · guidance
+
+Remove the token from source and revoke it in the Slack app's OAuth settings.
+
+Authority: [GitHub — About secret scanning](https://docs.github.com/en/code-security/secret-scanning/introduction/about-secret-scanning)
+
+### SEC005
+
+**Google API key found** — merge-worthy · guidance
+
+Remove the key from source and regenerate it in the Google Cloud Console credentials page.
+
+Authority: [GitHub — About secret scanning](https://docs.github.com/en/code-security/secret-scanning/introduction/about-secret-scanning)
+
+### SEC006
+
+**Stripe live secret key found** — merge-worthy · guidance
+
+Remove the key from source and roll it in the Stripe dashboard immediately — this is a live-mode key.
+
+Authority: [GitHub — About secret scanning](https://docs.github.com/en/code-security/secret-scanning/introduction/about-secret-scanning)
+
+### SEC007
+
+**Private key block found** — merge-worthy · guidance
+
+Remove the private key from source, rotate the keypair, and load the key from a secret store instead.
+
+Authority: [GitHub — About secret scanning](https://docs.github.com/en/code-security/secret-scanning/introduction/about-secret-scanning)
+
+### SEC008
+
+**Bearer/authorization token found** — merge-worthy · guidance
+
+Remove the token from source; if it's long-lived, revoke and reissue it via the issuing service.
+
+Authority: [GitHub — About secret scanning](https://docs.github.com/en/code-security/secret-scanning/introduction/about-secret-scanning)
+
+### SEC009
+
+**Credentials embedded in a connection string** — merge-worthy · guidance
+
+Move the username/password out of the URI into a secret store, and rotate the credential.
+
+Authority: [GitHub — About secret scanning](https://docs.github.com/en/code-security/secret-scanning/introduction/about-secret-scanning)
+
+### SEC010
+
+**High-entropy string — possible secret** — merge-worthy · guidance
+
+Confirm whether this is a live credential; if so, remove it from source and rotate it. If it's a false positive, suppress with a `chant-audit-ignore` comment or an allowlist entry.
+
+Authority: [GitHub — About secret scanning](https://docs.github.com/en/code-security/secret-scanning/introduction/about-secret-scanning)

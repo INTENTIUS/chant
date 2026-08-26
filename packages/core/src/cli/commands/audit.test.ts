@@ -8,9 +8,10 @@ import { MissingLexiconError, type AuditInput, type AuditLexicon } from "../../a
 async function discoverLexicon(repo: string, lexicon: AuditLexicon): Promise<AuditInput[]> {
   return discoverByDetection(repo, await loadAuditPlugins()).filter((i) => i.lexicon === lexicon);
 }
-import { readFileSync, existsSync, rmSync } from "fs";
+import { readFileSync, existsSync, rmSync, mkdirSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
+import { fingerprintSecret } from "../../audit/secrets";
 
 const REPO = fileURLToPath(new URL("./__fixtures__/audit-repo", import.meta.url));
 
@@ -398,5 +399,78 @@ describe("auditCommand", () => {
     const sarif = JSON.parse(result.output);
     expect(sarif.version).toBe("2.1.0");
     expect(sarif.runs[0].results.length).toBeGreaterThan(0);
+  });
+});
+
+describe("secrets detection (#443)", () => {
+  // A deliberately fake, non-functional AWS-access-key-ID-shaped value, built
+  // via concatenation (never a contiguous literal in this file's raw bytes)
+  // so pushing this file doesn't trip GitHub's own secret-scanning push
+  // protection on what is just a test fixture.
+  const FAKE_AWS_KEY = "AKIA" + "ABCDEFGHIJKLMNOP";
+  const FAKE_STRIPE_LIVE = "sk_live_" + "4eC39HqLyjWDarjtT1zdp7dc";
+
+  function tmpRepo(): string {
+    const dir = join(tmpdir(), `chant-audit-secrets-${process.pid}-${Math.random().toString(36).slice(2)}`);
+    mkdirSync(dir, { recursive: true });
+    return dir;
+  }
+
+  test("flags a hardcoded credential even when no lexicon is installed", async () => {
+    const dir = tmpRepo();
+    writeFileSync(join(dir, ".env"), `AWS_ACCESS_KEY_ID=${FAKE_AWS_KEY}\n`);
+    const result = await auditCommand({ path: dir, plugins: [] });
+    expect(result.status).toBe("no-lexicons"); // no lexicon installed — still not a clean miss
+    expect(result.findings.map((f) => f.checkId)).toContain("SEC001");
+    expect(JSON.stringify(result.findings)).not.toContain(FAKE_AWS_KEY); // redaction
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("a secret rides alongside lexicon findings, tiered and cataloged like any other finding", async () => {
+    const dir = tmpRepo();
+    mkdirSync(join(dir, ".github", "workflows"), { recursive: true });
+    writeFileSync(
+      join(dir, ".github", "workflows", "ci.yml"),
+      "name: CI\non:\n  push:\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo hi\n",
+    );
+    writeFileSync(join(dir, ".env"), `STRIPE_KEY=${FAKE_STRIPE_LIVE}\n`);
+    const all = await loadAuditPlugins();
+    const result = await auditCommand({ path: dir, plugins: all.filter((p) => p.name === "github"), format: "json" });
+    expect(result.status).toBe("ok");
+    const json = JSON.parse(result.output);
+    const sec = json.findings.find((f: { checkId: string }) => f.checkId === "SEC006");
+    expect(sec).toBeDefined();
+    expect(sec.tier).toBe("merge-worthy");
+    expect(sec.category).toBe("security");
+    expect(sec.file).toBe(".env");
+    expect(JSON.stringify(json)).not.toContain(FAKE_STRIPE_LIVE); // redaction, incl. the JSON report
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("an inline `chant-audit-ignore` marker suppresses the finding", async () => {
+    const dir = tmpRepo();
+    writeFileSync(join(dir, ".env"), `AWS_ACCESS_KEY_ID=${FAKE_AWS_KEY} # chant-audit-ignore: SEC001\n`);
+    const result = await auditCommand({ path: dir, plugins: [] });
+    expect(result.findings.map((f) => f.checkId)).not.toContain("SEC001");
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test(".chant-audit.json's allowlist suppresses a finding by fingerprint, without storing the secret", async () => {
+    const dir = tmpRepo();
+    writeFileSync(join(dir, ".env"), `AWS_ACCESS_KEY_ID=${FAKE_AWS_KEY}\n`);
+    const fingerprint = fingerprintSecret(FAKE_AWS_KEY);
+    writeFileSync(join(dir, ".chant-audit.json"), JSON.stringify({ secrets: { allow: [{ ruleId: "SEC001", fingerprint }] } }));
+    const result = await auditCommand({ path: dir, plugins: [] });
+    expect(result.findings.map((f) => f.checkId)).not.toContain("SEC001");
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("an explicit secretsScan option overrides (and wins over) the local config", async () => {
+    const dir = tmpRepo();
+    writeFileSync(join(dir, "config.yaml"), "token: kQ7mZ9pL2xR8vT4nW1sD6uJ3\n");
+    writeFileSync(join(dir, ".chant-audit.json"), JSON.stringify({ secrets: { entropyThreshold: 1 } }));
+    const result = await auditCommand({ path: dir, plugins: [], secretsScan: { entropyThreshold: 6.5 } });
+    expect(result.findings.map((f) => f.checkId)).not.toContain("SEC010");
+    rmSync(dir, { recursive: true, force: true });
   });
 });

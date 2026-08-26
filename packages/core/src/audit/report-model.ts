@@ -92,6 +92,10 @@ export interface SerializedFinding {
   message: string;
   file: string;
   entity?: string;
+  /** 1-based line within `file`, when the finding can pin one (e.g. secrets detection, #443). */
+  line?: number;
+  /** Redaction-safe fingerprint of a flagged value, when applicable (see `secrets.ts`). */
+  fingerprint?: string;
   lexicon: string;
   tier: Tier;
   fixKind: FixKind;
@@ -295,6 +299,8 @@ export function buildReportJson(
       message: f.message,
       file: f.file,
       entity: f.entity,
+      line: f.line,
+      fingerprint: f.fingerprint,
       lexicon: f.lexicon,
       tier: f.meta.tier,
       fixKind: f.meta.fixKind,

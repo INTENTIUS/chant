@@ -87,7 +87,10 @@ function renderNeedsReview(clusters: GuidanceCluster[], n: number): string {
       const rules = c.rules
         .map(({ meta, findings }) => {
           const locs = findings
-            .map((f) => `<li><code>${esc(f.file)}</code>${f.entity ? ` (<code>${esc(f.entity)}</code>)` : ""} — ${esc(f.message)}</li>`)
+            .map((f) => {
+              const loc = f.line ? `${f.file}:${f.line}` : f.file;
+              return `<li><code>${esc(loc)}</code>${f.entity ? ` (<code>${esc(f.entity)}</code>)` : ""} — ${esc(f.message)}</li>`;
+            })
             .join("");
           return `<div class="rule"><div><span class="sev ${findings[0].severity}"></span><strong>${ruleLink(meta.id)}</strong> — ${esc(meta.title)}. <span class="muted">${esc(meta.remediation)}</span>${authorityLinks(meta)}</div><ul>${locs}</ul></div>`;
         })
