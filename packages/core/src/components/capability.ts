@@ -44,8 +44,23 @@ export interface Capability<In = unknown, Out = unknown> {
   readonly kind: string;
   /** Perform the operation. */
   run(ctx: DeployContext, input: In): Promise<Out>;
-  /** Optional paired compensation, invoked in reverse order on saga rollback. */
-  rollback?(ctx: DeployContext, input: In): Promise<void>;
+  /**
+   * Optional paired compensation, invoked in reverse order on saga rollback.
+   * `output`, when supplied, is the exact value this step's own `run()` call
+   * returned (#1944, epic #1564 phase 4) — a serializable identity channel a
+   * capability can use to recover state `rollback` needs when it cannot rely
+   * on in-process object identity between its `run`/`rollback` calls. The
+   * local interpret driver (../driver.ts) always threads it through; the
+   * durable Temporal path (lexicons/temporal/src/component-op/*.ts) threads
+   * it across the Activity boundary as plain JSON, which is exactly the case
+   * this exists for — see ./verbs/run-agent.ts's "Rollback identity" doc
+   * comment for the motivating gap (a fresh sprite's checkpoint id, recorded
+   * only in an in-process `WeakMap` keyed by `run()`'s `input` object, never
+   * survives to a `rollback()` call that runs as a separate Activity with its
+   * own freshly-resolved `input`). Optional and additive: a capability that
+   * never needs it (most of them) simply ignores the third parameter.
+   */
+  rollback?(ctx: DeployContext, input: In, output?: Out): Promise<void>;
   /**
    * How this verb relates to rollback, for the COMP003 composition check.
    * Usually derivable and left unset: a capability with a `rollback` method is

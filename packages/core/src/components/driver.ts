@@ -313,11 +313,19 @@ export function resolveStepInput(
 
 // ── Step + phase execution ───────────────────────────────────────────────
 
-/** A step executed and its resolved input, kept so saga rollback can call the same capability's `rollback` with the same input. */
+/**
+ * A step executed and its resolved input, kept so saga rollback can call the
+ * same capability's `rollback` with the same input. `output` is the step's
+ * own `run()` result — threaded through to `rollback` (#1944) as the
+ * serializable identity channel `Capability.rollback`'s doc comment
+ * describes, alongside object identity (which already works here, since this
+ * driver runs entirely in-process — see this module's own doc comment).
+ */
 interface ExecutedStep {
   step: DriverStep;
   resolvedInput: Record<string, unknown>;
   phaseName: string;
+  output: unknown;
 }
 
 class StepFailure extends Error {
@@ -435,7 +443,7 @@ async function runPhase(
     }
     return {
       records: [record],
-      executed: record.status === "ok" ? [{ step: entry, resolvedInput, phaseName: phaseDef.phase }] : [],
+      executed: record.status === "ok" ? [{ step: entry, resolvedInput, phaseName: phaseDef.phase, output }] : [],
       failed: record.status === "fail",
     };
   };
@@ -505,7 +513,7 @@ async function rollbackExecuted(
   registry: CapabilityRegistry,
 ): Promise<DriverStepRecord[]> {
   const records: DriverStepRecord[] = [];
-  for (const { step, resolvedInput, phaseName } of [...executed].reverse()) {
+  for (const { step, resolvedInput, phaseName, output } of [...executed].reverse()) {
     const start = Date.now();
     try {
       const capability = registry.resolve(step.kind);
@@ -521,7 +529,7 @@ async function rollbackExecuted(
         });
         continue;
       }
-      await capability.rollback(ctx, resolvedInput as never);
+      await capability.rollback(ctx, resolvedInput as never, output as never);
       records.push({
         component: ctx.component,
         phase: phaseName,

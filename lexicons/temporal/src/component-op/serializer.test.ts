@@ -170,4 +170,52 @@ describe("serializeComponent()", () => {
     expect(accIdx).toBeGreaterThan(wf.indexOf("  try {"));
     expect(accIdx).toBeLessThan(wf.indexOf("  } catch (__compErr) {"));
   });
+
+  // ── #1944: durable identity channel + loud rollback-failure surfacing ─────
+
+  describe("saga rollback — durable identity channel + loud failure surfacing (#1944)", () => {
+    const component: DriverComponent = {
+      name: "svc",
+      dependsOn: [],
+      deploy: [{ phase: "Apply", steps: [{ kind: "cfn-deploy" }] }],
+    };
+
+    it("imports `log` and `rootCause` from @temporalio/workflow", () => {
+      const wf = serializeComponent(component)["components/svc/workflow.ts"];
+      expect(wf).toMatch(/import \{[^}]*\blog\b[^}]*\} from '@temporalio\/workflow'/);
+      expect(wf).toMatch(/import \{[^}]*\brootCause\b[^}]*\} from '@temporalio\/workflow'/);
+    });
+
+    it("carries each executed step's own run() output alongside it, for saga rollback to pass through", () => {
+      const wf = serializeComponent(component)["components/svc/workflow.ts"];
+      expect(wf).toContain(
+        "const executed: Array<{ step: Record<string, unknown>; phaseName: string; output: unknown }> = [];",
+      );
+      expect(wf).toMatch(/executed\.push\(\{ step: __step\d+, phaseName: "Apply", output: __out\d+ \}\);/);
+    });
+
+    it("passes the executed step's output through to rollbackCapabilityStep as `output`", () => {
+      const wf = serializeComponent(component)["components/svc/workflow.ts"];
+      expect(wf).toMatch(/rollbackCapabilityStep\(\{[^}]*output: __e\.output[^}]*\}\)/);
+    });
+
+    it("a rollback failure is logged via log.error, not swallowed by a bare catch", () => {
+      const wf = serializeComponent(component)["components/svc/workflow.ts"];
+      expect(wf).toContain("} catch (__rollbackErr) {");
+      expect(wf).toContain("log.error(");
+      expect(wf).not.toMatch(/rollbackCapabilityStep\([^;]*\);\s*\n\s*\} catch \{ \/\* best-effort unwind/);
+    });
+
+    it("records rollback failures into a RollbackFailed search attribute, without masking the original error", () => {
+      const wf = serializeComponent(component)["components/svc/workflow.ts"];
+      expect(wf).toContain("const __rollbackFailures: Array<{ kind: string; phase: string; error: string }> = [];");
+      expect(wf).toContain("__rollbackFailures.push({ kind: __e.step.kind as string, phase: __e.phaseName, error: __rollbackErrMsg });");
+      expect(wf).toMatch(/upsertSearchAttributes\(\{ RollbackFailed: __rollbackFailures\.map/);
+      // The original failure is still re-thrown after the (best-effort) unwind — never masked.
+      const rollbackFailedIdx = wf.indexOf("RollbackFailed");
+      const rethrowIdx = wf.indexOf("throw __compErr;");
+      expect(rollbackFailedIdx).toBeGreaterThan(0);
+      expect(rethrowIdx).toBeGreaterThan(rollbackFailedIdx);
+    });
+  });
 });
