@@ -231,19 +231,18 @@ export function unsupportedExpressionMessage(node: ts.Node): string {
 export function checkObjectMember(
   prop: ts.ObjectLiteralElementLike,
   intrinsics?: readonly IntrinsicDef[],
-  allowCompositeStepAccess?: boolean,
 ): SubsetViolation | undefined {
   if (ts.isPropertyAssignment(prop)) {
     if (!isLiteralPropertyName(prop.name)) {
       return violation(prop.name, computedPropertyNameMessage(prop.name));
     }
-    return findSubsetViolation(prop.initializer, intrinsics, allowCompositeStepAccess);
+    return findSubsetViolation(prop.initializer, intrinsics);
   }
   if (ts.isShorthandPropertyAssignment(prop)) {
     return undefined;
   }
   if (ts.isSpreadAssignment(prop)) {
-    return findSubsetViolation(prop.expression, intrinsics, allowCompositeStepAccess);
+    return findSubsetViolation(prop.expression, intrinsics);
   }
   return violation(prop, UNSUPPORTED_OBJECT_MEMBER_MESSAGE);
 }
@@ -252,10 +251,9 @@ export function checkObjectMember(
 function checkArrayElement(
   el: ts.Expression,
   intrinsics?: readonly IntrinsicDef[],
-  allowCompositeStepAccess?: boolean,
 ): SubsetViolation | undefined {
-  if (ts.isSpreadElement(el)) return findSubsetViolation(el.expression, intrinsics, allowCompositeStepAccess);
-  return findSubsetViolation(el, intrinsics, allowCompositeStepAccess);
+  if (ts.isSpreadElement(el)) return findSubsetViolation(el.expression, intrinsics);
+  return findSubsetViolation(el, intrinsics);
 }
 
 /**
@@ -268,23 +266,22 @@ function checkArrayElement(
  * `fold()`-evaluation-order) unsupported node, or `undefined` when `node`'s
  * whole shape is foldable.
  *
- * `allowCompositeStepAccess` (chant #1544) is an EVL-only, MORE-permissive
- * divergence in the same direction as points 1/2/2b/2c in the module doc
- * above: a call immediately narrowed to a single member access — the
- * `Checkout({...}).step` shape every lexicon's single-action `Composite()`
- * wrappers document as their embedded-inline idiom (see composites.mdx —
- * "normally embedded inline as `checkout.step` inside a `Job`'s `steps`
- * array") — is treated as shape-valid. `fold()` itself never passes this
- * (it has no such parameter to pass; only EVL001 opts in), so `fold()`'s own
- * behavior is unchanged: it still falls the file back to the run path for
- * this shape, exactly as composites.mdx describes as the expected, correct
- * outcome — not an error. What changes is that EVL001 stops treating that
- * ordinary, documented fallback as a lint error.
+ * The `<call>(...).step` composite-consumer idiom (`Checkout({...}).step`,
+ * every lexicon's single-action `Composite()` wrapper embedded inline in a
+ * `Job`'s `steps` array — see composites.mdx) used to be an EVL-only,
+ * MORE-permissive divergence here (chant #1544's `allowCompositeStepAccess`
+ * opt-in parameter, since removed): `fold()` had no way to invoke an
+ * arbitrary composite factory, so it fell the file back to run for this
+ * shape (documented, correct behavior, never an error) while this shared
+ * predicate had to be told to stop treating that fallback as a lint error.
+ * chant #1174 closed the divergence — `fold()` now folds exactly this shape
+ * (narrowed to the literal member name `"step"`, the one idiom actually in
+ * use) — so this classifier accepts it unconditionally, the same way it
+ * already accepts a nested `new Type(...)` unconditionally since #1169.
  */
 export function findSubsetViolation(
   node: ts.Node,
   intrinsics?: readonly IntrinsicDef[],
-  allowCompositeStepAccess?: boolean,
 ): SubsetViolation | undefined {
   if (
     ts.isParenthesizedExpression(node) ||
@@ -292,7 +289,7 @@ export function findSubsetViolation(
     ts.isSatisfiesExpression(node) ||
     ts.isNonNullExpression(node)
   ) {
-    return findSubsetViolation(node.expression, intrinsics, allowCompositeStepAccess);
+    return findSubsetViolation(node.expression, intrinsics);
   }
 
   if (
@@ -327,7 +324,7 @@ export function findSubsetViolation(
 
   if (ts.isTemplateExpression(node)) {
     for (const span of node.templateSpans) {
-      const v = findSubsetViolation(span.expression, intrinsics, allowCompositeStepAccess);
+      const v = findSubsetViolation(span.expression, intrinsics);
       if (v) return v;
     }
     return undefined;
@@ -335,7 +332,7 @@ export function findSubsetViolation(
 
   if (ts.isObjectLiteralExpression(node)) {
     for (const prop of node.properties) {
-      const v = checkObjectMember(prop, intrinsics, allowCompositeStepAccess);
+      const v = checkObjectMember(prop, intrinsics);
       if (v) return v;
     }
     return undefined;
@@ -343,35 +340,35 @@ export function findSubsetViolation(
 
   if (ts.isArrayLiteralExpression(node)) {
     for (const el of node.elements) {
-      const v = checkArrayElement(el, intrinsics, allowCompositeStepAccess);
+      const v = checkArrayElement(el, intrinsics);
       if (v) return v;
     }
     return undefined;
   }
 
   if (ts.isPropertyAccessExpression(node)) {
-    // chant #1544 — see this function's doc comment. `<call>(...).step`
-    // (any callee, any argument shape) is the composite-consumer idiom, EVL
-    // opt-in only: `fold()` never sets `allowCompositeStepAccess`, so it is
-    // unaffected and still falls back to the run path for this shape.
-    if (allowCompositeStepAccess && node.name.text === "step" && ts.isCallExpression(node.expression)) {
+    // chant #1174 — see this function's doc comment. `<call>(...).step`
+    // (any callee, any argument shape) is the composite-consumer idiom, and
+    // `fold()` now folds it too (narrowed to the literal member `"step"` —
+    // see fold.ts's PropertyAccessExpression branch).
+    if (node.name.text === "step" && ts.isCallExpression(node.expression)) {
       return undefined;
     }
-    return findSubsetViolation(node.expression, intrinsics, allowCompositeStepAccess);
+    return findSubsetViolation(node.expression, intrinsics);
   }
 
   if (ts.isElementAccessExpression(node)) {
     if (!isLiteralElementKey(node.argumentExpression)) {
       return violation(node.argumentExpression, dynamicElementAccessMessage(node.argumentExpression), "EVL003");
     }
-    return findSubsetViolation(node.expression, intrinsics, allowCompositeStepAccess);
+    return findSubsetViolation(node.expression, intrinsics);
   }
 
   if (ts.isPrefixUnaryExpression(node)) {
     if (!SUPPORTED_UNARY_OPERATORS.has(node.operator)) {
       return violation(node, UNSUPPORTED_UNARY_MESSAGE);
     }
-    return findSubsetViolation(node.operand, intrinsics, allowCompositeStepAccess);
+    return findSubsetViolation(node.operand, intrinsics);
   }
 
   if (ts.isBinaryExpression(node)) {
@@ -382,17 +379,17 @@ export function findSubsetViolation(
     // Flow-insensitive — see module doc: fold() short-circuits &&/||/?? and
     // only evaluates the taken side; EVL requires both sides shape-valid.
     return (
-      findSubsetViolation(node.left, intrinsics, allowCompositeStepAccess) ??
-      findSubsetViolation(node.right, intrinsics, allowCompositeStepAccess)
+      findSubsetViolation(node.left, intrinsics) ??
+      findSubsetViolation(node.right, intrinsics)
     );
   }
 
   if (ts.isConditionalExpression(node)) {
     // Flow-insensitive — see module doc: fold() only folds the taken branch.
     return (
-      findSubsetViolation(node.condition, intrinsics, allowCompositeStepAccess) ??
-      findSubsetViolation(node.whenTrue, intrinsics, allowCompositeStepAccess) ??
-      findSubsetViolation(node.whenFalse, intrinsics, allowCompositeStepAccess)
+      findSubsetViolation(node.condition, intrinsics) ??
+      findSubsetViolation(node.whenTrue, intrinsics) ??
+      findSubsetViolation(node.whenFalse, intrinsics)
     );
   }
 
@@ -403,14 +400,14 @@ export function findSubsetViolation(
     // argument is classified on its own terms and nothing is rejected merely
     // for being in the "wrong" position.
     for (const arg of node.arguments ?? []) {
-      const v = findSubsetViolation(arg, intrinsics, allowCompositeStepAccess);
+      const v = findSubsetViolation(arg, intrinsics);
       if (v) return v;
     }
     return undefined;
   }
 
   if (ts.isSpreadElement(node)) {
-    return findSubsetViolation(node.expression, intrinsics, allowCompositeStepAccess);
+    return findSubsetViolation(node.expression, intrinsics);
   }
 
   if (ts.isCallExpression(node)) {
@@ -426,7 +423,7 @@ export function findSubsetViolation(
     // ever be MORE permissive than `fold()`, never stricter.
     if (ts.isIdentifier(node.expression) && isFoldableHelperName(node.expression.text)) {
       for (const arg of node.arguments) {
-        const v = findSubsetViolation(arg, intrinsics, allowCompositeStepAccess);
+        const v = findSubsetViolation(arg, intrinsics);
         if (v) return v;
       }
       return undefined;
@@ -446,7 +443,7 @@ export function findSubsetViolation(
       intrinsics.some((i) => i.name === (node.expression as ts.Identifier).text && intrinsicCallFolds(i))
     ) {
       for (const arg of node.arguments) {
-        const v = findSubsetViolation(arg, intrinsics, allowCompositeStepAccess);
+        const v = findSubsetViolation(arg, intrinsics);
         if (v) return v;
       }
       return undefined;

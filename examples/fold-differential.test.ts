@@ -168,6 +168,39 @@ const report: ReportRow[] = [];
  * `CI` (gitlab) and value-position `AWS` (aws) failure in the corpus, but
  * those all live in `docs-snippets` entries carrying several unrelated
  * blockers apiece, so they move no entry on their own.
+ *
+ * chant #1174 grew the corpus's folding count from 82 to 89 (the corpus
+ * itself had also grown, 101 -> 108, from unrelated additions between #1169
+ * and this PR — this list only tracks what #1174 itself moved). Two
+ * independent mechanisms shared one cause string, "function call as a value
+ * is not foldable", and both needed closing:
+ *
+ *   - **A composite factory call narrowed to `.step`** — `Checkout({...}).step`,
+ *     `SetupNode({...}).step` — every lexicon's single-action `Composite()`
+ *     wrapper, embedded inline in a `Job`'s `steps` array exactly as
+ *     composites.mdx documents. `fold()` gained a narrow, EVL-parity-matched
+ *     case for exactly this shape (chant #1544's `allowCompositeStepAccess`
+ *     already carved the identical shape out of EVL001 as a documented,
+ *     correct fallback — this is the fold-side counterpart that actually
+ *     reduces it). The four added entries: `lexicons/github/examples/getting-started`,
+ *     `deploy-pages`, `release-please`, and `lexicons/forgejo/examples/ci-workflow`.
+ *     Four more github entries (`docker-build`, `matrix-test`, `node-ci`,
+ *     `reusable-workflow`) have a Checkout call too but do NOT flip — each
+ *     stops on a DIFFERENT, unrelated blocker one step behind it: a `.toString()`
+ *     method call on `github.actor`/`matrix(...)`/`inputs(...)` (an
+ *     Expression-returning helper, not a registered intrinsic), or an array
+ *     `.join(...)` inside a step's `run:` string. Method-call folding is a
+ *     separate, unscoped gap this PR does not attempt.
+ *   - **Helm's call-form intrinsics opted into `foldsAsCall`** — `include`,
+ *     `printf`, and `toYaml` (plus `required`/`helmDefault`/`quote`/`tpl`/
+ *     `lookup`/`filesGet`/`filesGlob`/`filesAsConfig`/`filesAsSecrets`,
+ *     audited the same way but not exercised by the corpus) were registered
+ *     with `isTag: false` and no `foldsAsCall` — helm has no tagged
+ *     templates at all, so before this PR literally zero helm intrinsic
+ *     calls ever folded. The three added entries — `lexicons/helm/examples/cron-job`,
+ *     `multi-container`, `stateful-service` — each used `include`/`printf`/
+ *     `toYaml` together, so all three needed opting in before any of them
+ *     could flip.
  */
 const EXPECTED_FOLD: readonly string[] = [
   "examples/adopt-alb-services",
@@ -223,6 +256,10 @@ const EXPECTED_FOLD: readonly string[] = [
   "lexicons/gcp/examples/gke-cluster",
   "lexicons/gcp/examples/pubsub",
   "lexicons/gcp/examples/vpc-network",
+  "lexicons/forgejo/examples/ci-workflow",
+  "lexicons/github/examples/deploy-pages",
+  "lexicons/github/examples/getting-started",
+  "lexicons/github/examples/release-please",
   "lexicons/gitlab/examples/docker-build",
   "lexicons/gitlab/examples/getting-started",
   "lexicons/gitlab/examples/multi-stage-deploy",
@@ -232,8 +269,11 @@ const EXPECTED_FOLD: readonly string[] = [
   "lexicons/helm/examples/composites-basic",
   "lexicons/helm/examples/composites-infrastructure",
   "lexicons/helm/examples/composites-production",
+  "lexicons/helm/examples/cron-job",
   "lexicons/helm/examples/helm-render-external-secrets",
   "lexicons/helm/examples/microservice-chart",
+  "lexicons/helm/examples/multi-container",
+  "lexicons/helm/examples/stateful-service",
   "lexicons/helm/examples/web-app-with-ingress",
   "lexicons/k8s/examples/basic-deployment",
   "lexicons/k8s/examples/batch-workers",

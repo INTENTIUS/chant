@@ -67,6 +67,14 @@ import { isFoldableHelperName } from "./foldable-helpers";
  * folds its body against the defining module's scope with the folded
  * arguments bound. Still nothing is imported or run.
  *
+ * A bare composite factory call (`Checkout({...})` on its own) is still out
+ * of scope (epic Phase 5, #1023 covers only interpreting a factory's OWN
+ * body, not consuming its result as a value elsewhere). chant #1174 adds one
+ * narrow exception at the PROPERTY-ACCESS level rather than here: the
+ * `<Identifier>(...).step` idiom — see {@link FoldedCompositeStepCall} on the
+ * property-access branch below. A call with no `.step` narrowing, or any
+ * other member, still throws from this branch exactly as before.
+ *
  * Everything else — a package's function, a method call, an array `.map`, a
  * registered name shadowed by a local binding — still throws.
  *
@@ -105,7 +113,8 @@ export type FoldedValue =
   | FoldedIntrinsic
   | FoldedHelperCall
   | SymbolicValue
-  | FoldedResource;
+  | FoldedResource
+  | FoldedCompositeStepCall;
 
 /**
  * Symbolic reference produced when a property/element access resolves to an
@@ -223,6 +232,40 @@ export interface FoldedResource {
    * never re-passed (which would double-count it).
    */
   args?: FoldedValue[];
+}
+
+/**
+ * The result of folding the `<Identifier>(...).step` composite-consumer
+ * idiom (chant #1174) — `Checkout({...}).step`, `SetupNode({...}).step`,
+ * every lexicon's single-action `Composite()` wrapper embedded inline in a
+ * `Job`'s `steps` array, exactly as composites.mdx documents it. This is the
+ * SAME shape chant #1544 already carved out of EVL001 as a documented,
+ * correct fallback rather than a lint error
+ * ({@link "./subset"}'s `allowCompositeStepAccess`) — `fold()` never set
+ * that flag, so before this it fell back to run every time, as designed.
+ * This is the fold-side counterpart that actually reduces it instead.
+ *
+ * Symbolic, exactly like {@link FoldedIntrinsic}/{@link FoldedHelperCall}:
+ * `fold()` executes nothing here. It records which composite factory the
+ * source named, its folded arguments (in source order), and that the result
+ * was immediately narrowed to `.step`. ../discovery/fold-import.ts's bridge
+ * resolves the callee through the folding file's own imports — a
+ * project-file registered `Composite` is interpreted (chant #1023's existing
+ * machinery), anything else (every lexicon-package composite, which is what
+ * `Checkout`/`SetupNode` are) is imported and invoked for real, exactly as a
+ * top-level `export const x = Checkout({...})` already does via
+ * `resolveCallExpression` — and then reads `.step` off the REAL result.
+ *
+ * Deliberately narrower than "any call, any member access": the member name
+ * is fixed to `"step"`, matching the one idiom ../fold/subset.ts's EVL
+ * carve-out already permits. `fold()` may never accept a shape EVL doesn't
+ * (see that module's doc, point 2c, for the direction it is not allowed to
+ * be wrong in) — widening past `.step` here without widening the shared
+ * predicate in lockstep would open exactly that gap.
+ */
+export interface FoldedCompositeStepCall {
+  __compositeStep: string;
+  args: FoldedValue[];
 }
 
 /**
@@ -648,6 +691,32 @@ function resolvesToResource(consts: Map<string, ts.Expression>, ident: ts.Identi
   return init !== undefined && ts.isNewExpression(init);
 }
 
+/**
+ * True when `node` is a call through a bare identifier that isn't ALREADY
+ * one of `fold()`'s other three call shapes — a registered authoring helper,
+ * a registered call-form intrinsic, or a project-local {@link FoldableFunction}
+ * — i.e. exactly the callee the `CallExpression` branch below would
+ * otherwise throw {@link callExpressionMessage} for. Used only by the
+ * `.step` narrowing in the property-access branch (chant #1174,
+ * {@link FoldedCompositeStepCall}): checked from the OUTSIDE, at the
+ * property-access node, so `Checkout({...})` alone (no `.step`) still falls
+ * through to the ordinary `CallExpression` throw, unchanged.
+ */
+function isUnclaimedBareCall(
+  node: ts.Expression,
+  consts: Map<string, ts.Expression>,
+  intrinsics: readonly IntrinsicDef[],
+  externals?: ReadonlyMap<string, unknown>,
+): node is ts.CallExpression {
+  if (!ts.isCallExpression(node) || !ts.isIdentifier(node.expression)) return false;
+  const name = node.expression.text;
+  if (consts.has(name)) return false;
+  if (isFoldableHelperName(name)) return false;
+  if (intrinsics.some((i) => i.name === name && intrinsicCallFolds(i))) return false;
+  if (isFoldableFunction(externals?.get(name))) return false;
+  return true;
+}
+
 /** True when a folded value is a {@link FoldedResource} envelope (a `new Type(...)` that nothing constructed yet). */
 function isFoldedResource(value: FoldedValue): value is FoldedResource {
   return typeof value === "object" && value !== null && !Array.isArray(value) && "__resource" in value;
@@ -947,6 +1016,21 @@ export function fold(
   if (ts.isPropertyAccessExpression(node)) {
     if (ts.isIdentifier(node.expression) && resolvesToResource(consts, node.expression)) {
       return { __attrRef: { entity: node.expression.text, attribute: node.name.text } };
+    }
+    // chant #1174 — `<Identifier>(...).step`, the composite-consumer idiom
+    // (`Checkout({...}).step`) — see FoldedCompositeStepCall's doc. Checked
+    // here, at the property-access node, rather than inside the
+    // CallExpression branch: a bare `Checkout({...})` with no `.step` still
+    // has no case there and throws exactly as before.
+    if (node.name.text === "step" && isUnclaimedBareCall(node.expression, consts, intrinsics, externals)) {
+      const call = node.expression;
+      const calleeName = (call.expression as ts.Identifier).text;
+      const inside = insideFunctionBody(node, `composite call \`${calleeName}(...).step\``);
+      if (inside) throw inside;
+      return {
+        __compositeStep: calleeName,
+        args: call.arguments.map((arg) => fold(arg, consts, intrinsics, externals)),
+      };
     }
     const obj = fold(node.expression, consts, intrinsics, externals);
     if (obj === null || obj === undefined) return undefined;

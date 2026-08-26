@@ -258,28 +258,40 @@ describe("documented divergences — NOT unified by design (see subset.ts module
     expect(evl001NonLiteralExpressionRule.check(context)).toHaveLength(0);
   });
 
-  test("composite step access: fold still rejects a call as a value; EVL001 accepts .step access (chant #1544, opt-in only)", () => {
+  test("composite step access: NO LONGER a divergence (chant #1174) — both fold and EVL001 accept it", () => {
     // `Checkout({...}).step` — the single-action Composite() wrapper idiom
     // every lexicon's own docs/examples embed inline inside a Job's
-    // `steps:` array. fold() has no way to invoke an arbitrary composite
-    // factory, so it still rejects this shape and falls the file back to
-    // the run path (documented, correct behavior — never an error). EVL001
-    // now opts INTO treating it as shape-valid via `allowCompositeStepAccess`
-    // — a caller of `findSubsetViolation` that does not pass that flag
-    // (fold(), or this very call below) is completely unaffected.
+    // `steps:` array. This was a documented, EVL-only-permissive divergence
+    // from chant #1544 until #1174: `fold()` had no way to invoke an
+    // arbitrary composite factory, so it fell the file back to run
+    // (correct, not an error) while EVL001 already opted into treating the
+    // shape as valid via a since-removed `allowCompositeStepAccess` flag.
+    //
+    // fold() now folds this to a `{__compositeStep, args}` envelope
+    // (../fold/fold.ts) that ../discovery/fold-import.ts's bridge resolves
+    // through the folding file's own imports — interpreted when the callee
+    // is a project-file registered Composite (chant #1023), invoked for
+    // real otherwise (every lexicon-package composite, which is what
+    // `Checkout` is) — and reads `.step` off the REAL result. Kept as a
+    // test rather than deleted: the assertion that the divergence stays
+    // closed.
     const source = `const bad = new Thing({ x: Checkout({}).step });`;
     const sourceFile = ts.createSourceFile("t.ts", source, ts.ScriptTarget.Latest, true);
     const consts = collectConsts(sourceFile);
     const badInit = consts.get("bad") as ts.NewExpression;
 
-    expect(() => foldResource(badInit, consts, [])).toThrow(FoldError);
+    expect(foldResource(badInit, consts, [])).toEqual({
+      __resource: "Thing",
+      props: { x: { __compositeStep: "Checkout", args: [{}] } },
+    });
 
-    // findSubsetViolation with no third argument (fold()'s own answer, and
-    // every pre-#1544 caller) is unchanged — still a violation.
-    const bareCallExpr = (badInit.arguments![0] as ts.ObjectLiteralExpression).properties[0];
-    expect(findSubsetViolation(bareCallExpr)).toBeDefined();
+    // findSubsetViolation (fold()'s own shared predicate, no opt-in needed
+    // anymore) agrees the shape is admissible.
+    const stepAccessExpr = (
+      (badInit.arguments![0] as ts.ObjectLiteralExpression).properties[0] as ts.PropertyAssignment
+    ).initializer;
+    expect(findSubsetViolation(stepAccessExpr)).toBeUndefined();
 
-    // EVL001 itself opts in and stops flagging it.
     const context: LintContext = { sourceFile, entities: [], filePath: "t.ts", lexicon: undefined };
     expect(evl001NonLiteralExpressionRule.check(context)).toHaveLength(0);
   });

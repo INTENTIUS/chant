@@ -62,25 +62,63 @@ export const helmPlugin: LexiconPlugin = {
   completionProvider: helmCompletions,
   hoverProvider: helmHover,
 
+  // chant #1174 — `foldsAsCall: true` opts an intrinsic's PLAIN-CALL form
+  // into `chant build --fold` (chant #1044's mechanism, previously unused by
+  // this lexicon: every helm intrinsic is a plain call — helm has no tagged
+  // templates at all — so before this PR NONE of them folded, and a single
+  // `include(...)`/`printf(...)` anywhere in a chart's resources forced the
+  // whole file back to the run path).
+  //
+  // Audited one at a time against `IntrinsicDef.foldsAsCall`'s criterion
+  // (../../../packages/core/src/lexicon.ts): "calling the intrinsic is a
+  // pure function of its arguments that builds a deterministic data
+  // envelope". Every function below (`include`/`required`/`helmDefault`/
+  // `toYaml`/`quote`/`printf`/`tpl`/`lookup`/`filesGet`/`filesGlob`/
+  // `filesAsConfig`/`filesAsSecrets`, ./intrinsics.ts) does exactly that: it
+  // builds a `HelmTpl` (or, for `lookup`, a string) by interpolating its
+  // arguments into a Go template expression string — no I/O, no mutation, no
+  // dependency on anything but the arguments. `lookup`'s own side effect
+  // (a live cluster read) happens when HELM renders the resulting template
+  // at deploy time, not when this JS function runs at `chant build` time, so
+  // it is just as pure here as the rest.
+  //
+  // Left OUT, each for a specific reason rather than an oversight:
+  //   - `values`/`Release`/`ChartRef`/`Capabilities`/`Template` are proxy
+  //     OBJECTS, never called (`values(...)` isn't valid source) — nothing
+  //     to opt in.
+  //   - `withOrder`/`argoWave` return a PLAIN record meant to be spread
+  //     (`{...withOrder(1)}`), not a `HelmTpl`. `fold()`'s object-spread
+  //     handling (`Object.assign(obj, src)`, ../fold/fold.ts) runs
+  //     SYNCHRONOUSLY on the immediately-folded value, before the async
+  //     revival that would turn a folded call into its real result — opting
+  //     these in would spread the folded `{__intrinsic, args}` envelope's
+  //     own keys into the object instead of the real record. A real
+  //     soundness hazard, not a "not yet audited."
+  //   - `If`/`ElseIf`/`Range`/`With` take an arbitrary `body`/`elseBody`
+  //     that is often an arrow function (`Range(list, (item) => ({...}))`)
+  //     or a nested Declarable — `fold()` already rejects a function used as
+  //     a value on its own terms, so opting these in buys nothing measured
+  //     on this corpus and is left for a future PR to size against real
+  //     usage rather than widened on speculation.
   intrinsics(): IntrinsicDef[] {
     return [
       { name: "values", description: "Proxy accessor for {{ .Values.x }} references", isTag: false },
       { name: "Release", description: "Built-in Release object (Name, Namespace, etc.)", isTag: false },
       { name: "ChartRef", description: "Built-in Chart object (Name, Version, AppVersion)", isTag: false },
-      { name: "include", description: 'Include a named template: {{ include "name" . }}', isTag: false },
-      { name: "required", description: 'Require a value: {{ required "msg" .Values.x }}', isTag: false },
-      { name: "helmDefault", description: 'Default value: {{ default "def" .Values.x }}', isTag: false },
-      { name: "toYaml", description: "Convert to YAML: {{ toYaml .Values.x | nindent N }}", isTag: false },
-      { name: "quote", description: "Quote a value: {{ .Values.x | quote }}", isTag: false },
-      { name: "printf", description: 'Format string: {{ printf "%s" .Values.x }}', isTag: false },
-      { name: "tpl", description: "Evaluate template: {{ tpl .Values.x . }}", isTag: false },
-      { name: "lookup", description: 'Lookup resource: {{ lookup "v1" "Secret" "ns" "name" }}', isTag: false },
+      { name: "include", description: 'Include a named template: {{ include "name" . }}', isTag: false, foldsAsCall: true },
+      { name: "required", description: 'Require a value: {{ required "msg" .Values.x }}', isTag: false, foldsAsCall: true },
+      { name: "helmDefault", description: 'Default value: {{ default "def" .Values.x }}', isTag: false, foldsAsCall: true },
+      { name: "toYaml", description: "Convert to YAML: {{ toYaml .Values.x | nindent N }}", isTag: false, foldsAsCall: true },
+      { name: "quote", description: "Quote a value: {{ .Values.x | quote }}", isTag: false, foldsAsCall: true },
+      { name: "printf", description: 'Format string: {{ printf "%s" .Values.x }}', isTag: false, foldsAsCall: true },
+      { name: "tpl", description: "Evaluate template: {{ tpl .Values.x . }}", isTag: false, foldsAsCall: true },
+      { name: "lookup", description: 'Lookup resource: {{ lookup "v1" "Secret" "ns" "name" }}', isTag: false, foldsAsCall: true },
       { name: "Capabilities", description: "Built-in Capabilities object (KubeVersion, APIVersions, HelmVersion)", isTag: false },
       { name: "Template", description: "Built-in Template object (Name, BasePath)", isTag: false },
-      { name: "filesGet", description: '.Files.Get: {{ .Files.Get "path" }}', isTag: false },
-      { name: "filesGlob", description: '.Files.Glob: {{ .Files.Glob "pattern" }}', isTag: false },
-      { name: "filesAsConfig", description: ".Files.Glob.AsConfig for ConfigMap data", isTag: false },
-      { name: "filesAsSecrets", description: ".Files.Glob.AsSecrets for Secret data", isTag: false },
+      { name: "filesGet", description: '.Files.Get: {{ .Files.Get "path" }}', isTag: false, foldsAsCall: true },
+      { name: "filesGlob", description: '.Files.Glob: {{ .Files.Glob "pattern" }}', isTag: false, foldsAsCall: true },
+      { name: "filesAsConfig", description: ".Files.Glob.AsConfig for ConfigMap data", isTag: false, foldsAsCall: true },
+      { name: "filesAsSecrets", description: ".Files.Glob.AsSecrets for Secret data", isTag: false, foldsAsCall: true },
       { name: "ElseIf", description: "Else-if chaining: {{- else if .Values.x }}...{{- end }}", isTag: false },
       { name: "If", description: "Conditional: {{- if .Values.x }}...{{- end }}", isTag: false },
       { name: "Range", description: "Range loop: {{- range .Values.x }}...{{- end }}", isTag: false },
