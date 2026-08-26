@@ -10,6 +10,8 @@ import { tmp002 } from "./tmp002-allowall-without-note";
 import { tmp010 } from "./tmp010-cron-syntax";
 import { tmp011 } from "./tmp011-namespace-reference";
 import { tmp012 } from "./tmp012-activity-contract";
+import { tmp013 } from "./tmp013-step-output-ref";
+import { stepOutput } from "@intentius/chant/op";
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
@@ -331,5 +333,100 @@ describe("TMP012: activity-contract", () => {
       ["ns", makeEntity("Temporal::Namespace", { name: "default", retention: "30d" })],
     ]));
     expect(tmp012.check(ctx)).toHaveLength(0);
+  });
+});
+
+// ── TMP013: step-output-ref (chant #1290) ────────────────────────────
+
+function opEntityPhases(name: string, phases: Array<{ name: string; steps: unknown[]; parallel?: boolean }>) {
+  return makeEntity("Temporal::Op", { name, overview: "test", phases });
+}
+
+describe("TMP013: step-output-ref", () => {
+  test("passes for a valid same-phase reference to a preceding step", () => {
+    const ctx = makeCtxFromEntities(new Map([
+      ["op", opEntity("reconcile", [
+        { kind: "activity", fn: "lifecycleDiff", args: { env: "prod" }, id: "diff" },
+        // "output" (string) into "contains" (string) — a type-compatible reference (#1950-3).
+        { kind: "activity", fn: "httpCheck", args: { url: "http://x", contains: stepOutput("diff", "output") } },
+      ])],
+    ]));
+    expect(tmp013.check(ctx)).toHaveLength(0);
+  });
+
+  test("errors on a reference to an unknown producer step id", () => {
+    const ctx = makeCtxFromEntities(new Map([
+      ["op", opEntity("reconcile", [
+        { kind: "activity", fn: "httpCheck", args: { url: "http://x", contains: stepOutput("nope", "x") } },
+      ])],
+    ]));
+    const diags = tmp013.check(ctx);
+    expect(diags.length).toBeGreaterThan(0);
+    expect(diags.every((d) => d.checkId === "TMP013" && d.severity === "error")).toBe(true);
+    expect(diags.some((d) => d.message.includes('unknown step id "nope"'))).toBe(true);
+    expect(diags[0].entity).toBe("op");
+  });
+
+  test("errors on a path that doesn't exist on the producer's declared return schema", () => {
+    const ctx = makeCtxFromEntities(new Map([
+      ["op", opEntity("reconcile", [
+        { kind: "activity", fn: "lifecycleDiff", args: { env: "prod" }, id: "diff" },
+        { kind: "activity", fn: "httpCheck", args: { url: "http://x", contains: stepOutput("diff", "notAField") } },
+      ])],
+    ]));
+    const diags = tmp013.check(ctx);
+    expect(diags.some((d) => d.message.includes('path "notAField"') && d.message.includes("does not exist"))).toBe(true);
+  });
+
+  test("errors on a reference to a later step (in a later phase)", () => {
+    const ctx = makeCtxFromEntities(new Map([
+      ["op", opEntityPhases("reconcile", [
+        { name: "Check", steps: [{ kind: "activity", fn: "httpCheck", args: { url: "http://x", contains: stepOutput("diff", "drifted") } }] },
+        { name: "Diff", steps: [{ kind: "activity", fn: "lifecycleDiff", args: { env: "prod" }, id: "diff" }] },
+      ])],
+    ]));
+    const diags = tmp013.check(ctx);
+    expect(diags.some((d) => d.message.includes("later phase"))).toBe(true);
+  });
+
+  test("errors on a reference into a step whose fn has no registered contract", () => {
+    const ctx = makeCtxFromEntities(new Map([
+      ["op", opEntity("reconcile", [
+        { kind: "activity", fn: "customUnregisteredActivity", args: {}, id: "custom" },
+        { kind: "activity", fn: "httpCheck", args: { url: "http://x", contains: stepOutput("custom", "x") } },
+      ])],
+    ]));
+    const diags = tmp013.check(ctx);
+    expect(diags.some((d) => d.message.includes("no registered activity contract"))).toBe(true);
+  });
+
+  test("ignores non-Op entities", () => {
+    const ctx = makeCtxFromEntities(new Map([
+      ["ns", makeEntity("Temporal::Namespace", { name: "default", retention: "30d" })],
+    ]));
+    expect(tmp013.check(ctx)).toHaveLength(0);
+  });
+
+  // ── cross-contract type compatibility (#1950-3) ──────────────────────────
+
+  test("errors when a boolean-returning path feeds a string-typed arg", () => {
+    const ctx = makeCtxFromEntities(new Map([
+      ["op", opEntity("reconcile", [
+        { kind: "activity", fn: "lifecycleDiff", args: { env: "prod" }, id: "diff" },
+        { kind: "activity", fn: "httpCheck", args: { url: "http://x", contains: stepOutput("diff", "drifted") } },
+      ])],
+    ]));
+    const diags = tmp013.check(ctx);
+    expect(diags.some((d) => d.message.includes("type mismatch") && d.message.includes("boolean") && d.message.includes("string"))).toBe(true);
+  });
+
+  test("a matching type (string into string) passes", () => {
+    const ctx = makeCtxFromEntities(new Map([
+      ["op", opEntity("reconcile", [
+        { kind: "activity", fn: "lifecycleDiff", args: { env: "prod" }, id: "diff" },
+        { kind: "activity", fn: "httpCheck", args: { url: "http://x", contains: stepOutput("diff", "output") } },
+      ])],
+    ]));
+    expect(tmp013.check(ctx)).toHaveLength(0);
   });
 });

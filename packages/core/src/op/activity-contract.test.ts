@@ -16,6 +16,7 @@ import {
   validateActivitySteps,
   type ActivityContract,
 } from "./activity-contract";
+import { stepOutput } from "./step-output-ref";
 import { EffectReceipt } from "../effect-receipt";
 
 // ── activityContract() / isActivityContract() ──────────────────────────────
@@ -85,6 +86,23 @@ describe("validateActivitySteps() — passing Ops", () => {
     const config = opWith({ phases: [phase("Diff", [step])] });
     const issues = validateActivitySteps(config, new Map([["lifecycleDiff", lifecycleDiffContract]]));
     expect(issues).toEqual([]);
+  });
+
+  it("a step-output reference standing in for a typed arg does not trip a false-positive type mismatch (#1290)", () => {
+    // args.env is z.string() — a StepOutputRef placeholder there is not a
+    // string, but it's not a real error either; TMP013 validates it against
+    // the producer's return schema separately.
+    const step = activity("lifecycleDiff", { env: stepOutput("diff", "name") as unknown as string });
+    const config = opWith({ phases: [phase("Diff", [step])] });
+    const issues = validateActivitySteps(config, new Map([["lifecycleDiff", lifecycleDiffContract]]));
+    expect(issues).toEqual([]);
+  });
+
+  it("a step-output reference elsewhere in args doesn't mask a genuinely unrecognized key", () => {
+    const step = activity("lifecycleDiff", { env: stepOutput("diff", "name") as unknown as string, typo: "oops" });
+    const config = opWith({ phases: [phase("Diff", [step])] });
+    const issues = validateActivitySteps(config, new Map([["lifecycleDiff", lifecycleDiffContract]]));
+    expect(issues.some((i) => i.message.includes("Unrecognized key") && i.message.includes("typo"))).toBe(true);
   });
 });
 

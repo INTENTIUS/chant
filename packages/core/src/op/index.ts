@@ -30,5 +30,9 @@ export type { StepRecord, OpRunResult } from "./local-executor";
 export { renderHuman, renderJson } from "./local-output";
 export {
   activityContract, isActivityContract, collectActivityContracts, validateActivitySteps, KNOWN_ACTIVITY_PROFILES,
+  pathExistsInSchema,
 } from "./activity-contract";
 export type { ActivityContract, ActivityContractIssue } from "./activity-contract";
+export { stepOutput, isStepOutputRef, collectStepOutputRefs, validateStepOutputRefs, validateStepOutputRefScope, makeOutProxy } from "./step-output-ref";
+export type { StepOutputRef } from "./step-output-ref";
+export type { NamedActivityStep } from "./builders";

@@ -39,9 +39,26 @@ export type StepDefinition = ActivityStep | GateStep | EffectStep;
 
 export interface ActivityStep {
   kind: "activity";
+  /**
+   * Identifies this step so a later step can reference its output (#1290)
+   * via `stepOutput(id, path?)` or, when built with `activity()`, the
+   * `.out` proxy sugar. Only steps in an Op's main `phases` — not
+   * `onFailure`, not one nested inside an `EffectStep` — can be referenced.
+   */
+  id?: string;
   /** Name of the exported activity function in the pre-built activity library. */
   fn: string;
-  /** Arguments passed to the activity function. */
+  /**
+   * Arguments passed to the activity function. A value may be a
+   * {@link StepOutputRef} (anywhere in the structure, including nested
+   * inside a plain object or array) — a reference to an earlier step's
+   * declared return value, resolved at build time and compiled by the
+   * serializer into a local variable holding that step's result. Never an
+   * expression over one: `diff.out.count > 0` or a template literal
+   * coerces the reference to a primitive, which throws (see
+   * `step-output-ref.ts`'s module doc for why this is a runtime-on-load
+   * guard, not a static lint rule).
+   */
   args?: Record<string, unknown>;
   /**
    * Key from TEMPORAL_ACTIVITY_PROFILES controlling timeout + retry.

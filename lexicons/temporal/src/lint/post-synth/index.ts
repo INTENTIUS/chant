@@ -5,6 +5,7 @@ import { tmp002 } from "./tmp002-allowall-without-note";
 import { tmp010 } from "./tmp010-cron-syntax";
 import { tmp011 } from "./tmp011-namespace-reference";
 import { tmp012 } from "./tmp012-activity-contract";
+import { tmp013 } from "./tmp013-step-output-ref";
 
 export const postSynthChecks: PostSynthCheck[] = [
   tmp001,
@@ -12,4 +13,5 @@ export const postSynthChecks: PostSynthCheck[] = [
   tmp010,
   tmp011,
   tmp012,
+  tmp013,
 ];

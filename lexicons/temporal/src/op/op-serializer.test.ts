@@ -6,7 +6,7 @@
 import { describe, expect, it } from "vitest";
 import { serializeOps } from "./serializer";
 import { DECLARABLE_MARKER, type Declarable } from "@intentius/chant/declarable";
-import { phase, gate, effect, envTeardown, shell } from "@intentius/chant/op";
+import { phase, gate, effect, envTeardown, shell, stepOutput } from "@intentius/chant/op";
 import type { OpConfig } from "@intentius/chant/op";
 import { EffectReceipt, receiptExpectation } from "@intentius/chant/effect-receipt";
 
@@ -703,6 +703,207 @@ describe("serializeOps()", () => {
       expect(wf).toContain("const [__r0, __r1] = await Promise.all([");
       expect(wf).toContain('upsertSearchAttributes({ "AlphaOk": [String(__r0?.ok)] });');
       expect(wf).toContain('upsertSearchAttributes({ "BetaOk": [String(__r1?.ok)] });');
+    });
+  });
+
+  // ── step-output references (#1290) ──────────────────────────────────────────
+
+  describe("step-output references", () => {
+    it("captures the producer's result and wires it into the consumer's args", () => {
+      const ops = new Map([
+        makeOp({
+          name: "reconcile",
+          overview: "reconcile",
+          phases: [
+            { name: "Diff", steps: [{ kind: "activity", fn: "lifecycleDiff", args: { env: "prod" }, id: "diff" }] },
+            {
+              name: "Apply",
+              steps: [
+                { kind: "activity", fn: "applyStacks", args: { stacks: stepOutput("diff", "driftedStacks") } },
+              ],
+            },
+          ],
+        }),
+      ]);
+      const wf = serializeOps(ops)["ops/reconcile/workflow.ts"];
+      expect(wf).toContain('const __r0 = await lifecycleDiff({"env":"prod"});');
+      expect(wf).toContain('await applyStacks({"stacks":__r0?.driftedStacks});');
+    });
+
+    it("a whole-value reference (no path) wires in the bare variable", () => {
+      const ops = new Map([
+        makeOp({
+          name: "reconcile",
+          overview: "reconcile",
+          phases: [
+            { name: "Diff", steps: [{ kind: "activity", fn: "lifecycleDiff", args: { env: "prod" }, id: "diff" }] },
+            { name: "Apply", steps: [{ kind: "activity", fn: "applyStacks", args: { diff: stepOutput("diff") } }] },
+          ],
+        }),
+      ]);
+      const wf = serializeOps(ops)["ops/reconcile/workflow.ts"];
+      expect(wf).toContain('await applyStacks({"diff":__r0});');
+    });
+
+    it("a step referenced only for its output (no outcomeAttribute) still gets captured", () => {
+      const ops = new Map([
+        makeOp({
+          name: "reconcile",
+          overview: "reconcile",
+          phases: [
+            { name: "Diff", steps: [{ kind: "activity", fn: "lifecycleDiff", id: "diff" }] },
+            { name: "Apply", steps: [{ kind: "activity", fn: "applyStacks", args: { x: stepOutput("diff", "x") } }] },
+          ],
+        }),
+      ]);
+      const wf = serializeOps(ops)["ops/reconcile/workflow.ts"];
+      expect(wf).toContain("const __r0 = await lifecycleDiff({});");
+    });
+
+    it("a step both outcome-attributed and referenced shares one capture variable", () => {
+      const ops = new Map([
+        makeOp({
+          name: "reconcile",
+          overview: "reconcile",
+          phases: [
+            {
+              name: "Diff",
+              steps: [
+                {
+                  kind: "activity",
+                  fn: "lifecycleDiff",
+                  id: "diff",
+                  outcomeAttribute: { name: "Drift", from: "drifted" },
+                },
+              ],
+            },
+            { name: "Apply", steps: [{ kind: "activity", fn: "applyStacks", args: { x: stepOutput("diff", "driftedStacks") } }] },
+          ],
+        }),
+      ]);
+      const wf = serializeOps(ops)["ops/reconcile/workflow.ts"];
+      expect(wf).toContain("const __r0 = await lifecycleDiff({});");
+      expect(wf).toContain('upsertSearchAttributes({ "Drift": [String(__r0?.drifted)] });');
+      expect(wf).toContain('await applyStacks({"x":__r0?.driftedStacks});');
+    });
+
+    it("a nested field path renders as a chained optional-access expression", () => {
+      const ops = new Map([
+        makeOp({
+          name: "reconcile",
+          overview: "reconcile",
+          phases: [
+            { name: "Diff", steps: [{ kind: "activity", fn: "lifecycleDiff", id: "diff" }] },
+            {
+              name: "Apply",
+              steps: [{ kind: "activity", fn: "applyStacks", args: { x: stepOutput("diff", "result.healthy") } }],
+            },
+          ],
+        }),
+      ]);
+      const wf = serializeOps(ops)["ops/reconcile/workflow.ts"];
+      expect(wf).toContain('await applyStacks({"x":__r0?.result?.healthy});');
+    });
+
+    it("a reference nested inside a plain object arg value is wired through too", () => {
+      const ops = new Map([
+        makeOp({
+          name: "reconcile",
+          overview: "reconcile",
+          phases: [
+            { name: "Diff", steps: [{ kind: "activity", fn: "lifecycleDiff", id: "diff" }] },
+            {
+              name: "Apply",
+              steps: [
+                { kind: "activity", fn: "applyStacks", args: { config: { stacks: stepOutput("diff", "driftedStacks") } } },
+              ],
+            },
+          ],
+        }),
+      ]);
+      const wf = serializeOps(ops)["ops/reconcile/workflow.ts"];
+      expect(wf).toContain('await applyStacks({"config":{"stacks":__r0?.driftedStacks}});');
+    });
+
+    it("a run with no references keeps the plain JSON.stringify fast path", () => {
+      const ops = new Map([
+        makeOp({
+          name: "plain",
+          overview: "plain",
+          phases: [{ name: "P", steps: [{ kind: "activity", fn: "shellCmd", args: { cmd: "true" } }] }],
+        }),
+      ]);
+      const wf = serializeOps(ops)["ops/plain/workflow.ts"];
+      expect(wf).toContain('await shellCmd({"cmd":"true"});');
+    });
+
+    it("counter is shared with outcomeAttribute captures: __r0, __r1, ... in authored order", () => {
+      const ops = new Map([
+        makeOp({
+          name: "reconcile",
+          overview: "reconcile",
+          phases: [
+            {
+              name: "P",
+              steps: [
+                { kind: "activity", fn: "first", outcomeAttribute: { name: "First" } },
+                { kind: "activity", fn: "diffIt", id: "diff" },
+                { kind: "activity", fn: "applyStacks", args: { x: stepOutput("diff", "x") } },
+              ],
+            },
+          ],
+        }),
+      ]);
+      const wf = serializeOps(ops)["ops/reconcile/workflow.ts"];
+      expect(wf).toContain("const __r0 = await first({});");
+      expect(wf).toContain("const __r1 = await diffIt({});");
+      expect(wf).toContain('await applyStacks({"x":__r1?.x});');
+    });
+
+    // ── defense-in-depth against scope-invalid refs (#1950 finding 2) ─────────
+    //
+    // `validateStepOutputRefs` (TMP013) is what's supposed to keep these out
+    // of `serializeOps`, but `serializeOps` is itself a public export a
+    // caller can invoke directly, bypassing `chant build`'s lint pass. Both
+    // of these reproduced a real bug: the reference resolved by "was this
+    // producer ever captured" alone, with no notion of scope, so the
+    // generated code referenced a `const __rN` from outside the block it was
+    // declared in (TS2304).
+
+    it("throws, not emits, for an onFailure ref to a main-phase step", () => {
+      const ops = new Map([
+        makeOp({
+          name: "reconcile",
+          overview: "reconcile",
+          phases: [{ name: "Diff", steps: [{ kind: "activity", fn: "lifecycleDiff", args: { env: "prod" }, id: "diff" }] }],
+          onFailure: [
+            { name: "Rollback", steps: [{ kind: "activity", fn: "applyStacks", args: { x: stepOutput("diff", "driftedStacks") } }] },
+          ],
+        }),
+      ]);
+      expect(() => serializeOps(ops)).toThrow(/reconcile/);
+      expect(() => serializeOps(ops)).toThrow(/onFailure/);
+    });
+
+    it("throws, not emits, for a reference nested inside an effect step's nested steps", () => {
+      const seeded = EffectReceipt("seeded", { effect: "db-seed", flavor: "hash", inputs: { file: "seed.sql" } });
+      const ops = new Map([
+        makeOp({
+          name: "reconcile",
+          overview: "reconcile",
+          phases: [
+            {
+              name: "P",
+              steps: [
+                { kind: "activity", fn: "lifecycleDiff", args: { env: "prod" }, id: "diff" },
+                effect(seeded, [{ kind: "activity", fn: "applyStacks", args: { x: stepOutput("diff", "driftedStacks") } }]),
+              ],
+            },
+          ],
+        }),
+      ]);
+      expect(() => serializeOps(ops)).toThrow(/reconcile/);
+      expect(() => serializeOps(ops)).toThrow(/nested inside an effect step/);
     });
   });
 

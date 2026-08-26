@@ -91,5 +91,9 @@ export {
   gcpApply,
   gcpDelete,
   policyGate,
+  stepOutput,
 } from "@intentius/chant/op";
-export type { OpConfig, PhaseDefinition, StepDefinition, ActivityStep, GateStep, EffectStep } from "@intentius/chant/op";
+export type {
+  OpConfig, PhaseDefinition, StepDefinition, ActivityStep, GateStep, EffectStep,
+  StepOutputRef, NamedActivityStep,
+} from "@intentius/chant/op";
