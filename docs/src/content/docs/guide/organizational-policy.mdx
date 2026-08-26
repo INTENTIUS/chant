@@ -24,6 +24,12 @@ A policy reads the resolved resources and returns diagnostics. A diagnostic with
 `severity: "error"` fails `chant build` — that is the gate. The check receives
 `ctx.env`, so a rule can branch on the environment.
 
+Both checks below read `ctx.docs` — the parsed-output view (chant #975,
+[Post-Synth Check Guide](/chant/lexicon-authoring/post-synth-checks/#ctxdocs--the-parsed-output-view-chant-975)) —
+rather than hand-splitting `ctx.outputs` YAML. It is exactly what a lexicon's
+own post-synth checks use, with no lexicon-internal import required: an org
+policy gets the same shared, parse-once manifest list.
+
 <Code code={policySrc} lang="typescript" title="policies/org.ts" />
 
 `ORG-COST-CENTER` runs in every environment; `ORG-PROD-TLS` only fires when the

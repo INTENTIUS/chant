@@ -7,6 +7,7 @@
  */
 
 import type { PostSynthContext, PostSynthCheck, PostSynthDiagnostic } from "../../core/src/lint/post-synth";
+import { createDocsAccessor } from "../../core/src/lint/post-synth";
 import type { SerializerResult } from "../../core/src/serializer";
 import type { Declarable } from "../../core/src/declarable";
 
@@ -25,9 +26,13 @@ export function makePostSynthCtx(
   const entityMap = entities ?? new Map();
   const outputs = new Map<string, string | SerializerResult>();
   outputs.set(lexicon, output);
+  const getDocs = createDocsAccessor(outputs);
   return {
     outputs,
     entities: entityMap,
+    get docs() {
+      return getDocs();
+    },
     buildResult: {
       outputs,
       entities: entityMap,
@@ -61,9 +66,13 @@ export function makePostSynthCtxFromFiles(
   };
   const outputs = new Map<string, string | SerializerResult>();
   outputs.set(lexicon, result);
+  const getDocs = createDocsAccessor(outputs);
   return {
     outputs,
     entities: entityMap,
+    get docs() {
+      return getDocs();
+    },
     buildResult: {
       outputs,
       entities: entityMap,

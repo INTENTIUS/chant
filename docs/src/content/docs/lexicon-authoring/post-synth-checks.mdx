@@ -39,7 +39,93 @@ The `ctx` parameter provides:
 
 - `ctx.outputs` — `Map<string, string | SerializerResult>` of serialized outputs per lexicon
 - `ctx.entities` — `Map<string, Declarable>` of all declared entities
+- `ctx.docs` — `OutputDoc[]`, `ctx.outputs` already parsed — see below
 - `ctx.buildResult` — Full build result including warnings and errors
+
+### `ctx.docs` — the parsed-output view (chant #975)
+
+`ctx.outputs` is raw serialized text. Reasoning about *structure* — "does this
+manifest set `hostNetwork: true`", "does this CFN resource have an
+`Encrypted` property" — means parsing it first, and every check that reaches
+for `ctx.outputs` directly reinvents that parse. `ctx.docs` is the shared,
+parse-once alternative: `ctx.outputs` run through `parseOutputDocs` once per
+build and cached, so every check reads the same array instead of re-parsing.
+
+```typescript
+import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
+
+interface K8sManifest {
+  kind?: string;
+  metadata?: { name?: string; labels?: Record<string, string> };
+}
+
+export const myCheck: PostSynthCheck = {
+  id: "MYD020",
+  description: "every Deployment carries a team label",
+  check(ctx: PostSynthContext): PostSynthDiagnostic[] {
+    return (ctx.docs ?? [])
+      .filter((d) => !d.error && (d.value as K8sManifest).kind === "Deployment")
+      .filter((d) => !(d.value as K8sManifest).metadata?.labels?.team)
+      .map((d) => ({
+        checkId: "MYD020",
+        severity: "warning",
+        message: `Deployment "${(d.value as K8sManifest).metadata?.name}" has no team label`,
+      }));
+  },
+};
+```
+
+Each `OutputDoc` is:
+
+```typescript
+interface OutputDoc {
+  lexicon: string;       // the ctx.outputs map key this document came from
+  index: number;         // position within a multi-document source (0 for a single doc)
+  format: "yaml" | "json";
+  value: unknown;        // the parsed tree
+  file?: string;         // set when this came from a SerializerResult.files entry
+  error?: string;        // set when parsing failed — value is undefined; see below
+}
+```
+
+Format detection is whole-source: if an output's entire text parses as JSON
+it is one `"json"` document; otherwise it is treated as a (possibly
+multi-document) YAML stream, split on `---` separators, with one `OutputDoc`
+per document. `SerializerResult.files` entries (a nested CloudFormation
+stack template, a sidecar manifest) are parsed the same way and tagged with
+`file`.
+
+**Malformed documents are never thrown** — a document `parseOutputDocs`
+cannot make sense of (invalid syntax, or content that parses to a bare
+scalar rather than an object/array) is still returned, with `error` set and
+`value: undefined`, rather than crashing the whole build or silently
+vanishing. Filter with `.filter((d) => !d.error)` to work with only the
+usable documents, the way the example above does.
+
+Two small helpers round out the `,remain`-style ergonomic — decode the
+fields you care about, leave the rest untouched and unvalidated:
+
+```typescript
+import { pick, get } from "@intentius/chant/lint/post-synth";
+
+// Deep walk to a nested field, without throwing on a missing intermediate key.
+const podSpec = get(doc.value, "spec.template.spec");
+
+// A shallow, typed, partial view of the top-level fields you name.
+const { kind, metadata } = pick<K8sManifest>(doc.value, ["kind", "metadata"]);
+```
+
+`pick`/`get` are deliberately not a query DSL or JSONPath engine — no
+wildcards, no predicates. Selector languages over the *source* AST belong in
+`declarative.ts`; this is output-side, and stays small.
+
+`ctx.docs` is `undefined`-typed only for lexicon test files that build a
+`PostSynthContext` object literal by hand and predate this field — every
+context chant itself constructs (`chant build`, `chant lint`, `policyGate`,
+the sandboxed policy runner, and `@intentius/chant-test-utils`'s
+`createPostSynthContext`/`makePostSynthCtx`/`makePostSynthCtxFromFiles`)
+populates it, so `ctx.docs ?? []` is a defensive habit, not something you
+should expect to hit in a normal build.
 
 ## PostSynthDiagnostic
 

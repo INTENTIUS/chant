@@ -5,13 +5,11 @@
 // They run during `chant build` over the resolved resources, with the current
 // `--env` in context, so a policy can branch on environment. A check returning
 // `severity: "error"` fails the build — the gate.
-import {
-  getPrimaryOutput,
-  type PostSynthCheck,
-  type PostSynthContext,
-  type PostSynthDiagnostic,
+import type {
+  PostSynthCheck,
+  PostSynthContext,
+  PostSynthDiagnostic,
 } from "@intentius/chant/lint/post-synth";
-import { parseYAML } from "@intentius/chant/yaml";
 
 interface Manifest {
   kind?: string;
@@ -19,22 +17,17 @@ interface Manifest {
   spec?: { tls?: unknown[] };
 }
 
-/** Parse every lexicon's serialized output into flat Kubernetes manifests. */
+/**
+ * Every parsed Kubernetes manifest across all lexicon outputs, via
+ * `ctx.docs` (chant #975) — the shared, parse-once view every check and
+ * policy gets, in place of hand-splitting `ctx.outputs` YAML/JSON. `d.error`
+ * marks a document `parseOutputDocs` could not make sense of; skip it
+ * rather than pass `undefined` along as a "manifest".
+ */
 function manifests(ctx: PostSynthContext): Manifest[] {
-  const out: Manifest[] = [];
-  for (const [, output] of ctx.outputs) {
-    for (const doc of getPrimaryOutput(output).split(/\n---\n/)) {
-      const trimmed = doc.trim();
-      if (!trimmed) continue;
-      try {
-        const m = parseYAML(trimmed);
-        if (m && typeof m === "object") out.push(m as Manifest);
-      } catch {
-        // skip unparseable documents
-      }
-    }
-  }
-  return out;
+  return (ctx.docs ?? [])
+    .filter((d) => !d.error)
+    .map((d) => d.value as Manifest);
 }
 
 const COST_CENTER = "acme.io/cost-center";

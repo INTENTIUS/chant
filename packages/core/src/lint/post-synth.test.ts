@@ -145,3 +145,100 @@ describe("isPostSynthCheck", () => {
 // chant #1138 — `applyConfiguredSeverity` (the `lint.rules` severity-override
 // pass over `PostSynthDiagnostic`s) is tested in `./config.test.ts`, where the
 // function itself now lives — see `./config.ts`'s doc comment for why.
+
+// ── chant #975 — ctx.docs: lazy, memoized, shared across every check ───────
+describe("ctx.docs (chant #975)", () => {
+  /** A Map subclass that counts how many times it was iterated — the only
+   *  way `parseOutputDocs` reads its outputs — so the tests below can prove
+   *  "parsed once" without reaching into module internals. */
+  class CountingOutputs extends Map<string, string> {
+    iterations = 0;
+    [Symbol.iterator](): IterableIterator<[string, string]> {
+      this.iterations++;
+      return super[Symbol.iterator]();
+    }
+  }
+
+  test("is not computed until first accessed", () => {
+    const outputs = new CountingOutputs([["k8s", "kind: Namespace"]]);
+    const check: PostSynthCheck = {
+      id: "PS-DOCS-1",
+      description: "never touches ctx.docs",
+      check() {
+        return [];
+      },
+    };
+    runPostSynthChecks([check], createBuildResult({ outputs: outputs as never }));
+    expect(outputs.iterations).toBe(0);
+  });
+
+  test("is parsed exactly once even when read by multiple checks", () => {
+    const outputs = new CountingOutputs([
+      ["k8s", "apiVersion: v1\nkind: Namespace\nmetadata:\n  name: ns-a"],
+    ]);
+    let seenByFirst: unknown;
+    let seenBySecond: unknown;
+    const checks: PostSynthCheck[] = [
+      {
+        id: "PS-DOCS-2A",
+        description: "reads ctx.docs once",
+        check(ctx) {
+          seenByFirst = ctx.docs;
+          return [];
+        },
+      },
+      {
+        id: "PS-DOCS-2B",
+        description: "reads ctx.docs again, and a second time in the same check",
+        check(ctx) {
+          seenBySecond = ctx.docs;
+          void ctx.docs; // a second read within the same check — still no reparse
+          return [];
+        },
+      },
+    ];
+    runPostSynthChecks(checks, createBuildResult({ outputs: outputs as never }));
+    expect(outputs.iterations).toBe(1);
+    // Every reader gets the exact same array instance, not an equal copy.
+    expect(seenByFirst).toBe(seenBySecond);
+  });
+
+  test("parses ctx.outputs into the expected OutputDoc shape", () => {
+    const outputs = new Map<string, string>([
+      ["k8s", "apiVersion: v1\nkind: Namespace\nmetadata:\n  name: ns-a"],
+    ]);
+    const check: PostSynthCheck = {
+      id: "PS-DOCS-3",
+      description: "reads a manifest field off ctx.docs",
+      check(ctx) {
+        const doc = (ctx.docs ?? [])[0];
+        return [
+          {
+            checkId: "PS-DOCS-3",
+            severity: "info",
+            message: `kind=${(doc.value as { kind?: string }).kind}`,
+          },
+        ];
+      },
+    };
+    const diags = runPostSynthChecks([check], createBuildResult({ outputs: outputs as never }));
+    expect(diags[0].message).toBe("kind=Namespace");
+  });
+
+  test("two independent runPostSynthChecks calls each get their own cache", () => {
+    const outputsA = new CountingOutputs([["k8s", "kind: Namespace"]]);
+    const outputsB = new CountingOutputs([["k8s", "kind: Deployment"]]);
+    const reader: PostSynthCheck = {
+      id: "PS-DOCS-4",
+      description: "reads ctx.docs",
+      check(ctx) {
+        void ctx.docs;
+        return [];
+      },
+    };
+    runPostSynthChecks([reader], createBuildResult({ outputs: outputsA as never }));
+    runPostSynthChecks([reader], createBuildResult({ outputs: outputsB as never }));
+    expect(outputsA.iterations).toBe(1);
+    expect(outputsB.iterations).toBe(1);
+  });
+});
