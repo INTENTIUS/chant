@@ -184,6 +184,71 @@ export const testEntity = {
     }
   });
 
+  test("#1083 — --fold-rank ranks blockers and, given a path, writes a collapsed-format export", async () => {
+    const thisDir = dirname(fileURLToPath(import.meta.url));
+    const runtimePath = resolvePath(thisDir, "../../runtime");
+
+    // A pair of files that fold fine (same shape as the #1022 test above),
+    // so the build produces output and the "no output" guard doesn't fire —
+    // unrelated to the ranking below.
+    await writeFile(
+      join(testDir, "resources.ts"),
+      `
+        import { createResource } from ${JSON.stringify(runtimePath)};
+        export const Bucket = createResource("Test::Bucket", "aws", { arn: "Arn" });
+      `,
+    );
+    await writeFile(
+      join(testDir, "main.ts"),
+      `
+        import { Bucket } from "./resources";
+        export const bucket = new Bucket({ name: "my-bucket" });
+      `,
+    );
+    // a.ts fails directly (process.env); b.ts fails because it imports a.ts.
+    await writeFile(join(testDir, "a.ts"), `export const a = process.env.SOMETHING;`);
+    await writeFile(
+      join(testDir, "b.ts"),
+      `
+        import { a } from "./a";
+        export const b = a;
+      `,
+    );
+
+    const awsSerializer: Serializer = {
+      name: "aws",
+      rulePrefix: "TEST",
+      serialize: (entities) => JSON.stringify([...entities.keys()]),
+    };
+
+    const collapsedPath = join(testDir, "out", "fold.collapsed");
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const result = await buildCommand({
+        path: testDir,
+        format: "json",
+        serializers: [awsSerializer],
+        fold: true,
+        foldRank: true,
+        foldRankCollapsedFile: collapsedPath,
+      });
+
+      expect(result.success).toBe(true);
+
+      const lines = errorSpy.mock.calls.map((call) => String(call[0]));
+      const rankingLine = lines.find((l) => l.includes("fold-rank:") && l.includes("blocker(s)"));
+      expect(rankingLine).toBeDefined();
+      const aLine = lines.find((l) => l.includes("retained 2") && l.includes("a.ts"));
+      expect(aLine).toBeDefined();
+
+      expect(existsSync(collapsedPath)).toBe(true);
+      const collapsed = readFileSync(collapsedPath, "utf-8").trim().split("\n");
+      expect(collapsed.sort()).toEqual(["fold;a.ts 1", "fold;a.ts;b.ts 1"].sort());
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
   describe("#1396 — ownership.env resolves from the env build parameter", () => {
     const thisDir = dirname(fileURLToPath(import.meta.url));
     const runtimePath = resolvePath(thisDir, "../../runtime");
