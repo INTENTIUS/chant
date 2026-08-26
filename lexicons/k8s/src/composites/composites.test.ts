@@ -11,6 +11,8 @@ import { StatefulApp } from "./stateful-app";
 import { ArgoAppFor, ArgoAppSetForRegions, registerArgoCluster } from "./argo-app";
 import { FluxGitSource, FluxAppFor } from "./flux-app";
 import { Model, resolveModelStorageUri } from "./model";
+import { OperatorStack, deriveHostVerbClass } from "./operator-stack";
+import type { OpConfig } from "@intentius/chant/op";
 import { CronWorkload } from "./cron-workload";
 import { AutoscaledService } from "./autoscaled-service";
 import { WorkerPool } from "./worker-pool";
@@ -3742,6 +3744,281 @@ describe("Model", () => {
   });
 });
 
+// ── OperatorStack ────────────────────────────────────────────────────────
+
+const READ_ONLY_OP: Pick<OpConfig, "phases" | "onFailure"> = {
+  phases: [{ name: "check", steps: [{ kind: "activity", fn: "lifecycleDiff" }] }],
+};
+const MUTATING_OP: Pick<OpConfig, "phases" | "onFailure"> = {
+  phases: [{ name: "apply", steps: [{ kind: "activity", fn: "kubectlApply" }] }],
+};
+const DESTRUCTIVE_OP: Pick<OpConfig, "phases" | "onFailure"> = {
+  phases: [{ name: "teardown", steps: [{ kind: "activity", fn: "envTeardown" }] }],
+};
+
+describe("OperatorStack", () => {
+  test("returns a namespace and one CronJob/ServiceAccount/Role/RoleBinding per hosted ConvergeOp", () => {
+    const result: any = OperatorStack({
+      name: "chant-operator",
+      image: "chant:latest",
+      converge: [
+        { name: "fountain-observe", schedule: "*/10 * * * *", env: "staging" },
+        { name: "fountain-apply", schedule: "*/10 * * * *", env: "staging", dial: "apply", dispatchTargets: [MUTATING_OP] },
+      ],
+    });
+    expect(result.namespace).toBeDefined();
+    expect(result["cronJob_fountain-observe"]).toBeDefined();
+    expect(result["cronJob_fountain-apply"]).toBeDefined();
+    expect(result["serviceAccount_fountain-observe"]).toBeDefined();
+    expect(result["serviceAccount_fountain-apply"]).toBeDefined();
+    expect(result["role_fountain-observe"]).toBeDefined();
+    expect(result["role_fountain-apply"]).toBeDefined();
+    expect(result["roleBinding_fountain-observe"]).toBeDefined();
+    expect(result["roleBinding_fountain-apply"]).toBeDefined();
+  });
+
+  test("namespace name defaults to the stack name", () => {
+    const result: any = OperatorStack({
+      name: "chant-operator",
+      image: "chant:latest",
+      converge: [{ name: "fountain-observe", schedule: "*/10 * * * *", env: "staging" }],
+    });
+    expect((p(result.namespace).metadata as any).name).toBe("chant-operator");
+  });
+
+  test("namespace name is overridable", () => {
+    const result: any = OperatorStack({
+      name: "chant-operator",
+      namespace: "chant-ops",
+      image: "chant:latest",
+      converge: [{ name: "fountain-observe", schedule: "*/10 * * * *", env: "staging" }],
+    });
+    expect((p(result.namespace).metadata as any).name).toBe("chant-ops");
+    expect((p(result["cronJob_fountain-observe"]).metadata as any).namespace).toBe("chant-ops");
+  });
+
+  test("CronJob schedule passes through from the hosted ConvergeOp", () => {
+    const result: any = OperatorStack({
+      name: "chant-operator",
+      image: "chant:latest",
+      converge: [{ name: "fountain-observe", schedule: "17 * * * *", env: "staging" }],
+    });
+    expect((p(result["cronJob_fountain-observe"]).spec as any).schedule).toBe("17 * * * *");
+  });
+
+  test("CronJob uses concurrencyPolicy Forbid — never queue a tick behind one in flight", () => {
+    const result: any = OperatorStack({
+      name: "chant-operator",
+      image: "chant:latest",
+      converge: [{ name: "fountain-observe", schedule: "*/10 * * * *", env: "staging" }],
+    });
+    expect((p(result["cronJob_fountain-observe"]).spec as any).concurrencyPolicy).toBe("Forbid");
+  });
+
+  test("CronJob container command defaults to `chant run <name>`", () => {
+    const result: any = OperatorStack({
+      name: "chant-operator",
+      image: "chant:latest",
+      converge: [{ name: "fountain-observe", schedule: "*/10 * * * *", env: "staging" }],
+    });
+    const container = (p(result["cronJob_fountain-observe"]).spec as any).jobTemplate.spec.template.spec.containers[0];
+    expect(container.image).toBe("chant:latest");
+    expect(container.command).toEqual(["chant", "run", "fountain-observe"]);
+    expect(container.env).toEqual([
+      { name: "CHANT_CONVERGE_ENV", value: "staging" },
+      { name: "CHANT_CONVERGE_DIAL", value: "observe" },
+    ]);
+  });
+
+  test("CronJob container command is overridable per host", () => {
+    const result: any = OperatorStack({
+      name: "chant-operator",
+      image: "chant:latest",
+      converge: [{ name: "fountain-observe", schedule: "*/10 * * * *", env: "staging", command: ["chant", "operator", "tick", "fountain-observe"] }],
+    });
+    const container = (p(result["cronJob_fountain-observe"]).spec as any).jobTemplate.spec.template.spec.containers[0];
+    expect(container.command).toEqual(["chant", "operator", "tick", "fountain-observe"]);
+  });
+
+  test("ServiceAccount is bound to the CronJob's pod spec", () => {
+    const result: any = OperatorStack({
+      name: "chant-operator",
+      image: "chant:latest",
+      converge: [{ name: "fountain-observe", schedule: "*/10 * * * *", env: "staging" }],
+    });
+    const podSpec = (p(result["cronJob_fountain-observe"]).spec as any).jobTemplate.spec.template.spec;
+    expect(podSpec.serviceAccountName).toBe("fountain-observe-sa");
+    expect((p(result["serviceAccount_fountain-observe"]).metadata as any).name).toBe("fountain-observe-sa");
+    const binding = p(result["roleBinding_fountain-observe"]) as any;
+    expect(binding.subjects[0]).toEqual({ kind: "ServiceAccount", name: "fountain-observe-sa", namespace: "chant-operator" });
+    expect(binding.roleRef).toEqual({ apiGroup: "rbac.authorization.k8s.io", kind: "Role", name: "fountain-observe-role" });
+  });
+
+  // ── RBAC derivation ──────────────────────────────────────────────────
+
+  test("a ConvergeOp with no dispatch targets gets read-only RBAC", () => {
+    const result: any = OperatorStack({
+      name: "chant-operator",
+      image: "chant:latest",
+      converge: [{ name: "fountain-observe", schedule: "*/10 * * * *", env: "staging" }],
+    });
+    const role = p(result["role_fountain-observe"]) as any;
+    for (const rule of role.rules) {
+      expect(rule.verbs).toEqual(["get", "list", "watch"]);
+    }
+  });
+
+  test("observe-dial ConvergeOp with a mutating dispatch target still gets read-only RBAC — observe never dispatches, per TMP014/convergeTick", () => {
+    const result: any = OperatorStack({
+      name: "chant-operator",
+      image: "chant:latest",
+      converge: [{ name: "fountain-watch", schedule: "*/10 * * * *", env: "staging", dial: "observe", dispatchTargets: [MUTATING_OP] }],
+    });
+    const role = p(result["role_fountain-watch"]) as any;
+    for (const rule of role.rules) {
+      expect(rule.verbs).toEqual(["get", "list", "watch"]);
+    }
+  });
+
+  test("reconcile-dial ConvergeOp with a mutating dispatch target still gets read-only RBAC — TMP014 only lets apply free-run a mutating dispatch", () => {
+    const result: any = OperatorStack({
+      name: "chant-operator",
+      image: "chant:latest",
+      converge: [{ name: "fountain-reconcile", schedule: "*/10 * * * *", env: "staging", dial: "reconcile", dispatchTargets: [MUTATING_OP] }],
+    });
+    const role = p(result["role_fountain-reconcile"]) as any;
+    for (const rule of role.rules) {
+      expect(rule.verbs).toEqual(["get", "list", "watch"]);
+    }
+  });
+
+  test("apply-dial ConvergeOp with a mutating dispatch target gets create/update/patch, never delete or wildcard", () => {
+    const result: any = OperatorStack({
+      name: "chant-operator",
+      image: "chant:latest",
+      converge: [{ name: "fountain-apply", schedule: "*/10 * * * *", env: "staging", dial: "apply", dispatchTargets: [MUTATING_OP] }],
+    });
+    const role = p(result["role_fountain-apply"]) as any;
+    expect(role.rules.length).toBeGreaterThan(0);
+    for (const rule of role.rules) {
+      expect(rule.verbs).toEqual(["get", "list", "watch", "create", "update", "patch"]);
+      expect(rule.verbs).not.toContain("delete");
+      expect(rule.verbs).not.toContain("deletecollection");
+      expect(rule.verbs).not.toContain("*");
+      expect(rule.resources).not.toContain("*");
+      expect(rule.apiGroups).not.toContain("*");
+    }
+  });
+
+  test("apply-dial ConvergeOp with only a read-only dispatch target stays read-only — least privilege, not dial-implied ceiling", () => {
+    const result: any = OperatorStack({
+      name: "chant-operator",
+      image: "chant:latest",
+      converge: [{ name: "fountain-verify", schedule: "*/10 * * * *", env: "staging", dial: "apply", dispatchTargets: [READ_ONLY_OP] }],
+    });
+    const role = p(result["role_fountain-verify"]) as any;
+    for (const rule of role.rules) {
+      expect(rule.verbs).toEqual(["get", "list", "watch"]);
+    }
+  });
+
+  test("a destructive dispatch target is refused at construction, even under dial apply", () => {
+    expect(() =>
+      OperatorStack({
+        name: "chant-operator",
+        image: "chant:latest",
+        converge: [{ name: "fountain-teardown", schedule: "*/10 * * * *", env: "staging", dial: "apply", dispatchTargets: [DESTRUCTIVE_OP] }],
+      }),
+    ).toThrow(/destructive/);
+  });
+
+  test("two hosts in the same stack get independently scoped RBAC — never the union", () => {
+    const result: any = OperatorStack({
+      name: "chant-operator",
+      image: "chant:latest",
+      converge: [
+        { name: "fountain-observe", schedule: "*/10 * * * *", env: "staging", dial: "observe" },
+        { name: "fountain-apply", schedule: "*/10 * * * *", env: "staging", dial: "apply", dispatchTargets: [MUTATING_OP] },
+      ],
+    });
+    expect((p(result["role_fountain-observe"]) as any).rules[0].verbs).toEqual(["get", "list", "watch"]);
+    expect((p(result["role_fountain-apply"]) as any).rules[0].verbs).toEqual(["get", "list", "watch", "create", "update", "patch"]);
+  });
+
+  test("custom resource rules are used instead of the default set", () => {
+    const result: any = OperatorStack({
+      name: "chant-operator",
+      image: "chant:latest",
+      converge: [{
+        name: "fountain-secrets",
+        schedule: "*/10 * * * *",
+        env: "staging",
+        resources: [{ apiGroups: [""], resources: ["secrets"] }],
+      }],
+    });
+    const role = p(result["role_fountain-secrets"]) as any;
+    expect(role.rules).toEqual([{ apiGroups: [""], resources: ["secrets"], verbs: ["get", "list", "watch"] }]);
+  });
+
+  // ── deriveHostVerbClass (unit) ───────────────────────────────────────
+
+  test("deriveHostVerbClass: reconcile dial with a mutating target stays read-only", () => {
+    expect(deriveHostVerbClass("x", "reconcile", [MUTATING_OP])).toBe("read-only");
+  });
+
+  test("deriveHostVerbClass: apply dial with a mutating target elevates to mutating", () => {
+    expect(deriveHostVerbClass("x", "apply", [MUTATING_OP])).toBe("mutating");
+  });
+
+  test("deriveHostVerbClass: apply dial with only read-only targets stays read-only", () => {
+    expect(deriveHostVerbClass("x", "apply", [READ_ONLY_OP])).toBe("read-only");
+  });
+
+  test("deriveHostVerbClass: a destructive target throws under any dial", () => {
+    expect(() => deriveHostVerbClass("x", "apply", [DESTRUCTIVE_OP])).toThrow(/destructive/);
+    expect(() => deriveHostVerbClass("x", "observe", [DESTRUCTIVE_OP])).toThrow(/destructive/);
+  });
+
+  // ── Build-time refusals ──────────────────────────────────────────────
+
+  test("refuses an empty converge array", () => {
+    expect(() => OperatorStack({ name: "chant-operator", image: "chant:latest", converge: [] })).toThrow(/at least one/);
+  });
+
+  test("refuses duplicate hosted ConvergeOp names", () => {
+    expect(() =>
+      OperatorStack({
+        name: "chant-operator",
+        image: "chant:latest",
+        converge: [
+          { name: "fountain-observe", schedule: "*/10 * * * *", env: "staging" },
+          { name: "fountain-observe", schedule: "*/5 * * * *", env: "staging" },
+        ],
+      }),
+    ).toThrow(/duplicate/);
+  });
+
+  test("refuses a host with a blank schedule", () => {
+    expect(() =>
+      OperatorStack({
+        name: "chant-operator",
+        image: "chant:latest",
+        converge: [{ name: "fountain-observe", schedule: "", env: "staging" }],
+      }),
+    ).toThrow(/schedule/);
+  });
+
+  test("refuses a blank image", () => {
+    expect(() =>
+      OperatorStack({
+        name: "chant-operator",
+        image: "",
+        converge: [{ name: "fountain-observe", schedule: "*/10 * * * *", env: "staging" }],
+      }),
+    ).toThrow(/image/);
+  });
+});
+
 describe("package index re-exports (regression guard)", () => {
   test("Argo composites are reachable from the package entry", async () => {
     const pkg: any = await import("../index");
@@ -3760,5 +4037,11 @@ describe("package index re-exports (regression guard)", () => {
     const pkg: any = await import("../index");
     expect(typeof pkg.Model).toBe("function");
     expect(typeof pkg.resolveModelStorageUri).toBe("function");
+  });
+
+  test("OperatorStack is reachable from the package entry", async () => {
+    const pkg: any = await import("../index");
+    expect(typeof pkg.OperatorStack).toBe("function");
+    expect(typeof pkg.deriveHostVerbClass).toBe("function");
   });
 });
