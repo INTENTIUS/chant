@@ -1,0 +1,83 @@
+---
+title: "chant scenario"
+description: Evaluate declared plan scenarios offline, against a fixture snapshot standing in for live observation
+diataxis: reference
+---
+
+## Synopsis
+
+```
+chant scenario check [flags]
+```
+
+## Description
+
+`chant scenario check` evaluates every [`Scenario`](/chant/concepts/plan-scenarios/) declared in the project. For each one it builds a `ChangeSet` the same way `chant lifecycle plan` does, with one substitution: the scenario's `given` fixture stands in for a live observation, so no plugin's `describeResources` ever runs and no credentials are ever read. Fully offline — safe in CI, safe on every PR.
+
+The resulting change set is checked against the scenario's `expect` clauses. Output is per-scenario pass/fail with a legible detail on every failing clause — what was expected and what the plan actually proposes, naming resources for `deletes` and `unobserved` failures.
+
+A lexicon the fixture has no data for is never silently read as "nothing declared, all absent" — every entity it declares lands in the change set as `unobserved`, same as a live read that could not look (#1089). A hole the fixture can't fill is reported as a hole.
+
+A declared [effect receipt](/chant/concepts/effect-receipts/) gets the same treatment `chant lifecycle plan` gives it: its own `effect` classification against the fixture, not the generic create/update/delete axis. An unfired receipt never reads as a bare `create`; a receipt present in the fixture with a stale or mismatched value never reads as a clean `noop` — see [Plan Scenarios](/chant/concepts/plan-scenarios/#effect-receipts-in-a-scenario) for what a fixture needs to carry for a receipt to resolve offline.
+
+See [Plan Scenarios](/chant/concepts/plan-scenarios/) for the `Scenario`/`snapshot()` declaration API and the full `expect` vocabulary.
+
+## Flags
+
+| Flag | Description |
+|------|-------------|
+| `--json` | Emit every scenario's verdict as structured JSON instead of the human report |
+
+## Example
+
+```typescript
+// infra/scenarios.ts
+import { Scenario, snapshot } from "@intentius/chant";
+
+export const composeIsNeutral = Scenario("extracting the composite is plan-neutral", {
+  given: snapshot("fixtures/prod-baseline.json"),
+  expect: { noop: true },
+});
+```
+
+```bash
+$ chant scenario check
+
+extracting the composite is plan-neutral [composeIsNeutral] — given fixtures/prod-baseline.json, env prod: PASS
+
+1/1 scenario(s) passed
+```
+
+A declaration that changes the plan against the same fixture fails, with the failing clause and the resource named:
+
+```
+extracting the composite is plan-neutral [composeIsNeutral] — given fixtures/prod-baseline.json, env prod: FAIL
+  noop: expected noop (no create/update/delete/effect) but the plan proposes 1 create, 0 update, 0 delete, 0 effect — newDatabase (AWS::RDS::DBInstance) [create]
+
+1/1 scenario(s) failed
+```
+
+## Fixtures
+
+`given: snapshot("fixtures/prod-baseline.json")` reads a checked-in file, in the same JSON shape `chant lifecycle snapshot <env>` writes (one lexicon's recorded resources per file). Record one, copy it into the project, and commit it:
+
+```bash
+chant lifecycle snapshot prod
+# then copy the recorded snapshot out of the chant/lifecycle branch:
+git show chant/lifecycle:prod/aws.json > fixtures/prod-baseline.json
+```
+
+`given: snapshot("prod")` reads the *current* last-recorded snapshot for that environment straight off the `chant/lifecycle` branch — no file to keep in sync, but the scenario's answer moves whenever a new snapshot is recorded.
+
+## Exit Codes
+
+| Exit | Meaning |
+|------|---------|
+| `0` | Every declared scenario passed (or none are declared) |
+| `1` | The build failed, a fixture could not be resolved, or at least one scenario failed |
+
+## See Also
+
+- [Plan Scenarios](/chant/concepts/plan-scenarios/) — the declaration API, the `expect` vocabulary, and why `update` can only ever assert `0`
+- [`lifecycle plan`](/chant/cli/lifecycle/#lifecycle-plan-env) — the live command a scenario mirrors offline
+- [Core Type System: ScenarioDeclaration](/chant/architecture/core-type-system/#scenariodeclaration) — the type reference

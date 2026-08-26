@@ -25,7 +25,7 @@
 
 import { Op, phase, build, activity, httpCheck } from "@intentius/chant/op";
 import type { OpResource } from "@intentius/chant/op";
-import type { ActivityStep } from "@intentius/chant/op";
+import type { ActivityStep, NamedActivityStep } from "@intentius/chant/op";
 
 /** The local mudflaps endpoint the deploy Op targets by default. */
 export const LOCAL_FLAPS_ENDPOINT = "http://localhost:4280";
@@ -52,13 +52,13 @@ export interface FlapsStepOpts {
  * `flapsUp` activity (#740). Defaults to the `longInfra` profile (the image may
  * pull); override via `opts.profile`.
  */
-export const flapsUp = (opts?: FlapsStepOpts): ActivityStep => {
+export const flapsUp = (opts?: FlapsStepOpts): NamedActivityStep => {
   const { profile, ...args } = opts ?? {};
   return activity("flapsUp", args as Record<string, unknown>, profile ?? "longInfra");
 };
 
 /** Stop and remove the local mudflaps container. Resolves to the `flapsDown` activity. Defaults to the `fastIdempotent` profile (override via `opts.profile`). */
-export const flapsDown = (opts?: FlapsStepOpts): ActivityStep => {
+export const flapsDown = (opts?: FlapsStepOpts): NamedActivityStep => {
   const { profile, ...args } = opts ?? {};
   return activity("flapsDown", args as Record<string, unknown>, profile ?? "fastIdempotent");
 };
@@ -83,7 +83,7 @@ export interface FlyApplyStepOpts {
  * App + Machine, wait each machine to `started`, prune owned-only when asked.
  * Defaults to the `longInfra` profile (override via `opts.profile`).
  */
-export const flyApplyStep = (planPath: string, opts?: FlyApplyStepOpts): ActivityStep => {
+export const flyApplyStep = (planPath: string, opts?: FlyApplyStepOpts): NamedActivityStep => {
   const { profile, ...rest } = opts ?? {};
   return activity("flyApply", { planPath, ...(rest as Record<string, unknown>) }, profile ?? "longInfra");
 };

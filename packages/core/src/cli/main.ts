@@ -25,6 +25,7 @@ import { runCarveBridge } from "./handlers/carve-bridge";
 import { runCarveApply } from "./handlers/carve-apply";
 import { runLifecycleSnapshot, runLifecycleShow, runLifecycleDiff, runLifecycleRollback, runLifecyclePlan, runLifecycleAffected, runLifecycleLog, runLifecycleTeardown, runLifecycleUnknown } from "./handlers/lifecycle";
 import { runComponentsStatus, runComponentsReleaseRecord, runComponentsUnknown } from "./handlers/components";
+import { runScenarioCheck, runScenarioUnknown } from "./handlers/scenario";
 import { runGraph } from "./handlers/graph";
 import { runExplain } from "./handlers/explain";
 import { runSearch } from "./handlers/search";
@@ -496,6 +497,12 @@ Lifecycle (alias: lc):
                             --confirm-prod, or an interactive confirmation)
   lifecycle log [env]       History of lifecycle snapshots
 
+Plan scenarios (#1292):
+  scenario check            Evaluate every declared Scenario's expect clause
+                            offline, against its given fixture (no cloud, no
+                            credentials); --json: emit verdicts as JSON.
+                            Nonzero exit on any failing scenario.
+
 Component release ledger + status:
   components status [env]  What's built vs what's deployed where, joined by
                             digest (--live: reconcile against live+ownership;
@@ -793,6 +800,11 @@ const registry: CommandDef[] = [
   { name: "lifecycle teardown", requiresPlugins: true, handler: runLifecycleTeardown },
   { name: "lifecycle log", handler: runLifecycleLog },
 
+  // Plan scenarios (#1292) — fully offline, no plugin network calls, but
+  // requiresPlugins:true so the build step has serializers to partition
+  // against, same as every other build-then-something verb.
+  { name: "scenario check", requiresPlugins: true, handler: runScenarioCheck },
+
   // Component release ledger + status surface (#568, epic #551)
   { name: "components status", requiresPlugins: true, handler: runComponentsStatus },
   { name: "components release", handler: runComponentsReleaseRecord },
@@ -811,6 +823,7 @@ const registry: CommandDef[] = [
   { name: "carve", handler: runCarveUnknown },
   { name: "emulator", requiresPlugins: true, handler: runEmulator },
   { name: "lifecycle", handler: runLifecycleUnknown },
+  { name: "scenario", handler: runScenarioUnknown },
   { name: "dev", handler: runDevUnknown },
   { name: "serve", handler: runServeUnknown },
   { name: "components", handler: runComponentsUnknown },

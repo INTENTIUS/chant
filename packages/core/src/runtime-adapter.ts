@@ -34,8 +34,13 @@ export interface RuntimeAdapter {
   readonly hashAlgorithm: string;
   /** Test whether filePath matches a glob pattern */
   globMatch(pattern: string, filePath: string): boolean;
-  /** Spawn a child process and collect output */
-  spawn(cmd: string[], opts?: { cwd?: string }): Promise<SpawnResult>;
+  /**
+   * Spawn a child process and collect output. When `opts.stdin` is set, it is
+   * written to the child's stdin and the stream is closed — the caller never
+   * needs to round-trip content through a shell (`sh -c "echo … | cmd"`) just
+   * to feed a command that reads from stdin (e.g. `git hash-object --stdin`).
+   */
+  spawn(cmd: string[], opts?: { cwd?: string; stdin?: string }): Promise<SpawnResult>;
   /** Commands to use when spawning package manager / executor */
   readonly commands: RuntimeCommands;
 }
@@ -59,16 +64,32 @@ class NodeRuntimeAdapter implements RuntimeAdapter {
     return picomatch(pattern)(filePath);
   }
 
-  async spawn(cmd: string[], opts?: { cwd?: string }): Promise<SpawnResult> {
+  async spawn(cmd: string[], opts?: { cwd?: string; stdin?: string }): Promise<SpawnResult> {
     return new Promise((resolve) => {
-      execFile(cmd[0], cmd.slice(1), { cwd: opts?.cwd, maxBuffer: 10 * 1024 * 1024 }, (err, stdout, stderr) => {
-        resolve({
-          stdout: stdout ?? "",
-          stderr: stderr ?? "",
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          exitCode: err ? (err as any).code ?? 1 : 0,
+      const child = execFile(
+        cmd[0],
+        cmd.slice(1),
+        { cwd: opts?.cwd, maxBuffer: 10 * 1024 * 1024 },
+        (err, stdout, stderr) => {
+          resolve({
+            stdout: stdout ?? "",
+            stderr: stderr ?? "",
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            exitCode: err ? (err as any).code ?? 1 : 0,
+          });
+        },
+      );
+      // Content is written verbatim (utf-8) — no shell involved, so nothing
+      // reinterprets backslash-escape sequences or needs quote-escaping.
+      // The error handler is load-bearing: a child that exits without reading
+      // stdin (any command that ignores it) makes this write race the pipe
+      // teardown, and an unhandled EPIPE 'error' event crashes the process.
+      if (child.stdin) {
+        child.stdin.on("error", () => {
+          /* EPIPE: child exited without consuming stdin — harmless */
         });
-      });
+        child.stdin.end(opts?.stdin ?? "");
+      }
     });
   }
 }

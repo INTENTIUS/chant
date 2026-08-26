@@ -10,6 +10,14 @@ export { helmPlugin } from "./plugin";
 export { helmCapabilityPlugin, HELM_VERB_FAMILIES } from "./components/capability-plugin";
 export { helmUpgradeCapability, createHelmUpgradeCapability, type HelmUpgradeInput, type HelmUpgradeOutcome } from "./components/helm-upgrade";
 
+// Typed Op step-builder wrappers (chant #1288 Stage 2) — helmInstall/
+// helmInstallPinned with authoring-time types derived from this lexicon's
+// own HelmInstallArgs (see ./op/builders.ts's module doc for why these live
+// here rather than in core or the temporal barrel). Opt-in:
+// `@intentius/chant-lexicon-temporal`'s same-named exports are core's
+// original untyped builders, unchanged, for cloud-agnostic authoring.
+export { helmInstall, helmInstallPinned } from "./op/builders";
+
 // Resources
 export { Chart, Values, ValuesOverride, HelmTest, HelmNotes, HelmHook, HelmDependency, HelmMaintainer, HelmCRD } from "./resources";
 
