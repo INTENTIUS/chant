@@ -28,3 +28,7 @@ export type { ActivityFn, ActivityProfile } from "./activity-registry";
 export { runOpLocally, parseDuration, findGate, LocalGateUnsupportedError, OpRunFailure } from "./local-executor";
 export type { StepRecord, OpRunResult } from "./local-executor";
 export { renderHuman, renderJson } from "./local-output";
+export {
+  activityContract, isActivityContract, collectActivityContracts, validateActivitySteps, KNOWN_ACTIVITY_PROFILES,
+} from "./activity-contract";
+export type { ActivityContract, ActivityContractIssue } from "./activity-contract";

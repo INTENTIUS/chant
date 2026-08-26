@@ -9,6 +9,7 @@ import { tmp001 } from "./tmp001-retention-too-short";
 import { tmp002 } from "./tmp002-allowall-without-note";
 import { tmp010 } from "./tmp010-cron-syntax";
 import { tmp011 } from "./tmp011-namespace-reference";
+import { tmp012 } from "./tmp012-activity-contract";
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
@@ -271,5 +272,64 @@ describe("TMP011: namespace-reference", () => {
     ]));
     const diags = tmp011.check(ctx);
     expect(diags).toHaveLength(2);
+  });
+});
+
+// ── TMP012: activity-contract (chant #1288 Stage 1) ─────────────────
+
+function opEntity(name: string, steps: unknown[]) {
+  return makeEntity("Temporal::Op", { name, overview: "test", phases: [{ name: "Phase", steps }] });
+}
+
+describe("TMP012: activity-contract", () => {
+  test("passes when args match the registered contract exactly", () => {
+    const ctx = makeCtxFromEntities(new Map([
+      ["op", opEntity("deploy", [{ kind: "activity", fn: "lifecycleDiff", args: { env: "prod", live: true } }])],
+    ]));
+    expect(tmp012.check(ctx)).toHaveLength(0);
+  });
+
+  test("skips a step whose fn has no registered contract", () => {
+    const ctx = makeCtxFromEntities(new Map([
+      ["op", opEntity("deploy", [{ kind: "activity", fn: "kubectlApply", args: { manifest: "dist/k8s.yaml", anything: "goes" } }])],
+    ]));
+    expect(tmp012.check(ctx)).toHaveLength(0);
+  });
+
+  test("errors on an unrecognized args key — lifecycleDiff's `env` typo'd as `environment`", () => {
+    const ctx = makeCtxFromEntities(new Map([
+      ["op", opEntity("deploy", [{ kind: "activity", fn: "lifecycleDiff", args: { environment: "prod" } }])],
+    ]));
+    const diags = tmp012.check(ctx);
+    expect(diags.length).toBeGreaterThan(0);
+    expect(diags.every((d) => d.checkId === "TMP012" && d.severity === "error")).toBe(true);
+    expect(diags.some((d) => d.message.includes("environment"))).toBe(true);
+    expect(diags[0].message).toContain('Op "deploy"');
+    expect(diags[0].entity).toBe("op");
+  });
+
+  test("errors on an outcomeAttribute.from path that doesn't exist on the declared return type", () => {
+    const ctx = makeCtxFromEntities(new Map([
+      ["op", opEntity("deploy", [
+        { kind: "activity", fn: "lifecycleDiff", args: { env: "prod" }, outcomeAttribute: { name: "Drift", from: "drifed" } },
+      ])],
+    ]));
+    const diags = tmp012.check(ctx);
+    expect(diags.some((d) => d.message.includes('outcomeAttribute.from "drifed"'))).toBe(true);
+  });
+
+  test("errors on an unknown profile", () => {
+    const ctx = makeCtxFromEntities(new Map([
+      ["op", opEntity("deploy", [{ kind: "activity", fn: "shellCmd", args: { cmd: "echo hi" }, profile: "longInfa" }])],
+    ]));
+    const diags = tmp012.check(ctx);
+    expect(diags.some((d) => d.message.includes('unknown profile "longInfa"'))).toBe(true);
+  });
+
+  test("ignores non-Op entities", () => {
+    const ctx = makeCtxFromEntities(new Map([
+      ["ns", makeEntity("Temporal::Namespace", { name: "default", retention: "30d" })],
+    ]));
+    expect(tmp012.check(ctx)).toHaveLength(0);
   });
 });

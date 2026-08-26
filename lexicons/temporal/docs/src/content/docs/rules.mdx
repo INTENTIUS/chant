@@ -6,7 +6,7 @@ description: "Every lint rule and post-synth check provided by the Temporal lexi
 {/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-temporal` — DO NOT EDIT.
     Edit lexicons/temporal/src/codegen/docs.ts instead; changes here are overwritten. */}
 
-The Temporal lexicon provides **5** rules: 1 lint rule and 4 post-synth checks.
+The Temporal lexicon provides **6** rules: 1 lint rule and 5 post-synth checks.
 
 ## Lint Rules
 
@@ -24,3 +24,4 @@ Post-synth checks validate the serialized output after the build pipeline comple
 | `TMP002` | TemporalSchedule with overlap AllowAll should include state.note explaining the intent |
 | `TMP010` | TemporalSchedule cron expressions must be valid 5- or 6-field cron syntax |
 | `TMP011` | SearchAttribute.namespace must reference a declared TemporalNamespace entity |
+| `TMP012` | Activity step args and outcomeAttribute.from must match the activity's declared contract |

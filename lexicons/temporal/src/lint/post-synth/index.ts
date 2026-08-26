@@ -4,10 +4,12 @@ import { tmp001 } from "./tmp001-retention-too-short";
 import { tmp002 } from "./tmp002-allowall-without-note";
 import { tmp010 } from "./tmp010-cron-syntax";
 import { tmp011 } from "./tmp011-namespace-reference";
+import { tmp012 } from "./tmp012-activity-contract";
 
 export const postSynthChecks: PostSynthCheck[] = [
   tmp001,
   tmp002,
   tmp010,
   tmp011,
+  tmp012,
 ];
