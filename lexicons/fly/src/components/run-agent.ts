@@ -72,10 +72,18 @@ import { spriteWriteFile, spriteReadFile } from "../op/activities/sprite-fs";
  * any other error shape — a genuine transport/infra failure the caller
  * should let propagate. Exported for direct unit testing of the
  * reclassification the module doc above describes as option (a).
+ *
+ * The leading `[\s\S]*` is greedy on purpose: `spriteExec`'s message echoes
+ * the raw `cmd` verbatim before the real ` exited <code>: ` marker
+ * (`exec "<cmd>" exited ...`), so a crafted command whose text itself
+ * contains that exact substring must not be mistaken for the marker. A
+ * greedy prefix backtracks from the end of the string, so it always anchors
+ * to the *last* occurrence — the genuine marker `spriteExec` appended — never
+ * a leftmost false match inside the echoed `cmd`.
  */
 export function parseSpriteExecFailure(err: unknown): { exitCode: number; output: string } | undefined {
   if (!(err instanceof Error)) return undefined;
-  const m = err.message.match(/ exited (\d+): ([\s\S]*)$/);
+  const m = err.message.match(/^[\s\S]* exited (\d+): ([\s\S]*)$/);
   if (!m) return undefined;
   const exitCode = Number(m[1]);
   if (!Number.isFinite(exitCode)) return undefined;

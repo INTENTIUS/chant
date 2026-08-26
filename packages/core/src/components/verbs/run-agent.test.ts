@@ -119,13 +119,26 @@ describe("defaultSpriteActivities — phase 1's not-wired-yet placeholder", () =
 
 // ── run()/rollback() sequencing (#1942) ─────────────────────────────────────
 
-/** A tiny in-memory `SpriteActivities` fake: one sprite's filesystem plus comment-keyed checkpoint snapshots — enough to prove checkpoint/restore is observable without any HTTP/WS (mirrors, at a smaller scale, `lexicons/fly/src/op/activities/sprites-fake.ts`'s in-process model). `execImpl` is the one piece a test overrides per scenario. */
+/**
+ * A tiny in-memory `SpriteActivities` fake: one sprite's filesystem plus a
+ * checkpoint list (id + comment + snapshot) — enough to prove checkpoint/
+ * restore is observable without any HTTP/WS (mirrors, at a smaller scale,
+ * `lexicons/fly/src/op/activities/sprites-fake.ts`'s in-process model).
+ * `execImpl` is the one piece a test overrides per scenario.
+ *
+ * `restore` mirrors the real `spriteRestore`'s resolution order
+ * (`lexicons/fly/src/op/activities/sprites.ts`): an explicit `checkpoint` id
+ * wins outright; otherwise the *newest* checkpoint carrying `comment` — so a
+ * reused sprite with two "pre-run"-commented checkpoints exercises the exact
+ * ambiguity the real backend has (regression coverage for #1942 review
+ * finding 1).
+ */
 function makeFakeSprites(
   execImpl: (args: { id: string; cmd: string }) => Promise<{ stdout: string; stderr: string; exitCode: number }>,
 ): { sprites: SpriteActivities; calls: string[]; fs: Record<string, string> } {
   const calls: string[] = [];
   const fs: Record<string, string> = {};
-  const checkpoints = new Map<string, Record<string, string>>();
+  const checkpoints: Array<{ id: string; comment: string; snapshot: Record<string, string> }> = [];
 
   const sprites: SpriteActivities = {
     async create(args) {
@@ -134,21 +147,30 @@ function makeFakeSprites(
     },
     async checkpoint(args) {
       const comment = args.comment ?? "";
+      const id = `v${checkpoints.length + 1}`;
       calls.push(`checkpoint:${comment}`);
-      checkpoints.set(comment, { ...fs });
-      return { checkpointId: `v${checkpoints.size}` };
+      checkpoints.push({ id, comment, snapshot: { ...fs } });
+      return { checkpointId: id };
     },
     async exec(args) {
       calls.push(`exec:${args.cmd}`);
       return execImpl(args);
     },
     async restore(args) {
-      const comment = args.comment ?? "";
-      calls.push(`restore:${args.id}:${comment}`);
-      const snapshot = checkpoints.get(comment);
-      if (!snapshot) throw new Error(`no checkpoint for comment "${comment}"`);
+      let entry: { id: string; comment: string; snapshot: Record<string, string> } | undefined;
+      if (args.checkpoint !== undefined) {
+        calls.push(`restore:${args.id}:checkpoint=${args.checkpoint}`);
+        entry = checkpoints.find((c) => c.id === args.checkpoint);
+        if (!entry) throw new Error(`no checkpoint "${args.checkpoint}" for sprite ${args.id}`);
+      } else {
+        const comment = args.comment ?? "";
+        calls.push(`restore:${args.id}:comment=${comment}`);
+        // Newest matching comment — mirrors `pickCheckpointByComment`.
+        entry = [...checkpoints].reverse().find((c) => c.comment === comment);
+        if (!entry) throw new Error(`no checkpoint for comment "${comment}"`);
+      }
       for (const key of Object.keys(fs)) delete fs[key];
-      Object.assign(fs, snapshot);
+      Object.assign(fs, entry.snapshot);
     },
     async destroy(args) {
       calls.push(`destroy:${args.id}`);
@@ -253,6 +275,32 @@ describe("run() — failed turn: non-zero exit surfaces as status \"failed\", ne
   });
 });
 
+describe("collectArtifacts — only a \"not found\" read means \"no artifact\"; a genuine infra failure propagates (#1942 review finding 2)", () => {
+  it("branch A: readFile rejecting with the sprite-fs \"not found\" shape resolves to empty artifacts.files, not a run() rejection", async () => {
+    const { sprites } = makeFakeSprites(succeed); // never writes /work/output — readFile hits the fake's "not found" branch
+    const capability = createRunAgentCapability(sprites);
+    await expect(capability.run(ctx, MINIMAL_INPUT)).resolves.toMatchObject({ artifacts: { files: [] } });
+  });
+
+  it("branch B: readFile rejecting with a genuine infra-failure shape propagates as a run() rejection, not swallowed into empty artifacts.files", async () => {
+    const { sprites } = makeFakeSprites(succeed);
+    sprites.readFile = async () => {
+      throw new Error("sprite s-1 read /work/output failed (500): backend unavailable");
+    };
+    const capability = createRunAgentCapability(sprites);
+    await expect(capability.run(ctx, MINIMAL_INPUT)).rejects.toThrow(/failed \(500\): backend unavailable/);
+  });
+
+  it("branch B (variant): a non-Error/non-string rejection from readFile still propagates rather than being treated as \"not found\"", async () => {
+    const { sprites } = makeFakeSprites(succeed);
+    sprites.readFile = async () => {
+      throw new Error("ECONNRESET");
+    };
+    const capability = createRunAgentCapability(sprites);
+    await expect(capability.run(ctx, MINIMAL_INPUT)).rejects.toThrow(/ECONNRESET/);
+  });
+});
+
 describe("rollback() restores the pre-run checkpoint (#1942)", () => {
   it("restores the sprite's filesystem to its pre-run state after a failed turn", async () => {
     const { sprites, fs } = makeFakeSprites(async () => {
@@ -274,17 +322,17 @@ describe("rollback() restores the pre-run checkpoint (#1942)", () => {
     expect(fs["/work/prompt"]).toBeUndefined();
   });
 
-  it("resolves the sprite id from the WeakMap keyed by the exact input object run() was called with", async () => {
+  it("resolves the sprite id AND restores by the exact recorded checkpoint id (not comment) from the WeakMap keyed by the exact input object run() was called with", async () => {
     const { sprites, calls } = makeFakeSprites(async () => ({ stdout: "", stderr: "", exitCode: 1 }));
     const capability = createRunAgentCapability(sprites);
     const output = await capability.run(ctx, MINIMAL_INPUT);
 
     await capability.rollback?.(ctx, MINIMAL_INPUT);
 
-    expect(calls.at(-1)).toBe(`restore:${output.spriteId}:pre-run`);
+    expect(calls.at(-1)).toBe(`restore:${output.spriteId}:checkpoint=${output.checkpointId}`);
   });
 
-  it("falls back to workspace.spriteName when there is no in-process run() record for this input", async () => {
+  it("falls back to workspace.spriteName + comment-based restore when there is no in-process run() record for this input", async () => {
     const { sprites, calls } = makeFakeSprites(succeed);
     // Simulate an earlier process/instance having already checkpointed this
     // warm sprite — otherwise there is nothing for a bare restore to find,
@@ -296,27 +344,72 @@ describe("rollback() restores the pre-run checkpoint (#1942)", () => {
 
     // No run() call at all — a fresh capability instance calling rollback()
     // directly, the same as a caller resuming against an already-created sprite.
+    // With no in-process record, there is no known checkpoint id, so this is
+    // the one case that still falls back to comment-based resolution.
     await capability.rollback?.(ctx, input);
 
-    expect(calls).toEqual([`restore:warm-sprite:pre-run`]);
+    expect(calls).toEqual([`restore:warm-sprite:comment=pre-run`]);
   });
 
-  it("throws a descriptive error when neither an in-process record nor workspace.spriteName is available", async () => {
-    const { sprites } = makeFakeSprites(succeed);
+  it("degrades to an explicit no-op (does not throw, does not call restore) when neither an in-process record nor workspace.spriteName is available (#1942 review finding 3)", async () => {
+    const { sprites, calls } = makeFakeSprites(succeed);
     const capability = createRunAgentCapability(sprites);
-    await expect(capability.rollback?.(ctx, MINIMAL_INPUT)).rejects.toThrow(/no sprite id to restore/);
+    await expect(capability.rollback?.(ctx, MINIMAL_INPUT)).resolves.toBeUndefined();
+    expect(calls.some((c) => c.startsWith("restore:"))).toBe(false);
   });
 
-  it("honors a custom workspace.checkpointComment for both checkpoint and restore", async () => {
-    const { sprites, calls } = makeFakeSprites(async () => ({ stdout: "", stderr: "", exitCode: 1 }));
+  it("honors a custom workspace.checkpointComment for the checkpoint call, but still restores by the exact recorded checkpoint id, not the comment", async () => {
+    const { sprites, calls, fs } = makeFakeSprites(async () => ({ stdout: "", stderr: "", exitCode: 1 }));
     const capability = createRunAgentCapability(sprites);
     const input: RunAgentInput = { ...MINIMAL_INPUT, workspace: { checkpointComment: "before-turn" } };
 
-    await capability.run(ctx, input);
+    const output = await capability.run(ctx, input);
     await capability.rollback?.(ctx, input);
 
     expect(calls).toContain("checkpoint:before-turn");
-    expect(calls.some((c) => c.startsWith("restore:") && c.endsWith(":before-turn"))).toBe(true);
+    expect(calls).toContain(`restore:${output.spriteId}:checkpoint=${output.checkpointId}`);
+    expect(fs["/work/prompt"]).toBeUndefined(); // restore actually rewound the fs
+  });
+
+  it("rollback of run 1 restores run 1's own checkpoint, not run 2's — two runs sharing the default \"pre-run\" comment on a reused sprite (regression, #1942 review finding 1)", async () => {
+    const { sprites, calls, fs } = makeFakeSprites(async (args) => {
+      // Each exec mutates a run-specific marker so the two runs' post-states
+      // are distinguishable.
+      fs[`/work/marker-${args.cmd}`] = "done";
+      return { stdout: "", stderr: "", exitCode: 0 };
+    });
+    const capability = createRunAgentCapability(sprites);
+    const input1: RunAgentInput = {
+      agent: "run1-marker",
+      task: { prompt: "first" },
+      workspace: { spriteName: "warm-sprite" },
+    };
+    const input2: RunAgentInput = {
+      agent: "run2-marker",
+      task: { prompt: "second" },
+      workspace: { spriteName: "warm-sprite" },
+    };
+
+    const output1 = await capability.run(ctx, input1);
+    const output2 = await capability.run(ctx, input2);
+
+    // Both checkpoints share the default "pre-run" comment, and run2's
+    // checkpoint (taken after run1's mutation) is the newer of the two — the
+    // exact ambiguity a comment-based restore could not resolve correctly.
+    expect(output1.checkpointId).not.toBe(output2.checkpointId);
+    expect(fs["/work/marker-run1-marker"]).toBe("done");
+    expect(fs["/work/marker-run2-marker"]).toBe("done");
+
+    await capability.rollback?.(ctx, input1);
+
+    // A comment-based ("pre-run") restore would have resolved to run2's
+    // newer checkpoint, which already contains run1's marker — the bug this
+    // regression test guards against. The fix restores run1's own checkpoint
+    // (taken before run1 ran at all), so run1's marker must be gone too.
+    expect(calls.at(-1)).toBe(`restore:warm-sprite:checkpoint=${output1.checkpointId}`);
+    expect(fs["/work/marker-run1-marker"]).toBeUndefined();
+    expect(fs["/work/marker-run2-marker"]).toBeUndefined();
+    expect(fs["/work/prompt"]).toBeUndefined();
   });
 });
 

@@ -86,22 +86,39 @@
  *    ../driver.ts's saga unwind stores `resolvedInput`, not a step's return
  *    value, precisely so `rollback` can be called with "the same input" per
  *    capability, the same contract `../../lexicons/aws/.../host-delivery.ts`'s
- *    `code-deploy` rollback already relies on). `run()` records the sprite id
- *    it created/reused in a private `WeakMap` keyed by that exact `input`
- *    object, so `rollback()` recovers it with no persisted state and no
- *    network round-trip — this works for ../driver.ts's saga unwind (which
- *    runs entirely in-process, right after the failing `run()`, per that
- *    module's own doc) and for this module's own tests calling `rollback()`
- *    directly after `run()`. When no such record exists (a different
- *    capability instance / process resumed against an already-created
- *    sprite), `rollback()` falls back to the caller-supplied
- *    `workspace.spriteName` and throws a descriptive error only if neither is
- *    available — there is no sprite id to restore. The checkpoint itself is
- *    *not* threaded through this map: restore always resolves by
- *    `workspace.checkpointComment` (default `"pre-run"`), the same
- *    comment-based resolution `spriteRestore`/`pickCheckpointByComment`
- *    (`lexicons/fly/src/op/activities/sprites.ts`) already implement — one
- *    fewer piece of state to keep in sync.
+ *    `code-deploy` rollback already relies on). `run()` records both the
+ *    sprite id and the exact pre-run checkpoint id it created/reused in a
+ *    private `WeakMap` keyed by that exact `input` object, so `rollback()`
+ *    recovers them with no persisted state and no network round-trip — this
+ *    works for ../driver.ts's saga unwind (which runs entirely in-process,
+ *    right after the failing `run()`, per that module's own doc) and for this
+ *    module's own tests calling `rollback()` directly after `run()`. **The
+ *    checkpoint id, not the comment, is what `rollback()` restores by** when a
+ *    record exists: `sprites.restore({ id, checkpoint: checkpointId })`, which
+ *    `spriteRestore`'s explicit-id resolution wins over comment on
+ *    (`lexicons/fly/src/op/activities/sprites.ts`). Restoring by comment alone
+ *    is unsafe on a reused sprite — two `run()` calls sharing the default
+ *    `"pre-run"` comment would make a comment-based restore always resolve to
+ *    the *newest* matching checkpoint, so rolling back the first run would
+ *    restore the second run's checkpoint (which already contains the first
+ *    run's mutation) instead of undoing it. Comment-based restore
+ *    (`workspace.checkpointComment`, default `"pre-run"`) is therefore only a
+ *    **fallback**, used when no recorded `checkpointId` exists for this input
+ *    (the `workspace.spriteName`-only path below). When neither a recorded
+ *    sprite id nor `workspace.spriteName` is available, `rollback()` degrades
+ *    with an explicit, commented no-op return — the same pattern
+ *    `../../lexicons/aws/src/components/host-delivery.ts`'s `code-deploy`
+ *    rollback uses (`if (!deploymentId) return;`) — rather than throwing. This
+ *    is not just a local edge case: on the Temporal durable path
+ *    (`lexicons/temporal/src/component-op/activities.ts`), `run` and
+ *    `rollback` execute as separate Activities that each rebuild `input` fresh
+ *    via `resolveStepInput`, so this `WeakMap` *never* has a hit there, even
+ *    for a sprite the matching `run()` call just created — and the generated
+ *    workflow's saga-unwind loop (`lexicons/temporal/src/component-op/
+ *    serializer.ts`) swallows a thrown rollback error with no logging. A fresh
+ *    sprite is therefore never restored on that path today; #1944 owns the
+ *    durable-identity follow-up (thread the checkpoint id through so
+ *    `rollback` can recover it without the in-process record).
  *  - **Destroy vs. leave-alive.** `run()` destroys a freshly created (not
  *    `workspace.spriteName`-reused) sprite only when `turn.status ===
  *    "completed"`. An ordinary failed turn leaves the sprite alive — it
@@ -311,10 +328,16 @@ export function defaultSpriteActivities(): SpriteActivities {
  * completed. See this module's doc comment for the exec-throw resolution,
  * the destroy-vs-leave-alive rule, and the rollback-identity design.
  *
- * `rollback()`: `sprites.restore({ id: spriteId, comment })` — the sole
- * compensation, restoring to the pre-run checkpoint by comment (see this
- * module's doc comment, "Rollback identity"). No hand-written inverse
- * action; "the environment is the transaction."
+ * `rollback()`: `sprites.restore({ id: spriteId, checkpoint: checkpointId })`
+ * — the sole compensation, restoring to the exact pre-run checkpoint `run()`
+ * recorded (see this module's doc comment, "Rollback identity"). Falls back
+ * to `sprites.restore({ id: spriteId, comment })` only when no recorded
+ * checkpoint id exists, and degrades to an explicit no-op when there is no
+ * sprite id to restore at all — **known limitation:** on the Temporal durable
+ * path this in-process record never survives from `run()` to `rollback()` (see
+ * "Rollback identity" above), so a fresh sprite's rollback there is silently a
+ * no-op today; #1944 tracks the durable-identity fix. No hand-written inverse
+ * action otherwise; "the environment is the transaction."
  *
  * `rollbackPolicy: "native"` is set explicitly (not left to
  * ../capability.ts's `rollback`-method inference) so the design commitment
@@ -345,8 +368,8 @@ export function createRunAgentCapability(
       const { checkpointId } = await sprites.checkpoint({ id: spriteId, comment: checkpointComment });
       // Recorded as early as possible: even if a later step throws (a genuine
       // infra failure, triggering saga rollback), `rollback()` still finds
-      // the sprite id it needs to restore.
-      stateByInput.set(input, { spriteId });
+      // the sprite id and exact checkpoint it needs to restore.
+      stateByInput.set(input, { spriteId, checkpointId });
 
       await sprites.writeFile({ id: spriteId, path: PROMPT_PATH, content: input.task.prompt, mkdir: true });
 
@@ -384,14 +407,28 @@ export function createRunAgentCapability(
       const state = stateByInput.get(input);
       const spriteId = state?.spriteId ?? input.workspace.spriteName;
       if (!spriteId) {
-        throw new Error(
-          'run-agent rollback: no sprite id to restore. This capability instance never ran "run()" for this ' +
-            'exact input (its in-memory record is gone — e.g. a different process or capability instance), and ' +
-            '"workspace.spriteName" was not supplied, so there is no way to identify which sprite to restore. ' +
-            "Supply \"workspace.spriteName\" for any sprite whose rollback might need to run outside the run() " +
-            "call that created it.",
-        );
+        // No in-process record for this exact input object (a different
+        // process/capability instance, or the Temporal durable path — see
+        // this module's doc comment, "Rollback identity" — where run() and
+        // rollback() run as separate Activities and never share one), and no
+        // "workspace.spriteName" to fall back to: there is nothing to
+        // identify which sprite to restore. Degrade explicitly rather than
+        // throwing into a swallowed catch, the same pattern
+        // ../../lexicons/aws/src/components/host-delivery.ts's code-deploy
+        // rollback uses (`if (!deploymentId) return;`). #1944 owns making the
+        // Temporal durable path actually restore a fresh sprite here.
+        return;
       }
+      // Restore the exact pre-run checkpoint when this capability instance
+      // recorded one — wins over comment (see "Rollback identity"), and is
+      // the only safe choice on a reused sprite where two runs can share the
+      // same default "pre-run" comment.
+      if (state?.checkpointId) {
+        await sprites.restore({ id: spriteId, checkpoint: state.checkpointId });
+        return;
+      }
+      // Fallback: no recorded checkpoint id (e.g. workspace.spriteName-only,
+      // no in-process run() record) — resolve by comment, same as before.
       const comment = input.workspace.checkpointComment ?? "pre-run";
       await sprites.restore({ id: spriteId, comment });
     },
@@ -442,7 +479,28 @@ function generateSpriteName(ctx: DeployContext): string {
   return `run-agent-${ctx.component}-${suffix}`.replace(/[^a-zA-Z0-9._-]/g, "-");
 }
 
-/** Read `OUTPUT_PATH` as the turn's sole artifact, when present. A missing/unreadable file (e.g. a failed turn that never wrote it) is not an error — `artifacts.files` is simply empty. */
+/**
+ * Match the "not found" error shape `lexicons/fly/src/op/activities/
+ * sprite-fs.ts`'s `spriteReadFile` throws for a 404 specifically (`sprite
+ * <id> read <path>: not found`) — distinct from that same module's >=300
+ * `"... failed (<status>): ..."` shape, which is a genuine infra failure. The
+ * match is narrow on purpose, mirroring how `lexicons/fly/src/components/
+ * run-agent.ts`'s `parseSpriteExecFailure` only reclassifies the one thrown
+ * shape it recognizes and lets everything else through.
+ */
+function isArtifactNotFoundError(err: unknown): boolean {
+  return err instanceof Error && /^sprite .+ read .+: not found$/.test(err.message);
+}
+
+/**
+ * Read `OUTPUT_PATH` as the turn's sole artifact, when present. Only a
+ * "not found" read (no artifact was ever written — e.g. a failed turn that
+ * never got that far) is treated as "no artifact"; any other error (a
+ * genuine transport/infra failure, or a real "failed (<status>)" from the
+ * sprite filesystem API) is rethrown so it propagates as a `run()` rejection
+ * and triggers saga rollback, instead of being silently swallowed into an
+ * empty `artifacts.files`.
+ */
 async function collectArtifacts(
   sprites: SpriteActivities,
   spriteId: string,
@@ -450,14 +508,16 @@ async function collectArtifacts(
   try {
     const { content } = await sprites.readFile({ id: spriteId, path: OUTPUT_PATH });
     return { files: [{ path: OUTPUT_PATH, digest: sha256Digest(content) }] };
-  } catch {
-    return { files: [] };
+  } catch (err) {
+    if (isArtifactNotFoundError(err)) return { files: [] };
+    throw err;
   }
 }
 
-/** Per-`input` record of what `run()` did, so `rollback()` (called with the same `input` object — see this module's doc comment) can recover the sprite id without any persisted state. */
+/** Per-`input` record of what `run()` did, so `rollback()` (called with the same `input` object — see this module's doc comment) can recover the sprite id and exact pre-run checkpoint id without any persisted state. */
 interface RunAgentRunState {
   spriteId: string;
+  checkpointId: string;
 }
 
 /** Default `run-agent` capability, backed by the not-wired-yet placeholder `SpriteActivities`. */

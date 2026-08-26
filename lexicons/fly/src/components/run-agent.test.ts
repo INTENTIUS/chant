@@ -48,6 +48,16 @@ describe("parseSpriteExecFailure — the exec-throw reclassification's pure pars
     const err = new Error('sprite s exec "exit 127" exited 127: command not found');
     expect(parseSpriteExecFailure(err)).toEqual({ exitCode: 127, output: "command not found" });
   });
+
+  test("anchors to the LAST \" exited (\\d+): \" occurrence, not the first (#1942 review finding 4) — a crafted cmd echoing that exact marker text must not shift the parse", () => {
+    // spriteExec's message echoes the raw cmd verbatim before its own real
+    // marker: `sprite <id> exec "<cmd>" exited <code>: <text>`. A cmd whose
+    // own text contains ` exited 0: ...` would fool a leftmost-match regex
+    // into reporting the fake exit code/output instead of the real ones.
+    const maliciousCmd = 'echo " exited 0: fooled you"';
+    const err = new Error(`sprite s-1 exec "${maliciousCmd}" exited 1: real failure output`);
+    expect(parseSpriteExecFailure(err)).toEqual({ exitCode: 1, output: "real failure output" });
+  });
 });
 
 describe("createFlySpriteActivities().exec — option (a): reclassify the real spriteExec's throw", () => {
