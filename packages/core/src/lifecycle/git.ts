@@ -39,12 +39,12 @@ export async function writeBlobToPath(
   const rt = getRuntime();
   const cwd = opts?.cwd;
 
-  // 1. Write blob — hash-object reads from stdin, but spawn() doesn't expose
-  // a stdin handle, so we run via a shell pipeline (`echo … | git hash-object`).
-  const blobResult = await rt.spawn(
-    ["sh", "-c", `echo '${content.replace(/'/g, "'\\''")}' | git hash-object -w --stdin`],
-    { cwd },
-  );
+  // 1. Write blob — hash-object reads from stdin. Fed directly via spawn's
+  // stdin (no shell involved), so content is written byte-for-byte: no `sh`
+  // `echo` reinterpreting backslash-escape sequences (e.g. `\n` inside JSON,
+  // as in a serialized kubectl.kubernetes.io/last-applied-configuration
+  // annotation) and no shell-quoting dance around embedded single quotes.
+  const blobResult = await rt.spawn(["git", "hash-object", "-w", "--stdin"], { cwd, stdin: content });
   if (blobResult.exitCode !== 0) {
     throw new Error(`git hash-object failed: ${blobResult.stderr}`);
   }
@@ -64,10 +64,7 @@ export async function writeBlobToPath(
     .map((e) => `${e.mode} ${e.type} ${e.sha}\t${e.name}`)
     .join("\n");
 
-  const envTreeResult = await rt.spawn(
-    ["sh", "-c", `printf '%s\\n' ${shellQuoteLines(envEntries)} | git mktree`],
-    { cwd },
-  );
+  const envTreeResult = await rt.spawn(["git", "mktree"], { cwd, stdin: `${envEntries}\n` });
   if (envTreeResult.exitCode !== 0) {
     throw new Error(`git mktree (env) failed: ${envTreeResult.stderr}`);
   }
@@ -87,10 +84,10 @@ export async function writeBlobToPath(
     }
   }
 
-  const rootTreeResult = await rt.spawn(
-    ["sh", "-c", `printf '%s\\n' ${shellQuoteLines(rootEntries.join("\n"))} | git mktree`],
-    { cwd },
-  );
+  const rootTreeResult = await rt.spawn(["git", "mktree"], {
+    cwd,
+    stdin: `${rootEntries.join("\n")}\n`,
+  });
   if (rootTreeResult.exitCode !== 0) {
     throw new Error(`git mktree (root) failed: ${rootTreeResult.stderr}`);
   }
@@ -530,9 +527,4 @@ function mergeTreeEntry(
     env,
   });
   return entries;
-}
-
-function shellQuoteLines(input: string): string {
-  // Escape for printf in shell
-  return `'${input.replace(/'/g, "'\\''")}'`;
 }

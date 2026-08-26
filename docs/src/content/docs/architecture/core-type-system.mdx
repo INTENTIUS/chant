@@ -87,6 +87,25 @@ Static inputs hash at synthesis (`receiptExpectation`). Reference inputs — att
 
 A receipt carries a recognition marker (`Symbol.for("chant.effect-receipt")`) that core reads lexicon-independently (`isEffectReceipt`, `collectEffectReceipts`). Unlike a secret declaration the marker identifies rather than excludes: a receipt serializes, becoming a real observable resource through a per-lexicon materialization row that stamps the same marker. Receipts are observe-only to the generic apply path — the `effect()` step is the sole writer, on success, last.
 
+### ScenarioDeclaration
+
+A **ScenarioDeclaration** is a checkable claim about what a change should DO, not just how it's shaped — see [Plan Scenarios](/chant/concepts/plan-scenarios/) for the full model. Like `SecretDeclaration`, it is serializer-neutral: discovery collects it, `partitionByLexicon` excludes it from every lexicon's output.
+
+```typescript
+import { Scenario, snapshot } from "@intentius/chant";
+
+export const planNeutral = Scenario("extracting the composite is plan-neutral", {
+  given: snapshot("fixtures/prod-baseline.json"),
+  expect: { noop: true },
+});
+```
+
+`given` comes from the `snapshot()` helper, which classifies its argument structurally and offline — a string with a path separator or a `.json` suffix is a fixture file (`{ kind: "file", path }`); anything else is an environment name (`{ kind: "env", env }`), replayed from the last snapshot recorded for it on the `chant/lifecycle` branch.
+
+`expect` composes independently-optional clauses: `noop: true`; exact `create`/`update`/`delete` counts; `deletes: [{ name, ownership }]` for named, ownership-checked deletes; and `unobserved: "refuse" | { allow: [names] }` for the plan's unobserved holes. At least one clause is required.
+
+A scenario carries a recognition marker (`Symbol.for("chant.scenario")`, `isScenario`/`collectScenarios`) and is checked offline by `chant scenario check` — see [CLI: scenario](/chant/cli/scenario/).
+
 ## Intrinsics
 
 An **Intrinsic** represents a lexicon-provided function that will be resolved at build time. Intrinsics are placeholders for values that depend on other resources or runtime information.

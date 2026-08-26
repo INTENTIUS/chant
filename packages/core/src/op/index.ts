@@ -34,7 +34,7 @@ export {
 } from "./activity-contract";
 export type { ActivityContract, ActivityContractIssue } from "./activity-contract";
 export { stepOutput, isStepOutputRef, collectStepOutputRefs, validateStepOutputRefs, validateStepOutputRefScope, makeOutProxy } from "./step-output-ref";
-export type { StepOutputRef } from "./step-output-ref";
+export type { StepOutputRef, WithStepRefs } from "./step-output-ref";
 export type { NamedActivityStep } from "./builders";
 export {
   eq, neq, gt, gte, lt, lte, truthy, falsy, allOf, anyOf,
@@ -50,3 +50,4 @@ export type {
 } from "./converge-rule";
 export { classifyOpVerbClass, isGated } from "./op-verb-class";
 export type { OpVerbClass } from "./op-verb-class";
+export { takeProfileAndId } from "./builders";

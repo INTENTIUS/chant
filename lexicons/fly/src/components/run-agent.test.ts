@@ -13,7 +13,22 @@
 import { describe, test, expect, beforeAll, afterAll } from "vitest";
 import { createSpritesFake } from "../op/activities/sprites-fake";
 import { createFlyRunAgentCapability, createFlySpriteActivities, parseSpriteExecFailure } from "./run-agent";
-import type { RunAgentInput } from "@intentius/chant/components/verbs/run-agent";
+import {
+  buildRunAgentProvenanceStatement,
+  extractTranscriptDigest,
+  RUN_AGENT_BUILD_TYPE,
+  type RunAgentInput,
+} from "@intentius/chant/components/verbs/run-agent";
+import {
+  createAttestProvenanceCapability,
+  createSignCapability,
+  SignTargetNotDigestError,
+} from "@intentius/chant/components/verbs/sign";
+import {
+  createVerifyCapability,
+  VerificationFailedError,
+} from "@intentius/chant/components/verbs/verify";
+import { createMockProcessRunner } from "@intentius/chant/components/verbs/__tests__/mock-process-runner";
 
 const ctx = { env: "dev", component: "review-agent" };
 
@@ -170,5 +185,118 @@ describe("createFlyRunAgentCapability — end to end against the offline fake (#
     // Still alive post-success (reuse is never destroyed) — a direct read succeeds.
     const { content } = await sprites.readFile({ id: name, path: "/work/output" });
     expect(content).toContain("warm");
+  });
+});
+
+// ── #1943: provenance + attestation, verify-gate interop over a real turn ───
+
+describe("run-agent -> sign -> attest-provenance -> verify (#1943), a real turn against the offline sprites-fake", () => {
+  const POLICY = {
+    expectedIssuer: "https://token.actions.githubusercontent.com",
+    expectedIdentity: "https://github.com/my-org/my-repo/.github/workflows/release.yml@refs/heads/main",
+  };
+
+  test("a valid attestation over a real sprite turn's output passes sign/attest-provenance/verify completely unmodified", async () => {
+    const capability = createFlyRunAgentCapability();
+    const input: RunAgentInput = {
+      agent: "echo hi > /work/output",
+      task: { prompt: "irrelevant for this scripted command" },
+      workspace: {},
+    };
+
+    // A real turn against the offline fake — not a hand-rolled SpriteActivities mock.
+    const output = await capability.run(ctx, input);
+    expect(output.turn.status).toBe("completed");
+    expect(output.attestationRef).toMatch(/^review-agent\/run-agent@sha256:[0-9a-f]{64}$/);
+
+    const proc = createMockProcessRunner();
+    const signCapability = createSignCapability(proc.runner);
+    const attestCapability = createAttestProvenanceCapability(proc.runner);
+    const verifyCapability = createVerifyCapability(proc.runner);
+
+    // sign/attest-provenance accept output.attestationRef exactly like any
+    // other digest-qualified imageRef — no new code path, no
+    // SignTargetNotDigestError.
+    const signOutput = await signCapability.run(ctx, { imageRef: output.attestationRef });
+    expect(signOutput).toEqual({ imageRef: output.attestationRef, signed: true, method: "keyless" });
+
+    const statement = buildRunAgentProvenanceStatement(input, output, "https://github.com/actions/runner");
+    expect(statement.predicateType).toBe("https://slsa.dev/provenance/v1");
+    expect(statement.predicate.buildDefinition.buildType).toBe(RUN_AGENT_BUILD_TYPE);
+
+    const attestOutput = await attestCapability.run(ctx, {
+      imageRef: output.attestationRef,
+      provenance: output.provenance,
+      builderId: "https://github.com/actions/runner",
+      buildType: RUN_AGENT_BUILD_TYPE,
+      externalParameters: { agent: input.agent },
+      internalParameters: {
+        spriteId: output.spriteId,
+        checkpointId: output.checkpointId,
+        turnStatus: output.turn.status,
+        turnExitCode: output.turn.exitCode,
+      },
+    });
+    expect(attestOutput.attested).toBe(true);
+
+    // The unmodified verify gate (imageRef: "@RunAgent.attestationRef" in a
+    // real component's step wiring) accepts it — no requireProvenance
+    // override, no predicateType plumbing needed on the verify side (see
+    // packages/core/src/components/verbs/run-agent.ts's doc comment,
+    // "Predicate-type decision, made").
+    const verifyOutput = await verifyCapability.run(ctx, { imageRef: output.attestationRef, policy: POLICY });
+    expect(verifyOutput).toEqual({ verified: true, checked: ["signature", "provenance"] });
+  });
+
+  test("the same unmodified verify gate refuses when the attestation doesn't check out", async () => {
+    const capability = createFlyRunAgentCapability();
+    const input: RunAgentInput = {
+      agent: "echo hi > /work/output",
+      task: { prompt: "irrelevant for this scripted command" },
+      workspace: {},
+    };
+    const output = await capability.run(ctx, input);
+
+    // Simulates a tampered/missing attestation the same way verify.test.ts's
+    // own "FAILS the deploy on missing/invalid provenance" suite does — cosign
+    // itself is the one that would refuse a mismatched digest or a stripped
+    // attestation in reality; this proves `verify` (composed after
+    // `run-agent`, unmodified) propagates that refusal as
+    // VerificationFailedError rather than passing the gate silently.
+    const proc = createMockProcessRunner({
+      failures: { "cosign verify-attestation": "Error: no matching attestations found for the given subject digest" },
+    });
+    const verifyCapability = createVerifyCapability(proc.runner);
+
+    await expect(
+      verifyCapability.run(ctx, { imageRef: output.attestationRef, policy: POLICY }),
+    ).rejects.toThrow(VerificationFailedError);
+  });
+
+  test("a turn whose output differs by one byte produces a different attestationRef — verifying the original digest against the tampered turn's evidence would target the wrong subject", async () => {
+    const capability = createFlyRunAgentCapability();
+    const original = await capability.run(ctx, {
+      agent: "echo original > /work/output",
+      task: { prompt: "irrelevant for this scripted command" },
+      workspace: {},
+    });
+    const tampered = await capability.run(ctx, {
+      agent: "echo tampered > /work/output",
+      task: { prompt: "irrelevant for this scripted command" },
+      workspace: {},
+    });
+
+    expect(original.attestationRef).not.toBe(tampered.attestationRef);
+    expect(extractTranscriptDigest(original.provenance.sourceRef)).not.toBe(
+      extractTranscriptDigest(tampered.provenance.sourceRef),
+    );
+  });
+
+  test("refuses to sign a non-digest-shaped reference the same way it would for any other verb — attestationRef is always digest-qualified by construction", async () => {
+    const proc = createMockProcessRunner();
+    const signCapability = createSignCapability(proc.runner);
+    await expect(signCapability.run(ctx, { imageRef: "review-agent/run-agent:latest" })).rejects.toThrow(
+      SignTargetNotDigestError,
+    );
   });
 });

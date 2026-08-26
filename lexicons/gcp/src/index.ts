@@ -1,3 +1,11 @@
+// Typed Op step-builder wrappers (chant #1288 Stage 2) — gcpApply/gcpDelete/
+// flociGcpUp/flociGcpDown with authoring-time types derived from this
+// lexicon's own *Args interfaces (see ./op/builders.ts's module doc for why
+// these live here rather than in core or the temporal barrel). Opt-in:
+// `@intentius/chant-lexicon-temporal`'s same-named exports are core's
+// original untyped builders, unchanged.
+export { gcpApply, gcpDelete, flociGcpUp, flociGcpDown } from "./op/builders";
+
 // Serializer
 export { gcpSerializer } from "./serializer";
 

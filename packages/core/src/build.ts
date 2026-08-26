@@ -8,6 +8,7 @@ import { DiscoveryError, BuildError as BuildErrorClass } from "./errors";
 import { LexiconOutput, isLexiconOutput } from "./lexicon-output";
 import { isSecretDeclaration } from "./secret-provenance";
 import { splitReceiptEntities } from "./effect-receipt";
+import { isScenario } from "./lifecycle/scenario";
 import { AttrRef } from "./attrref";
 import { isAttrRefLike } from "./utils";
 import { isChildProject, type ChildProjectInstance } from "./child-project";
@@ -114,9 +115,10 @@ export function computeStackGraph(
   // Dependency map: node → producers it depends on.
   const nodes = lexiconNames.length
     ? [...lexiconNames]
-    : // Secret provenance declarations (#1828) never form a stack — their
-      // pseudo-lexicon has no serializer and must not appear in the manifest.
-      [...new Set([...entities.values()].filter((e) => !isSecretDeclaration(e)).map((e) => e.lexicon))];
+    : // Secret provenance declarations (#1828) and plan scenarios (#1292) never
+      // form a stack — their pseudo-lexicon has no serializer and must not
+      // appear in the manifest.
+      [...new Set([...entities.values()].filter((e) => !isSecretDeclaration(e) && !isScenario(e)).map((e) => e.lexicon))];
   const deps = new Map<string, Set<string>>();
   for (const n of nodes) deps.set(n, new Set());
   for (const { from, to } of edges) {
@@ -303,6 +305,9 @@ export function partitionByLexicon(
     // them out of every partition means no serializer sees them and no
     // "No serializer found" warning fires for their pseudo-lexicon.
     if (isSecretDeclaration(entity)) continue;
+    // Plan scenarios (#1292) are serializer-neutral the same way: a checkable
+    // expectation the CLI reads off the entity map, never output.
+    if (isScenario(entity)) continue;
     const lexicon = entity.lexicon;
     if (!partitions.has(lexicon)) {
       partitions.set(lexicon, new Map());
