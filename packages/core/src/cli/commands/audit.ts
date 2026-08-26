@@ -11,6 +11,7 @@ import { auditFiles, type AuditInput, type AuditFinding, type ChecksProvider } f
 import { AUDIT_LEXICONS, classifyFiles, collectCandidates, loadAuditPlugins, unclaimedFiles, type DetectPlugin, type RepoFile, type UnclaimedFile } from "../../audit/discover";
 import { RULE_CATALOG, resolveAuditCatalog, type RuleMeta } from "../../audit/catalog";
 import { scanForSecrets, parseSecretsConfig, type SecretsScanOptions } from "../../audit/secrets";
+import { auditWranglerConfigs } from "../../audit/wrangler";
 import { renderMarkdown } from "../../audit/report";
 import { renderHtml, type ReportTheme } from "../../audit/report-html";
 import { buildReportJson, REPORT_SCHEMA_VERSION, type AuditSnapshot } from "../../audit/report-model";
@@ -384,15 +385,20 @@ export async function auditCommand(options: AuditCommandOptions): Promise<AuditC
   // has no local config file to read.
   const secretsConfig = isUrl ? {} : readLocalSecretsConfig(options.path);
   const secretsFindings = scanForSecrets(candidates, resolveSecretsOptions(secretsConfig, options.secretsScan));
+  // Wrangler config audit (#446) is likewise lexicon-independent: it scans
+  // every candidate file for `wrangler.toml` by its own detector, not through
+  // `classifyFiles`/an installed lexicon package (no such package exists —
+  // this format ships only a detector and checks, per the issue's scope).
+  const wranglerFindings = auditWranglerConfigs(candidates);
 
   if (plugins.length === 0) {
     const output = format === "json" ? renderNoLexiconsJson(options.path, unclaimed) : renderNoLexicons(options.path, unclaimed);
-    return { success: true, status: "no-lexicons", output, findings: secretsFindings, scanned: [], unclaimed, exitCode: NO_LEXICONS_EXIT_CODE, stream: format === "json" ? "stdout" : "stderr" };
+    return { success: true, status: "no-lexicons", output, findings: [...secretsFindings, ...wranglerFindings], scanned: [], unclaimed, exitCode: NO_LEXICONS_EXIT_CODE, stream: format === "json" ? "stdout" : "stderr" };
   }
 
   const missingLexiconNote = missingLexiconHint(unclaimed);
 
-  if (inputs.length === 0 && secretsFindings.length === 0) {
+  if (inputs.length === 0 && secretsFindings.length === 0 && wranglerFindings.length === 0) {
     const output = `No auditable files found under ${options.path}.${missingLexiconNote ? ` ${missingLexiconNote}` : ""}`;
     return { success: true, status: "ok", output, findings: [], scanned: [], unclaimed, exitCode: 0 };
   }
@@ -406,7 +412,7 @@ export async function auditCommand(options: AuditCommandOptions): Promise<AuditC
       return { success: false, output: "", findings: [], scanned, exitCode: 1, error: msg };
     }
   }
-  findings = [...findings, ...secretsFindings];
+  findings = [...findings, ...secretsFindings, ...wranglerFindings];
   // Resolve the audit catalog once, aggregating the audited lexicons' own
   // metadata over core's static catalog (#687). The lexicons are already loaded
   // by `auditFiles` above, so this is cheap. Core's static catalog (always
