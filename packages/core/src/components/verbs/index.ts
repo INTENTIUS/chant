@@ -30,7 +30,11 @@
  * ./wrangler.ts) and `r2-sync` (#1293, ./r2-sync.ts) are the Cloudflare
  * Workers apply leaves — real implementations over the same injectable
  * `ProcessRunner` `sign` uses, shelling to `wrangler`/`rclone` rather than an
- * AWS-shaped SDK client.
+ * AWS-shaped SDK client. `run-agent` (#1941, epic #1564 phase 1, ./run-agent.ts)
+ * is the typed schema + registry entry for a bounded, attested agent-turn
+ * capability over a fly Sprite — a typed stub for now (`run`/`rollback`
+ * reject with `CapabilityNotImplementedError`), `rollbackPolicy: "native"`
+ * declared up front; the real sprite-lifecycle implementation is #1942.
  */
 
 export * from "./build-archive";
@@ -44,6 +48,7 @@ export * from "./component-bom";
 export * from "./reproducibility";
 export * from "./sign";
 export * from "./verify";
+export * from "./run-agent";
 export * from "./wrangler";
 export * from "./r2-sync";
 export * from "./vuln-scan";
