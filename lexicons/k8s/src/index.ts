@@ -4,6 +4,14 @@ export { k8sSerializer } from "./serializer";
 // Plugin
 export { k8sPlugin } from "./plugin";
 
+// Typed Op step-builder wrappers (chant #1288 Stage 2) — kubectlApply/
+// waitForReady/ensureSecret with authoring-time types derived from this
+// lexicon's own *Args interfaces (see ./op/builders.ts's module doc for why
+// these live here rather than in core or the temporal barrel). Opt-in:
+// `@intentius/chant-lexicon-temporal`'s same-named exports are core's
+// original untyped builders, unchanged, for cloud-agnostic authoring.
+export { kubectlApply, waitForReady, ensureSecret } from "./op/builders";
+
 // The capability plugin core's loader discovers on this package (#1495 piece 2)
 // — the kubectl-apply leaf a component composes, the way aws contributes
 // cfn-deploy.

@@ -109,6 +109,17 @@ export interface StepOutputRef {
   readonly path?: string;
 }
 
+/**
+ * `T` with every own property additionally accepting a {@link StepOutputRef}
+ * in its place (chant #1288 Stage 2) — the authoring-time counterpart of
+ * `args` accepting a reference anywhere in the structure (#1290): a typed
+ * step-builder wrapper whose opts type is `WithStepRefs<SomeActivityArgs>`
+ * lets an author pass `diff.out.driftedStacks` for any field without an
+ * `as` cast, while runtime validation of the reference itself is still
+ * `validateStepOutputRefs`' job, not this type's.
+ */
+export type WithStepRefs<T> = { [K in keyof T]: T[K] | StepOutputRef };
+
 /** Structural guard for a value produced by {@link stepOutput} (or `activity()`'s `.out`). */
 export function isStepOutputRef(value: unknown): value is StepOutputRef {
   return typeof value === "object" && value !== null && (value as Record<symbol, unknown>)[STEP_OUTPUT_REF_BRAND] === true;

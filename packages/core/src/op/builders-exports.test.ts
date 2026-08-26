@@ -50,7 +50,23 @@ describe("op builders are all reachable (#1715)", () => {
       "spriteApplyServices", "spriteTaskCreate", "spriteTaskRefresh",
       "spriteTaskRelease", "spritesUp", "spritesDown",
     ]);
-    const expected = Object.keys(builders).filter((n) => !FLY_SURFACE.has(n));
+    // chant #1288 Stage 2 — these are the temporal lexicon's OWN activities
+    // (build.ts, shell.ts, wait.ts, ...), so its barrel re-exports a fully
+    // typed twin from its own `./op/builders` instead of core's untyped
+    // original — same name, same import path, deliberately not sourced from
+    // `@intentius/chant/op` any more. See `lexicons/temporal/src/index.ts`
+    // and `lexicons/temporal/src/op/builders.ts`.
+    const TEMPORAL_TYPED_SURFACE = new Set([
+      "build", "shell", "waitForStack", "lifecycleSnapshot", "teardown", "envTeardown", "httpCheck", "policyGate",
+    ]);
+    // chant #1288 Stage 2 — an internal helper (`takeProfile`'s sibling) for
+    // the lexicon-owned typed step-builder wrappers to reuse, not an
+    // Op-authoring primitive itself; nothing authors an Op with it directly,
+    // so it has no place in the Op-authoring barrel.
+    const INTERNAL_HELPERS = new Set(["takeProfileAndId"]);
+    const expected = Object.keys(builders).filter(
+      (n) => !FLY_SURFACE.has(n) && !TEMPORAL_TYPED_SURFACE.has(n) && !INTERNAL_HELPERS.has(n),
+    );
     const missing = expected.filter((name) => !reExported.has(name));
     expect(
       missing,

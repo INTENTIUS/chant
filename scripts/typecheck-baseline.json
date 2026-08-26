@@ -12,7 +12,6 @@
     "examples/k8s-aks-microservice/src/k8s/app.ts",
     "examples/k8s-eks-microservice/src/k8s/app.ts",
     "examples/k8s-eks-microservice/src/k8s/storage.ts",
-    "examples/k8s-gke-microservice/ops/gke-bootstrap.op.ts",
     "examples/k8s-gke-microservice/src/k8s/app.ts",
     "examples/local-op-quickstart/ops/hello/worker.ts",
     "examples/temporal-crdb-deploy/temporal/worker.ts",

@@ -38,6 +38,33 @@
  * serializer produces byte-identical output to serializing the original
  * config (verified by `op-ir.test.ts`'s round-trip test) — the issue's own
  * verification criterion.
+ *
+ * ## Step-output references (chant #1290, #1288 Stage 2 follow-up)
+ *
+ * A step's `args` may hold a {@link StepOutputRef} (core's
+ * `step-output-ref.ts`) anywhere in its structure — a placeholder for a
+ * prior step's declared return value, resolved by the serializer into a
+ * local variable in the generated `workflow.ts`. This module does not
+ * special-case it: `irActivityStep` copies `step.args` through as-is (same as
+ * every other value), and `JSON.stringify` — both the literal one in
+ * `serializeOpIR` and the structural-equality one `z.toJSONSchema`-adjacent
+ * consumers would use — drops a `StepOutputRef`'s brand (a `Symbol.for(...)`
+ * key; JSON has no symbols) while keeping its three own enumerable string
+ * properties. The result is a plain, first-class IR value at exactly the
+ * position the reference sat in `args`:
+ *
+ * ```json
+ * { "kind": "step-output-ref", "step": "build-step", "path": "manifestPath" }
+ * ```
+ *
+ * (`path` omitted when the reference is to the whole return value.) This is
+ * deliberate, not an accident of `JSON.stringify`'s symbol-dropping — a
+ * foreign consumer of op.json can match on `args.<field>.kind ===
+ * "step-output-ref"` to recognize a placeholder and resolve it against
+ * `steps[].id`/`activityContracts[fn].returns` itself, without ever loading
+ * chant's TypeScript. `op-ir.test.ts` asserts the shape directly so a future
+ * change to `StepOutputRef`'s own fields (core's `step-output-ref.ts`) that
+ * would silently change this JSON shape gets caught here.
  */
 
 import { z } from "zod";

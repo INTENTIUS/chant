@@ -174,6 +174,22 @@ function takeProfile(
   return { args, profile };
 }
 
+/**
+ * {@link takeProfile}'s sibling for the typed, lexicon-owned step-builder
+ * wrappers added in chant #1288 Stage 2 (e.g. `kubectlApply` in
+ * `@intentius/chant-lexicon-k8s`): also pulls `id` out of the opts bag so it
+ * routes to the step's `id` field (enabling `.out` — #1290) instead of
+ * leaking into the activity's args, the same way `profile` would without
+ * this split.
+ */
+export function takeProfileAndId(
+  opts: (Record<string, unknown> & { profile?: ActivityStep["profile"]; id?: string }) | undefined,
+): { args: Record<string, unknown>; profile?: ActivityStep["profile"]; id?: string } {
+  if (!opts) return { args: {} };
+  const { profile, id, ...args } = opts as { profile?: ActivityStep["profile"]; id?: string } & Record<string, unknown>;
+  return { args, profile, id };
+}
+
 /** Run an npm build script in the given project directory. `opts.script` selects the script (default `build`, e.g. `build:aws`); `opts.env` adds env vars. */
 export const build = (path: string, opts?: Record<string, unknown>): ActivityStep => {
   const { args, profile } = takeProfile(opts);

@@ -12,7 +12,7 @@ import { z } from "zod";
 import { activityContract, collectActivityContracts, type ActivityContract } from "@intentius/chant/op";
 import * as ownActivityContracts from "./activity-contracts";
 import { DECLARABLE_MARKER, type Declarable } from "@intentius/chant/declarable";
-import { phase, gate, effect, shell, kubectlApply, httpCheck } from "@intentius/chant/op";
+import { phase, gate, effect, shell, kubectlApply, httpCheck, activity, stepOutput } from "@intentius/chant/op";
 import type { OpConfig } from "@intentius/chant/op";
 import { EffectReceipt, receiptExpectation } from "@intentius/chant/effect-receipt";
 import { serializeOps } from "./serializer";
@@ -225,5 +225,54 @@ describe("op.json IR (#1289)", () => {
     expect(() => opConfigFromIR(staleIR)).toThrow(
       /op\.json IR format mismatch: expected "1\.0", got "0\.9"/,
     );
+  });
+
+  // chant #1288 Stage 2 follow-up — a step-output reference (#1290) sitting
+  // in a step's args gets a first-class, stable IR shape: this asserts it
+  // directly rather than leaving it as an implicit side effect of
+  // JSON.stringify dropping the reference's Symbol brand (see op-ir.ts's
+  // module doc, "Step-output references" section).
+  it("a StepOutputRef in a step's args serializes to a stable, documented shape", () => {
+    const build = activity("chantBuild", { path: "." }, { id: "build-step" });
+    const config: OpConfig = {
+      name: "ref-op",
+      overview: "Consumes a prior step's output",
+      phases: [
+        phase("Build", [build]),
+        phase("Deploy", [kubectlApply("dist/k8s.yaml", { context: stepOutput(build, "outputPath") })]),
+      ],
+    };
+
+    const ir = buildOpIR(config);
+    const deployStep = ir.phases[1]!.steps[0] as OpIRActivityStep;
+    const inMemoryRef = deployStep.args.context as { kind: string; step: string; path?: string };
+    expect(inMemoryRef.kind).toBe("step-output-ref");
+    expect(inMemoryRef.step).toBe("build-step");
+    expect(inMemoryRef.path).toBe("outputPath");
+
+    // What actually gets written to op.json — this is the real assertion:
+    // round-trips through JSON with no Symbol residue and no extra keys, a
+    // plain first-class value at the reference's position in `args`.
+    const roundTripped = JSON.parse(serializeOpIR(config)) as OpIR;
+    const roundTrippedDeploy = roundTripped.phases[1]!.steps[0] as OpIRActivityStep;
+    expect(roundTrippedDeploy.args.context).toEqual({ kind: "step-output-ref", step: "build-step", path: "outputPath" });
+    expect(Object.keys(roundTrippedDeploy.args.context as object).sort()).toEqual(["kind", "path", "step"]);
+  });
+
+  it("a whole-value StepOutputRef (no path) omits the path key", () => {
+    const build = activity("chantBuild", { path: "." }, { id: "build-step" });
+    const config: OpConfig = {
+      name: "ref-op-whole",
+      overview: "Consumes a prior step's whole output",
+      phases: [
+        phase("Build", [build]),
+        phase("Deploy", [kubectlApply("dist/k8s.yaml", { context: build.out })]),
+      ],
+    };
+
+    const roundTripped = JSON.parse(serializeOpIR(config)) as OpIR;
+    const roundTrippedDeploy = roundTripped.phases[1]!.steps[0] as OpIRActivityStep;
+    expect(roundTrippedDeploy.args.context).toEqual({ kind: "step-output-ref", step: "build-step" });
+    expect("path" in (roundTrippedDeploy.args.context as object)).toBe(false);
   });
 });
