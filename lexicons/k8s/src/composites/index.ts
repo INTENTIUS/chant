@@ -113,3 +113,7 @@ export { VllmServingRuntime } from "./vllm-serving-runtime";
 export type { VllmServingRuntimeProps, VllmServingRuntimeResult, VllmResourceSpec } from "./vllm-serving-runtime";
 export { Model, resolveModelStorageUri } from "./model";
 export type { ModelSource, ModelProps, ModelResult } from "./model";
+export { OperatorStack, deriveHostVerbClass, DEFAULT_RESOURCE_RULES } from "./operator-stack";
+export type {
+  OperatorDial, OperatorRbacResourceRule, OperatorStackConvergeHost, OperatorStackConfig, OperatorStackResult,
+} from "./operator-stack";

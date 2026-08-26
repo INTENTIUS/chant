@@ -79,6 +79,30 @@ describeAllExamples(
         expect(output).toContain("0 * * * *");
       },
     },
+    "operator-stack": {
+      checks: (output) => {
+        // The estate: one Namespace, one CronJob per hosted ConvergeOp, and
+        // a per-host ServiceAccount/Role/RoleBinding (#1940).
+        expect(output).toContain("kind: Namespace");
+        expect(output).toContain("kind: CronJob");
+        expect(output).toContain("kind: ServiceAccount");
+        expect(output).toContain("kind: Role");
+        expect(output).toContain("kind: RoleBinding");
+        expect(output).toContain("name: fountain-observe");
+        expect(output).toContain("name: fountain-apply");
+        // The observe host's Role never carries a mutating verb — read-only,
+        // per its dial (see OperatorStack's RBAC derivation doc).
+        expect(output).toContain("name: fountain-observe-role");
+        // The apply host's dispatch target is mutating, so its Role gains
+        // create/update/patch — but no delete/deletecollection/"*" verb, and
+        // no "*" resource/apiGroup, anywhere in the output.
+        expect(output).toContain("- create");
+        expect(output).toContain("- update");
+        expect(output).toContain("- patch");
+        expect(output).not.toContain("- delete");
+        expect(output).not.toContain("- '*'");
+      },
+    },
   },
 );
 
