@@ -148,6 +148,27 @@ export function evaluatePredicate<S>(predicate: SymptomPredicate<S>, symptom: S)
   return false;
 }
 
+/**
+ * Does a predicate reference the given symptom field anywhere in it,
+ * recursing through `allOf`/`anyOf`? The build-time backstop for a claim
+ * about a *category* of rule (e.g. "a rule reading `adoptCount`") rather
+ * than a single comparison — `TMP014`'s adopt-safety check
+ * (../../../lexicons/temporal/src/lint/post-synth/tmp014-converge-rule-refusals.ts)
+ * uses this to refuse a rule that both reads `adoptCount` and dispatches a
+ * mutating op, rather than merely documenting that authors shouldn't write
+ * one.
+ */
+export function predicateReferencesField<S>(predicate: SymptomPredicate<S>, field: string): boolean {
+  switch (predicate.kind) {
+    case "field-comparison":
+    case "field-truthiness":
+      return predicate.field === field;
+    case "all-of":
+    case "any-of":
+      return predicate.predicates.some((p) => predicateReferencesField(p, field));
+  }
+}
+
 // ── Predicate builders ──────────────────────────────────────────────────────
 
 export function eq<S>(field: keyof S & string, value: string | number | boolean): FieldComparisonPredicate<S> {

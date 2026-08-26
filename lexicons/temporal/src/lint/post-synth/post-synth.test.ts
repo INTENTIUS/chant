@@ -12,7 +12,7 @@ import { tmp011 } from "./tmp011-namespace-reference";
 import { tmp012 } from "./tmp012-activity-contract";
 import { tmp013 } from "./tmp013-step-output-ref";
 import { tmp014 } from "./tmp014-converge-rule-refusals";
-import { stepOutput, when, eq, gt, run, report } from "@intentius/chant/op";
+import { stepOutput, when, eq, gt, allOf, run, report } from "@intentius/chant/op";
 import type { ConvergeRule } from "@intentius/chant/op";
 import type { ConvergeSymptom } from "@intentius/chant/lifecycle/symptoms";
 
@@ -538,41 +538,102 @@ describe("TMP014: converge-rule-refusals", () => {
     expect(diags.some((d) => d.message.includes("mutating") && d.message.includes('dial "observe"'))).toBe(true);
   });
 
-  test("passes a mutating dispatch under a reconcile dial", () => {
+  // Finding A (#1954 pre-merge review): issue #1484's own Autonomy table
+  // gives `reconcile` × mutating "open PR", not "run directly" — v1 doesn't
+  // build the PR-opening channel, so this is refused rather than silently
+  // escalated to match `apply`'s authority.
+  test("errors when a mutating op is dispatched under a reconcile dial — reconcile's table answer is \"open PR\", not implemented in v1", () => {
     const rule = when<ConvergeSymptom>(eq("status", "drifted"), run("apply-staging"), { id: "drift-apply", why: "Re-apply on drift." });
     const ctx = makeCtxFromEntities(new Map([
       ["converge", convergeOpEntity("converge", [rule], { dial: "reconcile" })],
       ["apply-staging", mutatingOpEntity("apply-staging")],
     ]));
+    const diags = tmp014.check(ctx);
+    expect(diags.some((d) => d.message.includes("mutating") && d.message.includes('dial "reconcile"') && d.message.includes("open PR"))).toBe(true);
+  });
+
+  test("passes a mutating dispatch under an apply dial", () => {
+    const rule = when<ConvergeSymptom>(eq("status", "drifted"), run("apply-staging"), { id: "drift-apply", why: "Re-apply on drift." });
+    const ctx = makeCtxFromEntities(new Map([
+      ["converge", convergeOpEntity("converge", [rule], { dial: "apply" })],
+      ["apply-staging", mutatingOpEntity("apply-staging")],
+    ]));
     expect(tmp014.check(ctx)).toHaveLength(0);
   });
 
-  test("errors when a destructive op is dispatched under a reconcile dial (never permitted outside apply)", () => {
+  // Finding B (#1954 pre-merge review): a destructive dispatch target is
+  // refused under every dial, `apply` included — the local dispatch
+  // executor can never honor the gate a destructive target is required to
+  // carry, so "destructive + apply + gated" was a dead cell that could never
+  // actually dispatch.
+  test("errors when a destructive op is dispatched under a reconcile dial", () => {
     const rule = when<ConvergeSymptom>(eq("status", "drifted"), run("prune-staging"), { id: "drift-prune", why: "Prune drifted resources." });
     const ctx = makeCtxFromEntities(new Map([
       ["converge", convergeOpEntity("converge", [rule], { dial: "reconcile" })],
       ["prune-staging", destructiveOpEntity("prune-staging", { gated: true })],
     ]));
     const diags = tmp014.check(ctx);
-    expect(diags.some((d) => d.message.includes("destructive") && d.message.includes('dial "reconcile"'))).toBe(true);
+    expect(diags.some((d) => d.message.includes("destructive") && d.message.includes("refused in v1"))).toBe(true);
   });
 
-  test("errors when a destructive op is dispatched under apply but has no gate", () => {
+  test("errors when a destructive op is dispatched under apply and has no gate", () => {
     const rule = when<ConvergeSymptom>(eq("status", "drifted"), run("prune-staging"), { id: "drift-prune", why: "Prune drifted resources." });
     const ctx = makeCtxFromEntities(new Map([
       ["converge", convergeOpEntity("converge", [rule], { dial: "apply" })],
       ["prune-staging", destructiveOpEntity("prune-staging", { gated: false })],
     ]));
     const diags = tmp014.check(ctx);
-    expect(diags.some((d) => d.message.includes("no approval gate"))).toBe(true);
+    expect(diags.some((d) => d.message.includes("destructive") && d.message.includes("refused in v1"))).toBe(true);
   });
 
-  test("passes a destructive dispatch under apply when the target is gated", () => {
+  test("errors when a destructive op is dispatched under apply even when the target is gated — the gate can never actually run", () => {
     const rule = when<ConvergeSymptom>(eq("status", "drifted"), run("prune-staging"), { id: "drift-prune", why: "Prune drifted resources." });
     const ctx = makeCtxFromEntities(new Map([
       ["converge", convergeOpEntity("converge", [rule], { dial: "apply" })],
       ["prune-staging", destructiveOpEntity("prune-staging", { gated: true })],
     ]));
+    const diags = tmp014.check(ctx);
+    expect(diags.some((d) => d.message.includes("destructive") && d.message.includes("refused in v1"))).toBe(true);
+  });
+
+  // Finding C (#1954 pre-merge review): adopt safety — "an unowned resource
+  // is reported, never auto-claimed" — is enforced, not just documented.
+  test("errors when a rule reads adoptCount and dispatches a mutating op", () => {
+    const rule = when<ConvergeSymptom>(gt("adoptCount", 0), run("apply-staging"), { id: "adopt-apply", why: "test" });
+    const ctx = makeCtxFromEntities(new Map([
+      ["converge", convergeOpEntity("converge", [rule], { dial: "apply" })],
+      ["apply-staging", mutatingOpEntity("apply-staging")],
+    ]));
+    const diags = tmp014.check(ctx);
+    expect(diags.some((d) => d.message.includes('reads "adoptCount"') && d.message.includes("mutating"))).toBe(true);
+  });
+
+  test("errors when adoptCount is read inside a nested allOf/anyOf predicate that dispatches a mutating op", () => {
+    const rule = when<ConvergeSymptom>(
+      allOf(eq("status", "drifted"), gt("adoptCount", 0)),
+      run("apply-staging"),
+      { id: "nested-adopt-apply", why: "test" },
+    );
+    const ctx = makeCtxFromEntities(new Map([
+      ["converge", convergeOpEntity("converge", [rule], { dial: "apply" })],
+      ["apply-staging", mutatingOpEntity("apply-staging")],
+    ]));
+    const diags = tmp014.check(ctx);
+    expect(diags.some((d) => d.message.includes('reads "adoptCount"'))).toBe(true);
+  });
+
+  test("passes a rule that reads adoptCount and dispatches a read-only op", () => {
+    const rule = when<ConvergeSymptom>(gt("adoptCount", 0), run("watch"), { id: "adopt-watch", why: "test" });
+    const ctx = makeCtxFromEntities(new Map([
+      ["converge", convergeOpEntity("converge", [rule], { dial: "apply" })],
+      ["watch", readOnlyOpEntity("watch")],
+    ]));
+    expect(tmp014.check(ctx)).toHaveLength(0);
+  });
+
+  test("passes a rule that reads adoptCount and only reports (no dispatch at all)", () => {
+    const rule = when<ConvergeSymptom>(gt("adoptCount", 0), report("unowned resources present"), { id: "adopt-report", why: "test" });
+    const ctx = makeCtxFromEntities(new Map([["converge", convergeOpEntity("converge", [rule], { dial: "apply" })]]));
     expect(tmp014.check(ctx)).toHaveLength(0);
   });
 

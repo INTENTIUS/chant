@@ -26,4 +26,4 @@ Post-synth checks validate the serialized output after the build pipeline comple
 | `TMP011` | SearchAttribute.namespace must reference a declared TemporalNamespace entity |
 | `TMP012` | Activity step args and outcomeAttribute.from must match the activity's declared contract |
 | `TMP013` | A step-output reference must name an in-scope, preceding, contract-validated producer step |
-| `TMP014` | A ConvergeOp rule table: run() must name a declared Op, a mutating/destructive dispatch must be permitted by the dial, a destructive target must be gated, and every rule must carry its why |
+| `TMP014` | A ConvergeOp rule table: run() must name a declared Op, a mutating dispatch requires dial apply (reconcile opens a PR in a future version, not implemented in v1), a destructive dispatch is refused outright in v1 (the local dispatch executor can't honor a gate), an adoptCount-reading rule may not dispatch a mutation, and every rule must carry its why |

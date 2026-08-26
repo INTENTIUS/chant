@@ -55,18 +55,52 @@ function kebabToCamel(s: string): string {
 }
 
 /**
- * Authority level for this ConvergeOp's environment — the issue's Autonomy
- * table (dial × verb class):
+ * Authority level for this ConvergeOp's environment — issue #1484's own
+ * Autonomy table (dial × verb class):
  *
- * | verb class  | observe    | reconcile      | apply                |
- * |-------------|------------|----------------|-----------------------|
- * | read-only   | free-run   | free-run       | free-run              |
- * | mutating    | report only| dispatch runs  | dispatch runs         |
- * | destructive | refused    | refused        | dispatch runs, gated  |
+ * | verb class  | observe     | reconcile        | apply                 |
+ * |-------------|-------------|------------------|------------------------|
+ * | read-only   | free-run    | free-run         | free-run               |
+ * | mutating    | report only | open PR          | run, gated per op      |
+ * | destructive | refused     | refused          | always gated           |
  *
  * `ConvergeOp` adds no authority an environment did not already grant.
  * Default `"observe"` — not autonomous by default (issue: "a ConvergeOp in
  * an observe environment is a report generator").
+ *
+ * **v1 implements a conservative subset of this table**, not the whole
+ * thing (pre-merge review of #1954 caught the gap between what the code did
+ * and what this table says — this doc now matches the issue, and the code
+ * matches this doc):
+ *
+ * | verb class  | observe     | reconcile                          | apply                              |
+ * |-------------|-------------|-------------------------------------|--------------------------------------|
+ * | read-only   | free-run    | free-run                            | free-run                             |
+ * | mutating    | report only | **refused at build (TMP014)**       | run                                   |
+ * | destructive | refused     | refused                              | **refused at build (TMP014), v1**   |
+ *
+ * - **`reconcile` × mutating is "open PR" in the issue's table — not yet
+ *   implemented.** Building that channel (reusing `ReconcileOp`'s
+ *   `onDrift: "pull-request" | "issue" | "report"`) is out of v1 scope — see
+ *   `../../op/converge-rule.ts`'s `ReportAction` doc and epic #1487's
+ *   onDrift-channel open question. Until it exists, a rule that would
+ *   dispatch a mutating op under `reconcile` is refused at build
+ *   (`TMP014`), not silently escalated to "run directly" the way `apply`
+ *   would. A runtime backstop in `convergeTick`
+ *   (`../op/activities/converge.ts`) re-checks the same thing at dispatch
+ *   time, for a rule table that reached the tick without going through that
+ *   build.
+ * - **`apply` × destructive is refused outright in v1, gate or not.** The
+ *   issue's table says "always gated", but the dispatch executor can't
+ *   honor a gate: `dispatchOp` always shells `chant run <op>` without
+ *   `--temporal`, and the local executor's pre-flight rejects any gated op
+ *   before running a single step (`LocalGateUnsupportedError`) — so
+ *   "destructive + apply + gated" reads as a path to dispatch but was a
+ *   dead cell: it could never actually succeed. `TMP014` now refuses the
+ *   rule instead of shipping a path guaranteed to fail every time it's
+ *   exercised. Durable gated dispatch (e.g. a `--temporal` pass-through when
+ *   the parent workflow itself runs under Temporal) is #1485's design to
+ *   own.
  */
 export type ConvergeDial = "observe" | "reconcile" | "apply";
 
@@ -185,6 +219,15 @@ export function ConvergeOp(config: ConvergeOpConfig): ConvergeOpResources {
     return { op };
   }
 
+  // Overlap policy (#1484 acceptance criterion: "skip-and-report when a
+  // prior remediation is in flight ... never queue"). `"Skip"` is Temporal's
+  // schedule-level implementation of exactly that: if the previous tick's
+  // workflow run is still executing when the next fire time arrives, the new
+  // run is dropped rather than queued or run concurrently. There is no
+  // per-tick "in flight" ledger record for the skipped fire to produce —
+  // nothing ran, so nothing observed, classified, or dispatched; the skip
+  // itself is visible in the Temporal UI's schedule history, not in
+  // `converge.jsonl`.
   const schedule = new TemporalSchedule({
     scheduleId: `${config.name}-schedule`,
     spec: { cronExpressions: [config.schedule] },
@@ -192,6 +235,7 @@ export function ConvergeOp(config: ConvergeOpConfig): ConvergeOpResources {
       workflowType: kebabToCamel(config.name) + "Workflow",
       taskQueue,
     },
+    policies: { overlap: "Skip" },
   } as Record<string, unknown>);
 
   return { op, schedule };

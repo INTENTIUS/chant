@@ -38,7 +38,7 @@ export type { StepOutputRef } from "./step-output-ref";
 export type { NamedActivityStep } from "./builders";
 export {
   eq, neq, gt, gte, lt, lte, truthy, falsy, allOf, anyOf,
-  evaluatePredicate, isWellFormedPredicate,
+  evaluatePredicate, isWellFormedPredicate, predicateReferencesField,
   run, report,
   when, duplicateRuleIds,
   DEFAULT_FLAP_THRESHOLD,

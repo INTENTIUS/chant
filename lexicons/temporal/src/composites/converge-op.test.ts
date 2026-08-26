@@ -73,6 +73,16 @@ describe("ConvergeOp composite (#1484)", () => {
     const scheduled = ConvergeOp({ name: "staging-converge", env: "staging", rules: [driftRule], schedule: "*/10 * * * *" });
     expect(scheduled.schedule).toBeDefined();
   });
+
+  // Finding D (#1954 pre-merge review): issue #1484's acceptance criterion is
+  // "skip-and-report when a prior remediation is in flight ... never queue".
+  // `"Skip"` is the schedule-level overlap policy that drops a fire whose
+  // predecessor is still running, rather than buffering/queuing it.
+  test("a scheduled ConvergeOp sets an explicit \"Skip\" overlap policy — never queue an in-flight tick", () => {
+    const { schedule } = ConvergeOp({ name: "staging-converge", env: "staging", rules: [driftRule], schedule: "*/10 * * * *" });
+    const scheduleProps = (schedule as unknown as { props: { policies?: { overlap?: string } } }).props;
+    expect(scheduleProps.policies?.overlap).toBe("Skip");
+  });
 });
 
 describe("ConvergeOp composite — build-time refusals (#1484)", () => {

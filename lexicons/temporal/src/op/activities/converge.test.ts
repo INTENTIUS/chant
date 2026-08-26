@@ -1,8 +1,14 @@
 import { describe, test, expect } from "vitest";
 import { eq, gt, run, report, when } from "@intentius/chant/op";
 import type { ConvergeSymptom } from "@intentius/chant/lifecycle/symptoms";
-import type { ConvergeTickRecord } from "@intentius/chant/lifecycle/converge-ledger";
-import { planConvergeTick, type SerializedConvergeRule } from "./converge";
+import type { ConvergeTickRecord, ConvergeRuleOutcome } from "@intentius/chant/lifecycle/converge-ledger";
+import {
+  planConvergeTick,
+  verbClassAllowedToDispatch,
+  enforceVerbClassAtDispatch,
+  sanitizeOneLine,
+  type SerializedConvergeRule,
+} from "./converge";
 
 function symptom(overrides?: Partial<ConvergeSymptom>): ConvergeSymptom {
   return {
@@ -180,5 +186,109 @@ describe("planConvergeTick — flap damping", () => {
     const priorRecords = [tick({ firedRuleIds: ["tight"] })];
     const plan = planConvergeTick(symptom(), [tightRule], priorRecords, "apply", 3);
     expect(plan.outcomes[0].action).toBe("skipped-flap");
+  });
+});
+
+// ── Runtime backstop (Finding A, #1954 pre-merge review) ────────────────
+//
+// TMP014 (build time) is the primary defense against a mutating dispatch
+// escalating under "reconcile" or a destructive dispatch reaching any dial.
+// `verbClassAllowedToDispatch`/`enforceVerbClassAtDispatch` are the runtime
+// backstop `convergeTick` applies to every "ran" outcome just before
+// dispatch — for a rule table that reached the tick without going through
+// that build (e.g. `planConvergeTick`/`convergeTick` exercised directly).
+
+describe("verbClassAllowedToDispatch", () => {
+  test("read-only free-runs under every dial", () => {
+    expect(verbClassAllowedToDispatch("observe", "read-only")).toBe(true);
+    expect(verbClassAllowedToDispatch("reconcile", "read-only")).toBe(true);
+    expect(verbClassAllowedToDispatch("apply", "read-only")).toBe(true);
+  });
+
+  test("mutating only free-runs under apply — reconcile's table answer is \"open PR\", not implemented", () => {
+    expect(verbClassAllowedToDispatch("observe", "mutating")).toBe(false);
+    expect(verbClassAllowedToDispatch("reconcile", "mutating")).toBe(false);
+    expect(verbClassAllowedToDispatch("apply", "mutating")).toBe(true);
+  });
+
+  test("destructive never free-runs, under any dial — refused in v1 regardless of gate", () => {
+    expect(verbClassAllowedToDispatch("observe", "destructive")).toBe(false);
+    expect(verbClassAllowedToDispatch("reconcile", "destructive")).toBe(false);
+    expect(verbClassAllowedToDispatch("apply", "destructive")).toBe(false);
+  });
+
+  test("an unclassifiable target (undefined) fails closed, treated as mutating", () => {
+    expect(verbClassAllowedToDispatch("apply", undefined)).toBe(true);
+    expect(verbClassAllowedToDispatch("reconcile", undefined)).toBe(false);
+    expect(verbClassAllowedToDispatch("observe", undefined)).toBe(false);
+  });
+});
+
+describe("enforceVerbClassAtDispatch", () => {
+  test("leaves a non-\"ran\" outcome untouched", () => {
+    const outcome: ConvergeRuleOutcome = { ruleId: "r1", action: "reported", reason: "already reported" };
+    expect(enforceVerbClassAtDispatch(outcome, "apply", "mutating")).toEqual(outcome);
+  });
+
+  test("leaves a permitted \"ran\" outcome untouched", () => {
+    const outcome: ConvergeRuleOutcome = { ruleId: "r1", action: "ran", op: "fountain-apply" };
+    expect(enforceVerbClassAtDispatch(outcome, "apply", "mutating")).toEqual(outcome);
+  });
+
+  test("downgrades a mutating \"ran\" outcome to \"reported\" under a reconcile dial", () => {
+    const outcome: ConvergeRuleOutcome = { ruleId: "r1", action: "ran", op: "fountain-apply" };
+    const result = enforceVerbClassAtDispatch(outcome, "reconcile", "mutating");
+    expect(result.action).toBe("reported");
+    expect(result.op).toBe("fountain-apply");
+    expect(result.reason).toContain('dial "reconcile"');
+    expect(result.reason).toContain("fountain-apply");
+  });
+
+  test("downgrades a destructive \"ran\" outcome to \"reported\" even under apply", () => {
+    const outcome: ConvergeRuleOutcome = { ruleId: "r1", action: "ran", op: "prune-staging" };
+    const result = enforceVerbClassAtDispatch(outcome, "apply", "destructive");
+    expect(result.action).toBe("reported");
+    expect(result.reason).toContain("destructive");
+  });
+
+  test("downgrades an unclassifiable \"ran\" outcome to \"reported\" — fail-closed", () => {
+    const outcome: ConvergeRuleOutcome = { ruleId: "r1", action: "ran", op: "mystery-op" };
+    const result = enforceVerbClassAtDispatch(outcome, "reconcile", undefined);
+    expect(result.action).toBe("reported");
+    expect(result.reason).toContain("unclassifiable");
+  });
+});
+
+// ── stderr sanitization (#1954 pre-merge review note) ────────────────────
+//
+// A ledger record is one line of JSON (converge-ledger.ts); a dispatch
+// failure's raw stderr folded straight into `outcome.reason` could contain
+// newlines or be arbitrarily long. `sanitizeOneLine` is what keeps a
+// dispatch failure's `reason` from corrupting the ledger line it's written
+// into — independent of, and not a workaround for, #1936's separate
+// `writeBlobToPath` corruption bug (fixed at the root elsewhere).
+
+describe("sanitizeOneLine", () => {
+  test("passes short single-line text through unchanged", () => {
+    expect(sanitizeOneLine("Error: op not found")).toBe("Error: op not found");
+  });
+
+  test("keeps only the first line of multi-line stderr", () => {
+    expect(sanitizeOneLine("Error: something failed\nstack trace line 1\nstack trace line 2")).toBe("Error: something failed");
+  });
+
+  test("strips control characters", () => {
+    expect(sanitizeOneLine("Error:\tfailed\x00badly")).not.toMatch(/[\x00-\x1f\x7f]/);
+  });
+
+  test("caps length with an ellipsis", () => {
+    const long = "x".repeat(1000);
+    const result = sanitizeOneLine(long, 300);
+    expect(result.length).toBe(301); // 300 chars + the ellipsis marker
+    expect(result.endsWith("…")).toBe(true);
+  });
+
+  test("trims surrounding whitespace", () => {
+    expect(sanitizeOneLine("   padded message   \n")).toBe("padded message");
   });
 });

@@ -1,7 +1,7 @@
 import { describe, test, expect } from "vitest";
 import {
   eq, neq, gt, gte, lt, lte, truthy, falsy, allOf, anyOf,
-  evaluatePredicate, isWellFormedPredicate,
+  evaluatePredicate, isWellFormedPredicate, predicateReferencesField,
   run, report, when, duplicateRuleIds,
   DEFAULT_FLAP_THRESHOLD,
 } from "./converge-rule";
@@ -57,6 +57,31 @@ describe("evaluatePredicate", () => {
   test("nested allOf/anyOf compose", () => {
     const p = allOf<TestSymptom>(truthy("flag"), anyOf(eq("status", "reconciled"), gt("count", 1)));
     expect(evaluatePredicate(p, symptom)).toBe(true);
+  });
+});
+
+describe("predicateReferencesField", () => {
+  test("a field comparison references its own field, not another", () => {
+    expect(predicateReferencesField(eq<TestSymptom>("status", "drifted"), "status")).toBe(true);
+    expect(predicateReferencesField(eq<TestSymptom>("status", "drifted"), "count")).toBe(false);
+  });
+
+  test("a field truthiness predicate references its own field", () => {
+    expect(predicateReferencesField(truthy<TestSymptom>("flag"), "flag")).toBe(true);
+    expect(predicateReferencesField(truthy<TestSymptom>("flag"), "status")).toBe(false);
+  });
+
+  test("allOf/anyOf reference a field if any nested predicate does", () => {
+    const p = allOf<TestSymptom>(eq("status", "drifted"), gt("count", 2));
+    expect(predicateReferencesField(p, "count")).toBe(true);
+    expect(predicateReferencesField(p, "flag")).toBe(false);
+  });
+
+  test("recurses through nested allOf/anyOf", () => {
+    const p = allOf<TestSymptom>(truthy("flag"), anyOf(eq("status", "reconciled"), gt("count", 1)));
+    expect(predicateReferencesField(p, "count")).toBe(true);
+    expect(predicateReferencesField(p, "status")).toBe(true);
+    expect(predicateReferencesField(p, "flag")).toBe(true);
   });
 });
 
