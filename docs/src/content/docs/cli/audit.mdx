@@ -128,6 +128,26 @@ For tooling, `--format json` emits a **versioned** envelope (stable contract). T
 - `status` is `"ok"` when at least one lexicon ran, `"no-lexicons"` when none could (see [Prerequisites](#prerequisites)). Check it before trusting an empty `findings`. An optional `unclaimed` list names files that wanted a lexicon that is not installed.
 - For maximum stability, integrate via `--format sarif` — an industry-standard, independently-versioned format.
 
+### SARIF
+
+`--format sarif` emits a [SARIF 2.1.0](https://docs.oasis-open.org/sarif/sarif/v2.1.0/sarif-v2.1.0.html) document — the interchange format most CI platforms and code-review surfaces (GitHub code scanning, GitLab, Azure DevOps, many SAST/IDE viewers) render as inline, file-and-line annotations instead of scraped text:
+
+- Each `run.tool.driver.rules[]` entry carries the finding's `helpUri` (the same authority citation as the other formats) plus a `help.text` with the catalog's remediation guidance, and a `properties.category`/`properties.dimension` pair (`security`, `correctness`, or `best-practice`) for rule-level triage.
+- Each `run.results[]` entry carries `properties.tier` (`merge-worthy` or `report-only`) alongside the standard `ruleId`, `level`, `message`, and `locations` (file + line, when known).
+- Secrets findings (`SEC001`–`SEC010`) redact the same as every other format — a result's `message.text` never carries the matched value, only the rule id, kind, location, and fingerprint.
+
+Upload it to GitHub code scanning from a workflow:
+
+```yaml
+- name: Audit
+  run: npx @intentius/chant audit . --format sarif --output audit.sarif
+
+- name: Upload to code scanning
+  uses: github/codeql-action/upload-sarif@v3
+  with:
+    sarif_file: audit.sarif
+```
+
 ## Tokens
 
 Auditing a URL calls the host's API. Set a host-specific token to lift rate limits (and, for GitHub, to resolve action SHAs and image digests for the inline fix diffs):

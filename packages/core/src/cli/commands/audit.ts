@@ -260,6 +260,14 @@ function renderStylish(findings: AuditFinding[], scanned: string[], notes: strin
   return lines.join("\n");
 }
 
+/**
+ * SARIF (2.1.0) export (#442). Rule-level metadata — category (the finding
+ * "dimension": security/correctness/best-practice) and remediation — is
+ * carried in the property bag / `help` block since SARIF's core schema has no
+ * dedicated slot for either; `tier` is per-result (a `RuleMeta` fact looked up
+ * per finding) so consumers can triage merge-worthy vs. report-only without a
+ * second catalog lookup.
+ */
 function renderSarif(findings: AuditFinding[], catalog: Record<string, RuleMeta> = RULE_CATALOG): string {
   const ruleIds = [...new Set(findings.map((f) => f.checkId))].sort();
   const rules = ruleIds.map((id) => {
@@ -268,22 +276,28 @@ function renderSarif(findings: AuditFinding[], catalog: Record<string, RuleMeta>
       id,
       name: m?.title ?? id,
       shortDescription: { text: m?.title ?? id },
+      ...(m?.remediation ? { help: { text: m.remediation } } : {}),
       helpUri: m?.authority?.[0]?.url,
+      ...(m?.category ? { properties: { category: m.category, dimension: m.category } } : {}),
     };
   });
-  const results = findings.map((f) => ({
-    ruleId: f.checkId,
-    level: sarifLevel(f.severity),
-    message: { text: f.message },
-    locations: [
-      {
-        physicalLocation: {
-          artifactLocation: { uri: f.file },
-          ...(f.line ? { region: { startLine: f.line } } : {}),
+  const results = findings.map((f) => {
+    const tier = catalog[f.checkId]?.tier;
+    return {
+      ruleId: f.checkId,
+      level: sarifLevel(f.severity),
+      message: { text: f.message },
+      locations: [
+        {
+          physicalLocation: {
+            artifactLocation: { uri: f.file },
+            ...(f.line ? { region: { startLine: f.line } } : {}),
+          },
         },
-      },
-    ],
-  }));
+      ],
+      ...(tier ? { properties: { tier } } : {}),
+    };
+  });
   return JSON.stringify(
     {
       $schema: "https://json.schemastore.org/sarif-2.1.0.json",
