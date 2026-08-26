@@ -40,6 +40,19 @@
  * `requireTool` throws `ToolNotAvailableError` with an actionable message if
  * `cosign` is absent, and no test here ever spawns a real process or talks
  * to Rekor/Fulcio.
+ *
+ * **#1943 extension (`run-agent` interop).** `BuildProvenanceStatementInput`
+ * gained two optional merge fields, `externalParameters`/`internalParameters`
+ * — additive only, every existing call site's statement is byte-identical
+ * without them. `run-agent` (./run-agent.ts's `buildRunAgentProvenanceStatement`)
+ * is the first caller to use them, plus `buildType` (already overridable,
+ * unchanged here) set to a `run-agent`-specific recipe URI. `predicateType`
+ * stays `"https://slsa.dev/provenance/v1"` for every caller, `run-agent`
+ * included — see ./run-agent.ts's own doc comment ("Attestation interop")
+ * for why a turn is attested as an SLSA-shaped provenance predicate rather
+ * than under a minted `run-agent`-specific `predicateType`, and why that
+ * decision means `sign`/`attestProvenance`/`../verbs/verify.ts` needed zero
+ * changes to their `cosign` invocations to attest/verify a turn.
  */
 
 import type { Capability } from "../capability";
@@ -235,6 +248,23 @@ export interface BuildProvenanceStatementInput {
   finishedOn?: string;
   /** CI invocation/run id, when available (e.g. a GitHub Actions run id). */
   invocationId?: string;
+  /**
+   * Additional `buildDefinition.externalParameters` merged in alongside the
+   * `{ sourceRef }` default (#1943: `run-agent`'s provenance statement folds
+   * in the fountain-supplied *declared* facts — the agent selector today,
+   * more once fountain `Agent` resolution lands — without run-agent needing
+   * its own predicate builder). A caller-supplied key never collides with
+   * `sourceRef` since that key is reserved by this function; any other key
+   * name is the caller's choice.
+   */
+  externalParameters?: Record<string, unknown>;
+  /**
+   * Additional `buildDefinition.internalParameters` merged in alongside the
+   * `{ artifactDigest }` default (#1943: `run-agent` folds in what actually
+   * happened — sprite id, checkpoint id, turn status/exit code — the
+   * *imperative* facts a build's `internalParameters` are for).
+   */
+  internalParameters?: Record<string, unknown>;
 }
 
 const DEFAULT_BUILD_TYPE = "https://chant.dev/build-archive/v1";
@@ -263,8 +293,8 @@ export function buildProvenanceStatement(input: BuildProvenanceStatementInput): 
     predicate: {
       buildDefinition: {
         buildType: input.buildType ?? DEFAULT_BUILD_TYPE,
-        externalParameters: { sourceRef: input.provenance.sourceRef },
-        internalParameters: { artifactDigest: input.provenance.artifactDigest },
+        externalParameters: { sourceRef: input.provenance.sourceRef, ...input.externalParameters },
+        internalParameters: { artifactDigest: input.provenance.artifactDigest, ...input.internalParameters },
         resolvedDependencies: [{ uri: input.provenance.sourceRef, digest: { sha256: digest } }],
       },
       runDetails: {

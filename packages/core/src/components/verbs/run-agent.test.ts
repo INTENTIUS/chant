@@ -16,11 +16,16 @@
 import { describe, expect, it } from "vitest";
 import { CapabilityRegistry } from "../capability";
 import {
+  buildRunAgentProvenanceStatement,
   buildRuntimeCommand,
+  computeTranscriptDigest,
   createRunAgentCapability,
   defaultSpriteActivities,
+  extractTranscriptDigest,
+  RUN_AGENT_BUILD_TYPE,
   runAgentCapability,
   SpriteActivitiesNotWiredError,
+  toRunAgentArchiveEntry,
   type RunAgentInput,
   type RunAgentOutput,
   type SpriteActivities,
@@ -82,7 +87,8 @@ describe("run-agent — capability schema + registry entry (#1941)", () => {
       checkpointId: "v3",
       turn: { status: "completed", exitCode: 0, startedAt: "2026-08-25T00:00:00Z", endedAt: "2026-08-25T00:01:00Z" },
       artifacts: { files: [{ path: "report.md", digest: "sha256:" + "a".repeat(64) }], diff: "--- a\n+++ b\n" },
-      provenance: { sourceRef: "abc1234:packages/core", artifactDigest: "sha256:" + "a".repeat(64) },
+      provenance: { sourceRef: "abc1234:packages/core@sha256:" + "b".repeat(64), artifactDigest: "sha256:" + "a".repeat(64) },
+      attestationRef: "review-agent/run-agent@sha256:" + "b".repeat(64),
     };
 
     expect(input.agent).toBe("code-reviewer");
@@ -211,7 +217,11 @@ describe("run() — successful turn (#1942)", () => {
     expect(output.artifacts.files).toEqual([
       { path: "/work/output", digest: expect.stringMatching(/^sha256:[0-9a-f]{64}$/) },
     ]);
-    expect(output.provenance).toEqual({ sourceRef: "", artifactDigest: output.artifacts.files[0]?.digest });
+    // #1943: no input.sourceRef supplied -> provenance.sourceRef is the bare
+    // transcript digest, no folding.
+    expect(output.provenance.sourceRef).toMatch(/^sha256:[0-9a-f]{64}$/);
+    expect(output.provenance).toEqual({ sourceRef: output.provenance.sourceRef, artifactDigest: output.artifacts.files[0]?.digest });
+    expect(output.attestationRef).toBe(`${ctx.component}/run-agent@${output.provenance.sourceRef}`);
 
     // Order matters: writeFile stages the prompt before exec runs, destroy is last.
     expect(calls[0]).toMatch(/^create:/);
@@ -222,11 +232,13 @@ describe("run() — successful turn (#1942)", () => {
     expect(calls[5]).toMatch(/^destroy:/);
   });
 
-  it("threads sourceRef into provenance when supplied", async () => {
+  it("folds input.sourceRef with the transcript digest via '@' (#1943)", async () => {
     const { sprites } = makeFakeSprites(succeed);
     const capability = createRunAgentCapability(sprites);
     const output = await capability.run(ctx, { ...MINIMAL_INPUT, sourceRef: "abc123:packages/core" });
-    expect(output.provenance.sourceRef).toBe("abc123:packages/core");
+    expect(output.provenance.sourceRef).toMatch(/^abc123:packages\/core@sha256:[0-9a-f]{64}$/);
+    expect(extractTranscriptDigest(output.provenance.sourceRef)).toMatch(/^sha256:[0-9a-f]{64}$/);
+    expect(output.attestationRef).toBe(`${ctx.component}/run-agent@${extractTranscriptDigest(output.provenance.sourceRef)}`);
   });
 
   it("skips create() and destroy() when reusing an existing sprite (workspace.spriteName)", async () => {
@@ -485,5 +497,187 @@ describe("buildRuntimeCommand — runtime parameterization (#1942 acceptance: no
     const capability = createRunAgentCapability(sprites);
     await capability.run(ctx, { ...MINIMAL_INPUT, agent: "codex" });
     expect(calls.find((c) => c.startsWith("exec:"))).toBe(`exec:${buildRuntimeCommand("codex")}`);
+  });
+});
+
+// ── #1943: transcript hash + attestation interop ────────────────────────────
+
+describe("computeTranscriptDigest — deterministic hash basis (#1943)", () => {
+  type TranscriptParams = Parameters<typeof computeTranscriptDigest>[0];
+  const turn = { status: "completed" as const, exitCode: 0, startedAt: "2026-08-25T00:00:00Z", endedAt: "2026-08-25T00:01:00Z" };
+  const base: TranscriptParams = {
+    agent: "code-reviewer",
+    prompt: "Review the diff.",
+    turn,
+    stdout: "ok\n",
+    stderr: "",
+    artifacts: { files: [{ path: "/work/output", digest: "sha256:" + "a".repeat(64) }] },
+  };
+
+  it("is a sha256:<hex> digest", () => {
+    expect(computeTranscriptDigest(base)).toMatch(/^sha256:[0-9a-f]{64}$/);
+  });
+
+  it("same turn -> same sourceRef: fully deterministic across repeated calls", () => {
+    expect(computeTranscriptDigest(base)).toBe(computeTranscriptDigest({ ...base }));
+  });
+
+  it("is insensitive to wall-clock time — startedAt/endedAt are excluded from the basis by design", () => {
+    const laterTurn = { ...turn, startedAt: "2099-01-01T00:00:00Z", endedAt: "2099-01-01T00:01:00Z" };
+    expect(computeTranscriptDigest({ ...base, turn: laterTurn })).toBe(computeTranscriptDigest(base));
+  });
+
+  it("is insensitive to artifacts.files collection order (sorted by path before hashing)", () => {
+    const twoFiles = {
+      ...base,
+      artifacts: {
+        files: [
+          { path: "b.txt", digest: "sha256:" + "b".repeat(64) },
+          { path: "a.txt", digest: "sha256:" + "a".repeat(64) },
+        ],
+      },
+    };
+    const reordered = { ...twoFiles, artifacts: { files: [...twoFiles.artifacts.files].reverse() } };
+    expect(computeTranscriptDigest(twoFiles)).toBe(computeTranscriptDigest(reordered));
+  });
+
+  const mutations: Array<[string, (b: TranscriptParams) => TranscriptParams]> = [
+    ["agent", (b) => ({ ...b, agent: "other-agent" })],
+    ["prompt", (b) => ({ ...b, prompt: b.prompt + " " })],
+    ["turn.status", (b) => ({ ...b, turn: { ...b.turn, status: "failed" as const } })],
+    ["turn.exitCode", (b) => ({ ...b, turn: { ...b.turn, exitCode: 1 } })],
+    ["stdout", (b) => ({ ...b, stdout: b.stdout + "x" })],
+    ["stderr", (b) => ({ ...b, stderr: "warning" })],
+    ["artifacts.files[0].digest", (b) => ({ ...b, artifacts: { files: [{ ...b.artifacts.files[0]!, digest: "sha256:" + "f".repeat(64) }] } })],
+    ["artifacts.diff", (b) => ({ ...b, artifacts: { ...b.artifacts, diff: "--- a\n+++ b\n" } })],
+  ];
+
+  it.each(mutations)("any single-byte change (%s) changes the digest — tamper-evident by construction", (_label, mutate) => {
+    expect(computeTranscriptDigest(mutate(base))).not.toBe(computeTranscriptDigest(base));
+  });
+
+  it("is sensitive to image bytes, even though images are folded in as their own digest, not embedded verbatim", () => {
+    const withImage = { ...base, images: [{ data: "aGVsbG8=", media_type: "image/png" as const }] };
+    const withDifferentImage = { ...base, images: [{ data: "d29ybGQ=", media_type: "image/png" as const }] };
+    expect(computeTranscriptDigest(withImage)).not.toBe(computeTranscriptDigest(withDifferentImage));
+    expect(computeTranscriptDigest(withImage)).not.toBe(computeTranscriptDigest(base));
+  });
+});
+
+describe("run() — sourceRef/attestationRef determinism and tamper-evidence end to end (#1943)", () => {
+  it("two runs with byte-identical scripted turns produce the same sourceRef/attestationRef", async () => {
+    const { sprites: sprites1 } = makeFakeSprites(succeed);
+    const { sprites: sprites2 } = makeFakeSprites(succeed);
+
+    const cap1 = createRunAgentCapability(sprites1);
+    const cap2 = createRunAgentCapability(sprites2);
+
+    const out1 = await cap1.run(ctx, MINIMAL_INPUT);
+    const out2 = await cap2.run(ctx, MINIMAL_INPUT);
+
+    expect(out1.provenance.sourceRef).toBe(out2.provenance.sourceRef);
+    expect(out1.attestationRef).toBe(out2.attestationRef);
+  });
+
+  it("a differing prompt (one byte) produces a different sourceRef/attestationRef", async () => {
+    const { sprites: sprites1 } = makeFakeSprites(succeed);
+    const { sprites: sprites2 } = makeFakeSprites(succeed);
+    const cap1 = createRunAgentCapability(sprites1);
+    const cap2 = createRunAgentCapability(sprites2);
+
+    const out1 = await cap1.run(ctx, MINIMAL_INPUT);
+    const out2 = await cap2.run(ctx, { ...MINIMAL_INPUT, task: { prompt: MINIMAL_INPUT.task.prompt + "!" } });
+
+    expect(out1.provenance.sourceRef).not.toBe(out2.provenance.sourceRef);
+    expect(out1.attestationRef).not.toBe(out2.attestationRef);
+  });
+
+  it("a differing collected artifact (the produced output byte differs) produces a different sourceRef/attestationRef", async () => {
+    const fake1 = makeFakeSprites(async () => succeed());
+    const fake2 = makeFakeSprites(async () => succeed());
+    // Pre-seed each fake's fs so its own exec (which never itself writes
+    // /work/output — `succeed()` is a no-op body) collects a distinct artifact.
+    fake1.fs["/work/output"] = "result-a";
+    fake2.fs["/work/output"] = "result-b";
+    const cap1 = createRunAgentCapability(fake1.sprites);
+    const cap2 = createRunAgentCapability(fake2.sprites);
+
+    const out1 = await cap1.run(ctx, MINIMAL_INPUT);
+    const out2 = await cap2.run(ctx, MINIMAL_INPUT);
+
+    expect(out1.artifacts.files[0]?.digest).not.toBe(out2.artifacts.files[0]?.digest);
+    expect(out1.provenance.sourceRef).not.toBe(out2.provenance.sourceRef);
+  });
+});
+
+describe("toRunAgentArchiveEntry — folds RunAgentOutput into a BuildArchiveEntry (#1943 design point 2)", () => {
+  const output: RunAgentOutput = {
+    spriteId: "s-1",
+    checkpointId: "v1",
+    turn: { status: "completed", exitCode: 0, startedAt: "2026-08-25T00:00:00Z", endedAt: "2026-08-25T00:01:00Z" },
+    artifacts: { files: [{ path: "/work/output", digest: "sha256:" + "a".repeat(64) }] },
+    provenance: { sourceRef: "sha256:" + "b".repeat(64), artifactDigest: "sha256:" + "a".repeat(64) },
+    attestationRef: "review-agent/run-agent@sha256:" + "b".repeat(64),
+  };
+
+  it("returns an asset-kind entry, content-addressed by the transcript digest", () => {
+    const entry = toRunAgentArchiveEntry("review-agent", output);
+    expect(entry.kind).toBe("asset");
+    expect(entry.digest).toBe("sha256:" + "b".repeat(64));
+    expect(entry.path).toBe("run-agent/review-agent/s-1-turn.json");
+    expect(entry.provenance).toEqual(output.provenance);
+  });
+
+  it("throws when provenance.sourceRef carries no transcript digest (extractTranscriptDigest's guard)", () => {
+    const malformed: RunAgentOutput = { ...output, provenance: { sourceRef: "not-a-digest", artifactDigest: output.provenance.artifactDigest } };
+    expect(() => toRunAgentArchiveEntry("review-agent", malformed)).toThrow(/does not end in a "sha256:<hex>"/);
+  });
+});
+
+describe("buildRunAgentProvenanceStatement — SLSA statement over a turn (#1943 design points 3+4)", () => {
+  const input: RunAgentInput = {
+    agent: "code-reviewer",
+    task: { prompt: "Review the diff." },
+    workspace: {},
+  };
+  const output: RunAgentOutput = {
+    spriteId: "s-1",
+    checkpointId: "v1",
+    turn: { status: "completed", exitCode: 0, startedAt: "2026-08-25T00:00:00Z", endedAt: "2026-08-25T00:01:00Z" },
+    artifacts: { files: [{ path: "/work/output", digest: "sha256:" + "a".repeat(64) }] },
+    provenance: { sourceRef: "sha256:" + "b".repeat(64), artifactDigest: "sha256:" + "a".repeat(64) },
+    attestationRef: "review-agent/run-agent@sha256:" + "b".repeat(64),
+  };
+
+  it("reuses predicateType https://slsa.dev/provenance/v1 — no minted run-agent-specific predicate type", () => {
+    const statement = buildRunAgentProvenanceStatement(input, output, "https://github.com/actions/runner");
+    expect(statement.predicateType).toBe("https://slsa.dev/provenance/v1");
+  });
+
+  it("sets buildType to RUN_AGENT_BUILD_TYPE, distinguishing a turn from a container build", () => {
+    const statement = buildRunAgentProvenanceStatement(input, output, "https://github.com/actions/runner");
+    expect(statement.predicate.buildDefinition.buildType).toBe(RUN_AGENT_BUILD_TYPE);
+    expect(RUN_AGENT_BUILD_TYPE).toBe("https://chant.dev/agent-turn/v1");
+  });
+
+  it("the subject is output.attestationRef, digest-qualified", () => {
+    const statement = buildRunAgentProvenanceStatement(input, output, "builder");
+    expect(statement.subject).toEqual([{ name: output.attestationRef, digest: { sha256: "b".repeat(64) } }]);
+  });
+
+  it("folds input.agent into externalParameters and the imperative facts into internalParameters", () => {
+    const statement = buildRunAgentProvenanceStatement(input, output, "builder");
+    expect(statement.predicate.buildDefinition.externalParameters).toMatchObject({ agent: "code-reviewer" });
+    expect(statement.predicate.buildDefinition.internalParameters).toMatchObject({
+      spriteId: "s-1",
+      checkpointId: "v1",
+      turnStatus: "completed",
+      turnExitCode: 0,
+    });
+  });
+
+  it("defaults finishedOn from turn.endedAt", () => {
+    const statement = buildRunAgentProvenanceStatement(input, output, "builder");
+    expect(statement.predicate.runDetails.metadata?.finishedOn).toBe(output.turn.endedAt);
   });
 });

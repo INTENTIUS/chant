@@ -152,17 +152,100 @@
  *    (including one caused by an aborted signal) propagates as a genuine
  *    `run()` failure rather than being classified as an interrupted turn.
  *    Distinguishing "deadline hit mid-run" from "the sprite backend errored"
- *    well enough to surface `"interrupted"` safely is left for #1943.
- *  - Transcript hash basis — `provenance.sourceRef` below is `input.sourceRef
- *    ?? ""`, a documented placeholder (#1943 owns the real transcript-hash
- *    basis and verify-gate interop); `provenance.artifactDigest` is the
- *    digest of the collected `/work/output` artifact when there is one, else
- *    the digest of an empty string.
+ *    well enough to surface `"interrupted"` safely is left for #1944.
+ *
+ * **#1943 (this revision) resolved the transcript-hash basis and
+ * sign/verify-gate interop, closing #1941's open "transcript hash basis"
+ * question:**
+ *  - **Hash basis.** `provenance.sourceRef`'s digest component is
+ *    `sha256Digest(JSON.stringify(basis))` over a fixed-key-order object —
+ *    `{ agent, promptDigest, images, status, exitCode, stdoutDigest,
+ *    stderrDigest, artifacts, diffDigest }` — built fresh by
+ *    `computeTranscriptDigest` below every call, never re-ordered from a
+ *    caller-supplied object, so key order (and therefore the digest) never
+ *    drifts by construction. Every free-text field (`prompt`, `stdout`,
+ *    `stderr`, `diff`, each image's `data`) is folded in as its own
+ *    `sha256Digest`, not embedded verbatim — this keeps a (possibly large,
+ *    possibly secret-bearing) prompt or transcript out of the digest input's
+ *    own byte stream while the digest remains exactly as sensitive to those
+ *    bytes as embedding them would be, and it is *why* this module never
+ *    needs to retain raw stdout/stderr past computing their digest inline
+ *    (closing #1941's "is the raw transcript retained anywhere beyond the
+ *    attested digest" sub-question: no, not even internally). `startedAt`/
+ *    `endedAt` are deliberately excluded — including wall-clock time would
+ *    make "the same turn" (same prompt, same exec outcome, same artifacts)
+ *    hash differently on every real run, defeating the determinism property
+ *    (`same turn -> same sourceRef`) a verifier actually needs: identity is
+ *    about *what happened*, not *when*. `artifacts.files` is sorted by
+ *    `path` before hashing so collection order (never semantically
+ *    meaningful — there is exactly one conventional artifact today, see
+ *    `OUTPUT_PATH`) can't perturb the digest.
+ *  - **`sourceRef` folding.** `RunAgentInput.sourceRef`'s own doc comment
+ *    promises it is "folded into the output's `provenance.sourceRef`
+ *    alongside the transcript hash." Concretely: `sourceRef =
+ *    input.sourceRef ? \`${input.sourceRef}@${transcriptDigest}\` :
+ *    transcriptDigest` — an `"<sha>@sha256:<hex>"` shape when a source ref is
+ *    known, reading like the `repo@sha256:...` convention already used
+ *    throughout this codebase (./sign.ts, ./publish.ts's `uri`), or the bare
+ *    `sha256:<hex>` transcript digest alone when it is not. `@` (not `:`,
+ *    which `DockerBuildInput.sourceRef`'s own `"<sha>:<path>"` convention
+ *    already uses for a different purpose) keeps the split unambiguous.
+ *    `extractTranscriptDigest` below recovers the trailing
+ *    `sha256:<hex>` deterministically regardless of what `input.sourceRef`
+ *    contains, by anchoring on the fixed `sha256:[0-9a-f]{64}` pattern at the
+ *    very end of the string.
+ *  - **Attestation interop, decided.** `RunAgentOutput` gained one field,
+ *    `attestationRef` — a `"<component>/run-agent@sha256:<hex>"` string
+ *    already shaped like the digest-qualified `repo@sha256:...` reference
+ *    `./sign.ts`'s `assertDigestRef`/`./verify.ts` already require, built
+ *    from `ctx.component` and the transcript digest, so a `sign`/
+ *    `attest-provenance`/`verify` step composed after `run-agent` wires
+ *    `imageRef: "@RunAgent.attestationRef"` and needs **zero code changes**
+ *    to any of those three verbs — resolving design point 4 of #1943 exactly
+ *    as anticipated. The honest caveat, stated plainly rather than left
+ *    implicit: `attestationRef` is *shaped* like an OCI digest reference, but
+ *    is not by itself a real, registry-resolvable one — `run-agent`'s turn
+ *    output is never pushed anywhere by this module. A deployment that wants
+ *    a genuine `cosign sign`/`cosign verify` round trip against real
+ *    Rekor/Fulcio needs a registry-backed publish step ahead of `sign`
+ *    (mirroring `publish-image`'s `uri`, ./publish.ts) — out of this issue's
+ *    scope, and not needed for the offline contract this issue asks for
+ *    (injected `ProcessRunner`, no real `cosign`/registry ever touched).
+ *    `toRunAgentArchiveEntry` below folds the same digest into a
+ *    `BuildArchiveEntry` (`kind: "asset"`, ./build-archive.ts) per design
+ *    point 2, for a caller building a full archive manifest.
+ *  - **Predicate-type decision, made (not left open).** Reuses the existing
+ *    `predicateType: "https://slsa.dev/provenance/v1"` unchanged — does
+ *    *not* mint a `run-agent`-specific predicate type. `buildDefinition
+ *    .buildType` is the field SLSA v1 actually designates for "what kind of
+ *    recipe produced this" (`RUN_AGENT_BUILD_TYPE` below,
+ *    `"https://chant.dev/agent-turn/v1"`, the same role
+ *    `./sign.ts`'s `DEFAULT_BUILD_TYPE` plays for `docker-build`), so a
+ *    second, parallel `predicateType` taxonomy would duplicate what
+ *    `buildType` already discriminates. This is also what makes the "zero
+ *    code changes to `verify.ts`" claim above literally true:
+ *    `buildVerifyAttestationArgs` hardcodes `--type slsaprovenance1` — a
+ *    minted `predicateType` would have broken that interop outright, forcing
+ *    a `verify.ts` change this issue's design point 4 explicitly hoped to
+ *    avoid.
+ *  - **Fountain-supplied facts, honestly scoped.** `buildRunAgentProvenanceStatement`
+ *    below folds `input.agent` into `externalParameters` (the one *declared*
+ *    fact `RunAgentInput` actually carries today) and `spriteId`/
+ *    `checkpointId`/`turn.status`/`turn.exitCode` into `internalParameters`
+ *    (what actually happened). `model`/`runtime`/`Environment.networking_type`
+ *    /`allowed_hosts` are not included — populating them honestly needs
+ *    fountain `Agent`/`Environment` resolution against `/api/agents`, which
+ *    this module's own doc comment already marks out of scope ("Real `agent`
+ *    name/id -> `Agent.runtime` resolution ... is out of this issue's
+ *    scope"). Adding those keys later is additive (merged into
+ *    `externalParameters`, never replacing it), not a shape break.
  */
 
 import { createHash } from "node:crypto";
 import type { Capability, DeployContext } from "../capability";
 import type { ProvenanceLink } from "./reproducibility";
+import type { BuildArchiveEntry } from "./build-archive";
+import { buildProvenanceStatement, type InTotoProvenanceStatement } from "./sign";
 
 // ── fountain surface excerpts this input/output tracks ──────────────────────
 
@@ -223,8 +306,21 @@ export interface RunAgentOutput {
     /** Unified diff of the workspace against its pre-run checkpoint, when applicable. */
     diff?: string;
   };
-  /** #614's shape (./reproducibility.ts) — `sourceRef` is the prompt/transcript hash; exact basis is #1943's decision (see this module's doc comment). */
+  /** #614's shape (./reproducibility.ts) — `sourceRef` is the prompt/transcript hash, folded with `input.sourceRef` when supplied (see this module's doc comment, "sourceRef folding"). */
   provenance: ProvenanceLink;
+  /**
+   * A `"<component>/run-agent@sha256:<hex>"` reference, digest-qualified the
+   * same shape `./sign.ts`'s `assertDigestRef`/`./verify.ts` require (#1943)
+   * — wire a `sign`/`attest-provenance`/`verify` step composed after
+   * `run-agent` with `imageRef: "@RunAgent.attestationRef"` and none of those
+   * three verbs need any code change. See this module's doc comment,
+   * "Attestation interop, decided" for the honest caveat (shaped like an OCI
+   * digest reference, not itself a registry-resolvable one) and
+   * `extractTranscriptDigest`/`toRunAgentArchiveEntry`/
+   * `buildRunAgentProvenanceStatement` below for the rest of the interop
+   * surface built on top of it.
+   */
+  attestationRef: string;
 }
 
 // ── SpriteActivities: the injectable sprite-lifecycle seam ─────────────────
@@ -396,12 +492,28 @@ export function createRunAgentCapability(
         await sprites.destroy({ id: spriteId });
       }
 
+      // #1943: the transcript digest — see this module's doc comment ("Hash
+      // basis") for the exact fields/order this is computed over.
+      // execResult.stdout/stderr never outlive this call: they are folded
+      // into the digest right here and discarded, never stored on `turn` or
+      // anywhere else in `RunAgentOutput`.
+      const transcriptDigest = computeTranscriptDigest({
+        agent: input.agent,
+        prompt: input.task.prompt,
+        images: input.task.images,
+        turn,
+        stdout: execResult.stdout,
+        stderr: execResult.stderr,
+        artifacts,
+      });
+      const sourceRef = input.sourceRef ? `${input.sourceRef}@${transcriptDigest}` : transcriptDigest;
       const provenance: ProvenanceLink = {
-        sourceRef: input.sourceRef ?? "",
+        sourceRef,
         artifactDigest: artifacts.files[0]?.digest ?? EMPTY_DIGEST,
       };
+      const attestationRef = `${ctx.component}/run-agent@${transcriptDigest}`;
 
-      return { spriteId, checkpointId, turn, artifacts, provenance };
+      return { spriteId, checkpointId, turn, artifacts, provenance, attestationRef };
     },
     async rollback(_ctx, input): Promise<void> {
       const state = stateByInput.get(input);
@@ -447,6 +559,140 @@ function sha256Digest(content: string): string {
 }
 
 const EMPTY_DIGEST = sha256Digest("");
+
+// ── #1943: transcript hash + attestation interop ────────────────────────────
+
+/**
+ * The exact, fixed-key-order shape `computeTranscriptDigest` hashes — see
+ * this module's doc comment ("Hash basis") for the full rationale. Every
+ * free-text field is its own digest, never embedded verbatim.
+ */
+interface TranscriptBasis {
+  agent: string;
+  promptDigest: string;
+  images: Array<{ mediaType: string; digest: string }>;
+  status: RunAgentTurn["status"];
+  exitCode: number | null;
+  stdoutDigest: string;
+  stderrDigest: string;
+  artifacts: Array<{ path: string; digest: string }>;
+  diffDigest: string;
+}
+
+/**
+ * Compute the transcript digest that becomes (the digest component of)
+ * `provenance.sourceRef` and `attestationRef` — see this module's doc
+ * comment, "Hash basis," for the precise field list/order and the rationale
+ * for hashing rather than embedding each free-text field. Exported so a
+ * caller (or a test) can independently recompute/verify the same digest from
+ * the same run() inputs/outputs, without reaching into this module's private
+ * `run()` closure.
+ */
+export function computeTranscriptDigest(params: {
+  agent: string;
+  prompt: string;
+  images?: RunAgentImageInput[];
+  turn: RunAgentTurn;
+  stdout: string;
+  stderr: string;
+  artifacts: RunAgentOutput["artifacts"];
+}): string {
+  const basis: TranscriptBasis = {
+    agent: params.agent,
+    promptDigest: sha256Digest(params.prompt),
+    images: (params.images ?? []).map((img) => ({ mediaType: img.media_type, digest: sha256Digest(img.data) })),
+    status: params.turn.status,
+    exitCode: params.turn.exitCode,
+    stdoutDigest: sha256Digest(params.stdout),
+    stderrDigest: sha256Digest(params.stderr),
+    artifacts: [...params.artifacts.files]
+      .sort((a, b) => a.path.localeCompare(b.path))
+      .map((f) => ({ path: f.path, digest: f.digest })),
+    diffDigest: sha256Digest(params.artifacts.diff ?? ""),
+  };
+  return sha256Digest(JSON.stringify(basis));
+}
+
+/** The trailing `sha256:<hex>` transcript digest a `provenance.sourceRef`/`attestationRef` ends in — see this module's doc comment, "sourceRef folding." */
+const TRANSCRIPT_DIGEST_PATTERN = /sha256:[0-9a-f]{64}$/i;
+
+/**
+ * Recover the bare transcript digest (`sha256:<hex>`) from a
+ * `provenance.sourceRef` or `attestationRef` string, regardless of what (if
+ * anything) precedes it — see this module's doc comment, "sourceRef
+ * folding," for why anchoring on the fixed `sha256:[0-9a-f]{64}` suffix
+ * pattern is unambiguous even when `input.sourceRef` itself contains `@`/`:`.
+ */
+export function extractTranscriptDigest(sourceRef: string): string {
+  const match = TRANSCRIPT_DIGEST_PATTERN.exec(sourceRef);
+  if (!match) {
+    throw new Error(
+      `extractTranscriptDigest: "${sourceRef}" does not end in a "sha256:<hex>" transcript digest`,
+    );
+  }
+  return match[0];
+}
+
+/**
+ * `run-agent`'s SLSA `buildDefinition.buildType` — the recipe-kind URI this
+ * module's doc comment ("Predicate-type decision, made") settles on in place
+ * of minting a new `predicateType`. Mirrors ./sign.ts's own
+ * `DEFAULT_BUILD_TYPE` for `docker-build`.
+ */
+export const RUN_AGENT_BUILD_TYPE = "https://chant.dev/agent-turn/v1";
+
+/**
+ * Fold a `RunAgentOutput` into a `BuildArchiveEntry` (#1943 design point 2,
+ * ./build-archive.ts) — `kind: "asset"`, content-addressed by the same
+ * transcript digest `attestationRef` carries. Returns a bare entry (no
+ * `reproducibility` assigned); pass it through `addArchiveEntry` for the
+ * kind-appropriate `"best-effort"` default (./reproducibility.ts), the same
+ * as any other `asset` entry.
+ */
+export function toRunAgentArchiveEntry(component: string, output: RunAgentOutput): BuildArchiveEntry {
+  return {
+    kind: "asset",
+    path: `run-agent/${component}/${output.spriteId}-turn.json`,
+    digest: extractTranscriptDigest(output.provenance.sourceRef),
+    mediaType: "application/json",
+    provenance: output.provenance,
+  };
+}
+
+/**
+ * Build the in-toto SLSA provenance statement for a completed turn, reusing
+ * ./sign.ts's `buildProvenanceStatement` unmodified in behavior for every
+ * existing (image) caller — `predicateType` stays
+ * `"https://slsa.dev/provenance/v1"`, only `buildType` and the
+ * `external`/`internalParameters` merge fields (#1943's minimal, documented
+ * extension to `BuildProvenanceStatementInput`) differ. See this module's
+ * doc comment, "Fountain-supplied facts, honestly scoped," for exactly what
+ * is (and is not yet) folded in. The returned statement's `subject` is
+ * `output.attestationRef` — sign+attach it the same way `attest-provenance`
+ * already does for any other digest-qualified reference.
+ */
+export function buildRunAgentProvenanceStatement(
+  input: RunAgentInput,
+  output: RunAgentOutput,
+  builderId: string,
+  opts?: { finishedOn?: string; invocationId?: string },
+): InTotoProvenanceStatement {
+  return buildProvenanceStatement({
+    imageRef: output.attestationRef,
+    provenance: output.provenance,
+    builderId,
+    buildType: RUN_AGENT_BUILD_TYPE,
+    externalParameters: { agent: input.agent },
+    internalParameters: {
+      spriteId: output.spriteId,
+      checkpointId: output.checkpointId,
+      turnStatus: output.turn.status,
+      turnExitCode: output.turn.exitCode,
+    },
+    finishedOn: opts?.finishedOn ?? output.turn.endedAt ?? undefined,
+    invocationId: opts?.invocationId,
+  });
+}
 
 /**
  * Map `RunAgentInput.agent` to the one-shot, non-interactive command that
