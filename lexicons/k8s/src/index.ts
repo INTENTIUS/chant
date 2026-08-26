@@ -52,6 +52,7 @@ export {
   AksWorkloadIdentityServiceAccount,
   GkeFluentBitAgent, GkeOtelCollector, GkeExternalDnsAgent, AksExternalDnsAgent,
   Model, resolveModelStorageUri,
+  OperatorStack, deriveHostVerbClass, DEFAULT_RESOURCE_RULES,
 } from "./composites/index";
 export type {
   WebAppProps, WebAppResult, StatefulAppProps, StatefulAppResult, CronWorkloadProps, CronWorkloadResult,
@@ -92,6 +93,7 @@ export type {
   GkeExternalDnsAgentProps, GkeExternalDnsAgentResult,
   AksExternalDnsAgentProps, AksExternalDnsAgentResult,
   ModelSource, ModelProps, ModelResult,
+  OperatorDial, OperatorRbacResourceRule, OperatorStackConvergeHost, OperatorStackConfig, OperatorStackResult,
 } from "./composites/index";
 
 // RBAC verb constants
