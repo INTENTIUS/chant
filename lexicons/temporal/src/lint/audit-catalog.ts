@@ -2,12 +2,12 @@
  * The temporal lexicon's chant audit catalog — metadata for the TMP post-synth
  * checks, contributed via `temporalPlugin.auditCatalog()` (#687).
  *
- * Three of the four read the chant model (`ctx.entities`) rather than the
+ * Four of the five read the chant model (`ctx.entities`) rather than the
  * emitted output, so they carry `yamlBased: false` and cannot fire on an audit
  * of standalone Temporal config; TMP010 reads `ctx.outputs` and can.
  * `auditRule()` hardcodes `yamlBased: true`, so these are constructed directly.
  *
- * Without this the four checks reached `chant audit` with no title, tier, fix
+ * Without this the five checks reached `chant audit` with no title, tier, fix
  * kind, or category at all — `resolveAuditCatalog` contributes nothing for a
  * lexicon that omits the method, silently (#1346).
  */
@@ -54,5 +54,12 @@ export const temporalAuditCatalog: Record<string, RuleMeta> = {
     "correctness",
     "Search attribute references an undeclared namespace",
     "Point `namespace` at a TemporalNamespace declared in the same stack.",
+  ),
+  TMP012: rule(
+    "TMP012",
+    "merge-worthy",
+    "correctness",
+    "Activity step args or outcomeAttribute.from don't match the activity's declared contract",
+    "Fix the step's args to match the activity's registered schema (unrecognized key, wrong type, or missing required key), or point outcomeAttribute.from at a field that exists on the activity's declared return type.",
   ),
 };
