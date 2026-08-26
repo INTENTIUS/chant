@@ -21,11 +21,11 @@ describe("temporal plugin", () => {
     expect(temporalPlugin.serializer.name).toBe("temporal");
   });
 
-  it("postSynthChecks() returns 6 checks (TMP001, TMP002, TMP010, TMP011, TMP012, TMP013)", () => {
+  it("postSynthChecks() returns 7 checks (TMP001, TMP002, TMP010, TMP011, TMP012, TMP013, TMP014)", () => {
     const checks = temporalPlugin.postSynthChecks?.();
     expect(Array.isArray(checks)).toBe(true);
     const ids = checks?.map((c) => c.id).sort();
-    expect(ids).toEqual(["TMP001", "TMP002", "TMP010", "TMP011", "TMP012", "TMP013"]);
+    expect(ids).toEqual(["TMP001", "TMP002", "TMP010", "TMP011", "TMP012", "TMP013", "TMP014"]);
   });
 
   it("lintRules() returns 1 rule (TMP020)", () => {

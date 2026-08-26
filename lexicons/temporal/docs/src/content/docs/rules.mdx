@@ -6,7 +6,7 @@ description: "Every lint rule and post-synth check provided by the Temporal lexi
 {/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-temporal` — DO NOT EDIT.
     Edit lexicons/temporal/src/codegen/docs.ts instead; changes here are overwritten. */}
 
-The Temporal lexicon provides **7** rules: 1 lint rule and 6 post-synth checks.
+The Temporal lexicon provides **8** rules: 1 lint rule and 7 post-synth checks.
 
 ## Lint Rules
 
@@ -26,3 +26,4 @@ Post-synth checks validate the serialized output after the build pipeline comple
 | `TMP011` | SearchAttribute.namespace must reference a declared TemporalNamespace entity |
 | `TMP012` | Activity step args and outcomeAttribute.from must match the activity's declared contract |
 | `TMP013` | A step-output reference must name an in-scope, preceding, contract-validated producer step |
+| `TMP014` | A ConvergeOp rule table: run() must name a declared Op, a mutating/destructive dispatch must be permitted by the dial, a destructive target must be gated, and every rule must carry its why |

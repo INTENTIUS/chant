@@ -69,4 +69,11 @@ export const temporalAuditCatalog: Record<string, RuleMeta> = {
     "A step-output reference doesn't resolve to an in-scope, preceding, contract-validated producer step",
     "Point the reference at a step id declared earlier in the same main phases (not onFailure, not nested inside an effect step), whose activity has a registered contract with a returns schema the referenced path exists on.",
   ),
+  TMP014: rule(
+    "TMP014",
+    "merge-worthy",
+    "correctness",
+    "A ConvergeOp rule table dispatches an unknown, dial-disallowed, or ungated destructive op, or a rule is missing its why",
+    "Name a declared Op in run(), give every rule a non-empty why, keep a mutating dispatch off an observe dial, and gate any destructive dispatch target under an apply dial.",
+  ),
 };

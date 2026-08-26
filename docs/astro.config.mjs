@@ -116,6 +116,7 @@ export default defineConfig({
 								{ label: 'Ops', slug: 'guide/ops' },
 								{ label: 'Watching Lifecycle', slug: 'guide/watching-lifecycle' },
 								{ label: 'Reconciling Lifecycle', slug: 'guide/reconciling-lifecycle' },
+								{ label: 'Converging Lifecycle', slug: 'guide/converging-lifecycle' },
 							],
 						},
 						{

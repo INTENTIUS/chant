@@ -11,7 +11,10 @@ import { tmp010 } from "./tmp010-cron-syntax";
 import { tmp011 } from "./tmp011-namespace-reference";
 import { tmp012 } from "./tmp012-activity-contract";
 import { tmp013 } from "./tmp013-step-output-ref";
-import { stepOutput } from "@intentius/chant/op";
+import { tmp014 } from "./tmp014-converge-rule-refusals";
+import { stepOutput, when, eq, gt, run, report } from "@intentius/chant/op";
+import type { ConvergeRule } from "@intentius/chant/op";
+import type { ConvergeSymptom } from "@intentius/chant/lifecycle/symptoms";
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
@@ -428,5 +431,160 @@ describe("TMP013: step-output-ref", () => {
       ])],
     ]));
     expect(tmp013.check(ctx)).toHaveLength(0);
+  });
+});
+
+// ── TMP014: converge-rule-refusals (#1484) ───────────────────────────
+
+function convergeOpEntity(
+  name: string,
+  rules: ConvergeRule<ConvergeSymptom>[],
+  opts?: { dial?: "observe" | "reconcile" | "apply" },
+) {
+  return makeEntity("Temporal::Op", {
+    name,
+    overview: "test",
+    searchAttributes: { Converge: "true", Env: "staging", Dial: opts?.dial ?? "observe" },
+    phases: [
+      { name: "Observe", steps: [{ kind: "activity", fn: "lifecycleDiff", args: { env: "staging" }, id: "diff" }] },
+      { name: "Converge", steps: [{ kind: "activity", fn: "convergeTick", args: { rules } }] },
+    ],
+  });
+}
+
+function readOnlyOpEntity(name: string) {
+  return opEntity(name, [{ kind: "activity", fn: "lifecycleDiff", args: { env: "staging" } }]);
+}
+
+function mutatingOpEntity(name: string) {
+  return opEntity(name, [
+    { kind: "activity", fn: "nativeApply", args: { target: "kubectl", env: "staging", output: "dist", deleteMode: "never" } },
+  ]);
+}
+
+function destructiveOpEntity(name: string, opts?: { gated?: boolean }) {
+  const steps: unknown[] = [
+    { kind: "activity", fn: "nativeApply", args: { target: "kubectl", env: "staging", output: "dist", deleteMode: "gated" } },
+  ];
+  const phases = opts?.gated
+    ? [
+        { name: "Approve", steps: [{ kind: "gate", signalName: "approve-x" }] },
+        { name: "Apply", steps },
+      ]
+    : [{ name: "Apply", steps }];
+  return opEntityPhases(name, phases);
+}
+
+describe("TMP014: converge-rule-refusals", () => {
+  test("passes a well-formed rule table dispatching a read-only op under observe", () => {
+    const rule = when<ConvergeSymptom>(eq("status", "drifted"), run("watch"), {
+      id: "drift-watch",
+      why: "Re-check drift with a read-only observation.",
+    });
+    const ctx = makeCtxFromEntities(new Map([
+      ["converge", convergeOpEntity("converge", [rule], { dial: "observe" })],
+      ["watch", readOnlyOpEntity("watch")],
+    ]));
+    expect(tmp014.check(ctx)).toHaveLength(0);
+  });
+
+  test("passes a report-only rule table with no dispatch at all", () => {
+    const rule = when<ConvergeSymptom>(gt("adoptCount", 0), report("unowned resources present"), {
+      id: "adopt-report",
+      why: "Unowned resources are reported, never auto-claimed.",
+    });
+    const ctx = makeCtxFromEntities(new Map([["converge", convergeOpEntity("converge", [rule])]]));
+    expect(tmp014.check(ctx)).toHaveLength(0);
+  });
+
+  test("errors when a rule has a blank why", () => {
+    const badRule = {
+      id: "no-why",
+      when: { kind: "field-comparison", field: "status", op: "eq", value: "drifted" },
+      then: { kind: "report", reason: "x" },
+      why: "",
+    } as unknown as ConvergeRule<ConvergeSymptom>;
+    const ctx = makeCtxFromEntities(new Map([["converge", convergeOpEntity("converge", [badRule])]]));
+    const diags = tmp014.check(ctx);
+    expect(diags.some((d) => d.checkId === "TMP014" && d.message.includes("must carry its why"))).toBe(true);
+  });
+
+  test("errors when a rule's predicate is malformed (outside the evaluable subset)", () => {
+    const badRule = {
+      id: "bad-predicate",
+      when: { kind: "not-a-real-predicate-kind" },
+      then: { kind: "report", reason: "x" },
+      why: "some reason",
+    } as unknown as ConvergeRule<ConvergeSymptom>;
+    const ctx = makeCtxFromEntities(new Map([["converge", convergeOpEntity("converge", [badRule])]]));
+    const diags = tmp014.check(ctx);
+    expect(diags.some((d) => d.message.includes("outside the evaluable subset"))).toBe(true);
+  });
+
+  test("errors when run() names an op that doesn't exist", () => {
+    const rule = when<ConvergeSymptom>(eq("status", "drifted"), run("does-not-exist"), { id: "drift-apply", why: "Re-apply on drift." });
+    const ctx = makeCtxFromEntities(new Map([["converge", convergeOpEntity("converge", [rule], { dial: "apply" })]]));
+    const diags = tmp014.check(ctx);
+    expect(diags.some((d) => d.message.includes('unknown op "does-not-exist"'))).toBe(true);
+  });
+
+  test("errors when a mutating op is dispatched under an observe dial", () => {
+    const rule = when<ConvergeSymptom>(eq("status", "drifted"), run("apply-staging"), { id: "drift-apply", why: "Re-apply on drift." });
+    const ctx = makeCtxFromEntities(new Map([
+      ["converge", convergeOpEntity("converge", [rule], { dial: "observe" })],
+      ["apply-staging", mutatingOpEntity("apply-staging")],
+    ]));
+    const diags = tmp014.check(ctx);
+    expect(diags.some((d) => d.message.includes("mutating") && d.message.includes('dial "observe"'))).toBe(true);
+  });
+
+  test("passes a mutating dispatch under a reconcile dial", () => {
+    const rule = when<ConvergeSymptom>(eq("status", "drifted"), run("apply-staging"), { id: "drift-apply", why: "Re-apply on drift." });
+    const ctx = makeCtxFromEntities(new Map([
+      ["converge", convergeOpEntity("converge", [rule], { dial: "reconcile" })],
+      ["apply-staging", mutatingOpEntity("apply-staging")],
+    ]));
+    expect(tmp014.check(ctx)).toHaveLength(0);
+  });
+
+  test("errors when a destructive op is dispatched under a reconcile dial (never permitted outside apply)", () => {
+    const rule = when<ConvergeSymptom>(eq("status", "drifted"), run("prune-staging"), { id: "drift-prune", why: "Prune drifted resources." });
+    const ctx = makeCtxFromEntities(new Map([
+      ["converge", convergeOpEntity("converge", [rule], { dial: "reconcile" })],
+      ["prune-staging", destructiveOpEntity("prune-staging", { gated: true })],
+    ]));
+    const diags = tmp014.check(ctx);
+    expect(diags.some((d) => d.message.includes("destructive") && d.message.includes('dial "reconcile"'))).toBe(true);
+  });
+
+  test("errors when a destructive op is dispatched under apply but has no gate", () => {
+    const rule = when<ConvergeSymptom>(eq("status", "drifted"), run("prune-staging"), { id: "drift-prune", why: "Prune drifted resources." });
+    const ctx = makeCtxFromEntities(new Map([
+      ["converge", convergeOpEntity("converge", [rule], { dial: "apply" })],
+      ["prune-staging", destructiveOpEntity("prune-staging", { gated: false })],
+    ]));
+    const diags = tmp014.check(ctx);
+    expect(diags.some((d) => d.message.includes("no approval gate"))).toBe(true);
+  });
+
+  test("passes a destructive dispatch under apply when the target is gated", () => {
+    const rule = when<ConvergeSymptom>(eq("status", "drifted"), run("prune-staging"), { id: "drift-prune", why: "Prune drifted resources." });
+    const ctx = makeCtxFromEntities(new Map([
+      ["converge", convergeOpEntity("converge", [rule], { dial: "apply" })],
+      ["prune-staging", destructiveOpEntity("prune-staging", { gated: true })],
+    ]));
+    expect(tmp014.check(ctx)).toHaveLength(0);
+  });
+
+  test("ignores a Temporal::Op with no Converge search attribute", () => {
+    const ctx = makeCtxFromEntities(new Map([["op", readOnlyOpEntity("op")]]));
+    expect(tmp014.check(ctx)).toHaveLength(0);
+  });
+
+  test("ignores non-Op entities", () => {
+    const ctx = makeCtxFromEntities(new Map([
+      ["ns", makeEntity("Temporal::Namespace", { name: "default", retention: "30d" })],
+    ]));
+    expect(tmp014.check(ctx)).toHaveLength(0);
   });
 });
