@@ -15,7 +15,14 @@
  *                 steps unwound in reverse via their capability's `rollback`)
  *                 AND the component's own `rollback` phases run in reverse,
  *                 before the original failure is re-thrown — matching
- *                 `runComponentDeploy`'s local semantics (driver.ts) exactly
+ *                 `runComponentDeploy`'s local semantics (driver.ts) exactly.
+ *                 Also (#1944, epic #1564 phase 4): each rolled-back step's
+ *                 rollback receives its own run()'s output — the durable
+ *                 identity channel a capability needs when it cannot rely on
+ *                 in-process object identity across this workflow's separate
+ *                 run/rollback Activity invocations — and a rollback failure
+ *                 is logged and recorded into a `RollbackFailed` search
+ *                 attribute instead of silently vanishing.
  *
  * Each scenario serializes a real `DriverComponent` via `serializeComponent`,
  * writes the emitted workflow.ts next to this file (so relative imports
@@ -44,8 +51,10 @@ import {
 
 const GEN_DIR = fileURLToPath(new URL("./__generated__", import.meta.url));
 
-// Search attributes the generated workflows upsert (ComponentName/Phase always — see serializer.ts's generateWorkflow).
-const SEARCH_ATTRS = { ComponentName: 2, Phase: 2 } as const;
+// Search attributes the generated workflows upsert (ComponentName/Phase always,
+// RollbackFailed only on a saga-unwind failure, #1944 — see serializer.ts's
+// generateWorkflow/renderRollback).
+const SEARCH_ATTRS = { ComponentName: 2, Phase: 2, RollbackFailed: 7 } as const;
 
 let env: TestWorkflowEnvironment;
 let wfCounter = 0;
@@ -67,7 +76,8 @@ afterAll(async () => {
 
 /** Fake capability-dispatch activities — records every call, dispatches by `step.kind` to a caller-supplied table. Mirrors component-op/activities.ts's shape without a real CapabilityRegistry. */
 type FakeCapabilityRun = (input: Record<string, unknown>) => unknown | Promise<unknown>;
-type FakeCapabilityRollback = (input: Record<string, unknown>) => void | Promise<void>;
+/** `output` is the durable identity channel (#1944): the same value this step's own fake `run()` returned, threaded through by the generated workflow's `executed` array — see activities.ts's `CapabilityStepArgs.output` doc comment. */
+type FakeCapabilityRollback = (input: Record<string, unknown>, output?: unknown) => void | Promise<void>;
 
 interface CapabilityStepArgs {
   step: Record<string, unknown>;
@@ -75,6 +85,7 @@ interface CapabilityStepArgs {
   component: string;
   phaseOutputs: Record<string, Record<string, unknown>>;
   componentOutputs: Record<string, Record<string, unknown>>;
+  output?: unknown;
 }
 
 function makeFakeActivities(
@@ -92,7 +103,7 @@ function makeFakeActivities(
     const { kind, ...rest } = args.step;
     const resolvedInput = resolveWiringForTest(rest, args.phaseOutputs, args.componentOutputs);
     const fn = rollbacks[kind as string];
-    if (fn) await fn(resolvedInput);
+    if (fn) await fn(resolvedInput, args.output);
   }
   // The accumulator is NOT faked: it is the real core function behind the real
   // activity (component-op/activities.ts), so this harness proves the durable
@@ -157,7 +168,12 @@ async function runComponent(
   component: DriverComponent,
   activities: Record<string, (...args: never[]) => unknown>,
   opts: { signal?: string; seed?: Record<string, Record<string, unknown>> } = {},
-): Promise<{ durationMs: number; failed: boolean; result?: { phaseOutputs: Record<string, Record<string, unknown>>; componentOutputs: Record<string, Record<string, unknown>> } }> {
+): Promise<{
+  durationMs: number;
+  failed: boolean;
+  result?: { phaseOutputs: Record<string, Record<string, unknown>>; componentOutputs: Record<string, Record<string, unknown>> };
+  searchAttributes: Record<string, unknown>;
+}> {
   const files = serializeComponent(component);
   const wfKey = Object.keys(files).find((k) => k.endsWith("/workflow.ts"))!;
   const wfPath = join(GEN_DIR, `${component.name}.workflow.ts`);
@@ -187,7 +203,7 @@ async function runComponent(
   const desc = await handle.describe();
   const durationMs =
     desc.closeTime && desc.startTime ? desc.closeTime.getTime() - desc.startTime.getTime() : 0;
-  return { durationMs, failed, result };
+  return { durationMs, failed, result, searchAttributes: desc.searchAttributes };
 }
 
 describe("component → Temporal runtime harness (#589)", () => {
@@ -275,6 +291,81 @@ describe("component → Temporal runtime harness (#589)", () => {
     expect(failed).toBe(true); // original failure is re-thrown
     // Saga unwind (executed steps, reverse order) then component rollback phases (reverse order).
     expect(order).toEqual(["publish", "rollback:publish-image", "undo2", "undo1"]);
+  }, 120_000);
+
+  // ── #1944: durable identity channel — output threaded to rollback ─────────
+
+  test("compensation — a rolled-back step's rollback receives the exact output its own run() returned (#1944 durable identity channel)", async () => {
+    // This is the gap the epic #1564 phase-4 scope addition (on #1949's
+    // review) flagged: run() and rollback() execute as separate Activities on
+    // this durable path, each rebuilding resolvedInput fresh from JSON — no
+    // in-process object identity survives between them the way it does for
+    // driver.ts's local saga unwind. A capability like run-agent
+    // (@intentius/chant/components/verbs/run-agent) that recorded state in a
+    // WeakMap keyed by run()'s exact input object therefore never got a hit
+    // here. This test proves the fix: the generated workflow now carries each
+    // step's own run() output alongside it (serializer.ts's `executed`
+    // array) and passes it through rollbackCapabilityStep's `output` field
+    // (activities.ts) as `Capability.rollback`'s third parameter.
+    const receivedOutputs: unknown[] = [];
+    const component: DriverComponent = {
+      name: "identity-component",
+      dependsOn: [],
+      deploy: [
+        { phase: "Provision", steps: [{ kind: "run-agent-like" }] },
+        { phase: "Apply", steps: [{ kind: "cfn-deploy" }] },
+      ],
+    };
+    const activities = makeFakeActivities(
+      {
+        // Mirrors RunAgentOutput's shape: run() records identity (spriteId/
+        // checkpointId) only in its OWN output, never anywhere rollback()
+        // could reach it without this channel.
+        "run-agent-like": () => ({ spriteId: "sprite-abc", checkpointId: "chk-1" }),
+        "cfn-deploy": () => { throw new Error("boom"); },
+      },
+      {
+        "run-agent-like": (_input, output) => { receivedOutputs.push(output); },
+      },
+    );
+
+    const { failed } = await runComponent(component, activities);
+    expect(failed).toBe(true);
+    // The rollback fake received exactly what run() returned — not undefined,
+    // not the resolved input, not a stale/rebuilt object.
+    expect(receivedOutputs).toEqual([{ spriteId: "sprite-abc", checkpointId: "chk-1" }]);
+  }, 120_000);
+
+  test("compensation — a rollback failure is logged and surfaced via the RollbackFailed search attribute, not silently swallowed (#1944)", async () => {
+    // Before #1944 the generated workflow's saga-unwind catch was bare
+    // (`catch { /* ... */ }`) — a genuine rollback failure (the sprite
+    // backend erroring, say) vanished with zero logging or observable trace.
+    const component: DriverComponent = {
+      name: "loud-degrade-component",
+      dependsOn: [],
+      deploy: [
+        { phase: "Provision", steps: [{ kind: "provision-step" }] },
+        { phase: "Apply", steps: [{ kind: "cfn-deploy" }] },
+      ],
+    };
+    const activities = makeFakeActivities(
+      {
+        "provision-step": () => ({ ok: true }),
+        "cfn-deploy": () => { throw new Error("apply boom"); },
+      },
+      {
+        "provision-step": () => { throw new Error("rollback also failed"); },
+      },
+    );
+
+    const { failed, searchAttributes } = await runComponent(component, activities);
+    expect(failed).toBe(true); // the ORIGINAL failure still terminates the workflow
+    const rollbackFailed = (searchAttributes.RollbackFailed as string[] | undefined) ?? [];
+    expect(rollbackFailed.length).toBeGreaterThan(0);
+    const parsed = rollbackFailed.map((s) => JSON.parse(s));
+    expect(parsed).toEqual([
+      expect.objectContaining({ kind: "provision-step", phase: "Provision", error: expect.stringContaining("rollback also failed") }),
+    ]);
   }, 120_000);
 
   test("parallel phase — every concurrent step's output survives the merge into phaseOutputs", async () => {

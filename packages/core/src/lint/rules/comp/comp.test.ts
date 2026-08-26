@@ -23,11 +23,14 @@ const checks = loadComponentChecks();
 /**
  * Rollback dispositions the COMP003 fixtures reference, standing in for what
  * `chant lint` derives from the project's registry (`cfn-deploy` has a native
- * `rollback`; `run-migration` declares `needs-opt-out` in the aws lexicon).
+ * `rollback`; `run-migration` declares `needs-opt-out` in the aws lexicon;
+ * `run-agent` declares `native` from phase 1 (#1941) — see
+ * `../../../components/verbs/run-agent.ts`'s `rollbackPolicy: "native"`).
  */
 const FIXTURE_ROLLBACK_POLICIES = new Map<string, RollbackPolicy>([
   ["cfn-deploy", "native"],
   ["run-migration", "needs-opt-out"],
+  ["run-agent", "native"],
 ]);
 
 async function lintFixture(
@@ -124,6 +127,16 @@ describe("COMP003: mutating-no-rollback", () => {
     expect(diagnostics.filter((d) => d.checkId === "COMP003")).toHaveLength(0);
   });
 
+  it("does not flag a bare run-agent step — its registry-declared rollbackPolicy is \"native\" (#1941), never needing a noRollback opt-out (#1944)", async () => {
+    // Regression test: proves the registry's rollbackPolicy for "run-agent"
+    // is wired correctly into ctx.rollbackPolicies (the same seam COMP005
+    // uses for ctx.knownKinds), not just that COMP003 happens to stay quiet.
+    // See ../../../components/verbs/run-agent.ts's "rollbackPolicy: 'native'".
+    const diagnostics = await lintFixture("comp003", "pass", { rollbackPolicies: FIXTURE_ROLLBACK_POLICIES });
+    const hits = diagnostics.filter((d) => d.checkId === "COMP003" && d.component === "agent-turn");
+    expect(hits).toHaveLength(0);
+  });
+
   it("flags a needs-opt-out step nested inside a fan-out phase, not just top-level phases", () => {
     // Regression test: the rule used to iterate component.deploy directly and
     // never recursed into nested Phase entries (a fan-out unit, e.g. the
@@ -161,6 +174,41 @@ describe("COMP003: mutating-no-rollback", () => {
     expect(diagnostics).toHaveLength(1);
     expect(diagnostics[0].component).toBe("fanout-cluster");
     expect(diagnostics[0].message).toContain("run-migration");
+  });
+
+  it("DOES flag a \"run-agent\"-kind step when a synthetic registry declares it needs-opt-out — proves the rule is conditional on the registry, not a hard-coded allowance for this one verb name (#1944)", () => {
+    // Companion negative case to the "does not flag a bare run-agent step"
+    // test above: same step kind, same shape, but with a synthetic
+    // rollbackPolicies map that declares "run-agent" as "needs-opt-out"
+    // instead of the real registry's "native". If this rule silently
+    // special-cased "run-agent" by name, this would incorrectly pass; it must
+    // flag exactly like any other needs-opt-out verb.
+    const [comp003] = checks.filter((c) => c.id === "COMP003");
+    const ctx = {
+      rollbackPolicies: new Map<string, RollbackPolicy>([["run-agent", "needs-opt-out"]]),
+      components: new Map([
+        [
+          "agent-turn",
+          {
+            component: {
+              name: "agent-turn",
+              dependsOn: [],
+              deploy: [
+                {
+                  phase: "Run",
+                  steps: [{ kind: "run-agent", agent: "claude", task: { prompt: "..." }, workspace: {} }],
+                },
+              ],
+            },
+            filePath: "agent-turn.component.ts",
+          },
+        ],
+      ]),
+    };
+    const diagnostics = comp003.check(ctx as never);
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0].component).toBe("agent-turn");
+    expect(diagnostics[0].message).toContain("run-agent");
   });
 
   it("a compensation sibling only counts within the same nested phase, not a same-named sibling phase elsewhere in the component", () => {

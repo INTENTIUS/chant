@@ -12,7 +12,17 @@
  *     `rollback` (a no-op record if the capability declares none — mirrors
  *     `driver.ts`'s `rollback-opted-out` reporting, logged rather than
  *     returned since an activity's return value only feeds the workflow's
- *     `phaseOutputs`, not its run-result rendering).
+ *     `phaseOutputs`, not its run-result rendering). Also passes through
+ *     `args.output` — the executed step's own `run()` result, as recorded by
+ *     the generated workflow (`./serializer.ts`'s `executed` array) — as
+ *     `Capability.rollback`'s third parameter (#1944). This is the durable
+ *     identity channel: unlike `driver.ts`'s local saga unwind, `resolvedInput`
+ *     here is rebuilt fresh on every Activity invocation (see `resolveStepInput`
+ *     below), so a capability like `run-agent`
+ *     (`@intentius/chant/components/verbs/run-agent`) that needs to recover
+ *     state `run()` produced (a freshly created sprite's checkpoint id) can no
+ *     longer rely on in-process object identity between its `run`/`rollback`
+ *     calls — `output` survives the Activity boundary as plain JSON instead.
  *   - `accumulateComponentOutputs` — once every deploy phase has run, fold
  *     the component's publish/stack outputs into `componentOutputs` via the
  *     exact same core accumulator `runComponentDeploy` uses (#700), so the
@@ -61,6 +71,16 @@ export interface CapabilityStepArgs {
   phaseOutputs: Record<string, Record<string, unknown>>;
   /** Other components' published outputs — mirrors `driver.ts`'s `componentOutputs`. */
   componentOutputs: Record<string, Record<string, unknown>>;
+  /**
+   * `rollbackCapabilityStep` only: the value this step's own `run()` call
+   * returned (recorded by the generated workflow alongside `step`/`phaseName`
+   * — see `./serializer.ts`'s `executed` array), threaded through to
+   * `Capability.rollback` as its third parameter (#1944) — the durable
+   * identity channel described in this module's doc comment. Absent for a
+   * `runCapabilityStep` call, and harmless to omit for a `rollback` that
+   * never needs it.
+   */
+  output?: unknown;
 }
 
 let cachedRegistry: Promise<CapabilityRegistry> | undefined;
@@ -108,7 +128,7 @@ export async function rollbackCapabilityStep(args: CapabilityStepArgs): Promise<
     console.warn(`[rollback-opted-out] component="${args.component}" phase="${args.phase}" kind="${kind as string}": ${reason as string}`);
     return;
   }
-  await capability.rollback(ctx, resolvedInput as never);
+  await capability.rollback(ctx, resolvedInput as never, args.output as never);
 }
 
 /**

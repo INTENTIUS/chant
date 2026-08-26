@@ -73,9 +73,10 @@ function resolveTargets(
  * Deploy a revision to a host (fleet) via AWS CodeDeploy: create the
  * deployment, then wait for a terminal status. Rollback re-invokes
  * `stopAndRollback` against the deployment id this step created (captured in
- * a closure-scoped map keyed by application/deploymentGroup, since the
- * driver's saga rollback calls `rollback(ctx, sameInput)` rather than passing
- * `run`'s output) — riding CodeDeploy's own native automatic rollback to the
+ * a closure-scoped map keyed by application/deploymentGroup; the driver now
+ * also passes `run`'s output as `rollback`'s optional third arg (#1944), but
+ * this capability's input-derived key needs neither channel to resolve
+ * identity) — riding CodeDeploy's own native automatic rollback to the
  * last known-good revision rather than a chant-scripted compensation, the
  * "auto" rollback style the Neo4j pilot's docs comment contrasts with the
  * ALB/ECS pilot's component-declared one.
