@@ -50,7 +50,7 @@ Phases: **Observe → Converge**.
 1. **Observe** — `lifecycleSnapshot` + `lifecycleDiff --live`, the same pair [`WatchOp`](/chant/guide/ops/) runs, giving the tick a `Drift` search attribute for the Temporal UI.
 2. **Converge** — one `convergeTick` activity: derive the typed symptom (the status join + change-set counts + unobserved reasons), evaluate every rule against it, dispatch matched `run()` rules up to `budget` via the existing local runner (`chant run <op>`), and append one record to the converge ledger.
 
-`chant run staging-converge` runs a single tick locally — also the test story. Give it a `schedule` to run continuously on Temporal.
+`chant run staging-converge` runs a single tick locally — also the test story. Give it a `schedule` to run continuously on Temporal, or run `chant operator` to tick every discovered `ConvergeOp` continuously *without* Temporal — see the [operator guide](/chant/guide/operator/).
 
 ## The dial × verb class matrix
 
@@ -71,7 +71,8 @@ Phases: **Observe → Converge**.
 | destructive | refused     | refused                          | **refused at build, v1**            |
 
 - `reconcile` × mutating is "open PR" in the issue's table. Building that channel — reusing `ReconcileOp`'s `onDrift: "pull-request" | "issue" | "report"` — is out of v1 scope (epic #1487's onDrift-channel open question). Until it exists, a rule that would dispatch a mutating op under `reconcile` is **refused at build** (`TMP014`), not silently escalated to run directly the way `apply` would. `convergeTick` re-checks the same thing at dispatch time, as a runtime backstop for a rule table that reached the tick without going through that build.
-- `apply` × destructive is "always gated" in the issue's table, but v1 **refuses it outright, gate or not**: the dispatch executor can't honor a gate (`chant run <op>` runs without `--temporal`, and the local executor's pre-flight rejects any gated op before running a step). "destructive + apply + gated" was a path that read as reachable but could never actually dispatch — refused now, rather than shipped broken. Durable gated dispatch is [#1485](https://github.com/INTENTIUS/chant/issues/1485)'s design to own.
+- `apply` × destructive is "always gated" in the issue's table, but v1 **refuses it outright, gate or not**, at build (`TMP014`): a destructive target's gate could never actually dispatch, so the rule is refused rather than shipped broken.
+- `apply` × **mutating** + gated *is* reachable — `TMP014` only refuses destructive-with-a-gate, not mutating-with-a-gate. A tick that dispatches such a rule hits the same local-executor refusal every gated op does (`chant run <op>` runs without `--temporal`), but as of [#1485](/chant/guide/operator/) that refusal is gate-as-fact, not a dispatch failure: the tick records `action: "gated"` and moves on, rather than reporting an error. See the [operator guide](/chant/guide/operator/)'s "Gate-as-fact" section for the resolution path (`chant approve`, or a merged PR) and what it does and doesn't unblock in v1.
 
 `dial` defaults to `"observe"` — not autonomous by default. A `ConvergeOp` with no `dial` set is a report generator.
 
@@ -106,3 +107,4 @@ A rule's `when` looks like a predicate but is JSON — `eq("status", "drifted")`
 - [Ops](/chant/guide/ops/) — the Op abstraction `ConvergeOp` composites
 - [Reconciling Lifecycle](/chant/guide/reconciling-lifecycle/) — `ReconcileOp` / `ApplyOp`, the two directions a converge rule typically dispatches to
 - [Watching Lifecycle](/chant/guide/watching-lifecycle/) — the observation `ConvergeOp`'s Observe phase reuses
+- [Operator](/chant/guide/operator/) — `chant operator`: the local runtime that ticks a `ConvergeOp` on a schedule, durably, with no Temporal

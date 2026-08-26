@@ -133,4 +133,67 @@ describe("converge-ledger", () => {
       expect(consecutiveRuleFires(records, "r2")).toBe(2);
     });
   });
+
+  // ── Gate-as-fact (#1485) ───────────────────────────────────────────────────
+
+  describe("gated outcome", () => {
+    test("round-trips a 'gated' outcome with its gateName, and a gated count in the summary", async () => {
+      await withTestDir(async (dir) => {
+        await initRepo(dir);
+        const { record } = await appendConvergeRecord(
+          makeInput({
+            firedRuleIds: ["drift-apply"],
+            outcomes: [
+              {
+                ruleId: "drift-apply",
+                action: "gated",
+                op: "fountain-apply",
+                gateName: "rollout-gate",
+                reason: 'dispatch of "fountain-apply" hit gate "rollout-gate"',
+              },
+            ],
+            summary: { drifted: 1, remediated: 0, reported: 0, skippedBudget: 0, skippedFlap: 0, unobserved: 0, adopted: 0, gated: 1 },
+          }),
+          { cwd: dir },
+        );
+        expect(record.outcomes[0]).toEqual({
+          ruleId: "drift-apply",
+          action: "gated",
+          op: "fountain-apply",
+          gateName: "rollout-gate",
+          reason: 'dispatch of "fountain-apply" hit gate "rollout-gate"',
+        });
+        expect(record.summary.gated).toBe(1);
+
+        const { records } = await readConvergeLedger("staging", { cwd: dir });
+        expect(records).toEqual([record]);
+      });
+    });
+  });
+
+  // ── Concurrent local writers (#1485) ────────────────────────────────────────
+
+  describe("appendConvergeRecord retries on RefCASConflictError", () => {
+    test("a concurrent writer to a different env's file on the same orphan branch doesn't lose either write", async () => {
+      await withTestDir(async (dir) => {
+        await initRepo(dir);
+        // Two "operators" appending to two different environments' ledgers on
+        // the same orphan branch, interleaved so their internal git-plumbing
+        // reads race — this is exactly the scenario `writeBlobToPath`'s CAS
+        // guard (chant #1485) now protects against, and `appendConvergeRecord`
+        // retries through rather than surfacing to the caller.
+        const [a, b] = await Promise.all([
+          appendConvergeRecord(makeInput({ env: "staging", op: "staging-converge" }), { cwd: dir }),
+          appendConvergeRecord(makeInput({ env: "prod", op: "prod-converge" }), { cwd: dir }),
+        ]);
+        expect(a.record.env).toBe("staging");
+        expect(b.record.env).toBe("prod");
+
+        const staging = await readConvergeLedger("staging", { cwd: dir });
+        const prod = await readConvergeLedger("prod", { cwd: dir });
+        expect(staging.records).toHaveLength(1);
+        expect(prod.records).toHaveLength(1);
+      });
+    });
+  });
 });

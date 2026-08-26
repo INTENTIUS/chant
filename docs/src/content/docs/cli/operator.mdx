@@ -1,0 +1,85 @@
+---
+title: "chant operator"
+description: Run scheduled ConvergeOp ticks locally, durably, with no Temporal
+diataxis: reference
+---
+
+## Synopsis
+
+```
+chant operator [flags]
+chant operator status [flags]
+chant approve <op> <gate> [flags]
+```
+
+## Description
+
+`chant operator` runs scheduled ticks for every discovered [`ConvergeOp`](/chant/guide/converging-lifecycle/) locally — no Temporal server, no new state store. Coordination is a git-ref lease; tick state is a ledger fact on the `chant/lifecycle` orphan branch. See the [Operator guide](/chant/guide/operator/) for the full design (pipeline vs converge ops, the lease, crash recovery, gate-as-fact).
+
+`chant approve` is the sibling command that records a gate's out-of-band resolution — the durable counterpart to a tick's `gated` outcome.
+
+## Subcommands
+
+### `operator`
+
+Tick every discovered `ConvergeOp`, on `--interval`, until Ctrl-C.
+
+```bash
+chant operator
+chant operator --env staging
+chant operator --interval 30s --lease-ttl 2m
+chant operator --once
+```
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--env <name>` | all | Scope discovery to ConvergeOps declaring this environment (`searchAttributes.Env`) |
+| `--interval <duration>` | `60s` | How often the daemon runs a round. Accepts the same duration syntax as an activity profile timeout (`30s`, `5m`, `1h30m`) |
+| `--lease-ttl <duration>` | `5m` | How long an acquired lease is valid before another operator can reclaim it |
+| `--once` | off | Run a single round and exit, instead of looping. Exits non-zero if any op's tick failed this round. What a cron job, CI step, systemd timer, or Kubernetes CronJob should pass — the daemon form (`--once` omitted) is for a machine that stays up |
+
+Each round prints one line per discovered `ConvergeOp`:
+
+```
+operator: staging-converge@staging ticked=1 ok=true
+operator: prod-converge@prod skipped=1(lease-held:mac.local:4821:9f2c1a3b)
+```
+
+A `ConvergeOp`'s own `schedule` (its Temporal cron field) is unrelated to `--interval` — it drives the durable `TemporalSchedule` resource `chant build` generates, not anything the operator reads back at discovery time. `--interval` is the operator daemon's own, separate cadence.
+
+### `operator status`
+
+Print the last tick, outcome counts, and pending gates for every discovered `ConvergeOp`, read from the ledger alone — no daemon needs to be running.
+
+```bash
+chant operator status
+chant operator status --env staging
+chant operator status --json
+```
+
+| Flag | Meaning |
+|---|---|
+| `--env <name>` | Scope to ConvergeOps declaring this environment |
+| `--json` | Emit the same data as a JSON array instead of the human-readable form |
+
+### `approve <op> <gate>`
+
+Record a gate's out-of-band resolution — the durable counterpart to a converge tick's `gated` outcome (see the [Operator guide's Gate-as-fact section](/chant/guide/operator/#gate-as-fact)).
+
+```bash
+chant approve fountain-apply rollout-gate
+chant approve fountain-apply rollout-gate --actor alex --note "https://github.com/org/repo/pull/123"
+```
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--actor <name>` | `$GITHUB_ACTOR` / `$GITLAB_USER_LOGIN` / `$USER` | Who resolved the gate — recorded on the resolution fact |
+| `--note <text>` | — | Free-text context (e.g. a PR URL) recorded alongside the resolution |
+
+Recording a resolution does **not** retroactively unblock the gated op's own local dispatch — the local executor still refuses any Op containing a gate, unconditionally. Re-run it with `--temporal`, or let the merged PR the note points at carry the change itself.
+
+## See also
+
+- [Operator guide](/chant/guide/operator/) — the full design
+- [`chant run`](/chant/cli/run/) — the local executor `chant operator` ticks through
+- [Converging Lifecycle](/chant/guide/converging-lifecycle/) — defining a `ConvergeOp`

@@ -30,6 +30,7 @@ import { runGraph } from "./handlers/graph";
 import { runExplain } from "./handlers/explain";
 import { runSearch } from "./handlers/search";
 import { runOp, runOpList, runOpStatus, runOpSignal, runOpCancel, runOpLog } from "./handlers/run";
+import { runOperator, runOperatorStatus, runApprove } from "./handlers/operator";
 import { runEmulator } from "./handlers/emulator";
 import { splitJoinedFlags, dispatchCommandGroup, collectCommandGroups, formatCommandGroupsHelp, type CommandGroup } from "./command-group";
 import type { LexiconPlugin } from "../lexicon";
@@ -81,6 +82,7 @@ const BOOLEAN_FLAGS = new Set([
   "--sandbox",
   "--yes",
   "--confirm-prod",
+  "--once",
 ]);
 
 /**
@@ -348,6 +350,14 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.paramsFile = args[++i];
     } else if (arg === "--projection") {
       result.projection = args[++i];
+    } else if (arg === "--interval") {
+      result.interval = args[++i];
+    } else if (arg === "--lease-ttl") {
+      result.leaseTtl = args[++i];
+    } else if (arg === "--once") {
+      result.once = true;
+    } else if (arg === "--note") {
+      result.note = args[++i];
     } else if (arg.startsWith("--")) {
       // chant #1127 — every recognized flag is matched above; anything left
       // starting with `--` is unrecognized, whether it arrived bare
@@ -463,6 +473,24 @@ Ops:
                         consumer to render live wave/component/phase/step
                         progress instead of tailing raw logs (additive; run
                         semantics/exit code unchanged)
+  operator               Run scheduled ticks for discovered ConvergeOps
+                        locally, no Temporal (#1485): acquire/renew a per-op
+                        lease (git ref CAS), tick on --interval, record every
+                        result as a ledger fact. --env <env> scopes to one
+                        environment; --interval <dur> (default 60s) and
+                        --lease-ttl <dur> (default 5m) tune cadence; --once
+                        runs a single round and exits (cron/systemd-timer/
+                        CronJob invokers use this instead of the daemon)
+  operator status        Last tick, outcomes, and pending gates per
+                        ConvergeOp, read from the chant/lifecycle orphan
+                        branch alone — no daemon needs to be running
+                        (--env <env>, --json)
+  approve <op> <gate>    Record a gate's out-of-band resolution fact
+                        (--actor <name>, --note <text>) — the durable
+                        counterpart to a converge tick's gate-as-fact
+                        outcome; see the pending-gates list in operator
+                        status. Does not itself unblock the gated op's local
+                        dispatch (re-run --temporal, or merge its PR)
 
   graph                 Show Op dependency graph (--stacks for cross-stack order,
                         --format ir|mermaid|dot|layout for the lint-gated graph IR,
@@ -786,6 +814,10 @@ const registry: CommandDef[] = [
   { name: "run cancel", handler: runOpCancel },
   { name: "run log", handler: runOpLog },
   { name: "run", handler: runOp },
+
+  { name: "operator status", handler: runOperatorStatus },
+  { name: "operator", handler: runOperator },
+  { name: "approve", handler: runApprove },
 
   { name: "graph", handler: runGraph },
   { name: "vendor", handler: runVendor },

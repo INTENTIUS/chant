@@ -117,6 +117,7 @@ export default defineConfig({
 								{ label: 'Watching Lifecycle', slug: 'guide/watching-lifecycle' },
 								{ label: 'Reconciling Lifecycle', slug: 'guide/reconciling-lifecycle' },
 								{ label: 'Converging Lifecycle', slug: 'guide/converging-lifecycle' },
+								{ label: 'Operator', slug: 'guide/operator' },
 							],
 						},
 						{
@@ -201,6 +202,7 @@ export default defineConfig({
 								{ label: 'update', slug: 'cli/update' },
 								{ label: 'doctor', slug: 'cli/doctor' },
 								{ label: 'run', slug: 'cli/run' },
+								{ label: 'operator', slug: 'cli/operator' },
 								{ label: 'graph', slug: 'cli/graph' },
 								{ label: 'lifecycle', slug: 'cli/lifecycle' },
 								{ label: 'scenario', slug: 'cli/scenario' },

@@ -19,6 +19,14 @@ local executor is the on-ramp; the synthesis primitives need no executor at all.
 Reach for Temporal only when an Op must survive a crash, hold a multi-hour
 approval, or roll back a partial failure — never as a baseline requirement.
 
+**One shape of Op is the exception to "crash survival needs Temporal": `ConvergeOp`.**
+A converge tick is level-triggered — it re-observes and re-derives everything
+every time, so durability costs nothing extra: crash recovery and a normal
+tick are the same act. [`chant operator`](/chant/guide/operator/) runs
+scheduled converge ticks locally, durably, with no Temporal server — see that
+guide for the full pipeline-vs-converge distinction and when each still
+belongs to Temporal.
+
 ## Capability comparison
 
 | | Local mode | Temporal mode |

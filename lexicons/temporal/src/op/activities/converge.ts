@@ -99,6 +99,8 @@ export interface ConvergeTickResult {
   skippedFlap: number;
   unobserved: number;
   adopted: number;
+  /** Rules whose dispatch hit a gate this tick (#1485) — see `ConvergeRuleOutcome.action`'s doc. */
+  gated: number;
   /** The one human-readable summary line this tick produced. */
   log: string;
 }
@@ -137,14 +139,48 @@ async function observeStatusRows(env: string, signal?: AbortSignal): Promise<Com
   return Array.isArray(parsed) ? parsed : parsed.rows;
 }
 
-/** Dispatch one matched `run` action via the existing local runner (`chant run <op>`). A gated target Op fails loudly — expected, not swallowed. */
-async function dispatchOp(opName: string, signal?: AbortSignal): Promise<{ ok: true } | { ok: false; error: string }> {
+/**
+ * The local executor's own gate-rejection message (`../../../../../packages/
+ * core/src/op/local-executor.ts`'s `LocalGateUnsupportedError`), stable and
+ * well-known — `dispatchOp` matches it below to tell "hit a gate" apart from
+ * every other dispatch failure, the same way `ensureSearchAttributes`
+ * elsewhere in this codebase matches a known error string rather than
+ * threading a typed error code through a subprocess boundary. `chant run`
+ * itself never gains a distinct JSON field or exit code for this in v1 —
+ * the message is the one contract, and it's the same message a human sees
+ * running the dispatch by hand.
+ */
+const GATE_UNSUPPORTED_PATTERN = /gate "([^"]+)" is not supported in local mode/;
+
+/** Gate-as-fact detection for a dispatch's raw failure output (#1485) — pure, unit-tested directly rather than only through `dispatchOp`'s subprocess plumbing. `undefined` when the failure wasn't a gate rejection. */
+export function classifyDispatchFailure(raw: string): { gateName: string } | undefined {
+  const match = raw.match(GATE_UNSUPPORTED_PATTERN);
+  return match ? { gateName: match[1] } : undefined;
+}
+
+/**
+ * Dispatch one matched `run` action via the existing local runner (`chant
+ * run <op>`). A gated target Op is gate-as-fact (#1485): its own local
+ * executor still refuses to run it (`LocalGateUnsupportedError`, unchanged —
+ * see `../../../../../packages/core/src/lifecycle/gate-ledger.ts`'s doc on
+ * why that's still true in v1), but this tick no longer treats that refusal
+ * as an ordinary dispatch failure. `gateName` set on the return value is
+ * what `convergeTick` below turns into a `"gated"` outcome instead of a
+ * `"reported"` one — a terminal, durable, non-blocking fact rather than an
+ * error the operator retries every tick until a human notices the log.
+ */
+async function dispatchOp(
+  opName: string,
+  signal?: AbortSignal,
+): Promise<{ ok: true } | { ok: false; error: string; gateName?: string }> {
   try {
     await execAsync(`chant run ${shellQuote(opName)}`, { signal });
     return { ok: true };
   } catch (err) {
     const e = err as { stderr?: string; message?: string };
-    return { ok: false, error: sanitizeOneLine(e.stderr ?? e.message ?? String(err)) };
+    const raw = e.stderr ?? e.message ?? String(err);
+    const gate = classifyDispatchFailure(raw);
+    return { ok: false, error: sanitizeOneLine(raw), gateName: gate?.gateName };
   }
 }
 
@@ -295,6 +331,7 @@ function summarizeOutcomes(outcomes: ConvergeRuleOutcome[]) {
     reported: outcomes.filter((o) => o.action === "reported").length,
     skippedBudget: outcomes.filter((o) => o.action === "skipped-budget").length,
     skippedFlap: outcomes.filter((o) => o.action === "skipped-flap").length,
+    gated: outcomes.filter((o) => o.action === "gated").length,
   };
 }
 
@@ -302,7 +339,7 @@ function renderLog(env: string, s: ConvergeSymptom, counts: ReturnType<typeof su
   return (
     `converge(${env}): drifted=${s.updateCount + s.deleteCount} remediated=${counts.remediated} ` +
     `reported=${counts.reported} skipped-budget=${counts.skippedBudget} skipped-flap=${counts.skippedFlap} ` +
-    `unobserved=${s.unobservedCount} adopted=${s.adoptCount}`
+    `gated=${counts.gated} unobserved=${s.unobservedCount} adopted=${s.adoptCount}`
   );
 }
 
@@ -334,7 +371,17 @@ export async function convergeTick(args: ConvergeTickArgs, signal?: AbortSignal)
     if (outcome.action !== "ran") continue;
 
     const result = await dispatchOp(outcome.op, signal);
-    if (!result.ok) {
+    if (!result.ok && result.gateName) {
+      // Gate-as-fact (#1485): a terminal, durable, non-blocking fact — not
+      // an ordinary dispatch failure the operator keeps retrying. See
+      // ../../../../../packages/core/src/lifecycle/gate-ledger.ts's doc for
+      // how this resolves (`chant approve`, or a merged PR).
+      outcome.action = "gated";
+      outcome.gateName = result.gateName;
+      outcome.reason =
+        `dispatch of "${outcome.op}" hit gate "${result.gateName}" — recorded as a pending fact, not retried; ` +
+        `resolve with \`chant approve ${outcome.op} ${result.gateName}\` or a merged PR`;
+    } else if (!result.ok) {
       outcome.action = "reported";
       outcome.reason = `dispatch of "${outcome.op}" failed: ${result.error}`;
     }
@@ -356,6 +403,7 @@ export async function convergeTick(args: ConvergeTickArgs, signal?: AbortSignal)
       reported: counts.reported,
       skippedBudget: counts.skippedBudget,
       skippedFlap: counts.skippedFlap,
+      gated: counts.gated,
       unobserved: symptom.unobservedCount,
       adopted: symptom.adoptCount,
     },
@@ -369,6 +417,7 @@ export async function convergeTick(args: ConvergeTickArgs, signal?: AbortSignal)
     reported: record.summary.reported,
     skippedBudget: record.summary.skippedBudget,
     skippedFlap: record.summary.skippedFlap,
+    gated: record.summary.gated ?? 0,
     unobserved: record.summary.unobserved,
     adopted: record.summary.adopted,
     log: record.log,
