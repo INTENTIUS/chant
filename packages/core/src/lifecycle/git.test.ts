@@ -157,6 +157,83 @@ describe("lifecycle/git", () => {
     });
   });
 
+  // ── Backslash-escape content round-trips byte-identical (#1936) ────────────
+  //
+  // writeBlobToPath used to shell out to `sh -c "echo '<content>' | git
+  // hash-object -w --stdin"`. sh's `echo` reinterprets backslash-escape
+  // sequences (`\n`, `\t`, `\\`, ...) in single-quoted content, so any content
+  // embedding a literal two-character `\n` (as opposed to an actual newline
+  // byte) — e.g. a serialized `kubectl.kubernetes.io/last-applied-configuration`
+  // annotation, which is itself JSON whose string values are JSON-escaped —
+  // got silently corrupted in the stored blob. Content is now written
+  // directly to spawn's stdin, with no shell in the loop.
+  describe("writeBlobToPath preserves literal backslash-escape sequences (#1936)", () => {
+    test("literal \\n, \\t, \\\\ two-character sequences survive the write/read round trip", async () => {
+      await withTestDir(async (dir) => {
+        await initRepo(dir);
+        const content = String.raw`before\nmiddle\ttab\\backslash\nafter`;
+        await writeBlobToPath("prod", "raw.txt", content, "raw content", { cwd: dir });
+        const out = await readBlobFromPath("prod", "raw.txt", { cwd: dir });
+        expect(out).toBe(content);
+      });
+    });
+
+    test("single quotes combined with backslash sequences survive the round trip", async () => {
+      await withTestDir(async (dir) => {
+        await initRepo(dir);
+        const content = String.raw`it's a \path\to\thing with 'nested' quotes and \n \t escapes`;
+        await writeBlobToPath("prod", "mixed.txt", content, "mixed content", { cwd: dir });
+        const out = await readBlobFromPath("prod", "mixed.txt", { cwd: dir });
+        expect(out).toBe(content);
+      });
+    });
+
+    test("a realistic last-applied-configuration-style JSON payload survives byte-identical", async () => {
+      await withTestDir(async (dir) => {
+        await initRepo(dir);
+        // The annotation value is itself JSON-serialized, so a multi-line
+        // shell script embedded in the manifest shows up as literal `\n`
+        // and `\t` two-character sequences in the annotation string — the
+        // exact shape that `sh`'s `echo` used to mangle.
+        const innerManifest = {
+          apiVersion: "v1",
+          kind: "ConfigMap",
+          metadata: { name: "test-cm", namespace: "default" },
+          data: { "init.sh": "#!/bin/sh\necho 'hello world'\ncd /tmp\n\techo done" },
+        };
+        const manifest = {
+          apiVersion: "v1",
+          kind: "ConfigMap",
+          metadata: {
+            name: "test-cm",
+            namespace: "default",
+            annotations: {
+              "kubectl.kubernetes.io/last-applied-configuration": JSON.stringify(innerManifest),
+            },
+          },
+        };
+        const content = JSON.stringify(manifest);
+        // Sanity-check the fixture actually contains literal backslash-n /
+        // backslash-t sequences (the corruption trigger), not real newlines.
+        expect(content).toContain("\\n");
+        expect(content).toContain("\\t");
+
+        const sha = await writeBlobToPath("prod", "annotation.json", content, "annotated manifest", { cwd: dir });
+        expect(sha).toMatch(/^[0-9a-f]{40}$/);
+
+        const out = await readBlobFromPath("prod", "annotation.json", { cwd: dir });
+        expect(out).toBe(content);
+        expect(JSON.parse(out!)).toEqual(manifest);
+
+        // Cross-check via git plumbing directly (not just the readBlobFromPath
+        // helper), to rule out corruption in the stored blob itself.
+        const catFile = git(["cat-file", "-p", `chant/lifecycle:prod/annotation.json`], dir);
+        expect(catFile.exitCode).toBe(0);
+        expect(catFile.stdout).toBe(content);
+      });
+    });
+  });
+
   test("listSnapshots returns commit history of the orphan branch", async () => {
     await withTestDir(async (dir) => {
       await initRepo(dir);
