@@ -12,7 +12,7 @@
  */
 
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
-import { getPrimaryOutput, parseK8sManifests } from "./k8s-helpers";
+import { docsToManifests } from "./k8s-helpers";
 
 /** Trailing path segments that mean "no explicit version" even though present. */
 const FLOATING_TAGS = new Set(["latest", "main", "master", "head"]);
@@ -40,29 +40,24 @@ export const wk8407: PostSynthCheck = {
   check(ctx: PostSynthContext): PostSynthDiagnostic[] {
     const diagnostics: PostSynthDiagnostic[] = [];
 
-    for (const [, output] of ctx.outputs) {
-      const yaml = getPrimaryOutput(output);
-      const manifests = parseK8sManifests(yaml);
+    for (const manifest of docsToManifests(ctx)) {
+      if (manifest.kind !== "InferenceService") continue;
 
-      for (const manifest of manifests) {
-        if (manifest.kind !== "InferenceService") continue;
+      const spec = manifest.spec as Record<string, unknown> | undefined;
+      const predictor = spec?.predictor as Record<string, unknown> | undefined;
+      const model = predictor?.model as Record<string, unknown> | undefined;
+      const storageUri = model?.storageUri as string | undefined;
+      if (!storageUri) continue;
 
-        const spec = manifest.spec as Record<string, unknown> | undefined;
-        const predictor = spec?.predictor as Record<string, unknown> | undefined;
-        const model = predictor?.model as Record<string, unknown> | undefined;
-        const storageUri = model?.storageUri as string | undefined;
-        if (!storageUri) continue;
-
-        if (!isPinnedStorageUri(storageUri)) {
-          const resourceName = manifest.metadata?.name ?? "InferenceService";
-          diagnostics.push({
-            checkId: "WK8407",
-            severity: "warning",
-            message: `InferenceService "${resourceName}": model storageUri "${storageUri}" has no explicit version segment — pin it (e.g. via the Model composite's required \`version\`) so a redeploy can't silently pick up different weights`,
-            entity: resourceName,
-            lexicon: "k8s",
-          });
-        }
+      if (!isPinnedStorageUri(storageUri)) {
+        const resourceName = manifest.metadata?.name ?? "InferenceService";
+        diagnostics.push({
+          checkId: "WK8407",
+          severity: "warning",
+          message: `InferenceService "${resourceName}": model storageUri "${storageUri}" has no explicit version segment — pin it (e.g. via the Model composite's required \`version\`) so a redeploy can't silently pick up different weights`,
+          entity: resourceName,
+          lexicon: "k8s",
+        });
       }
     }
 

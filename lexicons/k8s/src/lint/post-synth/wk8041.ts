@@ -7,7 +7,7 @@
  */
 
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
-import { getPrimaryOutput, parseK8sManifests, extractContainers, WORKLOAD_KINDS } from "./k8s-helpers";
+import { docsToManifests, extractContainers, WORKLOAD_KINDS } from "./k8s-helpers";
 
 /**
  * Known API key patterns and their descriptions.
@@ -35,33 +35,28 @@ export const wk8041: PostSynthCheck = {
   check(ctx: PostSynthContext): PostSynthDiagnostic[] {
     const diagnostics: PostSynthDiagnostic[] = [];
 
-    for (const [, output] of ctx.outputs) {
-      const yaml = getPrimaryOutput(output);
-      const manifests = parseK8sManifests(yaml);
+    for (const manifest of docsToManifests(ctx)) {
+      if (!manifest.kind || !WORKLOAD_KINDS.has(manifest.kind)) continue;
 
-      for (const manifest of manifests) {
-        if (!manifest.kind || !WORKLOAD_KINDS.has(manifest.kind)) continue;
+      const containers = extractContainers(manifest);
+      const resourceName = manifest.metadata?.name ?? manifest.kind;
 
-        const containers = extractContainers(manifest);
-        const resourceName = manifest.metadata?.name ?? manifest.kind;
+      for (const container of containers) {
+        if (!Array.isArray(container.env)) continue;
 
-        for (const container of containers) {
-          if (!Array.isArray(container.env)) continue;
+        for (const envVar of container.env) {
+          if (typeof envVar.value !== "string" || envVar.value === "") continue;
 
-          for (const envVar of container.env) {
-            if (typeof envVar.value !== "string" || envVar.value === "") continue;
-
-            for (const { pattern, label } of API_KEY_PATTERNS) {
-              if (pattern.test(envVar.value)) {
-                diagnostics.push({
-                  checkId: "WK8041",
-                  severity: "error",
-                  message: `Container "${container.name ?? "(unnamed)"}" in ${manifest.kind} "${resourceName}" has a ${label} hardcoded in env var "${envVar.name ?? "(unnamed)"}" — use a Secret reference instead`,
-                  entity: resourceName,
-                  lexicon: "k8s",
-                });
-                break; // One match per env var is sufficient
-              }
+          for (const { pattern, label } of API_KEY_PATTERNS) {
+            if (pattern.test(envVar.value)) {
+              diagnostics.push({
+                checkId: "WK8041",
+                severity: "error",
+                message: `Container "${container.name ?? "(unnamed)"}" in ${manifest.kind} "${resourceName}" has a ${label} hardcoded in env var "${envVar.name ?? "(unnamed)"}" — use a Secret reference instead`,
+                entity: resourceName,
+                lexicon: "k8s",
+              });
+              break; // One match per env var is sufficient
             }
           }
         }

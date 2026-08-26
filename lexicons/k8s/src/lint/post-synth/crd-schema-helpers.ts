@@ -14,7 +14,7 @@
 import { createRequire } from "module";
 import type { PostSynthContext } from "@intentius/chant/lint/post-synth";
 import type { CrdFieldSchema } from "../../spec/parse";
-import { getPrimaryOutput, parseK8sManifests, type K8sManifest } from "./k8s-helpers";
+import { docsToManifests, type K8sManifest } from "./k8s-helpers";
 
 export type { CrdFieldSchema };
 
@@ -70,11 +70,9 @@ export function specSchemaFor(manifest: K8sManifest): CrdFieldSchema | undefined
 /** Every manifest in the build that has a shipped spec schema, with that schema. */
 export function customResources(ctx: PostSynthContext): Array<{ manifest: K8sManifest; schema: CrdFieldSchema }> {
   const out: Array<{ manifest: K8sManifest; schema: CrdFieldSchema }> = [];
-  for (const [, output] of ctx.outputs) {
-    for (const manifest of parseK8sManifests(getPrimaryOutput(output))) {
-      const schema = specSchemaFor(manifest);
-      if (schema) out.push({ manifest, schema });
-    }
+  for (const manifest of docsToManifests(ctx)) {
+    const schema = specSchemaFor(manifest);
+    if (schema) out.push({ manifest, schema });
   }
   return out;
 }

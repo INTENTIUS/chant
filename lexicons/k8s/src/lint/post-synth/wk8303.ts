@@ -7,7 +7,7 @@
  */
 
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
-import { getPrimaryOutput, parseK8sManifests } from "./k8s-helpers";
+import { docsToManifests } from "./k8s-helpers";
 import type { K8sManifest } from "./k8s-helpers";
 
 export const wk8303: PostSynthCheck = {
@@ -17,38 +17,35 @@ export const wk8303: PostSynthCheck = {
   check(ctx: PostSynthContext): PostSynthDiagnostic[] {
     const diagnostics: PostSynthDiagnostic[] = [];
 
-    for (const [, output] of ctx.outputs) {
-      const yaml = getPrimaryOutput(output);
-      const manifests = parseK8sManifests(yaml);
+    const manifests = docsToManifests(ctx);
 
-      // Collect all PDB selectors to match against Deployments
-      const pdbSelectors = collectPdbSelectors(manifests);
+    // Collect all PDB selectors to match against Deployments
+    const pdbSelectors = collectPdbSelectors(manifests);
 
-      for (const manifest of manifests) {
-        if (manifest.kind !== "Deployment") continue;
+    for (const manifest of manifests) {
+      if (manifest.kind !== "Deployment") continue;
 
-        const spec = manifest.spec;
-        if (!spec) continue;
+      const spec = manifest.spec;
+      if (!spec) continue;
 
-        const replicas = spec.replicas;
-        // Only check HA deployments (replicas >= 2)
-        if (typeof replicas !== "number" || replicas < 2) continue;
+      const replicas = spec.replicas;
+      // Only check HA deployments (replicas >= 2)
+      if (typeof replicas !== "number" || replicas < 2) continue;
 
-        const resourceName = manifest.metadata?.name ?? "Deployment";
+      const resourceName = manifest.metadata?.name ?? "Deployment";
 
-        // Check if any PDB targets this Deployment's labels
-        const selector = spec.selector as Record<string, unknown> | undefined;
-        const matchLabels = selector?.matchLabels as Record<string, string> | undefined;
+      // Check if any PDB targets this Deployment's labels
+      const selector = spec.selector as Record<string, unknown> | undefined;
+      const matchLabels = selector?.matchLabels as Record<string, string> | undefined;
 
-        if (!matchLabels || !hasCoveringPdb(matchLabels, pdbSelectors)) {
-          diagnostics.push({
-            checkId: "WK8303",
-            severity: "info",
-            message: `Deployment "${resourceName}" has ${replicas} replicas but no PodDisruptionBudget — add a PDB to ensure availability during voluntary disruptions`,
-            entity: resourceName,
-            lexicon: "k8s",
-          });
-        }
+      if (!matchLabels || !hasCoveringPdb(matchLabels, pdbSelectors)) {
+        diagnostics.push({
+          checkId: "WK8303",
+          severity: "info",
+          message: `Deployment "${resourceName}" has ${replicas} replicas but no PodDisruptionBudget — add a PDB to ensure availability during voluntary disruptions`,
+          entity: resourceName,
+          lexicon: "k8s",
+        });
       }
     }
 
