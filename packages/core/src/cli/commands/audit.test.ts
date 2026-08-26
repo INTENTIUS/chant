@@ -474,3 +474,63 @@ describe("secrets detection (#443)", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 });
+
+describe("Wrangler config audit (#446)", () => {
+  function tmpRepo(): string {
+    const dir = join(tmpdir(), `chant-audit-wrangler-${process.pid}-${Math.random().toString(36).slice(2)}`);
+    mkdirSync(dir, { recursive: true });
+    return dir;
+  }
+
+  test("audits wrangler.toml end to end, even when no lexicon is installed", async () => {
+    const dir = tmpRepo();
+    writeFileSync(
+      join(dir, "wrangler.toml"),
+      [
+        'name = "my-worker"',
+        "",
+        "[observability]",
+        "enabled = false",
+        "",
+        "[env.production]",
+        "workers_dev = true",
+      ].join("\n"),
+    );
+    const result = await auditCommand({ path: dir, plugins: [], format: "json" });
+    expect(result.status).toBe("no-lexicons"); // no lexicon installed — still not a clean miss
+    const ids = result.findings.map((f) => f.checkId);
+    expect(ids).toContain("WRG001");
+    expect(ids).toContain("WRG003");
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("a wrangler finding is tiered and cataloged like any other finding, alongside lexicon findings", async () => {
+    const dir = tmpRepo();
+    mkdirSync(join(dir, ".github", "workflows"), { recursive: true });
+    writeFileSync(
+      join(dir, ".github", "workflows", "ci.yml"),
+      "name: CI\non:\n  push:\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo hi\n",
+    );
+    writeFileSync(join(dir, "wrangler.toml"), 'routes = ["*/*"]\n');
+    const all = await loadAuditPlugins();
+    const result = await auditCommand({ path: dir, plugins: all.filter((p) => p.name === "github"), format: "json" });
+    expect(result.status).toBe("ok");
+    const json = JSON.parse(result.output);
+    const wrg = json.findings.find((f: { checkId: string }) => f.checkId === "WRG004");
+    expect(wrg).toBeDefined();
+    expect(wrg.tier).toBe("merge-worthy");
+    expect(wrg.category).toBe("security");
+    expect(wrg.file).toBe("wrangler.toml");
+    expect(wrg.docUrl).toBe("https://intentius.io/chant/lint-rules/audit-rules/#wrg004");
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("a malformed wrangler.toml contributes no findings, never fails the audit", async () => {
+    const dir = tmpRepo();
+    writeFileSync(join(dir, "wrangler.toml"), "not = valid = toml = [\n");
+    const result = await auditCommand({ path: dir, plugins: [] });
+    expect(result.success).toBe(true);
+    expect(result.findings.map((f) => f.checkId)).not.toEqual(expect.arrayContaining([expect.stringMatching(/^WRG/)]));
+    rmSync(dir, { recursive: true, force: true });
+  });
+});

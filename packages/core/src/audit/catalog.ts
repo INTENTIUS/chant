@@ -100,6 +100,26 @@ export const GH_SECRET_SCANNING: Authority = {
   name: "GitHub — About secret scanning",
   url: "https://docs.github.com/en/code-security/secret-scanning/introduction/about-secret-scanning",
 };
+export const CF_WORKERS_DEV: Authority = {
+  name: "Cloudflare Workers — workers.dev",
+  url: "https://developers.cloudflare.com/workers/configuration/routing/workers-dev/",
+};
+export const CF_SECRETS: Authority = {
+  name: "Cloudflare Workers — Secrets",
+  url: "https://developers.cloudflare.com/workers/configuration/secrets/",
+};
+export const CF_ROUTES: Authority = {
+  name: "Cloudflare Workers — Routes",
+  url: "https://developers.cloudflare.com/workers/configuration/routing/routes/",
+};
+export const CF_ENVIRONMENTS: Authority = {
+  name: "Cloudflare Workers — Wrangler environments",
+  url: "https://developers.cloudflare.com/workers/wrangler/configuration/#environments",
+};
+export const CF_STATIC_ASSETS: Authority = {
+  name: "Cloudflare Workers — Static assets",
+  url: "https://developers.cloudflare.com/workers/static-assets/",
+};
 
 function meta(
   id: string,
@@ -141,6 +161,12 @@ export const RULE_CATEGORY: Record<string, Category> = {
   SEC008: "security",
   SEC009: "security",
   SEC010: "security",
+  WRG001: "security",
+  WRG002: "security",
+  WRG003: "best-practice",
+  WRG004: "security",
+  WRG005: "security",
+  WRG006: "security",
 };
 
 /**
@@ -168,6 +194,16 @@ export const RULE_CATALOG: Record<string, RuleMeta> = {
   SEC008: meta("SEC008", M, G, "Bearer/authorization token found", "Remove the token from source; if it's long-lived, revoke and reissue it via the issuing service.", [GH_SECRET_SCANNING]),
   SEC009: meta("SEC009", M, G, "Credentials embedded in a connection string", "Move the username/password out of the URI into a secret store, and rotate the credential.", [GH_SECRET_SCANNING]),
   SEC010: meta("SEC010", M, G, "High-entropy string — possible secret", "Confirm whether this is a live credential; if so, remove it from source and rotate it. If it's a false positive, suppress with a `chant-audit-ignore` comment or an allowlist entry.", [GH_SECRET_SCANNING]),
+
+  // Wrangler config audit (#446) — lexicon-independent, same shape as the SEC
+  // family above: `wrangler.ts` scans every `wrangler.toml` it finds
+  // regardless of which (if any) audit lexicons are installed.
+  WRG001: meta("WRG001", M, G, "Production environment exposed on *.workers.dev", "Remove workers_dev (or set it to false) for this environment and rely on its custom domain/route instead of the shared public subdomain.", [CF_WORKERS_DEV]),
+  WRG002: meta("WRG002", M, G, "Credential-shaped key stored in [vars]", "Move the value out of [vars] and into `wrangler secret put <name>` so it isn't committed to source or visible in `wrangler dev`/the dashboard.", [CF_SECRETS]),
+  WRG003: meta("WRG003", R, G, "Observability explicitly disabled", "Set observability.enabled = true (or remove the override) so Workers Logs are recorded for this deployment."),
+  WRG004: meta("WRG004", M, G, "Unscoped wildcard route", "Scope the route pattern to the intended zone (e.g. \"example.com/*\") instead of a bare \"*\" or \"*/*\" that matches every zone on the account.", [CF_ROUTES]),
+  WRG005: meta("WRG005", M, G, "Non-production environment shares a data store with production", "Give the non-production environment its own KV namespace/R2 bucket/D1 database id instead of reusing production's.", [CF_ENVIRONMENTS]),
+  WRG006: meta("WRG006", M, G, "Static assets served from the project root", "Point [site].bucket / [assets].directory at a dedicated public output folder, not the project root, so non-public files (config, source maps, .git) aren't served.", [CF_STATIC_ASSETS]),
 };
 
 /**
