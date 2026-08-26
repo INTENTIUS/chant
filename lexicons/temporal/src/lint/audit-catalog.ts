@@ -62,4 +62,11 @@ export const temporalAuditCatalog: Record<string, RuleMeta> = {
     "Activity step args or outcomeAttribute.from don't match the activity's declared contract",
     "Fix the step's args to match the activity's registered schema (unrecognized key, wrong type, or missing required key), or point outcomeAttribute.from at a field that exists on the activity's declared return type.",
   ),
+  TMP013: rule(
+    "TMP013",
+    "merge-worthy",
+    "correctness",
+    "A step-output reference doesn't resolve to an in-scope, preceding, contract-validated producer step",
+    "Point the reference at a step id declared earlier in the same main phases (not onFailure, not nested inside an effect step), whose activity has a registered contract with a returns schema the referenced path exists on.",
+  ),
 };

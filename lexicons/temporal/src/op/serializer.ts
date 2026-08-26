@@ -6,11 +6,23 @@
  *   workflow.ts   — the Temporal workflow function
  *   activities.ts — re-exports from the pre-built activity library
  *   worker.ts     — bootstrap worker that reads chant.config.ts
+ *
+ * Step-output references (chant #1290): a step whose `id` a later step's
+ * `args` references (via `stepOutput()`/`.out`, `@intentius/chant/op`) gets
+ * its awaited result captured into a `const __rN`, same as `outcomeAttribute`
+ * already does — the two share one capture pass and one `__rN` counter. The
+ * referencing step's `args` are then rendered with the reference compiled
+ * to `__rN` (or `__rN?.path?.segments`) instead of a JSON literal, so the
+ * value flows through the generated workflow as a real local variable.
+ * `validateStepOutputRefs` (TMP013) is what makes this safe to compile
+ * unconditionally — every reference reaching this file already resolved to
+ * a step id in scope, ordered before its consumer.
  */
 
 import type { Declarable } from "@intentius/chant/declarable";
 import { isResourceDeclarable } from "@intentius/chant/declarable";
 import type { OpConfig, PhaseDefinition, StepDefinition, ActivityStep, GateStep, EffectStep } from "@intentius/chant/op";
+import { isStepOutputRef, collectStepOutputRefs } from "@intentius/chant/op";
 import { kebabToCamel, signalVarName, generateWorkerBootstrap } from "../codegen-shared";
 
 // ── Name helpers ──────────────────────────────────────────────────────────────
@@ -180,9 +192,29 @@ function generateWorkflow(config: OpConfig): string {
   lines.push(`  upsertSearchAttributes(${JSON.stringify(initialAttrs)});`);
   lines.push("");
 
-  // Counter for outcome-attribute capture variables (workflow-scoped).
+  // Counter for outcome-attribute AND step-output-reference capture
+  // variables (workflow-scoped) — one shared `__rN` counter/var per step
+  // that needs its result captured, whichever reason(s) apply.
   let resultCounter = 0;
   const nextResultVar = (): string => `__r${resultCounter++}`;
+
+  // Step-output references (#1290). Scope matches `validateStepOutputRefs`
+  // exactly: `config.phases` only, top-level activity steps only — never
+  // `onFailure`, never a step nested inside an `EffectStep`. A step whose
+  // `id` is referenced needs its result captured into a variable even when
+  // it has no `outcomeAttribute`; `varNameForStepId` records which variable
+  // once that step has been emitted, so a later consuming step's `args` can
+  // be rendered as a real reference to it instead of a JSON literal.
+  const referencedStepIds = new Set<string>();
+  for (const p of config.phases) {
+    for (const s of p.steps) {
+      if (s.kind !== "activity") continue;
+      for (const ref of collectStepOutputRefs(s.args)) referencedStepIds.add(ref.step);
+    }
+  }
+  const varNameForStepId = new Map<string, string>();
+  const needsCapture = (step: ActivityStep): boolean =>
+    !!step.outcomeAttribute || (!!step.id && referencedStepIds.has(step.id));
 
   // Build a `String(<var>?.<from-path>)` fragment from a dot-path.
   const stringifyFromPath = (varName: string, from?: string): string => {
@@ -206,17 +238,60 @@ function generateWorkflow(config: OpConfig): string {
   let effectCounter = 0;
   const nextEffectVar = (): string => `__eff${effectCounter++}`;
 
-  const argsOf = (step: ActivityStep): string =>
-    step.args && Object.keys(step.args).length > 0 ? JSON.stringify(step.args) : "{}";
+  // Render a step-output reference as `<var>` (whole value) or
+  // `<var>?.<path, ?.-joined>` (a sub-field) — the earlier step's captured
+  // result, not a JSON literal. Throws if the producer wasn't captured:
+  // `validateStepOutputRefs` (TMP013) rejects every config that would reach
+  // this — an unresolved reference here means the serializer ran on
+  // unvalidated input, so fail loud rather than emit `undefined?.path`.
+  const stepOutputRefExpr = (varName: string | undefined, ref: { step: string; path?: string }): string => {
+    if (!varName) {
+      throw new Error(
+        `Op "${config.name}": unresolved step-output reference to step "${ref.step}" — run \`chant build\` ` +
+          "(TMP013) first; the serializer does not itself validate references.",
+      );
+    }
+    return ref.path ? `${varName}?.${ref.path.split(".").join("?.")}` : varName;
+  };
+
+  // Render an args value as TypeScript source, substituting every
+  // step-output reference (anywhere in the structure) with the captured
+  // variable it resolves to. A JSON.stringify fast path handles the (much
+  // more common) reference-free case.
+  const argsSourceOf = (value: unknown): string => {
+    if (isStepOutputRef(value)) return stepOutputRefExpr(varNameForStepId.get(value.step), value);
+    if (Array.isArray(value)) return `[${value.map(argsSourceOf).join(",")}]`;
+    if (value && typeof value === "object") {
+      return `{${Object.entries(value)
+        .map(([k, v]) => `${JSON.stringify(k)}:${argsSourceOf(v)}`)
+        .join(",")}}`;
+    }
+    return JSON.stringify(value);
+  };
+
+  const argsOf = (step: ActivityStep): string => {
+    if (!step.args || Object.keys(step.args).length === 0) return "{}";
+    return collectStepOutputRefs(step.args).length > 0 ? argsSourceOf(step.args) : JSON.stringify(step.args);
+  };
+
+  // Record which variable a captured step's result landed in, keyed by the
+  // step's authored `id`, so a later step's `argsOf` can resolve a
+  // reference to it. A step with no `id` was never referenceable in the
+  // first place (`validateStepOutputRefs` requires one), so there is
+  // nothing to record.
+  const recordCapture = (step: ActivityStep, varName: string) => {
+    if (step.id) varNameForStepId.set(step.id, varName);
+  };
 
   // A run of consecutive activity steps. In a sequential context each is
   // awaited in turn; in a parallel phase the run is a single Promise.all.
   const emitActivityRun = (run: ActivityStep[], out: string[], indent: string, parallel: boolean) => {
     if (parallel && run.length > 1) {
-      // Capture results into an array if any step has an outcome attribute,
+      // Capture results into an array if any step needs its result held —
+      // an outcome attribute, or being referenced by a later step —
       // otherwise just await Promise.all without the destructure.
-      const anyOutcome = run.some((s) => s.outcomeAttribute);
-      if (anyOutcome) {
+      const anyNeedsCapture = run.some(needsCapture);
+      if (anyNeedsCapture) {
         const vars = run.map(() => nextResultVar());
         out.push(`${indent}const [${vars.join(", ")}] = await Promise.all([`);
         for (const step of run) {
@@ -224,6 +299,7 @@ function generateWorkflow(config: OpConfig): string {
         }
         out.push(`${indent}]);`);
         for (let i = 0; i < run.length; i++) {
+          recordCapture(run[i], vars[i]);
           const upsert = emitOutcomeUpsert(run[i], vars[i], indent);
           if (upsert) out.push(upsert);
         }
@@ -237,9 +313,10 @@ function generateWorkflow(config: OpConfig): string {
       return;
     }
     for (const step of run) {
-      if (step.outcomeAttribute) {
+      if (needsCapture(step)) {
         const v = nextResultVar();
         out.push(`${indent}const ${v} = await ${callee(step)}(${argsOf(step)});`);
+        recordCapture(step, v);
         const upsert = emitOutcomeUpsert(step, v, indent);
         if (upsert) out.push(upsert);
       } else {

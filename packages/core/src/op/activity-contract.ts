@@ -125,6 +125,25 @@ function activityStepsOf(steps: StepDefinition[]): ActivityStep[] {
   return steps.flatMap((s) => (s.kind === "activity" ? [s] : s.kind === "effect" ? s.steps.filter((n) => n.kind === "activity") : []));
 }
 
+// Same global symbol `step-output-ref.ts` brands a `StepOutputRef` with —
+// `Symbol.for(...)` interns by string key, so this recognizes one without
+// importing that module (which itself imports `pathExistsInSchema` below;
+// importing the other way would make the two files a cycle).
+const STEP_OUTPUT_REF_BRAND = Symbol.for("chant.op.stepOutputRef");
+function isStepOutputRefValue(value: unknown): boolean {
+  return typeof value === "object" && value !== null && (value as Record<symbol, unknown>)[STEP_OUTPUT_REF_BRAND] === true;
+}
+
+/** The value at `path` (a zod issue's `.path`) inside `obj`, or `undefined` if any segment doesn't resolve. */
+function valueAtPath(obj: unknown, path: ReadonlyArray<PropertyKey>): unknown {
+  let current = obj;
+  for (const segment of path) {
+    if (current === null || typeof current !== "object") return undefined;
+    current = (current as Record<PropertyKey, unknown>)[segment];
+  }
+  return current;
+}
+
 /** Unwrap `ZodOptional`/`ZodNullable`/`ZodDefault` (and similar) down to the schema they wrap. */
 function unwrap(schema: z.ZodTypeAny): z.ZodTypeAny {
   let current = schema;
@@ -134,8 +153,22 @@ function unwrap(schema: z.ZodTypeAny): z.ZodTypeAny {
   return current;
 }
 
-/** Does dot-path `path` resolve to a field that exists on `schema`? Object shapes only — an array/record return type has no fixed field set to check against. */
-function pathExistsInSchema(schema: z.ZodTypeAny, path: string): boolean {
+/**
+ * Does dot-path `path` resolve to a field that exists on `schema`? Object
+ * shapes only — a return schema whose root (or an intermediate segment) is
+ * a `z.record(...)`/`z.array(...)` rather than a `z.object(...)` hard-errors
+ * (returns `false`) instead of skipping, deliberately (chant #1290 comment
+ * on #1288's pre-merge review): a record's keys are dynamic and an array's
+ * elements are index-addressed, neither of which a dot-path segment can
+ * check against in any way that's more meaningful than "the author probably
+ * meant something else." No declared `returns` schema needs this today, so
+ * there's no live case to design against yet. The escape hatch is an empty
+ * path — `outcomeAttribute.from` omitted, or a {@link StepOutputRef}'s
+ * `path` omitted — which references the whole return value and never calls
+ * this function; a record/array-returning activity's whole value is always
+ * a valid reference target.
+ */
+export function pathExistsInSchema(schema: z.ZodTypeAny, path: string): boolean {
   let current = unwrap(schema);
   for (const segment of path.split(".")) {
     if (!(current instanceof z.ZodObject)) return false;
@@ -182,6 +215,15 @@ export function validateActivitySteps(
       const parsed = contract.args.safeParse(step.args ?? {});
       if (!parsed.success) {
         for (const issue of parsed.error.issues) {
+          // A step-output reference (#1290) sitting at this path is a
+          // placeholder object at build time, not the value it will
+          // resolve to — so an args-schema type mismatch here is a false
+          // positive; TMP013 (`validateStepOutputRefs`) is what validates
+          // a reference, against the *producer's* declared return schema.
+          // An unrecognized-key issue's path is the parent object (`[]`
+          // for a top-level extra key), which is never itself a reference,
+          // so a genuinely misspelled key is still caught either way.
+          if (isStepOutputRefValue(valueAtPath(step.args, issue.path))) continue;
           const path = issue.path.length > 0 ? issue.path.join(".") : "(args)";
           issues.push({ opName: config.name, phase: phase.name, fn: step.fn, message: `args.${path}: ${issue.message}` });
         }

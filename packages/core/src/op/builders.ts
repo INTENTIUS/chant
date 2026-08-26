@@ -2,6 +2,18 @@ import { OpResource } from "./resource";
 import type { OpConfig, PhaseDefinition, StepDefinition, ActivityStep, GateStep, EffectStep } from "./types";
 import { isEffectReceipt, type EffectReceiptDeclaration } from "../effect-receipt";
 import { receiptCheckInput } from "./receipt-store";
+import { makeOutProxy, type StepOutputRef } from "./step-output-ref";
+
+/** An `activity()` result — the plain `ActivityStep` shape plus the `.out` reference sugar (#1290). */
+export interface NamedActivityStep extends ActivityStep {
+  /**
+   * `step.out.someField` builds a {@link StepOutputRef} into this step's
+   * declared return value, for use in a later step's `args`. Throws on
+   * access if this step has no `id` (pass one via `activity()`'s third
+   * argument) — there is nothing for a reference to name otherwise.
+   */
+  readonly out: Record<string, StepOutputRef>;
+}
 
 // ── Core builders ─────────────────────────────────────────────────────────────
 
@@ -33,18 +45,44 @@ export function phase(
   return { name, steps, ...(opts?.parallel ? { parallel: true } : {}) };
 }
 
-/** Reference a pre-built or custom activity by function name. */
+/**
+ * Reference a pre-built or custom activity by function name.
+ *
+ * The third argument is a profile string (unchanged) or, to name the step
+ * so a later step can reference its output (#1290), an options object:
+ * `activity("lifecycleDiff", { env: "prod" }, { id: "diff" })`. Named or
+ * not, the result carries `.out` — `diff.out.driftedStacks` builds a
+ * reference to this step's declared return value; see `stepOutput()` in
+ * `@intentius/chant/op` for the equivalent on a step authored as a plain
+ * object literal instead of via this builder.
+ */
 export function activity(
   fn: string,
   args?: Record<string, unknown>,
-  profile?: ActivityStep["profile"],
-): ActivityStep {
-  return {
+  opts?: ActivityStep["profile"] | { profile?: ActivityStep["profile"]; id?: string },
+): NamedActivityStep {
+  const profile = typeof opts === "string" ? opts : opts?.profile;
+  const id = typeof opts === "string" ? undefined : opts?.id;
+  const step = {
     kind: "activity",
     fn,
     ...(args && Object.keys(args).length > 0 ? { args } : {}),
     ...(profile ? { profile } : {}),
-  };
+    ...(id ? { id } : {}),
+  } as NamedActivityStep;
+  Object.defineProperty(step, "out", {
+    enumerable: false,
+    get(): Record<string, StepOutputRef> {
+      if (!step.id) {
+        throw new Error(
+          `activity(${JSON.stringify(fn)}, ...).out: this step has no id — pass one via ` +
+            `activity(fn, args, { id: "..." }) before referencing its output.`,
+        );
+      }
+      return makeOutProxy(step.id);
+    },
+  });
+  return step;
 }
 
 /** Insert a human gate — the workflow pauses until the named signal is received. */
