@@ -8,6 +8,9 @@
  */
 
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
+import { activityContract, collectActivityContracts, type ActivityContract } from "@intentius/chant/op";
+import * as ownActivityContracts from "./activity-contracts";
 import { DECLARABLE_MARKER, type Declarable } from "@intentius/chant/declarable";
 import { phase, gate, effect, shell, kubectlApply, httpCheck } from "@intentius/chant/op";
 import type { OpConfig } from "@intentius/chant/op";
@@ -165,7 +168,14 @@ describe("op.json IR (#1289)", () => {
     // Build an Op that uses both a compatible activity (shellCmd) and one with a
     // transform schema (testTransformActivity). The compatible one should appear
     // in activityContracts; the transform-based one should be skipped gracefully
-    // but still present in the step graph.
+    // but still present in the step graph. The transform contract is injected via
+    // buildOpIR's contractRegistry parameter — it is not a real registered contract.
+    const registry = new Map<string, ActivityContract>();
+    collectActivityContracts(ownActivityContracts as Record<string, unknown>, registry);
+    registry.set(
+      "testTransformActivity",
+      activityContract("testTransformActivity", z.strictObject({ value: z.string().transform((s) => s.length) })),
+    );
     const config: OpConfig = {
       name: "test-with-transform",
       overview: "Test Op using a schema with transform and a normal schema",
@@ -177,7 +187,7 @@ describe("op.json IR (#1289)", () => {
       ],
     };
 
-    const ir = buildOpIR(config);
+    const ir = buildOpIR(config, registry);
 
     // shellCmd should be in activityContracts (it has a normal contract).
     expect(ir.activityContracts.shellCmd).toBeDefined();

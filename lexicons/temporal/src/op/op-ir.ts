@@ -204,8 +204,13 @@ function sortedEntries<T>(map: Map<string, T>): Record<string, T> {
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
-/** Build the deterministic op.json IR for one Op's config. */
-export function buildOpIR(config: OpConfig): OpIR {
+/**
+ * Build the deterministic op.json IR for one Op's config.
+ *
+ * `contractRegistry` defaults to this lexicon's own registered activity contracts;
+ * a caller with its own contract registry (or a test) can inject one instead.
+ */
+export function buildOpIR(config: OpConfig, contractRegistry: Map<string, ActivityContract> = OWN_CONTRACTS): OpIR {
   const allSteps = [...activityStepsOf(config.phases), ...activityStepsOf(config.onFailure ?? [])];
 
   const profiles = new Map<string, TemporalActivityProfile>();
@@ -216,7 +221,7 @@ export function buildOpIR(config: OpConfig): OpIR {
       profiles.set(prof, TEMPORAL_ACTIVITY_PROFILES[prof as keyof typeof TEMPORAL_ACTIVITY_PROFILES]);
     }
     if (!contracts.has(step.fn)) {
-      const contract = OWN_CONTRACTS.get(step.fn);
+      const contract = contractRegistry.get(step.fn);
       if (contract) {
         try {
           const args = z.toJSONSchema(contract.args) as Record<string, unknown>;
