@@ -44,4 +44,9 @@ export const gitlabAuditCatalog: Record<string, RuleMeta> = {
   WGL046: auditRule("WGL046", "merge-worthy", "guidance", "Cache populated in a merge-request pipeline", "Don't populate caches from merge-request pipelines (poisoning risk).", { authority: [GH_PWN] }),
   WGL047: auditRule("WGL047", "merge-worthy", "guidance", "Software piped to a shell without verification", "Verify a checksum/signature before executing fetched scripts.", { authority: [SCORECARD_PINNED] }),
   WGL048: auditRule("WGL048", "report-only", "guidance", "Pipeline without workflow:name", "Add a `workflow:name` for clearer pipeline naming.", { category: "best-practice" }),
+
+  // Efficiency (#444) — waste, not a safety/correctness issue. Always
+  // report-only: none of these warrant a merge on their own.
+  WGL049: auditRule("WGL049", "report-only", "guidance", "Dependency install without a cache", "Add a `cache:` covering the dependency directory.", { category: "efficiency" }),
+  WGL050: auditRule("WGL050", "report-only", "guidance", "Merge-request job missing interruptible", "Add `interruptible: true` so a superseded pipeline can be cancelled.", { category: "efficiency" }),
 };

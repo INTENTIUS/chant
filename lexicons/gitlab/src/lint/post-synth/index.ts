@@ -39,6 +39,8 @@ import { wgl045 } from "./wgl045";
 import { wgl046 } from "./wgl046";
 import { wgl047 } from "./wgl047";
 import { wgl048 } from "./wgl048";
+import { wgl049 } from "./wgl049";
+import { wgl050 } from "./wgl050";
 
 export const postSynthChecks: PostSynthCheck[] = [
   wgl010,
@@ -80,4 +82,6 @@ export const postSynthChecks: PostSynthCheck[] = [
   wgl046,
   wgl047,
   wgl048,
+  wgl049,
+  wgl050,
 ];

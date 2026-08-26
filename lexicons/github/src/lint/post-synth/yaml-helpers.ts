@@ -172,12 +172,27 @@ export interface ImageRef {
   source: "container" | "service" | "step";
 }
 
-function parseDoc(yaml: string): Record<string, unknown> | undefined {
+/** Parse a workflow YAML into a structured document, tolerant of parse errors. */
+export function parseDoc(yaml: string): Record<string, unknown> | undefined {
   try {
     return parseYAML(yaml);
   } catch {
     return undefined;
   }
+}
+
+/** Every job in the workflow as `[name, rawJobObject]`, via the structural parser. */
+export function jobEntries(yaml: string): Array<[string, Record<string, unknown>]> {
+  const doc = parseDoc(yaml);
+  const jobs = doc?.jobs;
+  if (!jobs || typeof jobs !== "object") return [];
+  const out: Array<[string, Record<string, unknown>]> = [];
+  for (const [name, val] of Object.entries(jobs as Record<string, unknown>)) {
+    if (val && typeof val === "object" && !Array.isArray(val)) {
+      out.push([name, val as Record<string, unknown>]);
+    }
+  }
+  return out;
 }
 
 /**
@@ -196,19 +211,6 @@ export function extractStepsByJob(yaml: string): Map<string, Array<Record<string
       job,
       steps.filter((s): s is Record<string, unknown> => !!s && typeof s === "object" && !Array.isArray(s)),
     );
-  }
-  return out;
-}
-
-function jobEntries(yaml: string): Array<[string, Record<string, unknown>]> {
-  const doc = parseDoc(yaml);
-  const jobs = doc?.jobs;
-  if (!jobs || typeof jobs !== "object") return [];
-  const out: Array<[string, Record<string, unknown>]> = [];
-  for (const [name, val] of Object.entries(jobs as Record<string, unknown>)) {
-    if (val && typeof val === "object" && !Array.isArray(val)) {
-      out.push([name, val as Record<string, unknown>]);
-    }
   }
   return out;
 }

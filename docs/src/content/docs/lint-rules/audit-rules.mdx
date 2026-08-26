@@ -364,6 +364,42 @@ Bump the reference to a patched ref/commit named by the advisory.
 
 Authority: [OSSF Scorecard — Vulnerabilities](https://github.com/ossf/scorecard/blob/main/docs/checks.md#vulnerabilities)
 
+### GHA063
+
+**Dependency setup action without caching enabled** — report-only · guidance
+
+Enable the setup action's `cache:` option or add an actions/cache step.
+
+### GHA064
+
+**Expensive runner without justification** — report-only · guidance
+
+Confirm the job needs that OS, or move it to a Linux runner.
+
+### GHA065
+
+**Unbounded matrix fan-out** — report-only · guidance
+
+Trim the matrix with include/exclude, or cap it with max-parallel.
+
+### GHA066
+
+**Unbounded artifact retention** — report-only · guidance
+
+Set a retention-days sized to how long the artifact is actually needed.
+
+### GHA067
+
+**Unconditional heavy step with no path filter** — report-only · guidance
+
+Scope the trigger's paths, or add an if: guard to the step.
+
+### GHA068
+
+**Pull-request workflow missing a concurrency group** — report-only · guidance
+
+Add a concurrency group with cancel-in-progress: true.
+
 ## GitLab CI (WGL)
 
 ### WGL010
@@ -633,6 +669,18 @@ Authority: [OSSF Scorecard — Pinned-Dependencies](https://github.com/ossf/scor
 **Pipeline without workflow:name** — report-only · guidance
 
 Add a `workflow:name` for clearer pipeline naming.
+
+### WGL049
+
+**Dependency install without a cache** — report-only · guidance
+
+Add a `cache:` covering the dependency directory.
+
+### WGL050
+
+**Merge-request job missing interruptible** — report-only · guidance
+
+Add `interruptible: true` so a superseded pipeline can be cancelled.
 
 ## Forgejo (WFJ)
 
