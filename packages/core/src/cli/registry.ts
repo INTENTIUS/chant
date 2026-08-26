@@ -228,6 +228,14 @@ export interface ParsedArgs {
    * forgejo today) — the same generator `chant build --components --generate
    * <lexicon>` uses, reused rather than re-derived. */
   projection?: string;
+  /** `chant operator --interval <duration>` (#1485) — poll interval between rounds, e.g. "30s", "5m". Default: 60s. */
+  interval?: string;
+  /** `chant operator --lease-ttl <duration>` (#1485) — how long an acquired lease is valid before it's reclaimable by another operator. Default: 5m. */
+  leaseTtl?: string;
+  /** `chant operator --once` (#1485) — run a single round and exit, instead of looping until Ctrl-C. Also the offline test/cron-invoker story. */
+  once?: boolean;
+  /** `chant approve <op> <gate> --note <text>` (#1485) — optional free-text context recorded on the gate-resolution fact (e.g. a PR URL). */
+  note?: string;
 }
 
 /**

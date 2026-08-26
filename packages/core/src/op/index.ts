@@ -48,6 +48,11 @@ export type {
   FieldComparisonPredicate, FieldTruthinessPredicate, AllOfPredicate, AnyOfPredicate, SymptomPredicate,
   RunAction, ReportAction, RuleAction, ConvergeRule,
 } from "./converge-rule";
+export {
+  discoverConvergeOps, runOperatorRound, runOperatorForever, formatRoundLine,
+  DEFAULT_OPERATOR_INTERVAL_MS,
+} from "./operator";
+export type { OperatorTickEvent, OperatorRoundOptions, OperatorLoopOptions } from "./operator";
 export { classifyOpVerbClass, isGated } from "./op-verb-class";
 export type { OpVerbClass } from "./op-verb-class";
 export { takeProfileAndId } from "./builders";

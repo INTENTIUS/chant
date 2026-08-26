@@ -19,6 +19,14 @@ import {
   writeBlobToPath,
   readBlobFromPath,
   listFilesInDir,
+  readRefSha,
+  updateRefCAS,
+  deleteRefCAS,
+  writeBlob,
+  readBlobBySha,
+  pushRef,
+  fetchRef,
+  RefCASConflictError,
 } from "./git";
 
 function git(args: string[], cwd: string): { stdout: string; exitCode: number } {
@@ -403,5 +411,137 @@ describe("lifecycle/git", () => {
         expect(await listLedgerEnvironments({ cwd: dir })).toEqual([]);
       });
     });
+  });
+
+  // ── Generic ref CAS (#1485) ────────────────────────────────────────────────
+
+  describe("readRefSha / updateRefCAS / deleteRefCAS / writeBlob / readBlobBySha", () => {
+    const REF = "refs/chant/lease/test-op";
+
+    test("readRefSha returns null for a ref that doesn't exist", async () => {
+      await withTestDir(async (dir) => {
+        await initRepo(dir);
+        expect(await readRefSha(REF, { cwd: dir })).toBeNull();
+      });
+    });
+
+    test("writeBlob + updateRefCAS(old=null) creates a ref pointing at a bare blob (no tree, no commit)", async () => {
+      await withTestDir(async (dir) => {
+        await initRepo(dir);
+        const blobSha = await writeBlob('{"holder":"a"}', { cwd: dir });
+        await updateRefCAS(REF, blobSha, null, { cwd: dir });
+
+        expect(await readRefSha(REF, { cwd: dir })).toBe(blobSha);
+        expect(await readBlobBySha(blobSha, { cwd: dir })).toBe('{"holder":"a"}');
+      });
+    });
+
+    test("updateRefCAS(old=null) fails if the ref already exists — RefCASConflictError, not a silent overwrite", async () => {
+      await withTestDir(async (dir) => {
+        await initRepo(dir);
+        const first = await writeBlob('{"holder":"a"}', { cwd: dir });
+        await updateRefCAS(REF, first, null, { cwd: dir });
+
+        const second = await writeBlob('{"holder":"b"}', { cwd: dir });
+        await expect(updateRefCAS(REF, second, null, { cwd: dir })).rejects.toBeInstanceOf(RefCASConflictError);
+        // The first writer's value is untouched.
+        expect(await readRefSha(REF, { cwd: dir })).toBe(first);
+      });
+    });
+
+    test("updateRefCAS succeeds when oldValue matches the ref's current value (a correct renewal)", async () => {
+      await withTestDir(async (dir) => {
+        await initRepo(dir);
+        const first = await writeBlob('{"holder":"a","expiresAt":"t1"}', { cwd: dir });
+        await updateRefCAS(REF, first, null, { cwd: dir });
+
+        const renewed = await writeBlob('{"holder":"a","expiresAt":"t2"}', { cwd: dir });
+        await updateRefCAS(REF, renewed, first, { cwd: dir });
+
+        expect(await readRefSha(REF, { cwd: dir })).toBe(renewed);
+      });
+    });
+
+    test("updateRefCAS fails when oldValue is stale — the exact race writeBlobToPath's own final ref update now guards against", async () => {
+      await withTestDir(async (dir) => {
+        await initRepo(dir);
+        const first = await writeBlob('{"holder":"a"}', { cwd: dir });
+        await updateRefCAS(REF, first, null, { cwd: dir });
+
+        // Simulate a second writer who moved the ref concurrently.
+        const interloper = await writeBlob('{"holder":"b"}', { cwd: dir });
+        await updateRefCAS(REF, interloper, first, { cwd: dir });
+
+        // The first writer, still holding its stale `first` as `oldValue`,
+        // tries to write again — must fail loudly, not clobber `interloper`.
+        const staleWrite = await writeBlob('{"holder":"a","stale":true}', { cwd: dir });
+        await expect(updateRefCAS(REF, staleWrite, first, { cwd: dir })).rejects.toBeInstanceOf(RefCASConflictError);
+        expect(await readRefSha(REF, { cwd: dir })).toBe(interloper);
+      });
+    });
+
+    test("deleteRefCAS removes the ref only when oldValue matches; a mismatch is a conflict, not a silent no-op", async () => {
+      await withTestDir(async (dir) => {
+        await initRepo(dir);
+        const sha = await writeBlob('{"holder":"a"}', { cwd: dir });
+        await updateRefCAS(REF, sha, null, { cwd: dir });
+
+        const wrongSha = await writeBlob("garbage", { cwd: dir });
+        await expect(deleteRefCAS(REF, wrongSha, { cwd: dir })).rejects.toBeInstanceOf(RefCASConflictError);
+        expect(await readRefSha(REF, { cwd: dir })).toBe(sha); // untouched
+
+        await deleteRefCAS(REF, sha, { cwd: dir });
+        expect(await readRefSha(REF, { cwd: dir })).toBeNull();
+      });
+    });
+
+    test("readBlobBySha returns null for a sha that was never written", async () => {
+      await withTestDir(async (dir) => {
+        await initRepo(dir);
+        expect(await readBlobBySha("0".repeat(40), { cwd: dir })).toBeNull();
+      });
+    });
+  });
+
+  describe("pushRef / fetchRef — a lease ref survives a round trip through a shared remote", () => {
+    test("pushRef pushes a non-branch ref; a second clone sees it via fetchRef", async () => {
+      const { clonePath: cloneA, remotePath, cleanup } = await setupClonePair();
+      const cloneB = join(tmpdir(), `chant-lease-clone-b-${Date.now()}-${Math.random()}`);
+      try {
+        git(["clone", "-q", remotePath, cloneB], tmpdir());
+
+        const ref = "refs/chant/lease/fountain-converge";
+        const blobSha = await writeBlob('{"holder":"a","token":"t1"}', { cwd: cloneA });
+        await updateRefCAS(ref, blobSha, null, { cwd: cloneA });
+        expect(await pushRef(ref, { cwd: cloneA })).toBe(true);
+
+        expect(await fetchRef(ref, { cwd: cloneB })).toBe(true);
+        expect(await readRefSha(ref, { cwd: cloneB })).toBe(blobSha);
+        expect(await readBlobBySha(blobSha, { cwd: cloneB })).toBe('{"holder":"a","token":"t1"}');
+      } finally {
+        await cleanup();
+        const { rm } = await import("node:fs/promises");
+        await rm(cloneB, { recursive: true, force: true });
+      }
+    });
+
+    test("pushRef / fetchRef return false (never throw) when no remote is configured", async () => {
+      await withTestDir(async (dir) => {
+        await initRepo(dir);
+        const ref = "refs/chant/lease/local-only";
+        const blobSha = await writeBlob('{"holder":"a"}', { cwd: dir });
+        await updateRefCAS(ref, blobSha, null, { cwd: dir });
+        expect(await pushRef(ref, { cwd: dir })).toBe(false);
+        expect(await fetchRef(ref, { cwd: dir })).toBe(false);
+      });
+    });
+  });
+
+  test("RefCASConflictError carries the ref and expected value", () => {
+    const err = new RefCASConflictError("refs/chant/lease/x", "abc123", "stale info");
+    expect(err.name).toBe("RefCASConflictError");
+    expect(err.ref).toBe("refs/chant/lease/x");
+    expect(err.expected).toBe("abc123");
+    expect(err.message).toContain("moved concurrently");
   });
 });

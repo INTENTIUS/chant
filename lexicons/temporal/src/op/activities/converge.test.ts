@@ -7,6 +7,7 @@ import {
   verbClassAllowedToDispatch,
   enforceVerbClassAtDispatch,
   sanitizeOneLine,
+  classifyDispatchFailure,
   type SerializedConvergeRule,
 } from "./converge";
 
@@ -290,5 +291,33 @@ describe("sanitizeOneLine", () => {
 
   test("trims surrounding whitespace", () => {
     expect(sanitizeOneLine("   padded message   \n")).toBe("padded message");
+  });
+});
+
+// ── Gate-as-fact dispatch classification (#1485) ──────────────────────────
+//
+// `dispatchOp` shells to `chant run <op>`; when the target is gated, the
+// local executor's `LocalGateUnsupportedError` message is the one contract
+// this tick reads to tell "hit a gate" apart from every other dispatch
+// failure (see `classifyDispatchFailure`'s doc for why a message match, not
+// a typed error, crosses the subprocess boundary). Tested directly against
+// the exact message shape `../../../../../packages/core/src/op/local-
+// executor.ts`'s `LocalGateUnsupportedError` produces, so a wording change
+// there would be caught here too.
+describe("classifyDispatchFailure", () => {
+  test("recognizes the local executor's own gate-rejection message and extracts the gate name", () => {
+    const raw = 'gate "rollout-gate" is not supported in local mode — gates and schedules need a durable runtime. Re-run with --temporal.';
+    expect(classifyDispatchFailure(raw)).toEqual({ gateName: "rollout-gate" });
+  });
+
+  test("matches the message wherever it appears in raw stderr, not only at the start", () => {
+    const raw = 'Error running op:\ngate "prod-approval" is not supported in local mode — gates and schedules need a durable runtime.';
+    expect(classifyDispatchFailure(raw)).toEqual({ gateName: "prod-approval" });
+  });
+
+  test("returns undefined for an ordinary dispatch failure — never misclassifies a ordinary error as a gate", () => {
+    expect(classifyDispatchFailure("Error: op \"fountain-apply\" not found")).toBeUndefined();
+    expect(classifyDispatchFailure("kubectl: connection refused")).toBeUndefined();
+    expect(classifyDispatchFailure("")).toBeUndefined();
   });
 });

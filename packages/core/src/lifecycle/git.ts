@@ -105,14 +105,15 @@ export async function writeBlobToPath(
   }
   const commitSha = commitResult.stdout.trim();
 
-  // 5. Update ref
-  const updateResult = await rt.spawn(
-    ["git", "update-ref", `refs/heads/${STATE_BRANCH}`, commitSha],
-    { cwd },
-  );
-  if (updateResult.exitCode !== 0) {
-    throw new Error(`git update-ref failed: ${updateResult.stderr}`);
-  }
+  // 5. Update ref — CAS-guarded against `parentRef` (#1485): closes the
+  // local race two concurrent writers used to hit silently (whoever called
+  // update-ref last simply overwrote the other's tree, no error). A
+  // conflict here throws RefCASConflictError instead of clobbering; callers
+  // that need to survive real local contention (e.g. two operator ticks
+  // targeting different envs on the same orphan branch) catch it and retry
+  // the whole read-modify-write — see converge-ledger.ts's
+  // `appendConvergeRecord`.
+  await updateRefCAS(`refs/heads/${STATE_BRANCH}`, commitSha, parentRef, { cwd });
 
   return commitSha;
 }
@@ -426,6 +427,146 @@ export async function fetchLifecycle(opts?: { cwd?: string }): Promise<boolean> 
     ["git", "fetch", remote, `${STATE_BRANCH}:${STATE_BRANCH}`],
     { cwd: opts?.cwd },
   );
+  return fetchResult.exitCode === 0;
+}
+
+// ── Generic ref CAS (#1485) ──────────────────────────────────────────────────
+//
+// `writeBlobToPath`'s own `update-ref` call (above) had no compare-and-swap
+// until this issue: two concurrent local writers could each build a tree from
+// what they read as "current", and whichever called `update-ref` last simply
+// overwrote the ref with no error — the other writer's change vanished
+// silently. The primitives below give any caller (this module's own
+// `writeBlobToPath`, and `./lease.ts`'s lease ref) a compare-and-swap guard
+// building on what `git update-ref` already supports natively: pass the
+// value you last observed as `<oldvalue>`, and the update only lands if the
+// ref still points there. No lock file — `update-ref` itself is already an
+// atomic local mutex (lockfile-then-rename under the hood), so this is
+// exactly the "extend the ref-write helper" shape, not a second mechanism.
+
+/**
+ * Thrown by {@link updateRefCAS}/{@link deleteRefCAS} when `ref` no longer
+ * points at the `oldValue` the caller last observed — another writer moved
+ * it concurrently. Deliberately a distinct type from a generic git failure so
+ * callers (a lease acquire, a retried ledger append) can tell "I lost a race"
+ * from "git itself failed" and react differently to each.
+ */
+export class RefCASConflictError extends Error {
+  constructor(
+    public readonly ref: string,
+    public readonly expected: string | null,
+    stderr: string,
+  ) {
+    super(
+      `ref "${ref}" moved concurrently — expected ${expected ?? "(ref must not exist)"}, ` +
+        `but another writer updated it first. git stderr: ${stderr.trim()}`,
+    );
+    this.name = "RefCASConflictError";
+  }
+}
+
+/** Read the SHA `ref` currently points to, or `null` if it doesn't exist. Works for any ref, not just the lifecycle branch. */
+export async function readRefSha(ref: string, opts?: { cwd?: string }): Promise<string | null> {
+  const rt = getRuntime();
+  const result = await rt.spawn(["git", "rev-parse", "--verify", ref], { cwd: opts?.cwd });
+  if (result.exitCode !== 0) return null;
+  return result.stdout.trim() || null;
+}
+
+/**
+ * Compare-and-swap update of an arbitrary ref. `oldValue` is the SHA the
+ * caller last observed the ref at, or `null` to assert the ref does not yet
+ * exist (git's own convention: an empty `<oldvalue>` argument to
+ * `update-ref` means "must not exist"). Throws {@link RefCASConflictError} —
+ * never silently overwrites — when the ref moved since `oldValue` was read.
+ */
+export async function updateRefCAS(
+  ref: string,
+  newValue: string,
+  oldValue: string | null,
+  opts?: { cwd?: string },
+): Promise<void> {
+  const rt = getRuntime();
+  const result = await rt.spawn(["git", "update-ref", ref, newValue, oldValue ?? ""], { cwd: opts?.cwd });
+  if (result.exitCode !== 0) {
+    throw new RefCASConflictError(ref, oldValue, result.stderr ?? "");
+  }
+}
+
+/**
+ * Compare-and-swap delete of an arbitrary ref — `oldValue` is required (no
+ * "delete unconditionally" escape hatch here) so releasing a lease you no
+ * longer hold can never delete someone else's newer one.
+ */
+export async function deleteRefCAS(ref: string, oldValue: string, opts?: { cwd?: string }): Promise<void> {
+  const rt = getRuntime();
+  const result = await rt.spawn(["git", "update-ref", "-d", ref, oldValue], { cwd: opts?.cwd });
+  if (result.exitCode !== 0) {
+    throw new RefCASConflictError(ref, oldValue, result.stderr ?? "");
+  }
+}
+
+/**
+ * Write arbitrary content as a git blob object — no tree, no commit, no ref
+ * update. The building block a CAS ref's value can point at directly: a
+ * lease record (`./lease.ts`) has no meaningful "tree of files", so its ref
+ * targets a blob SHA rather than a commit the way `writeBlobToPath`'s tree-
+ * building pipeline does.
+ */
+export async function writeBlob(content: string, opts?: { cwd?: string }): Promise<string> {
+  const rt = getRuntime();
+  const result = await rt.spawn(["git", "hash-object", "-w", "--stdin"], { cwd: opts?.cwd, stdin: content });
+  if (result.exitCode !== 0) throw new Error(`git hash-object failed: ${result.stderr}`);
+  return result.stdout.trim();
+}
+
+/** Read a blob's raw content by its SHA (whatever object a ref points at directly). Returns `null` when the object doesn't exist locally. */
+export async function readBlobBySha(sha: string, opts?: { cwd?: string }): Promise<string | null> {
+  const rt = getRuntime();
+  const result = await rt.spawn(["git", "cat-file", "blob", sha], { cwd: opts?.cwd });
+  if (result.exitCode !== 0) return null;
+  return result.stdout;
+}
+
+/**
+ * Push one arbitrary ref (e.g. a lease ref) to the remote, guarded the same
+ * way {@link pushLifecycle} guards the ledger branch: `--force-with-lease`
+ * keyed to the remote SHA last observed locally, so a concurrent push from a
+ * second machine is rejected rather than silently clobbered. Plain `--force`
+ * underneath that lease — a lease ref's value is a bare blob SHA, not a
+ * commit descending from the previous one, so there is no "fast-forward" to
+ * preserve, only the CAS the lease guard already provides.
+ *
+ * Returns `false` (never throws) when no remote is configured — a
+ * remote-less project's lease is local-only by construction (see
+ * `./lease.ts`'s module doc), or when the push itself is rejected (the
+ * caller re-reads and retries; see `acquireLease`).
+ */
+export async function pushRef(ref: string, opts?: { cwd?: string }): Promise<boolean> {
+  const rt = getRuntime();
+  const remoteResult = await rt.spawn(["git", "remote"], { cwd: opts?.cwd });
+  if (remoteResult.exitCode !== 0 || !remoteResult.stdout.trim()) return false;
+  const remote = remoteResult.stdout.trim().split("\n")[0];
+
+  const remoteRef = `refs/remotes/${remote}/${ref.replace(/^refs\//, "")}`;
+  const expectedResult = await rt.spawn(["git", "rev-parse", "--verify", remoteRef], { cwd: opts?.cwd });
+  const expected = expectedResult.exitCode === 0 ? expectedResult.stdout.trim() : null;
+  const lease = `${ref}:${expected ?? ""}`;
+
+  const pushResult = await rt.spawn(
+    ["git", "push", "--force", `--force-with-lease=${lease}`, remote, `${ref}:${ref}`],
+    { cwd: opts?.cwd },
+  );
+  return pushResult.exitCode === 0;
+}
+
+/** Fetch one arbitrary ref from remote into the same local ref name (e.g. a lease ref). `+` forces the update even when it isn't a fast-forward (a lease ref's new value is rarely a descendant of its old one). Returns `false` (never throws) when no remote is configured. */
+export async function fetchRef(ref: string, opts?: { cwd?: string }): Promise<boolean> {
+  const rt = getRuntime();
+  const remoteResult = await rt.spawn(["git", "remote"], { cwd: opts?.cwd });
+  if (remoteResult.exitCode !== 0 || !remoteResult.stdout.trim()) return false;
+  const remote = remoteResult.stdout.trim().split("\n")[0];
+  const fetchResult = await rt.spawn(["git", "fetch", remote, `+${ref}:${ref}`], { cwd: opts?.cwd });
   return fetchResult.exitCode === 0;
 }
 
