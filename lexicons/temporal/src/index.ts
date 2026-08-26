@@ -67,11 +67,11 @@ export type { ConvergeOpConfig, ConvergeOpResources, ConvergeDial } from "./comp
 // `kubectlApply` from `@intentius/chant-lexicon-k8s`).
 //
 // build, shell, waitForStack, lifecycleSnapshot, teardown, envTeardown,
-// httpCheck, and policyGate ARE this lexicon's own activities, so they come
-// from `./op/builders` (fully typed, deriving from each activity's own
-// `*Args` interface) instead — same names, same import path, no call-site
-// change required. See `builders-exports.test.ts` in core for the guard that
-// keeps this split intentional rather than drifting.
+// httpCheck, policyGate, and guardValidate ARE this lexicon's own activities,
+// so they come from `./op/builders` (fully typed, deriving from each
+// activity's own `*Args` interface) instead — same names, same import path,
+// no call-site change required. See `builders-exports.test.ts` in core for
+// the guard that keeps this split intentional rather than drifting.
 export {
   Op,
   phase,
@@ -108,4 +108,4 @@ export type {
   OpConfig, PhaseDefinition, StepDefinition, ActivityStep, GateStep, EffectStep,
   StepOutputRef, NamedActivityStep, WithStepRefs,
 } from "@intentius/chant/op";
-export { build, shell, waitForStack, lifecycleSnapshot, teardown, envTeardown, httpCheck, policyGate } from "./op/builders";
+export { build, shell, waitForStack, lifecycleSnapshot, teardown, envTeardown, httpCheck, policyGate, guardValidate } from "./op/builders";
