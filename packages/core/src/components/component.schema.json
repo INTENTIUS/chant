@@ -54,6 +54,12 @@
       "description": "Optional: the live lexicon entity/resource name(s) this component owns, when they differ from `name` (#598). `chant components status --live` reconciles the release ledger against live evidence by joining on this name; omitted entirely (the default), the join falls back to `name` itself with no behavior change. A component that owns several live entities (e.g. a fan-out cluster with one stack per node) may list them all.",
       "items": { "type": "string", "minLength": 1 },
       "minItems": 1
+    },
+    "composites": {
+      "type": "array",
+      "description": "Optional: the composite kind name(s) this component's deployed resources come from, when a consumer cannot infer it from `name` (#1492). Without this, a consumer joining a composite graph to the component DAG guesses by kebab-casing each composite's kind and matching it against this component's `name`, which only holds when a component maps 1:1 to a composite named for it. Omitted entirely (the default), the naming convention stays in effect with no behavior change. A component built from several composites may list them all.",
+      "items": { "type": "string", "minLength": 1 },
+      "minItems": 1
     }
   },
   "$defs": {

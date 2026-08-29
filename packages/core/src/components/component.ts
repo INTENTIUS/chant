@@ -148,6 +148,21 @@ export interface Component {
    * name == entity join with no behavior change.
    */
   liveNames?: string[];
+  /**
+   * Optional: the composite kind name(s) this component's deployed resources
+   * come from, when a consumer joining a composite graph to the component DAG
+   * cannot infer it from `name` (#1492). Components and composites are
+   * different namespaces, the same class of mismatch `liveNames` covers for
+   * components and lexicon entities: a consumer without this field guesses by
+   * kebab-casing each composite's kind and matching it against this
+   * component's `name` (`LoomBackend` -> `loom-backend`), which only holds
+   * when a component maps 1:1 to a composite named for it. A component built
+   * from several composites (e.g. one stack containing both an ArtifactBucket
+   * and an OperatorRole composite, plus loose resources) lists them all.
+   * Omitted entirely (the common case), the naming convention stays the
+   * default and nothing changes.
+   */
+  composites?: string[];
 }
 
 /** Author a named phase. `steps` may mix capability `Step`s, `Gate`s, and nested `Phase`s (fan-out). */

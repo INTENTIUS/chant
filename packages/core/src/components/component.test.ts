@@ -202,6 +202,27 @@ describe("projectToJson()", () => {
     expect("liveNames" in projected).toBe(false);
   });
 
+  it("projects an explicit composites list through unchanged (#1492)", () => {
+    const component: Component = {
+      name: "aws-plane",
+      dependsOn: [],
+      composites: ["ArtifactBucket", "OperatorRole"],
+      deploy: [phase("Apply", [{ kind: "cfn-deploy" }])],
+    };
+    const projected = projectToJson(component) as { composites?: string[] };
+    expect(projected.composites).toEqual(["ArtifactBucket", "OperatorRole"]);
+  });
+
+  it("omits composites from the projection when not authored (#1492)", () => {
+    const component: Component = {
+      name: "table",
+      dependsOn: [],
+      deploy: [phase("Apply", [{ kind: "cfn-deploy" }])],
+    };
+    const projected = projectToJson(component) as Record<string, unknown>;
+    expect("composites" in projected).toBe(false);
+  });
+
   it("projects a stackOutput() wiring reference to its plain-JSON form", () => {
     const component: Component = {
       name: "svc",

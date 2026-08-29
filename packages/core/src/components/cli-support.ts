@@ -141,6 +141,13 @@ export interface ComponentGraphResult {
    * `Component` contract already specifies. This is what lets a consumer join
    * the component DAG to the resource graph without guessing at kinds. */
   liveNames?: Record<string, string[]>;
+  /** Component name → the composite kind name(s) its resources come from (#1492),
+   * present only for components that declared `composites` explicitly. Unlike
+   * `liveNames`, there is no identity fallback — a component's own name is not
+   * a composite kind — so an undeclared component is left out of this map
+   * entirely rather than defaulting to a guess; a consumer with no entry here
+   * keeps applying its own naming-convention default. */
+  composites?: Record<string, string[]>;
   error?: string;
 }
 
@@ -173,10 +180,15 @@ export async function computeComponentGraph(
   // component name → owned live resource names (#1491), declared or the
   // contract's identity fallback.
   const liveNames: Record<string, string[]> = {};
+  // component name → declared composite kind(s) (#1492), only for components
+  // that declared them — no identity fallback (see ComponentGraphResult doc).
+  const composites: Record<string, string[]> = {};
   for (const [name, discovered] of result.components) {
     files[name] = relative(path, discovered.filePath);
     const declared = discovered.component.liveNames;
     liveNames[name] = declared && declared.length > 0 ? [...declared] : [name];
+    const declaredComposites = discovered.component.composites;
+    if (declaredComposites && declaredComposites.length > 0) composites[name] = [...declaredComposites];
   }
 
   try {
@@ -185,7 +197,7 @@ export async function computeComponentGraph(
     for (const c of driverComponents) {
       for (const dep of c.dependsOn ?? []) edges.push({ from: c.name, to: dep });
     }
-    return { success: true, order, waves, edges, files, liveNames };
+    return { success: true, order, waves, edges, files, liveNames, composites };
   } catch (err) {
     if (err instanceof UnknownDependencyError || err instanceof DependencyCycleError) {
       return { success: false, order: [], waves: [], edges: [], error: err.message };

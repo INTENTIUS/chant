@@ -431,6 +431,26 @@ describe("runGraph", () => {
       expect(discoverMock).not.toHaveBeenCalled();
     });
 
+    test("--components --format ir carries declared composites (#1492); undeclared components have no composites attr", async () => {
+      lintMock.mockResolvedValue({ success: true });
+      componentGraphMock.mockResolvedValue({
+        success: true,
+        order: ["shared-foundation", "loom-backend"],
+        waves: [["shared-foundation"], ["loom-backend"]],
+        edges: [{ from: "loom-backend", to: "shared-foundation" }],
+        files: {},
+        composites: { "shared-foundation": ["ArtifactBucket", "OperatorRole"] },
+      });
+      const exit = await runGraph({ args: makeArgs({ format: "ir", components: true }), plugins: [], serializers: [] });
+      expect(exit).toBe(0);
+      const ir = JSON.parse(stdoutBuf.join("\n"));
+      expect(ir.nodes.find((n: { id: string }) => n.id === "shared-foundation").attrs.composites).toEqual([
+        "ArtifactBucket",
+        "OperatorRole",
+      ]);
+      expect("composites" in ir.nodes.find((n: { id: string }) => n.id === "loom-backend").attrs).toBe(false);
+    });
+
     test("--components --format mermaid lanes the components by wave", async () => {
       lintMock.mockResolvedValue({ success: true });
       componentGraphClean();
