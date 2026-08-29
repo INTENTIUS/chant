@@ -6,17 +6,47 @@ import { githubSerializer } from "../serializer";
 import { Workflow } from "../generated/index";
 import type { SerializerResult } from "@intentius/chant/serializer";
 
-function steps(job: ReturnType<typeof PrPlanReport>["job"]) {
-  return job.props.steps ?? [];
+/**
+ * `Job`/`Step` (`../generated/index`) come from core's `createResource`/
+ * `createProperty` (`packages/core/src/runtime.ts`), whose constructor type
+ * is `new (...) => Declarable & Record<string, string>` — every property,
+ * `.props` included, reads back as `string` regardless of what was actually
+ * passed in. That is a known, tracked gap (chant #1388's shrinking
+ * typecheck baseline; `composites.test.ts` in this same directory is
+ * grandfathered into it for exactly this reason). This file is new, so
+ * rather than add to that backlog, these two interfaces describe the real
+ * runtime shape for the fields this file asserts on, and `asJob` narrows the
+ * composite's output into it once instead of reading `.props` off the
+ * loosely-typed instance directly.
+ */
+interface StepLike {
+  props: { name?: string; run?: string };
+}
+interface JobLike {
+  props: {
+    "runs-on": string;
+    if?: string;
+    permissions?: unknown;
+    env?: Record<string, string>;
+    steps?: StepLike[];
+  };
+}
+
+function asJob(job: unknown): JobLike {
+  return job as JobLike;
+}
+
+function steps(job: unknown): StepLike[] {
+  return asJob(job).props.steps ?? [];
 }
 
 describe("PrPlanReport composite (#1983)", () => {
   test("defaults: guarded on pull_request, posts by default, marker keyed on environment", () => {
     const { job } = PrPlanReport({ environment: "prod" });
-    expect(job.props["runs-on"]).toBe("ubuntu-latest");
-    expect(job.props.if).toBe("github.event_name == 'pull_request'");
-    expect(job.props.permissions).toMatchObject({ props: { contents: "read", "pull-requests": "write" } });
-    expect(job.props.env?.MARKER).toBe("<!-- chant-pr-plan-report:prod -->");
+    expect(asJob(job).props["runs-on"]).toBe("ubuntu-latest");
+    expect(asJob(job).props.if).toBe("github.event_name == 'pull_request'");
+    expect(asJob(job).props.permissions).toMatchObject({ props: { contents: "read", "pull-requests": "write" } });
+    expect(asJob(job).props.env?.MARKER).toBe("<!-- chant-pr-plan-report:prod -->");
     const names = steps(job).map((s) => s.props.name);
     expect(names).toContain("Post or update PR comment");
   });
@@ -24,7 +54,7 @@ describe("PrPlanReport composite (#1983)", () => {
   test("two environments get two distinct markers", () => {
     const prod = PrPlanReport({ environment: "prod" }).job;
     const staging = PrPlanReport({ environment: "staging" }).job;
-    expect(prod.props.env?.MARKER).not.toBe(staging.props.env?.MARKER);
+    expect(asJob(prod).props.env?.MARKER).not.toBe(asJob(staging).props.env?.MARKER);
   });
 
   test("postComment: false is the explicit opt-out — no comment step, plan still runs", () => {
