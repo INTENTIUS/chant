@@ -1,5 +1,5 @@
 import { isDeclarable, type Declarable } from "./declarable";
-import { setProvenance } from "./provenance";
+import { setPathProvenance, setProvenance } from "./provenance";
 
 /**
  * Marker symbol for Composite type identification.
@@ -150,10 +150,16 @@ export function Composite<P, M extends CompositeFactoryMembers = CompositeMember
 /**
  * Expands a CompositeInstance into a flat Map of prefixed entity names to Declarables.
  * Handles nested composites recursively.
+ *
+ * @param instanceName - The composite INSTANCE every member belongs to (chant
+ *   #1443), which at the top call is the export name and stays that name
+ *   through nesting — `prefix` grows per member and is not an instance
+ *   identity. Defaults to `prefix` so the top call needs no extra argument.
  */
 export function expandComposite(
   prefix: string,
   instance: CompositeInstance,
+  instanceName: string = prefix,
 ): Map<string, Declarable> {
   const result = new Map<string, Declarable>();
   const shared = (instance as unknown as Record<symbol, unknown>)[SHARED_PROPS] as Record<string, unknown> | undefined;
@@ -164,7 +170,7 @@ export function expandComposite(
     const fullName = `${prefix}${memberName[0].toUpperCase()}${memberName.slice(1)}`;
 
     if (isCompositeInstance(member)) {
-      const nested = expandComposite(fullName, member);
+      const nested = expandComposite(fullName, member, instanceName);
       for (const [nestedName, nestedEntity] of nested) {
         // Inner composite already stamped; `??=` keeps the most-specific one.
         if (compositeName) setProvenance(nestedEntity, { composite: compositeName });
@@ -173,6 +179,15 @@ export function expandComposite(
     } else {
       if (compositeName) setProvenance(member as Declarable, { composite: compositeName });
       result.set(fullName, member as Declarable);
+    }
+  }
+
+  // Whole-entity origin (chant #1443). Recorded after the loop so a nested
+  // member carries its INNER composite here — the recursive call above already
+  // ran and `setPathProvenance` keeps the first writer.
+  if (compositeName) {
+    for (const entity of result.values()) {
+      setPathProvenance(entity, "", { kind: "composite", composite: compositeName, instance: instanceName });
     }
   }
 
@@ -211,6 +226,20 @@ export function expandComposite(
         Object.defineProperty(entity, "props", {
           value: merged, enumerable: false, configurable: true,
         });
+        // A key the member did not set is the propagating instance's alone, so
+        // it is attributable exactly (chant #1443). A key both sides wrote —
+        // an override, or the array concatenation above — is left to the
+        // whole-entity origin rather than credited to one contributor.
+        if (compositeName) {
+          for (const k of Object.keys(shared)) {
+            if (shared[k] === undefined || existing[k] !== undefined) continue;
+            setPathProvenance(entity, k, {
+              kind: "composite",
+              composite: compositeName,
+              instance: instanceName,
+            });
+          }
+        }
       }
     }
   }

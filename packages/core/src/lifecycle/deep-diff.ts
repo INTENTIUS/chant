@@ -29,6 +29,7 @@ import {
   type DeepNormalizationHooks,
   type NormalizedDeepObservation,
 } from "../deep-observation";
+import { originOfPath, type PathOrigin } from "../provenance";
 import type { UnobservedResource } from "./live-diff";
 import { acceptedDeviation, type BaselineLexicon } from "./observation-baseline";
 
@@ -70,6 +71,18 @@ export interface PropertyDrift {
    * with no per-field ownership, which is every substrate but k8s.
    */
   owner?: string;
+  /**
+   * What produced this path on the DECLARED side (#1443) — the counterpart of
+   * {@link owner}, and the reason the two are reported together: "owned live by
+   * `hpa-controller`, governed in source by the `tier` parameter" says where
+   * each half of a disagreement has to be fixed, which neither half says alone.
+   *
+   * Resolved by longest prefix from the entity's recorded path origins, so a
+   * field inside a keyed list element inherits the origin recorded for the
+   * list. Absent when the build recorded none — the run path, and a sandboxed
+   * child, have no expression to attribute (see `EntityProvenance.paths`).
+   */
+  origin?: PathOrigin;
 }
 
 /** Property-level drift for one declared entity. */
@@ -100,6 +113,11 @@ export interface DeepDiffResult {
 export interface DeclaredDeepEntity {
   type: string;
   properties: Record<string, unknown>;
+  /**
+   * The entity's recorded path origins (#1443), as `EntityProvenance.paths`.
+   * Omit for a build that recorded none.
+   */
+  pathOrigins?: Record<string, PathOrigin>;
 }
 
 export interface DiffDeepInput {
@@ -188,12 +206,17 @@ export function diffDeep(input: DiffDeepInput): DeepDiffResult {
       // meaningful for a path that exists live — an `absent` drift has no live
       // field for anyone to own.
       const owner = hasLive ? liveEntity.fieldOwners?.[path] : undefined;
+      // The declared-side counterpart (#1443). Only meaningful for a path
+      // source actually declares — an `undeclared` drift has no authored
+      // expression for anything to have produced.
+      const origin = hasDeclared ? originOfPath(declaredEntity.pathOrigins, path) : undefined;
       const drift: PropertyDrift = {
         path,
         kind,
         ...(hasDeclared ? { declared: declaredValue } : {}),
         ...(hasLive ? { live: liveValue } : {}),
         ...(owner ? { owner } : {}),
+        ...(origin ? { origin } : {}),
       };
 
       const acceptedEntry = acceptedDeviation(baseline, name, path);

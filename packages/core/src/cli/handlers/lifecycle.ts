@@ -3,8 +3,9 @@ import { commandBuildParams } from "../build-params-cli";
 import { build } from "../../build";
 import { takeSnapshot } from "../../lifecycle/snapshot";
 import { readSnapshot, readSnapshotAt, readEnvironmentSnapshots, listSnapshots, fetchLifecycle, pushLifecycle, snapshotStorageKey, StaleLifecycleBranchError } from "../../lifecycle/git";
-import { deepDiffForLexicon } from "../../lifecycle/deep-observe";
+import { deepDiffForLexicon, type DeclaredEntities } from "../../lifecycle/deep-observe";
 import { countPropertyDrift, type DeepDiffResult } from "../../lifecycle/deep-diff";
+import { describePathOrigin, getPathProvenance } from "../../provenance";
 import {
   acceptDeviations,
   baselineForLexicon,
@@ -803,13 +804,17 @@ async function runLifecycleDiffLive(args: LiveDiffArgs): Promise<LiveDiffOutcome
     // declared name the reader can never resolve reads as missing (see
     // lifecycle/observe.ts).
     const declared = new Set<string>();
-    const entities = new Map<string, { entityType: string; props: Record<string, unknown> }>();
+    const entities: DeclaredEntities = new Map();
     for (const [name, entity] of args.buildResult.entities) {
       if (entity.lexicon === lexiconName && isResourceDeclarable(entity)) {
         declared.add(name);
+        // Path origins are carried across explicitly (#1443): this map is plain
+        // objects, and the symbol-keyed provenance channel does not survive it.
+        const pathOrigins = getPathProvenance(entity);
         entities.set(name, {
           entityType: entity.entityType,
           props: (entity.props != null ? entity.props : {}) as Record<string, unknown>,
+          ...(pathOrigins ? { pathOrigins } : {}),
         });
       }
     }
@@ -964,7 +969,10 @@ function renderDeepDiff(lexiconName: string, deep: DeepDiffResult): void {
         const declared = "declared" in change ? formatValue(change.declared) : "<undeclared>";
         const live = "live" in change ? formatValue(change.live) : "<absent>";
         const baseline = "baseline" in change ? ` [accepted: ${formatValue(change.baseline)}]` : "";
-        console.log(`      ${change.path}: ${declared} → ${live}${baseline}`);
+        // Both sides of the attribution, where each is known (#1443/#1189).
+        const from = change.origin ? ` [from: ${describePathOrigin(change.origin)}]` : "";
+        const owner = change.owner ? ` [owner: ${change.owner}]` : "";
+        console.log(`      ${change.path}: ${declared} → ${live}${baseline}${from}${owner}`);
       }
     }
   }

@@ -9,6 +9,7 @@ import { isCompositeInstance } from "../composite";
 import { isAttrRefLike } from "../utils";
 import { isIntrinsic } from "../intrinsic";
 import { params as sharedParams } from "../params";
+import { getPathProvenance } from "../provenance";
 import type { AttrRef } from "../attrref";
 import type { IntrinsicDef } from "../lexicon";
 
@@ -1152,6 +1153,59 @@ describe("tryFoldFile — build-time parameters (chant #1064)", () => {
     expect(sharedParams.tier).toBe("production-ha");
 
     setBuildParams({});
+  });
+
+  // chant #1443 — fold substitutes `params.<name>` away, so the emitted value
+  // is a literal and unattributable. These record which parameters the
+  // AUTHORED expression read, before that happens.
+  test("a folded resource records which build parameters each of its paths reads", async () => {
+    await writeResourceDefs();
+    const file = join(testDir, "main.ts");
+    await writeFile(
+      file,
+      `
+        import { Bucket } from "./resources";
+        import { params } from ${JSON.stringify(paramsPath)};
+        const suffix = params.env === "prod" ? "" : "-dev";
+        export const bucket = new Bucket({
+          name: \`assets\${suffix}\`,
+          fixed: "never-moves",
+          nested: { region: params.region },
+        });
+      `,
+    );
+
+    const session = createFoldSession([], { env: "prod", region: "us-east-1" });
+    const result = await tryFoldFile(file, [], session);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const [, entity] = result.entities[0];
+    expect(getPathProvenance(entity as object)).toEqual({
+      name: { kind: "build-param", params: ["env"] },
+      "nested.region": { kind: "build-param", params: ["region"] },
+    });
+  });
+
+  test("a folded resource that reads no parameter records no path origins", async () => {
+    await writeResourceDefs();
+    const file = join(testDir, "main.ts");
+    await writeFile(
+      file,
+      `
+        import { Bucket } from "./resources";
+        import { params } from ${JSON.stringify(paramsPath)};
+        export const other = params.env;
+        export const bucket = new Bucket({ name: "static" });
+      `,
+    );
+
+    const result = await tryFoldFile(file, [], createFoldSession([], { env: "prod" }));
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const entity = result.entities.find(([name]) => name === "bucket")![1];
+    expect(getPathProvenance(entity as object)).toBeUndefined();
   });
 });
 

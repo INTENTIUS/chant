@@ -38,6 +38,8 @@ import {
   SUPPORTED_UNARY_OPERATORS,
 } from "../fold/subset";
 import { importModule } from "./import";
+import { collectParamDependencies } from "./param-deps";
+import { setPathProvenance } from "../provenance";
 import type { IntrinsicDef } from "../lexicon";
 import type { BuildParamValue } from "../build-params";
 
@@ -2963,6 +2965,46 @@ async function constructFoldedResource(
  * performs unconditionally for the same file, and through the same
  * already-memoized `importModule`.
  */
+/**
+ * The local names this file bound to the build's parameter object (chant
+ * #1443). Object identity against {@link FoldSession.buildParams}, which
+ * `buildExternals` substituted directly, so an unrelated import that happens to
+ * be called `params` is not mistaken for it.
+ */
+function paramLocalNames(ctx: ResolveCtx): Set<string> {
+  const out = new Set<string>();
+  const buildParams = ctx.session.buildParams;
+  if (!buildParams) return out;
+  for (const [name, value] of ctx.externals) {
+    if (value === buildParams) out.add(name);
+  }
+  return out;
+}
+
+/**
+ * chant #1443 — record which build parameters each of a resource's authored
+ * property expressions reads, before fold substitutes them away. Best-effort
+ * and additive: a file with no `params` import, or a constructor called with no
+ * object literal, records nothing.
+ */
+function stampParamDependencies(entity: unknown, node: ts.NewExpression, ctx: ResolveCtx): void {
+  if (typeof entity !== "object" || entity === null) return;
+  const paramLocals = paramLocalNames(ctx);
+  if (paramLocals.size === 0) return;
+  // The same argument `foldResource` treats as props: the first object literal.
+  let propsArg: ts.ObjectLiteralExpression | undefined;
+  for (const argument of node.arguments ?? []) {
+    if (ts.isObjectLiteralExpression(argument)) {
+      propsArg = argument;
+      break;
+    }
+  }
+  if (!propsArg) return;
+  for (const [path, origin] of Object.entries(collectParamDependencies(propsArg, ctx.consts, paramLocals))) {
+    setPathProvenance(entity, path, origin);
+  }
+}
+
 async function preresolveResourceConsts(ctx: ResolveCtx): Promise<Map<ts.Expression, unknown>> {
   const built = new Map<ts.Expression, unknown>();
   for (const [name, initializer] of ctx.consts) {
@@ -2970,6 +3012,7 @@ async function preresolveResourceConsts(ctx: ResolveCtx): Promise<Map<ts.Express
     try {
       const spec = foldResource(initializer, ctx.consts, ctx.intrinsics, ctx.externals);
       const instance = await constructFoldedResource(spec, ctx, false);
+      stampParamDependencies(instance, initializer, ctx);
       built.set(initializer, instance);
       ctx.externals.set(name, instance);
     } catch {
@@ -3007,6 +3050,7 @@ async function resolveResourceEntity(
 
   try {
     const entity = (await instantiateFoldedResource(spec.__resource, ctorArgs, ctx, ` for "${name}"`)) as Declarable;
+    stampParamDependencies(entity, node, ctx);
     return { ok: true, entity };
   } catch (err) {
     return { ok: false, reason: err instanceof Error ? err.message : String(err) };
