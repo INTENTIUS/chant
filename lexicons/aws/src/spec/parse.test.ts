@@ -187,6 +187,80 @@ describe("parseCFNSchema", () => {
     });
     const result = parseCFNSchema(schema);
     expect(result.resource.deprecatedProperties).toEqual([]);
+    expect(result.resource.inferredDeprecations).toEqual([]);
+  });
+
+  // --- Deprecation basis (#1701) ---
+
+  test("a declared deprecation is not recorded as inferred", () => {
+    const schema = JSON.stringify({
+      typeName: "AWS::Test::Declared",
+      properties: {
+        OldProp: { type: "string", description: "An old property." },
+      },
+      deprecatedProperties: ["/properties/OldProp"],
+      additionalProperties: false,
+    });
+    const result = parseCFNSchema(schema);
+    expect(result.resource.deprecatedProperties).toEqual(["OldProp"]);
+    expect(result.resource.inferredDeprecations).toEqual([]);
+  });
+
+  test("a description-mined deprecation is recorded as inferred", () => {
+    const schema = JSON.stringify({
+      typeName: "AWS::Test::Mined",
+      properties: {
+        OldProp: { type: "string", description: "This property is deprecated. Use NewProp instead." },
+        NewProp: { type: "string", description: "The replacement property" },
+      },
+      additionalProperties: false,
+    });
+    const result = parseCFNSchema(schema);
+    expect(result.resource.deprecatedProperties).toEqual(["OldProp"]);
+    expect(result.resource.inferredDeprecations).toEqual(["OldProp"]);
+  });
+
+  test("a property both declared and matched by the regex counts as declared", () => {
+    // sampleBucketSchema declares AccessControl and its description says "legacy".
+    const result = parseCFNSchema(sampleBucketSchema);
+    expect(result.resource.deprecatedProperties).toContain("AccessControl");
+    expect(result.resource.inferredDeprecations).not.toContain("AccessControl");
+  });
+
+  test("inferredDeprecations is a subset of deprecatedProperties", () => {
+    const schema = JSON.stringify({
+      typeName: "AWS::Test::Mixed",
+      properties: {
+        DeclaredProp: { type: "string", description: "Plain prose." },
+        MinedProp: { type: "string", description: "This is a legacy property." },
+      },
+      deprecatedProperties: ["/properties/DeclaredProp"],
+      additionalProperties: false,
+    });
+    const result = parseCFNSchema(schema);
+    const all = new Set(result.resource.deprecatedProperties);
+    for (const p of result.resource.inferredDeprecations) {
+      expect(all.has(p)).toBe(true);
+    }
+    expect(result.resource.inferredDeprecations).toEqual(["MinedProp"]);
+  });
+
+  test("a description naming a sibling's deprecation lands in inferred, not declared", () => {
+    // Shape of AWS::Neptune::DBCluster.DBPort, where the description announces
+    // that the sibling `Port` is going away and DBPort is the replacement.
+    const schema = JSON.stringify({
+      typeName: "AWS::Test::Sibling",
+      properties: {
+        DBPort: {
+          type: "integer",
+          description: "The port. Note: `Port` will soon be deprecated. Rename it to `DBPort`.",
+        },
+      },
+      additionalProperties: false,
+    });
+    const result = parseCFNSchema(schema);
+    expect(result.resource.inferredDeprecations).toEqual(["DBPort"]);
+    expect(result.resource.deprecatedProperties).toEqual(["DBPort"]);
   });
 
   // --- Tagging metadata ---

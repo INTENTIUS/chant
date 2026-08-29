@@ -30,6 +30,13 @@ export type { PropertyConstraints } from "@intentius/chant/codegen/json-schema";
  */
 const MAX_PROPERTY_TYPE_DEPTH = 3;
 
+/**
+ * Prose signals that a property description is describing a deprecation.
+ * A hit is a guess, not a reading — see `ParsedResource.inferredDeprecations`.
+ */
+const DEPRECATION_RE =
+  /\bdeprecated\b|\blegacy\b|no longer (available|recommended|used|supported)|is not recommended|has been discontinued/i;
+
 export interface ParsedProperty {
   name: string;
   tsType: string;
@@ -63,6 +70,13 @@ export interface ParsedResource {
   writeOnly: string[];
   primaryIdentifier: string[];
   deprecatedProperties: string[];
+  /**
+   * The subset of `deprecatedProperties` that no upstream declaration backs.
+   * These names come from {@link DEPRECATION_RE} matching the property
+   * description, so they are an inference rather than a reading. Kept apart so
+   * a consumer can tell the two apart and calibrate what it says (#1701).
+   */
+  inferredDeprecations: string[];
   conditionalCreateOnly: string[];
   replacementStrategy?: "delete_then_create" | "create_then_delete";
   tagging?: { taggable: boolean; tagOnCreate: boolean; tagUpdatable: boolean };
@@ -160,19 +174,24 @@ export function parseCFNSchema(data: string | Buffer): SchemaParseResult {
     }
   }
 
-  // --- Deprecated properties: explicit + description-mined ---
+  // --- Deprecated properties: declared upstream, plus description-mined ---
+  // The declared half is what the Registry schema states. The mined half is a
+  // regex over English prose and is recorded separately (#1701): a description
+  // can mention the deprecation of a sibling property, of an enum value, or of
+  // something the property merely configures.
   const deprecatedSet = new Set<string>(
     stripPointerPaths(schema.deprecatedProperties ?? []),
   );
-
-  const DEPRECATION_RE = /\bdeprecated\b|\blegacy\b|no longer (available|recommended|used|supported)|is not recommended|has been discontinued/i;
+  const inferredDeprecations: string[] = [];
 
   // Mine top-level property descriptions
   if (schema.properties) {
     for (const [name, prop] of Object.entries(schema.properties)) {
-      if (prop.description && DEPRECATION_RE.test(prop.description)) {
-        deprecatedSet.add(name);
-      }
+      if (!prop.description || !DEPRECATION_RE.test(prop.description)) continue;
+      // A hit upstream already declares adds nothing, and is not an inference.
+      if (deprecatedSet.has(name)) continue;
+      deprecatedSet.add(name);
+      inferredDeprecations.push(name);
     }
   }
 
@@ -211,6 +230,7 @@ export function parseCFNSchema(data: string | Buffer): SchemaParseResult {
       writeOnly: stripPointerPaths(schema.writeOnlyProperties ?? []),
       primaryIdentifier: stripPointerPaths(schema.primaryIdentifier ?? []),
       deprecatedProperties: [...deprecatedSet],
+      inferredDeprecations,
       conditionalCreateOnly: stripPointerPaths(schema.conditionalCreateOnlyProperties ?? []),
       ...(replacementStrategy && { replacementStrategy }),
       ...(tagging && { tagging }),
