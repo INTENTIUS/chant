@@ -5,7 +5,7 @@ import { spawn as spawnChild, type ChildProcess } from "node:child_process";
 import { loadChantConfig, resolveAutoReleaseDisabled, type ChantConfig } from "../../config";
 import { discoverOps } from "../../op/discover";
 import { loadActivities, loadProfiles } from "../../op/activity-registry";
-import { runOpLocally, findGate, LocalGateUnsupportedError, OpRunFailure } from "../../op/local-executor";
+import { runOpLocally, findGate, LocalGateUnsupportedError, OpRunFailure, type StepRecord } from "../../op/local-executor";
 import { renderHuman, renderJson } from "../../op/local-output";
 import { formatError, formatWarning, formatSuccess, formatBold, formatInfo } from "../format";
 import { resolveCliBuildParams, parseParamFlags } from "../build-params-cli";
@@ -15,11 +15,13 @@ import {
   connectionOptions,
   resolveWorkflowId,
   resolveProfile,
+  fetchNormalizedHistory,
   type WorkflowHandleRaw,
   type WorkflowExecutionDescription,
   type WorkflowHistoryRaw,
 } from "./run-client";
 import { generateReport, writeReport } from "./run-report";
+import { extractStepRecords, countActivities, queryGateState } from "./op-progress";
 import { runComponents, resolveComponentTargets, findComponentGate, listComponents } from "../../components/cli-support";
 import { renderDriverHuman, renderDriverJson } from "../../components/driver-output";
 import { ndjsonProgressSink } from "../../components/run-progress";
@@ -250,12 +252,12 @@ export async function runOpStatus(ctx: CommandContext): Promise<number> {
   if (ctx.args.components) return runComponentStatus(ctx, name);
 
   const projectPath = resolve(".");
-  let client, desc: WorkflowExecutionDescription, history: WorkflowHistoryRaw;
+  let client, desc: WorkflowExecutionDescription, history: WorkflowHistoryRaw, handle: WorkflowHandleRaw;
   try {
     ({ client } = await makeTemporalClient(ctx.args.profile, projectPath));
-    const handle = client.workflow.getHandle(resolveWorkflowId(name));
+    handle = client.workflow.getHandle(resolveWorkflowId(name));
     desc = await handle.describe();
-    history = await handle.fetchHistory();
+    history = await fetchNormalizedHistory(handle);
   } catch (err) {
     console.error(formatError({ message: err instanceof Error ? err.message : String(err) }));
     return 1;
@@ -269,11 +271,17 @@ export async function runOpStatus(ctx: CommandContext): Promise<number> {
   console.log(`  Started     : ${desc.startTime.toISOString()}`);
   if (desc.closeTime) console.log(`  Closed      : ${desc.closeTime.toISOString()}`);
 
-  const events = history.events ?? [];
-  const completed = events.filter((e) => e.eventType === "ActivityTaskCompleted").length;
-  const scheduled = events.filter((e) => e.eventType === "ActivityTaskScheduled").length;
+  const { completed, scheduled } = countActivities(history);
   if (scheduled > 0) {
     console.log(`  Activities  : ${completed}/${scheduled} completed`);
+  }
+
+  // Queryable gate state (#1676) — undefined means the query itself failed
+  // (an ungated Op never registers a "gateState" handler), so print nothing;
+  // null means the query answered "no gate pending" — also nothing to print.
+  const gate = await queryGateState(handle);
+  if (gate) {
+    console.log(`  Gate        : ${gate.signalName}${gate.description ? ` — ${gate.description}` : ""} (waiting since ${gate.since})`);
   }
 
   return 0;
@@ -293,7 +301,7 @@ async function runComponentStatus(ctx: CommandContext, name: string): Promise<nu
     ({ client } = await makeTemporalClient(ctx.args.profile, projectPath));
     const handle = client.workflow.getHandle(componentWorkflowId(name));
     desc = await handle.describe();
-    history = await handle.fetchHistory();
+    history = await fetchNormalizedHistory(handle);
   } catch (err) {
     console.error(formatError({ message: err instanceof Error ? err.message : String(err) }));
     return 1;
@@ -307,9 +315,7 @@ async function runComponentStatus(ctx: CommandContext, name: string): Promise<nu
   console.log(`  Started     : ${desc.startTime.toISOString()}`);
   if (desc.closeTime) console.log(`  Closed      : ${desc.closeTime.toISOString()}`);
 
-  const events = history.events ?? [];
-  const completed = events.filter((e) => e.eventType === "ActivityTaskCompleted").length;
-  const scheduled = events.filter((e) => e.eventType === "ActivityTaskScheduled").length;
+  const { completed, scheduled } = countActivities(history);
   if (scheduled > 0) {
     console.log(`  Activities  : ${completed}/${scheduled} completed`);
   }
@@ -528,9 +534,7 @@ async function waitForTemporalServer(address: string, maxWaitMs = 30_000): Promi
 }
 
 function renderProgress(opName: string, history: WorkflowHistoryRaw): void {
-  const events = history.events ?? [];
-  const completed = events.filter((e) => e.eventType === "ActivityTaskCompleted").length;
-  const scheduled = events.filter((e) => e.eventType === "ActivityTaskScheduled").length;
+  const { completed, scheduled } = countActivities(history);
   process.stderr.write(
     `\r${formatInfo(`[${opName}]`)} ${completed}/${scheduled} activities completed`,
   );
@@ -954,7 +958,7 @@ async function runComponentTemporal(
     while (true) {
       await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
       const desc = await handle.describe();
-      const history = await handle.fetchHistory();
+      const history = await fetchNormalizedHistory(handle);
       renderProgress(component.name, history);
       if (TERMINAL_STATUSES.has(desc.status.name)) {
         process.stderr.write("\n");
@@ -1160,7 +1164,7 @@ async function runOpTemporal(ctx: CommandContext): Promise<number> {
       ({ client } = await makeTemporalClient(ctx.args.profile, projectPath));
       const handle = client.workflow.getHandle(resolveWorkflowId(opName));
       desc = await handle.describe();
-      history = await handle.fetchHistory();
+      history = await fetchNormalizedHistory(handle);
     } catch (err) {
       console.error(formatError({ message: err instanceof Error ? err.message : String(err) }));
       return 1;
@@ -1248,7 +1252,23 @@ async function runOpTemporal(ctx: CommandContext): Promise<number> {
     return 1;
   }
 
-  // Poll for progress until terminal state
+  // Poll for progress until terminal state.
+  //
+  // `--progress-json` (chant #1676): stream one NDJSON StepRecord per line to
+  // stdout as each declared step settles — the durable-path counterpart to
+  // `chant run <name> --json`'s local-executor record shape (op-progress.ts).
+  // Purely additive: when the flag is absent `emitProgress` stays undefined
+  // and every `emitProgress?.(...)` call is a no-op, so poll-loop behavior
+  // is unchanged. `extractStepRecords` is stable and append-only across
+  // polls (same declared order, a growing history), so a plain emitted-count
+  // watermark is enough to emit only what's new each round.
+  const emitProgress = ctx.args.progressJson ? ndjsonProgressSink<StepRecord>() : undefined;
+  let emittedCount = 0;
+  const emitNewRecords = (records: StepRecord[]) => {
+    for (const record of records.slice(emittedCount)) emitProgress?.(record);
+    emittedCount = records.length;
+  };
+
   let finalDesc: WorkflowExecutionDescription | undefined;
   let finalHistory: WorkflowHistoryRaw | undefined;
 
@@ -1256,12 +1276,14 @@ async function runOpTemporal(ctx: CommandContext): Promise<number> {
     while (true) {
       await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
       const desc = await handle.describe();
-      const history = await handle.fetchHistory();
+      const history = await fetchNormalizedHistory(handle);
 
       renderProgress(opName, history);
+      if (emitProgress) emitNewRecords(extractStepRecords(config, history));
 
       if (TERMINAL_STATUSES.has(desc.status.name)) {
         process.stderr.write("\n");
+        if (emitProgress) emitNewRecords(extractStepRecords(config, history, { final: true }));
         finalDesc = desc;
         finalHistory = history;
         break;

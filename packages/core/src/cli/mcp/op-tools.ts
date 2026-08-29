@@ -1,8 +1,9 @@
 import { resolve } from "node:path";
 import { discoverOps } from "../../op/discover";
 import { makeTemporalClient } from "../handlers/run";
-import { resolveWorkflowId } from "../handlers/run-client";
+import { resolveWorkflowId, fetchNormalizedHistory } from "../handlers/run-client";
 import { generateReport } from "../handlers/run-report";
+import { extractStepRecords, countActivities, queryGateState } from "../handlers/op-progress";
 import type { ToolRegistration } from "./lifecycle-tools";
 
 function workflowFnName(opName: string): string {
@@ -117,14 +118,22 @@ export function createOpStatusTool(): ToolRegistration {
       const name = params.name as string;
       const profile = params.profile as string | undefined;
 
+      const { ops } = await discoverOps();
+      const config = ops.get(name)?.config;
+
       const { client } = await makeTemporalClient(profile, resolve("."));
       const handle = client.workflow.getHandle(resolveWorkflowId(name));
       const desc = await handle.describe();
-      const history = await handle.fetchHistory();
+      const history = await fetchNormalizedHistory(handle);
 
-      const events = history.events ?? [];
-      const activitiesCompleted = events.filter((e) => e.eventType === "ActivityTaskCompleted").length;
-      const activitiesScheduled = events.filter((e) => e.eventType === "ActivityTaskScheduled").length;
+      const { completed: activitiesCompleted, scheduled: activitiesScheduled } = countActivities(history);
+      // Per-phase progress (#1676) — the same StepRecord shape `chant run
+      // <name> --json` uses locally, so a consumer renders one way
+      // regardless of executor. Only buildable when the Op's config was
+      // discoverable (a *.op.ts file on disk); absent otherwise rather than
+      // guessed at.
+      const progress = config ? extractStepRecords(config, history, { final: Boolean(desc.closeTime) }) : undefined;
+      const gate = await queryGateState(handle);
 
       return {
         workflowId: desc.workflowId,
@@ -135,6 +144,8 @@ export function createOpStatusTool(): ToolRegistration {
         taskQueue: desc.taskQueue,
         activitiesCompleted,
         activitiesScheduled,
+        ...(progress ? { progress } : {}),
+        gate: gate ?? null,
       };
     },
   };
@@ -196,7 +207,7 @@ export function createOpReportTool(): ToolRegistration {
       const { client } = await makeTemporalClient(profile, resolve("."));
       const handle = client.workflow.getHandle(resolveWorkflowId(name));
       const desc = await handle.describe();
-      const history = await handle.fetchHistory();
+      const history = await fetchNormalizedHistory(handle);
 
       return generateReport(name, config, desc, history);
     },

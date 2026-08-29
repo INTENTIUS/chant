@@ -5,7 +5,8 @@ import { getContext } from "./resources/context";
 import { readSnapshot, readEnvironmentSnapshots } from "../../lifecycle/git";
 import { discoverOps } from "../../op/discover";
 import { makeTemporalClient } from "../handlers/run";
-import { resolveWorkflowId } from "../handlers/run-client";
+import { resolveWorkflowId, fetchNormalizedHistory } from "../handlers/run-client";
+import { extractStepRecords, countActivities, queryGateState } from "../handlers/op-progress";
 import { loadOkfBundle } from "../../okf-read";
 import { loadChantConfigUpward, resolveKnowledgeDir } from "../../config";
 
@@ -177,11 +178,16 @@ export async function handleResourcesRead(
   if (uri.startsWith("chant://ops/") && uri.endsWith("/runs/latest")) {
     const name = uri.replace("chant://ops/", "").replace("/runs/latest", "");
     try {
+      const { ops } = await discoverOps();
+      const config = ops.get(name)?.config;
+
       const { client } = await makeTemporalClient(undefined, resolve("."));
       const handle = client.workflow.getHandle(resolveWorkflowId(name));
       const desc = await handle.describe();
-      const history = await handle.fetchHistory();
-      const events = history.events ?? [];
+      const history = await fetchNormalizedHistory(handle);
+      const { completed: activitiesCompleted, scheduled: activitiesScheduled } = countActivities(history);
+      const progress = config ? extractStepRecords(config, history, { final: Boolean(desc.closeTime) }) : undefined;
+      const gate = await queryGateState(handle);
       const result = {
         workflowId: desc.workflowId,
         runId: desc.runId,
@@ -189,8 +195,10 @@ export async function handleResourcesRead(
         startTime: desc.startTime,
         closeTime: desc.closeTime ?? null,
         taskQueue: desc.taskQueue,
-        activitiesCompleted: events.filter((e) => e.eventType === "ActivityTaskCompleted").length,
-        activitiesScheduled: events.filter((e) => e.eventType === "ActivityTaskScheduled").length,
+        activitiesCompleted,
+        activitiesScheduled,
+        ...(progress ? { progress } : {}),
+        gate: gate ?? null,
       };
       return {
         contents: [{ uri, mimeType: "application/json", text: JSON.stringify(result, null, 2) }],

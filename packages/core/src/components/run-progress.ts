@@ -107,11 +107,15 @@ export type RunProgressSink = (event: RunProgressEvent) => void;
 /**
  * Build a sink that writes `JSON.stringify(event) + "\n"` to `write` (default:
  * `process.stdout.write`), one line per event, as they happen — the
- * `--progress-json` CLI wiring's sink (../cli/handlers/run.ts). Kept separate
- * from `driver-output.ts`'s end-of-run renderers: this emits *during* the
- * run, one line at a time; `renderDriverJson`/`renderDriverHuman` render the
- * completed `DriverRunResult` once, after the run finishes.
+ * `--progress-json` CLI wiring's sink (../cli/handlers/run.ts, for both the
+ * `--components` driver's `RunProgressEvent`s and the Temporal Op path's
+ * `StepRecord`s, chant #1676). Kept separate from `driver-output.ts`'s
+ * end-of-run renderers: this emits *during* the run, one line at a time;
+ * `renderDriverJson`/`renderDriverHuman` render the completed
+ * `DriverRunResult` once, after the run finishes.
  */
-export function ndjsonProgressSink(write: (chunk: string) => void = (s) => void process.stdout.write(s)): RunProgressSink {
+export function ndjsonProgressSink<T = RunProgressEvent>(
+  write: (chunk: string) => void = (s) => void process.stdout.write(s),
+): (event: T) => void {
   return (event) => write(JSON.stringify(event) + "\n");
 }

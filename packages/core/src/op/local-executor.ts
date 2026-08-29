@@ -21,7 +21,13 @@ import { isStepOutputRef } from "./step-output-ref";
 export interface StepRecord {
   phase: string;
   fn: string;
-  args: Record<string, unknown>;
+  /**
+   * Present for a local-executor record. Absent for one reconstructed from
+   * Temporal workflow history (op-progress.ts) — an activity's scheduled
+   * input isn't decoded there, so the field is simply omitted rather than
+   * populated with a guess.
+   */
+  args?: Record<string, unknown>;
   status: "ok" | "fail" | "skipped";
   durationMs: number;
   outcome?: { name: string; value: unknown };

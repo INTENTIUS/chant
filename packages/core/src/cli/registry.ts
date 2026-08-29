@@ -26,7 +26,20 @@ export interface ParsedArgs {
   temporal?: boolean;
   /** `chant run` — emit the structured OpRunResult as JSON on stdout. */
   json?: boolean;
-  /** `chant run --components <name|all> --progress-json` — stream one NDJSON `RunProgressEvent` (../../components/run-progress.ts) per line to stdout while the run executes (local executor only), so a consumer can render live wave/component/phase/step progress instead of tailing raw logs. Purely additive: run semantics, ordering, and exit code are unchanged; omitted (undefined, not false) when the flag isn't passed. */
+  /**
+   * `chant run --components <name|all> --progress-json` (local executor) —
+   * stream one NDJSON `RunProgressEvent` (../../components/run-progress.ts)
+   * per line to stdout while the run executes, so a consumer can render live
+   * wave/component/phase/step progress instead of tailing raw logs.
+   *
+   * `chant run <name> --temporal --progress-json` (chant #1676) — the same
+   * flag on an Op's durable path streams one NDJSON `StepRecord`
+   * (../../op/local-executor.ts, reconstructed from workflow history by
+   * ../handlers/op-progress.ts) per settled step instead.
+   *
+   * Both are purely additive: run semantics, ordering, and exit code are
+   * unchanged; omitted (undefined, not false) when the flag isn't passed.
+   */
   progressJson?: boolean;
   live: boolean;
   /** `chant migrate --from <name>` (default "github") */
