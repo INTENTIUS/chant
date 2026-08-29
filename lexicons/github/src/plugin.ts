@@ -70,6 +70,31 @@ export const githubPlugin: LexiconPlugin = {
         outputKey: "expression",
         isTag: false,
       },
+      // chant #1966 — src/expression.ts's context-accessor and condition
+      // helpers, each a pure function of its arguments building an
+      // `Expression` (or, for `steps`/`needs`, a plain object of one).
+      // `foldsEagerly: true` (not `foldsAsCall`) because their usual use is
+      // embedded directly in a template literal (`` `${matrix("os")}` ``),
+      // which needs the real, already-live `Expression` at fold time to
+      // stringify correctly — see IntrinsicDef.foldsEagerly's doc.
+      { name: "secrets", description: "Access a secret by name.", isTag: false, foldsEagerly: true },
+      { name: "matrix", description: "Access a matrix value by key.", isTag: false, foldsEagerly: true },
+      { name: "steps", description: "Access a step output.", isTag: false, foldsEagerly: true },
+      { name: "needs", description: "Access a job output from a needed job.", isTag: false, foldsEagerly: true },
+      { name: "inputs", description: "Access a workflow input.", isTag: false, foldsEagerly: true },
+      { name: "vars", description: "Access a configuration variable.", isTag: false, foldsEagerly: true },
+      { name: "env", description: "Access an environment variable.", isTag: false, foldsEagerly: true },
+      { name: "always", description: "Always run, regardless of status.", isTag: false, foldsEagerly: true },
+      { name: "failure", description: "Run only if a previous step has failed.", isTag: false, foldsEagerly: true },
+      { name: "success", description: "Run only if all previous steps succeeded.", isTag: false, foldsEagerly: true },
+      { name: "cancelled", description: "Run only if the workflow was cancelled.", isTag: false, foldsEagerly: true },
+      { name: "contains", description: "Check if a string contains a substring.", isTag: false, foldsEagerly: true },
+      { name: "startsWith", description: "Check if a string starts with a prefix.", isTag: false, foldsEagerly: true },
+      { name: "toJSON", description: "Convert a value to JSON.", isTag: false, foldsEagerly: true },
+      { name: "fromJSON", description: "Parse a JSON string.", isTag: false, foldsEagerly: true },
+      { name: "format", description: "Format a string with placeholders.", isTag: false, foldsEagerly: true },
+      { name: "branch", description: "Check if the ref matches a branch name.", isTag: false, foldsEagerly: true },
+      { name: "tag", description: "Check if the ref matches a tag prefix.", isTag: false, foldsEagerly: true },
     ];
   },
 

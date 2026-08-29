@@ -226,6 +226,29 @@ export interface IntrinsicDef {
    * run path would have called, from the module the source itself named.
    */
   readonly foldsAsCall?: boolean;
+  /**
+   * chant #1966 — opt this intrinsic's PLAIN-CALL form into EAGER folding:
+   * unlike {@link foldsAsCall}, which defers to a `{__intrinsic}` envelope
+   * revived later, `fold()` (../fold/fold.ts) calls the real function
+   * immediately, with the folded arguments, and its real return value IS the
+   * folded value.
+   *
+   * Exists for a lexicon helper whose result is commonly embedded directly in
+   * a template literal (`` `${matrix("os")}` ``, github's
+   * `matrix`/`inputs`/…) — an envelope is still a plain `{__intrinsic, args}`
+   * object when the enclosing template folds, so `String()` coercion at fold
+   * time would stringify it as `"[object Object]"` instead of the real value.
+   * Eager evaluation produces the real, already-live result instead.
+   *
+   * Same admission bar as {@link foldsAsCall} (a pure function of its
+   * arguments — no I/O, no mutable state, no dependency on anything but its
+   * arguments) and mutually exclusive with both {@link isTag} and
+   * `foldsAsCall`: a plain call folds exactly one way.
+   * `../discovery/fold-import.ts`'s `resolveActiveLexiconExport` checks this
+   * to admit the function export into `externals` at all — a lexicon
+   * package's function export is excluded there otherwise.
+   */
+  readonly foldsEagerly?: boolean;
 }
 
 /**
@@ -257,8 +280,8 @@ export interface IntrinsicDef {
  * `dist/manifest.json`) that may predate either field. `undefined` there
  * means what it always did — not a tag, not opted in.
  */
-export function intrinsicFolds(def: { isTag?: boolean; foldsAsCall?: boolean }): boolean {
-  return intrinsicTagFolds(def) || intrinsicCallFolds(def);
+export function intrinsicFolds(def: { isTag?: boolean; foldsAsCall?: boolean; foldsEagerly?: boolean }): boolean {
+  return intrinsicTagFolds(def) || intrinsicCallFolds(def) || intrinsicCallFoldsEagerly(def);
 }
 
 /** True when this intrinsic's TAGGED-TEMPLATE form folds (`Sub\`...\``) — see {@link intrinsicFolds}. */
@@ -278,6 +301,15 @@ export function intrinsicTagFolds(def: { isTag?: boolean }): boolean {
  */
 export function intrinsicCallFolds(def: { isTag?: boolean; foldsAsCall?: boolean }): boolean {
   return def.isTag !== true && def.foldsAsCall === true;
+}
+
+/**
+ * True when this intrinsic's PLAIN-CALL form folds EAGERLY (chant #1966) —
+ * i.e. the lexicon opted it in via {@link IntrinsicDef.foldsEagerly}.
+ * `isTag: true` disqualifies, same as {@link intrinsicCallFolds}.
+ */
+export function intrinsicCallFoldsEagerly(def: { isTag?: boolean; foldsEagerly?: boolean }): boolean {
+  return def.isTag !== true && def.foldsEagerly === true;
 }
 
 /**

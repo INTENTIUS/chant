@@ -85,8 +85,29 @@ describe("githubPlugin", () => {
     // chant #1069 — registered as the `Expression` class (capitalized), the
     // real export of src/index.ts; "expression" (lowercase) was never exported.
     const intrinsics = githubPlugin.intrinsics!();
-    expect(intrinsics.length).toBe(1);
-    expect(intrinsics[0].name).toBe("Expression");
+    expect(intrinsics.find((i) => i.name === "Expression")).toEqual({
+      name: "Expression",
+      description: expect.any(String),
+      outputKey: "expression",
+      isTag: false,
+    });
+
+    // chant #1966 — src/expression.ts's pure context-accessor and condition
+    // helpers, registered `foldsEagerly` rather than `foldsAsCall` (see
+    // ../../../packages/core/src/lexicon.ts's IntrinsicDef.foldsEagerly).
+    const eagerNames = [
+      "secrets", "matrix", "steps", "needs", "inputs", "vars", "env",
+      "always", "failure", "success", "cancelled",
+      "contains", "startsWith", "toJSON", "fromJSON", "format",
+      "branch", "tag",
+    ];
+    for (const name of eagerNames) {
+      const def = intrinsics.find((i) => i.name === name);
+      expect(def, `missing intrinsic registration for "${name}"`).toBeDefined();
+      expect(def!.isTag).toBe(false);
+      expect(def!.foldsEagerly).toBe(true);
+    }
+    expect(intrinsics.length).toBe(1 + eagerNames.length);
   });
 
   test("provides init templates", () => {

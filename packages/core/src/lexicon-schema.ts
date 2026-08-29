@@ -21,6 +21,9 @@ export const IntrinsicDefSchema = z.object({
   // registration written before #1044 means. Only an explicit `true` opts a
   // call into folding. See IntrinsicDef.foldsAsCall in ../lexicon.ts.
   foldsAsCall: z.boolean().optional(),
+  // chant #1966 — same default-off shape as foldsAsCall, for the EAGER
+  // call-form opt-in. See IntrinsicDef.foldsEagerly in ../lexicon.ts.
+  foldsEagerly: z.boolean().optional(),
 });
 
 // ---------------------------------------------------------------------------

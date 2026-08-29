@@ -74,10 +74,12 @@ const SUPPORTED_CASES: SubsetCase[] = [
 
 const UNSUPPORTED_CASES: SubsetCase[] = [
   { name: "function call as a value", expr: `getName()` },
-  { name: "method call as a value", expr: `config.getName()` },
-  // chant #1082 — a registered helper NAME reached through a namespace is
-  // still a method call, and still rejected by both sides.
-  { name: "registered helper name reached as a method", expr: `helpers.phase("Apply", [])` },
+  // chant #1966 moved "method call as a value" and "registered helper name
+  // reached as a method" out of this strict-parity list and into "documented
+  // divergences" below — a method call now folds when its receiver resolves,
+  // which is exactly the identifier-resolution asymmetry every other
+  // divergence there already documents.
+  //
   // ...and a registered helper with an unfoldable argument is rejected on the
   // argument, by both sides, at the argument's own position.
   { name: "registered helper with an unfoldable argument", expr: `phase("Apply", [getName()])` },
@@ -258,6 +260,51 @@ describe("documented divergences — NOT unified by design (see subset.ts module
     expect(evl001NonLiteralExpressionRule.check(context)).toHaveLength(0);
   });
 
+  test("method call on an unresolved receiver: fold rejects; EVL001 accepts the shape (chant #1966, resolution-dependent)", () => {
+    // `config.getName()` — chant #1966 widened `findSubsetViolation` to
+    // accept a method call unconditionally (mirroring `.step` and a nested
+    // `new` before it), because whether the receiver resolves to a value
+    // with that method is resolution-dependent (module doc, point 1) and out
+    // of reach for a syntax-only classifier. fold() still rejects it here on
+    // the receiver: `config` isn't a `const` this file has.
+    const source = `const bad = new Thing({ x: config.getName() });`;
+    const sourceFile = ts.createSourceFile("t.ts", source, ts.ScriptTarget.Latest, true);
+    const consts = collectConsts(sourceFile);
+    const badInit = consts.get("bad") as ts.NewExpression;
+
+    expect(() => foldResource(badInit, consts, [])).toThrow(FoldError);
+
+    const context: LintContext = { sourceFile, entities: [], filePath: "t.ts", lexicon: undefined };
+    expect(evl001NonLiteralExpressionRule.check(context)).toHaveLength(0);
+  });
+
+  test("registered helper name reached as a method: not the registered call, on either side — rejected for a different reason since #1966", () => {
+    // chant #1082 — a registered helper NAME reached through a namespace is
+    // still a method call, never the bare registered call: `fold()`'s
+    // `{__helper}` shape only ever matches a BARE identifier callee, so
+    // `helpers.phase(...)` never gets that treatment, before or after #1966.
+    // What changed is WHY it's rejected — `helpers` is an unresolved
+    // identifier now reached through the general method-call case, not "no
+    // case for a property-access callee" — same divergence direction as the
+    // test above.
+    const source = `const bad = new Thing({ x: helpers.phase("Apply", []) });`;
+    const sourceFile = ts.createSourceFile("t.ts", source, ts.ScriptTarget.Latest, true);
+    const consts = collectConsts(sourceFile);
+    const badInit = consts.get("bad") as ts.NewExpression;
+
+    let error: unknown;
+    try {
+      foldResource(badInit, consts, []);
+    } catch (e) {
+      error = e;
+    }
+    expect(error).toBeInstanceOf(FoldError);
+    expect((error as FoldError).message).toContain("unresolved identifier: helpers");
+
+    const context: LintContext = { sourceFile, entities: [], filePath: "t.ts", lexicon: undefined };
+    expect(evl001NonLiteralExpressionRule.check(context)).toHaveLength(0);
+  });
+
   test("composite step access: NO LONGER a divergence (chant #1174) — both fold and EVL001 accept it", () => {
     // `Checkout({...}).step` — the single-action Composite() wrapper idiom
     // every lexicon's own docs/examples embed inline inside a Job's
@@ -390,10 +437,14 @@ describe("findSubsetViolation — optional intrinsic registry (#1044)", () => {
     expect(v?.message).toContain("function call as a value is not foldable: Ref(...)");
   });
 
-  test("the registry doesn't widen anything else: a name in it without the opt-in, a method call, and .map all stay violations", () => {
+  test("the registry doesn't widen anything else: a name in it without the opt-in, a closure-taking method, and a plain call stay violations", () => {
     const notOptedIn: IntrinsicDef[] = [{ name: "Reference", isTag: false }];
     expect(findSubsetViolation(propValue(`Reference("db")`), notOptedIn)).toBeDefined();
-    expect(findSubsetViolation(propValue(`aws.Ref("db")`), REF)).toBeDefined();
+    // chant #1966 — `aws.Ref("db")` is a method call (`Ref` reached through a
+    // namespace, not a bare identifier), so it's no longer here: shape-wise
+    // it's now the same resolution-dependent divergence
+    // "method call on an unresolved receiver" documents above, unrelated to
+    // whether `Ref` itself is opted into `foldsAsCall`.
     expect(findSubsetViolation(propValue(`cidrs.map((c) => c)`, `const cidrs = [];`), REF)).toBeDefined();
     expect(findSubsetViolation(propValue(`makeName("a")`), REF)).toBeDefined();
   });
