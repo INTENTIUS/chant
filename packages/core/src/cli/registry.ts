@@ -194,9 +194,9 @@ export interface ParsedArgs {
   check?: boolean;
   /** `chant dev surface-diff --update-snapshot --bump` — bump the lexicon's package.json version by the drift severity so the accepted surface is publishable (#616). */
   bump?: boolean;
-  /** `chant components release record --component <name>` (#568) — component name for the release record being appended. */
+  /** `chant components release record --component <name>` (#568) — component name for the release record being appended. Also `chant components export <env> --component <name>` (#929) — which component's most recent recorded build to export. */
   component?: string;
-  /** `chant components release record --digest <sha256:...>` (#568) — artifact digest to record, joining this release to the build archive/ledger. */
+  /** `chant components release record --digest <sha256:...>` (#568) — artifact digest to record, joining this release to the build archive/ledger. Also `chant components export --digest <manifestDigest>` (#929) — a build archive manifest digest to export directly, bypassing env/component resolution. */
   digest?: string;
   /** `chant components release record --git-sha <sha>` (#568) — git commit the deploy was built from. */
   gitSha?: string;

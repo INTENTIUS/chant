@@ -1,6 +1,6 @@
 ---
 title: "chant components"
-description: Record immutable deploy events and reconcile the release ledger against live truth — the build & deploy observability commands
+description: Record immutable deploy events, reconcile the release ledger against live truth, and export the build archive to a portable directory — the build & deploy observability commands
 diataxis: reference
 ---
 
@@ -10,11 +10,13 @@ diataxis: reference
 chant components release <env> --component <name> --digest <sha256:...>
                                 [--git-sha <sha>] [--run-id <id>] [--actor <name>] [--json]
 chant components status [env] [--live] [--json] [--compare-to <env>]
+chant components export <env> --component <name> [--digest <manifestDigest>]
+                                -o <dir> [--json]
 ```
 
 ## Description
 
-`chant components` holds the release ledger and status surface for [component](/chant/components/component-contract/) deploys: the recorded half of build & deploy observability. See [Observability](/chant/components/observability/) for the conceptual model. The release ledger lives on the same `chant/lifecycle` orphan branch [`chant lifecycle`](/chant/cli/lifecycle/) snapshots already use, at `<env>/releases.jsonl` — one immutable JSON line per recorded deploy.
+`chant components` holds the release ledger, status surface, and build-archive export for [component](/chant/components/component-contract/) deploys: the recorded half of build & deploy observability. See [Observability](/chant/components/observability/) for the conceptual model. The release ledger lives on the same `chant/lifecycle` orphan branch [`chant lifecycle`](/chant/cli/lifecycle/) snapshots already use, at `<env>/releases.jsonl` — one immutable JSON line per recorded deploy.
 
 `components release` below is the standalone, explicit way to append a record. [`chant run --components`](/chant/cli/run/#auto-recorded-releases) auto-emits one on every successful deploy, so most projects never need to call `components release` directly — it remains useful for CI compositions and Verify phases outside `chant run`'s own execution.
 
@@ -89,15 +91,50 @@ chant components status prod --compare-to staging --json
 | `--json` | Emit a stable array of rows (or `{ rows, comparisons }` with `--compare-to`). |
 | `--compare-to <env>` | Cross-check the requested env's recorded digest against another environment's, per component. |
 
+### `components export <env>`
+
+Materialize a persisted [build archive](/chant/components/build-archive/) manifest to a portable, downloadable directory: every `image`/`template`/`asset`/`sbom` entry copied byte-for-byte from where the build that produced it left it on disk (its archive-relative `path`, resolved against the current working directory) into `-o <dir>`, plus a self-describing `manifest.json` alongside them. No re-synthesis — it never regenerates content, only copies what a prior `chant build`/`run --components` already produced, so the export is byte-identical to what was built (promote-by-digest holds).
+
+```bash
+chant components export prod --component search-service -o ./dist/search-service
+chant components export --digest sha256:9fae3d7c... -o ./dist/search-service --json
+```
+
+Manifest resolution:
+
+- `--digest <manifestDigest>` reads the manifest directly, independent of any environment or release record.
+- Without `--digest`, resolves "the manifest behind this component's most recent successful run" in `<env>`: the latest release record's own `manifestDigest` when one was recorded, else a reverse lookup by its promoted artifact digest — the same join `chant components status` performs.
+
+| Flag | Meaning |
+|---|---|
+| `--component <name>` | Required unless `--digest` is given. Which component's most recent recorded build to export. |
+| `--digest <manifestDigest>` | Export this build archive manifest directly, bypassing environment/component resolution. |
+| `-o, --output <dir>` | Required. Directory the archive is materialized into. |
+| `--json` | Emit a structured per-entry summary instead of a human-readable list. |
+
+A source file missing on disk (the build ran somewhere else, or its output was since cleaned) is reported per entry, and the command exits non-zero — an incomplete export is never mistaken for a complete one. Run it from the same checkout the build that produced the manifest ran in.
+
+```json
+{
+  "component": "search-service",
+  "manifestDigest": "sha256:9fae3d...",
+  "outDir": "/abs/path/dist/search-service",
+  "entries": [
+    { "kind": "template", "path": "search.template.json", "digest": "sha256:...", "status": "materialized" },
+    { "kind": "image", "path": "dist/app.tar", "digest": "sha256:...", "status": "materialized" }
+  ]
+}
+```
+
 ## Exit Codes
 
 | Code | Meaning |
 |------|---------|
 | 0 | Success |
-| 1 | Error (missing required flags, unresolvable actor, concurrent ledger write) |
+| 1 | Error (missing required flags, unresolvable actor, concurrent ledger write, no manifest found, an export entry missing on disk) |
 
 ## See Also
 
 - [Observability](/chant/components/observability/) — the release ledger, build-ledger referrer discovery, and the reconciliation model this command implements.
 - [`chant lifecycle`](/chant/cli/lifecycle/) — snapshots, `diff --live`, and `plan`, whose ownership/drift classification `components status --live` reuses.
-- [Build Archive](/chant/components/build-archive/) — the content-addressed manifest and digest identity the release ledger joins against.
+- [Build Archive](/chant/components/build-archive/) — the content-addressed manifest and digest identity the release ledger joins against, and what `components export` materializes.

@@ -24,7 +24,7 @@ import { runCarveEmit } from "./handlers/carve-emit";
 import { runCarveBridge } from "./handlers/carve-bridge";
 import { runCarveApply } from "./handlers/carve-apply";
 import { runLifecycleSnapshot, runLifecycleShow, runLifecycleDiff, runLifecycleRollback, runLifecyclePlan, runLifecycleAffected, runLifecycleLog, runLifecycleTeardown, runLifecycleUnknown } from "./handlers/lifecycle";
-import { runComponentsStatus, runComponentsReleaseRecord, runComponentsUnknown } from "./handlers/components";
+import { runComponentsStatus, runComponentsReleaseRecord, runComponentsExport, runComponentsUnknown } from "./handlers/components";
 import { runScenarioCheck, runScenarioUnknown } from "./handlers/scenario";
 import { runGraph } from "./handlers/graph";
 import { runExplain } from "./handlers/explain";
@@ -551,6 +551,11 @@ Component release ledger + status:
   components release <env> Append one immutable release record
                             (--component <name> --digest <sha256:...>
                              [--git-sha <sha>] [--run-id <id>] [--actor <name>])
+  components export <env>  Materialize a persisted build archive manifest to
+                            a portable directory (--component <name>
+                            [--digest <manifestDigest>] -o <dir> [--json]);
+                            copies every image/template/asset/sbom entry
+                            byte-for-byte plus a self-describing manifest.json
 
 Lexicon development:
   dev generate          Generate lexicon artifacts (+ validate + coverage)
@@ -674,6 +679,7 @@ Examples:
   chant build ./infra/ --components --generate gitlab --output .gitlab-ci.yml
   chant run --components search-service --env staging
   chant run --components all --env production
+  chant components export prod --component search-service -o ./dist/search-service
   chant import template.json --output ./infra/
   chant import --from prod --name my-bucket --output src/
   chant lint ./infra/
@@ -859,6 +865,7 @@ const registry: CommandDef[] = [
   // Component release ledger + status surface (#568, epic #551)
   { name: "components status", requiresPlugins: true, handler: runComponentsStatus },
   { name: "components release", handler: runComponentsReleaseRecord },
+  { name: "components export", handler: runComponentsExport },
 
   // Local emulators of configured lexicons (#920). Compound so the action word
   // lands in args.path (not consumed as a project dir) and projectPath is forced ".".
