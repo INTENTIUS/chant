@@ -6,7 +6,7 @@ description: "Every lint rule and post-synth check provided by the GitLab CI/CD 
 {/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-gitlab` — DO NOT EDIT.
     Edit lexicons/gitlab/src/codegen/docs.ts instead; changes here are overwritten. */}
 
-The GitLab CI/CD lexicon provides **43** rules: 4 lint rules and 39 post-synth checks.
+The GitLab CI/CD lexicon provides **45** rules: 4 lint rules and 41 post-synth checks.
 
 ## Lint Rules
 
@@ -62,3 +62,5 @@ Post-synth checks validate the serialized output after the build pipeline comple
 | `WGL046` | Cache populated in a merge-request pipeline (poisoning risk) |
 | `WGL047` | Software fetched and piped to a shell without verification |
 | `WGL048` | Pipeline defines workflow: but no workflow:name |
+| `WGL049` | Job installs dependencies with no cache: in scope |
+| `WGL050` | Merge-request-reachable job is not interruptible |
