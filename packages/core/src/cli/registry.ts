@@ -185,6 +185,25 @@ export interface ParsedArgs {
    * what is declared, which is a broader read and a different claim.
    */
   ambient?: boolean;
+  /**
+   * `chant search "<q>" --at <ref> --check-live --env <name>` (#1268) —
+   * additionally read the estate live and diff the matched rows against the
+   * snapshot the answer came from, reusing `diffLive` (the same engine
+   * `lifecycle diff --live` uses) scoped to just those rows. Requires `--at`.
+   */
+  checkLive?: boolean;
+  /**
+   * `chant search "<q>" --live --check-snapshot --env <name>` (#1268) — the
+   * reverse of `--check-live`: answer live, diff the matched rows against the
+   * most recently recorded snapshot. Requires `--live`.
+   */
+  checkSnapshot?: boolean;
+  /**
+   * `chant search "<q>" --check-live|--check-snapshot --fail-on-drift`
+   * (#1268) — exit non-zero when the scoped check finds drift, so it is usable
+   * as a CI gate. Meaningless without one of the two flags above.
+   */
+  failOnDrift?: boolean;
 
   /** `chant dev surface-diff --run-examples` — also run the example build harness */
   runExamples?: boolean;

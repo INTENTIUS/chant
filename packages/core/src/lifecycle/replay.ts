@@ -17,7 +17,7 @@
 import { readEnvironmentSnapshots } from "./git";
 import { unqualifiedKey } from "./identity";
 import type { LiveObservation } from "../graph-ir";
-import type { LifecycleSnapshot } from "./types";
+import type { LifecycleSnapshot, ObservationDepth } from "./types";
 
 /**
  * Rebuild observations from a recorded snapshot (#1266).
@@ -52,7 +52,10 @@ export async function replaySnapshots(
   environment: string,
   ref: string,
   scopedStacks: Set<string>,
-): Promise<{ observations: LiveObservation[]; commit: string; timestamp: string } | { error: string; hint?: string }> {
+): Promise<
+  | { observations: LiveObservation[]; commit: string; timestamp: string; depth: ObservationDepth }
+  | { error: string; hint?: string }
+> {
   if (ref !== "latest" && ref !== "true") {
     return {
       error: `chant search --at only accepts "latest" for now, got "${ref}"`,
@@ -69,6 +72,10 @@ export async function replaySnapshots(
   const observations: LiveObservation[] = [];
   let commit = "";
   let timestamp = "";
+  // "deep" when ANY recorded lexicon read that deep — a consumer comparing
+  // against this replay (#1268) needs to know a richer record exists, even
+  // though a replay itself only ever turns `resources` back into identity.
+  let depth: ObservationDepth = "identity";
   // Ambient and dependency resources are keyed by physical id and are
   // account-level: the default security group three stacks each recorded is one
   // group, not three. Managed resources are stack-qualified below and cannot
@@ -187,6 +194,7 @@ export async function replaySnapshots(
     if (!timestamp || (snapshot.timestamp && snapshot.timestamp < timestamp)) {
       timestamp = snapshot.timestamp ?? timestamp;
     }
+    if (snapshot.depth === "deep") depth = "deep";
   }
-  return { observations, commit, timestamp };
+  return { observations, commit, timestamp, depth };
 }

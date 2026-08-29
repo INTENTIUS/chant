@@ -8,7 +8,11 @@ import { discover } from "../../discovery/index";
 
 import { observeResources } from "../../lifecycle/observe";
 import { replaySnapshots, hasSnapshot } from "../../lifecycle/replay";
+import { diffLive, type LiveDiffResult } from "../../lifecycle/live-diff";
 import type { LiveObservation } from "../../graph-ir";
+import type { ResourceMetadata } from "../../lexicon";
+import type { ObservationDepth } from "../../lifecycle/types";
+import { formatUnobserved } from "../../observation";
 import { loadChantConfig, matchesDeclaredEnvironment } from "../../config";
 import { loadPlugins, resolveProjectLexicons } from "../plugins";
 import { formatError, formatWarning } from "../format";
@@ -56,6 +60,31 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
   }
   const show = parseShow(args);
 
+  // Query-scoped drift (#1268): --check-live checks a snapshot answer against
+  // a live read, --check-snapshot checks a live answer against the recorded
+  // snapshot — the direction each needs is the source it does NOT already have.
+  if (args.checkLive && !args.at) {
+    console.error(formatError({
+      message: "chant search --check-live needs --at <ref>",
+      hint: "answer from a snapshot and check the matched rows against a live read: --at latest --check-live --env <name>",
+    }));
+    return 1;
+  }
+  if (args.checkSnapshot && !args.live) {
+    console.error(formatError({
+      message: "chant search --check-snapshot needs --live",
+      hint: "answer live and check the matched rows against the recorded snapshot: --live --check-snapshot --env <name>",
+    }));
+    return 1;
+  }
+  if (args.failOnDrift && !args.checkLive && !args.checkSnapshot) {
+    console.error(formatError({
+      message: "chant search --fail-on-drift needs --check-live or --check-snapshot",
+      hint: "it fails the check those flags run, so it is meaningless without one",
+    }));
+    return 1;
+  }
+
   const projectPath = resolve(".");
   const { config } = await loadChantConfig(projectPath);
 
@@ -73,6 +102,14 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
   let ambientKinds: string[] = [];
   // Set only on a replay: whether the recording itself holds ambient resources.
   let replayAmbient: { recordedAmbient: boolean } | undefined;
+  // Query-scoped drift (#1268): the OTHER observation, read only when
+  // --check-live/--check-snapshot asked for one — the declared canvas to
+  // classify against, and whether the exit code should reflect what it found.
+  let checkObservations: LiveObservation[] | undefined;
+  let primaryObservations: LiveObservation[] | undefined;
+  let declaredForDrift: GraphIR | undefined;
+  let snapshotDepth: ObservationDepth | undefined;
+  let driftFailure = false;
   if (args.live || args.at) {
     const environment = args.env;
     if (!environment) {
@@ -126,6 +163,21 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
         ),
       };
       source = { kind: "snapshot", commit: replay.commit, timestamp: replay.timestamp };
+      snapshotDepth = replay.depth;
+      if (args.checkLive) {
+        // A fresh live read, additional to the snapshot the answer itself came
+        // from — this is what the matched rows get checked against.
+        const liveCheck = await observeResources(environment, observing, buildResult, {
+          owned: true,
+          stacks,
+          ambient: args.ambient === true,
+        });
+        for (const e of liveCheck.errors) {
+          liveFailures.push(e);
+          console.error(formatError({ message: `live read failed — ${e}` }));
+        }
+        checkObservations = liveCheck.observations;
+      }
     } else {
       const observed = await observeResources(environment, observing, buildResult, {
         owned: true,
@@ -142,7 +194,22 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
       observations = observed.observations;
       liveNotes = observed.notes ?? [];
       source = { kind: "live" };
+      if (args.checkSnapshot) {
+        // The reverse direction: answer live, check the matched rows against
+        // the most recently recorded snapshot. Missing entirely is not a
+        // failure of THIS command — the live answer already stands — so it is
+        // a note, not an error.
+        const scoped = new Set(stacks.filter((st) => st.src).map((st) => st.name));
+        const checkReplay = await replaySnapshots(environment, "latest", scoped);
+        if ("error" in checkReplay) {
+          console.error(formatWarning({ message: `--check-snapshot: ${checkReplay.error}` }));
+        } else {
+          checkObservations = checkReplay.observations;
+          snapshotDepth = checkReplay.depth;
+        }
+      }
     }
+    primaryObservations = observations;
     let live = buildLiveGraphIr(observations);
     // Containment edges, kept aside until after the overlay (see below).
     let containmentEdges: IREdge[] = [];
@@ -206,6 +273,7 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
       stacks.length > 0
         ? await buildDeclaredPerStack(stacks, projectPath)
         : buildGraphIr((await discover(resolve(args.src ?? config.sourceDir ?? "."))).entities, projectPath);
+    declaredForDrift = declared;
     // Carry the NOT-OBSERVED half of the tri-state (#1089) onto the rows, so a
     // declared entity nobody could read is painted `_unobserved` and a row can
     // say so instead of printing blank where a physical id would go (#1263).
@@ -279,6 +347,29 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
   // Qualifies the provenance line, so it sits with it: one line per distinct
   // note for the whole run, not one per stack, and after the rows (#1265).
   for (const n of liveNotes) console.error(formatWarning({ message: n }));
+  // Query-scoped drift (#1268): the matched rows, and only the matched rows,
+  // checked against the observation the primary answer did NOT use. Scoping
+  // both sides of diffLive() to the matched ids is what keeps a query-scoped-
+  // out resource from reading as `missing` or `unobserved` — it was never
+  // asked about, which is a third thing from both.
+  if (checkObservations && declaredForDrift && primaryObservations) {
+    const declaredIds = new Set(declaredForDrift.nodes.map((n) => n.id));
+    const matchedIds = new Set(matches.map((n) => n.id));
+    const nowObservations = args.checkLive ? checkObservations : primaryObservations;
+    const thenObservations = args.checkLive ? primaryObservations : checkObservations;
+    const driftCount = renderDrift(
+      diffLive({
+        declared: new Set([...matchedIds].filter((id) => declaredIds.has(id))),
+        observedNow: pickResources(mergeResources(nowObservations), matchedIds),
+        observedThen: pickResources(mergeResources(thenObservations), matchedIds),
+        unobserved: pickResources(collectUnobserved(nowObservations), matchedIds),
+      }),
+      matches.length,
+      args.checkLive ? "live" : "snapshot",
+      snapshotDepth,
+    );
+    if (args.failOnDrift && driftCount > 0) driftFailure = true;
+  }
   ambientHint(matches, ambientKinds, args.ambient === true, replayAmbient);
   showMiss(matches, show);
   regionSpread(terms, matches, show);
@@ -297,6 +388,7 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
     }));
     return 1;
   }
+  if (driftFailure) return 1;
   return 0;
 }
 
@@ -461,6 +553,63 @@ function provenance(matches: IRNode[], source: AnswerSource, recorded?: string, 
   const taken = source.timestamp ? ` taken ${source.timestamp}` : "";
   const at = source.commit ? ` ${source.commit.slice(0, 7)}` : "";
   console.log(`— observed from snapshot${at}${taken} · bound ${bound}/${matches.length}`);
+}
+
+/** Union `LiveObservation.resources` across lexicons into one name-keyed map. */
+function mergeResources(observations: LiveObservation[]): Record<string, ResourceMetadata> {
+  const out: Record<string, ResourceMetadata> = {};
+  for (const o of observations) Object.assign(out, o.resources);
+  return out;
+}
+
+/** Restrict a name-keyed map to the matched ids — the whole of "query-scoped". */
+function pickResources<T>(map: Record<string, T>, ids: Set<string>): Record<string, T> {
+  const out: Record<string, T> = {};
+  for (const id of ids) if (id in map) out[id] = map[id];
+  return out;
+}
+
+/**
+ * Render the query-scoped drift check (#1268) — one line per matched resource
+ * whose {@link diffLive} verdict is not `unchanged`, then a summary.
+ *
+ * Reuses `diffLive` unmodified, so every category means exactly what it means
+ * in `lifecycle diff --live`: `missing`/`orphan`/`disappeared`/`drifted` count
+ * as drift, the same set `lifecycle diff` totals; `newlyObserved` and runtime
+ * children are reported but do not, and `unobserved` — a read that could not
+ * look — stays distinct from both, the same #1089 tri-state everywhere else.
+ */
+function renderDrift(
+  diff: LiveDiffResult,
+  checked: number,
+  direction: "live" | "snapshot",
+  depth?: ObservationDepth,
+): number {
+  for (const name of diff.missing) console.log(`⚠ ${name} — missing (declared, not found by this check)`);
+  for (const name of diff.orphan) console.log(`⚠ ${name} — orphan (observed, not declared)`);
+  for (const name of diff.disappeared) console.log(`⚠ ${name} — disappeared since the recorded snapshot`);
+  for (const drift of diff.driftedSinceSnapshot) {
+    for (const change of drift.changes) {
+      console.log(`⚠ ${drift.name}  ${change.path}: ${formatValue(change.oldValue)} → ${formatValue(change.newValue)} — drifted`);
+    }
+  }
+  for (const name of diff.newlyObserved) console.log(`  · ${name} — newly observed since the recorded snapshot`);
+  for (const r of diff.runtimeChildren) console.log(`  · ${r.name} (${r.type}) — runtime, owned by ${r.owner}`);
+  for (const u of diff.unobserved) console.log(`  ? ${formatUnobserved(u.name, u)}`);
+  const driftCount = diff.missing.length + diff.orphan.length + diff.disappeared.length + diff.driftedSinceSnapshot.length;
+  const label = direction === "live" ? "a live read" : "the recorded snapshot";
+  const depthNote = depth === "deep" ? " · snapshot recorded at deep depth, compared here at identity" : "";
+  console.log(
+    `— checked against ${label} · ${driftCount > 0 ? `${driftCount} of ${checked} matched drifted` : `no drift across ${checked} matched`}${depthNote}`,
+  );
+  return driftCount;
+}
+
+function formatValue(v: unknown): string {
+  if (v === undefined) return "<unset>";
+  if (typeof v === "string") return v.length > 60 ? v.slice(0, 57) + "..." : v;
+  const json = JSON.stringify(v);
+  return json.length > 60 ? json.slice(0, 57) + "..." : json;
 }
 
 /**
@@ -815,4 +964,4 @@ function formatRow(n: IRNode, show: string[]): string {
 }
 
 /** Internals exposed for unit tests. */
-export const __searchInternals = { parseQuery, matchTerm, formatRow, explain, describeTerm, derivedSurface, availableAttrs, ambientHint, regionSpread, showMiss, provenance };
+export const __searchInternals = { parseQuery, matchTerm, formatRow, explain, describeTerm, derivedSurface, availableAttrs, ambientHint, regionSpread, showMiss, provenance, renderDrift, mergeResources, pickResources };

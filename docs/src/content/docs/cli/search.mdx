@@ -7,7 +7,7 @@ diataxis: reference
 ## Synopsis
 
 ```
-chant search "<query>" [--live --env <name>] [flags]
+chant search "<query>" [--live | --at <ref>] [--env <name>] [flags]
 ```
 
 ## Description
@@ -75,10 +75,15 @@ chant search "kind:EC2::Instance attr:internetFacing=true attr:effectiveIngress=
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `--live` | `boolean` | `false` | Query live state overlaid on the declared graph (requires `--env`) |
+| `--at` | `string` | — | Answer from a recorded snapshot instead of reading the estate now (`latest`; requires `--env`; mutually exclusive with `--live`) |
 | `--env` | `string` | — | Environment to observe (must be in `chant.config` `environments` when declared) |
 | `--src` | `string` | config `sourceDir` or `.` | Source directory to discover/build |
 | `--show` | `string` | — | Comma-separated attribute names to append to each result row |
 | `--explain` | `boolean` | `false` | Print the match-universe footer and near-miss exclusions |
+| `--ambient` | `boolean` | `false` | Also report resources of a managed kind that exist without being declared or referenced |
+| `--check-live` | `boolean` | `false` | With `--at`: additionally read the estate live and diff the matched rows against the snapshot the answer came from |
+| `--check-snapshot` | `boolean` | `false` | With `--live`: additionally diff the matched rows against the most recently recorded snapshot |
+| `--fail-on-drift` | `boolean` | `false` | With `--check-live`/`--check-snapshot`: exit non-zero when the scoped check finds drift |
 
 ## `--explain`
 
@@ -121,6 +126,45 @@ them. The rows printed are what the source declares, labelled as such; answer
 from a recorded snapshot with `--at latest` or drop `--live` for a declared-only
 query.
 
+## Query-scoped drift
+
+`--check-live` and `--check-snapshot` compare the matched rows — and only the
+matched rows — against the observation the primary answer did not use. Where
+`lifecycle diff --live` asks "has anything changed anywhere", this asks "is
+what I was just told still true", about the resources in front of you, in the
+same command that produced them.
+
+```
+$ chant search "kind:EC2::Instance" --env prod --at latest --check-live
+webServer             AWS::EC2::Instance  i-e392157f576caf855
+launchTemplateServer  AWS::EC2::Instance  i-ee2744528df10ea0d
+⚠ webServer  attributes.SubnetId: subnet-2faec80b → subnet-9f01ab3c — drifted
+— checked against a live read · 1 of 2 matched drifted
+```
+
+The reverse framing answers live and checks the record for staleness:
+
+```bash
+chant search "kind:EC2::Instance" --env prod --live --check-snapshot
+```
+
+Both reuse `diffLive` — the exact function `lifecycle diff --live` calls —
+scoped to the matched entity ids, so the categories and what counts as drift
+are identical: `missing`/`orphan`/`disappeared`/`drifted` are drift,
+`newlyObserved` and runtime children are reported but are not, and
+`unobserved` (a read that could not look) stays distinct from both. A resource
+the query scoped out is a fourth thing again — never reported as missing or
+unobserved, because it was never asked about.
+
+`--check-live` requires `--at`; `--check-snapshot` requires `--live` — each
+checks the answer against the source it did not already use. `--fail-on-drift`
+exits non-zero when the check finds drift, so it is usable as a CI gate; a
+missing snapshot for `--check-snapshot` is a note on stderr, not a failure —
+the live answer already stands. A snapshot recorded with `chant lifecycle
+snapshot <env> --deep` compares here at identity depth regardless, and the
+footer says so, rather than reporting every property the identity-depth side
+never recorded as drift.
+
 ## Usage
 
 ```bash
@@ -131,11 +175,15 @@ chant search "tag:Environment=prod"
 # live estate questions
 chant search "kind:EC2::Instance attr:internetFacing=true" --live --env dev
 chant search "kind:Instance ->attr:MapPublicIpOnLaunch=true" --live --env dev --explain
+
+# query-scoped drift
+chant search "kind:EC2::Instance" --env prod --at latest --check-live
+chant search "kind:EC2::Instance" --env prod --live --check-snapshot --fail-on-drift
 ```
 
 ## Exit Codes
 
 | Code | Meaning |
 |------|---------|
-| 0 | Query ran (including zero matches — prints `(no matches)`) |
-| 1 | Missing query, missing/unknown `--env`, build failure in `--live` mode, or a `--live` read that failed for at least one lexicon (rows are printed, marked unobserved) |
+| 0 | Query ran (including zero matches — prints `(no matches)`), including a scoped check that found drift without `--fail-on-drift` |
+| 1 | Missing query, missing/unknown `--env`, build failure in `--live` mode, a `--live`/`--check-live` read that failed for at least one lexicon (rows are printed, marked unobserved), `--check-live`/`--check-snapshot` used without its required flag, `--fail-on-drift` used without either, or `--fail-on-drift` with drift found |
