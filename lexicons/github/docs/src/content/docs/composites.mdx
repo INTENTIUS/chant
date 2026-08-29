@@ -354,3 +354,29 @@ export const dependabot = Dependabot({
 **Props:** `ecosystems` (required — each `{ packageEcosystem, directory?, interval? }`), `cooldownDays?` (default 7), `openPullRequestsLimit?` (default 5)
 
 For full control, construct the `DependabotConfig` resource directly with raw `updates:` entries. Two post-synth checks validate the emitted config: **GHA057** (`insecure-external-code-execution: allow`) and **GHA058** (no cooldown). See [Lint Rules](/chant/lexicons/github/lint-rules/).
+
+## PrPlanReport
+
+Runs `chant lifecycle plan <environment> --report markdown` and posts (or updates) one sticky PR comment with the result — the compiled diff reaches the reviewer without being asked for. Guarded on `github.event_name == 'pull_request'`, since the comment targets `github.event.number`.
+
+```typescript
+import { PrPlanReport } from "@intentius/chant-lexicon-github";
+
+export const plan = PrPlanReport({
+  environment: "prod",
+  // credential setup — the plan queries the live system to classify drift
+  before: ["aws sts get-caller-identity"],
+}).job;
+```
+
+The job builds, plans, writes the markdown to `plan.md` with a hidden marker prepended (`<!-- chant-pr-plan-report:prod -->` by default — one per `environment`, so two environments get two comments), then finds a comment already carrying that marker and `PATCH`es it, or `POST`s a new one. Same mechanism `examples/github-pr-preview` proved for the preview-environment comment: a scripted `gh api` call keyed on the marker, no marketplace action to pin.
+
+The job needs its own `Workflow` (`on: pull_request`) declared alongside it — `PrPlanReport` returns only the job, the same as `DeployEnvironment`.
+
+**Props:** `environment` (required), `lexicon?`, `ownedOnly?`, `runsOn?`, `nodeVersion?`, `installCommand?`, `before?`, `postComment?` (default `true` — the explicit opt-out), `marker?`
+
+Caveats worth knowing:
+
+- **Opt-out is explicit.** `postComment: false` still runs the plan (useful to read in the job log, or ahead of turning the comment on) without posting anything.
+- **The plan reads the live system**, so the job needs cloud credentials — wire them via `before` or CI variables, same as `MrPlanReport` on GitLab.
+- **Forgejo gets this for free.** The forgejo lexicon re-exports every github composite through its dialect (`@intentius/chant-lexicon-forgejo` re-exports `@intentius/chant-lexicon-github`), so `PrPlanReport` works unchanged there — the dialect still drops the job's `permissions` and remaps its runner label, same as any other github-lexicon job.
