@@ -34,6 +34,15 @@ function stackPrefix(file: string, buildRoot: string | undefined): string {
   return segments.map((s) => s.charAt(0).toUpperCase() + s.slice(1)).join("");
 }
 
+/**
+ * Whole-entity origin for a declarable a file exported directly (chant #1443).
+ * A composite's members get theirs from `expandComposite`, which knows the
+ * composite and the instance; a direct export has nothing between the source
+ * file and the resource. Merged key-by-key, so a path the fold path already
+ * attributed to a build parameter is not overwritten.
+ */
+const AUTHORED_ROOT: EntityProvenance["paths"] = { "": { kind: "authored" } };
+
 /** One entity to be placed into the map, produced by {@link enumerateEntries}. */
 interface PendingEntry {
   /** The un-disambiguated map key this entity would take (export name, indexed
@@ -73,12 +82,12 @@ function enumerateEntries(
     for (const [rawName, value] of sortedExports) {
       const name = exportKey(rawName, file);
       if (isDeclarable(value)) {
-        entries.push({ bareKey: name, value, file, provenance: { sourceFile: file } });
+        entries.push({ bareKey: name, value, file, provenance: { sourceFile: file, paths: AUTHORED_ROOT } });
       } else if (Array.isArray(value)) {
         for (let i = 0; i < value.length; i++) {
           const item = value[i];
           if (isDeclarable(item)) {
-            entries.push({ bareKey: `${name}_${i}`, value: item, file, provenance: { sourceFile: file } });
+            entries.push({ bareKey: `${name}_${i}`, value: item, file, provenance: { sourceFile: file, paths: AUTHORED_ROOT } });
           } else if (isCompositeInstance(item)) {
             const indexedName = `${name}_${i}`;
             for (const [expandedName, entity] of expandComposite(indexedName, item)) {

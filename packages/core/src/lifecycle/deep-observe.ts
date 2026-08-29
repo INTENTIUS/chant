@@ -27,11 +27,21 @@ import {
   type NormalizedDeepObservation,
 } from "../deep-observation";
 import { unobservedAll, type UnobservedEntity } from "../observation";
+import type { PathOrigin } from "../provenance";
 import { diffDeep, type DeclaredDeepEntity, type DeepDiffResult } from "./deep-diff";
 import type { BaselineLexicon } from "./observation-baseline";
 
-/** Declared entities for one lexicon, in the shape the observe paths pass around. */
-export type DeclaredEntities = Map<string, { entityType: string; props: Record<string, unknown> }>;
+/**
+ * Declared entities for one lexicon, in the shape the observe paths pass around.
+ *
+ * `pathOrigins` (#1443) rides alongside `props` rather than being read off the
+ * entity, because callers rebuild this map as plain objects and the symbol-keyed
+ * provenance channel does not survive that copy.
+ */
+export type DeclaredEntities = Map<
+  string,
+  { entityType: string; props: Record<string, unknown>; pathOrigins?: Record<string, PathOrigin> }
+>;
 
 export interface DeepObserveOptions {
   environment: string;
@@ -138,6 +148,7 @@ export function diffDeepObservation(
         hooks,
         counterpartPaths: livePaths,
       }),
+      ...(entity.pathOrigins ? { pathOrigins: entity.pathOrigins } : {}),
     };
     if (liveEntity) {
       normalizedLive[name] = {

@@ -202,3 +202,78 @@ describe("diffDeep — owning field manager (#1189)", () => {
     expect(change).not.toHaveProperty("owner");
   });
 });
+
+// #1443 — the declared-side counterpart of `owner`. Both sides of one
+// comparison get precise attribution, which is what makes the report actionable.
+describe("diffDeep — declared-side origin (#1443)", () => {
+  const declared = {
+    web: {
+      type: "K8s::Apps::Deployment",
+      properties: { spec: { replicas: 2, template: { spec: { containers: [{ name: "app", image: "a:1" }] } } } },
+      pathOrigins: {
+        "": { kind: "composite", composite: "WebService", instance: "web" } as const,
+        "spec.replicas": { kind: "build-param", params: ["tier"] } as const,
+      },
+    },
+  };
+
+  test("reports the origin alongside the live owner", () => {
+    const result = diffDeep({
+      declared,
+      live: live({
+        web: {
+          type: "K8s::Apps::Deployment",
+          properties: { spec: { replicas: 5, template: { spec: { containers: [{ name: "app", image: "a:1" }] } } } },
+          fieldOwners: { "spec.replicas": "hpa-controller" },
+        },
+      }),
+    });
+    expect(result.drifted[0].changes[0]).toMatchObject({
+      path: "spec.replicas",
+      owner: "hpa-controller",
+      origin: { kind: "build-param", params: ["tier"] },
+    });
+  });
+
+  test("a path with no origin of its own inherits the nearest recorded ancestor", () => {
+    const result = diffDeep({
+      declared,
+      live: live({
+        web: {
+          type: "K8s::Apps::Deployment",
+          properties: { spec: { replicas: 2, template: { spec: { containers: [{ name: "app", image: "a:2" }] } } } },
+        },
+      }),
+    });
+    const change = result.drifted[0].changes.find((c) => c.path.includes("image"))!;
+    expect(change.origin).toEqual({ kind: "composite", composite: "WebService", instance: "web" });
+  });
+
+  test("is absent on an undeclared path — nothing in source produced it", () => {
+    const result = diffDeep({
+      declared,
+      live: live({
+        web: {
+          type: "K8s::Apps::Deployment",
+          properties: {
+            spec: { replicas: 2, template: { spec: { containers: [{ name: "app", image: "a:1" }] } } },
+            status: { observed: 1 },
+          },
+        },
+      }),
+    });
+    const change = result.drifted[0].changes.find((c) => c.path === "status.observed")!;
+    expect(change.kind).toBe("undeclared");
+    expect(change).not.toHaveProperty("origin");
+  });
+
+  test("is absent when the build recorded no path origins", () => {
+    // The run path, and a sandboxed child: absent means "could not record",
+    // not "nothing governs this field", so the key must not appear at all.
+    const result = diffDeep({
+      declared: { web: { type: "K8s::Apps::Deployment", properties: { spec: { replicas: 2 } } } },
+      live: live({ web: { type: "K8s::Apps::Deployment", properties: { spec: { replicas: 5 } } } }),
+    });
+    expect(result.drifted[0].changes[0]).not.toHaveProperty("origin");
+  });
+});
