@@ -987,6 +987,102 @@ describe("runOp dispatcher", () => {
   });
 });
 
+/**
+ * chant #2003 — `--sandbox` is a global flag and `../main.ts` arms the
+ * process-wide policy latch off it for every command, so `chant run <op>
+ * --sandbox` on an Op with a `policyGate` step used to reach `loadPolicyChecks`
+ * mid-run and show the user a message written for a chant maintainer ("This is
+ * a chant bug"). At the CLI level, not on `loadPolicyChecks`: the defect was
+ * that the combination got that far, not what the refusal says.
+ */
+describe("runOp: --sandbox with a policyGate step (chant #2003)", () => {
+  const policyGateOp = (name: string) =>
+    localOp(name, [{ kind: "activity", fn: "policyGate", args: { path: "." } }]);
+
+  beforeEach(() => {
+    discoverOpsMock.mockReset();
+    loadTemporalClientMock.mockReset();
+    loadChantConfigMock.mockReset();
+    resolveProfileMock.mockReset();
+    existsSyncMock.mockReset();
+    spawnChildMock.mockReset();
+  });
+
+  test("local mode → refuses before any phase runs, naming the combination", async () => {
+    discoverOpsMock.mockResolvedValue({ ops: new Map([policyGateOp("gate")]), errors: [] });
+    const stderr = makeStderrSpy();
+
+    const exit = await runOp({ args: makeArgs({ path: "gate", temporal: false, sandbox: true }), plugins: [], serializers: [] });
+
+    expect(exit).toBe(1);
+    const out = stderr.join("\n");
+    expect(out).toContain("policyGate");
+    expect(out).toContain("--sandbox");
+    // The message the user used to get instead.
+    expect(out).not.toContain("This is a chant bug");
+  });
+
+  test("--temporal → the same refusal, as a CLI error rather than an activity failure", async () => {
+    discoverOpsMock.mockResolvedValue({ ops: new Map([policyGateOp("gate")]), errors: [] });
+    const stderr = makeStderrSpy();
+
+    const exit = await runOp({ args: makeArgs({ path: "gate", temporal: true, sandbox: true }), plugins: [], serializers: [] });
+
+    expect(exit).toBe(1);
+    expect(stderr.join("\n")).toContain("policyGate");
+    // Refused before the project config is even loaded — nothing is scheduled.
+    expect(loadChantConfigMock).not.toHaveBeenCalled();
+    expect(loadTemporalClientMock).not.toHaveBeenCalled();
+  });
+
+  test("a policyGate nested in an effect step is found too", async () => {
+    discoverOpsMock.mockResolvedValue({
+      ops: new Map([
+        localOp("gate", [
+          { kind: "effect", steps: [{ kind: "activity", fn: "policyGate", args: { path: "." } }] },
+        ]),
+      ]),
+      errors: [],
+    });
+    const stderr = makeStderrSpy();
+
+    const exit = await runOp({ args: makeArgs({ path: "gate", temporal: false, sandbox: true }), plugins: [], serializers: [] });
+
+    expect(exit).toBe(1);
+    expect(stderr.join("\n")).toContain("policyGate");
+  });
+
+  test("without --sandbox the same Op is not refused", async () => {
+    discoverOpsMock.mockResolvedValue({ ops: new Map([policyGateOp("gate")]), errors: [] });
+    loadChantConfigMock.mockResolvedValue({ config: {} });
+    resolveProfileMock.mockReturnValue({ address: "localhost:7233", namespace: "default", taskQueue: "q" });
+    existsSyncMock.mockReturnValue(false);
+    const stderr = makeStderrSpy();
+
+    // The Temporal path, so the run stops at the missing worker.ts rather than
+    // actually building a project: reaching that point proves the pre-flight
+    // let it through.
+    const exit = await runOp({ args: makeArgs({ path: "gate", temporal: true }), plugins: [], serializers: [] });
+
+    expect(exit).toBe(1);
+    expect(stderr.join("\n")).toContain("worker.ts not found");
+    expect(loadChantConfigMock).toHaveBeenCalled();
+  });
+
+  test("--sandbox on an Op with no policyGate step is untouched", async () => {
+    discoverOpsMock.mockResolvedValue({
+      ops: new Map([localOp("hello", [{ kind: "activity", fn: "shellCmd", args: { cmd: "true" } }])]),
+      errors: [],
+    });
+    const stderrWrite = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+    const exit = await runOp({ args: makeArgs({ path: "hello", temporal: false, sandbox: true }), plugins: [], serializers: [] });
+
+    expect(exit).toBe(0);
+    stderrWrite.mockRestore();
+  });
+});
+
 describe("Temporal-only subcommand guards", () => {
   const cases: Array<[string, (ctx: { args: ParsedArgs; plugins: never[]; serializers: never[] }) => Promise<number>]> = [
     ["list", runOpList],

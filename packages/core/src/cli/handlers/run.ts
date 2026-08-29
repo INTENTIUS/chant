@@ -4,8 +4,9 @@ import { createConnection } from "node:net";
 import { spawn as spawnChild, type ChildProcess } from "node:child_process";
 import { loadChantConfig, resolveAutoReleaseDisabled, type ChantConfig } from "../../config";
 import { discoverOps } from "../../op/discover";
+import type { OpConfig } from "../../op/types";
 import { loadActivities, loadProfiles } from "../../op/activity-registry";
-import { runOpLocally, findGate, LocalGateUnsupportedError, OpRunFailure, type StepRecord } from "../../op/local-executor";
+import { runOpLocally, findGate, findPolicyGateStep, LocalGateUnsupportedError, OpRunFailure, type StepRecord } from "../../op/local-executor";
 import { renderHuman, renderJson } from "../../op/local-output";
 import { formatError, formatWarning, formatSuccess, formatBold, formatInfo } from "../format";
 import { resolveCliBuildParams, parseParamFlags } from "../build-params-cli";
@@ -561,6 +562,32 @@ function renderProgress(opName: string, history: WorkflowHistoryRaw): void {
  * live reaching an actual cloud shell-out. Erroring here is the safe minimum
  * called out on the issue; a real preview is future work.
  */
+/**
+ * Pre-flight for `chant run <op> --sandbox` on an Op containing a `policyGate`
+ * step (chant #2003). `--sandbox` is a global flag, and `../main.ts` arms the
+ * process-wide policy latch off it for every command — so the gate's
+ * `loadPolicyChecks` refuses mid-run with a message addressed to a chant
+ * maintainer ("This is a chant bug"), or, under `--temporal`, as a
+ * non-retryable activity failure inside the workflow. Neither is an answer a
+ * user can act on. Refuse here instead, before anything runs, naming the
+ * combination and what to do about it.
+ *
+ * Keyed on the flag rather than on whether the project declares
+ * `lint.policies`: the flag is what arms the latch, and a gate that builds the
+ * project in this process is a divergence from what `--sandbox` promises
+ * whether or not a policy module happens to be declared. Returns true when the
+ * caller should stop.
+ */
+function refusesPolicyGateUnderSandbox(ctx: CommandContext, config: OpConfig, opName: string): boolean {
+  if (!ctx.args.sandbox) return false;
+  if (!findPolicyGateStep(config)) return false;
+  console.error(formatError({
+    message: `Op "${opName}" has a policyGate step, which cannot run under --sandbox: the gate builds this project and imports its lint.policies in the chant process, which --sandbox forbids.`,
+    hint: "Re-run without --sandbox, or drop the policyGate step from this Op. Running the gate itself inside the sandbox boundary is tracked on chant#1157.",
+  }));
+  return true;
+}
+
 export async function runOp(ctx: CommandContext): Promise<number> {
   if (ctx.args.components && ctx.args.report) {
     console.error(formatError({
@@ -1061,6 +1088,9 @@ export async function runOpLocal(ctx: CommandContext): Promise<number> {
 
   const { config } = discovered;
 
+  // Pre-flight: --sandbox cannot cover a policyGate step (#2003).
+  if (refusesPolicyGateUnderSandbox(ctx, config, opName)) return 1;
+
   // Pre-flight: gates/schedules need a durable runtime — fail before any step.
   const gate = findGate(config);
   if (gate) {
@@ -1145,6 +1175,12 @@ async function runOpTemporal(ctx: CommandContext): Promise<number> {
   }
 
   const { config } = discovered;
+
+  // Pre-flight: --sandbox cannot cover a policyGate step (#2003). Refused here
+  // too, so the durable path fails as a CLI error rather than as a
+  // non-retryable activity failure buried in workflow history.
+  if (refusesPolicyGateUnderSandbox(ctx, config, opName)) return 1;
+
   const projectPath = resolve(".");
 
   // Load config + profile

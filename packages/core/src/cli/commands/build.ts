@@ -5,17 +5,15 @@ import {
   resolveOwnershipEnv,
   ownershipEnvDisagreement,
   isOwnershipParamRef,
-  resolveFoldEnabled,
-  resolveSandboxEnabled,
   resolveKnowledgeDir,
 } from "../../config";
+import { resolveBuildModes, resolveProjectBuildOptions } from "../build-options";
 import { loadOkfBundle } from "../../okf-read";
 import { unknownEnvError } from "../../env";
 import type { OwnershipMarker } from "../../ownership";
 import { resolveCliBuildParams } from "../build-params-cli";
 import type { Serializer, SerializerResult } from "../../serializer";
 import type { LexiconPlugin } from "../../lexicon";
-import { resolveLexiconVersions, collectBuildRootContributors } from "../plugins";
 import { runPostSynthChecks } from "../../lint/post-synth";
 import { coreReceiptChecks } from "../../lint/receipt-checks";
 import { coreOutputChecks } from "../../lint/output-checks";
@@ -182,15 +180,14 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
   const configDir = loaded.configPath ? dirname(loaded.configPath) : infraPath;
   const policies = config.lint?.policies ?? [];
 
-  // #1022/#1134 — fold is the default build path: an explicit CLI flag
-  // (--fold/--no-fold) wins over `chant.config.ts`'s `build.fold`, which
-  // wins over the default of `true`.
-  const fold = resolveFoldEnabled(config, options.fold);
-
-  // #1045 Phase 2 — opt-in sandboxed execution of run-fallback files (or,
-  // without --fold, every file). Same CLI-flag-wins-over-config precedence
-  // as fold, resolved independently.
-  const sandbox = resolveSandboxEnabled(config, options.sandbox);
+  // #1022/#1134 (fold) and #1045 Phase 2 (sandbox) — an explicit CLI flag
+  // (--fold/--no-fold, --sandbox) wins over `chant.config.ts`'s
+  // `build.fold`/`build.sandbox`, which wins over the defaults (fold on,
+  // sandbox off). Resolved here rather than with the rest of the build
+  // options below because arming sandboxed policy execution has to happen
+  // before any policy module could be loaded — see #2002 in ../build-options.ts.
+  const modes = resolveBuildModes(config, { fold: options.fold, sandbox: options.sandbox });
+  const { fold, sandbox } = modes;
 
   // #1131 — arm sandboxed policy execution from the RESOLVED value, before any
   // policy module could be loaded. Resolved, not `options.sandbox`, because
@@ -301,48 +298,22 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
     }
   }
 
-  // #1039 — thread each loaded plugin's registered intrinsics (e.g. AWS's
-  // `Sub`) through to the fold path, so a file using a registered intrinsic
-  // tagged template folds instead of unconditionally falling back to run.
-  // `intrinsics` is an optional plugin extension (not every lexicon defines
-  // any), hence the guard.
-  const intrinsics = options.plugins?.flatMap((plugin) => plugin.intrinsics?.() ?? []) ?? [];
-
-  // #1063 — the same loaded plugins, by NAME, are this build's allowlist for
-  // following a bare import specifier into a lexicon package (so `Azure`,
-  // `GCP`, `S3Actions`, `CI` fold as values). A plugin's `name` is the
-  // lexicon name `loadPlugin()` was called with, which is exactly what
-  // `@intentius/chant-lexicon-<name>` was imported from — see
-  // ../plugins.ts and fold-import.ts's `lexiconPackageName`.
-  const lexicons = options.plugins?.map((plugin) => plugin.name) ?? [];
-
-  // chant #1442 — which lexicon VERSION interpreted each declaration. The
-  // declaration is fingerprinted by `hashProps`; the thing that turned it into
-  // output was not recorded at all, so a lexicon bump that changed emitted
-  // output left the build digest identical. Captured here because this is the
-  // layer that knows which lexicons were loaded — `build()` is given only
-  // their names.
-  const lexiconVersions = resolveLexiconVersions(lexicons);
-
-  // Run the build
-  const result = await build(infraPath, options.serializers, undefined, {
-    ownership,
-    config: config as unknown as Record<string, unknown>,
-    fold,
-    sandbox,
-    intrinsics,
-    lexicons,
-    lexiconVersions,
-    buildParams: paramsResolution.provenance,
-    // #1548 piece 3 — config-declared build roots (kustomize dirs), rendered
-    // into entities by the owning lexicon's hook. Rooted at the config dir,
-    // not the (possibly sourceDir-scoped) infra path.
-    buildRoots: collectBuildRootContributors(
-      options.plugins,
-      config as unknown as Record<string, unknown>,
+  // Run the build. #2002 — every option comes from the shared assembler
+  // (../build-options.ts), which `evaluateProjectPolicies` calls too, so the
+  // `policyGate` step decides on the same project this command builds.
+  const result = await build(
+    infraPath,
+    options.serializers,
+    undefined,
+    resolveProjectBuildOptions({
+      config,
       configDir,
-    ),
-  });
+      plugins: options.plugins,
+      modes,
+      ownership,
+      buildParams: paramsResolution.provenance,
+    }),
+  );
 
   // #1022 — report per-file fold vs run so it's visible what still runs.
   // #1424 — one line by default; the per-file lines and their reasons are
