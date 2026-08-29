@@ -16,6 +16,7 @@ export * from "./build-ledger-store";
 export * from "./oras-referrer-lookup";
 export * from "./status";
 export * from "./teardown";
+export * from "./assert-live";
 export * from "./symptoms";
 export * from "./converge-ledger";
 export * from "./scenario";

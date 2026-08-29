@@ -15,6 +15,12 @@
  *   in-process for exactly this suite's environment. Stateless by design:
  *   a crashed suite's environment is recovered by calling destroy again (or
  *   `chant lifecycle teardown <env> --yes`).
+ * - **assertLive** (#1857) — `describeResources()` against exactly one
+ *   declared entity, turned into a pass or a thrown failure. Preserves
+ *   #1089's tri-state rather than collapsing it: NOT-OBSERVED throws {@link
+ *   UnobservedAssertionError}, never a silent pass and never an ordinary
+ *   failure, because chant could not read the entity is not the same claim
+ *   as chant read it and it is gone.
  *
  * ## Isolation
  *
@@ -44,7 +50,7 @@ import { basename, join, resolve } from "node:path";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { build } from "./build";
-import type { Declarable } from "./declarable";
+import { isResourceDeclarable, type Declarable } from "./declarable";
 import type { SerializerResult } from "./serializer";
 import {
   loadChantConfigUpward,
@@ -55,12 +61,20 @@ import { resolveBuildParams, type BuildParamValue } from "./build-params";
 import { ENV_VAR, unknownEnvError } from "./env";
 import { applyLiveEndpoint } from "./live-endpoint";
 import { loadPlugins, resolveProjectLexicons, collectBuildRootContributors } from "./cli/plugins";
-import type { LexiconPlugin } from "./lexicon";
+import type { LexiconPlugin, ResourceMetadata } from "./lexicon";
 import type { OwnershipMarker } from "./ownership";
 import { runOpLocally } from "./op/local-executor";
 import { loadActivities, loadProfiles, type ActivityFn, type ActivityProfile } from "./op/activity-registry";
 import type { OpConfig, ActivityStep } from "./op/types";
 import { executeTeardown, type TeardownReport } from "./lifecycle/teardown";
+import {
+  assertLiveEntity,
+  LiveAssertionError,
+  UnobservedAssertionError,
+  type AssertLiveOptions,
+} from "./lifecycle/assert-live";
+
+export { LiveAssertionError, UnobservedAssertionError, type AssertLiveOptions };
 
 /**
  * Which `nativeApply` target deploys each lexicon's built output. Only these
@@ -118,6 +132,19 @@ export interface DeployedStack {
   entities: Map<string, Declarable>;
   /** The environment this deploy targeted — the teardown key. */
   env: string;
+  /**
+   * Assert that a declared entity is live: observed present in this
+   * deploy's environment, not confirmed as another stack/env's resource,
+   * and — when `status` is given — reporting that status.
+   *
+   * Rides the observation contract (#1089): an entity `describeResources`
+   * could not cover throws {@link UnobservedAssertionError}, never a pass
+   * and never a plain failure — NOT-OBSERVED is not the same claim as
+   * absent. Observed-absent, a confirmed-foreign identity, or a status
+   * mismatch throws {@link LiveAssertionError}. Resolves to the entity's
+   * `ResourceMetadata` on success.
+   */
+  assertLive(name: string, options?: AssertLiveOptions): Promise<ResourceMetadata>;
   /**
    * Tear down everything carrying this suite's marker `{ stack, env }`.
    * Throws {@link TeardownIncompleteError} when any candidate failed to
@@ -321,6 +348,39 @@ export async function deployStack(options: DeployStackOptions): Promise<Deployed
     applied.restore();
   }
 
+  const assertLive = async (name: string, assertOptions: AssertLiveOptions = {}): Promise<ResourceMetadata> => {
+    const entity = result.entities.get(name);
+    if (!entity) {
+      throw new LiveAssertionError(
+        `assertLive("${name}"): no such entity — this deploy built ${[...result.entities.keys()].join(", ") || "nothing"}.`,
+      );
+    }
+    const entityPlugin = plugins.find((p) => p.name === entity.lexicon);
+    if (!entityPlugin) {
+      throw new LiveAssertionError(`assertLive("${name}"): no loaded lexicon named "${entity.lexicon}".`);
+    }
+    const entityOutput = result.outputs.get(entity.lexicon);
+    const entityBuildOutput =
+      entityOutput === undefined ? "" : typeof entityOutput === "string" ? entityOutput : entityOutput.primary;
+    const props = isResourceDeclarable(entity) ? ((entity.props ?? {}) as Record<string, unknown>) : {};
+
+    const endpointForAssert = applyLiveEndpoint(config.environments, env, plugins);
+    try {
+      return await assertLiveEntity({
+        plugin: entityPlugin,
+        name,
+        entityType: entity.entityType,
+        props,
+        buildOutput: entityBuildOutput,
+        environment: env,
+        marker,
+        ...assertOptions,
+      });
+    } finally {
+      endpointForAssert.restore();
+    }
+  };
+
   const destroy = async (): Promise<TeardownReport> => {
     const endpointForTeardown = applyLiveEndpoint(config.environments, env, plugins);
     let report: TeardownReport;
@@ -334,5 +394,5 @@ export async function deployStack(options: DeployStackOptions): Promise<Deployed
     return report;
   };
 
-  return { outputs: result.outputs, entities: result.entities, env, destroy };
+  return { outputs: result.outputs, entities: result.entities, env, assertLive, destroy };
 }
