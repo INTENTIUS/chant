@@ -20,7 +20,7 @@ import { readFileSync, writeFileSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { build } from "@intentius/chant/build";
-import { discoverCorpus, classifyFoldMode } from "../examples/differential-corpus";
+import { discoverCorpus, classifyFoldMode, entryBuildParams } from "../examples/differential-corpus";
 import { replaceFoldCoverageBlock, FOLD_COVERAGE_DOCS } from "../examples/fold-coverage";
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -29,7 +29,12 @@ const corpus = discoverCorpus();
 let foldCount = 0;
 
 for (const entry of corpus) {
-  const result = await build(entry.srcDir, entry.serializers, undefined, { fold: true, intrinsics: entry.intrinsics, lexicons: entry.lexicons });
+  const result = await build(entry.srcDir, entry.serializers, undefined, {
+    fold: true,
+    intrinsics: entry.intrinsics,
+    lexicons: entry.lexicons,
+    buildParams: await entryBuildParams(entry),
+  });
   const mode = classifyFoldMode(result.foldDecisions);
   if (mode === "fold") foldCount++;
   console.error(`  ${mode.padEnd(12)} ${entry.name}`);

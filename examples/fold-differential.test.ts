@@ -201,6 +201,24 @@ const report: ReportRow[] = [];
  *     `multi-container`, `stateful-service` — each used `include`/`printf`/
  *     `toYaml` together, so all three needed opting in before any of them
  *     could flip.
+ *
+ * chant #1966 grew the count from 89 to 95 (the corpus itself also grew, 108
+ * -> 108 net — additions and the docker-build/matrix-test/node-ci/reusable-
+ * workflow four were already counted at #1174) by closing the method-call gap
+ * #1174 left open: `fold()` had no case for a `CallExpression` whose callee is
+ * a property access, so `github.actor.toString()`/`matrix("os").toString()`/
+ * `[...].join(...)` all fell through to "function call as a value is not
+ * foldable". Two additions: (1) a lexicon-package plain function (github's
+ * `matrix`/`inputs`/`needs`/… expression helpers) opted into EAGER folding
+ * (`IntrinsicDef.foldsEagerly`, ../packages/core/src/lexicon.ts) evaluates
+ * immediately rather than enveloping for later revival, which is what lets
+ * its result stringify correctly when embedded straight into a template
+ * literal; (2) a method call whose receiver already resolves to a real value
+ * (a live external, an array/object literal, or one of the above) invokes the
+ * named method directly. Six entries flip: the four github ones #1174 left
+ * one blocker behind, plus `examples/k8s-aks-microservice` and
+ * `k8s-gke-microservice`, whose ingress config chains
+ * `config.domain.split(".").slice(-2).join(".")`.
  */
 const EXPECTED_FOLD: readonly string[] = [
   "examples/adopt-alb-services",
@@ -214,6 +232,8 @@ const EXPECTED_FOLD: readonly string[] = [
   "examples/gitlab-aws-alb-api",
   "examples/gitlab-aws-alb-infra",
   "examples/gitlab-aws-alb-ui",
+  "examples/k8s-aks-microservice",
+  "examples/k8s-gke-microservice",
   "examples/local-cloud-trio",
   "examples/local-fly",
   "examples/temporal-stack",
@@ -258,8 +278,12 @@ const EXPECTED_FOLD: readonly string[] = [
   "lexicons/gcp/examples/vpc-network",
   "lexicons/forgejo/examples/ci-workflow",
   "lexicons/github/examples/deploy-pages",
+  "lexicons/github/examples/docker-build",
   "lexicons/github/examples/getting-started",
+  "lexicons/github/examples/matrix-test",
+  "lexicons/github/examples/node-ci",
   "lexicons/github/examples/release-please",
+  "lexicons/github/examples/reusable-workflow",
   "lexicons/gitlab/examples/docker-build",
   "lexicons/gitlab/examples/getting-started",
   "lexicons/gitlab/examples/multi-stage-deploy",

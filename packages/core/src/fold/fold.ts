@@ -1,6 +1,6 @@
 import * as ts from "typescript";
 import { relative } from "node:path";
-import { intrinsicCallFolds, intrinsicTagFolds, type IntrinsicDef } from "../lexicon";
+import { intrinsicCallFolds, intrinsicCallFoldsEagerly, intrinsicTagFolds, type IntrinsicDef } from "../lexicon";
 import {
   SUPPORTED_BINARY_OPERATORS,
   SUPPORTED_UNARY_OPERATORS,
@@ -75,7 +75,19 @@ import { isFoldableHelperName } from "./foldable-helpers";
  * property-access branch below. A call with no `.step` narrowing, or any
  * other member, still throws from this branch exactly as before.
  *
- * Everything else — a package's function, a method call, an array `.map`, a
+ * chant #1966 adds a fourth call shape, and a method call on top of any of
+ * the four: a lexicon-package function its lexicon registered with
+ * {@link intrinsicCallFoldsEagerly} (../lexicon.ts) evaluates eagerly —
+ * unlike the other three, which envelope for later revival — because its
+ * usual use (`` `${matrix("os")}` ``) coerces the result via `String()` at
+ * fold time, before any revival would run. A `CallExpression` whose callee is
+ * a property access — `github.actor.toString()`, `[...].join(",")`,
+ * `matrix("os").toString()` — folds its receiver and calls the named method
+ * on it directly, PROVIDED the receiver is a real value and not one of
+ * fold's own symbolic envelopes (see {@link isFoldSymbolicEnvelope}); nothing
+ * about the method name is otherwise restricted.
+ *
+ * Everything else — an ordinary package function, an array `.map`, a
  * registered name shadowed by a local binding — still throws.
  *
  * Cross-file identifier resolution (chant #1020): `consts` alone is always
@@ -723,6 +735,26 @@ function isFoldedResource(value: FoldedValue): value is FoldedResource {
 }
 
 /**
+ * True when `value` is one of `fold()`'s own symbolic envelope shapes — a
+ * stand-in for a value nothing has constructed or revived yet, not the value
+ * itself. A method call (see the `CallExpression` branch's property-access
+ * case below) must refuse one rather than silently falling through to
+ * `Object.prototype`'s own inherited methods — `toString` chief among them —
+ * which would answer with the placeholder's shape instead of what the real,
+ * eventually-revived value would produce.
+ */
+function isFoldSymbolicEnvelope(value: FoldedValue): boolean {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  return (
+    "__attrRef" in value ||
+    "__intrinsic" in value ||
+    "__helper" in value ||
+    "__resource" in value ||
+    "__compositeStep" in value
+  );
+}
+
+/**
  * chant #1535 — an attribute read whose object folded to a resource ENVELOPE
  * rather than resolving through {@link resolvesToResource}. That happens when
  * the const's initializer is not a bare `new` but an expression that yields
@@ -960,6 +992,15 @@ export function fold(
         const external = externals.get(node.text);
         if (isFoldableFunction(external)) {
           throw foldError(node, `function "${node.text}" used as a value is not foldable`);
+        }
+        // chant #1966 — a registered eager-fold lexicon helper (see the
+        // CallExpression branch below) is callable, never a bare value:
+        // nothing downstream can serialize a function.
+        if (
+          typeof external === "function" &&
+          intrinsics.some((i) => i.name === node.text && intrinsicCallFoldsEagerly(i))
+        ) {
+          throw foldError(node, `function "${node.text}" used as a value is not foldable — call it instead`);
         }
         return external as FoldedValue;
       }
@@ -1228,6 +1269,62 @@ export function fold(
       if (isFoldableFunction(callee)) {
         return callFoldableFunction(callee, node, consts, intrinsics, externals);
       }
+    }
+
+    // chant #1966 — the fourth call shape: a lexicon-package function its
+    // lexicon registered with {@link intrinsicCallFoldsEagerly} (../lexicon.ts),
+    // resolved into `externals` by ../discovery/fold-import.ts's
+    // `resolveActiveLexiconExport` exactly like a plain data export
+    // (`Azure.ResourceGroupLocation`, chant #1063), except callable. Unlike
+    // the intrinsic-call shape above, this one is EVALUATED right here rather
+    // than enveloped: a lexicon's own string-building helper (`matrix("os")`,
+    // github lexicon) is typically embedded directly in a template literal
+    // (`` `${matrix("os")}` ``), which coerces its result via native
+    // `String()` at fold time — an envelope deferred to later revival would
+    // stringify as "[object Object]" there. Evaluating eagerly, with the
+    // folded arguments, produces the real, already-live return value instead
+    // — the same guarantee a live external's own getter execution already
+    // gives {@link fold}'s property-access branch.
+    if (
+      ts.isIdentifier(node.expression) &&
+      !consts.has(node.expression.text) &&
+      intrinsics.some((i) => i.name === (node.expression as ts.Identifier).text && intrinsicCallFoldsEagerly(i))
+    ) {
+      const callee = externals?.get(node.expression.text);
+      if (typeof callee !== "function") {
+        throw foldError(node, `"${node.expression.text}" did not resolve to a function — falls back to run`);
+      }
+      const args = node.arguments.map((arg) => fold(arg, consts, intrinsics, externals));
+      return (callee as (...callArgs: unknown[]) => unknown)(...args) as FoldedValue;
+    }
+
+    // chant #1966 — a method call whose RECEIVER is itself foldable: property
+    // access on a live external (`github.actor.toString()`), a call folded by
+    // one of the shapes above (`matrix("os").toString()`), or fold's own
+    // array/object literal (`[...].join(",")`). The method is never checked
+    // by name — only that the receiver is a REAL value (not one of fold's own
+    // symbolic envelopes, see {@link isFoldSymbolicEnvelope}) and that the
+    // named property on it is actually a function. Calling it with the folded
+    // arguments is then no different from what running the file would do:
+    // the receiver is the same real object either way.
+    if (ts.isPropertyAccessExpression(node.expression)) {
+      const methodName = node.expression.name.text;
+      const receiver = fold(node.expression.expression, consts, intrinsics, externals);
+      if (receiver === null || receiver === undefined) {
+        throw foldError(node, `cannot call ".${methodName}(...)" on ${String(receiver)}`);
+      }
+      if (isFoldSymbolicEnvelope(receiver)) {
+        throw foldError(
+          node,
+          `method call \`.${methodName}(...)\` on an unresolved value is not foldable — falls back to run`,
+        );
+      }
+      const method = (receiver as Record<string, unknown>)[methodName];
+      if (typeof method !== "function") {
+        throw foldError(node, `"${methodName}" is not a callable method on the folded value — falls back to run`);
+      }
+      const args = node.arguments.map((arg) => fold(arg, consts, intrinsics, externals));
+      return (method as (...methodArgs: unknown[]) => unknown).apply(receiver, args) as FoldedValue;
     }
 
     throw foldError(node, callExpressionMessage(node));

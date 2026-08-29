@@ -40,7 +40,7 @@ import {
 import { importModule } from "./import";
 import { collectParamDependencies } from "./param-deps";
 import { setPathProvenance } from "../provenance";
-import type { IntrinsicDef } from "../lexicon";
+import { intrinsicCallFoldsEagerly, type IntrinsicDef } from "../lexicon";
 import type { BuildParamValue } from "../build-params";
 
 /**
@@ -1099,19 +1099,25 @@ function activeLexiconPackage(specifier: string, lexiconPackages: ReadonlySet<st
  * and intrinsic functions; the only thing new is that a plain DATA export is
  * now reachable too.
  *
- * Callable exports are deliberately excluded. A lexicon's functions — its
+ * Callable exports are otherwise excluded. A lexicon's functions — its
  * resource classes, composite factories, intrinsic implementations — already
  * have dedicated resolution paths that know how to INVOKE them
  * (`resolveResourceEntity`, `resolveCallExpression`, `reviveFoldedValue`), and
- * binding them as plain identifier values here would widen what folds in ways
- * this issue neither needs nor measured: none of the references #1063 exists
- * to unblock (`Azure`, `GCP`, `S3Actions`, gitlab's `CI`) is a function.
+ * binding an arbitrary one as a plain identifier value here would widen what
+ * folds in unmeasured ways. The one exception (chant #1966) is a function its
+ * lexicon registered with {@link IntrinsicDef.foldsEagerly} — the same
+ * per-name, lexicon-declared opt-in `foldsAsCall` is for an intrinsic's
+ * envelope-and-revive form, admitting this one because `fold()`
+ * (../fold/fold.ts) needs to CALL it eagerly — synchronously, before
+ * revival — to support a lexicon's own string-building helpers used inline
+ * (`matrix("os").toString()`, `` `${inputs("x")}` ``), where an envelope
+ * would still be a plain object when the enclosing template folds.
  *
  * Returns `undefined` — never throws — for a package that isn't an active
- * lexicon, an export the package doesn't have, a callable export, or an
- * import that fails. The binding is then simply absent from `externals`,
- * exactly as before, and `fold()`'s ordinary "unresolved identifier" failure
- * still fires if the name is actually referenced.
+ * lexicon, an export the package doesn't have, a non-admitted callable
+ * export, or an import that fails. The binding is then simply absent from
+ * `externals`, exactly as before, and `fold()`'s ordinary "unresolved
+ * identifier" failure still fires if the name is actually referenced.
  */
 async function resolveActiveLexiconExport(
   binding: ImportBinding,
@@ -1136,7 +1142,10 @@ async function resolveActiveLexiconExport(
 
   if (!(binding.imported in mod)) return undefined;
   const value = mod[binding.imported];
-  if (typeof value === "function") return undefined;
+  if (typeof value === "function") {
+    const eager = session.intrinsics.some((i) => i.name === binding.imported && intrinsicCallFoldsEagerly(i));
+    if (!eager) return undefined;
+  }
   return { value };
 }
 

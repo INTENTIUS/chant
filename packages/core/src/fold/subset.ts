@@ -1,6 +1,6 @@
 import * as ts from "typescript";
 import { isFoldableHelperName } from "./foldable-helpers";
-import { intrinsicCallFolds, type IntrinsicDef } from "../lexicon";
+import { intrinsicCallFolds, intrinsicCallFoldsEagerly, type IntrinsicDef } from "../lexicon";
 
 /**
  * subset — the single canonical definition of chant's statically-foldable
@@ -278,6 +278,13 @@ function checkArrayElement(
  * (narrowed to the literal member name `"step"`, the one idiom actually in
  * use) — so this classifier accepts it unconditionally, the same way it
  * already accepts a nested `new Type(...)` unconditionally since #1169.
+ *
+ * chant #1966 adds a CallExpression whose callee is a property access —
+ * `github.actor.toString()`, `matrix("os").toString()`, `[...].join(",")` —
+ * to the same unconditional-acceptance set: whether the receiver actually
+ * folds to a value with a callable method of that name is resolution-
+ * dependent (module doc, point 1), so this classifier stays permissive and
+ * only recurses into shape.
  */
 export function findSubsetViolation(
   node: ts.Node,
@@ -445,6 +452,40 @@ export function findSubsetViolation(
       for (const arg of node.arguments) {
         const v = findSubsetViolation(arg, intrinsics);
         if (v) return v;
+      }
+      return undefined;
+    }
+
+    // chant #1966 — the eager counterpart of the #1044 case above: a lexicon
+    // intrinsic registered with `foldsEagerly` instead of `foldsAsCall`
+    // ({@link intrinsicCallFoldsEagerly}, ../lexicon.ts). Same registry-gated
+    // shape, same reasoning.
+    if (
+      intrinsics &&
+      ts.isIdentifier(node.expression) &&
+      intrinsics.some((i) => i.name === (node.expression as ts.Identifier).text && intrinsicCallFoldsEagerly(i))
+    ) {
+      for (const arg of node.arguments) {
+        const v = findSubsetViolation(arg, intrinsics);
+        if (v) return v;
+      }
+      return undefined;
+    }
+
+    // chant #1966 — a method call (`github.actor.toString()`, `[...].join(",")`,
+    // `matrix("os").toString()`): `fold()` now folds this shape unconditionally
+    // — the receiver must fold to a real value with the named method, which is
+    // resolution-dependent (module doc, point 1) and so out of reach for a
+    // syntax-only classifier, exactly the same asymmetry as `.step` above and
+    // a same-file `new` used as a value (#1169). Accepted here regardless of
+    // the intrinsics registry, unlike the two cases just above: nothing about
+    // whether a method call folds depends on a lexicon's registration.
+    if (ts.isPropertyAccessExpression(node.expression)) {
+      const v = findSubsetViolation(node.expression.expression, intrinsics);
+      if (v) return v;
+      for (const arg of node.arguments) {
+        const argViolation = findSubsetViolation(arg, intrinsics);
+        if (argViolation) return argViolation;
       }
       return undefined;
     }

@@ -435,7 +435,11 @@ describe("fold — registered call-form intrinsics (#1044)", () => {
     expect(() => fold(expr, consts, [REF])).toThrow(FoldError);
   });
 
-  test("an array method taking a closure is rejected — .map is arbitrary JS, not a registered intrinsic", () => {
+  test("an array method taking a closure is rejected — the closure argument, not .map itself, is what fails (chant #1966)", () => {
+    // chant #1966 — `.map` is now attempted (a real method on a real folded
+    // array), so the rejection moves from "no case for this call" to the
+    // closure argument itself: a function used as a value is never foldable,
+    // with or without a registered intrinsic inside it.
     const consts = parseConsts(`const cidrs = ["10.0.0.0/24"]; const x = cidrs.map((c) => Ref(c));`);
     const expr = consts.get("x");
     if (!expr) throw new Error("fixture error");
@@ -446,7 +450,7 @@ describe("fold — registered call-form intrinsics (#1044)", () => {
       error = e;
     }
     expect(error).toBeInstanceOf(FoldError);
-    expect((error as FoldError).message).toContain("cidrs.map(...)");
+    expect((error as FoldError).message).toContain("a function used as a value is not foldable");
   });
 
   test("a user-defined function is rejected however it's named", () => {
