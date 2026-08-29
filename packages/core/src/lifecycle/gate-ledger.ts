@@ -37,7 +37,7 @@
  * it is not itself the unblock.
  */
 import { sortedJsonReplacer } from "../utils";
-import { readBlobFromPath, writeBlobToPath, RefCASConflictError } from "./git";
+import { readBlobFromPath, readPathSha, readBlobBySha, writeBlobToPath, RefCASConflictError } from "./git";
 
 const DIR = "_gates";
 const APPEND_RETRY_ATTEMPTS = 5;
@@ -64,7 +64,7 @@ function filename(op: string): string {
   return `${op}.jsonl`;
 }
 
-/** Append one immutable gate-resolution record. Does not push to the remote — call `pushLifecycle` (./git.ts) afterward, same two-step shape every other ledger write here uses. Retries on `RefCASConflictError` the same way `appendConvergeRecord` does (./converge-ledger.ts) — a concurrent writer to a different op's/env's file on the same orphan branch is the ordinary case, not an edge case. */
+/** Append one immutable gate-resolution record. Does not push to the remote — call `pushLifecycle` (./git.ts) afterward, same two-step shape every other ledger write here uses. Retries on `RefCASConflictError` the same way `appendConvergeRecord` does (./converge-ledger.ts) — a concurrent writer to a different op's/env's file on the same orphan branch is the ordinary case, not an edge case. The baseline read must be `readPathSha` + `readBlobBySha` rather than `readBlobFromPath`, so the exact sha `existing` came from can be passed as `expectPriorPathSha` — see `writeBlobToPath` (./git.ts) for the race that closes. */
 export async function appendGateResolution(
   input: GateResolutionInput,
   opts?: { cwd?: string },
@@ -75,9 +75,13 @@ export async function appendGateResolution(
   let lastErr: unknown;
   for (let attempt = 1; attempt <= APPEND_RETRY_ATTEMPTS; attempt++) {
     try {
-      const existing = await readBlobFromPath(DIR, filename(record.op), opts);
+      const priorSha = await readPathSha(DIR, filename(record.op), opts);
+      const existing = priorSha ? await readBlobBySha(priorSha, opts) : null;
       const content = existing ? `${existing.replace(/\n$/, "")}\n${json}` : json;
-      const commit = await writeBlobToPath(DIR, filename(record.op), content, "Gate resolution record", opts);
+      const commit = await writeBlobToPath(DIR, filename(record.op), content, "Gate resolution record", {
+        ...opts,
+        expectPriorPathSha: priorSha,
+      });
       return { commit, record };
     } catch (err) {
       if (!(err instanceof RefCASConflictError)) throw err;

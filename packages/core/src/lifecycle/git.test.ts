@@ -243,6 +243,26 @@ describe("lifecycle/git", () => {
         expect(lines).toContain(recordB);
       });
     });
+
+    // Needs more writers than a single retry cycle serializes. A two-writer
+    // race is absorbed by `expectPriorPathSha` alone (the test above); it
+    // takes a third to expose a commit landing between the tree read and a
+    // re-resolved branch tip, where the CAS matches but the committed tree
+    // is stale.
+    test("appendReleaseRecordLine: five interleaved writers appending to the SAME env's ledger all survive (#1973)", async () => {
+      await withTestDir(async (dir) => {
+        await initRepo(dir);
+        const records = Array.from({ length: 5 }, (_, i) =>
+          JSON.stringify({ version: 1, component: `svc-${i}`, digest: `sha256:${i}` }),
+        );
+
+        await Promise.all(records.map((r) => appendReleaseRecordLine("prod", r, { cwd: dir })));
+
+        const lines = await readReleaseLedgerLines("prod", { cwd: dir });
+        expect(lines).toHaveLength(5);
+        for (const r of records) expect(lines).toContain(r);
+      });
+    });
   });
 
   // ── Backslash-escape content round-trips byte-identical (#1936) ────────────
