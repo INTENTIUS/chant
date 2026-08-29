@@ -26,6 +26,11 @@ export interface LexiconEntry {
   writeOnly?: string[];
   primaryIdentifier?: string[];
   deprecatedProperties?: string[];
+  /**
+   * Subset of `deprecatedProperties` that only a regex over the property
+   * description supports; the rest is declared by the Registry schema (#1701).
+   */
+  inferredDeprecations?: string[];
   conditionalCreateOnly?: string[];
   replacementStrategy?: "delete_then_create" | "create_then_delete";
   tagging?: { taggable: boolean; tagOnCreate: boolean; tagUpdatable: boolean };
@@ -72,6 +77,7 @@ export function generateLexiconJSON(
         ...(r.resource.writeOnly.length > 0 && { writeOnly: r.resource.writeOnly }),
         ...(r.resource.primaryIdentifier.length > 0 && { primaryIdentifier: r.resource.primaryIdentifier }),
         ...(r.resource.deprecatedProperties?.length && { deprecatedProperties: r.resource.deprecatedProperties }),
+        ...(r.resource.inferredDeprecations?.length && { inferredDeprecations: r.resource.inferredDeprecations }),
         ...(r.resource.conditionalCreateOnly?.length && { conditionalCreateOnly: r.resource.conditionalCreateOnly }),
         ...(r.resource.replacementStrategy && { replacementStrategy: r.resource.replacementStrategy }),
         ...(r.resource.tagging && { tagging: r.resource.tagging }),

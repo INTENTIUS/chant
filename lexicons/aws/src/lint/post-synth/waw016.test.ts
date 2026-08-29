@@ -1,16 +1,26 @@
 import { describe, test, expect } from "vitest";
 import { createPostSynthContext } from "@intentius/chant-test-utils";
-import { waw016, checkDeprecatedProperties } from "./waw016";
+import { waw016, checkDeprecatedProperties, type DeprecationBasis } from "./waw016";
 
 function makeCtx(template: object) {
   return createPostSynthContext({ aws: template });
 }
 
+function basisMap(entries: Array<[string, DeprecationBasis]>): Map<string, DeprecationBasis> {
+  return new Map(entries);
+}
+
 /** Synthetic deprecated-property map — no disk dependency. */
-function fakeDeprecated(): Map<string, Set<string>> {
+function fakeDeprecated(): Map<string, Map<string, DeprecationBasis>> {
   return new Map([
-    ["AWS::S3::Bucket", new Set(["AccessControl", "ObjectLockConfiguration"])],
-    ["AWS::Lambda::Function", new Set(["Code"])],
+    [
+      "AWS::S3::Bucket",
+      basisMap([
+        ["AccessControl", "declared"],
+        ["ObjectLockConfiguration", "declared"],
+      ]),
+    ],
+    ["AWS::Lambda::Function", basisMap([["Code", "declared"]])],
   ]);
 }
 
@@ -137,5 +147,52 @@ describe("WAW016: Deprecated Property Usage", () => {
     expect(diags).toHaveLength(2);
     expect(diags[0].entity).toBe("Bucket");
     expect(diags[1].entity).toBe("Func");
+  });
+
+  // --- Deprecation basis (#1701) ---
+
+  test("an inferred deprecation reports at info and names its basis", () => {
+    const ctx = makeCtx({
+      Resources: {
+        Func: {
+          Type: "AWS::Lambda::Function",
+          Properties: { Runtime: "nodejs20.x" },
+        },
+      },
+    });
+    const deprecated = new Map([
+      ["AWS::Lambda::Function", basisMap([["Runtime", "inferred"]])],
+    ]);
+    const diags = checkDeprecatedProperties(ctx, deprecated);
+    expect(diags).toHaveLength(1);
+    expect(diags[0].checkId).toBe("WAW016");
+    expect(diags[0].severity).toBe("info");
+    expect(diags[0].message).toContain("Runtime");
+    expect(diags[0].message).toContain("does not declare it deprecated");
+  });
+
+  test("declared and inferred deprecations on one resource keep separate severities", () => {
+    const ctx = makeCtx({
+      Resources: {
+        MyBucket: {
+          Type: "AWS::S3::Bucket",
+          Properties: { AccessControl: "Private", ObjectLockConfiguration: {} },
+        },
+      },
+    });
+    const deprecated = new Map([
+      [
+        "AWS::S3::Bucket",
+        basisMap([
+          ["AccessControl", "declared"],
+          ["ObjectLockConfiguration", "inferred"],
+        ]),
+      ],
+    ]);
+    const diags = checkDeprecatedProperties(ctx, deprecated);
+    expect(diags).toHaveLength(2);
+    const bySeverity = new Map(diags.map((d) => [d.severity, d.message]));
+    expect(bySeverity.get("warning")).toContain("AccessControl");
+    expect(bySeverity.get("info")).toContain("ObjectLockConfiguration");
   });
 });

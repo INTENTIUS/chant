@@ -20,6 +20,13 @@ export interface LexiconEntry {
   writeOnly?: string[];
   primaryIdentifier?: string[];
   deprecatedProperties?: string[];
+  /**
+   * Subset of `deprecatedProperties` that only prose supports — a lexicon
+   * generator matched the property description against a deprecation regex
+   * rather than reading an upstream declaration (#1701). Editors do not strike
+   * these through; the basis is too weak to mark a property dead.
+   */
+  inferredDeprecations?: string[];
   conditionalCreateOnly?: string[];
   replacementStrategy?: "delete_then_create" | "create_then_delete";
   tagging?: { taggable: boolean; tagOnCreate: boolean; tagUpdatable: boolean };
@@ -127,7 +134,10 @@ export function lexiconCompletions(
     const entry = index.getEntry(className);
     const props = index.getPropertyNames(className);
     if (props.length > 0) {
-      const deprecatedSet = new Set(entry?.deprecatedProperties ?? []);
+      const inferred = new Set(entry?.inferredDeprecations ?? []);
+      const deprecatedSet = new Set(
+        (entry?.deprecatedProperties ?? []).filter((p) => !inferred.has(p)),
+      );
       const filtered = wordAtCursor
         ? props.filter((p) => p.toLowerCase().startsWith(wordAtCursor.toLowerCase()))
         : props;

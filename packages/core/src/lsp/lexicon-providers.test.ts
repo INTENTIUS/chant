@@ -53,3 +53,47 @@ describe("lexiconCompletions resource ranking (#600)", () => {
     expect(items.length).toBe(100);
   });
 });
+
+describe("lexiconCompletions deprecation marking (#1701)", () => {
+  /** One resource with a declared deprecation and an inferred one. */
+  function bucketIndex(): LexiconIndex {
+    return new LexiconIndex({
+      Bucket: {
+        resourceType: "Test::S3::Bucket",
+        kind: "resource",
+        lexicon: "test",
+        createOnly: ["AccessControl", "Runtime", "BucketName"],
+        deprecatedProperties: ["AccessControl", "Runtime"],
+        inferredDeprecations: ["Runtime"],
+      },
+    });
+  }
+
+  const propCtx = (): CompletionContext =>
+    ({
+      uri: "file:///t.ts",
+      content: "const b = new Bucket({\n  ",
+      linePrefix: "  ",
+      wordAtCursor: "",
+      position: { line: 1, character: 2 },
+    }) as unknown as CompletionContext;
+
+  test("a declared deprecation is marked deprecated", () => {
+    const items = lexiconCompletions(propCtx(), bucketIndex(), "Test resource");
+    const access = items.find((i) => i.label === "AccessControl");
+    expect(access?.deprecated).toBe(true);
+  });
+
+  test("an inferred deprecation is not marked deprecated", () => {
+    const items = lexiconCompletions(propCtx(), bucketIndex(), "Test resource");
+    const runtime = items.find((i) => i.label === "Runtime");
+    expect(runtime).toBeDefined();
+    expect(runtime?.deprecated).toBeUndefined();
+  });
+
+  test("a property with no deprecation signal is not marked", () => {
+    const items = lexiconCompletions(propCtx(), bucketIndex(), "Test resource");
+    const name = items.find((i) => i.label === "BucketName");
+    expect(name?.deprecated).toBeUndefined();
+  });
+});

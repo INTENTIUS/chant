@@ -204,15 +204,23 @@ Detects circular references between child projects (e.g. project A references pr
 
 ### WAW016 — Deprecated Property Usage
 
-**Severity:** warning | **Category:** correctness
+**Severity:** warning (declared) / info (inferred) | **Category:** correctness
 
-Flags properties marked as deprecated in the CloudFormation Registry. Data comes from two sources: the explicit `deprecatedProperties` array in the Registry schema, and description text mining (keywords like "deprecated", "legacy", "no longer recommended").
+Flags properties marked as deprecated in the CloudFormation Registry. Data comes from two sources of different confidence, and the finding says which one it stands on.
 
-For example, `AccessControl` on `AWS::S3::Bucket` is a legacy property — use a bucket policy to grant access instead.
+A **declared** deprecation is read from the `deprecatedProperties` array in the Registry schema. It reports at `warning`.
 
 ```
-WAW016: Resource "MyBucket" (AWS::S3::Bucket) uses deprecated property "AccessControl" — consider alternatives
+WAW016: Resource "MyGroup" (AWS::AutoScaling::AutoScalingGroup) uses deprecated property "NotificationConfiguration" — consider alternatives
 ```
+
+An **inferred** deprecation comes from matching the property description against a deprecation regex (keywords like "deprecated", "legacy", "no longer recommended"). Prose also mentions deprecation when the thing going away is a sibling property, an enum value, or the service the property configures, so a hit is a guess. It reports at `info` and is worded as one.
+
+```
+WAW016: Resource "MyFunction" (AWS::Lambda::Function) uses property "Runtime", whose description reads as deprecated — the CloudFormation Registry does not declare it deprecated, so confirm before changing it
+```
+
+The generated lexicon records the split: `deprecatedProperties` holds every flagged name, and `inferredDeprecations` holds the subset only prose supports. Editor completion strikes through the declared half only.
 
 ### WAW017 — Missing Tags on Taggable Resource
 
