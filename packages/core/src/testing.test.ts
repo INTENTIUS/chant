@@ -3,8 +3,14 @@ import { mkdir, writeFile, rm } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { createMockPlugin } from "@intentius/chant-test-utils";
-import { deployStack, testEnvName, TeardownIncompleteError } from "./testing";
+import { createMockPlugin, staticObservation } from "@intentius/chant-test-utils";
+import {
+  deployStack,
+  testEnvName,
+  TeardownIncompleteError,
+  LiveAssertionError,
+  UnobservedAssertionError,
+} from "./testing";
 import type { ActivityFn } from "./op/activity-registry";
 import type { TeardownExecution } from "./lexicon";
 
@@ -257,5 +263,86 @@ describe("deployStack", () => {
 
     await expect(deployStack(harness(nativeApply, { applyTargets: {} }))).rejects.toThrow(/nothing to deploy/);
     expect(nativeApply).not.toHaveBeenCalled();
+  });
+
+  describe("assertLive", () => {
+    const nativeApply = vi.fn(async (_args: Record<string, unknown>) => ({ applied: 1, pruned: 0, notAttempted: 0 }));
+
+    test("resolves the metadata for an entity observed present and marker-matched", async () => {
+      await writeProject(dir);
+      const plugin = createMockPlugin({
+        name: "mock",
+        describeResources: (opts) =>
+          Promise.resolve({
+            bucket: { type: "Mock::Bucket", status: "READY", marker: { stack: "harness-fixture", env: opts.environment } },
+          }),
+      });
+      const stack = await deployStack(harness(nativeApply, { plugins: [plugin] }));
+
+      const meta = await stack.assertLive("bucket");
+      expect(meta.status).toBe("READY");
+    });
+
+    test("checks status when given", async () => {
+      await writeProject(dir);
+      const plugin = createMockPlugin({
+        name: "mock",
+        describeResources: (opts) =>
+          Promise.resolve({
+            bucket: { type: "Mock::Bucket", status: "READY", marker: { stack: "harness-fixture", env: opts.environment } },
+          }),
+      });
+      const stack = await deployStack(harness(nativeApply, { plugins: [plugin] }));
+
+      await expect(stack.assertLive("bucket", { status: "READY" })).resolves.toBeDefined();
+      await expect(stack.assertLive("bucket", { status: "GONE" })).rejects.toThrow(LiveAssertionError);
+    });
+
+    test("throws naming the entity when observed absent", async () => {
+      await writeProject(dir);
+      const plugin = createMockPlugin({ name: "mock", describeResources: staticObservation({}) });
+      const stack = await deployStack(harness(nativeApply, { plugins: [plugin] }));
+
+      await expect(stack.assertLive("bucket")).rejects.toThrow(/bucket.*observed absent/s);
+    });
+
+    test("throws UnobservedAssertionError, not a plain failure, when NOT-OBSERVED", async () => {
+      await writeProject(dir);
+      const plugin = createMockPlugin({
+        name: "mock",
+        describeResources: staticObservation({}, { bucket: { reason: "no-binding", type: "Mock::Bucket" } }),
+      });
+      const stack = await deployStack(harness(nativeApply, { plugins: [plugin] }));
+
+      const err = await stack.assertLive("bucket").then(
+        () => undefined,
+        (e: unknown) => e,
+      );
+      expect(err).toBeInstanceOf(UnobservedAssertionError);
+      expect(err).not.toBeInstanceOf(LiveAssertionError);
+    });
+
+    test("throws when the observed resource carries another environment's marker — a same-named leftover cannot satisfy it", async () => {
+      await writeProject(dir);
+      const plugin = createMockPlugin({
+        name: "mock",
+        describeResources: staticObservation({
+          bucket: { type: "Mock::Bucket", status: "READY", marker: { stack: "harness-fixture", env: "test-someone-else-000000" } },
+        }),
+      });
+      const stack = await deployStack(harness(nativeApply, { plugins: [plugin] }));
+
+      await expect(stack.assertLive("bucket")).rejects.toThrow(/not this deploy's/);
+    });
+
+    test("an unknown entity name throws before any read is attempted", async () => {
+      await writeProject(dir);
+      const describeResources = vi.fn(staticObservation({}));
+      const plugin = createMockPlugin({ name: "mock", describeResources });
+      const stack = await deployStack(harness(nativeApply, { plugins: [plugin] }));
+
+      await expect(stack.assertLive("nope")).rejects.toThrow(/no such entity/);
+      expect(describeResources).not.toHaveBeenCalled();
+    });
   });
 });
