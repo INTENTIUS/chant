@@ -580,7 +580,16 @@ async function runComponentGraphView(
       // `liveNames` (#1491): the resources this component owns — declared, or
       // the contract's `[name]` identity fallback — so a consumer can join
       // the component DAG to the resource graph instead of guessing at kinds.
-      attrs: { wave: waveOf.get(name) ?? null, liveNames: graph.liveNames?.[name] ?? [name] },
+      // `composites` (#1492): the composite kind(s) this component's
+      // resources come from, when the component declared them explicitly —
+      // omitted from attrs (not defaulted) when it didn't, so a consumer
+      // knows to fall back to its own naming-convention guess rather than
+      // reading "no composites" from an empty array.
+      attrs: {
+        wave: waveOf.get(name) ?? null,
+        liveNames: graph.liveNames?.[name] ?? [name],
+        ...(graph.composites?.[name] ? { composites: graph.composites[name] } : {}),
+      },
       // Deep-link the node to its `*.component.ts` (behold's inspect panel).
       ...(graph.files?.[name] ? { sourceLoc: { file: graph.files[name] } } : {}),
     })),

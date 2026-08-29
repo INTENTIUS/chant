@@ -22,6 +22,7 @@ interface Component {
   // verify + rollback fall out of the capabilities used
 
   liveNames?: string[];       // optional: live entity/resource name(s), when they differ from `name`
+  composites?: string[];      // optional: composite kind(s) this component deploys, when a consumer can't infer it from `name`
 }
 ```
 

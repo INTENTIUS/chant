@@ -143,6 +143,38 @@ describe("Component JSON Schema", () => {
     expect(validate(invalid)).toBe(false);
   });
 
+  it("accepts an optional composites list (#1492)", () => {
+    const withComposites = {
+      name: "aws-plane",
+      archetype: "infra",
+      dependsOn: [],
+      composites: ["ArtifactBucket", "OperatorRole"],
+      deploy: [{ phase: "Apply", steps: [{ kind: "cfn-deploy", template: "t.json" }] }],
+    };
+    expect(validate(withComposites)).toBe(true);
+  });
+
+  it("omitting composites still validates (backward-compatible default)", () => {
+    const noComposites = {
+      name: "table",
+      archetype: "infra",
+      dependsOn: [],
+      deploy: [{ phase: "Apply", steps: [{ kind: "cfn-deploy", template: "t.json" }] }],
+    };
+    expect(validate(noComposites)).toBe(true);
+  });
+
+  it("rejects an empty composites array (minItems: 1)", () => {
+    const invalid = {
+      name: "table",
+      archetype: "infra",
+      dependsOn: [],
+      composites: [],
+      deploy: [{ phase: "Apply", steps: [{ kind: "cfn-deploy", template: "t.json" }] }],
+    };
+    expect(validate(invalid)).toBe(false);
+  });
+
   it("rejects an invalid archetype value", () => {
     const invalid = {
       name: "x",

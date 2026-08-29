@@ -371,6 +371,23 @@ export const backup =
     expect(result.liveNames?.postgres).toEqual(["pgDeployment", "pgService", "pgClaim"]);
     expect(result.liveNames?.plain).toEqual(["plain"]);
   });
+
+  test("carries each component's declared composites, absent (not defaulted) when undeclared (#1492)", async () => {
+    await writeFile(
+      join(testDir, "aws-plane.component.ts"),
+      `export const awsPlane = { name: "aws-plane", composites: ["ArtifactBucket", "OperatorRole"], dependsOn: [], deploy: [{ phase: "Apply", steps: [{ kind: "shell", reason: "test" }] }] };`,
+    );
+    await writeFile(
+      join(testDir, "plain.component.ts"),
+      `export const plain = { name: "plain", dependsOn: [], deploy: [{ phase: "Apply", steps: [{ kind: "shell", reason: "test" }] }] };`,
+    );
+
+    const result = await computeComponentGraph(testDir);
+
+    expect(result.success).toBe(true);
+    expect(result.composites?.["aws-plane"]).toEqual(["ArtifactBucket", "OperatorRole"]);
+    expect(result.composites?.plain).toBeUndefined();
+  });
 });
 
 // ── runComponents (#585) ─────────────────────────────────────────────────────
