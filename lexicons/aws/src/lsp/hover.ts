@@ -62,11 +62,8 @@ function resourceHover(className: string, entry: LexiconEntry): HoverInfo | unde
   }
 
   // Declared and inferred deprecations rest on different evidence, so they
-  // read as separate lines rather than one merged list (#1701). The core
-  // `LexiconEntry` gains `inferredDeprecations` in the next core release; this
-  // lexicon builds against the published core, so widen locally until then.
-  const withBasis = entry as LexiconEntry & { inferredDeprecations?: string[] };
-  const inferred = new Set(withBasis.inferredDeprecations ?? []);
+  // read as separate lines rather than one merged list.
+  const inferred = new Set(entry.inferredDeprecations ?? []);
   const declared = (entry.deprecatedProperties ?? []).filter((p) => !inferred.has(p));
 
   if (declared.length > 0) {
