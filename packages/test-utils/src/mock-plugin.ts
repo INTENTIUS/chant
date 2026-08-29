@@ -23,6 +23,8 @@ export interface MockPluginOptions {
   executeTeardown?: LexiconPlugin["executeTeardown"];
   /** Deep observation (#1014) — the lexicon's pruning/ordering rules. */
   deepNormalizationHooks?: DeepNormalizationHooks;
+  /** #1665 — replacement semantics for a pending update. Omit it to exercise the honest `unknown` degradation. */
+  classifyDisruption?: LexiconPlugin["classifyDisruption"];
   /**
    * Local emulator(s) (#1345). Needed by any test that exercises `--live`
    * endpoint injection: the var to inject is read off the lexicon's own
@@ -49,6 +51,7 @@ export function createMockPlugin(options: MockPluginOptions = {}): LexiconPlugin
     ...(options.teardownOwned && { teardownOwned: options.teardownOwned }),
     ...(options.executeTeardown && { executeTeardown: options.executeTeardown }),
     ...(options.deepNormalizationHooks && { deepNormalizationHooks: options.deepNormalizationHooks }),
+    ...(options.classifyDisruption && { classifyDisruption: options.classifyDisruption }),
     ...(options.emulator && { emulator: options.emulator }),
   };
 }

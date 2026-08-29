@@ -20,6 +20,7 @@ import { computeBuildDigest, diffDigests } from "../../lifecycle/digest";
 import { diffLive, diffLiveArtifacts, diffSnapshots, type LiveDiffResult, type LiveArtifactDiffResult, type SnapshotDiffResult } from "../../lifecycle/live-diff";
 import { buildChangeSet, renderChangeSet, gitlabMrReport, summarize, type ChangeSet } from "../../lifecycle/change-set";
 import { mergeReceiptEntries, observedValueResolver, planReceipts, readReceiptValue, type ReceiptReading } from "../../lifecycle/receipt-plan";
+import { annotateDisruption, disruptionNotices } from "../../lifecycle/disruption";
 import { collectEffectReceipts, isEffectReceipt } from "../../effect-receipt";
 import {
   formatUnobserved,
@@ -1264,7 +1265,17 @@ export async function runLifecyclePlan(ctx: CommandContext): Promise<number> {
         // Attribution survives the flat merge below (#1674).
         lexicon: lexiconName,
       });
-      merged.entries.push(...cs.entries);
+
+      // Disruption (#1665) is asked of THIS lexicon, before the merge: the
+      // deltas are paths into its own observation shape, and the replacement
+      // rules are in the spec it compiled. A lexicon that answers nothing
+      // leaves every update `unknown` — never `in-place`.
+      const classified = await annotateDisruption(
+        cs,
+        environment,
+        plugin.classifyDisruption ? (o) => plugin.classifyDisruption!(o) : undefined,
+      );
+      merged.entries.push(...classified.entries);
       checked++;
     }
   } finally {
@@ -1297,6 +1308,12 @@ export async function runLifecyclePlan(ctx: CommandContext): Promise<number> {
     console.error(formatWarning({
       message: `${unobservedCount} declared entity(ies) could not be observed — no create/update/delete is proposed for them. This plan is incomplete, not clean.`,
     }));
+  }
+
+  // Same reason as above (#1665): the `--json` and `--report gitlab-mr` shapes
+  // have no column for how much an update hurts.
+  for (const notice of disruptionNotices(merged)) {
+    console.error(formatWarning({ message: notice }));
   }
 
   // `--report gitlab-mr` emits the GitLab MR plan-widget artifact instead of the

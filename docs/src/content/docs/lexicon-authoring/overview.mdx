@@ -109,6 +109,7 @@ family beyond the two best-known readers was missing from it.
 | `observeResourcesDeep()` | `DeepObservationResult` | The full live property tree per entity, for property-level drift |
 | `deepNormalizationHooks` | `DeepNormalizationHooks` | Which fields are server-populated or order-insensitive, applied to both the live and declared trees |
 | `observeDependencies()` | `DependencyObservation` | What the estate *relies on* but does not declare — a shared subnet, another team's network |
+| `classifyDisruption()` | `Record<string, DisruptionVerdict>` | Whether applying a pending `update` replaces the resource or mutates it in place, from the spec this lexicon compiled. Every degradation is `unknown` |
 | `ambientKinds()` | `string[]` | Kinds this lexicon can enumerate beyond the declared estate, so a caller knows `--ambient` is relevant without paying for a scan |
 | `observeAmbient()` | `Record<string, ResourceMetadata>` | Resources of a managed kind that exist while being neither declared nor referenced — the unattached security group |
 | `describeStackStatus()` | `StackStatusObservation \| null` | Whether one deploy unit is present and healthy, by deployed name. For multi-stack component projects |

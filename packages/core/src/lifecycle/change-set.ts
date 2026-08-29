@@ -14,6 +14,7 @@
  */
 import { diffLive, type AttributeChange, type DiffLiveInput } from "./live-diff";
 import { unobservedReasonText, type UnobservedReason } from "../observation";
+import { renderDisruption, summarizeDisruption, type Disruption } from "./disruption";
 
 /**
  * What the projection proposes for a single resource.
@@ -129,6 +130,22 @@ export interface ChangeSetEntry {
   effectReason?: EffectFireReason;
   /** Human-readable backing for `effectReason` (the digests that differ, the unresolved path). */
   effectDetail?: string;
+  /**
+   * How much applying this change hurts (#1665) — in-place / rolling / replace
+   * / destroy / unknown. Set on `update` entries only: every other action
+   * carries its blast radius in the action itself.
+   *
+   * The verdict comes from the lexicon that owns the spec
+   * ({@link LexiconPlugin.classifyDisruption}), never from core, which has no
+   * per-provider replacement rules and must not grow any. `unknown` is the
+   * default and the only fallback — read it as "nobody could say", never as
+   * "probably in place".
+   */
+  disruption?: Disruption;
+  /** The attribute paths that forced `disruption` (#1665). */
+  disruptionBecause?: string[];
+  /** Human-readable backing for `disruption` — the spec knowledge behind the call, or why there is none. */
+  disruptionDetail?: string;
 }
 
 export interface ChangeSet {
@@ -314,6 +331,16 @@ export function renderChangeSet(cs: ChangeSet): string {
   const header = ACTION_ORDER.map((a) => `${counts[a]} ${a}`).join(", ");
   const lines: string[] = [`Plan for ${cs.env}: ${header}`];
 
+  // Disruption (#1665) rides the header too, so the one number that says how
+  // much this plan hurts is visible without reading every row.
+  const disruption = summarizeDisruption(cs);
+  const disruptionParts = (Object.entries(disruption) as Array<[Disruption, number]>)
+    .filter(([, n]) => n > 0)
+    .map(([level, n]) => `${n} ${level}`);
+  if (disruptionParts.length > 0) {
+    lines.push(`Disruption: ${disruptionParts.join(", ")}`);
+  }
+
   for (const action of ACTION_ORDER) {
     const group = cs.entries.filter((e) => e.action === action);
     if (group.length === 0) continue;
@@ -324,7 +351,9 @@ export function renderChangeSet(cs: ChangeSet): string {
           ? "\nRUNTIME (owned by a declared resource; not drift, never a delete/adopt candidate):"
           : action === "effect"
             ? "\nEFFECT (receipt absent or stale; the effect step fires — the generic apply never writes a receipt):"
-            : `\n${action.toUpperCase()}:`,
+            : action === "update" && disruptionParts.length > 0
+              ? "\nUPDATE (disruption from the lexicon that owns the spec; unknown means nobody could say, not that it is safe):"
+              : `\n${action.toUpperCase()}:`,
     );
     for (const e of group) {
       if (e.action === "effect") {
@@ -339,9 +368,12 @@ export function renderChangeSet(cs: ChangeSet): string {
         ? ` — ${unobservedReasonText(e.unobservedReason)}${e.unobservedDetail ? `: ${e.unobservedDetail}` : ""}`
         : "";
       const owner = e.runtimeOwner ? ` — owned by ${e.runtimeOwner}` : "";
-      lines.push(`  ${e.name}${e.type ? ` (${e.type})` : ""}${own}${why}${owner}`);
+      lines.push(`  ${e.name}${e.type ? ` (${e.type})` : ""}${own}${why}${owner}${renderDisruption(e)}`);
+      const forced = new Set(e.disruptionBecause ?? []);
       for (const d of e.deltas ?? []) {
-        lines.push(`      ${d.path}: ${fmt(d.oldValue)} → ${fmt(d.newValue)}`);
+        // A path the verdict rests on is marked, so a `replace` row says which
+        // of five changed properties caused it.
+        lines.push(`      ${forced.has(d.path) ? "! " : ""}${d.path}: ${fmt(d.oldValue)} → ${fmt(d.newValue)}`);
       }
     }
   }

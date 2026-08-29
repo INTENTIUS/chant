@@ -1,6 +1,6 @@
 import { createRequire } from "module";
 import { detectTemplate } from "./detect";
-import type { LexiconPlugin, IntrinsicDef, ObservationResult, DeepObservationResult, DependencyObservation, ResourceMetadata, ExportedTemplate, ResourceSelector, InitTemplateSet, StackStatusObservation } from "@intentius/chant/lexicon";
+import type { LexiconPlugin, IntrinsicDef, ObservationResult, DeepObservationResult, DependencyObservation, DisruptionQuery, DisruptionVerdict, ResourceMetadata, ExportedTemplate, ResourceSelector, InitTemplateSet, StackStatusObservation } from "@intentius/chant/lexicon";
 const require = createRequire(import.meta.url);
 import type { LintRule } from "@intentius/chant/lint/rule";
 import type { TemplateParser } from "@intentius/chant/import/parser";
@@ -25,6 +25,7 @@ import {
   type StackResource,
 } from "./api/read-client";
 import { awsDeepNormalizationHooks, observeResourcesDeepAws } from "./deep-observe";
+import { awsDisruption } from "./disruption";
 import { awsReferenceCatalog } from "./reference-catalog";
 import { AMBIENT_KINDS } from "./ambient";
 import { canDescribe, describeOwnProperties, stampRegion } from "./properties";
@@ -763,6 +764,20 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
   }): Promise<DependencyObservation> {
     const { observeAwsDependencies } = await import("./dependencies");
     return observeAwsDependencies({ observed: options.observed, region: options.region });
+  },
+
+  /**
+   * What a pending update costs (#1665), read off the Registry schema the
+   * codegen already compiled: a changed `createOnlyProperties` entry is a
+   * replacement, and `replacementStrategy: delete_then_create` makes it a
+   * destroy. A conditionally-create-only property is `unknown` on purpose —
+   * the schema says "depends on the value", which is not an answer.
+   */
+  classifyDisruption(options: {
+    environment: string;
+    changes: DisruptionQuery[];
+  }): Record<string, DisruptionVerdict> {
+    return awsDisruption(options);
   },
 
   /**

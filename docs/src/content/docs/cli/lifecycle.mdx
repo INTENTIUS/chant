@@ -175,7 +175,7 @@ chant lifecycle plan prod --json   # emit the ChangeSet as JSON
 | Action | Meaning |
 |---|---|
 | **create** | Declared in source, and the provider confirmed it absent from the cloud |
-| **update** | Declared and live, but the live config drifted |
+| **update** | Declared and live, but the live config drifted — carries a [disruption verdict](#disruption-how-much-an-update-costs) saying whether applying it replaces the resource or mutates it in place |
 | **delete** | A chant-owned resource that is live but no longer declared |
 | **adopt** | Live but undeclared, ownership not established — a candidate to pull back into source, never an auto-delete |
 | **noop** | Declared and live with no drift, or already reconciled |
@@ -208,6 +208,40 @@ The `diff --live` categories and the `plan` actions describe the same signal on 
 
 The "when declared" qualifiers are where the axes diverge: an undeclared resource that also **drifted** or is **unchanged** is still an **orphan** to the plan — the snapshot history doesn't change that it's live-but-undeclared, so ownership decides between `adopt` and `delete`.
 
+#### Disruption: how much an `update` costs
+
+The action says what changes. It does not say what applying it costs, and an `update` that flips a tag reads exactly like an `update` that rebuilds a database. Every `update` entry therefore carries a `disruption` verdict:
+
+| Verdict | Meaning |
+|---|---|
+| **in-place** | The provider mutates the existing resource. No new identity, no window where it is absent |
+| **rolling** | The resource survives, but its workload is replaced incrementally — a Deployment's pod template changing |
+| **replace** | A new resource is built and the old one removed. The physical id changes, so anything holding the old one has to be updated |
+| **destroy** | Replacement that removes the old resource **first**. There is a window with nothing in it, and whatever the old one held is gone |
+| **unknown** | Nobody could say |
+
+The verdict comes from the lexicon, never from core. Replacement semantics are spec knowledge — CloudFormation's registry schema declares `createOnlyProperties` per type, Kubernetes' SSA schema knows which field changes roll a workload — and a lexicon publishes it through `classifyDisruption`, the same way it publishes `postSynthChecks`. Core hardcoding a per-provider replacement table would be a table the tool has to keep in step with a provider it does not generate from.
+
+`unknown` is the default and the only fallback. A lexicon that ships no classifier, a classifier that says nothing about an entry, one that throws, one that returns a level outside the vocabulary — all of them land on `unknown`. **There is no path by which a change accidentally reads as `in-place`**: that claim is only ever a lexicon's deliberate one, which is what makes it worth gating on. Read `unknown` as "nobody looked at the spec", in the same spirit as [`unobserved`](#lifecycle-plan-env) — not as "probably fine".
+
+The plan says it three ways. A count on the header, the verdict and its reason on the row, and a `!` on the specific delta the verdict rests on:
+
+```
+Plan for prod: 0 create, 2 update, 0 effect, 0 delete, 0 adopt, 0 runtime, 4 noop, 0 unobserved
+Disruption: 1 in-place, 1 destroy
+
+UPDATE (disruption from the lexicon that owns the spec; unknown means nobody could say, not that it is safe):
+  api (AWS::EC2::Instance) — in-place: no create-only property of AWS::EC2::Instance changed
+      attributes.InstanceType: t3.micro → t3.small
+  db (AWS::RDS::DBInstance) — destroy: DBInstanceIdentifier is create-only and AWS::RDS::DBInstance replaces by deleting first — the resource is gone before the new one exists
+      ! attributes.DBInstanceIdentifier: app-db → app-db-2
+      attributes.AllocatedStorage: 20 → 40
+```
+
+Replacing and unclassified counts are also printed on **stderr**, so a `--json` or `--report gitlab-mr` consumer — whose shapes have no column for disruption — still hears about them.
+
+The AWS lexicon is the first implementer, reading the CloudFormation Registry schema the codegen already compiles into `lexicon-aws.json`: a changed `createOnlyProperties` entry is a `replace`, and `replacementStrategy: delete_then_create` makes it a `destroy`. A changed `conditionalCreateOnlyProperties` entry is `unknown` on purpose — the schema is saying "depends on the value", and reporting a maybe as `in-place` is worse than reporting nothing. AWS never returns `rolling`; nothing in the Registry schema expresses a workload roll.
+
 #### The `--json` shape
 
 `--json` emits `{ env, entries }`. Every lexicon's change set is merged into the one `entries[]`, and each entry says which lexicon observed it:
@@ -225,6 +259,21 @@ The "when declared" qualifiers are where the axes diverge: an undeclared resourc
       "evidence": { "declared": true, "inSnapshot": true, "live": true, "observed": true },
       "ownership": "owned",
       "queried": "/apis/apps/v1/namespaces/default/deployments/web"
+    },
+    {
+      "name": "db",
+      "type": "AWS::RDS::DBInstance",
+      "lexicon": "aws",
+      "physicalId": "app-db",
+      "action": "update",
+      "evidence": { "declared": true, "inSnapshot": true, "live": true, "observed": true },
+      "deltas": [
+        { "path": "attributes.DBInstanceIdentifier", "oldValue": "app-db", "newValue": "app-db-2" }
+      ],
+      "ownership": "unknown",
+      "disruption": "destroy",
+      "disruptionBecause": ["attributes.DBInstanceIdentifier"],
+      "disruptionDetail": "DBInstanceIdentifier is create-only and AWS::RDS::DBInstance replaces by deleting first — the resource is gone before the new one exists"
     },
     {
       "name": "sg-0abc123",
@@ -249,6 +298,9 @@ The "when declared" qualifiers are where the axes diverge: an undeclared resourc
 | `queried` | The resolved read address, when the lexicon reported one (#1620). |
 | `runtimeOwner` | The declared entity a `runtime` entry's owner chain resolves to. |
 | `unobservedReason`, `unobservedDetail` | Why an `unobserved` entry could not be read. |
+| `disruption` | How much applying an `update` costs, from the lexicon that owns the spec. Present on every `update` and on nothing else. `unknown` means nobody could say. |
+| `disruptionBecause` | The attribute paths that forced the verdict — which of five changed properties is the one that replaces the resource. |
+| `disruptionDetail` | The spec knowledge behind the call, or why there is none. |
 
 `lexicon` and `physicalId` are what let a consumer route an entry to the right lexicon and tell a declared entity name apart from the live key of an undeclared resource without inferring it from the action.
 
