@@ -11,7 +11,7 @@ chant lifecycle snapshot <env> [lexicon] [--src <dir>]
 chant lifecycle show <env>
 chant lifecycle diff <env> [--live] [--src <dir>]
 chant lifecycle diff <env> --between <refA> <refB> [lexicon] [--json]
-chant lifecycle plan <env> [lexicon] [--json] [--owned] [--report gitlab-mr] [--src <dir>]
+chant lifecycle plan <env> [lexicon] [--json] [--owned] [--report gitlab-mr|markdown] [--src <dir>]
 chant lifecycle affected --base <ref> [--head <ref>] [--include-dependents] [--json]
 chant lifecycle teardown <env> [--yes] [--confirm-prod] [--json]
 chant lifecycle log [env]
@@ -182,7 +182,7 @@ chant lifecycle plan prod --json   # emit the ChangeSet as JSON
 | **effect** | A declared [effect receipt](https://github.com/INTENTIUS/chant/issues/1703) whose live value is absent or stale — rendered as `effect will fire: <effect>` |
 | **unobserved** | Declared, and chant could not read live state — no action is proposed, and the reason is printed |
 
-`unobserved` is not a proposal; it is the plan admitting a hole. A resource chant could not look at is never a `create` and never a `delete` — a plan is only as complete as the read behind it, and when entities are unobserved the command says so on stderr (including under `--json` and `--report gitlab-mr`, whose shapes have no column for it).
+`unobserved` is not a proposal; it is the plan admitting a hole. A resource chant could not look at is never a `create` and never a `delete` — a plan is only as complete as the read behind it, and when entities are unobserved the command says so on stderr (including under `--json` and `--report gitlab-mr`, whose shapes have no column for it). `--report markdown` carries the same warning **in the body** instead, plus its own section — see [Reporting to a pull request](#reporting-to-a-pull-request) below.
 
 `effect` is the receipt row. An effect receipt is declared, diffed, and observed like any resource, but it is **observe-only to the generic apply path**: the `effect()` step is the sole writer, on success, last. The plan resolves the receipt's expectation (references resolve against observed values at plan time) and compares it to the live value — absent or differing renders `effect will fire: <effect>`, with the reason (`receipt-absent`, `receipt-stale`, or `unresolved-input` when a reference could not resolve — the fire is proposed rather than guessed away). A matching receipt is a clean `noop`; a receipt nobody could read is `unobserved`, loudly. A receipt is never a `create`, never an `update`, and never a prune candidate: a stale receipt after a crash between the effect and its write re-proposes the fire on the next plan, which is the at-least-once guarantee the whole classification exists to preserve.
 
@@ -238,7 +238,7 @@ UPDATE (disruption from the lexicon that owns the spec; unknown means nobody cou
       attributes.AllocatedStorage: 20 → 40
 ```
 
-Replacing and unclassified counts are also printed on **stderr**, so a `--json` or `--report gitlab-mr` consumer — whose shapes have no column for disruption — still hears about them.
+Replacing and unclassified counts are also printed on **stderr**, so a `--json` or `--report gitlab-mr` consumer — whose shapes have no column for disruption — still hears about them. `--report markdown` bolds the verdict on every row instead, and rolls the same counts into the header — a `replace` or `destroy` reaches the reviewer without them having to read every line.
 
 The AWS lexicon is the first implementer, reading the CloudFormation Registry schema the codegen already compiles into `lexicon-aws.json`: a changed `createOnlyProperties` entry is a `replace`, and `replacementStrategy: delete_then_create` makes it a `destroy`. A changed `conditionalCreateOnlyProperties` entry is `unknown` on purpose — the schema is saying "depends on the value", and reporting a maybe as `in-place` is worse than reporting nothing. AWS never returns `rolling`; nothing in the Registry schema expresses a workload roll.
 
@@ -316,6 +316,44 @@ chant lifecycle plan prod --report gitlab-mr > tfplan.json
 Declare the file as `artifacts:reports:terraform` and GitLab renders "3 to add, 1 to change, 0 to delete" on the MR. The widget format is generic — any tool that emits this JSON gets it — so the plan maps onto it directly. Only the mutating actions count: `adopt` and `noop` are excluded, since the widget has no column for live-but-undeclared or no-change.
 
 The widget label always reads "Terraform" — that is GitLab's fixed string, not a claim chant makes. The GitLab lexicon ships an [`MrPlanReport`](/chant/lexicons/gitlab/examples/#merge-request-plan-widget) composite that wires the job for you.
+
+#### Reporting to a pull request
+
+`--report markdown` emits the plan as markdown, sized for a PR/MR comment rather than a terminal:
+
+```bash
+chant lifecycle plan prod --report markdown
+```
+
+````markdown
+## Plan for `prod`
+
+1 create, 1 update, 0 effect, 0 delete, 0 adopt, 0 runtime, 4 noop, 1 unobserved
+
+**Disruption:** 1 destroy
+
+> **1 declared entity(ies) could not be observed — no create/update/delete is proposed for them. This plan is incomplete, not clean.**
+
+### CREATE
+
+- `new-bucket` (AWS::S3::Bucket) `aws`
+
+### UPDATE (disruption from the lexicon that owns the spec; unknown means nobody could say, not that it is safe)
+
+- `db` (AWS::RDS::DBInstance) `aws` — **destroy**: DBInstanceIdentifier is create-only and AWS::RDS::DBInstance replaces by deleting first — the resource is gone before the new one exists
+  ```
+  ! attributes.DBInstanceIdentifier: app-db → app-db-2
+    attributes.AllocatedStorage: 20 → 40
+  ```
+
+### UNOBSERVED (declared; chant could not read live state — no action proposed)
+
+- `crd-widget` — no binding for this environment
+````
+
+Unlike `gitlab-mr`, this is not a floor: every action carries its own section, entries are attributed to the lexicon that observed them, and both holes the other two shapes leave to stderr ride the body instead — the unobserved count gets its own banner **and** its own section, and every `update` bolds its disruption verdict rather than staying silent about a `replace` or a `destroy`. A group past 20 entries folds into a `<details>` block so a large plan doesn't bury the comment. Deterministic and pure — no ANSI, same ordering as the terminal render.
+
+The github lexicon ships a [`PrPlanReport`](/chant/lexicons/github/composites/#prplanreport) composite that runs the plan and posts (or updates) one sticky PR comment per environment, reusing the marker-and-`gh api` mechanism `examples/github-pr-preview` proved. The forgejo lexicon gets it for free — it inherits every github composite through its dialect re-export.
 
 ### Resources vs artifacts
 

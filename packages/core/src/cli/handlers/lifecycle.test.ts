@@ -753,6 +753,25 @@ describe("runLifecyclePlan", () => {
     expect(stdoutBuf.join("\n")).toContain("bucket");
   });
 
+  // #1983 — `--report markdown` emits the reviewer-facing projection instead
+  // of the human render, same as `--report gitlab-mr` swaps in the widget JSON.
+  test("--report markdown emits the markdown projection instead of the human render", async () => {
+    buildMock.mockResolvedValue(makeBuildResult({ aws: ["bucket"] }));
+    const plugins: LexiconPlugin[] = [
+      createMockPlugin({ name: "aws", emulator: awsEmulatorStub, describeResources: staticDescribeResources({}) }),
+    ];
+    const exit = await runLifecyclePlan({
+      args: makeArgs({ path: "plan", extraPositional: "prod", reportFile: "markdown" }),
+      plugins,
+      serializers: plugins.map((p) => p.serializer),
+    });
+    expect(exit).toBe(0);
+    const out = stdoutBuf.join("\n");
+    expect(out).toContain("## Plan for `prod`");
+    expect(out).toContain("### CREATE");
+    expect(out).toContain("- `bucket`");
+  });
+
   // #1620 — the resolved read address rides plan entries the same way it rides
   // the live diff. Regression: the plan path dropped the observation's queried
   // map, so only unobserved rows ever carried an address while the docs

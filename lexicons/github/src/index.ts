@@ -31,6 +31,7 @@ export {
   DeployEnvironment,
   GoCI,
   Dependabot, DependabotConfig,
+  PrPlanReport,
 } from "./composites/index";
 export type {
   CheckoutProps, SetupNodeProps, SetupGoProps, SetupPythonProps,
@@ -42,6 +43,7 @@ export type {
   DeployEnvironmentProps,
   GoCIProps,
   DependabotProps, DependabotConfigProps, DependabotUpdate, DependabotEcosystem,
+  PrPlanReportProps,
 } from "./composites/index";
 
 // Spec utilities (for tooling)

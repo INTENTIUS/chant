@@ -136,6 +136,34 @@ export function findGate(config: OpConfig): GateStep | undefined {
   return undefined;
 }
 
+/**
+ * Find the first `policyGate` step anywhere in the Op (phases + `onFailure`,
+ * including steps nested inside effect steps), if any.
+ *
+ * chant #2003 — `--sandbox` is a GLOBAL flag (`../cli/registry.ts`), and
+ * `../cli/main.ts` arms the process-wide policy latch off it for every command,
+ * `chant run` included. A `policyGate` step then reaches `loadPolicyChecks`,
+ * which refuses while armed with a message written for a chant maintainer —
+ * shown to a user who passed a documented flag. The combination cannot be
+ * honoured until the gate can build and load policies inside the boundary
+ * (#1157), so both `chant run` paths pre-flight it with this and refuse before
+ * any phase executes, the same shape as {@link findGate}'s pre-flight.
+ */
+export function findPolicyGateStep(config: OpConfig): ActivityStep | undefined {
+  const all = [...config.phases, ...(config.onFailure ?? [])];
+  const isPolicyGate = (s: StepDefinition): s is ActivityStep => isActivity(s) && s.fn === "policyGate";
+  for (const phase of all) {
+    for (const step of phase.steps) {
+      if (isPolicyGate(step)) return step;
+      if (isEffect(step)) {
+        const nested = step.steps.find(isPolicyGate);
+        if (nested) return nested;
+      }
+    }
+  }
+  return undefined;
+}
+
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
 /**

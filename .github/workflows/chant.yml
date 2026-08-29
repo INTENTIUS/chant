@@ -133,7 +133,10 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # The suite lands at 9m46s-9m56s, so a 10 minute ceiling cancelled runs on
+    # runner variance rather than on anything in the change (#1993). Matches the
+    # other jobs in this workflow.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6

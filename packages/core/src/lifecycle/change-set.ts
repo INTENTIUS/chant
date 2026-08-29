@@ -325,6 +325,45 @@ export function gitlabMrReport(cs: ChangeSet): GitlabMrReport {
   return { create: counts.create, update: counts.update, delete: counts.delete };
 }
 
+/**
+ * Warning a plan should print when it carries a hole — a declared entity the
+ * lexicon could not observe (#1089). The `--json` and `--report gitlab-mr`
+ * shapes have no column for `unobserved`, so both the CLI (on stderr) and the
+ * `markdown` report (in the body, since a reviewer never sees a job's stderr)
+ * read this same wording rather than drifting apart. Empty when the plan has
+ * no hole. Same discipline as {@link disruptionNotices} in `./disruption`.
+ */
+export function unobservedPlanNotice(cs: ChangeSet): string[] {
+  const count = summarize(cs).unobserved;
+  return count > 0
+    ? [
+        `${count} declared entity(ies) could not be observed — no create/update/delete is proposed for them. This plan is incomplete, not clean.`,
+      ]
+    : [];
+}
+
+/**
+ * Section heading text for one action group — shared between {@link renderChangeSet}
+ * and {@link renderChangeSetMarkdown} so the wording never drifts between the
+ * terminal render and the reviewer-facing one.
+ */
+function actionSectionLabel(action: ChangeAction, hasDisruption: boolean): string {
+  switch (action) {
+    case "unobserved":
+      return "UNOBSERVED (declared; chant could not read live state — no action proposed)";
+    case "runtime":
+      return "RUNTIME (owned by a declared resource; not drift, never a delete/adopt candidate)";
+    case "effect":
+      return "EFFECT (receipt absent or stale; the effect step fires — the generic apply never writes a receipt)";
+    case "update":
+      return hasDisruption
+        ? "UPDATE (disruption from the lexicon that owns the spec; unknown means nobody could say, not that it is safe)"
+        : "UPDATE";
+    default:
+      return action.toUpperCase();
+  }
+}
+
 /** Human-readable render of a change set. Pure — returns a string. */
 export function renderChangeSet(cs: ChangeSet): string {
   const counts = summarize(cs);
@@ -344,17 +383,7 @@ export function renderChangeSet(cs: ChangeSet): string {
   for (const action of ACTION_ORDER) {
     const group = cs.entries.filter((e) => e.action === action);
     if (group.length === 0) continue;
-    lines.push(
-      action === "unobserved"
-        ? "\nUNOBSERVED (declared; chant could not read live state — no action proposed):"
-        : action === "runtime"
-          ? "\nRUNTIME (owned by a declared resource; not drift, never a delete/adopt candidate):"
-          : action === "effect"
-            ? "\nEFFECT (receipt absent or stale; the effect step fires — the generic apply never writes a receipt):"
-            : action === "update" && disruptionParts.length > 0
-              ? "\nUPDATE (disruption from the lexicon that owns the spec; unknown means nobody could say, not that it is safe):"
-              : `\n${action.toUpperCase()}:`,
-    );
+    lines.push(`\n${actionSectionLabel(action, disruptionParts.length > 0)}:`);
     for (const e of group) {
       if (e.action === "effect") {
         lines.push(
@@ -379,6 +408,99 @@ export function renderChangeSet(cs: ChangeSet): string {
   }
 
   return lines.join("\n");
+}
+
+/**
+ * Entries beyond this in one action group are collapsed into a `<details>`
+ * block in {@link renderChangeSetMarkdown} — a group's worth of rows is fine
+ * to read inline, a hundred-entry plan is not (#1983).
+ */
+const MARKDOWN_FOLD_THRESHOLD = 20;
+
+/** One entry's markdown, mirroring the rows {@link renderChangeSet} prints. */
+function renderMarkdownEntry(e: ChangeSetEntry): string[] {
+  if (e.action === "effect") {
+    return [
+      `- effect will fire: \`${e.effect ?? e.name}\` — receipt \`${e.name}\`${e.type ? ` (${e.type})` : ""}` +
+        `${e.effectDetail ? ` — ${e.effectDetail}` : ""}`,
+    ];
+  }
+  const lexicon = e.lexicon ? ` \`${e.lexicon}\`` : "";
+  const own = e.ownership === "unknown" ? "" : ` [${e.ownership}]`;
+  const why = e.unobservedReason
+    ? ` — ${unobservedReasonText(e.unobservedReason)}${e.unobservedDetail ? `: ${e.unobservedDetail}` : ""}`
+    : "";
+  const owner = e.runtimeOwner ? ` — owned by \`${e.runtimeOwner}\`` : "";
+  // Bolded rather than the plain-text render's bare " — destroy: ..." — a
+  // reviewer scanning a wall of "update" rows should see disruption without
+  // reading every one (#1665).
+  const disruption = e.disruption
+    ? ` — **${e.disruption}**${e.disruptionDetail ? `: ${e.disruptionDetail}` : ""}`
+    : "";
+  const lines = [`- \`${e.name}\`${e.type ? ` (${e.type})` : ""}${lexicon}${own}${why}${owner}${disruption}`];
+
+  if (e.deltas && e.deltas.length > 0) {
+    const forced = new Set(e.disruptionBecause ?? []);
+    lines.push("  ```");
+    for (const d of e.deltas) {
+      lines.push(`  ${forced.has(d.path) ? "! " : "  "}${d.path}: ${fmt(d.oldValue)} → ${fmt(d.newValue)}`);
+    }
+    lines.push("  ```");
+  }
+  return lines;
+}
+
+/**
+ * Markdown projection of a change set (#1983) — sized for a PR/MR comment
+ * rather than a terminal. A scannable counts header, entries grouped by
+ * action and attributed to their lexicon, deltas in a fenced block, and any
+ * group past {@link MARKDOWN_FOLD_THRESHOLD} folded into a `<details>` so a
+ * large plan doesn't bury the comment. Pure — no ANSI, no I/O — and
+ * deterministic: same entry ordering as {@link renderChangeSet}.
+ *
+ * Both a hole (#1089) and an expensive verdict (#1665) are surfaced IN the
+ * body, not left to stderr the way `--json` and `--report gitlab-mr` leave
+ * them: a reviewer reading a comment never sees the job's log, so a plan
+ * carrying either must not read as clean.
+ */
+export function renderChangeSetMarkdown(cs: ChangeSet): string {
+  const counts = summarize(cs);
+  const lines: string[] = [`## Plan for \`${cs.env}\``, "", ACTION_ORDER.map((a) => `${counts[a]} ${a}`).join(", ")];
+
+  const disruption = summarizeDisruption(cs);
+  const disruptionParts = (Object.entries(disruption) as Array<[Disruption, number]>)
+    .filter(([, n]) => n > 0)
+    .map(([level, n]) => `${n} ${level}`);
+  if (disruptionParts.length > 0) {
+    lines.push("", `**Disruption:** ${disruptionParts.join(", ")}`);
+  }
+
+  for (const notice of unobservedPlanNotice(cs)) {
+    lines.push("", `> **${notice}**`);
+  }
+
+  for (const action of ACTION_ORDER) {
+    const group = cs.entries.filter((e) => e.action === action);
+    if (group.length === 0) continue;
+
+    lines.push("", `### ${actionSectionLabel(action, disruptionParts.length > 0)}`);
+
+    const body = group.flatMap((e) => renderMarkdownEntry(e));
+    if (group.length > MARKDOWN_FOLD_THRESHOLD) {
+      lines.push(
+        "",
+        `<details><summary>${group.length} entries — click to expand</summary>`,
+        "",
+        ...body,
+        "",
+        "</details>",
+      );
+    } else {
+      lines.push("", ...body);
+    }
+  }
+
+  return lines.join("\n").trimEnd() + "\n";
 }
 
 function fmt(v: unknown): string {

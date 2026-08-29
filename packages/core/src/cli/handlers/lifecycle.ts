@@ -18,7 +18,7 @@ import {
 } from "../../lifecycle/observation-baseline";
 import { computeBuildDigest, diffDigests } from "../../lifecycle/digest";
 import { diffLive, diffLiveArtifacts, diffSnapshots, type LiveDiffResult, type LiveArtifactDiffResult, type SnapshotDiffResult } from "../../lifecycle/live-diff";
-import { buildChangeSet, renderChangeSet, gitlabMrReport, summarize, type ChangeSet } from "../../lifecycle/change-set";
+import { buildChangeSet, renderChangeSet, renderChangeSetMarkdown, gitlabMrReport, unobservedPlanNotice, type ChangeSet } from "../../lifecycle/change-set";
 import { mergeReceiptEntries, observedValueResolver, planReceipts, readReceiptValue, type ReceiptReading } from "../../lifecycle/receipt-plan";
 import { annotateDisruption, disruptionNotices } from "../../lifecycle/disruption";
 import { collectEffectReceipts, isEffectReceipt } from "../../effect-receipt";
@@ -1302,12 +1302,11 @@ export async function runLifecyclePlan(ctx: CommandContext): Promise<number> {
   merged.entries.sort((a, b) => a.name.localeCompare(b.name));
 
   // Say it on stderr too, so `--json` and `--report gitlab-mr` consumers (whose
-  // shapes have no room for it) still learn the plan has a hole (#1089).
-  const unobservedCount = summarize(merged).unobserved;
-  if (unobservedCount > 0) {
-    console.error(formatWarning({
-      message: `${unobservedCount} declared entity(ies) could not be observed — no create/update/delete is proposed for them. This plan is incomplete, not clean.`,
-    }));
+  // shapes have no room for it) still learn the plan has a hole (#1089). The
+  // `markdown` report carries the same wording in its own body instead — a
+  // reviewer reading a comment never sees this stderr.
+  for (const notice of unobservedPlanNotice(merged)) {
+    console.error(formatWarning({ message: notice }));
   }
 
   // Same reason as above (#1665): the `--json` and `--report gitlab-mr` shapes
@@ -1321,6 +1320,14 @@ export async function runLifecyclePlan(ctx: CommandContext): Promise<number> {
   // `artifacts:reports:terraform` to light up the merge-request widget.
   if (args.reportFile === "gitlab-mr") {
     console.log(JSON.stringify(gitlabMrReport(merged)));
+    return 0;
+  }
+
+  // `--report markdown` emits the reviewer-facing projection (#1983) — a
+  // counts header, entries grouped and attributed to their lexicon, holes and
+  // disruption both carried in the body rather than left to stderr.
+  if (args.reportFile === "markdown") {
+    console.log(renderChangeSetMarkdown(merged));
     return 0;
   }
 
