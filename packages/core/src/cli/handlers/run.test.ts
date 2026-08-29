@@ -50,6 +50,9 @@ vi.mock("./run-client", () => ({
   connectionOptions: (profile: { address: string }) => ({ address: profile.address }),
   resolveProfile: (...args: unknown[]) => resolveProfileMock(...args),
   resolveWorkflowId: (name: string) => `chant-op-${name}`,
+  // Test fixtures already use the short event-type form fetchNormalizedHistory
+  // produces (see mock-temporal-client.ts) — a passthrough keeps them valid.
+  fetchNormalizedHistory: (handle: { fetchHistory(): Promise<unknown> }) => handle.fetchHistory(),
 }));
 vi.mock("node:fs", async () => {
   const actual = await vi.importActual<typeof import("node:fs")>("node:fs");
@@ -296,6 +299,54 @@ describe("runOpStatus", () => {
     expect(out).toContain("chant-op-alb-deploy");
     expect(out).toContain("COMPLETED");
     expect(out).toContain("1/2 completed");
+  });
+
+  test("a pending gate prints a Gate line via the gateState query (#1676)", async () => {
+    setupTemporalClient(createMockTemporalClient({
+      describeByWorkflowId: {
+        "chant-op-alb-deploy": {
+          workflowId: "chant-op-alb-deploy", runId: "r1",
+          status: { name: "RUNNING" },
+          startTime: new Date("2026-05-01T00:00:00Z"),
+          taskQueue: "alb-deploy", type: { name: "albDeployWorkflow" },
+        },
+      },
+      historyByWorkflowId: { "chant-op-alb-deploy": [] },
+      queryResultByWorkflowId: {
+        "chant-op-alb-deploy:gateState": {
+          signalName: "gate-dns-delegation",
+          description: "Approve DNS delegation",
+          since: "2026-05-01T00:05:00.000Z",
+        },
+      },
+    }));
+    const stdout = makeStdoutSpy();
+    const exit = await runOpStatus({ args: makeArgs({ extraPositional: "alb-deploy" }), plugins: [], serializers: [] });
+    expect(exit).toBe(0);
+    const out = stdout.join("\n");
+    expect(out).toContain("Gate");
+    expect(out).toContain("gate-dns-delegation");
+    expect(out).toContain("Approve DNS delegation");
+    expect(out).toContain("2026-05-01T00:05:00.000Z");
+  });
+
+  test("an Op with no pending gate (query unregistered or answers null) prints no Gate line", async () => {
+    setupTemporalClient(createMockTemporalClient({
+      describeByWorkflowId: {
+        "chant-op-alb-deploy": {
+          workflowId: "chant-op-alb-deploy", runId: "r1",
+          status: { name: "COMPLETED" },
+          startTime: new Date("2026-05-01T00:00:00Z"),
+          closeTime: new Date("2026-05-01T01:00:00Z"),
+          taskQueue: "alb-deploy", type: { name: "albDeployWorkflow" },
+        },
+      },
+      historyByWorkflowId: { "chant-op-alb-deploy": [] },
+    }));
+    const stdout = makeStdoutSpy();
+    const exit = await runOpStatus({ args: makeArgs({ extraPositional: "alb-deploy" }), plugins: [], serializers: [] });
+    expect(exit).toBe(0);
+    expect(stdout.join("\n")).not.toContain("Gate");
   });
 });
 
@@ -726,6 +777,99 @@ describe("runOp", () => {
       expect(proc.kill).toHaveBeenCalled();
 
       stderrWriteSpy.mockRestore();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // ── --progress-json (#1676) ──────────────────────────────────────────────
+
+  test("--progress-json streams one NDJSON StepRecord per settled step, plus a final skipped record", async () => {
+    vi.useFakeTimers();
+    try {
+      discoverOpsMock.mockResolvedValue({
+        ops: new Map([[
+          "alb-deploy",
+          {
+            config: {
+              name: "alb-deploy", overview: "o",
+              phases: [
+                { name: "Build", steps: [{ kind: "activity", fn: "build" }] },
+                { name: "Deploy", steps: [{ kind: "activity", fn: "deploy" }] },
+              ],
+            },
+          },
+        ]]),
+        errors: [],
+      });
+      setupTemporalClient(createMockTemporalClient({
+        describeByWorkflowId: {
+          "chant-op-alb-deploy": {
+            workflowId: "chant-op-alb-deploy", runId: "r1",
+            status: { name: "COMPLETED" }, startTime: new Date(),
+            taskQueue: "alb-deploy", type: { name: "albDeployWorkflow" },
+          },
+        },
+        historyByWorkflowId: {
+          "chant-op-alb-deploy": [
+            { eventId: "1", eventType: "ActivityTaskScheduled", activityTaskScheduledEventAttributes: { activityId: "1", activityType: { name: "build" } } },
+            { eventType: "ActivityTaskCompleted", activityTaskCompletedEventAttributes: { scheduledEventId: "1" } },
+          ],
+        },
+      }));
+      existsSyncMock.mockReturnValue(true);
+      const { proc } = makeFakeChildProcess();
+      spawnChildMock.mockReturnValue(proc);
+      generateReportMock.mockReturnValue("# Report");
+      writeReportMock.mockReturnValue("/tmp/report.md");
+      vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+      const stdoutLines: string[] = [];
+      const stdoutSpy = vi.spyOn(process.stdout, "write").mockImplementation((chunk) => { stdoutLines.push(String(chunk)); return true; });
+
+      const promise = runOp({ args: makeArgs({ path: "alb-deploy", progressJson: true }), plugins: [], serializers: [] });
+      await vi.advanceTimersByTimeAsync(5000);
+      const exit = await promise;
+
+      expect(exit).toBe(0);
+      const records = stdoutLines.filter((l) => l.trim()).map((l) => JSON.parse(l));
+      expect(records).toEqual([
+        { phase: "Build", fn: "build", status: "ok", durationMs: 0 },
+        { phase: "Deploy", fn: "deploy", status: "skipped", durationMs: 0 },
+      ]);
+      stdoutSpy.mockRestore();
+    } finally {
+      vi.useRealTimers();
+    }
+  }, 10_000);
+
+  test("without --progress-json, nothing is written to stdout during the poll loop", async () => {
+    vi.useFakeTimers();
+    try {
+      discoverOpsMock.mockResolvedValue({ ops: new Map([makeOp("alb-deploy")]), errors: [] });
+      setupTemporalClient(createMockTemporalClient({
+        describeByWorkflowId: {
+          "chant-op-alb-deploy": {
+            workflowId: "chant-op-alb-deploy", runId: "r1",
+            status: { name: "COMPLETED" }, startTime: new Date(),
+            taskQueue: "alb-deploy", type: { name: "albDeployWorkflow" },
+          },
+        },
+        historyByWorkflowId: { "chant-op-alb-deploy": [] },
+      }));
+      existsSyncMock.mockReturnValue(true);
+      const { proc } = makeFakeChildProcess();
+      spawnChildMock.mockReturnValue(proc);
+      generateReportMock.mockReturnValue("# Report");
+      writeReportMock.mockReturnValue("/tmp/report.md");
+      vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+      const stdoutSpy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+
+      const promise = runOp({ args: makeArgs({ path: "alb-deploy" }), plugins: [], serializers: [] });
+      await vi.advanceTimersByTimeAsync(5000);
+      await promise;
+
+      expect(stdoutSpy).not.toHaveBeenCalled();
+      stdoutSpy.mockRestore();
     } finally {
       vi.useRealTimers();
     }

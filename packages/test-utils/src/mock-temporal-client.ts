@@ -19,6 +19,7 @@ export interface MockWorkflowDescription {
 }
 
 export interface MockHistoryEvent {
+  eventId?: string;
   eventType?: string;
   eventTime?: Date;
   activityTaskScheduledEventAttributes?: {
@@ -26,7 +27,7 @@ export interface MockHistoryEvent {
     activityType?: { name?: string };
   };
   activityTaskCompletedEventAttributes?: { scheduledEventId?: string | number };
-  activityTaskFailedEventAttributes?: { failure?: { message?: string } };
+  activityTaskFailedEventAttributes?: { scheduledEventId?: string | number; failure?: { message?: string } };
 }
 
 export interface MockWorkflowSummary {
@@ -49,6 +50,8 @@ export interface MockTemporalClientOptions {
   describeError?: Error;
   /** Map of workflowId -> resolved value for getHandle(...).result() (e.g. a component workflow's `{ phaseOutputs, componentOutputs }`, #597). Defaults to `undefined` when unset. */
   resultByWorkflowId?: Record<string, unknown>;
+  /** Map of `workflowId:queryName` -> resolved value for getHandle(...).query(...) (e.g. the `gateState` query, chant #1676). A query name with no entry rejects, matching Temporal's real behavior for an unregistered query. */
+  queryResultByWorkflowId?: Record<string, unknown>;
 }
 
 export interface RecordedCalls {
@@ -67,6 +70,7 @@ export interface MockTemporalClient {
         describe(): Promise<MockWorkflowDescription>;
         fetchHistory(): Promise<{ events?: MockHistoryEvent[] }>;
         signal(signalName: string): Promise<void>;
+        query<T>(queryName: string): Promise<T>;
         cancel(): Promise<void>;
       }>;
       getHandle(workflowId: string): {
@@ -74,6 +78,7 @@ export interface MockTemporalClient {
         describe(): Promise<MockWorkflowDescription>;
         fetchHistory(): Promise<{ events?: MockHistoryEvent[] }>;
         signal(signalName: string): Promise<void>;
+        query<T>(queryName: string): Promise<T>;
         cancel(): Promise<void>;
         result(): Promise<unknown>;
       };
@@ -102,6 +107,13 @@ export function createMockTemporalClient(opts: MockTemporalClientOptions = {}): 
     },
     async signal(signalName: string): Promise<void> {
       calls.signalCalls.push({ workflowId, signalName });
+    },
+    async query<T>(queryName: string): Promise<T> {
+      const key = `${workflowId}:${queryName}`;
+      if (!opts.queryResultByWorkflowId || !(key in opts.queryResultByWorkflowId)) {
+        throw new Error(`unregistered query "${queryName}" on workflow "${workflowId}"`);
+      }
+      return opts.queryResultByWorkflowId[key] as T;
     },
     async cancel(): Promise<void> {
       calls.cancelCalls.push({ workflowId });

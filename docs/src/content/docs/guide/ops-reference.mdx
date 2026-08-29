@@ -111,6 +111,42 @@ upsertSearchAttributes({ "Drift": [String(__r0?.drifted)] });
 
 `from` is a dot-path into the return value; when omitted, the whole return value is stringified. Counters are workflow-scoped (`__r0`, `__r1`, ...), and parallel phases destructure `Promise.all` results so each outcome attribute fires after the corresponding activity returns.
 
+## Progress and gate state
+
+`chant run status <name>` reports `activitiesCompleted`/`activitiesScheduled` counts, but a picture needs per-phase detail — which step is in which phase, and which gate (if any) is holding the run.
+
+### `--progress-json`
+
+`chant run <name> --temporal --progress-json` streams one NDJSON `StepRecord` per line to stdout as each declared step settles, matching `chant run <name> --json`'s local-executor shape:
+
+```typescript
+interface StepRecord {
+  phase: string;
+  fn: string;
+  status: "ok" | "fail" | "skipped";
+  durationMs: number;
+  error?: string;
+}
+```
+
+A record is emitted once a step reaches a terminal state — `"ok"` or `"fail"`. `"skipped"` only appears once the workflow itself reaches a terminal status: a declared step that never got scheduled this run (an `onFailure` phase on a run that succeeded, or an `effect()` step's untaken branch) is reported skipped rather than left silently absent. Purely additive: omitting the flag leaves `chant run`'s output and exit code unchanged.
+
+The same reconstruction backs the `op-status` MCP tool's `progress` field and the `chant://ops/<name>/runs/latest` resource, so a point-in-time query and a live stream answer with the same shape.
+
+### Gate state query
+
+A generated workflow with at least one `gate(...)` step registers a `gateState` query answering which gate, if any, is currently blocking the run:
+
+```typescript
+interface GateState {
+  signalName: string;
+  description?: string;
+  since: string; // ISO timestamp
+}
+```
+
+Query it directly through the Temporal SDK (`handle.query("gateState")`, resolving `null` when no gate is pending), or read it off `chant run status <name>`'s `Gate` line and the `op-status` MCP tool's `gate` field, both best-effort — an Op with no gate steps never registers the query, and both report nothing rather than an error.
+
 ## Delete paths
 
 `delete` controls how apply treats resources no longer declared. The delete rides the target's own delete path, and what bounds that path differs per target:
