@@ -17,7 +17,7 @@
  * fire (the symptom cleared).
  */
 import { sortedJsonReplacer } from "../utils";
-import { readBlobFromPath, writeBlobToPath, RefCASConflictError } from "./git";
+import { readBlobFromPath, readPathSha, readBlobBySha, writeBlobToPath, RefCASConflictError } from "./git";
 
 const FILENAME = "converge.jsonl";
 
@@ -99,6 +99,11 @@ export type ConvergeTickRecordInput = Omit<ConvergeTickRecord, "version">;
  * whatever the other writer just committed rather than reintroducing a stale
  * read. Exhausting the budget re-throws the conflict — a real, sustained
  * pile-up of writers is a signal worth surfacing, not silently swallowing.
+ *
+ * The baseline read must be `readPathSha` + `readBlobBySha` rather than
+ * `readBlobFromPath`, so the exact sha `existing` came from can be passed as
+ * `expectPriorPathSha`. See `writeBlobToPath` (./git.ts) for the race that
+ * closes.
  */
 export async function appendConvergeRecord(
   input: ConvergeTickRecordInput,
@@ -110,9 +115,13 @@ export async function appendConvergeRecord(
   let lastErr: unknown;
   for (let attempt = 1; attempt <= APPEND_RETRY_ATTEMPTS; attempt++) {
     try {
-      const existing = await readBlobFromPath(record.env, FILENAME, opts);
+      const priorSha = await readPathSha(record.env, FILENAME, opts);
+      const existing = priorSha ? await readBlobBySha(priorSha, opts) : null;
       const content = existing ? `${existing.replace(/\n$/, "")}\n${json}` : json;
-      const commit = await writeBlobToPath(record.env, FILENAME, content, "Converge tick record", opts);
+      const commit = await writeBlobToPath(record.env, FILENAME, content, "Converge tick record", {
+        ...opts,
+        expectPriorPathSha: priorSha,
+      });
       return { commit, record };
     } catch (err) {
       if (!(err instanceof RefCASConflictError)) throw err;
