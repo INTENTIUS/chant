@@ -26,20 +26,23 @@
  * `componentBom` fall back to `null` exactly as before — no regression for
  * ledgers with no persisted manifests at all.
  */
-import { resolve } from "node:path";
+import { resolve, join, dirname } from "node:path";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { getHeadCommit, fetchLifecycle, pushLifecycle, StaleLifecycleBranchError } from "../../lifecycle/git";
 import {
   appendReleaseRecord,
   readReleaseLedger,
   listReleaseEnvironments,
+  latestPerComponent,
   InvalidReleaseRecordError,
 } from "../../lifecycle/release-ledger";
 import { reconcileStatus, liveEvidenceFromChangeSet, compareAcrossEnvironments, mergeLiveEvidence, type LiveComponentEvidence } from "../../lifecycle/status";
 import { commandBuildParams } from "../build-params-cli";
 import { buildChangeSet } from "../../lifecycle/change-set";
 import { buildLedgerEntries, componentBomSummary, type BuildLedgerEntry } from "../../lifecycle/build-ledger";
-import { findBuildManifestByArtifactDigest } from "../../lifecycle/build-ledger-store";
+import { findBuildManifestByArtifactDigest, readBuildManifest } from "../../lifecycle/build-ledger-store";
 import type { ComponentBomSummary } from "../../lifecycle/build-ledger";
+import type { BuildArchiveManifest } from "../../components/verbs/build-archive";
 import { loadChantConfig } from "../../config";
 import { applyLiveEndpoint } from "../../live-endpoint";
 import { isResourceDeclarable } from "../../declarable";
@@ -51,6 +54,7 @@ import type { LexiconPlugin } from "../../lexicon";
 import { normalizeObservation, mergeObservations, unobservedAll, type NormalizedObservation } from "../../observation";
 import type { Phase, Component } from "../../components/component";
 import { deployUnits } from "../../components/deploy-units";
+import { sortedJsonReplacer } from "../../utils";
 
 /**
  * chant components release <env> --component <name> --digest <sha256:...>
@@ -145,6 +149,159 @@ export async function runComponentsReleaseRecord(ctx: CommandContext): Promise<n
     }
     throw err;
   }
+}
+
+/** One entry of `chant components export`'s per-entry result (text and `--json` output). */
+interface ExportEntryResult {
+  kind: string;
+  path: string;
+  digest: string;
+  status: "materialized" | "missing";
+  /** Set only when `status` is "missing" — why the source file couldn't be read. */
+  reason?: string;
+}
+
+/**
+ * chant components export <env> --component <name> [--digest <manifestDigest>]
+ *   -o <dir> [--json]
+ *
+ * Materializes a persisted `BuildArchiveManifest` (#609,
+ * ../../lifecycle/build-ledger-store.ts) to a portable directory: every
+ * `image`/`template`/`asset`/`sbom` entry is copied byte-for-byte from where
+ * the build that produced it left it on disk (its `path`, resolved against
+ * the current working directory — the same directory a component's
+ * `docker-build`/`addArchiveTemplate`/etc. step wrote it into) under that
+ * same archive-relative path in `-o <dir>`, plus a `manifest.json` so the
+ * directory is self-describing without chant. No re-synthesis: this reads
+ * bytes a prior `chant build`/`run --components` already produced, never
+ * regenerates them (#929) — the "byte-identical, promote-by-digest" contract
+ * the build archive is built on (see ../../components/verbs/build-archive.ts).
+ *
+ * Manifest resolution:
+ *  - `--digest <manifestDigest>` reads it directly (`readBuildManifest`),
+ *    independent of any environment/release record.
+ *  - Otherwise resolves "the manifest behind this component's most recent
+ *    successful run" in `<env>`: the latest release record's own
+ *    `manifestDigest` when it was recorded, else a reverse lookup by its
+ *    promoted artifact digest (`findBuildManifestByArtifactDigest`) — the
+ *    same join `chant components status` already performs.
+ *
+ * A source file missing on disk (the build that produced the manifest ran
+ * somewhere else, or its output was since cleaned) is reported per entry
+ * rather than silently dropped; the command exits non-zero so an incomplete
+ * export is never mistaken for a complete one.
+ */
+export async function runComponentsExport(ctx: CommandContext): Promise<number> {
+  const { args } = ctx;
+  const environment = args.extraPositional;
+  const component = args.component;
+  const outDir = args.output;
+  const usage = "chant components export <env> --component <name> [--digest <manifestDigest>] -o <dir>";
+
+  if (!outDir) {
+    console.error(formatError({ message: "-o/--output <dir> is required", hint: usage }));
+    return 1;
+  }
+
+  await fetchLifecycle();
+
+  let manifest: BuildArchiveManifest;
+
+  if (args.digest) {
+    const resolved = await readBuildManifest(args.digest);
+    if (!resolved) {
+      console.error(formatError({ message: `No persisted build manifest found for digest ${args.digest}` }));
+      return 1;
+    }
+    if (component && resolved.component !== component) {
+      console.error(formatWarning({
+        message: `--component ${component} does not match the resolved manifest's component (${resolved.component}) — exporting the manifest at --digest ${args.digest} anyway`,
+      }));
+    }
+    manifest = resolved;
+  } else {
+    if (!environment || !component) {
+      console.error(formatError({
+        message: "Environment and --component are required unless --digest <manifestDigest> is given",
+        hint: usage,
+      }));
+      return 1;
+    }
+    const ledger = await readReleaseLedger(environment);
+    const latest = latestPerComponent(ledger.records).get(component);
+    if (!latest) {
+      console.error(formatError({
+        message: `No release record for component "${component}" in environment "${environment}"`,
+      }));
+      return 1;
+    }
+    const resolved = latest.manifestDigest
+      ? await readBuildManifest(latest.manifestDigest)
+      : await findBuildManifestByArtifactDigest(latest.digest);
+    if (!resolved) {
+      console.error(formatError({
+        message: `No persisted build manifest found for ${component}@${environment}'s recorded digest ${latest.digest}`,
+        hint: "The build predates #609, or was recorded via `chant components release` alone with no corresponding `chant build`/`run --components`.",
+      }));
+      return 1;
+    }
+    manifest = resolved;
+  }
+
+  const targetDir = resolve(outDir);
+  const sourceRoot = resolve(".");
+  await mkdir(targetDir, { recursive: true });
+
+  const entries = [...manifest.contents].sort((a, b) => a.path.localeCompare(b.path));
+  const results: ExportEntryResult[] = [];
+  for (const entry of entries) {
+    try {
+      const bytes = await readFile(resolve(sourceRoot, entry.path));
+      const target = join(targetDir, entry.path);
+      await mkdir(dirname(target), { recursive: true });
+      await writeFile(target, bytes);
+      results.push({ kind: entry.kind, path: entry.path, digest: entry.digest, status: "materialized" });
+    } catch (err) {
+      results.push({
+        kind: entry.kind,
+        path: entry.path,
+        digest: entry.digest,
+        status: "missing",
+        reason: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  await writeFile(join(targetDir, "manifest.json"), JSON.stringify(manifest, sortedJsonReplacer, 2));
+
+  const missing = results.filter((r) => r.status === "missing");
+
+  if (args.json) {
+    console.log(JSON.stringify({
+      component: manifest.component,
+      manifestDigest: manifest.manifestDigest,
+      outDir: targetDir,
+      entries: results,
+    }, null, 2));
+  } else {
+    console.log(formatBold(`${manifest.component} (${manifest.manifestDigest}) -> ${targetDir}`));
+    for (const r of results) {
+      const status = r.status === "materialized" ? formatSuccess("ok") : formatError({ message: r.reason ?? "missing" });
+      console.log(`  ${r.kind.padEnd(10)}${r.path.padEnd(40)}${status}`);
+    }
+    console.log(`  ${"manifest".padEnd(10)}${"manifest.json".padEnd(40)}${formatSuccess("ok")}`);
+  }
+
+  if (missing.length > 0) {
+    console.error(formatError({
+      message: `${missing.length} of ${results.length} archive entr${missing.length === 1 ? "y" : "ies"} not found on disk — export incomplete`,
+      hint: `Run this from the checkout where the build that produced ${manifest.manifestDigest} still has its output on disk.`,
+    }));
+    return 1;
+  }
+
+  console.error(formatSuccess(`Exported ${results.length} entr${results.length === 1 ? "y" : "ies"} + manifest.json to ${targetDir}`));
+  return 0;
 }
 
 /** One row of `chant components status` JSON output. */
@@ -595,7 +752,7 @@ export async function runComponentsStatus(ctx: CommandContext): Promise<number> 
 export async function runComponentsUnknown(ctx: CommandContext): Promise<number> {
   console.error(formatError({
     message: `Unknown components subcommand: ${ctx.args.path}`,
-    hint: "Available: chant components status [env], chant components release <env>",
+    hint: "Available: chant components status [env], chant components release <env>, chant components export <env>",
   }));
   return 1;
 }
