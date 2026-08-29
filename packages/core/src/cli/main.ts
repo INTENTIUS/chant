@@ -83,6 +83,9 @@ const BOOLEAN_FLAGS = new Set([
   "--yes",
   "--confirm-prod",
   "--once",
+  "--check-live",
+  "--check-snapshot",
+  "--fail-on-drift",
 ]);
 
 /**
@@ -305,6 +308,12 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.at = args[++i];
     } else if (arg === "--ambient") {
       result.ambient = true;
+    } else if (arg === "--check-live") {
+      result.checkLive = true;
+    } else if (arg === "--check-snapshot") {
+      result.checkSnapshot = true;
+    } else if (arg === "--fail-on-drift") {
+      result.failOnDrift = true;
     } else if (arg === "--run-examples") {
       result.runExamples = true;
     } else if (arg === "--pinned-digest") {

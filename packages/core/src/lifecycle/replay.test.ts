@@ -249,3 +249,28 @@ describe("a resource recorded twice is one node (#1432 follow-up)", () => {
     expect(keys(result.observations)).toEqual(["rtb-default"]);
   });
 });
+
+describe("replaySnapshots — recorded depth (#1268)", () => {
+  it("reports identity when nothing recorded deeper", async () => {
+    stored.set("main__aws", snapshot("main", "us-east-1", { managed: { web: "i-1" } }));
+    const result = await replaySnapshots("prod", "latest", new Set());
+    if ("error" in result) throw new Error(result.error);
+    expect(result.depth).toBe("identity");
+  });
+
+  it("reports deep when any recorded lexicon read that deep", async () => {
+    stored.set("main__aws", JSON.stringify({
+      lexicon: "aws", environment: "prod", stack: "main",
+      commit: "abc", timestamp: "2026-08-03T00:00:00.000Z", depth: "deep",
+      resources: { web: { type: "AWS::EC2::Instance", status: "OBSERVED", physicalId: "i-1" } },
+    }));
+    stored.set("net__aws", JSON.stringify({
+      lexicon: "aws", environment: "prod", stack: "net",
+      commit: "abc", timestamp: "2026-08-03T00:00:00.000Z",
+      resources: { vpc: { type: "AWS::EC2::VPC", status: "OBSERVED", physicalId: "vpc-1" } },
+    }));
+    const result = await replaySnapshots("prod", "latest", new Set());
+    if ("error" in result) throw new Error(result.error);
+    expect(result.depth).toBe("deep");
+  });
+});
