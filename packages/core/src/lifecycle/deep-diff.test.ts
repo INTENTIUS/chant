@@ -1,5 +1,5 @@
 import { describe, test, expect } from "vitest";
-import { countPropertyDrift, diffDeep } from "./deep-diff";
+import { countPropertyDrift, diffDeep, type DeclaredDeepEntity } from "./deep-diff";
 import { UNRESOLVED, type NormalizedDeepObservation } from "../deep-observation";
 import type { BaselineLexicon } from "./observation-baseline";
 
@@ -206,13 +206,16 @@ describe("diffDeep — owning field manager (#1189)", () => {
 // #1443 — the declared-side counterpart of `owner`. Both sides of one
 // comparison get precise attribution, which is what makes the report actionable.
 describe("diffDeep — declared-side origin (#1443)", () => {
-  const declared = {
+  // Annotated, not `as const`: the annotation is what keeps `kind` narrowed to
+  // its literal, and it types the fixture as the production shape rather than
+  // whatever the literal happens to infer to.
+  const declared: Record<string, DeclaredDeepEntity> = {
     web: {
       type: "K8s::Apps::Deployment",
       properties: { spec: { replicas: 2, template: { spec: { containers: [{ name: "app", image: "a:1" }] } } } },
       pathOrigins: {
-        "": { kind: "composite", composite: "WebService", instance: "web" } as const,
-        "spec.replicas": { kind: "build-param", params: ["tier"] } as const,
+        "": { kind: "composite", composite: "WebService", instance: "web" },
+        "spec.replicas": { kind: "build-param", params: ["tier"] },
       },
     },
   };
