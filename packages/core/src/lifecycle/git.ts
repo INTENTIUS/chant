@@ -44,7 +44,7 @@ export async function writeBlobToPath(
   filename: string,
   content: string,
   commitMessage: string,
-  opts?: { cwd?: string },
+  opts?: { cwd?: string; expectPriorPathSha?: string | null },
 ): Promise<string> {
   const rt = getRuntime();
   const cwd = opts?.cwd;
@@ -90,11 +90,21 @@ export async function writeBlobToPath(
   //     outer retry (appendConvergeRecord, appendGateResolution,
   //     appendReleaseRecordLine below) can re-read and recompute `content`
   //     fresh before trying again, exactly as they already do.
+  //
+  //   - A read-modify-write caller must pass `expectPriorPathSha`. Without it
+  //     attempt 1 has no prior sha to compare, so a commit landing between the
+  //     caller's baseline read and this function's first tree read reads as the
+  //     ambient starting state rather than a conflict, and is overwritten from
+  //     the caller's stale content.
   let lastErr: unknown;
-  let priorPathSha: string | null | undefined;
+  let priorPathSha: string | null | undefined = opts?.expectPriorPathSha;
   for (let attempt = 1; attempt <= WRITE_BLOB_RETRY_ATTEMPTS; attempt++) {
-    // 2. Read existing tree (if branch exists) to preserve other env/file entries
-    const existingTree = await readTree(cwd);
+    // 2. Read existing tree (if branch exists) to preserve other env/file
+    // entries. `tip` is the commit sha `entries` was read from, and must stay
+    // the commit parent and CAS oldValue below. Re-resolving the branch name
+    // there instead can observe a newer tip than `entries` reflects, which
+    // makes the CAS succeed against a tree built from a stale read.
+    const { tip, entries: existingTree } = await readTree(cwd);
     const currentPathSha = existingTree.find((e) => e.env === environment && e.name === filename)?.sha ?? null;
 
     if (priorPathSha !== undefined && currentPathSha !== priorPathSha) {
@@ -144,8 +154,10 @@ export async function writeBlobToPath(
     }
     const rootTreeSha = rootTreeResult.stdout.trim();
 
-    // 4. Create commit
-    const parentRef = await getStateBranchTip(cwd);
+    // 4. Create commit — parented on `tip`, the exact sha `existingTree` was
+    // read from (see the comment on step 2), not a fresh re-resolution of
+    // the branch name.
+    const parentRef = tip;
     const parentArgs = parentRef ? ["-p", parentRef] : [];
     const commitResult = await rt.spawn(
       ["git", "commit-tree", ...parentArgs, "-m", commitMessage, rootTreeSha],
@@ -192,6 +204,27 @@ export async function readBlobFromPath(
   );
   if (result.exitCode !== 0) return null;
   return result.stdout;
+}
+
+/**
+ * Read the blob SHA stored at `<environment>/<filename>` on the orphan branch,
+ * or `null` if absent. Sibling of `readBlobFromPath` returning the
+ * content-address rather than the content. A read-modify-write ledger append
+ * pairs this with {@link readBlobBySha} to pin its baseline read to an exact
+ * sha, then passes that sha as `writeBlobToPath`'s `expectPriorPathSha`.
+ */
+export async function readPathSha(
+  environment: string,
+  filename: string,
+  opts?: { cwd?: string },
+): Promise<string | null> {
+  const rt = getRuntime();
+  const result = await rt.spawn(
+    ["git", "rev-parse", "--verify", `${STATE_BRANCH}:${environment}/${filename}`],
+    { cwd: opts?.cwd },
+  );
+  if (result.exitCode !== 0) return null;
+  return result.stdout.trim() || null;
 }
 
 /**
@@ -279,6 +312,10 @@ export async function readSnapshotAt(
  * needs `existing` re-read fresh so the appended line list is rebuilt onto
  * whatever the other writer just committed, not silently dropped by
  * retrying with a blob computed from a stale read.
+ *
+ * The baseline read must be `readPathSha` + `readBlobBySha` rather than
+ * `readBlobFromPath`, so the exact sha `existing` came from can be passed as
+ * `expectPriorPathSha`. See `writeBlobToPath` for the race that closes.
  */
 export async function appendReleaseRecordLine(
   environment: string,
@@ -290,9 +327,13 @@ export async function appendReleaseRecordLine(
   let lastErr: unknown;
   for (let attempt = 1; attempt <= WRITE_BLOB_RETRY_ATTEMPTS; attempt++) {
     try {
-      const existing = await readBlobFromPath(environment, filename, opts);
+      const priorSha = await readPathSha(environment, filename, opts);
+      const existing = priorSha ? await readBlobBySha(priorSha, opts) : null;
       const content = existing ? `${existing.replace(/\n$/, "")}\n${recordJson}` : recordJson;
-      return await writeBlobToPath(environment, filename, content, "Release record", opts);
+      return await writeBlobToPath(environment, filename, content, "Release record", {
+        ...opts,
+        expectPriorPathSha: priorSha,
+      });
     } catch (err) {
       if (!(err instanceof RefCASConflictError)) throw err;
       lastErr = err;
@@ -783,17 +824,25 @@ async function getStateBranchTip(cwd?: string): Promise<string | null> {
   return result.stdout.trim();
 }
 
-async function readTree(cwd?: string): Promise<TreeEntry[]> {
+/**
+ * Read the orphan branch's tip and every env/file tree entry under it as one
+ * consistent snapshot. Every listing must stay pinned to the resolved `tip`
+ * sha, never to `STATE_BRANCH`: the read spans several `ls-tree` calls (root
+ * plus one per env subtree) and a branch name re-resolves on each, so a
+ * concurrent commit splices entries from two commits into one array
+ * undetectably. Callers need the returned `tip` as their commit parent.
+ */
+async function readTree(cwd?: string): Promise<{ tip: string | null; entries: TreeEntry[] }> {
   const rt = getRuntime();
   const tip = await getStateBranchTip(cwd);
-  if (!tip) return [];
+  if (!tip) return { tip: null, entries: [] };
 
-  // List root tree to get env directories
+  // List root tree to get env directories — pinned to `tip`, not `STATE_BRANCH`.
   const rootResult = await rt.spawn(
-    ["git", "ls-tree", STATE_BRANCH],
+    ["git", "ls-tree", tip],
     { cwd },
   );
-  if (rootResult.exitCode !== 0) return [];
+  if (rootResult.exitCode !== 0) return { tip, entries: [] };
 
   const entries: TreeEntry[] = [];
   const lines = rootResult.stdout.trim().split("\n").filter(Boolean);
@@ -805,9 +854,9 @@ async function readTree(cwd?: string): Promise<TreeEntry[]> {
     const [, mode, type, sha, name] = match;
 
     if (type === "tree") {
-      // This is an env directory — list its contents
+      // This is an env directory — list its contents, still pinned to `tip`.
       const envResult = await rt.spawn(
-        ["git", "ls-tree", `${STATE_BRANCH}:${name}/`],
+        ["git", "ls-tree", `${tip}:${name}/`],
         { cwd },
       );
       if (envResult.exitCode !== 0) continue;
@@ -828,7 +877,7 @@ async function readTree(cwd?: string): Promise<TreeEntry[]> {
     }
   }
 
-  return entries;
+  return { tip, entries };
 }
 
 function mergeTreeEntry(
