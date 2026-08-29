@@ -23,12 +23,15 @@ import { gitlabHover } from "./lsp/hover";
 import { GitLabParser } from "./import/parser";
 import { GitLabGenerator } from "./import/generator";
 import { generateGitlabPipeline } from "./components/generate-pipeline";
+import { generateGitlabOpPipeline } from "./components/generate-op-pipeline";
 
 export const gitlabPlugin: LexiconPlugin = {
   name: "gitlab",
   auditCatalog: () => gitlabAuditCatalog,
   // Generate mode (#688): synthesize a .gitlab-ci.yml from the component graph.
   generateComponentPipeline: (components, options) => generateGitlabPipeline(components, options),
+  // Generate mode, Op counterpart (#927): scheduled Op → GitLab CI job.
+  generateOpPipeline: (ops, options) => generateGitlabOpPipeline(ops, options),
   // Self-upgrade: where the pinned GitLab schema version lives + its upstream (#685).
   upstreamPin: {
     file: "src/codegen/fetch.ts",

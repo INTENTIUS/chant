@@ -32,12 +32,15 @@ import { GitHubActionsParser } from "./import/parser";
 import { GitHubActionsGenerator } from "./import/generator";
 import { githubContextTools } from "./mcp/context-tools";
 import { generateGithubPipeline } from "./components/generate-pipeline";
+import { generateGithubOpPipeline } from "./components/generate-op-pipeline";
 
 export const githubPlugin: LexiconPlugin = {
   name: "github",
   auditCatalog: () => githubAuditCatalog,
   // Generate mode (#891): synthesize a GitHub Actions workflow from the component graph.
   generateComponentPipeline: (components, options) => generateGithubPipeline(components, options),
+  // Generate mode, Op counterpart (#927): synthesize one cron-triggered workflow per scheduled Op.
+  generateOpPipeline: (ops, options) => generateGithubOpPipeline(ops, options),
   serializer: githubSerializer,
 
   lintRules(): LintRule[] {

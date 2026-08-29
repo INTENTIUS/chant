@@ -236,6 +236,10 @@ export const { op: scheduledOp, schedule } = WorkflowAuditOp({
 
 `PipelineAuditOp` is the GitLab counterpart — it audits `.gitlab-ci.yml` `include:` / `component:` / `image:` references, and its finding-modes are `report | issue | merge-request`. Both run one-shot on the local executor (`chant run <name>`) with no Temporal dependency; only the scheduled, durable form requires Temporal, and `report` mode needs no external services at all. See the [github](/chant/lexicons/github/) and [gitlab](/chant/lexicons/gitlab/) lexicon docs for the per-platform reference lists each audit resolves.
 
+### Scheduling without Temporal
+
+`schedule` above produces a `TemporalSchedule`, so it needs a Temporal server. A project that doesn't run one can still put an audit/reconcile Op on a cron via CI itself — the Op counterpart to [generate mode](/chant/components/orchestration/#generate-mode)'s component pipeline. `generateOpsPipeline` (`@intentius/chant/op`) validates that every named Op exists, then delegates to the target lexicon's `generateOpPipeline` (gitlab, github, forgejo), which synthesizes one cron-triggered CI file per Op — `chant run <name>` on the local executor, with only the token/permission scope its finding-mode needs (read-only for `report`; scoped write for `issue`/`pull-request`/`merge-request`).
+
 ## Replay (policy drift)
 
 `PolicyReplayOp` is the same shape applied to authorization policy. A [dogwood](/chant/lexicons/cedar/) `.dw` policy set carries temporal clauses — `formerly within 1h …` — so what a policy decides depends on a history the build cannot see. Replaying the declared set against a recorded event trace is how that gets checked, and the answer moves as the history does.

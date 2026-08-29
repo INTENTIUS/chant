@@ -407,6 +407,61 @@ export interface ComponentPipelineResult {
 }
 
 /**
+ * Finding-mode a scheduled Op surfaces on drift — the vocabulary the
+ * temporal-lexicon composites (`WorkflowAuditOp`/`PipelineAuditOp`/
+ * `ReconcileOp`) already declare on the Op itself (#927). The mode is baked
+ * into the Op's own activity args at build time and is never re-passed on the
+ * generated CI invocation; here it decides only what token/permission wiring
+ * the generated job needs to act on a finding — elevated write access for
+ * `issue`/`pull-request`/`merge-request`, none for `report`.
+ */
+export type OpFindingMode = "report" | "issue" | "pull-request" | "merge-request";
+
+/** One scheduled Op to generate CI for — the cron-triggered counterpart to a component (generate mode). */
+export interface ScheduledOpSpec {
+  /** Op name (`*.op.ts`'s `Op({ name })`) — what `chant run <name>` targets. */
+  name: string;
+  /** Cron expression driving the CI-native trigger — the CI-only alternative to a Temporal `TemporalSchedule`. */
+  schedule: string;
+  /** This Op's finding-mode, for permission/token wiring only (see {@link OpFindingMode}). Default: "report" — no elevated permissions. */
+  findingMode?: OpFindingMode;
+}
+
+/** One CI job generated for a scheduled Op. */
+export interface OpPipelineJob {
+  /** CI job name (safe as a YAML key). */
+  jobName: string;
+  /** The Op this job runs. */
+  op: string;
+  /** Cron expression this job's workflow is scheduled on. */
+  schedule: string;
+  /** The finding-mode wired for this job. */
+  findingMode: OpFindingMode;
+}
+
+/**
+ * One generated CI file for a scheduled Op. Unlike a component pipeline —
+ * one combined document for the whole graph — a cron trigger is
+ * workflow-scoped in every CI provider chant targets (GitHub Actions'
+ * `on.schedule`, a GitLab pipeline schedule bound to one `.gitlab-ci.yml`), so
+ * each scheduled Op gets its own file.
+ */
+export interface OpPipelineFile {
+  /** Suggested file name (e.g. `<op-name>.yml`), relative to the provider's workflow directory. */
+  name: string;
+  /** The synthesized CI YAML for this Op. */
+  yaml: string;
+}
+
+/** The synthesized CI pipeline for a set of scheduled Ops (generate mode's Op counterpart, #927). */
+export interface OpPipelineResult {
+  /** One file per scheduled Op. */
+  files: OpPipelineFile[];
+  /** Every generated job, in emit order — one per Op. */
+  jobs: OpPipelineJob[];
+}
+
+/**
  * Live status of a single deploy unit (a CloudFormation stack, a K8s release, …)
  * addressed by its deployed name — the per-component presence signal
  * `chant components status --live` needs (#57). A component's deploy step carries
@@ -639,6 +694,20 @@ export interface LexiconPlugin {
     components: DriverComponent[],
     options?: ComponentPipelineOptions,
   ): ComponentPipelineResult;
+
+  /**
+   * Generate CI for a set of scheduled, stateless Ops — the cron-triggered
+   * sibling of {@link generateComponentPipeline} (#927). Each
+   * `ScheduledOpSpec` becomes its own CI file (cron triggers are
+   * workflow-scoped in every CI provider chant targets), invoking `chant run
+   * <name>` on the local executor — the same one-shot invocation `chant run
+   * <op>` runs by hand. Only CI-provider lexicons (gitlab, github, forgejo)
+   * implement this; omit for lexicons that are not CI providers.
+   */
+  generateOpPipeline?(
+    ops: ScheduledOpSpec[],
+    options?: ComponentPipelineOptions,
+  ): OpPipelineResult;
 
   /**
    * Render this lexicon's config-declared build roots into entities (#1548
