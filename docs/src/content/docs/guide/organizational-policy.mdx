@@ -216,6 +216,19 @@ single-attempt (a deterministic violation is not worth retrying). It is a plain
 activity, so it gates under both the local executor and Temporal. A clean
 evaluation passes through to the apply.
 
+The build behind the gate is assembled from the same resolution `chant build`
+uses, so it is the same project: folded by default, with the project's config
+reaching the serializers and its `buildRoots` contributing their entities. A gate
+that passes is a gate over a build `chant build` would also accept.
+
+One combination is refused rather than half-honoured. `chant run <op> --sandbox`
+on an Op containing a `policyGate` step exits before any phase runs: the gate
+builds the project and imports its `lint.policies` modules in the chant process,
+which is what `--sandbox` promises does not happen. Run the Op without
+`--sandbox`, or build separately with `chant build --sandbox`. A project whose
+`chant.config.ts` sets `build.sandbox: true` still gets a gate that builds
+in-process, and the gate says so on stderr.
+
 > **Signed override (deferred).** Pausing for a human, signed, audited override
 > to proceed *despite* a violation requires conditional gating in the generated
 > workflow — it is tracked as a follow-on, not in this version. Today `policyGate`
