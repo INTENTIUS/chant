@@ -1,5 +1,5 @@
 import { describe, test, expect } from "vitest";
-import { Workflow, Job, Step, Checkout, SetupNode } from "@intentius/chant-lexicon-github";
+import { Workflow, Job, Step, Checkout, SetupNode, PrPlanReport } from "@intentius/chant-lexicon-github";
 import type { Declarable } from "@intentius/chant/declarable";
 import type { SerializerResult } from "@intentius/chant/serializer";
 import { forgejoSerializer } from "./serializer";
@@ -120,5 +120,36 @@ describe("forgejoSerializer — multi-workflow output", () => {
     const result = asResult(out);
     expect(result.primary).toContain("name: A");
     expect(Object.keys(result.files ?? {})).toContain("release.yml");
+  });
+});
+
+// #1983 — the github lexicon's `PrPlanReport` composite reaches forgejo purely
+// through the re-export (`src/index.ts`'s `export * from
+// "@intentius/chant-lexicon-github"`); nothing forgejo-specific is written for
+// it. This is the functional check that inheritance actually holds, not just
+// that the type is importable: the dialect still drops the job's
+// `permissions` and remaps its runner label, while the sticky-comment step —
+// a plain `gh api` script with no `uses:` at all — passes through untouched,
+// since Forgejo's API accepts the same calls against its GitHub-compatible
+// surface.
+describe("forgejoSerializer — inherits PrPlanReport from github (#1983)", () => {
+  test("dialect still applies to a github-lexicon composite's job", () => {
+    const workflow = new Workflow({
+      name: "pr-plan",
+      on: { pull_request: { types: ["opened", "synchronize"] } },
+    }) as unknown as Declarable;
+    const { job } = PrPlanReport({ environment: "prod" });
+    const out = forgejoSerializer.serialize(
+      new Map<string, Declarable>([["workflow", workflow], ["plan", job as unknown as Declarable]]),
+    );
+    const result = asResult(out);
+    expect(result.primary).toContain("runs-on: docker");
+    expect(result.primary).not.toContain("ubuntu-latest");
+    // The job carries `permissions` — dropped by the dialect, warned once.
+    expect(result.primary).not.toContain("permissions:");
+    expect((result.warnings ?? []).filter((w) => w.includes("permissions"))).toHaveLength(1);
+    // The sticky-comment mechanism is a raw script, nothing to remap or drop.
+    expect(result.primary).toContain("Post or update PR comment");
+    expect(result.primary).toContain("gh api");
   });
 });

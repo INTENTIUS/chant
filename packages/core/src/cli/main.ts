@@ -624,6 +624,8 @@ Options:
                         OR with a path arg: SARIF report destination (migrate)
                         OR '--report gitlab-mr': emit the GitLab MR plan-widget
                         JSON (lifecycle plan)
+                        OR '--report markdown': emit a reviewer-facing markdown
+                        render, holes and disruption included (lifecycle plan)
   --from <name>         Source lexicon for migrate (default: github)
   --to <name>           Target lexicon for migrate (default: gitlab)
   --emit <fmt>          Migration output format: yaml (default) or ts

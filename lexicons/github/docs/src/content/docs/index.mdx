@@ -43,7 +43,7 @@ export const buildJob = new Job({
 });
 ```
 
-The lexicon provides **3 resources** (Workflow, Job, Dependabot config), **14 composites** (Checkout, SetupNode, SetupGo, SetupPython, CacheAction, UploadArtifact, DownloadArtifact, NodeCI, NodePipeline, PythonCI, DockerBuild, DeployEnvironment, GoCI, Dependabot) + **3 presets** (BunPipeline, PnpmPipeline, YarnPipeline), a typed **Expression** system with 24 GitHub and 5 Runner context variables, and **13 lint rules** + **49 post-synth checks** (including a CI/CD supply-chain security pass, GHA029–062).
+The lexicon provides **3 resources** (Workflow, Job, Dependabot config), **15 composites** (Checkout, SetupNode, SetupGo, SetupPython, CacheAction, UploadArtifact, DownloadArtifact, NodeCI, NodePipeline, PythonCI, DockerBuild, DeployEnvironment, GoCI, Dependabot, PrPlanReport) + **3 presets** (BunPipeline, PnpmPipeline, YarnPipeline), a typed **Expression** system with 24 GitHub and 5 Runner context variables, and **13 lint rules** + **49 post-synth checks** (including a CI/CD supply-chain security pass, GHA029–062).
 
 
 ## At a Glance
@@ -53,11 +53,11 @@ The lexicon provides **3 resources** (Workflow, Job, Dependabot config), **14 co
 | Resources | 3 |
 | Property types | 19 |
 | Services | 1 |
-| Intrinsic functions | 1 |
+| Intrinsic functions | 19 |
 | Pseudo-parameters | 0 |
 | Lint rules | 68 |
 
-**Lexicon version:** 0.49.0  
+**Lexicon version:** 0.51.0  
 **Namespace:** `GitHub`
 
 - [All Rules](./rules) — 68 rules
