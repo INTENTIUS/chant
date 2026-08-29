@@ -153,6 +153,25 @@ Two things to get right:
 
 Core owns the rest of the pass and needs no hook for it: canonical key order, hook-driven array order, secret masking by property name, and non-JSON values (an unevaluated `Fn::Sub`) collapsed so an interpolated property never reads as permanent drift.
 
+## classifyDisruption() — what applying an update costs
+
+Reference implementation: `lexicons/aws/src/disruption.ts`.
+
+`lifecycle plan` reports what changes. What it costs to apply is a separate question, and only the lexicon can answer it: replacement semantics live in the spec you already compile (CloudFormation's `createOnlyProperties`, Kubernetes' SSA schema), and the attribute paths on a change-set entry are paths into *your* observation shape, which core cannot map back onto property names.
+
+```typescript
+classifyDisruption?(options: {
+  environment: string;
+  changes: DisruptionQuery[];          // { name, type?, deltas }
+}): Record<string, DisruptionVerdict>; // { disruption, because?, detail? }
+```
+
+Called once per lexicon with that lexicon's `update` entries, before the plan merges the change sets. Expect a table lookup over compiled spec data — no live API call, no mutation. A `Promise` is allowed for a lexicon whose answer needs an await.
+
+The vocabulary is `in-place` / `rolling` / `replace` / `destroy` / `unknown`, described in [`lifecycle plan`](/chant/cli/lifecycle/#disruption-how-much-an-update-costs).
+
+**Return a partial map.** A name you say nothing about is `unknown`, which is the right answer wherever the spec does not say — a conditionally-immutable property, a type with no schema on record. Core also forces `unknown` when the method is absent, when it throws, and when it returns a level outside the vocabulary, so there is no path by which a lexicon accidentally emits a confident `in-place`. That is what makes `in-place` worth gating on: it is only ever a deliberate claim, backed by a `detail` naming the spec knowledge behind it.
+
 ## listArtifacts()
 
 Reference implementation: `lexicons/helm/src/list-artifacts.ts`.

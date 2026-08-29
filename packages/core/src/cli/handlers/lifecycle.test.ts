@@ -821,6 +821,96 @@ describe("runLifecyclePlan", () => {
     expect(byName["sg-0abc123"].name).toBe("sg-0abc123");
   });
 
+  // #1665 — per-change disruption. Core defines the contract and reports it;
+  // the lexicon that owns the spec answers, and every degradation is `unknown`.
+  describe("disruption classification (#1665)", () => {
+    const drifted = (lexicon: string, type: string) => {
+      readSnapshotMock.mockResolvedValue(JSON.stringify({
+        lexicon,
+        environment: "prod",
+        commit: "abc",
+        timestamp: "2026-04-01T00:00:00Z",
+        resources: { db: meta({ type, attributes: { Engine: "postgres" } }) },
+      }));
+      return staticDescribeResources({ db: meta({ type, attributes: { Engine: "mysql" } }) });
+    };
+
+    test("a lexicon's verdict reaches --json and the stderr warning", async () => {
+      buildMock.mockResolvedValue(makeBuildResult({ aws: ["db"] }));
+      const plugins: LexiconPlugin[] = [
+        createMockPlugin({
+          name: "aws",
+          emulator: awsEmulatorStub,
+          describeResources: drifted("aws", "AWS::RDS::DBInstance"),
+          classifyDisruption: ({ changes }) =>
+            Object.fromEntries(
+              changes.map((c) => [
+                c.name,
+                { disruption: "destroy" as const, because: c.deltas.map((d) => d.path), detail: "Engine is create-only" },
+              ]),
+            ),
+        }),
+      ];
+      const exit = await runLifecyclePlan({
+        args: makeArgs({ path: "plan", extraPositional: "prod", json: true }),
+        plugins,
+        serializers: plugins.map((p) => p.serializer),
+      });
+      expect(exit).toBe(0);
+      const plan = JSON.parse(stdoutBuf.join("\n"));
+      const db = plan.entries.find((e: { name: string }) => e.name === "db");
+      expect(db).toMatchObject({
+        action: "update",
+        disruption: "destroy",
+        disruptionDetail: "Engine is create-only",
+      });
+      expect(db.disruptionBecause).toContain("attributes.Engine");
+      // The --json shape has no column for it, so the warning is what a CI
+      // consumer hears.
+      expect(stderrBuf.join("\n")).toContain("replace the resource rather than mutating it in place");
+    });
+
+    test("a lexicon with no classifier leaves every update unknown, never in-place", async () => {
+      buildMock.mockResolvedValue(makeBuildResult({ k8s: ["db"] }));
+      const plugins: LexiconPlugin[] = [
+        createMockPlugin({ name: "k8s", describeResources: drifted("k8s", "K8s::Apps::Deployment") }),
+      ];
+      const exit = await runLifecyclePlan({
+        args: makeArgs({ path: "plan", extraPositional: "prod", json: true }),
+        plugins,
+        serializers: plugins.map((p) => p.serializer),
+      });
+      expect(exit).toBe(0);
+      const plan = JSON.parse(stdoutBuf.join("\n"));
+      const db = plan.entries.find((e: { name: string }) => e.name === "db");
+      expect(db.disruption).toBe("unknown");
+      expect(db.disruptionDetail).toContain("k8s lexicon does not classify disruption");
+      expect(stderrBuf.join("\n")).toContain("could not be classified");
+    });
+
+    test("the human render carries the verdict", async () => {
+      buildMock.mockResolvedValue(makeBuildResult({ aws: ["db"] }));
+      const plugins: LexiconPlugin[] = [
+        createMockPlugin({
+          name: "aws",
+          emulator: awsEmulatorStub,
+          describeResources: drifted("aws", "AWS::RDS::DBInstance"),
+          classifyDisruption: () => ({ db: { disruption: "in-place" as const, detail: "no create-only property changed" } }),
+        }),
+      ];
+      const exit = await runLifecyclePlan({
+        args: makeArgs({ path: "plan", extraPositional: "prod" }),
+        plugins,
+        serializers: plugins.map((p) => p.serializer),
+      });
+      expect(exit).toBe(0);
+      const out = stdoutBuf.join("\n");
+      expect(out).toContain("Disruption: 1 in-place");
+      expect(out).toContain("— in-place: no create-only property changed");
+      expect(stderrBuf.join("\n")).not.toContain("could not be classified");
+    });
+  });
+
   // #1832 — effect receipts are declared, diffed, and observed like any
   // resource, but observe-only to the generic apply path: the plan compares
   // live value to resolved expectation and proposes the fire, never a create.

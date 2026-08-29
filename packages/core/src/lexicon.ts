@@ -18,6 +18,7 @@ import type { ReferenceCatalog } from "./graph-refs";
 import type { IREdge } from "./graph-ir";
 import type { DescribeResourcesResult, UnobservedReason } from "./observation";
 import type { DeepNormalizationHooks, DeepObservationResult } from "./deep-observation";
+import type { DisruptionQuery, DisruptionVerdict } from "./lifecycle/disruption";
 import type { OwnerChainVerdict } from "./owner-chain";
 import type { CommandGroup } from "./cli/command-group";
 
@@ -43,6 +44,16 @@ export type {
   UnobservedEntity,
   UnobservedReason,
 } from "./observation";
+
+// Disruption classification (#1665), re-exported from the same entry so a
+// lexicon's `classifyDisruption` types itself without a second import path.
+// Runtime helpers live in `@intentius/chant/lifecycle/disruption`.
+export type {
+  Disruption,
+  DisruptionQuery,
+  DisruptionVerdict,
+  DisruptionClassifier,
+} from "./lifecycle/disruption";
 
 // The deep observation contract (#1014), re-exported for the same reason: a
 // lexicon authoring `observeResourcesDeep` + its pruning/ordering hooks types
@@ -877,6 +888,46 @@ export interface LexiconPlugin {
      */
     namespace?: string;
   }): Promise<DescribeResourcesResult>;
+
+  /**
+   * Classify how much each pending `update` in a plan hurts (#1665) —
+   * in-place / rolling / replace / destroy, or `unknown`.
+   *
+   * `lifecycle plan` reports WHAT changes. What it costs to apply is a
+   * different question, and the answer is spec knowledge: CloudFormation's
+   * registry schema declares `createOnlyProperties` per type, Kubernetes' SSA
+   * schema knows which field changes roll a workload. Core owns neither, so it
+   * defines the vocabulary and does the reporting, and the lexicon that
+   * compiled the spec answers — the same division `postSynthChecks` draws for
+   * validation. A replacement rule hardcoded in core would be a rule the tool
+   * has to keep in step with a provider it does not generate from.
+   *
+   * Only the lexicon can answer, for a second reason: the `deltas` on an entry
+   * are paths into ITS OWN observation shape (`attributes.<key>` off
+   * {@link describeResources}), which core cannot map back onto spec property
+   * names without knowing how the reader named things.
+   *
+   * Called once per lexicon with that lexicon's `update` entries, before the
+   * plan merges the change sets. Expected to be a table lookup over compiled
+   * spec data — no live API call, no mutation. Returning a `Promise` is
+   * allowed, so a lexicon whose answer needs an await is not shut out.
+   *
+   * **Every degradation lands on `unknown`.** Return a partial map: a name
+   * absent from the result is `unknown`, which is the right answer when the
+   * spec does not say (a conditionally-immutable property, a type with no
+   * schema on record). Core also forces `unknown` when this method is absent,
+   * when it throws, and when it returns a level outside the vocabulary. There
+   * is no path by which a lexicon accidentally produces a confident
+   * `in-place` — that claim has to be made deliberately, and a consumer gating
+   * on `replace` can trust it for exactly that reason.
+   *
+   * Omit for lexicons with no replacement semantics to publish.
+   */
+  classifyDisruption?(options: {
+    environment: string;
+    /** This lexicon's `update` entries — name, type, and the attribute deltas. */
+    changes: DisruptionQuery[];
+  }): Record<string, DisruptionVerdict> | Promise<Record<string, DisruptionVerdict>>;
 
   /**
    * Report the undeclared resources this estate *depends on* (#1273), as
