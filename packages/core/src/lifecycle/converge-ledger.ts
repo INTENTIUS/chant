@@ -16,10 +16,28 @@
  * row include a given rule id, stopping at the first tick where it didn't
  * fire (the symptom cleared).
  */
+import { randomUUID } from "node:crypto";
 import { sortedJsonReplacer } from "../utils";
+import type { ComponentStatusRow } from "./status";
 import { readBlobFromPath, readPathSha, readBlobBySha, writeBlobToPath, RefCASConflictError } from "./git";
 
 const FILENAME = "converge.jsonl";
+
+/**
+ * Cap a piece of free text to one sanitized line before it goes into a
+ * record. A record here is one line of JSON, so a multi-line or unbounded
+ * string folded into any field would break the line the ledger is built out
+ * of. Every free-text field a tick writes goes through this: a dispatch
+ * failure's `stderr` (lexicons/temporal's `sanitizeOneLine`, which delegates
+ * here) and a component verdict's lexicon-authored `detail`.
+ */
+const MAX_LEDGER_TEXT_LEN = 300;
+export function sanitizeLedgerText(raw: string, maxLen = MAX_LEDGER_TEXT_LEN): string {
+  const firstLine = raw.split(/\r?\n/, 1)[0] ?? "";
+  // Strips literal control bytes; it is not matching on a range boundary.
+  const stripped = firstLine.replace(/[\x00-\x1f\x7f]/g, " ").trim();
+  return stripped.length > maxLen ? `${stripped.slice(0, maxLen)}…` : stripped;
+}
 
 /**
  * Read-modify-append retry budget for {@link appendConvergeRecord} (#1485).
@@ -54,10 +72,67 @@ export interface ConvergeRuleOutcome {
   reason?: string;
 }
 
+/**
+ * One component's verdict as the tick observed it (#2027) — the per-entity
+ * layer behind the tick's single aggregate `status`.
+ *
+ * A deliberate subset of `ComponentStatusRow`: the five verdict-bearing
+ * fields, joined on the same `component` key `chant components status --live
+ * --json` emits, and none of the heavy ones. `recorded`, `build` and
+ * `componentBom` are dropped on purpose — they are release/build-ledger
+ * content, already readable by that same key, and a tick record is one line
+ * of JSON appended every tick forever. `detail` goes through
+ * {@link sanitizeLedgerText} for the same reason.
+ */
+export interface ConvergeComponentVerdict {
+  component: string;
+  reconciliation: ComponentStatusRow["reconciliation"];
+  /** Human-readable detail backing the verdict, capped to one line. */
+  detail: string;
+  /** "Observed live", when live evidence was gathered. Absent means "did not look" or "could not look" — see `unobserved`. */
+  live?: boolean;
+  /** Why live state could not be read for this component (#1089). Mutually exclusive with `live`; this is the row that tripped an aggregate `status: "unknown"`. */
+  unobserved?: { reason: string; detail?: string };
+}
+
+/**
+ * Project the tick's `ComponentStatusRow[]` down to what the ledger keeps.
+ * Pure; row order is preserved, so a consumer sees components in the same
+ * order the status join produced them.
+ */
+export function componentVerdicts(rows: readonly ComponentStatusRow[]): ConvergeComponentVerdict[] {
+  return rows.map((row) => ({
+    component: row.component,
+    reconciliation: row.reconciliation,
+    detail: sanitizeLedgerText(row.detail ?? ""),
+    ...(row.live !== undefined ? { live: row.live } : {}),
+    ...(row.unobserved
+      ? {
+          unobserved: {
+            reason: row.unobserved.reason,
+            ...(row.unobserved.detail !== undefined ? { detail: sanitizeLedgerText(row.unobserved.detail) } : {}),
+          },
+        }
+      : {}),
+  }));
+}
+
 /** One immutable converge-tick record. */
 export interface ConvergeTickRecord {
   /** Schema version, so an incompatible future shape is detected before being misread. */
   version: 1;
+  /**
+   * Stable tick id (#2027) — the one thing an outcome, a gate fact or a
+   * remediation can point at. Before this, a tick's identity was the
+   * `(op, env, timestamp)` triple, so two ticks landing in the same ISO
+   * second were indistinguishable and nothing could reference one.
+   *
+   * Minted by {@link appendConvergeRecord} with `randomUUID()` (the same
+   * mint `./lease.ts` uses for a lease token) when the caller doesn't supply
+   * one. Optional on the type because `version: 1` records written before
+   * #2027 have none — a reader must handle its absence, not assume it.
+   */
+  id?: string;
   /** The ConvergeOp's name (`OpConfig.name`). */
   op: string;
   env: string;
@@ -67,6 +142,18 @@ export interface ConvergeTickRecord {
   firedRuleIds: string[];
   /** Per-rule outcome, for every fired rule. */
   outcomes: ConvergeRuleOutcome[];
+  /**
+   * The per-component verdicts this tick observed (#2027), behind the
+   * aggregate counts in `summary`.
+   *
+   * The tick derives these to compute `summary.drifted` and the whole-tick
+   * `status`, and used to throw them away — so a reader could say "this
+   * environment drifted twice this hour" but could not colour the node that
+   * drifted, or name the single unobserved component whose `unknown` verdict
+   * refused remediation for everything else. Optional because `version: 1`
+   * records written before #2027 have none; absent is not "no components".
+   */
+  components?: ConvergeComponentVerdict[];
   /** Aggregate counts backing the tick's one log line. */
   summary: {
     drifted: number;
@@ -90,6 +177,13 @@ export type ConvergeTickRecordInput = Omit<ConvergeTickRecord, "version">;
  * `pushLifecycle` (./git.ts) afterward, same two-step shape every other
  * ledger write here uses.
  *
+ * Mints `record.id` (#2027) when the input doesn't carry one, so every tick
+ * written from here on is referenceable. Unlike `timestamp`, which stays
+ * caller-supplied because library code never calls `Date.now()` internally,
+ * an id has nothing for a caller to decide — the mint lives here so no
+ * writer can forget it. An explicit `input.id` still wins, which is what a
+ * test asserting an exact record uses.
+ *
  * Retries the whole read-modify-write cycle (#1485) on `RefCASConflictError`
  * — `writeBlobToPath`'s ref write is CAS-guarded, so a concurrent writer to
  * a *different* env's file on the same orphan branch (two operators ticking
@@ -108,8 +202,8 @@ export type ConvergeTickRecordInput = Omit<ConvergeTickRecord, "version">;
 export async function appendConvergeRecord(
   input: ConvergeTickRecordInput,
   opts?: { cwd?: string },
-): Promise<{ commit: string; record: ConvergeTickRecord }> {
-  const record: ConvergeTickRecord = { version: 1, ...input };
+): Promise<{ commit: string; record: ConvergeTickRecord & { id: string } }> {
+  const record: ConvergeTickRecord & { id: string } = { version: 1, ...input, id: input.id ?? randomUUID() };
   const json = JSON.stringify(record, sortedJsonReplacer);
 
   let lastErr: unknown;

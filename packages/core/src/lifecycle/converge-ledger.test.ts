@@ -7,9 +7,11 @@ import {
   appendConvergeRecord,
   readConvergeLedger,
   consecutiveRuleFires,
+  componentVerdicts,
   type ConvergeTickRecordInput,
   type ConvergeTickRecord,
 } from "./converge-ledger";
+import type { ComponentStatusRow } from "./status";
 
 function git(args: string[], cwd: string): { stdout: string; exitCode: number } {
   const r = spawnSync("git", args, { cwd, encoding: "utf-8" });
@@ -167,6 +169,114 @@ describe("converge-ledger", () => {
 
         const { records } = await readConvergeLedger("staging", { cwd: dir });
         expect(records).toEqual([record]);
+      });
+    });
+  });
+
+  // ── Per-component verdicts and tick id (#2027) ─────────────────────────────
+
+  describe("tick id", () => {
+    test("mints one per record, and two ticks in the same ISO second are still distinguishable", async () => {
+      await withTestDir(async (dir) => {
+        await initRepo(dir);
+        const a = await appendConvergeRecord(makeInput(), { cwd: dir });
+        const b = await appendConvergeRecord(makeInput(), { cwd: dir });
+
+        expect(a.record.id).toMatch(/^[0-9a-f-]{36}$/);
+        expect(a.record.timestamp).toBe(b.record.timestamp);
+        expect(a.record.id).not.toBe(b.record.id);
+
+        const { records } = await readConvergeLedger("staging", { cwd: dir });
+        expect(records.map((r) => r.id)).toEqual([a.record.id, b.record.id]);
+      });
+    });
+
+    test("an explicitly supplied id wins over the mint", async () => {
+      await withTestDir(async (dir) => {
+        await initRepo(dir);
+        const { record } = await appendConvergeRecord(makeInput({ id: "tick-fixed" }), { cwd: dir });
+        expect(record.id).toBe("tick-fixed");
+      });
+    });
+
+    test("a pre-#2027 record with no id still reads, rather than being counted malformed", async () => {
+      await withTestDir(async (dir) => {
+        await initRepo(dir);
+        await appendConvergeRecord(makeInput(), { cwd: dir });
+        // Hand-write the pre-#2027 shape (no `id`) onto the same ledger,
+        // through the same git plumbing a real writer used before the field
+        // existed.
+        const { readBlobFromPath, writeBlobToPath } = await import("./git");
+        const legacy = JSON.stringify({ version: 1, ...makeInput({ timestamp: "2025-12-31T00:00:00.000Z" }) });
+        const existing = await readBlobFromPath("staging", "converge.jsonl", { cwd: dir });
+        await writeBlobToPath("staging", "converge.jsonl", `${existing}\n${legacy}`, "legacy", { cwd: dir });
+
+        const { records, malformed } = await readConvergeLedger("staging", { cwd: dir });
+        expect(malformed).toBe(0);
+        expect(records).toHaveLength(2);
+        expect(records[1].id).toBeUndefined();
+      });
+    });
+  });
+
+  describe("componentVerdicts", () => {
+    const row = (over: Partial<ComponentStatusRow>): ComponentStatusRow => ({
+      component: "svc",
+      env: "staging",
+      reconciliation: "reconciled",
+      detail: "digest matches live",
+      ...over,
+    } as ComponentStatusRow);
+
+    test("keeps the verdict-bearing subset and drops the heavy release/build fields", () => {
+      const rows = [
+        row({ component: "api", reconciliation: "drifted", detail: "live digest differs", live: true,
+              recorded: { version: 1 } as unknown as ComponentStatusRow["recorded"] }),
+        row({ component: "worker", reconciliation: "unknown", detail: "could not read live state",
+              unobserved: { reason: "no-credentials", detail: "no role assumed" } }),
+      ];
+      expect(componentVerdicts(rows)).toEqual([
+        { component: "api", reconciliation: "drifted", detail: "live digest differs", live: true },
+        {
+          component: "worker",
+          reconciliation: "unknown",
+          detail: "could not read live state",
+          unobserved: { reason: "no-credentials", detail: "no role assumed" },
+        },
+      ]);
+    });
+
+    test("caps a multi-line or oversized detail to one line, so the record stays one line of JSON", () => {
+      const verdicts = componentVerdicts([
+        row({ detail: "first line\nsecond line" }),
+        row({ component: "big", detail: "x".repeat(500) }),
+      ]);
+      expect(verdicts[0].detail).toBe("first line");
+      expect(verdicts[1].detail).toHaveLength(301); // 300 + the ellipsis
+      expect(JSON.stringify(verdicts)).not.toContain("\\n");
+    });
+
+    test("round-trips on a record, naming the component that tripped the tick's aggregate unknown", async () => {
+      await withTestDir(async (dir) => {
+        await initRepo(dir);
+        const { record } = await appendConvergeRecord(
+          makeInput({
+            components: componentVerdicts([
+              row({ component: "api", reconciliation: "drifted", detail: "live digest differs", live: true }),
+              row({ component: "worker", reconciliation: "unknown", detail: "unreadable",
+                    unobserved: { reason: "no-credentials" } }),
+            ]),
+            summary: { drifted: 1, remediated: 0, reported: 1, skippedBudget: 0, skippedFlap: 0, unobserved: 1, adopted: 0 },
+          }),
+          { cwd: dir },
+        );
+
+        const { records } = await readConvergeLedger("staging", { cwd: dir });
+        expect(records).toEqual([record]);
+        // The count says "1 unobserved"; the verdicts say which one.
+        expect(records[0].summary.unobserved).toBe(1);
+        expect(records[0].components?.filter((c) => c.unobserved).map((c) => c.component)).toEqual(["worker"]);
+        expect(records[0].components?.find((c) => c.reconciliation === "drifted")?.component).toBe("api");
       });
     });
   });
