@@ -102,14 +102,15 @@ The status string is opaque to chant's diff logic (any change is "drift"), so yo
 
 Reference implementation: `lexicons/aws/src/deep-observe.ts`.
 
-**Five lexicons implement this seam** — aws, azure, gcp, k8s and temporal — each
-shipping a `src/deep-observe.ts` plus `deepNormalizationHooks`, both wired
-through its `plugin.ts`. That is the seam's conformance evidence: five readers
-over five very different transports (the Cloud Control API, an ARM GET, a
-direct GCP REST GET, a typed Kubernetes client, a Temporal client)
-against one unchanged interface, with **no per-lexicon branch anywhere in
-`lifecycle/deep-diff.ts` or `deep-observation.ts`**. A sixth is a reader and two
-hooks, not a core change.
+**Seven lexicons implement this seam** — aws, azure, gcp, k8s, temporal, helm
+and fountain — each shipping a `src/deep-observe.ts` plus
+`deepNormalizationHooks`, both wired through its `plugin.ts`. That is the seam's
+conformance evidence: seven readers over seven very different transports (the
+Cloud Control API, an ARM GET, a direct GCP REST GET, a typed Kubernetes client,
+a Temporal client, the helm CLI delegating to that same k8s client, a fountain
+REST list) against one unchanged interface, with **no per-lexicon branch
+anywhere in `lifecycle/deep-diff.ts` or `deep-observation.ts`**. An eighth is a
+reader and two hooks, not a core change.
 
 `describeResources()` answers whether a declared entity exists and carries a handful of scrubbed outputs. That catches a changed status, a replaced physical id, a changed stack output — and misses the drift people actually chase: a hand-edited security-group rule, an inline policy added in the console, a flipped bucket setting, a controller-mutated CRD field. Reading the full live model is what closes that gap.
 
