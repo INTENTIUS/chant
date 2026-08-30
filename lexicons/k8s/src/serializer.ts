@@ -14,7 +14,7 @@ import type { LexiconOutput } from "@intentius/chant/lexicon-output";
 import { walkValue, type SerializerVisitor } from "@intentius/chant/serializer-walker";
 import { emitYAML } from "@intentius/chant/yaml";
 import { isDefaultLabels, isDefaultAnnotations, type DefaultLabels, type DefaultAnnotations } from "./default-labels";
-import { isRenderedManifestEntity } from "./kustomize/rendered-entity";
+import { isRenderedManifestEntity } from "./manifest-entity";
 import { isEncryptedSecretFileEntity } from "./sops/entity";
 
 const require = createRequire(import.meta.url);

@@ -14,7 +14,7 @@
  * emitted source now carries.
  */
 
-import { ownershipEntries, type ChannelKeys, type OwnershipMarker } from "../ownership";
+import { ownershipEntries, LABEL_OWNERSHIP_KEYS, type ChannelKeys, type OwnershipMarker } from "../ownership";
 import type { CarveReport } from "./carve";
 
 /**
@@ -32,8 +32,10 @@ export const DEFAULT_TAG_OWNERSHIP_KEYS: ChannelKeys = {
 export interface GraduationPlan {
   target: string;
   marker: OwnershipMarker;
-  /** The ownership tags the emitted resource must carry to be chant-owned. */
+  /** The ownership entries the emitted resource must carry to be chant-owned. */
   ownershipTags: Record<string, string>;
+  /** What that channel is called on this target: `tags`, or `labels` for k8s. */
+  markerKind: string;
   /** The finalized, ordered apply runbook. */
   steps: string[];
   warnings: string[];
@@ -46,12 +48,48 @@ export interface GraduationOptions {
   env?: string;
   /** Override the tag channel (e.g. for a non-AWS lexicon). */
   channel?: ChannelKeys;
+  /**
+   * The lexicon the emitted source targets, from the carve provider that
+   * adopted the type. It decides how the build and the apply are spelled: a
+   * CloudFormation template and `aws cloudformation deploy` for aws, a manifest
+   * and `kubectl apply` for k8s (#999). Unknown falls back to the aws wording,
+   * which is what every carve was before there was a second provider.
+   */
+  lexicon?: string;
+}
+
+/**
+ * How the marker, the build output and the BYOL apply are spelled, per emitted
+ * lexicon. A Kubernetes object carries the marker as labels — the same
+ * `LABEL_OWNERSHIP_KEYS` the k8s serializer merges in — so a runbook promising
+ * `chant:managed-by` tags would name a channel nothing stamps.
+ */
+function applyVocabulary(
+  lexicon: string | undefined,
+  target: string,
+  stack: string,
+): { channel: ChannelKeys; markerKind: string; build: string; apply: string } {
+  if (lexicon === "k8s") {
+    return {
+      channel: LABEL_OWNERSHIP_KEYS,
+      markerKind: "labels",
+      build: `chant build <emitted-src> --lexicon k8s > ${target}.yaml`,
+      apply: `kubectl apply -f ${target}.yaml`,
+    };
+  }
+  return {
+    channel: DEFAULT_TAG_OWNERSHIP_KEYS,
+    markerKind: "tags",
+    build: `chant build <emitted-src> -o ${target}.template.json`,
+    apply: `aws cloudformation deploy --template-file ${target}.template.json --stack-name ${stack} ...`,
+  };
 }
 
 export function graduationPlan(report: CarveReport, opts: GraduationOptions = {}): GraduationPlan {
   const stack = opts.stack ?? (report.target.split(".").slice(1).join(".") || report.target);
   const marker: OwnershipMarker = { stack, env: opts.env };
-  const ownershipTags = ownershipEntries(opts.channel ?? DEFAULT_TAG_OWNERSHIP_KEYS, marker);
+  const vocabulary = applyVocabulary(opts.lexicon, report.target, stack);
+  const ownershipTags = ownershipEntries(opts.channel ?? vocabulary.channel, marker);
 
   const warnings: string[] = [];
   if (report.outbound.length) {
@@ -65,17 +103,26 @@ export function graduationPlan(report: CarveReport, opts: GraduationOptions = {}
     .join(", ");
 
   const steps = [
-    `1. Confirm the emitted source builds spec-true:  chant build <emitted-src> -o ${report.target}.template.json`,
-    `2. Add the ownership marker so chant owns the resource — tags: ${tagList}`,
+    `1. Confirm the emitted source builds spec-true:  ${vocabulary.build}`,
+    `2. Add the ownership marker so chant owns the resource — ${vocabulary.markerKind}: ${tagList}`,
     `3. Apply with your lifecycle (BYOL), e.g.:`,
-    `     aws cloudformation deploy --template-file ${report.target}.template.json --stack-name ${stack} ...`,
+    `     ${vocabulary.apply}`,
     `   or graduate to an ApplyOp for a durable, gated apply.`,
     `4. Verify chant now owns it:  chant lifecycle diff --live <env>   (expect: unchanged, owned)`,
     `Rollback before this point:  terraform import ${report.target} <physical-id>`,
   ];
 
-  return { target: report.target, marker, ownershipTags, steps, warnings };
+  return { target: report.target, marker, ownershipTags, markerKind: vocabulary.markerKind, steps, warnings };
 }
+
+/**
+ * A constructor-shaped emitted file: `export const x = new Ctor(`. Tag-based
+ * ownership is a property of that shape — a carved `kubernetes_manifest` is a
+ * `k8sManifest({ ... })` call whose props are the manifest, where a top-level
+ * `Tags` array would be an invented field on the object, not a marker (#999).
+ * Such a file is refused rather than stamped.
+ */
+const CONSTRUCTOR_SHAPE = /^export const \w+ = new \w+\(/m;
 
 /**
  * Stamp the ownership tags into an emitted chant source file (`carve apply
@@ -89,6 +136,7 @@ export function stampOwnershipIntoSource(
   content: string,
   tags: Record<string, string>,
 ): { content: string; changed: boolean } | null {
+  if (!CONSTRUCTOR_SHAPE.test(content)) return null;
   const entries = Object.entries(tags).map(([Key, Value]) => ({ Key, Value }));
   const keys = new Set(Object.keys(tags));
   const lines = content.split("\n");

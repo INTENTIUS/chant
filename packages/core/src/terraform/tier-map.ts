@@ -5,8 +5,8 @@
  * Every entry comes from a registered provider: the AWS ones from the single
  * AWS carve-out table (`providers/aws.ts` over `aws-resources.ts`), so the
  * advisor ranks exactly the AWS types `carve emit` can produce — no advise↔emit
- * cliff — and the Kubernetes ones from `providers/kubernetes.ts`, which ranks
- * but does not yet emit.
+ * cliff — and the Kubernetes ones from `providers/kubernetes.ts`, which emits
+ * `kubernetes_manifest` and ranks the typed provider resources it does not.
  *
  *   tier 1 — a clean 1:1 native resource
  *   tier 2 — maps, but with reshaping
@@ -56,10 +56,10 @@ export function foldParentOf(tfType: string): string | undefined {
 
 /**
  * Can `chant carve emit` produce chant source for this type? Narrower than
- * `resolveTier`: providers also rank types no emit path can adopt (the
- * kubernetes ones, #999). Both emit paths — `--state` and `--env` — gate on
- * this, so a type either command refuses is refused by the other with the same
- * message.
+ * `resolveTier`: providers also rank types no emit path can adopt (the typed
+ * `kubernetes_*` resources, whose manifest only the provider schema knows how
+ * to reassemble). Both emit paths — `--state` and `--env` — gate on this, so a
+ * type either command refuses is refused by the other with the same message.
  */
 export function canCarveEmit(tfType: string): boolean {
   return resolveEmitProvider(tfType) !== undefined;

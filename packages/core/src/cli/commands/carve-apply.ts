@@ -16,6 +16,7 @@ import { parseTerraformDir, Hcl2JsonNotInstalled } from "../../terraform/parse";
 import { boundaryReport } from "../../terraform/carve";
 import { graduationPlan, stampOwnershipIntoSource, type GraduationPlan } from "../../terraform/graduate";
 import { resolveCarveManifest, updateCarveManifest } from "../../terraform/manifest";
+import { resolveEmitProvider } from "../../terraform/carve-provider";
 
 export interface CarveApplyOptions {
   from?: string;
@@ -65,7 +66,12 @@ export async function carveApply(opts: CarveApplyOptions): Promise<CarveApplyRes
     const graph = await parseTerraformDir(opts.from, { statePath });
     const report = boundaryReport(graph, select) ?? resolved.manifest?.boundary ?? null;
     if (!report) return { ok: false, error: `${select} not found in ${opts.from}` };
-    plan = graduationPlan(report, { stack: opts.stack, env: opts.env });
+    // The carved type decides what the apply step even looks like: a
+    // CloudFormation deploy for aws, a cluster apply for k8s (#999). The
+    // manifest records the type; the graph has it when there is no manifest.
+    const tfType = resolved.manifest?.tfType ?? graph.nodes.find((n) => n.address === select)?.type;
+    const lexicon = tfType ? resolveEmitProvider(tfType)?.lexicon : undefined;
+    plan = graduationPlan(report, { stack: opts.stack, env: opts.env, lexicon });
   } catch (err) {
     if (err instanceof Hcl2JsonNotInstalled) return { ok: false, error: err.message };
     return { ok: false, error: `Failed to plan graduation: ${err instanceof Error ? err.message : String(err)}` };
@@ -87,7 +93,15 @@ export async function carveApply(opts: CarveApplyOptions): Promise<CarveApplyRes
     for (const file of files) {
       if (!existsSync(file)) return { ok: false, error: `Emitted source not found: ${file}` };
       const result = stampOwnershipIntoSource(readFileSync(file, "utf-8"), plan.ownershipTags);
-      if (!result) return { ok: false, error: `No constructor to stamp in ${file}.` };
+      if (!result) {
+        return {
+          ok: false,
+          error:
+            `No constructor to stamp in ${file}. Tag-based ownership is a property of a native constructor call; ` +
+            `on a Kubernetes object the marker is a label the k8s build merges in (defaultLabels), not a tag in the ` +
+            `emitted source. Re-run without --write-source to get the marker and the graduation plan.`,
+        };
+      }
       if (result.changed) writeFileSync(file, result.content);
       stamped.push(file);
     }
@@ -116,7 +130,7 @@ function renderGraduationDoc(plan: GraduationPlan): string {
   L.push("");
   L.push(`Ownership marker: stack=${plan.marker.stack}${plan.marker.env ? `, env=${plan.marker.env}` : ""}`);
   L.push("");
-  L.push("## Ownership tags (stamped on apply so chant owns the resource)");
+  L.push(`## Ownership ${plan.markerKind} (stamped on apply so chant owns the resource)`);
   for (const [k, v] of Object.entries(plan.ownershipTags)) L.push(`- ${k} = ${v}`);
   L.push("");
   L.push("## Steps");
@@ -135,7 +149,7 @@ export function formatCarveApply(result: CarveApplyResult): string {
   const L: string[] = [];
   L.push(`Apply graduation for ${p.target} (dial-turn: observe → apply)${result.selectFromManifest ? " — target from the carve manifest" : ""}.`);
   L.push(`  Ownership marker: stack=${p.marker.stack}${p.marker.env ? `, env=${p.marker.env}` : ""}`);
-  L.push("  Ownership tags (stamped on apply):");
+  L.push(`  Ownership ${p.markerKind} (stamped on apply):`);
   for (const [k, v] of Object.entries(p.ownershipTags)) L.push(`    ${k} = ${v}`);
   L.push("");
   for (const s of p.steps) L.push(`  ${s}`);

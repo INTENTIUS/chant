@@ -806,6 +806,59 @@ if [ -d "$CARVE_TF" ]; then
   fi
 
   rm -rf "$CARVE_OUT"
+
+  # ── Kubernetes carve (#999) ──
+  # The second estate manages K8s objects through the kubernetes provider. A
+  # kubernetes_manifest has no fixed kind, so emit reads apiVersion/kind out of
+  # the manifest body in state — which is why the CRD below needs no mapping of
+  # its own — and the emitted source builds back to the same object.
+  CARVE_K8S="/app/examples/terraform-carve-out/kubernetes"
+  if [ -d "$CARVE_K8S" ]; then
+    K8S_OUT=$(mktemp -d)
+    if $CHANT carve emit --from "$CARVE_K8S" --select kubernetes_manifest.web_cert \
+        --state "$CARVE_K8S/terraform.tfstate" --output "$K8S_OUT" >/dev/null 2>&1; then
+      if grep -q 'k8sManifest({' "$K8S_OUT"/src/web_cert.ts 2>/dev/null \
+         && grep -q 'apiVersion: "cert-manager.io/v1"' "$K8S_OUT"/src/web_cert.ts 2>/dev/null \
+         && grep -q 'lexicons: \["k8s"\]' "$K8S_OUT"/chant.config.ts 2>/dev/null; then
+        pass "carve emit adopts a kubernetes_manifest CRD into chant source"
+      else
+        fail "carve emit did not produce the expected kubernetes source"
+      fi
+      if K8S_BUILT=$($CHANT build "$K8S_OUT"/src --lexicon k8s 2>/dev/null) \
+         && echo "$K8S_BUILT" | grep -q 'kind: Certificate' \
+         && echo "$K8S_BUILT" | grep -q 'apiVersion: cert-manager.io/v1'; then
+        pass "emitted kubernetes source builds back to the same manifest"
+      else
+        fail "emitted kubernetes source did not build to the expected manifest"
+      fi
+    else
+      K8S_ERR=$($CHANT carve emit --from "$CARVE_K8S" --select kubernetes_manifest.web_cert \
+        --state "$CARVE_K8S/terraform.tfstate" --output "$K8S_OUT" 2>&1 >/dev/null || true)
+      echo "  stderr: $K8S_ERR"
+      fail "carve emit of a kubernetes_manifest failed"
+    fi
+    rm -rf "$K8S_OUT"
+
+    # A typed provider resource ranks but does not emit, and bridge refuses a
+    # manifest — both are honest refusals, not silent half-carves.
+    TYPED_ERR=$($CHANT carve emit --from "$CARVE_K8S" --select kubernetes_config_map.legacy \
+      --state "$CARVE_K8S/terraform.tfstate" 2>&1 >/dev/null || true)
+    if echo "$TYPED_ERR" | grep -q 'kubernetes_config_map cannot be emitted yet'; then
+      pass "a typed kubernetes resource is refused by emit"
+    else
+      echo "  stderr: $TYPED_ERR"
+      fail "a typed kubernetes resource was not refused by emit"
+    fi
+    K8S_BRIDGE_ERR=$($CHANT carve bridge --from "$CARVE_K8S" --select kubernetes_manifest.app_config 2>&1 >/dev/null || true)
+    if echo "$K8S_BRIDGE_ERR" | grep -q 'cannot be bridged'; then
+      pass "carve bridge still refuses a carved manifest"
+    else
+      echo "  stderr: $K8S_BRIDGE_ERR"
+      fail "carve bridge did not refuse a carved manifest"
+    fi
+  else
+    fail "kubernetes carve fixture missing at $CARVE_K8S"
+  fi
 else
   fail "carve example fixture missing at $CARVE_TF"
 fi

@@ -2,6 +2,7 @@ import { describe, test, expect } from "vitest";
 import { buildFixtureGraph } from "./__fixtures__/build-graph";
 import { boundaryReport } from "./carve";
 import { graduationPlan, stampOwnershipIntoSource, DEFAULT_TAG_OWNERSHIP_KEYS } from "./graduate";
+import { LABEL_OWNERSHIP_KEYS } from "../ownership";
 import type { Hcl2JsonTree } from "./types";
 
 const bucketTree: Hcl2JsonTree = {
@@ -38,6 +39,23 @@ describe("graduationPlan", () => {
     expect(runbook).toMatch(/terraform import aws_s3_bucket\.assets/);
     expect(runbook).toMatch(/cloudformation deploy|ApplyOp/);
     expect(runbook).toMatch(/lifecycle diff --live/);
+  });
+
+  test("a k8s carve graduates in labels and kubectl, not tags and CloudFormation (#999)", () => {
+    const report = boundaryReport(buildFixtureGraph(bucketTree), "aws_s3_bucket.assets")!;
+    const plan = graduationPlan(report, { stack: "assets", env: "prod", lexicon: "k8s" });
+
+    // The channel the k8s serializer actually merges in, not the AWS tag keys.
+    expect(plan.markerKind).toBe("labels");
+    expect(plan.ownershipTags).toEqual({
+      [LABEL_OWNERSHIP_KEYS.managedBy]: "chant",
+      [LABEL_OWNERSHIP_KEYS.stack]: "assets",
+      [LABEL_OWNERSHIP_KEYS.env]: "prod",
+    });
+    const runbook = plan.steps.join("\n");
+    expect(runbook).toContain("kubectl apply -f");
+    expect(runbook).toContain("--lexicon k8s");
+    expect(runbook).not.toContain("cloudformation deploy");
   });
 
   test("warns when outbound edges leave deferred inputs to wire", () => {
@@ -112,5 +130,24 @@ describe("stampOwnershipIntoSource", () => {
 
   test("returns null when there is no constructor to stamp", () => {
     expect(stampOwnershipIntoSource("// nothing here\n", TAGS)).toBeNull();
+  });
+
+  test("refuses a carved manifest rather than inventing a top-level Tags field (#999)", () => {
+    // The props of a `k8sManifest` call ARE the object. A `Tags: [...]` line
+    // spliced before the closing `});` would be a field the API server never
+    // heard of, applied as if an author had written it.
+    const src = [
+      'import { k8sManifest } from "@intentius/chant-lexicon-k8s";',
+      "",
+      "export const app_config = k8sManifest({",
+      '  apiVersion: "v1",',
+      '  kind: "ConfigMap",',
+      "  metadata: {",
+      '    name: "app-config",',
+      "  },",
+      "});",
+      "",
+    ].join("\n");
+    expect(stampOwnershipIntoSource(src, TAGS)).toBeNull();
   });
 });

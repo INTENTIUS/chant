@@ -91,6 +91,27 @@ Resolves the ownership marker + graduation runbook, and stamps the
 `chant:managed-by` / `chant:stack` / `chant:env` tags into the emitted source.
 No cloud call — the apply is your lifecycle.
 
+## Carving Kubernetes instead
+
+`kubernetes/` is a second estate, managing Kubernetes objects through the
+Terraform kubernetes provider:
+
+```bash
+chant carve advise --from ./kubernetes
+chant carve emit --from ./kubernetes --select kubernetes_manifest.web_cert \
+  --state ./kubernetes/terraform.tfstate --output ./carveout-k8s
+chant build ./carveout-k8s/src --lexicon k8s
+```
+
+A `kubernetes_manifest` has no fixed kind — the body is the object — so emit
+reads `apiVersion`/`kind` out of the manifest in state and writes it back
+through `k8sManifest`, the lexicon's verbatim escape hatch. The same rule
+carves the cert-manager `Certificate` in that estate as carves a core
+ConfigMap. The typed provider resources (`kubernetes_config_map` and friends)
+are ranked but refused by emit, `--env` is refused (no type to filter a live
+export by until the body is read), and `carve bridge` refuses the manifest
+types until they have a data-source mapping (chant #2034).
+
 ## Going live
 
 The real handoff adds three Terraform commands between steps 4 and 5:
