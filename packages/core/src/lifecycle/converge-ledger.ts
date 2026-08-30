@@ -68,6 +68,20 @@ export interface ConvergeRuleOutcome {
   op?: string;
   /** The gate's signal name, for `action: "gated"`. */
   gateName?: string;
+  /**
+   * Where this gate's approval happens (#2028), for `action: "gated"` — the
+   * PR carrying the change in a gate-as-PR flow, or whatever review surface
+   * the dispatching environment knows about.
+   *
+   * The pending fact is the one a human has to act on, and it used to carry
+   * no link at all: `chant operator status`'s pending row was
+   * `{rule, op, gate}` and the only affordance it could print was a shell
+   * command. Absent when there genuinely is no address — a local tick with no
+   * PR behind it — never a synthesized one. See
+   * `./gate-ledger.ts`'s `resolveApprovalUrl` for where it comes from, and
+   * `GateResolutionRecord.url` for the resolved counterpart.
+   */
+  url?: string;
   /** The report reason, for `action: "reported"` (including a flap-damped rule's forced report) — and the human-readable explanation for `action: "gated"`. */
   reason?: string;
 }

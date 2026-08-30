@@ -85,13 +85,23 @@ converge(staging): drifted=1 remediated=0 reported=0 skipped-budget=0 skipped-fl
 
 — one `ConvergeRuleOutcome` with `action: "gated"` and the gate's name, on the same ledger record every other tick outcome lands on (`<env>/converge.jsonl`). The tick ends there for that rule; it does not block, retry, or queue. The next tick re-observes independently and may fire the same rule again, recording another `gated` fact — visible in `chant operator status`'s pending-gates list either way.
 
+The pending fact carries an address when the tick has one. A tick running inside the PR (or MR) job that carries the change knows where approval happens, so it records that link on the outcome's `url`, and `chant operator status` prints it under the pending gate:
+
+```
+  pending gates:
+    - fountain-apply gate "rollout-gate" (rule drift-apply) — resolve: chant approve fountain-apply rollout-gate
+      approve at: https://github.com/org/repo/pull/123
+```
+
+A tick with no PR behind it records no `url` at all — the field is absent, never a synthesized link.
+
 Resolution is out-of-band, the same two paths [Reconciling Lifecycle](/chant/guide/reconciling-lifecycle/) already uses for a human gate:
 
 ```bash
-chant approve fountain-apply rollout-gate --actor alex --note "https://github.com/org/repo/pull/123"
+chant approve fountain-apply rollout-gate --actor alex --url "https://github.com/org/repo/pull/123"
 ```
 
-writes the counterpart fact — a `GateResolutionRecord` at `_gates/<op>.jsonl` — or a merged PR resolves it just as validly (record the PR's URL in `--note` for a single audit trail either way).
+writes the counterpart fact — a `GateResolutionRecord` at `_gates/<op>.jsonl` — or a merged PR resolves it just as validly. `--url` is the typed link, so a reader gets "resolved by this PR" without sniffing free text; omit it inside a PR/MR CI job and that job's own PR is used. `--note` stays for prose.
 
 <Aside type="caution" title="What chant approve does not (yet) do">
 Recording a resolution is a durable, queryable fact — it does not retroactively

@@ -180,6 +180,77 @@ describe("runOperatorStatus", () => {
     logSpy.mockRestore();
   });
 
+  // #2028 — the pending fact is the one a human has to act on, so it is the
+  // one that has to carry a link. Before this the row was {rule, op, gate}
+  // and the only affordance a renderer could offer was a shell command.
+  test("a gated outcome's approval url rides onto the pending-gate row", async () => {
+    discoverConvergeOpsMock.mockResolvedValue({
+      ops: [{ config: { name: "staging-converge", searchAttributes: { Env: "staging" } } }],
+      errors: [],
+    });
+    readConvergeLedgerMock.mockResolvedValue({
+      records: [
+        {
+          version: 1,
+          op: "staging-converge",
+          env: "staging",
+          timestamp: "2026-01-01T00:00:00.000Z",
+          firedRuleIds: ["drift-apply"],
+          outcomes: [{
+            ruleId: "drift-apply",
+            action: "gated",
+            op: "fountain-apply",
+            gateName: "rollout-gate",
+            url: "https://github.com/INTENTIUS/chant/pull/2028",
+          }],
+          summary: { drifted: 1, remediated: 0, reported: 0, skippedBudget: 0, skippedFlap: 0, unobserved: 0, adopted: 0, gated: 1 },
+          log: "converge(staging): ...",
+        },
+      ],
+      malformed: 0,
+    });
+    readLeaseMock.mockResolvedValue({ sha: null, record: undefined });
+    readGateResolutionsMock.mockResolvedValue({ records: [], malformed: 0 });
+
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    await runOperatorStatus(ctx({ json: true }));
+    const printed = JSON.parse(logSpy.mock.calls[0][0] as string);
+    expect(printed[0].pendingGates).toEqual([
+      { rule: "drift-apply", op: "fountain-apply", gate: "rollout-gate", url: "https://github.com/INTENTIUS/chant/pull/2028" },
+    ]);
+    logSpy.mockRestore();
+  });
+
+  test("the human render prints the address under the pending gate", async () => {
+    discoverConvergeOpsMock.mockResolvedValue({
+      ops: [{ config: { name: "staging-converge", searchAttributes: { Env: "staging" } } }],
+      errors: [],
+    });
+    readConvergeLedgerMock.mockResolvedValue({
+      records: [
+        {
+          version: 1,
+          op: "staging-converge",
+          env: "staging",
+          timestamp: "2026-01-01T00:00:00.000Z",
+          firedRuleIds: ["drift-apply"],
+          outcomes: [{ ruleId: "drift-apply", action: "gated", op: "fountain-apply", gateName: "rollout-gate", url: "https://pr.example/1" }],
+          summary: { drifted: 1, remediated: 0, reported: 0, skippedBudget: 0, skippedFlap: 0, unobserved: 0, adopted: 0, gated: 1 },
+          log: "converge(staging): ...",
+        },
+      ],
+      malformed: 0,
+    });
+    readLeaseMock.mockResolvedValue({ sha: null, record: undefined });
+    readGateResolutionsMock.mockResolvedValue({ records: [], malformed: 0 });
+
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    await runOperatorStatus(ctx({}));
+    const out = logSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(out).toContain("approve at: https://pr.example/1");
+    logSpy.mockRestore();
+  });
+
   test("a gate resolved after the tick that recorded it is no longer pending", async () => {
     discoverConvergeOpsMock.mockResolvedValue({
       ops: [{ config: { name: "staging-converge", searchAttributes: { Env: "staging" } } }],
@@ -236,6 +307,57 @@ describe("runApprove", () => {
       expect.objectContaining({ op: "fountain-apply", gate: "rollout-gate", resolvedBy: "alex", note: "https://pr/1" }),
     );
     expect(pushLifecycleMock).toHaveBeenCalled();
+    errSpy.mockRestore();
+  });
+
+  // #2028 — the resolution's link is typed, so a reader is not sniffing
+  // free-text `note` for something that looks like a URL.
+  test("--url is recorded typed, alongside --note's prose", async () => {
+    vi.stubEnv("GITHUB_REF_NAME", "");
+    vi.stubEnv("GITHUB_REPOSITORY", "");
+    vi.stubEnv("CI_MERGE_REQUEST_PROJECT_URL", "");
+    appendGateResolutionMock.mockResolvedValue({
+      commit: "sha",
+      record: { version: 1, op: "fountain-apply", gate: "rollout-gate", resolvedBy: "alex", timestamp: "2026-01-01T00:00:00.000Z", url: "https://github.com/org/repo/pull/9" },
+    });
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const code = await runApprove(ctx({
+      path: "fountain-apply", extraPositional: "rollout-gate", actor: "alex",
+      note: "rolled staging first", url: "https://github.com/org/repo/pull/9",
+    }));
+
+    expect(code).toBe(0);
+    expect(appendGateResolutionMock).toHaveBeenCalledWith(
+      expect.objectContaining({ note: "rolled staging first", url: "https://github.com/org/repo/pull/9" }),
+    );
+    errSpy.mockRestore();
+    vi.unstubAllEnvs();
+  });
+
+  test("without --url, the surrounding PR/MR job is itself the address", async () => {
+    vi.stubEnv("GITHUB_SERVER_URL", "https://github.com");
+    vi.stubEnv("GITHUB_REPOSITORY", "INTENTIUS/chant");
+    vi.stubEnv("GITHUB_REF_NAME", "2028/merge");
+    appendGateResolutionMock.mockResolvedValue({
+      commit: "sha",
+      record: { version: 1, op: "fountain-apply", gate: "g", resolvedBy: "alex", timestamp: "2026-01-01T00:00:00.000Z" },
+    });
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    expect(await runApprove(ctx({ path: "fountain-apply", extraPositional: "g", actor: "alex" }))).toBe(0);
+    expect(appendGateResolutionMock).toHaveBeenCalledWith(
+      expect.objectContaining({ url: "https://github.com/INTENTIUS/chant/pull/2028" }),
+    );
+    errSpy.mockRestore();
+    vi.unstubAllEnvs();
+  });
+
+  test("a --url that is not an absolute http/https link is refused, and nothing is written", async () => {
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const code = await runApprove(ctx({ path: "fountain-apply", extraPositional: "g", url: "org/repo/pull/1" }));
+    expect(code).toBe(1);
+    expect(appendGateResolutionMock).not.toHaveBeenCalled();
     errSpy.mockRestore();
   });
 

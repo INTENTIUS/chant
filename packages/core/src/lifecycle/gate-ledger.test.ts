@@ -3,7 +3,7 @@ import { withTestDir } from "@intentius/chant-test-utils";
 import { spawnSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { appendGateResolution, readGateResolutions, latestResolutionSince } from "./gate-ledger";
+import { appendGateResolution, readGateResolutions, latestResolutionSince, resolveApprovalUrl, isApprovalUrl } from "./gate-ledger";
 import { readBlobFromPath } from "./git";
 
 function git(args: string[], cwd: string): { stdout: string; exitCode: number } {
@@ -98,6 +98,86 @@ describe("lifecycle/gate-ledger", () => {
 
     test("undefined when there are no resolutions at all", () => {
       expect(latestResolutionSince([], "g1", "2026-01-01T00:00:00.000Z")).toBeUndefined();
+    });
+  });
+  // ── Gate-as-fact carries an address (#2028) ──────────────────────────────
+
+  describe("resolveApprovalUrl", () => {
+    test("a GitHub Actions pull_request run resolves to that PR", () => {
+      expect(resolveApprovalUrl({
+        GITHUB_SERVER_URL: "https://github.com",
+        GITHUB_REPOSITORY: "INTENTIUS/chant",
+        GITHUB_REF_NAME: "2028/merge",
+      })).toBe("https://github.com/INTENTIUS/chant/pull/2028");
+    });
+
+    test("honours a GitHub Enterprise server url, trailing slash and all", () => {
+      expect(resolveApprovalUrl({
+        GITHUB_SERVER_URL: "https://ghe.example.com/",
+        GITHUB_REPOSITORY: "org/repo",
+        GITHUB_REF_NAME: "7/head",
+      })).toBe("https://ghe.example.com/org/repo/pull/7");
+    });
+
+    test("a GitLab merge-request pipeline resolves to that MR", () => {
+      expect(resolveApprovalUrl({
+        CI_MERGE_REQUEST_PROJECT_URL: "https://gitlab.com/org/repo",
+        CI_MERGE_REQUEST_IID: "42",
+      })).toBe("https://gitlab.com/org/repo/-/merge_requests/42");
+    });
+
+    test("a push-event CI run, or no CI at all, has no address — undefined, never a guess", () => {
+      expect(resolveApprovalUrl({ GITHUB_REPOSITORY: "org/repo", GITHUB_REF_NAME: "main" })).toBeUndefined();
+      expect(resolveApprovalUrl({ GITHUB_REF_NAME: "3/merge" })).toBeUndefined();
+      expect(resolveApprovalUrl({ CI_MERGE_REQUEST_PROJECT_URL: "https://gitlab.com/org/repo" })).toBeUndefined();
+      expect(resolveApprovalUrl({})).toBeUndefined();
+    });
+  });
+
+  describe("isApprovalUrl", () => {
+    test("accepts absolute http/https", () => {
+      expect(isApprovalUrl("https://github.com/org/repo/pull/1")).toBe(true);
+      expect(isApprovalUrl("http://localhost:3000/pr/1")).toBe(true);
+    });
+
+    test("refuses anything a reader could not follow as a link", () => {
+      for (const bad of ["", "org/repo/pull/1", "/pull/1", "file:///etc/passwd", "javascript:alert(1)", "not a url"]) {
+        expect(isApprovalUrl(bad)).toBe(false);
+      }
+    });
+  });
+
+  test("a resolution round-trips its typed url alongside free-text note", async () => {
+    await withTestDir(async (dir) => {
+      await initRepo(dir);
+      const { record } = await appendGateResolution(
+        {
+          op: "fountain-apply",
+          gate: "rollout-gate",
+          resolvedBy: "alex",
+          timestamp: "2026-01-01T00:00:00.000Z",
+          note: "rolled staging first",
+          url: "https://github.com/INTENTIUS/chant/pull/2028",
+        },
+        { cwd: dir },
+      );
+      const { records } = await readGateResolutions("fountain-apply", { cwd: dir });
+      expect(records).toEqual([record]);
+      expect(records[0].url).toBe("https://github.com/INTENTIUS/chant/pull/2028");
+      expect(records[0].note).toBe("rolled staging first");
+    });
+  });
+
+  test("a pre-#2028 resolution with no url still reads", async () => {
+    await withTestDir(async (dir) => {
+      await initRepo(dir);
+      await appendGateResolution(
+        { op: "fountain-apply", gate: "g", resolvedBy: "alex", timestamp: "2026-01-01T00:00:00.000Z" },
+        { cwd: dir },
+      );
+      const { records, malformed } = await readGateResolutions("fountain-apply", { cwd: dir });
+      expect(malformed).toBe(0);
+      expect(records[0].url).toBeUndefined();
     });
   });
 });

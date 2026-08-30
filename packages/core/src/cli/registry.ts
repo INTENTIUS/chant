@@ -285,8 +285,10 @@ export interface ParsedArgs {
   leaseTtl?: string;
   /** `chant operator --once` (#1485) — run a single round and exit, instead of looping until Ctrl-C. Also the offline test/cron-invoker story. */
   once?: boolean;
-  /** `chant approve <op> <gate> --note <text>` (#1485) — optional free-text context recorded on the gate-resolution fact (e.g. a PR URL). */
+  /** `chant approve <op> <gate> --note <text>` (#1485) — optional free-text prose recorded on the gate-resolution fact. The PR link belongs in `--url` since #2028; this is for everything that isn't the link. */
   note?: string;
+  /** `chant approve <op> <gate> --url <url>` (#2028) — the address this resolution happened at (the PR/MR that carried the change), recorded typed on the gate-resolution fact so a reader is not sniffing `--note` for something link-shaped. Defaults to the PR/MR the surrounding CI job is for, when there is one. Must be an absolute http/https URL. */
+  url?: string;
 }
 
 /**
