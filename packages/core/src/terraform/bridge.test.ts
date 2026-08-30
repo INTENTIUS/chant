@@ -51,6 +51,18 @@ describe("generateBridge — inbound (data-source rewrite)", () => {
     );
   });
 
+  test("never renders a dotted identity attribute into the data body (#2015)", () => {
+    const report = boundaryReport(buildFixtureGraph(workedExample), "aws_s3_bucket.assets")!;
+    const dotted = new Map<string, CarvedIdentity>([
+      ["aws_s3_bucket.assets", { attr: "manifest.metadata.name", value: "demo-config" }],
+    ]);
+    const plan = generateBridge(report, [{ path: "api.tf", content: API_TF }], dotted);
+
+    // `manifest.metadata.name = "demo-config"` is not valid HCL.
+    expect(plan.dataSources[0].hcl).not.toContain("manifest.metadata.name =");
+    expect(plan.dataSources[0].hcl).toContain("# TODO: identify the resource");
+  });
+
   test("rewrites survivor references to the data source", () => {
     const report = boundaryReport(buildFixtureGraph(workedExample), "aws_s3_bucket.assets")!;
     const plan = generateBridge(report, [{ path: "api.tf", content: API_TF }], identities);

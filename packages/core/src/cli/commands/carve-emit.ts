@@ -16,19 +16,21 @@ import { existsSync, statSync, writeFileSync, mkdirSync } from "fs";
 import { basename, join, resolve } from "path";
 import { parseTerraformDir, Hcl2JsonNotInstalled } from "../../terraform/parse";
 import { boundaryReport, deferredParamName, type CarveReport } from "../../terraform/carve";
-import { resolveTier } from "../../terraform/tier-map";
+import { canCarveEmit, carveEmitTypes, resolveTier } from "../../terraform/tier-map";
 import { readStateResource, type StateResource } from "../../terraform/state";
 import { writeCarveManifest, type CarveManifest } from "../../terraform/manifest";
-import {
-  adoptFromState,
-  canAdoptFromState,
-  supportedStateAdoptionTypes,
-  type DeferredParam,
-  type FoldedContribution,
-} from "../../terraform/adopt-state";
+import { adoptFromState, type DeferredParam, type FoldedContribution } from "../../terraform/adopt-state";
 import { getChantVersion } from "./init";
 import type { LexiconPlugin, ResourceSelector } from "../../lexicon";
 import type { ImportResult, LiveImportOptions } from "./import";
+
+/**
+ * The lexicon emit targets. `canCarveEmit` admits only AWS carve-table types,
+ * so both the scaffolded project and the live import are AWS. Widening this
+ * needs the lexicon-agnostic emit seam (#999, #2016) — deriving it from
+ * `tier.mapsTo` does not work: a `k8s:Namespace` mapping has no `::` to split.
+ */
+const EMIT_LEXICON = "aws";
 
 export interface CarveEmitOptions {
   /** Terraform estate directory (`--from`). */
@@ -112,19 +114,24 @@ export async function carveEmit(opts: CarveEmitOptions, deps: CarveEmitDeps): Pr
     };
   }
 
+  // `carve advise` ranks every type in the tier map; emit produces source only
+  // for the ones with a native constructor mapping. Both adoption paths refuse
+  // the rest here — before any file is written or any cloud call is made — so
+  // neither path can proceed on a type the other rejects.
+  if (!canCarveEmit(tfType!)) {
+    return {
+      ok: false,
+      error:
+        `${tfType} cannot be emitted yet (no native constructor mapping).\n` +
+        `Supported types: ${carveEmitTypes().join(", ")}. ` +
+        `Coverage is expanding — see chant issue #1001.`,
+    };
+  }
+
   if (opts.reportFile) writeFileSync(opts.reportFile, JSON.stringify(report, null, 2));
 
   // ── Adoption path 1: from .tfstate (offline, correct for TF-managed) ──
   if (opts.statePath) {
-    if (!canAdoptFromState(tfType!)) {
-      return {
-        ok: false,
-        error:
-          `${tfType} cannot be adopted from state yet (no native constructor mapping).\n` +
-          `Supported types: ${supportedStateAdoptionTypes().join(", ")}. ` +
-          `Coverage is expanding — see chant issue #1001.`,
-      };
-    }
     const stateResource = readStateResource(opts.statePath, opts.select);
     if (!stateResource) {
       return { ok: false, error: `${opts.select} not found in state ${opts.statePath} (or is a data source / module-nested).` };
@@ -149,8 +156,7 @@ export async function carveEmit(opts: CarveEmitOptions, deps: CarveEmitDeps): Pr
     mkdirSync(srcDir, { recursive: true });
     const outPath = join(srcDir, adopted.fileName);
     writeFileSync(outPath, adopted.content);
-    const lexicon = tier.mapsTo.split("::")[0]?.toLowerCase() ?? "aws";
-    const scaffolded = scaffoldProject(outDir, lexicon, params);
+    const scaffolded = scaffoldProject(outDir, EMIT_LEXICON, params);
 
     const manifestPath = persistManifest(outDir, opts, report, tfType, "tfstate", [outPath], params);
     return {
@@ -178,8 +184,25 @@ export async function carveEmit(opts: CarveEmitOptions, deps: CarveEmitDeps): Pr
     environment: opts.env!,
     selector,
     output: opts.output,
-    lexicon: tier.mapsTo.split("::")[0]?.toLowerCase() === "aws" ? "aws" : undefined,
+    lexicon: EMIT_LEXICON,
   });
+
+  // A failed import emitted no source. Reporting success here would write a
+  // carve manifest that `carve bridge` composes from, and bridge excises the
+  // survivor's `.tf` block for the resource — so the estate would lose a
+  // declaration that was never adopted. Fail, and persist nothing.
+  if (!emit.success) {
+    return {
+      ok: false,
+      error:
+        `Live import of ${selector.type} from ${opts.env} failed: ${emit.error ?? "no error reported"}\n` +
+        `Nothing was emitted and no carve manifest was written.`,
+      report,
+      emit,
+      selector,
+      source: "live",
+    };
+  }
 
   const outDir = opts.output ?? join(opts.from, "carveout");
   const manifestPath = persistManifest(outDir, opts, report, tfType, "live", emit.generatedFiles ?? []);

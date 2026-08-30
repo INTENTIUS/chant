@@ -16,6 +16,8 @@ export async function runCarveEmit(ctx: CommandContext): Promise<number> {
   const { args } = ctx;
 
   // Load plugins only for the live path; the offline --state path needs none.
+  // aws is the only lexicon emit can adopt into (`canCarveEmit`), so it is the
+  // only one loaded here.
   let plugins = ctx.plugins;
   if (!args.statePath && args.env) {
     try {

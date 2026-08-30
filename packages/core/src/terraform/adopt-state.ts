@@ -19,13 +19,13 @@
  */
 
 import {
-  AWS_CARVE_TYPES,
   AWS_LEXICON_IMPORT,
   awsCarveType,
   applyAwsMapper,
   applyAwsFold,
   unmappedFoldAttrs,
 } from "./aws-resources";
+import { canCarveEmit, carveEmitTypes } from "./tier-map";
 import type { StateResource } from "./state";
 
 /** The core subpath the emitted source reads build parameters from. */
@@ -70,14 +70,17 @@ export interface AdoptedSource {
   folded: FoldedContribution[];
 }
 
-/** Is this Terraform type adoptable from state (has a native constructor)? */
+/**
+ * Is this Terraform type adoptable from state (has a native constructor)? The
+ * same table gates the live path, so both are the shared `canCarveEmit`.
+ */
 export function canAdoptFromState(tfType: string): boolean {
-  return awsCarveType(tfType) !== undefined;
+  return canCarveEmit(tfType);
 }
 
 /** Terraform types that can currently be adopted from state, for user-facing hints. */
 export function supportedStateAdoptionTypes(): string[] {
-  return AWS_CARVE_TYPES.map((t) => t.tfType).sort();
+  return carveEmitTypes();
 }
 
 /** Marker for a prop whose value is a `params.<name>` reference, not a literal. */

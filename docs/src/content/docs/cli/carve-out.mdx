@@ -31,7 +31,7 @@ Adopts the selected resource into typed chant source and reports the boundary �
 chant carve emit --from ./infra --select aws_s3_bucket.assets --state ./terraform.tfstate
 ```
 
-The state path emits a native chant Declarable with CloudFormation-style properties mapped from the Terraform attributes; attributes without a mapping are preserved in a reference comment so nothing is dropped. It covers ~50 common AWS carve targets across S3, IAM, DynamoDB, SNS/SQS, Lambda, KMS, Secrets Manager, SSM, ECR, CloudWatch, Route 53, EFS, EC2 (instances + networking), autoscaling, ELBv2, RDS, ElastiCache, API Gateway, Step Functions, ACM, and ECS; advise and emit cover exactly the same AWS types, so there is no rank-it-but-can't-emit gap. A type outside that set reports the supported list. Nothing is patched or applied; the resource lands at the observe position.
+The state path emits a native chant Declarable with CloudFormation-style properties mapped from the Terraform attributes; attributes without a mapping are preserved in a reference comment so nothing is dropped. It covers 78 common AWS carve targets across S3, IAM, DynamoDB, SNS/SQS, Lambda, KMS, Secrets Manager, SSM, ECR, CloudWatch, Route 53, EFS, EC2 (instances + networking), autoscaling, ELBv2, RDS, ElastiCache, API Gateway, Step Functions, ACM, and ECS; advise and emit cover exactly the same AWS types, so there is no rank-it-but-can't-emit gap. A type outside that set is refused with the supported list, the same way on both `--state` and `--env`. Kubernetes types are ranked by advise but cannot be emitted yet. Nothing is patched or applied; the resource lands at the observe position.
 
 After emit, `chant lint ./out --lexicon aws` audits the adopted resource — advisory findings you may choose to fix, and errors that block `chant build` (e.g. a bucket with no public-access block). Auditing what you inherited is part of the point.
 
@@ -46,7 +46,7 @@ Generates the edits to the Terraform you leave behind so its plan stays valid on
 chant carve bridge --from ./infra --select aws_s3_bucket.assets
 ```
 
-Safe by default: it writes the proposed data sources, rewritten survivor files, and a runbook to an output directory for review. `--apply-rewrites` edits the survivor `.tf` in place. The rewrite is idempotent and never touches the carved resource's own declaration.
+Safe by default: it writes the proposed data sources, rewritten survivor files, and a runbook to an output directory for review. `--apply-rewrites` edits the survivor `.tf` in place. The rewrite is idempotent, and it excises the carved resource's own declaration (and any folded sub-resources) from the survivor source — without that, the next `terraform apply` would re-create what `terraform state rm` released.
 
 ### 3. `carve apply` — graduate
 
@@ -82,7 +82,7 @@ At every step before 5, rollback is `terraform import aws_s3_bucket.assets <id>`
 
 ## Scope
 
-These are the emit, boundary-bridging, and apply-graduation phases of the strangler-fig design (#197), built on the read-only advisor (#214). Emit targets a Declarable (a single native resource); a whole service with a deploy pipeline is a Component, not a leaf carve. Removing the carved resource's own block from the `.tf` is a runbook step, not an automatic edit — the parser has no source spans to excise a block precisely.
+These are the emit, boundary-bridging, and apply-graduation phases of the strangler-fig design (#197), built on the read-only advisor (#214). Emit targets a Declarable (a single native resource); a whole service with a deploy pipeline is a Component, not a leaf carve. Removing the carved resource's own block from the `.tf` is part of the bridge patch, not a manual runbook step. Emit adopts AWS types only; the kubernetes types the advisor ranks are refused by emit and bridge until they have an exporter and a data-source mapping.
 
 :::caution
 `carve bridge --apply-rewrites` edits your Terraform in place, and `terraform state rm` / `terraform apply` change what Terraform manages. Review the generated proposals and the runbook before running them. The carve is reversible via `terraform import` up until apply graduation.

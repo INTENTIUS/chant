@@ -81,8 +81,11 @@ function referenceRegex(address: string): RegExp {
 }
 
 function dataSourceHcl(type: string, name: string, identity: CarvedIdentity): string {
+  // A dotted attr is a path into nested blocks; `a.b.c = v` is not valid HCL,
+  // so it falls back to the TODO. `carve bridge` refuses such a type outright.
+  const flat = identity.attr !== undefined && !identity.attr.includes(".");
   const body =
-    identity.attr && identity.value !== undefined
+    flat && identity.value !== undefined
       ? `  ${identity.attr} = ${JSON.stringify(identity.value)}`
       : `  # TODO: identify the resource (its name/id was interpolated in the source)`;
   return `data ${JSON.stringify(type)} ${JSON.stringify(name)} {\n${body}\n}`;

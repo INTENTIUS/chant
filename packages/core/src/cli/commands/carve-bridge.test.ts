@@ -194,6 +194,36 @@ describe("carveBridge", () => {
     }
   });
 
+  test("refuses a target whose identity attribute is a dotted path (#2015)", async () => {
+    if (!parserAvailable) return;
+    const dir = mkdtempSync(join(tmpdir(), "chant-bridge-k8s-"));
+    try {
+      // `kubernetes_manifest` identifies itself by `manifest.metadata.name`.
+      // Rendering that into a data body produced `manifest.metadata.name = "x"`,
+      // which is not valid HCL — and the provider has no manifest data source.
+      writeFileSync(
+        join(dir, "main.tf"),
+        `resource "kubernetes_manifest" "demo" {\n` +
+          `  manifest = {\n` +
+          `    apiVersion = "v1"\n` +
+          `    kind       = "ConfigMap"\n` +
+          `    metadata = { name = "demo-config" }\n` +
+          `  }\n` +
+          `}\n`,
+      );
+      const out = join(dir, "carveout");
+      const res = await carveBridge({ from: dir, select: "kubernetes_manifest.demo", output: out });
+
+      expect(res.ok).toBe(false);
+      expect(res.error).toContain("cannot be bridged");
+      expect(res.error).toContain("manifest.metadata.name");
+      expect(res.plan).toBeUndefined();
+      expect(existsSync(out)).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test("formatCarveBridge summarizes data sources, rewires, and safety", async () => {
     if (!parserAvailable) return;
     await withEstate(async (dir) => {
