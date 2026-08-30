@@ -388,6 +388,8 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.once = true;
     } else if (arg === "--note") {
       result.note = args[++i];
+    } else if (arg === "--url") {
+      result.url = args[++i];
     } else if (arg.startsWith("--")) {
       // chant #1127 — every recognized flag is matched above; anything left
       // starting with `--` is unrecognized, whether it arrived bare
@@ -525,10 +527,13 @@ Ops:
                         branch alone — no daemon needs to be running
                         (--env <env>, --json)
   approve <op> <gate>    Record a gate's out-of-band resolution fact
-                        (--actor <name>, --note <text>) — the durable
-                        counterpart to a converge tick's gate-as-fact
-                        outcome; see the pending-gates list in operator
-                        status. Does not itself unblock the gated op's local
+                        (--actor <name>, --note <text>, --url <url>) — the
+                        durable counterpart to a converge tick's
+                        gate-as-fact outcome; see the pending-gates list in
+                        operator status. --url is the PR/MR the resolution
+                        happened at, recorded typed rather than as free text,
+                        and defaults to the PR/MR of the surrounding CI job.
+                        Does not itself unblock the gated op's local
                         dispatch (re-run --temporal, or merge its PR)
 
   graph                 Show Op dependency graph (--stacks for cross-stack order,

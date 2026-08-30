@@ -42,6 +42,58 @@ import { readBlobFromPath, readPathSha, readBlobBySha, writeBlobToPath, RefCASCo
 const DIR = "_gates";
 const APPEND_RETRY_ATTEMPTS = 5;
 
+/**
+ * The address of the approval surface for a gate, resolved from the CI
+ * environment (#2028).
+ *
+ * #1485's argument for gate-as-fact was that approval gets an address:
+ * "gate-as-PR gives approval a URL, a review surface, and CODEOWNERS as the
+ * authorization model." What shipped recorded the gate and not the address,
+ * so a pending-approval card had nothing to link to and gate-as-PR stayed a
+ * convention. This is the narrow, honest half of that: when a tick (or a
+ * `chant approve`) runs inside the PR/MR job that carries the change, the
+ * loop genuinely knows where approval happens, and says so. Anywhere else it
+ * returns `undefined` and the field is simply absent — never a guess, never a
+ * synthesized link.
+ *
+ * The env-var fallback chain is the same one `--actor` and `--run-id` already
+ * use (`../cli/handlers/components.ts`): GitHub Actions first, then GitLab CI.
+ *
+ * - GitHub Actions on a `pull_request` event: `GITHUB_SERVER_URL` +
+ *   `GITHUB_REPOSITORY` + the PR number, which `GITHUB_REF_NAME` carries as
+ *   `<n>/merge`. A push-event run has no PR, so it resolves to nothing.
+ * - GitLab CI on a merge-request pipeline: `CI_MERGE_REQUEST_PROJECT_URL` +
+ *   `CI_MERGE_REQUEST_IID`.
+ */
+export function resolveApprovalUrl(env: NodeJS.ProcessEnv = process.env): string | undefined {
+  const prNumber = /^(\d+)\/(merge|head)$/.exec(env.GITHUB_REF_NAME ?? "")?.[1];
+  if (prNumber && env.GITHUB_REPOSITORY) {
+    const server = (env.GITHUB_SERVER_URL ?? "https://github.com").replace(/\/$/, "");
+    return `${server}/${env.GITHUB_REPOSITORY}/pull/${prNumber}`;
+  }
+
+  if (env.CI_MERGE_REQUEST_PROJECT_URL && env.CI_MERGE_REQUEST_IID) {
+    return `${env.CI_MERGE_REQUEST_PROJECT_URL.replace(/\/$/, "")}/-/merge_requests/${env.CI_MERGE_REQUEST_IID}`;
+  }
+
+  return undefined;
+}
+
+/**
+ * Whether `raw` is an address worth recording as one: an absolute `http`/
+ * `https` URL. A gate's address is a link a reader is expected to follow, so
+ * a relative path or a `file:`/`javascript:` scheme is refused at the CLI
+ * boundary rather than written into an immutable record.
+ */
+export function isApprovalUrl(raw: string): boolean {
+  try {
+    const parsed = new URL(raw);
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
 /** One immutable gate-resolution record. */
 export interface GateResolutionRecord {
   /** Schema version, so an incompatible future shape is detected before being misread. */
@@ -54,8 +106,19 @@ export interface GateResolutionRecord {
   resolvedBy: string;
   /** ISO-8601 timestamp, caller-supplied (library code never calls `Date.now()` internally). */
   timestamp: string;
-  /** Optional free-text context (e.g. a PR URL — "or a merged PR" is the issue's other resolution path; recording its link here keeps both paths visible from one ledger). */
+  /** Optional free-text context. Before #2028 this was also where a PR link went by convention; put the link in {@link GateResolutionRecord.url} instead and leave this for prose. */
   note?: string;
+  /**
+   * The address this resolution happened at (#2028) — the PR that carried the
+   * change, the review thread, whatever the approval surface was. Typed, so
+   * "resolved by this PR" is machine-readable instead of a reader sniffing
+   * `note` for something that looks like a link.
+   *
+   * `chant approve --url` sets it; absent when the resolver genuinely had no
+   * address (a human at a terminal, no PR). Always an absolute `http`/`https`
+   * URL — see {@link isApprovalUrl}.
+   */
+  url?: string;
 }
 
 export type GateResolutionInput = Omit<GateResolutionRecord, "version">;

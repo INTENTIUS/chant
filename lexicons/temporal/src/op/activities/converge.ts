@@ -54,6 +54,7 @@ import {
   type ConvergeRuleOutcome,
   type ConvergeTickRecord,
 } from "@intentius/chant/lifecycle/converge-ledger";
+import { resolveApprovalUrl } from "@intentius/chant/lifecycle/gate-ledger";
 import { fetchLifecycle, pushLifecycle } from "@intentius/chant/lifecycle/git";
 import type { ChangeSet } from "@intentius/chant/lifecycle/change-set";
 import type { ComponentStatusRow } from "@intentius/chant/lifecycle/status";
@@ -380,9 +381,13 @@ export async function convergeTick(args: ConvergeTickArgs, signal?: AbortSignal)
       // how this resolves (`chant approve`, or a merged PR).
       outcome.action = "gated";
       outcome.gateName = result.gateName;
+      // #2028: the pending fact carries its address when this tick is running
+      // somewhere that has one (a PR/MR job). Absent otherwise — never guessed.
+      const url = resolveApprovalUrl();
+      if (url) outcome.url = url;
       outcome.reason =
         `dispatch of "${outcome.op}" hit gate "${result.gateName}" — recorded as a pending fact, not retried; ` +
-        `resolve with \`chant approve ${outcome.op} ${result.gateName}\` or a merged PR`;
+        `resolve with \`chant approve ${outcome.op} ${result.gateName}\`${url ? ` or by merging ${url}` : " or a merged PR"}`;
     } else if (!result.ok) {
       outcome.action = "reported";
       outcome.reason = `dispatch of "${outcome.op}" failed: ${result.error}`;

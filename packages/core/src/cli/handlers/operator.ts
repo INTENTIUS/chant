@@ -20,7 +20,7 @@ import {
 } from "../../op/operator";
 import { readLease, DEFAULT_LEASE_TTL_MS } from "../../lifecycle/lease";
 import { readConvergeLedger, type ConvergeTickRecord } from "../../lifecycle/converge-ledger";
-import { appendGateResolution, readGateResolutions, latestResolutionSince } from "../../lifecycle/gate-ledger";
+import { appendGateResolution, readGateResolutions, latestResolutionSince, resolveApprovalUrl, isApprovalUrl } from "../../lifecycle/gate-ledger";
 import { pushLifecycle } from "../../lifecycle/git";
 import { formatError, formatWarning, formatSuccess, formatBold, formatInfo } from "../format";
 import type { CommandContext } from "../registry";
@@ -112,7 +112,8 @@ interface OpStatusLine {
   op: string;
   env: string;
   lastTick?: ConvergeTickRecord;
-  pendingGates: { rule: string; op?: string; gate: string }[];
+  /** `url` (#2028) is the gate's approval surface, when the tick that recorded it knew one — what a renderer points its approve affordance at instead of a shell command. */
+  pendingGates: { rule: string; op?: string; gate: string; url?: string }[];
   lease?: { holder: string; expiresAt: string };
 }
 
@@ -130,7 +131,14 @@ async function statusFor(opName: string, env: string, cwd?: string): Promise<OpS
       if (outcome.action !== "gated" || !outcome.gateName || !outcome.op) continue;
       const { records: resolutions } = await readGateResolutions(outcome.op, { cwd });
       const resolved = latestResolutionSince(resolutions, outcome.gateName, lastTick.timestamp);
-      if (!resolved) pendingGates.push({ rule: outcome.ruleId, op: outcome.op, gate: outcome.gateName });
+      if (!resolved) {
+        pendingGates.push({
+          rule: outcome.ruleId,
+          op: outcome.op,
+          gate: outcome.gateName,
+          ...(outcome.url ? { url: outcome.url } : {}),
+        });
+      }
     }
   }
 
@@ -182,6 +190,7 @@ export async function runOperatorStatus(ctx: CommandContext): Promise<number> {
       console.log(`  pending gates:`);
       for (const g of row.pendingGates) {
         console.log(`    - ${g.op ?? row.op} gate "${g.gate}" (rule ${g.rule}) — resolve: chant approve ${g.op ?? row.op} ${g.gate}`);
+        if (g.url) console.log(`      approve at: ${g.url}`);
       }
     }
     console.log("");
@@ -193,7 +202,8 @@ export async function runOperatorStatus(ctx: CommandContext): Promise<number> {
 // ── chant approve <op> <gate> ───────────────────────────────────────────────
 
 /**
- * `chant approve <op> <gate> [--actor <name>] [--note <text>]` — record the
+ * `chant approve <op> <gate> [--actor <name>] [--note <text>] [--url <url>]`
+ * — record the
  * out-of-band resolution fact for a gate a converge tick recorded as gated
  * (issue: "resolution is an out-of-band act that writes the counterpart
  * fact"). Per the issue's own leaning on open question 3 ("local trust in
@@ -220,17 +230,31 @@ export async function runApprove(ctx: CommandContext): Promise<number> {
 
   const resolvedBy = ctx.args.actor ?? process.env.GITHUB_ACTOR ?? process.env.GITLAB_USER_LOGIN ?? process.env.USER ?? "unknown";
 
+  // #2028: the resolution's link is typed. `--url` wins; otherwise, running
+  // inside the PR/MR job that carries the change is itself the address, the
+  // same env fallback `--actor` uses. `--note` stays free-text prose.
+  const url = ctx.args.url ?? resolveApprovalUrl();
+  if (url && !isApprovalUrl(url)) {
+    console.error(formatError({
+      message: `--url must be an absolute http/https URL (got "${url}")`,
+      hint: "Pass the PR/MR link, or omit --url and put prose in --note.",
+    }));
+    return 1;
+  }
+
   const { record } = await appendGateResolution({
     op: opName,
     gate,
     resolvedBy,
     timestamp: new Date().toISOString(),
     ...(ctx.args.note ? { note: ctx.args.note } : {}),
+    ...(url ? { url } : {}),
   });
   await pushLifecycle().catch(() => undefined);
 
   console.error(formatSuccess(
-    `Gate "${gate}" on "${opName}" resolved by ${record.resolvedBy} at ${record.timestamp}`,
+    `Gate "${gate}" on "${opName}" resolved by ${record.resolvedBy} at ${record.timestamp}` +
+      (record.url ? ` (${record.url})` : ""),
   ));
   console.error(formatInfo(
     "This records the resolution as a fact; it does not itself re-run the gated dispatch — " +
