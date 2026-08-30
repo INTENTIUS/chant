@@ -172,6 +172,48 @@ The vocabulary is `in-place` / `rolling` / `replace` / `destroy` / `unknown`, de
 
 **Return a partial map.** A name you say nothing about is `unknown`, which is the right answer wherever the spec does not say — a conditionally-immutable property, a type with no schema on record. Core also forces `unknown` when the method is absent, when it throws, and when it returns a level outside the vocabulary, so there is no path by which a lexicon accidentally emits a confident `in-place`. That is what makes `in-place` worth gating on: it is only ever a deliberate claim, backed by a `detail` naming the spec knowledge behind it.
 
+## describeIdentity() — who chant would act as
+
+Reference implementations: `lexicons/aws/src/caller-identity.ts`, `lexicons/k8s/src/whoami.ts`.
+
+Your `describeResources()` already resolves an identity and a scope before it reads anything — the bind reaches the provider on the applier's transport, the connector picks a context, the read client picks a region and an endpoint — and then throws both away. `chant lifecycle whoami <env>` reports them, one row per lexicon, before anything acts.
+
+```typescript
+describeIdentity?(options: {
+  environment: string;
+  region?: string;   // the region the env's stacks declare, when they agree on one
+  cwd?: string;      // project root whose chant.config.ts carries the binding
+}): Promise<
+  | { identity: string; scope: string; source: string; endpoint?: string }
+  | { unresolved: { reason: UnobservedReason; detail?: string } }
+>;
+```
+
+- `identity` — the principal, as the **substrate** names it. An STS ARN, a `system:serviceaccount:<ns>:<name>` subject, a service-account email. Not what your config calls it: a kubeconfig `user` entry is a local alias, and the whole reason the question is worth asking is that the substrate may map that credential onto a different subject.
+- `scope` — what the principal is scoped to *here*. An account plus region, a cluster context plus namespace, a project, an org. This is the half where a wrong-account read is actually visible.
+- `source` — where the binding came from, in the project's own vocabulary: `k8s.profiles.prod.context`, `stacks[].region`, `env AWS_ACCESS_KEY_ID`. An identity with no provenance cannot be corrected by whoever reads it.
+- `endpoint` — the address the self-query went to.
+
+### Three rules
+
+**Read-only.** `whoami` is pre-flight and never a gate. The self-query must be one the substrate treats as a read of the caller's own identity. Kubernetes' `SelfSubjectReview` is a POST and still qualifies: the server evaluates the request's own credentials and returns the result without persisting anything, which is exactly what `kubectl auth whoami` does.
+
+**Never return a credential.** An identity is a principal and a scope, never a token, key, password or certificate. Where a substrate's only identity signal *is* a secret, report the fact without the value — the k8s implementation reports `credential token` and stops there. Core scrubs credential-shaped material from every field as a backstop; that is not a reason to put one there.
+
+**The endpoint must be the one your read uses.** Resolve it through the same helper `describeResources()` resolves it through, so an endpoint override, a region and a context binding cannot diverge between the two. A whoami that names a target the read does not reach is worse than no whoami, so pin it with a test: the aws suite asserts both calls land on the same origin under `AWS_ENDPOINT_URL`, and the k8s suite asserts the reported server is the one the declared-entity reads go to.
+
+### Unresolved is a real answer
+
+Return `{ unresolved: { reason, detail } }` whenever you cannot resolve an identity, with a reason from the same [`UnobservedReason`](/chant/lexicon-authoring/observation-contract/) set:
+
+| Reason | Says |
+|---|---|
+| `no-credentials` | Nothing is configured to act as, or the substrate refused the self-query. |
+| `no-binding` | This environment resolves to no concrete target. |
+| `read-failed` | The substrate was reached and the self-query errored — or serves no self-query at all. |
+
+`no-credentials` and `read-failed` are different claims and render differently, so do not collapse them. Never invent an identity to fill a row: a lexicon that returns an empty principal is forced to `unresolved` by core, and a throw degrades to `read-failed` for that lexicon alone without failing the command. Omitting the method entirely reports `not reported`, which is honest — it is never rendered as an empty identity.
+
 ## listArtifacts()
 
 Reference implementation: `lexicons/helm/src/list-artifacts.ts`.

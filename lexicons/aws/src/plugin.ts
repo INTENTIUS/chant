@@ -1,6 +1,6 @@
 import { createRequire } from "module";
 import { detectTemplate } from "./detect";
-import type { LexiconPlugin, IntrinsicDef, ObservationResult, DeepObservationResult, DependencyObservation, DisruptionQuery, DisruptionVerdict, ResourceMetadata, ExportedTemplate, ResourceSelector, InitTemplateSet, StackStatusObservation } from "@intentius/chant/lexicon";
+import type { LexiconPlugin, IntrinsicDef, ObservationResult, DeepObservationResult, DependencyObservation, DescribeIdentityOptions, DescribeIdentityResult, DisruptionQuery, DisruptionVerdict, ResourceMetadata, ExportedTemplate, ResourceSelector, InitTemplateSet, StackStatusObservation } from "@intentius/chant/lexicon";
 const require = createRequire(import.meta.url);
 import type { LintRule } from "@intentius/chant/lint/rule";
 import type { TemplateParser } from "@intentius/chant/import/parser";
@@ -798,6 +798,17 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
     changes: DisruptionQuery[];
   }): Record<string, DisruptionVerdict> {
     return awsDisruption(options);
+  },
+
+  /**
+   * Who chant would act as here, before it acts (#1982) —
+   * `sts:GetCallerIdentity` on the same transport, endpoint override and
+   * region resolution `describeResources` uses, so the principal reported and
+   * the account read are the same one. Implementation in ./caller-identity.ts.
+   */
+  async describeIdentity(options: DescribeIdentityOptions): Promise<DescribeIdentityResult> {
+    const { describeIdentity } = await import("./caller-identity");
+    return describeIdentity(options);
   },
 
   /**

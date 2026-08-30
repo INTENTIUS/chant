@@ -697,6 +697,17 @@ const { deployment, service, serviceMonitor, prometheusRule } = MonitoredService
     return describeResources(options);
   },
 
+  /**
+   * Who chant would act as in this cluster, before it acts (#1982) — the
+   * connector's own context/credential resolution plus the API server's
+   * `SelfSubjectReview`, reported through the same connect path the read uses
+   * so the cluster named is the cluster read. Implementation in ./whoami.ts.
+   */
+  async describeIdentity(options) {
+    const { describeIdentity } = await import("./whoami");
+    return describeIdentity(options);
+  },
+
   // Env teardown (#1222): enumeration + execution over the marker label
   // selector (managed-by + stack + env), through the same typed client the
   // prune uses. Execution deletes namespaces last. See ./teardown.ts.

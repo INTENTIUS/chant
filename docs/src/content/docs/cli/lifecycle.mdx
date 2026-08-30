@@ -13,6 +13,7 @@ chant lifecycle diff <env> [--live] [--src <dir>]
 chant lifecycle diff <env> --between <refA> <refB> [lexicon] [--json]
 chant lifecycle plan <env> [lexicon] [--json] [--owned] [--report gitlab-mr|markdown] [--src <dir>]
 chant lifecycle affected --base <ref> [--head <ref>] [--include-dependents] [--json]
+chant lifecycle whoami <env> [lexicon] [--json] [--strict]
 chant lifecycle teardown <env> [--yes] [--confirm-prod] [--json]
 chant lifecycle log [env]
 ```
@@ -445,6 +446,53 @@ The same shape works from an Op you write — `affected` is the primitive; the f
 | `--include-dependents` | Add downstream consumers of changed stacks. |
 | `--json` | Emit the result as JSON. |
 
+### `lifecycle whoami <env>`
+
+Report the identity chant would act as in each configured lexicon, and the scope that identity resolves to, before anything acts.
+
+```bash
+chant lifecycle whoami prod
+chant lifecycle whoami prod aws     # one lexicon
+chant lifecycle whoami prod --json
+```
+
+```
+LEXICON  IDENTITY                                     SCOPE                      SOURCE
+aws      arn:aws:sts::4915:assumed-role/deploy/ci     4915 us-east-1             env AWS_ACCESS_KEY_ID; stacks[].region
+k8s      system:serviceaccount:chant:deployer         prod-eks-a ns=chant        k8s.profiles.prod.context; credential exec-plugin (aws)
+github   not reported — this lexicon does not answer for an identity
+```
+
+A project spanning several substrates reaches each one with its own credentials, and until this command the answer arrived as a failure — an `unobserved` entry with reason `no-credentials` — or, when the binding was wrong rather than missing, as a clean read of the wrong account. Every observer already resolves an identity and a scope inside its bind and throws both away. This asks for them first.
+
+Read-only and never a gate. It builds nothing, mutates nothing, and exits 0 whatever the rows say unless you pass `--strict`. Each lexicon answers with its own cheap self-query — `sts:GetCallerIdentity` for aws, `SelfSubjectReview` (the call behind `kubectl auth whoami`) for k8s — issued on the same transport, endpoint override and region resolution the live read uses, so the target reported is the target read.
+
+**Three verdicts, and the difference between them matters.**
+
+| Verdict | Meaning |
+|---|---|
+| an identity | The substrate was asked and answered. The principal is what it returned, not what your config calls it. |
+| `could not determine` | The lexicon tried and could not, with a typed reason: `no identity is configured` (nothing to act as), `this environment resolves to no target` (no binding), or `the substrate was reached and the self-query failed`. |
+| `not reported` | The lexicon implements no identity self-query. It answers for nothing, which is never rendered as an empty identity. |
+
+"No identity is configured" and "I could not find out" are different answers and stay apart in both the table and the JSON.
+
+**No credential ever reaches the output.** An identity is a principal and a scope — an account id, a region, a project, a cluster context, a service-account subject. Where a substrate's only identity signal is a secret (a kubeconfig holding a static bearer token), the report names the credential *path* — `credential token` — and stops there. Core also scrubs any value the process holds in a credential-named environment variable, plus PEM blocks, JWTs and `Bearer …` headers, from every field before it prints.
+
+**What each lexicon answers with today:**
+
+- **aws** — `sts:GetCallerIdentity`. The principal ARN, scoped to the account and the region the read transport actually resolves. That region comes from `stacks[].region` and otherwise defaults to `us-east-1`; the native transport does not consult `AWS_REGION`, and the `SOURCE` column says so when your shell sets one that is not being used. Credentials resolve from `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` only — `AWS_PROFILE` alone signs nothing, and is reported as `no identity is configured` naming the profile.
+- **k8s** — `SelfSubjectReview` against the bound cluster. The subject the API server authenticated, scoped to the resolved context and its default namespace, sourced from `k8s.profiles.<env>.context` or, when the environment is unbound, from the ambient current-context with the missing binding named. A cluster too old to serve the review API (pre-1.26) reports `could not determine` rather than falling back to the kubeconfig's local user alias, which is a name you chose, not the subject the cluster resolves it to.
+
+Every other lexicon reports `not reported` until it implements the capability — see [Implementing Observation](/chant/lexicon-authoring/observation/#describeidentity--who-chant-would-act-as).
+
+The environment's declared `endpoint` is applied for the identity query exactly as it is for `diff --live`, so pointing an environment at a local emulator reports the emulator's identity rather than the cloud's.
+
+| Flag | Meaning |
+|---|---|
+| `--json` | Emit `{ environment, identities: [...] }`, one row per lexicon, with the same verdicts. |
+| `--strict` | Exit 1 when any lexicon could not determine an identity. A `not reported` row never fails, since a lexicon that implements nothing is not a failure. |
+
 ### `lifecycle teardown <env>`
 
 Plan — and with `--yes`, execute — the deletion of an environment's marker-scoped resources.
@@ -525,3 +573,4 @@ chant lifecycle log dev     # just dev
 - [Configuration](/chant/configuration/config-file/) — declare `environments` in `chant.config.ts`
 - [Watching Lifecycle](/chant/guide/watching-lifecycle/) — wire `lifecycle snapshot` + `lifecycle diff --live` to a `TemporalSchedule` via the `WatchOp` composite
 - [Implementing Observation](/chant/lexicon-authoring/observation/) — for lexicon authors, how to plug into `--live` via `describeResources()` / `listArtifacts()`
+- [Implementing Observation](/chant/lexicon-authoring/observation/#describeidentity--who-chant-would-act-as) — for lexicon authors, how to answer `whoami` via `describeIdentity()`

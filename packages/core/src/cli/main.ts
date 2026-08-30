@@ -23,7 +23,7 @@ import { runCarveAdvise, runCarveUnknown } from "./handlers/carve";
 import { runCarveEmit } from "./handlers/carve-emit";
 import { runCarveBridge } from "./handlers/carve-bridge";
 import { runCarveApply } from "./handlers/carve-apply";
-import { runLifecycleSnapshot, runLifecycleShow, runLifecycleDiff, runLifecycleRollback, runLifecyclePlan, runLifecycleAffected, runLifecycleLog, runLifecycleTeardown, runLifecycleUnknown } from "./handlers/lifecycle";
+import { runLifecycleSnapshot, runLifecycleShow, runLifecycleDiff, runLifecycleRollback, runLifecyclePlan, runLifecycleAffected, runLifecycleLog, runLifecycleTeardown, runLifecycleWhoami, runLifecycleUnknown } from "./handlers/lifecycle";
 import { runComponentsStatus, runComponentsReleaseRecord, runComponentsExport, runComponentsUnknown } from "./handlers/components";
 import { runScenarioCheck, runScenarioUnknown } from "./handlers/scenario";
 import { runGraph } from "./handlers/graph";
@@ -558,6 +558,9 @@ Lifecycle (alias: lc):
   lifecycle plan <env>      Typed change set (create/update/delete/adopt) vs live
   lifecycle affected        Stacks a change affects (--base <ref> [--include-dependents])
                             --json: emit the ChangeSet as JSON
+  lifecycle whoami <env>    Who chant would act as in each configured lexicon,
+                            and what that principal is scoped to — read-only,
+                            before anything acts (--json, --strict)
   lifecycle teardown <env>  Plan what deleting the environment would remove —
                             marker-scoped (this project's stack + env); --yes
                             executes the plan (production-like names also need
@@ -648,7 +651,8 @@ Options:
   --from <name>         Source lexicon for migrate (default: github)
   --to <name>           Target lexicon for migrate (default: gitlab)
   --emit <fmt>          Migration output format: yaml (default) or ts
-  --strict              Escalate needs-review/validation to errors (migrate)
+  --strict              Escalate needs-review/validation to errors (migrate);
+                        exit nonzero on an unresolved identity (lifecycle whoami)
   --validate            Run external validator (glci/glab) after migrate
   --use-composites      Rewrite to composite calls when patterns match (migrate)
   --components          Target discovered Component declarations instead of
@@ -884,6 +888,7 @@ const registry: CommandDef[] = [
   { name: "lifecycle rollback", handler: runLifecycleRollback },
   { name: "lifecycle plan", requiresPlugins: true, handler: runLifecyclePlan },
   { name: "lifecycle affected", requiresPlugins: true, handler: runLifecycleAffected },
+  { name: "lifecycle whoami", requiresPlugins: true, handler: runLifecycleWhoami },
   { name: "lifecycle teardown", requiresPlugins: true, handler: runLifecycleTeardown },
   { name: "lifecycle log", handler: runLifecycleLog },
 
