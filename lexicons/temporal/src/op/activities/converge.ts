@@ -49,6 +49,8 @@ import {
   appendConvergeRecord,
   readConvergeLedger,
   consecutiveRuleFires,
+  componentVerdicts,
+  sanitizeLedgerText,
   type ConvergeRuleOutcome,
   type ConvergeTickRecord,
 } from "@intentius/chant/lifecycle/converge-ledger";
@@ -92,6 +94,8 @@ export interface ConvergeTickArgs {
 }
 
 export interface ConvergeTickResult {
+  /** The ledger record's tick id (#2027) — what a caller correlates this tick's outcomes, gate facts and remediations against. */
+  id: string;
   drifted: boolean;
   remediated: number;
   reported: number;
@@ -117,14 +121,12 @@ function shellQuote(s: string): string {
  * `writeBlobToPath`'s corruption under concurrent writes — fixed at the root
  * in a separate PR); this only keeps one dispatch failure's own message from
  * corrupting the line it's written into.
+ *
+ * The rule now lives next to the record it protects (`sanitizeLedgerText`,
+ * #2027), since a component verdict's `detail` needs the same cap; this stays
+ * as the dispatch path's name for it.
  */
-const MAX_DISPATCH_ERROR_LEN = 300;
-export function sanitizeOneLine(raw: string, maxLen = MAX_DISPATCH_ERROR_LEN): string {
-  const firstLine = raw.split(/\r?\n/, 1)[0] ?? "";
-  // eslint-disable-next-line no-control-regex -- stripping literal control bytes, not matching on a range boundary
-  const stripped = firstLine.replace(/[\x00-\x1f\x7f]/g, " ").trim();
-  return stripped.length > maxLen ? `${stripped.slice(0, maxLen)}…` : stripped;
-}
+export const sanitizeOneLine = sanitizeLedgerText;
 
 /** Run `chant lifecycle plan <env> --live --json` and parse its `ChangeSet`. */
 async function observeChangeSet(env: string, signal?: AbortSignal): Promise<ChangeSet> {
@@ -397,6 +399,9 @@ export async function convergeTick(args: ConvergeTickArgs, signal?: AbortSignal)
     timestamp,
     firedRuleIds: plan.firedRuleIds,
     outcomes: plan.outcomes,
+    // #2027: the per-component verdicts this tick already observed, kept
+    // instead of discarded once `summary`'s counts were derived from them.
+    components: componentVerdicts(statusRows),
     summary: {
       drifted: symptom.updateCount + symptom.deleteCount,
       remediated: counts.remediated,
@@ -412,6 +417,7 @@ export async function convergeTick(args: ConvergeTickArgs, signal?: AbortSignal)
   await pushLifecycle().catch(() => undefined);
 
   return {
+    id: record.id,
     drifted: symptom.status === "drifted",
     remediated: record.summary.remediated,
     reported: record.summary.reported,
