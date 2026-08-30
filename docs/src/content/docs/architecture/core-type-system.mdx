@@ -60,7 +60,7 @@ export const dbPassword = declareSecret({
 });
 ```
 
-No declaration kind has a field that could hold secret material. `value`, `data`, and similar fields are typed `never` on every factory input and rejected at runtime, so a value is unrepresentable by construction. Declarations are ordinary entities to discovery (`isSecretDeclaration`, `collectSecretDeclarations` read them back), but they are serializer-neutral: no lexicon ever emits them. A fourth origin, committed-encrypted ciphertext in the repo, is part of the taxonomy but has no primitive yet.
+No declaration kind has a field that could hold secret material. `value`, `data`, and similar fields are typed `never` on every factory input and rejected at runtime, so a value is unrepresentable by construction. Declarations are ordinary entities to discovery (`isSecretDeclaration`, `collectSecretDeclarations` read them back), but they are serializer-neutral: no lexicon ever emits them. The fourth origin, `committed-encrypted`, declares a repo-relative `file` pointing at sops-style ciphertext committed alongside the source. The ciphertext never enters the primary output an applier reads — it is copied out as a sidecar — and WK8504 and WK8505 check it. See [the origin table](/chant/concepts/where-values-come-from/) for what each origin names and what it never carries.
 
 ### EffectReceipt
 
