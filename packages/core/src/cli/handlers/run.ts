@@ -22,7 +22,7 @@ import {
   type WorkflowHistoryRaw,
 } from "./run-client";
 import { generateReport, writeReport } from "./run-report";
-import { extractStepRecords, countActivities, queryGateState } from "./op-progress";
+import { extractIndexedStepRecords, stepRecordEmitter, countActivities, queryGateState } from "./op-progress";
 import { runComponents, resolveComponentTargets, findComponentGate, listComponents } from "../../components/cli-support";
 import { renderDriverHuman, renderDriverJson } from "../../components/driver-output";
 import { ndjsonProgressSink } from "../../components/run-progress";
@@ -1293,17 +1293,15 @@ async function runOpTemporal(ctx: CommandContext): Promise<number> {
   // `--progress-json` (chant #1676): stream one NDJSON StepRecord per line to
   // stdout as each declared step settles — the durable-path counterpart to
   // `chant run <name> --json`'s local-executor record shape (op-progress.ts).
-  // Purely additive: when the flag is absent `emitProgress` stays undefined
-  // and every `emitProgress?.(...)` call is a no-op, so poll-loop behavior
-  // is unchanged. `extractStepRecords` is stable and append-only across
-  // polls (same declared order, a growing history), so a plain emitted-count
-  // watermark is enough to emit only what's new each round.
+  // Purely additive: when the flag is absent `emitNewRecords` stays undefined
+  // and every call site is a no-op, so poll-loop behavior is unchanged.
+  //
+  // Dedup is by declared-step identity, not by an emitted count (chant #2032):
+  // the terminal `final: true` pass *inserts* a `"skipped"` record at each
+  // never-reached step's declared position, so the list is not append-only and
+  // a count watermark shifts off the end of it.
   const emitProgress = ctx.args.progressJson ? ndjsonProgressSink<StepRecord>() : undefined;
-  let emittedCount = 0;
-  const emitNewRecords = (records: StepRecord[]) => {
-    for (const record of records.slice(emittedCount)) emitProgress?.(record);
-    emittedCount = records.length;
-  };
+  const emitNewRecords = emitProgress ? stepRecordEmitter(emitProgress) : undefined;
 
   let finalDesc: WorkflowExecutionDescription | undefined;
   let finalHistory: WorkflowHistoryRaw | undefined;
@@ -1315,11 +1313,11 @@ async function runOpTemporal(ctx: CommandContext): Promise<number> {
       const history = await fetchNormalizedHistory(handle);
 
       renderProgress(opName, history);
-      if (emitProgress) emitNewRecords(extractStepRecords(config, history));
+      emitNewRecords?.(extractIndexedStepRecords(config, history));
 
       if (TERMINAL_STATUSES.has(desc.status.name)) {
         process.stderr.write("\n");
-        if (emitProgress) emitNewRecords(extractStepRecords(config, history, { final: true }));
+        emitNewRecords?.(extractIndexedStepRecords(config, history, { final: true }));
         finalDesc = desc;
         finalHistory = history;
         break;
