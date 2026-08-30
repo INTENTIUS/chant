@@ -1078,9 +1078,44 @@ function paramsModulePath(): string | null {
  *  - **Lexicons of THIS build only.** Not "any `@intentius/chant-lexicon-*`
  *    package on disk", and emphatically not "any bare specifier". A lexicon
  *    the build did not load is as out of scope as `node:fs`.
+ *
+ * chant #1995 — the "no subpaths" restriction above stays as documented for
+ * THIS function's caller ({@link resolveActiveLexiconExport}, #1063's
+ * data-export resolution): every lexicon's public data surface is reachable
+ * from the barrel, so a subpath buys that caller nothing and would cost the
+ * same cold-resolution risk. {@link isTrustedExecutableBinding} (#1093) asks a
+ * different question — not "does this specifier name a reachable data
+ * export" but "has the CLI already loaded this code" — and a project file
+ * reaching a lexicon's generated module by subpath instead of through the
+ * barrel is code the CLI already imported and executed either way, so that
+ * caller resolves a subpath's package root separately, via
+ * {@link bareSpecifierPackageRoot}, rather than widening this function.
  */
 function activeLexiconPackage(specifier: string, lexiconPackages: ReadonlySet<string>): string | undefined {
   return lexiconPackages.has(specifier) ? specifier : undefined;
+}
+
+/**
+ * chant #1995 — the package-ROOT portion of a bare subpath specifier
+ * (`@intentius/chant-lexicon-azure/generated/index` ->
+ * `@intentius/chant-lexicon-azure`), or `undefined` when `specifier` is a
+ * relative/absolute path, is already a bare root with no subpath, or is
+ * malformed (a lone `@scope` with nothing after it).
+ *
+ * Text only, no resolution — the same discipline {@link activeLexiconPackage}
+ * documents and for the identical reason: resolving an arbitrary bare
+ * specifier to find out what package it belongs to is the pathological cold
+ * `require.resolve` chant#1020 measured. A scoped package (`@scope/name`)
+ * reserves its first two `/`-separated segments for the root; an unscoped
+ * package (`name`) reserves one.
+ */
+function bareSpecifierPackageRoot(specifier: string): string | undefined {
+  if (specifier.startsWith(".") || isAbsolute(specifier)) return undefined;
+  const segments = specifier.split("/");
+  if (specifier.startsWith("@")) {
+    return segments.length > 2 ? `${segments[0]}/${segments[1]}` : undefined;
+  }
+  return segments.length > 1 ? segments[0] : undefined;
 }
 
 /**
@@ -2706,10 +2741,19 @@ function isChantOwnedHelperBinding(binding: ImportBinding, ctx: ResolveCtx): boo
  * in the CLI's own process when the #1045 sandbox is active. Exactly two
  * arms, and neither of them trusts text the project controls:
  *
- *  1. **An ACTIVE lexicon package of this build** — matched against
- *     {@link FoldSession.lexiconPackages}, a closed set built from the
- *     lexicon names the BUILD resolved and `loadPlugins` already imported
- *     (../cli/plugins.ts), not from anything the file under fold says.
+ *  1. **An ACTIVE lexicon package of this build, root OR subpath** — the
+ *     exact specifier matched against {@link FoldSession.lexiconPackages}, a
+ *     closed set built from the lexicon names the BUILD resolved and
+ *     `loadPlugins` already imported (../cli/plugins.ts), not from anything
+ *     the file under fold says; OR (chant #1995) a subpath of one of those
+ *     same packages (`@intentius/chant-lexicon-azure/generated/index`), whose
+ *     package ROOT is extracted from the specifier TEXT
+ *     ({@link bareSpecifierPackageRoot}, no resolution) and checked against
+ *     the identical set. A subpath is trusted because the code it names
+ *     belongs to a package the CLI already imported and executed to load that
+ *     lexicon's serializers/lint rules — reaching one of that package's own
+ *     modules by subpath instead of through the barrel names code the process
+ *     already trusts, not code the project controls.
  *  2. **chant-core's own executing tree** — the specifier is RESOLVED and the
  *     resulting path checked against {@link chantCoreRoot}. A text match is
  *     not enough here: `@intentius/chant` and `@intentius/chant-lexicon-evil`
@@ -2738,6 +2782,12 @@ function isChantOwnedHelperBinding(binding: ImportBinding, ctx: ResolveCtx): boo
  */
 function isTrustedExecutableBinding(binding: ImportBinding, ctx: ResolveCtx): boolean {
   if (activeLexiconPackage(binding.specifier, ctx.lexiconPackages) !== undefined) return true;
+  // chant #1995 — arm 1's subpath case: same allowlist, matched against the
+  // specifier's package ROOT (text only, see bareSpecifierPackageRoot) rather
+  // than the specifier itself, so `<activeLexiconPkg>/generated/index` is
+  // trusted exactly like the bare package import already is.
+  const subpathRoot = bareSpecifierPackageRoot(binding.specifier);
+  if (subpathRoot !== undefined && activeLexiconPackage(subpathRoot, ctx.lexiconPackages) !== undefined) return true;
   // Only a chant-shaped or project-relative specifier is worth resolving; any
   // other bare specifier is untrusted by definition, and resolving it to find
   // that out would cost the pathological cold `require.resolve` (chant#1020).

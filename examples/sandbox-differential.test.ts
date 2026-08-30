@@ -96,7 +96,7 @@ import {
  */
 vi.setConfig({ testTimeout: 60_000 });
 
-const CORPUS = discoverCorpus();
+const CORPUS = await discoverCorpus();
 
 /**
  * Known, understood entries where sandboxed and in-process output are

@@ -58,6 +58,12 @@ export default defineConfig({
       // and lexicons/*/examples/ itself (no Docker), so it's included
       // explicitly the same way examples.test.ts is.
       "test/no-consumer-apps.test.ts",
+      // chant #1996 — unit coverage for discoverCorpus() itself: a
+      // lexicons/*/examples/* fixture's own declared lexicons, not just the
+      // directory it lives under. Same corpus-walking shape as the
+      // differentials below (no Docker), but no build — just what the corpus
+      // entries came back as.
+      "examples/differential-corpus.test.ts",
       "examples/fold-differential.test.ts",
       // chant #1045 Phase 1 — the JSON entity-boundary differential. Same
       // corpus-walking shape as fold-differential.test.ts above (no Docker).
