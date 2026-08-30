@@ -54,7 +54,7 @@ vi.mock("../../lifecycle/git", async () => {
 });
 
 // Imported after the mocks above are registered.
-const { runOperator, runOperatorStatus, runApprove } = await import("./operator");
+const { runOperator, runOperatorStatus, runOperatorLog, runApprove } = await import("./operator");
 
 function ctx(args: Partial<ParsedArgs>) {
   return {
@@ -372,6 +372,185 @@ describe("runApprove", () => {
     const code = await runApprove(ctx({ path: "unknown-op", extraPositional: "g" }));
     expect(code).toBe(0);
     expect(appendGateResolutionMock).toHaveBeenCalled();
+    errSpy.mockRestore();
+  });
+});
+
+// ── chant operator log (#2029) ────────────────────────────────────────────────
+
+describe("runOperatorLog", () => {
+  function tick(over: Record<string, unknown> = {}) {
+    return {
+      version: 1,
+      id: "11111111-2222-3333-4444-555555555555",
+      op: "staging-converge",
+      env: "staging",
+      timestamp: "2026-01-01T00:00:00.000Z",
+      firedRuleIds: [],
+      outcomes: [],
+      summary: { drifted: 0, remediated: 0, reported: 0, skippedBudget: 0, skippedFlap: 0, unobserved: 0, adopted: 0 },
+      log: "converge(staging): drifted=0",
+      ...over,
+    };
+  }
+
+  beforeEach(() => {
+    discoverConvergeOpsMock.mockResolvedValue({
+      ops: [{ config: { name: "staging-converge", searchAttributes: { Env: "staging" } } }],
+      errors: [],
+    });
+    readGateResolutionsMock.mockResolvedValue({ records: [], malformed: 0 });
+  });
+
+  test("--json emits the whole tick history, not just the newest row", async () => {
+    readConvergeLedgerMock.mockResolvedValue({
+      records: [
+        tick({ id: "t1", timestamp: "2026-01-01T00:00:00.000Z" }),
+        tick({ id: "t2", timestamp: "2026-01-01T01:00:00.000Z" }),
+        tick({ id: "t3", timestamp: "2026-01-01T02:00:00.000Z" }),
+      ],
+      malformed: 0,
+    });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    expect(await runOperatorLog(ctx({ json: true }))).toBe(0);
+
+    const printed = JSON.parse(logSpy.mock.calls[0][0] as string);
+    expect(printed.entries.map((e: { record: { id: string } }) => e.record.id)).toEqual(["t1", "t2", "t3"]);
+    expect(printed.malformed).toEqual({ converge: 0, gates: 0 });
+    logSpy.mockRestore();
+  });
+
+  test("carries the malformed-line count, so a short timeline is never silently short", async () => {
+    readConvergeLedgerMock.mockResolvedValue({ records: [tick()], malformed: 3 });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    await runOperatorLog(ctx({ json: true }));
+    expect(JSON.parse(logSpy.mock.calls[0][0] as string).malformed.converge).toBe(3);
+
+    logSpy.mockClear();
+    await runOperatorLog(ctx({}));
+    expect(errSpy.mock.calls.map((c) => String(c[0])).join("\n")).toContain("3 ledger line(s) were unreadable");
+
+    logSpy.mockRestore();
+    errSpy.mockRestore();
+  });
+
+  test("gate resolutions are merged into the timeline, in timestamp order after the tick that gated", async () => {
+    readConvergeLedgerMock.mockResolvedValue({
+      records: [
+        tick({
+          id: "t1",
+          timestamp: "2026-01-01T00:00:00.000Z",
+          outcomes: [{ ruleId: "drift-apply", action: "gated", op: "fountain-apply", gateName: "rollout-gate", url: "https://pr.example/1" }],
+        }),
+        tick({ id: "t2", timestamp: "2026-01-03T00:00:00.000Z" }),
+      ],
+      malformed: 0,
+    });
+    readGateResolutionsMock.mockResolvedValue({
+      records: [{ version: 1, op: "fountain-apply", gate: "rollout-gate", resolvedBy: "alex", timestamp: "2026-01-02T00:00:00.000Z", url: "https://pr.example/1" }],
+      malformed: 0,
+    });
+
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    await runOperatorLog(ctx({ json: true }));
+    const printed = JSON.parse(logSpy.mock.calls[0][0] as string);
+    expect(printed.entries.map((e: { kind: string }) => e.kind)).toEqual(["tick", "gate-resolution", "tick"]);
+    expect(readGateResolutionsMock).toHaveBeenCalledWith("fountain-apply", expect.anything());
+    logSpy.mockRestore();
+  });
+
+  test("--since drops everything older, --limit keeps the newest n (still oldest-first)", async () => {
+    readConvergeLedgerMock.mockResolvedValue({
+      records: [
+        tick({ id: "t1", timestamp: "2026-01-01T00:00:00.000Z" }),
+        tick({ id: "t2", timestamp: "2026-01-02T00:00:00.000Z" }),
+        tick({ id: "t3", timestamp: "2026-01-03T00:00:00.000Z" }),
+        tick({ id: "t4", timestamp: "2026-01-04T00:00:00.000Z" }),
+      ],
+      malformed: 0,
+    });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    await runOperatorLog(ctx({ json: true, since: "2026-01-02T00:00:00.000Z" }));
+    expect(JSON.parse(logSpy.mock.calls[0][0] as string).entries.map((e: { record: { id: string } }) => e.record.id))
+      .toEqual(["t2", "t3", "t4"]);
+
+    logSpy.mockClear();
+    await runOperatorLog(ctx({ json: true, limit: 2 }));
+    expect(JSON.parse(logSpy.mock.calls[0][0] as string).entries.map((e: { record: { id: string } }) => e.record.id))
+      .toEqual(["t3", "t4"]);
+
+    logSpy.mockRestore();
+  });
+
+  test("--op restricts to one ConvergeOp", async () => {
+    discoverConvergeOpsMock.mockResolvedValue({
+      ops: [
+        { config: { name: "staging-converge", searchAttributes: { Env: "staging" } } },
+        { config: { name: "other-converge", searchAttributes: { Env: "staging" } } },
+      ],
+      errors: [],
+    });
+    readConvergeLedgerMock.mockResolvedValue({
+      records: [tick({ id: "t1" }), tick({ id: "t2", op: "other-converge" })],
+      malformed: 0,
+    });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    await runOperatorLog(ctx({ json: true, op: "other-converge" }));
+    expect(JSON.parse(logSpy.mock.calls[0][0] as string).entries.map((e: { record: { id: string } }) => e.record.id))
+      .toEqual(["t2"]);
+    logSpy.mockRestore();
+  });
+
+  test("two ConvergeOps sharing one environment read that ledger once", async () => {
+    discoverConvergeOpsMock.mockResolvedValue({
+      ops: [
+        { config: { name: "staging-converge", searchAttributes: { Env: "staging" } } },
+        { config: { name: "other-converge", searchAttributes: { Env: "staging" } } },
+      ],
+      errors: [],
+    });
+    readConvergeLedgerMock.mockResolvedValue({ records: [tick()], malformed: 2 });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    await runOperatorLog(ctx({ json: true }));
+    expect(readConvergeLedgerMock).toHaveBeenCalledTimes(1);
+    // ...and its malformed count is not double-counted.
+    expect(JSON.parse(logSpy.mock.calls[0][0] as string).malformed.converge).toBe(2);
+    logSpy.mockRestore();
+  });
+
+  test("refuses an unparseable --since and a non-positive --limit without reading anything", async () => {
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    expect(await runOperatorLog(ctx({ since: "last tuesday" }))).toBe(1);
+    expect(await runOperatorLog(ctx({ limit: 0 }))).toBe(1);
+    expect(await runOperatorLog(ctx({ limit: 1.5 }))).toBe(1);
+    expect(readConvergeLedgerMock).not.toHaveBeenCalled();
+    errSpy.mockRestore();
+  });
+
+  test("prints the tick id, log line and gated outcomes in the human render", async () => {
+    readConvergeLedgerMock.mockResolvedValue({
+      records: [tick({
+        id: "abcdef01-2222-3333-4444-555555555555",
+        outcomes: [{ ruleId: "drift-apply", action: "gated", op: "fountain-apply", gateName: "rollout-gate", url: "https://pr.example/1" }],
+      })],
+      malformed: 0,
+    });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    await runOperatorLog(ctx({}));
+    const out = logSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(out).toContain("[abcdef01]");
+    expect(out).toContain("converge(staging): drifted=0");
+    expect(out).toContain('gated  drift-apply → fountain-apply gate "rollout-gate"  https://pr.example/1');
+    logSpy.mockRestore();
+  });
+
+  test("exits 0 with a warning when no ConvergeOps are discovered", async () => {
+    discoverConvergeOpsMock.mockResolvedValue({ ops: [], errors: [] });
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    expect(await runOperatorLog(ctx({}))).toBe(0);
     errSpy.mockRestore();
   });
 });

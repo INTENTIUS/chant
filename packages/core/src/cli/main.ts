@@ -30,7 +30,7 @@ import { runGraph } from "./handlers/graph";
 import { runExplain } from "./handlers/explain";
 import { runSearch } from "./handlers/search";
 import { runOp, runOpList, runOpStatus, runOpSignal, runOpCancel, runOpLog } from "./handlers/run";
-import { runOperator, runOperatorStatus, runApprove } from "./handlers/operator";
+import { runOperator, runOperatorStatus, runOperatorLog, runApprove } from "./handlers/operator";
 import { runEmulator } from "./handlers/emulator";
 import { splitJoinedFlags, dispatchCommandGroup, collectCommandGroups, formatCommandGroupsHelp, type CommandGroup } from "./command-group";
 import type { LexiconPlugin } from "../lexicon";
@@ -390,6 +390,14 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.note = args[++i];
     } else if (arg === "--url") {
       result.url = args[++i];
+    } else if (arg === "--op") {
+      result.op = args[++i];
+    } else if (arg === "--since") {
+      result.since = args[++i];
+    } else if (arg === "--limit") {
+      // Parsed here, validated by the handler — `parseArgs` reports shape, not
+      // policy, the same split every other value flag here uses.
+      result.limit = Number(args[++i]);
     } else if (arg.startsWith("--")) {
       // chant #1127 — every recognized flag is matched above; anything left
       // starting with `--` is unrecognized, whether it arrived bare
@@ -526,6 +534,13 @@ Ops:
                         ConvergeOp, read from the chant/lifecycle orphan
                         branch alone — no daemon needs to be running
                         (--env <env>, --json)
+  operator log           Converge tick history and the gate resolutions
+                        against it, merged into one timestamp-ordered
+                        timeline, from the same orphan branch (--env <env>,
+                        --op <name>, --since <iso>, --limit <n>, --json).
+                        --json also carries the count of ledger lines that
+                        were unreadable, so a short timeline is never
+                        silently short
   approve <op> <gate>    Record a gate's out-of-band resolution fact
                         (--actor <name>, --note <text>, --url <url>) — the
                         durable counterpart to a converge tick's
@@ -880,6 +895,7 @@ const registry: CommandDef[] = [
   { name: "run", handler: runOp },
 
   { name: "operator status", handler: runOperatorStatus },
+  { name: "operator log", handler: runOperatorLog },
   { name: "operator", handler: runOperator },
   { name: "approve", handler: runApprove },
 

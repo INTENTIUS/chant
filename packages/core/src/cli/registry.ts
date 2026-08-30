@@ -287,6 +287,12 @@ export interface ParsedArgs {
   once?: boolean;
   /** `chant approve <op> <gate> --note <text>` (#1485) — optional free-text prose recorded on the gate-resolution fact. The PR link belongs in `--url` since #2028; this is for everything that isn't the link. */
   note?: string;
+  /** `chant operator log --op <name>` (#2029) — restrict the tick history to one ConvergeOp by name. Omitted, every discovered ConvergeOp's ticks are merged into one timeline. */
+  op?: string;
+  /** `chant operator log --since <iso>` (#2029) — only entries at or after this ISO-8601 instant. */
+  since?: string;
+  /** `chant operator log --limit <n>` (#2029) — keep only the newest n entries (still printed oldest-first). */
+  limit?: number;
   /** `chant approve <op> <gate> --url <url>` (#2028) — the address this resolution happened at (the PR/MR that carried the change), recorded typed on the gate-resolution fact so a reader is not sniffing `--note` for something link-shaped. Defaults to the PR/MR the surrounding CI job is for, when there is one. Must be an absolute http/https URL. */
   url?: string;
 }

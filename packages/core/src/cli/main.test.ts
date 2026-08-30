@@ -256,6 +256,25 @@ describe("parseArgs", () => {
     expect(result.json).toBe(true);
   });
 
+  test("parses --op, --since and --limit for operator log (#2029)", () => {
+    const result = parseArgs([
+      "operator", "log", "--env", "staging", "--op", "staging-converge",
+      "--since", "2026-01-01T00:00:00Z", "--limit", "20", "--json",
+    ]);
+    expect(result.command).toBe("operator");
+    expect(result.path).toBe("log");
+    expect(result.env).toBe("staging");
+    expect(result.op).toBe("staging-converge");
+    expect(result.since).toBe("2026-01-01T00:00:00Z");
+    expect(result.limit).toBe(20);
+    expect(result.json).toBe(true);
+  });
+
+  test("parses --url for approve (#2028)", () => {
+    const result = parseArgs(["approve", "fountain-apply", "rollout-gate", "--url", "https://github.com/org/repo/pull/1"]);
+    expect(result.url).toBe("https://github.com/org/repo/pull/1");
+  });
+
   // ── --no-release-record (#597) ───────────────────────────────────────────
 
   test("parses --no-release-record for run --components", () => {
