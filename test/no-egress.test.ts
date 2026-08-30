@@ -42,10 +42,22 @@
  * every spawn** the guarded phases make — through a `vi.mock` recorder that
  * catches the sync variants too — and fails on a binary that is not in
  * `OFFLINE_SHELL_OUTS` (./egress-catalogue.ts). That list is the enumeration
- * #1984 asks for: `git check-ignore` on the lint path, `git fetch` on the one
- * `scenario check` branch that reads the lifecycle branch, and the sandbox
- * child. What a child then does of its own is outside the guard, and is stated
- * as such on the published page.
+ * #1984 asks for: `git check-ignore` on the lint path, the sandbox child,
+ * `git fetch` on the one `scenario check` branch that reads the lifecycle
+ * branch, and `helm template` on a build of a project declaring `HelmRender`.
+ * What a child then does of its own is outside the guard, and is stated as
+ * such on the published page.
+ *
+ * That last one was this guard's first real finding, and it is the reason the
+ * shell-out assertions are shaped the way they are. `HelmRender` resolves at
+ * synthesis time and `helm template --repo <url>` fetches the chart, so a
+ * build CAN reach a network through a child — on first synth only, since the
+ * result is cached. It is documented, opt-in behaviour rather than a defect,
+ * but the flat claim "chant build reaches no network" did not survive contact
+ * with it, and the page no longer makes that claim unqualified. The two things
+ * worth fixing underneath it — a render store reachable only through a
+ * capability profile, and a corpus that builds a fixture the helm lexicon's
+ * own suite skips as unbuildable in CI — are chant #2035.
  *
  * A bare DNS query is also outside it: `node:dns` is not reached through a
  * socket. Nothing in the tree imports it, and the static half below is what
@@ -90,14 +102,31 @@ import { basename, join, resolve } from "node:path";
 // form. Both specifiers are mocked: core imports `"child_process"` in some
 // modules and `"node:child_process"` in others.
 
-const spawns: string[] = [];
+interface SpawnRecord {
+  /** Executable basename for `spawn`/`exec`, forked module basename for `fork`. */
+  binary: string;
+  /** The guarded phase and corpus project that spawned it. */
+  phase: string;
+}
+
+const spawns: SpawnRecord[] = [];
+
+/** Distinct binaries recorded, sorted. */
+function spawnedBinaries(): string[] {
+  return [...new Set(spawns.map((s) => s.binary))].sort();
+}
+
+/** Where a binary was spawned from, for a failure message that names the phase and project. */
+function spawnOrigins(binary: string): string[] {
+  return [...new Set(spawns.filter((s) => s.binary === binary).map((s) => s.phase))].sort();
+}
 
 function recordSpawns(actual: typeof import("node:child_process")): typeof import("node:child_process") {
   const wrapped: Record<string, unknown> = { ...actual };
   for (const name of ["spawn", "spawnSync", "exec", "execSync", "execFile", "execFileSync", "fork"] as const) {
     const original = actual[name] as (...args: unknown[]) => unknown;
     wrapped[name] = (...args: unknown[]) => {
-      if (armed) spawns.push(basename(String(args[0]).split(/\s+/)[0]));
+      if (armed) spawns.push({ binary: basename(String(args[0]).split(/\s+/)[0]), phase: currentPhase });
       return original(...args);
     };
   }
@@ -238,6 +267,20 @@ interface PhaseReport {
 }
 const report: PhaseReport[] = [];
 
+/**
+ * Per-test budget for the phases that loop the whole corpus.
+ *
+ * Each of those is one test doing a hundred-odd builds or lints — a batch, not
+ * a unit — and they are among the heaviest tests in the suite. Standalone they
+ * take two to four seconds; on a saturated run (the fourteen-fork pool, the
+ * temporal suites bundling workflows with webpack in-process) they have been
+ * seen past the file's 20s default and reported as a timeout, which reads as a
+ * network violation to anyone skimming CI. The generous ceiling is not masking
+ * a hang: a guarded phase that genuinely blocks on a socket throws at the call
+ * site rather than waiting, because the guard never lets a connection open.
+ */
+const CORPUS_PHASE_TIMEOUT_MS = 180_000;
+
 // ── The guarded phases ───────────────────────────────────────────────────────
 
 describe("chant #1984 — the phases an adopter runs reach no network", () => {
@@ -262,7 +305,7 @@ describe("chant #1984 — the phases an adopter runs reach no network", () => {
     }
     report.push({ phase: "chant build", projects: CORPUS.length, violations: violations.length });
     expect(violations, "a plain build reached the network").toEqual([]);
-  });
+  }, CORPUS_PHASE_TIMEOUT_MS);
 
   test("chant build --fold: folding a project opens no connection either", async () => {
     const violations: string[] = [];
@@ -281,7 +324,7 @@ describe("chant #1984 — the phases an adopter runs reach no network", () => {
     }
     report.push({ phase: "chant build --fold", projects: CORPUS.length, violations: violations.length });
     expect(violations, "a folded build reached the network").toEqual([]);
-  });
+  }, CORPUS_PHASE_TIMEOUT_MS);
 
   test("chant build (CLI, with post-synth checks): no lexicon's checks reach out", async () => {
     // `build()` above stops at serialization. `buildCommand` is what a real
@@ -309,7 +352,7 @@ describe("chant #1984 — the phases an adopter runs reach no network", () => {
     }
     report.push({ phase: "chant build (CLI)", projects: REPRESENTATIVE.length, violations: violations.length });
     expect(violations, "the CLI build path — config, policies, post-synth checks — reached the network").toEqual([]);
-  });
+  }, CORPUS_PHASE_TIMEOUT_MS);
 
   test("chant build --sandbox: neither the CLI process nor the child dials out", async () => {
     // The child evaluates project code in its own process, so this asserts the
@@ -331,7 +374,7 @@ describe("chant #1984 — the phases an adopter runs reach no network", () => {
     }
     report.push({ phase: "chant build --sandbox", projects: REPRESENTATIVE.length, violations: violations.length });
     expect(violations, "a sandboxed build reached the network from the CLI process").toEqual([]);
-  });
+  }, CORPUS_PHASE_TIMEOUT_MS);
 
   test("chant lint: no rule, no post-synth check and no policy reaches out", async () => {
     const violations: string[] = [];
@@ -342,7 +385,7 @@ describe("chant #1984 — the phases an adopter runs reach no network", () => {
     }
     report.push({ phase: "chant lint", projects: CORPUS.length, violations: violations.length });
     expect(violations, "linting reached the network").toEqual([]);
-  });
+  }, CORPUS_PHASE_TIMEOUT_MS);
 
   test("chant search: answering from the declared graph reaches nothing", async () => {
     const project = resolve(ROOT, "examples/k8s-eks-microservice");
@@ -402,24 +445,66 @@ describe("chant #1984 — the phases an adopter runs reach no network", () => {
 
 // ── The shell-outs the guard cannot cover ────────────────────────────────────
 
+/**
+ * The recorded set is not the same on every machine, and the assertions below
+ * are shaped so that does not matter.
+ *
+ * `helm` is the case that taught this. `HelmRender` resolves at synthesis
+ * time, so building `lexicons/helm/examples/helm-render-external-secrets`
+ * shells out to `helm template` — but only when the render is not already
+ * cached under `~/.chant/helm-renders/`, and only when `helm` is on `PATH` at
+ * all. A workstation that has built the corpus before spawns nothing; a cold
+ * CI runner spawns it once. The first version of this suite asserted set
+ * equality and went red on CI for exactly that reason.
+ *
+ * So the rule is containment plus a floor: every observed binary must be
+ * enumerated (an unlisted spawn is a finding), and every UNCONDITIONAL entry
+ * must actually have been observed (so the check can never pass because the
+ * recorder was inert). A `conditional` entry is permitted and not required,
+ * which is the honest statement — its presence depends on the machine, not on
+ * the tree.
+ */
 describe("chant #1984 — the offline phases' shell-outs are enumerated, not covered", () => {
   test("every binary spawned during a guarded phase is in the catalogue", () => {
     const allowed = new Set(OFFLINE_SHELL_OUTS.map((s) => s.binary));
     // The recorder reduces every spawn to a basename: a binary for
     // `spawn`/`exec`, and the forked module for `fork` — which is why the
     // sandbox child appears as `child.mjs` rather than as `node`.
-    const observed = [...new Set(spawns)].sort();
-    const unlisted = observed.filter((binary) => !allowed.has(binary));
+    const observed = spawnedBinaries();
+    const unlisted = observed
+      .filter((binary) => !allowed.has(binary))
+      .map((binary) => `${binary} — spawned by ${spawnOrigins(binary).join("; ")}`);
     expect(
       unlisted,
-      `these binaries were spawned by a guarded phase and are not in OFFLINE_SHELL_OUTS — add them to test/egress-catalogue.ts with what they do, or stop spawning them: ${observed.join(", ")}`,
+      `a guarded phase spawned a binary that is not in OFFLINE_SHELL_OUTS. Understand what it does before enumerating it — an unlisted spawn is a finding, and the first one this guard produced was a network-reaching \`helm template\` on the build path. Observed this run: ${observed.join(", ")}`,
     ).toEqual([]);
   });
 
-  test("the recorder is not silently inert — the guarded phases did spawn something", () => {
-    // `chant lint` runs `git check-ignore` on every corpus project. If this is
-    // empty the mock never installed and the assertion above proved nothing.
-    expect(spawns.length, "no child process was recorded at all — the child_process mock did not install").toBeGreaterThan(0);
+  test("the recorder is not inert — every unconditional shell-out was observed", () => {
+    // `chant lint` runs `git check-ignore` on every corpus project and
+    // `--sandbox` forks its child, on every machine. If either is missing the
+    // mock did not install and the assertion above proved nothing.
+    const observed = new Set(spawnedBinaries());
+    const missing = OFFLINE_SHELL_OUTS.filter((s) => !s.conditional && !observed.has(s.binary)).map((s) => s.binary);
+    expect(
+      missing,
+      `these shell-outs are declared unconditional but were not recorded — either the child_process mock did not install, or they have become conditional and OFFLINE_SHELL_OUTS should say so. Observed: ${[...observed].join(", ") || "nothing"}`,
+    ).toEqual([]);
+  });
+
+  test("a conditional shell-out is permitted, not required", () => {
+    // The claim this test protects is a property of the catalogue, not of the
+    // run: anything whose presence depends on PATH, a cache or a project's own
+    // declaration has to be marked, or the suite goes red on one machine and
+    // green on another for reasons that have nothing to do with the tree.
+    for (const shellOut of OFFLINE_SHELL_OUTS) {
+      if (shellOut.reachesNetwork) {
+        expect(
+          shellOut.conditional,
+          `${shellOut.binary} reaches a network from an offline phase — if that is unconditional it is not an offline phase`,
+        ).toBe(true);
+      }
+    }
   });
 });
 
@@ -545,7 +630,9 @@ afterAll(() => {
       "",
       "── no-egress guard (chant #1984) ───────────────────────────────────",
       ...lines,
-      `  shell-outs observed:     ${[...new Set(spawns)].sort().join(", ") || "none"}`,
+      // Printed because the set legitimately differs between machines: `helm`
+      // appears on a cold render cache and not on a warm one.
+      `  shell-outs observed:     ${spawnedBinaries().join(", ") || "none"}`,
       `  modules cleared to reach the network: ${EGRESS_CATALOGUE.length}`,
       "────────────────────────────────────────────────────────────────────",
     ].join("\n"),

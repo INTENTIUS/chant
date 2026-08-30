@@ -108,7 +108,11 @@ export interface OfflinePhase {
  * stubs — so the claim is tested, not asserted.
  */
 export const OFFLINE_PHASES: readonly OfflinePhase[] = [
-  { command: "chant build", note: "Discovery, evaluation and serialization. No network in process.", guarded: true },
+  {
+    command: "chant build",
+    note: "Discovery, evaluation and serialization. No network in process. One declaration puts a network-reaching child on this path — `HelmRender` with a `repo`, which renders the chart at synthesis time; see the shell-outs below.",
+    guarded: true,
+  },
   {
     command: "chant build --fold",
     note: "The same, with modules reduced to values instead of executed. No network in process.",
@@ -150,6 +154,20 @@ export interface ShellOut {
   from: string;
   /** What it is for, and whether it can reach a network. */
   note: string;
+  /**
+   * Whether this spawn happens on every run of the phase.
+   *
+   * A conditional shell-out depends on something outside the repository — the
+   * binary being on `PATH`, a warm cache, a project declaring the feature that
+   * needs it — so the guard permits it without requiring it. Marking it here
+   * rather than leaving it implicit is what keeps the guard's outcome the same
+   * on a runner that has the tool and one that does not: the unconditional
+   * entries are the ones the guard insists it observed, so it can still never
+   * pass vacuously.
+   */
+  conditional?: true;
+  /** Whether the spawned process can itself reach a network. */
+  reachesNetwork: boolean;
 }
 
 /**
@@ -167,16 +185,32 @@ export const OFFLINE_SHELL_OUTS: readonly ShellOut[] = [
     binary: "git",
     from: "chant lint",
     note: "`git check-ignore --stdin`, to drop ignored paths from the file scan. Local repository read; no remote.",
-  },
-  {
-    binary: "git",
-    from: "chant scenario check",
-    note: "`git remote` then `git fetch <remote> chant/lifecycle`, and only when a scenario's `given` is `snapshot(env)`. This one does reach the configured git remote — it is the single egress on an otherwise offline command, and it is the same remote the repository is already cloned from.",
+    reachesNetwork: false,
   },
   {
     binary: "child.mjs",
     from: "chant build --sandbox, chant lint --sandbox",
     note: "The esbuild-bundled sandbox child, forked under `process.execPath` with `--permission` and a closed environment (`PATH`, plus `CHANT_ENV` for the config child). Node's Permission Model has no network flag, so the child is bounded by what the bundle contains rather than by a kernel gate — see [Sandboxed Execution](/chant/architecture/sandbox/).",
+    reachesNetwork: false,
+  },
+  {
+    binary: "git",
+    from: "chant scenario check",
+    note: "`git remote` then `git fetch <remote> chant/lifecycle`, and only when a scenario's `given` is `snapshot(env)` rather than a fixture file. This one does reach the configured git remote — the same remote the repository is already cloned from.",
+    conditional: true,
+    reachesNetwork: true,
+  },
+  // This guard's first finding, tracked as chant #2035: the render store that
+  // would let a hermetic build skip the fetch is only reachable through a
+  // capability profile, and the corpus builds the fixture that needs it while
+  // the helm lexicon's own example suite skips it for exactly this reason.
+  // Enumerated here rather than fixed here.
+  {
+    binary: "helm",
+    from: "chant build, on a project declaring HelmRender",
+    note: "`helm version`, then `helm template <name> <chart> --include-crds [--repo <url> --version <v>]`. A `HelmRender` composite resolves at synthesis time, so a project that declares one puts a chart render on its build path. With `repo` set, helm fetches the chart from that repository — **this is the one build-path shell-out that reaches a network**, on first synth only: the rendered manifests are cached under `~/.chant/helm-renders/` and every later build reads the cache. A project declaring no `HelmRender` never spawns it.",
+    conditional: true,
+    reachesNetwork: true,
   },
 ];
 
@@ -643,10 +677,15 @@ export function renderEgressCatalogueBlock(): string {
   lines.push(
     "An in-process guard says nothing about a child process, so the offline phases' shell-outs are enumerated instead. The guard records every spawn and fails on a binary that is not listed here.",
     "",
+    "**Reaches a network** is the column to read. Two of these do, and both are conditional — they need a declaration or a flag that a project either has or does not. Nothing else spawned on an offline path leaves the machine.",
+    "",
   );
-  lines.push("| Binary | Spawned by | What it does |", "|---|---|---|");
+  lines.push("| Binary | Spawned by | Reaches a network | What it does |", "|---|---|---|---|");
   for (const shellOut of OFFLINE_SHELL_OUTS) {
-    lines.push(`| \`${cell(shellOut.binary)}\` | \`${cell(shellOut.from)}\` | ${cell(shellOut.note)} |`);
+    const reach = shellOut.reachesNetwork ? (shellOut.conditional ? "yes, conditionally" : "yes") : "no";
+    lines.push(
+      `| \`${cell(shellOut.binary)}\` | \`${cell(shellOut.from)}\` | ${reach} | ${cell(shellOut.note)} |`,
+    );
   }
   lines.push("");
 

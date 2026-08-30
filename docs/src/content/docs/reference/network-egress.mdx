@@ -22,6 +22,8 @@ So the story stays an integration pattern, documented here, with the offline hal
 The offline phases are guaranteed: `test/no-egress.test.ts` runs them over every project in the example corpus with `net.Socket.prototype.connect` and `globalThis.fetch` replaced by throwing stubs, and fails on any call. That one socket patch covers the whole in-process TCP surface — `fetch`, `http`, `https`, `net`, `tls` — regardless of how a module imported it.
 
 A child process is not in that process. Rather than imply coverage it does not have, the guard records every spawn and fails on a binary that is not enumerated in the second table below. What a child does of its own — what `git fetch` talks to, what a container runtime pulls — is outside the guard and stated as such.
+
+That enumeration is not decoration. Its first finding was a `helm template` on the **build** path: a `HelmRender` declaration resolves at synthesis time and fetches its chart, so "`chant build` reaches no network" is true of the process and not of the machine. The table below says so, and the claim is qualified rather than quietly wrong.
 </Aside>
 
 {/* GENERATED:egress-catalogue:start */}
@@ -32,7 +34,7 @@ A guarded row is executed by `test/no-egress.test.ts` over every project in the 
 
 | Command | Behaviour | Guarded by test |
 |---|---|---|
-| `chant build` | Discovery, evaluation and serialization. No network in process. | yes |
+| `chant build` | Discovery, evaluation and serialization. No network in process. One declaration puts a network-reaching child on this path — `HelmRender` with a `repo`, which renders the chart at synthesis time; see the shell-outs below. | yes |
 | `chant build --fold` | The same, with modules reduced to values instead of executed. No network in process. | yes |
 | `chant build --sandbox` | Project code is evaluated in a child process instead. Neither process reaches the network. | yes |
 | `chant lint` | Declarative rules and post-synth checks, over the built documents. No network in process. | yes |
@@ -44,11 +46,14 @@ A guarded row is executed by `test/no-egress.test.ts` over every project in the 
 
 An in-process guard says nothing about a child process, so the offline phases' shell-outs are enumerated instead. The guard records every spawn and fails on a binary that is not listed here.
 
-| Binary | Spawned by | What it does |
-|---|---|---|
-| `git` | `chant lint` | `git check-ignore --stdin`, to drop ignored paths from the file scan. Local repository read; no remote. |
-| `git` | `chant scenario check` | `git remote` then `git fetch <remote> chant/lifecycle`, and only when a scenario's `given` is `snapshot(env)`. This one does reach the configured git remote — it is the single egress on an otherwise offline command, and it is the same remote the repository is already cloned from. |
-| `child.mjs` | `chant build --sandbox, chant lint --sandbox` | The esbuild-bundled sandbox child, forked under `process.execPath` with `--permission` and a closed environment (`PATH`, plus `CHANT_ENV` for the config child). Node's Permission Model has no network flag, so the child is bounded by what the bundle contains rather than by a kernel gate — see [Sandboxed Execution](/chant/architecture/sandbox/). |
+**Reaches a network** is the column to read. Two of these do, and both are conditional — they need a declaration or a flag that a project either has or does not. Nothing else spawned on an offline path leaves the machine.
+
+| Binary | Spawned by | Reaches a network | What it does |
+|---|---|---|---|
+| `git` | `chant lint` | no | `git check-ignore --stdin`, to drop ignored paths from the file scan. Local repository read; no remote. |
+| `child.mjs` | `chant build --sandbox, chant lint --sandbox` | no | The esbuild-bundled sandbox child, forked under `process.execPath` with `--permission` and a closed environment (`PATH`, plus `CHANT_ENV` for the config child). Node's Permission Model has no network flag, so the child is bounded by what the bundle contains rather than by a kernel gate — see [Sandboxed Execution](/chant/architecture/sandbox/). |
+| `git` | `chant scenario check` | yes, conditionally | `git remote` then `git fetch <remote> chant/lifecycle`, and only when a scenario's `given` is `snapshot(env)` rather than a fixture file. This one does reach the configured git remote — the same remote the repository is already cloned from. |
+| `helm` | `chant build, on a project declaring HelmRender` | yes, conditionally | `helm version`, then `helm template <name> <chart> --include-crds [--repo <url> --version <v>]`. A `HelmRender` composite resolves at synthesis time, so a project that declares one puts a chart render on its build path. With `repo` set, helm fetches the chart from that repository — **this is the one build-path shell-out that reaches a network**, on first synth only: the rendered manifests are cached under `~/.chant/helm-renders/` and every later build reads the cache. A project declaring no `HelmRender` never spawns it. |
 
 ## Phases that do reach the network
 
@@ -137,6 +142,7 @@ Container images that chant itself produces travel in the [build archive](/chant
 |---|---|
 | Codegen | Do not run `chant dev generate`. The generated types and the committed spec snapshot in each lexicon are what a build reads; a lexicon is fully usable on a machine that never fetches a spec. |
 | Kubernetes CRDs | CRD YAML is baked in at generation time, so `chant build` on a project using third-party CRDs stays offline. See [Add a Third-Party CRD](/chant/lexicon-authoring/crd-sources/). |
+| Helm chart renders | Warm the render cache on a networked machine before going offline — `chant build` once, and `~/.chant/helm-renders/` carries every later build. A `HelmRender` pointed at a local chart path instead of a `repo` needs no fetch at all. |
 | Action references | Point the forgejo lexicon at a mirror base, and `uses:` refs resolve against it instead of a public forge. |
 | Image delivery | Use the build archive's `load-image-on-host` publish backend instead of a registry. |
 | A whole substrate | Run against an [emulator](/chant/local-testing/overview/). `chant emulator up` needs the image once; everything after it is loopback. |
