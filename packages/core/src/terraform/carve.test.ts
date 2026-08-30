@@ -1,6 +1,6 @@
 import { describe, test, expect } from "vitest";
 import { buildFixtureGraph } from "./__fixtures__/build-graph";
-import { resolveCarveSet, boundaryReport } from "./carve";
+import { resolveCarveSet, boundaryReport, dedupeEdges, type BoundaryEdge } from "./carve";
 import type { Hcl2JsonTree } from "./types";
 
 // #197 worked example: a bucket a Lambda reads, with a versioning sub-resource.
@@ -129,5 +129,59 @@ describe("boundaryReport", () => {
 
   test("null for an unknown target", () => {
     expect(boundaryReport(buildFixtureGraph(workedExample), "aws_s3_bucket.nope")).toBeNull();
+  });
+});
+
+// #2025: dedupeEdges joins survivor/carved with a separator no Terraform
+// address can contain. A survivor/carved pair with no separator at all would
+// collide across the two edges below (both concatenate to the same string),
+// so this pins the separator's job, not just the byte that used to be a NUL.
+describe("dedupeEdges", () => {
+  const edge = (over: Partial<BoundaryEdge>): BoundaryEdge => ({
+    direction: "inbound",
+    survivor: "a",
+    carved: "b",
+    attrs: [],
+    via: [],
+    bridge: "tf-data-source",
+    required: "immediately",
+    ...over,
+  });
+
+  test("does not merge distinct pairs whose plain concatenation collides", () => {
+    const edges = [
+      edge({ survivor: "aws_instance.ab", carved: "aws_s3_bucket.x", attrs: ["arn"] }),
+      edge({ survivor: "aws_instance.a", carved: "baws_s3_bucket.x", attrs: ["id"] }),
+    ];
+    // Both concatenate (survivor + carved, no separator) to the same string.
+    expect(edges[0].survivor + edges[0].carved).toBe(edges[1].survivor + edges[1].carved);
+
+    const result = dedupeEdges(edges);
+    expect(result).toHaveLength(2);
+    // Sorted by survivor: "aws_instance.a" sorts before "aws_instance.ab".
+    expect(result.map((e) => e.attrs)).toEqual([["id"], ["arn"]]);
+  });
+
+  test("merges edges that share the same survivor/carved pair, unioning attrs and via", () => {
+    const edges = [
+      edge({ survivor: "aws_lambda_function.api", carved: "aws_s3_bucket.assets", attrs: ["arn"], via: ["env"] }),
+      edge({
+        survivor: "aws_lambda_function.api",
+        carved: "aws_s3_bucket.assets",
+        attrs: ["bucket"],
+        via: ["tags"],
+      }),
+    ];
+    const result = dedupeEdges(edges);
+    expect(result).toHaveLength(1);
+    expect(result[0].attrs).toEqual(["arn", "bucket"]);
+    expect(result[0].via).toEqual(["env", "tags"]);
+  });
+
+  test("the separator is outside the alphabet a Terraform address component can use", () => {
+    // Mirrors graph.ts's NAME (`/^[A-Za-z_][A-Za-z0-9_-]*$/`), the grammar an
+    // address segment must match, plus the literal `.` that joins segments.
+    const addressChars = /^[A-Za-z0-9_.-]*$/;
+    expect(addressChars.test("")).toBe(false);
   });
 });
