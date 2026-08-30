@@ -19,7 +19,7 @@ import { applyAwsEndpointArgv } from "./components/cloud-executor";
 import { stackDoesNotExist } from "./stack-errors";
 import {
   AwsReadError,
-  describeStackOutputs,
+  describeStackDetail,
   describeStackResources,
   type AwsReadClientOptions,
   type StackResource,
@@ -37,6 +37,7 @@ import { parseStackTemplate } from "./import/live-export";
 import { awsCompletions } from "./lsp/completions";
 import { awsHover } from "./lsp/hover";
 import { AWS_TAG_OWNERSHIP_KEYS } from "./ownership";
+import { readOwnership } from "@intentius/chant/ownership";
 
 /** Re-exported from ./stack-errors so the long-standing import path (and its
  * tests) keep working now that the deep reader shares the classifier. */
@@ -49,19 +50,24 @@ export { stackDoesNotExist } from "./stack-errors";
  * import parsing, and code generation for AWS CloudFormation.
  */
 /**
- * describe-stack-resources returns no tags, so the ownership filter cannot be
- * applied on this read path. Returned as a run-level note rather than printed
- * (#1265): core says it once per run, after the answer, however many stacks
- * were read. The text is the contract consumers grep for.
+ * The stack's own tags did not resolve a marker for this read, so `owned: true`
+ * withheld nothing. Returned as a run-level note rather than printed (#1265):
+ * core says it once per run, after the answer, however many stacks were read.
+ * The text is the contract consumers grep for.
  */
-const OWNERSHIP_UNAVAILABLE_NOTE =
-  "ownership filter unavailable on describeResources (no tags from describe-stack-resources) — returning all, each with an explicit `unknown` verdict; use `chant import --from <env> --owned` for ownership-filtered export";
+const OWNERSHIP_UNRESOLVED_NOTE =
+  "ownership filter not applied on describeResources (this stack's own tags carry no chant marker, or DescribeStacks did not answer) — returning all, each with the verdict the read supports; use `chant import --from <env> --owned` for ownership-filtered export";
 
 export const awsPlugin: LexiconPlugin = {
   name: "aws",
-  // The thin read is sourced from describe-stack-resources, which returns no
-  // tags — so `owned` on that path can only answer `unknown`, and does (#1348).
-  ownershipChannel: { keys: AWS_TAG_OWNERSHIP_KEYS, reads: ["observeResourcesDeep", "exportResources"] },
+  // The thin read's marker channel is the STACK's own tags (#1998), read off
+  // the DescribeStacks call it already makes for the outputs.
+  // describe-stack-resources carries no per-resource tags, so the stack is the
+  // granularity — the same boundary teardown verifies on (#1222).
+  ownershipChannel: {
+    keys: AWS_TAG_OWNERSHIP_KEYS,
+    reads: ["describeResources", "observeResourcesDeep", "exportResources"],
+  },
   serializer: awsSerializer,
   // Local emulator (#920): Floci + the AWS env that redirects the SDK / observe.
   emulator: FLOCI_EMULATOR,
@@ -568,14 +574,11 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
       ...(options.region ? { region: options.region } : {}),
     };
 
-    // describe-stack-resources does not return tags, so ownership cannot be
-    // determined here. Degrade to detect-only rather than silently filtering,
-    // and say so as a note on the observation. It is a property of the
-    // environment, not of each stack: a four-stack project once printed four
-    // identical copies ahead of every answer (#1265) — enough that an agent
-    // piping `graph --format ir` with `2>&1` had to skip lines to find the
-    // JSON. Core dedupes the note across stacks and prints it with the footer.
-    const notes = options.owned ? [OWNERSHIP_UNAVAILABLE_NOTE] : undefined;
+    // The note for the read paths that never reach the stack's tags at all: a
+    // missing stack, and a failed stack read. Core dedupes it across stacks and
+    // prints it once per run with the footer, rather than ahead of every answer
+    // (#1265).
+    const unresolvedNotes = options.owned ? [OWNERSHIP_UNRESOLVED_NOTE] : undefined;
 
     // Derive stack name. A multi-stack project passes the explicit CloudFormation
     // stack this observation targets (see `stacks` in ChantConfig); otherwise the
@@ -614,7 +617,7 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
           { ...resources, ...identity.resources, ...receiptObs.resources },
           receiptHoles,
           identity.queried,
-          notes,
+          unresolvedNotes,
         );
       }
       // Any other failure (credentials, throttling, a region that can't be
@@ -636,22 +639,40 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
         { ...receiptObs.resources },
         { ...stackHoles, ...receiptObs.unobserved },
         undefined,
-        notes,
+        unresolvedNotes,
       );
     }
 
     // Map logical names from build to stack resources
     const stackResourceMap = new Map(stackResources.map((r) => [r.logicalId, r]));
 
-    // Get stack outputs. A stack whose resources read fine but whose outputs do
-    // not is still a usable observation, so this failure is swallowed exactly as
-    // the non-zero exit code used to be.
+    // Get the stack's outputs and its own tags — one DescribeStacks call. A
+    // stack whose resources read fine but whose DescribeStacks does not is
+    // still a usable observation, so this failure is swallowed exactly as the
+    // non-zero exit code used to be. `undefined` tags mean the call did not
+    // answer, which is an unread channel rather than an absent marker.
     let stackOutputs: Record<string, string> = {};
+    let stackTags: Record<string, string> | undefined;
     try {
-      stackOutputs = await describeStackOutputs(stackName, client);
+      const detail = await describeStackDetail(stackName, client);
+      stackOutputs = detail.outputs;
+      stackTags = detail.tags;
     } catch {
       stackOutputs = {};
+      stackTags = undefined;
     }
+
+    // The marker channel on this path (#1998). describe-stack-resources carries
+    // no per-resource tags, but the stack's own tags carry the identity the
+    // apply paths stamped from the template's `Metadata["chant:ownership"]`
+    // block — the same channel teardown verifies on (#1222). Every member of a
+    // marked stack belongs to that stack's identity, so the verdict and the
+    // marker are the stack's, read back verbatim.
+    const stackMarker = stackTags ? readOwnership(stackTags, AWS_TAG_OWNERSHIP_KEYS) : undefined;
+    const stackOwnership: ResourceMetadata["ownership"] =
+      stackTags === undefined ? "unknown" : stackMarker ? "owned" : "foreign";
+    // `owned: true` withheld nothing, so say why whenever the marker did not resolve.
+    const notes = options.owned && stackMarker === undefined ? unresolvedNotes : undefined;
 
     // The outputs are the stack's, not any member's (#1279). They used to be
     // copied onto every resource's `attributes`, so a VPC carried the stack's
@@ -672,14 +693,13 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
         physicalId: stackResource.physicalId ?? "",
         status: stackResource.status ?? "",
         lastUpdated: stackResource.timestamp ?? "",
-        // Total verdict (#1089): describe-stack-resources returns no tags, so
-        // this path cannot read the ownership marker. Say `unknown` explicitly
-        // rather than leaving the field off and letting each consumer guess —
-        // the change set never escalates `unknown` to a delete.
-        // For the same reason `marker` (#1222) stays absent here: no tags, no
-        // stack/env identity to read, and absent means absent — never a guess.
-        // aws teardown is stack-level and reads the stack's own tags instead.
-        ownership: "unknown",
+        // Total verdict (#1089), from the stack's own tags. `unknown` is kept
+        // for the one case that earns it — DescribeStacks did not answer, so
+        // the channel was never read — and the change set never escalates
+        // `unknown` to a delete. `marker` is set only where the stack really
+        // carries one: absent means absent, never a guess.
+        ownership: stackOwnership,
+        ...(stackMarker ? { marker: stackMarker } : {}),
       };
     }
 

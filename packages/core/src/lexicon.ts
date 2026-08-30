@@ -1163,10 +1163,10 @@ export interface LexiconPlugin {
    * where the wrong delete gets proposed.
    *
    * Declared per read path, because the answer differs by path. aws stamps tags
-   * at synthesis and reads them on the deep observation and on live export,
-   * while its `describeResources` is sourced from `describe-stack-resources`,
-   * which returns no tags — so an `owned: true` thin read against aws can only
-   * answer `unknown`, and does.
+   * at synthesis and reads them per resource on the deep observation and on
+   * live export, while its `describeResources` is sourced from
+   * `describe-stack-resources`, which returns no per-resource tags — so that
+   * path resolves the verdict from the stack's own tags (#1998).
    *
    * Absent means no channel anywhere: every verdict must be `unknown`.
    */
@@ -1417,11 +1417,12 @@ export interface ResourceMetadata {
    *
    * Set only when the live model actually carries the channel and the
    * managed-by marker is present — an absent channel means an absent field,
-   * never a guess. In particular aws's thin read is sourced from
-   * `describe-stack-resources`, which returns no tags at all, so aws never
-   * populates this here; aws teardown is stack-level and reads the stack's own
-   * tags instead (later PR). A populated `marker` does not by itself imply an
-   * {@link ownership} verdict on paths that do not declare a marker channel.
+   * never a guess. The granularity is whatever the channel reads at: aws's thin
+   * read is sourced from `describe-stack-resources`, which returns no
+   * per-resource tags, so it reads the STACK's own tags and every member of a
+   * marked stack carries that stack's identity (#1998). A populated `marker`
+   * does not by itself imply an {@link ownership} verdict on paths that do not
+   * declare a marker channel.
    */
   marker?: OwnershipMarker;
   /**
