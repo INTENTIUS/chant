@@ -11,6 +11,8 @@ chant synthesizes each cloud's native format — CloudFormation for AWS, ARM for
 
 This is not a mock. The applier issues the same calls it would against AWS, Azure, or GCP; only the endpoint changes. When a local run succeeds, you've exercised synthesis, serialization, and apply end-to-end.
 
+"Offline" here means after the image is pulled: `chant emulator up` needs the container image once, and every call after that is loopback. See [Network Egress](/chant/reference/network-egress/) for what each phase reaches.
+
 <Diagram name="lexicon-floci-apply" alt="Typed resources → chant build → spec-native artifact → native applier (awsApply / azApply / gcpApply) speaking each cloud's own API → endpoint override → Floci emulator or real cloud" caption="The same pipeline, local or real — the applier speaks each cloud's native protocol, and only the endpoint changes" />
 
 The path deliberately has no CLI shell-out on it. `chant build` is a pure function — typed TypeScript in, a validated spec-native artifact out. The applier then speaks the cloud's own protocol directly: `awsApply` calls the CloudFormation API, `azApply` PUTs ARM resources, `gcpApply` calls the GCS/PubSub/IAM REST APIs. It doesn't wrap `aws`, `az`, or `gcloud`. That's what makes a green local run meaningful — the thing under test is the real deployer, not a script around a CLI.

@@ -13,7 +13,13 @@
     "moduleResolution is bundler here, unlike the root config's node. That is deliberate:",
     "this config covers tests and examples, which run under vitest and tsx \u2014 both of which",
     "resolve like a bundler. Shipped code keeps its node-resolution build configs, so the",
-    "stricter resolution story for published packages is unchanged."
+    "stricter resolution story for published packages is unchanged.",
+    "",
+    "test/ joined the include in chant #1984. The repo-wide gates live there — the",
+    "no-consumer-apps ruling, the lexicon-artifacts guard, the no-egress guard — and every",
+    "one of them was typechecked by nothing, which is the same gap this config was created",
+    "to close for lexicon tests. Three files in the tree still used Bun's import.meta.dir;",
+    "they became import.meta.dirname rather than baseline entries."
   ],
   "extends": "./tsconfig.json",
   "compilerOptions": {
@@ -24,7 +30,8 @@
     "packages/**/*",
     "lexicons/**/*",
     "scripts/**/*",
-    "examples/**/*"
+    "examples/**/*",
+    "test/**/*"
   ],
   "exclude": [
     "node_modules",

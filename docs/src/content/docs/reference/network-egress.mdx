@@ -1,0 +1,167 @@
+---
+title: Network Egress
+description: Every module in chant that can reach the network, which command reaches it, and why — with the offline phases guaranteed by a guard test rather than by assertion.
+diataxis: reference
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+chant sends no telemetry. Nothing in core or in any lexicon reports usage, versions, errors or identities anywhere, and there is no endpoint to opt out of.
+
+What remains is the network chant needs to do its job, and this page is the whole of it: every module that calls a network primitive, which command reaches it, and where it dials. The tables below are generated from `test/egress-catalogue.ts`, which the same test that guards the offline phases checks against the tree on every run. A module that starts calling `fetch` and is not in the catalogue fails CI.
+
+## The decision
+
+A first-class air-gapped mode does not belong in core.
+
+The network chant needs at apply time is the substrate itself — the AWS, Azure, GCP, Kubernetes or Fly endpoint the project describes. A mode that severed it would sever the product. Every *other* piece an adopter needs to cut already has a per-surface answer: committed spec snapshots for codegen, the forgejo lexicon's mirror base for `uses:` resolution, the build archive's `load-image-on-host` backend for registry-free delivery, and the emulators for a whole substrate.
+
+So the story stays an integration pattern, documented here, with the offline half guaranteed by test rather than by claim.
+
+<Aside type="note" title="What is guaranteed and what is enumerated">
+The offline phases are guaranteed: `test/no-egress.test.ts` runs them over every project in the example corpus with `net.Socket.prototype.connect` and `globalThis.fetch` replaced by throwing stubs, and fails on any call. That one socket patch covers the whole in-process TCP surface — `fetch`, `http`, `https`, `net`, `tls` — regardless of how a module imported it.
+
+A child process is not in that process. Rather than imply coverage it does not have, the guard records every spawn and fails on a binary that is not enumerated in the second table below. What a child does of its own — what `git fetch` talks to, what a container runtime pulls — is outside the guard and stated as such.
+
+That enumeration is not decoration. Its first finding was a `helm template` on the **build** path: a `HelmRender` declaration resolves at synthesis time and fetches its chart, so "`chant build` reaches no network" is true of the process and not of the machine. The table below says so, and the claim is qualified rather than quietly wrong.
+</Aside>
+
+{/* GENERATED:egress-catalogue:start */}
+
+## Phases with no egress
+
+A guarded row is executed by `test/no-egress.test.ts` over every project in the example corpus, with `net.Socket.prototype.connect` and `globalThis.fetch` replaced by throwing stubs. Adding a network call to one of these paths fails that test.
+
+| Command | Behaviour | Guarded by test |
+|---|---|---|
+| `chant build` | Discovery, evaluation and serialization. No network in process. One declaration puts a network-reaching child on this path — `HelmRender` with a `repo`, which renders the chart at synthesis time; see the shell-outs below. | yes |
+| `chant build --fold` | The same, with modules reduced to values instead of executed. No network in process. | yes |
+| `chant build --sandbox` | Project code is evaluated in a child process instead. Neither process reaches the network. | yes |
+| `chant lint` | Declarative rules and post-synth checks, over the built documents. No network in process. | yes |
+| `chant scenario check` | Scenarios are evaluated against a fixture snapshot, which is what replaces the live read. A scenario whose `given` is `snapshot(env)` rather than a file first runs `git fetch` for the lifecycle branch — see the shell-outs below. | yes |
+| `chant search` | Answers from the declared graph. `--live` and `--at` are the flags that read an estate, and they land in the apply phase above. | yes |
+| `chant graph, describe, list` | Projections of the same built graph. `--live` again is the opt-in. | static scan only |
+
+## Shell-outs on those paths
+
+An in-process guard says nothing about a child process, so the offline phases' shell-outs are enumerated instead. The guard records every spawn and fails on a binary that is not listed here.
+
+**Reaches a network** is the column to read. Two of these do, and both are conditional — they need a declaration or a flag that a project either has or does not. Nothing else spawned on an offline path leaves the machine.
+
+| Binary | Spawned by | Reaches a network | What it does |
+|---|---|---|---|
+| `git` | `chant lint` | no | `git check-ignore --stdin`, to drop ignored paths from the file scan. Local repository read; no remote. |
+| `child.mjs` | `chant build --sandbox, chant lint --sandbox` | no | The esbuild-bundled sandbox child, forked under `process.execPath` with `--permission` and a closed environment (`PATH`, plus `CHANT_ENV` for the config child). Node's Permission Model has no network flag, so the child is bounded by what the bundle contains rather than by a kernel gate — see [Sandboxed Execution](/chant/architecture/sandbox/). |
+| `git` | `chant scenario check` | yes, conditionally | `git remote` then `git fetch <remote> chant/lifecycle`, and only when a scenario's `given` is `snapshot(env)` rather than a fixture file. This one does reach the configured git remote — the same remote the repository is already cloned from. |
+| `helm` | `chant build, on a project declaring HelmRender` | yes, conditionally | `helm version`, then `helm template <name> <chart> --include-crds [--repo <url> --version <v>]`. A `HelmRender` composite resolves at synthesis time, so a project that declares one puts a chart render on its build path. With `repo` set, helm fetches the chart from that repository — **this is the one build-path shell-out that reaches a network**, on first synth only: the rendered manifests are cached under `~/.chant/helm-renders/` and every later build reads the cache. A project declaring no `HelmRender` never spawns it. |
+
+## Phases that do reach the network
+
+### Reading and changing an estate
+
+`chant lifecycle diff --live`, `plan`, `snapshot`, `apply`, `converge`, `chant search --live`, `chant import --live`, `chant run` and every component verb talk to the substrate they manage. This is the provider API, not a chant service — the same endpoint a console session or an SDK call would use, with the same credentials.
+
+| Module | Primitive | Destination | Why |
+|---|---|---|---|
+| `packages/core/src/cli/handlers/run.ts` | `node:net` | the configured Temporal server's gRPC address | `chant run --temporal` opens a TCP probe against the server address and retries until it answers, so a not-yet-ready cluster reports as a wait rather than as a client error. |
+| `packages/core/src/components/verbs/cloud-executor.ts` | `node:net` | a declared cluster member's bolt port | The agnostic `wait-cluster-healthy` verb probes each member's port to decide quorum; injectable, so a test never opens a socket. |
+| `packages/core/src/components/verbs/wait-verify.ts` | `fetch` | the endpoint a component declares | `wait-endpoint` and `health-gate` poll the deployed thing they were pointed at; the fetcher is injectable for the same reason. |
+| `lexicons/aws/src/api/read-client.ts` | `fetch` | AWS Cloud Control and CloudFormation, or `AWS_ENDPOINT_URL` | The aws lexicon's read transport, signed with SigV4 and retargetable at a local emulator; there is no AWS SDK in the tree. |
+| `lexicons/aws/src/op/activities/aws-apply.ts` | `fetch` | AWS Cloud Control, or `AWS_ENDPOINT_URL` | `awsApply` writes the change set the plan produced, over the same transport the read client uses. |
+| `lexicons/aws/src/receipt-store.ts` | `fetch` | AWS SSM Parameter Store, or `AWS_ENDPOINT_URL_SSM` | Effect receipts are read before an effect step and written after it succeeds; the store is the aws implementation of core's injectable receipt seam. |
+| `lexicons/aws/src/agentcore/trace-fetch.ts` | `fetch` | Bedrock AgentCore | `awsAgentCoreFetchTrace` pulls a session history and renders it as replay-trace text for a later cedar policy replay. |
+| `lexicons/azure/src/api/read-client.ts` | `fetch` | Azure Resource Manager, or a declared endpoint override | The azure lexicon's read transport for observation and live import. |
+| `lexicons/azure/src/op/activities/az-apply.ts` | `fetch` | Azure Resource Manager, or a declared endpoint override | `azApply` performs ARM resource CRUD for the native local applier and for real subscriptions alike. |
+| `lexicons/gcp/src/api/read-client.ts` | `fetch` | Google Cloud REST APIs, or a declared endpoint override | The gcp lexicon's read transport, resolving Config Connector kinds to their underlying REST resources. |
+| `lexicons/gcp/src/op/activities/gcp-apply.ts` | `fetch` | Google Cloud REST APIs, or a declared endpoint override | `gcpApply` performs the REST calls a Config Connector manifest implies. |
+| `lexicons/cpln/src/api.ts` | `fetch` | the Control Plane API, or a declared endpoint | The cpln lexicon's read transport, injectable through `CplnHttp` so tests need no network. |
+| `lexicons/fly/src/op/activities/fly-apply.ts` | `fetch` | the Fly Machines API, or `FLY_API_HOSTNAME` (the mudflaps emulator) | `flyApply` creates, updates and destroys Machines; pointing it at the emulator is how the Fly tutorials run offline. |
+| `lexicons/fly/src/op/activities/sprites.ts` | `fetch` | the Sprites API, or `SPRITES_BASE_URL` | Sprite lifecycle activities — create, exec, destroy — for the Sprites Ops. |
+| `lexicons/fly/src/op/activities/sprite-fs.ts` | `fetch` | the Sprites filesystem API, or `SPRITES_BASE_URL` | Stages an input file into a sprite and reads a result out, without shelling it through `spriteExec`. |
+| `lexicons/fountain/src/op/activities/fountain-apply.ts` | `fetch` | the fountain control-plane API, or a declared endpoint | `fountainApply` performs the lexicon's resource CRUD. |
+| `lexicons/render/src/op/activities/render-apply.ts` | `fetch` | the Render API | `renderApply` performs the lexicon's resource CRUD. |
+| `lexicons/k8s/src/op/activities/argo.ts` | `fetch` | an Argo CD server's API | The Argo sync/wait activities drive an installed Argo CD rather than reimplementing it. |
+| `lexicons/cedar/src/avp/client.ts` | `fetch` | Amazon Verified Permissions | The AVP read transport, hand-rolled over the AWS JSON protocol for the same reason the aws lexicon is: no AWS SDK in a vendor-neutral lexicon's dependency tree. |
+| `lexicons/temporal/src/op/activities/http-check.ts` | `fetch` | whatever URL the Op step declares | `httpCheck` is a generic probe step — the URL is the caller's, and the activity has no default of its own. |
+| `lexicons/temporal/src/op/activities/workflow-audit.ts` | `fetch` | `api.github.com`, or a declared GitHub host | The workflow-audit activity resolves an action reference to a commit so a pipeline can assert what it actually ran. |
+| `lexicons/temporal/src/op/activities/pipeline-audit.ts` | `fetch` | a GitLab instance's API | The pipeline-audit activity reads project and pipeline metadata for the same governance question on GitLab. |
+
+### Local emulators
+
+`chant emulator up` pulls a container image and then polls the container it just started on localhost. The poll is loopback traffic; the image pull is the container runtime's, and is the only egress in the phase.
+
+| Module | Primitive | Destination | Why |
+|---|---|---|---|
+| `packages/core/src/op/emulator-lifecycle.ts` | `fetch` | the just-started emulator container on localhost | The shared boot loop polls the container's health endpoint until it answers; loopback only, and the image pull it depends on is the container runtime's. |
+
+### Code generation
+
+`chant dev generate`, `chant dev pinned-upgrade` and `chant vendor` fetch upstream schemas. Every lexicon's `spec/fetch.ts` runs here and nowhere else: the generated types and the committed spec snapshot are what a build reads, so a machine that never runs codegen never needs the endpoints below. `chant dev pinned-upgrade` is the one command here that queries `api.github.com`, and it is a lexicon-maintainer command — it moves a pin in a lexicon's own source, and nothing on an adopter's build, lint or apply path calls it.
+
+| Module | Primitive | Destination | Why |
+|---|---|---|---|
+| `packages/core/src/codegen/fetch.ts` | `fetch` | the upstream schema URL a caller passes | `fetchWithCache`/`fetchWithRetry` — the single transport under every lexicon's `spec/fetch.ts`, the k8s CRD loader, `chant vendor` and `chant dev pinned-upgrade`. Caches to disk, bounds each attempt, and falls back to the committed snapshot when the endpoint is unreachable. |
+| `lexicons/aws/src/spec/fetch.ts` | `fetch` | the CloudFormation resource specification and Cloud Control schema endpoints | The aws spec fetch follows redirects itself rather than going through the shared cache helper; run by `chant dev generate`, never by a build. |
+| `lexicons/cpln/src/spec/snapshot-cli.ts` | `fetch` | the Control Plane OpenAPI document | `just snapshot` refreshes the committed offline spec snapshot; run on a networked machine on purpose, and the snapshot is what everything else reads. |
+| `lexicons/azure/scripts/fetch-quickstart-templates.ts` | `fetch` | the Azure quickstart-templates repository | Builds the ARM fixture corpus the azure serializer is tested against; a maintainer script, not part of the lexicon's published surface. |
+
+### Auditing a remote repository
+
+`chant audit <url>` reads someone else's repository over a git host's API. Auditing a local path reaches nothing.
+
+| Module | Primitive | Destination | Why |
+|---|---|---|---|
+| `packages/core/src/audit/fetch.ts` | `fetch` | an allowlisted git host's API — GitHub, GitLab or Forgejo | The only audit module that touches the network: `chant audit <url>` pulls candidate files so the auditor can run on a URL. Hosts are allowlisted, redirects refused, and file count, size, bytes and time all capped. |
+
+### Repository maintenance
+
+Freshness checks that run in this repository's own CI, against `api.github.com`. Nothing here sits on a path an adopter runs — no CLI command reaches these modules.
+
+| Module | Primitive | Destination | Why |
+|---|---|---|---|
+| `packages/core/src/op/emulator-freshness.ts` | `fetch` | `api.github.com` release metadata | Reports how far behind an emulator's pinned image is. Advisory, never gating, and reached only from `scripts/check-emulator-freshness.ts` — no CLI command calls it. |
+| `scripts/dogwood-freshness.ts` | `fetch` | `api.github.com` commit and tree metadata | Compares the committed dogwood pin against upstream for `scripts/check-dogwood-freshness.ts`. The transport is injectable, which is why the comparison half is unit-tested without a network. |
+
+**30 modules** across `packages/`, `lexicons/`, `scripts/`, `ops/` call a network primitive directly. Every other module that reaches the network does so through one of them.
+
+{/* GENERATED:egress-catalogue:end */}
+
+## Supply chain
+
+None of the above covers how chant and its outputs arrive on a machine, which is a separate question with separate answers.
+
+`npm install` reaches a registry, like any Node project. A private mirror or an offline cache serves chant the same way it serves anything else — there is no chant-specific endpoint in the install path.
+
+An emitted pipeline references container images and, on GitHub and Forgejo, `uses:` action refs. Those are fetched by the CI runner, not by chant, at a time chant is not running. The forgejo lexicon resolves `uses:` against a configurable mirror base for exactly this reason, so a self-hosted Forgejo with a local action mirror emits refs that resolve inside the perimeter.
+
+Container images that chant itself produces travel in the [build archive](/chant/components/build-archive/), and the archive's `load-image-on-host` backend delivers them to a host without a registry in between.
+
+## Severing each surface
+
+| Surface | How to cut it |
+|---|---|
+| Codegen | Do not run `chant dev generate`. The generated types and the committed spec snapshot in each lexicon are what a build reads; a lexicon is fully usable on a machine that never fetches a spec. |
+| Kubernetes CRDs | CRD YAML is baked in at generation time, so `chant build` on a project using third-party CRDs stays offline. See [Add a Third-Party CRD](/chant/lexicon-authoring/crd-sources/). |
+| Helm chart renders | Warm the render cache on a networked machine before going offline — `chant build` once, and `~/.chant/helm-renders/` carries every later build. A `HelmRender` pointed at a local chart path instead of a `repo` needs no fetch at all. |
+| Action references | Point the forgejo lexicon at a mirror base, and `uses:` refs resolve against it instead of a public forge. |
+| Image delivery | Use the build archive's `load-image-on-host` publish backend instead of a registry. |
+| A whole substrate | Run against an [emulator](/chant/local-testing/overview/). `chant emulator up` needs the image once; everything after it is loopback. |
+| Build-ledger referrers | Nothing to cut. Referrer lookup defaults to `noopReferrerLookup`, which reaches nothing; the `oras`-backed lookup is opt-in, because a query that was network-free should not silently start reaching a registry. |
+
+## How this page stays true
+
+`test/egress-catalogue.ts` holds the catalogue as data. `test/no-egress.test.ts` checks it from three sides on every run:
+
+- **Closure.** A scan of `packages/`, `lexicons/`, `scripts/` and `ops/` finds every module naming a network primitive. It must equal the catalogue exactly — so an added `fetch` fails, and so does a stale row for a call that no longer exists.
+- **Accuracy.** Each row declares which primitives it reaches for, and the scan must agree.
+- **Publication.** The generated block above must match what the catalogue renders, byte for byte. Refresh it with `npm run generate:egress-catalogue`.
+
+A prose audit answers the question once and is wrong after the next merge. This one is answered by the test suite.
+
+## What this is not
+
+It is not a security boundary against project code you do not trust.
+
+The guard is a regression gate over chant's own source, run by chant's own CI, and every mechanism in it is defeatable by code that wants to defeat it — a module can import its own copy of `node:http`, or shell out. That is the same argument [Sandboxed Execution](/chant/architecture/sandbox/#what-is-explicitly-not-isolated-network-egress) makes for why `--sandbox` does not ship a bootstrap-time `fetch` patch and does not claim to block egress: against a hostile file, a userland patch is theatre.
+
+The two are answering different questions. The sandbox asks whether a repository chant does not own can reach out from inside a build; the answer is yes, and the deployment guidance there — a container with no route out, a network namespace, a `seatbelt` profile — is what closes it. This page asks whether chant itself reaches out on the paths you run every day; the answer is no, and a test fails the day that stops being true.

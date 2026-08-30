@@ -90,6 +90,11 @@ export default defineConfig({
       "examples/testing-harness-aws/fixtures/failing-suite.test.ts",
       // chant #1419 — unit tests for the missing-artifacts guard below.
       "test/lexicon-artifacts.test.ts",
+      // chant #1984 — the no-egress guard and the egress catalogue it checks
+      // itself against. Walks the same corpus the differentials above walk
+      // (no Docker, no network — that is the point), and additionally scans
+      // packages/ and lexicons/ for network primitives.
+      "test/no-egress.test.ts",
     ],
     // chant #1419 — a fresh clone has no lexicon src/generated/ or
     // dist/meta.json, and lexicon tests fail against their absence with

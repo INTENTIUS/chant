@@ -70,6 +70,8 @@ Node has no permission flag for network access. `--permission` does not gate `fe
 - **Network namespace locally** — `unshare --net` (Linux) or an equivalent sandboxed network namespace with no interface configured.
 - **`sandbox-exec` (macOS)** — a `seatbelt` profile denying network sockets, layered on top of `--sandbox`'s filesystem/process/environment restrictions.
 
+This is about code the project authored. What **chant's own** code reaches on each phase is a separate, closed question, answered in [Network Egress](/chant/reference/network-egress/) — where the same userland patch this section declines to call a boundary is used for what it is honestly good for: a regression gate over source that is not trying to escape.
+
 ## The trust boundary, precisely
 
 With `chant build --sandbox`, no file the project authored is executed in the CLI's own process — not its source files, folded or not, not its `chant.config.ts`, and not its `lint.policies` modules. That covers the whole build: reading the configuration, discovering the resources, and enforcing the project's own organizational policy over the result. The only code that runs there is chant's own and the packages of the lexicons this build loaded.

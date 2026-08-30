@@ -56,7 +56,7 @@ Operators built with the Java and Go operator SDKs generate their CRDs at build 
 
 This needs the `helm` binary on PATH at generation time, the same shape of dependency `type: "cluster"` has on `kubectl`. Prefer `url` when the operator publishes its CRDs — it is one fewer tool and one fewer network shape.
 
-> The CRD YAML is fetched and baked in at generation time, not at build time. `chant build` stays offline and deterministic.
+> The CRD YAML is fetched and baked in at generation time, not at build time. `chant build` stays offline and deterministic — see [Network Egress](/chant/reference/network-egress/) for the guard that keeps that true.
 
 ## Generate
 

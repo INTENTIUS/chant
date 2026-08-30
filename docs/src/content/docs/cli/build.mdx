@@ -14,6 +14,8 @@ chant build [path] [flags]
 
 `chant build` loads the project at the given path, parses all TypeScript source files, evaluates resource definitions, and serializes the output.
 
+It reaches no network. Every schema it needs is generated into the lexicon packages ahead of time, and a guard test runs the build over every example project with the socket layer replaced by a throwing stub — see [Network Egress](/chant/reference/network-egress/).
+
 ## Flags
 
 | Flag | Type | Default | Description |
