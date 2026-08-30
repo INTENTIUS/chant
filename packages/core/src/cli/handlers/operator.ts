@@ -20,6 +20,7 @@ import {
 } from "../../op/operator";
 import { readLease, DEFAULT_LEASE_TTL_MS } from "../../lifecycle/lease";
 import { readConvergeLedger, type ConvergeTickRecord } from "../../lifecycle/converge-ledger";
+import type { GateResolutionRecord } from "../../lifecycle/gate-ledger";
 import { appendGateResolution, readGateResolutions, latestResolutionSince, resolveApprovalUrl, isApprovalUrl } from "../../lifecycle/gate-ledger";
 import { pushLifecycle } from "../../lifecycle/git";
 import { formatError, formatWarning, formatSuccess, formatBold, formatInfo } from "../format";
@@ -196,6 +197,169 @@ export async function runOperatorStatus(ctx: CommandContext): Promise<number> {
     console.log("");
   }
 
+  return 0;
+}
+
+// ── chant operator log ──────────────────────────────────────────────────────
+
+/** One entry of the merged tick/gate timeline `chant operator log` prints. */
+export type OperatorLogEntry =
+  | { kind: "tick"; timestamp: string; record: ConvergeTickRecord }
+  | { kind: "gate-resolution"; timestamp: string; record: GateResolutionRecord };
+
+export interface OperatorLogResult {
+  entries: OperatorLogEntry[];
+  /**
+   * Unreadable lines behind this answer, per ledger. `readConvergeLedger` and
+   * `readGateResolutions` both skip a malformed line and count it rather than
+   * throwing, so a corrupted ledger renders a shorter timeline; without this a
+   * consumer could not tell that from a genuinely quiet environment.
+   */
+  malformed: { converge: number; gates: number };
+}
+
+/**
+ * Gather the converge/gate history a set of ConvergeOps has recorded, merged
+ * into one timestamp-ordered timeline, oldest first.
+ *
+ * `since` (inclusive) and `limit` are applied after the merge — `limit` keeps
+ * the *newest* n entries, since that is what a log is asked for, and then
+ * prints them oldest-first like every other log.
+ */
+export async function collectOperatorLog(
+  ops: { name: string; env: string }[],
+  opts: { op?: string; since?: string; limit?: number; cwd?: string } = {},
+): Promise<OperatorLogResult> {
+  const wanted = opts.op ? ops.filter((o) => o.name === opts.op) : ops;
+  const sinceMs = opts.since ? new Date(opts.since).getTime() : undefined;
+
+  const entries: OperatorLogEntry[] = [];
+  const malformed = { converge: 0, gates: 0 };
+
+  // One read per distinct environment — several ConvergeOps can share one
+  // `<env>/converge.jsonl`, and re-reading it per op would both cost more and
+  // double-count its malformed lines.
+  const envs = [...new Set(wanted.map((o) => o.env))].sort();
+  const opNames = new Set(wanted.map((o) => o.name));
+  const gateOps = new Set<string>();
+
+  for (const env of envs) {
+    const { records, malformed: bad } = await readConvergeLedger(env, { cwd: opts.cwd });
+    malformed.converge += bad;
+    for (const record of records) {
+      if (!opNames.has(record.op)) continue;
+      for (const outcome of record.outcomes) {
+        if (outcome.action === "gated" && outcome.op) gateOps.add(outcome.op);
+      }
+      entries.push({ kind: "tick", timestamp: record.timestamp, record });
+    }
+  }
+
+  for (const gateOp of [...gateOps].sort()) {
+    const { records, malformed: bad } = await readGateResolutions(gateOp, { cwd: opts.cwd });
+    malformed.gates += bad;
+    for (const record of records) {
+      entries.push({ kind: "gate-resolution", timestamp: record.timestamp, record });
+    }
+  }
+
+  let merged = entries.sort((a, b) => {
+    const delta = new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime();
+    // A gate resolution recorded in the same instant as a tick reads after it:
+    // the tick is what made the gate pending in the first place.
+    return delta !== 0 ? delta : (a.kind === b.kind ? 0 : a.kind === "tick" ? -1 : 1);
+  });
+  if (sinceMs !== undefined) merged = merged.filter((e) => new Date(e.timestamp).getTime() >= sinceMs);
+  if (opts.limit !== undefined && merged.length > opts.limit) merged = merged.slice(-opts.limit);
+
+  return { entries: merged, malformed };
+}
+
+function renderLogEntry(entry: OperatorLogEntry): string[] {
+  if (entry.kind === "gate-resolution") {
+    const { record } = entry;
+    return [
+      `${record.timestamp}  gate-resolved  ${record.op}/${record.gate} by ${record.resolvedBy}` +
+        (record.url ? `  ${record.url}` : ""),
+    ];
+  }
+
+  const { record } = entry;
+  const id = record.id ? `[${record.id.slice(0, 8)}]` : "[--------]";
+  const lines = [`${record.timestamp}  ${record.op}@${record.env}  ${id}  ${record.log}`];
+  for (const outcome of record.outcomes) {
+    if (outcome.action !== "gated" || !outcome.gateName) continue;
+    lines.push(
+      `    gated  ${outcome.ruleId} → ${outcome.op ?? "?"} gate "${outcome.gateName}"` +
+        (outcome.url ? `  ${outcome.url}` : ""),
+    );
+  }
+  return lines;
+}
+
+/**
+ * `chant operator log [--env <env>] [--op <name>] [--since <iso>] [--limit
+ * <n>] [--json]` (#2029) — the converge tick history and the gate resolutions
+ * against it, read from the `chant/lifecycle` orphan branch alone.
+ *
+ * `readConvergeLedger` has always returned every tick for an environment;
+ * until this its only caller was `operator status`, which threw the history
+ * away and kept `.at(-1)`. A consumer wanting more than the newest row had to
+ * `git show chant/lifecycle:<env>/converge.jsonl` and parse it — which pins it
+ * to the orphan branch's name, the `<env>/converge.jsonl` path convention, the
+ * `_gates/<op>.jsonl` convention and the on-disk encoding, none of which are
+ * promised contracts. This is the read surface that makes those private again.
+ *
+ * Read-only: no lease, no dispatch, no daemon. Same `--json` discipline as
+ * `operator status` — one JSON document on stdout, diagnostics on stderr.
+ */
+export async function runOperatorLog(ctx: CommandContext): Promise<number> {
+  const { ops, errors } = await discoverConvergeOps({ env: ctx.args.env });
+  for (const err of errors) console.error(formatWarning({ message: err }));
+
+  if (ops.length === 0) {
+    console.error(formatWarning({ message: "No ConvergeOp declarations found" }));
+    return 0;
+  }
+
+  if (ctx.args.since && Number.isNaN(new Date(ctx.args.since).getTime())) {
+    console.error(formatError({
+      message: `--since must be an ISO-8601 timestamp (got "${ctx.args.since}")`,
+      hint: "e.g. --since 2026-01-01T00:00:00Z",
+    }));
+    return 1;
+  }
+  if (ctx.args.limit !== undefined && (!Number.isInteger(ctx.args.limit) || ctx.args.limit < 1)) {
+    console.error(formatError({ message: `--limit must be a positive integer (got "${ctx.args.limit}")` }));
+    return 1;
+  }
+
+  const { entries, malformed } = await collectOperatorLog(
+    ops.map((d) => ({ name: d.config.name, env: d.config.searchAttributes?.Env ?? "unknown" })),
+    { op: ctx.args.op, since: ctx.args.since, limit: ctx.args.limit },
+  );
+
+  if (ctx.args.json) {
+    console.log(JSON.stringify({ entries, malformed }, null, 2));
+    return 0;
+  }
+
+  const unreadable = malformed.converge + malformed.gates;
+  if (unreadable > 0) {
+    console.error(formatWarning({
+      message: `${unreadable} ledger line(s) were unreadable and are missing from this timeline ` +
+        `(converge: ${malformed.converge}, gates: ${malformed.gates})`,
+    }));
+  }
+
+  if (entries.length === 0) {
+    console.error(formatWarning({ message: "No converge ticks recorded yet" }));
+    return 0;
+  }
+
+  for (const entry of entries) {
+    for (const line of renderLogEntry(entry)) console.log(line);
+  }
   return 0;
 }
 

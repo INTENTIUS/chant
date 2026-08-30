@@ -41,6 +41,7 @@ chant operator                       # tick every discovered ConvergeOp, forever
 chant operator --env staging         # scope to one environment
 chant operator --once                # one round, then exit — cron/CI/CronJob invokers use this
 chant operator status                # last tick, outcomes, pending gates — reads the ledger only
+chant operator log                   # the whole tick history, and the gate resolutions against it
 chant approve fountain-apply rollout-gate   # resolve a gate a tick recorded
 ```
 
@@ -134,6 +135,29 @@ staging-converge (staging)
 ```
 
 A gate stops appearing as pending the moment `chant approve` (or a resolution recorded from elsewhere) is dated after the tick that recorded it — `chant operator status` re-checks the gate ledger on every read, so a stale/superseded approval (dated before the gated tick) doesn't count.
+
+## `chant operator log`
+
+`status` answers "where is this environment right now" and shows exactly one tick. `log` is the history behind it — every tick record for the discovered ConvergeOps and every gate resolution against them, merged into one timestamp-ordered timeline, oldest first, read from the same orphan branch:
+
+```bash
+chant operator log
+chant operator log --env staging --op staging-converge
+chant operator log --since 2026-08-25T00:00:00Z --limit 50 --json
+```
+
+```
+2026-08-25T10:00:00.000Z  staging-converge@staging  [7f3c1a9b]  converge(staging): drifted=0 remediated=0 ...
+2026-08-25T10:04:00.000Z  staging-converge@staging  [c02de451]  converge(staging): drifted=1 ... gated=1 ...
+    gated  drift-apply → fountain-apply gate "rollout-gate"  https://github.com/org/repo/pull/123
+2026-08-25T10:41:00.000Z  gate-resolved  fountain-apply/rollout-gate by alex  https://github.com/org/repo/pull/123
+```
+
+The bracketed value is the tick's own id, so an outcome can be traced back to the tick that produced it. `--limit` keeps the newest n entries and still prints them oldest-first; `--since` takes an ISO-8601 instant and is inclusive.
+
+`--json` emits `{entries, malformed}` — one document, on stdout, diagnostics on stderr, the same discipline `operator status --json` follows. `malformed` carries the per-ledger count of lines that could not be parsed, so a consumer can say "3 lines of this ledger were unreadable" rather than silently rendering a shorter timeline. Without `--json` the same count is a warning on stderr.
+
+This exists so a reader never has to reach past the CLI. `git show chant/lifecycle:<env>/converge.jsonl` works, and pins whoever does it to the orphan branch's name, the `<env>/converge.jsonl` and `_gates/<op>.jsonl` path conventions, and the record's on-disk encoding — none of which are promised contracts.
 
 ## Local-only durability
 
