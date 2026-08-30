@@ -32,6 +32,8 @@ What it scans:
 - Secrets & credentials (`SEC*`) — every file above, plus `.env*`, `.pem`, `.key`, `.crt`, `.cer`, `.pfx`, and `.p12` files, are scanned for likely secrets regardless of which lexicons are installed. See [Secrets & credentials detection](#secrets--credentials-detection) below.
 - Wrangler config (`WRG*`) — `wrangler.toml`, Cloudflare Workers' native deploy config. TOML is not a format any lexicon parses, so this is audit-only (#446): no lexicon package to install, no authoring surface — chant never writes Wrangler config, it only reads it for these checks. Runs regardless of which lexicons are installed, the same as `SEC*`. See [Wrangler config detection](#wrangler-config-detection) below.
 
+A different subject entirely, behind its own flag: `--agents` audits the agent configuration installed on the machine rather than a repository — instruction files, MCP servers, skills, plugins, and tool permissions, running the `AGT*` rules. See [Auditing agent configuration](#auditing-agent-configuration---agents) below.
+
 Every rule a finding cites links to its entry in the [audit rules reference](/chant/lint-rules/audit-rules/).
 
 The report groups findings into:
@@ -86,6 +88,66 @@ The **expanded** (HTML) report renders the same findings with badges, cards, and
 | `--fail-on <level>` | Exit non-zero on `merge-worthy`, `warning`, or `none` (default `none`) |
 | `--template <file>` | `html` only: a full HTML template override (see below) |
 | `--theme <file>` | `html` only: a JSON file of theme knobs (`title`, `logo`, `accent`, `footer`) |
+| `--agents` | Audit this machine's **agent configuration** instead of a repository (see below) |
+| `--scope <list>` | `--agents` only: comma-separated `system`, `user`, `project` (default: all) |
+| `--runtime <list>` | `--agents` only: comma-separated `claude`, `codex`, `gemini`, `opencode`, `cursor` (default: all) |
+| `--all-projects` | `--agents` only: scan every project registered in `~/.claude.json`, not just the path argument |
+
+## Auditing agent configuration (`--agents`)
+
+`chant audit --agents` changes the *subject* from a repository to the machine
+you are on: the instruction files, MCP servers, skills, plugins, and tool
+permissions that configure your coding agents.
+
+It is worth auditing separately from CI because it is a different threat model.
+An agent config is executable surface that runs with your own credentials, on
+your own machine, usually with no review step — an MCP server entry is a command
+line that runs at session start, a skill is instructions the model will follow,
+and a permission allowlist decides what runs without anyone being asked. All of
+it is typically installed with a single command and rarely re-read afterwards.
+
+```bash
+chant audit --agents                                  # every scope, every harness
+chant audit --agents --scope user                     # just the home directory
+chant audit --agents --format html -o agents.html     # shareable report
+chant audit --agents --tier merge-worthy --fail-on merge-worthy   # for CI
+```
+
+Three scopes are scanned, in the order harnesses merge them:
+
+| Scope | Where | Why it matters |
+|-------|-------|----------------|
+| `system` | machine-wide managed policy | Administrator-set, not user-editable |
+| `user` | your home directory | Applies to **every** project you open, including repos you don't own |
+| `project` | the path argument (default `.`), or every registered project with `--all-projects` | Narrowest, but most likely to have arrived from someone else |
+
+`--all-projects` reads the project list the harness already maintains in
+`~/.claude.json`, so it needs no disk crawl and no configuration. Registrations
+whose directory no longer exists are skipped. The path argument is still
+included, so a project you are sitting in but haven't opened before is not
+dropped:
+
+```bash
+chant audit --agents --scope project --all-projects --tier merge-worthy
+```
+
+When a scan does *not* cover everything, the report says so — "Scanned 1 project
+root; 64 more are registered in ~/.claude.json and were not visited" — and when
+it does, it states the breadth instead, because "5 findings" reads very
+differently across one project than across sixty-five.
+
+Five harnesses are recognized — Claude Code, codex, Gemini, opencode, and Cursor
+— and each is normalized onto one model, so a finding reads the same regardless
+of which tool's dialect declared it.
+
+The report leads with an **inventory** (what is configured, before any judgement
+about it), because for most users that list has never been seen in one place. It
+then states its own edges: locations probed, files that could not be parsed, and
+registered projects it did not visit. The rules it applies are the `AGT` family
+in the [audit rules reference](/chant/lint-rules/audit-rules/).
+
+To turn what it finds into chant code, see
+[`chant import --agents`](/chant/cli/import/).
 
 ## Report modes
 
@@ -136,6 +198,7 @@ For tooling, `--format json` emits a **versioned** envelope (stable contract). T
 - Each `run.tool.driver.rules[]` entry carries the finding's `helpUri` (the same authority citation as the other formats) plus a `help.text` with the catalog's remediation guidance, and a `properties.category`/`properties.dimension` pair (`security`, `correctness`, or `best-practice`) for rule-level triage.
 - Each `run.results[]` entry carries `properties.tier` (`merge-worthy` or `report-only`) alongside the standard `ruleId`, `level`, `message`, and `locations` (file + line, when known).
 - Secrets findings (`SEC001`–`SEC010`) redact the same as every other format — a result's `message.text` never carries the matched value, only the rule id, kind, location, and fingerprint.
+- `--agents` emits the same property bag under a `chant audit --agents` driver name, so one consumer can triage both. Its rules' `helpUri` points at the rule's own entry in the audit rules reference rather than an external authority, since an `AGT` finding is about a local file.
 
 Upload it to GitHub code scanning from a workflow:
 

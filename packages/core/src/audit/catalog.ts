@@ -127,6 +127,14 @@ export const CF_STATIC_ASSETS: Authority = {
   name: "Cloudflare Workers — Static assets",
   url: "https://developers.cloudflare.com/workers/static-assets/",
 };
+export const CWE_HARDCODED_CREDS: Authority = {
+  name: "CWE-798 — Use of Hard-coded Credentials",
+  url: "https://cwe.mitre.org/data/definitions/798.html",
+};
+export const CWE_CLEARTEXT: Authority = {
+  name: "CWE-319 — Cleartext Transmission of Sensitive Information",
+  url: "https://cwe.mitre.org/data/definitions/319.html",
+};
 
 function meta(
   id: string,
@@ -148,6 +156,21 @@ const M = "merge-worthy" as const;
 const R = "report-only" as const;
 const D = "deterministic" as const;
 const G = "guidance" as const;
+
+/**
+ * An AGT (agent-configuration) rule. Unlike every other family in the catalog
+ * these do not run against emitted YAML — they run against the agent config
+ * discovered on a machine (`packages/core/src/agents/`), so `yamlBased` is
+ * false: feeding a workflow file to the auditor will never produce one.
+ *
+ * All eight are `guidance`. There is no safe mechanical fix for any of them —
+ * pinning someone's MCP server picks a version on their behalf, and narrowing a
+ * permission grant requires knowing which commands they actually run.
+ */
+function agentMeta(id: string, tier: Tier, title: string, remediation: string, authority?: Authority[]): RuleMeta {
+  const category: Category = authority && authority.length > 0 ? "security" : RULE_CATEGORY[id] ?? "best-practice";
+  return { id, tier, fixKind: G, category, title, remediation, authority, yamlBased: false };
+}
 
 /**
  * Finding category per rule (#415). Curated: security rules are those that
@@ -174,6 +197,17 @@ export const RULE_CATEGORY: Record<string, Category> = {
   WRG004: "security",
   WRG005: "security",
   WRG006: "security",
+  // AGT — agent configuration (`chant audit --agents`). Core-owned like COR/EXT:
+  // these run against the machine's own agent config, not against any one
+  // lexicon's emitted output, so no lexicon ships them.
+  AGT001: "security",
+  AGT002: "security",
+  AGT003: "security",
+  AGT004: "security",
+  AGT005: "security",
+  AGT006: "best-practice",
+  AGT007: "correctness",
+  AGT008: "best-practice",
 };
 
 /**
@@ -181,7 +215,8 @@ export const RULE_CATEGORY: Record<string, Category> = {
  * CloudFormation ids (COR/EXT) that aren't owned by a single lexicon. Every
  * per-provider block moved to its lexicon's `auditCatalog()` (#687): WAW→aws,
  * WGC→gcp, AZR→azure, DKRD→docker, WK8/ARGO→k8s, WHM→helm, GHA→github,
- * WGL→gitlab, WFJ→forgejo. `resolveAuditCatalog` merges those over this map.
+ * WGL→gitlab, WFJ→forgejo. `resolveAuditCatalog` merges those over this map,
+ * alongside the lexicon-independent SEC/WRG/AGT families core owns outright.
  */
 export const RULE_CATALOG: Record<string, RuleMeta> = {
   COR020: meta("COR020", M, G, "Circular resource dependency", "Break the dependency cycle between resources."),
@@ -211,6 +246,60 @@ export const RULE_CATALOG: Record<string, RuleMeta> = {
   WRG004: meta("WRG004", M, G, "Unscoped wildcard route", "Scope the route pattern to the intended zone (e.g. \"example.com/*\") instead of a bare \"*\" or \"*/*\" that matches every zone on the account.", [CF_ROUTES]),
   WRG005: meta("WRG005", M, G, "Non-production environment shares a data store with production", "Give the non-production environment its own KV namespace/R2 bucket/D1 database id instead of reusing production's.", [CF_ENVIRONMENTS]),
   WRG006: meta("WRG006", M, G, "Static assets served from the project root", "Point [site].bucket / [assets].directory at a dedicated public output folder, not the project root, so non-public files (config, source maps, .git) aren't served.", [CF_STATIC_ASSETS]),
+
+  // ── Agent configuration (`chant audit --agents`) ──────────────────
+  AGT001: agentMeta(
+    "AGT001",
+    M,
+    "MCP server runs an unpinned package",
+    "Pin the package spec to an exact version (`server@1.2.3`), so a new upstream release can't execute on this machine unreviewed.",
+    [SCORECARD_PINNED],
+  ),
+  AGT002: agentMeta(
+    "AGT002",
+    M,
+    "Literal credential in agent config",
+    "Replace the value with an environment reference (`${TOKEN}`) and keep the secret in a secret store — agent config files sync, back up, and get shared.",
+    [CWE_HARDCODED_CREDS],
+  ),
+  AGT003: agentMeta(
+    "AGT003",
+    M,
+    "MCP server reached over cleartext HTTP",
+    "Use an https:// endpoint. Tool arguments and results — including data the agent read locally — otherwise cross the network in the clear.",
+    [CWE_CLEARTEXT],
+  ),
+  AGT004: agentMeta(
+    "AGT004",
+    M,
+    "Remote skill or plugin is unpinned",
+    "Pin the source to a tag or commit sha, so the instructions the agent follows can't change upstream without a local edit.",
+    [SCORECARD_PINNED],
+  ),
+  AGT005: agentMeta(
+    "AGT005",
+    M,
+    "Tool permission granted without constraint",
+    "Scope the grant to the specific commands you run (`Bash(git status:*)`), and re-enable the confirmation prompt for dangerous operations.",
+  ),
+  AGT006: agentMeta(
+    "AGT006",
+    R,
+    "User-scope config applies to every project",
+    "Move project-specific instructions, MCP servers, and skills to that project's own config so they don't follow you into unrelated repos.",
+  ),
+  AGT007: agentMeta(
+    "AGT007",
+    R,
+    "MCP server declared in multiple files",
+    "Delete the shadowed declarations. The harness silently picks one, so the file you read may not be the one that decides what runs.",
+  ),
+  AGT008: agentMeta(
+    "AGT008",
+    R,
+    "Instruction file exceeds the attention budget",
+    "Move situational guidance into skills that load on demand, so the always-on instructions stay short enough to be followed reliably.",
+  ),
 };
 
 /**

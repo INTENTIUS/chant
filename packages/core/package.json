@@ -69,6 +69,11 @@
       "types": "./dist/testing.d.ts",
       "default": "./src/testing.ts"
     },
+    "./agents": {
+      "development": "./src/agents/index.ts",
+      "types": "./dist/agents/index.d.ts",
+      "default": "./src/agents/index.ts"
+    },
     "./*": {
       "development": "./src/*.ts",
       "types": "./dist/*.d.ts",

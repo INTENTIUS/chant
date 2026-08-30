@@ -5,6 +5,7 @@ import type { RuleSpec } from "./lint/declarative";
 import type { PostSynthCheck } from "./lint/post-synth";
 import type { TemplateParser, TemplateIR } from "./import/parser";
 import type { TypeScriptGenerator } from "./import/generator";
+import type { AgentConfigImporter } from "./agents/importer";
 import type { ArtifactIntegrity } from "./lexicon-integrity";
 import type { OkfFile } from "./okf";
 import type { CompletionContext, CompletionItem, HoverContext, HoverInfo, CodeActionContext, CodeAction } from "./lsp/types";
@@ -713,6 +714,17 @@ export interface LexiconPlugin {
 
   /** Return a generator for converting IR to TypeScript */
   templateGenerator?(): TypeScriptGenerator;
+
+  /**
+   * Re-express local agent configuration (skills, MCP servers, instruction
+   * files) discovered by `chant audit --agents` as this lexicon's resources.
+   *
+   * Implement this when the lexicon has types that model an agent's workload —
+   * fountain's `Agent`/`Environment` are the motivating case. Core does the
+   * harness-neutral discovery; the mapping onto concrete resource types is the
+   * lexicon's call, for the same reason `templateParser` is.
+   */
+  agentConfigImporter?(): AgentConfigImporter;
 
   /** Return skills provided by this lexicon */
   skills?(): SkillDefinition[];

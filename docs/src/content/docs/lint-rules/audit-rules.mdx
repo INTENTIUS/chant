@@ -2129,3 +2129,63 @@ Authority: [Cloudflare Workers — Wrangler environments](https://developers.clo
 Point [site].bucket / [assets].directory at a dedicated public output folder, not the project root, so non-public files (config, source maps, .git) aren't served.
 
 Authority: [Cloudflare Workers — Static assets](https://developers.cloudflare.com/workers/static-assets/)
+
+## Agent configuration (AGT)
+
+Run by `chant audit --agents` against the agent configuration on a machine — instruction files, MCP servers, skills, plugins, and permissions at system, user, and project scope. Unlike every other family here, these do not fire on repository YAML.
+
+### AGT001
+
+**MCP server runs an unpinned package** — merge-worthy · guidance
+
+Pin the package spec to an exact version (`server@1.2.3`), so a new upstream release can't execute on this machine unreviewed.
+
+Authority: [OSSF Scorecard — Pinned-Dependencies](https://github.com/ossf/scorecard/blob/main/docs/checks.md#pinned-dependencies)
+
+### AGT002
+
+**Literal credential in agent config** — merge-worthy · guidance
+
+Replace the value with an environment reference (`$\{TOKEN}`) and keep the secret in a secret store — agent config files sync, back up, and get shared.
+
+Authority: [CWE-798 — Use of Hard-coded Credentials](https://cwe.mitre.org/data/definitions/798.html)
+
+### AGT003
+
+**MCP server reached over cleartext HTTP** — merge-worthy · guidance
+
+Use an https:// endpoint. Tool arguments and results — including data the agent read locally — otherwise cross the network in the clear.
+
+Authority: [CWE-319 — Cleartext Transmission of Sensitive Information](https://cwe.mitre.org/data/definitions/319.html)
+
+### AGT004
+
+**Remote skill or plugin is unpinned** — merge-worthy · guidance
+
+Pin the source to a tag or commit sha, so the instructions the agent follows can't change upstream without a local edit.
+
+Authority: [OSSF Scorecard — Pinned-Dependencies](https://github.com/ossf/scorecard/blob/main/docs/checks.md#pinned-dependencies)
+
+### AGT005
+
+**Tool permission granted without constraint** — merge-worthy · guidance
+
+Scope the grant to the specific commands you run (`Bash(git status:*)`), and re-enable the confirmation prompt for dangerous operations.
+
+### AGT006
+
+**User-scope config applies to every project** — report-only · guidance
+
+Move project-specific instructions, MCP servers, and skills to that project's own config so they don't follow you into unrelated repos.
+
+### AGT007
+
+**MCP server declared in multiple files** — report-only · guidance
+
+Delete the shadowed declarations. The harness silently picks one, so the file you read may not be the one that decides what runs.
+
+### AGT008
+
+**Instruction file exceeds the attention budget** — report-only · guidance
+
+Move situational guidance into skills that load on demand, so the always-on instructions stay short enough to be followed reliably.
