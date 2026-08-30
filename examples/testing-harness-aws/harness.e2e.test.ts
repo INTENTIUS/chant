@@ -5,7 +5,9 @@
  *
  * 1. `deployStack` in `beforeAll` — build + additive apply of `src/` into a
  *    per-run `test-<suite>-<nonce>` environment on a local Floci;
- * 2. assertions against the returned outputs AND the live stack;
+ * 2. assertions against the returned outputs AND the live stack, through
+ *    `assertLive` — which verifies the ownership marker, so a same-named
+ *    resource from another env cannot satisfy one;
  * 3. `destroy()` in `afterAll` — the marker-scoped sweep of exactly that env;
  * 4. the survival proof: a fixture suite whose test deliberately fails still
  *    tears its environment down (afterAll runs on assertion failure), asserted
@@ -103,10 +105,44 @@ describe.skipIf(!wanted || !docker)("live-stack test harness against Floci (#122
     });
   });
 
-  test("the stack is live on the emulator", async () => {
-    const res = await describeStack(stack.env);
-    expect(res.status).toBe(200);
-    expect(res.text).toContain("CREATE_COMPLETE");
+  test("assertLive verifies each entity against this deploy's marker", async () => {
+    // The identity read (#1998): aws resolves the marker from the stack's own
+    // tags, so the assertion checks WHICH deploy answered, not just that
+    // something with the right name exists.
+    const bucket = await stack.assertLive("dataBucket");
+    expect(bucket.type).toBe("AWS::S3::Bucket");
+    expect(bucket.ownership).toBe("owned");
+    expect(bucket.marker).toEqual({ stack: "testing-harness-aws", env: stack.env });
+
+    const queue = await stack.assertLive("taskQueue", { status: "CREATE_COMPLETE" });
+    expect(queue.type).toBe("AWS::SQS::Queue");
+    expect(queue.marker).toEqual({ stack: "testing-harness-aws", env: stack.env });
+  });
+
+  test("the marker really gates the assertion — another env's identity cannot satisfy it", async () => {
+    // Same live resource, same read, a marker naming a different env. Without
+    // the marker on the observation this passed, which is what made the
+    // assertion above worth nothing.
+    const { assertLiveEntity, LiveAssertionError } = await import("@intentius/chant/lifecycle/assert-live");
+    const { awsPlugin } = await import("@intentius/chant-lexicon-aws");
+    const output = stack.outputs.get("aws");
+    const buildOutput = typeof output === "string" ? output : (output?.primary ?? "");
+
+    await expect(
+      assertLiveEntity({
+        plugin: awsPlugin,
+        name: "dataBucket",
+        entityType: "AWS::S3::Bucket",
+        props: {},
+        buildOutput,
+        environment: stack.env,
+        marker: { stack: "testing-harness-aws", env: "some-other-env" },
+      }),
+    ).rejects.toThrow(LiveAssertionError);
+  });
+
+  test("an entity the deploy never built has no assertion to make", async () => {
+    await expect(stack.assertLive("nonesuch")).rejects.toThrow(/no such entity/);
   });
 
   test("destroy sweeps the env, and only the env (proven after afterAll by rerun)", async () => {

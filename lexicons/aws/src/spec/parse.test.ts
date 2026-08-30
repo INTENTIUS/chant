@@ -3,7 +3,9 @@ import {
   parseCFNSchema,
   cfnShortName,
   cfnServiceName,
+  stripPointerPath,
 } from "./parse";
+import type { CFNSchema } from "./fetch";
 
 // Sample Registry JSON Schema for testing
 const sampleBucketSchema = JSON.stringify({
@@ -398,6 +400,84 @@ describe("parseCFNSchema", () => {
     expect(address!.tsType).toBe("string");
     const port = result.resource.attributes.find((a) => a.name === "Endpoint.Port");
     expect(port!.tsType).toBe("string");
+  });
+});
+
+describe("stripPointerPath (#1988)", () => {
+  const schema = {
+    typeName: "AWS::CloudFront::ContinuousDeploymentPolicy",
+    properties: {
+      ContinuousDeploymentPolicyConfig: { $ref: "#/definitions/ContinuousDeploymentPolicyConfig" },
+      Id: { type: "string" },
+    },
+    definitions: {
+      ContinuousDeploymentPolicyConfig: {
+        type: "object",
+        properties: {
+          Enabled: { type: "boolean" },
+          TrafficConfig: { $ref: "#/definitions/TrafficConfig" },
+        },
+      },
+      TrafficConfig: {
+        type: "object",
+        properties: { Type: { type: "string" } },
+      },
+    },
+  } as unknown as CFNSchema;
+
+  test("strips the top-level prefix", () => {
+    expect(stripPointerPath("/properties/BucketName")).toBe("BucketName");
+  });
+
+  test("keeps a nested path as a template writes it", () => {
+    expect(stripPointerPath("/properties/Tags/TagKey")).toBe("Tags/TagKey");
+    expect(stripPointerPath("/properties/Source/Decryption/Url")).toBe("Source/Decryption/Url");
+  });
+
+  test("drops a mid-path properties keyword", () => {
+    expect(stripPointerPath("/properties/DistributionConfig/properties/S3Origin")).toBe(
+      "DistributionConfig/S3Origin",
+    );
+    expect(stripPointerPath("/properties/EncryptionAtRestOptions/properties")).toBe(
+      "EncryptionAtRestOptions",
+    );
+  });
+
+  test("keeps array wildcards", () => {
+    expect(stripPointerPath("/properties/SecurityGroupEgress/*/SourceSecurityGroupId")).toBe(
+      "SecurityGroupEgress/*/SourceSecurityGroupId",
+    );
+  });
+
+  test("resolves a definition-scoped pointer through the property that carries it", () => {
+    expect(stripPointerPath("/definitions/ContinuousDeploymentPolicyConfig/properties/Enabled", schema)).toBe(
+      "ContinuousDeploymentPolicyConfig/Enabled",
+    );
+    expect(stripPointerPath("/definitions/TrafficConfig/properties/Type", schema)).toBe(
+      "ContinuousDeploymentPolicyConfig/TrafficConfig/Type",
+    );
+  });
+
+  test("leaves a definition nothing declared reaches as the Registry wrote it", () => {
+    expect(stripPointerPath("/definitions/Orphan/properties/Type", schema)).toBe(
+      "/definitions/Orphan/properties/Type",
+    );
+    expect(stripPointerPath("/definitions/Orphan/properties/Type")).toBe(
+      "/definitions/Orphan/properties/Type",
+    );
+  });
+
+  test("a definition reached through an array carries the wildcard", () => {
+    const arraySchema = {
+      typeName: "AWS::Test::Thing",
+      properties: { Rules: { type: "array", items: { $ref: "#/definitions/Rule" } } },
+      definitions: { Rule: { type: "object", properties: { Legacy: { type: "string" } } } },
+    } as unknown as CFNSchema;
+    expect(stripPointerPath("/definitions/Rule/properties/Legacy", arraySchema)).toBe("Rules/*/Legacy");
+  });
+
+  test("passes a non-pointer through", () => {
+    expect(stripPointerPath("BucketName")).toBe("BucketName");
   });
 });
 

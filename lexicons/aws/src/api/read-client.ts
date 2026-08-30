@@ -328,17 +328,40 @@ export async function describeStackResources(
   }));
 }
 
-/** `DescribeStacks` outputs for one stack, as `key → value`. */
-export async function describeStackOutputs(
+/** One stack's `DescribeStacks` answer: its outputs and its own tags. */
+export interface StackDetail {
+  outputs: Record<string, string>;
+  /** The stack's own tags, as a flat map — where the ownership marker lives (#1222). */
+  tags: Record<string, string>;
+}
+
+/**
+ * `DescribeStacks` for one stack, outputs and tags off the same response. The
+ * two ride together because they come from one call: reading the ownership
+ * marker on the observation path (#1998) costs no extra round trip.
+ */
+export async function describeStackDetail(
   stackName: string,
   options: AwsReadClientOptions = {},
-): Promise<Record<string, string>> {
+): Promise<StackDetail> {
   const xml = await cfnQuery("DescribeStacks", { StackName: stackName }, options);
   const outputs: Record<string, string> = {};
   for (const m of xmlMembers(xml, "Outputs")) {
     if (m.OutputKey) outputs[m.OutputKey] = m.OutputValue ?? "";
   }
-  return outputs;
+  const tags: Record<string, string> = {};
+  for (const m of xmlMembers(xml, "Tags")) {
+    if (m.Key) tags[m.Key] = m.Value ?? "";
+  }
+  return { outputs, tags };
+}
+
+/** `DescribeStacks` outputs for one stack, as `key → value`. */
+export async function describeStackOutputs(
+  stackName: string,
+  options: AwsReadClientOptions = {},
+): Promise<Record<string, string>> {
+  return (await describeStackDetail(stackName, options)).outputs;
 }
 
 /* ── Cloud Control ────────────────────────────────────────────────────────── */

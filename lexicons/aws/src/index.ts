@@ -67,6 +67,7 @@ export {
 export {
   describeStackResources,
   describeStackOutputs,
+  describeStackDetail,
   getResource,
   listResources,
   parseResourceDescription,
@@ -77,6 +78,7 @@ export {
   type AwsReadClientOptions,
   type CloudControlDescription,
   type StackResource,
+  type StackDetail,
   type AwsCredentials,
   type AwsCredentialResolver,
   type AwsCredentialSource,
