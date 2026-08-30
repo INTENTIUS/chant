@@ -1,5 +1,6 @@
 import { carveEmit, formatCarveEmit } from "../commands/carve-emit";
 import { liveImportFromPlugins } from "../commands/import";
+import { carveEmitLexicons, resolveEmitProvider } from "../../terraform/carve-provider";
 import { loadPlugins } from "../plugins";
 import { formatError } from "../format";
 import type { CommandContext } from "../registry";
@@ -16,12 +17,16 @@ export async function runCarveEmit(ctx: CommandContext): Promise<number> {
   const { args } = ctx;
 
   // Load plugins only for the live path; the offline --state path needs none.
-  // aws is the only lexicon emit can adopt into (`canCarveEmit`), so it is the
-  // only one loaded here.
+  // Which lexicon comes from the carve provider seam (#2016), resolved off the
+  // selected address's type without parsing the estate — so a second provider
+  // needs no edit here. A type no provider emits falls back to every lexicon
+  // emit can adopt into, and carveEmit refuses the type properly afterwards.
   let plugins = ctx.plugins;
   if (!args.statePath && args.env) {
+    const tfType = args.selectAddress?.split(".")[0] ?? "";
+    const lexicon = resolveEmitProvider(tfType)?.lexicon;
     try {
-      plugins = await loadPlugins(["aws"]);
+      plugins = await loadPlugins(lexicon ? [lexicon] : carveEmitLexicons());
     } catch {
       // fall through with whatever ctx provided; carveEmit surfaces a clear error
     }

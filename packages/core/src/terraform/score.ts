@@ -18,13 +18,13 @@
  * expression in a block that manages no infrastructure, the same order of work
  * as recording an outbound deferred input. Hence 4, not 12.
  *
- * Sub-resources that inline into a parent (see `FOLDS_INTO`) are folded into the
+ * Sub-resources that inline into a parent (see `foldParentOf`) are folded into the
  * parent's carve set: they are removed from the ranking and their edge to the
  * parent is not counted as inbound — inlining them is free, not boundary work.
  */
 
 import { inboundEdges, outboundEdges } from "./graph";
-import { FOLDS_INTO, resolveTier } from "./tier-map";
+import { foldParentOf, resolveTier } from "./tier-map";
 import type { TfGraph, TfNode } from "./types";
 
 export type PeelabilityBand = "clean leaf" | "carvable w/ edits" | "leave in Terraform";
@@ -81,7 +81,7 @@ function computeFolds(graph: TfGraph): { folded: Set<string>; childrenOf: Map<st
   const childrenOf = new Map<string, Set<string>>();
   for (const node of graph.nodes) {
     if (node.kind !== "resource" || !node.type) continue;
-    const parentType = FOLDS_INTO[node.type];
+    const parentType = foldParentOf(node.type);
     if (!parentType) continue;
     const parentAddress = `${parentType}.${node.name}`;
     if (!byAddress.has(parentAddress)) continue; // sub-resource without its parent → score it on its own
