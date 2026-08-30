@@ -8,9 +8,14 @@
  */
 
 import { awsCarveProvider } from "./aws";
+import { gcpCarveProvider } from "./gcp";
 import { kubernetesCarveProvider } from "./kubernetes";
 import type { CarveProvider } from "../carve-provider";
 
-export const BUILTIN_CARVE_PROVIDERS: readonly CarveProvider[] = [awsCarveProvider, kubernetesCarveProvider];
+export const BUILTIN_CARVE_PROVIDERS: readonly CarveProvider[] = [
+  awsCarveProvider,
+  gcpCarveProvider,
+  kubernetesCarveProvider,
+];
 
-export { awsCarveProvider, kubernetesCarveProvider };
+export { awsCarveProvider, gcpCarveProvider, kubernetesCarveProvider };

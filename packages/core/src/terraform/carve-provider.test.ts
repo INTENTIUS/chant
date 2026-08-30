@@ -32,10 +32,11 @@ const fake: CarveProvider = {
 };
 
 describe("carve provider registry (#2016)", () => {
-  test("core ships aws and kubernetes, and aws is the only one that emits", () => {
-    expect(carveProviders().map((p) => p.name)).toEqual(["aws", "kubernetes"]);
+  test("core ships aws, gcp and kubernetes, and aws is the only one that emits", () => {
+    expect(carveProviders().map((p) => p.name)).toEqual(["aws", "gcp", "kubernetes"]);
     expect(carveEmitLexicons()).toEqual(["aws"]);
     expect(resolveCarveProvider("aws_s3_bucket")?.name).toBe("aws");
+    expect(resolveCarveProvider("google_storage_bucket")?.name).toBe("gcp");
     expect(resolveCarveProvider("kubernetes_config_map")?.name).toBe("kubernetes");
     expect(resolveCarveProvider("random_pet")).toBeUndefined();
   });
