@@ -34,6 +34,11 @@ export { GENERATED_ONCE_LABEL_KEY, GENERATED_ONCE_LABEL_VALUE, isGeneratedOnce }
 // MicroTime helpers — see micro-time.ts for why this exists.
 export { microTime, isMicroTimeFormatted } from "./micro-time";
 
+// Verbatim manifest escape hatch — a kind with no generated class, and what
+// `chant carve emit` writes for a Terraform kubernetes_manifest (#999).
+export { k8sManifest } from "./manifest-entity";
+export type { RenderedManifestEntity } from "./manifest-entity";
+
 // Generated entities — export everything from generated index
 // After running `chant generate`, this re-exports all K8s resource classes
 export * from "./generated/index";

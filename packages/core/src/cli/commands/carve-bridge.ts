@@ -80,7 +80,9 @@ export async function carveBridge(opts: CarveBridgeOptions): Promise<CarveBridge
     // dotted identity attribute is a path into nested blocks, and a data body
     // is flat `attr = value`. `kubernetes_manifest` is the standing case — the
     // provider has no `kubernetes_manifest` data source either; its generic
-    // read is `kubernetes_resource`, a different shape (#999).
+    // read is `kubernetes_resource`, a different shape. Emit adopting the type
+    // (#999) does not lift this: reading a manifest out of state and reading it
+    // back through a data source are separate problems (#2034).
     const carvedTypes = report.carveSet.map((m) => m.type).filter((t): t is string => t !== undefined);
     const unbridgeable = [...new Set(carvedTypes.filter((t) => !canBridge(t)))];
     if (unbridgeable.length) {
@@ -90,7 +92,7 @@ export async function carveBridge(opts: CarveBridgeOptions): Promise<CarveBridge
           `${select} cannot be bridged: ${unbridgeable
             .map((t) => `${t} identifies itself by \`${identityAttrOf(t)}\``)
             .join(", ")}, a path into nested blocks that a Terraform data source body cannot express. ` +
-          `Bridging these types needs a data-source mapping — see chant issue #999.`,
+          `Bridging these types needs a data-source mapping — see chant issue #2034.`,
       };
     }
 

@@ -32,9 +32,9 @@ const fake: CarveProvider = {
 };
 
 describe("carve provider registry (#2016)", () => {
-  test("core ships aws, gcp and kubernetes, and aws is the only one that emits", () => {
+  test("core ships aws, gcp and kubernetes; aws and kubernetes emit", () => {
     expect(carveProviders().map((p) => p.name)).toEqual(["aws", "gcp", "kubernetes"]);
-    expect(carveEmitLexicons()).toEqual(["aws"]);
+    expect(carveEmitLexicons()).toEqual(["aws", "k8s"]);
     expect(resolveCarveProvider("aws_s3_bucket")?.name).toBe("aws");
     expect(resolveCarveProvider("google_storage_bucket")?.name).toBe("gcp");
     expect(resolveCarveProvider("kubernetes_config_map")?.name).toBe("kubernetes");
@@ -42,9 +42,11 @@ describe("carve provider registry (#2016)", () => {
   });
 
   test("a provider owns every type under its prefix for advise, only its emitTypes for emit", () => {
-    // kubernetes ranks but does not emit; aws does both.
+    // kubernetes ranks every typed provider resource and emits only
+    // kubernetes_manifest; aws emits everything it ranks.
     expect(resolveCarveProvider("kubernetes_config_map")?.name).toBe("kubernetes");
     expect(resolveEmitProvider("kubernetes_config_map")).toBeUndefined();
+    expect(resolveEmitProvider("kubernetes_manifest")?.name).toBe("kubernetes");
     expect(resolveEmitProvider("aws_s3_bucket")?.name).toBe("aws");
     // A type under aws_ that the carve table does not list is ranked by nobody
     // and emitted by nobody, but still resolves to the aws provider.
@@ -68,7 +70,7 @@ describe("carve provider registry (#2016)", () => {
       expect(canCarveEmit("fake_widget")).toBe(true);
       expect(canCarveEmit("fake_gizmo")).toBe(false);
       expect(carveEmitTypes()).toContain("fake_widget");
-      expect(carveEmitLexicons()).toEqual(["aws", "fakelex"]);
+      expect(carveEmitLexicons()).toEqual(["aws", "fakelex", "k8s"]);
       // adopt-state dispatches to the provider, with no knowledge of it.
       const adopted = adoptFromState({ type: "fake_widget", name: "w", attributes: { widget_name: "w1" } });
       expect(adopted).toMatchObject({ fileName: "w.ts", nativeType: "fake:Widget" });
@@ -78,7 +80,7 @@ describe("carve provider registry (#2016)", () => {
     // Unregistering leaves the registry exactly as it was found.
     expect(resolveTier("fake_widget")).toBeNull();
     expect(carveEmitTypes()).not.toContain("fake_widget");
-    expect(carveEmitLexicons()).toEqual(["aws"]);
+    expect(carveEmitLexicons()).toEqual(["aws", "k8s"]);
     expect(adoptFromState({ type: "fake_widget", name: "w", attributes: {} })).toBeNull();
   });
 

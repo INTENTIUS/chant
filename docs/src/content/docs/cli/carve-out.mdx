@@ -82,7 +82,7 @@ At every step before 5, rollback is `terraform import aws_s3_bucket.assets <id>`
 
 ## Scope
 
-These are the emit, boundary-bridging, and apply-graduation phases of the strangler-fig design (#197), built on the read-only advisor (#214). Emit targets a Declarable (a single native resource); a whole service with a deploy pipeline is a Component, not a leaf carve. Removing the carved resource's own block from the `.tf` is part of the bridge patch, not a manual runbook step. Emit adopts AWS types only; the google and kubernetes types the advisor ranks are refused by emit and bridge until they have an exporter and a data-source mapping.
+These are the emit, boundary-bridging, and apply-graduation phases of the strangler-fig design (#197), built on the read-only advisor (#214). Emit targets a Declarable (a single native resource); a whole service with a deploy pipeline is a Component, not a leaf carve. Removing the carved resource's own block from the `.tf` is part of the bridge patch, not a manual runbook step. Emit adopts the AWS types the carve table lists plus `kubernetes_manifest`, whose kind is read out of the manifest body in state so one rule covers every CRD. The typed `kubernetes_*` resources and the google types the advisor ranks are refused by emit, and every kubernetes type is refused by bridge until it has a data-source mapping (#2034).
 
 :::caution
 `carve bridge --apply-rewrites` edits your Terraform in place, and `terraform state rm` / `terraform apply` change what Terraform manages. Review the generated proposals and the runbook before running them. The carve is reversible via `terraform import` up until apply graduation.

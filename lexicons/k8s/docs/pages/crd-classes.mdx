@@ -469,3 +469,22 @@ Guidelines:
 - **One URL per CRD**, or a single multi-doc bundle URL (the parser uses `loadAll`, as with cert-manager).
 - The group's first segment becomes the namespace. Add a `GROUP_NAMESPACE_OVERRIDES` entry in `crd/parser.ts` if the default mapping reads poorly.
 - Document the produced classes and the operator install command in a comment block next to the entry — match the existing entries.
+
+## A kind with no generated class: `k8sManifest`
+
+`k8sManifest` declares an object from its manifest, for a kind the lexicon ships no class for and you do not want to generate one for:
+
+```typescript
+import { k8sManifest } from "@intentius/chant-lexicon-k8s";
+
+export const widget = k8sManifest({
+  apiVersion: "acme.io/v1",
+  kind: "Widget",
+  metadata: { name: "demo", namespace: "web" },
+  spec: { size: 3 },
+});
+```
+
+The props **are** the manifest: the serializer emits the document as written, plus the default-label and ownership merge every discovered resource gets. `apiVersion` and `kind` are required — they are what makes the object addressable — and they resolve the entity type through the same group rule a generated class uses, so `acme.io/v1 Widget` is `K8s::Acme::Widget` either way and `lifecycle diff --live` reads it through the same operation surface.
+
+What you give up is the whole point of a generated class: no typed constructor, no spec validation at lint time, no LSP hover. Prefer generating the CRD. Two callers use this deliberately — a [kustomize build root](/chant/lexicons/k8s/importing-yaml/), whose output is already finished documents, and `chant carve emit` adopting a Terraform `kubernetes_manifest`, whose kind is only known once the body is read.

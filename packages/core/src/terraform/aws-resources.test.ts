@@ -14,14 +14,15 @@ describe("AWS carve-out table", () => {
   });
 
   test("the emit gate is narrower than the tier map, which also ranks k8s (#2015)", () => {
-    // `carve advise` bands kubernetes types; emit has no path for them, so the
-    // gate both emit paths share must refuse them.
+    // `carve advise` bands every typed kubernetes resource; emit has a path for
+    // kubernetes_manifest only (#999), so the gate both emit paths share must
+    // refuse the rest.
     expect(tierMap().kubernetes_config_map).toBeDefined();
     expect(canCarveEmit("kubernetes_config_map")).toBe(false);
-    expect(canCarveEmit("kubernetes_manifest")).toBe(false);
+    expect(canCarveEmit("kubernetes_manifest")).toBe(true);
     expect(canCarveEmit("random_pet")).toBe(false);
     expect(canCarveEmit("aws_s3_bucket")).toBe(true);
-    expect(carveEmitTypes()).toEqual(AWS_CARVE_TYPES.map((t) => t.tfType).sort());
+    expect(carveEmitTypes()).toEqual([...AWS_CARVE_TYPES.map((t) => t.tfType), "kubernetes_manifest"].sort());
     // State adoption and live emit gate on the same table.
     for (const t of carveEmitTypes()) expect(canAdoptFromState(t)).toBe(true);
   });
@@ -226,10 +227,25 @@ describe("folded sub-resource mappers (#1637)", () => {
 
 describe("tier + identity coverage maps (#998)", () => {
   test("kubernetes provider types rank, with _v1 aliases sharing the entry", () => {
-    expect(tierMap().kubernetes_manifest).toEqual({ tier: 1, mapsTo: "k8s:manifest" });
-    for (const t of ["kubernetes_deployment", "kubernetes_config_map", "kubernetes_service", "kubernetes_namespace"]) {
-      expect(tierMap()[t]).toMatchObject({ tier: 2 });
+    // kubernetes_manifest has no fixed kind — the body names it — so the family
+    // is all `mapsTo` can say. Every other entry is a real three-part entity
+    // type from the generated operation surface: `k8s:Namespace` was in no
+    // table chant addresses by (#999).
+    expect(tierMap().kubernetes_manifest).toEqual({ tier: 1, mapsTo: "K8s::*" });
+    for (const [t, entity] of Object.entries({
+      kubernetes_deployment: "K8s::Apps::Deployment",
+      kubernetes_config_map: "K8s::Core::ConfigMap",
+      kubernetes_service: "K8s::Core::Service",
+      kubernetes_namespace: "K8s::Core::Namespace",
+      kubernetes_priority_class: "K8s::Scheduling::PriorityClass",
+      kubernetes_cron_job: "K8s::Batch::CronJob",
+    })) {
+      expect(tierMap()[t]).toEqual({ tier: 2, mapsTo: entity });
       expect(tierMap()[`${t}_v1`]).toEqual(tierMap()[t]);
+    }
+    for (const [t, info] of Object.entries(tierMap())) {
+      if (!t.startsWith("kubernetes_") || t === "kubernetes_manifest") continue;
+      expect(info.mapsTo).toMatch(/^K8s::[A-Za-z]+::[A-Za-z]+$/);
     }
     expect(tierMap().kubernetes_horizontal_pod_autoscaler_v2).toEqual(tierMap().kubernetes_horizontal_pod_autoscaler);
   });

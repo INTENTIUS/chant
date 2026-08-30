@@ -235,6 +235,93 @@ first. The carve is reversible with `terraform import aws_s3_bucket.assets
 myapp-assets-prod` up until graduation.
 </Aside>
 
+## Carve a Kubernetes manifest
+
+The same five steps run against a Terraform estate that manages Kubernetes
+objects. The example ships a second estate for it, in
+`examples/terraform-carve-out/kubernetes`:
+
+```bash
+chant carve advise --from ./kubernetes
+```
+
+```
+CLEAN LEAF — carve now  (3)
+  100  kubernetes_manifest.web_cert -> K8s::*
+       clean 1:1 native map, no boundary edges
+   96  kubernetes_manifest.app_config -> K8s::*
+       1 outbound (deferred input each)
+   85  kubernetes_config_map.legacy -> K8s::Core::ConfigMap
+       tier 2 map
+
+CARVABLE — has boundary work  (1)
+   73  kubernetes_namespace.web -> K8s::Core::Namespace
+       1 inbound (data-source patch each), tier 2 map
+```
+
+`kubernetes_manifest` maps to `K8s::*` rather than to one type because it has
+no fixed kind: the body is the object, and its `apiVersion`/`kind` say what it
+is. That is also why one carve rule covers every CRD — the second resource
+below is a cert-manager `Certificate`, and nothing in the path is cert-manager
+specific.
+
+```bash
+chant carve emit --from ./kubernetes --select kubernetes_manifest.web_cert \
+  --state ./kubernetes/terraform.tfstate --output ./carveout-k8s
+```
+
+```ts
+// Adopted from Terraform state: kubernetes_manifest.web_cert -> cert-manager.io/v1 Certificate
+// The Terraform type names no kind — apiVersion/kind come from the manifest
+// body in state, and the body is carried over verbatim.
+// Provider-behaviour attributes not part of the object: computed_fields.
+import { k8sManifest } from "@intentius/chant-lexicon-k8s";
+
+export const web_cert = k8sManifest({
+  apiVersion: "cert-manager.io/v1",
+  kind: "Certificate",
+  metadata: {
+    name: "web-tls",
+    namespace: "web",
+  },
+  spec: {
+    secretName: "web-tls",
+    dnsNames: [
+      "web.example.com",
+    ],
+    issuerRef: {
+      name: "letsencrypt",
+      kind: "ClusterIssuer",
+    },
+  },
+});
+```
+
+`k8sManifest` is the lexicon's verbatim escape hatch: the props are the
+manifest, so the build emits the object back unchanged and a kind the lexicon
+ships no generated class for still carves. Build the scaffolded project and the
+YAML is what Terraform was applying.
+
+Four limits on this estate today:
+
+- **Emit adopts `kubernetes_manifest`, not the typed provider resources.**
+  `kubernetes_config_map.legacy` ranks tier 2 and is refused by emit on both
+  paths: the object it applies lives in the provider's own schema, and
+  recovering it is a per-type reshaping.
+- **`--env` is refused; `--state` is the path.** A live import filters by
+  native type, and there is no type to filter by until the body is read.
+- **`carve bridge` refuses a manifest.** `kubernetes_manifest` identifies
+  itself by `manifest.metadata.name`, a path into nested blocks that a flat
+  data-source body cannot express — and the provider has no manifest data
+  source, only the differently-shaped `kubernetes_resource`
+  ([#2034](https://github.com/intentius/chant/issues/2034)). Carve a manifest
+  nothing else references, or repoint the survivors by hand.
+- **`carve apply --write-source` is refused.** The tag stamp belongs to a
+  native constructor call. `carve apply` without the flag graduates normally,
+  in the vocabulary of the target: ownership as
+  `app.kubernetes.io/managed-by` + `chant.intentius.io/{stack,env}` labels, and
+  a `kubectl apply -f` in the runbook instead of a CloudFormation deploy.
+
 ## Try it on your own estate
 
 Point it at your own Terraform. Two of the five steps work on any tree today;
@@ -263,8 +350,12 @@ expect before you run them.
   certificates, Cognito user pools, EKS (clusters / node groups), and ECS
   (clusters / services / task definitions). Advise and emit cover the same AWS
   types, so anything advise ranks, emit can produce. A type outside that set
-  reports the supported list. Other clouds are not carved yet — Kubernetes
-  carve support is tracked in
-  [#999](https://github.com/intentius/chant/issues/999).
+  reports the supported list.
+
+- **`carve emit` — Kubernetes.** `kubernetes_manifest` emits from state, any
+  kind and any CRD, as shown above. The typed `kubernetes_*` resources are
+  ranked but not emitted, `--env` is refused, and bridge refuses the manifest
+  types ([#2034](https://github.com/intentius/chant/issues/2034)). GCP and
+  Azure are not carved yet.
 
 See the [carve CLI reference](/chant/cli/carve-out/) for every flag.

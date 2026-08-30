@@ -16,7 +16,7 @@ chant carve advise --from <terraform-dir | cdk.out> [flags]
 
 Two sources are read. A **Terraform estate** is parsed from `.tf` (and optionally `.tfstate`), and each resource and module is ranked. A **CDK cloud assembly** (`cdk.out`) is read from its synthesized JSON, and each *construct* is ranked. Which one is in `--from` is decided by looking at the directory, not by a second flag.
 
-It is read-only either way. It parses, scores, and prints. It emits no chant source, patches nothing, and touches no live resource. The emit, boundary-bridging, and apply phases have shipped as [`chant carve emit|bridge|apply`](/chant/cli/carve-out/) and read Terraform only; this command is the analysis slice that is useful on its own. Advise also ranks more than emit can adopt — it bands the google and kubernetes provider types and every CDK construct, which emit and bridge refuse.
+It is read-only either way. It parses, scores, and prints. It emits no chant source, patches nothing, and touches no live resource. The emit, boundary-bridging, and apply phases have shipped as [`chant carve emit|bridge|apply`](/chant/cli/carve-out/) and read Terraform only; this command is the analysis slice that is useful on its own. Advise also ranks more than emit can adopt — it bands the google provider types, the typed kubernetes provider resources and every CDK construct, which emit refuses, and it bands `kubernetes_manifest`, which emit adopts but bridge still refuses.
 
 Use it to decide where an incremental move is worth starting. The point is not to carve everything. Small, cleanly-mappable pieces move; the gnarly long tail stays where it is.
 

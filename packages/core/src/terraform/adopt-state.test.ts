@@ -159,3 +159,134 @@ describe("adoptFromState", () => {
     expect(adoptFromState({ type: "random_pet", name: "x", attributes: { id: "abc" } })).toBeNull();
   });
 });
+
+/**
+ * `kubernetes_manifest` adoption (#999). The Terraform type names no kind: the
+ * target is whatever the manifest body says it is, so these assertions are
+ * about reading the body, not about a per-type property mapping.
+ */
+describe("adoptFromState — kubernetes_manifest", () => {
+  const configMap: StateResource = {
+    type: "kubernetes_manifest",
+    name: "app_config",
+    attributes: {
+      manifest: {
+        apiVersion: "v1",
+        kind: "ConfigMap",
+        metadata: { name: "app-config", namespace: "web", labels: { "app.kubernetes.io/name": "web" } },
+        data: { LOG_LEVEL: "info" },
+      },
+      field_manager: null,
+      wait: null,
+      computed_fields: ["metadata.labels", "metadata.annotations"],
+    },
+  };
+
+  test("adopts the manifest body verbatim through the lexicon escape hatch", () => {
+    const out = adoptFromState(configMap)!;
+    expect(out.fileName).toBe("app_config.ts");
+    expect(out.mapped).toBe(true);
+    // The kind came out of the body, not out of the Terraform type.
+    expect(out.nativeType).toBe("v1 ConfigMap");
+
+    expect(out.content).toContain('import { k8sManifest } from "@intentius/chant-lexicon-k8s";');
+    expect(out.content).toContain("export const app_config = k8sManifest({");
+    expect(out.content).toContain('apiVersion: "v1"');
+    expect(out.content).toContain('kind: "ConfigMap"');
+    expect(out.content).toContain('namespace: "web"');
+    // A key that is not an identifier is quoted, so the emitted source parses.
+    expect(out.content).toContain('"app.kubernetes.io/name": "web"');
+    expect(out.content).toContain('LOG_LEVEL: "info"');
+    // Provider knobs are reported, never smuggled into the object.
+    expect(out.content).toContain("Provider-behaviour attributes not part of the object: computed_fields");
+    expect(out.content).not.toContain("computed_fields:");
+    expect(out.folded).toEqual([]);
+  });
+
+  test("a CRD body needs no per-type mapping — one rule covers every kind", () => {
+    const out = adoptFromState({
+      type: "kubernetes_manifest",
+      name: "cert",
+      attributes: {
+        manifest: {
+          apiVersion: "cert-manager.io/v1",
+          kind: "Certificate",
+          metadata: { name: "web-tls", namespace: "web" },
+          spec: {
+            secretName: "web-tls",
+            dnsNames: ["web.example.com"],
+            issuerRef: { name: "letsencrypt", kind: "ClusterIssuer" },
+          },
+        },
+      },
+    })!;
+    expect(out.nativeType).toBe("cert-manager.io/v1 Certificate");
+    expect(out.content).toContain('apiVersion: "cert-manager.io/v1"');
+    expect(out.content).toContain('kind: "Certificate"');
+    expect(out.content).toContain('secretName: "web-tls"');
+    expect(out.content).toContain('"web.example.com",');
+  });
+
+  test("falls back to the computed object, without the fields the API server owns", () => {
+    const out = adoptFromState({
+      type: "kubernetes_manifest",
+      name: "ns",
+      attributes: {
+        object: {
+          apiVersion: "v1",
+          kind: "Namespace",
+          metadata: {
+            name: "web",
+            uid: "8f1e",
+            resourceVersion: "4711",
+            creationTimestamp: "2026-01-01T00:00:00Z",
+            labels: {},
+          },
+          status: { phase: "Active" },
+        },
+      },
+    })!;
+    expect(out.content).toContain('name: "web"');
+    expect(out.content).not.toContain("resourceVersion");
+    expect(out.content).not.toContain("creationTimestamp");
+    expect(out.content).not.toContain("uid");
+    expect(out.content).not.toContain("status");
+  });
+
+  test("a deferred input is reported in the source, not substituted", () => {
+    // The survivor value sits inside the body, so the boundary report names the
+    // enclosing `manifest` attribute and state resolves it to an object —
+    // there is no scalar for a `params.<name>` reference to replace.
+    const params: DeferredParam[] = [
+      { name: "manifest", tfAttr: "manifest", survivor: "aws_eks_cluster.main", attrs: ["endpoint"] },
+    ];
+    const out = adoptFromState(configMap, params)!;
+    expect(out.parameterized).toEqual([]);
+    expect(out.content).toContain("Deferred deploy-time input: manifest read aws_eks_cluster.main.endpoint");
+    expect(out.content).toContain('declared as build param "manifest" in chant.config.ts');
+    expect(out.content).not.toContain("params.");
+  });
+
+  test("a name Terraform allows but TypeScript does not becomes an identifier", () => {
+    const out = adoptFromState({
+      type: "kubernetes_manifest",
+      name: "app-config",
+      attributes: { manifest: { apiVersion: "v1", kind: "ConfigMap", metadata: { name: "app-config" } } },
+    })!;
+    expect(out.fileName).toBe("app_config.ts");
+    expect(out.content).toContain("export const app_config = k8sManifest({");
+  });
+
+  test("a body without apiVersion/kind is refused rather than emitted headless", () => {
+    expect(
+      adoptFromState({ type: "kubernetes_manifest", name: "x", attributes: { manifest: { metadata: { name: "x" } } } }),
+    ).toBeNull();
+    expect(adoptFromState({ type: "kubernetes_manifest", name: "x", attributes: {} })).toBeNull();
+  });
+
+  test("a typed kubernetes resource is ranked but not adoptable", () => {
+    expect(canAdoptFromState("kubernetes_manifest")).toBe(true);
+    expect(canAdoptFromState("kubernetes_config_map")).toBe(false);
+    expect(adoptFromState({ type: "kubernetes_config_map", name: "c", attributes: {} })).toBeNull();
+  });
+});
