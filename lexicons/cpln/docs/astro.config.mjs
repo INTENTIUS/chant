@@ -21,44 +21,59 @@ export default defineConfig({
                   "slug": "index"
             },
             {
-                  "label": "Resources",
-                  "slug": "resources"
+                  "label": "How-to guides",
+                  "items": [
+                        {
+                              "label": "Secrets and Identities",
+                              "slug": "secrets"
+                        },
+                        {
+                              "label": "Applying",
+                              "slug": "applying"
+                        }
+                  ]
             },
             {
-                  "label": "Workload Types",
-                  "slug": "workload-types"
+                  "label": "Reference",
+                  "items": [
+                        {
+                              "label": "Resources",
+                              "slug": "resources"
+                        },
+                        {
+                              "label": "Workload Types",
+                              "slug": "workload-types"
+                        },
+                        {
+                              "label": "Links and References",
+                              "slug": "links"
+                        },
+                        {
+                              "label": "Composites",
+                              "slug": "composites"
+                        },
+                        {
+                              "label": "Skills",
+                              "slug": "skills"
+                        },
+                        {
+                              "label": "All Rules",
+                              "slug": "rules"
+                        },
+                        {
+                              "label": "Serialization",
+                              "slug": "serialization"
+                        }
+                  ]
             },
             {
-                  "label": "Links and References",
-                  "slug": "links"
-            },
-            {
-                  "label": "Secrets and Identities",
-                  "slug": "secrets"
-            },
-            {
-                  "label": "Composites",
-                  "slug": "composites"
-            },
-            {
-                  "label": "Applying",
-                  "slug": "applying"
-            },
-            {
-                  "label": "Drift and Ownership",
-                  "slug": "adoption"
-            },
-            {
-                  "label": "Skills",
-                  "slug": "skills"
-            },
-            {
-                  "label": "All Rules",
-                  "slug": "rules"
-            },
-            {
-                  "label": "Serialization",
-                  "slug": "serialization"
+                  "label": "Explanation",
+                  "items": [
+                        {
+                              "label": "Drift and Ownership",
+                              "slug": "adoption"
+                        }
+                  ]
             }
       ],
     }),

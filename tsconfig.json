@@ -40,6 +40,12 @@
       "@intentius/chant-lexicon-cedar/*": [
         "lexicons/cedar/src/*"
       ],
+      "@intentius/chant-lexicon-cpln": [
+        "lexicons/cpln/src/index.ts"
+      ],
+      "@intentius/chant-lexicon-cpln/*": [
+        "lexicons/cpln/src/*"
+      ],
       "@intentius/chant-lexicon-gitlab": [
         "lexicons/gitlab/src/index.ts"
       ],

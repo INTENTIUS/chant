@@ -9,7 +9,8 @@
 
 import { GvcEnvironment, ServerlessService } from "@intentius/chant-lexicon-cpln";
 
-const org = process.env.CPLN_ORG ?? "acme";
+/** The org the location links are built under. Replace it with yours. */
+const org = "acme";
 
 export const { gvc } = GvcEnvironment({
   name: "prod",

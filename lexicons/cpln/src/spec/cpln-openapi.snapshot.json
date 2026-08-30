@@ -386,7 +386,8 @@
             "ready",
             "pendingDnsConfig",
             "pendingCertificate",
-            "ignored"
+            "ignored",
+            "errored"
            ]
           }
          },
@@ -5405,6 +5406,23 @@
             "type": "string",
             "description": "The name of the CSI driver used to provision and manage this volume"
            },
+           "diskType": {
+            "type": "string",
+            "enum": [
+             "gp3",
+             "pd-balanced",
+             "pd-ssd",
+             "hyperdisk-balanced",
+             "PremiumV2_LRS",
+             "do-block-storage",
+             "hcloud-volume",
+             "linode-block-storage",
+             "oci-bv-balanced",
+             "juicefs",
+             "hostpath"
+            ],
+            "description": "The disk type used for this volume by the underlying cloud provider, for example gp3 on AWS or pd-balanced on GCP. Omitted when the storage backend is not one Control Plane recognizes."
+           },
            "volumeSnapshots": {
             "type": "array",
             "items": {
@@ -5447,6 +5465,10 @@
            },
            "zone": {
             "type": "string"
+           },
+           "node": {
+            "type": "string",
+            "description": "The node hosting this volume, recorded for storage backends whose devices live on a specific node"
            }
           },
           "additionalProperties": false

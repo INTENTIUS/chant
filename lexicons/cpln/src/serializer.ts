@@ -64,7 +64,15 @@ const KEY_ORDER: string[] = ["kind", "name", "description", "gvc", "tags"];
 /** Properties consumed to build the envelope rather than copied into the body. */
 const ENVELOPE_KEYS = new Set(["name", "description", "gvc", "tags"]);
 
-export const cplnSerializer: Serializer = {
+/**
+ * `satisfies` rather than a type annotation: `Serializer.serialize` returns
+ * `string | SerializerResult`, and cpln always emits a single YAML string.
+ * Annotating widens the export to the union and every caller — the tests
+ * included — has to narrow it back with a cast that asserts something the
+ * implementation already guarantees. `satisfies` checks the shape against the
+ * interface and keeps the narrower return type.
+ */
+export const cplnSerializer = {
   name: "cpln",
   rulePrefix: "CPL",
 
@@ -112,7 +120,7 @@ export const cplnSerializer: Serializer = {
 
     return documents.map((d) => d.text).join("\n---\n");
   },
-};
+} satisfies Serializer;
 
 // ── Tags and ownership ─────────────────────────────────────────────
 
