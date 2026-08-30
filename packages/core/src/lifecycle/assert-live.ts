@@ -15,9 +15,8 @@
  *
  * Marker verification is best-effort by the same logic {@link
  * ResourceMetadata.marker}'s own contract states: a lexicon with no marker
- * channel on this read path (aws's thin `describeResources`, `ownership:
- * "unknown"`) reports no marker at all, which is not the same claim as
- * "foreign". Enforcing a match whenever the channel exists — a present
+ * channel on this read path reports no marker at all, which is not the same
+ * claim as "foreign". Enforcing a match whenever the channel exists — a present
  * mismatch, or `ownership: "foreign"` with no marker to show — catches the
  * case the harness cares about (a same-named leftover from another env);
  * an absent channel is passed through unverified rather than making every

@@ -9,6 +9,10 @@
  * which also matches descriptions that mention the deprecation of a sibling
  * property, an enum value, or the thing the property configures. Declared is a
  * warning; inferred is reported at info and worded as a guess.
+ *
+ * A declared name is a flattened Registry pointer path (#1988), so most of them
+ * are nested — `Tags/TagKey`, `Source/Decryption/Url`. The template is walked
+ * along that path; matching top-level keys reached fewer than half of them.
  */
 
 import { readFileSync } from "fs";
@@ -57,6 +61,28 @@ function loadDeprecatedProperties(): Map<string, Map<string, DeprecationBasis>> 
 }
 
 /**
+ * True when `value` expresses `segments` — the flattened Registry pointer path
+ * (#1988), which is a single key for a top-level property and `/`-joined for a
+ * nested one.
+ *
+ * An array met where the pointer named a property is descended anyway: the
+ * Registry elides the wildcard in some schemas, so `Tags/TagKey` addresses a
+ * key inside the Tags array's items.
+ */
+function expressesPath(value: unknown, segments: string[]): boolean {
+  if (segments.length === 0) return true;
+  if (Array.isArray(value)) {
+    const rest = segments[0] === "*" ? segments.slice(1) : segments;
+    return value.some((item) => expressesPath(item, rest));
+  }
+  if (segments[0] === "*") return false;
+  if (typeof value !== "object" || value === null) return false;
+  const obj = value as Record<string, unknown>;
+  if (!Object.prototype.hasOwnProperty.call(obj, segments[0])) return false;
+  return expressesPath(obj[segments[0]], segments.slice(1));
+}
+
+/**
  * Core detection logic — exported for direct testing with synthetic data.
  */
 export function checkDeprecatedProperties(
@@ -76,9 +102,11 @@ export function checkDeprecatedProperties(
       if (!deprProps) continue;
 
       const props = resource.Properties ?? {};
-      for (const propName of Object.keys(props)) {
-        const basis = deprProps.get(propName);
-        if (!basis) continue;
+      // Walk each declared path into the template, rather than matching
+      // top-level template keys: over half the declared names are nested
+      // (#1988), and a key comparison could never reach them.
+      for (const [propName, basis] of deprProps) {
+        if (!expressesPath(props, propName.split("/"))) continue;
 
         diagnostics.push({
           checkId: "WAW016",

@@ -33,6 +33,7 @@ const { liveEvidenceFromChangeSet, reconcileStatus } = await import("@intentius/
 const { describeObservationConformance } = await import("@intentius/chant-test-utils");
 const { observeResources } = await import("@intentius/chant/lifecycle/observe");
 const { DECLARABLE_MARKER } = await import("@intentius/chant/declarable");
+const { assertLiveEntity, LiveAssertionError } = await import("@intentius/chant/lifecycle/assert-live");
 
 const liveTemplate = {
   AWSTemplateFormatVersion: "2010-09-09",
@@ -58,10 +59,19 @@ const stackResourcesXml = (rows: Array<{ logicalId: string; type: string; physic
     )
     .join("")}</StackResources></DescribeStackResourcesResponse>`;
 
-const stackOutputsXml = (outputs: Record<string, string> = {}) =>
+const stackOutputsXml = (outputs: Record<string, string> = {}, tags: Record<string, string> = {}) =>
   `<DescribeStacksResponse><Outputs>${Object.entries(outputs)
     .map(([k, v]) => `<member><OutputKey>${k}</OutputKey><OutputValue>${v}</OutputValue></member>`)
-    .join("")}</Outputs></DescribeStacksResponse>`;
+    .join("")}</Outputs><Tags>${Object.entries(tags)
+    .map(([k, v]) => `<member><Key>${k}</Key><Value>${v}</Value></member>`)
+    .join("")}</Tags></DescribeStacksResponse>`;
+
+/** The stack tags a chant apply stamps for one identity (#1222). */
+const ownedStackTags = (stack: string, env: string) => ({
+  "chant:managed-by": "chant",
+  "chant:stack": stack,
+  "chant:env": env,
+});
 
 const queryErrorXml = (code: string, message: string) =>
   `<ErrorResponse><Error><Code>${code}</Code><Message>${message}</Message></Error></ErrorResponse>`;
@@ -122,9 +132,10 @@ describe("aws lifecycle integration (#163)", () => {
       }),
     );
     expect(observedNow.MyBucket?.type).toBe("AWS::S3::Bucket");
-    // Ownership verdicts are total (#1089): DescribeStackResources carries no
-    // tags, so the verdict is an explicit `unknown`, not a missing field.
-    expect(observedNow.MyBucket?.ownership).toBe("unknown");
+    // Ownership verdicts are total (#1089). The stack answered and carries no
+    // chant tags, so the verdict is `foreign` — read, not merely unattempted.
+    expect(observedNow.MyBucket?.ownership).toBe("foreign");
+    expect(observedNow.MyBucket?.marker).toBeUndefined();
 
     // Declared "MyQueue" is absent from live → create; live "MyBucket" is
     // undeclared and unmarked → adopt (never delete without ownership).
@@ -371,14 +382,106 @@ describe("aws lifecycle integration (#163)", () => {
       { errors: [], warnings: [], entities, outputs: new Map([["aws", ""]]) } as never,
       { owned: true, stacks: ["prod-net", "prod-data", "prod-app", "prod-edge"] },
     );
-    const ownership = result.notes.filter((n) => n.includes("ownership filter unavailable"));
+    const ownership = result.notes.filter((n) => n.includes("ownership filter not applied"));
     expect(ownership).toHaveLength(1);
     expect(ownership[0]).toBe(
-      "[aws] ownership filter unavailable on describeResources (no tags from describe-stack-resources) — returning all, each with an explicit `unknown` verdict; use `chant import --from <env> --owned` for ownership-filtered export",
+      "[aws] ownership filter not applied on describeResources (this stack's own tags carry no chant marker, or DescribeStacks did not answer) — returning all, each with the verdict the read supports; use `chant import --from <env> --owned` for ownership-filtered export",
     );
-    expect(result.warnings.join("\n")).not.toContain("ownership filter unavailable");
+    expect(result.warnings.join("\n")).not.toContain("ownership filter not applied");
     expect(warn).not.toHaveBeenCalled();
     expect(error).not.toHaveBeenCalled();
+  });
+
+  test("an owned read of a marked stack resolves the marker and carries no note", async () => {
+    stubCfn((action) =>
+      action === "DescribeStackResources"
+        ? { text: stackResourcesXml([{ logicalId: "MyBucket", type: "AWS::S3::Bucket", physicalId: "my-bucket" }]) }
+        : { text: stackOutputsXml({}, ownedStackTags("shop", "prod")) },
+    );
+    const observed = normalizeObservation(
+      await awsPlugin.describeResources!({
+        environment: "prod",
+        buildOutput: "",
+        entityNames: ["MyBucket"],
+        entities: new Map(),
+        owned: true,
+      }),
+    );
+    expect(observed.resources.MyBucket?.ownership).toBe("owned");
+    expect(observed.resources.MyBucket?.marker).toEqual({ stack: "shop", env: "prod" });
+    expect(observed.notes).toEqual([]);
+  });
+
+  // --- The ownership marker on the thin read (#1998) ---
+
+  test("a stack tagged for another environment is reported foreign, not unknown", async () => {
+    stubCfn((action) =>
+      action === "DescribeStackResources"
+        ? { text: stackResourcesXml([{ logicalId: "MyBucket", type: "AWS::S3::Bucket", physicalId: "my-bucket" }]) }
+        : { text: stackOutputsXml({}, ownedStackTags("shop", "staging")) },
+    );
+
+    const meta = normalizeObservation(
+      await awsPlugin.describeResources!({
+        environment: "prod",
+        buildOutput: "",
+        entityNames: ["MyBucket"],
+        entities: new Map(),
+      }),
+    ).resources.MyBucket;
+    // The marker is the stack's, read back verbatim — which is what makes the
+    // env mismatch visible at all. Before this the field was absent and every
+    // caller had to pass the resource through unverified.
+    expect(meta?.marker).toEqual({ stack: "shop", env: "staging" });
+
+    await expect(
+      assertLiveEntity({
+        plugin: awsPlugin,
+        name: "MyBucket",
+        entityType: "AWS::S3::Bucket",
+        props: {},
+        buildOutput: "",
+        environment: "prod",
+        marker: { stack: "shop", env: "prod" },
+      }),
+    ).rejects.toThrow(LiveAssertionError);
+  });
+
+  test("assertLive passes when the stack's marker is this deploy's", async () => {
+    stubCfn((action) =>
+      action === "DescribeStackResources"
+        ? { text: stackResourcesXml([{ logicalId: "MyBucket", type: "AWS::S3::Bucket", physicalId: "my-bucket" }]) }
+        : { text: stackOutputsXml({}, ownedStackTags("shop", "prod")) },
+    );
+    const meta = await assertLiveEntity({
+      plugin: awsPlugin,
+      name: "MyBucket",
+      entityType: "AWS::S3::Bucket",
+      props: {},
+      buildOutput: "",
+      environment: "prod",
+      marker: { stack: "shop", env: "prod" },
+    });
+    expect(meta.marker).toEqual({ stack: "shop", env: "prod" });
+    expect(meta.ownership).toBe("owned");
+  });
+
+  test("a stack whose tags could not be read stays unknown, never a guess", async () => {
+    stubCfn((action) =>
+      action === "DescribeStackResources"
+        ? { text: stackResourcesXml([{ logicalId: "MyBucket", type: "AWS::S3::Bucket", physicalId: "my-bucket" }]) }
+        : { status: 400, text: queryErrorXml("Throttling", "Rate exceeded") },
+    );
+    const meta = normalizeObservation(
+      await awsPlugin.describeResources!({
+        environment: "prod",
+        buildOutput: "",
+        entityNames: ["MyBucket"],
+        entities: new Map(),
+      }),
+    ).resources.MyBucket;
+    expect(meta?.ownership).toBe("unknown");
+    expect(meta?.marker).toBeUndefined();
   });
 
   test("an unowned read carries no ownership note", async () => {
@@ -428,10 +531,10 @@ describeObservationConformance({
       },
     },
     {
-      // describe-stack-resources also carries no tags to read a stack/env
-      // identity from, so `marker` (#1222) stays absent here — stack-level
-      // handling reads the stack's own tags instead.
-      name: "a healthy stack read",
+      // describe-stack-resources carries no per-resource tags, so a stack whose
+      // own tags carry no marker leaves `marker` (#1222) absent — absent means
+      // absent, never a guess.
+      name: "a healthy read of an unmarked stack",
       declared: ["MyBucket"],
       expectPresent: ["MyBucket"],
       expectNoMarker: ["MyBucket"],
@@ -450,13 +553,54 @@ describeObservationConformance({
       },
     },
     {
-      // aws declares a marker channel on the deep read and on live export, but
-      // not here: describe-stack-resources returns no tags, so the filter has
-      // nothing to filter on. The suite holds it to that — an `owned` verdict
-      // from this path would be a claim the transport cannot support (#1348).
-      name: "an owned read on a path with no marker channel",
+      // The stack's own tags are this path's marker channel (#1998), so every
+      // member of a marked stack carries that stack's identity.
+      name: "a healthy read of a marked stack",
       declared: ["MyBucket"],
       expectPresent: ["MyBucket"],
+      expectMarker: { MyBucket: { stack: "shop", env: "prod" } },
+      run: () => {
+        stubCfn((action) =>
+          action === "DescribeStackResources"
+            ? { text: stackResourcesXml([{ logicalId: "MyBucket", type: "AWS::S3::Bucket", physicalId: "my-bucket" }]) }
+            : { text: stackOutputsXml({}, ownedStackTags("shop", "prod")) },
+        );
+        return awsPlugin.describeResources!({
+          environment: "prod",
+          buildOutput: "",
+          entityNames: ["MyBucket"],
+          entities: new Map(),
+        });
+      },
+    },
+    {
+      // aws declares a marker channel here now, so the suite holds the verdict
+      // to `owned`/`foreign` — an `unknown` would mean the declaration is a
+      // claim the transport does not support (#1348).
+      name: "an owned read of a marked stack",
+      declared: ["MyBucket"],
+      expectPresent: ["MyBucket"],
+      owned: true,
+      run: () => {
+        stubCfn((action) =>
+          action === "DescribeStackResources"
+            ? { text: stackResourcesXml([{ logicalId: "MyBucket", type: "AWS::S3::Bucket", physicalId: "my-bucket" }]) }
+            : { text: stackOutputsXml({}, ownedStackTags("shop", "prod")) },
+        );
+        return awsPlugin.describeResources!({
+          environment: "prod",
+          buildOutput: "",
+          entityNames: ["MyBucket"],
+          entities: new Map(),
+          owned: true,
+        });
+      },
+    },
+    {
+      name: "an owned read of an unmarked stack",
+      declared: ["MyBucket"],
+      expectPresent: ["MyBucket"],
+      expectNoMarker: ["MyBucket"],
       owned: true,
       run: () => {
         stubCfn((action) =>

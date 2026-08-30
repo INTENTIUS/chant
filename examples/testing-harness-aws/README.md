@@ -13,7 +13,9 @@ account.
   legalizes the derived `test-<suite>-<nonce>` names and carries the default
   emulator endpoint.
 - `harness.e2e.test.ts` — the suite: `deployStack` in `beforeAll`, assertions
-  against the returned outputs and the live stack, `destroy()` in `afterAll`.
+  against the returned outputs and the live stack (through `assertLive`, which
+  verifies the ownership marker so another env's same-named resource cannot
+  satisfy one), `destroy()` in `afterAll`.
   It also proves teardown survives a failing test, by running
   `fixtures/failing-suite.test.ts` in a child vitest and checking from outside
   that the fixture's environment is gone even though its one test failed.
