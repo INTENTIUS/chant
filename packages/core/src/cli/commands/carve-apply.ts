@@ -11,6 +11,7 @@
 
 import { existsSync, statSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { join } from "path";
+import { cdkNotSupported, isCloudAssembly } from "../../cdk/assembly";
 import { parseTerraformDir, Hcl2JsonNotInstalled } from "../../terraform/parse";
 import { boundaryReport } from "../../terraform/carve";
 import { graduationPlan, stampOwnershipIntoSource, type GraduationPlan } from "../../terraform/graduate";
@@ -48,6 +49,7 @@ export async function carveApply(opts: CarveApplyOptions): Promise<CarveApplyRes
   if (!existsSync(opts.from) || !statSync(opts.from).isDirectory()) {
     return { ok: false, error: `Not a directory: ${opts.from}` };
   }
+  if (isCloudAssembly(opts.from)) return { ok: false, error: cdkNotSupported(opts.from, "apply") };
 
   // Compose with the manifest emit/bridge persisted: it supplies the target
   // (and tfstate) when --select is absent, and its persisted boundary stands in

@@ -14,6 +14,7 @@
 
 import { existsSync, statSync, writeFileSync, mkdirSync } from "fs";
 import { basename, join, resolve } from "path";
+import { cdkNotSupported, isCloudAssembly } from "../../cdk/assembly";
 import { parseTerraformDir, Hcl2JsonNotInstalled } from "../../terraform/parse";
 import { boundaryReport, deferredParamName, type CarveReport } from "../../terraform/carve";
 import { carveEmitTypes, resolveTier } from "../../terraform/tier-map";
@@ -85,6 +86,7 @@ export async function carveEmit(opts: CarveEmitOptions, deps: CarveEmitDeps): Pr
   if (!existsSync(opts.from) || !statSync(opts.from).isDirectory()) {
     return { ok: false, error: `Not a directory: ${opts.from}` };
   }
+  if (isCloudAssembly(opts.from)) return { ok: false, error: cdkNotSupported(opts.from, "emit") };
 
   let report: CarveReport | null;
   let tfType: string | undefined;

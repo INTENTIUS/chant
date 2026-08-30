@@ -11,6 +11,7 @@
 
 import { existsSync, statSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "fs";
 import { join, basename, relative, resolve } from "path";
+import { cdkNotSupported, isCloudAssembly } from "../../cdk/assembly";
 import { parseTerraformDir, Hcl2JsonNotInstalled } from "../../terraform/parse";
 import { boundaryReport, type CarveReport } from "../../terraform/carve";
 import { generateBridge, type BridgePlan, type CarvedIdentity } from "../../terraform/bridge";
@@ -57,6 +58,7 @@ export async function carveBridge(opts: CarveBridgeOptions): Promise<CarveBridge
   if (!existsSync(opts.from) || !statSync(opts.from).isDirectory()) {
     return { ok: false, error: `Not a directory: ${opts.from}` };
   }
+  if (isCloudAssembly(opts.from)) return { ok: false, error: cdkNotSupported(opts.from, "bridge") };
 
   // Compose with the carve state manifest `carve emit` persisted: without
   // --select it supplies the target (and tfstate), with it it is updated below.

@@ -1,0 +1,90 @@
+{
+  "Parameters": {
+    "BootstrapVersion": {
+      "Type": "AWS::SSM::Parameter::Value<String>",
+      "Default": "/cdk-bootstrap/hnb659fds/version",
+      "Description": "Version of the CDK Bootstrap resources in this environment"
+    }
+  },
+  "Resources": {
+    "Assets675B7A57": {
+      "Type": "AWS::S3::Bucket",
+      "Properties": {
+        "BucketName": "myapp-assets-prod",
+        "VersioningConfiguration": { "Status": "Enabled" }
+      },
+      "UpdateReplacePolicy": "Retain",
+      "DeletionPolicy": "Retain",
+      "Metadata": {
+        "aws:cdk:path": "DataStack/Assets/Resource"
+      }
+    },
+    "AssetsPolicyE8B0F1C2": {
+      "Type": "AWS::S3::BucketPolicy",
+      "Properties": {
+        "Bucket": { "Ref": "Assets675B7A57" },
+        "PolicyDocument": {
+          "Statement": [
+            {
+              "Action": "s3:*",
+              "Condition": { "Bool": { "aws:SecureTransport": "false" } },
+              "Effect": "Deny",
+              "Principal": { "AWS": "*" },
+              "Resource": [
+                { "Fn::GetAtt": ["Assets675B7A57", "Arn"] },
+                { "Fn::Join": ["", [{ "Fn::GetAtt": ["Assets675B7A57", "Arn"] }, "/*"]] }
+              ]
+            }
+          ],
+          "Version": "2012-10-17"
+        }
+      },
+      "Metadata": {
+        "aws:cdk:path": "DataStack/Assets/Policy/Resource"
+      }
+    },
+    "Table778B6D2C": {
+      "Type": "AWS::DynamoDB::Table",
+      "Properties": {
+        "AttributeDefinitions": [{ "AttributeName": "pk", "AttributeType": "S" }],
+        "BillingMode": "PAY_PER_REQUEST",
+        "KeySchema": [{ "AttributeName": "pk", "KeyType": "HASH" }]
+      },
+      "UpdateReplacePolicy": "Delete",
+      "DeletionPolicy": "Delete",
+      "Metadata": {
+        "aws:cdk:path": "DataStack/Table/Resource"
+      }
+    },
+    "CDKMetadata": {
+      "Type": "AWS::CDK::Metadata",
+      "Properties": {
+        "Analytics": "v2:deflate64:H4sIAAAAAAAA/y2K0QqAIAwAv8V3XVEE9V4fEEQfIGtJmDrYVoT4740ed3fY4wr7BgtCvIYuBl+w7gLuoIm2y9lgAWJv6TylOUYVXpLK5x0Ipp98yRz5Uqz+MvzQZlvibDpsMK1SUteYWvwNyxu2AlgAAAA="
+      },
+      "Metadata": {
+        "aws:cdk:path": "DataStack/CDKMetadata/Default"
+      }
+    }
+  },
+  "Outputs": {
+    "ExportsOutputFnGetAttAssets675B7A57ArnE0B2A4A8": {
+      "Value": { "Fn::GetAtt": ["Assets675B7A57", "Arn"] },
+      "Export": { "Name": "DataStack:ExportsOutputFnGetAttAssets675B7A57ArnE0B2A4A8" }
+    },
+    "TableName": {
+      "Value": { "Ref": "Table778B6D2C" }
+    }
+  },
+  "Rules": {
+    "CheckBootstrapVersion": {
+      "Assertions": [
+        {
+          "Assert": {
+            "Fn::Not": [{ "Fn::Contains": [["1", "2", "3", "4", "5"], { "Ref": "BootstrapVersion" }] }]
+          },
+          "AssertDescription": "CDK bootstrap stack version 6 required."
+        }
+      ]
+    }
+  }
+}

@@ -1,6 +1,6 @@
 {
   "name": "@intentius/chant-lexicon-fly",
-  "version": "0.52.1",
+  "version": "0.52.2",
   "type": "module",
   "files": [
     "src/",
@@ -62,7 +62,7 @@
     "typescript": "^5.9.3"
   },
   "peerDependencies": {
-    "@intentius/chant": "^0.52.1",
+    "@intentius/chant": "^0.52.2",
     "typescript": "^5.9.3"
   },
   "description": "Fly.io Machines lexicon for chant — declarative IaC in TypeScript",
