@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import type { Declarable } from "@intentius/chant";
 import { resolveAttrRefs } from "@intentius/chant/discovery/resolve";
-import { renderSerializer } from "./serializer";
+import { serializeRender } from "./serializer";
 import { describeResources } from "./describe-resources";
 import { FakeRender } from "./op/activities/fake-render";
 import { renderApply } from "./op/activities/render-apply";
@@ -16,7 +16,7 @@ function stack(...entries: Array<[string, unknown]>): Map<string, Declarable> {
 
 function build(entities: Map<string, Declarable>): { buildOutput: string; entities: Map<string, { entityType: string; props: Record<string, unknown> }> } {
   resolveAttrRefs(entities);
-  const buildOutput = renderSerializer.serialize(entities);
+  const buildOutput = serializeRender(entities);
   const meta = new Map<string, { entityType: string; props: Record<string, unknown> }>();
   for (const [name, e] of entities) {
     meta.set(name, { entityType: (e as unknown as { entityType: string }).entityType, props: (e as unknown as { props: Record<string, unknown> }).props ?? {} });

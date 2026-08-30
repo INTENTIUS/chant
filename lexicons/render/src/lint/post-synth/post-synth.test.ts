@@ -65,7 +65,7 @@ describe("render post-synth checks", () => {
             new WebService({
               name: "web",
               repo: REPO,
-              serviceDetails: { runtime: "python", envSpecificDetails: { buildCommand: "pip install -r requirements.txt", startCommand: "gunicorn app:app" } } as unknown as WebServiceDetails,
+              serviceDetails: { runtime: "python", envSpecificDetails: { buildCommand: "pip install -r requirements.txt", startCommand: "gunicorn app:app" } } as unknown as InstanceType<typeof WebServiceDetails>,
             }),
           ]),
         ),

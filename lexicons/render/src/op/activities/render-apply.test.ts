@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Declarable } from "@intentius/chant";
 import { resolveAttrRefs } from "@intentius/chant/discovery/resolve";
-import { renderSerializer } from "../../serializer";
+import { serializeRender } from "../../serializer";
 import { CATALOG, ENTITY_TYPES } from "../../catalog";
 import {
   WebService,
@@ -46,7 +46,7 @@ function planFile(entities: Map<string, Declarable>, ownership?: { stack: string
   resolveAttrRefs(entities);
   const dir = mkdtempSync(join(tmpdir(), "render-plan-"));
   const path = join(dir, "render.json");
-  writeFileSync(path, renderSerializer.serialize(entities, undefined, ownership ? { ownership } : undefined));
+  writeFileSync(path, serializeRender(entities, undefined, ownership ? { ownership } : undefined));
   return path;
 }
 
@@ -86,7 +86,7 @@ describe("render-apply pure helpers", () => {
     });
     const entities = stack(["web", w], ["disk", new Disk({ name: "d", sizeGB: 1, mountPath: "/d", serviceId: w })], ["db", db], ["env", env], ["project", project]);
     resolveAttrRefs(entities);
-    const plan = JSON.parse(renderSerializer.serialize(entities));
+    const plan = JSON.parse(serializeRender(entities));
     expect(orderPlan(plan).map(([n]) => n)).toEqual(["project", "env", "db", "web", "disk"]);
   });
 
@@ -122,7 +122,7 @@ describe("render-apply pure helpers", () => {
     expect(inStack({ stack: "a" }, { stack: "b" })).toBe(false);
     expect(inStack({ stack: "a", env: "prod" }, { stack: "a", env: "dev" })).toBe(false);
     expect(inStack(undefined, { stack: "a" })).toBe(false);
-    const plan = JSON.parse(renderSerializer.serialize(stack(["web", web()]), undefined, { ownership: { stack: "shop", env: "prod" } }));
+    const plan = JSON.parse(serializeRender(stack(["web", web()]), undefined, { ownership: { stack: "shop", env: "prod" } }));
     expect(planOwnership(plan)).toEqual({ stack: "shop", env: "prod" });
   });
 

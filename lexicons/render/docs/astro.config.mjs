@@ -21,20 +21,25 @@ export default defineConfig({
                   "slug": "index"
             },
             {
-                  "label": "Resource Reference",
-                  "slug": "resources"
-            },
-            {
-                  "label": "Pseudo-parameters",
-                  "slug": "pseudo-params"
-            },
-            {
-                  "label": "All Rules",
-                  "slug": "rules"
-            },
-            {
-                  "label": "Serialization",
-                  "slug": "serialization"
+                  "label": "Reference",
+                  "items": [
+                        {
+                              "label": "All Rules",
+                              "slug": "rules"
+                        },
+                        {
+                              "label": "Serialization",
+                              "slug": "serialization"
+                        },
+                        {
+                              "label": "Pseudo-parameters",
+                              "slug": "pseudo-params"
+                        },
+                        {
+                              "label": "Resource Reference",
+                              "slug": "resources"
+                        }
+                  ]
             }
       ],
     }),

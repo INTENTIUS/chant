@@ -188,91 +188,99 @@ export function stampOwnership(envVars: unknown, marker: Record<string, string>)
 }
 
 /**
+ * Serialize a render partition into the plan document `renderApply` consumes.
+ *
+ * Split out of the `Serializer` object so callers that need the concrete
+ * document — the applier, its tests, the `describeResources` fixtures — get
+ * `string` rather than the interface's `string | SerializerResult` union.
+ */
+export function serializeRender(
+  entities: Map<string, Declarable>,
+  _outputs?: LexiconOutput[],
+  context?: SerializeContext,
+): string {
+  const entityNames = new Map<Declarable, string>();
+  for (const [name, entity] of entities) entityNames.set(entity, name);
+  const visitor = renderVisitor();
+
+  // Ownership marker. `CHANT_MANAGED_BY=chant` is always stamped; stack/env
+  // are added when the build threads an ownership marker through the context.
+  const ownershipEnv: Record<string, string> = context?.ownership
+    ? ownershipEntries(RENDER_ENV_OWNERSHIP_KEYS, context.ownership)
+    : { [RENDER_ENV_OWNERSHIP_KEYS.managedBy]: OWNERSHIP_MANAGED_BY_VALUE };
+
+  const requests: RenderPlan = {};
+
+  for (const [entityName, entity] of entities) {
+    if (isPropertyDeclarable(entity)) continue;
+    const entityType = (entity as unknown as { entityType?: string }).entityType;
+    if (!entityType || !(entityType in CATALOG)) continue;
+    const entry = catalogEntry(entityType);
+    const props = readProps(entity);
+
+    // Body: every prop except association hints, walked so nested property
+    // declarables flatten and references become markers.
+    const body: Record<string, unknown> = {};
+    const pathParams: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(props)) {
+      if (value === undefined) continue;
+      const walked = walkValue(value, entityNames, visitor);
+      if (entry.nonBodyProps.includes(key)) {
+        pathParams[key] = walked;
+      } else {
+        body[key] = walked;
+      }
+    }
+
+    // Services: re-inject the fixed `type` discriminator the authoring
+    // surface hides, and stamp the marker.
+    if (isServiceEntityType(entityType)) {
+      body.type = SERVICE_TYPE_OF[entityType];
+    }
+    if (entry.marked) {
+      body.envVars = stampOwnership(body.envVars, ownershipEnv);
+    }
+
+    // Owner: fill from the pseudo-parameter when omitted; the walked value
+    // of `Render.OwnerId` is a `{ Ref }` resolved below with the rest.
+    if (entry.ownerScoped && body.ownerId === undefined) {
+      body.ownerId = { Ref: "Render::OwnerId" };
+    }
+    // `image.ownerId` must match the service's; default it the same way.
+    if (isServiceEntityType(entityType) && body.image && typeof body.image === "object") {
+      const image = body.image as Record<string, unknown>;
+      if (image.ownerId === undefined) image.ownerId = body.ownerId;
+    }
+
+    // Child collections: fill the endpoint placeholder from pathParams when
+    // the value is a literal id; a `{ $ref }` stays for the applier.
+    let endpoint = entry.collection;
+    for (const [key, value] of Object.entries(pathParams)) {
+      if (typeof value === "string") endpoint = endpoint.replace(`{${key}}`, encodeURIComponent(value));
+    }
+
+    const request: RenderRequest = {
+      kind: entry.kind,
+      entityType,
+      endpoint,
+      method: "POST",
+      name: resourceName(props, entityName),
+      body,
+    };
+    if (Object.keys(pathParams).length > 0) request.pathParams = pathParams;
+    requests[entityName] = request;
+  }
+
+  // Resolve pseudo-parameter markers (Render.OwnerId, Render.Region) to their
+  // environment value so bodies carry plain strings, not `{ Ref }`.
+  return JSON.stringify(resolvePseudoParameters(requests), null, 2);
+}
+
+/**
  * Render serializer.
  */
 export const renderSerializer: Serializer = {
   name: "render",
   rulePrefix: "REN",
-
-  serialize(
-    entities: Map<string, Declarable>,
-    _outputs?: LexiconOutput[],
-    context?: SerializeContext,
-  ): string {
-    const entityNames = new Map<Declarable, string>();
-    for (const [name, entity] of entities) entityNames.set(entity, name);
-    const visitor = renderVisitor();
-
-    // Ownership marker. `CHANT_MANAGED_BY=chant` is always stamped; stack/env
-    // are added when the build threads an ownership marker through the context.
-    const ownershipEnv: Record<string, string> = context?.ownership
-      ? ownershipEntries(RENDER_ENV_OWNERSHIP_KEYS, context.ownership)
-      : { [RENDER_ENV_OWNERSHIP_KEYS.managedBy]: OWNERSHIP_MANAGED_BY_VALUE };
-
-    const requests: RenderPlan = {};
-
-    for (const [entityName, entity] of entities) {
-      if (isPropertyDeclarable(entity)) continue;
-      const entityType = (entity as unknown as { entityType?: string }).entityType;
-      if (!entityType || !(entityType in CATALOG)) continue;
-      const entry = catalogEntry(entityType);
-      const props = readProps(entity);
-
-      // Body: every prop except association hints, walked so nested property
-      // declarables flatten and references become markers.
-      const body: Record<string, unknown> = {};
-      const pathParams: Record<string, unknown> = {};
-      for (const [key, value] of Object.entries(props)) {
-        if (value === undefined) continue;
-        const walked = walkValue(value, entityNames, visitor);
-        if (entry.nonBodyProps.includes(key)) {
-          pathParams[key] = walked;
-        } else {
-          body[key] = walked;
-        }
-      }
-
-      // Services: re-inject the fixed `type` discriminator the authoring
-      // surface hides, and stamp the marker.
-      if (isServiceEntityType(entityType)) {
-        body.type = SERVICE_TYPE_OF[entityType];
-      }
-      if (entry.marked) {
-        body.envVars = stampOwnership(body.envVars, ownershipEnv);
-      }
-
-      // Owner: fill from the pseudo-parameter when omitted; the walked value
-      // of `Render.OwnerId` is a `{ Ref }` resolved below with the rest.
-      if (entry.ownerScoped && body.ownerId === undefined) {
-        body.ownerId = { Ref: "Render::OwnerId" };
-      }
-      // `image.ownerId` must match the service's; default it the same way.
-      if (isServiceEntityType(entityType) && body.image && typeof body.image === "object") {
-        const image = body.image as Record<string, unknown>;
-        if (image.ownerId === undefined) image.ownerId = body.ownerId;
-      }
-
-      // Child collections: fill the endpoint placeholder from pathParams when
-      // the value is a literal id; a `{ $ref }` stays for the applier.
-      let endpoint = entry.collection;
-      for (const [key, value] of Object.entries(pathParams)) {
-        if (typeof value === "string") endpoint = endpoint.replace(`{${key}}`, encodeURIComponent(value));
-      }
-
-      const request: RenderRequest = {
-        kind: entry.kind,
-        entityType,
-        endpoint,
-        method: "POST",
-        name: resourceName(props, entityName),
-        body,
-      };
-      if (Object.keys(pathParams).length > 0) request.pathParams = pathParams;
-      requests[entityName] = request;
-    }
-
-    // Resolve pseudo-parameter markers (Render.OwnerId, Render.Region) to their
-    // environment value so bodies carry plain strings, not `{ Ref }`.
-    return JSON.stringify(resolvePseudoParameters(requests), null, 2);
-  },
+  serialize: serializeRender,
 };

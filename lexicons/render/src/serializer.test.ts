@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import type { Declarable } from "@intentius/chant";
 import { resolveAttrRefs } from "@intentius/chant/discovery/resolve";
-import { renderSerializer, stampOwnership } from "./serializer";
+import { renderSerializer, serializeRender, stampOwnership } from "./serializer";
 import {
   WebService,
   WebServiceDetails,
@@ -29,11 +29,11 @@ function stack(...entries: Array<[string, unknown]>): Map<string, Declarable> {
   return new Map(entries as Array<[string, Declarable]>);
 }
 
-const parse = (entities: Map<string, Declarable>, ctx?: Parameters<typeof renderSerializer.serialize>[2]) => {
+const parse = (entities: Map<string, Declarable>, ctx?: Parameters<typeof serializeRender>[2]) => {
   // The build pipeline assigns each entity's logical name before serializing;
   // do the same so attribute reads (`db.internalConnectionString`) resolve.
   resolveAttrRefs(entities);
-  return JSON.parse(renderSerializer.serialize(entities, undefined, ctx));
+  return JSON.parse(serializeRender(entities, undefined, ctx));
 };
 
 describe("render serializer", () => {
@@ -43,7 +43,7 @@ describe("render serializer", () => {
   });
 
   it("serializes an empty map to valid JSON", () => {
-    expect(JSON.parse(renderSerializer.serialize(new Map()))).toEqual({});
+    expect(JSON.parse(serializeRender(new Map()))).toEqual({});
   });
 
   it("has the correct name and rule prefix", () => {
