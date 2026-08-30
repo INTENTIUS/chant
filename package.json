@@ -30,6 +30,7 @@
     "@intentius/chant-lexicon-k3d": "workspace:*",
     "@intentius/chant-lexicon-k3s": "workspace:*",
     "@intentius/chant-lexicon-k8s": "*",
+    "@intentius/chant-lexicon-render": "workspace:*",
     "@intentius/chant-lexicon-temporal": "*"
   },
   "devDependencies": {

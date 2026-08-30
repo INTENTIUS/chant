@@ -1,0 +1,63 @@
+---
+title: "Render"
+description: "Typed constructors for Render services, datastores, and env groups, serialized to Public API create bodies"
+---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-render` — DO NOT EDIT.
+    Edit lexicons/render/src/codegen/docs.ts instead; changes here are overwritten. */}
+
+The **Render** lexicon defines Render services, datastores, env groups, projects, and environments using chant's declarative TypeScript syntax. Resources are serialized to the JSON create bodies the [Render Public API](https://api-docs.render.com/) accepts, so the applier can POST them straight through — no Blueprint, no CLI, no state file.
+
+This lexicon is generated from Render's published [OpenAPI spec](https://api-docs.render.com/v1.0/openapi/render-public-api-1.json).
+
+Install it with:
+
+```bash
+npm install --save-dev @intentius/chant-lexicon-render
+```
+
+## Quick Start
+
+```typescript
+import {
+  WebService, WebServiceDetails, NativeEnvironmentDetails, EnvVar, GeneratedEnvVar, Postgres, Render,
+} from "@intentius/chant-lexicon-render";
+
+const db = new Postgres({ name: "app-db", plan: "free", version: "16", region: Render.Region });
+
+const web = new WebService({
+  name: "app-web",
+  repo: "https://github.com/render-examples/express-hello-world",
+  serviceDetails: new WebServiceDetails({
+    runtime: "node",
+    plan: "starter",
+    region: Render.Region,
+    envSpecificDetails: new NativeEnvironmentDetails({ buildCommand: "npm ci", startCommand: "npm start" }),
+  }),
+  envVars: [
+    new EnvVar({ key: "DATABASE_URL", value: db.internalConnectionString }),
+    new GeneratedEnvVar({ key: "SESSION_SECRET", generateValue: true }),
+  ],
+});
+
+export { db, web };
+```
+
+`Render.OwnerId` and `Render.Region` are pseudo-parameters resolved from the environment at build time (`RENDER_OWNER_ID`, `RENDER_REGION`). Every `ownerId` chant fills in defaults to `Render.OwnerId`, so a stack rarely names it. `db.internalConnectionString` is an attribute read the applier resolves from the live database.
+
+## At a Glance
+
+| Metric | Count |
+|--------|-------|
+| Resources | 14 |
+| Property types | 23 |
+| Services | 4 |
+| Intrinsic functions | 0 |
+| Pseudo-parameters | 0 |
+| Lint rules | 6 |
+
+**Lexicon version:** 0.52.1  
+**Namespace:** `Render`
+
+- [All Rules](./rules) — 6 rules
+- [Serialization](./serialization) — output format details

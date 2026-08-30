@@ -1,0 +1,34 @@
+---
+title: "Resource Reference"
+description: "The render resource types, how each is created and reconciled, and their API documentation links"
+diataxis: reference
+---
+
+The render lexicon ships 14 top-level resources. Each maps to a Public API create body; follow the reference link for the underlying API shape.
+
+| Resource | Type | Group | Create | Reconciled by | Marker | API reference |
+|----------|------|-------|--------|---------------|--------|---------------|
+| `WebService` | `Render::Services::WebService` | Services | `POST /services` | name | yes | [reference](https://api-docs.render.com/reference/create-service) |
+| `StaticSite` | `Render::Services::StaticSite` | Services | `POST /services` | name | yes | [reference](https://api-docs.render.com/reference/create-service) |
+| `PrivateService` | `Render::Services::PrivateService` | Services | `POST /services` | name | yes | [reference](https://api-docs.render.com/reference/create-service) |
+| `BackgroundWorker` | `Render::Services::BackgroundWorker` | Services | `POST /services` | name | yes | [reference](https://api-docs.render.com/reference/create-service) |
+| `CronJob` | `Render::Services::CronJob` | Services | `POST /services` | name | yes | [reference](https://api-docs.render.com/reference/create-service) |
+| `Postgres` | `Render::Datastores::Postgres` | Datastores | `POST /postgres` | name | — | [reference](https://api-docs.render.com/reference/create-postgres) |
+| `KeyValue` | `Render::Datastores::KeyValue` | Datastores | `POST /key-value` | name | — | [reference](https://api-docs.render.com/reference/create-key-value) |
+| `EnvGroup` | `Render::Config::EnvGroup` | Config | `POST /env-groups` | name | yes | [reference](https://api-docs.render.com/reference/create-env-group) |
+| `Project` | `Render::Projects::Project` | Projects | `POST /projects` | name | — | [reference](https://api-docs.render.com/reference/create-project) |
+| `Environment` | `Render::Projects::Environment` | Projects | `POST /environments` | name + project | — | [reference](https://api-docs.render.com/reference/create-environment) |
+| `Disk` | `Render::Services::Disk` | Services | `POST /disks` | name + service | via service | [reference](https://api-docs.render.com/reference/add-disk) |
+| `CustomDomain` | `Render::Services::CustomDomain` | Services | `POST /services/{serviceId}/custom-domains` | name | via service | [reference](https://api-docs.render.com/reference/create-custom-domain) |
+| `RegistryCredential` | `Render::Config::RegistryCredential` | Config | `POST /registrycredentials` | name | — | [reference](https://api-docs.render.com/reference/create-registry-credential) |
+| `Webhook` | `Render::Config::Webhook` | Config | `POST /webhooks` | name | — | [reference](https://api-docs.render.com/reference/create-webhook) |
+
+Property types such as `WebServiceDetails`, `StaticSiteDetails`, `CronJobDetails`, `NativeEnvironmentDetails`, `DockerDetails`, `Image`, `ServiceDisk`, `Route`, `Header`, `ReadReplica`, and `CidrBlockAndDescription` are authored inline on a resource and are documented alongside the resources they belong to.
+
+## Cross-resource references
+
+Render assigns ids on create, so id-valued fields accept the declared resource in place of a string: `Disk.serviceId`, `CustomDomain.serviceId`, `Environment.projectId`, `*.environmentId`, `EnvGroup.serviceIds`, `Image.registryCredentialId`. Attribute reads on datastores (`internalConnectionString`, `externalConnectionString`, `psqlCommand` / `cliCommand`) resolve from the live `/connection-info` endpoint; `id`, `dashboardUrl`, and the other response fields resolve from the live resource.
+
+## Ownership
+
+Services and env groups carry chant's marker in their env vars. Disks and custom domains have no marker but hang off a service and inherit its verdict (the service boundary), so an undeclared disk or domain under a chant-owned service is pruned too. Datastores, projects, environments, registry credentials, and webhooks have no marker channel and no boundary: their ownership verdict is `unknown`, and they are removed only by an explicit `renderDelete` of a plan that names them.

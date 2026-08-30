@@ -1,0 +1,47 @@
+// @ts-check
+import { defineConfig } from 'astro/config';
+import starlight from '@astrojs/starlight';
+import rehypeBaseUrl from './src/rehype-base-url.mjs';
+
+export default defineConfig({
+  base: '/chant/lexicons/render/',
+  markdown: {
+    rehypePlugins: [[rehypeBaseUrl, { base: '/chant/lexicons/render/', projectBase: '/chant' }]],
+  },
+  integrations: [
+    starlight({
+      title: 'Render',
+      sidebar: [
+            {
+                  "label": "← chant docs",
+                  "link": "../../"
+            },
+            {
+                  "label": "Overview",
+                  "slug": "index"
+            },
+            {
+                  "label": "Reference",
+                  "items": [
+                        {
+                              "label": "All Rules",
+                              "slug": "rules"
+                        },
+                        {
+                              "label": "Serialization",
+                              "slug": "serialization"
+                        },
+                        {
+                              "label": "Pseudo-parameters",
+                              "slug": "pseudo-params"
+                        },
+                        {
+                              "label": "Resource Reference",
+                              "slug": "resources"
+                        }
+                  ]
+            }
+      ],
+    }),
+  ],
+});
