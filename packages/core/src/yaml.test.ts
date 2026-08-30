@@ -484,3 +484,57 @@ describe("parseYAML — sibling keys after a nested block in a sequence item (#1
     });
   });
 });
+
+// #2013 — a colon opens a mapping only when whitespace or the end of the line
+// follows it (YAML 1.2 §7.4.2). The item/key disambiguation used to accept a
+// colon anywhere, which turned a bare URL in a sequence into a single-key
+// object and made the CRD-schema check reject a string list the emitter here
+// had written itself.
+describe("parseYAML — a colon without following space is not a mapping (#2013)", () => {
+  test("a bare URL in a sequence is a string", () => {
+    expect(parseYAML("sourceRepos:\n- https://github.com/INTENTIUS/behold\n")).toEqual({
+      sourceRepos: ["https://github.com/INTENTIUS/behold"],
+    });
+  });
+
+  test("an AppProject's sourceRepos round-trips through emit and parse", () => {
+    const repos = ["https://github.com/INTENTIUS/behold", "ssh://git@github.com:22/INTENTIUS/behold.git"];
+    expect(parseYAML(`spec:${emitYAML({ sourceRepos: repos }, 1)}\n`)).toEqual({ spec: { sourceRepos: repos } });
+  });
+
+  test("a real `- key: value` item is still a mapping", () => {
+    expect(parseYAML("items:\n- name: x\n  url: https://example.com/a\n")).toEqual({
+      items: [{ name: "x", url: "https://example.com/a" }],
+    });
+  });
+
+  test("a mapping item whose first value is a URL keeps its siblings", () => {
+    expect(parseYAML("sources:\n- repoURL: https://github.com/o/r\n  path: ./chart\n")).toEqual({
+      sources: [{ repoURL: "https://github.com/o/r", path: "./chart" }],
+    });
+  });
+
+  test("a quoted URL in a sequence still works", () => {
+    expect(parseYAML("sourceRepos:\n- 'https://github.com/o/r'\n- \"https://github.com/o/s\"\n")).toEqual({
+      sourceRepos: ["https://github.com/o/r", "https://github.com/o/s"],
+    });
+  });
+
+  test("`- key:value` with no space after the colon is a scalar, per the spec", () => {
+    expect(parseYAML("items:\n- key:value\n")).toEqual({ items: ["key:value"] });
+  });
+
+  test("`- key:` with nothing after the colon is still a mapping with a null value", () => {
+    expect(parseYAML("items:\n- key:\n")).toEqual({ items: [{ key: null }] });
+  });
+
+  test("a URL on a mapping line, not a sequence item, is unaffected", () => {
+    expect(parseYAML("url: https://example.com/a\n")).toEqual({ url: "https://example.com/a" });
+  });
+
+  test("a bare URL among mapping-shaped siblings inside one item", () => {
+    expect(parseYAML("items:\n- name: x\n  args:\n  - --endpoint\n  - https://example.com/a\n  image: nginx\n")).toEqual({
+      items: [{ name: "x", args: ["--endpoint", "https://example.com/a"], image: "nginx" }],
+    });
+  });
+});

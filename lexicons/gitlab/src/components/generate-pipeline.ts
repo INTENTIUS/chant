@@ -126,7 +126,12 @@ export function generateGitlabPipeline(
   });
 
   const sections: string[] = [];
-  sections.push("stages:" + emitYAML(stages, 1));
+  // `emitYAML` returns a `\n`-led block for a non-empty sequence and an inline
+  // `[]` for an empty one, so the header needs a space in the second case.
+  // `stages:[]` is the plain scalar "stages:[]" — a colon opens a mapping only
+  // when whitespace or the line's end follows it — which is how GitLab's own
+  // reader takes it, and now how `parseYAML` does too (chant #2013).
+  sections.push(stages.length > 0 ? "stages:" + emitYAML(stages, 1) : "stages: []");
   if (doc.variables) sections.push("variables:" + emitYAML(doc.variables, 1));
   for (const job of jobs) {
     const props = doc[job.jobName] as Record<string, unknown>;

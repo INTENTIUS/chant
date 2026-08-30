@@ -156,6 +156,27 @@ export interface ParseResult {
 }
 
 /**
+ * `key: value` on a line of its own (`KEY_LINE`, capturing the indent) and the
+ * same after a sequence item's `- ` (`ITEM_KEY`).
+ *
+ * The lookahead is the rule both patterns used to miss: a `:` opens a mapping
+ * only when what follows it is whitespace or the end of the line, and a plain
+ * scalar may carry any other colon (YAML 1.2 §7.4.2). Written as `:\s*`, which
+ * matches zero whitespace, EVERY colon opened one — so a bare URL in a
+ * sequence,
+ *
+ *     sourceRepos:
+ *     - https://github.com/INTENTIUS/behold
+ *
+ * came back as `{ https: "//github.com/INTENTIUS/behold" }`, and the CRD-schema
+ * post-synth check (#1372) re-reading emitted YAML reported the string list
+ * this file's own emitter had just written as a list of objects (#2013). By the
+ * same rule `- key:value` is the scalar `"key:value"`, not a mapping.
+ */
+const KEY_LINE = /^(\s*)([^\s:][^:]*?):(?=\s|$)\s*(.*)$/;
+const ITEM_KEY = /^([^\s:][^:]*?):(?=\s|$)\s*(.*)$/;
+
+/**
  * Parse a YAML document (or JSON document) into a plain object.
  *
  * Tries `JSON.parse` first; falls back to a line-based YAML parser that
@@ -274,7 +295,7 @@ export function parseYAMLLines(
     if (indent < baseIndent) break; // Dedented — done with this block
     if (indent > baseIndent && startIndex > 0) break; // Unexpected indent
 
-    const keyMatch = line.match(/^(\s*)([^\s:][^:]*?):\s*(.*)$/);
+    const keyMatch = line.match(KEY_LINE);
     if (keyMatch) {
       const key = keyMatch[2].trim();
       const inlineValue = keyMatch[3].trim();
@@ -472,7 +493,7 @@ export function parseYAMLArray(
       const isQuotedScalar =
         (itemValue.startsWith('"') && itemValue.endsWith('"')) ||
         (itemValue.startsWith("'") && itemValue.endsWith("'"));
-      const kvMatch = !isQuotedScalar && itemValue.match(/^([^\s:][^:]*?):\s*(.*)$/);
+      const kvMatch = !isQuotedScalar && itemValue.match(ITEM_KEY);
       if (kvMatch) {
         const obj: Record<string, unknown> = {};
         obj[kvMatch[1].trim()] = parseArrayItemValue(kvMatch[2].trim(), lines, i, indent + 2);
@@ -506,7 +527,7 @@ export function parseYAMLArray(
           const ni = nextLine.search(/\S/);
           if (ni < nextIndent) break;
           if (ni > nextIndent) break; // belongs to a nested block already consumed
-          const nextKV = nextLine.match(/^(\s*)([^\s:][^:]*?):\s*(.*)$/);
+          const nextKV = nextLine.match(KEY_LINE);
           if (nextKV) {
             const nextVal = nextKV[3].trim();
             obj[nextKV[2].trim()] = parseArrayItemValue(nextVal, lines, j, ni);
