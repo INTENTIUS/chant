@@ -364,6 +364,54 @@ export async function describeStackOutputs(
   return (await describeStackDetail(stackName, options)).outputs;
 }
 
+/* ── STS ──────────────────────────────────────────────────────────────────── */
+
+const STS_API_VERSION = "2011-06-15";
+
+/** What `sts:GetCallerIdentity` answers with. No credential is in the response. */
+export interface CallerIdentity {
+  /** The principal's ARN — an IAM user, or an assumed-role session. */
+  arn: string;
+  /** The 12-digit account the credentials belong to. */
+  account: string;
+}
+
+/**
+ * `sts:GetCallerIdentity` — who these credentials are, per the service itself
+ * (#1982). Query protocol like CloudFormation, so it rides the same transport,
+ * the same endpoint-override rule and the same signing decision as every other
+ * read, which is what keeps `chant lifecycle whoami` and `describeResources`
+ * from resolving different targets.
+ *
+ * The response carries an ARN, an account and a `UserId`. Only the first two
+ * are returned: `UserId` adds nothing a principal ARN does not already say,
+ * and the narrower the surface, the fewer ways a credential reaches a report.
+ */
+export async function getCallerIdentity(options: AwsReadClientOptions = {}): Promise<CallerIdentity> {
+  options = withEndpointOverride("sts", options);
+  const http = options.http ?? defaultHttp;
+  const url = serviceUrl("sts", options.endpoint, options.region);
+  const body = new URLSearchParams({ Action: "GetCallerIdentity", Version: STS_API_VERSION }).toString();
+  const res = await http(
+    url,
+    {
+      headers: requestHeaders("sts", url, body, { "content-type": "application/x-www-form-urlencoded" }, options),
+      body,
+    },
+    options.signal,
+  );
+  const err = xmlError(res.text);
+  if (err || res.status >= 400) {
+    throw new AwsReadError(
+      err?.message ?? `GetCallerIdentity failed with HTTP ${res.status}`,
+      res.status,
+      err?.code,
+    );
+  }
+  const leaves = xmlLeaves(res.text);
+  return { arn: leaves.Arn ?? "", account: leaves.Account ?? "" };
+}
+
 /* ── Cloud Control ────────────────────────────────────────────────────────── */
 
 /** One live resource, as Cloud Control describes it. */

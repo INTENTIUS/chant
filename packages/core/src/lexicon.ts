@@ -18,6 +18,7 @@ import type { RuleMeta } from "./audit/catalog";
 import type { ReferenceCatalog } from "./graph-refs";
 import type { IREdge } from "./graph-ir";
 import type { DescribeResourcesResult, UnobservedReason } from "./observation";
+import type { DescribeIdentityOptions, DescribeIdentityResult } from "./identity";
 import type { DeepNormalizationHooks, DeepObservationResult } from "./deep-observation";
 import type { DisruptionQuery, DisruptionVerdict } from "./lifecycle/disruption";
 import type { OwnerChainVerdict } from "./owner-chain";
@@ -45,6 +46,18 @@ export type {
   UnobservedEntity,
   UnobservedReason,
 } from "./observation";
+
+// The identity contract (#1982), re-exported from the same entry so a
+// lexicon's `describeIdentity` types itself without a second import path.
+// Runtime helpers live in `@intentius/chant/identity`.
+export type {
+  DescribeIdentityOptions,
+  DescribeIdentityResult,
+  ResolvedIdentity,
+  UnresolvedIdentity,
+  IdentityRow,
+  IdentityStatus,
+} from "./identity";
 
 // Disruption classification (#1665), re-exported from the same entry so a
 // lexicon's `classifyDisruption` types itself without a second import path.
@@ -1082,6 +1095,46 @@ export interface LexiconPlugin {
    * unit returns `{ present: false }`.
    */
   describeStackStatus?(options: { environment: string; stack: string }): Promise<StackStatusObservation | null>;
+
+  /**
+   * Report the principal chant would act as in this substrate, and the scope
+   * that principal resolves to (#1982) — what `chant lifecycle whoami <env>`
+   * prints, one row per lexicon, before anything acts.
+   *
+   * Every implementation of {@link describeResources} already resolves this
+   * and throws it away: the bind reaches the provider on the applier's own
+   * transport, the k8s connector resolves a context and knows which binding
+   * produced it, the aws read client resolves a region and an endpoint. The
+   * answer has only ever surfaced as a `no-credentials` hole or, when the
+   * binding was wrong rather than missing, as a clean read of the wrong
+   * account.
+   *
+   * Implement it with the substrate's own cheap self-query —
+   * `sts:GetCallerIdentity`, `SelfSubjectReview`, the token introspection the
+   * forge already exposes. Two rules bind the implementation:
+   *
+   * - **Read-only.** `whoami` is pre-flight and never a gate. The self-query
+   *   must be one the substrate treats as a read of the caller's own identity;
+   *   it creates nothing and changes nothing.
+   * - **No credential in the answer.** An identity is a principal and a scope,
+   *   never a token, key or password. Where a substrate's only identity signal
+   *   IS a secret, report that fact in `source` without the value. Core
+   *   redacts credential material from every field as a backstop, which is not
+   *   a reason to put one there.
+   *
+   * `endpoint` must be the address this lexicon's live read resolves for the
+   * same environment. A whoami that names a binding the read does not use is
+   * worse than no whoami, so a test pins the two together.
+   *
+   * Returning `{ unresolved: { reason, detail } }` is a real answer and the
+   * required one when the identity cannot be resolved — `no-credentials` for
+   * "nothing is configured", `no-binding` for "this environment resolves to no
+   * target", `read-failed` for a self-query that errored. A throw degrades to
+   * `read-failed` for this lexicon alone and never fails the command. Omitting
+   * the method entirely reports `not reported`, which is honest; it is never
+   * rendered as an empty identity.
+   */
+  describeIdentity?(options: DescribeIdentityOptions): Promise<DescribeIdentityResult>;
 
   /**
    * Enumerate the resources this lexicon would delete for one marker identity

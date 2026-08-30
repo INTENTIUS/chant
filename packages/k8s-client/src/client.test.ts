@@ -637,3 +637,70 @@ describe("apply", () => {
     expect(layer.requests).toHaveLength(0);
   });
 });
+
+describe("selfSubjectReview — who the API server says this client is (#1982)", () => {
+  const REVIEW_V1 = "/apis/authentication.k8s.io/v1/selfsubjectreviews";
+  const REVIEW_V1BETA1 = "/apis/authentication.k8s.io/v1beta1/selfsubjectreviews";
+
+  function reviewBody(username: string, groups: string[] = []): Record<string, unknown> {
+    return {
+      apiVersion: "authentication.k8s.io/v1",
+      kind: "SelfSubjectReview",
+      status: { userInfo: { username, uid: "uid-1", groups } },
+    };
+  }
+
+  test("returns the subject the server authenticated, over a POST that creates nothing", async () => {
+    const layer = cluster({}, (req) =>
+      req.path === REVIEW_V1 ? { body: reviewBody("system:serviceaccount:chant:deployer", ["system:authenticated"]) } : undefined,
+    );
+    const c = await client(layer);
+    await expect(c.selfSubjectReview()).resolves.toEqual({
+      username: "system:serviceaccount:chant:deployer",
+      uid: "uid-1",
+      groups: ["system:authenticated"],
+    });
+    const sent = layer.requests.find((r) => r.path === REVIEW_V1)!;
+    expect(sent.method).toBe("POST");
+    expect(JSON.parse(sent.body as string)).toMatchObject({ kind: "SelfSubjectReview" });
+    // The review resource carries no name and no namespace: there is nothing
+    // for the server to persist, which is what makes it safe pre-flight.
+    expect(JSON.stringify(sent.body)).not.toContain("metadata");
+  });
+
+  test("falls back through the older API versions when v1 is not served", async () => {
+    const layer = cluster({}, (req) =>
+      req.path === REVIEW_V1BETA1 ? { body: reviewBody("kubernetes-admin") } : undefined,
+    );
+    const c = await client(layer);
+    await expect(c.selfSubjectReview()).resolves.toMatchObject({ username: "kubernetes-admin" });
+    expect(layer.paths()).toContain(REVIEW_V1);
+    expect(layer.paths()).toContain(REVIEW_V1BETA1);
+  });
+
+  test("a cluster serving no version at all answers undefined, not an error", async () => {
+    const c = await client(cluster());
+    await expect(c.selfSubjectReview()).resolves.toBeUndefined();
+  });
+
+  test("a refusal propagates rather than degrading to 'no such API'", async () => {
+    const layer = cluster({}, (req) =>
+      req.path === REVIEW_V1
+        ? { status: 403, body: statusBody(403, "Forbidden", "selfsubjectreviews is forbidden") }
+        : undefined,
+    );
+    const c = await client(layer);
+    await expect(c.selfSubjectReview()).rejects.toBeInstanceOf(K8sApiError);
+  });
+
+  test("no credential is echoed back, and the answer carries only the subject", async () => {
+    const layer = cluster({}, (req) => (req.path === REVIEW_V1 ? { body: reviewBody("ci@acme.example") } : undefined));
+    const c = await createK8sClient({
+      kubeconfig: fakeKubeconfig({ token: "a-static-bearer-token-value" }),
+      requestLayer: layer,
+    });
+    const subject = await c.selfSubjectReview();
+    expect(JSON.stringify(subject)).not.toContain("a-static-bearer-token-value");
+    expect(c.provenance.credential).toBe("token");
+  });
+});

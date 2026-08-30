@@ -30,6 +30,7 @@ import {
   type NormalizedObservation,
   type UnobservedEntity,
 } from "../../observation";
+import { describeIdentities, identityStatusText, type IdentityRow } from "../../identity";
 import { discoverComponents } from "../../components/discover";
 import { cfnDeployStacks } from "./components";
 import { affectedStacks } from "../../lifecycle/affected";
@@ -1584,12 +1585,135 @@ export async function runLifecycleLog(ctx: CommandContext): Promise<number> {
 }
 
 /**
+ * The region core hands `describeIdentity` — the one the environment's stacks
+ * declare, when they declare exactly one (#1261's `stacks[].region`).
+ *
+ * Stacks that declare none, or that disagree, resolve to `undefined`, and the
+ * lexicon then resolves the region its own read path would. Guessing one of
+ * several would report a binding half the estate does not use, which is the
+ * failure this command exists to prevent.
+ */
+function singleDeclaredRegion(targets: readonly StackTarget[]): string | undefined {
+  const regions = new Set(targets.map((t) => t.region).filter((r): r is string => Boolean(r)));
+  return regions.size === 1 ? [...regions][0] : undefined;
+}
+
+/**
+ * chant lifecycle whoami <environment> [lexicon] [--json] [--strict]
+ *
+ * Read-only pre-flight (#1982): who chant would act as in each configured
+ * lexicon, and what that principal is scoped to, before it acts. Never
+ * mutates, never gates — `--strict` is the only way this exits non-zero on an
+ * unresolved row, and a lexicon that answers for nothing is reported as such
+ * rather than as an empty identity.
+ */
+export async function runLifecycleWhoami(ctx: CommandContext): Promise<number> {
+  const { args, plugins } = ctx;
+  const environment = args.extraPositional;
+  const lexiconFilter = args.extraPositional2;
+
+  if (!environment) {
+    console.error(formatError({
+      message: "Environment is required: chant lifecycle whoami <environment> [lexicon] [--json] [--strict]",
+    }));
+    return 1;
+  }
+
+  const projectPath = resolve(".");
+  const { config } = await loadChantConfig(projectPath);
+  const declaredEnvNames = environmentNames(config.environments);
+  if (declaredEnvNames && !matchesDeclaredEnvironment(config.environments, environment)) {
+    console.error(formatError({
+      message: `Unknown environment "${environment}"`,
+      hint: `Defined environments: ${declaredEnvNames.join(", ")}`,
+    }));
+    return 1;
+  }
+
+  const targetPlugins = lexiconFilter ? plugins.filter((p) => p.name === lexiconFilter) : plugins;
+  if (targetPlugins.length === 0) {
+    console.error(formatError({
+      message: `Lexicon "${lexiconFilter}" is not configured for this project`,
+      hint: `Configured: ${plugins.map((p) => p.name).join(", ") || "(none)"}`,
+    }));
+    return 1;
+  }
+
+  // The environment's declared endpoint applies here exactly as it does to a
+  // `--live` read (#1166). Without it whoami would report the identity of real
+  // AWS while `describeResources` reads the emulator — the wrong-target answer
+  // this command exists to make visible.
+  const endpointResult = applyLiveEndpoint(config.environments, environment, targetPlugins);
+  if (endpointResult.notice) console.error(formatWarning({ message: endpointResult.notice }));
+
+  const region = singleDeclaredRegion(resolveStackTargets(args, config));
+  let rows: IdentityRow[];
+  try {
+    rows = await describeIdentities(targetPlugins, {
+      environment,
+      ...(region ? { region } : {}),
+      cwd: projectPath,
+    });
+  } finally {
+    endpointResult.restore();
+  }
+
+  if (args.json) {
+    console.log(JSON.stringify({ environment, identities: rows }, null, 2));
+  } else {
+    printIdentityTable(rows);
+  }
+
+  // Never a gate by default: an unresolved identity is a report, and a
+  // pre-flight command that fails the build has stopped being pre-flight.
+  const unresolved = rows.filter((r) => r.status === "unresolved");
+  if (args.strict && unresolved.length > 0) {
+    console.error(formatError({
+      message: `--strict: ${unresolved.length} lexicon(s) could not resolve an identity: ${unresolved.map((r) => r.lexicon).join(", ")}`,
+    }));
+    return 1;
+  }
+  return 0;
+}
+
+function printIdentityTable(rows: IdentityRow[]): void {
+  if (rows.length === 0) {
+    console.error(formatWarning({ message: "No lexicons are configured for this project" }));
+    return;
+  }
+  const width = (pick: (r: IdentityRow) => string): number =>
+    Math.max(...rows.map((r) => pick(r).length));
+  const lexWidth = Math.max(width((r) => r.lexicon), "LEXICON".length);
+  const idWidth = Math.max(width((r) => r.identity ?? identityStatusText(r)), "IDENTITY".length);
+  const scopeWidth = Math.max(width((r) => r.scope ?? ""), "SCOPE".length);
+
+  console.log(
+    "LEXICON".padEnd(lexWidth + 2) + "IDENTITY".padEnd(idWidth + 2) + "SCOPE".padEnd(scopeWidth + 2) + "SOURCE",
+  );
+  for (const row of rows) {
+    const identity = row.status === "reported" ? (row.identity ?? "") : identityStatusText(row);
+    console.log(
+      row.lexicon.padEnd(lexWidth + 2) +
+        identity.padEnd(idWidth + 2) +
+        (row.scope ?? "").padEnd(scopeWidth + 2) +
+        (row.source ?? ""),
+    );
+  }
+  // The resolved address and the reason's detail are both sentences, so they
+  // go under the table rather than widening a column every row pays for.
+  for (const row of rows) {
+    if (row.endpoint) console.error(`  ${row.lexicon}: resolved endpoint ${row.endpoint}`);
+    if (row.detail) console.error(`  ${row.lexicon}: ${row.detail}`);
+  }
+}
+
+/**
  * Fallback for unknown state subcommands.
  */
 export async function runLifecycleUnknown(ctx: CommandContext): Promise<number> {
   console.error(formatError({
     message: `Unknown state subcommand: ${ctx.args.extraPositional ?? ctx.args.path}`,
-    hint: "Available: chant lifecycle snapshot, chant lifecycle show, chant lifecycle diff, chant lifecycle plan, chant lifecycle teardown, chant lifecycle log",
+    hint: "Available: chant lifecycle snapshot, chant lifecycle show, chant lifecycle diff, chant lifecycle plan, chant lifecycle whoami, chant lifecycle teardown, chant lifecycle log",
   }));
   return 1;
 }

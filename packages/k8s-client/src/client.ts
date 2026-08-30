@@ -287,8 +287,37 @@ export interface K8sClient {
    * Cached for the client's lifetime, like the rest of discovery.
    */
   preferredGroupVersions(signal?: AbortSignal): Promise<string[]>;
+  /**
+   * Who the API server says this client authenticates as (chant #1982) —
+   * `SelfSubjectReview`, the call behind `kubectl auth whoami`. `undefined`
+   * when the cluster serves no version of the review API, which is an answer
+   * rather than a failure: an older cluster simply cannot be asked.
+   *
+   * Non-mutating despite the POST: the review is evaluated against the
+   * request's own credentials and never persisted, which is what lets a
+   * read-only pre-flight command use it.
+   */
+  selfSubjectReview(signal?: AbortSignal): Promise<SelfSubjectInfo | undefined>;
   /** The API resource lists discovery has been asked for so far, for tests and diagnostics. */
   discoveryCacheKeys(): string[];
+}
+
+/**
+ * The subject a `SelfSubjectReview` reports. A principal and its groups —
+ * never a token, and the API server never echoes one back.
+ */
+export interface SelfSubjectInfo {
+  /** `system:serviceaccount:<ns>:<name>`, an OIDC subject, a certificate CN. */
+  username: string;
+  uid?: string;
+  groups?: string[];
+}
+
+/** The versions of the review API to try, newest first. `v1` landed in 1.28. */
+const SELF_SUBJECT_REVIEW_VERSIONS = ["v1", "v1beta1", "v1alpha1"] as const;
+
+interface SelfSubjectReviewResponse {
+  status?: { userInfo?: { username?: string; uid?: string; groups?: string[] } };
 }
 
 interface ApiResourceListResponse {
@@ -750,6 +779,47 @@ export async function createK8sClient(options: K8sClientOptions = {}): Promise<K
     });
   }
 
+  /**
+   * `SelfSubjectReview` — what the API server says this client authenticates
+   * as (chant #1982). The `authentication.k8s.io` API is versioned, and the
+   * review moved from alpha through beta to `v1` in 1.28; each version is
+   * tried in turn and the first the cluster serves answers. A cluster serving
+   * none is `undefined` — an answer, not a failure.
+   *
+   * The endpoint is a POST because that is the shape of a non-persisting
+   * review resource: the server evaluates the request's own credentials and
+   * returns the result. It creates nothing, stores nothing and admits nothing,
+   * which is what makes it safe on a read-only pre-flight path. `kubectl auth
+   * whoami` is the same call.
+   */
+  async function selfSubjectReview(signal?: AbortSignal): Promise<SelfSubjectInfo | undefined> {
+    for (const version of SELF_SUBJECT_REVIEW_VERSIONS) {
+      const path = `/apis/authentication.k8s.io/${version}/selfsubjectreviews`;
+      let response: SelfSubjectReviewResponse;
+      try {
+        response = await sendJson<SelfSubjectReviewResponse>(path, "POST", {
+          body: JSON.stringify({ apiVersion: `authentication.k8s.io/${version}`, kind: "SelfSubjectReview" }),
+          signal,
+          target: `self subject review (${version})`,
+        });
+      } catch (err) {
+        // 404 is "this cluster does not serve that version" — try the next.
+        // Anything else (401, 403, a transport fault) is the caller's answer.
+        if (err instanceof K8sApiError && err.notFound) continue;
+        throw err;
+      }
+      const user = response.status?.userInfo;
+      if (user?.username) {
+        return {
+          username: user.username,
+          ...(user.uid ? { uid: user.uid } : {}),
+          ...(user.groups && user.groups.length > 0 ? { groups: user.groups } : {}),
+        };
+      }
+    }
+    return undefined;
+  }
+
   async function resourcesOf(apiVersion: string, signal?: AbortSignal): Promise<ApiResourceInfo[]> {
     const list = await apiResourceList(apiVersion, signal);
     if (!list) return [];
@@ -772,6 +842,7 @@ export async function createK8sClient(options: K8sClientOptions = {}): Promise<K
     concurrently: (items, fn) => mapConcurrent(items, fn, concurrency),
     resources: resourcesOf,
     preferredGroupVersions,
+    selfSubjectReview,
     discoveryCacheKeys: () => [...discoveryCache.keys()].sort(),
   };
 }

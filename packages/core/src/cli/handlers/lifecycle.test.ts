@@ -53,7 +53,7 @@ vi.mock("../../config", async () => {
   };
 });
 
-const { runLifecycleDiff, runLifecyclePlan, runLifecycleSnapshot, runLifecycleShow, runLifecycleLog, runLifecycleTeardown, runLifecycleUnknown } = await import("./lifecycle");
+const { runLifecycleDiff, runLifecyclePlan, runLifecycleSnapshot, runLifecycleShow, runLifecycleLog, runLifecycleTeardown, runLifecycleWhoami, runLifecycleUnknown } = await import("./lifecycle");
 
 function makeArgs(overrides: Partial<ParsedArgs>): ParsedArgs {
   return {
@@ -1671,5 +1671,191 @@ describe("runLifecycleTeardown (#1222 — plan only)", () => {
     expect(parsed.environment).toBe("dev");
     expect(parsed.stack).toBe("shop");
     expect(parsed.entries).toHaveLength(1);
+  });
+});
+
+describe("runLifecycleWhoami (#1982)", () => {
+  let stdoutBuf: string[];
+  let stderrBuf: string[];
+
+  beforeEach(() => {
+    stdoutBuf = [];
+    stderrBuf = [];
+    vi.spyOn(console, "log").mockImplementation((s: string) => { stdoutBuf.push(s); });
+    vi.spyOn(console, "error").mockImplementation((s: string) => { stderrBuf.push(s); });
+    loadChantConfigMock.mockReset();
+    loadChantConfigMock.mockResolvedValue({ config: { environments: ["prod"] } });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    delete process.env.AWS_ENDPOINT_URL;
+  });
+
+  function whoamiCtx(plugins: LexiconPlugin[], overrides: Partial<ParsedArgs> = {}) {
+    return {
+      args: makeArgs({ command: "lifecycle", path: "whoami", extraPositional: "prod", ...overrides }),
+      plugins,
+      serializers: plugins.map((p) => p.serializer),
+    };
+  }
+
+  const awsIdentity = createMockPlugin({
+    name: "aws",
+    describeIdentity: async () => ({
+      identity: "arn:aws:sts::491500000000:assumed-role/deploy/ci",
+      scope: "491500000000 us-east-1",
+      source: "env AWS_ACCESS_KEY_ID",
+      endpoint: "https://sts.us-east-1.amazonaws.com/",
+    }),
+  });
+
+  test("missing environment arg → exit 1", async () => {
+    const exit = await runLifecycleWhoami(whoamiCtx([], { extraPositional: undefined }));
+    expect(exit).toBe(1);
+    expect(stderrBuf.join("\n")).toContain("Environment is required");
+  });
+
+  test("environment not in config → exit 1", async () => {
+    const exit = await runLifecycleWhoami(whoamiCtx([], { extraPositional: "nope" }));
+    expect(exit).toBe(1);
+    expect(stderrBuf.join("\n")).toContain('Unknown environment "nope"');
+  });
+
+  test("one row per configured lexicon, and --json emits the same rows", async () => {
+    const plugins: LexiconPlugin[] = [
+      awsIdentity,
+      createMockPlugin({
+        name: "k8s",
+        describeIdentity: async () => ({ unresolved: { reason: "no-binding", detail: "no context" } }),
+      }),
+      createMockPlugin({ name: "github" }),
+    ];
+
+    expect(await runLifecycleWhoami(whoamiCtx(plugins))).toBe(0);
+    const table = stdoutBuf.join("\n");
+    expect(table).toContain("arn:aws:sts::491500000000:assumed-role/deploy/ci");
+    expect(table).toContain("k8s");
+    expect(table).toContain("github");
+
+    stdoutBuf.length = 0;
+    expect(await runLifecycleWhoami(whoamiCtx(plugins, { json: true }))).toBe(0);
+    const parsed = JSON.parse(stdoutBuf.join("\n")) as {
+      environment: string;
+      identities: Array<{ lexicon: string; status: string; identity?: string; reason?: string }>;
+    };
+    expect(parsed.environment).toBe("prod");
+    expect(parsed.identities.map((r) => [r.lexicon, r.status])).toEqual([
+      ["aws", "reported"],
+      ["k8s", "unresolved"],
+      ["github", "not-reported"],
+    ]);
+    expect(parsed.identities[1].reason).toBe("no-binding");
+  });
+
+  test("a lexicon that implements nothing reads as 'not reported', never an empty identity", async () => {
+    const exit = await runLifecycleWhoami(whoamiCtx([createMockPlugin({ name: "helm" })]));
+    expect(exit).toBe(0);
+    expect(stdoutBuf.join("\n")).toContain("not reported");
+  });
+
+  test("an unresolved identity exits 0 by default and nonzero only under --strict", async () => {
+    const plugins: LexiconPlugin[] = [
+      createMockPlugin({
+        name: "aws",
+        describeIdentity: async () => ({ unresolved: { reason: "no-credentials" } }),
+      }),
+    ];
+    expect(await runLifecycleWhoami(whoamiCtx(plugins))).toBe(0);
+    expect(await runLifecycleWhoami(whoamiCtx(plugins, { strict: true }))).toBe(1);
+  });
+
+  test("--strict does not fail on a lexicon that simply does not implement the capability", async () => {
+    const exit = await runLifecycleWhoami(whoamiCtx([createMockPlugin({ name: "github" })], { strict: true }));
+    expect(exit).toBe(0);
+  });
+
+  test("the positional lexicon filter narrows the report", async () => {
+    const plugins: LexiconPlugin[] = [awsIdentity, createMockPlugin({ name: "k8s" })];
+    expect(await runLifecycleWhoami(whoamiCtx(plugins, { extraPositional2: "aws", json: true }))).toBe(0);
+    const parsed = JSON.parse(stdoutBuf.join("\n")) as { identities: Array<{ lexicon: string }> };
+    expect(parsed.identities.map((r) => r.lexicon)).toEqual(["aws"]);
+  });
+
+  test("an unconfigured lexicon filter → exit 1", async () => {
+    const exit = await runLifecycleWhoami(whoamiCtx([awsIdentity], { extraPositional2: "gcp" }));
+    expect(exit).toBe(1);
+    expect(stderrBuf.join("\n")).toContain('Lexicon "gcp" is not configured');
+  });
+
+  test("the environment's declared endpoint is applied for the identity query, exactly as for a live read", async () => {
+    // #1166 parity: without this, whoami reports the identity of real AWS
+    // while `describeResources` reads the emulator — the wrong-target answer
+    // this command exists to surface.
+    loadChantConfigMock.mockResolvedValue({
+      config: { environments: [{ name: "prod", endpoint: "http://localhost:4566" }] },
+    });
+    let seenEndpoint: string | undefined;
+    const plugins: LexiconPlugin[] = [
+      createMockPlugin({
+        name: "aws",
+        emulator: awsEmulatorStub,
+        describeIdentity: async () => {
+          seenEndpoint = process.env.AWS_ENDPOINT_URL;
+          return { identity: "arn:x", scope: "s", source: "env" };
+        },
+      }),
+    ];
+    expect(await runLifecycleWhoami(whoamiCtx(plugins))).toBe(0);
+    expect(seenEndpoint).toBe("http://localhost:4566");
+    // Restored after the call, so it never leaks into a later invocation.
+    expect(process.env.AWS_ENDPOINT_URL).toBeUndefined();
+  });
+
+  test("a single declared stack region is handed to the lexicon; disagreeing regions are not guessed", async () => {
+    const seen: Array<string | undefined> = [];
+    const plugin = createMockPlugin({
+      name: "aws",
+      describeIdentity: async (options) => {
+        seen.push(options.region);
+        return { identity: "arn:x", scope: "s", source: "env" };
+      },
+    });
+    loadChantConfigMock.mockResolvedValue({
+      config: { environments: ["prod"], stacks: [{ name: "a", src: "src/a", region: "eu-west-1" }] },
+    });
+    await runLifecycleWhoami(whoamiCtx([plugin]));
+    loadChantConfigMock.mockResolvedValue({
+      config: {
+        environments: ["prod"],
+        stacks: [
+          { name: "a", src: "src/a", region: "eu-west-1" },
+          { name: "b", src: "src/b", region: "us-east-1" },
+        ],
+      },
+    });
+    await runLifecycleWhoami(whoamiCtx([plugin]));
+    expect(seen).toEqual(["eu-west-1", undefined]);
+  });
+
+  test("no credential value survives into the rendered rows", async () => {
+    process.env.CHANT_TEST_API_TOKEN = "tok_averyrealtokenvalue";
+    try {
+      const plugins: LexiconPlugin[] = [
+        createMockPlugin({
+          name: "aws",
+          describeIdentity: async () => ({
+            identity: "arn:aws:iam::1:user/ci",
+            scope: "us-east-1",
+            source: "tok_averyrealtokenvalue",
+          }),
+        }),
+      ];
+      expect(await runLifecycleWhoami(whoamiCtx(plugins, { json: true }))).toBe(0);
+      expect(stdoutBuf.join("\n")).not.toContain("tok_averyrealtokenvalue");
+      expect(stdoutBuf.join("\n")).toContain("[redacted]");
+    } finally {
+      delete process.env.CHANT_TEST_API_TOKEN;
+    }
   });
 });
