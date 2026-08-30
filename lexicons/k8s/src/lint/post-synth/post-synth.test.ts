@@ -2221,6 +2221,29 @@ describe("WK8501/WK8502: custom resource spec validated against the shipped CRD 
     expect(wk8502.check(ctx)).toEqual([]);
   });
 
+  // chant #2013 — the Argo AppProject from behold's example-argo-estate, as
+  // YAML text rather than JSON on purpose: `sourceRepos` is a list of bare
+  // URLs, and the core parser used to hand this check `{ https: "//github…" }`
+  // for each one. WK8502 then reported an object on a field the source had
+  // declared, and the emitter had written, as a string.
+  test.skipIf(!hasLexicon)("a bare URL in an AppProject's sourceRepos reaches the check as a string", () => {
+    const ctx = makeCtx([
+      "apiVersion: argoproj.io/v1alpha1",
+      "kind: AppProject",
+      "metadata:",
+      "  name: estate",
+      "spec:",
+      "  sourceRepos:",
+      "  - https://github.com/INTENTIUS/behold",
+      "  destinations:",
+      "  - namespace: '*'",
+      "    server: https://kubernetes.default.svc",
+      "",
+    ].join("\n"));
+    expect(wk8501.check(ctx)).toEqual([]);
+    expect(wk8502.check(ctx)).toEqual([]);
+  });
+
   test("open objects and int-or-string accept anything (stub registry)", () => {
     setCrdSchemaRegistry(new Map([[
       "example.com/v1/Widget",
