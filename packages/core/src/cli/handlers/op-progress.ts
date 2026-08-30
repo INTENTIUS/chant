@@ -114,33 +114,54 @@ function terminalOutcomes(events: HistoryEvent[]): Map<string, TerminalOutcome> 
 }
 
 /**
+ * A step record paired with the position of the declared step it came from.
+ *
+ * `index` is an offset into `declaredStepOrder(config)`, which depends only
+ * on the Op config — not on the history — so it is the record's identity
+ * and is stable across polls. The record *list* is not: a mid-run poll omits
+ * every step that hasn't settled yet, and the terminal `final: true` pass
+ * inserts a `"skipped"` record at each such step's declared position, which
+ * shifts every later record's list offset (chant #2032). Anything tracking
+ * what it has already seen must key on `index`, never on how many records
+ * the previous call returned.
+ */
+export interface IndexedStepRecord {
+  index: number;
+  record: StepRecord;
+}
+
+/**
  * Reconstruct per-step progress records from a workflow's history, in
- * declared order. Only settled steps (matched to a scheduled event that has
- * since completed or failed) produce a record — a step that hasn't been
- * scheduled yet simply isn't in the result, so a live poll only ever
- * appends. Pass `final: true` once the workflow has reached a terminal
+ * declared order, each tagged with its declared-step `index`. Only settled
+ * steps (matched to a scheduled event that has since completed or failed)
+ * produce a record — a step that hasn't been scheduled yet simply isn't in
+ * the result. Pass `final: true` once the workflow has reached a terminal
  * status to also emit a `"skipped"` record for every declared step that
  * never got a matching scheduled event (an untaken effect branch, or an
  * `onFailure` phase on a run that succeeded) — never before, or a
  * still-running Op would show its not-yet-reached steps as skipped.
  */
-export function extractStepRecords(
+export function extractIndexedStepRecords(
   config: OpConfig,
   history: WorkflowHistoryRaw,
   opts: { final?: boolean } = {},
-): StepRecord[] {
+): IndexedStepRecord[] {
   const events = history.events ?? [];
   const queues = scheduledQueues(events);
   const terminals = terminalOutcomes(events);
   const nextIndex = new Map<string, number>();
 
-  const records: StepRecord[] = [];
-  for (const step of declaredStepOrder(config)) {
+  const records: IndexedStepRecord[] = [];
+  const declared = declaredStepOrder(config);
+  for (let index = 0; index < declared.length; index++) {
+    const step = declared[index];
     const queue = queues.get(step.fn);
     const idx = nextIndex.get(step.fn) ?? 0;
     const entry = queue?.[idx];
     if (!entry) {
-      if (opts.final) records.push({ phase: step.phase, fn: step.fn, status: "skipped", durationMs: 0 });
+      if (opts.final) {
+        records.push({ index, record: { phase: step.phase, fn: step.fn, status: "skipped", durationMs: 0 } });
+      }
       continue;
     }
     nextIndex.set(step.fn, idx + 1);
@@ -151,14 +172,49 @@ export function extractStepRecords(
     const durationMs =
       entry.scheduledAt && terminal.at ? terminal.at.getTime() - entry.scheduledAt.getTime() : 0;
     records.push({
-      phase: step.phase,
-      fn: step.fn,
-      status: terminal.status,
-      durationMs,
-      ...(terminal.error ? { error: terminal.error } : {}),
+      index,
+      record: {
+        phase: step.phase,
+        fn: step.fn,
+        status: terminal.status,
+        durationMs,
+        ...(terminal.error ? { error: terminal.error } : {}),
+      },
     });
   }
   return records;
+}
+
+/** `extractIndexedStepRecords` without the indices — the plain declared-order record list. */
+export function extractStepRecords(
+  config: OpConfig,
+  history: WorkflowHistoryRaw,
+  opts: { final?: boolean } = {},
+): StepRecord[] {
+  return extractIndexedStepRecords(config, history, opts).map((r) => r.record);
+}
+
+/**
+ * A sink that forwards each declared step's record exactly once, however many
+ * times the poll loop re-derives the list.
+ *
+ * `--progress-json` calls this per poll with the whole list so far, plus once
+ * more with the terminal `final: true` list. Deduplicating by declared-step
+ * `index` is what makes that safe: an emitted-count watermark assumed the list
+ * was append-only, and the `final` pass's inserted `"skipped"` records break
+ * that assumption — with an unreached phase declared before an `onFailure`
+ * phase that ran, the insertion shifted the tail, so the last record shipped
+ * twice and the skipped one never shipped at all (chant #2032).
+ */
+export function stepRecordEmitter(emit: (record: StepRecord) => void): (records: IndexedStepRecord[]) => void {
+  const seen = new Set<number>();
+  return (records) => {
+    for (const { index, record } of records) {
+      if (seen.has(index)) continue;
+      seen.add(index);
+      emit(record);
+    }
+  };
 }
 
 /** `{completed, scheduled}` activity counts for the summary line `chant run status`/`op-status` show alongside the full record list. */

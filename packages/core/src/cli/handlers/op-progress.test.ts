@@ -1,5 +1,6 @@
 import { describe, test, expect } from "vitest";
-import { extractStepRecords, countActivities, queryGateState } from "./op-progress";
+import { extractStepRecords, extractIndexedStepRecords, stepRecordEmitter, countActivities, queryGateState } from "./op-progress";
+import type { StepRecord } from "../../op/local-executor";
 import type { OpConfig } from "../../op/types";
 import type { EffectReceiptRef } from "../../op/receipt-store";
 import type { WorkflowHistoryRaw, HistoryEvent } from "./run-client";
@@ -168,6 +169,71 @@ describe("extractStepRecords", () => {
       { phase: "C2", fn: "comp2", status: "ok", durationMs: 1000 },
       { phase: "C1", fn: "comp1", status: "ok", durationMs: 1000 },
     ]);
+  });
+});
+
+describe("stepRecordEmitter", () => {
+  // chant #2032. Declared order is main phases then `onFailure` reversed, so an
+  // unreached main phase sits *before* an `onFailure` phase that ran. The live
+  // poll therefore returns [Main(fail), Comp(ok)] and the terminal `final: true`
+  // pass returns [Main(fail), Never(skipped), Comp(ok)] — an insertion, not an
+  // append. The old emitted-count watermark sliced at 2 and re-shipped Comp
+  // while dropping Never entirely. The #1676 coverage above misses this because
+  // in those configs the skipped record lands last, where insert and append are
+  // the same operation.
+  const config: OpConfig = {
+    name: "op", overview: "o",
+    phases: [
+      { name: "Main", steps: [{ kind: "activity", fn: "boom" }] },
+      { name: "Never", steps: [{ kind: "activity", fn: "never" }] },
+    ],
+    onFailure: [{ name: "Comp", steps: [{ kind: "activity", fn: "comp" }] }],
+  };
+  // Main fails, Never is never reached, compensation runs and succeeds.
+  const history: WorkflowHistoryRaw = {
+    events: [
+      scheduled("1", "boom", sec(0)),
+      failed("1", sec(1), "boom"),
+      scheduled("2", "comp", sec(2)),
+      completed("2", sec(3)),
+    ],
+  };
+
+  const MAIN: StepRecord = { phase: "Main", fn: "boom", status: "fail", durationMs: 1000, error: "boom" };
+  const NEVER: StepRecord = { phase: "Never", fn: "never", status: "skipped", durationMs: 0 };
+  const COMP: StepRecord = { phase: "Comp", fn: "comp", status: "ok", durationMs: 1000 };
+
+  test("the final pass inserts rather than appends, so list position is not an identity", () => {
+    expect(extractIndexedStepRecords(config, history)).toEqual([
+      { index: 0, record: MAIN },
+      { index: 2, record: COMP },
+    ]);
+    expect(extractIndexedStepRecords(config, history, { final: true })).toEqual([
+      { index: 0, record: MAIN },
+      { index: 1, record: NEVER },
+      { index: 2, record: COMP },
+    ]);
+  });
+
+  test("each record ships exactly once across the poll passes and the final pass", () => {
+    const emitted: StepRecord[] = [];
+    const emit = stepRecordEmitter((r) => emitted.push(r));
+
+    emit(extractIndexedStepRecords(config, history)); // a poll while the workflow closes
+    emit(extractIndexedStepRecords(config, history)); // an identical re-poll adds nothing
+    emit(extractIndexedStepRecords(config, history, { final: true }));
+
+    expect(emitted).toEqual([MAIN, COMP, NEVER]);
+  });
+
+  test("an empty first poll does not shift what a later pass ships", () => {
+    const emitted: StepRecord[] = [];
+    const emit = stepRecordEmitter((r) => emitted.push(r));
+
+    emit(extractIndexedStepRecords(config, { events: [] }));
+    expect(emitted).toEqual([]);
+    emit(extractIndexedStepRecords(config, history, { final: true }));
+    expect(emitted).toEqual([MAIN, NEVER, COMP]);
   });
 });
 
