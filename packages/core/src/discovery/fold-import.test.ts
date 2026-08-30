@@ -2015,6 +2015,108 @@ describe("tryFoldFile — active lexicon package exports (#1063)", () => {
   });
 });
 
+describe("tryFoldFile — sandbox trust boundary, subpath import of an active lexicon package (chant #1995)", () => {
+  let testDir: string;
+  let seq = 0;
+
+  beforeEach(async () => {
+    testDir = join(tmpdir(), `chant-fold-import-lexsubpath-test-${Date.now()}-${Math.random()}`);
+    await mkdir(testDir, { recursive: true });
+  });
+
+  afterEach(async () => {
+    await rm(testDir, { recursive: true, force: true });
+  });
+
+  /**
+   * Install a package into `<testDir>/node_modules/<name>` shaped like a real
+   * lexicon package: a barrel at "." AND a `./generated/index` subpath — the
+   * exact shape `examples/cc-azure-canonical/src/cc-cluster/cluster.ts`
+   * imports `AksCluster` through (`@intentius/chant-lexicon-azure/generated/index`).
+   * The subpath module exports a real resource CLASS with the same runtime
+   * shape `createResource` (chant-core's own factory) produces — plain,
+   * dependency-free JS using `Symbol.for("chant.declarable")` directly (same
+   * global-registry trick `../declarable.ts`'s own `DECLARABLE_MARKER` uses,
+   * and the same convention `installLexiconPackage`'s `LEXICON_SOURCE` above
+   * follows), rather than importing chant-core's runtime module: a real
+   * package's OWN `.js` file is loaded by a genuine `import()`, not run
+   * through this repo's TS loader, so a bare relative import of `runtime.ts`
+   * from inside it would need an extension Node's ESM resolver never gets —
+   * self-contained avoids that entirely and is just as faithful a stand-in.
+   */
+  async function installSubpathLexiconPackage(): Promise<{ lexicon: string; specifier: string }> {
+    const lexicon = `fold1995x${seq++}${Date.now().toString(36)}`;
+    const specifier = `@intentius/chant-lexicon-${lexicon}`;
+    const dir = join(testDir, "node_modules", specifier);
+    await mkdir(join(dir, "generated"), { recursive: true });
+    await writeFile(
+      join(dir, "package.json"),
+      JSON.stringify({
+        name: specifier,
+        version: "0.0.0",
+        type: "module",
+        exports: { ".": "./index.js", "./generated/index": "./generated/index.js" },
+      }),
+    );
+    await writeFile(join(dir, "index.js"), `export * from "./generated/index.js";`);
+    await writeFile(
+      join(dir, "generated", "index.js"),
+      `
+        const DECLARABLE_MARKER = Symbol.for("chant.declarable");
+        export function Widget(props) {
+          this[DECLARABLE_MARKER] = true;
+          this.lexicon = ${JSON.stringify(lexicon)};
+          this.entityType = "Test::Widget";
+          this.kind = "resource";
+          this.props = props ?? {};
+        }
+      `,
+    );
+    return { lexicon, specifier };
+  }
+
+  test("a subpath import of a declared-active lexicon package is trusted, and folds under --sandbox", async () => {
+    const { lexicon, specifier } = await installSubpathLexiconPackage();
+    const file = join(testDir, "main.ts");
+    await writeFile(
+      file,
+      `
+        import { Widget } from ${JSON.stringify(`${specifier}/generated/index`)};
+        export const widget = new Widget({ name: "test" });
+      `,
+    );
+
+    const sandboxed = await tryFoldFile(file, [], createFoldSession([], undefined, [lexicon], true));
+
+    expect(sandboxed.ok, !sandboxed.ok ? sandboxed.reason : "").toBe(true);
+    if (!sandboxed.ok) return;
+    const [, entity] = sandboxed.entities[0];
+    expect(isDeclarable(entity)).toBe(true);
+  });
+
+  test("a subpath import of a lexicon package NOT active for this build stays refused under --sandbox", async () => {
+    // chant #1995's own boundary — the fix must not widen trust beyond the
+    // build's declared-active set: an installed, importable package whose
+    // root the build never listed is still untrusted, subpath or not.
+    const { specifier } = await installSubpathLexiconPackage();
+    const file = join(testDir, "main.ts");
+    await writeFile(
+      file,
+      `
+        import { Widget } from ${JSON.stringify(`${specifier}/generated/index`)};
+        export const widget = new Widget({ name: "test" });
+      `,
+    );
+
+    const sandboxed = await tryFoldFile(file, [], createFoldSession([], undefined, ["aws"], true));
+
+    expect(sandboxed.ok).toBe(false);
+    if (sandboxed.ok) return;
+    expect(sandboxed.reason).toContain("--sandbox");
+    expect(sandboxed.reason).toContain(`constructor "Widget"`);
+  });
+});
+
 /**
  * chant #1169 — a `new Type(...)` used as a VALUE.
  *

@@ -25,7 +25,7 @@ import { replaceFoldCoverageBlock, FOLD_COVERAGE_DOCS } from "../examples/fold-c
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 
-const corpus = discoverCorpus();
+const corpus = await discoverCorpus();
 let foldCount = 0;
 
 for (const entry of corpus) {

@@ -52,7 +52,7 @@ import { foldExecutionCounts, resetFoldExecutionCounts } from "../packages/core/
  * as run-fallback here even once the fold-import wiring recognizes it.
  */
 
-const CORPUS = discoverCorpus();
+const CORPUS = await discoverCorpus();
 
 interface ReportRow {
   name: string;

@@ -178,7 +178,7 @@ describe("chant #1074 — the build path cannot reach the k8s API client (static
   });
 });
 
-const K8S_CORPUS = discoverCorpus().filter((entry) => entry.lexicons?.includes("k8s") || entry.name.includes("k8s"));
+const K8S_CORPUS = (await discoverCorpus()).filter((entry) => entry.lexicons?.includes("k8s") || entry.name.includes("k8s"));
 
 describe("chant #1074 — the build path does not resolve the client (observed)", () => {
   test(`k8s corpus is non-empty (found ${K8S_CORPUS.length})`, () => {
