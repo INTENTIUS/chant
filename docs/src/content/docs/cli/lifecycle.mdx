@@ -1,6 +1,7 @@
 ---
 title: "chant lifecycle"
 description: Capture, diff, and plan against deployed infrastructure — the observational lifecycle commands
+diataxis: reference
 ---
 
 ## Synopsis
@@ -10,8 +11,9 @@ chant lifecycle snapshot <env> [lexicon] [--src <dir>]
 chant lifecycle show <env>
 chant lifecycle diff <env> [--live] [--src <dir>]
 chant lifecycle diff <env> --between <refA> <refB> [lexicon] [--json]
-chant lifecycle plan <env> [lexicon] [--json] [--owned] [--report gitlab-mr] [--src <dir>]
+chant lifecycle plan <env> [lexicon] [--json] [--owned] [--report gitlab-mr|markdown] [--src <dir>]
 chant lifecycle affected --base <ref> [--head <ref>] [--include-dependents] [--json]
+chant lifecycle teardown <env> [--yes] [--confirm-prod] [--json]
 chant lifecycle log [env]
 ```
 
@@ -173,13 +175,16 @@ chant lifecycle plan prod --json   # emit the ChangeSet as JSON
 | Action | Meaning |
 |---|---|
 | **create** | Declared in source, and the provider confirmed it absent from the cloud |
-| **update** | Declared and live, but the live config drifted |
+| **update** | Declared and live, but the live config drifted — carries a [disruption verdict](#disruption-how-much-an-update-costs) saying whether applying it replaces the resource or mutates it in place |
 | **delete** | A chant-owned resource that is live but no longer declared |
 | **adopt** | Live but undeclared, ownership not established — a candidate to pull back into source, never an auto-delete |
 | **noop** | Declared and live with no drift, or already reconciled |
+| **effect** | A declared [effect receipt](https://github.com/INTENTIUS/chant/issues/1703) whose live value is absent or stale — rendered as `effect will fire: <effect>` |
 | **unobserved** | Declared, and chant could not read live state — no action is proposed, and the reason is printed |
 
-`unobserved` is not a proposal; it is the plan admitting a hole. A resource chant could not look at is never a `create` and never a `delete` — a plan is only as complete as the read behind it, and when entities are unobserved the command says so on stderr (including under `--json` and `--report gitlab-mr`, whose shapes have no column for it).
+`unobserved` is not a proposal; it is the plan admitting a hole. A resource chant could not look at is never a `create` and never a `delete` — a plan is only as complete as the read behind it, and when entities are unobserved the command says so on stderr (including under `--json` and `--report gitlab-mr`, whose shapes have no column for it). `--report markdown` carries the same warning **in the body** instead, plus its own section — see [Reporting to a pull request](#reporting-to-a-pull-request) below.
+
+`effect` is the receipt row. An effect receipt is declared, diffed, and observed like any resource, but it is **observe-only to the generic apply path**: the `effect()` step is the sole writer, on success, last. The plan resolves the receipt's expectation (references resolve against observed values at plan time) and compares it to the live value — absent or differing renders `effect will fire: <effect>`, with the reason (`receipt-absent`, `receipt-stale`, or `unresolved-input` when a reference could not resolve — the fire is proposed rather than guessed away). A matching receipt is a clean `noop`; a receipt nobody could read is `unobserved`, loudly. A receipt is never a `create`, never an `update`, and never a prune candidate: a stale receipt after a crash between the effect and its write re-proposes the fire on the next plan, which is the at-least-once guarantee the whole classification exists to preserve.
 
 `create` and `update` are precise from declared-vs-live. `delete` is only ever proposed for an undeclared resource whose **live ownership marker** ([ownership marking](/chant/configuration/config-file/#ownership)) confirms it is chant's; a foreign orphan is `adopt`, and an orphan with no marker data is `adopt`, never `delete`. Pass `--owned` to restrict the query to chant-owned resources.
 
@@ -203,6 +208,102 @@ The `diff --live` categories and the `plan` actions describe the same signal on 
 
 The "when declared" qualifiers are where the axes diverge: an undeclared resource that also **drifted** or is **unchanged** is still an **orphan** to the plan — the snapshot history doesn't change that it's live-but-undeclared, so ownership decides between `adopt` and `delete`.
 
+#### Disruption: how much an `update` costs
+
+The action says what changes. It does not say what applying it costs, and an `update` that flips a tag reads exactly like an `update` that rebuilds a database. Every `update` entry therefore carries a `disruption` verdict:
+
+| Verdict | Meaning |
+|---|---|
+| **in-place** | The provider mutates the existing resource. No new identity, no window where it is absent |
+| **rolling** | The resource survives, but its workload is replaced incrementally — a Deployment's pod template changing |
+| **replace** | A new resource is built and the old one removed. The physical id changes, so anything holding the old one has to be updated |
+| **destroy** | Replacement that removes the old resource **first**. There is a window with nothing in it, and whatever the old one held is gone |
+| **unknown** | Nobody could say |
+
+The verdict comes from the lexicon, never from core. Replacement semantics are spec knowledge — CloudFormation's registry schema declares `createOnlyProperties` per type, Kubernetes' SSA schema knows which field changes roll a workload — and a lexicon publishes it through `classifyDisruption`, the same way it publishes `postSynthChecks`. Core hardcoding a per-provider replacement table would be a table the tool has to keep in step with a provider it does not generate from.
+
+`unknown` is the default and the only fallback. A lexicon that ships no classifier, a classifier that says nothing about an entry, one that throws, one that returns a level outside the vocabulary — all of them land on `unknown`. **There is no path by which a change accidentally reads as `in-place`**: that claim is only ever a lexicon's deliberate one, which is what makes it worth gating on. Read `unknown` as "nobody looked at the spec", in the same spirit as [`unobserved`](#lifecycle-plan-env) — not as "probably fine".
+
+The plan says it three ways. A count on the header, the verdict and its reason on the row, and a `!` on the specific delta the verdict rests on:
+
+```
+Plan for prod: 0 create, 2 update, 0 effect, 0 delete, 0 adopt, 0 runtime, 4 noop, 0 unobserved
+Disruption: 1 in-place, 1 destroy
+
+UPDATE (disruption from the lexicon that owns the spec; unknown means nobody could say, not that it is safe):
+  api (AWS::EC2::Instance) — in-place: no create-only property of AWS::EC2::Instance changed
+      attributes.InstanceType: t3.micro → t3.small
+  db (AWS::RDS::DBInstance) — destroy: DBInstanceIdentifier is create-only and AWS::RDS::DBInstance replaces by deleting first — the resource is gone before the new one exists
+      ! attributes.DBInstanceIdentifier: app-db → app-db-2
+      attributes.AllocatedStorage: 20 → 40
+```
+
+Replacing and unclassified counts are also printed on **stderr**, so a `--json` or `--report gitlab-mr` consumer — whose shapes have no column for disruption — still hears about them. `--report markdown` bolds the verdict on every row instead, and rolls the same counts into the header — a `replace` or `destroy` reaches the reviewer without them having to read every line.
+
+The AWS lexicon is the first implementer, reading the CloudFormation Registry schema the codegen already compiles into `lexicon-aws.json`: a changed `createOnlyProperties` entry is a `replace`, and `replacementStrategy: delete_then_create` makes it a `destroy`. A changed `conditionalCreateOnlyProperties` entry is `unknown` on purpose — the schema is saying "depends on the value", and reporting a maybe as `in-place` is worse than reporting nothing. AWS never returns `rolling`; nothing in the Registry schema expresses a workload roll.
+
+#### The `--json` shape
+
+`--json` emits `{ env, entries }`. Every lexicon's change set is merged into the one `entries[]`, and each entry says which lexicon observed it:
+
+```json
+{
+  "env": "prod",
+  "entries": [
+    {
+      "name": "web",
+      "type": "K8s::Apps::Deployment",
+      "lexicon": "k8s",
+      "physicalId": "default/web",
+      "action": "noop",
+      "evidence": { "declared": true, "inSnapshot": true, "live": true, "observed": true },
+      "ownership": "owned",
+      "queried": "/apis/apps/v1/namespaces/default/deployments/web"
+    },
+    {
+      "name": "db",
+      "type": "AWS::RDS::DBInstance",
+      "lexicon": "aws",
+      "physicalId": "app-db",
+      "action": "update",
+      "evidence": { "declared": true, "inSnapshot": true, "live": true, "observed": true },
+      "deltas": [
+        { "path": "attributes.DBInstanceIdentifier", "oldValue": "app-db", "newValue": "app-db-2" }
+      ],
+      "ownership": "unknown",
+      "disruption": "destroy",
+      "disruptionBecause": ["attributes.DBInstanceIdentifier"],
+      "disruptionDetail": "DBInstanceIdentifier is create-only and AWS::RDS::DBInstance replaces by deleting first — the resource is gone before the new one exists"
+    },
+    {
+      "name": "sg-0abc123",
+      "type": "AWS::EC2::SecurityGroup",
+      "lexicon": "aws",
+      "physicalId": "sg-0abc123",
+      "action": "adopt",
+      "evidence": { "declared": false, "inSnapshot": false, "live": true, "observed": true },
+      "ownership": "foreign"
+    }
+  ]
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `name` | The chant entity name for a declared entity. For an undeclared live resource (`adopt`, `delete`, `runtime`) it is the lexicon's live key, which is not a name you can join to the graph IR. |
+| `lexicon` | The lexicon whose observation produced the entry. |
+| `physicalId` | The provider-assigned id (`ResourceMetadata.physicalId`) from the live read, or from the snapshot when the resource is gone. Absent when neither reported one. |
+| `action`, `evidence`, `ownership` | The classification and the three-way evidence behind it, as in the table above. |
+| `deltas` | Attribute-level changes, on `update`. |
+| `queried` | The resolved read address, when the lexicon reported one (#1620). |
+| `runtimeOwner` | The declared entity a `runtime` entry's owner chain resolves to. |
+| `unobservedReason`, `unobservedDetail` | Why an `unobserved` entry could not be read. |
+| `disruption` | How much applying an `update` costs, from the lexicon that owns the spec. Present on every `update` and on nothing else. `unknown` means nobody could say. |
+| `disruptionBecause` | The attribute paths that forced the verdict — which of five changed properties is the one that replaces the resource. |
+| `disruptionDetail` | The spec knowledge behind the call, or why there is none. |
+
+`lexicon` and `physicalId` are what let a consumer route an entry to the right lexicon and tell a declared entity name apart from the live key of an undeclared resource without inferring it from the action.
+
 #### Reporting to a GitLab merge request
 
 `--report gitlab-mr` emits the plan as the JSON GitLab reads for its merge-request plan widget:
@@ -215,6 +316,44 @@ chant lifecycle plan prod --report gitlab-mr > tfplan.json
 Declare the file as `artifacts:reports:terraform` and GitLab renders "3 to add, 1 to change, 0 to delete" on the MR. The widget format is generic — any tool that emits this JSON gets it — so the plan maps onto it directly. Only the mutating actions count: `adopt` and `noop` are excluded, since the widget has no column for live-but-undeclared or no-change.
 
 The widget label always reads "Terraform" — that is GitLab's fixed string, not a claim chant makes. The GitLab lexicon ships an [`MrPlanReport`](/chant/lexicons/gitlab/examples/#merge-request-plan-widget) composite that wires the job for you.
+
+#### Reporting to a pull request
+
+`--report markdown` emits the plan as markdown, sized for a PR/MR comment rather than a terminal:
+
+```bash
+chant lifecycle plan prod --report markdown
+```
+
+````markdown
+## Plan for `prod`
+
+1 create, 1 update, 0 effect, 0 delete, 0 adopt, 0 runtime, 4 noop, 1 unobserved
+
+**Disruption:** 1 destroy
+
+> **1 declared entity(ies) could not be observed — no create/update/delete is proposed for them. This plan is incomplete, not clean.**
+
+### CREATE
+
+- `new-bucket` (AWS::S3::Bucket) `aws`
+
+### UPDATE (disruption from the lexicon that owns the spec; unknown means nobody could say, not that it is safe)
+
+- `db` (AWS::RDS::DBInstance) `aws` — **destroy**: DBInstanceIdentifier is create-only and AWS::RDS::DBInstance replaces by deleting first — the resource is gone before the new one exists
+  ```
+  ! attributes.DBInstanceIdentifier: app-db → app-db-2
+    attributes.AllocatedStorage: 20 → 40
+  ```
+
+### UNOBSERVED (declared; chant could not read live state — no action proposed)
+
+- `crd-widget` — no binding for this environment
+````
+
+Unlike `gitlab-mr`, this is not a floor: every action carries its own section, entries are attributed to the lexicon that observed them, and both holes the other two shapes leave to stderr ride the body instead — the unobserved count gets its own banner **and** its own section, and every `update` bolds its disruption verdict rather than staying silent about a `replace` or a `destroy`. A group past 20 entries folds into a `<details>` block so a large plan doesn't bury the comment. Deterministic and pure — no ANSI, same ordering as the terminal render.
+
+The github lexicon ships a [`PrPlanReport`](/chant/lexicons/github/composites/#prplanreport) composite that runs the plan and posts (or updates) one sticky PR comment per environment, reusing the marker-and-`gh api` mechanism `examples/github-pr-preview` proved. The forgejo lexicon gets it for free — it inherits every github composite through its dialect re-export.
 
 ### Resources vs artifacts
 
@@ -305,6 +444,64 @@ The same shape works from an Op you write — `affected` is the primitive; the f
 | `--head <ref>` | Head ref (default: the working tree). |
 | `--include-dependents` | Add downstream consumers of changed stacks. |
 | `--json` | Emit the result as JSON. |
+
+### `lifecycle teardown <env>`
+
+Plan — and with `--yes`, execute — the deletion of an environment's marker-scoped resources.
+
+```bash
+chant lifecycle teardown dev            # plan only: print the would-delete set
+chant lifecycle teardown dev --json
+chant lifecycle teardown dev --yes      # execute the planned set
+chant lifecycle teardown prod --yes --confirm-prod
+```
+
+Selection is marker-scoped by construction: a resource is in the plan only when its own [ownership marker](/chant/configuration/config-file/#ownership) carries this project's `ownership.stack` **and** the requested environment. Unmarked resources, another stack's resources, and another environment's resources are never candidates. The read is stateless — live markers only, no build, no snapshot.
+
+The environment must be declared in `chant.config.ts` under `environments`; an unknown name exits nonzero. A project with no `ownership.stack` is refused: teardown has nothing to select on.
+
+Per lexicon, the plan comes from the `teardownOwned` capability where a lexicon implements one, falling back to `describeResources` plus the per-resource marker identity otherwise. Kinds a lexicon stamps but cannot read back are reported as **holes** — a plan with holes is incomplete, not clean, and says so. An empty would-delete set is also reported loudly rather than exiting silently.
+
+#### Execution (`--yes`)
+
+`--yes` deletes the planned set through each lexicon's `executeTeardown` capability and prints one outcome per candidate: `deleted` (already-gone counts — teardown is idempotent), `failed` (the delete errored), `not-prunable` (deliberately refused, with the reason — for example the live object's marker changed since planning), `retained` (owned and no longer declared, but deliberately kept — a k8s `generated-once` secret is never swept, because the stored bytes are the only copy of material chant never held; delete it explicitly if you mean to), or `skipped` (the lexicon enumerates but does not implement execution yet). Nothing is ever silent: every planned entry gets a row, the summary line counts `retained` separately with a warning that the environment is not clean while retained resources exist, and the command exits nonzero when any candidate is still `failed` after the retry pass.
+
+Ordering is per lexicon, and each lexicon deletes in the order its target requires — there is no global reverse-dependency ordering. After the first pass, core runs **one bounded retry pass** over that lexicon's failures, which covers most ordering hiccups (a dependent that had not finished deleting yet). Failures that survive the retry are reported as failures.
+
+Implemented today:
+
+- **k8s** — deletes by the marker label selector through the typed API client (the same delete the ownership-scoped prune uses), re-reading and re-verifying each object's marker immediately before deleting. Namespaces are deleted last, so their members get individual outcomes before the namespace cascade.
+- **fly** — destroys marker-carrying machines (lease → destroy → wait) first, then deletes whole apps last. An app is deleted whole only when every live machine in it carries the requested identity — the app-boundary rule from the fly ownership convention; volumes, IPs, and certificates go with their app. An app also hosting a foreign or other-env machine is never deleted whole.
+- **aws** — STACK granularity: CloudFormation's thin read returns no tags, so per-resource selection is impossible, and the stack is the deploy boundary anyway. The plan resolves the environment's stacks (the project's `stacks[]`, else the stack named after the environment), reads each stack's **own** tags via `DescribeStacks`, and admits only stacks whose tags carry the requested marker identity — one candidate of type `AWS::CloudFormation::Stack` per verified stack. Execution re-verifies the tags, then `DeleteStack` polled to `DELETE_COMPLETE`. The apply paths stamp the marker as stack tags on create/update (from the template's `Metadata["chant:ownership"]` block the build writes), so every stack deployed from a marked build is teardown-eligible; a stack deployed before stack tagging carries no tags to verify and is reported as a hole (`unverified-ownership`) — re-deploy it once to stamp it. It is never deleted.
+
+gcp and azure enumerate (via the fallback read) but do not execute yet — their candidates are reported as `skipped`.
+
+#### The prod guard
+
+An environment whose name looks production-like (`prod`, `production`, `prod-eu`, `us-prod`, ...) is never torn down on `--yes` alone. Interactively, chant asks you to re-type the environment name; non-interactively (CI, scripts), pass `--yes --confirm-prod` explicitly. Planning a production environment needs no confirmation — only deletion does.
+
+Both halves are exported from `@intentius/chant` for programmatic use (a test-environment harness tearing down in `afterAll`, for example): `planTeardown()` enumerates, `executeTeardown()` deletes and returns the same per-candidate report the CLI prints.
+
+#### As an Op step
+
+The same engine runs as a durable step with the `envTeardown` builder — an [Op](/chant/guide/ops/) that tears an environment down on Temporal (or the local executor) instead of from a terminal:
+
+```typescript
+import { Op, phase, gate, envTeardown } from "@intentius/chant-lexicon-temporal";
+
+export default Op({
+  name: "retire-staging",
+  overview: "Tear down the staging environment behind an approval",
+  phases: [
+    phase("Teardown", [
+      gate("approve-teardown", { description: "Release the staging teardown" }),
+      envTeardown("staging"),
+    ]),
+  ],
+});
+```
+
+Steps run in authored order, so a `gate(...)` placed before `envTeardown` holds the deletion until the signal arrives — the durable equivalent of pausing at the plan. The guards are the CLI's guards: an undeclared environment and a missing `ownership.stack` fail the step before any live read, and a production-like name needs `envTeardown("prod", { confirmProd: true })` — the authored counterpart of `--confirm-prod`, since an Op never prompts. The step fails when any candidate is still `failed` after the retry pass, naming the survivors; a fully clean run returns the same per-candidate report the CLI prints. See the [Ops reference](/chant/guide/ops-reference/#step-builders) for the builder row.
 
 ### `lifecycle log [env]`
 

@@ -17,8 +17,14 @@ export interface MockPluginOptions {
   observeResourcesDeep?: LexiconPlugin["observeResourcesDeep"];
   /** #1273 — what the estate references but does not manage. */
   observeDependencies?: LexiconPlugin["observeDependencies"];
+  /** #1222 — enumerate the would-delete set for one marker identity (plan only). */
+  teardownOwned?: LexiconPlugin["teardownOwned"];
+  /** #1222 — delete handed-over candidates, one outcome per candidate. */
+  executeTeardown?: LexiconPlugin["executeTeardown"];
   /** Deep observation (#1014) — the lexicon's pruning/ordering rules. */
   deepNormalizationHooks?: DeepNormalizationHooks;
+  /** #1665 — replacement semantics for a pending update. Omit it to exercise the honest `unknown` degradation. */
+  classifyDisruption?: LexiconPlugin["classifyDisruption"];
   /**
    * Local emulator(s) (#1345). Needed by any test that exercises `--live`
    * endpoint injection: the var to inject is read off the lexicon's own
@@ -42,7 +48,10 @@ export function createMockPlugin(options: MockPluginOptions = {}): LexiconPlugin
     ...(options.listArtifacts && { listArtifacts: options.listArtifacts }),
     ...(options.observeResourcesDeep && { observeResourcesDeep: options.observeResourcesDeep }),
     ...(options.observeDependencies && { observeDependencies: options.observeDependencies }),
+    ...(options.teardownOwned && { teardownOwned: options.teardownOwned }),
+    ...(options.executeTeardown && { executeTeardown: options.executeTeardown }),
     ...(options.deepNormalizationHooks && { deepNormalizationHooks: options.deepNormalizationHooks }),
+    ...(options.classifyDisruption && { classifyDisruption: options.classifyDisruption }),
     ...(options.emulator && { emulator: options.emulator }),
   };
 }

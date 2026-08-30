@@ -1,0 +1,73 @@
+---
+title: "Intrinsics Guide"
+description: "Worked examples for every CloudFormation intrinsic function and their chant syntax"
+diataxis: reference
+---
+
+See [Intrinsic Functions](../intrinsics/) for the generated reference table (name, description, output key, whether it's a tagged template, whether folding can reduce it). This page is the worked-example companion — one `Fn::` intrinsic function per section, with real usage.
+
+CloudFormation intrinsic functions are available as imports from the lexicon. They produce the corresponding `Fn::` calls in the serialized template.
+
+Only `Sub` is a tagged template — the others below are plain function calls. Both forms fold on the [default build path](/chant/concepts/typescript-as-data/#folded-vs-run) ([#1044](https://github.com/INTENTIUS/chant/issues/1044)): every AWS intrinsic on this page is registered with its call form opted in, so using `Ref`, `GetAtt`, `If`, `Join`, `Select`, `Split`, `Base64`, or `GetAZs` in a resource's props no longer forces that file back to the run path. What folds is the call, not calls in general — the name has to be one this lexicon registered and opted in, imported from this lexicon by the file using it. A same-file resource passed to one (`Ref(bucket)` where `bucket` is declared in the same file) still falls back, since the intrinsic needs the real constructed resource.
+
+Here is a complete example using all intrinsic functions:
+
+{{file:docs-snippets/src/intrinsics.ts}}
+
+## `Sub` — string substitution
+
+Tagged template literal that produces `Fn::Sub`. The most common intrinsic — use it for dynamic naming with pseudo-parameters and attribute references:
+
+{{file:docs-snippets/src/intrinsics-detail.ts:3-5}}
+
+`Sub` is a tagged template — use it with backticks, not as a function call.
+
+## `Ref` — resource and parameter references
+
+References a resource's physical ID or a parameter's value:
+
+{{file:docs-snippets/src/intrinsics-detail.ts:7-9}}
+
+In most cases you don't need `Ref` directly — the serializer automatically generates `Ref` when you reference an imported resource (e.g. `dataBucket` imported from another file).
+
+## `GetAtt` — resource attributes
+
+**Preferred:** Use AttrRef directly via the resource's typed properties. When you write `dataBucket.arn` (imported from the file that defines it), the serializer automatically emits `Fn::GetAtt`. Explicit `GetAtt` is only needed for dynamic or imported resource names.
+
+## `If` — conditional values
+
+Returns one of two values based on a condition:
+
+{{file:docs-snippets/src/intrinsics-detail.ts:11-12}}
+
+Use with `AWS.NoValue` to conditionally omit a property — see [Conditions](#conditions) on the CloudFormation Concepts page.
+
+## `Join` — join values
+
+Joins values with a delimiter:
+
+{{file:docs-snippets/src/intrinsics-detail.ts:14-15}}
+
+## `Select` — select by index
+
+Selects a value from a list by index:
+
+{{file:docs-snippets/src/intrinsics-detail.ts:17-18}}
+
+## `Split` — split string
+
+Splits a string by a delimiter:
+
+{{file:docs-snippets/src/intrinsics-detail.ts:20-21}}
+
+## `Base64` — encode to Base64
+
+Encodes a string to Base64, commonly used for EC2 user data:
+
+{{file:docs-snippets/src/intrinsics-detail.ts:23-27}}
+
+## `GetAZs` — availability zones
+
+Returns the list of Availability Zones for a region:
+
+{{file:docs-snippets/src/intrinsics-detail.ts:29-31}}

@@ -87,7 +87,10 @@ function renderNeedsReview(clusters: GuidanceCluster[], n: number): string {
       const rules = c.rules
         .map(({ meta, findings }) => {
           const locs = findings
-            .map((f) => `<li><code>${esc(f.file)}</code>${f.entity ? ` (<code>${esc(f.entity)}</code>)` : ""} — ${esc(f.message)}</li>`)
+            .map((f) => {
+              const loc = f.line ? `${f.file}:${f.line}` : f.file;
+              return `<li><code>${esc(loc)}</code>${f.entity ? ` (<code>${esc(f.entity)}</code>)` : ""} — ${esc(f.message)}</li>`;
+            })
             .join("");
           return `<div class="rule"><div><span class="sev ${findings[0].severity}"></span><strong>${ruleLink(meta.id)}</strong> — ${esc(meta.title)}. <span class="muted">${esc(meta.remediation)}</span>${authorityLinks(meta)}</div><ul>${locs}</ul></div>`;
         })
@@ -108,7 +111,7 @@ function renderReportOnly(findings: EnrichedFinding[], n: number): string {
 function renderHeader(counts: ReportCounts, snapshot: AuditSnapshot | undefined, notes: string[]): string {
   const sev = `<span class="sev error"></span>${counts.errors} error <span class="sev warning"></span>${counts.warnings} warning <span class="sev info"></span>${counts.infos} info`;
   const tiers = `<span class="chip">${counts.quickWin} quick-win</span> <span class="chip">${counts.needsReview} needs-review</span> <span class="chip">${counts.reportOnly} hygiene</span>`;
-  const cats = `<span class="chip">${counts.security} security</span> <span class="chip">${counts.correctness} correctness</span> <span class="chip">${counts.bestPractice} best-practice</span>`;
+  const cats = `<span class="chip">${counts.security} security</span> <span class="chip">${counts.correctness} correctness</span> <span class="chip">${counts.bestPractice} best-practice</span> <span class="chip">${counts.efficiency} efficiency</span>`;
   const meta: string[] = [];
   if (snapshot) {
     if (snapshot.host) meta.push(esc(snapshot.host));

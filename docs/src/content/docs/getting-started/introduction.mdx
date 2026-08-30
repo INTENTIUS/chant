@@ -1,7 +1,10 @@
 ---
 title: Introduction
 description: What chant is and why it exists
+diataxis: explanation
 ---
+
+This is the narrative version of [What chant is](/chant/concepts/overview/) — same ground, with paths for what to do next.
 
 chant is a TypeScript-first infrastructure tool, end to end. You define cloud resources as plain TypeScript objects; chant type-checks them against a provider lexicon and emits deployment-ready output — then deploys, observes, and reconciles it when you want that too. No YAML, no string templating, no authoritative state file to manage.
 
@@ -17,6 +20,7 @@ You get real `import`/`export`, editor autocompletion, and semantic lint rules t
 
 ## Choose Your Path
 
+- **Working with an agent?** Hand it the [copy-paste prompt](/chant/agents/) — it installs chant, runs `chant init`, and reads the generated skills before writing anything.
 - **New to chant? Start hands-on** — the [getting-started example](https://github.com/INTENTIUS/chant/tree/main/examples/getting-started) teaches chant in levels, beginning with typed resources → `chant build` → spec-native YAML and building up to deployment. Run it alongside [Quick Start](/chant/getting-started/quick-start/).
 - **Deploy with chant** — You want durable deployments with phase visibility, gate steps, and rollback. Declare phases in `*.op.ts`, `chant build` generates Temporal worker code, `chant run` starts the workflow. Start with [Quick Start](/chant/getting-started/quick-start/), then the [Ops guide](/chant/guide/ops/). Not sure if Ops fits? See [Choosing Your Deployment Model](/chant/concepts/deployment-paths/).
 - **Track drift and reconcile** — You want chant to track drift and reconcile it. Pick a position per environment on the `observe → reconcile → authoritative` dial: report drift, open `cloud → code` PRs, or apply `code → cloud` behind a gate — no authoritative state file. See [Lifecycle Models](/chant/concepts/lifecycle-models/) and the [Reconciling Lifecycle](/chant/guide/reconciling-lifecycle/) guide.

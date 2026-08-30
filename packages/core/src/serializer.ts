@@ -20,6 +20,18 @@ export interface SerializeContext {
    * ad-hoc builds (e.g. context tools) that pass no config.
    */
   config?: Record<string, unknown>;
+
+  /**
+   * Effect receipts (#1832, epic #1703) declared in this lexicon's partition.
+   * Withheld from the `entities` map by the build: receipts are observe-only
+   * to the generic apply path, and the serialized output is what feeds
+   * appliers, so a receipt must never enter the apply-bound document. A
+   * serializer that wants to render receipts for visibility (#1835) reads
+   * them here and puts them anywhere BUT the section an applier writes from;
+   * a serializer that ignores this field emits nothing for them, which is the
+   * safe default.
+   */
+  receipts?: ReadonlyMap<string, Declarable>;
 }
 
 /**
@@ -30,6 +42,24 @@ export interface SerializerResult {
   primary: string;
   /** Additional files keyed by filename (e.g. "network.template.json" → content) */
   files?: Record<string, string>;
+  /**
+   * Basenames from `files` that must reach disk byte-for-byte — never
+   * `JSON.parse`d, key-sorted, or reformatted to YAML by the build's
+   * additional-file writer (chant#1937).
+   *
+   * A separate field rather than a per-file flag on `files` (e.g. widening
+   * its value to `string | { content: string; verbatim: boolean }`) so every
+   * existing lexicon serializer that returns `files: Record<string, string>`
+   * keeps compiling and behaving unchanged: this list defaults to empty, and
+   * only a serializer that actually carries opaque/pre-formatted bytes
+   * (committed ciphertext, a vendored file) needs to populate it.
+   *
+   * Before this field existed, "JSON.parse fails on this content" was the
+   * only way to opt out of round-tripping — true for YAML that happens not to
+   * parse as JSON, but never a structural guarantee (YAML is a JSON
+   * superset).
+   */
+  verbatimFiles?: string[];
   /**
    * Non-fatal diagnostics produced during serialization (e.g. a dialect
    * dropping keys the target platform ignores). The build pipeline collects

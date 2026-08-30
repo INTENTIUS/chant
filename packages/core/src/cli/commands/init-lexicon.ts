@@ -10,7 +10,7 @@ import { generateSampleRuleTs, generateLintRulesIndexTs } from "./init-lexicon/t
 import { generateLspCompletionsTs, generateLspHoverTs } from "./init-lexicon/templates/lsp";
 import { generatePackageJson, generateTsConfig, generateTsConfigBuild, generateJustfile, generateGitignore, generateReadme, generateSerializerTs, generateValidateTs, generateValidateCliTs } from "./init-lexicon/templates/project";
 import { generatePluginTestTs, generateSerializerTestTs, generateCompletionsTestTs, generateHoverTestTs } from "./init-lexicon/templates/tests";
-import { generateDocsPackageJson, generateDocsTsConfig, generateDocsAstroConfig, generateDocsContentConfig, generateDocsIndexMdx } from "./init-lexicon/templates/docs";
+import { generateDocsPackageJson, generateDocsTsConfig, generateDocsAstroConfig, generateDocsContentConfig, generateDocsIndexMdx, generateDocsGettingStartedMdx } from "./init-lexicon/templates/docs";
 import { generateExamplePackageJson, generateExampleInfraTs } from "./init-lexicon/templates/examples";
 
 /**
@@ -115,6 +115,7 @@ export async function initLexiconCommand(options: InitLexiconOptions): Promise<I
     "docs/src",
     "docs/src/content",
     "docs/src/content/docs",
+    "docs/pages",
     "examples/getting-started",
     "examples/getting-started/src",
   ];
@@ -159,6 +160,7 @@ export async function initLexiconCommand(options: InitLexiconOptions): Promise<I
     "docs/astro.config.mjs": generateDocsAstroConfig(name),
     "docs/src/content.config.ts": generateDocsContentConfig(),
     "docs/src/content/docs/index.mdx": generateDocsIndexMdx(name),
+    "docs/pages/getting-started.mdx": generateDocsGettingStartedMdx(name),
     "examples/getting-started/package.json": generateExamplePackageJson(name),
     "examples/getting-started/src/infra.ts": generateExampleInfraTs(name, names),
   };

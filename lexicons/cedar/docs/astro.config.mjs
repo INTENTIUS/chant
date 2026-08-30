@@ -21,67 +21,97 @@ export default defineConfig({
                   "slug": "index"
             },
             {
-                  "label": "Getting Started",
-                  "slug": "getting-started"
-            },
-            {
-                  "label": "Schema",
-                  "slug": "schema"
-            },
-            {
-                  "label": "Resources",
-                  "slug": "resources"
-            },
-            {
-                  "label": "Policies",
-                  "slug": "policies"
-            },
-            {
-                  "label": "Composites",
-                  "slug": "composites"
-            },
-            {
-                  "label": "Lint Rules",
-                  "slug": "lint-rules"
-            },
-            {
-                  "label": "Importing",
-                  "slug": "importing"
-            },
-            {
-                  "label": "Verified Permissions",
-                  "slug": "avp"
-            },
-            {
-                  "label": "All Rules",
-                  "slug": "rules"
-            },
-            {
-                  "label": "Serialization",
-                  "slug": "serialization"
-            },
-            {
-                  "label": "Dogwood",
+                  "label": "Tutorials",
                   "items": [
                         {
-                              "label": "The Dialect",
-                              "slug": "dogwood"
+                              "label": "Getting Started",
+                              "slug": "getting-started"
+                        }
+                  ]
+            },
+            {
+                  "label": "How-to guides",
+                  "items": [
+                        {
+                              "label": "Importing",
+                              "slug": "importing"
                         },
                         {
-                              "label": "Temporal Policies",
-                              "slug": "dogwood-temporal-policies"
+                              "label": "Dogwood",
+                              "items": [
+                                    {
+                                          "label": "Replay",
+                                          "slug": "dogwood-replay"
+                                    }
+                              ]
+                        }
+                  ]
+            },
+            {
+                  "label": "Reference",
+                  "items": [
+                        {
+                              "label": "All Rules",
+                              "slug": "rules"
                         },
                         {
-                              "label": "Event Schemas",
-                              "slug": "dogwood-event-schemas"
+                              "label": "Serialization",
+                              "slug": "serialization"
                         },
                         {
-                              "label": "Validation",
-                              "slug": "dogwood-validation"
+                              "label": "Composites",
+                              "slug": "composites"
                         },
                         {
-                              "label": "Replay",
-                              "slug": "dogwood-replay"
+                              "label": "Lint Rules",
+                              "slug": "lint-rules"
+                        },
+                        {
+                              "label": "Policies",
+                              "slug": "policies"
+                        },
+                        {
+                              "label": "Resources",
+                              "slug": "resources"
+                        },
+                        {
+                              "label": "Schema",
+                              "slug": "schema"
+                        },
+                        {
+                              "label": "Dogwood",
+                              "items": [
+                                    {
+                                          "label": "Dogwood Validation",
+                                          "slug": "dogwood-validation"
+                                    },
+                                    {
+                                          "label": "Event Schemas",
+                                          "slug": "dogwood-event-schemas"
+                                    },
+                                    {
+                                          "label": "Temporal Policies",
+                                          "slug": "dogwood-temporal-policies"
+                                    }
+                              ]
+                        }
+                  ]
+            },
+            {
+                  "label": "Explanation",
+                  "items": [
+                        {
+                              "label": "Verified Permissions",
+                              "slug": "avp"
+                        },
+                        {
+                              "label": "Dogwood",
+                              "items": [
+                                    {
+                                          "label": "The Dogwood Dialect",
+                                          "slug": "dogwood"
+                                    }
+                              ]
                         }
                   ]
             }

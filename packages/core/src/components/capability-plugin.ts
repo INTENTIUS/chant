@@ -44,7 +44,7 @@ import type { Capability } from "./capability";
 export interface CapabilityManifest {
   /** Package/plugin name (e.g. "aws", "gcp"), not a capability `kind`. */
   name: string;
-  /** Plugin package version (semver). */
+  /** The plugin package's version (semver), read from its `package.json`. */
   version: string;
   /** Minimum/compatible chant core version, checked the same way as `LexiconManifest.chantVersion` (see ../lexicon-manifest.ts's `checkVersionCompatibility`). */
   chantVersion?: string;
@@ -69,7 +69,13 @@ export interface CapabilityPlugin {
   /** Human-readable plugin/package name (e.g. "aws", "gcp"), not a capability `kind`. */
   readonly name: string;
 
-  /** Plugin package version (semver), mirrors `LexiconManifest.version`. */
+  /**
+   * The plugin package's version (semver), read from its `package.json`
+   * (chant #1505). Mirrors `LexiconManifest.version`. Informational — nothing
+   * gates on it. The built-in plugins expose it as a lazy getter over
+   * `ownPackageVersion`, so the read happens on first access and never at
+   * module scope.
+   */
   readonly version: string;
 
   /** Return every `Capability` this plugin contributes, keyed for registration by its own `kind`. */
@@ -124,8 +130,23 @@ export function isCapabilityPlugin(value: unknown): value is CapabilityPlugin {
  *
  * Returns `"0.0.0"` when no versioned `package.json` is found — a visible
  * sentinel rather than a guess; nothing gates on the field.
+ *
+ * Call it lazily (from a `get version()` accessor, as the built-in plugins
+ * do), not at module scope: the read touches the filesystem, and a plugin
+ * module must stay importable where `fs` is absent (workerd, chant #1081).
+ * The result is cached per module URL, so the walk happens once.
  */
 export function ownPackageVersion(moduleUrl: string): string {
+  const cached = ownVersionCache.get(moduleUrl);
+  if (cached !== undefined) return cached;
+  const found = findPackageVersion(moduleUrl);
+  ownVersionCache.set(moduleUrl, found);
+  return found;
+}
+
+const ownVersionCache = new Map<string, string>();
+
+function findPackageVersion(moduleUrl: string): string {
   let dir = dirname(fileURLToPath(moduleUrl));
   for (;;) {
     try {

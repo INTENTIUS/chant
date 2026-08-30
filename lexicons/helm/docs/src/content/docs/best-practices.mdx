@@ -1,10 +1,13 @@
 ---
 title: "Best Practices"
 description: "Common patterns and recommendations for Helm charts with chant"
+diataxis: how-to
 ---
 
 {/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-helm` — DO NOT EDIT.
-    Edit lexicons/helm/src/codegen/docs.ts instead; changes here are overwritten. */}
+    Edit lexicons/helm/docs/pages/best-practices.mdx instead; changes here are overwritten. */}
+
+
 ## CRD lifecycle
 
 Helm installs CRDs from the `crds/` directory but **never upgrades or deletes them**. For managed CRD lifecycle, use the `HelmCRDLifecycle` composite:
@@ -50,6 +53,125 @@ values-prod.yaml    ← Override for production
 
 Use `helm install -f values-prod.yaml` to merge environment-specific values.
 
+## Capability profiles
+
+`helm template` does not fail when it cannot see a cluster — it renders against a Kubernetes version baked into the helm binary, and `.Capabilities.APIVersions` is empty. The default differs by binary (helm 3.16.2 assumes v1.31.0, helm 4.1.1 assumes v1.35.0), so two machines can render different bytes from the same chart and values without any error.
+
+A capability profile closes those inputs. Declare one per cluster in `chant.config.ts`:
+
+```typescript
+export default {
+  lexicons: ["helm", "k8s"],
+  helm: {
+    capabilityProfiles: {
+      prod: { kubeVersion: "1.33.6", apiVersions: ["monitoring.coreos.com/v1"] },
+      staging: { kubeVersion: "1.31.4", apiVersions: [] },
+    },
+  },
+};
+```
+
+Reference it from a `HelmRender`:
+
+```typescript
+import { HelmRender } from "@intentius/chant-lexicon-helm";
+
+export const eso = HelmRender({
+  name: "external-secrets",
+  repo: "https://charts.external-secrets.io",
+  chart: "external-secrets",
+  version: "0.10.4",
+  capabilityProfile: "prod",
+});
+```
+
+The render then runs with `--kube-version` and `--api-versions` from the profile, so `.Capabilities` reflects the declared cluster rather than the local toolchain. Every render pinned to the same profile produces the same bytes on every machine — a per-cluster guarantee, since clusters legitimately differ in version and installed API groups.
+
+Referencing a profile the config does not declare is a build error naming the profile. Omitting `capabilityProfile` keeps the unpinned behavior.
+
+Profiles are a cluster fact, not a chart fact. Keep one per cluster or environment, named the way `k8s.profiles` names cluster bindings, and update `kubeVersion` when the cluster upgrades.
+
+The profile is also asserted at deploy time. When `helmInstall` is given a `capabilityProfile`, it reads the target cluster's real capabilities before any helm mutation — `kubectl version -o json` for the server version, `kubectl api-versions` for the served API set, through the same ambient kubeconfig the deploy itself will use. The declared `kubeVersion` must match the live cluster on major.minor (patch skew changes no capability a chart can probe), and every declared apiVersion must be served. A divergence refuses the deploy with each difference named, declared against live. A cluster that cannot be probed refuses too — a deploy that cannot verify its declared profile does not proceed. Nothing runs a probe when no profile is declared.
+
+`overrideProfileAssertion: true` is the deliberate escape hatch. The deploy proceeds through the divergence, the bypassed differences are warned about, and they are recorded verbatim in the release record's `profileOverride` field — so the ledger shows the release knowingly skewed from its declared profile.
+
+## Render digests
+
+A pinned render records two digests. Each answers a different question.
+
+`inputDigest` is a `sha256:` digest over the canonical JSON of the render's declared inputs. Those are the chart reference, the chart version, the resolved values, and the capability facts. It answers "same inputs?" without touching any rendered bytes. It is the same digest `helmInstall` records in the release ledger, computed by the same helper, so a render and a deploy of the same inputs share one identity.
+
+`contentDigest` is a `sha256:` digest over the canonical rendered bytes. It answers "same bytes on the cluster?". This is the artifact identity.
+
+The two diverge exactly when a render is not a function of its declared inputs. Two renders with the same `inputDigest` and different `contentDigest`s mean the chart is unstable or an input escaped declaration. That divergence is itself a signal. `renderStability` reads the recorded renders and names it.
+
+```typescript
+import { getHelmRenderRecords, renderStability } from "@intentius/chant-lexicon-helm";
+
+const report = renderStability(getHelmRenderRecords());
+// report.unstable — same inputs produced different bytes; the render is not pinned down
+// report.stable — every render of these inputs produced the same bytes
+// report.unassessed — unpinned renders, which carry no digests
+```
+
+Canonicalization normalizes render noise and nothing else. Mapping keys are sorted, since Kubernetes treats mappings as unordered. List order is never touched, since it is meaningful. Document order is preserved as helm emitted it. Duplicate documents are kept, because an aliased dependency legitimately emits the same CRD twice. The `# Source:` header survives as each document's leading line. CRLF endings, trailing whitespace, and other comments do not.
+
+Only pinned renders carry digests. An unpinned render's bytes depend on the local helm binary's defaulted capabilities, so a digest over them would assert an identity the render does not have. Unpinned renders record neither digest.
+
+## The render store
+
+A pinned render is durable, not just identified. By default it persists to a content-addressed store under `~/.chant/helm-renders/` (override with `CHANT_HELM_RENDER_ROOT`):
+
+```
+sha256-<hex>/           one entry per distinct contentDigest
+  content.yaml          the canonical rendered bytes
+  manifest.json         the RenderManifest
+inputs/<hex>.json       inputs index — full render inputs -> digests
+```
+
+The `RenderManifest` is the record of what the bytes are and what produced them. It carries the chart identity (`chart`, `chartVersion`, `repo`), the release name and namespace baked into the bytes, the capability profile the render was pinned against, both identity sides (`inputDigest` with `valuesDigest` as its values-only component, and `contentDigest` as the storage key), a document index, `renderedAt`, the chant version, an optional `sourceRef`, and `helmVersion`. The helm version is load-bearing. The defaulted kube version is a property of the binary, so this field is what explains a digest mismatch between two machines.
+
+The document index maps each identifiable document to its kind, namespace, name, `# Source:` origin, byte span, and per-document digest. `readRenderDocument` resolves one document to its exact bytes and verifies the slice against its digest before returning it.
+
+```typescript
+import { listRenderManifests, loadRenderManifest, readRenderDocument } from "@intentius/chant-lexicon-helm";
+
+const manifests = listRenderManifests();
+const manifest = loadRenderManifest("sha256:...");
+const doc = readRenderDocument("sha256:...", { kind: "ConfigMap", namespace: "web", name: "app-config" });
+```
+
+Entries are immutable and deduplicated: two renders producing the same bytes share one entry, written once. The inputs index is what makes a repeat render a cache hit — it keys on everything that changes the bytes, including the release name and namespace, which `inputDigest` deliberately excludes because the ledger uses that digest as a cross-environment join key.
+
+Persistence follows the cache knob. A pinned render persists unless `noCache` is set; `persist: true` forces the write even with `noCache`; `persist: false` turns the store off. `persist: true` on an unpinned render is a build error naming the reason — an unpinned render has no content identity to store under.
+
+The store has no retention policy, matching the build archive it is modeled on. Entries accumulate until removed by hand. Renders cached under the older truncated-hash entries are left in place — unpinned renders still use them — and pinned renders write to the `sha256-` entries instead. Nothing is migrated.
+
+## Render routing
+
+A stored render deploys through a structure-preserving wrapper: a small chart tree, not a flat manifest stream. `routeRender` splits the recorded stream into the groups the wrapper preserves, and it only routes and labels. Every routed document is byte-identical to the recorded one. Nothing is re-serialized, reordered, or edited.
+
+```typescript
+import { routeStoredRender } from "@intentius/chant-lexicon-helm";
+
+const routed = routeStoredRender("sha256:...");
+// routed.chart, routed.chartVersion — inherited from the source chart
+// routed.crds    — documents whose # Source: path has a crds/ segment
+// routed.hooks   — helm.sh/hook-annotated documents, annotations intact
+// routed.main    — everything else (the wrapper's templates/)
+// routed.warnings — dropped duplicates and template-rendered CRDs, each named
+```
+
+Routing keys on each document's `# Source:` origin, and the CRD rule matches a `crds/` **segment** (`(^|/)crds/`), never a prefix. A subchart's CRDs arrive as `charts/<child>/crds/<file>`, so a prefix rule would route every one of them into `templates/`. That distinction is what keeps `helm uninstall` safe: a CRD shipped in `crds/` survives uninstall, while the same CRD flattened into `templates/` is deleted along with every custom resource of its type.
+
+The segment is the discriminator, not the kind. A `CustomResourceDefinition` rendered from `templates/` stays in the main group, because that chart opted into template lifecycle semantics — upgrades and deletes apply to it. The routing notes it with a `template-crd` warning so the choice is visible.
+
+An aliased dependency emits the same CRD once per instance. The store keeps both documents; the routed CRD group holds each CRD once, deduplicated by `(group, kind)` with the first occurrence winning and a `duplicate-crd` warning naming both sources. A CRD document the routing cannot identify is kept as-is. Routing never silently drops what it cannot name.
+
+Hook-annotated documents route to their own group rather than being folded into the main set or dropped. Hooks survive pinning with unchanged ordering and delete-policy behavior, and surfacing them separately lets the install path account for them.
+
+The wrapper inherits the source chart's name and version, so `helm history` reads continuously across the migration from an unpinned release to a pinned one.
+
 ## List merge workaround
 
 Helm's strategic merge patch does not merge lists — it replaces them. Use map-of-maps instead:
@@ -72,3 +194,51 @@ WHM501 detects values keys that are defined but never referenced in templates. T
 ## Deprecated API versions
 
 WHM502 detects deprecated Kubernetes API versions (like `extensions/v1beta1` for Ingress) and suggests current replacements.
+
+## Deploying through an Op
+
+The `helmInstall` op activity runs `helm upgrade --install --wait`. Since chant #1243 it also records the deploy in the [release ledger](/chant/components/observability/#the-release-ledger), so charts join the same digest-keyed queries the ledger answers for components.
+
+```ts
+import { Op, phase, helmInstall } from "@intentius/chant/op";
+
+export const deployWeb = Op("deploy-web", {
+  phases: [
+    phase("Deploy", [
+      helmInstall("web", "./dist", {
+        values: "values-prod.yaml",
+        chartVersion: "1.2.3",
+        env: "prod",
+      }),
+    ]),
+  ],
+});
+```
+
+The record is keyed by an input digest. That is a `sha256:` digest over the deploy's inputs — the chart reference, the chart version, the resolved values (values file with `--set` entries applied), and the declared capability profile when one is given. Canonical JSON makes it stable across value key order. It is not a digest of the rendered manifests. Rendered-output identity is the `contentDigest` a pinned render records — see [Render digests](#render-digests).
+
+Record fields follow the auto-release convention. `component` defaults to the release name and `env` to `local`. The actor resolves from `GITHUB_ACTOR`, `GITLAB_USER_LOGIN`, or `USER`. The git sha resolves from `HEAD`. The run id resolves from `GITHUB_RUN_ID` or `CI_PIPELINE_ID` unless passed explicitly. A field that cannot be resolved is never faked. The append is skipped and a warning explains why.
+
+A ledger-append failure never fails the deploy. The deploy already happened, so the activity warns and still succeeds. Pass `recordRelease: false` to opt out. The activity returns the input digest and the record, so a workflow can carry both.
+
+## Pinned installs
+
+`helmInstall` can also deploy a recorded render's exact bytes. Pass `contentDigest` instead of a chart reference and the activity takes the pinned path. It loads the render from [the render store](#the-render-store), verifies the stored bytes still hash to the digest, routes them (see [Render routing](#render-routing)), and installs them as a structure-preserving wrapper chart. Helm renders nothing at deploy time.
+
+```ts
+import { Op, phase, helmInstallPinned } from "@intentius/chant/op";
+
+export const promoteWeb = Op("promote-web", {
+  phases: [
+    phase("Deploy", [
+      helmInstallPinned("web", "sha256:...", { env: "prod" }),
+    ]),
+  ],
+});
+```
+
+The wrapper preserves lifecycle semantics. Documents whose origin has a `crds/` segment land in the wrapper's `crds/`, so `helm uninstall` leaves them alone, exactly as it would for the source chart. Every other document ships byte-for-byte through a `.Files.Get` shim rather than sitting in `templates/` directly. Rendered output can legitimately contain template-looking text (an alertmanager rule's `{{ $labels }}`, for example), and the shim keeps helm from templating recorded bytes a second time. Hook annotations are part of the recorded bytes, so hooks fire with unchanged ordering and delete-policy behavior. The wrapper inherits the source chart's name and version, so `helm history` and `helm rollback` keep working, and an existing unpinned release migrates to pinned by an in-place `helm upgrade` under the same release name.
+
+Refusals are specific and fire before any helm mutation. A digest the store does not hold refuses. Stored bytes that no longer hash to their digest refuse. Passing `chart`, `values`, `set`, or `chartVersion` alongside `contentDigest` refuses, because those inputs were closed at render time. A release name other than the one the bytes were rendered for refuses, because `.Release.Name` is baked into the bytes. A declared `capabilityProfile` that disagrees with the profile recorded in the render's manifest refuses offline. And the deploy-time assertion described under [Capability profiles](#capability-profiles) always runs on this path, against the manifest's recorded profile, so a diverging live cluster refuses too unless deliberately overridden.
+
+The result carries the deploy's full identity. `pinned: true`, the `contentDigest`, the stored render's `inputDigest`, the release revision read from `helm get metadata -o json`, and the document counts `crdsApplied`, `docsApplied`, and `hooksRun`. The release record for a pinned deploy is keyed by the content digest, what this cluster actually received, and carries the input digest alongside. Profiles are per cluster, so two environments legitimately render different bytes. Cross-environment questions join on the input digest, while the content digest proves the exact bytes each cluster got.

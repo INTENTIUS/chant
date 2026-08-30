@@ -1,6 +1,7 @@
 ---
 title: Drift Detection
 description: Why chant's snapshots are observational, what the diff categories mean, and when continuous drift detection earns its keep
+diataxis: explanation
 ---
 
 import { Aside } from '@astrojs/starlight/components';
@@ -33,6 +34,8 @@ Drift can mean two structurally different things, and chant tracks them through 
 **Artifacts** are runtime concepts created by tooling outside chant's entity model. A Helm release isn't declared in chant — chant declares Chart.yaml + templates, and `helm install` later creates the release. Same story for Docker containers. Lexicons that fit this model implement `listArtifacts()` (context-keyed: "tell me what artifacts exist *in this environment* right now").
 
 The diff engine treats them differently because they *are* different. Resources have a "declared" axis to compare against; artifacts don't.
+
+A lexicon can implement both. The helm lexicon lists every release in the cluster as an artifact, and *also* resolves each declared `Helm::Chart` to its release and reports what that release holds as per-resource rows — `helm get manifest` plus `helm get hooks` (chant #1246). See [Helm — Live Observation](/chant/lexicons/helm/observation/).
 
 For the implementer-side walkthrough, see [Implementing Observation](/chant/lexicon-authoring/observation/).
 
@@ -75,7 +78,7 @@ Those seven categories are entity-level — they answer whether a resource is th
 
 `undeclared` is the interesting one and the reason the deep read exists. CloudFormation's own drift detection compares only the properties it was told about, so a property nobody declared is invisible to it no matter who changed it.
 
-A raw live model is mostly fields nobody declared and nobody changed, so both trees are normalized with the lexicon's own rules before the comparison: server-populated fields dropped, set-like arrays (tags, policy statements) canonicalized, provider defaults subtracted where source is silent. On Kubernetes, where the API server records per-field ownership (`metadata.managedFields`), each reported drift also names the manager that owns the field live — "owned by `hpa-controller`" and "owned by `kubectl-edit`" are the same drift kind and very different answers.
+A raw live model is mostly fields nobody declared and nobody changed, so both trees are normalized with the lexicon's own rules before the comparison: server-populated fields dropped, set-like arrays (tags, policy statements) canonicalized, provider defaults subtracted where source is silent. On Kubernetes, where the API server records per-field ownership (`metadata.managedFields`), each reported drift also names the manager that owns the field live — "owned by `hpa-controller`" and "owned by `kubectl-edit`" are the same drift kind and very different answers. Ownership names the writer; it does not silence the line. A field another manager owns that source never declared is `undeclared` drift like any other (a `kubectl label` from the console is the canonical case), and the way to stop hearing about a controller that legitimately owns a field — an HPA on `spec.replicas` — is to accept it into the baseline below. Only the metadata Kubernetes itself stamps on every object of a kind (`deployment.kubernetes.io/revision`, `pod-template-hash`, client-side apply's `last-applied-configuration`) is subtracted statically, with `status` and the server-minted fields.
 
 Depth is opt-in per lexicon and changes nothing for the others. All five resource-observing lexicons implement it — see the [coverage matrix](/chant/lexicons/overview/#runtime-observation-coverage) for the mechanism each one reads through.
 
@@ -102,6 +105,8 @@ An orphan is a resource in the cloud that source doesn't know about. Detection i
 
 - **Adopt it into source.** Regenerate the resource as chant TypeScript with [live import](/chant/guide/live-import/): `chant import --from <env> --name <orphan>`. The orphan stops being a surprise and starts being declared — the [`ReconcileOp`](/chant/guide/reconciling-lifecycle/) workflow automates this as a PR.
 - **Delete it.** Only ever for a *chant-owned* orphan — one carrying the [ownership marker](/chant/configuration/config-file/#ownership). A foreign orphan (no marker) is never auto-deleted; it escalates to adopt-or-review. `chant lifecycle plan` classifies which is which, and `ApplyOp` deletes only the owned ones.
+
+When a whole environment is done rather than one resource, [`chant lifecycle teardown <env>`](/chant/cli/lifecycle/#lifecycle-teardown-env) deletes everything carrying that environment's marker in one marker-scoped pass — also available as the [`envTeardown` Op step](/chant/guide/ops-reference/#step-builders) for a durable run behind a human gate.
 
 ### Artifacts (two-way diff)
 

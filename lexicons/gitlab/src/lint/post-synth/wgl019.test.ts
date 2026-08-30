@@ -53,6 +53,14 @@ describe("WGL019: Missing Retry on Deploy Jobs", () => {
     expect(diags).toHaveLength(0);
   });
 
+  test("does not flag deploy job with explicit retry: 0 (#1544)", () => {
+    const entities = new Map<string, Declarable>([
+      ["deployApp", new MockJob({ script: ["deploy.sh"], stage: "deploy", retry: 0 })],
+    ]);
+    const diags = wgl019.check(makeCtx(entities));
+    expect(diags).toHaveLength(0);
+  });
+
   test("does not flag non-deploy job without retry", () => {
     const entities = new Map<string, Declarable>([
       ["testJob", new MockJob({ script: ["npm test"], stage: "test" })],

@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeAll, afterAll } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { checkExamplesBuild } from "./check-lexicon-examples";
@@ -15,7 +15,10 @@ import { checkExamplesBuild } from "./check-lexicon-examples";
  * exactly what each example's own `npm run build` does.
  *
  * These fixtures import the real, already-installed `@intentius/chant-lexicon-aws`
- * package (workspace-linked), so no lexicon plugin needs to be faked.
+ * package (workspace-linked), so no lexicon plugin needs to be faked. The
+ * temp lexicon dir gets the repo's node_modules linked in so that bare
+ * specifier resolves from the fixture the way it does from a real lexicon
+ * (Vitest 4's module runner resolves from the importing file, not the root).
  */
 
 function writeLexiconDirWithExample(
@@ -35,18 +38,43 @@ describe("checkExamplesBuild", () => {
 
   beforeAll(() => {
     dir = mkdtempSync(join(tmpdir(), "chant-check-lexicon-examples-"));
+    symlinkSync(join(__dirname, "..", "..", "..", "..", "..", "node_modules"), join(dir, "node_modules"), "dir");
   });
   afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
-  test("a clean example builds", async () => {
-    writeLexiconDirWithExample(dir, "clean", {
-      "bucket.ts": `import { Bucket } from "@intentius/chant-lexicon-aws";
+  // A bucket that satisfies the aws lexicon's error-severity checks (#1400):
+  // public access blocked (WAW018) and a TLS-only bucket policy (WAW042).
+  const cleanBucketSource = `import { Bucket, PublicAccessBlockConfiguration, S3BucketPolicy, Ref } from "@intentius/chant-lexicon-aws";
 
 export const appBucket = new Bucket({
   BucketName: "my-app-bucket",
+  PublicAccessBlockConfiguration: new PublicAccessBlockConfiguration({
+    BlockPublicAcls: true,
+    BlockPublicPolicy: true,
+    IgnorePublicAcls: true,
+    RestrictPublicBuckets: true,
+  }),
 });
-`,
-    });
+
+export const appBucketPolicy = new S3BucketPolicy({
+  Bucket: Ref(appBucket),
+  PolicyDocument: {
+    Version: "2012-10-17",
+    Statement: [
+      {
+        Effect: "Deny",
+        Principal: "*",
+        Action: "s3:*",
+        Resource: [appBucket.Arn],
+        Condition: { Bool: { "aws:SecureTransport": "false" } },
+      },
+    ],
+  },
+});
+`;
+
+  test("a clean example builds", async () => {
+    writeLexiconDirWithExample(dir, "clean", { "bucket.ts": cleanBucketSource });
 
     const results = await checkExamplesBuild(dir);
     const clean = results.find((r) => r.example === "clean");
@@ -73,6 +101,44 @@ export const dataBucket = new Bucket({
     const broken = results.find((r) => r.example === "broken");
     expect(broken?.ok).toBe(false);
     expect(broken?.detail).toMatch(/Duplicate export name "dataBucket" found/);
+  });
+
+  // chant #1400 — a bare bucket serializes fine, which is all #1067 asked,
+  // but fails the aws lexicon's own WAW018/WAW042 at error severity. This is
+  // the exact shape lambda-api and lambda-s3 shipped in.
+  test("an example that fails its own lexicon's post-synth checks at error severity fails (#1400)", async () => {
+    writeLexiconDirWithExample(dir, "insecure", {
+      "bucket.ts": `import { Bucket } from "@intentius/chant-lexicon-aws";
+
+export const plainBucket = new Bucket({
+  BucketName: "plain-bucket",
+});
+`,
+    });
+
+    const results = await checkExamplesBuild(dir);
+    const insecure = results.find((r) => r.example === "insecure");
+    expect(insecure?.ok).toBe(false);
+    expect(insecure?.detail).toMatch(/post-synth error\(s\) from the lexicon's own checks/);
+    expect(insecure?.detail).toMatch(/WAW042: \[plainBucket\]/);
+  });
+
+  test("an example's own lint.rules severity config applies to post-synth checks (#1400)", async () => {
+    writeLexiconDirWithExample(dir, "suppressed", {
+      "bucket.ts": `import { Bucket } from "@intentius/chant-lexicon-aws";
+
+export const plainBucket = new Bucket({
+  BucketName: "plain-bucket",
+});
+`,
+    });
+    writeFileSync(
+      join(dir, "examples", "suppressed", "chant.config.json"),
+      JSON.stringify({ lint: { rules: { WAW018: "warning", WAW042: "off" } } }),
+    );
+
+    const results = await checkExamplesBuild(dir);
+    expect(results.find((r) => r.example === "suppressed")).toMatchObject({ ok: true });
   });
 
   test("an empty src/ directory is skipped, not reported as a failure", async () => {

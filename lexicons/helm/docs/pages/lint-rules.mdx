@@ -1,0 +1,141 @@
+---
+title: "Lint Rules"
+description: "Built-in lint rules and post-synth checks for Helm charts"
+diataxis: reference
+---
+The Helm lexicon ships lint rules that run during `chant lint` and post-synth checks that validate the generated chart after `chant build`.
+
+## AST Rules
+
+### WHM001 — Chart metadata
+
+**Severity:** error | **Category:** correctness
+
+Flags Chart constructors missing required fields: `name`, `version`, or `appVersion`. Charts without these fields produce invalid Chart.yaml files.
+
+### WHM002 — Values no secrets
+
+**Severity:** error | **Category:** security
+
+Flags Values constructors containing keys that match secret patterns (`password`, `secret`, `token`, `apiKey`, `privateKey`). Secrets should use Kubernetes Secrets or external secret managers, not values.yaml.
+
+### WHM003 — No hardcoded image
+
+**Severity:** warning | **Category:** maintainability
+
+Flags Deployment and container constructors with hardcoded image strings instead of `values.*` proxy references. Images should be parameterized through values.yaml for override flexibility.
+
+### WHM004 — HelmTpl expression in a Values constructor
+
+**Severity:** warning | **Category:** correctness
+
+Flags a `HelmTpl` expression inside a `Values` constructor, where it has no
+effect: `values.yaml` is plain data, so a Go template expression written there
+is emitted literally rather than evaluated. Use `runtimeSlot()` for a value
+that must resolve at deploy time.
+
+## Post-synth Checks
+
+### WHM005 — Sub-chart wrapper with no templates
+
+**Severity:** warning
+
+Flags a chart that declares sub-chart dependencies but ships no templates of
+its own. A wrapper that adds nothing should be dropped in favour of deploying
+the upstream chart directly.
+
+### Chart Structure (WHM1xx)
+
+| Rule | Description |
+|------|-------------|
+| WHM101 | Chart.yaml must have required fields (apiVersion v2, name, version) |
+| WHM102 | values.schema.json should be present when Values are non-empty |
+| WHM103 | Go template syntax must be valid (balanced braces) |
+| WHM104 | NOTES.txt should exist for application charts |
+| WHM105 | _helpers.tpl must exist in templates/ |
+
+### Templates (WHM2xx)
+
+| Rule | Description |
+|------|-------------|
+| WHM201 | K8s resources should include standard Helm labels |
+| WHM202 | Hook weights should be defined when multiple hooks exist |
+| WHM203 | Values entries should be documented via schema or comments |
+| WHM204 | Chart dependencies should use semver ranges, not pinned versions |
+
+### Testing & Resources (WHM3xx)
+
+| Rule | Description |
+|------|-------------|
+| WHM301 | Application charts should include at least one Helm test |
+| WHM302 | Container resources (limits/requests) should be set via values or defaults |
+
+### Security & Images (WHM4xx)
+
+| Rule | Description |
+|------|-------------|
+| WHM401 | Container images should not use :latest tag or omit tag entirely |
+| WHM402 | Containers should set runAsNonRoot in security context |
+| WHM403 | Containers should set readOnlyRootFilesystem in security context |
+| WHM404 | Containers must not run in privileged mode |
+| WHM405 | Resource specs should include cpu and memory in limits/requests |
+| WHM406 | CRDs in crds/ directory are never upgraded or deleted by Helm |
+| WHM407 | Secrets with inline data should use ExternalSecret or SealedSecret |
+
+### Dependencies & Notes (WHM5xx)
+
+| Rule | Description |
+|------|-------------|
+| WHM501 | Detect values keys that are defined but never referenced in templates |
+| WHM502 | Detect deprecated or invalid Kubernetes API versions |
+| WHM504 | Detect supplied values that never survive coalescing (dead assignments) |
+
+## Values provenance
+
+Helm coalesces values from several layers — each (sub)chart's own
+`values.yaml`, the parent chart's overrides under the dependency's
+alias-or-name key, supplied values files, `--set` flags — and only the
+result reaches the templates. The coalesced tree exists on no side of the
+usual tooling: `helm template --debug` does not print it, and
+`helm get values --all` needs an installed release.
+
+The lexicon extracts it at build time with a probe (`probeCoalescedValues`):
+the chart is copied, every (sub)chart's templates are replaced with a single
+`chant-values-probe.yaml` template that prints `{{ toYaml .Values }}`, the
+copy is rendered, and the probe documents are lifted out. Coalescing is
+helm's own — parent-overrides-child, `global` propagation, alias scoping and
+`import-values` all behave exactly as a real render, because it is a real
+render. The copy is discarded afterwards; the probe document can never
+appear in a real render of the chart. A dependency disabled by a
+`condition:` renders no probe document and is reported separately, with the
+condition that disabled it.
+
+Three products come out of the probe:
+
+- a coalesced-values digest — `sha256:` over the canonical JSON of the
+  per-instance trees, following the same conventions as the render input
+  digest. Two renders that coalesce the same values everywhere share it.
+- `valueSources` — every coalesced path attributed to the layer that won
+  it: `chart default`, `parent override`, `supplied file`, or `--set`
+  (subchart paths are scope-prefixed, e.g. `web.replicas`). "Why is this
+  field this value" becomes a lookup rather than a grep.
+- dead assignments — supplied values that never survive coalescing, which
+  WHM504 reports.
+
+### WHM504 — Dead value assignment
+
+**Severity:** warning
+
+Flags a supplied value that never survives coalescing:
+
+- shadowed — a later supplied layer assigns the same path, so the earlier
+  assignment is unreachable (two maps merging is not a shadow);
+- disabled subchart — the path targets a dependency a `condition:`
+  disabled, so no rendered chart ever reads it;
+- unknown subchart — a values map under a top-level key that names no
+  dependency, no chart default and not `global`, on a chart that has
+  dependencies: the classic silently-ignored typo of a subchart name.
+
+Each finding names the path, the layer that supplied it, and what shadowed
+or disabled it. The check reports over the probe runs of the current build;
+when no probe ran, it reports nothing.

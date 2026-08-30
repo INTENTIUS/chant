@@ -127,6 +127,28 @@ describe("renderMarkdown — reworked structure", () => {
   });
 });
 
+describe("efficiency dimension (#444)", () => {
+  test("buildReportModel tallies efficiency separately, excluded from security/correctness", async () => {
+    const { buildReportModel } = await import("./report-model");
+    const findings: AuditFinding[] = [
+      { checkId: "GHA063", severity: "info", message: "no cache.", file: ".github/workflows/ci.yml", lexicon: "github", entity: "build" }, // efficiency
+      { checkId: "GHA021", severity: "warning", message: "unpinned checkout.", file: ".github/workflows/ci.yml", lexicon: "github", entity: "build" }, // security
+      { checkId: "GHA028", severity: "error", message: "no triggers.", file: ".github/workflows/ci.yml", lexicon: "github" }, // correctness
+    ];
+    const { counts } = buildReportModel(findings, { catalog: CATALOG });
+    expect(counts.efficiency).toBe(1);
+    expect(counts.security).toBe(1);
+    expect(counts.correctness).toBe(1);
+    // the efficiency finding must not have leaked into either tally
+    expect(counts.security + counts.correctness + counts.bestPractice + counts.efficiency).toBe(counts.total);
+  });
+
+  test("markdown report surfaces the efficiency tally in the By category line", () => {
+    const out = md([{ checkId: "GHA063", severity: "info", message: "no cache.", file: ".github/workflows/ci.yml", lexicon: "github", entity: "build" }]);
+    expect(out).toContain("By category: 0 security, 0 correctness, 0 best-practice, 1 efficiency.");
+  });
+});
+
 describe("catalog threading (#687)", () => {
   test("buildReportModel uses a passed-in catalog over core's static one", async () => {
     const { buildReportModel } = await import("./report-model");

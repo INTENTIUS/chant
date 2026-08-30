@@ -21,52 +21,72 @@ export default defineConfig({
                   "slug": "index"
             },
             {
-                  "label": "Getting Started",
-                  "slug": "getting-started"
+                  "label": "Tutorials",
+                  "items": [
+                        {
+                              "label": "Getting Started",
+                              "slug": "getting-started"
+                        }
+                  ]
             },
             {
-                  "label": "Config Connector Concepts",
-                  "slug": "config-connector-concepts"
+                  "label": "How-to guides",
+                  "items": [
+                        {
+                              "label": "Deploying to GKE",
+                              "slug": "gke-kubernetes"
+                        },
+                        {
+                              "label": "Examples: Composites",
+                              "slug": "composite-examples"
+                        },
+                        {
+                              "label": "Examples: Resources",
+                              "slug": "examples"
+                        },
+                        {
+                              "label": "Importing Existing YAML",
+                              "slug": "importing-yaml"
+                        },
+                        {
+                              "label": "Operational Playbook",
+                              "slug": "operational-playbook"
+                        }
+                  ]
             },
             {
-                  "label": "Lint Rules",
-                  "slug": "lint-rules"
+                  "label": "Reference",
+                  "items": [
+                        {
+                              "label": "Pseudo-Parameters",
+                              "slug": "pseudo-parameters"
+                        },
+                        {
+                              "label": "All Rules",
+                              "slug": "rules"
+                        },
+                        {
+                              "label": "Serialization",
+                              "slug": "serialization"
+                        },
+                        {
+                              "label": "AI Skills",
+                              "slug": "skills"
+                        },
+                        {
+                              "label": "Lint Rules",
+                              "slug": "lint-rules"
+                        }
+                  ]
             },
             {
-                  "label": "Examples: Resources",
-                  "slug": "examples"
-            },
-            {
-                  "label": "Examples: Composites",
-                  "slug": "composite-examples"
-            },
-            {
-                  "label": "Operational Playbook",
-                  "slug": "operational-playbook"
-            },
-            {
-                  "label": "Importing Existing YAML",
-                  "slug": "importing-yaml"
-            },
-            {
-                  "label": "AI Skills",
-                  "slug": "skills"
-            },
-            {
-                  "label": "Pseudo-Parameters",
-                  "slug": "pseudo-parameters"
-            },
-            {
-                  "label": "All Rules",
-                  "slug": "rules"
-            },
-            {
-                  "label": "Serialization",
-                  "slug": "serialization"
-            },
-            {
-                  "label": "Deploying to GKE",
-                  "slug": "gke-kubernetes"
+                  "label": "Explanation",
+                  "items": [
+                        {
+                              "label": "Config Connector Concepts",
+                              "slug": "config-connector-concepts"
+                        }
+                  ]
             }
       ],
     }),

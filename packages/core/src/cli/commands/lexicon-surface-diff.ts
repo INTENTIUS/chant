@@ -9,6 +9,12 @@
  *
  * The snapshot file is written to `<lexicon-dir>/surface.snapshot.json`.
  * Pass `--update-snapshot` to commit the fresh snapshot after a successful run.
+ *
+ * An update run is exempt from the `surface-matches-snapshot` validate check
+ * and from nothing else (#1825): that check fails on the stale baseline the
+ * run exists to replace, and with an `"always"` gate (#1475) the documented
+ * re-baseline flow would deadlock. Any other failing step still refuses the
+ * write, so a broken generate cannot be baselined.
  */
 
 import { existsSync, readFileSync } from "fs";
@@ -62,7 +68,7 @@ export async function runSurfaceDiff(opts: SurfaceDiffOptions): Promise<RegenRes
       ok: false,
       changed: false,
       severity: "none",
-      delta: { added: [], changed: [], removed: [], severity: "none" },
+      delta: { added: [], changed: [], removed: [], renamed: [], severity: "none" },
       deltaText: "",
       failures: [failure],
       freshSnapshot: null,
@@ -78,6 +84,9 @@ export async function runSurfaceDiff(opts: SurfaceDiffOptions): Promise<RegenRes
     skipLint: opts.skipLint,
     skipExamples: !opts.runExamples,
     pinnedDigestPath: opts.pinnedDigestPath,
+    // The update run skips only the surface-matches-snapshot validate check —
+    // the staleness it is about to fix (#1825).
+    updatingSnapshot: opts.updateSnapshot,
   });
 
   // Update snapshot when requested and the run succeeded

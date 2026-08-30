@@ -4,6 +4,15 @@ export { k8sSerializer } from "./serializer";
 // Plugin
 export { k8sPlugin } from "./plugin";
 
+// Typed Op step-builder wrappers (chant #1288 Stage 2) — kubectlApply/
+// waitForReady/ensureSecret — are deliberately NOT re-exported here: their
+// types derive from the activities' own *Args interfaces, which name the API
+// client and therefore sit behind the #1074 dynamic-import boundary this
+// entry point must never reach, even type-only
+// (examples/k8s-client-boundary.test.ts). Import them via the subpath
+// `@intentius/chant-lexicon-k8s/op/builders`, the same way workers import
+// `@intentius/chant-lexicon-k8s/op/activities`.
+
 // The capability plugin core's loader discovers on this package (#1495 piece 2)
 // — the kubectl-apply leaf a component composes, the way aws contributes
 // cfn-deploy.
@@ -17,6 +26,10 @@ export { DEFAULT_LABELS_MARKER, DEFAULT_ANNOTATIONS_MARKER } from "./default-lab
 
 // Variables / label constants
 export { K8sLabels, K8sAnnotations } from "./variables";
+
+// Generated-once secret marker (#1830) — constants only; the store adapter
+// itself lives at the `/secret-store` subpath, off the build path (#1074).
+export { GENERATED_ONCE_LABEL_KEY, GENERATED_ONCE_LABEL_VALUE, isGeneratedOnce } from "./secret-labels";
 
 // MicroTime helpers — see micro-time.ts for why this exists.
 export { microTime, isMicroTimeFormatted } from "./micro-time";
@@ -38,6 +51,8 @@ export {
   AgicIngress, AzureDiskStorageClass, AzureFileStorageClass, AzureMonitorCollector,
   AksWorkloadIdentityServiceAccount,
   GkeFluentBitAgent, GkeOtelCollector, GkeExternalDnsAgent, AksExternalDnsAgent,
+  Model, resolveModelStorageUri,
+  OperatorStack, deriveHostVerbClass, DEFAULT_RESOURCE_RULES,
 } from "./composites/index";
 export type {
   WebAppProps, WebAppResult, StatefulAppProps, StatefulAppResult, CronWorkloadProps, CronWorkloadResult,
@@ -77,6 +92,8 @@ export type {
   GkeOtelCollectorProps, GkeOtelCollectorResult,
   GkeExternalDnsAgentProps, GkeExternalDnsAgentResult,
   AksExternalDnsAgentProps, AksExternalDnsAgentResult,
+  ModelSource, ModelProps, ModelResult,
+  OperatorDial, OperatorRbacResourceRule, OperatorStackConvergeHost, OperatorStackConfig, OperatorStackResult,
 } from "./composites/index";
 
 // RBAC verb constants

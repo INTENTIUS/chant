@@ -1,0 +1,21 @@
+---
+title: "AI Skills"
+description: "AI agent skills bundled with the Helm lexicon"
+diataxis: reference
+---
+
+## What are skills?
+
+Skills are structured markdown documents bundled with a lexicon. When an AI agent works in a chant project, it discovers and loads relevant skills automatically — giving it operational knowledge about the Helm chart workflow.
+
+## Bundled skill: chant-helm
+
+The `chant-helm` skill teaches AI agents how to:
+
+- Scaffold new Helm chart projects with `chant init --lexicon helm`
+- Use Helm intrinsics (values proxy, include, printf, toYaml, If/Range/With)
+- Build and validate charts with chant + helm CLI
+- Debug common issues (unbalanced braces, hardcoded images, missing metadata)
+- Use composites for common patterns (WebApp, Microservice, StatefulService)
+
+When you scaffold a new project with `chant init --lexicon helm`, the skill is installed to `skills/chant-helm/SKILL.md` for automatic discovery by Claude Code.

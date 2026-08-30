@@ -9,7 +9,12 @@ import {
   OWNERSHIP_MANAGED_BY_VALUE,
   type ChannelKeys,
 } from "./ownership";
-import { resolveOwnershipMarker } from "./config";
+import {
+  resolveOwnershipMarker,
+  resolveOwnershipEnv,
+  resolveOwnershipStack,
+  ownershipEnvDisagreement,
+} from "./config";
 
 // A stand-in for a lexicon-provided convention (e.g. AWS's colon keys), to
 // prove the core helpers are generic over any `ChannelKeys` — the per-provider
@@ -103,5 +108,62 @@ describe("resolveOwnershipMarker (config opt-in)", () => {
 
   test("off when explicitly disabled", () => {
     expect(resolveOwnershipMarker({ ownership: { stack: "billing", enabled: false } })).toBeUndefined();
+  });
+});
+
+describe("ownership.env as a build-parameter reference (#1396)", () => {
+  const config = {
+    ownership: { stack: "fountain", env: { param: "env" } },
+    buildParams: { env: { type: "string" as const, default: "dev", env: "FOUNTAIN_ENV" } },
+  };
+
+  test("takes the resolved parameter value — --param env=prod drives the marker", () => {
+    expect(resolveOwnershipMarker(config, [{ name: "env", value: "prod", source: "cli" }])).toEqual({
+      stack: "fountain",
+      env: "prod",
+    });
+    expect(resolveOwnershipMarker(config, [{ name: "env", value: "dev", source: "default" }])).toEqual({
+      stack: "fountain",
+      env: "dev",
+    });
+  });
+
+  test("a reference to an undeclared parameter is an error, not an env-less marker", () => {
+    expect(() => resolveOwnershipMarker({ ownership: { stack: "s", env: { param: "env" } } }, [])).toThrow(
+      /does not declare/,
+    );
+  });
+
+  test("a reference to a parameter that resolved to nothing is an error", () => {
+    expect(() => resolveOwnershipMarker(config, [])).toThrow(
+      /resolved to no value.*--param env=<value>.*FOUNTAIN_ENV/,
+    );
+  });
+
+  test("the stack-only resolver needs no parameters", () => {
+    expect(resolveOwnershipStack(config)).toBe("fountain");
+    expect(resolveOwnershipStack({ ownership: { stack: "s", enabled: false } })).toBeUndefined();
+  });
+
+  test("a literal env is returned untouched, with or without parameters", () => {
+    expect(resolveOwnershipEnv({ ownership: { stack: "s", env: "prod" } }, undefined)).toBe("prod");
+    expect(resolveOwnershipEnv({ ownership: { stack: "s" } }, [])).toBeUndefined();
+  });
+
+  test("a literal env disagreeing with an env parameter is reported", () => {
+    const literal = {
+      ownership: { stack: "fountain", env: "dev" },
+      buildParams: { env: { type: "string" as const, default: "dev" } },
+    };
+    expect(ownershipEnvDisagreement(literal, [{ name: "env", value: "dev", source: "default" }])).toBeUndefined();
+    expect(ownershipEnvDisagreement(literal, [{ name: "env", value: "prod", source: "cli" }])).toMatch(
+      /ownership\.env is "dev" but the env build parameter resolved to "prod" \(cli\)/,
+    );
+    // A reference never disagrees — there is one source.
+    expect(ownershipEnvDisagreement(config, [{ name: "env", value: "prod", source: "cli" }])).toBeUndefined();
+    // Marking off — nothing is stamped, nothing to disagree with.
+    expect(
+      ownershipEnvDisagreement({ ownership: { env: "dev" } }, [{ name: "env", value: "prod", source: "cli" }]),
+    ).toBeUndefined();
   });
 });

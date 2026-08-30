@@ -10,7 +10,6 @@ kind: Environment
 metadata:
   name: concierge-env
 spec:
-  name: concierge-env
   networking_type: limited
   networking_config:
     allowed_hosts:
@@ -24,7 +23,6 @@ kind: Agent
 metadata:
   name: researcher
 spec:
-  name: researcher
   model: anthropic/claude-sonnet-4-6
   runtime: claude
   environment: concierge-env
@@ -48,6 +46,18 @@ describe("parser", () => {
     ]);
     expect(ir.resources[0].logicalId).toBe("concierge-env");
     expect(ir.resources[0].properties.networking_type).toBe("limited");
+  });
+
+  it("takes the name prop from metadata.name when spec carries none (#1606)", () => {
+    const ir = new FountainParser().parse(MANIFESTS);
+    expect(ir.resources.map((r) => r.properties.name)).toEqual(["concierge-env", "researcher"]);
+  });
+
+  it("lets metadata.name win over a stray spec.name", () => {
+    const ir = new FountainParser().parse(
+      "apiVersion: fountain.dev/v1\nkind: Vault\nmetadata:\n  name: real\nspec:\n  name: stale\n",
+    );
+    expect(ir.resources[0].properties.name).toBe("real");
   });
 
   it("parses the fountain-plan.json sidecar", () => {

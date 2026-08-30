@@ -1,4 +1,5 @@
 import type { LintDiagnostic, LintRule, Severity } from "../../lint/rule";
+import type { OkfBundle } from "../../okf-read";
 import { pathToFileURL } from "node:url";
 
 /**
@@ -33,56 +34,79 @@ function color(text: string, colorCode: string): string {
 /**
  * Format diagnostics in stylish format (similar to ESLint)
  * Groups by file, shows severity, message, and rule ID
+ *
+ * @param diagnostics - Active (non-suppressed) diagnostics
+ * @param suppressed - Suppressed diagnostics with optional reason (optional). When
+ *   present and non-empty, a "Suppressed" section is appended (#1866, design #1059)
+ *   below the active diagnostics, mirroring SARIF's `suppressed` param on
+ *   {@link formatSarif} rather than changing what "diagnostics" means here.
+ * @param bundle - The project's loaded OKF knowledge bundle (`../../okf-read`'s
+ *   `loadOkfBundle`), used to resolve `okf:` citations in suppression reasons.
+ *   Omitted (or a bundle with no matching concept) falls back to printing the
+ *   raw reason with a warning — this never affects suppression itself, only
+ *   how a cited reason renders.
  */
-export function formatStylish(diagnostics: LintDiagnostic[]): string {
-  if (diagnostics.length === 0) {
-    return formatSummary(0, 0);
-  }
+export function formatStylish(
+  diagnostics: LintDiagnostic[],
+  suppressed?: Array<LintDiagnostic & { reason?: string }>,
+  bundle?: OkfBundle,
+): string {
+  const hasSuppressed = suppressed !== undefined && suppressed.length > 0;
 
-  // Group by file
-  const byFile = new Map<string, LintDiagnostic[]>();
-  for (const diag of diagnostics) {
-    const existing = byFile.get(diag.file) ?? [];
-    existing.push(diag);
-    byFile.set(diag.file, existing);
+  if (diagnostics.length === 0 && !hasSuppressed) {
+    return formatSummary(0, 0);
   }
 
   const lines: string[] = [];
   let errorCount = 0;
   let warningCount = 0;
 
-  for (const [file, fileDiags] of byFile) {
-    // File header with underline
-    lines.push("");
-    lines.push(color(file, colors.underline));
-
-    // Sort by line, then column
-    fileDiags.sort((a, b) => {
-      if (a.line !== b.line) return a.line - b.line;
-      return a.column - b.column;
-    });
-
-    for (const diag of fileDiags) {
-      // Count errors and warnings
-      if (diag.severity === "error") {
-        errorCount++;
-      } else if (diag.severity === "warning") {
-        warningCount++;
-      }
-
-      // Format: "  line:col  severity  message  ruleId"
-      const location = color(
-        `${String(diag.line).padStart(4)}:${String(diag.column).padEnd(3)}`,
-        colors.gray
-      );
-
-      const severityColor = diag.severity === "error" ? colors.red : colors.yellow;
-      const severity = color(diag.severity.padEnd(7), severityColor);
-
-      const ruleId = color(diag.ruleId, colors.gray);
-
-      lines.push(`  ${location}  ${severity}  ${diag.message}  ${ruleId}`);
+  if (diagnostics.length > 0) {
+    // Group by file
+    const byFile = new Map<string, LintDiagnostic[]>();
+    for (const diag of diagnostics) {
+      const existing = byFile.get(diag.file) ?? [];
+      existing.push(diag);
+      byFile.set(diag.file, existing);
     }
+
+    for (const [file, fileDiags] of byFile) {
+      // File header with underline
+      lines.push("");
+      lines.push(color(file, colors.underline));
+
+      // Sort by line, then column
+      fileDiags.sort((a, b) => {
+        if (a.line !== b.line) return a.line - b.line;
+        return a.column - b.column;
+      });
+
+      for (const diag of fileDiags) {
+        // Count errors and warnings
+        if (diag.severity === "error") {
+          errorCount++;
+        } else if (diag.severity === "warning") {
+          warningCount++;
+        }
+
+        // Format: "  line:col  severity  message  ruleId"
+        const location = color(
+          `${String(diag.line).padStart(4)}:${String(diag.column).padEnd(3)}`,
+          colors.gray
+        );
+
+        const severityColor = diag.severity === "error" ? colors.red : colors.yellow;
+        const severity = color(diag.severity.padEnd(7), severityColor);
+
+        const ruleId = color(diag.ruleId, colors.gray);
+
+        lines.push(`  ${location}  ${severity}  ${diag.message}  ${ruleId}`);
+      }
+    }
+  }
+
+  if (hasSuppressed) {
+    lines.push(...formatSuppressedSection(suppressed!, bundle));
   }
 
   // Summary line
@@ -91,6 +115,103 @@ export function formatStylish(diagnostics: LintDiagnostic[]): string {
   lines.push(summary);
 
   return lines.join("\n");
+}
+
+/**
+ * A suppression reason's `okf:` citation, resolved against a loaded bundle.
+ */
+interface ResolvedCitation {
+  /** What to print beside the rule id: the concept title when resolved, the raw reason otherwise. */
+  label: string;
+  /** The concept's bundle-relative path, printed on the line below — only set when resolved. */
+  path?: string;
+  /** True when the reason carried an `okf:` token that named no concept in `bundle`. */
+  unresolved: boolean;
+}
+
+/**
+ * Resolve a suppression reason's `okf:<path>` citation (#1866, design #1059)
+ * against a loaded bundle's concepts, matched on `OkfConcept.path`. Not an
+ * `okf:` citation at all: returns `null`, and the reason renders as plain
+ * text, same as before this section existed. A leading `/` on the cited path
+ * is accepted and stripped — `okf-read.ts`'s bundle-relative paths never
+ * carry one, but the design doc's worked example writes citations with one
+ * (mirroring an absolute-from-bundle-root reading), so both forms resolve.
+ */
+function resolveOkfCitation(reason: string, bundle: OkfBundle | undefined): ResolvedCitation | null {
+  const prefix = "okf:";
+  if (!reason.startsWith(prefix)) return null;
+
+  const token = reason.slice(prefix.length).trim().replace(/^\/+/, "");
+  const concept = bundle?.concepts.find((c) => c.path === token);
+
+  if (concept) {
+    return { label: concept.title ?? concept.path, path: concept.path, unresolved: false };
+  }
+
+  return { label: reason, unresolved: true };
+}
+
+/**
+ * Render the "Suppressed" section: every suppressed diagnostic, grouped by
+ * file like the active section above, with an `okf:` reason resolved to its
+ * concept's title (and bundle-relative path on the line below) when
+ * `bundle` has a match. A citation naming no concept — including when no
+ * `bundle` was loaded at all — prints the raw reason plus a warning; a
+ * plain (non-`okf:`) reason prints as-is. Never affects which diagnostics
+ * are suppressed, only how the reason renders (design #1059: "a cited
+ * suppression suppresses exactly as an uncited one does").
+ */
+function formatSuppressedSection(
+  suppressed: Array<LintDiagnostic & { reason?: string }>,
+  bundle: OkfBundle | undefined,
+): string[] {
+  const lines: string[] = [];
+
+  const byFile = new Map<string, Array<LintDiagnostic & { reason?: string }>>();
+  for (const diag of suppressed) {
+    const existing = byFile.get(diag.file) ?? [];
+    existing.push(diag);
+    byFile.set(diag.file, existing);
+  }
+
+  lines.push("");
+  lines.push(color("Suppressed", colors.underline));
+
+  for (const [file, fileDiags] of byFile) {
+    lines.push("");
+    lines.push(color(file, colors.underline));
+
+    fileDiags.sort((a, b) => {
+      if (a.line !== b.line) return a.line - b.line;
+      return a.column - b.column;
+    });
+
+    for (const diag of fileDiags) {
+      const locationPlain = `${String(diag.line).padStart(4)}:${String(diag.column).padEnd(3)}`;
+      const location = color(locationPlain, colors.gray);
+      const severity = color("suppressed", colors.cyan);
+      const ruleId = color(diag.ruleId, colors.gray);
+
+      const citation = diag.reason ? resolveOkfCitation(diag.reason, bundle) : null;
+      const indent = " ".repeat(2 + locationPlain.length + 2 + "suppressed".length + 2 + diag.ruleId.length + 2);
+
+      if (citation) {
+        lines.push(`  ${location}  ${severity}  ${ruleId}  ${citation.label}`);
+        if (!citation.unresolved) {
+          lines.push(`${indent}${color(citation.path!, colors.gray)}`);
+        } else {
+          lines.push(`${indent}${color("⚠ unresolved okf citation", colors.yellow)}`);
+        }
+      } else if (diag.reason) {
+        lines.push(`  ${location}  ${severity}  ${ruleId}  ${diag.reason}`);
+      } else {
+        lines.push(`  ${location}  ${severity}  ${ruleId}`);
+      }
+    }
+  }
+
+  return lines;
 }
 
 /**

@@ -48,6 +48,11 @@ jobs:
     # 12 lexicon prepacks (build + validate) plus the full vitest suite — the
     # suite alone runs ~5m, so a 5m cap gets killed mid-run and skips publish.
     timeout-minutes: 20
+    # #1481 — same gate `npm publish` arms in the publish job below, so the
+    # prepacks here prove the thing that publish will actually check rather
+    # than a looser version of it.
+    env:
+      CHANT_RELEASE_GATE: "1"
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
@@ -133,3 +138,28 @@ jobs:
           # lexicon-upgrade job, not a reason to fail the build.
           CHANT_RELEASE_GATE: "1"
         run: bash scripts/publish-packages.sh
+
+  # #1481 — a failed release must not leave its tag behind. `just release`
+  # pushes the bump commit and the tag before this workflow runs, so when the
+  # gate or the publish fails, main is left claiming a version the registry
+  # never got (chant-v0.40.1 was exactly that: tagged, bumped, nothing on npm).
+  # Deleting the tag makes the tag list the truth again: a tag exists only for
+  # a release whose every package published.
+  #
+  # The bump commit stays — rewriting main from a workflow is worse than a
+  # stale version field, and `just release` floors the next bump on it anyway.
+  # A partial publish is recovered by fixing the cause and running this
+  # workflow via workflow_dispatch on main (the skip-if-unchanged guard
+  # publishes only what is still missing), or by cutting the next release.
+  untag:
+    needs: [test, publish]
+    if: ${{ always() && startsWith(github.ref, 'refs/tags/') && (contains(fromJSON('["failure","cancelled"]'), needs.test.result) || contains(fromJSON('["failure","cancelled"]'), needs.publish.result)) }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+      - name: Delete the tag of the failed release
+        run: |
+          echo "::error::release ${GITHUB_REF_NAME} failed (test: ${{ needs.test.result }}, publish: ${{ needs.publish.result }}) — deleting its tag"
+          git push origin ":refs/tags/${GITHUB_REF_NAME}"

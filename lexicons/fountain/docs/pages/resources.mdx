@@ -1,0 +1,56 @@
+---
+title: "Resources"
+description: "The three fountain workload kinds the lexicon declares."
+diataxis: reference
+---
+
+The lexicon types the three kinds `fountain apply` reconciles — the workload
+layer of [fountain](https://github.com/BinaryBourbon/fountain). Types are
+generated from fountain's served OpenAPI spec, so they track the real API.
+Conversations are deliberately **not** a resource: they are runs with a
+status lifecycle, modeled as ops.
+
+## Environment
+
+A reusable sandbox baseline: packages, repos, setup script, env vars,
+encrypted secrets, and the networking policy. `networking_type` is
+`"unrestricted" | "limited"`; under `limited`, egress is restricted to
+`networking_config.allowed_hosts`, and with no hosts (or an empty list) the
+sandbox denies all egress — a deny-all, not an allow-all. FTN010 requires the
+networking intent to be explicit.
+
+## Vault
+
+A bag of env-var overrides selected at conversation create. Vault values
+win on key collision with the environment — which is why agents can carry
+a vault allowlist upstream (fountain#136). `allowed_vault_ids` on an Agent is
+three-state: `null` allows any tenant vault, `[]` forbids all, a list is an
+allowlist.
+
+## Agent
+
+A named, re-runnable agent configuration: model, runtime, skills (inline
+SKILL.md or GitHub-sourced with a `ref` pin), MCP servers, and an optional
+`environment` reference — typed, so a dangling reference is a build error,
+not a 422 at apply time.
+
+## Example
+
+```ts
+import { Environment, Agent } from "@intentius/chant-lexicon-fountain";
+
+export const conciergeEnv = new Environment({
+  name: "concierge-env",
+  networking_type: "limited",
+  networking_config: { allowed_hosts: ["registry.npmjs.org", "github.com"] },
+  metadata: { "managed-by": "chant" },
+});
+
+export const researcher = new Agent({
+  name: "researcher",
+  model: "anthropic/claude-sonnet-4-6",
+  runtime: "claude",
+  environment: conciergeEnv,
+  skills: [{ source: "vercel-labs/agent-skills", ref: "main" }],
+});
+```

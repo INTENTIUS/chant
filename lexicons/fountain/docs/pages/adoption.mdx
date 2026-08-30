@@ -1,0 +1,23 @@
+---
+title: "Drift and Adoption"
+description: "Live observation, import, and the graph edge fountain reconstructs."
+diataxis: reference
+---
+
+The lexicon reads live fountain state on three paths.
+
+## Drift
+
+`chant lifecycle diff --live` reports each declared entity as observed present, observed absent, or **not observed** with a reason — a read failure is never reported as an absence, which would propose a spurious create. Ownership comes from the `managed-by: chant` marker, so `--owned` filters to what chant declared.
+
+An out-of-band change to a locked environment — a UI edit that adds a secret, opens networking, or drops the marker — is what this catches. Wire it into a scheduled watch and treat a hit as an incident, not housekeeping.
+
+## Import
+
+`chant import --from` adopts UI-built resources into typed files. Server-written fields are stripped to the authored shape, and an agent's `environment_id` is resolved back to the exported environment's logical name so the generated code carries a reviewable reference.
+
+Secrets do not round-trip: values are write-only upstream and secret keys are not on the typed request surface, so environments export without them and the caller is warned per environment that carried any. Re-declare them through your secret provider.
+
+## Graph
+
+`chant graph --live` reconstructs the topology from one edge: an Agent runs in an Environment. Vaults are deliberately edge-free — vault-to-agent binding is a conversation-time choice scoped by `allowed_vault_ids`, not standing topology.

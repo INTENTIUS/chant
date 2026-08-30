@@ -26,10 +26,13 @@ export type FixKind = "deterministic" | "guidance";
  * What kind of finding this is — orthogonal to `tier` (fix confidence). Lets the
  * report say "N security, M best-practice, K correctness" instead of branding
  * everything "security." `security` = exposure/vuln/supply-chain; `correctness`
- * = a structural bug (broken reference, invalid schema, never-runs); everything
- * else is `best-practice` (hygiene/style/deprecation/reliability).
+ * = a structural bug (broken reference, invalid schema, never-runs); `efficiency`
+ * (#444) = waste — redundant work, an oversized execution environment,
+ * unintended fan-out, unbounded retention — never a safety/correctness issue,
+ * so it is excluded from the security and correctness tallies; everything else
+ * is `best-practice` (hygiene/style/deprecation/reliability).
  */
-export type Category = "security" | "correctness" | "best-practice";
+export type Category = "security" | "correctness" | "best-practice" | "efficiency";
 
 export interface Authority {
   name: string;
@@ -96,6 +99,34 @@ export const K8S_SECRETS: Authority = {
   name: "Kubernetes — Good practices for Secrets",
   url: "https://kubernetes.io/docs/concepts/security/secrets-good-practices/",
 };
+export const GH_SECRET_SCANNING: Authority = {
+  name: "GitHub — About secret scanning",
+  url: "https://docs.github.com/en/code-security/secret-scanning/introduction/about-secret-scanning",
+};
+export const SCORECARD_VULN: Authority = {
+  name: "OSSF Scorecard — Vulnerabilities",
+  url: "https://github.com/ossf/scorecard/blob/main/docs/checks.md#vulnerabilities",
+};
+export const CF_WORKERS_DEV: Authority = {
+  name: "Cloudflare Workers — workers.dev",
+  url: "https://developers.cloudflare.com/workers/configuration/routing/workers-dev/",
+};
+export const CF_SECRETS: Authority = {
+  name: "Cloudflare Workers — Secrets",
+  url: "https://developers.cloudflare.com/workers/configuration/secrets/",
+};
+export const CF_ROUTES: Authority = {
+  name: "Cloudflare Workers — Routes",
+  url: "https://developers.cloudflare.com/workers/configuration/routing/routes/",
+};
+export const CF_ENVIRONMENTS: Authority = {
+  name: "Cloudflare Workers — Wrangler environments",
+  url: "https://developers.cloudflare.com/workers/wrangler/configuration/#environments",
+};
+export const CF_STATIC_ASSETS: Authority = {
+  name: "Cloudflare Workers — Static assets",
+  url: "https://developers.cloudflare.com/workers/static-assets/",
+};
 
 function meta(
   id: string,
@@ -127,6 +158,22 @@ const G = "guidance" as const;
 export const RULE_CATEGORY: Record<string, Category> = {
   COR020: "correctness",
   EXT001: "correctness",
+  SEC001: "security",
+  SEC002: "security",
+  SEC003: "security",
+  SEC004: "security",
+  SEC005: "security",
+  SEC006: "security",
+  SEC007: "security",
+  SEC008: "security",
+  SEC009: "security",
+  SEC010: "security",
+  WRG001: "security",
+  WRG002: "security",
+  WRG003: "best-practice",
+  WRG004: "security",
+  WRG005: "security",
+  WRG006: "security",
 };
 
 /**
@@ -139,6 +186,31 @@ export const RULE_CATEGORY: Record<string, Category> = {
 export const RULE_CATALOG: Record<string, RuleMeta> = {
   COR020: meta("COR020", M, G, "Circular resource dependency", "Break the dependency cycle between resources."),
   EXT001: meta("EXT001", M, G, "Extension constraint violation", "Fix the cross-property constraint flagged by the cfn-lint extension schema."),
+
+  // Secrets & credentials (#443) — lexicon-independent: `secrets.ts` scans the
+  // raw text of every candidate file, so these ids apply regardless of which
+  // (if any) audit lexicons are installed. `fixKind` is `guidance`: removing
+  // a hardcoded credential and rotating it needs a human, never an auto-fix.
+  SEC001: meta("SEC001", M, G, "AWS access key ID found", "Remove the key from source, rotate it in IAM, and load it from a secret store or environment variable instead.", [GH_SECRET_SCANNING]),
+  SEC002: meta("SEC002", M, G, "AWS secret access key found", "Remove the key from source, rotate it in IAM, and load it from a secret store or environment variable instead.", [GH_SECRET_SCANNING]),
+  SEC003: meta("SEC003", M, G, "GitHub token found", "Remove the token from source and revoke it at github.com/settings/tokens; use a GitHub Actions secret instead.", [GH_SECRET_SCANNING]),
+  SEC004: meta("SEC004", M, G, "Slack token found", "Remove the token from source and revoke it in the Slack app's OAuth settings.", [GH_SECRET_SCANNING]),
+  SEC005: meta("SEC005", M, G, "Google API key found", "Remove the key from source and regenerate it in the Google Cloud Console credentials page.", [GH_SECRET_SCANNING]),
+  SEC006: meta("SEC006", M, G, "Stripe live secret key found", "Remove the key from source and roll it in the Stripe dashboard immediately — this is a live-mode key.", [GH_SECRET_SCANNING]),
+  SEC007: meta("SEC007", M, G, "Private key block found", "Remove the private key from source, rotate the keypair, and load the key from a secret store instead.", [GH_SECRET_SCANNING]),
+  SEC008: meta("SEC008", M, G, "Bearer/authorization token found", "Remove the token from source; if it's long-lived, revoke and reissue it via the issuing service.", [GH_SECRET_SCANNING]),
+  SEC009: meta("SEC009", M, G, "Credentials embedded in a connection string", "Move the username/password out of the URI into a secret store, and rotate the credential.", [GH_SECRET_SCANNING]),
+  SEC010: meta("SEC010", M, G, "High-entropy string — possible secret", "Confirm whether this is a live credential; if so, remove it from source and rotate it. If it's a false positive, suppress with a `chant-audit-ignore` comment or an allowlist entry.", [GH_SECRET_SCANNING]),
+
+  // Wrangler config audit (#446) — lexicon-independent, same shape as the SEC
+  // family above: `wrangler.ts` scans every `wrangler.toml` it finds
+  // regardless of which (if any) audit lexicons are installed.
+  WRG001: meta("WRG001", M, G, "Production environment exposed on *.workers.dev", "Remove workers_dev (or set it to false) for this environment and rely on its custom domain/route instead of the shared public subdomain.", [CF_WORKERS_DEV]),
+  WRG002: meta("WRG002", M, G, "Credential-shaped key stored in [vars]", "Move the value out of [vars] and into `wrangler secret put <name>` so it isn't committed to source or visible in `wrangler dev`/the dashboard.", [CF_SECRETS]),
+  WRG003: meta("WRG003", R, G, "Observability explicitly disabled", "Set observability.enabled = true (or remove the override) so Workers Logs are recorded for this deployment."),
+  WRG004: meta("WRG004", M, G, "Unscoped wildcard route", "Scope the route pattern to the intended zone (e.g. \"example.com/*\") instead of a bare \"*\" or \"*/*\" that matches every zone on the account.", [CF_ROUTES]),
+  WRG005: meta("WRG005", M, G, "Non-production environment shares a data store with production", "Give the non-production environment its own KV namespace/R2 bucket/D1 database id instead of reusing production's.", [CF_ENVIRONMENTS]),
+  WRG006: meta("WRG006", M, G, "Static assets served from the project root", "Point [site].bucket / [assets].directory at a dedicated public output folder, not the project root, so non-public files (config, source maps, .git) aren't served.", [CF_STATIC_ASSETS]),
 };
 
 /**

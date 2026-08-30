@@ -1,0 +1,31 @@
+---
+title: "Ops"
+description: "fountainApply and fountainRun — the applier and the conversation runner."
+diataxis: reference
+---
+
+Two op activities ship with the lexicon, resolvable by name via `loadActivities(["fountain"])`.
+
+## fountainApply
+
+The native applier: compiles the serializer's manifest YAML into fountain's bulk `POST /api/apply` request and sends it in one call.
+
+| Behavior | Detail |
+|---|---|
+| Create / update | By name, reconciled server-side. An agent's `environment` reference resolves by name — against the manifest or the tenant's existing environments — without a client-side id lookup. |
+| Order | Environment → Vault → Agent, fixed server-side regardless of manifest order. |
+| Prune | Off by default. With `prune: true`, chant-owned resources absent from the manifest are deleted, in reverse order — the one thing bulk apply doesn't cover, so this still lists live state per kind. |
+| Secrets | `spec.secrets` converts from chant's authored `{key, value}[]` to the wire's `{KEY: value}` map; the server upserts them through the encrypted envelope path in the same request. Upsert-always — values are write-only upstream. |
+| Failure | Best-effort per resource. Every result is collected before this throws, so one bad resource doesn't hide failures elsewhere in the manifest. |
+
+```typescript
+await fountainApply({ manifestPath: "build/fountain.yaml", prune: true });
+```
+
+Endpoint and token resolution: explicit args win, then `FOUNTAIN_ENDPOINT` / `FOUNTAIN_TOKEN`, then the hosted default.
+
+## fountainRun
+
+Conversations are runs, not resources, so they are started rather than declared. `fountainRun` resolves the agent by name, starts a conversation (optionally with a prompt and an allowlisted vault), polls to `completed | failed | timed_out`, and terminates at its deadline so a hung sandbox never outlives the op.
+
+Multi-turn interaction — follow-up prompts, interrupt — is fountain's own conversations API. The lexicon stays at the lifecycle edges.

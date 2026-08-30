@@ -1,6 +1,7 @@
 ---
 title: Core Type System
 description: "Deep dive into chant's fundamental types — Declarable, Value<T>, Intrinsic, AttrRef"
+diataxis: explanation
 ---
 
 chant provides a lexicon-agnostic declarative specification system. This guide covers the core types you'll use when building with chant.
@@ -36,6 +37,74 @@ interface CoreOutput extends Declarable {
   readonly value: unknown;
 }
 ```
+
+### SecretDeclaration
+
+A **SecretDeclaration** records where a secret's value comes from — never what the value is. The kind set is a closed union:
+
+```typescript
+type SecretProvenance = "referenced" | "from-provider" | "generated-once";
+```
+
+- `referenced` — the value exists out of band; the declaration carries the name and an optional `scope`.
+- `from-provider` — a declared provider binding materializes it; the declaration points at that binding via `provider: { binding, entityType? }` (for example an `InfisicalSecret` CRD instance).
+- `generated-once` — minted on first materialization, then never regenerated; the declaration carries contract flags only, such as the declared key-set (`keys?: string[]`).
+
+```typescript
+import { declareSecret } from "@intentius/chant";
+
+export const dbPassword = declareSecret({
+  name: "db-password",
+  provenance: "generated-once",
+  keys: ["password"],
+});
+```
+
+No declaration kind has a field that could hold secret material. `value`, `data`, and similar fields are typed `never` on every factory input and rejected at runtime, so a value is unrepresentable by construction. Declarations are ordinary entities to discovery (`isSecretDeclaration`, `collectSecretDeclarations` read them back), but they are serializer-neutral: no lexicon ever emits them. The fourth origin, `committed-encrypted`, declares a repo-relative `file` pointing at sops-style ciphertext committed alongside the source. The ciphertext never enters the primary output an applier reads — it is copied out as a sidecar — and WK8504 and WK8505 check it. See [the origin table](/chant/concepts/where-values-come-from/) for what each origin names and what it never carries.
+
+### EffectReceipt
+
+An **EffectReceipt** is the declared witness that an out-of-band effect (a migration, a seed job, a one-shot bootstrap) has run. Receipts come in two flavors:
+
+```typescript
+type EffectReceiptFlavor = "existence" | "hash";
+```
+
+- `existence` — presence is the witness; the expected value is a fixed marker constant (`EXISTENCE_EXPECTATION`).
+- `hash` — a `sha256:<hex>` digest over the canonical JSON of `{ effect, inputs }` is the witness, so changed inputs re-propose the fire.
+
+```typescript
+import { EffectReceipt } from "@intentius/chant";
+
+export const migrated = EffectReceipt("migrated", {
+  effect: "db-migrate",
+  flavor: "hash",
+  inputs: { schema: "v42", endpoint: dbCluster.endpoint },
+});
+```
+
+Static inputs hash at synthesis (`receiptExpectation`). Reference inputs — attr-refs and other intrinsics — are recorded in placeholder form and resolve in the plan engine and again in the effect step, via `resolveReceiptExpectation(receipt, resolver)`; synthesis resolves nothing, and `receiptExpectation` refuses a hash receipt that still carries references. Hashing is JCS-style canonical JSON (`canonicalJson`: sorted keys, standard number and string encoding) digested with sha256.
+
+A receipt carries a recognition marker (`Symbol.for("chant.effect-receipt")`) that core reads lexicon-independently (`isEffectReceipt`, `collectEffectReceipts`). Unlike a secret declaration the marker identifies rather than excludes: a receipt serializes, becoming a real observable resource through a per-lexicon materialization row that stamps the same marker. Receipts are observe-only to the generic apply path — the `effect()` step is the sole writer, on success, last.
+
+### ScenarioDeclaration
+
+A **ScenarioDeclaration** is a checkable claim about what a change should DO, not just how it's shaped — see [Plan Scenarios](/chant/concepts/plan-scenarios/) for the full model. Like `SecretDeclaration`, it is serializer-neutral: discovery collects it, `partitionByLexicon` excludes it from every lexicon's output.
+
+```typescript
+import { Scenario, snapshot } from "@intentius/chant";
+
+export const planNeutral = Scenario("extracting the composite is plan-neutral", {
+  given: snapshot("fixtures/prod-baseline.json"),
+  expect: { noop: true },
+});
+```
+
+`given` comes from the `snapshot()` helper, which classifies its argument structurally and offline — a string with a path separator or a `.json` suffix is a fixture file (`{ kind: "file", path }`); anything else is an environment name (`{ kind: "env", env }`), replayed from the last snapshot recorded for it on the `chant/lifecycle` branch.
+
+`expect` composes independently-optional clauses: `noop: true`; exact `create`/`update`/`delete` counts; `deletes: [{ name, ownership }]` for named, ownership-checked deletes; and `unobserved: "refuse" | { allow: [names] }` for the plan's unobserved holes. At least one clause is required.
+
+A scenario carries a recognition marker (`Symbol.for("chant.scenario")`, `isScenario`/`collectScenarios`) and is checked offline by `chant scenario check` — see [CLI: scenario](/chant/cli/scenario/).
 
 ## Intrinsics
 

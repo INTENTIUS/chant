@@ -15,20 +15,20 @@ The Helm lexicon provides **23** intrinsic functions.
 | `values` | Proxy accessor for \{\{ .Values.x \}\} references | `values` | No | No |
 | `Release` | Built-in Release object (Name, Namespace, etc.) | `Release` | No | No |
 | `ChartRef` | Built-in Chart object (Name, Version, AppVersion) | `ChartRef` | No | No |
-| `include` | Include a named template: \{\{ include "name" . \}\} | `include` | No | No |
-| `required` | Require a value: \{\{ required "msg" .Values.x \}\} | `required` | No | No |
-| `helmDefault` | Default value: \{\{ default "def" .Values.x \}\} | `helmDefault` | No | No |
-| `toYaml` | Convert to YAML: \{\{ toYaml .Values.x | nindent N \}\} | `toYaml` | No | No |
-| `quote` | Quote a value: \{\{ .Values.x | quote \}\} | `quote` | No | No |
-| `printf` | Format string: \{\{ printf "%s" .Values.x \}\} | `printf` | No | No |
-| `tpl` | Evaluate template: \{\{ tpl .Values.x . \}\} | `tpl` | No | No |
-| `lookup` | Lookup resource: \{\{ lookup "v1" "Secret" "ns" "name" \}\} | `lookup` | No | No |
+| `include` | Include a named template: \{\{ include "name" . \}\} | `include` | No | Yes |
+| `required` | Require a value: \{\{ required "msg" .Values.x \}\} | `required` | No | Yes |
+| `helmDefault` | Default value: \{\{ default "def" .Values.x \}\} | `helmDefault` | No | Yes |
+| `toYaml` | Convert to YAML: \{\{ toYaml .Values.x | nindent N \}\} | `toYaml` | No | Yes |
+| `quote` | Quote a value: \{\{ .Values.x | quote \}\} | `quote` | No | Yes |
+| `printf` | Format string: \{\{ printf "%s" .Values.x \}\} | `printf` | No | Yes |
+| `tpl` | Evaluate template: \{\{ tpl .Values.x . \}\} | `tpl` | No | Yes |
+| `lookup` | Lookup resource: \{\{ lookup "v1" "Secret" "ns" "name" \}\} | `lookup` | No | Yes |
 | `Capabilities` | Built-in Capabilities object (KubeVersion, APIVersions, HelmVersion) | `Capabilities` | No | No |
 | `Template` | Built-in Template object (Name, BasePath) | `Template` | No | No |
-| `filesGet` | .Files.Get: \{\{ .Files.Get "path" \}\} | `filesGet` | No | No |
-| `filesGlob` | .Files.Glob: \{\{ .Files.Glob "pattern" \}\} | `filesGlob` | No | No |
-| `filesAsConfig` | .Files.Glob.AsConfig for ConfigMap data | `filesAsConfig` | No | No |
-| `filesAsSecrets` | .Files.Glob.AsSecrets for Secret data | `filesAsSecrets` | No | No |
+| `filesGet` | .Files.Get: \{\{ .Files.Get "path" \}\} | `filesGet` | No | Yes |
+| `filesGlob` | .Files.Glob: \{\{ .Files.Glob "pattern" \}\} | `filesGlob` | No | Yes |
+| `filesAsConfig` | .Files.Glob.AsConfig for ConfigMap data | `filesAsConfig` | No | Yes |
+| `filesAsSecrets` | .Files.Glob.AsSecrets for Secret data | `filesAsSecrets` | No | Yes |
 | `ElseIf` | Else-if chaining: \{\{- else if .Values.x \}\}...\{\{- end \}\} | `ElseIf` | No | No |
 | `If` | Conditional: \{\{- if .Values.x \}\}...\{\{- end \}\} | `If` | No | No |
 | `Range` | Range loop: \{\{- range .Values.x \}\}...\{\{- end \}\} | `Range` | No | No |

@@ -1,5 +1,13 @@
 import { describe, test, expect } from "vitest";
-import { applyAwsEndpoint, applyAwsEndpointArgv, awsDeployCapabilities, ecsDeploymentId, ecsServiceStable } from "./cloud-executor";
+import {
+  applyAwsEndpoint,
+  applyAwsEndpointArgv,
+  awsDeployCapabilities,
+  awsDeployCapabilitiesForBody,
+  awsDeployCapabilityList,
+  ecsDeploymentId,
+  ecsServiceStable,
+} from "./cloud-executor";
 
 describe("ecsDeploymentId / ecsServiceStable — tolerate Floci's missing deployments (#937)", () => {
   test("deployment id: real AWS shape", () => {
@@ -73,5 +81,25 @@ describe("awsDeployCapabilities — CAPABILITY_AUTO_EXPAND for Transform macros"
       "CAPABILITY_NAMED_IAM CAPABILITY_AUTO_EXPAND",
     );
     expect(awsDeployCapabilities({ Transform: ["AWS::LanguageExtensions"] })).toContain("CAPABILITY_AUTO_EXPAND");
+  });
+  test("list form mirrors the string form", () => {
+    expect(awsDeployCapabilityList({})).toEqual(["CAPABILITY_NAMED_IAM"]);
+    expect(awsDeployCapabilityList({ Transform: "AWS::Serverless-2016-10-31" })).toEqual([
+      "CAPABILITY_NAMED_IAM",
+      "CAPABILITY_AUTO_EXPAND",
+    ]);
+    expect(awsDeployCapabilityList({ Transform: ["AWS::LanguageExtensions", "AWS::Serverless-2016-10-31"] })).toEqual([
+      "CAPABILITY_NAMED_IAM",
+      "CAPABILITY_AUTO_EXPAND",
+    ]);
+  });
+  test("raw body: parses JSON, falls back to NAMED_IAM for non-JSON or empty input", () => {
+    expect(awsDeployCapabilitiesForBody(JSON.stringify({ Transform: "AWS::SecretsManager-2020-07-23", Resources: {} }))).toEqual([
+      "CAPABILITY_NAMED_IAM",
+      "CAPABILITY_AUTO_EXPAND",
+    ]);
+    expect(awsDeployCapabilitiesForBody(JSON.stringify({ Resources: {} }))).toEqual(["CAPABILITY_NAMED_IAM"]);
+    expect(awsDeployCapabilitiesForBody("Resources:\n  B:\n    Type: AWS::S3::Bucket\n")).toEqual(["CAPABILITY_NAMED_IAM"]);
+    expect(awsDeployCapabilitiesForBody("")).toEqual(["CAPABILITY_NAMED_IAM"]);
   });
 });

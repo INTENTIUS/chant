@@ -1,0 +1,471 @@
+---
+title: "CRD-Generated Classes"
+description: "Typed K8s::* classes generated from third-party CRDs — Gateway API, cert-manager, CloudNativePG, Infisical, Traefik, the CockroachDB operator, KubeRay, Argo CD, and Flux — plus how the CRD source list works and how to add your own."
+diataxis: reference
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+The k8s lexicon generates typed classes from the core Kubernetes OpenAPI spec **plus a curated list of third-party CRDs**. Each CRD in the list becomes a first-class `K8s::*` resource — with the serializer, LSP hover, and MCP — the same as a built-in `Deployment`. No hand-written YAML, no `as any`. The constructor's `spec` is an open record; its fields are checked against the CRD schema at lint time (see [Spec validation](#spec-validation)).
+
+<Aside type="note">
+The lexicon stays **runtime-agnostic** — it only emits manifests. Generated CRD classes describe the custom resource; you still install the upstream **controller/operator** (and its CRDs) in the cluster. Each section below includes the install command.
+</Aside>
+
+## How it works
+
+CRD sources live in `lexicons/k8s/src/crd/crd-sources.ts`. At generation time (`npm run generate`) the CRD YAML is fetched from a pinned upstream URL, parsed, and baked into the lexicon output. The group's first segment maps to a TypeScript namespace via the first-segment rule in `crd/parser.ts` — e.g. `gateway.networking.k8s.io` → `Gateway`, `cert-manager.io` → `CertManager`.
+
+```
+group                          namespace        example class
+─────────────────────────────  ───────────────  ─────────────────────────
+ray.io                         Ray              K8s::Ray::RayCluster
+argoproj.io                    Argo             K8s::Argo::Application
+gateway.networking.k8s.io      Gateway          K8s::Gateway::HTTPRoute
+crdb.cockroachlabs.com         Crdb             K8s::Crdb::CrdbCluster
+postgresql.cnpg.io             Cnpg             K8s::Cnpg::Cluster
+barmancloud.cnpg.io            Cnpg             K8s::Cnpg::ObjectStore
+traefik.io                     Traefik          K8s::Traefik::IngressRoute
+cert-manager.io                CertManager      K8s::CertManager::Certificate
+acme.cert-manager.io           Acme             K8s::Acme::Challenge
+secrets.infisical.com          Infisical        K8s::Infisical::InfisicalSecret
+*.toolkit.fluxcd.io            Flux             K8s::Flux::Kustomization
+fluxcd.controlplane.io         Flux             K8s::Flux::FluxInstance
+```
+
+The Flux and CNPG rows show the override at work: six distinct groups all map to one `Flux` namespace (see [Flux](#flux)), and CNPG's two groups both map to `Cnpg`, rather than each group's first segment.
+
+### Spec validation
+
+A generated CRD class takes `spec: Record<string, unknown>`. The field names, scalar types and enums from the CRD's `openAPIV3Schema` do not reach the TypeScript constructor; they ship in the lexicon JSON instead, as a `specSchema` on each custom resource's entry. Two post-synth checks read it at `chant lint` time:
+
+- `WK8501` flags a `spec` field the CRD does not declare, with a "did you mean" suggestion. The API server would prune it and the controller would never see it.
+- `WK8502` flags a scalar with the wrong type (`replicas: "2"`) or a value outside its enum (`desiredState: "Runing"`).
+
+Objects the CRD marks `x-kubernetes-preserve-unknown-fields` or `additionalProperties` accept any member; `x-kubernetes-int-or-string` accepts either. Nothing checks a built-in kind this way, because the generated `.d.ts` already does.
+
+## Gateway API
+
+`gateway.networking.k8s.io`, pinned to **v1.2.1** (standard channel). The modern, portable replacement for `Ingress` — `GRPCRoute` in particular is the native way to express a gRPC route, instead of ingress-controller annotations.
+
+| Type | apiVersion / kind |
+|---|---|
+| `GatewayClass` | `gateway.networking.k8s.io/v1` / `GatewayClass` |
+| `Gateway` | `gateway.networking.k8s.io/v1` / `Gateway` |
+| `HTTPRoute` | `gateway.networking.k8s.io/v1` / `HTTPRoute` |
+| `GRPCRoute` | `gateway.networking.k8s.io/v1` / `GRPCRoute` |
+| `ReferenceGrant` | `gateway.networking.k8s.io/v1beta1` / `ReferenceGrant` |
+
+```bash
+kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.2.1/standard-install.yaml
+```
+
+```typescript
+import { Gateway, HTTPRoute } from "@intentius/chant-lexicon-k8s";
+
+export const gw = new Gateway({
+  metadata: { name: "edge", namespace: "infra" },
+  spec: {
+    gatewayClassName: "istio",
+    listeners: [{ name: "http", protocol: "HTTP", port: 80 }],
+  },
+});
+
+export const route = new HTTPRoute({
+  metadata: { name: "api", namespace: "infra" },
+  spec: {
+    parentRefs: [{ name: "edge" }],
+    rules: [{ backendRefs: [{ name: "api", port: 8080 }] }],
+  },
+});
+```
+
+## cert-manager
+
+`cert-manager.io` + `acme.cert-manager.io`, pinned to **v1.16.2**. The de-facto controller for issuing and rotating TLS certificates. The bundle is a single multi-doc YAML.
+
+| Type | apiVersion |
+|---|---|
+| `Certificate` | `cert-manager.io/v1` |
+| `CertificateRequest` | `cert-manager.io/v1` |
+| `Issuer` | `cert-manager.io/v1` |
+| `ClusterIssuer` | `cert-manager.io/v1` |
+| `Challenge` | `acme.cert-manager.io/v1` |
+| `Order` | `acme.cert-manager.io/v1` |
+
+```bash
+kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.16.2/cert-manager.yaml
+```
+
+```typescript
+import { ClusterIssuer, Certificate } from "@intentius/chant-lexicon-k8s";
+
+export const issuer = new ClusterIssuer({
+  metadata: { name: "letsencrypt-prod" },
+  spec: {
+    acme: {
+      server: "https://acme-v02.api.letsencrypt.org/directory",
+      email: "ops@acme.io",
+      privateKeySecretRef: { name: "letsencrypt-prod" },
+      solvers: [{ http01: { ingress: { class: "nginx" } } }],
+    },
+  },
+});
+
+export const cert = new Certificate({
+  metadata: { name: "api-tls", namespace: "api" },
+  spec: {
+    secretName: "api-tls",
+    issuerRef: { name: "letsencrypt-prod", kind: "ClusterIssuer" },
+    dnsNames: ["api.acme.io"],
+  },
+});
+```
+
+### SecureIngress emits a real Certificate
+
+When you set `clusterIssuer` on the [`SecureIngress`](/chant/lexicons/k8s/composite-examples/) composite, it now emits a genuine `K8s::CertManager::Certificate` (wired to the named issuer) alongside the ingress-shim annotation — no placeholder.
+
+```typescript
+import { SecureIngress } from "@intentius/chant-lexicon-k8s";
+
+export const ingress = SecureIngress("api", {
+  host: "api.acme.io",
+  serviceName: "api",
+  servicePort: 8080,
+  clusterIssuer: "letsencrypt-prod", // → annotation + a real Certificate
+});
+```
+
+## CloudNativePG
+
+`postgresql.cnpg.io`, pinned to **v1.29.1**, plus the barman-cloud plugin's `barmancloud.cnpg.io`, pinned to **v0.14.0**. The Postgres operator: it runs the primary/replica topology, failover, and backups.
+
+Both groups map to the `Cnpg` namespace, because a Cluster and an ObjectStore are only useful together.
+
+| Type | apiVersion / kind |
+|---|---|
+| `Cluster` | `postgresql.cnpg.io/v1` / `Cluster` |
+| `ScheduledBackup` | `postgresql.cnpg.io/v1` / `ScheduledBackup` |
+| `Backup` | `postgresql.cnpg.io/v1` / `Backup` |
+| `Pooler` | `postgresql.cnpg.io/v1` / `Pooler` |
+| `ObjectStore` | `barmancloud.cnpg.io/v1` / `ObjectStore` |
+
+The pin is 1.29.1 rather than latest because that is the operator version a real consumer runs.
+
+```bash
+kubectl apply --server-side -f https://raw.githubusercontent.com/cloudnative-pg/cloudnative-pg/release-1.29/releases/cnpg-1.29.1.yaml
+kubectl apply -f https://github.com/cloudnative-pg/plugin-barman-cloud/releases/download/v0.14.0/manifest.yaml
+```
+
+A cluster that archives WAL to object storage, and the nightly base backup that makes point-in-time recovery possible:
+
+```typescript
+import { Cluster, ObjectStore, ScheduledBackup } from "@intentius/chant-lexicon-k8s";
+
+export const store = new ObjectStore({
+  metadata: { name: "pg-backups", namespace: "app" },
+  spec: {
+    retentionPolicy: "14d",
+    configuration: {
+      destinationPath: "s3://pg-backups/barman",
+      s3Credentials: {
+        accessKeyId: { name: "backup-s3", key: "AWS_ACCESS_KEY_ID" },
+        secretAccessKey: { name: "backup-s3", key: "AWS_SECRET_ACCESS_KEY" },
+      },
+    },
+  },
+});
+
+export const db = new Cluster({
+  metadata: { name: "pg", namespace: "app" },
+  spec: {
+    instances: 3,
+    storage: { size: "10Gi" },
+    // Names the ObjectStore above. Nothing checks this string, so a typo
+    // leaves the cluster healthy with archiving pointed at nothing.
+    plugins: [{
+      name: "barman-cloud.cloudnative-pg.io",
+      isWALArchiver: true,
+      parameters: { barmanObjectName: "pg-backups" },
+    }],
+  },
+});
+
+export const nightly = new ScheduledBackup({
+  metadata: { name: "pg-base", namespace: "app" },
+  spec: {
+    schedule: "0 47 2 * * *", // six fields, see below
+    cluster: { name: "pg" },
+    method: "plugin",
+    pluginConfiguration: { name: "barman-cloud.cloudnative-pg.io" },
+<Aside type="caution">
+`ScheduledBackup.schedule` takes **six** fields, leading with seconds — not the five a Kubernetes `CronJob` takes. `"0 47 2 * * *"` above is 02:47 daily.
+
+Write the five-field form out of habit — `"47 2 * * *"`, meaning 02:47 to every other cron on the cluster — and CNPG reads it as second 47 of minute 2 of *every hour*. The schema types the field as a plain string, so nothing rejects it. You get 24 base backups a day and no error anywhere.
+</Aside>
+
+<Aside type="note">
+Adding the `plugins` block to a live Cluster injects the plugin sidecar, which **rolls the Postgres pods**. At `instances: 1` that is a brief outage.
+</Aside>
+
+## Traefik
+
+`traefik.io`, pinned to chart **v41.1.0**. Traefik's own routing surface. An `IngressRoute` is not a `networking.k8s.io` `Ingress` with annotations — it is a separate CRD with its own matcher grammar, so before this an estate fronted by Traefik had an edge chant could not express.
+
+| Type | apiVersion / kind |
+|---|---|
+| `IngressRoute` | `traefik.io/v1alpha1` / `IngressRoute` |
+| `IngressRouteTCP` | `traefik.io/v1alpha1` / `IngressRouteTCP` |
+| `IngressRouteUDP` | `traefik.io/v1alpha1` / `IngressRouteUDP` |
+| `Middleware` | `traefik.io/v1alpha1` / `Middleware` |
+| `MiddlewareTCP` | `traefik.io/v1alpha1` / `MiddlewareTCP` |
+| `ServersTransport` | `traefik.io/v1alpha1` / `ServersTransport` |
+| `ServersTransportTCP` | `traefik.io/v1alpha1` / `ServersTransportTCP` |
+| `TLSOption` | `traefik.io/v1alpha1` / `TLSOption` |
+| `TLSStore` | `traefik.io/v1alpha1` / `TLSStore` |
+| `TraefikService` | `traefik.io/v1alpha1` / `TraefikService` |
+
+Only the `traefik.io` group. The chart also ships `hub.traefik.io_*` — Traefik Hub, a different commercial product — and a vendored copy of the Gateway API, which is already generated here from its own upstream and would collide.
+
+```bash
+helm repo add traefik https://traefik.github.io/charts
+helm install traefik traefik/traefik --version 41.1.0
+```
+
+An HTTPS route plus the HTTP one that redirects to it:
+
+```typescript
+import { IngressRoute, Middleware } from "@intentius/chant-lexicon-k8s";
+
+export const redirect = new Middleware({
+  metadata: { name: "redirect-https", namespace: "default" },
+  spec: { redirectScheme: { scheme: "https", permanent: true } },
+});
+
+export const secure = new IngressRoute({
+  metadata: { name: "app", namespace: "app" },
+  spec: {
+    entryPoints: ["websecure"],
+    routes: [{
+      match: "Host(`app.example.com`)",
+      kind: "Rule",
+      services: [{ name: "app", port: 80 }],
+    }],
+    tls: { secretName: "app-tls" },
+  },
+});
+
+export const plain = new IngressRoute({
+  metadata: { name: "app-http", namespace: "app" },
+  spec: {
+    entryPoints: ["web"],
+    routes: [{
+      match: "Host(`app.example.com`)",
+      kind: "Rule",
+      // The middleware is in `default`, this route is in `app`.
+      middlewares: [{ name: "redirect-https", namespace: "default" }],
+      services: [{ name: "app", port: 80 }],
+    }],
+  },
+});
+```
+
+<Aside type="caution">
+A `middlewares` entry with no `namespace` is looked up in the route's own namespace. Point at one that lives elsewhere and forget the qualifier, and Traefik finds nothing, applies no middleware, and serves the route anyway — so in the example above, plain HTTP would keep working instead of redirecting. Nothing errors.
+</Aside>
+
+<Aside type="note">
+The pin is the **chart** version, which is not the Traefik version: chart v41.1.0 ships Traefik v3.7.9. When bumping, check both.
+</Aside>
+
+## Infisical
+
+`secrets.infisical.com`, pinned to operator **v0.11.7**. Binds a Kubernetes Secret to an external secret provider.
+
+| Type | apiVersion / kind |
+|---|---|
+| `InfisicalSecret` | `secrets.infisical.com/v1alpha1` / `InfisicalSecret` |
+| `InfisicalPushSecret` | `secrets.infisical.com/v1alpha1` / `InfisicalPushSecret` |
+| `InfisicalDynamicSecret` | `secrets.infisical.com/v1alpha1` / `InfisicalDynamicSecret` |
+
+The group is overridden to `Infisical`. The first-segment rule would give `K8s::Secrets::InfisicalSecret`, which reads like a core Secret with `K8s::Core::Secret` right there to be confused with.
+
+```bash
+helm repo add infisical https://dl.cloudsmith.io/public/infisical/helm-charts/helm/charts/
+helm install infisical-secrets-operator infisical/secrets-operator
+```
+
+```typescript
+import { InfisicalSecret } from "@intentius/chant-lexicon-k8s";
+
+export const appSecrets = new InfisicalSecret({
+  metadata: { name: "app-secrets", namespace: "app" },
+  spec: {
+    hostAPI: "http://infisical.infisical.svc.cluster.local:8080",
+    resyncInterval: 60,
+    authentication: {
+      kubernetesAuth: {
+        identityId: "<machine identity>",
+        autoCreateServiceAccountToken: true,
+        serviceAccountRef: { name: "app-infisical", namespace: "app" },
+        secretsScope: { projectSlug: "app", envSlug: "prod", secretsPath: "/" },
+      },
+    },
+    managedSecretReference: {
+      secretName: "app-secrets",     // a Deployment envFrom's this
+      secretNamespace: "app",
+      creationPolicy: "Orphan",
+    },
+  },
+});
+```
+
+Every field there is policy: where the secret comes from, who may fetch it, what happens to the materialized Secret when the CR is deleted. None of it is a value — which is exactly why this kind is expressible in chant. Synthesis resolves nothing, so the manifest stays safe to commit. See [Where Values Come From](/chant/concepts/where-values-come-from/).
+
+<Aside type="caution">
+`creationPolicy` decides what deletion means. `Orphan` leaves the materialized Secret behind when the CR goes away; `Owner` takes it with it, so deleting the CR takes down anything reading that Secret.
+</Aside>
+
+## CockroachDB operator
+
+`crdb.cockroachlabs.com`, pinned to **v2.17.0**. The operator-managed path for a CockroachDB cluster — the operator handles version upgrades, scale-down decommissioning, and cert rotation.
+
+| Type | apiVersion / kind |
+|---|---|
+| `CrdbCluster` | `crdb.cockroachlabs.com/v1alpha1` / `CrdbCluster` |
+
+```bash
+kubectl apply -f https://github.com/cockroachdb/cockroach-operator/releases/download/v2.17.0/install/operator.yaml
+```
+
+```typescript
+import { CrdbCluster } from "@intentius/chant-lexicon-k8s";
+
+export const db = new CrdbCluster({
+  metadata: { name: "cockroachdb", namespace: "crdb" },
+  spec: {
+    dataStore: { pvc: { spec: { resources: { requests: { storage: "60Gi" } } } } },
+    tlsEnabled: true,
+    image: { name: "cockroachdb/cockroach:v24.1.0" },
+    nodes: 3,
+  },
+});
+```
+
+<Aside type="tip">
+The operator-managed `CrdbCluster` is the common single-region production path. For the self-managed, multi-region StatefulSet pattern, use the [`CockroachDbCluster` composite](/chant/tutorials/cockroachdb-multi-region/) instead — the two are complementary.
+</Aside>
+
+## KubeRay & Argo CD
+
+The first two CRD sources. KubeRay (`ray.io`, **v1.3.0**) produces `RayCluster`, `RayJob`, and `RayService`. Argo CD (`argoproj.io`, **v2.13.3**) produces `Application`, `ApplicationSet`, and `AppProject`. Both ship value-add composites — see [Argo CD Composites](/chant/lexicons/k8s/argo-composites/) and the [Ray + KubeRay on GKE tutorial](/chant/tutorials/ray-kuberay-gke/).
+
+## Flux
+
+The Flux GitOps Toolkit (pinned to flux2 **v2.9.1**) and the Flux Operator (**v0.54.1**). The toolkit spreads across five `*.toolkit.fluxcd.io` groups and the operator adds `fluxcd.controlplane.io`; all six collapse to a single `Flux` namespace, so a `GitRepository` and a `Kustomization` read as `K8s::Flux::*` siblings rather than scattering across `Source`, `Kustomize`, `Helm`, `Notification`, and `Image`.
+
+Both sources are the release `install.yaml` — a multi-doc bundle of controllers, RBAC, and CRDs. The parser keeps only the CRD documents, and a `kinds` allowlist on each `CRD_SOURCES` entry narrows those to the supported set (the bundle also carries the experimental `ExternalArtifact` and `ArtifactGenerator`, left out for now).
+
+| Type | apiVersion / kind |
+|---|---|
+| `GitRepository` | `source.toolkit.fluxcd.io/v1` |
+| `OCIRepository` | `source.toolkit.fluxcd.io/v1` |
+| `HelmRepository` | `source.toolkit.fluxcd.io/v1` |
+| `HelmChart` | `source.toolkit.fluxcd.io/v1` |
+| `Bucket` | `source.toolkit.fluxcd.io/v1` |
+| `Kustomization` | `kustomize.toolkit.fluxcd.io/v1` |
+| `HelmRelease` | `helm.toolkit.fluxcd.io/v2` |
+| `Provider` | `notification.toolkit.fluxcd.io/v1beta3` |
+| `Alert` | `notification.toolkit.fluxcd.io/v1beta3` |
+| `Receiver` | `notification.toolkit.fluxcd.io/v1` |
+| `ImagePolicy` | `image.toolkit.fluxcd.io/v1` |
+| `ImageRepository` | `image.toolkit.fluxcd.io/v1` |
+| `ImageUpdateAutomation` | `image.toolkit.fluxcd.io/v1` |
+| `FluxInstance` | `fluxcd.controlplane.io/v1` |
+| `FluxReport` | `fluxcd.controlplane.io/v1` |
+| `ResourceSet` | `fluxcd.controlplane.io/v1` |
+| `ResourceSetInputProvider` | `fluxcd.controlplane.io/v1` |
+
+Install the toolkit and, optionally, the operator:
+
+```bash
+# GitOps Toolkit controllers (source, kustomize, helm, notification, image)
+kubectl apply -f https://github.com/fluxcd/flux2/releases/download/v2.9.1/install.yaml
+
+# Flux Operator (manages a Flux instance declaratively)
+kubectl apply -f https://github.com/controlplaneio-fluxcd/flux-operator/releases/download/v0.54.1/install.yaml
+```
+
+```typescript
+import { GitRepository, Kustomization } from "@intentius/chant-lexicon-k8s";
+
+export const podinfo = new GitRepository({
+  metadata: { name: "podinfo", namespace: "flux-system" },
+  spec: {
+    interval: "1m",
+    url: "https://github.com/stefanprodan/podinfo",
+    ref: { branch: "master" },
+  },
+});
+
+export const apps = new Kustomization({
+  metadata: { name: "apps", namespace: "flux-system" },
+  spec: {
+    interval: "10m",
+    path: "./kustomize",
+    prune: true,
+    sourceRef: { kind: "GitRepository", name: "podinfo" },
+  },
+});
+```
+
+<Aside type="note">
+Flux is a **source-as-truth** reconciler — its controllers converge the cluster to what's in git. That is a different lifecycle model from chant's own observational one; chant only **emits** the typed Flux resources. The role split mirrors [Argo CD](/chant/lexicons/k8s/argo-composites/#the-three-layer-model-argo-vs-temporal-vs-ci): reach for Flux (or Argo) when the desired state lives in git and converges; reach for an [Op](/chant/guide/ops/) when the step is a procedure with ordering or gates.
+</Aside>
+
+The `FluxGitSource` and `FluxAppFor` composites collapse the `GitRepository` + `Kustomization` pair above into two calls with estate-tested defaults, and the FLUX001–003 [lint rules](/chant/lexicons/k8s/lint-rules/#flux) validate the source pin, `sourceRef`, and `dependsOn` edges.
+
+## Read-only status
+
+Generated CRD classes expose a read-only `status` accessor alongside `name`, `namespace`, and `uid`. It carries the resource's server-owned runtime state — never part of the writable constructor.
+
+```typescript
+import { Certificate } from "@intentius/chant-lexicon-k8s";
+
+const cert = new Certificate({
+  metadata: { name: "web-tls", namespace: "prod" },
+  spec: { secretName: "web-tls", issuerRef: { name: "letsencrypt" } },
+});
+
+// Read-only — populated at apply time, typed from the CRD's status schema.
+cert.status; // Certificate_Status — notAfter, notBefore, renewalTime, revision, conditions
+```
+
+The per-field status shape is generated from the CRD's `openAPIV3Schema`. Scalar leaves (`notAfter`, `revision`, a `RayCluster`'s `head.serviceIP`) are typed; deeply nested or `x-kubernetes-preserve-unknown-fields` status degrades to an opaque record. CRDs without a status schema (config-only kinds like a Prometheus `ServiceMonitor`) get no `status` accessor.
+
+<Aside type="caution">
+Status is a **runtime** value. chant synthesis is pure and stateless — a resource's `.status` does not exist at build time, so it cannot feed another resource's `spec`. Read it after apply inside an Op step (e.g. via the k8s lexicon's `waitForReady`), never as a build-time reference.
+</Aside>
+
+## Adding your own CRD
+
+Append an entry to `CRD_SOURCES` in `lexicons/k8s/src/crd/crd-sources.ts` and re-run codegen:
+
+```typescript
+export const CRD_SOURCES: CRDSource[] = [
+  // ...existing entries
+  { type: "url", url: "https://raw.githubusercontent.com/acme/operator/v1.0.0/config/crd/bases/acme.io_widgets.yaml" },
+];
+```
+
+```bash
+cd lexicons/k8s && npm run generate
+```
+
+Guidelines:
+
+- **Pin the version** in the URL (a `vX.Y.Z` tag or release asset), never `main`. Codegen is deterministic only if the source is.
+- **One URL per CRD**, or a single multi-doc bundle URL (the parser uses `loadAll`, as with cert-manager).
+- The group's first segment becomes the namespace. Add a `GROUP_NAMESPACE_OVERRIDES` entry in `crd/parser.ts` if the default mapping reads poorly.
+- Document the produced classes and the operator install command in a comment block next to the entry — match the existing entries.

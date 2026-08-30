@@ -26,4 +26,6 @@ export const helmAuditCatalog: Record<string, RuleMeta> = {
   WHM407: auditRule("WHM407", "merge-worthy", "guidance", "Inline Secret data", "Use ExternalSecret/SealedSecret instead of inline Secret data.", { authority: [K8S_SECRETS] }),
   WHM501: auditRule("WHM501", "report-only", "guidance", "Unused values key", "Remove values defined but never referenced.", { category: "best-practice" }),
   WHM502: auditRule("WHM502", "merge-worthy", "guidance", "Deprecated/invalid Kubernetes API version", "Update to a supported apiVersion.", { category: "correctness" }),
+  WHM503: auditRule("WHM503", "merge-worthy", "guidance", "Pinned render carries Secret data", "Declare the value with runtimeSlot() or replace the Secret with HelmExternalSecret.", { authority: [K8S_SECRETS] }),
+  WHM504: auditRule("WHM504", "merge-worthy", "guidance", "Dead value assignment", "Remove supplied values that never survive coalescing (shadowed, disabled subchart, or unknown subchart).", { category: "correctness" }),
 };

@@ -71,6 +71,13 @@ generated `.forgejo/workflows/ci.yml` in Docker via a Forgejo runner
 accepts and executes chant's output. On-demand — it needs Docker and a runner
 tool, and is not part of the gating CI.
 
+A second harness (`just forgejo-preview-e2e`, chant #1223) drives a
+chant-declared per-PR preview workflow through stubbed `pull_request`
+opened/closed events: the on-open job deploys an isolated environment to a
+live emulator, the on-close job sweeps it by its ownership marker, and the
+harness asserts the environment's resources exist between the two runs and
+are gone after. Same on-demand terms.
+
 ## Caveats
 
 Flow-style YAML (`branches: [main]`) is parsed by chant's lightweight core
@@ -89,9 +96,8 @@ migrate. This is shared with the github import path.
 | Pseudo-parameters | 0 |
 | Lint rules | 2 |
 
-**Lexicon version:** 0.34.1  
+**Lexicon version:** 0.49.0  
 **Namespace:** `Forgejo`
 
-- [The Forgejo Dialect](./dialect)
 - [All Rules](./rules) — 2 rules
 - [Serialization](./serialization) — output format details

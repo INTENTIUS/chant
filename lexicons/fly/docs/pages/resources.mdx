@@ -1,0 +1,18 @@
+---
+title: "Resource Reference"
+description: "The fly resource types and their Machines API documentation links"
+diataxis: reference
+---
+
+The fly lexicon ships 6 top-level resources. Each maps to a Machines API create body; follow the reference link for the underlying API shape.
+
+| Resource | Type | Service | Machines API |
+|----------|------|---------|--------------|
+| `App` | `Fly::Machines::App` | Apps | [reference](https://docs.machines.dev/#tag/apps) |
+| `Machine` | `Fly::Machines::Machine` | Machines | [reference](https://docs.machines.dev/#tag/machines) |
+| `Volume` | `Fly::Machines::Volume` | Storage | [reference](https://docs.machines.dev/#tag/volumes) |
+| `IPAddress` | `Fly::Machines::IPAddress` | Networking | [reference](https://fly.io/docs/networking/services/) |
+| `Certificate` | `Fly::Machines::Certificate` | Networking | [reference](https://fly.io/docs/networking/custom-domains-with-fly/) |
+| `Secret` | `Fly::Machines::Secret` | Secrets | [reference](https://docs.machines.dev/#tag/secrets) |
+
+Property types such as `MachineConfig`, `MachineGuest`, `MachineService`, `MachinePort`, and `MachineMount` are authored inline on a resource and are documented alongside the resources they belong to.

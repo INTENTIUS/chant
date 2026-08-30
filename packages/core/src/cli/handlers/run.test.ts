@@ -50,6 +50,9 @@ vi.mock("./run-client", () => ({
   connectionOptions: (profile: { address: string }) => ({ address: profile.address }),
   resolveProfile: (...args: unknown[]) => resolveProfileMock(...args),
   resolveWorkflowId: (name: string) => `chant-op-${name}`,
+  // Test fixtures already use the short event-type form fetchNormalizedHistory
+  // produces (see mock-temporal-client.ts) — a passthrough keeps them valid.
+  fetchNormalizedHistory: (handle: { fetchHistory(): Promise<unknown> }) => handle.fetchHistory(),
 }));
 vi.mock("node:fs", async () => {
   const actual = await vi.importActual<typeof import("node:fs")>("node:fs");
@@ -101,7 +104,7 @@ function makeOp(name: string, depends: string[] = []): [string, { config: { name
 function setupTemporalClient(mock: ReturnType<typeof createMockTemporalClient>) {
   loadTemporalClientMock.mockResolvedValue({
     Connection: { connect: vi.fn(async () => ({})) },
-    Client: vi.fn(() => mock.client) as unknown as new () => unknown,
+    Client: vi.fn(function () { return mock.client; }) as unknown as new () => unknown,
   });
   loadChantConfigMock.mockResolvedValue({ config: {} });
   resolveProfileMock.mockReturnValue({ address: "localhost:7233", namespace: "default", taskQueue: "q" });
@@ -296,6 +299,54 @@ describe("runOpStatus", () => {
     expect(out).toContain("chant-op-alb-deploy");
     expect(out).toContain("COMPLETED");
     expect(out).toContain("1/2 completed");
+  });
+
+  test("a pending gate prints a Gate line via the gateState query (#1676)", async () => {
+    setupTemporalClient(createMockTemporalClient({
+      describeByWorkflowId: {
+        "chant-op-alb-deploy": {
+          workflowId: "chant-op-alb-deploy", runId: "r1",
+          status: { name: "RUNNING" },
+          startTime: new Date("2026-05-01T00:00:00Z"),
+          taskQueue: "alb-deploy", type: { name: "albDeployWorkflow" },
+        },
+      },
+      historyByWorkflowId: { "chant-op-alb-deploy": [] },
+      queryResultByWorkflowId: {
+        "chant-op-alb-deploy:gateState": {
+          signalName: "gate-dns-delegation",
+          description: "Approve DNS delegation",
+          since: "2026-05-01T00:05:00.000Z",
+        },
+      },
+    }));
+    const stdout = makeStdoutSpy();
+    const exit = await runOpStatus({ args: makeArgs({ extraPositional: "alb-deploy" }), plugins: [], serializers: [] });
+    expect(exit).toBe(0);
+    const out = stdout.join("\n");
+    expect(out).toContain("Gate");
+    expect(out).toContain("gate-dns-delegation");
+    expect(out).toContain("Approve DNS delegation");
+    expect(out).toContain("2026-05-01T00:05:00.000Z");
+  });
+
+  test("an Op with no pending gate (query unregistered or answers null) prints no Gate line", async () => {
+    setupTemporalClient(createMockTemporalClient({
+      describeByWorkflowId: {
+        "chant-op-alb-deploy": {
+          workflowId: "chant-op-alb-deploy", runId: "r1",
+          status: { name: "COMPLETED" },
+          startTime: new Date("2026-05-01T00:00:00Z"),
+          closeTime: new Date("2026-05-01T01:00:00Z"),
+          taskQueue: "alb-deploy", type: { name: "albDeployWorkflow" },
+        },
+      },
+      historyByWorkflowId: { "chant-op-alb-deploy": [] },
+    }));
+    const stdout = makeStdoutSpy();
+    const exit = await runOpStatus({ args: makeArgs({ extraPositional: "alb-deploy" }), plugins: [], serializers: [] });
+    expect(exit).toBe(0);
+    expect(stdout.join("\n")).not.toContain("Gate");
   });
 });
 
@@ -731,6 +782,99 @@ describe("runOp", () => {
     }
   });
 
+  // ── --progress-json (#1676) ──────────────────────────────────────────────
+
+  test("--progress-json streams one NDJSON StepRecord per settled step, plus a final skipped record", async () => {
+    vi.useFakeTimers();
+    try {
+      discoverOpsMock.mockResolvedValue({
+        ops: new Map([[
+          "alb-deploy",
+          {
+            config: {
+              name: "alb-deploy", overview: "o",
+              phases: [
+                { name: "Build", steps: [{ kind: "activity", fn: "build" }] },
+                { name: "Deploy", steps: [{ kind: "activity", fn: "deploy" }] },
+              ],
+            },
+          },
+        ]]),
+        errors: [],
+      });
+      setupTemporalClient(createMockTemporalClient({
+        describeByWorkflowId: {
+          "chant-op-alb-deploy": {
+            workflowId: "chant-op-alb-deploy", runId: "r1",
+            status: { name: "COMPLETED" }, startTime: new Date(),
+            taskQueue: "alb-deploy", type: { name: "albDeployWorkflow" },
+          },
+        },
+        historyByWorkflowId: {
+          "chant-op-alb-deploy": [
+            { eventId: "1", eventType: "ActivityTaskScheduled", activityTaskScheduledEventAttributes: { activityId: "1", activityType: { name: "build" } } },
+            { eventType: "ActivityTaskCompleted", activityTaskCompletedEventAttributes: { scheduledEventId: "1" } },
+          ],
+        },
+      }));
+      existsSyncMock.mockReturnValue(true);
+      const { proc } = makeFakeChildProcess();
+      spawnChildMock.mockReturnValue(proc);
+      generateReportMock.mockReturnValue("# Report");
+      writeReportMock.mockReturnValue("/tmp/report.md");
+      vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+      const stdoutLines: string[] = [];
+      const stdoutSpy = vi.spyOn(process.stdout, "write").mockImplementation((chunk) => { stdoutLines.push(String(chunk)); return true; });
+
+      const promise = runOp({ args: makeArgs({ path: "alb-deploy", progressJson: true }), plugins: [], serializers: [] });
+      await vi.advanceTimersByTimeAsync(5000);
+      const exit = await promise;
+
+      expect(exit).toBe(0);
+      const records = stdoutLines.filter((l) => l.trim()).map((l) => JSON.parse(l));
+      expect(records).toEqual([
+        { phase: "Build", fn: "build", status: "ok", durationMs: 0 },
+        { phase: "Deploy", fn: "deploy", status: "skipped", durationMs: 0 },
+      ]);
+      stdoutSpy.mockRestore();
+    } finally {
+      vi.useRealTimers();
+    }
+  }, 10_000);
+
+  test("without --progress-json, nothing is written to stdout during the poll loop", async () => {
+    vi.useFakeTimers();
+    try {
+      discoverOpsMock.mockResolvedValue({ ops: new Map([makeOp("alb-deploy")]), errors: [] });
+      setupTemporalClient(createMockTemporalClient({
+        describeByWorkflowId: {
+          "chant-op-alb-deploy": {
+            workflowId: "chant-op-alb-deploy", runId: "r1",
+            status: { name: "COMPLETED" }, startTime: new Date(),
+            taskQueue: "alb-deploy", type: { name: "albDeployWorkflow" },
+          },
+        },
+        historyByWorkflowId: { "chant-op-alb-deploy": [] },
+      }));
+      existsSyncMock.mockReturnValue(true);
+      const { proc } = makeFakeChildProcess();
+      spawnChildMock.mockReturnValue(proc);
+      generateReportMock.mockReturnValue("# Report");
+      writeReportMock.mockReturnValue("/tmp/report.md");
+      vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+      const stdoutSpy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+
+      const promise = runOp({ args: makeArgs({ path: "alb-deploy" }), plugins: [], serializers: [] });
+      await vi.advanceTimersByTimeAsync(5000);
+      await promise;
+
+      expect(stdoutSpy).not.toHaveBeenCalled();
+      stdoutSpy.mockRestore();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   test("workflow ends in FAILED → exit 1, worker still killed", async () => {
     vi.useFakeTimers();
     try {
@@ -843,6 +987,102 @@ describe("runOp dispatcher", () => {
   });
 });
 
+/**
+ * chant #2003 — `--sandbox` is a global flag and `../main.ts` arms the
+ * process-wide policy latch off it for every command, so `chant run <op>
+ * --sandbox` on an Op with a `policyGate` step used to reach `loadPolicyChecks`
+ * mid-run and show the user a message written for a chant maintainer ("This is
+ * a chant bug"). At the CLI level, not on `loadPolicyChecks`: the defect was
+ * that the combination got that far, not what the refusal says.
+ */
+describe("runOp: --sandbox with a policyGate step (chant #2003)", () => {
+  const policyGateOp = (name: string) =>
+    localOp(name, [{ kind: "activity", fn: "policyGate", args: { path: "." } }]);
+
+  beforeEach(() => {
+    discoverOpsMock.mockReset();
+    loadTemporalClientMock.mockReset();
+    loadChantConfigMock.mockReset();
+    resolveProfileMock.mockReset();
+    existsSyncMock.mockReset();
+    spawnChildMock.mockReset();
+  });
+
+  test("local mode → refuses before any phase runs, naming the combination", async () => {
+    discoverOpsMock.mockResolvedValue({ ops: new Map([policyGateOp("gate")]), errors: [] });
+    const stderr = makeStderrSpy();
+
+    const exit = await runOp({ args: makeArgs({ path: "gate", temporal: false, sandbox: true }), plugins: [], serializers: [] });
+
+    expect(exit).toBe(1);
+    const out = stderr.join("\n");
+    expect(out).toContain("policyGate");
+    expect(out).toContain("--sandbox");
+    // The message the user used to get instead.
+    expect(out).not.toContain("This is a chant bug");
+  });
+
+  test("--temporal → the same refusal, as a CLI error rather than an activity failure", async () => {
+    discoverOpsMock.mockResolvedValue({ ops: new Map([policyGateOp("gate")]), errors: [] });
+    const stderr = makeStderrSpy();
+
+    const exit = await runOp({ args: makeArgs({ path: "gate", temporal: true, sandbox: true }), plugins: [], serializers: [] });
+
+    expect(exit).toBe(1);
+    expect(stderr.join("\n")).toContain("policyGate");
+    // Refused before the project config is even loaded — nothing is scheduled.
+    expect(loadChantConfigMock).not.toHaveBeenCalled();
+    expect(loadTemporalClientMock).not.toHaveBeenCalled();
+  });
+
+  test("a policyGate nested in an effect step is found too", async () => {
+    discoverOpsMock.mockResolvedValue({
+      ops: new Map([
+        localOp("gate", [
+          { kind: "effect", steps: [{ kind: "activity", fn: "policyGate", args: { path: "." } }] },
+        ]),
+      ]),
+      errors: [],
+    });
+    const stderr = makeStderrSpy();
+
+    const exit = await runOp({ args: makeArgs({ path: "gate", temporal: false, sandbox: true }), plugins: [], serializers: [] });
+
+    expect(exit).toBe(1);
+    expect(stderr.join("\n")).toContain("policyGate");
+  });
+
+  test("without --sandbox the same Op is not refused", async () => {
+    discoverOpsMock.mockResolvedValue({ ops: new Map([policyGateOp("gate")]), errors: [] });
+    loadChantConfigMock.mockResolvedValue({ config: {} });
+    resolveProfileMock.mockReturnValue({ address: "localhost:7233", namespace: "default", taskQueue: "q" });
+    existsSyncMock.mockReturnValue(false);
+    const stderr = makeStderrSpy();
+
+    // The Temporal path, so the run stops at the missing worker.ts rather than
+    // actually building a project: reaching that point proves the pre-flight
+    // let it through.
+    const exit = await runOp({ args: makeArgs({ path: "gate", temporal: true }), plugins: [], serializers: [] });
+
+    expect(exit).toBe(1);
+    expect(stderr.join("\n")).toContain("worker.ts not found");
+    expect(loadChantConfigMock).toHaveBeenCalled();
+  });
+
+  test("--sandbox on an Op with no policyGate step is untouched", async () => {
+    discoverOpsMock.mockResolvedValue({
+      ops: new Map([localOp("hello", [{ kind: "activity", fn: "shellCmd", args: { cmd: "true" } }])]),
+      errors: [],
+    });
+    const stderrWrite = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+    const exit = await runOp({ args: makeArgs({ path: "hello", temporal: false, sandbox: true }), plugins: [], serializers: [] });
+
+    expect(exit).toBe(0);
+    stderrWrite.mockRestore();
+  });
+});
+
 describe("Temporal-only subcommand guards", () => {
   const cases: Array<[string, (ctx: { args: ParsedArgs; plugins: never[]; serializers: never[] }) => Promise<number>]> = [
     ["list", runOpList],
@@ -951,9 +1191,9 @@ describe("runOpComponents", () => {
       expect(runComponentsMock).toHaveBeenCalledWith(expect.any(String), "svc", expect.objectContaining({
         buildParams: [{ name: "tier", value: "light", source: "default" }],
       }));
-      // A parameter at its default collapses into the count line now; the
-      // provenance forwarded above is where its value is asserted.
-      expect(stderr.join("\n")).toContain("at their defaults");
+      // The echo is a one-line count (#1424); the provenance forwarded above
+      // is where the value is asserted.
+      expect(stderr.join("\n")).toContain("1 build parameter resolved (1 default)");
     });
 
     test("--param overrides a declared default and is threaded through to runComponents", async () => {
@@ -978,7 +1218,7 @@ describe("runOpComponents", () => {
       expect(runComponentsMock).toHaveBeenCalledWith(expect.any(String), "svc", expect.objectContaining({
         buildParams: [{ name: "tier", value: "production", source: "cli" }],
       }));
-      expect(stderr.join("\n")).toContain("[param] tier");
+      expect(stderr.join("\n")).toContain("1 build parameter resolved (1 from cli)");
       vi.restoreAllMocks();
     });
 

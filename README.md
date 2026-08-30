@@ -2,6 +2,26 @@
 
 A type system for operations.
 
+**Working with an agent?** Paste this and it'll get to a working `chant build` on its own — full version at [intentius.io/chant/agents](https://intentius.io/chant/agents/):
+
+```text
+Install a chant lexicon for this project's target platform (aws, azure, gcp,
+k8s, helm, docker, github, gitlab, forgejo, or temporal) — this also installs
+the chant CLI:
+
+  npm install --save-dev @intentius/chant-lexicon-<name>
+
+Then scaffold (use `.` if this repo is already the project root):
+
+  npx chant init . --lexicon <name>
+
+Read every skills/*/SKILL.md it writes before authoring anything — that's
+the operational playbook for this platform. Author resources as typed
+TypeScript exports, then validate with `npx chant build` and
+`npx chant lint`. Query the estate with `npx chant search "<query>"`
+instead of reading a raw synthesized dump.
+```
+
 Synthesis is pure and local. There is no authoritative state file — chant computes a precise change set against the live system using cloud-side ownership markers, so you get a plan without hosting state. When an apply needs durability — approval gates, rollback, crash-resume — chant compiles your orchestration to [durable workflows](https://intentius.io/chant/concepts/durable-workflows/): Temporal-native when you want durability, zero-dependency when you don't.
 
 **[Read the docs →](https://intentius.io/chant/getting-started/introduction/)**

@@ -1,0 +1,70 @@
+---
+title: "Examples"
+description: "Walkthrough of GitHub Actions examples — workflows, composites, and patterns"
+diataxis: how-to
+---
+
+Runnable examples live in the lexicon's `examples/` directory. Clone the repo and try them:
+
+```bash
+cd examples/getting-started
+npm install
+chant build    # produces .github/workflows/ci.yml
+chant lint     # runs lint rules
+npx vitest run    # run the tests
+```
+
+## Getting Started
+
+`examples/getting-started/` — a CI workflow with build and test steps for a Node.js project.
+
+```
+src/
+└── ci.ts    # Workflow + Job definitions
+```
+
+### Source
+
+{{file:getting-started/src/ci.ts}}
+
+### Generated output
+
+`chant build` produces `.github/workflows/ci.yml`:
+
+```yaml
+name: CI
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install
+        run: npm ci
+      - name: Build
+        run: npm run build
+      - name: Test
+        run: npm test
+```
+
+**Patterns demonstrated:**
+
+1. **Typed composites** — `Checkout({})` and `SetupNode({...})` instead of raw `uses:` strings
+2. **Permissions** — explicit `contents: read` following least-privilege
+3. **Timeout** — `timeoutMinutes: 15` prevents runaway jobs
+4. **Trigger scoping** — push and PR on `main` only

@@ -1,6 +1,7 @@
 ---
 title: "Ray + KubeRay on GKE"
 description: "A persistent Ray cluster on GKE backed by Filestore shared storage and GCS spillover, deployed via Config Connector and KubeRay."
+diataxis: tutorial
 ---
 
 import { Aside } from '@astrojs/starlight/components';
@@ -41,7 +42,7 @@ K8s layer (KubeRay → k8s.yaml)
 | Local k3d smoke test | `k3d/src/` | `k3d/k3d.yaml` |
 
 <Aside type="caution">
-GKE cluster (3× n2-standard-4) + Filestore ENTERPRISE (1Ti) + NAT gateway ≈ $300+/mo while running. The GPU node pool scales to zero. Tear down after testing.
+GKE cluster (3× n2-standard-4) + Filestore ENTERPRISE (1Ti) + NAT gateway ≈ $300+/mo while running (us-central1 list price, checked 2026-08 against chant 0.46.0; GCP list prices change and vary by region — re-price before relying on this number). The GPU node pool scales to zero. Tear down after testing.
 </Aside>
 
 ## What you'll learn

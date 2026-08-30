@@ -6,7 +6,7 @@ import { AttrRef } from "@intentius/chant/attrref";
 // reaching into core directly here mirrors nested-stack-integration.test.ts's
 // precedent for aws-lexicon integration-style tests.
 import { resolveAttrRefs } from "../../../../packages/core/src/discovery/resolve";
-import { AgentCoreAgent } from "./agentcore-agent";
+import { AgentCoreAgent, agentCoreDefaultEndpointArn } from "./agentcore-agent";
 import { Split, Ref } from "../intrinsics";
 import { awsSerializer } from "../serializer";
 
@@ -15,12 +15,12 @@ const baseProps = {
   containerUri: "123456789012.dkr.ecr.us-east-1.amazonaws.com/support-agent:latest",
 };
 
-// The endpoint is opt-in (#978) — it races the Runtime's async version-READY when
-// created in the same apply. Tests that exercise the endpoint pass this variant.
-const withEndpoint = { ...baseProps, provisionEndpoint: true };
+// An explicit endpoint exists only for a non-DEFAULT alias (#978): AgentCore owns DEFAULT,
+// and declaring it races the Runtime's async version-READY. Endpoint tests use this variant.
+const withEndpoint = { ...baseProps, endpointName: "PROD" };
 
 describe("AgentCoreAgent", () => {
-  test("returns 7 members by default; the endpoint is opt-in (#978)", () => {
+  test("returns 7 members by default; no RuntimeEndpoint (#978)", () => {
     const instance = AgentCoreAgent(baseProps);
     expect(Object.keys(instance.members)).toEqual([
       "role", "gatewayRole", "runtime", "memory",
@@ -29,7 +29,7 @@ describe("AgentCoreAgent", () => {
     expect((instance as any).endpoint).toBeUndefined();
   });
 
-  test("provisionEndpoint adds the endpoint as an 8th member", () => {
+  test("endpointName adds an explicit endpoint as an 8th member", () => {
     const instance = AgentCoreAgent(withEndpoint);
     expect(Object.keys(instance.members)).toContain("endpoint");
     expect(Object.keys(instance.members)).toHaveLength(8);
@@ -40,13 +40,13 @@ describe("AgentCoreAgent", () => {
     expect(expanded.has("agentRole")).toBe(true);
     expect(expanded.has("agentGatewayRole")).toBe(true);
     expect(expanded.has("agentRuntime")).toBe(true);
-    expect(expanded.has("agentEndpoint")).toBe(false); // opt-in (#978)
+    expect(expanded.has("agentEndpoint")).toBe(false); // managed DEFAULT, not declared (#978)
     expect(expanded.has("agentMemory")).toBe(true);
     expect(expanded.has("agentWorkloadIdentity")).toBe(true);
     expect(expanded.has("agentGateway")).toBe(true);
     expect(expanded.has("agentGatewayTarget")).toBe(true);
     expect(expanded.size).toBe(7);
-    // With the endpoint opted in, it appears as agentEndpoint.
+    // With an explicit non-DEFAULT endpoint, it appears as agentEndpoint.
     expect(expandComposite("agent", AgentCoreAgent(withEndpoint)).has("agentEndpoint")).toBe(true);
   });
 
@@ -69,7 +69,7 @@ describe("AgentCoreAgent", () => {
     const memoryProps = (instance.memory as any).props;
     expect(runtimeProps.AgentRuntimeName).toBe("support_agent");
     expect(runtimeProps.AgentRuntimeName).toMatch(/^[a-zA-Z][a-zA-Z0-9_]{0,47}$/);
-    expect(endpointProps.Name).toBe("DEFAULT");
+    expect(endpointProps.Name).toBe("PROD");
     expect(memoryProps.Name).toBe("support_agentMemory");
     expect(memoryProps.Name).toMatch(/^[a-zA-Z][a-zA-Z0-9_]{0,47}$/);
   });
@@ -144,7 +144,7 @@ describe("AgentCoreAgent", () => {
       code: { s3Bucket: "loom-artifacts", s3Prefix: "agents/assistant.zip", runtime: "PYTHON_3_12", entryPoint: ["app.py"] },
     }));
     resolveAttrRefs(expanded);
-    const template = JSON.parse(awsSerializer.serialize(expanded));
+    const template = JSON.parse(awsSerializer.serialize(expanded) as string);
     const artifact = template.Resources.agentRuntime.Properties.AgentRuntimeArtifact;
     expect(artifact.ContainerConfiguration).toBeUndefined();
     expect(artifact.CodeConfiguration).toEqual({
@@ -195,7 +195,27 @@ describe("AgentCoreAgent", () => {
     );
   });
 
-  test("RuntimeEndpoint references runtime.AgentRuntimeId (when opted in)", () => {
+  test("endpointName \"DEFAULT\" is rejected — AgentCore provisions the managed DEFAULT endpoint (#978)", () => {
+    expect(() => AgentCoreAgent({ ...baseProps, endpointName: "DEFAULT" })).toThrow(
+      "AgentCoreAgent endpointName must not be \"DEFAULT\"",
+    );
+  });
+
+  test("explicit endpoint name is sanitized to the Runtime identifier pattern", () => {
+    const instance = AgentCoreAgent({ ...baseProps, endpointName: "blue-green" });
+    expect((instance.endpoint as any).props.Name).toBe("blue_green");
+  });
+
+  test("agentCoreDefaultEndpointArn derives the managed DEFAULT endpoint ARN from the Runtime ARN", () => {
+    const instance = AgentCoreAgent(baseProps);
+    const expanded = expandComposite("agent", instance);
+    resolveAttrRefs(expanded);
+    expect(JSON.parse(JSON.stringify(agentCoreDefaultEndpointArn(instance.runtime)))).toEqual({
+      "Fn::Sub": "${agentRuntime.AgentRuntimeArn}/runtime-endpoint/DEFAULT",
+    });
+  });
+
+  test("RuntimeEndpoint references runtime.AgentRuntimeId (when an explicit endpoint is named)", () => {
     const instance = AgentCoreAgent(withEndpoint);
     const endpointProps = (instance.endpoint as any).props;
     expect(endpointProps.AgentRuntimeId).toBeInstanceOf(AttrRef);
@@ -245,7 +265,7 @@ describe("AgentCoreAgent", () => {
   test("serializes to a valid CloudFormation template with the expected resource types", () => {
     const expanded = expandComposite("agent", AgentCoreAgent(withEndpoint));
     resolveAttrRefs(expanded);
-    const output = awsSerializer.serialize(expanded);
+    const output = awsSerializer.serialize(expanded) as string;
     const template = JSON.parse(output);
 
     expect(template.AWSTemplateFormatVersion).toBe("2010-09-09");

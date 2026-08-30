@@ -1,6 +1,7 @@
 ---
 title: Correctness Rules
 description: Rules that catch structural errors causing evaluation or deployment failures
+diataxis: reference
 ---
 
 Correctness rules catch structural errors that would cause evaluation or deployment failures.
@@ -92,3 +93,173 @@ export const bucket = new _.Bucket({
 
 ---
 
+
+## COR021: Literal Name in a Multi-Environment Project
+
+When a project declares two or more `environments` and binds its ownership marker to a build parameter (`ownership.env: { param: "env" }`), it is built once per environment — and a name-bearing property holding a bare string literal produces the same physical name in every build. The collision is silent until apply time, when the second environment's deploy walks over the first's resources. Interpolate the env parameter into the name instead; the template folds to a per-environment literal because [build-time parameters](/chant/concepts/build-time-parameters/) resolve before any file is imported.
+
+**Severity:** warning
+
+```typescript
+// ❌ Triggers COR021 (config declares environments: ["dev", "prod"]
+//    and ownership: { env: { param: "env" } })
+export const uploads = new _.Bucket({
+  bucketName: "billing-uploads",
+});
+```
+
+```typescript
+// ✅ Fixed
+import { params } from "@intentius/chant/params";
+
+export const uploads = new _.Bucket({
+  bucketName: `billing-${params.env}-uploads`,
+});
+```
+
+The rule stays silent when `ownership.env` is a literal or absent — a project not doing per-environment builds from one source tree names its instances another way (the [layered configuration](/chant/guide/layered-configuration/) all-in-one pattern hand-names each instance), and warning there would be noise. See [Resource Naming](/chant/guide/resource-naming/#multi-environment-coexistence) for both patterns.
+
+---
+
+## COR022: Effect Receipt Is a Leaf
+
+Nothing may reference an effect receipt's attributes. A receipt is the declared witness that an out-of-band effect ran — the `effect()` step is its sole writer, on success, last. A resource that derives a property from a receipt couples itself to a value only the effect controls, and the receipt's late write (or its absence after a crash) ripples into resources that were supposed to be independent of whether the effect has fired. Const indirection fires too: an alias of a receipt is still the receipt.
+
+**Severity:** error
+
+```typescript
+// ❌ Triggers COR022
+const seeded = EffectReceipt("seeded", { effect: "db-seed", flavor: "existence" });
+export const app = new _.Service({
+  marker: seeded.effect,
+});
+```
+
+```typescript
+// ✅ Fixed — reference the effect's inputs (or their sources) directly
+export const seeded = EffectReceipt("seeded", { effect: "db-seed", flavor: "existence" });
+export const app = new _.Service({
+  marker: "db-seed",
+});
+```
+
+Passing the receipt value itself around (registering it, handing it to a materialization row) is fine — the leaf constraint is about attributes.
+
+---
+
+## COR023: Receipt Materializes Into a Plain Store
+
+A receipt's materialization target must be a plain store — never a Secret, a SecureString, or any secret-capable kind. The receipt value is a witness (an existence marker or a `sha256:` digest), not a secret; a secret-capable store adds masking, rotation, and access-control semantics that defeat the observe-and-compare loop the receipt exists for.
+
+This is a post-synth check run by `chant build` over the whole build result. Core recognizes receipts through their marker, lexicon-independently, and checks the two signals it has: an `entityType` naming a secret-capable kind, and a `Type`/`Kind` prop selecting a secret-capable variant of an otherwise plain kind (SSM's `Type: "SecureString"`). Each lexicon's materialization row enforces its own kind concretely at the source.
+
+**Severity:** error
+
+```yaml
+# ❌ Triggers COR023 — receipt landed in a SecureString
+MigratedReceipt:
+  Type: AWS::SSM::Parameter
+  Properties:
+    Name: /receipts/migrated
+    Type: SecureString
+```
+
+```yaml
+# ✅ Fixed — plain String parameter
+MigratedReceipt:
+  Type: AWS::SSM::Parameter
+  Properties:
+    Name: /receipts/migrated
+    Type: String
+```
+
+---
+
+## COR024: Receipt Inputs Reference Secrets by Pointer
+
+A receipt's `inputs` feed its expectation hash — whatever lands there is canonicalized, digested, and compared against a stored value for the rest of the receipt's life. chant's constitutional line on secrets is that no code path may hold, log, hash, or compare a secret value, so a receipt input reading a Secret-kind entity's material (`.data`, `.value`, `.stringData`, ...) is refused. Reference the secret by name+version pointer instead: a rotation is then an explicit version bump that re-proposes the effect, and the hash only ever sees the pointer. Const indirection fires — extracting the material into a variable first does not change what the input reads.
+
+**Severity:** error
+
+```typescript
+// ❌ Triggers COR024 — secret material would enter the expectation hash
+const dbSecret = new SecretManagerSecret({ name: "db-password" });
+export const seeded = EffectReceipt("seeded", {
+  effect: "db-seed",
+  flavor: "hash",
+  inputs: { password: dbSecret.data.password },
+});
+```
+
+```typescript
+// ✅ Fixed — name+version pointer
+const dbSecret = new SecretManagerSecret({ name: "db-password" });
+export const seeded = EffectReceipt("seeded", {
+  effect: "db-seed",
+  flavor: "hash",
+  inputs: { secretName: dbSecret.name, secretVersion: 3 },
+});
+```
+
+---
+
+## COR025: Stringified Reference in Serialized Output
+
+A serialized output (a CloudFormation template, a Kubernetes manifest, ...) containing the literal substring `[object Object]` is always an authoring error: a reference got coerced to a string — typically by a template literal or string concatenation over an object like an `AttrRef` — instead of resolved to its actual value. No lexicon's serializer emits this on purpose, and no provider's schema ever expects it, so this check is cheap, universal across lexicons, and free of meaningful false positives.
+
+This is a post-synth check run by `chant build` over the whole build result's emitted text, scanning every lexicon's primary output plus any nested files (e.g. nested stack templates). It flags each distinct offending line once, quoting it in the diagnostic so the emitting declaration is easy to spot.
+
+**Severity:** error
+
+```typescript
+// ❌ Triggers COR025 — bucket.arn is an AttrRef, not a string;
+// the template literal stringifies it via Object.prototype.toString
+export const policy = new BucketPolicy({
+  bucket,
+  statement: [{ effect: "Allow", resource: `${bucket.arn}/*` }],
+});
+```
+
+```typescript
+// ✅ Fixed — join the reference instead of interpolating it
+import { Join } from "@intentius/chant-lexicon-aws";
+
+export const policy = new BucketPolicy({
+  bucket,
+  statement: [{ effect: "Allow", resource: Join("", [bucket.arn, "/*"]) }],
+});
+```
+
+---
+
+## COR026: Stale Knowledge Binding
+
+A knowledge concept's `binds` frontmatter key (an OKF v0.2 bundle read from the project's `knowledge/` directory, or wherever `knowledge.dir` points) must name a discovered entity's logical name. A name that resolves to nothing is a stale binding — the entity was renamed or removed, or the concept was authored against a name that never existed.
+
+This is a post-synth check run by `chant build` over the whole build result, alongside COR023/COR024. Per the OKF binding design (#1059), the spec permits broken links, so a stale binding warns rather than fails the build — knowledge is deliberately softer than the typed graph it describes. A concept with no `binds` at all is orphaned knowledge, not an omission, and never triggers this check; a project with no knowledge bundle triggers nothing either.
+
+**Severity:** warning
+
+```markdown
+<!-- ❌ Triggers COR026 — knowledge/decisions/example.md -->
+---
+type: decision
+title: Use a managed queue
+binds: ghostQueue
+---
+
+No entity named `ghostQueue` exists in this project anymore.
+```
+
+```markdown
+<!-- ✅ Fixed — binds the current logical name -->
+---
+type: decision
+title: Use a managed queue
+binds: jobQueue
+---
+
+`jobQueue` is a declared entity in this project.
+```
+
+---

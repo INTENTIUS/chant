@@ -1,5 +1,19 @@
 import { OpResource } from "./resource";
-import type { OpConfig, PhaseDefinition, StepDefinition, ActivityStep, GateStep } from "./types";
+import type { OpConfig, PhaseDefinition, StepDefinition, ActivityStep, GateStep, EffectStep } from "./types";
+import { isEffectReceipt, type EffectReceiptDeclaration } from "../effect-receipt";
+import { receiptCheckInput } from "./receipt-store";
+import { makeOutProxy, type StepOutputRef } from "./step-output-ref";
+
+/** An `activity()` result — the plain `ActivityStep` shape plus the `.out` reference sugar (#1290). */
+export interface NamedActivityStep extends ActivityStep {
+  /**
+   * `step.out.someField` builds a {@link StepOutputRef} into this step's
+   * declared return value, for use in a later step's `args`. Throws on
+   * access if this step has no `id` (pass one via `activity()`'s third
+   * argument) — there is nothing for a reference to name otherwise.
+   */
+  readonly out: Record<string, StepOutputRef>;
+}
 
 // ── Core builders ─────────────────────────────────────────────────────────────
 
@@ -31,18 +45,44 @@ export function phase(
   return { name, steps, ...(opts?.parallel ? { parallel: true } : {}) };
 }
 
-/** Reference a pre-built or custom activity by function name. */
+/**
+ * Reference a pre-built or custom activity by function name.
+ *
+ * The third argument is a profile string (unchanged) or, to name the step
+ * so a later step can reference its output (#1290), an options object:
+ * `activity("lifecycleDiff", { env: "prod" }, { id: "diff" })`. Named or
+ * not, the result carries `.out` — `diff.out.driftedStacks` builds a
+ * reference to this step's declared return value; see `stepOutput()` in
+ * `@intentius/chant/op` for the equivalent on a step authored as a plain
+ * object literal instead of via this builder.
+ */
 export function activity(
   fn: string,
   args?: Record<string, unknown>,
-  profile?: ActivityStep["profile"],
-): ActivityStep {
-  return {
+  opts?: ActivityStep["profile"] | { profile?: ActivityStep["profile"]; id?: string },
+): NamedActivityStep {
+  const profile = typeof opts === "string" ? opts : opts?.profile;
+  const id = typeof opts === "string" ? undefined : opts?.id;
+  const step = {
     kind: "activity",
     fn,
     ...(args && Object.keys(args).length > 0 ? { args } : {}),
     ...(profile ? { profile } : {}),
-  };
+    ...(id ? { id } : {}),
+  } as NamedActivityStep;
+  Object.defineProperty(step, "out", {
+    enumerable: false,
+    get(): Record<string, StepOutputRef> {
+      if (!step.id) {
+        throw new Error(
+          `activity(${JSON.stringify(fn)}, ...).out: this step has no id — pass one via ` +
+            `activity(fn, args, { id: "..." }) before referencing its output.`,
+        );
+      }
+      return makeOutProxy(step.id);
+    },
+  });
+  return step;
 }
 
 /** Insert a human gate — the workflow pauses until the named signal is received. */
@@ -54,6 +94,62 @@ export function gate(
     kind: "gate",
     signalName,
     ...(opts?.timeout ? { timeout: opts.timeout } : {}),
+    ...(opts?.description ? { description: opts.description } : {}),
+  };
+}
+
+/**
+ * Wrap nested steps in read-compare-run-write over an effect receipt (#1834,
+ * epic #1703). At run: read the live receipt through the receipt store,
+ * compare it against the resolved expectation, and on a match skip the nested
+ * steps ("effect already applied"). On a mismatch the nested steps run in
+ * authored order, and ONLY when every one of them succeeds is the receipt
+ * written — last, once. This step is the sole writer of a receipt (decision
+ * 3); a nested-step failure leaves the receipt untouched (stale), so the next
+ * run re-proposes the effect.
+ *
+ * `receipt` is the typed EffectReceipt declaration — import the const from
+ * your receipts module. There is no string form: a receipt named by string
+ * would sever the step from the declaration that lint, plan, and the lexicon
+ * row all key on.
+ *
+ * A gate authored inside `steps` pauses only when the effect will fire (the
+ * matched path never reaches it). The receipt-store activities (`receiptRead`,
+ * `receiptWrite`) are provided by the receipt row's lexicon (#1835, aws).
+ *
+ * @example
+ * ```ts
+ * import { seededReceipt } from "./receipts";
+ * phase("Seed", [
+ *   effect(seededReceipt, [
+ *     shell("npm run db:seed"),
+ *   ]),
+ * ]),
+ * ```
+ */
+export function effect(
+  receipt: EffectReceiptDeclaration,
+  steps: Array<ActivityStep | GateStep>,
+  opts?: { description?: string },
+): EffectStep {
+  if (!isEffectReceipt(receipt)) {
+    throw new Error(
+      "effect(): `receipt` must be the EffectReceipt declaration itself — import the const; there is no string form",
+    );
+  }
+  for (const step of steps) {
+    if ((step as { kind?: unknown }).kind === "effect") {
+      throw new Error(
+        `effect("${receipt.name}"): effect steps do not nest — one receipt witnesses one effect`,
+      );
+    }
+  }
+  const { receipt: ref, expectation } = receiptCheckInput(receipt);
+  return {
+    kind: "effect",
+    receipt: ref,
+    ...(expectation !== undefined ? { expectation } : {}),
+    steps,
     ...(opts?.description ? { description: opts.description } : {}),
   };
 }
@@ -78,6 +174,22 @@ function takeProfile(
   return { args, profile };
 }
 
+/**
+ * {@link takeProfile}'s sibling for the typed, lexicon-owned step-builder
+ * wrappers added in chant #1288 Stage 2 (e.g. `kubectlApply` in
+ * `@intentius/chant-lexicon-k8s`): also pulls `id` out of the opts bag so it
+ * routes to the step's `id` field (enabling `.out` — #1290) instead of
+ * leaking into the activity's args, the same way `profile` would without
+ * this split.
+ */
+export function takeProfileAndId(
+  opts: (Record<string, unknown> & { profile?: ActivityStep["profile"]; id?: string }) | undefined,
+): { args: Record<string, unknown>; profile?: ActivityStep["profile"]; id?: string } {
+  if (!opts) return { args: {} };
+  const { profile, id, ...args } = opts as { profile?: ActivityStep["profile"]; id?: string } & Record<string, unknown>;
+  return { args, profile, id };
+}
+
 /** Run an npm build script in the given project directory. `opts.script` selects the script (default `build`, e.g. `build:aws`); `opts.env` adds env vars. */
 export const build = (path: string, opts?: Record<string, unknown>): ActivityStep => {
   const { args, profile } = takeProfile(opts);
@@ -98,6 +210,22 @@ export const helmInstall = (
 ): ActivityStep => {
   const { args, profile } = takeProfile(opts);
   return activity("helmInstall", { name, chart, ...args }, profile ?? "longInfra");
+};
+
+/**
+ * Deploy a recorded pinned render by its `sha256:` content digest (chant
+ * #1242): the helm lexicon's `helmInstall` activity loads the render from
+ * the render store, verifies the digest, and installs those exact bytes as
+ * a structure-preserving wrapper chart — no deploy-time render. Defaults to
+ * the `longInfra` profile (override via `opts.profile`).
+ */
+export const helmInstallPinned = (
+  name: string,
+  contentDigest: string,
+  opts?: { namespace?: string; profile?: ActivityStep["profile"]; [k: string]: unknown },
+): ActivityStep => {
+  const { args, profile } = takeProfile(opts);
+  return activity("helmInstall", { name, contentDigest, ...args }, profile ?? "longInfra");
 };
 
 /** Poll for stack readiness (kubectl rollout, CloudFormation complete, etc). Defaults to the `k8sWait` profile (override via `opts.profile`). */
@@ -133,9 +261,62 @@ export const shell = (
 ): ActivityStep =>
   activity("shellCmd", { cmd, ...(opts?.env ? { env: opts.env } : {}) }, opts?.profile);
 
+/**
+ * Ensure a `generated-once` secret exists in the target store (#1829, epic
+ * #1365). The op-step surface over the same engine as the `ensure-secret`
+ * capability verb (`ensureSecretMaterialization`, core's
+ * secret-materialization module): read-then-write — if the secret exists, its
+ * declared key-set and any declared `metadata` are verified and the step
+ * stops (present means done); if absent, one value per key is minted at
+ * apply time and written straight to the store. Never mints over an existing
+ * value, never rotates implicitly; a mismatch fails the step loudly, naming
+ * key names and metadata keys — never values. No output of the activity
+ * carries secret material. The backing activity is provided by the store's
+ * lexicon (k8s, #1830).
+ */
+export const ensureSecret = (
+  name: string,
+  keys: string[],
+  opts?: { metadata?: Record<string, string>; profile?: ActivityStep["profile"]; [k: string]: unknown },
+): ActivityStep => {
+  const { args, profile } = takeProfile(opts);
+  return activity("ensureSecret", { name, keys, ...args }, profile);
+};
+
 /** Run `chant teardown` in the given project directory. Uses `longInfra` profile. */
 export const teardown = (path: string): ActivityStep =>
   activity("chantTeardown", { path }, "longInfra");
+
+/**
+ * Tear down one environment's marker-owned resources — the durable form of
+ * `chant lifecycle teardown <env> --yes` (#1222). The activity runs core's
+ * teardown engine in-process: enumerate by ownership marker (this project's
+ * `ownership.stack` + `env`), delete through each lexicon's `executeTeardown`
+ * capability, retry failures once, and fail the step when any candidate is
+ * still failed. Distinct from {@link teardown}, which runs a project's own
+ * `npm run teardown` script.
+ *
+ * The CLI's guards apply unchanged, and a production-like environment name
+ * needs `confirmProd: true` in `opts` — the authored counterpart of
+ * `--confirm-prod`, since an Op never prompts. An ordinary {@link gate} step
+ * placed before this one composes as usual (steps run in authored order), so
+ * a human approval can precede the deletion:
+ *
+ * ```ts
+ * phase("Teardown", [
+ *   gate("approve-teardown", { description: "Release the staging teardown" }),
+ *   envTeardown("staging"),
+ * ]),
+ * ```
+ *
+ * `opts` also accepts `path` (the chant project directory, default the
+ * worker's cwd). Defaults to the `longInfra` profile (override via
+ * `opts.profile`).
+ */
+export const envTeardown = (env: string, opts?: Record<string, unknown>): ActivityStep => {
+  const { args, profile } = takeProfile(opts);
+  return activity("envTeardown", { env, ...args }, profile ?? "longInfra");
+};
 
 /**
  * Create a local k3d cluster (vanilla Kubernetes in Docker). Idempotent: skips
@@ -167,6 +348,48 @@ export const k3dUp = (name: string, opts?: Record<string, unknown>): ActivitySte
 export const k3dDown = (name: string, opts?: Record<string, unknown>): ActivityStep => {
   const { args, profile } = takeProfile(opts);
   return activity("k3dDown", { name, ...args }, profile ?? "fastIdempotent");
+};
+
+/**
+ * Run the pinned k3s installer against a reachable host (`role`: `"server"`
+ * or `"agent"`). Idempotent on an already-installed matching version.
+ * Defaults to the `longInfra` profile (the installer downloads and starts
+ * the binary); override via `opts.profile`.
+ *
+ * The implementation lives in the k3s lexicon (chant #1601) — the project's
+ * `chant.config.ts` must list `"k3s"` in `lexicons` for the activity to load.
+ * Bounded exactly as `k3dUp`/`k3dDown` (chant #1410): drives the reachable-host
+ * case only, no host provisioning, no SSH orchestration.
+ *
+ * `opts` accepts `configFile` (required — path to the chant-emitted
+ * config.yaml, passed as `--config`), `version` (overrides the lexicon's
+ * pinned `INSTALL_K3S_VERSION`), and `tokenFile` (path to a file holding the
+ * join token, passed to the installer as `K3S_TOKEN_FILE`). There is no
+ * `token` option — the join secret's value never travels through this step;
+ * only a file path does (the #1601 token boundary, same stance as #1365).
+ */
+export const k3sInstall = (
+  role: "server" | "agent",
+  opts: { configFile: string; version?: string; tokenFile?: string; profile?: ActivityStep["profile"]; [k: string]: unknown },
+): ActivityStep => {
+  const { args, profile } = takeProfile(opts);
+  return activity("k3sInstall", { role, ...args }, profile ?? "longInfra");
+};
+
+/**
+ * Uninstall k3s from a reachable host (`role`: `"server"` or `"agent"`).
+ * Defaults to the `fastIdempotent` profile (override via `opts.profile`).
+ * Implementation lives in the k3s lexicon (chant #1601) — requires `"k3s"`
+ * in the project's `lexicons`. A host where k3s was never installed is a
+ * no-op success, the same shape as `k3dDown` against an already-gone
+ * cluster.
+ */
+export const k3sUninstall = (
+  role: "server" | "agent",
+  opts?: Record<string, unknown>,
+): ActivityStep => {
+  const { args, profile } = takeProfile(opts);
+  return activity("k3sUninstall", { role, ...args }, profile ?? "fastIdempotent");
 };
 
 /**
@@ -279,8 +502,8 @@ export const azDelete = (templatePath: string, opts?: Record<string, unknown>): 
  * Deploy a built CloudFormation template by calling the CloudFormation API
  * directly (create-or-update + poll) — the direct twin of {@link azApply} /
  * {@link gcpApply} for AWS, targeting a local Floci emulator or real AWS by
- * endpoint override. Speaks the CFN API over HTTP rather than shelling `aws`
- * (that path is still `nativeApply({ target: "cloudformation" })`). Provided by
+ * endpoint override. Speaks the CFN API over HTTP rather than shelling `aws` —
+ * `nativeApply({ target: "cloudformation" })` routes here too (#1449). Provided by
  * the aws lexicon; loaded when the project lists `aws`. Defaults to the
  * `longInfra` profile. `opts` requires `stackName`; accepts `endpoint`, `region`,
  * `capabilities`, `timeoutMs`, `intervalMs`.
@@ -297,13 +520,15 @@ export const awsDelete = (templatePath: string, opts?: Record<string, unknown>):
 };
 
 /**
- * Apply chant's built GCP (CNRM) resources directly to the GCS REST API,
+ * Apply chant's built GCP (CNRM) resources directly to their GCP REST APIs,
  * targeting a local floci-gcp emulator or real GCP by endpoint override — the
- * native GCP applier (#706 starter #711), currently handling `StorageBucket`.
- * Defaults to the `longInfra` profile (override via `opts.profile`).
+ * native GCP applier (#706 starter #711). `nativeApply({ target: "gcp" })`
+ * routes here too (#1449). Defaults to the `longInfra` profile (override via
+ * `opts.profile`).
  *
- * `opts` accepts `endpoint` (default `STORAGE_EMULATOR_HOST` env / real GCS) and
- * `project` (default `GOOGLE_CLOUD_PROJECT` env / the CNRM project-id annotation).
+ * `opts` accepts `endpoint` (default `GCP_ENDPOINT_URL` env / each kind's
+ * real-GCP host) and `project` (default `GOOGLE_CLOUD_PROJECT` env / the CNRM
+ * project-id annotation).
  */
 export const gcpApply = (manifestPath: string, opts?: Record<string, unknown>): ActivityStep => {
   const { args, profile } = takeProfile(opts);

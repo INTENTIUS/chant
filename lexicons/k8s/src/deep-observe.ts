@@ -7,8 +7,7 @@
  * rather than the hand-maintained `ignoreDifferences` list every Argo user
  * keeps.
  *
- * ## Why this is not "the AWS reader, with `kubectl get` instead of Cloud
- * Control"
+ * ## What managedFields decides, and what it does not
  *
  * AWS, Azure and Temporal's rows all prune by a **static, entityType-keyed**
  * table: an ARN always looks like an ARN, `provisioningState` is always
@@ -17,65 +16,43 @@
  * what `./deep-observe-hooks.ts`'s `k8sDeepNormalizationHooks` is, and it
  * covers Kubernetes' *equivalent* static noise (`status`,
  * `metadata.{uid,resourceVersion,generation,creationTimestamp}`, a handful of
- * server-defaulted pod-spec fields).
+ * server-defaulted pod-spec fields, and the annotations and labels
+ * Kubernetes' own controllers stamp on every object of a kind —
+ * `K8S_SYSTEM_METADATA_PRUNE_PATTERNS` in `@intentius/chant/managed-fields`).
  *
- * managedFields is not that kind of rule. Whether `spec.replicas` is noise on
- * *this* Deployment depends on whether *this* Deployment's
- * `metadata.managedFields` says a controller owns it — a fact that differs
- * between two Deployments of the same type, and that the declared tree never
- * carries at all (chant's source has no `managedFields` key to normalize).
- * `DeepNormalizationHooks.prune` cannot see the object it is walking, only a
- * path and a value, so this cannot be expressed as a fixed hook the way the
- * other three rows' entire contribution is. It has to be computed once per
- * resource, here, and layered on top of the static rules before the tree is
- * normalized.
+ * managedFields is a different kind of fact. Which manager owns
+ * `spec.replicas` on *this* Deployment differs between two Deployments of
+ * the same type, and the declared tree never carries it at all (chant's
+ * source has no `managedFields` key to normalize). It has to be resolved once
+ * per resource, here, against the object in hand.
  *
- * ## The contested-field rule, precisely
+ * Until chant #1191 that resolution *pruned*: a foreign-owned path nobody
+ * declared was dropped before the tree reached core, on the theory that it
+ * was controller noise. It silenced exactly the case the deep read exists
+ * for — `kubectl label deploy web team=platform` is foreign-owned
+ * (`kubectl-edit`) and undeclared, and never appeared in fieldDrift. The
+ * policy now (recorded on #1202) is:
  *
- * For every path on the live tree, three questions, each independent:
+ * 1. **Chant-owned** (`chant`, `chant:<stack>` — chant #1075, matched on the
+ *    family so a stack rename does not stop recognizing its own history) is
+ *    always diffable.
+ * 2. **Declared, whoever owns it live** (a contested field) is always
+ *    diffable: chant's source is a statement of intent independent of which
+ *    write currently holds the field, and a foreign write that overrides a
+ *    value chant's manifest asks for is the thing `lifecycle diff --live`
+ *    exists to surface. It reports as `changed`.
+ * 3. **Foreign-owned and undeclared** is reported as `undeclared` drift,
+ *    unless the accepted baseline already carries it at that value. The
+ *    baseline (`--update-baseline`) is the noise valve: an HPA that owns
+ *    `spec.replicas` on a Deployment whose source is silent about replicas
+ *    reports once, gets accepted, and stays quiet until the value moves.
  *
- * 1. **Does any chant field manager (`chant`, `chant:<stack>` — chant #1075,
- *    matched on the family so a stack rename does not stop recognizing its
- *    own history) own this path?** If so it is chant's business regardless of
- *    what else is true — always diffable, never pruned by this rule.
- * 2. **Does some *other* manager own this path, and chant does not?** That is
- *    controller-managed noise — HPA rewriting `spec.replicas`, a mutating
- *    webhook defaulting a field, `kubectl-client-side-apply` from a human
- *    operator — *provided* nobody declared it (next question). Prune it.
- * 3. **Does chant's own manifest *also* set this path?** — independent of
- *    who currently owns it live. This is the case the issue calls out by
- *    name: **a contested field chant declared is drift-relevant.** The
- *    reasoning: chant's source is a statement of intent regardless of
- *    whether a previous apply is what currently holds the field, and a
- *    foreign write that overrides a value chant's manifest asks for is
- *    exactly the thing `lifecycle diff --live` exists to surface — silencing
- *    it because *something else* currently owns the field would hide the one
- *    case where chant and the cluster disagree about a property chant is
- *    actively declaring. So: foreign-owned *and* declared is never pruned by
- *    this rule, whatever #2 would otherwise do.
- *
- * `counterpart: "unknown"` and why it does not help here: core's own
- * counterpart tri-state (`side === "live" && counterpart === "absent"`, what
- * {@link K8S_SERVICE_DEFAULTS} is gated on) answers "did the *declared tree*
- * carry this path at all" — which is exactly question 3, but it is computed
- * by *core*, from the raw declared and raw live trees, only on the **second**
- * normalization pass (`packages/core/src/lifecycle/deep-observe.ts`'s
- * `diffDeepObservation`). This reader's own call to
- * {@link normalizeDeepProperties} runs first, with no `counterpartPaths`
- * supplied — same as the other three rows — so `counterpart` is `"unknown"`
- * for every node here, and a rule gated on `"absent"` would never fire during
- * this read at all. That is fine for a table keyed only by entityType (AWS's
- * service defaults are subtracted on core's later pass, not this one), but it
- * is *not* fine for the managed-fields rule: if this reader left
- * `spec.replicas` in the tree waiting for core's second pass to prune it,
- * core would be normalizing with the *static* `k8sDeepNormalizationHooks`,
- * which has no managedFields for this object in hand either (this reader
- * already computed its ownership sets from data it read once and does not
- * return). So question 3 is answered **here**, directly against the declared
- * `props` this reader was handed — not via `counterpart` — and the result is
- * baked into what this reader returns: a foreign-owned, undeclared field is
- * gone from the tree before it ever reaches core, and a contested one is
- * still there for the ordinary declared-vs-live comparison to catch.
+ * So ownership decides nothing about *whether* a path is compared. What it
+ * contributes is `fieldOwners` (#1189): every reported drift names the
+ * manager that holds the field live, which is how an operator tells
+ * `hpa-controller` doing its job from somebody running `kubectl edit`. The
+ * only fields subtracted because a foreign manager wrote them are the
+ * well-known system ones on the static allowlist.
  *
  * ## Resolving a managedFields entry against a live array
  *
@@ -99,10 +76,8 @@
  * container that also sets no scalar sub-fields (unusual — a real apply
  * setting a container almost always sets `image`/`name` too) would not confer
  * ownership onto a sibling field nobody's `fieldsV1` entry lists explicitly.
- * That is the conservative direction: a path absent from every manager's
- * fields is treated as "no ownership information", which leaves it diffable
- * rather than silently pruned. Reported drift that turns out to be more
- * noise than expected is a tuning problem; drift silently dropped is not.
+ * A path absent from every manager's fields simply has no `owner` on its
+ * drift line; it is compared like any other.
  *
  * ## `buildOwnershipSets` lives in core now
  *
@@ -119,7 +94,6 @@
 
 import type { K8sObject } from "@intentius/chant-k8s-client";
 import type {
-  DeepNormalizationHooks,
   DeepObservationResult,
   DeepResourceObservation,
   UnobservedEntity,
@@ -127,7 +101,7 @@ import type {
 import { deepObservation, normalizeDeepProperties } from "@intentius/chant/deep-observation";
 import { unobservedAll } from "@intentius/chant/observation";
 import { hasOwnershipMarker, LABEL_OWNERSHIP_KEYS } from "@intentius/chant/ownership";
-import { buildOwnershipSets, pruneByOwnership, type OwnershipSets } from "@intentius/chant/managed-fields";
+import { buildOwnershipSets, type OwnershipSets } from "@intentius/chant/managed-fields";
 import { defaultK8sConnector, type K8sConnector } from "./api/connect";
 import {
   classifyApiFailure,
@@ -156,21 +130,6 @@ export interface K8sDeepObserveOptions {
   owned?: boolean;
   /** Directory whose `chant.config.ts` carries the cluster binding. Defaults to cwd. */
   cwd?: string;
-}
-
-/**
- * The managed-fields prune, composed with the static rules, for one
- * resource's normalization call. See the module doc for the three-question
- * rule this encodes (`@intentius/chant/managed-fields`'s `pruneByOwnership`).
- */
-function perResourceHooks(sets: OwnershipSets): DeepNormalizationHooks {
-  return {
-    prune(node) {
-      if (k8sDeepNormalizationHooks.prune?.(node)) return true;
-      return pruneByOwnership(node, sets);
-    },
-    orderKey: k8sDeepNormalizationHooks.orderKey,
-  };
 }
 
 /** The live object minus the envelope fields that live outside `properties` on {@link DeepResourceObservation} (mirrors `type`/`physicalId`). */
@@ -282,14 +241,13 @@ export async function observeResourcesDeepK8s(
         properties: normalizeDeepProperties(liveRoot, {
           entityType,
           side: "live",
-          hooks: perResourceHooks(sets),
+          hooks: k8sDeepNormalizationHooks,
         }),
-        // Who owns each surviving path (#1189). The prune above already
-        // dropped confidently-foreign undeclared noise, so what reaches the
-        // diff is chant's own fields and contested ones — and for a contested
-        // field, naming the manager is the whole question: an operator needs to
-        // tell `hpa-controller` doing its job from somebody running
-        // `kubectl edit`.
+        // Who owns each path (#1189). Nothing is pruned by ownership any more
+        // (#1191), so a foreign-owned undeclared field reaches the diff as
+        // `undeclared` — and naming the manager is the whole question there:
+        // an operator needs to tell `hpa-controller` doing its job from
+        // somebody running `kubectl edit`.
         ...(sets.owners.size > 0 ? { fieldOwners: Object.fromEntries(sets.owners) } : {}),
       };
     } catch (err) {

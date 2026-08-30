@@ -14,12 +14,15 @@ import {
   fold,
   propName,
   FoldError,
+  FoldableFunction,
+  isFoldableFunction,
   locate,
   type FoldedResource,
   type FoldedValue,
   type FoldedIntrinsic,
   type FoldedHelperCall,
   type SymbolicValue,
+  type FoldedCompositeStepCall,
 } from "../fold/fold";
 import { isChantOwnedSpecifier, isFoldableHelperName } from "../fold/foldable-helpers";
 import {
@@ -35,7 +38,9 @@ import {
   SUPPORTED_UNARY_OPERATORS,
 } from "../fold/subset";
 import { importModule } from "./import";
-import type { IntrinsicDef } from "../lexicon";
+import { collectParamDependencies } from "./param-deps";
+import { setPathProvenance } from "../provenance";
+import { intrinsicCallFoldsEagerly, type IntrinsicDef } from "../lexicon";
 import type { BuildParamValue } from "../build-params";
 
 /**
@@ -545,8 +550,15 @@ interface ReExportDeclarator {
   elements: Array<{ imported: string; exportedName: string }>;
 }
 
+/** `export function name(...) {...}` (chant #1373) — exported as a {@link FoldableFunction} marker so an importer can fold a call to it. The body's own foldability is judged at the CALL, never here: an unfoldable helper nobody calls from foldable source costs its module nothing. */
+interface FunctionDeclarator {
+  kind: "function";
+  name: string;
+}
+
 type ScanDeclarator =
   | ResourceDeclarator
+  | FunctionDeclarator
   | SingleDeclarator
   | DestructureDeclarator
   | NamedExportDeclarator
@@ -563,8 +575,9 @@ interface ScanResult {
  * `export const X = <expr>` / `export const { a, b } = <expr>` (composite
  * calls and member access on them, #1023), `export { a, b }` (a local
  * named-export list), and `export { a, b } from "./other"` (a re-export
- * chain, #1020). Any OTHER export construct (`export default`, `export *
- * from`, an exported function/class, `let`/`var`, a destructured export with
+ * chain, #1020), and `export function name(...) {...}` (a foldable-function
+ * export, #1373). Any OTHER export construct (`export default`, `export *
+ * from`, an exported class, `let`/`var`, a destructured export with
  * a rest/nested/defaulted element) makes the whole file ineligible: the
  * module must run so that construct is actually evaluated. This mirrors the
  * epic's hybrid design — fallback is per-module, not per-declaration,
@@ -629,10 +642,17 @@ function scanExports(sourceFile: ts.SourceFile): ScanResult {
     }
 
     if (ts.isFunctionDeclaration(statement) && hasExportModifier(statement)) {
-      return {
-        declarators,
-        unfoldableReason: `exported function declaration "${statement.name?.text ?? "<anonymous>"}" is not foldable`,
-      };
+      // chant #1373 — a named, bodied exported function is a foldable-function
+      // export (see {@link FunctionDeclarator}). An overload signature has no
+      // body and no value of its own — skipped, the implementation that
+      // follows it is the export. `export default function` has no name an
+      // importer could bind and stays a disqualifier, like `export default`.
+      if (statement.modifiers?.some((m) => m.kind === ts.SyntaxKind.DefaultKeyword) || !statement.name) {
+        return { declarators, unfoldableReason: "`export default` is not foldable" };
+      }
+      if (!statement.body) continue;
+      declarators.push({ kind: "function", name: statement.name.text });
+      continue;
     }
     if (ts.isClassDeclaration(statement) && hasExportModifier(statement)) {
       return {
@@ -725,6 +745,54 @@ function collectLocalBindings(sourceFile: ts.SourceFile): Map<string, LocalBindi
   }
 
   return bindings;
+}
+
+/** `(x) => …` / `function (x) {…}`, possibly wrapped in parens/`as`/`satisfies` — the initializer shapes that make a `const` a function binding. */
+function unwrapFunctionInitializer(node: ts.Expression): ts.ArrowFunction | ts.FunctionExpression | undefined {
+  let current = node;
+  while (ts.isParenthesizedExpression(current) || ts.isAsExpression(current) || ts.isSatisfiesExpression(current)) {
+    current = current.expression;
+  }
+  return ts.isArrowFunction(current) || ts.isFunctionExpression(current) ? current : undefined;
+}
+
+/**
+ * chant #1373 — every top-level function a file declares, exported or not, as
+ * a {@link FoldableFunction}: `function f(...) {...}` and `const f = (...) =>
+ * …`. Placed in the file's own `externals` (so a same-file call folds, and a
+ * sibling function can call it) and exported under its name (so an importer's
+ * `buildExternals` can). The marker carries the file's scope BY REFERENCE:
+ * `ctx.externals` is still being filled (pre-built resources land in it after
+ * this runs) and a body reads it only when called.
+ *
+ * The marker's `consts` drops every `new`-bound const (transitively, through
+ * aliases) — see {@link FoldableFunction.consts} for why a body must reach a
+ * module-level resource through `externals` only.
+ */
+function collectLocalFunctions(sourceFile: ts.SourceFile, ctx: ResolveCtx): Map<string, FoldableFunction> {
+  const consts = new Map(ctx.consts);
+  for (const [name] of [...consts]) {
+    if (constResolvesToResource(ctx.consts, name, new Set())) consts.delete(name);
+  }
+  const functions = new Map<string, FoldableFunction>();
+  const add = (name: string, fn: ts.FunctionDeclaration | ts.ArrowFunction | ts.FunctionExpression): void => {
+    functions.set(name, new FoldableFunction(name, fn, ctx.file, consts, ctx.externals, ctx.crossFileFailures));
+  };
+
+  for (const statement of sourceFile.statements) {
+    if (ts.isFunctionDeclaration(statement)) {
+      if (statement.name && statement.body) add(statement.name.text, statement);
+      continue;
+    }
+    if (!ts.isVariableStatement(statement)) continue;
+    if ((statement.declarationList.flags & ts.NodeFlags.Const) === 0) continue;
+    for (const decl of statement.declarationList.declarations) {
+      if (!ts.isIdentifier(decl.name) || !decl.initializer) continue;
+      const fn = unwrapFunctionInitializer(decl.initializer);
+      if (fn) add(decl.name.text, fn);
+    }
+  }
+  return functions;
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -1010,9 +1078,44 @@ function paramsModulePath(): string | null {
  *  - **Lexicons of THIS build only.** Not "any `@intentius/chant-lexicon-*`
  *    package on disk", and emphatically not "any bare specifier". A lexicon
  *    the build did not load is as out of scope as `node:fs`.
+ *
+ * chant #1995 — the "no subpaths" restriction above stays as documented for
+ * THIS function's caller ({@link resolveActiveLexiconExport}, #1063's
+ * data-export resolution): every lexicon's public data surface is reachable
+ * from the barrel, so a subpath buys that caller nothing and would cost the
+ * same cold-resolution risk. {@link isTrustedExecutableBinding} (#1093) asks a
+ * different question — not "does this specifier name a reachable data
+ * export" but "has the CLI already loaded this code" — and a project file
+ * reaching a lexicon's generated module by subpath instead of through the
+ * barrel is code the CLI already imported and executed either way, so that
+ * caller resolves a subpath's package root separately, via
+ * {@link bareSpecifierPackageRoot}, rather than widening this function.
  */
 function activeLexiconPackage(specifier: string, lexiconPackages: ReadonlySet<string>): string | undefined {
   return lexiconPackages.has(specifier) ? specifier : undefined;
+}
+
+/**
+ * chant #1995 — the package-ROOT portion of a bare subpath specifier
+ * (`@intentius/chant-lexicon-azure/generated/index` ->
+ * `@intentius/chant-lexicon-azure`), or `undefined` when `specifier` is a
+ * relative/absolute path, is already a bare root with no subpath, or is
+ * malformed (a lone `@scope` with nothing after it).
+ *
+ * Text only, no resolution — the same discipline {@link activeLexiconPackage}
+ * documents and for the identical reason: resolving an arbitrary bare
+ * specifier to find out what package it belongs to is the pathological cold
+ * `require.resolve` chant#1020 measured. A scoped package (`@scope/name`)
+ * reserves its first two `/`-separated segments for the root; an unscoped
+ * package (`name`) reserves one.
+ */
+function bareSpecifierPackageRoot(specifier: string): string | undefined {
+  if (specifier.startsWith(".") || isAbsolute(specifier)) return undefined;
+  const segments = specifier.split("/");
+  if (specifier.startsWith("@")) {
+    return segments.length > 2 ? `${segments[0]}/${segments[1]}` : undefined;
+  }
+  return segments.length > 1 ? segments[0] : undefined;
 }
 
 /**
@@ -1031,19 +1134,25 @@ function activeLexiconPackage(specifier: string, lexiconPackages: ReadonlySet<st
  * and intrinsic functions; the only thing new is that a plain DATA export is
  * now reachable too.
  *
- * Callable exports are deliberately excluded. A lexicon's functions — its
+ * Callable exports are otherwise excluded. A lexicon's functions — its
  * resource classes, composite factories, intrinsic implementations — already
  * have dedicated resolution paths that know how to INVOKE them
  * (`resolveResourceEntity`, `resolveCallExpression`, `reviveFoldedValue`), and
- * binding them as plain identifier values here would widen what folds in ways
- * this issue neither needs nor measured: none of the references #1063 exists
- * to unblock (`Azure`, `GCP`, `S3Actions`, gitlab's `CI`) is a function.
+ * binding an arbitrary one as a plain identifier value here would widen what
+ * folds in unmeasured ways. The one exception (chant #1966) is a function its
+ * lexicon registered with {@link IntrinsicDef.foldsEagerly} — the same
+ * per-name, lexicon-declared opt-in `foldsAsCall` is for an intrinsic's
+ * envelope-and-revive form, admitting this one because `fold()`
+ * (../fold/fold.ts) needs to CALL it eagerly — synchronously, before
+ * revival — to support a lexicon's own string-building helpers used inline
+ * (`matrix("os").toString()`, `` `${inputs("x")}` ``), where an envelope
+ * would still be a plain object when the enclosing template folds.
  *
  * Returns `undefined` — never throws — for a package that isn't an active
- * lexicon, an export the package doesn't have, a callable export, or an
- * import that fails. The binding is then simply absent from `externals`,
- * exactly as before, and `fold()`'s ordinary "unresolved identifier" failure
- * still fires if the name is actually referenced.
+ * lexicon, an export the package doesn't have, a non-admitted callable
+ * export, or an import that fails. The binding is then simply absent from
+ * `externals`, exactly as before, and `fold()`'s ordinary "unresolved
+ * identifier" failure still fires if the name is actually referenced.
  */
 async function resolveActiveLexiconExport(
   binding: ImportBinding,
@@ -1068,7 +1177,10 @@ async function resolveActiveLexiconExport(
 
   if (!(binding.imported in mod)) return undefined;
   const value = mod[binding.imported];
-  if (typeof value === "function") return undefined;
+  if (typeof value === "function") {
+    const eager = session.intrinsics.some((i) => i.name === binding.imported && intrinsicCallFoldsEagerly(i));
+    if (!eager) return undefined;
+  }
   return { value };
 }
 
@@ -1208,7 +1320,14 @@ async function resolveLiveValue(node: ts.Expression, ctx: ResolveCtx): Promise<L
       // exports object). Absent from `externals` falls through to
       // `undefined`, exactly the pre-#1020 behavior for any unbound name.
       if (ctx.externals.has(node.text)) {
-        return { value: ctx.externals.get(node.text) };
+        const external = ctx.externals.get(node.text);
+        // chant #1373 — a function marker is callable, never a value. The
+        // export-by-name cases (`export const g = f`, `export { f }`) are
+        // handled by the declarator loop before it gets here.
+        if (isFoldableFunction(external)) {
+          throw cheapError(`function "${node.text}" used as a value is not foldable`);
+        }
+        return { value: external };
       }
       return undefined;
     }
@@ -1278,10 +1397,48 @@ async function resolveCallExpression(node: ts.CallExpression, ctx: ResolveCtx): 
   }
   const calleeName = node.expression.text;
   const binding = ctx.imports.get(calleeName);
+
+  // chant #1373 — a project-local function with a foldable body (declared in
+  // this file, or imported from a sibling project file) is evaluated
+  // statically, through the same `fold()` branch a NESTED call to it takes.
+  // When its body turns out not to fold, an IMPORTED callee still has the
+  // pre-#1373 path below (interpret as a composite, else import and invoke) —
+  // a helper that wraps a composite call, say, keeps folding by invocation
+  // exactly as it did. A same-file callee has nothing to invoke without
+  // running the file, so the fold diagnostic is the verdict.
+  const local = ctx.externals.get(calleeName);
+  if (isFoldableFunction(local)) {
+    let foldFailure: Error | undefined;
+    try {
+      const folded = fold(node, ctx.consts, ctx.intrinsics, ctx.externals);
+      return await reviveFoldedValue(folded, ctx, false);
+    } catch (err) {
+      if (!(err instanceof Error)) throw err;
+      foldFailure = err;
+    }
+    if (!binding) throw foldFailure;
+    try {
+      return await resolveImportedCall(node, calleeName, binding, ctx);
+    } catch (err) {
+      throw cheapError(
+        `${foldFailure.message}; invoking it instead failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
   if (!binding) {
     throw cheapError(callExpressionMessage(node));
   }
+  return resolveImportedCall(node, calleeName, binding, ctx);
+}
 
+/** The pre-#1373 two-arm resolution of an IMPORTED callee — see {@link resolveCallExpression}. */
+async function resolveImportedCall(
+  node: ts.CallExpression,
+  calleeName: string,
+  binding: ImportBinding,
+  ctx: ResolveCtx,
+): Promise<unknown> {
   // chant #1023 — is this callee a composite whose body can be INTERPRETED
   // rather than run? Purely a static question (does the defining module parse,
   // does it declare this export as `Composite(<fn>, "<name>")`, is `<fn>`'s
@@ -1305,19 +1462,19 @@ async function resolveCallExpression(node: ts.CallExpression, ctx: ResolveCtx): 
 }
 
 /**
- * Arm 2 — import the module the callee came from and call it, in this process.
- * Unchanged from #1022 in both behavior and ORDER (refusal, resolve, import,
- * callable check, arguments, call); #1023 only factored it out so the
- * interpretation arm above can fall back into it.
- *
- * @param args - Already-evaluated arguments, when the caller has them.
+ * Arm 2 — import the module the callee came from and call it, in this
+ * process, given ALREADY-RESOLVED argument values. Factored out of
+ * {@link invokeImportedCallee} (chant #1174) so a caller with no raw
+ * `ts.CallExpression` node — {@link resolveCompositeCall}, the nested-value
+ * counterpart to {@link resolveCallExpression} — can reach the identical
+ * refusal/resolve/import/callable-check/call sequence #1022 established,
+ * without inventing a second copy of it.
  */
-async function invokeImportedCallee(
-  node: ts.CallExpression,
+async function invokeResolvedCallee(
   calleeName: string,
   binding: ImportBinding,
   ctx: ResolveCtx,
-  args?: readonly unknown[],
+  args: readonly unknown[],
 ): Promise<unknown> {
   // chant #1093 — THE gap this check exists for. Invoking the callee runs
   // project code (the factory body, and its whole module's top level) in the
@@ -1363,12 +1520,67 @@ async function invokeImportedCallee(
     throw cheapError(`"${binding.imported}" from "${binding.specifier}" is not a function`);
   }
 
-  const callArgs = args ?? (await resolveCallArguments(node, calleeName, ctx));
-
   executionCounts.factoryInvocations += 1;
   if (isProjectFileSpecifier(binding.specifier)) executionCounts.projectFactoryInvocations += 1;
 
-  return (Fn as (...fnArgs: unknown[]) => unknown)(...callArgs);
+  return (Fn as (...fnArgs: unknown[]) => unknown)(...args);
+}
+
+/**
+ * Arm 2's original entry point — a raw call-expression node in hand. Resolves
+ * arguments (unless the caller already has them) and delegates to
+ * {@link invokeResolvedCallee}. Unchanged from #1022 in both behavior and
+ * ORDER (refusal, resolve, import, callable check, arguments, call); #1023
+ * factored the body out once already, #1174 a second time.
+ *
+ * @param args - Already-evaluated arguments, when the caller has them.
+ */
+async function invokeImportedCallee(
+  node: ts.CallExpression,
+  calleeName: string,
+  binding: ImportBinding,
+  ctx: ResolveCtx,
+  args?: readonly unknown[],
+): Promise<unknown> {
+  const callArgs = args ?? (await resolveCallArguments(node, calleeName, ctx));
+  return invokeResolvedCallee(calleeName, binding, ctx, callArgs);
+}
+
+/**
+ * Resolve a composite-factory call used as a NESTED value — chant #1174's
+ * `<Identifier>(...).step` idiom ({@link FoldedCompositeStepCall}) — given
+ * its callee NAME and already-REVIVED argument values. The nested-value
+ * counterpart to {@link resolveCallExpression}, which the top-level
+ * declarator path (`export const x = Checkout({...})`) already used: the
+ * raw `ts.CallExpression` node isn't needed here because
+ * {@link resolveInterpretableFactory} only needs the import `binding`, and
+ * {@link interpretCompositeFactory}/{@link invokeResolvedCallee} only need
+ * the resolved argument values — which `fold()`'s envelope already folded
+ * and {@link reviveFoldedValue} has already revived by the time this runs.
+ *
+ * Same two arms, same order, as the top-level path: interpret a project-file
+ * registered `Composite` (chant #1023) when its body qualifies, otherwise
+ * import and invoke for real — which is the arm every lexicon-package
+ * composite (`Checkout`, `SetupNode`, …) always takes, exactly as it does
+ * today for a top-level `export const x = Checkout({...})`. An unbound
+ * callee name throws the same "function call as a value" message `fold()`
+ * itself would have, for a caller with no `FoldedCompositeStepCall` special
+ * case to fall into.
+ */
+async function resolveCompositeCall(calleeName: string, args: readonly unknown[], ctx: ResolveCtx): Promise<unknown> {
+  const binding = ctx.imports.get(calleeName);
+  if (!binding) throw cheapError(`unresolved identifier: ${calleeName}`);
+
+  const factory = await resolveInterpretableFactory(binding, ctx);
+  if (factory) {
+    const interpreted = await interpretCompositeFactory(factory, args, ctx);
+    if (interpreted) return interpreted.value;
+    // Declined — falls through to arm 2 with the SAME arguments, so a nested
+    // composite-call argument (or a live cross-file reference) is not
+    // resolved a second time. Identical discipline to `resolveImportedCall`.
+  }
+
+  return invokeResolvedCallee(calleeName, binding, ctx, args);
 }
 
 /**
@@ -2392,6 +2604,24 @@ async function reviveFoldedValue(value: FoldedValue, ctx: ResolveCtx, requireLiv
     return reviveHelperCall(value as FoldedHelperCall, ctx);
   }
 
+  if ("__compositeStep" in value) {
+    // chant #1174 — `<Identifier>(...).step`, see {@link FoldedCompositeStepCall}.
+    // Arguments revive with `requireLiveRefs: false` — the same rule
+    // `resolveCallArguments` applies to a NON-helper callee's arguments
+    // (a composite factory stores its props, it doesn't inspect them the way
+    // an intrinsic/helper does), so a `{__attrRef}` among them stays the
+    // symbolic envelope the composite's own resource construction resolves
+    // by name, exactly as a top-level resource's props would.
+    const call = value as FoldedCompositeStepCall;
+    const revivedArgs: unknown[] = [];
+    for (const a of call.args) revivedArgs.push(await reviveFoldedValue(a, ctx, false));
+    const result = await resolveCompositeCall(call.__compositeStep, revivedArgs, ctx);
+    if (!isIndexableObject(result)) {
+      throw cheapError(`composite call \`${call.__compositeStep}(...)\` did not resolve to an object with a "step" member`);
+    }
+    return (result as Record<string, unknown>).step;
+  }
+
   if ("__attrRef" in value) {
     if (requireLiveRefs) {
       throw cheapError(
@@ -2511,10 +2741,19 @@ function isChantOwnedHelperBinding(binding: ImportBinding, ctx: ResolveCtx): boo
  * in the CLI's own process when the #1045 sandbox is active. Exactly two
  * arms, and neither of them trusts text the project controls:
  *
- *  1. **An ACTIVE lexicon package of this build** — matched against
- *     {@link FoldSession.lexiconPackages}, a closed set built from the
- *     lexicon names the BUILD resolved and `loadPlugins` already imported
- *     (../cli/plugins.ts), not from anything the file under fold says.
+ *  1. **An ACTIVE lexicon package of this build, root OR subpath** — the
+ *     exact specifier matched against {@link FoldSession.lexiconPackages}, a
+ *     closed set built from the lexicon names the BUILD resolved and
+ *     `loadPlugins` already imported (../cli/plugins.ts), not from anything
+ *     the file under fold says; OR (chant #1995) a subpath of one of those
+ *     same packages (`@intentius/chant-lexicon-azure/generated/index`), whose
+ *     package ROOT is extracted from the specifier TEXT
+ *     ({@link bareSpecifierPackageRoot}, no resolution) and checked against
+ *     the identical set. A subpath is trusted because the code it names
+ *     belongs to a package the CLI already imported and executed to load that
+ *     lexicon's serializers/lint rules — reaching one of that package's own
+ *     modules by subpath instead of through the barrel names code the process
+ *     already trusts, not code the project controls.
  *  2. **chant-core's own executing tree** — the specifier is RESOLVED and the
  *     resulting path checked against {@link chantCoreRoot}. A text match is
  *     not enough here: `@intentius/chant` and `@intentius/chant-lexicon-evil`
@@ -2543,6 +2782,12 @@ function isChantOwnedHelperBinding(binding: ImportBinding, ctx: ResolveCtx): boo
  */
 function isTrustedExecutableBinding(binding: ImportBinding, ctx: ResolveCtx): boolean {
   if (activeLexiconPackage(binding.specifier, ctx.lexiconPackages) !== undefined) return true;
+  // chant #1995 — arm 1's subpath case: same allowlist, matched against the
+  // specifier's package ROOT (text only, see bareSpecifierPackageRoot) rather
+  // than the specifier itself, so `<activeLexiconPkg>/generated/index` is
+  // trusted exactly like the bare package import already is.
+  const subpathRoot = bareSpecifierPackageRoot(binding.specifier);
+  if (subpathRoot !== undefined && activeLexiconPackage(subpathRoot, ctx.lexiconPackages) !== undefined) return true;
   // Only a chant-shaped or project-relative specifier is worth resolving; any
   // other bare specifier is untrusted by definition, and resolving it to find
   // that out would cost the pathological cold `require.resolve` (chant#1020).
@@ -2779,6 +3024,46 @@ async function constructFoldedResource(
  * performs unconditionally for the same file, and through the same
  * already-memoized `importModule`.
  */
+/**
+ * The local names this file bound to the build's parameter object (chant
+ * #1443). Object identity against {@link FoldSession.buildParams}, which
+ * `buildExternals` substituted directly, so an unrelated import that happens to
+ * be called `params` is not mistaken for it.
+ */
+function paramLocalNames(ctx: ResolveCtx): Set<string> {
+  const out = new Set<string>();
+  const buildParams = ctx.session.buildParams;
+  if (!buildParams) return out;
+  for (const [name, value] of ctx.externals) {
+    if (value === buildParams) out.add(name);
+  }
+  return out;
+}
+
+/**
+ * chant #1443 — record which build parameters each of a resource's authored
+ * property expressions reads, before fold substitutes them away. Best-effort
+ * and additive: a file with no `params` import, or a constructor called with no
+ * object literal, records nothing.
+ */
+function stampParamDependencies(entity: unknown, node: ts.NewExpression, ctx: ResolveCtx): void {
+  if (typeof entity !== "object" || entity === null) return;
+  const paramLocals = paramLocalNames(ctx);
+  if (paramLocals.size === 0) return;
+  // The same argument `foldResource` treats as props: the first object literal.
+  let propsArg: ts.ObjectLiteralExpression | undefined;
+  for (const argument of node.arguments ?? []) {
+    if (ts.isObjectLiteralExpression(argument)) {
+      propsArg = argument;
+      break;
+    }
+  }
+  if (!propsArg) return;
+  for (const [path, origin] of Object.entries(collectParamDependencies(propsArg, ctx.consts, paramLocals))) {
+    setPathProvenance(entity, path, origin);
+  }
+}
+
 async function preresolveResourceConsts(ctx: ResolveCtx): Promise<Map<ts.Expression, unknown>> {
   const built = new Map<ts.Expression, unknown>();
   for (const [name, initializer] of ctx.consts) {
@@ -2786,6 +3071,7 @@ async function preresolveResourceConsts(ctx: ResolveCtx): Promise<Map<ts.Express
     try {
       const spec = foldResource(initializer, ctx.consts, ctx.intrinsics, ctx.externals);
       const instance = await constructFoldedResource(spec, ctx, false);
+      stampParamDependencies(instance, initializer, ctx);
       built.set(initializer, instance);
       ctx.externals.set(name, instance);
     } catch {
@@ -2823,6 +3109,7 @@ async function resolveResourceEntity(
 
   try {
     const entity = (await instantiateFoldedResource(spec.__resource, ctorArgs, ctx, ` for "${name}"`)) as Declarable;
+    stampParamDependencies(entity, node, ctx);
     return { ok: true, entity };
   } catch (err) {
     return { ok: false, reason: err instanceof Error ? err.message : String(err) };
@@ -3108,6 +3395,10 @@ async function buildExternals(
  * falls back. See {@link FoldFileResult.liveSources}.
  */
 function hasObjectIdentity(value: unknown): boolean {
+  // chant #1373 — a foldable-function marker is a description of source, not
+  // an object the run path could hold a different copy of: a call to it
+  // produces the same value folded or run. No identity to disagree about.
+  if (isFoldableFunction(value)) return false;
   return value !== null && (typeof value === "object" || typeof value === "function");
 }
 
@@ -3143,6 +3434,19 @@ async function resolveDeclaratorValue(node: ts.Expression, ctx: ResolveCtx): Pro
  * entry point below.
  */
 async function tryFoldFileCore(file: string, session: FoldSession): Promise<FoldFileResult> {
+  // chant #1373 — chant-core's own modules are library code, not project
+  // source: their exports are reached by importing them (a helper, a
+  // constructor, `params`), never by folding their bodies. Before #1373 every
+  // one of them happened to disqualify itself at the scan (each exports a
+  // function); now that an exported function is a foldable shape, the
+  // exclusion has to be explicit, or a fixture/in-repo import by path would
+  // walk fold into chant's own tree and fold `params` to an empty object.
+  {
+    const root = chantCoreRoot();
+    if (file === root || file.startsWith(root + sep)) {
+      return { ok: false, reason: "chant's own module is not project source" };
+    }
+  }
   try {
     const source = await readFile(file, "utf-8");
     const sourceFile = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, /* setParentNodes */ true);
@@ -3177,10 +3481,24 @@ async function tryFoldFileCore(file: string, session: FoldSession): Promise<Fold
     // {@link preresolveResourceConsts}.
     const prebuiltResources = await preresolveResourceConsts(ctx);
 
+    // chant #1373 — this file's own functions, callable from its own folds
+    // (and, once exported, from an importer's). Registered after the
+    // resource pre-pass so a marker never shadows a pre-built instance; a
+    // function and a const cannot share a name in valid TypeScript anyway.
+    const localFunctions = collectLocalFunctions(sourceFile, ctx);
+    for (const [name, marker] of localFunctions) {
+      if (!ctx.externals.has(name)) ctx.externals.set(name, marker);
+    }
+
     const entities: FoldedEntity[] = [];
     const exportedValues = new Map<string, unknown>();
 
     for (const decl of scan.declarators) {
+      if (decl.kind === "function") {
+        applyResolvedValue(decl.name, localFunctions.get(decl.name), entities, exportedValues);
+        continue;
+      }
+
       if (decl.kind === "resource") {
         // chant #1169 — the pre-pass already built this exact node. Reuse that
         // instance rather than constructing a second one: a sibling prop that
@@ -3199,6 +3517,15 @@ async function tryFoldFileCore(file: string, session: FoldSession): Promise<Fold
       }
 
       if (decl.kind === "single") {
+        // chant #1373 — `export const f = (…) => …` exports the function
+        // marker, exactly like `export function f`; so does an alias of one
+        // (`export const g = f`, `f` declared here or imported).
+        const aliased = ts.isIdentifier(decl.node) ? ctx.externals.get(decl.node.text) : undefined;
+        const marker = localFunctions.get(decl.name) ?? (isFoldableFunction(aliased) ? aliased : undefined);
+        if (marker) {
+          applyResolvedValue(decl.name, marker, entities, exportedValues);
+          continue;
+        }
         let value: unknown;
         try {
           value = (await resolveDeclaratorValue(decl.node, ctx)).value;
@@ -3244,6 +3571,12 @@ async function tryFoldFileCore(file: string, session: FoldSession): Promise<Fold
         // (ctx.locals/ctx.externals lookup + memoized destructured-member
         // extraction) rather than duplicating it here.
         for (const { localNameNode, exportedName } of decl.elements) {
+          // chant #1373 — `function f() {…}; export { f }`.
+          const marker = localFunctions.get(localNameNode.text);
+          if (marker) {
+            applyResolvedValue(exportedName, marker, entities, exportedValues);
+            continue;
+          }
           let value: unknown;
           try {
             value = (await resolveDeclaratorValue(localNameNode, ctx)).value;
@@ -3396,22 +3729,21 @@ export async function tryFoldFile(
  * so the exact same forced-taint safety net still applies to that remaining
  * boundary, unchanged.
  */
-export async function planFoldTaint(
-  files: readonly string[],
-  wouldFold: ReadonlyMap<string, boolean>,
-  liveSources?: ReadonlyMap<string, ReadonlySet<string>>,
-): Promise<Set<string>> {
+/**
+ * file -> set of OTHER files in `files` that it relatively imports OR
+ * re-exports from, regardless of that file's own fold outcome. Extracted
+ * from {@link planFoldTaint} (chant #1083) so a second consumer — the fold
+ * blocker dominator ranking (`./fold-rank.ts`) — can walk the exact same
+ * project-file edges instead of re-parsing every file with its own
+ * specifier-resolution logic. chant #1020 — this counts a namespace import
+ * (`import * as ns from "./x"`, previously skipped — see `collectImports`)
+ * and a re-export (`export { x } from "./y"`, which `collectImports` never
+ * saw at all, since it only looks at `import` declarations): both are real
+ * cross-file value dependencies fold's own resolution follows, so both need
+ * the same edge an ordinary named import already gets.
+ */
+export async function buildProjectImportEdges(files: readonly string[]): Promise<Map<string, Set<string>>> {
   const fileSet = new Set(files);
-
-  // file -> set of OTHER discovered files it relatively imports OR re-exports
-  // from, regardless of that file's own fold outcome (taint needs the full
-  // edge set to propagate transitively). chant #1020 — this now ALSO counts
-  // a namespace import (`import * as ns from "./x"`, previously skipped —
-  // see `collectImports`) and a re-export (`export { x } from "./y"`, which
-  // `collectImports` never saw at all, since it only looks at `import`
-  // declarations): both are real cross-file value dependencies my own new
-  // resolution follows, so both need the same identity guarantee an
-  // ordinary named import already got.
   const edges = new Map<string, Set<string>>();
   for (const file of files) {
     const targets = new Set<string>();
@@ -3444,10 +3776,24 @@ export async function planFoldTaint(
     } catch {
       // Unreadable/unparseable — no edges contributed; tryFoldFile's own
       // top-level catch already turns this into a "run" decision for the
-      // file itself, which is enough to seed it as tainted below.
+      // file itself, which is enough to seed it as tainted below (or, for
+      // the dominator ranking, leaves it a childless node).
     }
     edges.set(file, targets);
   }
+  return edges;
+}
+
+export async function planFoldTaint(
+  files: readonly string[],
+  wouldFold: ReadonlyMap<string, boolean>,
+  liveSources?: ReadonlyMap<string, ReadonlySet<string>>,
+): Promise<Set<string>> {
+  const fileSet = new Set(files);
+
+  // file -> set of OTHER discovered files it relatively imports OR re-exports
+  // from — see {@link buildProjectImportEdges}.
+  const edges = await buildProjectImportEdges(files);
 
   // chant #1044 — reverse edges: consumed-file -> the folded files that
   // captured its objects. Same taint set, same fixpoint walk; see this

@@ -125,7 +125,7 @@ describe("fixture utilities", () => {
       entities.set("entity1", createMockEntity("Type1"));
       entities.set("entity2", createMockEntity("Type2"));
 
-      const result = serializer.serialize(entities);
+      const result = serializer.serialize(entities) as string;
       const parsed = JSON.parse(result);
 
       expect(parsed.resources.entity1.type).toBe("Type1");

@@ -1,0 +1,43 @@
+---
+title: "Getting Started"
+description: "Create your first typed Helm chart in 5 minutes"
+diataxis: tutorial
+---
+
+## What is the Helm lexicon?
+
+The Helm lexicon extends chant to produce **real, parameterized Helm charts** from typed TypeScript. Unlike static manifest generators (like cdk8s's Helm output), the Helm lexicon generates:
+
+- `{{ .Values.x }}` template directives
+- `values.yaml` with typed defaults
+- `values.schema.json` for validation
+- Conditional resources via `{{- if }}`
+- Standard `_helpers.tpl`
+- Helm hooks and tests
+
+## Install
+
+```bash
+npm install --save-dev @intentius/chant @intentius/chant-lexicon-helm @intentius/chant-lexicon-k8s
+```
+
+## Your first chart
+
+```bash
+chant init --lexicon helm
+```
+
+This creates a scaffold with a Chart, Values, Deployment, and Service. Run `chant build` to produce a complete Helm chart directory.
+
+## Key imports
+
+```typescript
+// Resources
+import { Chart, Values, HelmNotes } from "@intentius/chant-lexicon-helm";
+
+// Intrinsics (produce Go template expressions)
+import { values, Release, include, printf, toYaml, If } from "@intentius/chant-lexicon-helm";
+
+// K8s resources
+import { Deployment, Service, Ingress } from "@intentius/chant-lexicon-k8s";
+```

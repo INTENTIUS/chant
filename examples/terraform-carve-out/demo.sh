@@ -6,8 +6,9 @@ set -euo pipefail
 # terraform/ estate and terraform.tfstate.
 #
 # Steps: advise (what to carve) → emit (adopt into chant source from state) →
-# bridge (patch the survivors) → apply (graduation plan). The real live steps
-# (terraform state rm / apply) are printed, not executed.
+# audit (the build refuses the adopted posture) → bridge (patch the survivors)
+# → apply (graduation plan). The real live steps (terraform state rm / apply)
+# are printed, not executed.
 #
 # Requires: chant on PATH, @cdktf/hcl2json (npm install -D @cdktf/hcl2json).
 
@@ -28,13 +29,23 @@ $CHANT carve emit --from "$TF" --select "$SELECT" --state "$STATE" --output "$OU
 echo "--- emitted chant source: $OUT/src/assets.ts ---"
 cat "$OUT/src/assets.ts"
 
-rule "3. bridge — patch the surviving Terraform (data source + rewired refs)"
-$CHANT carve bridge --from "$TF" --select "$SELECT" --output "$OUT"
+rule "3. audit — chant build refuses the adopted security posture"
+if $CHANT build "$OUT/src" --lexicon aws >/dev/null 2>&1; then
+  echo "unexpected: the adopted bucket built clean"
+else
+  $CHANT build "$OUT/src" --lexicon aws 2>&1 | grep 'error' || true
+  echo "Expected: the adopted bucket faithfully lacks a public-access block and"
+  echo "a TLS-only policy, so the audit blocks the build until you add them."
+  echo "The tutorial shows the fix; the build then emits valid CloudFormation."
+fi
+
+rule "4. bridge — patch the surviving Terraform (target from the carve manifest)"
+$CHANT carve bridge --from "$TF" --output "$OUT"
 echo "--- generated data source ---"
 cat "$OUT/aws_s3_bucket-assets-datasources.tf"
 
-rule "4. apply — graduation plan (ownership marker + runbook; no cloud call)"
-$CHANT carve apply --from "$TF" --select "$SELECT" --env prod --stack assets
+rule "5. apply — graduation plan (ownership marker + runbook; no cloud call)"
+$CHANT carve apply --from "$TF" --output "$OUT" --env prod --stack assets
 
 rule "done"
 echo "Reviewed everything above without touching a cloud. The live steps"

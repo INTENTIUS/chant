@@ -1,7 +1,12 @@
 ---
 title: The Kubernetes API client
 description: How chant reaches a live cluster — coverage, concurrency, credentials, and why the client is a separate package
+diataxis: reference
 ---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-k8s` — DO NOT EDIT.
+    Edit lexicons/k8s/docs/pages/api-client.mdx instead; changes here are overwritten. */}
+
 
 import { Aside } from '@astrojs/starlight/components';
 
@@ -143,6 +148,19 @@ export const { op } = ApplyOp({
 - **Namespace-scoped to the apply.** Namespaced kinds are swept only in the namespaces the apply set touched. A manifest that mentions `prod` never reaches into `staging`.
 - **Kind-scoped to the union** of the kinds in the apply set and chant's default sweep set. The union is what lets a kind deleted from source entirely still be pruned — it appears nowhere in the apply set.
 
+### Generated-once secrets and the `retained` outcome
+
+The `ensure-secret` capability and the `ensureSecret(...)` op step ([#1829](https://github.com/INTENTIUS/chant/issues/1829)) have a Kubernetes store: `k8sSecretStore(namespace, client?)` from `@intentius/chant-lexicon-k8s/secret-store`, plus `k8sEnsureSecretCapability(...)` to build the registered capability over it. The contract is read-then-write — if the Secret exists, its key NAMES and metadata are verified and nothing is written; if absent, one value per declared key is minted at the write and never travels back. `describe` projects key names and labels/annotations only; no code path returns, logs, or compares a `data` value ([#1365](https://github.com/INTENTIUS/chant/issues/1365) decision 6).
+
+A minted Secret carries the ownership marker plus `chant.intentius.io/generated-once: "true"`, and that label puts it outside every prunable set:
+
+- The owned-only prune above skips it and reports it under `retained` in the apply result, with a console line saying so.
+- `chant lifecycle teardown <env> --yes` reports it as a `retained` row — the env sweep deletes everything else and says loudly that the environment is not clean while the Secret exists.
+
+Both are deliberate: the stored bytes are the only copy of material chant never held, so no sweep may destroy them. Deleting a generated-once Secret is an explicit act — `kubectl delete secret <name>` today, a gated op later — never a side effect of "no longer declared".
+
+Drift keeps the same line. Deep observation masks every `data.*`/`stringData.*` value on a `K8s::Core::Secret` on both sides of the diff, so `chant lifecycle diff --live` classifies presence and key-name drift (a key injected out of band, a declared key gone) without ever holding a value — a value-only change is invisible by design.
+
 ### managedFields as a read surface
 
 `@intentius/chant-k8s-client` exports the decoding primitives, since `fieldsV1` is not a shape a caller should have to parse:
@@ -156,6 +174,18 @@ fieldSetsOf(live);             // one decoded entry per manager, subresources in
 ```
 
 Paths render the way `sigs.k8s.io/structured-merge-diff` does — `.spec.template.spec.containers[name="web"].image` — which is the same syntax a conflict cause uses, so the two are comparable as strings. Subresource entries (a controller's `status` writes) are excluded by default.
+
+### What ownership means for drift
+
+`chant lifecycle diff --live` reads `managedFields` on every declared object, but ownership decides who gets named on a drift line, not whether the line is reported. The rule:
+
+| Live field is | Reported as |
+|---|---|
+| Declared in source, whoever owns it live | `changed` (or nothing, when the values agree). A `kubectl scale` that took `spec.replicas` away from chant still shows, with `owner: kubectl-client-side-apply`. |
+| Not declared, owned by another manager | `undeclared`, with the owner named — `kubectl label deploy web team=platform` shows as `metadata.labels.team` owned by `kubectl-edit`; an HPA that owns `spec.replicas` on a Deployment whose source is silent about replicas shows as `spec.replicas` owned by `kube-controller-manager`. |
+| Not declared, stamped by Kubernetes itself | Nothing. `deployment.kubernetes.io/revision`, `kubectl.kubernetes.io/last-applied-configuration`, `pod-template-hash` and the other controller-written annotations and labels are on a static allowlist (`K8S_SYSTEM_METADATA_PRUNE_PATTERNS` in `@intentius/chant/managed-fields`), alongside `status` and the server-minted metadata. |
+
+The second row is the one that changed in chant #1191. Until then a foreign-owned field nobody declared was pruned before the diff ran, which silenced the console-edit case the deep read exists for. The noise valve is the [accepted baseline](/chant/concepts/drift-detection/#the-accepted-baseline---update-baseline): accept the HPA's `spec.replicas` once with `--update-baseline` and it stays quiet until the value moves. Acceptance is value-bound, so accepting `team=platform` does not bless `team=security`.
 
 ## What is still shelled out
 

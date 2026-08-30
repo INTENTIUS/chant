@@ -11,13 +11,14 @@ import type { CompletionContext, CompletionItem, HoverContext, HoverInfo, CodeAc
 import type { McpToolContribution, McpResourceContribution } from "./mcp/types";
 import type { DriverComponent } from "./components/driver";
 import type { EmulatorDeclaration } from "./op/emulator-lifecycle";
-import type { OwnershipChannel } from "./ownership";
+import type { OwnershipChannel, OwnershipMarker } from "./ownership";
 import type { LexiconConfigSchema } from "./lexicon-config";
 import type { RuleMeta } from "./audit/catalog";
 import type { ReferenceCatalog } from "./graph-refs";
 import type { IREdge } from "./graph-ir";
-import type { DescribeResourcesResult } from "./observation";
+import type { DescribeResourcesResult, UnobservedReason } from "./observation";
 import type { DeepNormalizationHooks, DeepObservationResult } from "./deep-observation";
+import type { DisruptionQuery, DisruptionVerdict } from "./lifecycle/disruption";
 import type { OwnerChainVerdict } from "./owner-chain";
 import type { CommandGroup } from "./cli/command-group";
 
@@ -43,6 +44,16 @@ export type {
   UnobservedEntity,
   UnobservedReason,
 } from "./observation";
+
+// Disruption classification (#1665), re-exported from the same entry so a
+// lexicon's `classifyDisruption` types itself without a second import path.
+// Runtime helpers live in `@intentius/chant/lifecycle/disruption`.
+export type {
+  Disruption,
+  DisruptionQuery,
+  DisruptionVerdict,
+  DisruptionClassifier,
+} from "./lifecycle/disruption";
 
 // The deep observation contract (#1014), re-exported for the same reason: a
 // lexicon authoring `observeResourcesDeep` + its pruning/ordering hooks types
@@ -226,6 +237,29 @@ export interface IntrinsicDef {
    * run path would have called, from the module the source itself named.
    */
   readonly foldsAsCall?: boolean;
+  /**
+   * chant #1966 — opt this intrinsic's PLAIN-CALL form into EAGER folding:
+   * unlike {@link foldsAsCall}, which defers to a `{__intrinsic}` envelope
+   * revived later, `fold()` (../fold/fold.ts) calls the real function
+   * immediately, with the folded arguments, and its real return value IS the
+   * folded value.
+   *
+   * Exists for a lexicon helper whose result is commonly embedded directly in
+   * a template literal (`` `${matrix("os")}` ``, github's
+   * `matrix`/`inputs`/…) — an envelope is still a plain `{__intrinsic, args}`
+   * object when the enclosing template folds, so `String()` coercion at fold
+   * time would stringify it as `"[object Object]"` instead of the real value.
+   * Eager evaluation produces the real, already-live result instead.
+   *
+   * Same admission bar as {@link foldsAsCall} (a pure function of its
+   * arguments — no I/O, no mutable state, no dependency on anything but its
+   * arguments) and mutually exclusive with both {@link isTag} and
+   * `foldsAsCall`: a plain call folds exactly one way.
+   * `../discovery/fold-import.ts`'s `resolveActiveLexiconExport` checks this
+   * to admit the function export into `externals` at all — a lexicon
+   * package's function export is excluded there otherwise.
+   */
+  readonly foldsEagerly?: boolean;
 }
 
 /**
@@ -257,8 +291,8 @@ export interface IntrinsicDef {
  * `dist/manifest.json`) that may predate either field. `undefined` there
  * means what it always did — not a tag, not opted in.
  */
-export function intrinsicFolds(def: { isTag?: boolean; foldsAsCall?: boolean }): boolean {
-  return intrinsicTagFolds(def) || intrinsicCallFolds(def);
+export function intrinsicFolds(def: { isTag?: boolean; foldsAsCall?: boolean; foldsEagerly?: boolean }): boolean {
+  return intrinsicTagFolds(def) || intrinsicCallFolds(def) || intrinsicCallFoldsEagerly(def);
 }
 
 /** True when this intrinsic's TAGGED-TEMPLATE form folds (`Sub\`...\``) — see {@link intrinsicFolds}. */
@@ -278,6 +312,15 @@ export function intrinsicTagFolds(def: { isTag?: boolean }): boolean {
  */
 export function intrinsicCallFolds(def: { isTag?: boolean; foldsAsCall?: boolean }): boolean {
   return def.isTag !== true && def.foldsAsCall === true;
+}
+
+/**
+ * True when this intrinsic's PLAIN-CALL form folds EAGERLY (chant #1966) —
+ * i.e. the lexicon opted it in via {@link IntrinsicDef.foldsEagerly}.
+ * `isTag: true` disqualifies, same as {@link intrinsicCallFolds}.
+ */
+export function intrinsicCallFoldsEagerly(def: { isTag?: boolean; foldsEagerly?: boolean }): boolean {
+  return def.isTag !== true && def.foldsEagerly === true;
 }
 
 /**
@@ -407,6 +450,61 @@ export interface ComponentPipelineResult {
 }
 
 /**
+ * Finding-mode a scheduled Op surfaces on drift — the vocabulary the
+ * temporal-lexicon composites (`WorkflowAuditOp`/`PipelineAuditOp`/
+ * `ReconcileOp`) already declare on the Op itself (#927). The mode is baked
+ * into the Op's own activity args at build time and is never re-passed on the
+ * generated CI invocation; here it decides only what token/permission wiring
+ * the generated job needs to act on a finding — elevated write access for
+ * `issue`/`pull-request`/`merge-request`, none for `report`.
+ */
+export type OpFindingMode = "report" | "issue" | "pull-request" | "merge-request";
+
+/** One scheduled Op to generate CI for — the cron-triggered counterpart to a component (generate mode). */
+export interface ScheduledOpSpec {
+  /** Op name (`*.op.ts`'s `Op({ name })`) — what `chant run <name>` targets. */
+  name: string;
+  /** Cron expression driving the CI-native trigger — the CI-only alternative to a Temporal `TemporalSchedule`. */
+  schedule: string;
+  /** This Op's finding-mode, for permission/token wiring only (see {@link OpFindingMode}). Default: "report" — no elevated permissions. */
+  findingMode?: OpFindingMode;
+}
+
+/** One CI job generated for a scheduled Op. */
+export interface OpPipelineJob {
+  /** CI job name (safe as a YAML key). */
+  jobName: string;
+  /** The Op this job runs. */
+  op: string;
+  /** Cron expression this job's workflow is scheduled on. */
+  schedule: string;
+  /** The finding-mode wired for this job. */
+  findingMode: OpFindingMode;
+}
+
+/**
+ * One generated CI file for a scheduled Op. Unlike a component pipeline —
+ * one combined document for the whole graph — a cron trigger is
+ * workflow-scoped in every CI provider chant targets (GitHub Actions'
+ * `on.schedule`, a GitLab pipeline schedule bound to one `.gitlab-ci.yml`), so
+ * each scheduled Op gets its own file.
+ */
+export interface OpPipelineFile {
+  /** Suggested file name (e.g. `<op-name>.yml`), relative to the provider's workflow directory. */
+  name: string;
+  /** The synthesized CI YAML for this Op. */
+  yaml: string;
+}
+
+/** The synthesized CI pipeline for a set of scheduled Ops (generate mode's Op counterpart, #927). */
+export interface OpPipelineResult {
+  /** One file per scheduled Op. */
+  files: OpPipelineFile[];
+  /** Every generated job, in emit order — one per Op. */
+  jobs: OpPipelineJob[];
+}
+
+/**
  * Live status of a single deploy unit (a CloudFormation stack, a K8s release, …)
  * addressed by its deployed name — the per-component presence signal
  * `chant components status --live` needs (#57). A component's deploy step carries
@@ -439,6 +537,24 @@ export interface BuildRootContext {
   projectRoot: string;
   /** The resolved project configuration, for the lexicon's own namespace. */
   config: Record<string, unknown>;
+  /**
+   * The discovered entities, read-only (#1828 / SOPS provenance). A
+   * contributor that reacts to what the project DECLARED — rather than to
+   * what its config listed — reads them here: the committed-encrypted
+   * `declareSecret()` hook resolves each declaration's `file` into a sidecar
+   * entity, and any future declaration-driven contributor needs the same.
+   *
+   * Read-only on purpose. The merge that follows is the only thing that adds
+   * to the entity set, and it refuses a name collision rather than
+   * overwriting; a contributor mutating the map directly would slip past
+   * that. Contributors run in order, so a contributor also sees entities
+   * earlier contributors added.
+   *
+   * Optional: a caller that has no entity set (a plugin hook invoked
+   * directly, a graph mode that never discovered) omits it, and a hook must
+   * treat an absent map as an empty one.
+   */
+  entities?: ReadonlyMap<string, Declarable>;
 }
 
 /**
@@ -449,6 +565,17 @@ export interface BuildRootContribution {
   entities: Map<string, Declarable>;
   warnings?: string[];
 }
+
+/**
+ * A plugin's `buildRoots` hook, already bound to this invocation's project
+ * root and config (`collectBuildRootContributors`, ./cli/plugins.ts). What is
+ * NOT bindable that early is the entity set — discovery has not run yet — so
+ * the merge supplies it when it calls the closure. A contributor that ignores
+ * the argument is still assignable, which is what every pre-#1828 hook does.
+ */
+export type BuildRootContributor = (
+  ctx: Pick<BuildRootContext, "entities">,
+) => Promise<BuildRootContribution>;
 
 export interface LexiconPlugin {
   // ── Required ──────────────────────────────────────────────
@@ -540,6 +667,34 @@ export interface LexiconPlugin {
    */
   auditCatalog?(): Record<string, RuleMeta>;
 
+  /**
+   * Parse standalone template content (a file audit discovery classified for
+   * this lexicon) into the lexicon's entity graph, keyed the way `ctx.entities`
+   * is during a build. Lets entity-reading post-synth checks fire on
+   * `chant audit` of hand-written manifests — parse-to-graph rather than
+   * output-reading rule variants (#1567). Implementations must tolerate
+   * arbitrary external content: a malformed document yields no entities, never
+   * a throw. Omit for lexicons whose audit checks read `ctx.outputs`.
+   */
+  auditEntities?(content: string): Map<string, Declarable>;
+
+  /**
+   * Machine-readable spec-coverage accounting for `check-lexicon` (#1330).
+   *
+   * `coverage()` prints a report for humans; this returns the one fact the
+   * completeness gate cares about: which upstream spec kinds are neither
+   * modeled as declarables nor on the lexicon's exclusion list. fountain held
+   * this line in a lexicon-local vitest assertion (`coverage.test.ts`), which
+   * is a convention rather than a contract — the same class of gap #1342
+   * closed for LSP providers.
+   *
+   * Implementations must work offline from committed snapshots (fountain
+   * reads `spec/fountain-openapi.snapshot.json` plus its surface baseline):
+   * `check-lexicon` runs on every PR, so no network I/O. Omit when the
+   * lexicon has no kind-level spec accounting; the check passes vacuously.
+   */
+  coverageReport?(): Promise<{ unaccountedKinds?: string[] }>;
+
   /** Return intrinsic function definitions */
   intrinsics?(): IntrinsicDef[];
 
@@ -582,6 +737,20 @@ export interface LexiconPlugin {
     components: DriverComponent[],
     options?: ComponentPipelineOptions,
   ): ComponentPipelineResult;
+
+  /**
+   * Generate CI for a set of scheduled, stateless Ops — the cron-triggered
+   * sibling of {@link generateComponentPipeline} (#927). Each
+   * `ScheduledOpSpec` becomes its own CI file (cron triggers are
+   * workflow-scoped in every CI provider chant targets), invoking `chant run
+   * <name>` on the local executor — the same one-shot invocation `chant run
+   * <op>` runs by hand. Only CI-provider lexicons (gitlab, github, forgejo)
+   * implement this; omit for lexicons that are not CI providers.
+   */
+  generateOpPipeline?(
+    ops: ScheduledOpSpec[],
+    options?: ComponentPipelineOptions,
+  ): OpPipelineResult;
 
   /**
    * Render this lexicon's config-declared build roots into entities (#1548
@@ -719,6 +888,46 @@ export interface LexiconPlugin {
      */
     namespace?: string;
   }): Promise<DescribeResourcesResult>;
+
+  /**
+   * Classify how much each pending `update` in a plan hurts (#1665) —
+   * in-place / rolling / replace / destroy, or `unknown`.
+   *
+   * `lifecycle plan` reports WHAT changes. What it costs to apply is a
+   * different question, and the answer is spec knowledge: CloudFormation's
+   * registry schema declares `createOnlyProperties` per type, Kubernetes' SSA
+   * schema knows which field changes roll a workload. Core owns neither, so it
+   * defines the vocabulary and does the reporting, and the lexicon that
+   * compiled the spec answers — the same division `postSynthChecks` draws for
+   * validation. A replacement rule hardcoded in core would be a rule the tool
+   * has to keep in step with a provider it does not generate from.
+   *
+   * Only the lexicon can answer, for a second reason: the `deltas` on an entry
+   * are paths into ITS OWN observation shape (`attributes.<key>` off
+   * {@link describeResources}), which core cannot map back onto spec property
+   * names without knowing how the reader named things.
+   *
+   * Called once per lexicon with that lexicon's `update` entries, before the
+   * plan merges the change sets. Expected to be a table lookup over compiled
+   * spec data — no live API call, no mutation. Returning a `Promise` is
+   * allowed, so a lexicon whose answer needs an await is not shut out.
+   *
+   * **Every degradation lands on `unknown`.** Return a partial map: a name
+   * absent from the result is `unknown`, which is the right answer when the
+   * spec does not say (a conditionally-immutable property, a type with no
+   * schema on record). Core also forces `unknown` when this method is absent,
+   * when it throws, and when it returns a level outside the vocabulary. There
+   * is no path by which a lexicon accidentally produces a confident
+   * `in-place` — that claim has to be made deliberately, and a consumer gating
+   * on `replace` can trust it for exactly that reason.
+   *
+   * Omit for lexicons with no replacement semantics to publish.
+   */
+  classifyDisruption?(options: {
+    environment: string;
+    /** This lexicon's `update` entries — name, type, and the attribute deltas. */
+    changes: DisruptionQuery[];
+  }): Record<string, DisruptionVerdict> | Promise<Record<string, DisruptionVerdict>>;
 
   /**
    * Report the undeclared resources this estate *depends on* (#1273), as
@@ -863,6 +1072,86 @@ export interface LexiconPlugin {
   describeStackStatus?(options: { environment: string; stack: string }): Promise<StackStatusObservation | null>;
 
   /**
+   * Enumerate the resources this lexicon would delete for one marker identity
+   * (#1222). Opt-in, and read-only here: this method names the would-delete
+   * set, it never deletes. `chant lifecycle teardown <env>` calls it to plan;
+   * the execution half ({@link executeTeardown}) deletes from the same
+   * enumeration.
+   *
+   * Selection is marker-scoped by construction. `marker` carries this
+   * project's ownership stack plus the requested environment, and every
+   * returned candidate must have been read carrying exactly that identity on
+   * this lexicon's marker channel — managed-by present, stack equal, env
+   * equal. A resource whose marker is absent, foreign-stack, or foreign-env is
+   * not a candidate, ever. Core re-checks each candidate's `marker` and drops
+   * mismatches, so a buggy implementation cannot widen the set.
+   *
+   * The #1089 discipline applies: a kind this lexicon stamps but cannot read
+   * back (no reader for the kind, the read errored, no credentials) is a
+   * `hole`, named with a total {@link UnobservedReason} — never silently
+   * absent, because "absent from the plan" reads as "safe", and an unreadable
+   * kind is unknown, not safe.
+   *
+   * A lexicon without this capability still takes part in teardown planning:
+   * core falls back to {@link describeResources} and filters on
+   * {@link ResourceMetadata.marker}. Implement this when that read is the
+   * wrong shape for deletion — aws, whose thin read carries no tags and whose
+   * teardown is stack-level, is the motivating case.
+   */
+  teardownOwned?(options: {
+    environment: string;
+    /** The identity to select on: this project's ownership stack + the env being torn down. */
+    marker: OwnershipMarker;
+    /** Deployed stack name, for a multi-stack project (see `stacks` in {@link ChantConfig}). */
+    stack?: string;
+    /** Region that stack is deployed in (#1261's contract). */
+    region?: string;
+    /**
+     * Every deployed stack a multi-stack project declares (see `stacks` in
+     * {@link ChantConfig}), for a lexicon whose enumeration is stack-shaped
+     * (aws). When absent or empty, the single-stack convention applies:
+     * `stack`, else the stack named after the environment.
+     */
+    stacks?: Array<{ name: string; region?: string }>;
+  }): Promise<TeardownEnumeration>;
+
+  /**
+   * Delete the teardown candidates core hands over — the execution half of
+   * `chant lifecycle teardown <env> --yes` (#1222). Opt-in, and the sibling of
+   * {@link teardownOwned}: that method names the would-delete set, this one
+   * deletes it. A lexicon that enumerates but does not implement this reports
+   * its candidates as skipped rather than pretending.
+   *
+   * `candidates` is the marker-verified set core computed from the plan — an
+   * implementation deletes those and only those, in whatever order its target
+   * requires (k8s deletes namespaces last; fly deletes apps last). It never
+   * re-widens the set: a live resource not in `candidates` is not this call's
+   * business, whatever its labels say.
+   *
+   * Every candidate gets exactly one outcome per call, keyed by `name`:
+   * `deleted` (including already-gone — deletion is idempotent), `failed`
+   * (the delete errored; core runs one bounded retry pass over these), or
+   * `not-prunable` with a reason (the live object no longer carries the
+   * requested identity, the kind cannot be addressed, the target refuses).
+   * A candidate the implementation says nothing about is reported as failed
+   * by core — silence is never success.
+   */
+  executeTeardown?(options: {
+    environment: string;
+    /** The identity everything was selected on: ownership stack + env. */
+    marker: OwnershipMarker;
+    /** The marker-verified candidates to delete — from {@link teardownOwned} / the plan. */
+    candidates: TeardownCandidate[];
+    /** Deployed stack name, for a multi-stack project (see `stacks` in {@link ChantConfig}). */
+    stack?: string;
+    /** Region that stack is deployed in (#1261's contract). */
+    region?: string;
+    /** Every declared deployed stack, mirroring {@link teardownOwned} — how a
+     * stack-shaped execution (aws) finds each candidate's region. */
+    stacks?: Array<{ name: string; region?: string }>;
+  }): Promise<TeardownExecution>;
+
+  /**
    * Where this lexicon can stamp and read chant's ownership marker (#1348).
    * Data, not a method.
    *
@@ -874,10 +1163,10 @@ export interface LexiconPlugin {
    * where the wrong delete gets proposed.
    *
    * Declared per read path, because the answer differs by path. aws stamps tags
-   * at synthesis and reads them on the deep observation and on live export,
-   * while its `describeResources` is sourced from `describe-stack-resources`,
-   * which returns no tags — so an `owned: true` thin read against aws can only
-   * answer `unknown`, and does.
+   * at synthesis and reads them per resource on the deep observation and on
+   * live export, while its `describeResources` is sourced from
+   * `describe-stack-resources`, which returns no per-resource tags — so that
+   * path resolves the verdict from the stack's own tags (#1998).
    *
    * Absent means no channel anywhere: every verdict must be `unknown`.
    */
@@ -960,6 +1249,79 @@ export interface LexiconPlugin {
     owned?: boolean;
     verbatim?: boolean;
   }): Promise<ExportedTemplate>;
+}
+
+/**
+ * One resource {@link LexiconPlugin.teardownOwned} would delete (#1222).
+ * Identity only — no delete happens on this path.
+ */
+export interface TeardownCandidate {
+  /** chant entity name where a declared mapping exists, else the provider-side name. */
+  name: string;
+  /** Resource type (e.g. "AWS::S3::Bucket", "K8s::Apps::Deployment"). */
+  type: string;
+  /** Provider-side identifier, when the read surfaces one. */
+  physicalId?: string;
+  /**
+   * The stack/env identity read off the resource's own marker — read back,
+   * never inferred. Core verifies it equals the requested identity and drops
+   * the candidate otherwise.
+   */
+  marker: OwnershipMarker;
+}
+
+/**
+ * One kind or entity a teardown enumeration could not read (#1089). A hole is
+ * a claim of ignorance, not of absence: the plan must print it loudly, and the
+ * execution half must refuse to call the env clean while holes exist.
+ */
+export interface TeardownHole {
+  /** The unreadable kind or entity name. */
+  name: string;
+  /** Resource type, when known. */
+  type?: string;
+  /** Total verdict — the same vocabulary the observation envelope uses. */
+  reason: UnobservedReason;
+  /** Human-readable detail: the failing command, the unsupported kind. */
+  detail?: string;
+}
+
+/** What {@link LexiconPlugin.teardownOwned} returns: the would-delete set plus its holes. */
+export interface TeardownEnumeration {
+  candidates: TeardownCandidate[];
+  /** Omit or leave empty when every stamped kind was readable. */
+  holes?: TeardownHole[];
+}
+
+/**
+ * One candidate's fate after {@link LexiconPlugin.executeTeardown} (#1222).
+ * `name` keys it back to the candidate it answers for.
+ */
+export interface TeardownOutcome {
+  /** The candidate's `name`, verbatim. */
+  name: string;
+  /** Resource type, when the implementation carries it through. */
+  type?: string;
+  /** Provider-side identifier, when known. */
+  physicalId?: string;
+  /**
+   * - `deleted` — gone, including already-gone (deletion is idempotent);
+   * - `failed` — the delete errored (core retries these once);
+   * - `not-prunable` — deliberately not deleted; `detail` says why;
+   * - `retained` — owned and no longer declared, but deliberately kept
+   *   (#1365 decision 5): a `generated-once` secret never enters the prunable
+   *   set, because deleting it would destroy the only copy of material chant
+   *   never held. Reported loudly, never deleted; deletion is an explicit act
+   *   (`kubectl delete`, or a future gated op), never a sweep's.
+   */
+  outcome: "deleted" | "failed" | "not-prunable" | "retained";
+  /** The error for `failed`, the reason for `not-prunable`/`retained`. */
+  detail?: string;
+}
+
+/** What {@link LexiconPlugin.executeTeardown} returns: one outcome per candidate. */
+export interface TeardownExecution {
+  outcomes: TeardownOutcome[];
 }
 
 /**
@@ -1047,6 +1409,22 @@ export interface ResourceMetadata {
    * a delete, and never escalates `unknown` to one.
    */
   ownership?: "owned" | "foreign" | "unknown";
+  /**
+   * The stack/env identity read off the resource's own ownership marker
+   * (#1222) — the tags/labels/metadata chant stamped at synthesis, read back
+   * verbatim on the same channel. This is what marker-scoped selection keys
+   * on: {@link ownership} says "chant's", `marker` says *which* stack and env.
+   *
+   * Set only when the live model actually carries the channel and the
+   * managed-by marker is present — an absent channel means an absent field,
+   * never a guess. The granularity is whatever the channel reads at: aws's thin
+   * read is sourced from `describe-stack-resources`, which returns no
+   * per-resource tags, so it reads the STACK's own tags and every member of a
+   * marked stack carries that stack's identity (#1998). A populated `marker`
+   * does not by itself imply an {@link ownership} verdict on paths that do not
+   * declare a marker channel.
+   */
+  marker?: OwnershipMarker;
   /**
    * Where this resource's owner-reference chain leads, for a live resource
    * that is not itself declared (#1077). A lexicon that maintains an

@@ -29,7 +29,7 @@ const meta = (over: Partial<ResourceMetadata> = {}): ResourceMetadata => ({
 
 describe("normalizeObservation", () => {
   test("a bare map means 'I looked at everything'", () => {
-    expect(normalizeObservation({ a: meta() })).toEqual({ resources: { a: meta() }, unobserved: {}, queried: {} });
+    expect(normalizeObservation({ a: meta() })).toEqual({ resources: { a: meta() }, unobserved: {}, queried: {}, notes: [] });
   });
 
   test("the envelope carries both halves", () => {
@@ -38,11 +38,19 @@ describe("normalizeObservation", () => {
       resources: { a: meta() },
       unobserved: { b: { reason: "read-failed" } },
       queried: {},
+      notes: [],
     });
   });
 
+  test("run-level notes ride the envelope, distinct (#1265)", () => {
+    const value = observation({ a: meta() }, undefined, undefined, ["ownership unknown", "ownership unknown"]);
+    expect(value.notes).toEqual(["ownership unknown", "ownership unknown"]);
+    expect(normalizeObservation(value).notes).toEqual(["ownership unknown"]);
+    expect(observation({}).notes).toBeUndefined();
+  });
+
   test("undefined normalizes to empty maps", () => {
-    expect(normalizeObservation(undefined)).toEqual({ resources: {}, unobserved: {}, queried: {} });
+    expect(normalizeObservation(undefined)).toEqual({ resources: {}, unobserved: {}, queried: {}, notes: [] });
   });
 
   test("the envelope carries the queried addresses through normalization (#1620)", () => {
@@ -84,25 +92,33 @@ describe("unobservedAll", () => {
 describe("mergeObservations (multi-stack)", () => {
   test("present beats not-observed beats absent", () => {
     const merged = mergeObservations([
-      { resources: {}, unobserved: { a: { reason: "read-failed" }, b: { reason: "no-binding" } }, queried: {} },
-      { resources: { a: meta() }, unobserved: {}, queried: {} },
+      { resources: {}, unobserved: { a: { reason: "read-failed" }, b: { reason: "no-binding" } }, queried: {}, notes: [] },
+      { resources: { a: meta() }, unobserved: {}, queried: {}, notes: [] },
     ]);
     expect(Object.keys(merged.resources)).toEqual(["a"]);
     expect(Object.keys(merged.unobserved)).toEqual(["b"]);
   });
 
+  test("the same note from four stacks is one note (#1265)", () => {
+    const note = "ownership filter unavailable";
+    const merged = mergeObservations(
+      ["a", "b", "c", "d"].map((k) => ({ resources: { [k]: meta() }, unobserved: {}, queried: {}, notes: [note] })),
+    );
+    expect(merged.notes).toEqual([note]);
+  });
+
   test("an entity nobody looked for in any stack stays absent", () => {
     const merged = mergeObservations([
-      { resources: { a: meta() }, unobserved: {}, queried: {} },
-      { resources: { b: meta() }, unobserved: {}, queried: {} },
+      { resources: { a: meta() }, unobserved: {}, queried: {}, notes: [] },
+      { resources: { b: meta() }, unobserved: {}, queried: {}, notes: [] },
     ]);
     expect(merged.unobserved).toEqual({});
   });
 
   test("queried addresses union across stacks (#1620)", () => {
     const merged = mergeObservations([
-      { resources: {}, unobserved: {}, queried: { a: "stack-1/a" } },
-      { resources: { b: meta() }, unobserved: {}, queried: { b: "stack-2/b" } },
+      { resources: {}, unobserved: {}, queried: { a: "stack-1/a" }, notes: [] },
+      { resources: { b: meta() }, unobserved: {}, queried: { b: "stack-2/b" }, notes: [] },
     ]);
     expect(merged.queried).toEqual({ a: "stack-1/a", b: "stack-2/b" });
   });

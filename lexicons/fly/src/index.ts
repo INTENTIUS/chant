@@ -1,6 +1,11 @@
 // Plugin
 export { flyPlugin } from "./plugin";
 
+// Component/release capabilities — run-agent, the sprite-lifecycle leaf
+// contributed to core's capability-plugin seam (#1942). Core loads
+// `flyCapabilityPlugin` when a project's chant.config lists this lexicon.
+export { flyCapabilityPlugin, FLY_VERB_FAMILIES } from "./components/capability-plugin";
+
 // Serializer
 export { flySerializer } from "./serializer";
 
@@ -17,10 +22,16 @@ export { FLY_METADATA_OWNERSHIP_KEYS } from "./ownership";
 export { flyDeploy, flapsUp, flapsDown, flyApplyStep, LOCAL_FLAPS_ENDPOINT } from "./composites/fly-deploy";
 export type { FlyDeployOpts, FlyApplyStepOpts, FlapsStepOpts } from "./composites/fly-deploy";
 
-// Sprite Op step builders (re-exported from core for single-import convenience).
-// These author `activity("spriteCreate", ...)` steps; `loadActivities(["fly"])`
-// binds them to the implementations in ./op/activities/sprites.ts. The `spritesUp`
-// /`spritesDown` builders boot/tear down the spritzer emulator as modeled steps.
+// Sprite Op step builders. chant #1288 Stage 2: these author
+// `activity("spriteCreate", ...)` steps with authoring-time types derived
+// from this lexicon's own `Sprite*Args` interfaces (`./op/builders.ts`),
+// replacing the hand-restated inline types core's same-named builders used
+// to carry — same names, same import path, so an existing
+// `import { spriteCreate } from "@intentius/chant-lexicon-fly"` call site
+// gains real derived types with no change. `loadActivities(["fly"])` binds
+// the `fn` strings to the implementations in `./op/activities/sprites.ts`
+// etc. The `spritesUp`/`spritesDown` builders boot/tear down the spritzer
+// emulator as modeled steps.
 export {
   spriteCreate,
   spriteExec,
@@ -39,7 +50,7 @@ export {
   spriteTaskRelease,
   spritesUp,
   spritesDown,
-} from "@intentius/chant/op";
+} from "./op/builders";
 
 // Generated resources — export everything from generated index.
 // Provides `App`, `Machine`, `Volume`, and the property types

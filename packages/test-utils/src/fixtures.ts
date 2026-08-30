@@ -2,6 +2,7 @@ import type { Declarable } from "../../core/src/declarable";
 import type { Serializer } from "../../core/src/serializer";
 import type { LintRule, LintContext, LintDiagnostic } from "../../core/src/lint/rule";
 import type { PostSynthContext } from "../../core/src/lint/post-synth";
+import { createDocsAccessor } from "../../core/src/lint/post-synth";
 import { DECLARABLE_MARKER } from "../../core/src/declarable";
 import * as ts from "typescript";
 
@@ -82,6 +83,12 @@ export function createMockLintContext(
 /**
  * Creates a PostSynthContext from a map of lexicon name → template object.
  * Each template object is JSON-serialized.
+ *
+ * `ctx.docs` (chant #975) is wired up here the same way `runPostSynthChecks`
+ * wires it up in production — lazy, memoized via `createDocsAccessor` over
+ * the same `outputs` map — so a check under test can read `ctx.docs` without
+ * this fixture and the real build path disagreeing on what it returns.
+ *
  * @param outputs - Map or record of lexicon name → template object
  * @returns A PostSynthContext for testing post-synth checks
  */
@@ -92,6 +99,7 @@ export function createPostSynthContext(
   for (const [key, value] of Object.entries(outputs)) {
     serialized.set(key, JSON.stringify(value));
   }
+  const getDocs = createDocsAccessor(serialized);
   return {
     outputs: serialized,
     entities: new Map(),
@@ -101,6 +109,9 @@ export function createPostSynthContext(
       warnings: [],
       errors: [],
       sourceFileCount: 0,
+    },
+    get docs() {
+      return getDocs();
     },
   };
 }

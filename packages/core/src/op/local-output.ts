@@ -33,7 +33,7 @@ export function renderHuman(result: OpRunResult, write: Writer = stderr): void {
       write(`[phase] ${currentPhase}`);
     }
     const mark = record.status === "ok" ? "✓" : record.status === "fail" ? "✗" : "•";
-    const call = `${record.fn}(${formatArgs(record.args)})`;
+    const call = `${record.fn}(${formatArgs(record.args ?? {})})`;
     if (record.status === "skipped") {
       write(`  ${mark} ${call}   skipped`);
     } else {

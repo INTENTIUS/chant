@@ -98,6 +98,30 @@ const FLUX_TERMINAL = (reasons: string[]): ReadinessSpec => ({
   observedGeneration: true,
 });
 
+/**
+ * Config Connector (CNRM) wedge reasons (#1725): CNRM is kstatus-conformant —
+ * `Ready=True` + `observedGeneration` is the correct ready predicate, same as
+ * `DEFAULT_READINESS` — so, like `FLUX_TERMINAL`, the value added here is
+ * failing fast on a `Ready=False` reason that will not heal by waiting.
+ * `UpdateFailed` is CNRM giving up on a reconcile (bad spec, quota, API
+ * error); `ManagementConflict` is two controllers fighting over the same GCP
+ * resource. Neither resolves on its own.
+ *
+ * `DependencyNotReady` is deliberately excluded: it is the normal state while
+ * a resource waits on another one it depends on (e.g. a `ContainerCluster`
+ * waiting on its network) — exactly the "still being created" case this spec
+ * has to distinguish from a real wedge, not fold into it.
+ *
+ * One entry per kind, matching `FLUX_TERMINAL`'s convention, rather than a
+ * group-level key: CNRM's kinds don't share a single apiGroup (`ContainerCluster`
+ * and `ContainerNodePool` are `container.cnrm.cloud.google.com`; `SQLInstance`
+ * would be `sql.cnrm.cloud.google.com`, etc.), so a group-level key would need
+ * prefix matching against `*.cnrm.cloud.google.com` — a real change to
+ * `readinessFor`'s exact-match lookup for a handful of entries. Not worth it
+ * until more CNRM kinds actually need the override.
+ */
+const CNRM_TERMINAL = (): ReadinessSpec => FLUX_TERMINAL(["UpdateFailed", "ManagementConflict"]);
+
 export const READINESS_OVERRIDES: Record<string, ReadinessSpec> = {
   "argoproj.io/Application": {
     ready: [
@@ -139,6 +163,8 @@ export const READINESS_OVERRIDES: Record<string, ReadinessSpec> = {
     "ChartPackageError",
     "StorageOperationFailed",
   ]),
+  "container.cnrm.cloud.google.com/ContainerCluster": CNRM_TERMINAL(),
+  "container.cnrm.cloud.google.com/ContainerNodePool": CNRM_TERMINAL(),
 };
 
 /** Resolve the readiness spec for a resource: registry override, else default. */

@@ -9,6 +9,12 @@ import { tmp001 } from "./tmp001-retention-too-short";
 import { tmp002 } from "./tmp002-allowall-without-note";
 import { tmp010 } from "./tmp010-cron-syntax";
 import { tmp011 } from "./tmp011-namespace-reference";
+import { tmp012 } from "./tmp012-activity-contract";
+import { tmp013 } from "./tmp013-step-output-ref";
+import { tmp014 } from "./tmp014-converge-rule-refusals";
+import { stepOutput, when, eq, gt, allOf, run, report } from "@intentius/chant/op";
+import type { ConvergeRule } from "@intentius/chant/op";
+import type { ConvergeSymptom } from "@intentius/chant/lifecycle/symptoms";
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
@@ -271,5 +277,375 @@ describe("TMP011: namespace-reference", () => {
     ]));
     const diags = tmp011.check(ctx);
     expect(diags).toHaveLength(2);
+  });
+});
+
+// ── TMP012: activity-contract (chant #1288 Stage 1) ─────────────────
+
+function opEntity(name: string, steps: unknown[]) {
+  return makeEntity("Temporal::Op", { name, overview: "test", phases: [{ name: "Phase", steps }] });
+}
+
+describe("TMP012: activity-contract", () => {
+  test("passes when args match the registered contract exactly", () => {
+    const ctx = makeCtxFromEntities(new Map([
+      ["op", opEntity("deploy", [{ kind: "activity", fn: "lifecycleDiff", args: { env: "prod", live: true } }])],
+    ]));
+    expect(tmp012.check(ctx)).toHaveLength(0);
+  });
+
+  test("skips a step whose fn has no registered contract", () => {
+    const ctx = makeCtxFromEntities(new Map([
+      ["op", opEntity("deploy", [{ kind: "activity", fn: "kubectlApply", args: { manifest: "dist/k8s.yaml", anything: "goes" } }])],
+    ]));
+    expect(tmp012.check(ctx)).toHaveLength(0);
+  });
+
+  test("errors on an unrecognized args key — lifecycleDiff's `env` typo'd as `environment`", () => {
+    const ctx = makeCtxFromEntities(new Map([
+      ["op", opEntity("deploy", [{ kind: "activity", fn: "lifecycleDiff", args: { environment: "prod" } }])],
+    ]));
+    const diags = tmp012.check(ctx);
+    expect(diags.length).toBeGreaterThan(0);
+    expect(diags.every((d) => d.checkId === "TMP012" && d.severity === "error")).toBe(true);
+    expect(diags.some((d) => d.message.includes("environment"))).toBe(true);
+    expect(diags[0].message).toContain('Op "deploy"');
+    expect(diags[0].entity).toBe("op");
+  });
+
+  test("errors on an outcomeAttribute.from path that doesn't exist on the declared return type", () => {
+    const ctx = makeCtxFromEntities(new Map([
+      ["op", opEntity("deploy", [
+        { kind: "activity", fn: "lifecycleDiff", args: { env: "prod" }, outcomeAttribute: { name: "Drift", from: "drifed" } },
+      ])],
+    ]));
+    const diags = tmp012.check(ctx);
+    expect(diags.some((d) => d.message.includes('outcomeAttribute.from "drifed"'))).toBe(true);
+  });
+
+  test("errors on an unknown profile", () => {
+    const ctx = makeCtxFromEntities(new Map([
+      ["op", opEntity("deploy", [{ kind: "activity", fn: "shellCmd", args: { cmd: "echo hi" }, profile: "longInfa" }])],
+    ]));
+    const diags = tmp012.check(ctx);
+    expect(diags.some((d) => d.message.includes('unknown profile "longInfa"'))).toBe(true);
+  });
+
+  test("ignores non-Op entities", () => {
+    const ctx = makeCtxFromEntities(new Map([
+      ["ns", makeEntity("Temporal::Namespace", { name: "default", retention: "30d" })],
+    ]));
+    expect(tmp012.check(ctx)).toHaveLength(0);
+  });
+});
+
+// ── TMP013: step-output-ref (chant #1290) ────────────────────────────
+
+function opEntityPhases(name: string, phases: Array<{ name: string; steps: unknown[]; parallel?: boolean }>) {
+  return makeEntity("Temporal::Op", { name, overview: "test", phases });
+}
+
+describe("TMP013: step-output-ref", () => {
+  test("passes for a valid same-phase reference to a preceding step", () => {
+    const ctx = makeCtxFromEntities(new Map([
+      ["op", opEntity("reconcile", [
+        { kind: "activity", fn: "lifecycleDiff", args: { env: "prod" }, id: "diff" },
+        // "output" (string) into "contains" (string) — a type-compatible reference (#1950-3).
+        { kind: "activity", fn: "httpCheck", args: { url: "http://x", contains: stepOutput("diff", "output") } },
+      ])],
+    ]));
+    expect(tmp013.check(ctx)).toHaveLength(0);
+  });
+
+  test("errors on a reference to an unknown producer step id", () => {
+    const ctx = makeCtxFromEntities(new Map([
+      ["op", opEntity("reconcile", [
+        { kind: "activity", fn: "httpCheck", args: { url: "http://x", contains: stepOutput("nope", "x") } },
+      ])],
+    ]));
+    const diags = tmp013.check(ctx);
+    expect(diags.length).toBeGreaterThan(0);
+    expect(diags.every((d) => d.checkId === "TMP013" && d.severity === "error")).toBe(true);
+    expect(diags.some((d) => d.message.includes('unknown step id "nope"'))).toBe(true);
+    expect(diags[0].entity).toBe("op");
+  });
+
+  test("errors on a path that doesn't exist on the producer's declared return schema", () => {
+    const ctx = makeCtxFromEntities(new Map([
+      ["op", opEntity("reconcile", [
+        { kind: "activity", fn: "lifecycleDiff", args: { env: "prod" }, id: "diff" },
+        { kind: "activity", fn: "httpCheck", args: { url: "http://x", contains: stepOutput("diff", "notAField") } },
+      ])],
+    ]));
+    const diags = tmp013.check(ctx);
+    expect(diags.some((d) => d.message.includes('path "notAField"') && d.message.includes("does not exist"))).toBe(true);
+  });
+
+  test("errors on a reference to a later step (in a later phase)", () => {
+    const ctx = makeCtxFromEntities(new Map([
+      ["op", opEntityPhases("reconcile", [
+        { name: "Check", steps: [{ kind: "activity", fn: "httpCheck", args: { url: "http://x", contains: stepOutput("diff", "drifted") } }] },
+        { name: "Diff", steps: [{ kind: "activity", fn: "lifecycleDiff", args: { env: "prod" }, id: "diff" }] },
+      ])],
+    ]));
+    const diags = tmp013.check(ctx);
+    expect(diags.some((d) => d.message.includes("later phase"))).toBe(true);
+  });
+
+  test("errors on a reference into a step whose fn has no registered contract", () => {
+    const ctx = makeCtxFromEntities(new Map([
+      ["op", opEntity("reconcile", [
+        { kind: "activity", fn: "customUnregisteredActivity", args: {}, id: "custom" },
+        { kind: "activity", fn: "httpCheck", args: { url: "http://x", contains: stepOutput("custom", "x") } },
+      ])],
+    ]));
+    const diags = tmp013.check(ctx);
+    expect(diags.some((d) => d.message.includes("no registered activity contract"))).toBe(true);
+  });
+
+  test("ignores non-Op entities", () => {
+    const ctx = makeCtxFromEntities(new Map([
+      ["ns", makeEntity("Temporal::Namespace", { name: "default", retention: "30d" })],
+    ]));
+    expect(tmp013.check(ctx)).toHaveLength(0);
+  });
+
+  // ── cross-contract type compatibility (#1950-3) ──────────────────────────
+
+  test("errors when a boolean-returning path feeds a string-typed arg", () => {
+    const ctx = makeCtxFromEntities(new Map([
+      ["op", opEntity("reconcile", [
+        { kind: "activity", fn: "lifecycleDiff", args: { env: "prod" }, id: "diff" },
+        { kind: "activity", fn: "httpCheck", args: { url: "http://x", contains: stepOutput("diff", "drifted") } },
+      ])],
+    ]));
+    const diags = tmp013.check(ctx);
+    expect(diags.some((d) => d.message.includes("type mismatch") && d.message.includes("boolean") && d.message.includes("string"))).toBe(true);
+  });
+
+  test("a matching type (string into string) passes", () => {
+    const ctx = makeCtxFromEntities(new Map([
+      ["op", opEntity("reconcile", [
+        { kind: "activity", fn: "lifecycleDiff", args: { env: "prod" }, id: "diff" },
+        { kind: "activity", fn: "httpCheck", args: { url: "http://x", contains: stepOutput("diff", "output") } },
+      ])],
+    ]));
+    expect(tmp013.check(ctx)).toHaveLength(0);
+  });
+});
+
+// ── TMP014: converge-rule-refusals (#1484) ───────────────────────────
+
+function convergeOpEntity(
+  name: string,
+  rules: ConvergeRule<ConvergeSymptom>[],
+  opts?: { dial?: "observe" | "reconcile" | "apply" },
+) {
+  return makeEntity("Temporal::Op", {
+    name,
+    overview: "test",
+    searchAttributes: { Converge: "true", Env: "staging", Dial: opts?.dial ?? "observe" },
+    phases: [
+      { name: "Observe", steps: [{ kind: "activity", fn: "lifecycleDiff", args: { env: "staging" }, id: "diff" }] },
+      { name: "Converge", steps: [{ kind: "activity", fn: "convergeTick", args: { rules } }] },
+    ],
+  });
+}
+
+function readOnlyOpEntity(name: string) {
+  return opEntity(name, [{ kind: "activity", fn: "lifecycleDiff", args: { env: "staging" } }]);
+}
+
+function mutatingOpEntity(name: string) {
+  return opEntity(name, [
+    { kind: "activity", fn: "nativeApply", args: { target: "kubectl", env: "staging", output: "dist", deleteMode: "never" } },
+  ]);
+}
+
+function destructiveOpEntity(name: string, opts?: { gated?: boolean }) {
+  const steps: unknown[] = [
+    { kind: "activity", fn: "nativeApply", args: { target: "kubectl", env: "staging", output: "dist", deleteMode: "gated" } },
+  ];
+  const phases = opts?.gated
+    ? [
+        { name: "Approve", steps: [{ kind: "gate", signalName: "approve-x" }] },
+        { name: "Apply", steps },
+      ]
+    : [{ name: "Apply", steps }];
+  return opEntityPhases(name, phases);
+}
+
+describe("TMP014: converge-rule-refusals", () => {
+  test("passes a well-formed rule table dispatching a read-only op under observe", () => {
+    const rule = when<ConvergeSymptom>(eq("status", "drifted"), run("watch"), {
+      id: "drift-watch",
+      why: "Re-check drift with a read-only observation.",
+    });
+    const ctx = makeCtxFromEntities(new Map([
+      ["converge", convergeOpEntity("converge", [rule], { dial: "observe" })],
+      ["watch", readOnlyOpEntity("watch")],
+    ]));
+    expect(tmp014.check(ctx)).toHaveLength(0);
+  });
+
+  test("passes a report-only rule table with no dispatch at all", () => {
+    const rule = when<ConvergeSymptom>(gt("adoptCount", 0), report("unowned resources present"), {
+      id: "adopt-report",
+      why: "Unowned resources are reported, never auto-claimed.",
+    });
+    const ctx = makeCtxFromEntities(new Map([["converge", convergeOpEntity("converge", [rule])]]));
+    expect(tmp014.check(ctx)).toHaveLength(0);
+  });
+
+  test("errors when a rule has a blank why", () => {
+    const badRule = {
+      id: "no-why",
+      when: { kind: "field-comparison", field: "status", op: "eq", value: "drifted" },
+      then: { kind: "report", reason: "x" },
+      why: "",
+    } as unknown as ConvergeRule<ConvergeSymptom>;
+    const ctx = makeCtxFromEntities(new Map([["converge", convergeOpEntity("converge", [badRule])]]));
+    const diags = tmp014.check(ctx);
+    expect(diags.some((d) => d.checkId === "TMP014" && d.message.includes("must carry its why"))).toBe(true);
+  });
+
+  test("errors when a rule's predicate is malformed (outside the evaluable subset)", () => {
+    const badRule = {
+      id: "bad-predicate",
+      when: { kind: "not-a-real-predicate-kind" },
+      then: { kind: "report", reason: "x" },
+      why: "some reason",
+    } as unknown as ConvergeRule<ConvergeSymptom>;
+    const ctx = makeCtxFromEntities(new Map([["converge", convergeOpEntity("converge", [badRule])]]));
+    const diags = tmp014.check(ctx);
+    expect(diags.some((d) => d.message.includes("outside the evaluable subset"))).toBe(true);
+  });
+
+  test("errors when run() names an op that doesn't exist", () => {
+    const rule = when<ConvergeSymptom>(eq("status", "drifted"), run("does-not-exist"), { id: "drift-apply", why: "Re-apply on drift." });
+    const ctx = makeCtxFromEntities(new Map([["converge", convergeOpEntity("converge", [rule], { dial: "apply" })]]));
+    const diags = tmp014.check(ctx);
+    expect(diags.some((d) => d.message.includes('unknown op "does-not-exist"'))).toBe(true);
+  });
+
+  test("errors when a mutating op is dispatched under an observe dial", () => {
+    const rule = when<ConvergeSymptom>(eq("status", "drifted"), run("apply-staging"), { id: "drift-apply", why: "Re-apply on drift." });
+    const ctx = makeCtxFromEntities(new Map([
+      ["converge", convergeOpEntity("converge", [rule], { dial: "observe" })],
+      ["apply-staging", mutatingOpEntity("apply-staging")],
+    ]));
+    const diags = tmp014.check(ctx);
+    expect(diags.some((d) => d.message.includes("mutating") && d.message.includes('dial "observe"'))).toBe(true);
+  });
+
+  // Finding A (#1954 pre-merge review): issue #1484's own Autonomy table
+  // gives `reconcile` × mutating "open PR", not "run directly" — v1 doesn't
+  // build the PR-opening channel, so this is refused rather than silently
+  // escalated to match `apply`'s authority.
+  test("errors when a mutating op is dispatched under a reconcile dial — reconcile's table answer is \"open PR\", not implemented in v1", () => {
+    const rule = when<ConvergeSymptom>(eq("status", "drifted"), run("apply-staging"), { id: "drift-apply", why: "Re-apply on drift." });
+    const ctx = makeCtxFromEntities(new Map([
+      ["converge", convergeOpEntity("converge", [rule], { dial: "reconcile" })],
+      ["apply-staging", mutatingOpEntity("apply-staging")],
+    ]));
+    const diags = tmp014.check(ctx);
+    expect(diags.some((d) => d.message.includes("mutating") && d.message.includes('dial "reconcile"') && d.message.includes("open PR"))).toBe(true);
+  });
+
+  test("passes a mutating dispatch under an apply dial", () => {
+    const rule = when<ConvergeSymptom>(eq("status", "drifted"), run("apply-staging"), { id: "drift-apply", why: "Re-apply on drift." });
+    const ctx = makeCtxFromEntities(new Map([
+      ["converge", convergeOpEntity("converge", [rule], { dial: "apply" })],
+      ["apply-staging", mutatingOpEntity("apply-staging")],
+    ]));
+    expect(tmp014.check(ctx)).toHaveLength(0);
+  });
+
+  // Finding B (#1954 pre-merge review): a destructive dispatch target is
+  // refused under every dial, `apply` included — the local dispatch
+  // executor can never honor the gate a destructive target is required to
+  // carry, so "destructive + apply + gated" was a dead cell that could never
+  // actually dispatch.
+  test("errors when a destructive op is dispatched under a reconcile dial", () => {
+    const rule = when<ConvergeSymptom>(eq("status", "drifted"), run("prune-staging"), { id: "drift-prune", why: "Prune drifted resources." });
+    const ctx = makeCtxFromEntities(new Map([
+      ["converge", convergeOpEntity("converge", [rule], { dial: "reconcile" })],
+      ["prune-staging", destructiveOpEntity("prune-staging", { gated: true })],
+    ]));
+    const diags = tmp014.check(ctx);
+    expect(diags.some((d) => d.message.includes("destructive") && d.message.includes("refused in v1"))).toBe(true);
+  });
+
+  test("errors when a destructive op is dispatched under apply and has no gate", () => {
+    const rule = when<ConvergeSymptom>(eq("status", "drifted"), run("prune-staging"), { id: "drift-prune", why: "Prune drifted resources." });
+    const ctx = makeCtxFromEntities(new Map([
+      ["converge", convergeOpEntity("converge", [rule], { dial: "apply" })],
+      ["prune-staging", destructiveOpEntity("prune-staging", { gated: false })],
+    ]));
+    const diags = tmp014.check(ctx);
+    expect(diags.some((d) => d.message.includes("destructive") && d.message.includes("refused in v1"))).toBe(true);
+  });
+
+  test("errors when a destructive op is dispatched under apply even when the target is gated — the gate can never actually run", () => {
+    const rule = when<ConvergeSymptom>(eq("status", "drifted"), run("prune-staging"), { id: "drift-prune", why: "Prune drifted resources." });
+    const ctx = makeCtxFromEntities(new Map([
+      ["converge", convergeOpEntity("converge", [rule], { dial: "apply" })],
+      ["prune-staging", destructiveOpEntity("prune-staging", { gated: true })],
+    ]));
+    const diags = tmp014.check(ctx);
+    expect(diags.some((d) => d.message.includes("destructive") && d.message.includes("refused in v1"))).toBe(true);
+  });
+
+  // Finding C (#1954 pre-merge review): adopt safety — "an unowned resource
+  // is reported, never auto-claimed" — is enforced, not just documented.
+  test("errors when a rule reads adoptCount and dispatches a mutating op", () => {
+    const rule = when<ConvergeSymptom>(gt("adoptCount", 0), run("apply-staging"), { id: "adopt-apply", why: "test" });
+    const ctx = makeCtxFromEntities(new Map([
+      ["converge", convergeOpEntity("converge", [rule], { dial: "apply" })],
+      ["apply-staging", mutatingOpEntity("apply-staging")],
+    ]));
+    const diags = tmp014.check(ctx);
+    expect(diags.some((d) => d.message.includes('reads "adoptCount"') && d.message.includes("mutating"))).toBe(true);
+  });
+
+  test("errors when adoptCount is read inside a nested allOf/anyOf predicate that dispatches a mutating op", () => {
+    const rule = when<ConvergeSymptom>(
+      allOf(eq("status", "drifted"), gt("adoptCount", 0)),
+      run("apply-staging"),
+      { id: "nested-adopt-apply", why: "test" },
+    );
+    const ctx = makeCtxFromEntities(new Map([
+      ["converge", convergeOpEntity("converge", [rule], { dial: "apply" })],
+      ["apply-staging", mutatingOpEntity("apply-staging")],
+    ]));
+    const diags = tmp014.check(ctx);
+    expect(diags.some((d) => d.message.includes('reads "adoptCount"'))).toBe(true);
+  });
+
+  test("passes a rule that reads adoptCount and dispatches a read-only op", () => {
+    const rule = when<ConvergeSymptom>(gt("adoptCount", 0), run("watch"), { id: "adopt-watch", why: "test" });
+    const ctx = makeCtxFromEntities(new Map([
+      ["converge", convergeOpEntity("converge", [rule], { dial: "apply" })],
+      ["watch", readOnlyOpEntity("watch")],
+    ]));
+    expect(tmp014.check(ctx)).toHaveLength(0);
+  });
+
+  test("passes a rule that reads adoptCount and only reports (no dispatch at all)", () => {
+    const rule = when<ConvergeSymptom>(gt("adoptCount", 0), report("unowned resources present"), { id: "adopt-report", why: "test" });
+    const ctx = makeCtxFromEntities(new Map([["converge", convergeOpEntity("converge", [rule], { dial: "apply" })]]));
+    expect(tmp014.check(ctx)).toHaveLength(0);
+  });
+
+  test("ignores a Temporal::Op with no Converge search attribute", () => {
+    const ctx = makeCtxFromEntities(new Map([["op", readOnlyOpEntity("op")]]));
+    expect(tmp014.check(ctx)).toHaveLength(0);
+  });
+
+  test("ignores non-Op entities", () => {
+    const ctx = makeCtxFromEntities(new Map([
+      ["ns", makeEntity("Temporal::Namespace", { name: "default", retention: "30d" })],
+    ]));
+    expect(tmp014.check(ctx)).toHaveLength(0);
   });
 });

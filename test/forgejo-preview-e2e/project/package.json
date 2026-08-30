@@ -1,0 +1,9 @@
+{
+  "name": "forgejo-preview-e2e-project",
+  "version": "0.0.1",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "chant build src --lexicon fly -o dist/fly.json"
+  }
+}

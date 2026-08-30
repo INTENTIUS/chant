@@ -10,12 +10,103 @@ export { helmPlugin } from "./plugin";
 export { helmCapabilityPlugin, HELM_VERB_FAMILIES } from "./components/capability-plugin";
 export { helmUpgradeCapability, createHelmUpgradeCapability, type HelmUpgradeInput, type HelmUpgradeOutcome } from "./components/helm-upgrade";
 
+// Typed Op step-builder wrappers (chant #1288 Stage 2) — helmInstall/
+// helmInstallPinned with authoring-time types derived from this lexicon's
+// own HelmInstallArgs (see ./op/builders.ts's module doc for why these live
+// here rather than in core or the temporal barrel). Opt-in:
+// `@intentius/chant-lexicon-temporal`'s same-named exports are core's
+// original untyped builders, unchanged, for cloud-agnostic authoring.
+export { helmInstall, helmInstallPinned } from "./op/builders";
+
 // Resources
 export { Chart, Values, ValuesOverride, HelmTest, HelmNotes, HelmHook, HelmDependency, HelmMaintainer, HelmCRD } from "./resources";
 
 // HelmRender — render an upstream chart at chant build time
-export { HelmRender } from "./render";
-export type { HelmRenderProps } from "./render";
+export { HelmRender, getHelmRenderRecords, clearHelmRenderRecords } from "./render";
+export type { HelmRenderProps, HelmRenderRecord } from "./render";
+
+// #1237 — render canonicalization + the contentDigest/inputDigest split.
+export { canonicalizeRender, helmContentDigest, helmInputDigest, renderStability } from "./render-digest";
+export type { HelmInputDigestSource, RenderStabilityGroup, RenderStabilityReport } from "./render-digest";
+
+// #1238 — RenderManifest + content-addressed render storage.
+export {
+  helmValuesDigest,
+  indexRenderDocuments,
+  renderCacheKey,
+  renderStoreRoot,
+  persistHelmRender,
+  loadRenderManifest,
+  loadRenderContent,
+  listRenderManifests,
+  findRenderByCacheKey,
+  readRenderDocument,
+} from "./render-store";
+export type {
+  RenderManifest,
+  RenderDocumentEntry,
+  RenderDocumentRef,
+  RenderCacheKeySource,
+  RenderInputsIndexEntry,
+  PersistHelmRenderInput,
+  PersistedHelmRender,
+} from "./render-store";
+
+// #1239 — structure-preserving render wrapper: segment-based CRD routing.
+export { routeRender, routeStoredRender } from "./render-wrapper";
+export type {
+  RoutedRender,
+  RoutedDocument,
+  RoutedRenderWarning,
+  RoutedRenderWarningCode,
+  RouteRenderOptions,
+} from "./render-wrapper";
+
+// #1242 — pinned install path: wrapper-chart materialization.
+export { materializeWrapperChart, wrapperChartName } from "./wrapper-chart";
+export type { MaterializedWrapperChart } from "./wrapper-chart";
+
+// #1240 — addArchiveHelmRender: fold a pinned render into a build archive.
+export { addArchiveHelmRender, HELM_RENDER_MEDIA_TYPE } from "./archive-render";
+export type { AddArchiveHelmRenderInput, AddArchiveHelmRenderOutput } from "./archive-render";
+
+// #1251/#1252 — build-time coalesced-values probe and its provenance products.
+export {
+  probeCoalescedValues,
+  coalescedValuesDigest,
+  computeValueSources,
+  findDeadAssignments,
+  rootCoalescedValues,
+  getValuesProbeRecords,
+  recordValuesProbe,
+  clearValuesProbeRecords,
+} from "./values-probe";
+export type {
+  ValuesProbeOptions,
+  CoalescedValuesProbe,
+  CoalescedChartValues,
+  DisabledDependency,
+  SuppliedValuesLayer,
+  ValueOrigin,
+  ValuesAttributionInput,
+  DeadAssignment,
+  HelmValuesProbeRecord,
+} from "./values-probe";
+
+// Capability profiles — per-cluster render inputs (#1235, epic #1228)
+export {
+  helmConfigSchema,
+  helmCapabilityProfileSchema,
+  resolveCapabilityProfile,
+  validateCapabilityProfile,
+  KUBE_VERSION_PATTERN,
+} from "./config";
+export type {
+  HelmChantConfig,
+  HelmCapabilityProfile,
+  HelmCapabilityProfileConfig,
+  HelmCapabilityProfileRef,
+} from "./config";
 
 // Intrinsics
 export {
@@ -112,6 +203,19 @@ export { HelmParser } from "./import/parser";
 export { HelmGenerator } from "./import/generator";
 export { stripTemplateExpressions, classifyExpression } from "./import/template-stripper";
 export type { StrippedExpression, StripResult, ExpressionKind } from "./import/template-stripper";
+
+// Pinnability gate (#1234, epic #1228) — what the pinned-render pipeline
+// consults before anything is pinned
+export { classifyChart } from "./pinnability";
+export type {
+  PinnabilityVerdict,
+  PinnabilityReport,
+  ClassifyChartOptions,
+  CapabilityRequirement,
+  ClosedInput,
+  ConditionalHazard,
+  RenderEvidence,
+} from "./pinnability";
 
 // LSP providers
 export { helmCompletions } from "./lsp/completions";

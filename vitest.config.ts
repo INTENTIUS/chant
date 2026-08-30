@@ -27,6 +27,14 @@ const forkHeapMb = Math.max(
   Math.min(4096, Math.floor(((totalmem() / 1024 / 1024) * 0.5) / Math.max(cpus().length, 1))),
 );
 
+/**
+ * Vitest is on the 4.x line for chant #1693. Vitest 3.x gave the worker side
+ * of the worker<->host RPC birpc's hardcoded 60s call timeout, so when a
+ * saturated CI runner was slow to drain "onTaskUpdate" during teardown the
+ * worker threw `[vitest-worker]: Timeout calling "onTaskUpdate"` after every
+ * test had passed and the job went red. vitest-dev/vitest#8297 (shipped in
+ * 4.0.0-beta.4) sets that timeout to -1; there is no 3.x option to raise it.
+ */
 export default defineConfig({
   plugins: [tsconfigPaths({ ignoreConfigErrors: true })],
   test: {
@@ -50,6 +58,12 @@ export default defineConfig({
       // and lexicons/*/examples/ itself (no Docker), so it's included
       // explicitly the same way examples.test.ts is.
       "test/no-consumer-apps.test.ts",
+      // chant #1996 — unit coverage for discoverCorpus() itself: a
+      // lexicons/*/examples/* fixture's own declared lexicons, not just the
+      // directory it lives under. Same corpus-walking shape as the
+      // differentials below (no Docker), but no build — just what the corpus
+      // entries came back as.
+      "examples/differential-corpus.test.ts",
       "examples/fold-differential.test.ts",
       // chant #1045 Phase 1 — the JSON entity-boundary differential. Same
       // corpus-walking shape as fold-differential.test.ts above (no Docker).
@@ -67,13 +81,28 @@ export default defineConfig({
       // optional Kubernetes client package. Same corpus-walking shape as the
       // differentials above (no Docker, no cluster).
       "examples/k8s-client-boundary.test.ts",
+      "examples/readme-counts.test.ts",
+      // chant #1224 — the testing-harness worked example and its survival
+      // fixture. Both are gated (CHANT_HARNESS_E2E; the fixture on the env
+      // vars the outer suite sets) and skip cleanly in a plain run — Docker
+      // and Floci come into play only via `just testing-harness-e2e`.
+      "examples/testing-harness-aws/harness.e2e.test.ts",
+      "examples/testing-harness-aws/fixtures/failing-suite.test.ts",
+      // chant #1419 — unit tests for the missing-artifacts guard below.
+      "test/lexicon-artifacts.test.ts",
     ],
+    // chant #1419 — a fresh clone has no lexicon src/generated/ or
+    // dist/meta.json, and lexicon tests fail against their absence with
+    // module-not-found and plain assertion errors. `just test` builds them
+    // first (_ensure-gen); a direct `npx vitest run` gets one failure here
+    // naming the lexicons and the command instead. The check is a few
+    // hundred stat calls (~10ms); generation itself is ~55s cold, too slow
+    // to run implicitly.
+    globalSetup: ["test/lexicon-artifacts.setup.ts"],
     environment: "node",
-    poolOptions: {
-      forks: {
-        execArgv: [`--max-old-space-size=${forkHeapMb}`],
-      },
-    },
+    // Vitest 4 moved the per-worker node flags from poolOptions.forks.execArgv
+    // to this top-level key; the default pool is still forks.
+    execArgv: [`--max-old-space-size=${forkHeapMb}`],
     // The Temporal runtime/compile-smoke suites bundle workflows with webpack
     // in-process, which loads the CI runner enough to push short-timeout tests
     // (e.g. build.test.ts discovery) past the 5s default under contention.

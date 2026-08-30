@@ -17,7 +17,7 @@
  *
  * The policy files use `entityType`-string scopes (`{ is: "App::Document" }`)
  * and generated action constants, so a scaffolded project compiles the moment
- * `chant generate` has run against its own schema.
+ * `chant cedar generate` has run against its own schema (#1696).
  */
 
 import type { InitTemplateSet } from "@intentius/chant/lexicon";
@@ -30,12 +30,16 @@ function readme(title: string, body: string): string {
 
 \`\`\`bash
 npm install
-npx chant generate --lexicon cedar   # schema.cedarschema -> typed classes
-npx chant build                      # emits .cedar text + policies.cedar.json
+npx chant cedar generate   # schema.cedarschema -> src/generated/cedar/
+npx chant build            # emits .cedar text, policies.cedar.json, and the schema
 \`\`\`
 
-Generate first. The classes and action constants \`src/policies.ts\` imports do
-not exist until \`chant generate\` has read \`${SCHEMA_FILE}\`.
+Generate first. The classes and action constants \`src/policies.ts\` imports
+from \`./generated/cedar\` do not exist until \`chant cedar generate\` has read
+\`${SCHEMA_FILE}\`. The output is yours: it lives in this project, not in
+\`node_modules\`, so commit it (or regenerate it in CI before \`chant build\`)
+and re-run generate whenever the schema changes. \`cedar.outDir\` in
+\`chant.config.ts\` moves it.
 
 ${body}
 
@@ -63,6 +67,7 @@ this project never declared.
 |------|--------------|
 | \`dist/*.cedar\` | Every Cedar evaluator — AVP, cedar-agent, an embedded cedar-wasm |
 | \`dist/policies.cedar.json\` | The Cedar JSON policy format; also the parse source for import |
+| \`dist/${SCHEMA_FILE}\` | Your schema, beside the policies, so the build validates against it and a bundle can carry it |
 `;
 }
 
@@ -70,7 +75,7 @@ this project never declared.
 
 const DEFAULT_SCHEMA = `// The entity model your policies are typed against.
 //
-// \`chant generate --lexicon cedar\` turns every declaration below into a
+// \`chant cedar generate\` turns every declaration below into a
 // TypeScript class or constant, so a renamed entity type becomes a
 // compiler-guided refactor rather than a runtime validation failure.
 
@@ -96,7 +101,7 @@ namespace App {
 }
 `;
 
-const DEFAULT_POLICIES = `import { Policy, ReadAction, WriteAction } from "@intentius/chant-lexicon-cedar";
+const DEFAULT_POLICIES = `import { Policy, ReadAction, WriteAction } from "./generated/cedar";
 
 /**
  * A permit and a forbid — the smallest policy set worth deploying.
@@ -160,7 +165,7 @@ namespace Store {
 }
 `;
 
-const AVP_POLICIES = `import { Policy, EditAction, ViewAction } from "@intentius/chant-lexicon-cedar";
+const AVP_POLICIES = `import { Policy, EditAction, ViewAction } from "./generated/cedar";
 
 /**
  * Policies destined for an AVP policy store.
@@ -239,13 +244,8 @@ namespace Gateway {
 }
 `;
 
-const GATEWAY_POLICIES = `import {
-  DeleteAction,
-  DenyByDefaultSet,
-  GetAction,
-  Policy,
-  PostAction,
-} from "@intentius/chant-lexicon-cedar";
+const GATEWAY_POLICIES = `import { DenyByDefaultSet } from "@intentius/chant-lexicon-cedar";
+import { DeleteAction, GetAction, Policy, PostAction } from "./generated/cedar";
 
 /**
  * A gateway policy set with an explicit deny floor.
@@ -298,7 +298,7 @@ export const authenticatedWriteGrant = guarded.members[1];
  */
 export function cedarInitTemplates(template?: string): InitTemplateSet {
   const scripts = {
-    generate: "chant generate --lexicon cedar",
+    generate: "chant cedar generate",
     build: "chant build",
   };
 

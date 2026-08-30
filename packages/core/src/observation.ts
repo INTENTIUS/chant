@@ -112,6 +112,24 @@ export interface ObservationResult {
    * namespace, endpoint or region was read, not the one the resource lives in.
    */
   queried?: Record<string, string>;
+  /**
+   * Notices about the read as a whole, not about any one entity (#1265) —
+   * "the ownership filter could not be applied on this surface" is the
+   * canonical one. A note is a property of the environment or the read path,
+   * so core says each distinct note once per run, after the answer, however
+   * many stacks or lexicons reported it. A lexicon returns it here instead of
+   * printing, so the note cannot land ahead of the rows it qualifies.
+   */
+  notes?: string[];
+  /**
+   * What the deployable unit publishes, keyed by the stack that publishes it
+   * (#1279) — a CloudFormation stack's outputs, for instance. Stack-level, so it
+   * lives here once rather than on every resource: a node's `attributes` are
+   * that resource's own properties, and a VPC that carried the stack's
+   * `expWebIp` beside no `CidrBlock` of its own was answering the wrong
+   * question. Values are already scrubbed of anything that looks secret.
+   */
+  stackExports?: Record<string, Record<string, unknown>>;
 }
 
 /**
@@ -126,6 +144,10 @@ export interface NormalizedObservation {
   unobserved: Record<string, UnobservedEntity>;
   /** Resolved query address per entity name (#1620). Empty when the lexicon reported none. */
   queried: Record<string, string>;
+  /** Run-level notices (#1265), distinct. Empty when the lexicon reported none. */
+  notes: string[];
+  /** Per-stack exports (#1279), keyed by stack name. Absent when the lexicon reported none. */
+  stackExports?: Record<string, Record<string, unknown>>;
 }
 
 /** True when `value` is the versioned {@link ObservationResult} envelope. */
@@ -145,12 +167,16 @@ export function observation(
   resources: Record<string, ResourceMetadata>,
   unobserved?: Record<string, UnobservedEntity>,
   queried?: Record<string, string>,
+  notes?: string[],
+  stackExports?: Record<string, Record<string, unknown>>,
 ): ObservationResult {
   return {
     observation: "v1",
     resources,
     ...(unobserved && Object.keys(unobserved).length > 0 ? { unobserved } : {}),
     ...(queried && Object.keys(queried).length > 0 ? { queried } : {}),
+    ...(notes && notes.length > 0 ? { notes } : {}),
+    ...(stackExports && Object.keys(stackExports).length > 0 ? { stackExports } : {}),
   };
 }
 
@@ -161,11 +187,17 @@ export function observation(
  * {@link unobservedAll} rather than returning nothing.
  */
 export function normalizeObservation(value: DescribeResourcesResult | undefined): NormalizedObservation {
-  if (!value) return { resources: {}, unobserved: {}, queried: {} };
+  if (!value) return { resources: {}, unobserved: {}, queried: {}, notes: [] };
   if (isObservationResult(value)) {
-    return { resources: value.resources ?? {}, unobserved: value.unobserved ?? {}, queried: value.queried ?? {} };
+    return {
+      resources: value.resources ?? {},
+      unobserved: value.unobserved ?? {},
+      queried: value.queried ?? {},
+      notes: [...new Set(value.notes ?? [])],
+      ...(value.stackExports && Object.keys(value.stackExports).length > 0 ? { stackExports: value.stackExports } : {}),
+    };
   }
-  return { resources: value, unobserved: {}, queried: {} };
+  return { resources: value, unobserved: {}, queried: {}, notes: [] };
 }
 
 /**
@@ -205,15 +237,27 @@ export function mergeObservations(parts: Iterable<NormalizedObservation>): Norma
   const resources: Record<string, ResourceMetadata> = {};
   const unobserved: Record<string, UnobservedEntity> = {};
   const queried: Record<string, string> = {};
+  // A note is about the read, not a stack; four stacks saying the same thing
+  // is one note (#1265).
+  const notes = new Set<string>();
+  const stackExports: Record<string, Record<string, unknown>> = {};
   for (const part of parts) {
     Object.assign(resources, part.resources);
     Object.assign(unobserved, part.unobserved);
     Object.assign(queried, part.queried);
+    for (const n of part.notes) notes.add(n);
+    Object.assign(stackExports, part.stackExports ?? {});
   }
   // Present wins: a stack that could not be read does not un-observe a resource
   // another stack returned.
   for (const name of Object.keys(resources)) delete unobserved[name];
-  return { resources, unobserved, queried };
+  return {
+    resources,
+    unobserved,
+    queried,
+    notes: [...notes],
+    ...(Object.keys(stackExports).length > 0 ? { stackExports } : {}),
+  };
 }
 
 /** One-line human phrasing of a reason, for CLI output. */

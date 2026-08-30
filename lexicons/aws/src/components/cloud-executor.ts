@@ -24,6 +24,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { realDocker, type DockerClient } from "@intentius/chant/components/verbs/cloud-executor";
 import { q } from "@intentius/chant/components/verbs/process-runner";
+import { ownershipStackTagsForBody } from "../ownership.js";
 
 export type { DockerClient };
 
@@ -393,9 +394,26 @@ async function cfnChangeSetType(stackName: string): Promise<"CREATE" | "UPDATE">
  * CloudFormation refuses without the acknowledgement.
  */
 export function awsDeployCapabilities(template: { Transform?: unknown }): string {
+  return awsDeployCapabilityList(template).join(" ");
+}
+
+/** {@link awsDeployCapabilities} as a list, for the CFN API's `Capabilities.member.N` params. */
+export function awsDeployCapabilityList(template: { Transform?: unknown }): string[] {
   return template.Transform !== undefined
-    ? "CAPABILITY_NAMED_IAM CAPABILITY_AUTO_EXPAND"
-    : "CAPABILITY_NAMED_IAM";
+    ? ["CAPABILITY_NAMED_IAM", "CAPABILITY_AUTO_EXPAND"]
+    : ["CAPABILITY_NAMED_IAM"];
+}
+
+/**
+ * {@link awsDeployCapabilityList} for a raw template body. A body that isn't
+ * JSON gets the default list; the deploy itself reports the real problem.
+ */
+export function awsDeployCapabilitiesForBody(body: string): string[] {
+  try {
+    return awsDeployCapabilityList(JSON.parse(body) as { Transform?: unknown });
+  } catch {
+    return ["CAPABILITY_NAMED_IAM"];
+  }
 }
 
 const realCloudFormation: CloudFormationClient = {
@@ -410,14 +428,23 @@ const realCloudFormation: CloudFormationClient = {
     // for one still in REVIEW_IN_PROGRESS (a prior CREATE change set never
     // executed), mirroring what `aws cloudformation deploy` does under the hood.
     const changeSetType = await cfnChangeSetType(args.stackName);
-    let capabilities = "CAPABILITY_NAMED_IAM";
+    let body = "";
     try {
-      capabilities = awsDeployCapabilities(JSON.parse(readFileSync(args.templatePath, "utf8")) as { Transform?: unknown });
-    } catch { /* unreadable/non-JSON template — keep the default capability */ }
+      body = readFileSync(args.templatePath, "utf8");
+    } catch { /* unreadable template — create-change-set reports it */ }
+    const capabilities = awsDeployCapabilitiesForBody(body).join(" ");
+    // The template's ownership marker becomes the STACK's own tags (#1222) —
+    // the identity stack-level teardown verifies before a DeleteStack. Same
+    // source as the applier's `Tags.member.N`: `Metadata["chant:ownership"]`.
+    const stackTags = Object.entries(ownershipStackTagsForBody(body))
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([k, v]) => q(`Key=${k},Value=${v}`))
+      .join(" ");
+    const tagsFlag = stackTags ? ` --tags ${stackTags}` : "";
     await run(
       `aws cloudformation create-change-set --stack-name ${q(args.stackName)} --change-set-name ${q(changeSetName)} ` +
         `--change-set-type ${changeSetType} ` +
-        `--template-body file://${args.templatePath} --capabilities ${capabilities}${paramFlag}`,
+        `--template-body file://${args.templatePath} --capabilities ${capabilities}${paramFlag}${tagsFlag}`,
     );
     await run(
       `aws cloudformation wait change-set-create-complete --stack-name ${q(args.stackName)} --change-set-name ${q(changeSetName)}`,

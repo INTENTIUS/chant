@@ -1,0 +1,15 @@
+---
+title: "Skills"
+description: "The agent skills the lexicon ships."
+diataxis: reference
+---
+
+Three agent skills ship with the lexicon and load automatically in a project that uses it.
+
+| Skill | Covers |
+|---|---|
+| `chant-fountain` | The core authoring loop — declaring the three kinds, the build/apply/drift/import cycle, endpoint and auth |
+| `chant-fountain-secrets` | Secrets, `env_vars`, and `${VAR}` substitution: the order of preference, vault precedence, and what does not round-trip |
+| `chant-fountain-locked-sandboxes` | The locked-down posture for untrusted or security-sensitive agents, and running conversations against them |
+
+Invoke one directly by name, or let it trigger on context (`fountain`, `vault`, `sandbox`, `networking_type`).

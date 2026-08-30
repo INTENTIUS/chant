@@ -1,10 +1,9 @@
 import { describe, test, expect } from "vitest";
+import { makePostSynthCtx } from "@intentius/chant-test-utils";
 import { wgc203 } from "./wgc203";
 
 function makeCtx(yaml: string) {
-  return {
-    outputs: new Map([["gcp", yaml]]),
-  };
+  return makePostSynthCtx("gcp", yaml);
 }
 
 describe("WGC203: cloud-platform OAuth scope", () => {

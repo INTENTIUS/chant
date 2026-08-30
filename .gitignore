@@ -23,6 +23,7 @@ examples/*/.cert-arn
 examples/*/k8s.yaml
 examples/*/templates/*.json
 examples/*/.gitlab-ci.yml
+examples/*/.github/
 
 # supply-chain example: generated SBOM/config-BOM (npm run supply-chain)
 examples/supply-chain/sbom.*.json

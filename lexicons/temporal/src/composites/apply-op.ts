@@ -8,9 +8,11 @@
  * Phases: build → plan → [approve] → apply. Deletes ride the native
  * prune path, whose bound is per target: the ownership marker on `kubectl`,
  * the ownership tag on `arm` (chant #1448 — previously `--mode Complete`, which
- * removed resources chant never applied), and the stack itself on
- * `cloudformation`, which a resource CFN did not create is not in. All three
- * are owned-only. See {@link DeleteMode}.
+ * removed resources chant never applied), the ownership label on `gcp`
+ * (chant #1449), the metadata marker (machines) and managed app
+ * (volumes/ips/certs/secrets) on `fly` (chant #1449), and the stack itself on
+ * `cloudformation`, which a resource CFN did not create is not in. All of
+ * them are owned-only. See {@link DeleteMode}.
  *
  * An ungated apply may run on the local Op executor; a gated apply needs
  * Temporal for the durable approval wait (added in #125).
@@ -34,22 +36,33 @@
  */
 
 import { Op, phase, activity, gate, OpResource } from "@intentius/chant/op";
-import { defaultOutput, type ApplyTarget, type DeleteMode } from "../op/activities/apply";
+import { defaultOutput, hasNativeRollback, type ApplyTarget, type DeleteMode } from "../op/activities/apply";
 
 export interface ApplyOpConfig {
   /** Op name (kebab-case). */
   name: string;
-  /** Environment — CFN stack name / ARM resource group / kube context env. */
+  /** Environment — CFN stack name / ARM resource group / kube context env;
+   * a log label on `gcp` and `fly`. */
   env: string;
   /** Native apply mechanism. Default: "kubectl". */
   target?: ApplyTarget;
   /** Built manifest/template path. Default per target: `dist` (dir) for kubectl,
-   * `template.json` (file) for CloudFormation/ARM. Must match your build output. */
+   * `template.json` (file) for CloudFormation/ARM, `dist/gcp.yaml` for gcp,
+   * `dist/fly.json` for fly. Must match your build output. */
   output?: string;
   /** Project directory to build. Default: ".". */
   path?: string;
   /** Delete handling. Default: "never". */
   delete?: DeleteMode;
+  /**
+   * Effect handling (#1834, epic #1703 decision 6). `"gated"` pauses the run
+   * at the approval gate whenever the plan proposes an effect, so the Plan
+   * phase's effect-will-fire rows (#1832) are reviewed before any effect
+   * runs — the same durable-signal shape as `delete: "gated"`. The generic
+   * apply itself never writes a receipt regardless (#1832); only an
+   * `effect()` step does, on success, last.
+   */
+  effects?: "gated";
   /**
    * Approval gate before the apply. Implied when `delete: "gated"`; may also be
    * set explicitly. Omit `signalName` to default to `approve-<name>`.
@@ -57,9 +70,17 @@ export interface ApplyOpConfig {
   gate?: { signalName?: string; timeout?: string; description?: string };
   /**
    * Saga-style rollback on partial apply failure, run as an `onFailure` phase.
-   * Defaults on whenever the apply is destructive (`delete !== "never"`). Pass
-   * `{ command }` to supply a rollback command for targets without a native one
-   * (kubectl, ARM); `false` to disable.
+   *
+   * Compensation is total or refused (#1449): it only builds when the target
+   * has a rollback to run — a mapped native one (`cloudformation`, the aws
+   * lexicon's `rollbackStack`) or an explicit `{ command }`. Asking for it
+   * (`true`, or an object without a `command`) on any other target fails at
+   * build time rather than warning at rollback time.
+   *
+   * Defaults on for a destructive apply (`delete !== "never"`) when the target
+   * has a native rollback; a destructive apply on a target without one gets no
+   * compensation phase unless a `{ command }` supplies the rollback. Pass
+   * `false` to disable.
    */
   compensate?: boolean | { command?: string };
   /**
@@ -88,7 +109,7 @@ export function ApplyOp(config: ApplyOpConfig): ApplyOpResources {
   const target = config.target ?? "kubectl";
   const output = config.output ?? defaultOutput(target);
   const deleteMode = config.delete ?? "never";
-  const gated = deleteMode === "gated" || config.gate !== undefined;
+  const gated = deleteMode === "gated" || config.effects === "gated" || config.gate !== undefined;
 
   const phases = [
     phase("Build", [activity("chantBuild", { path: config.path ?? "." })]),
@@ -108,7 +129,9 @@ export function ApplyOp(config: ApplyOpConfig): ApplyOpResources {
         gate(config.gate?.signalName ?? `approve-${config.name}`, {
           ...(config.gate?.timeout ? { timeout: config.gate.timeout } : {}),
           description:
-            config.gate?.description ?? `Approve apply to ${config.env} (delete mode: ${deleteMode})`,
+            config.gate?.description ??
+            `Approve apply to ${config.env} (delete mode: ${deleteMode}` +
+              `${config.effects === "gated" ? ", effects: gated" : ""})`,
         }),
       ]),
     );
@@ -132,12 +155,28 @@ export function ApplyOp(config: ApplyOpConfig): ApplyOpResources {
     ]),
   );
 
-  // Compensation defaults on for destructive applies — a partial failure should
-  // unwind rather than leave the cloud half-applied.
-  const compensateDefault = deleteMode !== "never";
-  const compensateEnabled = config.compensate === undefined ? compensateDefault : config.compensate !== false;
+  // Compensation is total or refused (#1449). A rollback path is either the
+  // target's mapped native rollback (cloudformation's rollbackStack) or an
+  // explicit command; without one there is nothing a Rollback phase could run,
+  // so asking for one is refused here — at build time, with the op named —
+  // rather than surfacing as a warn when the rollback is already needed.
   const compensateCommand =
     typeof config.compensate === "object" ? config.compensate.command : undefined;
+  const rollbackAvailable = hasNativeRollback(target) || compensateCommand !== undefined;
+  if (config.compensate !== undefined && config.compensate !== false && !rollbackAvailable) {
+    throw new Error(
+      `ApplyOp "${config.name}": compensate is enabled, but target "${target}" has no automatic ` +
+        `rollback — the only mapped one today is cloudformation's rollbackStack. Either supply ` +
+        `compensate: { command: "..." } with a rollback of your own, or set compensate: false.`,
+    );
+  }
+
+  // Compensation defaults on for destructive applies — a partial failure should
+  // unwind rather than leave the cloud half-applied — but only where a rollback
+  // path exists; a destructive apply on a rollback-less target gets no
+  // compensation phase rather than one that could only warn.
+  const compensateDefault = deleteMode !== "never" && rollbackAvailable;
+  const compensateEnabled = config.compensate === undefined ? compensateDefault : config.compensate !== false;
 
   const op = Op({
     name: config.name,

@@ -1,10 +1,9 @@
 import { describe, test, expect } from "vitest";
+import { makePostSynthCtx } from "@intentius/chant-test-utils";
 import { wgc110 } from "./wgc110";
 
 function makeCtx(yaml: string) {
-  return {
-    outputs: new Map([["gcp", yaml]]),
-  };
+  return makePostSynthCtx("gcp", yaml);
 }
 
 describe("WGC110: missing key rotation", () => {

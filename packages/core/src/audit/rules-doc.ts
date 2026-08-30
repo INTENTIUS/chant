@@ -20,14 +20,26 @@ const GROUPS: Array<{ heading: string; prefixes: string[]; blurb: string }> = [
   { heading: "Azure ARM (AZR)", prefixes: ["AZR"], blurb: "Run against ARM deployment templates (JSON)." },
   { heading: "GCP Config Connector (WGC)", prefixes: ["WGC"], blurb: "Run against Config Connector (cnrm.cloud.google.com) manifests." },
   { heading: "Helm (WHM)", prefixes: ["WHM"], blurb: "Run against Helm charts (Chart.yaml + templates)." },
+  { heading: "fountain (FTN)", prefixes: ["FTN"], blurb: "Run against fountain manifests (`apiVersion: fountain.dev/v1`) — standalone `fountain apply` YAML is parsed back into the entity graph, so the same rules fire on `chant build` and `chant audit`." },
+  { heading: "Secrets & credentials (SEC)", prefixes: ["SEC"], blurb: "Lexicon-independent — scans the raw text of every scanned file for likely credentials, regardless of which audit lexicons are installed. Matched values are always redacted; see [suppressing false positives](/chant/cli/audit/#suppressing-a-secrets-finding)." },
+  { heading: "Wrangler config (WRG)", prefixes: ["WRG"], blurb: "Lexicon-independent, audit-only (#446) — scans `wrangler.toml`, Cloudflare Workers' native deploy config, which the engine cannot otherwise parse (it is not YAML/JSON). No authoring surface: chant does not write Wrangler config, it only reads it for these checks." },
 ];
+
+/**
+ * MDX treats `{expr}` as a JavaScript expression and `<x` as JSX, so rule
+ * text containing literal braces (`${VAR}` substitution references) or angle
+ * brackets must be escaped or the docs build fails at render time.
+ */
+function mdxEscape(text: string): string {
+  return text.replace(/\{/g, "\\{").replace(/</g, "\\<");
+}
 
 function ruleBlock(m: RuleMeta): string {
   const tags = `${m.tier} · ${m.fixKind}`;
   const authority = m.authority?.length
     ? `\n\nAuthority: ${m.authority.map((a) => `[${a.name}](${a.url})`).join(" · ")}`
     : "";
-  return `### ${m.id}\n\n**${m.title}** — ${tags}\n\n${m.remediation}${authority}`;
+  return `### ${m.id}\n\n**${mdxEscape(m.title)}** — ${tags}\n\n${mdxEscape(m.remediation)}${authority}`;
 }
 
 /**
@@ -49,6 +61,7 @@ export async function renderRulesReference(): Promise<string> {
   return `---
 title: Audit rules reference
 description: Every rule chant audit can report, with its tier, fix kind, and remediation.
+diataxis: reference
 ---
 
 This is the reference for every rule [\`chant audit\`](/chant/cli/audit/) can report. Each finding in a report links to its rule here.

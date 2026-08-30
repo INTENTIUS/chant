@@ -6,7 +6,7 @@ description: "Every lint rule and post-synth check provided by the GitHub Action
 {/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-github` — DO NOT EDIT.
     Edit lexicons/github/src/codegen/docs.ts instead; changes here are overwritten. */}
 
-The GitHub Actions lexicon provides **58** rules: 13 lint rules and 45 post-synth checks.
+The GitHub Actions lexicon provides **68** rules: 13 lint rules and 55 post-synth checks.
 
 ## Lint Rules
 
@@ -77,3 +77,13 @@ Post-synth checks validate the serialized output after the build pipeline comple
 | `GHA056` | Workflow without a name |
 | `GHA057` | Dependency update allows executing untrusted external code |
 | `GHA058` | Dependency update has no cooldown window |
+| `GHA059` | SHA-pinned action reference has a missing or internally-inconsistent version annotation |
+| `GHA060` | Generated GitHub App token granted broader scope than its consuming steps evidence |
+| `GHA061` | Action reference outside the configured usage policy (opt-in) |
+| `GHA062` | Pinned action reference matches a known-vulnerability advisory (feed-driven) |
+| `GHA063` | Dependency setup action without caching enabled |
+| `GHA064` | Job hardcoded onto an expensive runner with no sign it needs that OS |
+| `GHA065` | Matrix combines dimensions into an uncapped, large fan-out |
+| `GHA066` | Uploaded artifact has no explicit retention-days |
+| `GHA067` | Unconditional docker build with no path filter or guard |
+| `GHA068` | Pull-request workflow missing a concurrency group |

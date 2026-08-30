@@ -1,6 +1,7 @@
 ---
 title: CI & Distribution
 description: Integrate your lexicon into the monorepo CI pipeline, Docker smoke tests, and npm publishing
+diataxis: how-to
 ---
 
 import { Aside, Steps } from '@astrojs/starlight/components';
@@ -20,17 +21,18 @@ record that nothing here can create for you — hand your agent
 chant dev onboard <name>
 ```
 
-This patches 5 files:
+This patches 6 files:
 
 | File | What it adds |
 |------|-------------|
 | `package.json` (root) | `@intentius/chant-lexicon-<name>: "workspace:*"` dependency |
+| `tsconfig.json` (root) | `paths` mappings for the package and its subpaths. The whole-repo typecheck runs `moduleResolution: node`, which never reads exports maps, so a lexicon without this entry fails the `check` job as soon as an example imports it |
 | `.github/workflows/chant.yml` | Prepack lines in check/test jobs + validate step |
 | `.github/workflows/publish.yml` | Prepack line in test job (no publish step needed — `scripts/publish-packages.sh` enumerates the workspace) |
-| `test/Dockerfile.smoke` | Prepack validation line for workspace smoke test |
-| `test/Dockerfile.smoke-npm` | Prepack validation line for npm tarball smoke test |
+| `test/Dockerfile.smoke` | `<name>` in the `for lex in ...` lexicon list of the workspace smoke test |
+| `test/Dockerfile.smoke-npm` | `<name>` in both `for lex in ...` lexicon lists of the npm tarball smoke test |
 
-The command is idempotent — running it twice skips already-configured files.
+The command is idempotent. A second run changes nothing and reports each file as already covered.
 
 ## Manual steps after onboard
 
@@ -101,10 +103,11 @@ The command is idempotent — running it twice skips already-configured files.
    # Full test suite
    npx vitest run
 
-   # Docker smoke tests (optional but recommended)
-   docker build -f test/Dockerfile.smoke -t chant-smoke .
-   docker build -f test/Dockerfile.smoke-npm -t chant-smoke-npm .
+   # Docker smoke tests
+   just smoke
    ```
+
+   The Docker smoke images (`test/Dockerfile.smoke`, `test/Dockerfile.smoke-npm`) and the per-lexicon sections in `test/integration.sh` run **only locally**. No CI job builds them; the `smoke-npm` job in `.github/workflows/chant.yml` is gated `if: false` on purpose, because a Docker build per push is too expensive. A new lexicon's integration section therefore executes for the first time when you run `just smoke` by hand. Do that before the lexicon's first release.
 
 </Steps>
 

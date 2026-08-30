@@ -216,7 +216,7 @@ describe("gcpSerializer", () => {
       }),
     );
 
-    const result = gcpSerializer.serialize(entities);
+    const result = gcpSerializer.serialize(entities) as string;
     expect(result).toContain("env: prod");
     // Should not contain "dev" since explicit overrides
     const envLines = result.split("\n").filter((l: string) => l.includes("env:"));
@@ -233,7 +233,7 @@ describe("gcpSerializer", () => {
       }),
     );
 
-    const result = gcpSerializer.serialize(entities);
+    const result = gcpSerializer.serialize(entities) as string;
     // Only one document — property entities should not appear as separate docs
     expect(result.split("---").length).toBeLessThanOrEqual(2);
   });
@@ -264,7 +264,7 @@ describe("gcpSerializer", () => {
       }),
     );
 
-    const result = gcpSerializer.serialize(entities);
+    const result = gcpSerializer.serialize(entities) as string;
     const lines = result.split("\n");
     const keyLines = lines.filter((l: string) => /^\w+:/.test(l));
     const keys = keyLines.map((l: string) => l.split(":")[0]);

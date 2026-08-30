@@ -1,6 +1,7 @@
 ---
 title: Build-Time Parameters
 description: Vary a build across environments without reading process.env — declare a parameter, supply it to chant build, reference it as a literal.
+diataxis: explanation
 ---
 
 import { Aside } from '@astrojs/starlight/components';
@@ -88,11 +89,45 @@ export const env = params.env ?? "dev";
 
 `params` is a plain object, so ordinary property access, optional chaining, and `??` all work exactly as they do on any other value.
 
+### Optional parameters
+
+A parameter declared with `required: false` and no `default` may go unset without a build error. An unset optional parameter is absent from `params`, so `params.<name>` reads as `undefined`, never `null`. A default written as `?? x` applies, a truthiness check is false, and a property that receives the bare value (`spec: { baseImageArn: params.baseImageArn }`) is dropped from the output in both JSON and YAML rather than shipped as `baseImageArn: null`.
+
+```typescript
+// chant.config.ts
+baseImageArn: { type: "string", required: false, env: "KMV_BASE_IMAGE_ARN" },
+
+// params.ts
+export const baseImageArn =
+  (params.baseImageArn as string | undefined) ?? `arn:aws:lambda:${region}:aws:microvm-image:al2023-1`;
+```
+
+An explicitly supplied empty string (`--param name=` or an exported-but-empty env var) is a value, not "unset". It reaches `params.<name>` as `""` and does not fall through `??`. A `null` in a `--params-file` is rejected as a build error.
+
 ## Why it folds
 
 Because the value is known at build invocation — before any project file is imported or folded — a `params.<name>` reference resolves to a **literal**, not a symbolic node, and not a function call. `env: process.env.LOOM_ENV ?? "dev"` cannot fold: the value comes from ambient state at module-evaluation time. `env: params.env` folds to `"dev"` (or whatever the build was invoked with) the same way a `const` does, so [`chant build --fold`](/chant/concepts/typescript-as-data/#folded-vs-run) reduces it with zero module execution.
 
 Determinism is preserved, not weakened: same parameters in, same output out. The parameters are supplied explicitly and recorded (`BuildResult.buildParams`), rather than read invisibly from whatever environment happened to be running the build.
+
+## The ownership marker follows the parameter
+
+`chant.config.ts` is evaluated before build parameters exist, so a config field cannot read `params.env`. For the one config field that naturally wants to vary with the build, the [`ownership`](/chant/configuration/config-file/#ownership) marker's `env`, the config references the parameter instead:
+
+```typescript
+export default {
+  ownership: { stack: "fountain", env: { param: "env" } },
+  buildParams: {
+    env: { type: "string", default: "dev", env: "FOUNTAIN_ENV" },
+  },
+} satisfies ChantConfig;
+```
+
+`--param env=prod` then sets the `chant.intentius.io/env` label and the `params.env` value in source from one resolution. Before this, a config that wanted both had to read `process.env` itself for the marker and declare a parameter for the label, and nothing kept the two in step. A build with a literal `ownership.env` next to an `env` parameter that resolved to a different value warns, naming both values.
+
+A reference that cannot be satisfied, a parameter the config does not declare or one that resolved to no value, is a build error. The marker is what `--owned` filtering, drift and prune key on, so a marker stamped without an env is the quiet failure this exists to rule out.
+
+Interpolating the same parameter into physical names is what lets several instances of one stack coexist in one account — `chant build --param env=staging` and `--param env=prod` then produce disjoint names and disjoint markers from the same source. The parameter can also declare `env: "CHANT_ENV"` so `chant build --env <name>` supplies it, validated against the project's declared `environments`. Both patterns are worked through in [Resource Naming](/chant/guide/resource-naming/#multi-environment-coexistence).
 
 ## A pointed error for `process.env`
 
@@ -111,3 +146,4 @@ rather than reading process.env directly
 - [Where Values Come From](/chant/concepts/where-values-come-from/) — how a build-time parameter fits among static data, deploy-time inputs, and refused runtime lookups
 - [Parameters & Outputs](/chant/getting-started/parameters-and-outputs/) — the deploy-time `Parameter()`, a different concept
 - [`chant build` CLI reference](/chant/cli/build/) — `--param`/`--params-file` flags
+- [Resource Naming](/chant/guide/resource-naming/#multi-environment-coexistence) — interpolating `params.env` into names so environments coexist in one account

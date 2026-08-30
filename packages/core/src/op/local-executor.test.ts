@@ -8,6 +8,7 @@ import {
   LocalGateUnsupportedError,
   OpRunFailure,
 } from "./local-executor";
+import { stepOutput } from "./step-output-ref";
 
 // Fast profiles so retry/timeout tests run in milliseconds.
 const PROFILES: Record<string, ActivityProfile> = {
@@ -259,5 +260,96 @@ describe("runOpLocally — gate rejection", () => {
       phases: [{ name: "P", steps: [{ kind: "gate", signalName: "g" }] }],
     }));
     expect(gated?.signalName).toBe("g");
+  });
+});
+
+describe("runOpLocally — step-output references (#1290)", () => {
+  test("a later step receives the producer's resolved value, not the placeholder", async () => {
+    const received: unknown[] = [];
+    const activities = new Map<string, ActivityFn>([
+      ["produce", async () => ({ driftedStacks: ["a", "b"], count: 2 })],
+      ["consume", async (args) => { received.push(args); }],
+    ]);
+    const config = op({
+      phases: [{ name: "P", steps: [
+        { kind: "activity", fn: "produce", id: "diff" },
+        { kind: "activity", fn: "consume", args: { stacks: stepOutput("diff", "driftedStacks") } },
+      ] }],
+    });
+    const result = await runOpLocally(config, activities, PROFILES);
+    expect(result.ok).toBe(true);
+    expect(received).toEqual([{ stacks: ["a", "b"] }]);
+    // The recorded step also shows the resolved value, not the raw ref object.
+    expect(result.records[1].args).toEqual({ stacks: ["a", "b"] });
+  });
+
+  test("a whole-value reference (no path) passes the entire producer result", async () => {
+    const received: unknown[] = [];
+    const activities = new Map<string, ActivityFn>([
+      ["produce", async () => ({ ok: true, detail: "x" })],
+      ["consume", async (args) => { received.push(args); }],
+    ]);
+    const config = op({
+      phases: [{ name: "P", steps: [
+        { kind: "activity", fn: "produce", id: "p" },
+        { kind: "activity", fn: "consume", args: { result: stepOutput("p") } },
+      ] }],
+    });
+    await runOpLocally(config, activities, PROFILES);
+    expect(received).toEqual([{ result: { ok: true, detail: "x" } }]);
+  });
+
+  test("resolves a reference nested inside an object and an array", async () => {
+    const received: unknown[] = [];
+    const activities = new Map<string, ActivityFn>([
+      ["produce", async () => ({ name: "prod" })],
+      ["consume", async (args) => { received.push(args); }],
+    ]);
+    const config = op({
+      phases: [{ name: "P", steps: [
+        { kind: "activity", fn: "produce", id: "p" },
+        {
+          kind: "activity",
+          fn: "consume",
+          args: { config: { tags: ["static", stepOutput("p", "name")] } },
+        },
+      ] }],
+    });
+    await runOpLocally(config, activities, PROFILES);
+    expect(received).toEqual([{ config: { tags: ["static", "prod"] } }]);
+  });
+
+  test("an unresolvable path resolves to undefined instead of throwing", async () => {
+    const received: unknown[] = [];
+    const activities = new Map<string, ActivityFn>([
+      ["produce", async () => ({})],
+      ["consume", async (args) => { received.push(args); }],
+    ]);
+    const config = op({
+      phases: [{ name: "P", steps: [
+        { kind: "activity", fn: "produce", id: "p" },
+        { kind: "activity", fn: "consume", args: { v: stepOutput("p", "a.b") } },
+      ] }],
+    });
+    const result = await runOpLocally(config, activities, PROFILES);
+    expect(result.ok).toBe(true);
+    expect(received).toEqual([{ v: undefined }]);
+  });
+
+  test("e2e: chant run (non-temporal) end to end — producer object flows to consumer", async () => {
+    const activities = new Map<string, ActivityFn>([
+      ["lifecycleDiff", async () => ({ driftedStacks: ["stack-a"], drifted: true })],
+      ["applyStacks", async (args) => ({ applied: args.stacks })],
+    ]);
+    const config = op({
+      phases: [
+        { name: "Diff", steps: [{ kind: "activity", fn: "lifecycleDiff", id: "diff", args: { env: "prod" } }] },
+        { name: "Apply", steps: [{ kind: "activity", fn: "applyStacks", args: { stacks: stepOutput("diff", "driftedStacks") } }] },
+      ],
+    });
+    const result = await runOpLocally(config, activities, PROFILES);
+    expect(result.ok).toBe(true);
+    expect(result.records.every((r) => r.status === "ok")).toBe(true);
+    expect(result.records[1].args).toEqual({ stacks: ["stack-a"] });
   });
 });

@@ -1,6 +1,6 @@
 {
   "name": "@intentius/chant-lexicon-helm",
-  "version": "0.44.14",
+  "version": "0.52.1",
   "description": "Helm chart lexicon for chant — declarative IaC in TypeScript",
   "license": "Apache-2.0",
   "homepage": "https://intentius.io/chant",
@@ -49,6 +49,11 @@
       "types": "./dist/components/index.d.ts",
       "default": "./src/components/index.ts"
     },
+    "./pinnability": {
+      "development": "./src/pinnability/index.ts",
+      "types": "./dist/pinnability/index.d.ts",
+      "default": "./src/pinnability/index.ts"
+    },
     "./lint/post-synth": {
       "development": "./src/lint/post-synth/index.ts",
       "types": "./dist/lint/post-synth/index.d.ts",
@@ -73,7 +78,7 @@
   },
   "dependencies": {
     "@intentius/chant-lexicon-k8s": "*",
-    "js-yaml": "^4.1.0"
+    "js-yaml": "^4.3.1"
   },
   "devDependencies": {
     "@intentius/chant": "*",
@@ -81,7 +86,8 @@
     "@types/js-yaml": "^4.0.9"
   },
   "peerDependencies": {
-    "@intentius/chant": "^0.44.14",
-    "typescript": "^5.9.3"
+    "@intentius/chant": "^0.52.1",
+    "typescript": "^5.9.3",
+    "zod": "^4.3.6"
   }
 }

@@ -106,7 +106,7 @@ const { foldExecutionCounts, resetFoldExecutionCounts } = await import("../packa
 // --sandbox` does off the parsed flag, before the first config load.
 armSandboxConfigEvaluation();
 
-const CORPUS = discoverCorpus();
+const CORPUS = await discoverCorpus();
 
 interface ReportRow {
   name: string;

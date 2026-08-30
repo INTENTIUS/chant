@@ -20,7 +20,8 @@
  * @see #31 — Continuous observation (the issue this composite addresses)
  */
 
-import { Op, phase, activity, OpResource } from "@intentius/chant/op";
+import { Op, phase, activity, OpResource, receiptCheckInput } from "@intentius/chant/op";
+import type { EffectReceiptDeclaration } from "@intentius/chant/effect-receipt";
 import { TemporalSchedule } from "../resources";
 
 function kebabToCamel(s: string): string {
@@ -51,6 +52,15 @@ export interface WatchOpConfig {
    * @default true
    */
   live?: boolean;
+  /**
+   * Effect receipts to check for staleness between change windows (#1834,
+   * epic #1703). Typed references only — import each EffectReceipt const.
+   * Read-only: the watch reads each receipt through the receipt store
+   * (provided by the receipt row's lexicon, #1835) and reports absent or
+   * differing values as findings. It never runs an effect and never writes
+   * a receipt — the `effect()` step is the sole writer.
+   */
+  receipts?: EffectReceiptDeclaration[];
 }
 
 export interface WatchOpResources {
@@ -85,6 +95,21 @@ export function WatchOp(config: WatchOpConfig): WatchOpResources {
           outcomeAttribute: { name: "Drift", from: "drifted" },
         },
       ]),
+      // Receipt staleness (#1834): read-only over the receipt store — absent
+      // or differing receipts surface as findings (and a StaleReceipts search
+      // attribute); nothing runs and nothing is written.
+      ...(config.receipts && config.receipts.length > 0
+        ? [
+            phase("Receipts", [
+              {
+                kind: "activity" as const,
+                fn: "receiptStaleness",
+                args: { receipts: config.receipts.map(receiptCheckInput) },
+                outcomeAttribute: { name: "StaleReceipts", from: "stale" },
+              },
+            ]),
+          ]
+        : []),
     ],
   });
 

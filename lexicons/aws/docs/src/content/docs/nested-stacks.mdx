@@ -1,10 +1,13 @@
 ---
 title: "Nested Stacks"
 description: "Splitting resources into child CloudFormation templates with automatic cross-stack reference wiring"
+diataxis: how-to
 ---
 
 {/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-aws` — DO NOT EDIT.
-    Edit lexicons/aws/src/codegen/docs.ts instead; changes here are overwritten. */}
+    Edit lexicons/aws/docs/pages/nested-stacks.mdx instead; changes here are overwritten. */}
+
+
 import Diagram from '../../components/Diagram.astro';
 
 CloudFormation nested stacks (`AWS::CloudFormation::Stack`) let you decompose large templates into smaller, reusable child templates. The AWS lexicon's `nestedStack()` function references a **child project directory** — a subdirectory that builds independently to a valid CloudFormation template.

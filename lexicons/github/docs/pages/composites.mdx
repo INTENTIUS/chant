@@ -1,0 +1,291 @@
+---
+title: "Composites"
+description: "Pre-built composites — action wrappers, CI pipelines, Docker builds, and deploy environments"
+diataxis: reference
+---
+
+Composites are pre-built abstractions that produce typed GitHub Actions resources. They range from single-action wrappers to full multi-job workflow pipelines.
+
+{{file:docs-snippets/src/composites-usage.ts}}
+
+**A note on folding.** These two composite shapes fold differently (see [Folded vs Run](/chant/concepts/typescript-as-data/#folded-vs-run)). A single-action wrapper like `Checkout({...})` is normally embedded inline as `checkout.step` inside a `Job`'s `steps` array — a call nested as a value inside another resource's own properties, which is outside the fold subset, so a file using it falls back to the normal run path. A multi-job pipeline composite like `NodePipeline({...})` is normally consumed the other way: bound to a local `const`, then each member re-exported separately (`export const nodeWorkflow = node.workflow`) — a top-level export whose value is a call result's member access, which is exactly the composite-call shape folding resolves (chant #1023).
+
+## Checkout
+
+Wraps `actions/checkout@v4`. Clones the repository.
+
+```typescript
+import { Checkout } from "@intentius/chant-lexicon-github";
+
+Checkout({}).step                              // Default checkout
+Checkout({ fetchDepth: 0 }).step               // Full history
+Checkout({ ref: "develop" }).step              // Specific branch
+Checkout({ submodules: "recursive" }).step     // With submodules
+```
+
+**Props:** `ref?`, `repository?`, `fetchDepth?`, `token?`, `submodules?`, `sshKey?`
+
+## SetupNode
+
+Wraps `actions/setup-node@v4`. Installs Node.js with optional dependency caching.
+
+```typescript
+import { SetupNode } from "@intentius/chant-lexicon-github";
+
+SetupNode({ nodeVersion: "22" }).step              // Node 22
+SetupNode({ nodeVersion: "22", cache: "npm" }).step // With npm cache
+SetupNode({ nodeVersion: "20", cache: "pnpm" }).step // pnpm cache
+```
+
+**Props:** `nodeVersion?`, `cache?` (`"npm"` | `"pnpm"` | `"yarn"`), `registryUrl?`
+
+## SetupGo
+
+Wraps `actions/setup-go@v5`. Installs Go.
+
+```typescript
+import { SetupGo } from "@intentius/chant-lexicon-github";
+
+SetupGo({ goVersion: "1.22" }).step
+SetupGo({ goVersion: "stable" }).step
+```
+
+**Props:** `goVersion?`, `cache?`
+
+## SetupPython
+
+Wraps `actions/setup-python@v5`. Installs Python.
+
+```typescript
+import { SetupPython } from "@intentius/chant-lexicon-github";
+
+SetupPython({ pythonVersion: "3.12" }).step
+SetupPython({ pythonVersion: "3.12", cache: "pip" }).step
+```
+
+**Props:** `pythonVersion?`, `cache?` (`"pip"` | `"pipenv"` | `"poetry"`), `architecture?`
+
+## CacheAction
+
+Wraps `actions/cache@v4`. Caches files between workflow runs.
+
+```typescript
+import { CacheAction } from "@intentius/chant-lexicon-github";
+
+CacheAction({
+  path: "~/.npm",
+  key: "npm-${{ runner.os }}-${{ hashFiles('**/package-lock.json') }}",
+  restoreKeys: ["npm-${{ runner.os }}-"],
+}).step
+```
+
+**Props:** `path`, `key`, `restoreKeys?`
+
+## UploadArtifact
+
+Wraps `actions/upload-artifact@v4`. Uploads files as workflow artifacts.
+
+```typescript
+import { UploadArtifact } from "@intentius/chant-lexicon-github";
+
+UploadArtifact({
+  name: "build-output",
+  path: "dist/",
+  retentionDays: 7,
+}).step
+```
+
+**Props:** `name`, `path`, `retentionDays?`, `ifNoFilesFound?`
+
+## DownloadArtifact
+
+Wraps `actions/download-artifact@v4`. Downloads previously uploaded artifacts.
+
+```typescript
+import { DownloadArtifact } from "@intentius/chant-lexicon-github";
+
+DownloadArtifact({
+  name: "build-output",
+  path: "dist/",
+}).step
+```
+
+**Props:** `name`, `path?`
+
+## NodeCI
+
+A batteries-included composite that produces a full CI workflow and job. Generates a `Workflow` (push + PR on main) and a `Job` with checkout, setup-node, install, build, and test steps.
+
+```typescript
+import { NodeCI } from "@intentius/chant-lexicon-github";
+
+// Default: Node 22, npm, "build" + "test" scripts
+const { workflow, job } = NodeCI({});
+
+// Customized
+const { workflow: w, job: j } = NodeCI({
+  nodeVersion: "20",
+  packageManager: "pnpm",
+  buildScript: "compile",
+  testScript: "test:ci",
+});
+```
+
+**Props:** `nodeVersion?`, `packageManager?` (`"npm"` | `"pnpm"` | `"yarn"` | `"bun"`), `buildScript?`, `testScript?`, `installCommand?`
+
+The returned `workflow` and `job` can be exported directly:
+
+```typescript
+const ci = NodeCI({ nodeVersion: "22", packageManager: "npm" });
+export const workflow = ci.workflow;
+export const build = ci.job;
+```
+
+## NodePipeline
+
+A production-grade Node pipeline with separate build and test jobs connected by artifact passing. The build job uploads artifacts; the test job downloads them and runs tests with `needs: ["build"]`.
+
+```typescript
+import { NodePipeline } from "@intentius/chant-lexicon-github";
+
+const { workflow, buildJob, testJob } = NodePipeline({
+  nodeVersion: "22",
+  packageManager: "pnpm",
+  buildScript: "build",
+  testScript: "test:ci",
+  buildArtifactPaths: ["dist/", "lib/"],
+});
+```
+
+**Props:** `nodeVersion?`, `packageManager?` (`"npm"` | `"pnpm"` | `"yarn"` | `"bun"`), `buildScript?`, `testScript?`, `installCommand?`, `buildArtifactPaths?`, `artifactName?`, `artifactRetentionDays?`, `runsOn?`
+
+### Presets
+
+```typescript
+import { BunPipeline, PnpmPipeline, YarnPipeline } from "@intentius/chant-lexicon-github";
+
+const bun = BunPipeline({});         // packageManager: "bun", uses oven-sh/setup-bun@v2
+const pnpm = PnpmPipeline({});       // packageManager: "pnpm"
+const yarn = YarnPipeline({});       // packageManager: "yarn"
+```
+
+## PythonCI
+
+Python CI with test and optional lint jobs. Supports pip and Poetry workflows.
+
+```typescript
+import { PythonCI } from "@intentius/chant-lexicon-github";
+
+const { workflow, testJob, lintJob } = PythonCI({
+  pythonVersion: "3.12",
+  testCommand: "pytest --junitxml=report.xml --cov",
+  lintCommand: "ruff check .",
+});
+
+// Omit lint job
+const { workflow: w, testJob: t } = PythonCI({ lintCommand: null });
+
+// Poetry mode
+const poetry = PythonCI({ usePoetry: true });
+```
+
+**Props:** `pythonVersion?`, `testCommand?`, `lintCommand?` (null to omit), `requirementsFile?`, `usePoetry?`, `runsOn?`
+
+## DockerBuild
+
+Docker build and push using official Docker actions (login, setup-buildx, metadata, build-push). Configured for GitHub Container Registry by default.
+
+```typescript
+import { DockerBuild } from "@intentius/chant-lexicon-github";
+
+const { workflow, job } = DockerBuild({
+  registry: "ghcr.io",
+  imageName: "ghcr.io/my-org/my-app",
+  dockerfile: "Dockerfile",
+  platforms: ["linux/amd64", "linux/arm64"],
+});
+```
+
+**Props:** `tag?`, `dockerfile?`, `context?`, `registry?`, `imageName?`, `tagLatest?`, `buildArgs?`, `push?`, `platforms?`, `runsOn?`
+
+## DeployEnvironment
+
+Deploy and cleanup job pair using GitHub Environments with concurrency control.
+
+```typescript
+import { DeployEnvironment } from "@intentius/chant-lexicon-github";
+
+const { deployJob, cleanupJob } = DeployEnvironment({
+  name: "staging",
+  deployScript: ["npm run build", "npm run deploy"],
+  cleanupScript: "npm run teardown",
+  url: "https://staging.example.com",
+});
+```
+
+**Props:** `name` (required), `deployScript` (required), `cleanupScript?`, `url?`, `concurrencyGroup?`, `cancelInProgress?`, `runsOn?`
+
+## GoCI
+
+Go CI with build, test, and optional lint jobs. Uses `golangci-lint-action` for linting.
+
+```typescript
+import { GoCI } from "@intentius/chant-lexicon-github";
+
+const { workflow, buildJob, testJob, lintJob } = GoCI({
+  goVersion: "1.22",
+  buildCommand: "go build ./...",
+  testCommand: "go test ./... -v -race",
+});
+
+// Without lint
+const noLint = GoCI({ lintCommand: null });
+```
+
+**Props:** `goVersion?`, `testCommand?`, `buildCommand?`, `lintCommand?` (null to omit), `runsOn?`
+
+## Dependabot
+
+Models the repository's dependency-update configuration (`.github/dependabot.yml`) as a chant resource, so it is emitted and lintable like a workflow. The composite ships **safe defaults**: a cooldown window on every ecosystem (so a version published moments ago — including a compromised one — is not adopted before anyone can react) and external code execution explicitly denied.
+
+```typescript
+import { Dependabot } from "@intentius/chant-lexicon-github";
+
+export const dependabot = Dependabot({
+  ecosystems: [
+    { packageEcosystem: "npm", directory: "/" },
+    { packageEcosystem: "github-actions", directory: "/" },
+  ],
+  // cooldownDays defaults to 7, openPullRequestsLimit to 5
+});
+```
+
+**Props:** `ecosystems` (required — each `{ packageEcosystem, directory?, interval? }`), `cooldownDays?` (default 7), `openPullRequestsLimit?` (default 5)
+
+For full control, construct the `DependabotConfig` resource directly with raw `updates:` entries. Two post-synth checks validate the emitted config: **GHA057** (`insecure-external-code-execution: allow`) and **GHA058** (no cooldown). See [Lint Rules](/chant/lexicons/github/lint-rules/).
+
+## PrPlanReport
+
+Runs `chant lifecycle plan <environment> --report markdown` and posts (or updates) one sticky PR comment with the result — the compiled diff reaches the reviewer without being asked for. Guarded on `github.event_name == 'pull_request'`, since the comment targets `github.event.number`.
+
+```typescript
+import { PrPlanReport } from "@intentius/chant-lexicon-github";
+
+export const plan = PrPlanReport({
+  environment: "prod",
+  // credential setup — the plan queries the live system to classify drift
+  before: ["aws sts get-caller-identity"],
+}).job;
+```
+
+The job builds, plans, writes the markdown to `plan.md` with a hidden marker prepended (`<!-- chant-pr-plan-report:prod -->` by default — one per `environment`, so two environments get two comments), then finds a comment already carrying that marker and `PATCH`es it, or `POST`s a new one. Same mechanism `examples/github-pr-preview` proved for the preview-environment comment: a scripted `gh api` call keyed on the marker, no marketplace action to pin.
+
+The job needs its own `Workflow` (`on: pull_request`) declared alongside it — `PrPlanReport` returns only the job, the same as `DeployEnvironment`.
+
+**Props:** `environment` (required), `lexicon?`, `ownedOnly?`, `runsOn?`, `nodeVersion?`, `installCommand?`, `before?`, `postComment?` (default `true` — the explicit opt-out), `marker?`
+
+Caveats worth knowing:
+
+- **Opt-out is explicit.** `postComment: false` still runs the plan (useful to read in the job log, or ahead of turning the comment on) without posting anything.
+- **The plan reads the live system**, so the job needs cloud credentials — wire them via `before` or CI variables, same as `MrPlanReport` on GitLab.
+- **Forgejo gets this for free.** The forgejo lexicon re-exports every github composite through its dialect (`@intentius/chant-lexicon-forgejo` re-exports `@intentius/chant-lexicon-github`), so `PrPlanReport` works unchanged there — the dialect still drops the job's `permissions` and remaps its runner label, same as any other github-lexicon job.

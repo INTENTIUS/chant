@@ -1,0 +1,4 @@
+# The parent ships no override for kid.persistence.enabled, so the
+# subchart's own default (false) decides — exactly how kube-prometheus-stack
+# leaves grafana's persistence off.
+kid: {}

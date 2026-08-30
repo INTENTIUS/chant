@@ -7,7 +7,7 @@
  */
 
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
-import { getPrimaryOutput, parseK8sManifests } from "./k8s-helpers";
+import { docsToManifests } from "./k8s-helpers";
 
 export const wk8402: PostSynthCheck = {
   id: "WK8402",
@@ -16,25 +16,20 @@ export const wk8402: PostSynthCheck = {
   check(ctx: PostSynthContext): PostSynthDiagnostic[] {
     const diagnostics: PostSynthDiagnostic[] = [];
 
-    for (const [, output] of ctx.outputs) {
-      const yaml = getPrimaryOutput(output);
-      const manifests = parseK8sManifests(yaml);
+    for (const manifest of docsToManifests(ctx)) {
+      if (manifest.kind !== "RayCluster") continue;
 
-      for (const manifest of manifests) {
-        if (manifest.kind !== "RayCluster") continue;
+      const name = manifest.metadata?.name ?? "RayCluster";
+      const rayVersion = (manifest.spec as Record<string, unknown> | undefined)?.rayVersion;
 
-        const name = manifest.metadata?.name ?? "RayCluster";
-        const rayVersion = (manifest.spec as Record<string, unknown> | undefined)?.rayVersion;
-
-        if (!rayVersion) {
-          diagnostics.push({
-            checkId: "WK8402",
-            severity: "warning",
-            message: `RayCluster "${name}" is missing spec.rayVersion — KubeRay autoscaler will pull the "latest" image tag`,
-            entity: name,
-            lexicon: "k8s",
-          });
-        }
+      if (!rayVersion) {
+        diagnostics.push({
+          checkId: "WK8402",
+          severity: "warning",
+          message: `RayCluster "${name}" is missing spec.rayVersion — KubeRay autoscaler will pull the "latest" image tag`,
+          entity: name,
+          lexicon: "k8s",
+        });
       }
     }
 

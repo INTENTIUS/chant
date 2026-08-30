@@ -178,8 +178,8 @@ See `ops/gke-bootstrap.op.ts` for the workflow definition.
 
 ## Resource counts
 
-- **GCP lexicon**: ~15 Config Connector resources (VPC, subnets, NAT, GKE cluster, node pool, service accounts, IAM bindings, DNS zone)
-- **K8s lexicon**: ~20 Kubernetes resources (namespaces, quotas, limits, network policy, deployment, HPA, PDB, service, service accounts, ingress, storage class, DaemonSets, cluster roles, cluster role bindings, config maps)
+- **GCP lexicon**: 22 Config Connector resources (VPC, 2 subnets, 2 firewall rules, router, NAT, GKE cluster, node pool, 4 service accounts, 8 IAM bindings, DNS zone)
+- **K8s lexicon**: 28 Kubernetes resources (namespaces, quotas, limits, network policy, deployment, HPA, PDB, service, service accounts, ingress, storage class, DaemonSets, cluster roles, cluster role bindings, config maps)
 
 ## Cross-lexicon value flow
 

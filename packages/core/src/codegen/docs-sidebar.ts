@@ -1,13 +1,50 @@
 /**
  * Sidebar generation for Starlight docs sites.
+ *
+ * Grouped by Diátaxis quadrant (https://diataxis.fr), chant #1731. Every page
+ * the pipeline knows about — authored under docs/pages/ and generated reference
+ * tables — arrives as a {@link SidebarPage} with a quadrant; this module only sorts and nests. Empty quadrants are omitted.
  */
 
-import type { DocsConfig, DocsResult } from "./docs-types";
+import { QUADRANTS, QUADRANT_LABELS } from "./docs-pages";
+import type { DocsConfig, DocsResult, Quadrant, SidebarPage } from "./docs-types";
+
+type Entry = Record<string, unknown>;
+
+function byOrderThenLabel(a: SidebarPage, b: SidebarPage): number {
+  const ao = a.order ?? Number.POSITIVE_INFINITY;
+  const bo = b.order ?? Number.POSITIVE_INFINITY;
+  if (ao !== bo) return ao - bo;
+  return a.label.localeCompare(b.label);
+}
+
+/**
+ * One quadrant's entries: ungrouped pages first (by order, then label), then
+ * each nested `group` in order of its lowest-ordered member.
+ */
+export function quadrantItems(pages: SidebarPage[]): Entry[] {
+  const loose = pages.filter((p) => !p.group).sort(byOrderThenLabel);
+  const groups = new Map<string, SidebarPage[]>();
+  for (const p of pages) {
+    if (!p.group) continue;
+    const list = groups.get(p.group) ?? [];
+    list.push(p);
+    groups.set(p.group, list);
+  }
+  const items: Entry[] = loose.map((p) => ({ label: p.label, slug: p.slug }));
+  const grouped = [...groups.entries()]
+    .map(([label, members]) => ({ label, members: members.sort(byOrderThenLabel) }))
+    .sort((a, b) => byOrderThenLabel(a.members[0], b.members[0]));
+  for (const g of grouped) {
+    items.push({ label: g.label, items: g.members.map((p) => ({ label: p.label, slug: p.slug })) });
+  }
+  return items;
+}
 
 export function buildSidebar(
   config: DocsConfig,
   result: DocsResult,
-): Array<Record<string, unknown>> {
+): Entry[] {
   // Starlight prepends basePath to every sidebar `link`, so a site-root-relative
   // path like "/chant/" becomes "/chant/lexicons/aws/chant/" — a 404.  Instead
   // we use relative traversal: "../../" is prepended to become
@@ -15,47 +52,23 @@ export function buildSidebar(
   const segments = (config.basePath ?? "/").replace(/^\/|\/$/g, "").split("/");
   const backLink = segments.length > 1 ? "../".repeat(segments.length - 1) : "/";
 
-  const items: Array<Record<string, unknown>> = [
+  const items: Entry[] = [
     { label: "← chant docs", link: backLink },
     { label: "Overview", slug: "index" },
   ];
 
-  const suppress = new Set(config.suppressPages ?? []);
-  const extraSlugs = new Set((config.extraPages ?? []).map((p) => p.slug));
-
-  // Extra pages from lexicon config (appear after Overview)
-  if (config.extraPages) {
-    for (const page of config.extraPages) {
-      if (page.sidebar === false) continue;
-      items.push({ label: page.title, slug: page.slug });
-    }
+  const byQuadrant = new Map<Quadrant, SidebarPage[]>();
+  for (const page of result.sidebarPages) {
+    if (page.hidden) continue;
+    const list = byQuadrant.get(page.quadrant) ?? [];
+    list.push(page);
+    byQuadrant.set(page.quadrant, list);
   }
 
-  if (!suppress.has("intrinsics") && !extraSlugs.has("intrinsics") && result.pages.has("intrinsics.mdx")) {
-    items.push({ label: "Intrinsics", slug: "intrinsics" });
-  }
-
-  if (!suppress.has("pseudo-parameters") && !extraSlugs.has("pseudo-parameters") && result.pages.has("pseudo-parameters.mdx")) {
-    items.push({ label: "Pseudo-Parameters", slug: "pseudo-parameters" });
-  }
-
-  // Every lexicon links its generated rules table, whether or not it also
-  // ships a prose `lint-rules` page. Skipping it when one existed was how gcp
-  // ended up emitting a page nothing pointed at (#1312), and it left readers
-  // with no complete list on the lexicons whose prose covers only part of the
-  // set — aws documented 26 of 50 that way. The label distinguishes the
-  // generated table from a prose page rather than competing with it.
-  if (!suppress.has("rules") && !extraSlugs.has("rules") && result.pages.has("rules.mdx")) {
-    items.push({ label: "All Rules", slug: "rules" });
-  }
-
-  if (!suppress.has("serialization") && !extraSlugs.has("serialization") && result.pages.has("serialization.mdx")) {
-    items.push({ label: "Serialization", slug: "serialization" });
-  }
-
-  // Append raw sidebar entries (supports groups and nested items)
-  if (config.sidebarExtra) {
-    items.push(...config.sidebarExtra);
+  for (const q of QUADRANTS) {
+    const pages = byQuadrant.get(q);
+    if (!pages || pages.length === 0) continue;
+    items.push({ label: QUADRANT_LABELS[q], items: quadrantItems(pages) });
   }
 
   return items;

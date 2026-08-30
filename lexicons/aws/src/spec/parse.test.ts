@@ -3,7 +3,9 @@ import {
   parseCFNSchema,
   cfnShortName,
   cfnServiceName,
+  stripPointerPath,
 } from "./parse";
+import type { CFNSchema } from "./fetch";
 
 // Sample Registry JSON Schema for testing
 const sampleBucketSchema = JSON.stringify({
@@ -187,6 +189,80 @@ describe("parseCFNSchema", () => {
     });
     const result = parseCFNSchema(schema);
     expect(result.resource.deprecatedProperties).toEqual([]);
+    expect(result.resource.inferredDeprecations).toEqual([]);
+  });
+
+  // --- Deprecation basis (#1701) ---
+
+  test("a declared deprecation is not recorded as inferred", () => {
+    const schema = JSON.stringify({
+      typeName: "AWS::Test::Declared",
+      properties: {
+        OldProp: { type: "string", description: "An old property." },
+      },
+      deprecatedProperties: ["/properties/OldProp"],
+      additionalProperties: false,
+    });
+    const result = parseCFNSchema(schema);
+    expect(result.resource.deprecatedProperties).toEqual(["OldProp"]);
+    expect(result.resource.inferredDeprecations).toEqual([]);
+  });
+
+  test("a description-mined deprecation is recorded as inferred", () => {
+    const schema = JSON.stringify({
+      typeName: "AWS::Test::Mined",
+      properties: {
+        OldProp: { type: "string", description: "This property is deprecated. Use NewProp instead." },
+        NewProp: { type: "string", description: "The replacement property" },
+      },
+      additionalProperties: false,
+    });
+    const result = parseCFNSchema(schema);
+    expect(result.resource.deprecatedProperties).toEqual(["OldProp"]);
+    expect(result.resource.inferredDeprecations).toEqual(["OldProp"]);
+  });
+
+  test("a property both declared and matched by the regex counts as declared", () => {
+    // sampleBucketSchema declares AccessControl and its description says "legacy".
+    const result = parseCFNSchema(sampleBucketSchema);
+    expect(result.resource.deprecatedProperties).toContain("AccessControl");
+    expect(result.resource.inferredDeprecations).not.toContain("AccessControl");
+  });
+
+  test("inferredDeprecations is a subset of deprecatedProperties", () => {
+    const schema = JSON.stringify({
+      typeName: "AWS::Test::Mixed",
+      properties: {
+        DeclaredProp: { type: "string", description: "Plain prose." },
+        MinedProp: { type: "string", description: "This is a legacy property." },
+      },
+      deprecatedProperties: ["/properties/DeclaredProp"],
+      additionalProperties: false,
+    });
+    const result = parseCFNSchema(schema);
+    const all = new Set(result.resource.deprecatedProperties);
+    for (const p of result.resource.inferredDeprecations) {
+      expect(all.has(p)).toBe(true);
+    }
+    expect(result.resource.inferredDeprecations).toEqual(["MinedProp"]);
+  });
+
+  test("a description naming a sibling's deprecation lands in inferred, not declared", () => {
+    // Shape of AWS::Neptune::DBCluster.DBPort, where the description announces
+    // that the sibling `Port` is going away and DBPort is the replacement.
+    const schema = JSON.stringify({
+      typeName: "AWS::Test::Sibling",
+      properties: {
+        DBPort: {
+          type: "integer",
+          description: "The port. Note: `Port` will soon be deprecated. Rename it to `DBPort`.",
+        },
+      },
+      additionalProperties: false,
+    });
+    const result = parseCFNSchema(schema);
+    expect(result.resource.inferredDeprecations).toEqual(["DBPort"]);
+    expect(result.resource.deprecatedProperties).toEqual(["DBPort"]);
   });
 
   // --- Tagging metadata ---
@@ -324,6 +400,84 @@ describe("parseCFNSchema", () => {
     expect(address!.tsType).toBe("string");
     const port = result.resource.attributes.find((a) => a.name === "Endpoint.Port");
     expect(port!.tsType).toBe("string");
+  });
+});
+
+describe("stripPointerPath (#1988)", () => {
+  const schema = {
+    typeName: "AWS::CloudFront::ContinuousDeploymentPolicy",
+    properties: {
+      ContinuousDeploymentPolicyConfig: { $ref: "#/definitions/ContinuousDeploymentPolicyConfig" },
+      Id: { type: "string" },
+    },
+    definitions: {
+      ContinuousDeploymentPolicyConfig: {
+        type: "object",
+        properties: {
+          Enabled: { type: "boolean" },
+          TrafficConfig: { $ref: "#/definitions/TrafficConfig" },
+        },
+      },
+      TrafficConfig: {
+        type: "object",
+        properties: { Type: { type: "string" } },
+      },
+    },
+  } as unknown as CFNSchema;
+
+  test("strips the top-level prefix", () => {
+    expect(stripPointerPath("/properties/BucketName")).toBe("BucketName");
+  });
+
+  test("keeps a nested path as a template writes it", () => {
+    expect(stripPointerPath("/properties/Tags/TagKey")).toBe("Tags/TagKey");
+    expect(stripPointerPath("/properties/Source/Decryption/Url")).toBe("Source/Decryption/Url");
+  });
+
+  test("drops a mid-path properties keyword", () => {
+    expect(stripPointerPath("/properties/DistributionConfig/properties/S3Origin")).toBe(
+      "DistributionConfig/S3Origin",
+    );
+    expect(stripPointerPath("/properties/EncryptionAtRestOptions/properties")).toBe(
+      "EncryptionAtRestOptions",
+    );
+  });
+
+  test("keeps array wildcards", () => {
+    expect(stripPointerPath("/properties/SecurityGroupEgress/*/SourceSecurityGroupId")).toBe(
+      "SecurityGroupEgress/*/SourceSecurityGroupId",
+    );
+  });
+
+  test("resolves a definition-scoped pointer through the property that carries it", () => {
+    expect(stripPointerPath("/definitions/ContinuousDeploymentPolicyConfig/properties/Enabled", schema)).toBe(
+      "ContinuousDeploymentPolicyConfig/Enabled",
+    );
+    expect(stripPointerPath("/definitions/TrafficConfig/properties/Type", schema)).toBe(
+      "ContinuousDeploymentPolicyConfig/TrafficConfig/Type",
+    );
+  });
+
+  test("leaves a definition nothing declared reaches as the Registry wrote it", () => {
+    expect(stripPointerPath("/definitions/Orphan/properties/Type", schema)).toBe(
+      "/definitions/Orphan/properties/Type",
+    );
+    expect(stripPointerPath("/definitions/Orphan/properties/Type")).toBe(
+      "/definitions/Orphan/properties/Type",
+    );
+  });
+
+  test("a definition reached through an array carries the wildcard", () => {
+    const arraySchema = {
+      typeName: "AWS::Test::Thing",
+      properties: { Rules: { type: "array", items: { $ref: "#/definitions/Rule" } } },
+      definitions: { Rule: { type: "object", properties: { Legacy: { type: "string" } } } },
+    } as unknown as CFNSchema;
+    expect(stripPointerPath("/definitions/Rule/properties/Legacy", arraySchema)).toBe("Rules/*/Legacy");
+  });
+
+  test("passes a non-pointer through", () => {
+    expect(stripPointerPath("BucketName")).toBe("BucketName");
   });
 });
 

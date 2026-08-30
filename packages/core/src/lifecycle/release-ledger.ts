@@ -78,6 +78,26 @@ export interface ReleaseRecord {
   approver?: string;
   /** Optional: the archive's own manifest digest (../components/verbs/build-archive.ts's `manifestDigest`), when the caller has it — lets a reader recover full build contents/provenance, not just the promoted image digest. */
   manifestDigest?: string;
+  /**
+   * Optional: set when the deploy's capability-profile assertion (chant
+   * #1244, helm lexicon) was deliberately overridden — carries the named
+   * divergences that were bypassed (declared vs live), so the ledger shows
+   * this release knowingly skewed from its declared profile. Absent for a
+   * deploy whose target matched, and for deploys with no declared profile.
+   */
+  profileOverride?: string;
+  /**
+   * Optional: the deploy's input-side digest, when `digest` is a
+   * rendered-content identity rather than an input identity. A pinned helm
+   * deploy (chant #1242) records the render's `contentDigest` as `digest` —
+   * what this cluster actually received — and carries the input digest
+   * (chart, chart version, resolved values, capability facts; chant #1243)
+   * here, because profiles are per cluster: two environments legitimately
+   * render to different bytes, so cross-environment "is prod running what
+   * staging tested" joins on this field while `digest` proves the exact
+   * bytes each cluster got. Absent when `digest` is already input-side.
+   */
+  inputDigest?: string;
 }
 
 /** Required, non-empty-string fields every `ReleaseRecord` must carry. */

@@ -6,6 +6,8 @@
  */
 
 import type { LexiconPlugin, IntrinsicDef, InitTemplateSet } from "@intentius/chant/lexicon";
+import type { CommandGroup } from "@intentius/chant/cli/command-group";
+import { helmCommandGroup } from "./commands";
 import { detectTemplate } from "./detect";
 import { discoverLintRules } from "@intentius/chant/lint/discover";
 import { postSynthChecks as postSynthCheckList } from "./lint/post-synth";
@@ -16,11 +18,34 @@ import { fileURLToPath } from "url";
 import { helmSerializer } from "./serializer";
 import { helmCompletions } from "./lsp/completions";
 import { helmHover } from "./lsp/hover";
+import { helmConfigSchema } from "./config";
+import { helmDeepNormalizationHooks } from "./deep-observe-hooks";
+import { LABEL_OWNERSHIP_KEYS } from "@intentius/chant/ownership";
 
 export const helmPlugin: LexiconPlugin = {
   name: "helm",
+  // The `helm` namespace in chant.config.ts — capability profiles (#1235).
+  // Declaring the schema makes core validate the namespace at load, so a
+  // typo'd profile field fails the build instead of silently unpinning.
+  configSchema: helmConfigSchema,
+  // #1246 — helm resolves real ownership verdicts on the thin read (every row
+  // is release-scoped, so helm-managed = owned via release identity), and the
+  // deep read (#1247) delegates to the k8s reader, which resolves the shared
+  // label channel (`app.kubernetes.io/managed-by` + `chant.intentius.io/*`)
+  // on the live objects.
+  ownershipChannel: { keys: LABEL_OWNERSHIP_KEYS, reads: ["describeResources", "observeResourcesDeep"] },
   auditCatalog: () => helmAuditCatalog,
   serializer: helmSerializer,
+
+  // #1248 (epic #1228 Phase 6, via the #1078 seam) — `chant helm` mounts the
+  // pinned-render surface: the pinnability gate (#1234), the double-render
+  // localizer (#1236), and the recorded-render listing with digests (#1237).
+  // See ./commands.ts for the verb list; this plugin only mounts it. The
+  // diff verbs (#1249 render-to-render, #1250 render-to-live, both mounted on
+  // "diff") land there.
+  commands(): CommandGroup {
+    return helmCommandGroup();
+  },
 
   lintRules() {
     const rulesDir = join(dirname(fileURLToPath(import.meta.url)), "lint", "rules");
@@ -37,25 +62,63 @@ export const helmPlugin: LexiconPlugin = {
   completionProvider: helmCompletions,
   hoverProvider: helmHover,
 
+  // chant #1174 — `foldsAsCall: true` opts an intrinsic's PLAIN-CALL form
+  // into `chant build --fold` (chant #1044's mechanism, previously unused by
+  // this lexicon: every helm intrinsic is a plain call — helm has no tagged
+  // templates at all — so before this PR NONE of them folded, and a single
+  // `include(...)`/`printf(...)` anywhere in a chart's resources forced the
+  // whole file back to the run path).
+  //
+  // Audited one at a time against `IntrinsicDef.foldsAsCall`'s criterion
+  // (../../../packages/core/src/lexicon.ts): "calling the intrinsic is a
+  // pure function of its arguments that builds a deterministic data
+  // envelope". Every function below (`include`/`required`/`helmDefault`/
+  // `toYaml`/`quote`/`printf`/`tpl`/`lookup`/`filesGet`/`filesGlob`/
+  // `filesAsConfig`/`filesAsSecrets`, ./intrinsics.ts) does exactly that: it
+  // builds a `HelmTpl` (or, for `lookup`, a string) by interpolating its
+  // arguments into a Go template expression string — no I/O, no mutation, no
+  // dependency on anything but the arguments. `lookup`'s own side effect
+  // (a live cluster read) happens when HELM renders the resulting template
+  // at deploy time, not when this JS function runs at `chant build` time, so
+  // it is just as pure here as the rest.
+  //
+  // Left OUT, each for a specific reason rather than an oversight:
+  //   - `values`/`Release`/`ChartRef`/`Capabilities`/`Template` are proxy
+  //     OBJECTS, never called (`values(...)` isn't valid source) — nothing
+  //     to opt in.
+  //   - `withOrder`/`argoWave` return a PLAIN record meant to be spread
+  //     (`{...withOrder(1)}`), not a `HelmTpl`. `fold()`'s object-spread
+  //     handling (`Object.assign(obj, src)`, ../fold/fold.ts) runs
+  //     SYNCHRONOUSLY on the immediately-folded value, before the async
+  //     revival that would turn a folded call into its real result — opting
+  //     these in would spread the folded `{__intrinsic, args}` envelope's
+  //     own keys into the object instead of the real record. A real
+  //     soundness hazard, not a "not yet audited."
+  //   - `If`/`ElseIf`/`Range`/`With` take an arbitrary `body`/`elseBody`
+  //     that is often an arrow function (`Range(list, (item) => ({...}))`)
+  //     or a nested Declarable — `fold()` already rejects a function used as
+  //     a value on its own terms, so opting these in buys nothing measured
+  //     on this corpus and is left for a future PR to size against real
+  //     usage rather than widened on speculation.
   intrinsics(): IntrinsicDef[] {
     return [
       { name: "values", description: "Proxy accessor for {{ .Values.x }} references", isTag: false },
       { name: "Release", description: "Built-in Release object (Name, Namespace, etc.)", isTag: false },
       { name: "ChartRef", description: "Built-in Chart object (Name, Version, AppVersion)", isTag: false },
-      { name: "include", description: 'Include a named template: {{ include "name" . }}', isTag: false },
-      { name: "required", description: 'Require a value: {{ required "msg" .Values.x }}', isTag: false },
-      { name: "helmDefault", description: 'Default value: {{ default "def" .Values.x }}', isTag: false },
-      { name: "toYaml", description: "Convert to YAML: {{ toYaml .Values.x | nindent N }}", isTag: false },
-      { name: "quote", description: "Quote a value: {{ .Values.x | quote }}", isTag: false },
-      { name: "printf", description: 'Format string: {{ printf "%s" .Values.x }}', isTag: false },
-      { name: "tpl", description: "Evaluate template: {{ tpl .Values.x . }}", isTag: false },
-      { name: "lookup", description: 'Lookup resource: {{ lookup "v1" "Secret" "ns" "name" }}', isTag: false },
+      { name: "include", description: 'Include a named template: {{ include "name" . }}', isTag: false, foldsAsCall: true },
+      { name: "required", description: 'Require a value: {{ required "msg" .Values.x }}', isTag: false, foldsAsCall: true },
+      { name: "helmDefault", description: 'Default value: {{ default "def" .Values.x }}', isTag: false, foldsAsCall: true },
+      { name: "toYaml", description: "Convert to YAML: {{ toYaml .Values.x | nindent N }}", isTag: false, foldsAsCall: true },
+      { name: "quote", description: "Quote a value: {{ .Values.x | quote }}", isTag: false, foldsAsCall: true },
+      { name: "printf", description: 'Format string: {{ printf "%s" .Values.x }}', isTag: false, foldsAsCall: true },
+      { name: "tpl", description: "Evaluate template: {{ tpl .Values.x . }}", isTag: false, foldsAsCall: true },
+      { name: "lookup", description: 'Lookup resource: {{ lookup "v1" "Secret" "ns" "name" }}', isTag: false, foldsAsCall: true },
       { name: "Capabilities", description: "Built-in Capabilities object (KubeVersion, APIVersions, HelmVersion)", isTag: false },
       { name: "Template", description: "Built-in Template object (Name, BasePath)", isTag: false },
-      { name: "filesGet", description: '.Files.Get: {{ .Files.Get "path" }}', isTag: false },
-      { name: "filesGlob", description: '.Files.Glob: {{ .Files.Glob "pattern" }}', isTag: false },
-      { name: "filesAsConfig", description: ".Files.Glob.AsConfig for ConfigMap data", isTag: false },
-      { name: "filesAsSecrets", description: ".Files.Glob.AsSecrets for Secret data", isTag: false },
+      { name: "filesGet", description: '.Files.Get: {{ .Files.Get "path" }}', isTag: false, foldsAsCall: true },
+      { name: "filesGlob", description: '.Files.Glob: {{ .Files.Glob "pattern" }}', isTag: false, foldsAsCall: true },
+      { name: "filesAsConfig", description: ".Files.Glob.AsConfig for ConfigMap data", isTag: false, foldsAsCall: true },
+      { name: "filesAsSecrets", description: ".Files.Glob.AsSecrets for Secret data", isTag: false, foldsAsCall: true },
       { name: "ElseIf", description: "Else-if chaining: {{- else if .Values.x }}...{{- end }}", isTag: false },
       { name: "If", description: "Conditional: {{- if .Values.x }}...{{- end }}", isTag: false },
       { name: "Range", description: "Range loop: {{- range .Values.x }}...{{- end }}", isTag: false },
@@ -382,6 +445,28 @@ export const service = new Service({
     const { listArtifacts } = await import("./list-artifacts");
     return listArtifacts(options);
   },
+
+  // #1246 — per-resource observation of what each declared chart's release
+  // holds (`helm get manifest` + `helm get hooks`, both channels), with total
+  // tri-state verdicts. This is what gives `lifecycle diff --live` helm rows.
+  async describeResources(options) {
+    const { describeResources } = await import("./describe-resources");
+    return describeResources(options);
+  },
+
+  // #1247 — deep property-level trees for the release's resources, read live
+  // through the k8s lexicon's typed client and normalized by its hooks.
+  // Dynamic import for the same reason k8s's is: the reader reaches
+  // `@intentius/chant-k8s-client`, which must stay off the build path.
+  async observeResourcesDeep(options) {
+    const { observeResourcesDeepHelm } = await import("./deep-observe");
+    return observeResourcesDeepHelm(options);
+  },
+
+  // The k8s lexicon's hooks by reference, not a copy (#1247) — the objects a
+  // release deploys are Kubernetes objects, and core normalizes the declared
+  // tree with the same rules the reader used.
+  deepNormalizationHooks: helmDeepNormalizationHooks,
 
   // #1495 piece 4 — the deploy-unit observer for helm-upgrade units: a
   // release's presence and native status, read back by the same name the

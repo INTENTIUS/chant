@@ -1,0 +1,85 @@
+---
+title: "Getting Started"
+description: "Step-by-step guide to building your first GitHub Actions workflow with chant"
+diataxis: tutorial
+---
+
+## 1. Install
+
+```bash
+mkdir my-project && cd my-project
+npm init -y
+npm install --save-dev @intentius/chant @intentius/chant-lexicon-github typescript
+```
+
+## 2. Create your workflow
+
+Create `src/ci.ts`:
+
+{{file:docs-snippets/src/quickstart.ts}}
+
+## 3. Build
+
+```bash
+chant build src/ --output .github/workflows/ci.yml
+```
+
+This produces `.github/workflows/ci.yml`:
+
+```yaml
+name: CI
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install
+        run: npm ci
+      - name: Build
+        run: npm run build
+      - name: Test
+        run: npm test
+```
+
+## 4. Lint
+
+```bash
+chant lint src/
+```
+
+Lint checks for common issues — missing timeouts, hardcoded secrets, raw expression strings, and more. See the [Lint Rules](/chant/lexicons/github/lint-rules/) page for the full list.
+
+## 5. Deploy
+
+Commit the generated YAML and push:
+
+```bash
+git add .github/workflows/ci.yml
+git commit -m "Add CI workflow"
+git push
+```
+
+GitHub automatically picks up any `.github/workflows/*.yml` files and runs them on the configured triggers.
+
+## Next steps
+
+- [Workflow Concepts](/chant/lexicons/github/workflow-concepts/) — resource types, triggers, permissions
+- [Expressions](/chant/lexicons/github/expressions/) — typed expression system and condition helpers
+- [Composites](/chant/lexicons/github/composites/) — pre-built action wrappers (Checkout, SetupNode, etc.)
+- [Lint Rules](/chant/lexicons/github/lint-rules/) — 13 lint rules and 45 post-synth checks

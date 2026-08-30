@@ -2,10 +2,9 @@
  * fountain documentation generator.
  *
  * Calls the core docsPipeline with fountain-specific config. The reference
- * pages (resources, composites, ops, adoption, skills) are declared as
- * `extraPages` rather than left as hand-written files in docs/: the sidebar is
- * rebuilt from generated pages on every run, so a page the config does not
- * know about exists but cannot be navigated to.
+ * pages (resources, composites, ops, adoption, skills) live as authored MDX
+ * under `docs/pages/`, each tagged with its Diátaxis quadrant; the sidebar is
+ * grouped from that field (chant #1731 / #1733).
  */
 
 import { dirname, join } from "path";
@@ -46,7 +45,7 @@ export const helper = new Agent({
 
 ## The loop
 
-1. \`chant build\` — synthesize and lint. The FTN rules catch open networking, credential literals, and unresolvable \`\${VAR}\` references before review.
+1. \`chant build\` — synthesize and lint. The FTN rules catch open networking, credential literals, and unresolvable \`\${VAR}\` references before review. The same rules run via [\`chant audit\`](/chant/cli/audit/) over a repo of hand-written \`fountain apply\` manifests — no chant project needed; the documents are parsed back into the entity graph.
 2. \`chant run <apply op>\` or call \`fountainApply\` — reconcile against the API. Idempotent by name.
 3. \`chant lifecycle diff --live\` — drift. A UI edit to an owned Environment shows up here.
 4. \`chant import --from\` — adopt UI-built resources into typed files.
@@ -67,14 +66,13 @@ kind: Environment
 metadata:
   name: team-env
 spec:
-  name: team-env
   networking_type: limited
   networking_config:
     allowed_hosts:
       - github.com
 \`\`\`
 
-\`metadata.name\` is the resource's declared \`name\`, not the name of the variable you exported it as. fountain reconciles by that name, so renaming the variable does not orphan the resource. An entity declared without a \`name\` falls back to the export name.
+\`metadata.name\` is the resource's declared \`name\`, not the name of the variable you exported it as. fountain reconciles by that name, so renaming the variable does not orphan the resource. An entity declared without a \`name\` falls back to the export name. The name appears only in \`metadata\`; it is not repeated under \`spec\`, so the apply request carries one name per resource.
 
 The output is ejectable — \`fountain apply -f\` accepts it verbatim, so adopting chant here does not trap the manifests behind chant.
 
@@ -89,135 +87,6 @@ Resources carrying \`metadata."managed-by": chant\` are chant-owned. That marker
 ## Secrets
 
 \`spec.secrets\` is authored as an ordered \`{key, value}[]\`, same as any other typed prop. \`fountainApply\` converts it to the \`{KEY: value}\` map fountain's bulk apply expects on the wire; the server upserts it through the encrypted envelope path. Values are write-only upstream, so this is upsert-always — a changed value cannot be detected, only overwritten.`;
-
-const resourcesPage = `The lexicon types the three kinds \`fountain apply\` reconciles — the workload
-layer of [fountain](https://github.com/BinaryBourbon/fountain). Types are
-generated from fountain's served OpenAPI spec, so they track the real API.
-Conversations are deliberately **not** a resource: they are runs with a
-status lifecycle, modeled as ops.
-
-## Environment
-
-A reusable sandbox baseline: packages, repos, setup script, env vars,
-encrypted secrets, and the networking policy. \`networking_type\` is
-\`"unrestricted" | "limited"\`; under \`limited\`, egress is restricted to
-\`networking_config.allowed_hosts\`, and with no hosts (or an empty list) the
-sandbox denies all egress — a deny-all, not an allow-all. FTN010 requires the
-networking intent to be explicit.
-
-## Vault
-
-A bag of env-var overrides selected at conversation create. Vault values
-win on key collision with the environment — which is why agents can carry
-a vault allowlist upstream (fountain#136). \`allowed_vault_ids\` on an Agent is
-three-state: \`null\` allows any tenant vault, \`[]\` forbids all, a list is an
-allowlist.
-
-## Agent
-
-A named, re-runnable agent configuration: model, runtime, skills (inline
-SKILL.md or GitHub-sourced with a \`ref\` pin), MCP servers, and an optional
-\`environment\` reference — typed, so a dangling reference is a build error,
-not a 422 at apply time.
-
-## Example
-
-\`\`\`ts
-import { Environment, Agent } from "@intentius/chant-lexicon-fountain";
-
-export const conciergeEnv = new Environment({
-  name: "concierge-env",
-  networking_type: "limited",
-  networking_config: { allowed_hosts: ["registry.npmjs.org", "github.com"] },
-  metadata: { "managed-by": "chant" },
-});
-
-export const researcher = new Agent({
-  name: "researcher",
-  model: "anthropic/claude-sonnet-4-6",
-  runtime: "claude",
-  environment: conciergeEnv,
-  skills: [{ source: "vercel-labs/agent-skills", ref: "main" }],
-});
-\`\`\``;
-
-const compositesPage = `## ConciergeStack
-
-An Environment + Agent pair with the secure-by-construction defaults for agents that touch anything sensitive:
-
-\`\`\`typescript
-import { ConciergeStack } from "@intentius/chant-lexicon-fountain";
-
-export const { environment, agent } = ConciergeStack({
-  name: "concierge",
-  model: "anthropic/claude-sonnet-4-6",
-  allowedHosts: ["registry.npmjs.org", "github.com"],
-});
-\`\`\`
-
-| Default | Effect |
-|---|---|
-| \`networking_type: limited\` with an empty allowlist | deny-all egress — fountain's isolation mode |
-| \`allowed_vault_ids: []\` | no conversation may override the reviewed environment at spawn |
-| \`managed-by: chant\` on both | owned-only reconcile, prune, and drift filtering see them |
-
-Every default is the closed one, so loosening any of it is a visible, reviewable act: pass an allowlist, pass vault ids, or drop to the raw classes.
-
-Give such a sandbox **no cloud credentials of any kind** — anything readable inside it is exfiltratable by prompt injection. Services the agent needs live outside the sandbox behind their own auth; the sandbox gets at most a conversation-scoped token.`;
-
-const opsPage = `Two op activities ship with the lexicon, resolvable by name via \`loadActivities(["fountain"])\`.
-
-## fountainApply
-
-The native applier: compiles the serializer's manifest YAML into fountain's bulk \`POST /api/apply\` request and sends it in one call.
-
-| Behavior | Detail |
-|---|---|
-| Create / update | By name, reconciled server-side. An agent's \`environment\` reference resolves by name — against the manifest or the tenant's existing environments — without a client-side id lookup. |
-| Order | Environment → Vault → Agent, fixed server-side regardless of manifest order. |
-| Prune | Off by default. With \`prune: true\`, chant-owned resources absent from the manifest are deleted, in reverse order — the one thing bulk apply doesn't cover, so this still lists live state per kind. |
-| Secrets | \`spec.secrets\` converts from chant's authored \`{key, value}[]\` to the wire's \`{KEY: value}\` map; the server upserts them through the encrypted envelope path in the same request. Upsert-always — values are write-only upstream. |
-| Failure | Best-effort per resource. Every result is collected before this throws, so one bad resource doesn't hide failures elsewhere in the manifest. |
-
-\`\`\`typescript
-await fountainApply({ manifestPath: "build/fountain.yaml", prune: true });
-\`\`\`
-
-Endpoint and token resolution: explicit args win, then \`FOUNTAIN_ENDPOINT\` / \`FOUNTAIN_TOKEN\`, then the hosted default.
-
-## fountainRun
-
-Conversations are runs, not resources, so they are started rather than declared. \`fountainRun\` resolves the agent by name, starts a conversation (optionally with a prompt and an allowlisted vault), polls to \`completed | failed | timed_out\`, and terminates at its deadline so a hung sandbox never outlives the op.
-
-Multi-turn interaction — follow-up prompts, interrupt — is fountain's own conversations API. The lexicon stays at the lifecycle edges.`;
-
-const adoptionPage = `The lexicon reads live fountain state on three paths.
-
-## Drift
-
-\`chant lifecycle diff --live\` reports each declared entity as observed present, observed absent, or **not observed** with a reason — a read failure is never reported as an absence, which would propose a spurious create. Ownership comes from the \`managed-by: chant\` marker, so \`--owned\` filters to what chant declared.
-
-An out-of-band change to a locked environment — a UI edit that adds a secret, opens networking, or drops the marker — is what this catches. Wire it into a scheduled watch and treat a hit as an incident, not housekeeping.
-
-## Import
-
-\`chant import --from\` adopts UI-built resources into typed files. Server-written fields are stripped to the authored shape, and an agent's \`environment_id\` is resolved back to the exported environment's logical name so the generated code carries a reviewable reference.
-
-Secrets do not round-trip: values are write-only upstream and secret keys are not on the typed request surface, so environments export without them and the caller is warned per environment that carried any. Re-declare them through your secret provider.
-
-## Graph
-
-\`chant graph --live\` reconstructs the topology from one edge: an Agent runs in an Environment. Vaults are deliberately edge-free — vault-to-agent binding is a conversation-time choice scoped by \`allowed_vault_ids\`, not standing topology.`;
-
-const skillsPage = `Three agent skills ship with the lexicon and load automatically in a project that uses it.
-
-| Skill | Covers |
-|---|---|
-| \`chant-fountain\` | The core authoring loop — declaring the three kinds, the build/apply/drift/import cycle, endpoint and auth |
-| \`chant-fountain-secrets\` | Secrets, \`env_vars\`, and \`\${VAR}\` substitution: the order of preference, vault precedence, and what does not round-trip |
-| \`chant-fountain-locked-sandboxes\` | The locked-down posture for untrusted or security-sensitive agents, and running conversations against them |
-
-Invoke one directly by name, or let it trigger on context (\`fountain\`, \`vault\`, \`sandbox\`, \`networking_type\`).`;
 
 /**
  * Generate documentation site for the fountain lexicon.
@@ -237,38 +106,6 @@ export async function generateDocs(options?: { verbose?: boolean }): Promise<voi
     // No `resourceTypeUrl` key: DocsConfig has none, so passing it was a
     // silent no-op. The upstream reference link lives in the resources page
     // content, where it actually renders.
-    extraPages: [
-      {
-        slug: "resources",
-        title: "Resources",
-        description: "The three fountain workload kinds the lexicon declares.",
-        content: resourcesPage,
-      },
-      {
-        slug: "composites",
-        title: "Composites",
-        description: "ConciergeStack — a locked-down Environment and Agent pair.",
-        content: compositesPage,
-      },
-      {
-        slug: "ops",
-        title: "Ops",
-        description: "fountainApply and fountainRun — the applier and the conversation runner.",
-        content: opsPage,
-      },
-      {
-        slug: "adoption",
-        title: "Drift and Adoption",
-        description: "Live observation, import, and the graph edge fountain reconstructs.",
-        content: adoptionPage,
-      },
-      {
-        slug: "skills",
-        title: "Skills",
-        description: "The agent skills the lexicon ships.",
-        content: skillsPage,
-      },
-    ],
   };
 
   const result = docsPipeline(config);

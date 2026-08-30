@@ -59,6 +59,7 @@ function samFunction(): SchemaParseResult {
       writeOnly: [],
       primaryIdentifier: [],
       deprecatedProperties: [],
+      inferredDeprecations: [],
       conditionalCreateOnly: [],
     },
     propertyTypes: [
@@ -147,6 +148,7 @@ function samApi(): SchemaParseResult {
       writeOnly: [],
       primaryIdentifier: [],
       deprecatedProperties: [],
+      inferredDeprecations: [],
       conditionalCreateOnly: [],
     },
     propertyTypes: [
@@ -200,6 +202,7 @@ function samHttpApi(): SchemaParseResult {
       writeOnly: [],
       primaryIdentifier: [],
       deprecatedProperties: [],
+      inferredDeprecations: [],
       conditionalCreateOnly: [],
     },
     propertyTypes: [
@@ -236,6 +239,7 @@ function samSimpleTable(): SchemaParseResult {
       writeOnly: [],
       primaryIdentifier: [],
       deprecatedProperties: [],
+      inferredDeprecations: [],
       conditionalCreateOnly: [],
     },
     propertyTypes: [
@@ -273,6 +277,7 @@ function samLayerVersion(): SchemaParseResult {
       writeOnly: [],
       primaryIdentifier: [],
       deprecatedProperties: [],
+      inferredDeprecations: [],
       conditionalCreateOnly: [],
     },
     propertyTypes: [],
@@ -306,6 +311,7 @@ function samStateMachine(): SchemaParseResult {
       writeOnly: [],
       primaryIdentifier: [],
       deprecatedProperties: [],
+      inferredDeprecations: [],
       conditionalCreateOnly: [],
     },
     propertyTypes: [
@@ -339,6 +345,7 @@ function samApplication(): SchemaParseResult {
       writeOnly: [],
       primaryIdentifier: [],
       deprecatedProperties: [],
+      inferredDeprecations: [],
       conditionalCreateOnly: [],
     },
     propertyTypes: [],
@@ -360,6 +367,7 @@ function samConnector(): SchemaParseResult {
       writeOnly: [],
       primaryIdentifier: [],
       deprecatedProperties: [],
+      inferredDeprecations: [],
       conditionalCreateOnly: [],
     },
     propertyTypes: [],
@@ -397,6 +405,7 @@ function samGraphQLApi(): SchemaParseResult {
       writeOnly: [],
       primaryIdentifier: [],
       deprecatedProperties: [],
+      inferredDeprecations: [],
       conditionalCreateOnly: [],
     },
     propertyTypes: [],

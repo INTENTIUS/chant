@@ -1,0 +1,173 @@
+---
+title: "Event Schemas"
+description: "The .dwschema surface, the callerPrincipal pin, and what opting out of it widens."
+diataxis: reference
+group: "Dogwood"
+---
+
+A dogwood policy set is checked against two schemas, and only one of them is
+required.
+
+| Half | Format | Flag | Required |
+|---|---|---|---|
+| Action schema | Cedar `.cedarschema` — entities, actions, each action's `context` | `--policy-schema` | Yes, for `validate`, `lower` and `replay` |
+| Service schema | `.dwschema` event DSL, a `providers.json`, a `.dw` macro library | `--event-schema`, `--providers`, `--macros` | No |
+
+The action schema is the one the rest of this lexicon already generates from —
+see [Schema](../schema/). This page is about the other half.
+
+With all three service flags omitted, upstream falls back to
+`ServiceSchema::defaults()`: `request` (deciding), `response` and `error`
+kinds, a universal `pin callerPrincipal = principal`, a 24h `max_window` cap,
+no providers, and the embedded default macro library.
+
+## The `.dwschema` surface
+
+The grammar is 136 lines of pest and purely syntactic: an optional
+`max_window` directive, then a sequence of event declarations.
+
+```
+max_window = 30d
+
+decision event <A>::request {
+    ...inputs(A),
+    pin callerPrincipal: principalType(A) = principal,
+    callerResource: resourceType(A),
+    requestId: String,
+}
+```
+
+`A` is a symbolic action binder, not an action. **The file names no actions at
+all** — it says what shape an event of each kind has, for whichever action it
+is derived against. That is why DWDC010 can check a predicate's event *kind*
+against the emitted schema but not its action: the action half of that check
+lives in the `.cedarschema`, and it is the CLI's to make.
+
+Event kind names are author-defined. `request`, `response` and `error` are
+conventional, not fixed.
+
+| Builder | Emits |
+|---|---|
+| `spreadInputs()` / `spreadOutputs()` | `...inputs(A)` / `...outputs(A)` |
+| `field("requestId", concrete("String"))` | `requestId: String` |
+| `field("callerResource", resourceType())` | `callerResource: resourceType(A)` |
+| `field("meta", record([…]))` | a nested record, addressed as `meta.member` |
+| `pinnedField(name, type, pinPrincipal())` | `pin name: … = principal` |
+| `pinnedField(name, type, pinContext("input.user"))` | `pin name: … = context.input.user` |
+
+A pinned field must be a leaf; upstream requires the `pin` prefix and the
+`= …` clause together, and the builder enforces both rather than deferring to
+the parser.
+
+## The default, and the pin
+
+```typescript
+import { TemporalEventSchema, dogwood } from "@intentius/chant-lexicon-cedar";
+
+export const events = new TemporalEventSchema({ schema: dogwood.defaultEventSchema() });
+```
+
+That reproduces upstream's `pinned.dwschema` — the shape
+`ServiceSchema::defaults()` uses — and emits `events.dwschema`:
+
+```
+// The default event-schema shape: request/response/error, each correlated to
+// the deciding request's principal.
+
+decision event <A>::request {
+    ...inputs(A),
+    pin callerPrincipal: principalType(A) = principal,
+    callerResource: resourceType(A),
+    requestId: String,
+    sessionId: String,
+}
+
+event <A>::response {
+    ...inputs(A),
+    ...outputs(A),
+    pin callerPrincipal: principalType(A) = principal,
+    callerResource: resourceType(A),
+    requestId: String,
+    sessionId: String,
+}
+
+event <A>::error {
+    ...inputs(A),
+    pin callerPrincipal: principalType(A) = principal,
+    callerResource: resourceType(A),
+    requestId: String,
+    sessionId: String,
+}
+```
+
+**The pin is the thing to understand before writing your own schema.**
+`pin callerPrincipal = principal` correlates every temporal predicate to the
+deciding request's principal: events logged by other principals are invisible
+to `formerly`, `since` and every aggregate over them.
+
+Supplying *any* event schema opts out of upstream's default wholesale. So a
+schema emitted without a pin does not merely fail to add a correlation — it
+removes one the policy author very likely assumed, and every predicate in the
+set starts matching other principals' events.
+
+That is a legitimate design; cross-principal correlation is a reason to write
+your own schema. It is also a decision, so chant makes it a named argument:
+
+```typescript
+export const events = new TemporalEventSchema({
+  schema: dogwood.defaultEventSchema({ pinCallerPrincipal: false }),
+});
+```
+
+which stamps the reasoning into the emitted file as a comment, and which
+DWDS010 reports as a warning in the build. Neither stops you. Both make the
+choice visible in a diff.
+
+## `max_window`
+
+The directive caps how far back any operator in the set may look. Absent, the
+cap is upstream's 24h default — the same 24h that applies when no schema is
+supplied at all.
+
+```typescript
+dogwood.defaultEventSchema({ maxWindow: "30d" });   // max_window = 30d
+```
+
+DWDC011 does the arithmetic in TypeScript and fails the build on a window past
+the cap, with no binary involved. Where several schemas are emitted the
+tightest cap wins, and macro-call intervals count: `once(48h, …)` expands
+through `within ?w` and looks back exactly as far as `formerly within 48h`.
+
+## Several schemas
+
+One `.dwschema` per file, because `max_window` is a single directive at the
+top and concatenating two schemas would emit something upstream rejects. A
+build with more than one gives each an explicit filename:
+
+```typescript
+export const gateway = new TemporalEventSchema({
+  schema: dogwood.defaultEventSchema({ maxWindow: "30d" }),
+  filename: "gateway.dwschema",
+});
+```
+
+Two schemas targeting one filename is a serializer warning and only the first
+is written — a silent merge would produce a file that parses as neither.
+
+## Providers
+
+The third service flag, `--providers`, takes a `providers.json` whose entries
+carry `argumentTypes`, an `outputType` and an `implementation`. chant has no
+typed builder for it today; the CLI adapter's bundle type accepts provider text
+if you assemble it, and the build's planner does not emit one.
+
+One upstream trap worth recording even so: the CLI reads `--providers` as raw
+text and **never resolves `scriptFile`**. Rhai has to be inlined under
+`implementation.script`, or `replay` fails per-evaluation with "rhai
+implementation has no script" while `validate` and `lower` still pass.
+
+## Next
+
+- [Validation](../dogwood-validation/) — DWDC010, DWDC011 and DWDS010 in full
+- [Replay](../dogwood-replay/) — where the events these schemas describe
+  actually come from

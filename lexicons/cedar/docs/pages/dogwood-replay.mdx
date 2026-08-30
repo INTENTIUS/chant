@@ -1,0 +1,262 @@
+---
+title: "Replay"
+description: "Typed traces, PolicyReplayOp, and the both-bags trap that makes half a trace pass."
+diataxis: how-to
+group: "Dogwood"
+---
+
+`dogwood replay` evaluates a policy set against a recorded event trace and
+returns a verdict per decision point. It is how a temporal policy gets tested
+at all.
+
+A plain Cedar policy is decidable from its source: given the schema, a build
+can say whether it parses, whether it type-checks, and what it applies to. The
+DWDC and CEDC checks already do that. A temporal policy is not decidable that
+way — whether `formerly within 1h Login::response{ … }` fires depends on a
+history nobody has replayed. So the check is a replay against recorded decision
+history, and the answer moves as the history does. That puts it on the observe
+end of the lifecycle dial, beside `WorkflowAuditOp`, with a finding mode as the
+reconcile step.
+
+Three pieces ship: a typed trace builder, a `dogwoodReplay` activity, and the
+`PolicyReplayOp` composite that pairs them. The worked example is
+`lexicons/cedar/examples/policy-replay`.
+
+## The Op
+
+```typescript
+// ops/policy-replay.op.ts
+import { PolicyReplayOp } from "@intentius/chant-lexicon-cedar";
+import { readAfterLoginExpectations } from "../trace/read-after-login";
+
+export const { op } = PolicyReplayOp({
+  name: "policy-replay",
+  policiesPath: "dist/policies.dw",
+  policySchemaPath: "schema.cedarschema",
+  eventSchemaPath: "dist/events.dwschema",
+  tracePath: "trace/read-after-login.log",
+  expect: readAfterLoginExpectations,
+  onFinding: "report",
+});
+
+export default op;
+```
+
+```bash
+npx chant run policy-replay
+```
+
+Three phases:
+
+| Phase | Step | What it does |
+|---|---|---|
+| Artifacts | `chantBuild` | Emits `policies.dw`, the `.cedarschema` and the `.dwschema` the replay reads. Pass `buildScript: false` when they are checked in and the phase is dropped rather than run empty |
+| Replay | `dogwoodReplay` | Runs `dogwood replay --format json` over the bundle and the trace, writes the divergence report |
+| Report | `dogwoodReplayReport` | Reads that report and acts on the finding mode |
+
+The report file (`dist/dogwood-replay.json` by default) is the seam between the
+last two phases, for the same reason `dist/fly.json` is the seam between
+`build:fly` and `flyApply`: Op steps do not hand return values to one another,
+so a phase boundary needs an artifact to be a real boundary.
+
+The Replay step carries `outcomeAttribute: { name: "Divergences", from: "findings" }`,
+so "show me the replays that found something" is one filter rather than a log
+read. `onFinding` takes `report | issue | pull-request`; `report` prints the
+markdown, and the other two hand back a title and body for whatever opens them
+— the cedar lexicon has no forge client and does not grow one, the same
+division `workflowSupplyChainAudit` draws. `failOnDivergence` defaults to
+false: an observe-dial Op reports, and a red run is the caller's decision.
+
+The composite ships from cedar, not from temporal, because it hands back an Op
+and nothing else. It imports `@intentius/chant/op` and carries no dependency on
+the temporal lexicon. A project that wants it scheduled pairs it with a
+`TemporalSchedule` of its own — two lines, project-side, rather than a config
+flag that would drag the dependency in for everyone.
+
+## Typed traces
+
+`traceEvent()` builds one line. `renderTrace()` renders a list.
+`traceFixture()` does both and refuses to hand back a trace that would weaken
+its own replay.
+
+```typescript
+import { dogwood } from "@intentius/chant-lexicon-cedar";
+
+const { entityRef, traceEvent } = dogwood;
+
+const ALICE = 'Drupe::OAuthUser::"alice"';
+const GATEWAY = 'Drupe::Gateway::"gw1"';
+
+const session = {
+  scope: { principal: ALICE, resource: GATEWAY },
+  context: { input: { user: "alice" } },
+} as const;
+
+const injected = (requestId: string) => ({
+  callerPrincipal: entityRef(ALICE),
+  callerResource: entityRef(GATEWAY),
+  requestId,
+});
+
+export const trace = [
+  traceEvent({ ...session, timestamp: 0, action: 'Drupe::Action::"Login"', record: injected("u1") }),
+  traceEvent({ ...session, timestamp: 0, action: 'Drupe::Action::"Login"', kind: "response", record: injected("u1") }),
+  traceEvent({ ...session, timestamp: 10, action: 'Drupe::Action::"Read"', record: injected("u2") }),
+  traceEvent({ ...session, timestamp: 7200, action: 'Drupe::Action::"Read"', record: injected("u3") }),
+];
+```
+
+```
+@0 scope(principal: Drupe::OAuthUser::"alice", resource: Drupe::Gateway::"gw1") request_context(input: { user: "alice" }) Drupe::Action::"Login"::request(input: { user: "alice" }, callerPrincipal: Drupe::OAuthUser::"alice", callerResource: Drupe::Gateway::"gw1", requestId: "u1")
+```
+
+Compare the input to the output: `input` was written once, under `context`,
+and comes out in the `request_context` envelope **and** in the logged record.
+`kind` defaults to `request`. Values render in Cedar surface
+forms: strings quote themselves, `entityRef()` renders a uid bare,
+`decimalValue("1.50")` keeps a scale a JS number would lose, and a non-integer
+`number` throws rather than emitting something the parser reads differently.
+
+## The both-bags trap
+
+Each line carries two field bags and they are not the same bag.
+
+```
+@10 … request_context(input: { user: "alice" }) Drupe::Action::"Read"::request(input: { user: "alice" }, callerPrincipal: …)
+      └── the Cedar request is built from this   └── temporal predicates match against this
+```
+
+`formerly within 1h Drupe::Action::"Login"::response{ input.user: context.input.user }`
+compares the *past* login's `input.user`, out of the logged record, against the
+*current* request's `context.input.user`, out of the `request_context`
+envelope. Fill one bag and not the other and nothing errors: the replay exits 0
+with a verdict that tested half of what it claims.
+
+So the default is both bags, and the weaker trace takes an explicit opt-out:
+
+| `bags` | Where a `context` group lands |
+|---|---|
+| `"both"` (default) | `request_context` and the logged record |
+| `"record-only"` | The logged record alone — `context.*` is absent from the Cedar request |
+| `"context-only"` | The envelope alone — no temporal predicate can match the group |
+
+`record` is the other half of the input, and it is deliberately separate: the
+event schema's own injections (`callerPrincipal`, `callerResource`,
+`requestId`, `sessionId`) belong to the logged record and are never part of the
+Cedar request.
+
+## The action-naming trap
+
+Action names must be fully qualified — `Drupe::Action::"Read"`, never `Read`. A
+short name leaves every temporal predicate unmatched while Cedar still
+authorizes. `traceEvent()` rejects one at construction, as do `entityRef()` and
+`traceEntity()`.
+
+## Auditing a trace chant did not build
+
+A trace fetched from somewhere else — an AgentCore session history, a `.log`
+recorded by hand — normalizes into the same `TraceEvent` list and takes the
+same audit:
+
+```typescript
+const issues = dogwood.auditTrace(events);
+```
+
+| Kind | What it means |
+|---|---|
+| `single-bag` | A group is in one bag and not the other, so one side of the check silently misses |
+| `no-request-context` | A deciding event has no envelope at all, so every `context.*` test misses |
+| `empty-record` | An event logs no fields, so no temporal predicate can match it |
+| `out-of-order` | A timestamp goes backwards; history accumulates in file order, so a window sees something different |
+
+Every one of those makes a replay *weaker* rather than making it fail, which is
+the class a green run hides. `decisionKinds` defaults to `["request"]` — a
+history-only event never becomes a Cedar request, so a missing envelope on one
+is not a weakening and is not reported. The truth is whichever kinds the
+project's `.dwschema` marks `decision`, and that file is not visible from the
+audit.
+
+`traceFixture(events)` runs the same audit and **throws** on any finding,
+naming the `allow` list that would let it through. A fixture that weakens its
+own replay fails at build time instead of producing a green run that proves
+nothing.
+
+## Expectations
+
+```typescript
+export const expectations = [
+  { timestamp: 0, verdict: "deny", note: "the login request itself is not permitted" },
+  { timestamp: 10, verdict: "allow", determiningRules: [0], note: "the login is ten seconds old" },
+  { timestamp: 7200, verdict: "deny", note: "the login is two hours stale" },
+];
+```
+
+Three expectations for four trace lines, and that is the point of writing them
+against `timestamp` rather than `index`: `Login::response` is history-only
+under the default event schema, so it contributes to the window and produces no
+verdict. `index` is the position in the *decision* stream, not the trace line
+number, and it shifts whenever a trace gains a history-only event.
+
+`determiningRules` is the second half of the assertion. A decision that comes
+out right for the wrong reason — the correct verdict carried by a different
+rule — is drift the verdict alone cannot show.
+
+What `compareVerdicts` reports: a verdict that differs from the expectation; a
+verdict that matches but was determined by different rules; a decision point an
+expectation named that never occurred; a decision point that occurred and
+nothing expected. Per-evaluation errors are reported even when the expectation
+matched, and — when no expectations were written at all — an errored evaluation
+is still a finding, because a provider with no inlined Rhai script would
+otherwise replay "clean".
+
+## The trace format
+
+One event per line. Blank lines are skipped, a leading BOM is stripped, and
+there is **no comment syntax** — a `//` is an ordinary part of a value, so URLs
+survive and an attribution header would be parsed as an event and rejected with
+"timepoint must start with `@`".
+
+```
+@<timestamp> [scope(...)] [entities(...)] [request_context(...)] <Ns>::Action::"<Name>"::<kind>(<field>: <value>, ...)
+```
+
+The timestamp is an `i64` after `@`. The three envelopes are optional and must
+appear in that order. Values use Cedar surface forms: entity refs, quoted
+strings, integers, decimals like `1.50`, booleans, arrays, nested records.
+
+## Reading the run
+
+Human output is one line per decision point:
+
+```
+@0 (time point 0): DENY
+@10 (time point 1): ALLOW  [rules: 0]
+@7200 (time point 2): DENY
+```
+
+JSON gives `{verdicts: [{index, timestamp, verdict, determining_rules, errors}]}`.
+History-only events produce no line.
+
+**Replay exits 0 even when every verdict is DENY.** A non-zero exit means the
+trace or the policy set failed to load, never that a policy denied. The adapter
+in `src/dogwood/cli.ts` reads the JSON and not the exit code, here as
+everywhere; an unrecognised verdict string is read as a deny rather than
+dropped, because dropping an entry would shift every later index.
+
+## It needs the binary, and does not pretend otherwise
+
+The Replay phase shells to upstream's CLI. There is no npm package and no wasm
+build — see [Validation](../dogwood-validation/) for how chant finds a binary
+and how to build one.
+
+Without one the step **fails** and says where chant looked. It does not degrade
+to a pass, and an unusable invocation or a fatal (a malformed trace line, an
+unparseable policy set) throws rather than reporting zero divergences. A replay
+that did not happen is not a replay that found nothing — which is also why
+nothing in gating CI executes the binary.
+
+## Next
+
+- [Validation](../dogwood-validation/) — the two verbs that run inside a build,
+  and the binary knobs replay shares
+- [The Dogwood Dialect](../dogwood/) — what pre-release means for all of this

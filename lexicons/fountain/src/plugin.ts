@@ -12,6 +12,7 @@ import { fountainSerializer } from "./serializer";
 import { rules } from "./lint/rules";
 import { postSynthChecks } from "./lint/post-synth";
 import { fountainAuditCatalog } from "./lint/audit-catalog";
+import { fountainAuditEntities } from "./audit-entities";
 import { fountainReferenceCatalog } from "./reference-catalog";
 import { detectFountainTemplate } from "./detect";
 import { fountainInitTemplates } from "./init-templates";
@@ -63,6 +64,14 @@ export const fountainPlugin: LexiconPlugin = {
 
   // ── Optional extensions ────────────────────────────────────
 
+  // #1330 — the fact check-lexicon gates on, computed offline from the
+  // committed spec snapshot + surface baseline. Never fetchSchemas():
+  // check-lexicon runs per-PR, no network.
+  async coverageReport(): Promise<{ unaccountedKinds?: string[] }> {
+    const { coverageReportFromSnapshots } = await import("./coverage");
+    return { unaccountedKinds: coverageReportFromSnapshots().unaccountedKinds };
+  },
+
   lintRules() {
     return rules;
   },
@@ -72,6 +81,10 @@ export const fountainPlugin: LexiconPlugin = {
   },
 
   auditCatalog: () => fountainAuditCatalog,
+
+  auditEntities(content: string) {
+    return fountainAuditEntities(content);
+  },
 
   skills: createSkillsLoader(import.meta.url, [
     {

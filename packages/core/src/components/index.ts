@@ -91,6 +91,8 @@ export {
   resolveComponentGraph,
   resolveWiring,
   resolveStepInput,
+  collectComponentOutputs,
+  accumulateComponentOutputs,
   runComponentDeploy,
   runInterpretDriver,
   DriverGateUnsupportedError,

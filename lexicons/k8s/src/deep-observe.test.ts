@@ -128,6 +128,38 @@ describe("k8sDeepNormalizationHooks — the static rules", () => {
     expect(foreign).toEqual({ metadata: { name: "web", labels: { "app.kubernetes.io/managed-by": "helm" } } });
   });
 
+  test("controller-stamped annotations and labels subtract; an out-of-band user label does not (#1191)", () => {
+    const live = {
+      metadata: {
+        name: "web",
+        labels: { "pod-template-hash": "5d4f8b7c9", team: "platform" },
+        annotations: {
+          "deployment.kubernetes.io/revision": "3",
+          "kubectl.kubernetes.io/last-applied-configuration": "{}",
+          "kubernetes.io/change-cause": "kubectl set image",
+        },
+      },
+    };
+    const out = normalizeDeepProperties(live, {
+      entityType: "K8s::Apps::Deployment",
+      side: "live",
+      hooks: k8sDeepNormalizationHooks,
+      counterpartPaths: new Set(["metadata", "metadata.name"]),
+    });
+    expect(out).toEqual({
+      metadata: { name: "web", labels: { team: "platform" }, annotations: { "kubernetes.io/change-cause": "kubectl set image" } },
+    });
+
+    // Declared, so compared — the allowlist is counterpart-gated like the defaults table.
+    const declaredRevision = normalizeDeepProperties(live, {
+      entityType: "K8s::Apps::Deployment",
+      side: "live",
+      hooks: k8sDeepNormalizationHooks,
+      counterpartPaths: new Set(["metadata", "metadata.name", "metadata.annotations", "metadata.annotations.deployment.kubernetes.io/revision"]),
+    });
+    expect((declaredRevision as { metadata: { annotations: Record<string, string> } }).metadata.annotations["deployment.kubernetes.io/revision"]).toBe("3");
+  });
+
   test("a server-assigned ClusterIP nobody declared subtracts; a declared one is compared", () => {
     const undeclared = normalizeDeepProperties(
       { spec: { clusterIP: "10.43.201.161", clusterIPs: ["10.43.201.161"], ipFamilies: ["IPv4"], selector: { app: "web" } } },
@@ -453,8 +485,10 @@ describe("observeResourcesDeepK8s — reading through the typed client (#1076)",
  */
 describe("end to end: managed-fields-derived drift (#1076)", () => {
   const declared = makeEntities([
-    // "web": HPA owns replicas (undeclared → pruned), Istio injects a sidecar
-    // (undeclared → pruned), and someone changed a label chant owns.
+    // "web": someone changed a label chant owns, someone added a label chant
+    // never declared (#1191), HPA owns replicas and Istio injected a sidecar
+    // (both undeclared — drift until accepted), and the Deployment controller
+    // stamped its revision annotation (system noise, never drift).
     {
       name: "web",
       entityType: "K8s::Apps::Deployment",
@@ -505,10 +539,12 @@ describe("end to end: managed-fields-derived drift (#1076)", () => {
       resourceVersion: "42",
       generation: 7,
       creationTimestamp: "2026-01-01T00:00:00Z",
-      // GENUINE DRIFT: chant owns this label, and the live value moved.
-      labels: { app: "web", tier: "frontend" },
-      // ACCEPTED: chant owns this annotation; the platform's baseline accepts "43".
-      annotations: { "build-id": "43" },
+      // GENUINE DRIFT: chant owns `tier`, and the live value moved.
+      // UNDECLARED DRIFT: `team` was added out of band by `kubectl label` (#1191).
+      labels: { app: "web", tier: "frontend", team: "platform" },
+      // ACCEPTED: chant owns build-id; the platform's baseline accepts "43".
+      // NOISE: the Deployment controller's revision counter is on the static allowlist.
+      annotations: { "build-id": "43", "deployment.kubernetes.io/revision": "3" },
       managedFields: [
         {
           manager: "chant:web",
@@ -529,15 +565,27 @@ describe("end to end: managed-fields-derived drift (#1076)", () => {
           },
         },
         {
-          // NOISE: HPA owns replicas, and chant never declared it.
+          // UNDECLARED: a human ran `kubectl label deploy web team=platform`.
+          manager: "kubectl-edit",
+          operation: "Update",
+          apiVersion: "apps/v1",
+          time: "2026-01-03T00:00:00Z",
+          fieldsV1: { "f:metadata": { "f:labels": { "f:team": {} } } },
+        },
+        {
+          // UNDECLARED until accepted: HPA owns replicas, and chant never declared it.
+          // SYSTEM NOISE: the revision annotation, stamped by the Deployment controller.
           manager: "kube-controller-manager",
           operation: "Update",
           apiVersion: "apps/v1",
           time: "2026-01-02T00:00:00Z",
-          fieldsV1: { "f:spec": { "f:replicas": {} } },
+          fieldsV1: {
+            "f:metadata": { "f:annotations": { "f:deployment.kubernetes.io/revision": {} } },
+            "f:spec": { "f:replicas": {} },
+          },
         },
         {
-          // NOISE: a mutating webhook injected a whole sidecar container.
+          // UNDECLARED until accepted: a mutating webhook injected a whole sidecar container.
           manager: "istio-sidecar-injector",
           operation: "Update",
           apiVersion: "apps/v1",
@@ -625,14 +673,21 @@ describe("end to end: managed-fields-derived drift (#1076)", () => {
       respond: (req) => (req.path.endsWith("/deployments/broken") ? { status: 500, body: statusBody(500, "InternalError", "backend unavailable") } : undefined),
     });
 
+  // The platform accepted the HPA and the sidecar — the valve #1191 leans on —
+  // but nobody accepted the `team` label.
   const baseline = {
     web: {
       type: "K8s::Apps::Deployment",
-      accepted: [{ path: "metadata.annotations.build-id", value: "43" }],
+      accepted: [
+        { path: "metadata.annotations.build-id", value: "43" },
+        { path: "spec.replicas", value: 7 },
+        { path: "spec.template.spec.containers[#istio-proxy].name", value: "istio-proxy" },
+        { path: "spec.template.spec.containers[#istio-proxy].image", value: "istio/proxyv2:1.20" },
+      ],
     },
   };
 
-  test("exactly the genuine + contested drift surfaces; controller noise and the accepted annotation do not", async () => {
+  test("genuine, undeclared and contested drift surface; accepted deviations and controller-stamped metadata do not", async () => {
     const live = normalizeDeepObservation(
       await observeResourcesDeepK8s({ environment: "prod", entityNames: [...declared.keys()], entities: declared }, cluster().connector),
     );
@@ -642,28 +697,36 @@ describe("end to end: managed-fields-derived drift (#1076)", () => {
       {
         name: "web",
         type: "K8s::Apps::Deployment",
-        changes: [{ path: "metadata.labels.tier", kind: "changed", declared: "backend", live: "frontend" }],
+        changes: [
+          // The #1191 case: foreign-owned, undeclared, not accepted — and the owner says who.
+          { path: "metadata.labels.team", kind: "undeclared", live: "platform", owner: "kubectl-edit" },
+          { path: "metadata.labels.tier", kind: "changed", declared: "backend", live: "frontend", owner: "chant:web" },
+        ],
       },
       {
         name: "worker",
         type: "K8s::Apps::Deployment",
-        changes: [{ path: "spec.replicas", kind: "changed", declared: 5, live: 9 }],
+        changes: [{ path: "spec.replicas", kind: "changed", declared: 5, live: 9, owner: "kubectl-client-side-apply" }],
       },
     ]);
 
+    // The accepted HPA replicas and sidecar are held back, not hidden.
     expect(result.accepted).toEqual([
       {
         name: "web",
         type: "K8s::Apps::Deployment",
-        changes: [{ path: "metadata.annotations.build-id", kind: "changed", declared: "42", live: "43", baseline: "43" }],
+        changes: [
+          { path: "metadata.annotations.build-id", kind: "changed", declared: "42", live: "43", baseline: "43", owner: "chant:web" },
+          { path: "spec.replicas", kind: "undeclared", live: 7, baseline: 7, owner: "kube-controller-manager" },
+          { path: "spec.template.spec.containers[#istio-proxy].image", kind: "undeclared", live: "istio/proxyv2:1.20", baseline: "istio/proxyv2:1.20" },
+          { path: "spec.template.spec.containers[#istio-proxy].name", kind: "undeclared", live: "istio-proxy", baseline: "istio-proxy" },
+        ],
       },
     ]);
 
-    // The HPA-owned replicas and the Istio sidecar never appear at all — not
-    // as drift, not as "undeclared" noise. Pruned before the diff ever runs.
-    const webDriftPaths = result.drifted.find((d) => d.name === "web")?.changes.map((c) => c.path) ?? [];
-    expect(webDriftPaths).not.toContain("spec.replicas");
-    expect(JSON.stringify(result)).not.toContain("istio-proxy");
+    // The Deployment controller's revision counter never appears at all — not
+    // as drift, not as accepted. Subtracted by the static allowlist.
+    expect(JSON.stringify(result)).not.toContain("deployment.kubernetes.io/revision");
 
     expect(result.unobserved).toEqual([
       { name: "broken", type: "K8s::Apps::Deployment", reason: "read-failed", detail: expect.stringContaining("500") },
@@ -676,14 +739,55 @@ describe("end to end: managed-fields-derived drift (#1076)", () => {
     ]);
   });
 
-  test("without the baseline the annotation is drift too; accepting it is what silences it", async () => {
+  test("without the baseline every foreign-owned undeclared field is drift too; accepting is what silences it", async () => {
     const live = normalizeDeepObservation(
       await observeResourcesDeepK8s({ environment: "prod", entityNames: [...declared.keys()], entities: declared }, cluster().connector),
     );
     const result = diffDeepObservation(declared, live, k8sDeepNormalizationHooks);
     const web = result.drifted.find((d) => d.name === "web");
-    expect(web?.changes.map((c) => c.path).sort()).toEqual(["metadata.annotations.build-id", "metadata.labels.tier"]);
+    expect(web?.changes.map((c) => c.path).sort()).toEqual([
+      "metadata.annotations.build-id",
+      "metadata.labels.team",
+      "metadata.labels.tier",
+      "spec.replicas",
+      "spec.template.spec.containers[#istio-proxy].image",
+      "spec.template.spec.containers[#istio-proxy].name",
+    ]);
     expect(result.accepted).toEqual([]);
+  });
+
+  test("the same out-of-band label in the accepted baseline is not drift, at that value (#1191)", async () => {
+    const live = normalizeDeepObservation(
+      await observeResourcesDeepK8s({ environment: "prod", entityNames: [...declared.keys()], entities: declared }, cluster().connector),
+    );
+    const withTeam = {
+      web: { ...baseline.web, accepted: [...baseline.web.accepted, { path: "metadata.labels.team", value: "platform" }] },
+    };
+    const result = diffDeepObservation(declared, live, k8sDeepNormalizationHooks, withTeam);
+    const web = result.drifted.find((d) => d.name === "web");
+    expect(web?.changes).toEqual([
+      { path: "metadata.labels.tier", kind: "changed", declared: "backend", live: "frontend", owner: "chant:web" },
+    ]);
+    expect(result.accepted.find((d) => d.name === "web")?.changes).toContainEqual({
+      path: "metadata.labels.team",
+      kind: "undeclared",
+      live: "platform",
+      baseline: "platform",
+      owner: "kubectl-edit",
+    });
+
+    // Value-bound: accepting `team=platform` does not bless `team=security`.
+    const moved = {
+      web: { ...baseline.web, accepted: [...baseline.web.accepted, { path: "metadata.labels.team", value: "security" }] },
+    };
+    const movedResult = diffDeepObservation(declared, live, k8sDeepNormalizationHooks, moved);
+    expect(movedResult.drifted.find((d) => d.name === "web")?.changes).toContainEqual({
+      path: "metadata.labels.team",
+      kind: "undeclared",
+      live: "platform",
+      baseline: "security",
+      owner: "kubectl-edit",
+    });
   });
 
   test("a whole-lexicon failure (no client) is a hole for every declared entity, never a clean report", async () => {
@@ -711,11 +815,12 @@ describe("end to end: managed-fields-derived drift (#1076)", () => {
 });
 
 /**
- * The managed-fields-specific case named in #1076's acceptance: the same
- * live mutation on the same field is drift when chant owns it, and silence
- * when a controller owns it and source is silent.
+ * The managed-fields case named in #1076's acceptance, re-decided by #1191:
+ * the same live mutation on the same field is `changed` when chant owns it
+ * and source declares it, and `undeclared` when a controller owns it and
+ * source is silent. Ownership names the writer; it no longer silences.
  */
-describe("the managed-fields twist: ownership decides drift vs silence for the same mutation (#1076)", () => {
+describe("the managed-fields twist: ownership names the writer, the declared tree decides the kind (#1076, #1191)", () => {
   const liveWith = (owner: "chant" | "controller") => ({
     apiVersion: "apps/v1",
     kind: "Deployment",
@@ -768,15 +873,115 @@ describe("the managed-fields twist: ownership decides drift vs silence for the s
     ]);
   });
 
-  test("a controller owns the field and source is silent: the same mutated value is silence, not drift and not undeclared noise", async () => {
+  test("a controller owns the field and source is silent: the same mutated value is undeclared drift until accepted (#1191)", async () => {
     const cluster = fakeCluster({ objects: { [objectKey("apps/v1", "Deployment", "app", "prod")]: liveWith("controller") } });
     const entities = declaredWith(false);
     const live = normalizeDeepObservation(
       await observeResourcesDeepK8s({ environment: "prod", entityNames: ["app"], entities }, cluster.connector),
     );
     const result = diffDeepObservation(entities, live, k8sDeepNormalizationHooks);
-    expect(result.drifted).toEqual([]);
-    expect(result.unchanged).toEqual(["app"]);
-    expect(JSON.stringify(result)).not.toContain("app:2.0");
+    expect(result.drifted).toEqual([
+      {
+        name: "app",
+        type: "K8s::Apps::Deployment",
+        changes: [{ path: "spec.template.spec.containers[#app].image", kind: "undeclared", live: "app:2.0" }],
+      },
+    ]);
+
+    const accepted = {
+      app: { accepted: [{ path: "spec.template.spec.containers[#app].image", value: "app:2.0" }] },
+    };
+    const quiet = diffDeepObservation(entities, live, k8sDeepNormalizationHooks, accepted);
+    expect(quiet.drifted).toEqual([]);
+    expect(quiet.accepted.map((d) => d.name)).toEqual(["app"]);
+  });
+});
+
+describe("secret masking — diff --live never holds a Secret data value (#1830, #1365 decision 6)", () => {
+  const DECLARED_VALUE = "ZGVjbGFyZWQtYnl0ZXM=";
+  const LIVE_VALUE = "bGl2ZS1ieXRlcy1kaWZmZXJlbnQ=";
+  const INJECTED_VALUE = "aW5qZWN0ZWQtb3V0LW9mLWJhbmQ=";
+
+  const secretEntities = makeEntities([
+    {
+      name: "master-key",
+      entityType: "K8s::Core::Secret",
+      props: {
+        metadata: { name: "master-key", namespace: "prod" },
+        // A declared value would never exist for a generated-once secret; it
+        // is here precisely to prove even a declared one cannot reach the diff.
+        data: { MASTER_KEY: DECLARED_VALUE, PENDING_KEY: DECLARED_VALUE },
+      },
+    },
+  ]);
+
+  const secretCluster = () =>
+    fakeCluster({
+      objects: {
+        [objectKey("v1", "Secret", "master-key", "prod")]: {
+          apiVersion: "v1",
+          kind: "Secret",
+          metadata: {
+            name: "master-key",
+            namespace: "prod",
+            uid: "uid-master-key",
+            resourceVersion: "5",
+            creationTimestamp: "2026-01-01T00:00:00Z",
+            labels: {
+              "app.kubernetes.io/managed-by": "chant",
+              "chant.intentius.io/generated-once": "true",
+            },
+          },
+          type: "Opaque",
+          // The declared key moved (a rotation done out of band), one declared
+          // key is gone, and one key was injected. All three classify — none
+          // by value.
+          data: { MASTER_KEY: LIVE_VALUE, INJECTED_KEY: INJECTED_VALUE },
+        },
+      },
+    });
+
+  test("presence and key-name drift classify; no value (declared or live) appears anywhere in the result", async () => {
+    const live = normalizeDeepObservation(
+      await observeResourcesDeepK8s(
+        { environment: "prod", entityNames: ["master-key"], entities: secretEntities },
+        secretCluster().connector,
+      ),
+    );
+    const result = diffDeepObservation(secretEntities, live, k8sDeepNormalizationHooks);
+
+    const changes = result.drifted.find((d) => d.name === "master-key")?.changes ?? [];
+    // MASTER_KEY is present on both sides: both values collapse to the mask,
+    // so a value-only difference is NOT drift — that is the contract, chant
+    // cannot know and must not learn whether the bytes moved.
+    expect(changes.map((c) => `${c.path}:${c.kind}`).sort()).toEqual([
+      "data.INJECTED_KEY:undeclared",
+      "data.PENDING_KEY:absent",
+    ]);
+
+    // The hard line, asserted over the whole serialized result: no data
+    // value — declared, live, or injected — anywhere, under any key.
+    const serialized = JSON.stringify(result);
+    expect(serialized).not.toContain(DECLARED_VALUE);
+    expect(serialized).not.toContain(LIVE_VALUE);
+    expect(serialized).not.toContain(INJECTED_VALUE);
+
+    // chant's own generated-once marker is its signature, not drift.
+    expect(serialized).not.toContain("generated-once");
+  });
+
+  test("type-level: the mask hook collapses Secret data on both sides, and only for Secrets", () => {
+    const masked = normalizeDeepProperties(
+      { data: { "app.conf": DECLARED_VALUE } },
+      { entityType: "K8s::Core::Secret", side: "declared", hooks: k8sDeepNormalizationHooks },
+    );
+    expect(masked).toEqual({ data: { "app.conf": "[REDACTED]" } });
+
+    // A ConfigMap's data is configuration, not material — untouched.
+    const untouched = normalizeDeepProperties(
+      { data: { "app.conf": "plain-config" } },
+      { entityType: "K8s::Core::ConfigMap", side: "live", hooks: k8sDeepNormalizationHooks },
+    );
+    expect(untouched).toEqual({ data: { "app.conf": "plain-config" } });
   });
 });

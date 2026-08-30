@@ -1,6 +1,7 @@
 ---
 title: Reconciling Lifecycle
-description: The two reconciliation directions — reconcile (cloud→code) and apply (code→cloud) — the dial as per-environment configuration, and when to pick each.
+description: The two reconciliation directions as Op composites — ReconcileOp (cloud→code) and ApplyOp (code→cloud) — the commands and flags for each.
+diataxis: how-to
 ---
 
 Drift detection tells you the cloud and your source disagree. Reconciliation closes the gap. There are two directions, and chant exposes each as an Op composite. Which one you reach for — and whether you reach for either — is the [dial](/chant/concepts/lifecycle-models/#the-dial), chosen per environment.
@@ -52,32 +53,11 @@ const { op } = ApplyOp({
 export default op;
 ```
 
-Authority stays with the platform — chant hosts no state file. Deletes ride the target's own delete path and are owned-only on every target: marker-scoped on `kubectl`, tag-scoped on `arm`, and bounded by the stack on `cloudformation`. See [`delete` and what bounds it](/chant/guide/ops/#apply-code--cloud) for the mechanism in each case. A destructive apply gets an approval gate and saga-style rollback; see [Gates and compensation](/chant/guide/ops/#gates-and-compensation--where-temporal-is-load-bearing) for why that half is Temporal-bound.
-
-## The dial as configuration
-
-The same project can sit at different positions per environment:
-
-| Environment | Position | What runs |
-|---|---|---|
-| `dev` | observe | `chant lifecycle diff --live` in CI; no reconciliation |
-| `staging` | reconcile | `ReconcileOp` opens PRs when staging drifts |
-| `prod` | authoritative | `ApplyOp` with `delete: "gated"` behind approval |
-
-Nothing forces an environment past the position you chose for it. Turn the dial up as trust and tooling allow.
-
-The position is not a config field. `environments` in `chant.config.ts` is just a list of names — there is no `model` or `dial` setting on an environment. You choose the position by which verb you run against it: `chant lifecycle diff --live` for observe, a `ReconcileOp` for reconcile, an `ApplyOp` for apply. An environment sits at observe until a reconcile or apply Op is wired to it and run. To pin a position, control what exists and what runs — put `lifecycle diff --live` in dev's CI and commit no apply Op for dev, and dev stays observe-only by construction. There is no global switch to flip, which is why nothing can force an environment past where you left it.
-
-## When to pick each
-
-- **Observe** when the cloud is changed by other tools you don't want to fight, and you just need visibility.
-- **Reconcile** when source should track reality and humans should review each adoption — the default for shared or partially-managed environments.
-- **Apply** when source is authoritative and you want the cloud reconciled to it, with deletes limited to what chant owns. Gate it in production.
+Authority stays with the platform — chant hosts no state file. Deletes ride the target's own delete path and are owned-only on every target: marker-scoped on `kubectl`, tag-scoped on `arm`, and bounded by the stack on `cloudformation`. See [`delete` and what bounds it](/chant/guide/ops-reference/#delete-paths) for the mechanism in each case. A destructive apply gets an approval gate and saga-style rollback; see [Gates and compensation](/chant/guide/ops/#gates-and-compensation--where-temporal-is-load-bearing) for why that half is Temporal-bound.
 
 ## See also
 
 - [`lifecycle-reconcile-aws` example](https://github.com/INTENTIUS/chant/tree/main/lexicons/aws/examples/lifecycle-reconcile-aws) — the whole loop on a real stack: deploy → drift → diff → reconcile / apply
-- [Lifecycle Models](/chant/concepts/lifecycle-models/) — the three axes and the dial
 - [Live Import](/chant/guide/live-import/) — the cloud→code regeneration the reconcile workflow uses
 - [Ops](/chant/guide/ops/) — `ReconcileOp` and `ApplyOp` in depth
-- [Durable Workflows](/chant/concepts/durable-workflows/) — why gated apply wants Temporal
+- [Reconciliation](/chant/concepts/reconciliation/) — the dial as per-environment configuration, and when to pick reconcile vs. apply vs. observe

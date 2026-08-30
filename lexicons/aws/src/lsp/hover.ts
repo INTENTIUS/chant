@@ -61,9 +61,21 @@ function resourceHover(className: string, entry: LexiconEntry): HoverInfo | unde
     lines.push(`**Conditionally immutable:** ${entry.conditionalCreateOnly.map((p) => `\`${p}\``).join(", ")}`);
   }
 
-  if (entry.deprecatedProperties?.length) {
+  // Declared and inferred deprecations rest on different evidence, so they
+  // read as separate lines rather than one merged list.
+  const inferred = new Set(entry.inferredDeprecations ?? []);
+  const declared = (entry.deprecatedProperties ?? []).filter((p) => !inferred.has(p));
+
+  if (declared.length > 0) {
     lines.push("");
-    lines.push(`**Deprecated properties:** ${entry.deprecatedProperties.map((p) => `\`${p}\``).join(", ")}`);
+    lines.push(`**Deprecated properties:** ${declared.map((p) => `\`${p}\``).join(", ")}`);
+  }
+
+  if (inferred.size > 0) {
+    lines.push("");
+    lines.push(
+      `**Possibly deprecated** (description text only, not declared by the Registry): ${[...inferred].map((p) => `\`${p}\``).join(", ")}`,
+    );
   }
 
   return { contents: lines.join("\n") };

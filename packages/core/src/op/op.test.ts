@@ -3,8 +3,8 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { Op, phase, activity, gate, build, kubectlApply, helmInstall,
-         waitForStack, gitlabPipeline, lifecycleSnapshot, shell, teardown, policyGate } from "./builders";
+import { Op, phase, activity, gate, build, kubectlApply, helmInstall, helmInstallPinned,
+         waitForStack, gitlabPipeline, lifecycleSnapshot, shell, ensureSecret, teardown, policyGate } from "./builders";
 import { DECLARABLE_MARKER, type Declarable } from "../declarable";
 
 // ── Op() ──────────────────────────────────────────────────────────────────────
@@ -163,6 +163,16 @@ describe("pre-built shortcuts", () => {
     expect(a.profile).toBe("longInfra");
   });
 
+  it("helmInstallPinned() produces a helmInstall activity keyed by contentDigest, no chart", () => {
+    const a = helmInstallPinned("my-release", "sha256:abc", { namespace: "web" });
+    expect(a.fn).toBe("helmInstall");
+    expect(a.args?.name).toBe("my-release");
+    expect(a.args?.contentDigest).toBe("sha256:abc");
+    expect(a.args?.namespace).toBe("web");
+    expect(a.args?.chart).toBeUndefined();
+    expect(a.profile).toBe("longInfra");
+  });
+
   it("waitForStack() produces waitForStack activity with k8sWait profile", () => {
     const a = waitForStack("my-stack");
     expect(a.fn).toBe("waitForStack");
@@ -188,6 +198,19 @@ describe("pre-built shortcuts", () => {
     const a = shell("echo hello");
     expect(a.fn).toBe("shellCmd");
     expect(a.args?.cmd).toBe("echo hello");
+  });
+
+  it("ensureSecret() produces ensureSecret activity with name/keys args and no material-shaped field", () => {
+    const a = ensureSecret("master-key", ["MASTER_SECRETS_KEY"], {
+      metadata: { "chant.dev/provenance": "generated-once" },
+    });
+    expect(a.fn).toBe("ensureSecret");
+    expect(a.args?.name).toBe("master-key");
+    expect(a.args?.keys).toEqual(["MASTER_SECRETS_KEY"]);
+    expect(a.args?.metadata).toEqual({ "chant.dev/provenance": "generated-once" });
+    // The step is contract-only: nothing on it could carry secret material.
+    expect(a.args && "value" in a.args).toBe(false);
+    expect(a.args && "data" in a.args).toBe(false);
   });
 
   it("teardown() produces chantTeardown activity with longInfra profile", () => {

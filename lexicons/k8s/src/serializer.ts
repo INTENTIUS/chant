@@ -15,6 +15,7 @@ import { walkValue, type SerializerVisitor } from "@intentius/chant/serializer-w
 import { emitYAML } from "@intentius/chant/yaml";
 import { isDefaultLabels, isDefaultAnnotations, type DefaultLabels, type DefaultAnnotations } from "./default-labels";
 import { isRenderedManifestEntity } from "./kustomize/rendered-entity";
+import { isEncryptedSecretFileEntity } from "./sops/entity";
 
 const require = createRequire(import.meta.url);
 
@@ -225,7 +226,11 @@ export const k8sSerializer: Serializer = {
   // `chant-disable ARGO001` already written (#1349).
   extraRulePrefixes: ["ARGO", "FLUX"],
 
-  serialize(entities: Map<string, Declarable>, _outputs?: LexiconOutput[], context?: SerializeContext): string {
+  serialize(
+    entities: Map<string, Declarable>,
+    _outputs?: LexiconOutput[],
+    context?: SerializeContext,
+  ): string | SerializerResult {
     // Build reverse map: entity → name
     const entityNames = new Map<Declarable, string>();
     for (const [name, entity] of entities) {
@@ -251,10 +256,35 @@ export const k8sSerializer: Serializer = {
 
     const namespaceDocs: string[] = [];
     const otherDocs: string[] = [];
+    /** Sidecar files — committed ciphertext, copied byte-for-byte. */
+    const files: Record<string, string> = {};
+    /** Basenames within `files` that must never be JSON.parse round-tripped (chant#1937). */
+    const verbatimFiles: string[] = [];
+    const warnings: string[] = [];
 
     for (const [name, entity] of entities) {
       if (isPropertyDeclarable(entity)) continue;
       if (isDefaultLabels(entity) || isDefaultAnnotations(entity)) continue;
+
+      // Committed SOPS ciphertext (epic lex00/iac-cd-bench#6) leaves as a
+      // SIDECAR and never as a document in the primary output. That is the
+      // load-bearing line: chant's appliers read the primary output, so an
+      // undecrypted Secret cannot reach a cluster through them. The bytes are
+      // copied exactly as committed — no re-emit, no label merge, no
+      // ownership stamp — because re-serializing would break the MAC the
+      // `sops` block carries over the plaintext.
+      if (isEncryptedSecretFileEntity(entity)) {
+        const existing = files[entity.filename];
+        if (existing !== undefined && existing !== entity.text) {
+          warnings.push(
+            `k8s: two committed-encrypted secrets emit the same sidecar filename ` +
+              `"${entity.filename}" — the second (${entity.sourcePath}) wins`,
+          );
+        }
+        files[entity.filename] = entity.text;
+        if (!verbatimFiles.includes(entity.filename)) verbatimFiles.push(entity.filename);
+        continue;
+      }
 
       // A kustomize build root's document (#1548 piece 3) is render-final:
       // the overlay decided every field, so the props ARE the manifest and
@@ -386,7 +416,16 @@ export const k8sSerializer: Serializer = {
       }
     }
 
-    return [...namespaceDocs, ...otherDocs].join("\n---\n");
+    const primary = [...namespaceDocs, ...otherDocs].join("\n---\n");
+    // A bare string when there is nothing extra to write, so the common case
+    // stays byte-identical to what every existing consumer already reads.
+    if (Object.keys(files).length === 0 && warnings.length === 0) return primary;
+    return {
+      primary,
+      files,
+      ...(verbatimFiles.length > 0 ? { verbatimFiles } : {}),
+      ...(warnings.length > 0 ? { warnings } : {}),
+    };
   },
 };
 

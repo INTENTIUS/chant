@@ -92,9 +92,14 @@ describe("createCapabilityRegistry", () => {
     }
   });
 
-  test("family table lists exactly the agnostic starter families (cloud leaves moved to lexicons)", () => {
+  // Every AWS/k8s cloud leaf moved out to its lexicon — but the three
+  // Cloudflare Workers apply verbs (#1293, epic #1296) stay in core by
+  // deliberate decision (see ./verbs/wrangler.ts's module doc): the epic
+  // cedes the Workers plane to `wrangler` and there is no cloudflare lexicon
+  // for them to live in instead.
+  test("family table lists exactly the agnostic starter families plus the Cloudflare apply leaves (#1293)", () => {
     expect(Object.keys(STARTER_VERB_FAMILIES).sort()).toEqual(
-      ["build", "escapeHatch", "sbom", "supplyChainPolicy", "supplyChainSecurity", "waitVerify"].sort(),
+      ["build", "cloudflare", "escapeHatch", "sbom", "secrets", "supplyChainPolicy", "supplyChainSecurity", "waitVerify"].sort(),
     );
   });
 

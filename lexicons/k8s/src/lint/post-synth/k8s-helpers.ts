@@ -1,12 +1,12 @@
 /**
  * Shared helpers for Kubernetes post-synthesis lint rules.
  *
- * Provides YAML parsing for multi-document K8s manifests and container
- * extraction logic that handles all common workload types.
+ * Provides the `ctx.docs` → `K8sManifest[]` bridge every check reads through,
+ * and container extraction logic that handles all common workload types.
  */
 
-import { parseYAML } from "@intentius/chant/yaml";
-export { getPrimaryOutput } from "@intentius/chant/lint/post-synth";
+import { parseOutputDocs, type PostSynthContext } from "@intentius/chant/lint/post-synth";
+export { getPrimaryOutput, getAdditionalFiles } from "@intentius/chant/lint/post-synth";
 
 /**
  * A parsed Kubernetes manifest (loosely typed).
@@ -45,27 +45,36 @@ export interface K8sContainer {
 }
 
 /**
- * Split a multi-document YAML string on `---` boundaries and parse each
- * document into a K8sManifest.
+ * Every parsed Kubernetes manifest across all lexicon outputs, via `ctx.docs`
+ * (chant #975) — the shared, parse-once view every k8s post-synth check
+ * reads, in place of the old per-check `parseK8sManifests(getPrimaryOutput(output))`
+ * splitter (chant #976). Two documents are dropped rather than passed through
+ * as a "manifest":
+ *
+ * - `d.error` — a document `parseOutputDocs` could not make sense of.
+ * - `d.file` — a document that came from a `SerializerResult.files` sidecar
+ *   (a committed-encrypted secret's ciphertext, in this lexicon) rather than
+ *   a lexicon's primary output. `parseK8sManifests` only ever saw
+ *   `getPrimaryOutput(output)`, so a sidecar was invisible to every general
+ *   manifest-consuming check — see `getAdditionalFiles`'s doc comment on why
+ *   that separation is deliberate. Only `sops-helpers.ts`'s
+ *   `resolveEncryptedSecretClaims` (WK8504/WK8503's producer join) reads
+ *   `.files` explicitly; this bridge must keep it that way.
+ *
+ * `ctx.docs` is populated by every context chant itself builds (`chant
+ * build`, `@intentius/chant-test-utils`'s `createPostSynthContext` /
+ * `makePostSynthCtx*`) — see `PostSynthContext.docs`'s doc comment for why
+ * it is still optional at the type level. A handful of this lexicon's own
+ * hand-rolled `PostSynthContext` test literals (`post-synth.test.ts`'s
+ * `makeCtx`) predate that field and never set it; for those, fall back to
+ * parsing `ctx.outputs` directly with the same `parseOutputDocs` primitive,
+ * rather than silently returning no manifests.
  */
-export function parseK8sManifests(yaml: string): K8sManifest[] {
-  const documents = yaml.split(/\n---\n/);
-  const manifests: K8sManifest[] = [];
-
-  for (const doc of documents) {
-    const trimmed = doc.trim();
-    if (trimmed === "" || trimmed === "---") continue;
-    try {
-      const parsed = parseYAML(trimmed);
-      if (typeof parsed === "object" && parsed !== null) {
-        manifests.push(parsed as K8sManifest);
-      }
-    } catch {
-      // Skip unparseable documents
-    }
-  }
-
-  return manifests;
+export function docsToManifests(ctx: PostSynthContext): K8sManifest[] {
+  const docs = ctx.docs ?? parseOutputDocs(ctx.outputs);
+  return docs
+    .filter((d) => !d.error && !d.file)
+    .map((d) => d.value as K8sManifest);
 }
 
 /**
@@ -102,6 +111,13 @@ export function extractPodSpec(
       const template = jobSpec?.template as Record<string, unknown> | undefined;
       return (template?.spec as Record<string, unknown>) ?? null;
     }
+
+    // KServe ServingRuntime/ClusterServingRuntime carry `containers` and
+    // `tolerations` directly on spec — no template wrapper, unlike the
+    // built-in workload kinds above.
+    case "ServingRuntime":
+    case "ClusterServingRuntime":
+      return spec;
 
     default:
       return null;
@@ -147,6 +163,53 @@ export const WORKLOAD_KINDS = new Set([
   "Job",
   "CronJob",
 ]);
+
+/**
+ * Workload kinds that can request `nvidia.com/gpu` — the built-in workload
+ * kinds plus KServe's ServingRuntime/ClusterServingRuntime, which declare
+ * `containers`/`tolerations` directly on spec (see `extractPodSpec`).
+ */
+export const GPU_POD_KINDS = new Set([
+  ...WORKLOAD_KINDS,
+  "ServingRuntime",
+  "ClusterServingRuntime",
+]);
+
+/** A Kubernetes toleration (loosely typed). */
+export interface K8sToleration {
+  key?: string;
+  operator?: "Exists" | "Equal";
+  value?: string;
+  effect?: string;
+  [key: string]: unknown;
+}
+
+/** Resource name used for GPU requests/limits across the lexicon. */
+export const NVIDIA_GPU_RESOURCE = "nvidia.com/gpu";
+
+/**
+ * True when any container in `containers` requests or limits
+ * `nvidia.com/gpu`.
+ */
+export function requestsGpu(containers: K8sContainer[]): boolean {
+  return containers.some((c) => {
+    const requests = c.resources?.requests as Record<string, unknown> | undefined;
+    const limits = c.resources?.limits as Record<string, unknown> | undefined;
+    return Boolean(requests?.[NVIDIA_GPU_RESOURCE]) || Boolean(limits?.[NVIDIA_GPU_RESOURCE]);
+  });
+}
+
+/**
+ * True when `tolerations` includes one that tolerates the `nvidia.com/gpu`
+ * taint — either an explicit `key: "nvidia.com/gpu"` toleration, or a
+ * wildcard `{ operator: "Exists" }` with no key (tolerates every taint).
+ */
+export function toleratesGpu(tolerations: unknown): boolean {
+  if (!Array.isArray(tolerations)) return false;
+  return (tolerations as K8sToleration[]).some(
+    (t) => t.key === NVIDIA_GPU_RESOURCE || (t.operator === "Exists" && !t.key),
+  );
+}
 
 /**
  * Parse a Kubernetes memory string to bytes.

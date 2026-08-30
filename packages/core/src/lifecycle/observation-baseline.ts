@@ -37,6 +37,7 @@
 
 import { readBlobFromPath, writeBlobToPath } from "./git";
 import { sortedJsonReplacer } from "../utils";
+import { EFFECT_RECEIPT_ENTITY_TYPE } from "../effect-receipt";
 
 /** The file name under `<environment>/` on the orphan branch. */
 export const OBSERVATION_BASELINE_FILE = "observation-baseline.json";
@@ -140,19 +141,50 @@ export interface DeviationToAccept {
   note?: string;
 }
 
+/** Options for {@link acceptDeviations}. */
+export interface AcceptDeviationsOptions {
+  /** ISO timestamp to stamp instead of the wall clock (tests, replays). */
+  now?: string;
+  /**
+   * Entity names the caller recognized as effect receipts (#1833) — the
+   * marker-based read (`collectEffectReceipts`, ../effect-receipt.ts) over
+   * the build's entities, which is how a lexicon-materialized receipt row is
+   * caught even though its `entityType` is the row's own. Core-typed
+   * receipts are refused regardless, via {@link DeviationToAccept.type}.
+   */
+  receipts?: ReadonlySet<string>;
+}
+
 /**
  * Record deviations as accepted, returning a new baseline (the input is not
  * mutated). An existing acceptance for the same entity+path is replaced — that
  * is how re-accepting after a deliberate change works, and it keeps the file
  * from growing a second entry for every value a path has ever held.
+ *
+ * REFUSES a deviation on an effect receipt (#1833, epic #1703), throwing
+ * before anything is recorded: a receipt is the declared witness that its
+ * effect ran, and the `effect()` step is its only writer — baselining a
+ * receipt's live value would accept "the effect never fired" as the new
+ * normal and silently defuse the effect. The whole acceptance aborts, not
+ * just the receipt's row, so a partial baseline never lands.
  */
 export function acceptDeviations(
   baseline: ObservationBaseline,
   lexicon: string,
   deviations: readonly DeviationToAccept[],
-  opts?: { now?: string },
+  opts?: AcceptDeviationsOptions,
 ): ObservationBaseline {
   if (deviations.length === 0) return baseline;
+  for (const dev of deviations) {
+    if (dev.type === EFFECT_RECEIPT_ENTITY_TYPE || opts?.receipts?.has(dev.entity)) {
+      throw new Error(
+        `cannot accept drift on effect receipt "${dev.entity}" (path ${dev.path}): ` +
+          `the effect() step is the receipt's only writer — accepting the live value would ` +
+          `silently defuse the effect. Re-run the effect (or change its inputs) instead of ` +
+          `baselining the receipt.`,
+      );
+    }
+  }
   const now = opts?.now ?? new Date().toISOString();
   const lexicons: Record<string, BaselineLexicon> = { ...baseline.lexicons };
   const entities: BaselineLexicon = { ...(lexicons[lexicon] ?? {}) };

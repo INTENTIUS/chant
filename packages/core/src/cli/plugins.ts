@@ -106,10 +106,12 @@ export function collectBuildRootContributors(
   plugins: readonly LexiconPlugin[] | undefined,
   config: Record<string, unknown>,
   projectRoot: string,
-): Array<() => Promise<import("../lexicon").BuildRootContribution>> {
+): Array<import("../lexicon").BuildRootContributor> {
   return (plugins ?? [])
     .filter((plugin) => typeof plugin.buildRoots === "function")
-    .map((plugin) => () => plugin.buildRoots!({ projectRoot, config }));
+    // `entities` is not bindable here — discovery has not run — so the merge
+    // hands it in when it calls the closure (#1828 / SOPS provenance).
+    .map((plugin) => (ctx) => plugin.buildRoots!({ projectRoot, config, entities: ctx?.entities }));
 }
 
 /**

@@ -1,0 +1,13 @@
+{
+  "extends": ["@intentius/chant/lint/presets/strict"],
+  "_ruleNotes": {
+    "COR004": "Workflow/Job/Step and k8s exports are build entry points — the serializer collects them; nothing imports them.",
+    "ci-overrides": "CI workflow entities are one-per-repo, not per-environment: a Job or Step name never becomes a physical cloud resource name, so COR021's collision cannot happen there. COR001 is off for ci/ because GitHub Actions steps are naturally written as inline step lists (the gitlab examples make the same call)."
+  },
+  "rules": {
+    "COR004": "off"
+  },
+  "overrides": [
+    { "files": ["ci/**"], "rules": { "COR001": "off", "COR021": "off" } }
+  ]
+}

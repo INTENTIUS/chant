@@ -92,4 +92,24 @@ describe("snapshot", () => {
     expect(dts).toContain("class Service");
     expect(dts).toContain("class Pod");
   });
+
+  // chant #1372 — CRD field schemas ship in the registry; built-ins do not carry one.
+  test.skipIf(!hasGenerated)("every CRD-derived resource entry carries a specSchema, built-ins none", () => {
+    const raw = readFileSync(join(generatedDir, "lexicon-k8s.json"), "utf-8");
+    const registry = JSON.parse(raw) as Record<string, any>;
+
+    const crd = registry.Certificate;
+    expect(crd.resourceType).toBe("K8s::CertManager::Certificate");
+    expect(crd.specSchema.type).toBe("object");
+    expect(crd.specSchema.fields.issuerRef.fields.name.type).toBe("string");
+    expect(crd.specSchema.required).toContain("secretName");
+
+    expect(registry.Deployment.specSchema).toBeUndefined();
+    expect(registry.Certificate_Status.specSchema).toBeUndefined();
+
+    // Each schema is written on one line so the file stays reviewable; the
+    // pretty-printed form is four times the size for no reader's benefit.
+    const line = raw.split("\n").find((l) => l.includes('"specSchema": {'));
+    expect(line).toMatch(/^\s+"specSchema": \{.*\}$/);
+  });
 });

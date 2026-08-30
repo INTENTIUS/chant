@@ -1,0 +1,8 @@
+apiVersion: v2
+name: kid
+description: >-
+  Subchart with a control-flow `lookup` gated by `persistence.enabled`
+  (default false) — grafana's templates/pvc.yaml:28 shape, the construct
+  that makes kube-prometheus-stack refusable only under a values flip.
+type: application
+version: 0.1.0

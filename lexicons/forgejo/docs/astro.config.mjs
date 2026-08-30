@@ -21,16 +21,26 @@ export default defineConfig({
                   "slug": "index"
             },
             {
-                  "label": "The Forgejo Dialect",
-                  "slug": "dialect"
+                  "label": "Reference",
+                  "items": [
+                        {
+                              "label": "All Rules",
+                              "slug": "rules"
+                        },
+                        {
+                              "label": "Serialization",
+                              "slug": "serialization"
+                        }
+                  ]
             },
             {
-                  "label": "All Rules",
-                  "slug": "rules"
-            },
-            {
-                  "label": "Serialization",
-                  "slug": "serialization"
+                  "label": "Explanation",
+                  "items": [
+                        {
+                              "label": "The Forgejo Dialect",
+                              "slug": "dialect"
+                        }
+                  ]
             }
       ],
     }),

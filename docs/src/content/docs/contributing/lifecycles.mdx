@@ -1,6 +1,7 @@
 ---
 title: Contributing a Lifecycle
 description: How to extend chant's lifecycle layer — write your own as Ops, or plug an existing one in. The pluggable-lifecycle architecture, what ships today, and what is direction.
+diataxis: how-to
 ---
 
 import { Aside } from '@astrojs/starlight/components';
@@ -23,7 +24,7 @@ The built-in lifecycle composites are themselves nothing more than Ops you could
 
 - [`WatchOp`](/chant/guide/watching-lifecycle/) — observe: snapshot + live diff on a schedule.
 - [`ReconcileOp`](/chant/guide/reconciling-lifecycle/) — `cloud → code`: open PRs when live drifts from source.
-- [`ApplyOp`](/chant/guide/reconciling-lifecycle/) — `code → cloud`: apply through the target's own delete path, owned-only on every target ([what bounds each one](/chant/guide/ops/#apply-code--cloud)).
+- [`ApplyOp`](/chant/guide/reconciling-lifecycle/) — `code → cloud`: apply through the target's own delete path, owned-only on every target ([what bounds each one](/chant/guide/ops-reference/#delete-paths)).
 
 To contribute a lifecycle this way, compose the primitives your workflow needs:
 

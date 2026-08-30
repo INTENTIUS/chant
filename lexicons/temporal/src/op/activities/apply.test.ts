@@ -1,58 +1,16 @@
 import { describe, test, expect } from "vitest";
-import { applyCommand, rollbackCommand, defaultOutput, applyEndpoint, nativeApply } from "./apply";
-import type { K8sApplier, AzureApplier } from "./apply";
-
-describe("applyCommand (#124)", () => {
-  test("cloudformation deploys to the env stack", () => {
-    const cmd = applyCommand("cloudformation", "prod", "stack.json", "owned-only");
-    expect(cmd).toContain("aws cloudformation deploy");
-    expect(cmd).toContain("--stack-name prod");
-    expect(cmd).toContain("--template-file stack.json");
-  });
-
-  // Replaces "arm uses Complete mode only when deleting" (#1448). That test
-  // asserted the bug: `az deployment group create --mode Complete` deletes every
-  // resource in the group absent from the template, chant-owned or not, while
-  // this module's docblock promised deletes were "limited to chant-owned orphans
-  // by construction". arm no longer produces a command at all.
-  test("cloudformation is the only shell target left", () => {
-    // `deleteMode` changes nothing for CFN: the stack IS the ownership boundary,
-    // so `deploy` can only remove resources chant put in it.
-    const owned = applyCommand("cloudformation", "prod", "stack.json", "owned-only");
-    const never = applyCommand("cloudformation", "prod", "stack.json", "never");
-    expect(owned).toBe(never);
-    expect(owned).not.toContain("--mode");
-  });
-});
-
-describe("applyEndpoint (#926)", () => {
-  const url = "http://localhost:4566";
-
-  test("injects --endpoint-url into the cloudformation deploy when an endpoint is set", () => {
-    const cmd = applyEndpoint(applyCommand("cloudformation", "prod", "template.json", "never"), "cloudformation", url);
-    expect(cmd).toBe(
-      `aws --endpoint-url '${url}' cloudformation deploy --template-file template.json --stack-name prod --capabilities CAPABILITY_NAMED_IAM`,
-    );
-  });
-
-  test("passes through with no endpoint, or for non-cloudformation targets", () => {
-    const cfn = applyCommand("cloudformation", "prod", "template.json", "never");
-    expect(applyEndpoint(cfn, "cloudformation", undefined)).toBe(cfn);
-    expect(applyEndpoint(cfn, "cloudformation", "")).toBe(cfn);
-    // A non-cloudformation target passes through untouched. Written against a
-    // literal rather than `applyCommand("arm", …)`, which since #1448 returns
-    // undefined — comparing that to itself asserted nothing.
-    const arm = "az deployment group create --resource-group rg";
-    expect(applyEndpoint(arm, "arm", url)).toBe(arm);
-    expect(applyEndpoint("kubectl apply -f dist", "kubectl", url)).toBe("kubectl apply -f dist");
-  });
-});
+import { applyResult } from "@intentius/chant/apply";
+import { defaultOutput, nativeApply, compensateApply, hasNativeRollback } from "./apply";
+import type { K8sApplier, AzureApplier, GcpApplier, FlyApplier, AwsApplier, AwsRollback } from "./apply";
 
 /**
- * The kubectl branch moved to the k8s lexicon in chant #1075. What is asserted
- * here is the dispatch — that a kubectl target never becomes a shell command
- * again, and that the arguments the composite emits reach the applier intact.
- * What the applier *does* is the k8s lexicon's own test.
+ * The kubectl branch moved to the k8s lexicon in chant #1075, the arm branch to
+ * the azure lexicon in #1448, and the cloudformation branch to the aws lexicon
+ * in #1449 — no shell target is left. What is asserted here is the dispatch —
+ * that a target never becomes a shell command again, that the arguments the
+ * composite emits reach each applier intact, and that every branch collapses
+ * onto the one normalized result (#1446 counts, collapsed in #1449). What the
+ * appliers *do* is their own lexicons' tests.
  */
 describe("nativeApply: kustomize renders, then dispatches to the SAME k8s applier (#1548)", () => {
   test("the rendered documents reach the applier inline, output as the render dir", async () => {
@@ -79,13 +37,12 @@ describe("nativeApply: kustomize renders, then dispatches to the SAME k8s applie
     expect(calls[0].documents).toBe(rendered);
     expect(calls[0].manifest).toBe("kustomize:overlays/prod"); // label, not a path
     expect(calls[0].deleteMode).toBe("owned-only");
-    expect(result.applied).toBe(1);
-    expect(result.fieldManager).toBe("chant:web");
+    // The field manager stays on the log; the result is the collapsed counts.
+    expect(result).toEqual({ applied: 1, pruned: 0, notAttempted: 0 });
   });
 
-  test("defaultOutput and rollback: dist directory, no native rollback", async () => {
+  test("defaultOutput: dist directory", async () => {
     expect(defaultOutput("kustomize")).toBe("dist");
-    expect(rollbackCommand("kustomize", "prod")).toBeUndefined();
   });
 });
 
@@ -112,9 +69,9 @@ describe("nativeApply: kubectl dispatches to the k8s lexicon (chant #1075)", () 
     expect(k8s.calls).toEqual([
       { manifest: "dist", environment: "prod", deleteMode: "owned-only" },
     ]);
-    expect(result).toEqual({ applied: 3, pruned: 1, fieldManager: "chant:web" });
-    // The result is not a shell command, because no shell ran.
-    expect(result.command).toBeUndefined();
+    // Counts preserved from the k8s applier's arrays; the k8s contract has no
+    // skip path (an unclassifiable document throws), so notAttempted is 0.
+    expect(result).toEqual({ applied: 3, pruned: 1, notAttempted: 0 });
   });
 
   test("defaults the output to `dist` and the delete mode to never", async () => {
@@ -133,20 +90,6 @@ describe("nativeApply: kubectl dispatches to the k8s lexicon (chant #1075)", () 
     expect(on.calls[0].force).toBe(true);
   });
 
-  test("there is no kubectl shell command left to fall back to", () => {
-    // `applyCommand` only takes the shell targets now — the type says so, and
-    // at runtime a kubectl target falls off the end of the switch rather than
-    // producing `kubectl apply -f`. Nothing can shell out for kubectl again
-    // without this failing first.
-    const shellCommandForKubectl = (applyCommand as unknown as (
-      t: string,
-      e: string,
-      o: string,
-      d: string,
-    ) => string | undefined)("kubectl", "prod", "dist", "owned-only");
-    expect(shellCommandForKubectl).toBeUndefined();
-  });
-
   test("with nothing injected it resolves the real k8s lexicon's applyManifest", async () => {
     // The delegation itself, not a stand-in for it. A manifest path that does
     // not exist fails inside the k8s activity's own manifest read, which is
@@ -163,12 +106,12 @@ describe("nativeApply: kubectl dispatches to the k8s lexicon (chant #1075)", () 
 });
 
 describe("nativeApply: arm dispatches to the azure lexicon (chant #1448)", () => {
-  /** Records what the applier was handed, and reports nothing applied. */
+  /** Records what the applier was handed, and reports an empty envelope. */
   const spy = (): { calls: Array<Parameters<AzureApplier>[0]>; applier: AzureApplier } => {
     const calls: Array<Parameters<AzureApplier>[0]> = [];
     const applier: AzureApplier = async (args) => {
       calls.push(args);
-      return { applied: [], pruned: [] };
+      return applyResult([]);
     };
     return { calls, applier };
   };
@@ -188,8 +131,7 @@ describe("nativeApply: arm dispatches to the azure lexicon (chant #1448)", () =>
     expect(calls[0].prune).toBe(true);
     expect(calls[0].resourceGroup).toBe("my-rg");
     expect(calls[0].templatePath).toBe("t.json");
-    // A command here would mean the shell path ran — the thing #1448 is about.
-    expect(result.command).toBeUndefined();
+    expect(result).toEqual({ applied: 0, pruned: 0, notAttempted: 0 });
   });
 
   test("gated prunes too — same delete scope, the gate lives in the composite", async () => {
@@ -236,10 +178,40 @@ describe("nativeApply: arm dispatches to the azure lexicon (chant #1448)", () =>
     }
   });
 
-  test("reports what was applied and pruned, not a command", async () => {
-    const applier: AzureApplier = async () => ({ applied: [{}, {}], pruned: [{}] });
+  test("counts are preserved from the applier's envelope, not a command", async () => {
+    const applier: AzureApplier = async () =>
+      applyResult(
+        [
+          { kind: "Microsoft.Storage/storageAccounts", name: "sa1", action: "updated" },
+          { kind: "Microsoft.Network/virtualNetworks", name: "vnet1", action: "updated" },
+        ],
+        [{ kind: "Microsoft.Storage/storageAccounts", name: "old", deleted: true }],
+      );
     const result = await nativeApply({ target: "arm", env: "rg" }, undefined, undefined, applier);
-    expect(result).toEqual({ applied: 2, pruned: 1 });
+    expect(result).toEqual({ applied: 2, pruned: 1, notAttempted: 0 });
+  });
+
+  test("a not-prunable orphan (#1457) surfaces in the notAttempted count", async () => {
+    const applier: AzureApplier = async () =>
+      applyResult(
+        [{ kind: "Microsoft.Storage/storageAccounts", name: "sa1", action: "updated" }],
+        [],
+        [
+          {
+            kind: "Microsoft.Custom/widgets",
+            name: "w1",
+            reason: "not-prunable",
+            detail: "no-api-version",
+          },
+        ],
+      );
+    const result = await nativeApply(
+      { target: "arm", env: "rg", deleteMode: "owned-only" },
+      undefined,
+      undefined,
+      applier,
+    );
+    expect(result).toEqual({ applied: 1, pruned: 0, notAttempted: 1 });
   });
 
   test("with nothing injected it resolves the real azure lexicon's azApply", async () => {
@@ -259,23 +231,337 @@ describe("nativeApply: arm dispatches to the azure lexicon (chant #1448)", () =>
   });
 });
 
-describe("rollbackCommand (#125)", () => {
-  test("cloudformation has a native rollback", () => {
-    expect(rollbackCommand("cloudformation", "prod")).toBe(
-      "aws cloudformation rollback-stack --stack-name prod",
-    );
+describe("nativeApply: gcp dispatches to the gcp lexicon (chant #1449)", () => {
+  /** Records what the applier was handed, and reports an empty envelope. */
+  const spy = (): { calls: Array<Parameters<GcpApplier>[0]>; applier: GcpApplier } => {
+    const calls: Array<Parameters<GcpApplier>[0]> = [];
+    const applier: GcpApplier = async (args) => {
+      calls.push(args);
+      return applyResult([]);
+    };
+    return { calls, applier };
+  };
+  /** nativeApply with only the gcp applier injected. */
+  const applyGcp = (args: Parameters<typeof nativeApply>[0], applier: GcpApplier) =>
+    nativeApply(args, undefined, undefined, undefined, undefined, undefined, applier);
+
+  test("output maps to the manifest path, and nothing else is passed", async () => {
+    const { calls, applier } = spy();
+    await applyGcp({ target: "gcp", env: "prod", output: "dist/gcp.yaml" }, applier);
+    // Exactly the mapped pair. No `endpoint` — gcpApply resolves
+    // GCP_ENDPOINT_URL itself, the same variable its read path honours; no
+    // `project` — gcpApply resolves GOOGLE_CLOUD_PROJECT / the CNRM
+    // annotation itself; and no `env` — GCP has no stack or resource-group
+    // equivalent, so env is only a log label on this target.
+    expect(calls).toEqual([{ manifestPath: "dist/gcp.yaml", prune: false }]);
   });
 
-  test("kubectl / arm have no native single-command rollback", () => {
-    expect(rollbackCommand("kubectl", "prod")).toBeUndefined();
-    expect(rollbackCommand("arm", "rg")).toBeUndefined();
+  test("owned-only asks the gcp applier to prune, and issues no shell command", async () => {
+    const { calls, applier } = spy();
+    await applyGcp({ target: "gcp", env: "prod", deleteMode: "owned-only" }, applier);
+    expect(calls[0].prune).toBe(true);
+  });
+
+  test("gated prunes too — same delete scope, the gate lives in the composite", async () => {
+    const { calls, applier } = spy();
+    await applyGcp({ target: "gcp", env: "prod", deleteMode: "gated" }, applier);
+    expect(calls[0].prune).toBe(true);
+  });
+
+  test("never (and the default) do not prune", async () => {
+    const explicit = spy();
+    await applyGcp({ target: "gcp", env: "prod", deleteMode: "never" }, explicit.applier);
+    expect(explicit.calls[0].prune).toBe(false);
+
+    const defaulted = spy();
+    await applyGcp({ target: "gcp", env: "prod" }, defaulted.applier);
+    expect(defaulted.calls[0].prune).toBe(false);
+  });
+
+  test("defaults the manifest path to dist/gcp.yaml", async () => {
+    const { calls, applier } = spy();
+    await applyGcp({ target: "gcp", env: "prod" }, applier);
+    expect(calls[0].manifestPath).toBe("dist/gcp.yaml");
+    expect(defaultOutput("gcp")).toBe("dist/gcp.yaml");
+  });
+
+  test("counts are preserved from the applier's envelope, skips included (#1447)", async () => {
+    // The skips of #1447 and a kind the prune could not consider both ride the
+    // envelope as NOT-ATTEMPTED entries — the old separate notPrunable count
+    // folds into the one notAttempted count.
+    const applier: GcpApplier = async () =>
+      applyResult(
+        [
+          { kind: "StorageBucket", name: "b1", action: "created" },
+          { kind: "StorageBucket", name: "b2", action: "unchanged" },
+        ],
+        [{ kind: "StorageBucket", name: "old", deleted: true }],
+        [
+          { kind: "PubSubTopic", name: "x", reason: "unsupported-kind" },
+          { kind: "PubSubTopic", name: "*", reason: "not-prunable", detail: "no-list-capability" },
+        ],
+      );
+    const result = await applyGcp({ target: "gcp", env: "prod" }, applier);
+    expect(result).toEqual({ applied: 2, pruned: 1, notAttempted: 2 });
+  });
+
+  test("with nothing injected it resolves the real gcp lexicon's gcpApply", async () => {
+    // Same shape as the kubectl and cloudformation cases: a manifest path that
+    // does not exist fails inside gcpApply's own manifest read — reachable only
+    // if the dynamic import found the lexicon — and it fails before any HTTP
+    // call, so nothing goes near GCP or an emulator.
+    const err = await nativeApply({
+      target: "gcp",
+      env: "prod",
+      output: "/nonexistent/chant-1449-gcp.yaml",
+    }).catch((e: unknown) => e);
+    expect(String(err)).toMatch(/ENOENT|no such file/);
+    expect(String(err)).not.toMatch(/could not be loaded/);
+  });
+});
+
+describe("nativeApply: fly dispatches to the fly lexicon (chant #1449)", () => {
+  /** Records what the applier was handed, and reports an empty envelope. */
+  const spy = (): { calls: Array<Parameters<FlyApplier>[0]>; applier: FlyApplier } => {
+    const calls: Array<Parameters<FlyApplier>[0]> = [];
+    const applier: FlyApplier = async (args) => {
+      calls.push(args);
+      return applyResult([]);
+    };
+    return { calls, applier };
+  };
+  /** nativeApply with only the fly applier injected. */
+  const applyFly = (args: Parameters<typeof nativeApply>[0], applier: FlyApplier) =>
+    nativeApply(args, undefined, undefined, undefined, undefined, undefined, undefined, applier);
+
+  test("output maps to the plan path, and nothing else is passed", async () => {
+    const { calls, applier } = spy();
+    await applyFly({ target: "fly", env: "prod", output: "dist/fly.json" }, applier);
+    // Exactly the mapped pair. No `endpoint` — flyApply resolves
+    // FLY_FLAPS_BASE_URL itself (mudflaps locally, real Fly when unset); no
+    // `token` — it resolves FLY_API_TOKEN itself; and no `env` — the app
+    // names live in the plan, so env is only a log label on this target.
+    expect(calls).toEqual([{ planPath: "dist/fly.json", prune: false }]);
+  });
+
+  test("owned-only asks the fly applier to prune, and issues no shell command", async () => {
+    const { calls, applier } = spy();
+    await applyFly({ target: "fly", env: "prod", deleteMode: "owned-only" }, applier);
+    expect(calls[0].prune).toBe(true);
+  });
+
+  test("gated prunes too — same delete scope, the gate lives in the composite", async () => {
+    const { calls, applier } = spy();
+    await applyFly({ target: "fly", env: "prod", deleteMode: "gated" }, applier);
+    expect(calls[0].prune).toBe(true);
+  });
+
+  test("never (and the default) do not prune", async () => {
+    const explicit = spy();
+    await applyFly({ target: "fly", env: "prod", deleteMode: "never" }, explicit.applier);
+    expect(explicit.calls[0].prune).toBe(false);
+
+    const defaulted = spy();
+    await applyFly({ target: "fly", env: "prod" }, defaulted.applier);
+    expect(defaulted.calls[0].prune).toBe(false);
+  });
+
+  test("defaults the plan path to dist/fly.json", async () => {
+    const { calls, applier } = spy();
+    await applyFly({ target: "fly", env: "prod" }, applier);
+    expect(calls[0].planPath).toBe("dist/fly.json");
+    expect(defaultOutput("fly")).toBe("dist/fly.json");
+  });
+
+  test("counts are preserved from the applier's envelope", async () => {
+    // The six applied classes and five pruned classes are flattened into the
+    // envelope by fly's own toApplyResult (tested in the fly lexicon); this
+    // dispatcher only carries the counts through.
+    const applier: FlyApplier = async () =>
+      applyResult(
+        [
+          { kind: "app", name: "web", action: "created" },
+          { kind: "machine", name: "web-1", action: "created" },
+          { kind: "machine", name: "web-2", action: "updated" },
+          { kind: "volume", name: "data", action: "unchanged" },
+          { kind: "ip", name: "v4", action: "created" },
+          { kind: "cert", name: "example.com", action: "created" },
+          { kind: "secret", name: "API_KEY", action: "updated" },
+        ],
+        [
+          { kind: "machine", name: "old-1", deleted: true },
+          { kind: "volume", name: "old-data", deleted: true },
+          { kind: "ip", name: "1.2.3.4", deleted: true },
+          { kind: "cert", name: "old.example.com", deleted: true },
+          { kind: "secret", name: "OLD_KEY", deleted: true },
+        ],
+      );
+    const result = await applyFly({ target: "fly", env: "prod" }, applier);
+    expect(result).toEqual({ applied: 7, pruned: 5, notAttempted: 0 });
+  });
+
+  test("with nothing injected it resolves the real fly lexicon's flyApply", async () => {
+    // Same shape as the kubectl and cloudformation cases: a plan path that does
+    // not exist fails inside flyApply's own plan read — reachable only if the
+    // dynamic import found the lexicon — and it fails before any HTTP call, so
+    // nothing goes near Fly or an emulator.
+    const err = await nativeApply({
+      target: "fly",
+      env: "prod",
+      output: "/nonexistent/chant-1449-fly.json",
+    }).catch((e: unknown) => e);
+    expect(String(err)).toMatch(/ENOENT|no such file/);
+    expect(String(err)).not.toMatch(/could not be loaded/);
+  });
+});
+
+describe("nativeApply: cloudformation dispatches to the aws lexicon (chant #1449)", () => {
+  /** Records what the applier was handed, and reports a settled create. */
+  const spy = (): { calls: Array<Parameters<AwsApplier>[0]>; applier: AwsApplier } => {
+    const calls: Array<Parameters<AwsApplier>[0]> = [];
+    const applier: AwsApplier = async (args) => {
+      calls.push(args);
+      return { stackName: args.stackName, status: "CREATE_COMPLETE", action: "created" };
+    };
+    return { calls, applier };
+  };
+  /** nativeApply with only the aws applier injected. */
+  const applyCfn = (args: Parameters<typeof nativeApply>[0], applier: AwsApplier) =>
+    nativeApply(args, undefined, undefined, undefined, undefined, applier);
+
+  test("env maps to the stack name and output to the template path, and nothing else is passed", async () => {
+    const { calls, applier } = spy();
+    await applyCfn({ target: "cloudformation", env: "prod", output: "stack.json" }, applier);
+    // Exactly the mapped pair. No `capabilities` — awsApply derives them from
+    // the template body (#980, `awsDeployCapabilitiesForBody`); no `endpoint` —
+    // awsApply resolves AWS_ENDPOINT_URL[_CLOUDFORMATION] itself (#1694). Both
+    // rules used to be duplicated here as `cfnCapabilities`/`applyEndpoint`.
+    expect(calls).toEqual([{ templatePath: "stack.json", stackName: "prod" }]);
+  });
+
+  test("defaults the template path to template.json", async () => {
+    const { calls, applier } = spy();
+    await applyCfn({ target: "cloudformation", env: "prod" }, applier);
+    expect(calls[0].templatePath).toBe("template.json");
+    expect(defaultOutput("cloudformation")).toBe("template.json");
+  });
+
+  test("deleteMode changes nothing — the stack IS the ownership boundary", async () => {
+    // CFN removes resources dropped from the template within the stack itself,
+    // so owned-only and never hand the applier identical arguments.
+    const owned = spy();
+    await applyCfn({ target: "cloudformation", env: "prod", deleteMode: "owned-only" }, owned.applier);
+    const never = spy();
+    await applyCfn({ target: "cloudformation", env: "prod", deleteMode: "never" }, never.applier);
+    expect(owned.calls).toEqual(never.calls);
+  });
+
+  test("collapses onto the normalized counts — the stack is the unit", async () => {
+    // The stack name, settled status and action are the operator's detail and
+    // stay on the activity log; the result is the same count shape as every
+    // other target's. One settled deploy is one applied.
+    const applier: AwsApplier = async () => ({ stackName: "prod", status: "UPDATE_COMPLETE", action: "updated" });
+    const result = await applyCfn({ target: "cloudformation", env: "prod" }, applier);
+    expect(result).toEqual({ applied: 1, pruned: 0, notAttempted: 0 });
+  });
+
+  test("with nothing injected it resolves the real aws lexicon's awsApply", async () => {
+    // Same shape as the kubectl case: a template path that does not exist fails
+    // inside awsApply's own template read — reachable only if the dynamic
+    // import found the lexicon — and it fails before any HTTP call, so nothing
+    // goes near AWS or an emulator.
+    const err = await nativeApply({
+      target: "cloudformation",
+      env: "prod",
+      output: "/nonexistent/chant-1449-template.json",
+    }).catch((e: unknown) => e);
+    expect(String(err)).toMatch(/ENOENT|no such file/);
+    expect(String(err)).not.toMatch(/could not be loaded/);
+  });
+});
+
+describe("compensateApply: cloudformation rolls back through the aws lexicon (chant #1449)", () => {
+  test("calls rollbackStack with the env as the stack name, and execs nothing", async () => {
+    const calls: Array<Parameters<AwsRollback>[0]> = [];
+    const rollback: AwsRollback = async (args) => {
+      calls.push(args);
+      return { stackName: args.stackName, rolledBack: true, status: "UPDATE_ROLLBACK_COMPLETE" };
+    };
+    const result = await compensateApply({ target: "cloudformation", env: "prod" }, undefined, rollback);
+    expect(calls).toEqual([{ stackName: "prod" }]);
+    expect(result).toEqual({ stackName: "prod", rolledBack: true, status: "UPDATE_ROLLBACK_COMPLETE" });
+    // A command in the result would mean the shell path ran.
+    expect(result.command).toBeUndefined();
+  });
+
+  test("a declined rollback (absent stack, or Floci's UnknownAction) is reported, not hidden", async () => {
+    const rollback: AwsRollback = async (args) => ({ stackName: args.stackName, rolledBack: false });
+    const result = await compensateApply({ target: "cloudformation", env: "prod" }, undefined, rollback);
+    expect(result).toEqual({ stackName: "prod", rolledBack: false });
+  });
+
+  test("an explicit command takes precedence over the native rollback", async () => {
+    let rolled = false;
+    const rollback: AwsRollback = async (args) => {
+      rolled = true;
+      return { stackName: args.stackName, rolledBack: true };
+    };
+    const result = await compensateApply(
+      { target: "cloudformation", env: "prod", command: "echo custom-rollback" },
+      undefined,
+      rollback,
+    );
+    expect(rolled).toBe(false);
+    expect(result).toEqual({ command: "echo custom-rollback" });
+  });
+
+  test("kubectl / kustomize / arm / gcp / fly without a command throw — the defensive branch (#1449)", async () => {
+    // Unreachable from a built ApplyOp, which refuses this combination at
+    // build time. A hand-assembled op that reaches it fails loudly rather than
+    // returning a result that could read as a revert.
+    for (const target of ["kubectl", "kustomize", "arm", "gcp", "fly"] as const) {
+      const err = await compensateApply({ target, env: "prod" }).catch((e: unknown) => e);
+      expect(String(err)).toMatch(`no automatic rollback for target "${target}"`);
+      expect(String(err)).toMatch(/NOT\s+reverted/);
+      expect(String(err)).toMatch(/compensate\.command/);
+    }
+  });
+
+  test("hasNativeRollback: cloudformation only", () => {
+    expect(hasNativeRollback("cloudformation")).toBe(true);
+    for (const target of ["kubectl", "kustomize", "arm", "gcp", "fly"] as const) {
+      expect(hasNativeRollback(target)).toBe(false);
+    }
+  });
+
+  test("an explicit command still runs for targets without a native rollback", async () => {
+    const result = await compensateApply({ target: "arm", env: "rg", command: "echo arm-rollback" });
+    expect(result).toEqual({ command: "echo arm-rollback" });
+  });
+
+  test("with nothing injected it resolves the real aws lexicon's rollbackStack", async () => {
+    // Point the endpoint at a closed local port so the failure comes from inside
+    // rollbackStack's own transport — reachable only if the dynamic import found
+    // the lexicon — and never touches real AWS.
+    const prev = process.env.AWS_ENDPOINT_URL;
+    process.env.AWS_ENDPOINT_URL = "http://127.0.0.1:1";
+    try {
+      const err = await compensateApply({ target: "cloudformation", env: "prod" }).catch((e: unknown) => e);
+      expect(String(err)).not.toMatch(/could not be loaded/);
+      expect(String(err)).not.toMatch(/predates chant/);
+    } finally {
+      if (prev === undefined) delete process.env.AWS_ENDPOINT_URL;
+      else process.env.AWS_ENDPOINT_URL = prev;
+    }
   });
 });
 
 describe('defaultOutput (target-aware apply output)', () => {
-  test('kubectl → dist (dir); cloudformation/arm → template.json (file)', () => {
+  test('kubectl → dist (dir); cloudformation/arm → template.json (file); gcp → dist/gcp.yaml; fly → dist/fly.json', () => {
     expect(defaultOutput('kubectl')).toBe('dist');
     expect(defaultOutput('cloudformation')).toBe('template.json');
     expect(defaultOutput('arm')).toBe('template.json');
+    expect(defaultOutput('gcp')).toBe('dist/gcp.yaml');
+    expect(defaultOutput('fly')).toBe('dist/fly.json');
   });
 });

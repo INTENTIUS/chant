@@ -33,6 +33,13 @@ adopting chant.
   work for a component whose own name isn't the entity/resource name it
   deploys, falling back to `name` itself when omitted. See
   docs/src/content/docs/components/observability.mdx.
+- **Composite mapping** — `composites` (#1492), optional: the composite kind
+  name(s) this component's deployed resources come from, when a consumer
+  joining a composite graph to the component DAG (e.g. `chant graph
+  --components --format ir`'s node `attrs.composites`, ../cli/handlers/
+  graph.ts) can't infer it by kebab-casing `name` against each composite's
+  kind. Omitted entirely (the default), that naming convention stays in
+  effect with no behavior change.
 - **The three archetypes** — service (build → publish → apply → verify),
   infra (apply → verify, no build), and producer/library (build → publish
   only, no service apply). `deploy` being a plain composition is what makes

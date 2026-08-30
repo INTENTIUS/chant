@@ -21,12 +21,12 @@ temporal workflow signal \
   --namespace <namespace>
 ```
 
-List pending signals by querying the workflow:
+Check which gate (if any) is pending via the generated `gateState` query — every workflow with at least one `gate(...)` step registers it, answering `{ signalName, description?, since }` or `null`:
 
 ```bash
 temporal workflow query \
   --workflow-id <workflow-id> \
-  --type currentPhase \
+  --type gateState \
   --namespace <namespace>
 ```
 

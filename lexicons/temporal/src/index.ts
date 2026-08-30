@@ -51,31 +51,49 @@ export { LexiconUpgradeOp, IN_SCOPE_LEXICONS } from "./composites/lexicon-upgrad
 export type { LexiconUpgradeOpConfig, LexiconUpgradeOpResources } from "./composites/lexicon-upgrade-op";
 export { ApplyOp } from "./composites/apply-op";
 export type { ApplyOpConfig, ApplyOpResources } from "./composites/apply-op";
+export { ConvergeOp } from "./composites/converge-op";
+export type { ConvergeOpConfig, ConvergeOpResources, ConvergeDial } from "./composites/converge-op";
 
 // Op builders (re-exported from core for single-import convenience)
+//
+// chant #1288 Stage 2: kubectlApply, helmInstall, helmInstallPinned,
+// waitForReady, ensureSecret, gitlabPipeline, and the cloud appliers
+// (k3d/k3s/floci*/az*/aws*/gcp*) are owned by other lexicons — typing them
+// here would make this package depend on k8s/helm/gitlab/aws/azure/gcp/k3d/
+// k3s at runtime, undoing the product-agnostic split #809 did (see
+// `lexicons/k8s/src/op/builders.ts`'s module doc). They stay sourced from
+// core, unchanged, exactly as before; an author who wants the typed surface
+// for one of these imports it from the owning lexicon instead (e.g.
+// `kubectlApply` from `@intentius/chant-lexicon-k8s`).
+//
+// build, shell, waitForStack, lifecycleSnapshot, teardown, envTeardown,
+// httpCheck, policyGate, and guardValidate ARE this lexicon's own activities,
+// so they come from `./op/builders` (fully typed, deriving from each
+// activity's own `*Args` interface) instead — same names, same import path,
+// no call-site change required. See `builders-exports.test.ts` in core for
+// the guard that keeps this split intentional rather than drifting.
 export {
   Op,
   phase,
   activity,
   gate,
-  build,
+  effect,
   kubectlApply,
   helmInstall,
-  waitForStack,
+  helmInstallPinned,
   waitForReady,
   gitlabPipeline,
-  lifecycleSnapshot,
-  shell,
-  teardown,
+  ensureSecret,
   k3dUp,
   k3dDown,
+  k3sInstall,
+  k3sUninstall,
   flociUp,
   flociDown,
   flociAzUp,
   flociAzDown,
   flociGcpUp,
   flociGcpDown,
-  httpCheck,
   azGroupEnsure,
   azGroupDelete,
   azApply,
@@ -84,6 +102,10 @@ export {
   awsDelete,
   gcpApply,
   gcpDelete,
-  policyGate,
+  stepOutput,
 } from "@intentius/chant/op";
-export type { OpConfig, PhaseDefinition, StepDefinition, ActivityStep, GateStep } from "@intentius/chant/op";
+export type {
+  OpConfig, PhaseDefinition, StepDefinition, ActivityStep, GateStep, EffectStep,
+  StepOutputRef, NamedActivityStep, WithStepRefs,
+} from "@intentius/chant/op";
+export { build, shell, waitForStack, lifecycleSnapshot, teardown, envTeardown, httpCheck, policyGate, guardValidate } from "./op/builders";

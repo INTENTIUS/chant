@@ -12,8 +12,31 @@ export default defineConfig({
     starlight({
       title: 'K3s',
       sidebar: [
-        { label: '← chant docs', link: '../../' },
-        { label: 'Overview', slug: '' },
+            {
+                  "label": "← chant docs",
+                  "link": "../../"
+            },
+            {
+                  "label": "Overview",
+                  "slug": "index"
+            },
+            {
+                  "label": "Reference",
+                  "items": [
+                        {
+                              "label": "All Rules",
+                              "slug": "rules"
+                        },
+                        {
+                              "label": "Serialization",
+                              "slug": "serialization"
+                        },
+                        {
+                              "label": "Entities & Rules",
+                              "slug": "reference"
+                        }
+                  ]
+            }
       ],
     }),
   ],

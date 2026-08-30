@@ -9,6 +9,7 @@ import { CloudFunctionWithTrigger } from "./cloud-function";
 import { PrivateService } from "./private-service";
 import { ManagedCertificate } from "./managed-certificate";
 import { SecureProject } from "./secure-project";
+import { GpuNodePool } from "./gpu-node-pool";
 
 /** Helper to extract props from a Declarable member. */
 function p(member: unknown): Record<string, any> {
@@ -19,35 +20,35 @@ function p(member: unknown): Record<string, any> {
 
 describe("GkeCluster", () => {
   test("returns cluster and node pool", () => {
-    const result = GkeCluster({ name: "my-cluster" });
+    const result = GkeCluster({ name: "my-cluster", projectId: "proj" });
     expect(result.cluster).toBeDefined();
     expect(result.nodePool).toBeDefined();
   });
 
   test("includes common labels", () => {
-    const result = GkeCluster({ name: "my-cluster" });
+    const result = GkeCluster({ name: "my-cluster", projectId: "proj" });
     const meta = p(result.cluster).metadata;
     expect(meta.labels["app.kubernetes.io/managed-by"]).toBe("chant");
   });
 
   test("node pool references cluster", () => {
-    const result = GkeCluster({ name: "my-cluster" });
+    const result = GkeCluster({ name: "my-cluster", projectId: "proj" });
     expect(p(result.nodePool).clusterRef.name).toBe("my-cluster");
   });
 
   test("respects maxNodeCount", () => {
-    const result = GkeCluster({ name: "c", maxNodeCount: 20 });
+    const result = GkeCluster({ name: "c", projectId: "proj", maxNodeCount: 20 });
     expect(p(result.nodePool).autoscaling.maxNodeCount).toBe(20);
   });
 
   test("sets namespace when provided", () => {
-    const result = GkeCluster({ name: "c", namespace: "infra" });
+    const result = GkeCluster({ name: "c", projectId: "proj", namespace: "infra" });
     expect(p(result.cluster).metadata.namespace).toBe("infra");
     expect(p(result.nodePool).metadata.namespace).toBe("infra");
   });
 
   test("enables workload identity by default", () => {
-    const result = GkeCluster({ name: "c" });
+    const result = GkeCluster({ name: "c", projectId: "proj" });
     expect(p(result.cluster).workloadIdentityConfig).toBeDefined();
     expect(p(result.nodePool).nodeConfig.workloadMetadataConfig).toBeDefined();
   });
@@ -59,13 +60,13 @@ describe("GkeCluster", () => {
     );
   });
 
-  test("workloadPool falls back to GCP_PROJECT_ID env var", () => {
+  test("ignores GCP_PROJECT_ID env var — projectId comes from props only", () => {
     const prev = process.env.GCP_PROJECT_ID;
     process.env.GCP_PROJECT_ID = "env-project-456";
     try {
-      const result = GkeCluster({ name: "c" });
+      const result = GkeCluster({ name: "c", projectId: "explicit-project" });
       expect(p(result.cluster).workloadIdentityConfig.workloadPool).toBe(
-        "env-project-456.svc.id.goog",
+        "explicit-project.svc.id.goog",
       );
     } finally {
       if (prev === undefined) delete process.env.GCP_PROJECT_ID;
@@ -460,5 +461,152 @@ describe("SecureProject", () => {
   test("no logging sink by default", () => {
     const result = SecureProject({ name: "my-project" });
     expect(result.loggingSink).toBeUndefined();
+  });
+});
+
+// ── GpuNodePool ────────────────────────────────────────────────────
+
+describe("GpuNodePool", () => {
+  test("returns a node pool", () => {
+    const result = GpuNodePool({
+      name: "ray-gke-gpu",
+      clusterRef: { name: "ray-gke" },
+      location: "us-central1",
+    });
+    expect(result.nodePool).toBeDefined();
+  });
+
+  test("scales to zero by default", () => {
+    const result = GpuNodePool({
+      name: "gpu-pool",
+      clusterRef: { name: "c" },
+      location: "us-central1",
+    });
+    expect(p(result.nodePool).initialNodeCount).toBe(0);
+    expect(p(result.nodePool).autoscaling.minNodeCount).toBe(0);
+    expect(p(result.nodePool).autoscaling.maxNodeCount).toBe(4);
+  });
+
+  test("defaults to a single nvidia-tesla-t4 accelerator", () => {
+    const result = GpuNodePool({
+      name: "gpu-pool",
+      clusterRef: { name: "c" },
+      location: "us-central1",
+    });
+    expect(p(result.nodePool).nodeConfig.guestAccelerator).toEqual([
+      { count: 1, type: "nvidia-tesla-t4" },
+    ]);
+  });
+
+  test("respects acceleratorType and acceleratorCount", () => {
+    const result = GpuNodePool({
+      name: "gpu-pool",
+      clusterRef: { name: "c" },
+      location: "us-central1",
+      acceleratorType: "nvidia-l4",
+      acceleratorCount: 2,
+    });
+    expect(p(result.nodePool).nodeConfig.guestAccelerator).toEqual([
+      { count: 2, type: "nvidia-l4" },
+    ]);
+  });
+
+  test("defaults to the nvidia.com/gpu NoSchedule taint", () => {
+    const result = GpuNodePool({
+      name: "gpu-pool",
+      clusterRef: { name: "c" },
+      location: "us-central1",
+    });
+    expect(p(result.nodePool).nodeConfig.taint).toEqual([
+      { key: "nvidia.com/gpu", value: "present", effect: "NO_SCHEDULE" },
+    ]);
+  });
+
+  test("omits taint when an empty array is passed", () => {
+    const result = GpuNodePool({
+      name: "gpu-pool",
+      clusterRef: { name: "c" },
+      location: "us-central1",
+      taint: [],
+    });
+    expect(p(result.nodePool).nodeConfig.taint).toBeUndefined();
+  });
+
+  test("does not emit a device-plugin manifest — GKE auto-installs it", () => {
+    const result = GpuNodePool({
+      name: "gpu-pool",
+      clusterRef: { name: "c" },
+      location: "us-central1",
+    });
+    expect(Object.keys(result)).toEqual(["nodePool"]);
+  });
+
+  test("enables GKE_METADATA workload identity mode by default", () => {
+    const result = GpuNodePool({
+      name: "gpu-pool",
+      clusterRef: { name: "c" },
+      location: "us-central1",
+    });
+    expect(p(result.nodePool).nodeConfig.workloadMetadataConfig).toEqual({ mode: "GKE_METADATA" });
+  });
+
+  test("supports GPU time-sharing config", () => {
+    const result = GpuNodePool({
+      name: "gpu-pool",
+      clusterRef: { name: "c" },
+      location: "us-central1",
+      gpuSharingConfig: { maxSharedClientsPerGpu: 2, gpuSharingStrategy: "TIME_SHARING" },
+    });
+    expect(p(result.nodePool).nodeConfig.guestAccelerator[0].gpuSharingConfig).toEqual({
+      maxSharedClientsPerGpu: 2,
+      gpuSharingStrategy: "TIME_SHARING",
+    });
+  });
+
+  test("supports MIG partition size", () => {
+    const result = GpuNodePool({
+      name: "gpu-pool",
+      clusterRef: { name: "c" },
+      location: "us-central1",
+      gpuPartitionSize: "1g.5gb",
+    });
+    expect(p(result.nodePool).nodeConfig.guestAccelerator[0].gpuPartitionSize).toBe("1g.5gb");
+  });
+
+  test("references the target cluster", () => {
+    const result = GpuNodePool({
+      name: "gpu-pool",
+      clusterRef: { name: "ray-gke" },
+      location: "us-central1",
+    });
+    expect(p(result.nodePool).clusterRef).toEqual({ name: "ray-gke" });
+  });
+
+  test("matches the hand-wired ray-kuberay-gke example config", () => {
+    const result = GpuNodePool({
+      name: "ray-gke-gpu",
+      clusterRef: { name: "ray-gke" },
+      location: "us-central1",
+      machineType: "n1-standard-8",
+      acceleratorType: "nvidia-tesla-t4",
+      acceleratorCount: 1,
+      minNodeCount: 0,
+      maxNodeCount: 4,
+      diskSizeGb: 200,
+      diskType: "pd-ssd",
+    });
+    const spec = p(result.nodePool);
+    expect(spec.initialNodeCount).toBe(0);
+    expect(spec.autoscaling).toEqual({ minNodeCount: 0, maxNodeCount: 4, locationPolicy: "ANY" });
+    expect(spec.nodeConfig).toEqual({
+      machineType: "n1-standard-8",
+      diskSizeGb: 200,
+      diskType: "pd-ssd",
+      guestAccelerator: [{ count: 1, type: "nvidia-tesla-t4" }],
+      taint: [{ key: "nvidia.com/gpu", value: "present", effect: "NO_SCHEDULE" }],
+      workloadMetadataConfig: { mode: "GKE_METADATA" },
+      oauthScopes: ["https://www.googleapis.com/auth/cloud-platform"],
+    });
+    expect(spec.management).toEqual({ autoRepair: true, autoUpgrade: true });
   });
 });

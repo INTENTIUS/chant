@@ -115,8 +115,8 @@ Patterns to add next:
 
 ## Resource counts
 
-- **Azure lexicon**: ~14 ARM resources (VNet, subnets, NSG, route table, AKS cluster, ACR, managed identities, role assignments, DNS zone)
-- **K8s lexicon**: ~20 Kubernetes resources (namespaces, quotas, limits, network policy, deployment, HPA, PDB, service, service accounts, ingress, storage class, DaemonSet, cluster roles, cluster role bindings, config maps)
+- **Azure lexicon**: 14 ARM resources (VNet, subnets, NSG, route table, AKS cluster, ACR, managed identities, role assignments, DNS zone)
+- **K8s lexicon**: 22 Kubernetes resources (namespaces, quotas, limits, network policy, deployment, HPA, PDB, service, service accounts, ingress, storage class, DaemonSet, cluster roles, cluster role bindings, config maps)
 
 ## Cross-lexicon value flow
 

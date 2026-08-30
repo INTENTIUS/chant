@@ -23,14 +23,14 @@ describe("serializeComponent()", () => {
   it("exports a camelCase workflow function named after the component, suffixed ComponentWorkflow", () => {
     const component: DriverComponent = { name: "search-service", dependsOn: [], deploy: [] };
     const wf = serializeComponent(component)["components/search-service/workflow.ts"];
-    expect(wf).toContain("export async function searchServiceComponentWorkflow()");
+    expect(wf).toContain("export async function searchServiceComponentWorkflow(input?: ComponentWorkflowInput)");
     expect(componentWorkflowFnName("search-service")).toBe("searchServiceComponentWorkflow");
   });
 
   it("activities.ts re-exports the generic capability-dispatch activities from the lexicon package", () => {
     const component: DriverComponent = { name: "svc", dependsOn: [], deploy: [] };
     const activities = serializeComponent(component)["components/svc/activities.ts"];
-    expect(activities).toContain("export { runCapabilityStep, rollbackCapabilityStep } from '@intentius/chant-lexicon-temporal/component-op/activities';");
+    expect(activities).toContain("export { runCapabilityStep, rollbackCapabilityStep, accumulateComponentOutputs } from '@intentius/chant-lexicon-temporal/component-op/activities';");
   });
 
   it("worker.ts bootstraps a Worker pointed at workflow.ts with the component name as the default task queue", () => {
@@ -116,7 +116,7 @@ describe("serializeComponent()", () => {
       const component: DriverComponent = { name: "3d-viewer", dependsOn: [], deploy: [] };
       const wf = serializeComponent(component)["components/3d-viewer/workflow.ts"];
       // Must not start with a digit — "3dViewerComponentWorkflow" is a syntax error.
-      expect(wf).toMatch(/export async function [A-Za-z_$][A-Za-z0-9_$]*\(\): Promise<ComponentWorkflowResult>/);
+      expect(wf).toMatch(/export async function [A-Za-z_$][A-Za-z0-9_$]*\(input\?: ComponentWorkflowInput\): Promise<ComponentWorkflowResult>/);
       expect(componentWorkflowFnName("3d-viewer")).toMatch(/^[A-Za-z_$]/);
     });
 
@@ -155,13 +155,67 @@ describe("serializeComponent()", () => {
     });
   });
 
-  // ── componentOutputs scope (#589 review: always empty — documented, not a bug) ──
+  // ── componentOutputs scope (#700: seeded from input, accumulated via core after deploy) ──
 
-  it("componentOutputs starts empty and the workflow never writes to it (single-component scope)", () => {
+  it("componentOutputs is seeded from the workflow input and folded in by the shared accumulator after the deploy phases", () => {
     const component: DriverComponent = { name: "svc", dependsOn: [], deploy: [{ phase: "Apply", steps: [{ kind: "cfn-deploy" }] }] };
     const wf = serializeComponent(component)["components/svc/workflow.ts"];
-    expect(wf).toContain("const componentOutputs: Record<string, Record<string, unknown>> = {};");
-    // No assignment into componentOutputs anywhere in the generated body.
+    expect(wf).toContain("let componentOutputs: Record<string, Record<string, unknown>> = { ...(input?.componentOutputs ?? {}) };");
+    // The workflow never derives outputs itself — the only write is the
+    // activity that calls core's accumulateComponentOutputs (driver.ts parity).
     expect(wf).not.toMatch(/componentOutputs\[.*\]\s*=/);
+    expect(wf).toContain('componentOutputs = await accumulateComponentOutputs({ component: "svc", phaseOutputs, componentOutputs });');
+    // ...and only on the success path: it sits inside the try, before the catch.
+    const accIdx = wf.indexOf("await accumulateComponentOutputs(");
+    expect(accIdx).toBeGreaterThan(wf.indexOf("  try {"));
+    expect(accIdx).toBeLessThan(wf.indexOf("  } catch (__compErr) {"));
+  });
+
+  // ── #1944: durable identity channel + loud rollback-failure surfacing ─────
+
+  describe("saga rollback — durable identity channel + loud failure surfacing (#1944)", () => {
+    const component: DriverComponent = {
+      name: "svc",
+      dependsOn: [],
+      deploy: [{ phase: "Apply", steps: [{ kind: "cfn-deploy" }] }],
+    };
+
+    it("imports `log` and `rootCause` from @temporalio/workflow", () => {
+      const wf = serializeComponent(component)["components/svc/workflow.ts"];
+      expect(wf).toMatch(/import \{[^}]*\blog\b[^}]*\} from '@temporalio\/workflow'/);
+      expect(wf).toMatch(/import \{[^}]*\brootCause\b[^}]*\} from '@temporalio\/workflow'/);
+    });
+
+    it("carries each executed step's own run() output alongside it, for saga rollback to pass through", () => {
+      const wf = serializeComponent(component)["components/svc/workflow.ts"];
+      expect(wf).toContain(
+        "const executed: Array<{ step: Record<string, unknown>; phaseName: string; output: unknown }> = [];",
+      );
+      expect(wf).toMatch(/executed\.push\(\{ step: __step\d+, phaseName: "Apply", output: __out\d+ \}\);/);
+    });
+
+    it("passes the executed step's output through to rollbackCapabilityStep as `output`", () => {
+      const wf = serializeComponent(component)["components/svc/workflow.ts"];
+      expect(wf).toMatch(/rollbackCapabilityStep\(\{[^}]*output: __e\.output[^}]*\}\)/);
+    });
+
+    it("a rollback failure is logged via log.error, not swallowed by a bare catch", () => {
+      const wf = serializeComponent(component)["components/svc/workflow.ts"];
+      expect(wf).toContain("} catch (__rollbackErr) {");
+      expect(wf).toContain("log.error(");
+      expect(wf).not.toMatch(/rollbackCapabilityStep\([^;]*\);\s*\n\s*\} catch \{ \/\* best-effort unwind/);
+    });
+
+    it("records rollback failures into a RollbackFailed search attribute, without masking the original error", () => {
+      const wf = serializeComponent(component)["components/svc/workflow.ts"];
+      expect(wf).toContain("const __rollbackFailures: Array<{ kind: string; phase: string; error: string }> = [];");
+      expect(wf).toContain("__rollbackFailures.push({ kind: __e.step.kind as string, phase: __e.phaseName, error: __rollbackErrMsg });");
+      expect(wf).toMatch(/upsertSearchAttributes\(\{ RollbackFailed: __rollbackFailures\.map/);
+      // The original failure is still re-thrown after the (best-effort) unwind — never masked.
+      const rollbackFailedIdx = wf.indexOf("RollbackFailed");
+      const rethrowIdx = wf.indexOf("throw __compErr;");
+      expect(rollbackFailedIdx).toBeGreaterThan(0);
+      expect(rethrowIdx).toBeGreaterThan(rollbackFailedIdx);
+    });
   });
 });

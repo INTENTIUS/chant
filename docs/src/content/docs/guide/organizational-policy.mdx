@@ -1,6 +1,7 @@
 ---
 title: Organizational Policy
 description: Enforce org-specific rules ("no public buckets in prod", "every workload has a cost-center tag") as project-authored, environment-aware checks.
+diataxis: how-to
 ---
 
 import { Code } from '@astrojs/starlight/components';
@@ -22,6 +23,12 @@ run by the existing engine, with the current environment in context** — the sa
 A policy reads the resolved resources and returns diagnostics. A diagnostic with
 `severity: "error"` fails `chant build` — that is the gate. The check receives
 `ctx.env`, so a rule can branch on the environment.
+
+Both checks below read `ctx.docs` — the parsed-output view (chant #975,
+[Post-Synth Check Guide](/chant/lexicon-authoring/post-synth-checks/#ctxdocs--the-parsed-output-view-chant-975)) —
+rather than hand-splitting `ctx.outputs` YAML. It is exactly what a lexicon's
+own post-synth checks use, with no lexicon-internal import required: an org
+policy gets the same shared, parse-once manifest list.
 
 <Code code={policySrc} lang="typescript" title="policies/org.ts" />
 
@@ -91,6 +98,89 @@ the operation. See [Sandboxed
 Execution](/chant/architecture/sandbox/#what-a-sandboxed-policy-sees) for the
 full contract, including the handful of ways the resource view is narrower.
 
+## Cookbook: the same shape against CloudFormation
+
+Nothing above is k8s-specific — a policy reads `ctx.docs`, whatever lexicon
+produced it. Two more examples, in the style CDK's `cdk-nag` /
+`CfnGuardValidator` compliance packs cover for CloudFormation: a bucket must
+not allow public access in prod, and every bucket must declare encryption.
+(For reusing an *existing* CloudFormation Guard/OPA ruleset instead of writing
+one of these by hand, see the aws lexicon's [Policy
+Validation](/chant/lexicons/aws/policy-validation/) guide — the two compose,
+they don't compete.)
+
+```typescript
+import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
+
+interface CfnResource {
+  Type?: string;
+  Properties?: Record<string, unknown>;
+}
+
+/** Every `AWS::S3::Bucket` across every parsed CloudFormation template, via `ctx.docs`. */
+function s3Buckets(ctx: PostSynthContext): Array<[string, CfnResource]> {
+  const buckets: Array<[string, CfnResource]> = [];
+  for (const doc of ctx.docs ?? []) {
+    if (doc.error) continue;
+    const resources = (doc.value as { Resources?: Record<string, CfnResource> })?.Resources ?? {};
+    for (const [logicalId, resource] of Object.entries(resources)) {
+      if (resource.Type === "AWS::S3::Bucket") buckets.push([logicalId, resource]);
+    }
+  }
+  return buckets;
+}
+
+const BLOCK_FLAGS = ["BlockPublicAcls", "BlockPublicPolicy", "IgnorePublicAcls", "RestrictPublicBuckets"] as const;
+
+/** In prod, every bucket must fully block public access. Lower environments may skip it. */
+export const noPublicBucketsInProd: PostSynthCheck = {
+  id: "ORG-NO-PUBLIC-BUCKETS-PROD",
+  description: "in prod, every S3 bucket must block all public access",
+  check(ctx): PostSynthDiagnostic[] {
+    if (ctx.env !== "prod") return []; // the environment-aware branch
+    const diags: PostSynthDiagnostic[] = [];
+    for (const [logicalId, resource] of s3Buckets(ctx)) {
+      const pab = resource.Properties?.PublicAccessBlockConfiguration as Record<string, unknown> | undefined;
+      const blocked = !!pab && BLOCK_FLAGS.every((flag) => pab[flag] === true);
+      if (!blocked) {
+        diags.push({
+          checkId: "ORG-NO-PUBLIC-BUCKETS-PROD",
+          severity: "error",
+          message: `S3 bucket "${logicalId}" must block all public access in prod`,
+          entity: logicalId,
+        });
+      }
+    }
+    return diags;
+  },
+};
+
+/** Every bucket, in every environment, must declare server-side encryption. */
+export const bucketEncryptionRequired: PostSynthCheck = {
+  id: "ORG-BUCKET-ENCRYPTION",
+  description: "every S3 bucket must declare BucketEncryption",
+  check(ctx): PostSynthDiagnostic[] {
+    const diags: PostSynthDiagnostic[] = [];
+    for (const [logicalId, resource] of s3Buckets(ctx)) {
+      if (!resource.Properties?.BucketEncryption) {
+        diags.push({
+          checkId: "ORG-BUCKET-ENCRYPTION",
+          severity: "error",
+          message: `S3 bucket "${logicalId}" has no BucketEncryption configured`,
+          entity: logicalId,
+        });
+      }
+    }
+    return diags;
+  },
+};
+```
+
+Register both the same way — add the file to `lint.policies` in
+`chant.config.ts` (`lexicons: ["aws"]` instead of `["k8s"]`). `ORG-BUCKET-
+ENCRYPTION` runs in every environment; `ORG-NO-PUBLIC-BUCKETS-PROD` only fires
+in `prod` — the same environment-aware branch `ORG-PROD-TLS` uses above.
+
 ## Why not a separate engine
 
 chant already has the machinery: a [post-synth phase](/chant/lexicon-authoring/post-synth-checks/)
@@ -125,6 +215,19 @@ export default Op({
 single-attempt (a deterministic violation is not worth retrying). It is a plain
 activity, so it gates under both the local executor and Temporal. A clean
 evaluation passes through to the apply.
+
+The build behind the gate is assembled from the same resolution `chant build`
+uses, so it is the same project: folded by default, with the project's config
+reaching the serializers and its `buildRoots` contributing their entities. A gate
+that passes is a gate over a build `chant build` would also accept.
+
+One combination is refused rather than half-honoured. `chant run <op> --sandbox`
+on an Op containing a `policyGate` step exits before any phase runs: the gate
+builds the project and imports its `lint.policies` modules in the chant process,
+which is what `--sandbox` promises does not happen. Run the Op without
+`--sandbox`, or build separately with `chant build --sandbox`. A project whose
+`chant.config.ts` sets `build.sandbox: true` still gets a gate that builds
+in-process, and the gate says so on stderr.
 
 > **Signed override (deferred).** Pausing for a human, signed, audited override
 > to proceed *despite* a violation requires conditional gating in the generated

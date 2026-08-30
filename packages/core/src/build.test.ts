@@ -338,6 +338,47 @@ export const discovered = {
     expect(result.entities.get("discovered")?.entityType).toBe("Discovered");
   });
 
+  test("a contributor sees the discovered entities, read-only", async () => {
+    await writeFile(
+      join(testDir, "app.infra.ts"),
+      `
+export const discovered = {
+  lexicon: "test",
+  entityType: "Discovered",
+  props: {},
+  [Symbol.for("chant.declarable")]: true,
+};
+      `,
+    );
+
+    let seenNames: string[] = [];
+    const result = await build(testDir, [recordingSerializer([])], undefined, {
+      buildRoots: [
+        async (ctx) => {
+          seenNames = [...(ctx.entities?.keys() ?? [])];
+          return { entities: new Map() };
+        },
+      ],
+    });
+
+    expect(result.errors).toEqual([]);
+    expect(seenNames).toContain("discovered");
+  });
+
+  test("a later contributor sees what an earlier one contributed", async () => {
+    const seen: string[][] = [];
+    await build(testDir, [recordingSerializer([])], undefined, {
+      buildRoots: [
+        async () => ({ entities: new Map([["first", entity("First")]]) }),
+        async (ctx) => {
+          seen.push([...(ctx.entities?.keys() ?? [])]);
+          return { entities: new Map() };
+        },
+      ],
+    });
+    expect(seen[0]).toContain("first");
+  });
+
   test("contributors run exactly once per build", async () => {
     let calls = 0;
     await build(testDir, [], undefined, {

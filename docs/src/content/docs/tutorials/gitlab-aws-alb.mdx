@@ -1,6 +1,7 @@
 ---
 title: "GitLab CI + AWS ALB"
 description: "Three lexicons (AWS, GitLab), three stacks, one ALB — deploy a multi-service Fargate application from TypeScript sources via GitLab CI."
+diataxis: tutorial
 ---
 
 import { Aside } from '@astrojs/starlight/components';
@@ -33,7 +34,7 @@ Three TypeScript source directories produce three CloudFormation stacks and thre
 | UI service | `lexicons/aws/examples/shared-alb-ui/` | `examples/gitlab-aws-alb-ui/` |
 
 <Aside type="caution">
-NAT gateway (~$32/mo) + ALB (~$16/mo) = ~$48/mo for shared infra alone. Teardown after testing.
+NAT gateway (~$32/mo) + ALB (~$16/mo) = ~$48/mo for shared infra alone (us-east-1 list price, checked 2026-08 against chant 0.46.0; AWS list prices change and vary by region — re-price before relying on this number). Teardown after testing.
 </Aside>
 
 ## What you'll learn

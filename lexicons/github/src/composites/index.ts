@@ -26,3 +26,5 @@ export { GoCI } from "./go-ci";
 export type { GoCIProps } from "./go-ci";
 export { Dependabot, DependabotConfig } from "./dependabot";
 export type { DependabotProps, DependabotConfigProps, DependabotUpdate, DependabotEcosystem } from "./dependabot";
+export { PrPlanReport } from "./pr-plan-report";
+export type { PrPlanReportProps } from "./pr-plan-report";

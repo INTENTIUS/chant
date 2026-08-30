@@ -21,52 +21,84 @@ export default defineConfig({
                   "slug": "index"
             },
             {
-                  "label": "Getting Started",
-                  "slug": "getting-started"
+                  "label": "Tutorials",
+                  "items": [
+                        {
+                              "label": "Getting Started",
+                              "slug": "getting-started"
+                        }
+                  ]
             },
             {
-                  "label": "Intrinsics Reference",
-                  "slug": "intrinsics-guide"
+                  "label": "How-to guides",
+                  "items": [
+                        {
+                              "label": "Best Practices",
+                              "slug": "best-practices"
+                        },
+                        {
+                              "label": "chant helm",
+                              "slug": "cli"
+                        },
+                        {
+                              "label": "Examples",
+                              "slug": "examples"
+                        },
+                        {
+                              "label": "Migrating to Pinned Installs",
+                              "slug": "migration"
+                        },
+                        {
+                              "label": "Security",
+                              "slug": "security"
+                        }
+                  ]
             },
             {
-                  "label": "Composites",
-                  "slug": "composites"
+                  "label": "Reference",
+                  "items": [
+                        {
+                              "label": "Intrinsics",
+                              "slug": "intrinsics"
+                        },
+                        {
+                              "label": "All Rules",
+                              "slug": "rules"
+                        },
+                        {
+                              "label": "Serialization",
+                              "slug": "serialization"
+                        },
+                        {
+                              "label": "AI Skills",
+                              "slug": "skills"
+                        },
+                        {
+                              "label": "Composites",
+                              "slug": "composites"
+                        },
+                        {
+                              "label": "Intrinsics Reference",
+                              "slug": "intrinsics-guide"
+                        },
+                        {
+                              "label": "Lint Rules",
+                              "slug": "lint-rules"
+                        }
+                  ]
             },
             {
-                  "label": "Security",
-                  "slug": "security"
-            },
-            {
-                  "label": "Best Practices",
-                  "slug": "best-practices"
-            },
-            {
-                  "label": "AI Skills",
-                  "slug": "skills"
-            },
-            {
-                  "label": "Intrinsics",
-                  "slug": "intrinsics"
-            },
-            {
-                  "label": "All Rules",
-                  "slug": "rules"
-            },
-            {
-                  "label": "Serialization",
-                  "slug": "serialization"
-            },
-            {
-                  "label": "Helm Concepts",
-                  "slug": "helm-concepts"
-            },
-            {
-                  "label": "Lint Rules",
-                  "slug": "lint-rules"
-            },
-            {
-                  "label": "Examples",
-                  "slug": "examples"
+                  "label": "Explanation",
+                  "items": [
+                        {
+                              "label": "Helm Concepts",
+                              "slug": "helm-concepts"
+                        },
+                        {
+                              "label": "Live Observation",
+                              "slug": "observation"
+                        }
+                  ]
             }
       ],
     }),

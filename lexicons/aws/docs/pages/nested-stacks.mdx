@@ -1,0 +1,142 @@
+---
+title: "Nested Stacks"
+description: "Splitting resources into child CloudFormation templates with automatic cross-stack reference wiring"
+diataxis: how-to
+---
+
+import Diagram from '../../components/Diagram.astro';
+
+CloudFormation nested stacks (`AWS::CloudFormation::Stack`) let you decompose large templates into smaller, reusable child templates. The AWS lexicon's `nestedStack()` function references a **child project directory** — a subdirectory that builds independently to a valid CloudFormation template.
+
+:::caution[Consider alternatives first]
+Nested stacks add deployment complexity: child templates must be uploaded to S3, rollbacks are all-or-nothing at the parent level, drift detection doesn't recurse into children, and debugging failures requires drilling into child stack events. For splitting a large project into separately-deployed pieces, prefer [Multi-Stack Projects](/chant/guide/multi-stack/) — each `src/` subdirectory becomes an independent stack with no parent orchestration and no S3 upload step. Nested stacks are supported for specific cases — exceeding CloudFormation's 500-resource limit inside a single deployable unit, or packaging reusable infrastructure for other teams to deploy as a black box — but are not the recommended default.
+:::
+
+<Diagram name="nested-stacks" alt="Parent and child project source directories producing separate CloudFormation templates, both uploaded to S3" caption="Nested stack source layout and output" />
+
+## Project structure
+
+A nested stack is a child project — a subdirectory with its own resource files and explicit `stackOutput()` declarations:
+
+```
+src/
+  app.ts                  # parent resources
+  network/                # ← child project (nested stack)
+    vpc.ts                # VPC, subnet, internet gateway, routing
+    security.ts           # security group for Lambda
+    outputs.ts            # declares cross-stack outputs
+```
+
+## Declaring outputs in the child
+
+Use `stackOutput()` to mark values that the parent can reference. Each `stackOutput()` becomes an entry in the child template's `Outputs` section:
+
+{{file:../src/testdata/nested-stacks/network/outputs.ts}}
+
+The child can be built independently:
+
+```bash
+chant build src/network/ -o network.json
+# Produces a standalone, valid CloudFormation template with Outputs
+```
+
+## Referencing from the parent
+
+Use `nestedStack()` in the parent to reference a child project directory. It returns an object with an `outputs` proxy for cross-stack references:
+
+{{file:../src/testdata/nested-stacks/app.ts}}
+
+`network.outputs.subnetId` produces a `NestedStackOutputRef` that serializes to `{ "Fn::GetAtt": ["Network", "Outputs.SubnetId"] }`.
+
+## Build output
+
+`chant build` produces multiple template files:
+
+```bash
+chant build -o template.json
+# Produces:
+#   template.json              — parent template
+#   network.template.json      — child template
+```
+
+The parent template includes an `AWS::CloudFormation::Stack` resource pointing to the child:
+
+```json
+"Network": {
+  "Type": "AWS::CloudFormation::Stack",
+  "Properties": {
+    "TemplateURL": { "Fn::Sub": "${TemplateBasePath}/network.template.json" }
+  }
+}
+```
+
+## `TemplateBasePath` parameter
+
+Every parent template gets a `TemplateBasePath` parameter (default `"."`) that controls where CloudFormation looks for child templates:
+
+```bash
+# Local dev — default "." works with rain and similar tools
+chant build -o template.json
+
+# Production — override with S3 URL
+aws cloudformation deploy \
+  --template-file template.json \
+  --stack-name my-stack \
+  --parameter-overrides TemplateBasePath=https://my-bucket.s3.amazonaws.com/templates
+```
+
+Child templates also receive the `TemplateBasePath` parameter so it propagates through all nesting levels.
+
+All child template files must be uploaded alongside the parent template (or to the S3 path specified by `TemplateBasePath`).
+
+## Explicit parameters
+
+Pass CloudFormation Parameters to child stacks with the `parameters` option:
+
+```typescript
+import { nestedStack } from "@intentius/chant-lexicon-aws";
+
+const network = nestedStack("network", import.meta.dirname + "/network", {
+  parameters: { Environment: "prod", CidrBlock: "10.0.0.0/16" },
+});
+```
+
+## Recursive nesting
+
+Child projects can themselves reference grandchild projects. Each level produces its own template file:
+
+```
+src/
+  app.ts
+  infra/
+    network/
+      vpc.ts
+      outputs.ts
+    database/
+      cluster.ts
+      outputs.ts
+```
+
+The build pipeline detects circular references and reports an error if child A references child B which references child A.
+
+## Lint rules
+
+Three lint rules help catch common nested stack issues:
+
+| Rule | Severity | Description |
+|------|----------|-------------|
+| **WAW013** | error | Child project has no `stackOutput()` exports — parent can't reference anything |
+| **WAW014** | warning | `nestedStack()` outputs never referenced from parent — could be a separate build |
+| **WAW015** | error | Circular project references |
+
+## When to use nested stacks
+
+Most splitting use cases are better served by other mechanisms:
+
+- **Splitting a large project into separately-deployed pieces** → [Multi-Stack Projects](/chant/guide/multi-stack/). Organize `src/` into subdirectories — each becomes an independent stack, deployed on its own, with cross-stack references resolved via standard CloudFormation `Export`/`ImportValue`. No parent template, no S3 upload of children, no `TemplateBasePath` parameter.
+- **Reusing resource patterns within a single template** → [Composites](../composites/). Composites expand into the same template and deploy atomically — they're about DRY, not splitting.
+
+**Use nested stacks only when:**
+- A single deployable unit exceeds CloudFormation's 500-resource limit
+- You're packaging reusable infrastructure for other teams to consume as a black box (the parent-child relationship is load-bearing)
+- You need an orchestrator parent that coordinates child lifecycles via CloudFormation Parameters and Outputs specifically

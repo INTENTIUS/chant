@@ -1,6 +1,7 @@
 ---
 title: Capabilities
 description: The bounded, plugin-style registry of verbs that components compose from — the families, the discipline, and the preset layer.
+diataxis: reference
 ---
 
 import { Aside } from '@astrojs/starlight/components';
@@ -30,7 +31,9 @@ The set is a plugin registry, not a closed enum. Verbs group into families. The 
 | **sbom** | `generate-sbom` | core | artifact-type-keyed software SBOM (native SPDX/CycloneDX, hermetic lockfile backend) into the build archive — see [Build Archive](/chant/components/build-archive/#sbom-format-agnostic-generated-at-build-time) |
 | **supply chain** | `sign`, `attest-provenance`, `verify`, `scan-vulnerabilities`, `vuln-gate` | core | keyless cosign signing/attestation + a deploy-time verify gate and vulnerability policy gate |
 | **wait / verify (agnostic)** | `wait-cluster-healthy`, `wait-endpoint`, `health-gate` | core | bolt-port cluster probe + HTTP readiness/health gates |
+| **secrets** | `ensure-secret` | core | generated-once materialization ([#1365](https://github.com/INTENTIUS/chant/issues/1365)): read-then-write — present means done, never mints over an existing value, never rotates implicitly; a presence / declared key-set / metadata mismatch stops the apply naming key names only; `needs-opt-out` rollback (COMP003); store adapters come from provider lexicons |
 | **escape hatch** | `shell` | core | typed, lint-flagged |
+| **apply (Cloudflare Workers)** | `wrangler-deploy`, `wrangler-versions-promote`, `r2-sync` | core | wraps the `wrangler`/`rclone` CLIs directly — the Workers plane is deliberately ceded to `wrangler` (no cloudflare lexicon owns these; [#1293](https://github.com/INTENTIUS/chant/issues/1293)); `r2-sync` mirrors `s3-sync`'s input shape |
 | **sbom (config)** | `extract-config-bom` | aws | IaC config-BOM (declared resources / nested stacks / external refs) from the synthesized CloudFormation template into the build archive |
 | **publish** | `publish-image`, `load-image-on-host`, `publish-asset` / `publish-artifact` | aws | deploy-time, promote by identity; an interface with backends |
 | **apply** | `cfn-deploy`, `ecs-update-service`, `lambda-deploy`, `s3-sync`, `cdn-invalidate`, `run-migration` | aws | `cfn-deploy` carries safety options (changeset preview, `onReplace`, `stageGsi`) |
@@ -54,6 +57,8 @@ phase("Apply", [
 ```
 
 Every sticky resource reuses that one implementation. The alternative — each component scripting its own workaround — is exactly the sprawl the model exists to remove. Capabilities are allowed to be smart (preflight, guard, stage), not thin shells.
+
+Cloudflare's Worker versions are the same discipline paying off with a whole new cloud attached: `wrangler-deploy` returns the version id it just published, and `wrangler-versions-promote` moves live traffic to any version by id. Cloudflare's own gradual-deployment rollback is exactly "promote to a prior version" — no bespoke undo to write — so `wrangler-deploy` declares a `rollback` that re-promotes to whatever version was live before it ran, landing on the same `RollbackPolicy: "native"` (`../orchestration/#rollback-comes-free`) every other native-rollback verb uses. `r2-sync` has no such native undo (an overwritten/deleted object is gone), so it carries `needs-opt-out` — the same disposition `s3-sync` does.
 
 ## The discipline
 

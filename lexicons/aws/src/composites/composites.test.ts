@@ -13,9 +13,12 @@ import { VpcDefault } from "./vpc-default";
 import { FargateAlb } from "./fargate-alb";
 import { AlbShared } from "./alb-shared";
 import { FargateService } from "./fargate-service";
+import { NlbService } from "./nlb-service";
 import { RdsInstance } from "./rds-instance";
 import { Ec2InstanceRole } from "./ec2-instance-role";
+import { Ec2InstanceBundle } from "./ec2-instance-bundle";
 import { MinimalVpc } from "./minimal-vpc";
+import { StepFunctionsWorkflow } from "./step-functions-workflow";
 
 const baseProps = {
   name: "TestFunc",
@@ -639,6 +642,112 @@ describe("FargateService", () => {
   });
 });
 
+describe("NlbService", () => {
+  const nlbProps = {
+    vpcId: "vpc-123",
+    subnetIds: ["subnet-pub1", "subnet-pub2"],
+  };
+
+  test("returns 3 members with correct names", () => {
+    const instance = NlbService(nlbProps);
+    const names = Object.keys(instance.members);
+    expect(names).toEqual(["nlb", "targetGroup", "listener"]);
+  });
+
+  test("expandComposite produces correct logical names", () => {
+    const expanded = expandComposite("app", NlbService(nlbProps));
+    expect(expanded.has("appNlb")).toBe(true);
+    expect(expanded.has("appTargetGroup")).toBe(true);
+    expect(expanded.has("appListener")).toBe(true);
+    expect(expanded.size).toBe(3);
+  });
+
+  test("NLB has Type network and given subnets", () => {
+    const instance = NlbService(nlbProps);
+    const nlbResourceProps = (instance.nlb as any).props;
+    expect(nlbResourceProps.Type).toBe("network");
+    expect(nlbResourceProps.Scheme).toBe("internet-facing");
+    expect(nlbResourceProps.Subnets).toEqual(["subnet-pub1", "subnet-pub2"]);
+  });
+
+  test("no security group is created", () => {
+    const instance = NlbService(nlbProps);
+    expect(Object.keys(instance.members)).not.toContain("albSg");
+    expect(Object.keys(instance.members)).not.toContain("nlbSg");
+  });
+
+  test("defaults: TCP protocol, port 80, ip target type", () => {
+    const instance = NlbService(nlbProps);
+    const tgProps = (instance.targetGroup as any).props;
+    expect(tgProps.Protocol).toBe("TCP");
+    expect(tgProps.Port).toBe(80);
+    expect(tgProps.TargetType).toBe("ip");
+    expect(tgProps.HealthCheckProtocol).toBe("TCP");
+
+    const listenerProps = (instance.listener as any).props;
+    expect(listenerProps.Protocol).toBe("TCP");
+    expect(listenerProps.Port).toBe(80);
+  });
+
+  test("targetPort defaults to listenerPort but can be overridden", () => {
+    const instance = NlbService({ ...nlbProps, listenerPort: 443, targetPort: 8443 });
+    const tgProps = (instance.targetGroup as any).props;
+    expect(tgProps.Port).toBe(8443);
+    const listenerProps = (instance.listener as any).props;
+    expect(listenerProps.Port).toBe(443);
+  });
+
+  test("listener forwards to the target group", () => {
+    const instance = NlbService(nlbProps);
+    const listenerProps = (instance.listener as any).props;
+    expect(listenerProps.DefaultActions).toHaveLength(1);
+    const action = (listenerProps.DefaultActions[0] as any).props;
+    expect(action.Type).toBe("forward");
+  });
+
+  test("static targets are registered on the target group", () => {
+    const instance = NlbService({
+      ...nlbProps,
+      targetType: "instance",
+      targets: [{ id: "i-0123456789abcdef0", port: 8080 }],
+    });
+    const tgProps = (instance.targetGroup as any).props;
+    expect(tgProps.TargetType).toBe("instance");
+    expect(tgProps.Targets).toHaveLength(1);
+    const target = (tgProps.Targets[0] as any).props;
+    expect(target.Id).toBe("i-0123456789abcdef0");
+    expect(target.Port).toBe(8080);
+  });
+
+  test("internal scheme is respected", () => {
+    const instance = NlbService({ ...nlbProps, scheme: "internal" });
+    const nlbResourceProps = (instance.nlb as any).props;
+    expect(nlbResourceProps.Scheme).toBe("internal");
+  });
+
+  test("TLS protocol adds certificate to listener", () => {
+    const instance = NlbService({
+      ...nlbProps,
+      protocol: "TLS",
+      certificateArn: "arn:aws:acm:us-east-1:123:certificate/abc",
+    });
+    const listenerProps = (instance.listener as any).props;
+    expect(listenerProps.Protocol).toBe("TLS");
+    expect(listenerProps.Certificates).toHaveLength(1);
+    const cert = (listenerProps.Certificates[0] as any).props;
+    expect(cert.CertificateArn).toBe("arn:aws:acm:us-east-1:123:certificate/abc");
+
+    const tgProps = (instance.targetGroup as any).props;
+    expect(tgProps.Protocol).toBe("TLS");
+  });
+
+  test("throws when protocol is TLS without a certificateArn", () => {
+    expect(() =>
+      NlbService({ ...nlbProps, protocol: "TLS" }),
+    ).toThrow("NlbService requires certificateArn when protocol is TLS");
+  });
+});
+
 describe("RdsInstance", () => {
   const rdsProps = {
     vpcId: "vpc-123",
@@ -897,6 +1006,140 @@ describe("Ec2InstanceRole", () => {
   });
 });
 
+describe("Ec2InstanceBundle", () => {
+  const instanceProps = {
+    imageId: "ami-0abcdef1234567890",
+    vpcId: "vpc-123",
+    subnetId: "subnet-456",
+  };
+
+  test("returns role, instanceProfile, sg, instance members", () => {
+    const instance = Ec2InstanceBundle(instanceProps);
+    expect(Object.keys(instance.members)).toEqual(["role", "instanceProfile", "sg", "instance"]);
+  });
+
+  test("expandComposite produces correct logical names", () => {
+    const expanded = expandComposite("web", Ec2InstanceBundle(instanceProps));
+    expect(expanded.has("webRole")).toBe(true);
+    expect(expanded.has("webInstanceProfile")).toBe(true);
+    expect(expanded.has("webSg")).toBe(true);
+    expect(expanded.has("webInstance")).toBe(true);
+    expect(expanded.size).toBe(4);
+  });
+
+  test("role has EC2 trust policy", () => {
+    const instance = Ec2InstanceBundle(instanceProps);
+    const roleProps = (instance.role as any).props;
+    expect(roleProps.AssumeRolePolicyDocument.Statement[0].Principal.Service).toBe("ec2.amazonaws.com");
+  });
+
+  test("instanceProfile references the role", () => {
+    const instance = Ec2InstanceBundle(instanceProps);
+    const profileProps = (instance.instanceProfile as any).props;
+    expect(profileProps.Roles).toHaveLength(1);
+  });
+
+  test("ManagedPolicyArns and Policies pass through to the role", () => {
+    const arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore";
+    const instance = Ec2InstanceBundle({
+      ...instanceProps,
+      ManagedPolicyArns: [arn],
+      Policies: [{ PolicyName: "extra", PolicyDocument: { Version: "2012-10-17", Statement: [] } }],
+    });
+    const roleProps = (instance.role as any).props;
+    expect(roleProps.ManagedPolicyArns).toContain(arn);
+    expect(roleProps.Policies).toHaveLength(1);
+  });
+
+  test("instance wires ImageId, InstanceType default, subnet, SG, and instance profile", () => {
+    const instance = Ec2InstanceBundle(instanceProps);
+    const instanceProps_ = (instance.instance as any).props;
+    expect(instanceProps_.ImageId).toBe("ami-0abcdef1234567890");
+    expect(instanceProps_.InstanceType).toBe("t3.micro");
+    expect(instanceProps_.SubnetId).toBe("subnet-456");
+    expect(instanceProps_.SecurityGroupIds).toHaveLength(1);
+    expect(instanceProps_.IamInstanceProfile).toBeDefined();
+  });
+
+  test("custom instanceType is respected", () => {
+    const instance = Ec2InstanceBundle({ ...instanceProps, instanceType: "m5.large" });
+    expect((instance.instance as any).props.InstanceType).toBe("m5.large");
+  });
+
+  test("keyName is passed through when provided", () => {
+    const instance = Ec2InstanceBundle({ ...instanceProps, keyName: "my-key" });
+    expect((instance.instance as any).props.KeyName).toBe("my-key");
+  });
+
+  test("keyName is omitted by default", () => {
+    const instance = Ec2InstanceBundle(instanceProps);
+    expect((instance.instance as any).props.KeyName).toBeUndefined();
+  });
+
+  test("userData is wrapped in Fn::Base64", () => {
+    const instance = Ec2InstanceBundle({ ...instanceProps, userData: "#!/bin/bash\necho hi" });
+    const userData = (instance.instance as any).props.UserData;
+    expect(JSON.stringify(userData)).toContain("Fn::Base64");
+  });
+
+  test("no ingress rules by default", () => {
+    const instance = Ec2InstanceBundle(instanceProps);
+    expect((instance.sg as any).props.SecurityGroupIngress).toBeUndefined();
+  });
+
+  test("ingress with cidr produces a CidrIp rule", () => {
+    const instance = Ec2InstanceBundle({
+      ...instanceProps,
+      ingress: [{ fromPort: 22, cidr: "10.0.0.0/16", description: "ssh" }],
+    });
+    const rules = (instance.sg as any).props.SecurityGroupIngress;
+    expect(rules).toHaveLength(1);
+    const rule = (rules[0] as any).props;
+    expect(rule.CidrIp).toBe("10.0.0.0/16");
+    expect(rule.FromPort).toBe(22);
+    expect(rule.ToPort).toBe(22);
+    expect(rule.IpProtocol).toBe("tcp");
+    expect(rule.Description).toBe("ssh");
+  });
+
+  test("ingress with sourceSecurityGroupId produces a SG-sourced rule", () => {
+    const instance = Ec2InstanceBundle({
+      ...instanceProps,
+      ingress: [{ fromPort: 80, toPort: 8080, sourceSecurityGroupId: "sg-abc123" }],
+    });
+    const rule = ((instance.sg as any).props.SecurityGroupIngress[0] as any).props;
+    expect(rule.SourceSecurityGroupId).toBe("sg-abc123");
+    expect(rule.FromPort).toBe(80);
+    expect(rule.ToPort).toBe(8080);
+  });
+
+  test("ingress with cidrIpv6 produces an IPv6 rule", () => {
+    const instance = Ec2InstanceBundle({
+      ...instanceProps,
+      ingress: [{ fromPort: 443, cidrIpv6: "::/0" }],
+    });
+    const rule = ((instance.sg as any).props.SecurityGroupIngress[0] as any).props;
+    expect(rule.CidrIpv6).toBe("::/0");
+  });
+
+  test("ingress rule with no source throws", () => {
+    expect(() =>
+      Ec2InstanceBundle({ ...instanceProps, ingress: [{ fromPort: 22 }] }),
+    ).toThrow(/needs one of cidr, cidrIpv6, or sourceSecurityGroupId/);
+  });
+
+  test("multiple ingress rules are all applied", () => {
+    const instance = Ec2InstanceBundle({
+      ...instanceProps,
+      ingress: [
+        { fromPort: 22, cidr: "10.0.0.0/16" },
+        { fromPort: 443, cidr: "0.0.0.0/0" },
+      ],
+    });
+    expect((instance.sg as any).props.SecurityGroupIngress).toHaveLength(2);
+  });
+});
+
 describe("MinimalVpc", () => {
   test("returns 8 members", () => {
     const instance = MinimalVpc({});
@@ -928,5 +1171,87 @@ describe("MinimalVpc", () => {
   test("expandComposite produces 8 entries", () => {
     const expanded = expandComposite("net", MinimalVpc({}));
     expect(expanded.size).toBe(8);
+  });
+});
+
+describe("StepFunctionsWorkflow", () => {
+  const passDefinition = { StartAt: "Hello", States: { Hello: { Type: "Pass", End: true } } };
+
+  test("returns role, logGroup, stateMachine members", () => {
+    const instance = StepFunctionsWorkflow({ definition: passDefinition });
+    expect(Object.keys(instance.members)).toEqual(["role", "logGroup", "stateMachine"]);
+  });
+
+  test("role has states.amazonaws.com trust policy", () => {
+    const instance = StepFunctionsWorkflow({ definition: passDefinition });
+    const roleProps = (instance.role as any).props;
+    expect(roleProps.AssumeRolePolicyDocument.Statement[0].Principal.Service).toBe("states.amazonaws.com");
+  });
+
+  test("role always carries the log-delivery policy", () => {
+    const instance = StepFunctionsWorkflow({ definition: passDefinition });
+    const roleProps = (instance.role as any).props;
+    const names = roleProps.Policies.map((p: any) => p.props.PolicyName);
+    expect(names).toContain("StepFunctionsLogDelivery");
+  });
+
+  test("lambdaFunctionArns grants InvokeFunction on those ARNs", () => {
+    const instance = StepFunctionsWorkflow({
+      definition: passDefinition,
+      lambdaFunctionArns: ["arn:aws:lambda:us-east-1:123456789012:function:worker"],
+    });
+    const roleProps = (instance.role as any).props;
+    const invokePolicy = roleProps.Policies.find((p: any) => p.props.PolicyName === "InvokeLambdaTasks");
+    expect(invokePolicy).toBeDefined();
+    expect(invokePolicy.props.PolicyDocument.Statement[0].Resource).toEqual([
+      "arn:aws:lambda:us-east-1:123456789012:function:worker",
+    ]);
+  });
+
+  test("without lambdaFunctionArns, no InvokeLambdaTasks policy", () => {
+    const instance = StepFunctionsWorkflow({ definition: passDefinition });
+    const roleProps = (instance.role as any).props;
+    const names = roleProps.Policies.map((p: any) => p.props.PolicyName);
+    expect(names).not.toContain("InvokeLambdaTasks");
+  });
+
+  test("stateMachine carries the definition object as Definition (not a string)", () => {
+    const instance = StepFunctionsWorkflow({ definition: passDefinition });
+    const smProps = (instance.stateMachine as any).props;
+    expect(smProps.Definition).toEqual(passDefinition);
+    expect(smProps.DefinitionString).toBeUndefined();
+  });
+
+  test("stateMachine references role.Arn and defaults to STANDARD", () => {
+    const instance = StepFunctionsWorkflow({ definition: passDefinition });
+    const smProps = (instance.stateMachine as any).props;
+    expect(smProps.RoleArn).toBeInstanceOf(AttrRef);
+    expect(smProps.StateMachineType).toBe("STANDARD");
+  });
+
+  test("logGroup defaults to 14-day retention, overridable", () => {
+    const defaultInstance = StepFunctionsWorkflow({ definition: passDefinition });
+    expect((defaultInstance.logGroup as any).props.RetentionInDays).toBe(14);
+
+    const overridden = StepFunctionsWorkflow({ definition: passDefinition, logRetentionDays: 30 });
+    expect((overridden.logGroup as any).props.RetentionInDays).toBe(30);
+  });
+
+  test("LoggingConfiguration wires the log group and defaults level to ALL", () => {
+    const instance = StepFunctionsWorkflow({ definition: passDefinition });
+    const smProps = (instance.stateMachine as any).props;
+    const loggingProps = (smProps.LoggingConfiguration as any).props;
+    expect(loggingProps.Level).toBe("ALL");
+    const destProps = (loggingProps.Destinations[0] as any).props;
+    const cwProps = (destProps.CloudWatchLogsLogGroup as any).props;
+    expect(cwProps.LogGroupArn).toBeInstanceOf(AttrRef);
+  });
+
+  test("expandComposite produces 3 entries", () => {
+    const expanded = expandComposite("workflow", StepFunctionsWorkflow({ definition: passDefinition }));
+    expect(expanded.has("workflowRole")).toBe(true);
+    expect(expanded.has("workflowLogGroup")).toBe(true);
+    expect(expanded.has("workflowStateMachine")).toBe(true);
+    expect(expanded.size).toBe(3);
   });
 });

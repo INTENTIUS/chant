@@ -122,6 +122,25 @@ describe("buildProvenanceStatement — SLSA in-toto statement from #614 provenan
       }),
     ).toThrow(SignTargetNotDigestError);
   });
+
+  it("reserved parameter keys win over caller-supplied collisions (#1943)", () => {
+    const statement = buildProvenanceStatement({
+      imageRef: DIGEST_REF,
+      provenance: { sourceRef: "abc123def", artifactDigest: DIGEST_REF.split("@")[1]! },
+      builderId: "builder",
+      externalParameters: { sourceRef: "spoofed", agent: "reviewer" },
+      internalParameters: { artifactDigest: "spoofed", spriteId: "s-1" },
+    });
+
+    expect(statement.predicate.buildDefinition.externalParameters).toEqual({
+      sourceRef: "abc123def",
+      agent: "reviewer",
+    });
+    expect(statement.predicate.buildDefinition.internalParameters).toEqual({
+      artifactDigest: DIGEST_REF.split("@")[1]!,
+      spriteId: "s-1",
+    });
+  });
 });
 
 describe("attest-provenance — keyless cosign attest (#622)", () => {

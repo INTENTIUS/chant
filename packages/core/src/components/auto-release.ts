@@ -42,7 +42,7 @@ import type { DriverStepRecord } from "./driver";
  * `extract-config-bom` likewise *describes* an artifact rather than promoting
  * one. Those must not trigger a release record (#665) — a release means "we
  * promoted this by digest to a location", not "we hashed some bytes". The
- * driver's own `findPublishOutput` stays looser (uri/digest/key) because it
+ * driver's own `collectComponentOutputs` stays looser (uri/digest/key) because it
  * only feeds `@<component>.publish.*` wiring, where a false positive is harmless.
  */
 function isPromotedArtifact(output: unknown): output is { uri: string; digest?: string } {
@@ -117,6 +117,10 @@ export interface AutoReleaseRunInfo {
   digest?: string;
   /** Orchestrator run identifier — a Temporal `runId`, or a locally generated id for the local executor (mirrors `runComponentsReleaseRecord`'s `--run-id` default). */
   runId: string;
+  /** The bypassed capability-profile divergences, when the caller deliberately overrode a deploy-time profile assertion (chant #1244) — recorded verbatim as the release record's `profileOverride`. */
+  profileOverride?: string;
+  /** The deploy's input-side digest, when `digest` is a rendered-content identity (a pinned helm deploy, chant #1242) — recorded as the release record's `inputDigest` so ledger queries can still join on inputs across clusters whose bytes legitimately differ. */
+  inputDigest?: string;
 }
 
 /** Opt-out + field-override knobs for auto-release recording, threaded from CLI flags/config (#597: "opt-out-able (flag/config), documented default"). */
@@ -202,6 +206,8 @@ export async function maybeRecordAutoRelease(
         runId: run.runId,
         timestamp,
         actor,
+        ...(run.profileOverride ? { profileOverride: run.profileOverride } : {}),
+        ...(run.inputDigest ? { inputDigest: run.inputDigest } : {}),
       },
       { cwd: options.cwd },
     );

@@ -1,6 +1,7 @@
 ---
 title: Docs Site Setup
 description: Setting up a Starlight documentation site for your lexicon
+diataxis: how-to
 ---
 
 Each lexicon can include a documentation site built with [Astro Starlight](https://starlight.astro.build/). The docs site lives in `lexicons/<name>/docs/`.
@@ -67,23 +68,52 @@ export default defineConfig({
 }
 ```
 
-## Recommended Page Structure
+## Where Pages Live
 
-A comprehensive docs site should have these pages (as MDX files in `docs/src/content/docs/`):
+A lexicon docs site has two kinds of page:
 
-| Page | File | Description |
-|------|------|-------------|
-| Overview | `index.mdx` | Installation, quick start, feature list |
-| Getting Started | `getting-started.mdx` | First project walkthrough |
-| Resources | `resources.mdx` | Resource types, resource-level fields |
-| Intrinsics | `intrinsics.mdx` | Template functions (if applicable) |
-| Pseudo-Parameters | `pseudo-parameters.mdx` | Deployment-time parameters |
-| Composites | `composites.mdx` | All composites with examples |
-| Parameters & Outputs | `parameters-outputs.mdx` | Template parameters and outputs |
-| Lint Rules | `lint-rules.mdx` | All pre-synth and post-synth checks |
-| Importing | `importing.mdx` | Import existing templates |
-| Advanced Patterns | `linked-templates.mdx` | Advanced usage patterns |
-| Examples | `examples.mdx` | Walkthrough of example projects |
+- Generated reference tables — `index`, `intrinsics`, `pseudo-parameters`, `rules`, `serialization` — produced by `docsPipeline()` from the packaged `dist/manifest.json`, `dist/meta.json` and the rule files under `src/`. Never edit these; they carry a `GENERATED-BY-CHANT-DOCS` marker and are rewritten on every run.
+- Authored pages under `docs/pages/*.mdx`. The pipeline expands `{{file:...}}` markers, stamps the same marker (pointing back at the source file) and copies each one into `docs/src/content/docs/`. The copy is reaped when the source is deleted.
+
+Each authored page names its [Diátaxis](https://diataxis.fr) quadrant, and the sidebar is grouped from it. Only non-empty groups appear.
+
+```mdx title="docs/pages/getting-started.mdx"
+---
+title: "Getting Started"
+description: "First project with the my-lexicon lexicon"
+diataxis: tutorial
+---
+
+Content goes here. Use {{file:examples/basic/src/main.ts}} to inline a file
+from the directory `examplesDir` points at.
+```
+
+Frontmatter the pipeline reads, on top of Starlight's `title` and `description`:
+
+| Field | Required | Meaning |
+|---|---|---|
+| `diataxis` | yes | `tutorial`, `how-to`, `reference` or `explanation`. The sidebar group. One mode per page; a page that needs two gets split |
+| `label` | no | Sidebar label; defaults to `title` |
+| `group` | no | A nested subgroup inside the quadrant, e.g. `"Vendor Composites"` |
+| `order` | no | Lower sorts first within its group; pages without it follow, by label |
+| `hidden` | no | `true` keeps the page out of the sidebar |
+
+`chant dev check-lexicon` fails on an authored page with no valid `diataxis`.
+
+## Recommended Pages
+
+| Page | File | Quadrant |
+|------|------|----------|
+| Getting Started | `getting-started.mdx` | tutorial |
+| Concepts | `<product>-concepts.mdx` | explanation |
+| Resources | `resources.mdx` | reference |
+| Composites | `composites.mdx` | reference |
+| Parameters & Outputs | `parameters-outputs.mdx` | reference |
+| Lint Rules | `lint-rules.mdx` | reference (the generated `rules` table is the complete list; this page explains the important ones) |
+| Importing | `importing.mdx` | how-to |
+| Examples | `examples.mdx` | how-to |
+| Operational playbook | `operational-playbook.mdx` | how-to |
+| AI Skills | `skills.mdx` | reference |
 
 ## Building the Docs
 
@@ -109,19 +139,6 @@ Add a `docs` script to your lexicon's `package.json`:
     "docs:build": "cd docs && npm run build"
   }
 }
-```
-
-## Page Frontmatter
-
-Each MDX page requires YAML frontmatter:
-
-```mdx
----
-title: "Page Title"
-description: "Brief description for SEO and sidebar"
----
-
-Content goes here...
 ```
 
 ## Cross-Site Links

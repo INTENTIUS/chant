@@ -1,7 +1,12 @@
 ---
 title: "GKE Composites"
 description: "Vendor-specific composites for Google GKE — Workload Identity, GCE Ingress, Gateway API, PD/Filestore storage, Cloud Logging, Cloud Trace, and Config Connector."
+diataxis: reference
 ---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-k8s` — DO NOT EDIT.
+    Edit lexicons/k8s/docs/pages/gke-composites.mdx instead; changes here are overwritten. */}
+
 
 import { Aside } from '@astrojs/starlight/components';
 
@@ -199,6 +204,89 @@ const { context } = ConfigConnectorContext({
 - Required when using Config Connector to manage GCP resources from within the cluster
 - Configures the GCP service account per namespace
 - `stateIntoSpec` controls whether CC writes observed state back into the spec (`absent` recommended)
+
+## CockroachDbRegionStack
+
+All K8s resources for one CockroachDB region, in a single call — the 8-file per-region
+pattern (namespace, storage, StatefulSet, External Secrets, ingress, TLS, BackendConfig,
+monitoring) collapsed into one composite. Backs the [CockroachDB Multi-Region
+tutorial](/chant/tutorials/cockroachdb-multi-region/) and its
+[example](https://github.com/intentius/chant/tree/main/examples/cockroachdb-multi-region-gke),
+two calls per region:
+
+```typescript
+import { CockroachDbRegionStack } from "@intentius/chant-lexicon-k8s";
+
+export const east = CockroachDbRegionStack({
+  region: "east",
+  namespace: "crdb-east",
+  domain: "east.crdb.example.com",
+  internalDomain: "east.crdb.internal",
+  publicRootDomain: "crdb.example.com",
+  projectId: "my-project",
+  clusterName: "gke-crdb-east",
+  clusterRegion: "us-east4",
+  crdbGsaEmail: "gke-crdb-east-crdb@my-project.iam.gserviceaccount.com",
+  externalDnsGsaEmail: "gke-crdb-east-dns@my-project.iam.gserviceaccount.com",
+  cockroachdb: {
+    locality: "cloud=gcp,region=us-east4",
+    joinAddresses: [/* ... */],
+    advertiseHostDomain: "east.crdb.internal",
+    skipInit: false,
+    mountClientCerts: true,
+  },
+  tls: {
+    gcpSecretNames: {
+      ca: "crdb-ca-crt",
+      nodeCrt: "crdb-node-crt",
+      nodeKey: "crdb-node-key",
+      clientRootCrt: "crdb-client-root-crt",
+      clientRootKey: "crdb-client-root-key",
+    },
+  },
+  cloudArmor: { policyName: "crdb-ui-waf" },
+  monitoring: true,
+});
+```
+
+It emits: a namespace with resource quota, default limits and default-deny NetworkPolicy;
+a `pd-ssd` StorageClass; the CockroachDB StatefulSet, headless + public Services, RBAC and
+PodDisruptionBudget (via [`CockroachDbCluster`](/chant/tutorials/cockroachdb-multi-region/));
+a `ClusterSecretStore` and two `ExternalSecret`s pulling node and client certs from GCP
+Secret Manager; a `ManagedCertificate`, `FrontendConfig` and `GceIngress` for the public UI;
+an ExternalDNS agent for both the public and internal (cross-cluster) domains; and,
+optionally, a Cloud Armor `BackendConfig` and a Prometheus scrape ConfigMap/Deployment/Service.
+
+The props that matter for a multi-region rollout:
+
+- **`cockroachdb.advertiseHostDomain`** — when set, pods advertise
+  `${HOSTNAME}.${advertiseHostDomain}` instead of their in-cluster DNS name, so gossip
+  resolves across clusters. Required on every region except a single-cluster deployment.
+- **`cockroachdb.skipInit`** — only the first region should run the `cockroach init` Job;
+  every other region sets this `true`.
+- **`cockroachdb.mountClientCerts`** — mounts the client cert secret into the CockroachDB
+  pods so `kubectl exec ... -- cockroach sql` works for multi-region init. Certs still come
+  from TLS/External Secrets either way — this only controls the mount.
+- **`cloudArmor`** — when set, attaches a Cloud Armor WAF policy to the public UI Service
+  via a generated `BackendConfig`. Omit it and no `BackendConfig` is emitted.
+- **`monitoring`** — emits a lightweight Prometheus scraping `/_status/vars` (default
+  `false`); use it or point an existing Prometheus at the same endpoint, not both.
+
+TLS is always sourced from GCP Secret Manager via External Secrets Operator — unlike
+[`CockroachDbCluster`](/chant/tutorials/cockroachdb-multi-region/), `CockroachDbRegionStack`
+does not expose `skipCertGen`; it calls `CockroachDbCluster` with `skipCertGen: true`
+unconditionally, so no self-signed cert Job is ever emitted here.
+
+<Aside type="caution" title="Regions sharing one K8s cluster">
+`CockroachDbCluster`'s `ClusterRole` and `ClusterRoleBinding` are named after
+`cockroachdb.name` (default `"cockroachdb"`), and both are cluster-scoped —
+unlike everything else the stack emits, they are not namespaced. Two regions
+deployed into *separate* K8s clusters never collide. Two or three regions
+deployed into the *same* K8s cluster do, unless each call gives
+`cockroachdb.name` a region-unique value (e.g. `"cockroachdb-east"`). The
+stack's own `ClusterSecretStore` is similarly fixed-named
+(`gcp-secret-manager`) and has the same constraint.
+</Aside>
 
 ## Workload Identity vs key-based auth
 

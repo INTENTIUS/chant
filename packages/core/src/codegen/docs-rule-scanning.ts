@@ -92,7 +92,7 @@ function scanDir(dir: string, type: "lint" | "post-synth", out: ScannedRule[]): 
     } else {
       // Extract from PostSynthCheck objects: id, description
       const idMatch = content.match(/id:\s*"([^"]+)"/);
-      const descMatch = content.match(/description:\s*"([^"]+)"/);
+      const descMatch = content.match(/description:\s*"((?:[^"\\]|\\.)*)"/);
 
       if (idMatch) {
         out.push({
@@ -100,7 +100,7 @@ function scanDir(dir: string, type: "lint" | "post-synth", out: ScannedRule[]): 
             id: idMatch[1],
             severity: "error",
             category: "post-synth",
-            description: descMatch?.[1] ?? idMatch[1],
+            description: descMatch ? unescapeStringLiteral(descMatch[1]) : idMatch[1],
             type: "post-synth",
           },
           source: content,
@@ -108,6 +108,29 @@ function scanDir(dir: string, type: "lint" | "post-synth", out: ScannedRule[]): 
       }
     }
   }
+}
+
+/**
+ * Undo the backslash escaping of a double-quoted JS/TS string literal body
+ * captured by a regex like `/description:\s*"((?:[^"\\]|\\.)*)"/` — the
+ * capture group still has the source's escape sequences (`\"`, `\\`, `\n`,
+ * ...) in it verbatim, so a description written as `"say \"hi\""` would
+ * otherwise render in generated docs as `say \"hi\"` instead of `say "hi"`.
+ */
+function unescapeStringLiteral(raw: string): string {
+  return raw.replace(/\\(.)/g, (_, ch: string) => {
+    switch (ch) {
+      case "n":
+        return "\n";
+      case "t":
+        return "\t";
+      case "r":
+        return "\r";
+      default:
+        // \" -> ", \\ -> \, \' -> ', and anything else -> itself unescaped
+        return ch;
+    }
+  });
 }
 
 function extractDescriptionFromComment(

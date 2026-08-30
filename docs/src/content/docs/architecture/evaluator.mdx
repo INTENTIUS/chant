@@ -1,6 +1,7 @@
 ---
 title: Evaluator Engine
 description: How chant extracts resource declarations — the static folder that reads your source as data, and the run path a file falls back to
+diataxis: explanation
 ---
 
 chant has two ways to turn a source file's exported resources into structured data for the lexicon serializer: reduce their AST to a value directly (the default), or run them for real (the per-file fallback, and what `--no-fold` forces). This page covers both — see [TypeScript as Data](/chant/concepts/typescript-as-data/#folded-vs-run) for the full comparison.
@@ -9,7 +10,7 @@ chant has two ways to turn a source file's exported resources into structured da
 
 `chant build` folds by default since #1134 (mechanism from #1022/#1026/#1023, epic #1019): it skips execution for files that stay inside the fold subset. It walks top-level statements in the source file directly — looking for an exported `new Type({...})` resource, or a composite factory call — and recursively reduces the property object into a value tree from the AST, with zero module execution. This is the literal "read the AST as data" mechanism; it's implemented in `packages/core/src/fold/{fold,subset}.ts`.
 
-A file outside the subset falls back to importing and running it instead, transparently, logged as `[fold:run] <reason>`. A folded file and a run file produce byte-identical serialized output ([#1025](https://github.com/INTENTIUS/chant/issues/1025)) — see [Folded vs Run](/chant/concepts/typescript-as-data/#folded-vs-run) for what folds today and what still falls back.
+A file outside the subset falls back to importing and running it instead, transparently, logged as `[fold:run] <reason>` under `chant build --verbose` (a count otherwise). A folded file and a run file produce byte-identical serialized output ([#1025](https://github.com/INTENTIUS/chant/issues/1025)) — see [Folded vs Run](/chant/concepts/typescript-as-data/#folded-vs-run) for what folds today and what still falls back.
 
 ## The fallback: import and run
 

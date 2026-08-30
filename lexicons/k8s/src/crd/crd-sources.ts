@@ -311,6 +311,172 @@ const K3S_API_VERSION = "v0.1.4"; // vendored by k3s v1.36.3+k3s1
 const K3S_HELM_CONTROLLER_CRD_BASE = `https://raw.githubusercontent.com/k3s-io/helm-controller/${K3S_HELM_CONTROLLER_VERSION}/pkg/crds/yaml/generated`;
 const K3S_API_CRD_BASE = `https://raw.githubusercontent.com/k3s-io/api/${K3S_API_VERSION}/pkg/crds/yaml/generated`;
 
+/**
+ * KServe CRDs — serving.kserve.io
+ *
+ * The model-serving control plane chant #982 builds vLLM composites on top
+ * of. Produces (the `serving.kserve.io` group maps to the `KServe` namespace
+ * — see GROUP_NAMESPACE_OVERRIDES in group-namespace.ts; the first-segment
+ * rule would otherwise give `K8s::Serving::*`):
+ *   K8s::KServe::InferenceService       → serving.kserve.io/v1beta1, kind: InferenceService
+ *   K8s::KServe::ServingRuntime         → serving.kserve.io/v1alpha1, kind: ServingRuntime
+ *   K8s::KServe::ClusterServingRuntime  → serving.kserve.io/v1alpha1, kind: ClusterServingRuntime
+ *
+ * Sourced from `config/crd/full`, not `config/crd/minimal` — `full` is what
+ * the release's own kustomization.yaml (and `kubectl apply -k config/crd`)
+ * actually installs; `minimal` is a stripped, non-validating variant with no
+ * OpenAPI schema to speak of. `full`'s InferenceService schema is the entire
+ * spec-true predictor/transformer/explainer union (~1MB of YAML) — see
+ * schemaPatches in codegen/patches.ts if generation trips on its recursion
+ * depth.
+ *
+ * Pinned to the last patch of the 0.15 line rather than latest (0.20.0,
+ * weeks old at pin time) — a release that's had over a year to settle,
+ * matching the CNPG precedent above of tracking what a real operator runs
+ * rather than the newest tag.
+ *
+ * Operator install: kubectl apply --server-side -k
+ *   "github.com/kserve/kserve/config/default?ref=v0.15.2"
+ */
+const KSERVE_VERSION = "v0.15.2";
+const KSERVE_CRD_BASE = `https://raw.githubusercontent.com/kserve/kserve/${KSERVE_VERSION}/config/crd/full`;
+
+/**
+ * Cluster API (CAPI) core CRDs — cluster.x-k8s.io/v1beta2
+ *
+ * The provider-agnostic cluster-lifecycle surface CAPA, CAAPH, and every
+ * other CAPI provider build on. Only the two kinds a project actually
+ * declares are taken; `ClusterClass`, `MachineDeployment`, `MachineSet`,
+ * `MachineHealthCheck`, `MachineDrainRule`, the `ipam.cluster.x-k8s.io` pair,
+ * and `ExtensionConfig` are deliberately left out (the scale note at the top
+ * of this file: add the kinds a project uses). `ClusterResourceSet`, CAPI
+ * core's other addons.cluster.x-k8s.io kind, is a separate source below —
+ * see the CAAPH block for why it's grouped there. Produces (the group takes
+ * the `CAPI` override — see GROUP_NAMESPACE_OVERRIDES in group-namespace.ts,
+ * which avoids the `K8s::Cluster::Cluster` stutter):
+ *   K8s::CAPI::Cluster      → cluster.x-k8s.io/v1beta2, kind: Cluster
+ *   K8s::CAPI::MachinePool  → cluster.x-k8s.io/v1beta2, kind: MachinePool
+ *
+ * Controller install: kubectl apply -f
+ *   https://github.com/kubernetes-sigs/cluster-api/releases/download/v1.14.0/cluster-api-components.yaml
+ */
+const CAPI_VERSION = "v1.14.0";
+const CAPI_CRD_BASE = `https://raw.githubusercontent.com/kubernetes-sigs/cluster-api/${CAPI_VERSION}/core/config/crd/bases`;
+
+/**
+ * Cluster API Provider AWS (CAPA) CRDs — infrastructure.cluster.x-k8s.io + controlplane.cluster.x-k8s.io
+ *
+ * The AWS infrastructure and EKS control-plane providers for CAPI. Produces
+ * (first-segment rule, no override — the `AWS` kind prefix already keeps
+ * these from reading like anything else in the file):
+ *   K8s::Infrastructure::AWSManagedCluster            → infrastructure.cluster.x-k8s.io/v1beta2
+ *   K8s::Infrastructure::AWSManagedMachinePool         → infrastructure.cluster.x-k8s.io/v1beta2
+ *   K8s::Infrastructure::AWSClusterControllerIdentity  → infrastructure.cluster.x-k8s.io/v1beta2
+ *   K8s::Controlplane::AWSManagedControlPlane          → controlplane.cluster.x-k8s.io/v1beta2
+ *
+ * Contradicts chant #10's own text: the issue describes AWSManagedControlPlane
+ * as an `infrastructure.cluster.x-k8s.io` kind alongside the other three. The
+ * shipped CRD (`config/crd/bases/controlplane.cluster.x-k8s.io_awsmanagedcontrolplanes.yaml`
+ * in the v2.13.0 tag) puts it under `controlplane.cluster.x-k8s.io` instead —
+ * CAPA's EKS control-plane provider is a `controlplane.*` provider like
+ * kubeadm's, not an infra one. The parser reads `spec.group` from the fetched
+ * CRD document itself (`parseCRDSpec` in `crd/parser.ts`), so the source list
+ * below only needs the right URL; the resulting type name follows upstream's
+ * actual group, not the issue text's.
+ *
+ * Operator install: with clusterctl,
+ *   clusterctl init --infrastructure aws:v2.13.0
+ */
+const CAPA_VERSION = "v2.13.0";
+const CAPA_CRD_BASE = `https://raw.githubusercontent.com/kubernetes-sigs/cluster-api-provider-aws/${CAPA_VERSION}/config/crd/bases`;
+
+/**
+ * Cluster API Addon Provider for Helm (CAAPH) CRD, plus CAPI core's own
+ * addon-binding kind — both addons.cluster.x-k8s.io/v1alpha1|v1beta2
+ *
+ * `HelmChartProxy` is CAAPH's kind — installs a Helm chart across every
+ * cluster a label selector matches. `ClusterResourceSet` ships in CAPI
+ * core's own `core/` component (same CAPI_VERSION/CAPI_CRD_BASE pin as the
+ * `Cluster`/`MachinePool` source above), not a separate provider — it binds
+ * a set of raw manifests (ConfigMaps/Secrets) to matching clusters. They're
+ * grouped in one source block because both are what the RegionCluster
+ * composite's flux-addon wiring needs (chant#11) and both share the
+ * `addons.cluster.x-k8s.io` group, so both land under `K8s::Addons::*`:
+ *   K8s::Addons::HelmChartProxy      → addons.cluster.x-k8s.io/v1alpha1, kind: HelmChartProxy
+ *   K8s::Addons::ClusterResourceSet  → addons.cluster.x-k8s.io/v1beta2,  kind: ClusterResourceSet
+ *
+ * `HelmReleaseProxy` (CAAPH's per-cluster status-tracking CR, never authored
+ * directly) is deliberately left out.
+ *
+ * Operator install: with clusterctl,
+ *   clusterctl init --addon helm:v0.6.4
+ */
+const CAAPH_VERSION = "v0.6.4";
+const CAAPH_CRD_BASE = `https://raw.githubusercontent.com/kubernetes-sigs/cluster-api-addon-provider-helm/${CAAPH_VERSION}/config/crd/bases`;
+
+/**
+ * AWS Controllers for Kubernetes (ACK) — S3 controller CRD — s3.services.k8s.aws/v1alpha1
+ *
+ * Each ACK service controller is its own release train with its own CRDs, so
+ * (per the docs' "add the specific kinds a project uses" guidance, and
+ * matching how the ACK IAM group below stays split from EKS/RDS/S3) it is
+ * its own scoped source rather than one entry per AWS "provider". Produces:
+ *   K8s::S3::Bucket  → s3.services.k8s.aws/v1alpha1, kind: Bucket
+ *
+ * Controller install: helm install ack-s3-controller
+ *   oci://public.ecr.aws/aws-controllers-k8s/s3-chart --version 1.10.0
+ */
+const ACK_S3_VERSION = "v1.10.0";
+const ACK_S3_CRD_BASE = `https://raw.githubusercontent.com/aws-controllers-k8s/s3-controller/${ACK_S3_VERSION}/config/crd/bases`;
+
+/**
+ * ACK RDS controller CRD — rds.services.k8s.aws/v1alpha1
+ *
+ * Only `DBInstance` — the standalone-instance kind a project provisions
+ * directly. `DBCluster` and its endpoint/parameter-group/snapshot satellites
+ * are left out (no known consumer; add them when one shows up). Produces:
+ *   K8s::Rds::DBInstance  → rds.services.k8s.aws/v1alpha1, kind: DBInstance
+ *
+ * Controller install: helm install ack-rds-controller
+ *   oci://public.ecr.aws/aws-controllers-k8s/rds-chart --version 1.11.1
+ */
+const ACK_RDS_VERSION = "v1.11.1";
+const ACK_RDS_CRD_BASE = `https://raw.githubusercontent.com/aws-controllers-k8s/rds-controller/${ACK_RDS_VERSION}/config/crd/bases`;
+
+/**
+ * ACK IAM controller CRDs — iam.services.k8s.aws/v1alpha1
+ *
+ * `Role`, `User`, `Policy` — the three IAM primitives a cluster workload
+ * needing AWS access declares (a Role's trust policy, a User's access keys,
+ * a Policy document attached to either). `Group`, `InstanceProfile`,
+ * `OpenIDConnectProvider`, and `ServiceLinkedRole` are left out. Produces:
+ *   K8s::Iam::Role    → iam.services.k8s.aws/v1alpha1, kind: Role
+ *   K8s::Iam::User    → iam.services.k8s.aws/v1alpha1, kind: User
+ *   K8s::Iam::Policy  → iam.services.k8s.aws/v1alpha1, kind: Policy
+ *
+ * Controller install: helm install ack-iam-controller
+ *   oci://public.ecr.aws/aws-controllers-k8s/iam-chart --version 1.8.1
+ */
+const ACK_IAM_VERSION = "v1.8.1";
+const ACK_IAM_CRD_BASE = `https://raw.githubusercontent.com/aws-controllers-k8s/iam-controller/${ACK_IAM_VERSION}/config/crd/bases`;
+
+/**
+ * ACK EKS controller CRD — eks.services.k8s.aws/v1alpha1
+ *
+ * Only `PodIdentityAssociation` — EKS Pod Identity is the modern replacement
+ * for IRSA, and the ACK-managed way to bind a Kubernetes ServiceAccount to
+ * an IAM role without a webhook. `Cluster`, `Addon`, `Nodegroup`,
+ * `FargateProfile`, `AccessEntry`, `IdentityProviderConfig`, and
+ * `Capability` are left out (this k8s lexicon doesn't provision the EKS
+ * cluster itself). Produces:
+ *   K8s::Eks::PodIdentityAssociation  → eks.services.k8s.aws/v1alpha1, kind: PodIdentityAssociation
+ *
+ * Controller install: helm install ack-eks-controller
+ *   oci://public.ecr.aws/aws-controllers-k8s/eks-chart --version 1.20.0
+ */
+const ACK_EKS_VERSION = "v1.20.0";
+const ACK_EKS_CRD_BASE = `https://raw.githubusercontent.com/aws-controllers-k8s/eks-controller/${ACK_EKS_VERSION}/config/crd/bases`;
+
 export const CRD_SOURCES: CRDSource[] = [
   { type: "url", url: `${KUBERAY_CRD_BASE}/ray.io_rayclusters.yaml` },
   { type: "url", url: `${KUBERAY_CRD_BASE}/ray.io_rayjobs.yaml` },
@@ -378,4 +544,21 @@ export const CRD_SOURCES: CRDSource[] = [
     version: KUBEMICROVM_VERSION,
     kinds: ["MicroVM", "MicroVMImage", "MicroVMNetwork", "MicroVMClass", "MicroVMReplicaSet"],
   },
+  { type: "url", url: `${KSERVE_CRD_BASE}/serving.kserve.io_inferenceservices.yaml` },
+  { type: "url", url: `${KSERVE_CRD_BASE}/serving.kserve.io_servingruntimes.yaml` },
+  { type: "url", url: `${KSERVE_CRD_BASE}/serving.kserve.io_clusterservingruntimes.yaml` },
+  { type: "url", url: `${CAPI_CRD_BASE}/cluster.x-k8s.io_clusters.yaml` },
+  { type: "url", url: `${CAPI_CRD_BASE}/cluster.x-k8s.io_machinepools.yaml` },
+  { type: "url", url: `${CAPA_CRD_BASE}/controlplane.cluster.x-k8s.io_awsmanagedcontrolplanes.yaml` },
+  { type: "url", url: `${CAPA_CRD_BASE}/infrastructure.cluster.x-k8s.io_awsmanagedclusters.yaml` },
+  { type: "url", url: `${CAPA_CRD_BASE}/infrastructure.cluster.x-k8s.io_awsmanagedmachinepools.yaml` },
+  { type: "url", url: `${CAPA_CRD_BASE}/infrastructure.cluster.x-k8s.io_awsclustercontrolleridentities.yaml` },
+  { type: "url", url: `${CAAPH_CRD_BASE}/addons.cluster.x-k8s.io_helmchartproxies.yaml` },
+  { type: "url", url: `${CAPI_CRD_BASE}/addons.cluster.x-k8s.io_clusterresourcesets.yaml` },
+  { type: "url", url: `${ACK_S3_CRD_BASE}/s3.services.k8s.aws_buckets.yaml` },
+  { type: "url", url: `${ACK_RDS_CRD_BASE}/rds.services.k8s.aws_dbinstances.yaml` },
+  { type: "url", url: `${ACK_IAM_CRD_BASE}/iam.services.k8s.aws_roles.yaml` },
+  { type: "url", url: `${ACK_IAM_CRD_BASE}/iam.services.k8s.aws_users.yaml` },
+  { type: "url", url: `${ACK_IAM_CRD_BASE}/iam.services.k8s.aws_policies.yaml` },
+  { type: "url", url: `${ACK_EKS_CRD_BASE}/eks.services.k8s.aws_podidentityassociations.yaml` },
 ];

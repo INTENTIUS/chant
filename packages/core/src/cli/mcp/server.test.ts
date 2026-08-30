@@ -47,7 +47,8 @@ describe("McpServer", () => {
 
       expect(response.error).toBeUndefined();
       const result = response.result as Record<string, unknown>;
-      expect(result.protocolVersion).toBe("2024-11-05");
+      // No requested version → negotiates to the latest supported revision (#1194).
+      expect(result.protocolVersion).toBe("2026-07-28");
       expect(result.capabilities).toBeDefined();
       expect((result.serverInfo as Record<string, unknown>).name).toBe("chant");
       expect((result.serverInfo as Record<string, unknown>).version).toBe("0.1.0");
@@ -60,10 +61,272 @@ describe("McpServer", () => {
         method: "initialize",
         params: {},
       });
-      const result = response.result as Record<string, unknown>;
+      const result = response!.result as Record<string, unknown>;
       const caps = result.capabilities as Record<string, unknown>;
       expect(caps.tools).toBeDefined();
       expect(caps.resources).toBeDefined();
+    });
+
+    // -----------------------------------------------------------------------
+    // Dual-revision negotiation (#1194)
+    // -----------------------------------------------------------------------
+
+    test("a 2024-11-05 client requesting its own version gets it back unchanged", async () => {
+      const response = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: { protocolVersion: "2024-11-05", clientInfo: { name: "old-client", version: "1.0" } },
+      });
+      expect(response!.error).toBeUndefined();
+      const result = response!.result as Record<string, unknown>;
+      expect(result.protocolVersion).toBe("2024-11-05");
+    });
+
+    test("a 2026-07-28 client requesting its version gets the latest revision", async () => {
+      const response = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: { _meta: { protocolVersion: "2026-07-28" } },
+      });
+      expect(response!.error).toBeUndefined();
+      const result = response!.result as Record<string, unknown>;
+      expect(result.protocolVersion).toBe("2026-07-28");
+    });
+
+    test("an unrecognized requested version falls back to the latest supported", async () => {
+      const response = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: { protocolVersion: "1999-01-01" },
+      });
+      const result = response!.result as Record<string, unknown>;
+      expect(result.protocolVersion).toBe("2026-07-28");
+    });
+
+    test("no requested version at all defaults to the latest supported", async () => {
+      const response = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: {},
+      });
+      const result = response!.result as Record<string, unknown>;
+      expect(result.protocolVersion).toBe("2026-07-28");
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // _meta parsing (#1194)
+  // -----------------------------------------------------------------------
+
+  describe("_meta parsing", () => {
+    test("reads requested protocol version from _meta on initialize", async () => {
+      const response = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: { _meta: { protocolVersion: "2024-11-05" } },
+      });
+      const result = response!.result as Record<string, unknown>;
+      expect(result.protocolVersion).toBe("2024-11-05");
+    });
+
+    test("_meta protocolVersion takes precedence over a legacy top-level one", async () => {
+      const response = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: { protocolVersion: "2024-11-05", _meta: { protocolVersion: "2026-07-28" } },
+      });
+      const result = response!.result as Record<string, unknown>;
+      expect(result.protocolVersion).toBe("2026-07-28");
+    });
+
+    test("client identity in _meta does not interfere with tool dispatch", async () => {
+      const response = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: {
+          name: "search",
+          arguments: { query: "bucket" },
+          _meta: {
+            protocolVersion: "2026-07-28",
+            "io.modelcontextprotocol/clientInfo": { name: "some-agent", version: "3.0" },
+          },
+        },
+      });
+      expect(response!.error).toBeUndefined();
+      const result = response!.result as { content: Array<{ text: string }>; isError?: boolean };
+      expect(result.isError).toBeUndefined();
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.query).toBe("bucket");
+    });
+
+    test("a request with no _meta and no legacy fields is unaffected", async () => {
+      const response = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/list",
+        params: {},
+      });
+      expect(response!.error).toBeUndefined();
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Notification silence (#1194)
+  // -----------------------------------------------------------------------
+
+  describe("notifications", () => {
+    test("a message with no id gets no response", async () => {
+      const response = await server.handleRequest({
+        jsonrpc: "2.0",
+        method: "notifications/initialized",
+        params: {},
+      });
+      expect(response).toBeNull();
+    });
+
+    test("an id-less message is not routed through dispatch as Unknown method", async () => {
+      // notifications/initialized isn't a dispatch case; silence must come
+      // from the id check, not from swallowing a dispatch error.
+      const response = await server.handleRequest({
+        jsonrpc: "2.0",
+        method: "notifications/anything",
+      });
+      expect(response).toBeNull();
+    });
+
+    test("a message with id 0 (falsy but present) still gets a response", async () => {
+      const response = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 0,
+        method: "tools/list",
+      });
+      expect(response).not.toBeNull();
+      expect(response!.id).toBe(0);
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // server/discover (#1194)
+  // -----------------------------------------------------------------------
+
+  describe("server/discover", () => {
+    test("a 2026-07-28 client can discover capabilities without calling initialize", async () => {
+      const response = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "server/discover",
+        params: { _meta: { protocolVersion: "2026-07-28" } },
+      });
+      expect(response!.error).toBeUndefined();
+      const result = response!.result as Record<string, unknown>;
+      expect(result.protocolVersion).toBe("2026-07-28");
+      expect(result.serverInfo).toBeDefined();
+      expect(result.capabilities).toBeDefined();
+      expect(Array.isArray(result.tools)).toBe(true);
+      expect(Array.isArray(result.resources)).toBe(true);
+    });
+
+    test("discover's tools list matches tools/list", async () => {
+      const discover = await server.handleRequest({ jsonrpc: "2.0", id: 1, method: "server/discover", params: {} });
+      const list = await server.handleRequest({ jsonrpc: "2.0", id: 2, method: "tools/list" });
+      const discoverNames = (discover!.result as { tools: Array<{ name: string }> }).tools.map((t) => t.name).sort();
+      const listNames = (list!.result as { tools: Array<{ name: string }> }).tools.map((t) => t.name).sort();
+      expect(discoverNames).toEqual(listNames);
+    });
+
+    test("discover's resources list matches resources/list, including plugin contributions", async () => {
+      const plugin = createMockPlugin({
+        name: "test-lex",
+        mcpResources: () => [
+          {
+            uri: "catalog",
+            name: "Test Catalog",
+            description: "Test resource catalog",
+            mimeType: "application/json",
+            handler: async () => "[]",
+          },
+        ],
+      });
+      const s = new McpServer([plugin]);
+      const discover = await s.handleRequest({ jsonrpc: "2.0", id: 1, method: "server/discover", params: {} });
+      const list = await s.handleRequest({ jsonrpc: "2.0", id: 2, method: "resources/list" });
+      const discoverUris = (discover!.result as { resources: Array<{ uri: string }> }).resources.map((r) => r.uri).sort();
+      const listUris = (list!.result as { resources: Array<{ uri: string }> }).resources.map((r) => r.uri).sort();
+      expect(discoverUris).toEqual(listUris);
+      expect(discoverUris).toContain("chant://test-lex/catalog");
+    });
+
+    test("negotiates protocol version the same way as initialize", async () => {
+      const response = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "server/discover",
+        params: { protocolVersion: "2024-11-05" },
+      });
+      const result = response!.result as Record<string, unknown>;
+      expect(result.protocolVersion).toBe("2024-11-05");
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Structured tool output (#1194)
+  // -----------------------------------------------------------------------
+
+  describe("structured tool output", () => {
+    test("an object-returning handler gets structuredContent alongside text", async () => {
+      const response = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name: "search", arguments: { query: "bucket" } },
+      });
+      const result = response!.result as { content: Array<{ text: string }>; structuredContent?: Record<string, unknown> };
+      expect(result.structuredContent).toBeDefined();
+      expect(result.structuredContent!.query).toBe("bucket");
+      const parsedText = JSON.parse(result.content[0].text);
+      expect(result.structuredContent).toEqual(parsedText);
+    });
+
+    test("a string-returning handler has no structuredContent", async () => {
+      const plugin = createMockPlugin({
+        name: "test-lex",
+        mcpTools: () => [
+          {
+            name: "greet",
+            description: "Greet",
+            inputSchema: { type: "object", properties: {} },
+            handler: async () => "hello from plugin",
+          },
+        ],
+      });
+      const s = new McpServer([plugin]);
+      const response = await s.handleRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name: "test-lex:greet", arguments: {} },
+      });
+      const result = response!.result as { structuredContent?: unknown };
+      expect(result.structuredContent).toBeUndefined();
+    });
+
+    test("an isError response has no structuredContent", async () => {
+      const response = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name: "unknown-tool", arguments: {} },
+      });
+      const result = response!.result as { isError: boolean; structuredContent?: unknown };
+      expect(result.isError).toBe(true);
+      expect(result.structuredContent).toBeUndefined();
     });
   });
 
@@ -590,6 +853,7 @@ describe("McpServer", () => {
       expect(uris).toContain("chant://ops");
       expect(uris).toContain("chant://ops/{name}/runs");
       expect(uris).toContain("chant://ops/{name}/runs/latest");
+      expect(uris).toContain("chant://knowledge");
 
       // Each resource has required fields
       for (const resource of result.resources) {
@@ -733,6 +997,62 @@ describe("McpServer", () => {
         const result = response.result as { contents: Array<{ text: string }> };
         const data = JSON.parse(result.contents[0].text);
         expect(data.error).toBeDefined();
+      });
+    });
+
+    describe("chant://knowledge", () => {
+      test("empty gracefully when no bundle exists", async () => {
+        const originalCwd = process.cwd();
+        process.chdir(testDir);
+        try {
+          const response = await server.handleRequest({
+            jsonrpc: "2.0",
+            id: 1,
+            method: "resources/read",
+            params: { uri: "chant://knowledge" },
+          });
+          expect(response.error).toBeUndefined();
+          const result = response.result as { contents: Array<{ text: string; mimeType: string }> };
+          expect(result.contents[0].mimeType).toBe("application/json");
+          const data = JSON.parse(result.contents[0].text);
+          expect(data.index).toBeNull();
+          expect(data.concepts).toEqual([]);
+        } finally {
+          process.chdir(originalCwd);
+        }
+      });
+
+      test("serves the bundle index and concepts when present", async () => {
+        const originalCwd = process.cwd();
+        process.chdir(testDir);
+        try {
+          await mkdir(join(testDir, "knowledge", "decisions"), { recursive: true });
+          await writeFile(join(testDir, "knowledge", "index.md"), "# Knowledge index\n");
+          await writeFile(
+            join(testDir, "knowledge", "decisions", "public-assets.md"),
+            "---\ntype: decision\ntitle: Public assets\nbinds: bucket\n---\nBody text.\n",
+          );
+
+          const response = await server.handleRequest({
+            jsonrpc: "2.0",
+            id: 1,
+            method: "resources/read",
+            params: { uri: "chant://knowledge" },
+          });
+          expect(response.error).toBeUndefined();
+          const result = response.result as { contents: Array<{ text: string }> };
+          const data = JSON.parse(result.contents[0].text);
+          expect(data.index).toBe("# Knowledge index\n");
+          expect(data.concepts).toHaveLength(1);
+          expect(data.concepts[0]).toMatchObject({
+            path: "decisions/public-assets.md",
+            type: "decision",
+            title: "Public assets",
+            binds: ["bucket"],
+          });
+        } finally {
+          process.chdir(originalCwd);
+        }
       });
     });
   });
@@ -1157,7 +1477,7 @@ describe("McpServer", () => {
 
       const resourcesRes = await s.handleRequest({ jsonrpc: "2.0", id: 3, method: "resources/list" });
       const resources = (resourcesRes.result as { resources: Array<{ uri: string }> }).resources;
-      expect(resources).toHaveLength(7);
+      expect(resources).toHaveLength(8);
     });
 
     test("server with empty plugins array works", async () => {

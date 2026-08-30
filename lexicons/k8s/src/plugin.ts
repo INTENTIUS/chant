@@ -31,6 +31,8 @@ import { LABEL_OWNERSHIP_KEYS } from "@intentius/chant/ownership";
 import { k8sConfigSchema } from "./config-schema";
 import type { K8sChantConfig } from "./config";
 import { renderKustomizeRoots } from "./kustomize/root";
+import { encryptedSecretBuildRoot } from "./sops/encrypted-secret-file";
+import type { Declarable } from "@intentius/chant/declarable";
 
 export const k8sPlugin: LexiconPlugin = {
   name: "k8s",
@@ -79,10 +81,27 @@ export const k8sPlugin: LexiconPlugin = {
   // fallback) and the documents join the build as verbatim manifest entities:
   // serialized with ownership stamping, checked post-synth, observed by
   // `lifecycle diff --live`. See ./kustomize/root.ts.
+  //
+  // The same hook also resolves committed-encrypted `declareSecret()`
+  // declarations: it reads the ciphertext each one names and contributes it
+  // as a verbatim sidecar entity (see ./sops/encrypted-secret-file.ts). Both
+  // halves are one filesystem read at the one sanctioned impure seam.
   async buildRoots(ctx) {
+    const entities = new Map<string, Declarable>();
+    const warnings: string[] = [];
+
     const roots = (ctx.config as { k8s?: K8sChantConfig }).k8s?.kustomize?.roots ?? [];
-    if (roots.length === 0) return { entities: new Map() };
-    return renderKustomizeRoots({ projectRoot: ctx.projectRoot, roots });
+    if (roots.length > 0) {
+      const rendered = await renderKustomizeRoots({ projectRoot: ctx.projectRoot, roots });
+      for (const [name, entity] of rendered.entities) entities.set(name, entity);
+      warnings.push(...rendered.warnings);
+    }
+
+    const encrypted = await encryptedSecretBuildRoot(ctx);
+    for (const [name, entity] of encrypted.entities) entities.set(name, entity);
+    warnings.push(...(encrypted.warnings ?? []));
+
+    return { entities, warnings };
   },
 
   // K8s YAML has no template interpolation functions like CloudFormation's
@@ -676,6 +695,19 @@ const { deployment, service, serviceMonitor, prometheusRule } = MonitoredService
   async describeResources(options) {
     const { describeResources } = await import("./describe-resources");
     return describeResources(options);
+  },
+
+  // Env teardown (#1222): enumeration + execution over the marker label
+  // selector (managed-by + stack + env), through the same typed client the
+  // prune uses. Execution deletes namespaces last. See ./teardown.ts.
+  async teardownOwned(options) {
+    const { teardownOwned } = await import("./teardown");
+    return teardownOwned(options);
+  },
+
+  async executeTeardown(options) {
+    const { executeTeardown } = await import("./teardown");
+    return executeTeardown(options);
   },
 
   /**

@@ -1,6 +1,7 @@
 ---
 title: Lexicons
 description: How chant lexicons provide types and semantic rules for operational areas
+diataxis: explanation
 ---
 
 A **lexicon** is a collection of types and semantic lint rules for an operational area. The core system is lexicon-agnostic — it discovers files, collects exports, resolves dependencies, and runs semantic lint rules. Each lexicon plugs into this pipeline with its own types and rules.
@@ -39,7 +40,7 @@ A third, optional method goes one level deeper. `observeResourcesDeep()` reads t
 | Fly Machines | ✅ |  |  | Metadata | Machines API (flaps) reads, or the mudflaps emulator offline. Two-tier ownership: machines carry `managed-by: chant` in `config.metadata`; volumes, IPs and certificates have no per-resource marker, so ownership is inferred at the app boundary and says so |
 | Fountain | ✅ |  |  | Metadata | REST reads against the fountain API, one list per declared kind; `--owned` reads the `managed-by: chant` metadata marker, which all three kinds carry |
 | Render | ✅ |  |  | Env vars | Public API reads, one name-scoped list per declared entity plus a workspace scan for orphans. Two-tier ownership: services and env groups carry `CHANT_MANAGED_BY=chant` in their env vars (Render has no tags), and disks/custom domains inherit their service's verdict; datastores, projects, environments, credentials and webhooks have no marker channel and report `unknown`, so they are never proposed for deletion |
-| Helm |  |  | ✅ | — | `helm list -A -o json` — releases as artifacts |
+| Helm | ✅ | ✅ | ✅ | Release identity / Labels | Per-release reads over the helm CLI (chant #1246): each declared `Helm::Chart` resolves to its release, and `helm get manifest` + `helm get hooks` — both channels, since hooks are excluded from the manifest — become per-resource rows. Rows are `owned` via release identity and classify as runtime children of their chart, so an unpinned release is not drift. The deep read (chant #1247) delegates to the k8s lexicon's typed client and reuses its `deepNormalizationHooks`, so managed-fields ownership and Secret masking apply unchanged. `helm list -A -o json` still reports every release as an artifact — declared or not |
 | Docker |  |  | ✅ | — | `docker ps`, `docker image ls`, `docker network ls` (NDJSON) |
 | GitHub Actions |  |  |  | — | N/A — workflow definitions are git-tracked; drift is `git diff` ([rationale](https://github.com/INTENTIUS/chant/blob/main/lexicons/github/README.md#runtime-observation-na)) |
 | GitLab CI/CD |  |  |  | — | N/A — same rationale ([README](https://github.com/INTENTIUS/chant/blob/main/lexicons/gitlab/README.md#runtime-observation-na)) |
@@ -49,7 +50,7 @@ Lexicons that implement neither are warn-skipped — `--live` doesn't fail the w
 
 The **Ownership** column shows the marker channel a lexicon queries for the `--owned` filter ([ownership marking](/chant/configuration/config-file/#ownership)). `—` means the `--owned` query isn't available for that lexicon — it has no durable marker channel. Where a lexicon is asked for owned resources but can't read a marker on a given path — e.g. AWS and Azure `describeResources`, which the filter degrades to detect-only — it stamps an explicit `unknown` verdict and returns everything rather than silently filtering. The `--owned` filter is honored on live export, where the full config (with tags) is available.
 
-Every observing lexicon reports per declared entity in three states, not two ([the observation contract](/chant/lexicon-authoring/observation/#the-observation-tri-state-absent-is-not-the-same-as-unread)): observed present, observed absent, or **not observed** with a reason. Coverage gaps in the table above — Azure's nested ARM types, a read denied by RBAC — surface as `unobserved` entries in `lifecycle diff --live` and `lifecycle plan`, never as absences, so an uncovered resource is reported as unknown instead of being proposed for creation.
+Every observing lexicon reports per declared entity in three states, not two ([the observation contract](/chant/lexicon-authoring/observation-contract/#the-observation-tri-state-absent-is-not-the-same-as-unread)): observed present, observed absent, or **not observed** with a reason. Coverage gaps in the table above — Azure's nested ARM types, a read denied by RBAC — surface as `unobserved` entries in `lifecycle diff --live` and `lifecycle plan`, never as absences, so an uncovered resource is reported as unknown instead of being proposed for creation.
 
 ## Cross-lexicon migration
 

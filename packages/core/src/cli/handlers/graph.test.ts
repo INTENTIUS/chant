@@ -145,6 +145,8 @@ describe("runGraph", () => {
     vi.spyOn(console, "log").mockImplementation((s: string) => { stdoutBuf.push(s); });
     vi.spyOn(console, "error").mockImplementation((s: string) => { stderrBuf.push(s); });
     discoverOpsMock.mockReset();
+    // Default: no git-root ops — the IR views join these into the entity map (#1675).
+    discoverOpsMock.mockResolvedValue({ ops: new Map(), errors: [] });
     discoverMock.mockReset();
     lintMock.mockReset();
     layoutMock.mockReset();
@@ -221,6 +223,48 @@ describe("runGraph", () => {
       const ir = JSON.parse(stdoutBuf.join("\n"));
       expect(ir.nodes.map((n: { id: string }) => n.id).sort()).toEqual(["pod", "subnet", "vpc"]);
       expect(ir.edges).toContainEqual({ from: "subnet", to: "vpc", kind: "ref", viaAttr: "network" });
+    });
+
+    // #1675 — discovery scans sourceDir, but ops live beside it (project root,
+    // `ops/`) and are found by discoverOps from the git root. The IR joins them.
+    describe("ops outside sourceDir reach the IR (#1675)", () => {
+      const rootOp = (file: string) => ({
+        config: { name: "deploy", phases: [{ name: "Apply", steps: [{ kind: "activity", fn: "build" }] }], depends: ["infra"] },
+        filePath: file,
+      });
+
+      test("an op discoverOps finds at the project root becomes a Temporal::Op node", async () => {
+        lintClean(); discovered();
+        discoverOpsMock.mockResolvedValue({ ops: new Map([["deploy", rootOp("/proj/deploy.op.ts")]]), errors: [] });
+        const exit = await runGraph({ args: makeArgs({ format: "ir", path: "/proj", detail: 3 }), plugins: [], serializers: [] });
+        expect(exit).toBe(0);
+        const ir = JSON.parse(stdoutBuf.join("\n"));
+        const node = ir.nodes.find((n: { id: string }) => n.id === "deploy");
+        expect(node).toMatchObject({ kind: "Temporal::Op", lexicon: "temporal", sourceLoc: { file: "deploy.op.ts" } });
+        expect(node.attrs.phases[0].name).toBe("Apply");
+        expect(node.attrs.depends).toEqual(["infra"]);
+      });
+
+      test("an op discovery already loaded from sourceDir is not added twice", async () => {
+        lintClean();
+        const entities = sampleEntities();
+        entities.set("deploy", decl({ lexicon: "temporal", entityType: "Temporal::Op", props: { name: "deploy", phases: [] } }));
+        discoverMock.mockResolvedValue({ entities, errors: [], dependencies: new Map(), sourceFiles: ["/proj/src/deploy.op.ts"] });
+        discoverOpsMock.mockResolvedValue({ ops: new Map([["deploy", rootOp("/proj/src/deploy.op.ts")]]), errors: [] });
+        const exit = await runGraph({ args: makeArgs({ format: "ir", path: "/proj", detail: 3 }), plugins: [], serializers: [] });
+        expect(exit).toBe(0);
+        const ir = JSON.parse(stdoutBuf.join("\n"));
+        expect(ir.nodes.filter((n: { id: string }) => n.id === "deploy")).toHaveLength(1);
+        expect(ir.nodes.find((n: { id: string }) => n.id === "deploy").attrs.phases).toEqual([]);
+      });
+
+      test("op-discovery errors are warnings, not a refusal", async () => {
+        lintClean(); discovered();
+        discoverOpsMock.mockResolvedValue({ ops: new Map(), errors: ["ops/bad.op.ts: boom"] });
+        const exit = await runGraph({ args: makeArgs({ format: "ir" }), plugins: [], serializers: [] });
+        expect(exit).toBe(0);
+        expect(stderrBuf.join("\n")).toContain("ops/bad.op.ts: boom");
+      });
     });
 
     // #1339 — `chant graph` discovered source with `params.*` empty, so a
@@ -385,6 +429,26 @@ describe("runGraph", () => {
       });
       // The entity-graph discovery path is not taken for the component projection.
       expect(discoverMock).not.toHaveBeenCalled();
+    });
+
+    test("--components --format ir carries declared composites (#1492); undeclared components have no composites attr", async () => {
+      lintMock.mockResolvedValue({ success: true });
+      componentGraphMock.mockResolvedValue({
+        success: true,
+        order: ["shared-foundation", "loom-backend"],
+        waves: [["shared-foundation"], ["loom-backend"]],
+        edges: [{ from: "loom-backend", to: "shared-foundation" }],
+        files: {},
+        composites: { "shared-foundation": ["ArtifactBucket", "OperatorRole"] },
+      });
+      const exit = await runGraph({ args: makeArgs({ format: "ir", components: true }), plugins: [], serializers: [] });
+      expect(exit).toBe(0);
+      const ir = JSON.parse(stdoutBuf.join("\n"));
+      expect(ir.nodes.find((n: { id: string }) => n.id === "shared-foundation").attrs.composites).toEqual([
+        "ArtifactBucket",
+        "OperatorRole",
+      ]);
+      expect("composites" in ir.nodes.find((n: { id: string }) => n.id === "loom-backend").attrs).toBe(false);
     });
 
     test("--components --format mermaid lanes the components by wave", async () => {

@@ -42,14 +42,6 @@ export function generateOverview(
 
   const suppress = new Set(config.suppressPages ?? []);
 
-  // Extra pages listed first in reference links
-  if (config.extraPages && config.extraPages.length > 0) {
-    for (const page of config.extraPages) {
-      if (page.sidebar === false) continue;
-      lines.push(`- [${page.title}](./${page.slug})`);
-    }
-  }
-
   if (!suppress.has("intrinsics") && manifest.intrinsics && manifest.intrinsics.length > 0) {
     lines.push(
       `- [Intrinsic Functions](./intrinsics) — ${manifest.intrinsics.length} built-in functions`,

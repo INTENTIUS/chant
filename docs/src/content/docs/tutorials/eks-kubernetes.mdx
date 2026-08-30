@@ -1,6 +1,7 @@
 ---
 title: "AWS EKS + Kubernetes"
 description: "Deploy a production-grade EKS cluster with Kubernetes workloads using the AWS CloudFormation lexicon for infrastructure and the K8s lexicon for workloads."
+diataxis: tutorial
 ---
 
 import { Aside } from '@astrojs/starlight/components';
@@ -37,7 +38,7 @@ The deploy is intentionally two-phase: ACM certificate DNS validation requires y
 
 ## Cost
 
-EKS control plane ~$73/mo, NAT gateway ~$32/mo, ALB ~$16/mo, 3× t3.medium nodes ~$100/mo. **Total ~$221/mo.** Teardown after testing.
+EKS control plane ~$73/mo, NAT gateway ~$32/mo, ALB ~$16/mo, 3× t3.medium nodes ~$100/mo. **Total ~$221/mo** (us-east-1 list price, checked 2026-08 against chant 0.46.0; AWS list prices change and vary by region — re-price before relying on this number). Teardown after testing.
 
 ## Get started
 

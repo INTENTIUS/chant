@@ -1,6 +1,7 @@
 ---
 title: "chant dev onboard"
 description: Wire a lexicon into the monorepo CI pipeline, Docker smoke tests, and npm publish workflow
+diataxis: reference
 ---
 
 ## Synopsis
@@ -13,17 +14,18 @@ chant dev onboard <name> [--verbose]
 
 `chant dev onboard` patches the monorepo infrastructure to include a new lexicon in CI, Docker smoke tests, and the npm publish workflow. Run this after scaffolding a lexicon with `chant init lexicon <name>` and building out its implementation.
 
-The command modifies 5 files:
+The command modifies 6 files:
 
 | File | Change |
 |------|--------|
 | `package.json` (root) | Adds `@intentius/chant-lexicon-<name>: "workspace:*"` to dependencies |
+| `tsconfig.json` (root) | Adds `paths` entries for `@intentius/chant-lexicon-<name>` and `@intentius/chant-lexicon-<name>/*`. The repo-wide typecheck uses `moduleResolution: node`, which ignores package exports maps, so without these the lexicon's example fails to resolve |
 | `.github/workflows/chant.yml` | Adds prepack lines to check/test jobs + a validate step |
 | `.github/workflows/publish.yml` | Adds prepack line to test job (publishing needs no per-lexicon step — `scripts/publish-packages.sh` enumerates the workspace) |
-| `test/Dockerfile.smoke` | Adds `RUN npm run --prefix lexicons/<name> prepack` |
-| `test/Dockerfile.smoke-node` | Same prepack line for Node.js smoke test |
+| `test/Dockerfile.smoke` | Adds `<name>` to the `for lex in ...` lexicon list |
+| `test/Dockerfile.smoke-npm` | Adds `<name>` to both `for lex in ...` lexicon lists |
 
-The command is **idempotent** — running it again on an already-onboarded lexicon skips all changes.
+The command is **idempotent**. Running it again on an already-onboarded lexicon changes nothing and reports each file as already covered.
 
 ## Options
 

@@ -31,6 +31,6 @@ npx vitest run lexicons/k3s
 - `src/serializer.ts` — config.yaml / registries.yaml emitter
 - `src/spec/fetch.ts` — pinned upstream sources (the CLI flag definitions)
 - `src/codegen/parse.ts` — Go flag-definition parser
-- `src/lint/` — K3S001 pre-synth rule, K3S101–K3S105 post-synth checks
+- `src/lint/` — K3S001 pre-synth rule, K3S101–K3S107 post-synth checks
 - `src/lsp/` — completions and hover from the generated registry
 - `src/generated/` — generated artifacts (do not edit)

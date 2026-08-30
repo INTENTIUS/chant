@@ -81,6 +81,13 @@ export { RayJob } from "./ray-job";
 export type { RayJobProps, RayJobResult } from "./ray-job";
 export { RayService } from "./ray-service";
 export type { RayServiceProps, RayServiceResult } from "./ray-service";
+export { InferenceService } from "./inference-service";
+export type {
+  InferenceServiceProps,
+  InferenceServiceResult,
+  ModelReference,
+  ScaleMetric,
+} from "./inference-service";
 export { ArgoAppFor, ArgoAppSetForRegions, registerArgoCluster } from "./argo-app";
 export type {
   ArgoDestination,
@@ -102,3 +109,11 @@ export type {
   FluxAppForOptions,
   FluxAppForResult,
 } from "./flux-app";
+export { VllmServingRuntime } from "./vllm-serving-runtime";
+export type { VllmServingRuntimeProps, VllmServingRuntimeResult, VllmResourceSpec } from "./vllm-serving-runtime";
+export { Model, resolveModelStorageUri } from "./model";
+export type { ModelSource, ModelProps, ModelResult } from "./model";
+export { OperatorStack, deriveHostVerbClass, DEFAULT_RESOURCE_RULES } from "./operator-stack";
+export type {
+  OperatorDial, OperatorRbacResourceRule, OperatorStackConvergeHost, OperatorStackConfig, OperatorStackResult,
+} from "./operator-stack";

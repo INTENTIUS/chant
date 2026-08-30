@@ -1,0 +1,402 @@
+---
+title: "Lint Rules"
+description: "Built-in lint rules and post-synth checks for GitHub Actions workflows"
+diataxis: reference
+---
+
+The GitHub Actions lexicon ships lint rules that run during `chant lint` and post-synth checks that validate the serialized YAML after `chant build`.
+
+## Lint rules
+
+Lint rules analyze your TypeScript source code before build.
+
+### GHA001 — Use typed action composites
+
+**Severity:** warning | **Category:** style
+
+Flags raw `uses:` strings when a typed composite wrapper is available (e.g. `actions/checkout@v4` → `Checkout({})`). Typed composites provide better IDE support and catch configuration errors at compile time.
+
+### GHA002 — Use Expression helpers
+
+**Severity:** warning | **Category:** style
+
+Flags raw `${{ }}` strings in `if:` conditions. Use the typed Expression helpers (`github.ref.eq(...)`, `branch("main")`, `failure()`) instead for type safety and lint coverage.
+
+### GHA003 — No hardcoded secrets
+
+**Severity:** error | **Category:** security
+
+Flags hardcoded GitHub tokens, AWS keys, and other secret patterns in source code. Use `secrets("...")` expressions instead.
+
+{{file:docs-snippets/src/lint-gha003.ts}}
+
+### GHA004 — Extract inline matrix
+
+**Severity:** info | **Category:** style
+
+Flags inline matrix objects and suggests extracting them to named constants for readability.
+
+### GHA005 — Extract deeply nested objects
+
+**Severity:** info | **Category:** style
+
+Flags deeply nested inline objects and suggests extracting them to named constants.
+
+### GHA007 — Too many jobs per file
+
+**Severity:** warning | **Category:** style
+
+Flags files with more than 10 job exports. Split large workflows into separate files for maintainability.
+
+### GHA008 — Avoid raw expression strings
+
+**Severity:** info | **Category:** style
+
+Flags raw `${{ }}` expression strings outside of `if:` fields. Use the typed expression helpers (`github.*`, `secrets()`, `matrix()`) for better type safety.
+
+### GHA010 — Setup action missing version
+
+**Severity:** warning | **Category:** correctness
+
+Flags setup action composites (SetupNode, SetupGo, SetupPython) without a version input. Pinning the version ensures reproducible builds.
+
+### GHA012 — Deprecated action version
+
+**Severity:** warning | **Category:** correctness
+
+Flags action `uses:` references that point to deprecated versions. Upgrade to the recommended version.
+
+### GHA014 — Missing timeout
+
+**Severity:** warning | **Category:** correctness
+
+Flags jobs without `timeoutMinutes`. Jobs without a timeout default to 360 minutes (6 hours), which can waste runner minutes if stuck.
+
+### GHA015 — Setup without cache
+
+**Severity:** warning | **Category:** performance
+
+Flags setup action composites (SetupNode, SetupGo, SetupPython) without a paired `CacheAction` or built-in `cache` option. Caching dependencies significantly speeds up builds.
+
+### GHA016 — Concurrency missing group
+
+**Severity:** warning | **Category:** correctness
+
+Flags `concurrency` with `cancel-in-progress: true` but no `group` specified. Without a group, all runs of the workflow share a single concurrency slot.
+
+### GHA020 — Potential secret detected
+
+**Severity:** error | **Category:** security
+
+Flags string literals that match common secret patterns (API keys, tokens, passwords). Use `secrets()` or environment variables instead.
+
+## Post-synth checks
+
+Post-synth checks run against the serialized YAML after build. They catch issues only visible in the final output.
+
+### GHA006 — Duplicate workflow names
+
+**Severity:** error
+
+Flags multiple workflows that share the same `name:` value. Duplicate names cause confusion in the GitHub Actions UI.
+
+### GHA009 — Empty matrix dimension
+
+**Severity:** error
+
+Flags matrix strategy dimensions with an empty values array. An empty dimension causes the job to be skipped entirely.
+
+### GHA011 — Invalid needs target
+
+**Severity:** error
+
+Flags jobs whose `needs:` entries reference a job not defined in the workflow. This causes a workflow validation error on GitHub.
+
+### GHA013 — Missing job-level permissions for sensitive triggers
+
+**Severity:** warning
+
+Flags jobs without an explicit `permissions:` block when the workflow uses a sensitive trigger (`pull_request_target` or `workflow_dispatch`). Declaring job-level permissions keeps least-privilege scope on workflows that run with elevated context.
+
+### GHA017 — Missing permissions block
+
+**Severity:** info
+
+Flags workflows without an explicit `permissions:` block. Omitting permissions uses the repository default (often overly broad). Following least-privilege by declaring explicit permissions is a security best practice.
+
+### GHA018 — pull_request_target with checkout
+
+**Severity:** warning
+
+Flags workflows triggered by `pull_request_target` that include `actions/checkout`. This combination can be a security risk because the workflow runs with write permissions in the context of the base branch while checking out potentially untrusted PR code.
+
+### GHA019 — Circular needs chain
+
+**Severity:** error
+
+Detects cycles in the `needs:` dependency graph. If job A needs B and B needs A (directly or transitively), GitHub rejects the workflow. Reports the full cycle chain in the diagnostic message.
+
+### GHA021 — Checkout action not pinned to a SHA
+
+**Severity:** warning
+
+Flags `actions/checkout` referenced by a tag (e.g. `@v4`) instead of a pinned commit SHA. The narrower precursor to GHA029, kept because checkout is the most common unpinned action.
+
+### GHA022 — Job without timeout-minutes
+
+**Severity:** info
+
+Flags jobs that omit `timeout-minutes`. A hung step otherwise runs to the runner's default cap, burning minutes — set an explicit ceiling.
+
+### GHA023 — Deprecated set-output command
+
+**Severity:** warning
+
+Flags `::set-output` in `run:` steps. The workflow command is deprecated and disabled on current runners — write to `$GITHUB_OUTPUT` instead.
+
+### GHA024 — Missing concurrency for deploy workflows
+
+**Severity:** info
+
+Flags deploy workflows without a `concurrency:` block. Without one, two pushes can deploy concurrently and race — add a concurrency group to serialize them.
+
+### GHA025 — pull_request_target without restrictions
+
+**Severity:** warning
+
+Flags `pull_request_target` used without a `types:` filter. The trigger runs with repository secrets in the base-branch context, so it should be scoped to the specific PR events that need it.
+
+### GHA026 — Secret used without environment protection
+
+**Severity:** info
+
+Flags workflows that reference `secrets.` in steps but declare no `environment:` on any job, so the secret skips the approval and scoping rules an environment gate provides.
+
+### GHA027 — Cleanup step missing if: always()
+
+**Severity:** info
+
+Flags steps named "cleanup" / "teardown" / "clean up" that lack an `if:` condition. Cleanup should run even when a prior step fails — add `if: always()`.
+
+### GHA028 — Workflow with no on: triggers
+
+**Severity:** error
+
+Flags a workflow file with no top-level `on:` key. Without a trigger the workflow can never run.
+
+## Supply-chain security pass (GHA029–058)
+
+GHA029 onward are a CI/CD supply-chain security pass: pin & vet external references, enforce least-privilege token scopes, guard trust boundaries against untrusted input, contain secrets, reject unsound expressions, and keep artifacts/caches honest. They run statically on the emitted YAML — everything answerable without leaving the build.
+
+The checks that need a *moving external truth* — whether a pinned SHA still maps to a real upstream tag, whether a ref still exists, whether a new advisory now covers an action in use — can't be deterministic, so they live in the operational layer instead. Schedule the [`WorkflowAuditOp`](/chant/guide/ops/#audit-supply-chain-drift) (temporal lexicon) for that live, always-fresh half; it reads the same emitted workflow references and reports drift via `report | issue | pull-request`.
+
+### GHA029 — Action or reusable workflow not pinned to a commit SHA
+
+**Severity:** warning
+
+Flags any `uses:` — step action or job-level reusable workflow — pinned to a mutable tag or branch instead of a full commit SHA. Tags can be repointed to malicious code after review, so every external reference should be pinned. `actions/checkout` is covered by the more specific GHA021; local (`./`) and `docker://` references are out of scope. Owners in the vendored trusted allowlist are exempt.
+
+### GHA030 — Container image not pinned to a digest
+
+**Severity:** warning
+
+Flags job `container:` images, `services:` images, and `docker://` step references that are not pinned to an immutable `@sha256:` digest. A mutable tag can be repointed to a different image after review.
+
+### GHA031 — Action resembles a well-known action
+
+**Severity:** warning
+
+Flags a `uses:` slug that is a near-miss (edit distance 1–2) of a popular action but not an exact match — a likely typo or impersonation under different ownership. Advisory; backed by a vendored reference list.
+
+### GHA032 — Archived or compromised action
+
+**Severity:** warning
+
+Flags a `uses:` slug that a vendored snapshot marks as archived/abandoned or carrying a disclosed security issue, with remediation. Advisory and necessarily incomplete.
+
+### GHA033 — Blanket write-all permissions
+
+**Severity:** warning
+
+Flags `permissions: write-all` at the workflow or job level. It grants the `GITHUB_TOKEN` every write scope regardless of need — replace it with the specific scopes the job uses.
+
+### GHA034 — Write permissions granted workflow-wide
+
+**Severity:** warning
+
+Flags individual write scopes declared at the workflow level, which apply to every job even when only one needs them. Move each write scope onto the specific job that uses it. (The `write-all` preset is covered by GHA033.)
+
+### GHA035 — Elevated scope on an untrusted-code trigger
+
+**Severity:** error
+
+Flags a workflow that grants the token write access while using a trigger that can run untrusted code (`pull_request_target`, `workflow_run`). An injected step would run with standing write credentials — drop the write scope or isolate the privileged work in a separate trusted workflow.
+
+### GHA036 — Untrusted input in a run: command
+
+**Severity:** error
+
+Flags an attacker-controllable expression context (PR title, branch name, issue/comment body, commit message) interpolated directly into a `run:` script — a script-injection sink. Pass the value through an `env:` variable and reference it quoted instead.
+
+### GHA037 — Untrusted input written to GITHUB_ENV / GITHUB_PATH
+
+**Severity:** error
+
+Flags a `run:` step that writes untrusted input into `$GITHUB_ENV` or `$GITHUB_PATH`, which set environment/PATH state for later steps and can escalate into takeover of a subsequent privileged step.
+
+### GHA038 — workflow_run trigger checking out untrusted code
+
+**Severity:** warning
+
+Generalizes GHA018 to the `workflow_run` trigger, which runs with repo write scope and secrets. Checking out the head/artifact of the triggering run pulls untrusted code into that privileged context.
+
+### GHA039 — Authorization gate on a spoofable identity
+
+**Severity:** warning
+
+Flags an `if:` condition that gates on a commit-author identity field (`author.name` / `author.email`). Those come from git metadata the committer sets freely and can be spoofed — gate on a verified signal (environment protection, CODEOWNERS, verified actor).
+
+### GHA040 — Self-hosted runner on an untrusted-code trigger
+
+**Severity:** warning
+
+Flags a job on a self-hosted runner under a trigger a fork can reach (`pull_request`, `pull_request_target`, `workflow_run`). Self-hosted runners are non-ephemeral and shared, so untrusted code can persist and compromise later jobs.
+
+### GHA041 — Blanket secrets: inherit into a reusable workflow
+
+**Severity:** warning
+
+Flags a reusable-workflow call passing `secrets: inherit`, which hands the called workflow every caller secret. Pass through only the specific secrets it needs.
+
+### GHA042 — Entire secrets context passed
+
+**Severity:** warning
+
+Flags `toJSON(secrets)` passed into a step or reusable workflow, serializing every secret where one or two specific references would do.
+
+### GHA043 — Secret consumed without an environment gate
+
+**Severity:** warning
+
+Extends GHA026: when a workflow gates some jobs with an `environment:`, flags the specific secret-using jobs that have none — the inconsistent-gating case where a job skips the approval/scoping applied elsewhere.
+
+### GHA044 — Hardcoded registry/container credential
+
+**Severity:** error
+
+Flags a `password:` / `token:` / `registry-password:` set to a literal rather than a `${{ secrets.* }}` reference. Move the credential into a secret.
+
+### GHA045 — Secret interpolated into a run: command
+
+**Severity:** warning
+
+Flags `${{ secrets.* }}` expanded directly into a `run:` script, where a transform can defeat log masking and the raw value is exposed to argument injection. Pass it through an `env:` variable and reference `"$VAR"` quoted.
+
+### GHA046 — Logically unsound guard condition
+
+**Severity:** warning
+
+Flags an `if:` condition that reads like a gate but evaluates to a constant — `true`/`false` literals, an `X == X` tautology, or a collapse via `|| true` / `&& false`. A gate that constrains nothing is misleading.
+
+### GHA047 — Ineffective contains() guard
+
+**Severity:** warning
+
+Flags `contains('literal', <dynamic>)` — a constant haystack with a dynamic needle. `contains(search, item)` tests whether `item` is in `search`, so reversed arguments make the result depend on a fixed string. Swap them.
+
+### GHA048 — Obfuscated guard condition
+
+**Severity:** warning
+
+Flags an `if:` gate whose compared operand is built through `format()` / `join()` / `fromJSON()` indirection. Constructing the operand at evaluation time hides what the gate checks — compare against the value directly.
+
+### GHA049 — Persisted checkout credentials reachable by an artifact
+
+**Severity:** warning
+
+Flags a job that checks out with persisted credentials (the default) and uploads an artifact — the token in `.git/config` can be swept into the artifact. Set `persist-credentials: false` on the checkout.
+
+### GHA050 — Cache populated in a privileged context
+
+**Severity:** warning
+
+Flags `actions/cache` under a privileged trigger (`pull_request_target`, `workflow_run`). A cache entry influenced by a fork can be restored and executed by a later trusted run (cache poisoning) — restrict caching to trusted triggers.
+
+### GHA051 — Publish step using a long-lived token instead of OIDC
+
+**Severity:** info
+
+Flags a publish/release job that uses a long-lived token secret while requesting no `id-token: write`. If the registry supports OIDC, mint a short-lived federated credential per run instead of holding a standing token.
+
+### GHA052 — Software fetched and piped to a shell
+
+**Severity:** warning
+
+Flags a `run:` step that pipes a network download straight into a shell (`curl ... | bash`). The fetched code is unpinned and unverified — download to a file, verify a checksum/signature, then run it.
+
+### GHA053 — Unsafe set-env / add-path opt-in
+
+**Severity:** error
+
+Flags re-enabling the `set-env` / `add-path` workflow commands removed for security (CVE-2020-15228) via `ACTIONS_ALLOW_UNSECURE_COMMANDS` or direct `::set-env::` / `::add-path::`. Use the `$GITHUB_ENV` / `$GITHUB_PATH` files instead.
+
+### GHA054 — Known-bad feature usage
+
+**Severity:** warning
+
+Catch-all, data-driven check flagging emitted content matching a vendored snapshot of risky features (deprecated workflow commands, unsafe runtime opt-ins). Advisory and necessarily incomplete.
+
+### GHA055 — Redundant runtime tool install
+
+**Severity:** info
+
+Flags a `run:` step that installs a tool GitHub-hosted runners already ship. The redundant install adds supply-chain surface for no benefit (irrelevant on self-hosted runners that may lack the tool).
+
+### GHA056 — Workflow without a name
+
+**Severity:** info
+
+Flags a workflow with no top-level `name:`. Without one, GitHub falls back to the file path in the UI and audit logs, making runs harder to identify.
+
+> Two items from issue #295 are intentionally not implemented at the post-synth layer: over-broad/unrevoked app-installation tokens (whether a minted token is scoped wider than used cannot be determined from emitted YAML) and a reference allowlist/denylist policy (configuration, overlapping the GHA029 trusted-owner allowlist).
+
+### GHA057 — Dependency update executes untrusted code
+
+**Severity:** error
+
+Flags a Dependabot `updates:` entry with `insecure-external-code-execution: allow`, which runs a freshly-pulled dependency's lifecycle scripts during the update itself — a compromised release executes before any review. Set it to `deny`. Requires the `Dependabot` resource so the config is emitted (`.github/dependabot.yml`).
+
+### GHA058 — Dependency update without a cooldown
+
+**Severity:** warning
+
+Flags a Dependabot `updates:` entry with no cooldown — a version published moments ago (including a compromised one) is adopted immediately. Configure a `cooldown:` window. The `Dependabot` composite ships a 7-day default.
+
+## Running lint
+
+```bash
+# Lint your chant project
+chant lint src/
+
+# Lint with auto-fix where supported
+chant lint --fix src/
+```
+
+To suppress a rule on a specific line:
+
+```typescript
+// chant-disable-next-line GHA001
+new Step({ uses: "actions/checkout@v4" });
+```
+
+To suppress globally in `chant.config.ts`:
+
+```typescript
+export default {
+  lint: {
+    rules: {
+      GHA014: "off",
+    },
+  },
+};
+```

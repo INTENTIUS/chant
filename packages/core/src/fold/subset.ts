@@ -1,6 +1,6 @@
 import * as ts from "typescript";
 import { isFoldableHelperName } from "./foldable-helpers";
-import { intrinsicCallFolds, type IntrinsicDef } from "../lexicon";
+import { intrinsicCallFolds, intrinsicCallFoldsEagerly, type IntrinsicDef } from "../lexicon";
 
 /**
  * subset — the single canonical definition of chant's statically-foldable
@@ -265,6 +265,26 @@ function checkArrayElement(
  * environment-dependent exceptions). Returns the first (deepest,
  * `fold()`-evaluation-order) unsupported node, or `undefined` when `node`'s
  * whole shape is foldable.
+ *
+ * The `<call>(...).step` composite-consumer idiom (`Checkout({...}).step`,
+ * every lexicon's single-action `Composite()` wrapper embedded inline in a
+ * `Job`'s `steps` array — see composites.mdx) used to be an EVL-only,
+ * MORE-permissive divergence here (chant #1544's `allowCompositeStepAccess`
+ * opt-in parameter, since removed): `fold()` had no way to invoke an
+ * arbitrary composite factory, so it fell the file back to run for this
+ * shape (documented, correct behavior, never an error) while this shared
+ * predicate had to be told to stop treating that fallback as a lint error.
+ * chant #1174 closed the divergence — `fold()` now folds exactly this shape
+ * (narrowed to the literal member name `"step"`, the one idiom actually in
+ * use) — so this classifier accepts it unconditionally, the same way it
+ * already accepts a nested `new Type(...)` unconditionally since #1169.
+ *
+ * chant #1966 adds a CallExpression whose callee is a property access —
+ * `github.actor.toString()`, `matrix("os").toString()`, `[...].join(",")` —
+ * to the same unconditional-acceptance set: whether the receiver actually
+ * folds to a value with a callable method of that name is resolution-
+ * dependent (module doc, point 1), so this classifier stays permissive and
+ * only recurses into shape.
  */
 export function findSubsetViolation(
   node: ts.Node,
@@ -334,6 +354,13 @@ export function findSubsetViolation(
   }
 
   if (ts.isPropertyAccessExpression(node)) {
+    // chant #1174 — see this function's doc comment. `<call>(...).step`
+    // (any callee, any argument shape) is the composite-consumer idiom, and
+    // `fold()` now folds it too (narrowed to the literal member `"step"` —
+    // see fold.ts's PropertyAccessExpression branch).
+    if (node.name.text === "step" && ts.isCallExpression(node.expression)) {
+      return undefined;
+    }
     return findSubsetViolation(node.expression, intrinsics);
   }
 
@@ -358,7 +385,10 @@ export function findSubsetViolation(
     }
     // Flow-insensitive — see module doc: fold() short-circuits &&/||/?? and
     // only evaluates the taken side; EVL requires both sides shape-valid.
-    return findSubsetViolation(node.left, intrinsics) ?? findSubsetViolation(node.right, intrinsics);
+    return (
+      findSubsetViolation(node.left, intrinsics) ??
+      findSubsetViolation(node.right, intrinsics)
+    );
   }
 
   if (ts.isConditionalExpression(node)) {
@@ -422,6 +452,40 @@ export function findSubsetViolation(
       for (const arg of node.arguments) {
         const v = findSubsetViolation(arg, intrinsics);
         if (v) return v;
+      }
+      return undefined;
+    }
+
+    // chant #1966 — the eager counterpart of the #1044 case above: a lexicon
+    // intrinsic registered with `foldsEagerly` instead of `foldsAsCall`
+    // ({@link intrinsicCallFoldsEagerly}, ../lexicon.ts). Same registry-gated
+    // shape, same reasoning.
+    if (
+      intrinsics &&
+      ts.isIdentifier(node.expression) &&
+      intrinsics.some((i) => i.name === (node.expression as ts.Identifier).text && intrinsicCallFoldsEagerly(i))
+    ) {
+      for (const arg of node.arguments) {
+        const v = findSubsetViolation(arg, intrinsics);
+        if (v) return v;
+      }
+      return undefined;
+    }
+
+    // chant #1966 — a method call (`github.actor.toString()`, `[...].join(",")`,
+    // `matrix("os").toString()`): `fold()` now folds this shape unconditionally
+    // — the receiver must fold to a real value with the named method, which is
+    // resolution-dependent (module doc, point 1) and so out of reach for a
+    // syntax-only classifier, exactly the same asymmetry as `.step` above and
+    // a same-file `new` used as a value (#1169). Accepted here regardless of
+    // the intrinsics registry, unlike the two cases just above: nothing about
+    // whether a method call folds depends on a lexicon's registration.
+    if (ts.isPropertyAccessExpression(node.expression)) {
+      const v = findSubsetViolation(node.expression.expression, intrinsics);
+      if (v) return v;
+      for (const arg of node.arguments) {
+        const argViolation = findSubsetViolation(arg, intrinsics);
+        if (argViolation) return argViolation;
       }
       return undefined;
     }

@@ -1,0 +1,103 @@
+---
+title: "Composites"
+description: "OwnerCanManage and DenyByDefaultSet — the shapes Cedar has nowhere to put."
+diataxis: reference
+---
+
+Cedar has no functions, no modules, and no loops, so every repeated policy shape is copy-paste in `.cedar` text. A TypeScript factory is the only place the abstraction can live.
+
+These follow chant's general
+[composite resources](/chant/guide/composite-resources/) pattern: a function
+returning declared resources, discovered like any other export.
+
+```typescript
+import { OwnerCanManage, DenyByDefaultSet } from "@intentius/chant-lexicon-cedar";
+```
+
+## OwnerCanManage
+
+"The owner of a thing may act on it" — the most-repeated shape in any policy
+set, and where the two classic mistakes get made: the `when` guard names an
+attribute the schema spells differently, or the grant is written wide and the
+scoping clause is forgotten.
+
+```typescript
+import { ReadAction, WriteAction } from "@intentius/chant-lexicon-cedar";
+
+export const docOwner = OwnerCanManage({
+  entityType: "App::Document",
+  actions: [ReadAction, WriteAction],
+  principal: "App::User",
+});
+```
+
+Emits:
+
+```cedar
+@id("doc-owner")
+@composite("OwnerCanManage")
+@scopedTo("App::Document")
+permit (
+  principal is App::User,
+  action in [App::Action::"read", App::Action::"write"],
+  resource is App::Document
+)
+when { resource.owner == principal };
+```
+
+| Option | Default | Notes |
+|---|---|---|
+| `entityType` | required | `EntityTypeName` — schema-checked |
+| `actions` | unconstrained | One action emits `==`, several emit `in [ … ]` |
+| `ownerAttribute` | `"owner"` | The attribute holding the owner |
+| `principal` | unconstrained | A bare type string becomes `is T`; a full scope passes through |
+| `when` | — | Appended after the ownership test |
+| `unless` | — | Omitted entirely when not asked for |
+| `annotations` | — | Merged over the generated ones; an explicit `id` wins |
+
+Leaving `actions` off produces a wide grant, so it has to be asked for by
+omitting the field rather than arriving by accident.
+
+## DenyByDefaultSet
+
+A guarded `forbid` and the permits it governs, returned from one call. The
+pattern teams write by hand is a forbid at the top of a file and a pile of
+permits under it with nothing tying the two together — delete the forbid and
+the permits keep working, wider than anyone intended.
+
+```typescript
+import { DeleteAction } from "@intentius/chant-lexicon-cedar";
+
+const guarded = DenyByDefaultSet({
+  policies: [docOwner],
+  entityType: "App::Document",
+  actions: DeleteAction,
+  when: ['resource.classification == "confidential"'],
+  unless: ['principal == App::User::"archivist"'],
+});
+
+export const confidentialFloor = guarded.floor;
+export const documentOwnerGrant = guarded.members[0];
+```
+
+| Returned | What it is |
+|---|---|
+| `floor` | The `forbid` policy |
+| `members` | The permits, unchanged, in the order given |
+| `all` | `[floor, ...members]` |
+
+`when` is required. An unguarded forbid overrides every permit in the set, so
+the result would authorize nothing — the composite throws rather than emit it.
+
+## Where composites go in a build
+
+They return `Declarable` values like any other resource, so exporting them
+from a discovered file is all that is needed:
+
+```typescript
+export const [floor, grant] = DenyByDefaultSet({ /* … */ }).all;
+```
+
+The floor is emitted first. Cedar's evaluation is order-independent — a forbid
+wins wherever it sits — but a file that reads floor-first matches how the set
+is reasoned about.

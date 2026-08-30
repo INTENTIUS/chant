@@ -4,10 +4,11 @@ import { discover } from "../../discovery/index";
 import { partitionByLexicon, computeStackGraph, build, mergeBuildRootEntities } from "../../build";
 import { buildGraphIr, buildLiveGraphIr, collectUnobserved, overlayGraphs, sourceOverlayGraphs, type GraphIR, type IRPipeline, type LiveObservation } from "../../graph-ir";
 import { buildDeclaredPerStack } from "../../graph-declared";
+import { mergeProjectOps } from "../../graph-ops";
 import { reconstructEdges, mergeCatalogs, containmentGroups, type ReferenceCatalog, type ContainmentPair } from "../../graph-refs";
 import { observeResources } from "../../lifecycle/observe";
 import { replaySnapshots, hasSnapshot } from "../../lifecycle/replay";
-import { loadChantConfig, environmentNames, loadChantConfigUpward, type ChantConfig } from "../../config";
+import { loadChantConfig, environmentNames, matchesDeclaredEnvironment, loadChantConfigUpward, type ChantConfig } from "../../config";
 import { applyLiveEndpoint } from "../../live-endpoint";
 import { applyDetail, detailInertNotice, type DetailLevel } from "../../graph-detail";
 import { applyLens, parseLens } from "../../graph-lens";
@@ -48,6 +49,7 @@ async function graphBuildParams(
   const resolution = resolveCliBuildParams(config.buildParams, {
     cli: parseParamFlags(ctx.args.param),
     paramsFile: ctx.args.paramsFile,
+    verbose: ctx.args.verbose,
   });
   if (!resolution.success) {
     for (const message of resolution.errors) console.error(message);
@@ -75,7 +77,7 @@ async function graphBuildParams(
 async function graphBuildRootContributors(
   ctx: CommandContext,
   projectPath: string,
-): Promise<Array<() => Promise<import("../../lexicon").BuildRootContribution>>> {
+): Promise<Array<import("../../lexicon").BuildRootContributor>> {
   const { config, configPath } = await loadChantConfigUpward(projectPath).catch(
     () => ({ config: {} as ChantConfig, configPath: undefined }),
   );
@@ -107,7 +109,7 @@ async function graphBuildRootContributors(
  */
 async function mergeGraphBuildRoots(
   entities: Map<string, import("../../declarable").Declarable>,
-  contributors: Array<() => Promise<import("../../lexicon").BuildRootContribution>>,
+  contributors: Array<import("../../lexicon").BuildRootContributor>,
 ): Promise<boolean> {
   if (contributors.length === 0) return true;
   const merged = await mergeBuildRootEntities(entities, contributors);
@@ -117,6 +119,17 @@ async function mergeGraphBuildRoots(
     return false;
   }
   return true;
+}
+
+/** #1675 — join git-root ops into a discovered entity map; op-discovery
+ * errors are warnings here (the lint gate never saw those files). */
+async function mergeGraphOps(
+  entities: Map<string, import("../../declarable").Declarable>,
+  sourceFiles: readonly string[],
+  projectPath: string,
+): Promise<void> {
+  const { errors } = await mergeProjectOps(entities, sourceFiles, projectPath);
+  for (const e of errors) console.error(formatWarning({ message: e }));
 }
 
 /**
@@ -197,7 +210,7 @@ async function runGraphLive(
   // observation plugins — load them here, mirroring the lifecycle handlers.
   const plugins = ctx.plugins.length > 0 ? ctx.plugins : await loadPlugins(await resolveProjectLexicons(projectPath));
   const declaredEnvNames = environmentNames(config.environments);
-  if (declaredEnvNames && !declaredEnvNames.includes(environment)) {
+  if (declaredEnvNames && !matchesDeclaredEnvironment(config.environments, environment)) {
     console.error(formatError({
       message: `Unknown environment "${environment}"`,
       hint: `Defined environments: ${declaredEnvNames.join(", ")}`,
@@ -307,7 +320,7 @@ async function runGraphLive(
         ...(args.namespace ? { namespace: args.namespace } : {}),
       });
       observations = observeResult.observations;
-      const { errors, warnings } = observeResult;
+      const { errors, warnings, notes = [] } = observeResult;
       for (const e of errors) console.error(formatWarning({ message: e }));
       // Unobserved entities (#1089) arrive as warnings — a node missing from the
       // live graph because nobody looked is a different fact from one that isn't
@@ -320,7 +333,9 @@ async function runGraphLive(
         console.error(formatWarning({
           message: `... and ${warnings.length - WARN_CAP} more entity(ies) not observed — run \`chant lifecycle diff ${environment} --live\` for the full list`,
         }));
-    }
+      }
+      // Run-level notes (#1265): one line each, outside the per-entity cap.
+      for (const n of notes) console.error(formatWarning({ message: n }));
     }
 
     // Both paths land here: a replay rejoins the live pipeline at exactly this
@@ -409,6 +424,7 @@ async function runGraphLive(
       } else if (!(await mergeGraphBuildRoots(declared.entities, buildRoots))) {
         console.error(formatWarning({ message: "overlay: a build root failed to render — showing the provisioned graph without the declared overlay" }));
       } else {
+        await mergeGraphOps(declared.entities, declared.sourceFiles, projectPath);
         const declaredIr = buildGraphIr(declared.entities, projectPath);
         ir =
           args.overlayAnchor === "live"
@@ -564,7 +580,16 @@ async function runComponentGraphView(
       // `liveNames` (#1491): the resources this component owns — declared, or
       // the contract's `[name]` identity fallback — so a consumer can join
       // the component DAG to the resource graph instead of guessing at kinds.
-      attrs: { wave: waveOf.get(name) ?? null, liveNames: graph.liveNames?.[name] ?? [name] },
+      // `composites` (#1492): the composite kind(s) this component's
+      // resources come from, when the component declared them explicitly —
+      // omitted from attrs (not defaulted) when it didn't, so a consumer
+      // knows to fall back to its own naming-convention guess rather than
+      // reading "no composites" from an empty array.
+      attrs: {
+        wave: waveOf.get(name) ?? null,
+        liveNames: graph.liveNames?.[name] ?? [name],
+        ...(graph.composites?.[name] ? { composites: graph.composites[name] } : {}),
+      },
       // Deep-link the node to its `*.component.ts` (behold's inspect panel).
       ...(graph.files?.[name] ? { sourceLoc: { file: graph.files[name] } } : {}),
     })),
@@ -674,6 +699,10 @@ async function runGraphView(
   if (!(await mergeGraphBuildRoots(result.entities, await graphBuildRootContributors(ctx, projectPath)))) {
     return 1;
   }
+
+  // #1675 — ops live outside sourceDir by convention; join the ones
+  // `discoverOps` finds from the git root so the IR carries the declared DAG.
+  await mergeGraphOps(result.entities, result.sourceFiles, projectPath);
 
   // Build the base IR, focus with a lens (declarable-level, most precise), then
   // apply the detail tier — so e.g. blast:<resource> works before any collapse.

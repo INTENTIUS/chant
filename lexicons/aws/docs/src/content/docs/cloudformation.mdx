@@ -1,10 +1,19 @@
 ---
 title: "CloudFormation Concepts"
 description: "Templates, resources, parameters, outputs, dependencies, and tagging in the AWS CloudFormation lexicon"
+diataxis: explanation
 ---
 
 {/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-aws` — DO NOT EDIT.
-    Edit lexicons/aws/src/codegen/docs.ts instead; changes here are overwritten. */}
+    Edit lexicons/aws/docs/pages/cloudformation.mdx instead; changes here are overwritten. */}
+
+
+{/* TODO(diataxis): split — this page mixes concept mapping (resource
+    naming, dependencies, intrinsics) with reference tables (naming,
+    PolicyDocument fields, resource attributes) and task-style walkthroughs
+    (parameters, outputs, conditions, mappings, tagging). Tagged explanation
+    for its majority; not split in this PR. */}
+
 Every exported resource declaration becomes a logical resource in a CloudFormation template. The serializer handles the translation automatically:
 
 - Wraps output in `AWSTemplateFormatVersion: "2010-09-09"`

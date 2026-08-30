@@ -201,6 +201,7 @@ Composites group related Config Connector resources with secure defaults. Each r
 | `PrivateService` | ComputeGlobalAddress + ServiceNetworkingConnection | RFC 1918 range, automatic peering |
 | `ManagedCertificate` | ComputeManagedSslCertificate | Auto-renewal via Google-managed cert |
 | `SecureProject` | Project + IAMAuditConfig + essential Service resources | Audit logging, required APIs enabled, org policy constraints |
+| `GpuNodePool` | ContainerNodePool with GPU accelerators | Scale-to-zero, nvidia.com/gpu taint, GKE metadata workload identity |
 
 ### Example: GKE cluster with secure defaults
 
@@ -209,6 +210,7 @@ import { GkeCluster } from "@intentius/chant-lexicon-gcp";
 
 const { cluster, nodePool } = GkeCluster({
   name: "prod-cluster",
+  projectId: "my-project",
   location: "us-central1",
   initialNodeCount: 3,
   minNodeCount: 1,

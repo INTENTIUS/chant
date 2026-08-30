@@ -14,6 +14,7 @@
  */
 import { diffLive, type AttributeChange, type DiffLiveInput } from "./live-diff";
 import { unobservedReasonText, type UnobservedReason } from "../observation";
+import { renderDisruption, summarizeDisruption, type Disruption } from "./disruption";
 
 /**
  * What the projection proposes for a single resource.
@@ -31,11 +32,30 @@ import { unobservedReasonText, type UnobservedReason } from "../observation";
  *   not drift, just the runtime doing its job. `runtimeOwner` names the
  *   declared entity it belongs to.
  * - `noop` — declared and live with no drift, or already reconciled.
+ * - `effect` — a declared effect receipt (#1832) whose live value is absent or
+ *   differs from the resolved expectation: the effect step will fire. Never a
+ *   `create` or `update` — the generic apply path is observe-only to receipts,
+ *   and the `effect()` step is the sole writer (epic #1703, decision 3). Read
+ *   `effect` for the effect's identity and `effectReason` for why it fires.
  * - `unobserved` — declared, and the lexicon could not look (#1089). Not a
  *   proposal at all: it is the plan admitting a hole. Never a create, never a
  *   delete. Read `unobservedReason` for which hole.
  */
-export type ChangeAction = "create" | "update" | "delete" | "adopt" | "runtime" | "noop" | "unobserved";
+export type ChangeAction = "create" | "update" | "delete" | "adopt" | "runtime" | "noop" | "effect" | "unobserved";
+
+/**
+ * Why an `effect` entry proposes a fire (#1832).
+ *
+ * - `receipt-absent` — the provider confirmed the receipt absent: the effect
+ *   has never recorded a run (or the run crashed before the write — the
+ *   at-least-once case this classification exists to preserve).
+ * - `receipt-stale` — the receipt is live but its value differs from the
+ *   resolved expectation: the effect's inputs changed since the last run.
+ * - `unresolved-input` — a reference input could not resolve at plan time, so
+ *   the expectation cannot be computed. The fire is proposed rather than
+ *   guessed away; the effect step resolves again at run.
+ */
+export type EffectFireReason = "receipt-absent" | "receipt-stale" | "unresolved-input";
 
 /**
  * Who answers "is this resource chant's?". `unknown` until a live ownership
@@ -45,10 +65,27 @@ export type ChangeAction = "create" | "update" | "delete" | "adopt" | "runtime" 
 export type Ownership = "owned" | "foreign" | "unknown";
 
 export interface ChangeSetEntry {
-  /** chant entity name. */
+  /**
+   * chant entity name for a declared entity. For an undeclared live resource
+   * (`adopt`, `delete`, `runtime`) this is the lexicon's live key — not an
+   * IR-joinable entity name; read `physicalId` for the provider id (#1674).
+   */
   name: string;
   /** Resource type, when known from either side. */
   type?: string;
+  /**
+   * The lexicon whose observation produced this entry (#1674). Set when the
+   * change set is built for one lexicon; `lifecycle plan` merges every
+   * lexicon's change set into one `entries[]`, and this is what keeps the
+   * attribution through the merge.
+   */
+  lexicon?: string;
+  /**
+   * Provider-assigned physical id (ARN, resource id, pod name) from the live
+   * observation's `ResourceMetadata.physicalId`, falling back to the snapshot's
+   * when the resource is gone (#1674). Absent when neither side reported one.
+   */
+  physicalId?: string;
   action: ChangeAction;
   /** The three-way evidence the classification was derived from. */
   evidence: {
@@ -83,6 +120,32 @@ export interface ChangeSetEntry {
   queried?: string;
   /** The declared entity this resource's owner chain resolves to, for `action: "runtime"` (#1077). */
   runtimeOwner?: string;
+  /**
+   * The effect a receipt witnesses (#1832), for entries derived from an effect
+   * receipt. On `action: "effect"` it names what will fire; on a receipt's
+   * `noop`/`unobserved` rows it keeps the attribution.
+   */
+  effect?: string;
+  /** Why the effect fires, for `action: "effect"` (#1832). */
+  effectReason?: EffectFireReason;
+  /** Human-readable backing for `effectReason` (the digests that differ, the unresolved path). */
+  effectDetail?: string;
+  /**
+   * How much applying this change hurts (#1665) — in-place / rolling / replace
+   * / destroy / unknown. Set on `update` entries only: every other action
+   * carries its blast radius in the action itself.
+   *
+   * The verdict comes from the lexicon that owns the spec
+   * ({@link LexiconPlugin.classifyDisruption}), never from core, which has no
+   * per-provider replacement rules and must not grow any. `unknown` is the
+   * default and the only fallback — read it as "nobody could say", never as
+   * "probably in place".
+   */
+  disruption?: Disruption;
+  /** The attribute paths that forced `disruption` (#1665). */
+  disruptionBecause?: string[];
+  /** Human-readable backing for `disruption` — the spec knowledge behind the call, or why there is none. */
+  disruptionDetail?: string;
 }
 
 export interface ChangeSet {
@@ -101,7 +164,12 @@ export interface ChangeSet {
  * classifies as `unobserved` and nothing else: no `create` is ever synthesized
  * from a read that did not happen.
  */
-export function buildChangeSet(env: string, input: DiffLiveInput): ChangeSet {
+export interface ChangeSetOptions {
+  /** Stamp every entry with the lexicon it was observed by (#1674). */
+  lexicon?: string;
+}
+
+export function buildChangeSet(env: string, input: DiffLiveInput, options?: ChangeSetOptions): ChangeSet {
   const diff = diffLive(input);
   const { declared, observedNow } = input;
   const observedThen = input.observedThen ?? {};
@@ -184,9 +252,15 @@ export function buildChangeSet(env: string, input: DiffLiveInput): ChangeSet {
     // classification above never reads it.
     const queried = unobservedEntry?.queried ?? input.queried?.[name];
 
+    // The provider's id for the row (#1674). Live first; the snapshot's only
+    // when the resource is no longer live (a snapshot-only noop).
+    const physicalId = observedNow[name]?.physicalId ?? observedThen[name]?.physicalId;
+
     entries.push({
       name,
       type,
+      ...(options?.lexicon ? { lexicon: options.lexicon } : {}),
+      ...(physicalId ? { physicalId } : {}),
       action,
       evidence,
       deltas,
@@ -206,13 +280,14 @@ export function buildChangeSet(env: string, input: DiffLiveInput): ChangeSet {
   return { env, entries };
 }
 
-const ACTION_ORDER: ChangeAction[] = ["create", "update", "delete", "adopt", "runtime", "noop", "unobserved"];
+const ACTION_ORDER: ChangeAction[] = ["create", "update", "effect", "delete", "adopt", "runtime", "noop", "unobserved"];
 
 /** Count entries per action. */
 export function summarize(cs: ChangeSet): Record<ChangeAction, number> {
   const counts: Record<ChangeAction, number> = {
     create: 0,
     update: 0,
+    effect: 0,
     delete: 0,
     adopt: 0,
     runtime: 0,
@@ -229,10 +304,10 @@ export function summarize(cs: ChangeSet): Record<ChangeAction, number> {
  * GitLab renders an `artifacts:reports:terraform` artifact in the merge-request
  * UI as "N to add, M to change, K to delete". The format is generic — any tool
  * that emits this JSON gets the widget — and the chant plan maps onto it
- * directly. Only the mutating actions count: `adopt`, `runtime`, `noop` and
- * `unobserved` are excluded, since the widget has no column for "live but
- * undeclared", "expected runtime child" (#1077), "no change", or "could not
- * look" (#1089). The widget is therefore a floor, not a complete plan: read
+ * directly. Only the mutating actions count: `adopt`, `runtime`, `noop`,
+ * `effect` and `unobserved` are excluded, since the widget has no column for
+ * "live but undeclared", "expected runtime child" (#1077), "no change", "an
+ * effect will fire" (#1832), or "could not look" (#1089). The widget is therefore a floor, not a complete plan: read
  * the full change set when entities are unobserved or classified runtime.
  *
  * The widget label reads "Terraform" regardless of producer; that is GitLab's
@@ -250,36 +325,182 @@ export function gitlabMrReport(cs: ChangeSet): GitlabMrReport {
   return { create: counts.create, update: counts.update, delete: counts.delete };
 }
 
+/**
+ * Warning a plan should print when it carries a hole — a declared entity the
+ * lexicon could not observe (#1089). The `--json` and `--report gitlab-mr`
+ * shapes have no column for `unobserved`, so both the CLI (on stderr) and the
+ * `markdown` report (in the body, since a reviewer never sees a job's stderr)
+ * read this same wording rather than drifting apart. Empty when the plan has
+ * no hole. Same discipline as {@link disruptionNotices} in `./disruption`.
+ */
+export function unobservedPlanNotice(cs: ChangeSet): string[] {
+  const count = summarize(cs).unobserved;
+  return count > 0
+    ? [
+        `${count} declared entity(ies) could not be observed — no create/update/delete is proposed for them. This plan is incomplete, not clean.`,
+      ]
+    : [];
+}
+
+/**
+ * Section heading text for one action group — shared between {@link renderChangeSet}
+ * and {@link renderChangeSetMarkdown} so the wording never drifts between the
+ * terminal render and the reviewer-facing one.
+ */
+function actionSectionLabel(action: ChangeAction, hasDisruption: boolean): string {
+  switch (action) {
+    case "unobserved":
+      return "UNOBSERVED (declared; chant could not read live state — no action proposed)";
+    case "runtime":
+      return "RUNTIME (owned by a declared resource; not drift, never a delete/adopt candidate)";
+    case "effect":
+      return "EFFECT (receipt absent or stale; the effect step fires — the generic apply never writes a receipt)";
+    case "update":
+      return hasDisruption
+        ? "UPDATE (disruption from the lexicon that owns the spec; unknown means nobody could say, not that it is safe)"
+        : "UPDATE";
+    default:
+      return action.toUpperCase();
+  }
+}
+
 /** Human-readable render of a change set. Pure — returns a string. */
 export function renderChangeSet(cs: ChangeSet): string {
   const counts = summarize(cs);
   const header = ACTION_ORDER.map((a) => `${counts[a]} ${a}`).join(", ");
   const lines: string[] = [`Plan for ${cs.env}: ${header}`];
 
+  // Disruption (#1665) rides the header too, so the one number that says how
+  // much this plan hurts is visible without reading every row.
+  const disruption = summarizeDisruption(cs);
+  const disruptionParts = (Object.entries(disruption) as Array<[Disruption, number]>)
+    .filter(([, n]) => n > 0)
+    .map(([level, n]) => `${n} ${level}`);
+  if (disruptionParts.length > 0) {
+    lines.push(`Disruption: ${disruptionParts.join(", ")}`);
+  }
+
   for (const action of ACTION_ORDER) {
     const group = cs.entries.filter((e) => e.action === action);
     if (group.length === 0) continue;
-    lines.push(
-      action === "unobserved"
-        ? "\nUNOBSERVED (declared; chant could not read live state — no action proposed):"
-        : action === "runtime"
-          ? "\nRUNTIME (owned by a declared resource; not drift, never a delete/adopt candidate):"
-          : `\n${action.toUpperCase()}:`,
-    );
+    lines.push(`\n${actionSectionLabel(action, disruptionParts.length > 0)}:`);
     for (const e of group) {
+      if (e.action === "effect") {
+        lines.push(
+          `  effect will fire: ${e.effect ?? e.name} — receipt ${e.name}${e.type ? ` (${e.type})` : ""}` +
+            `${e.effectDetail ? ` — ${e.effectDetail}` : ""}`,
+        );
+        continue;
+      }
       const own = e.ownership === "unknown" ? "" : ` [${e.ownership}]`;
       const why = e.unobservedReason
         ? ` — ${unobservedReasonText(e.unobservedReason)}${e.unobservedDetail ? `: ${e.unobservedDetail}` : ""}`
         : "";
       const owner = e.runtimeOwner ? ` — owned by ${e.runtimeOwner}` : "";
-      lines.push(`  ${e.name}${e.type ? ` (${e.type})` : ""}${own}${why}${owner}`);
+      lines.push(`  ${e.name}${e.type ? ` (${e.type})` : ""}${own}${why}${owner}${renderDisruption(e)}`);
+      const forced = new Set(e.disruptionBecause ?? []);
       for (const d of e.deltas ?? []) {
-        lines.push(`      ${d.path}: ${fmt(d.oldValue)} → ${fmt(d.newValue)}`);
+        // A path the verdict rests on is marked, so a `replace` row says which
+        // of five changed properties caused it.
+        lines.push(`      ${forced.has(d.path) ? "! " : ""}${d.path}: ${fmt(d.oldValue)} → ${fmt(d.newValue)}`);
       }
     }
   }
 
   return lines.join("\n");
+}
+
+/**
+ * Entries beyond this in one action group are collapsed into a `<details>`
+ * block in {@link renderChangeSetMarkdown} — a group's worth of rows is fine
+ * to read inline, a hundred-entry plan is not (#1983).
+ */
+const MARKDOWN_FOLD_THRESHOLD = 20;
+
+/** One entry's markdown, mirroring the rows {@link renderChangeSet} prints. */
+function renderMarkdownEntry(e: ChangeSetEntry): string[] {
+  if (e.action === "effect") {
+    return [
+      `- effect will fire: \`${e.effect ?? e.name}\` — receipt \`${e.name}\`${e.type ? ` (${e.type})` : ""}` +
+        `${e.effectDetail ? ` — ${e.effectDetail}` : ""}`,
+    ];
+  }
+  const lexicon = e.lexicon ? ` \`${e.lexicon}\`` : "";
+  const own = e.ownership === "unknown" ? "" : ` [${e.ownership}]`;
+  const why = e.unobservedReason
+    ? ` — ${unobservedReasonText(e.unobservedReason)}${e.unobservedDetail ? `: ${e.unobservedDetail}` : ""}`
+    : "";
+  const owner = e.runtimeOwner ? ` — owned by \`${e.runtimeOwner}\`` : "";
+  // Bolded rather than the plain-text render's bare " — destroy: ..." — a
+  // reviewer scanning a wall of "update" rows should see disruption without
+  // reading every one (#1665).
+  const disruption = e.disruption
+    ? ` — **${e.disruption}**${e.disruptionDetail ? `: ${e.disruptionDetail}` : ""}`
+    : "";
+  const lines = [`- \`${e.name}\`${e.type ? ` (${e.type})` : ""}${lexicon}${own}${why}${owner}${disruption}`];
+
+  if (e.deltas && e.deltas.length > 0) {
+    const forced = new Set(e.disruptionBecause ?? []);
+    lines.push("  ```");
+    for (const d of e.deltas) {
+      lines.push(`  ${forced.has(d.path) ? "! " : "  "}${d.path}: ${fmt(d.oldValue)} → ${fmt(d.newValue)}`);
+    }
+    lines.push("  ```");
+  }
+  return lines;
+}
+
+/**
+ * Markdown projection of a change set (#1983) — sized for a PR/MR comment
+ * rather than a terminal. A scannable counts header, entries grouped by
+ * action and attributed to their lexicon, deltas in a fenced block, and any
+ * group past {@link MARKDOWN_FOLD_THRESHOLD} folded into a `<details>` so a
+ * large plan doesn't bury the comment. Pure — no ANSI, no I/O — and
+ * deterministic: same entry ordering as {@link renderChangeSet}.
+ *
+ * Both a hole (#1089) and an expensive verdict (#1665) are surfaced IN the
+ * body, not left to stderr the way `--json` and `--report gitlab-mr` leave
+ * them: a reviewer reading a comment never sees the job's log, so a plan
+ * carrying either must not read as clean.
+ */
+export function renderChangeSetMarkdown(cs: ChangeSet): string {
+  const counts = summarize(cs);
+  const lines: string[] = [`## Plan for \`${cs.env}\``, "", ACTION_ORDER.map((a) => `${counts[a]} ${a}`).join(", ")];
+
+  const disruption = summarizeDisruption(cs);
+  const disruptionParts = (Object.entries(disruption) as Array<[Disruption, number]>)
+    .filter(([, n]) => n > 0)
+    .map(([level, n]) => `${n} ${level}`);
+  if (disruptionParts.length > 0) {
+    lines.push("", `**Disruption:** ${disruptionParts.join(", ")}`);
+  }
+
+  for (const notice of unobservedPlanNotice(cs)) {
+    lines.push("", `> **${notice}**`);
+  }
+
+  for (const action of ACTION_ORDER) {
+    const group = cs.entries.filter((e) => e.action === action);
+    if (group.length === 0) continue;
+
+    lines.push("", `### ${actionSectionLabel(action, disruptionParts.length > 0)}`);
+
+    const body = group.flatMap((e) => renderMarkdownEntry(e));
+    if (group.length > MARKDOWN_FOLD_THRESHOLD) {
+      lines.push(
+        "",
+        `<details><summary>${group.length} entries — click to expand</summary>`,
+        "",
+        ...body,
+        "",
+        "</details>",
+      );
+    } else {
+      lines.push("", ...body);
+    }
+  }
+
+  return lines.join("\n").trimEnd() + "\n";
 }
 
 function fmt(v: unknown): string {

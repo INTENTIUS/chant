@@ -45,6 +45,15 @@
  *     signing against one would make every local lane need credentials to read
  *     what it just deployed. `signEndpointOverride` opts back in for an
  *     override that *is* real AWS — a VPC endpoint, a signing proxy.
+ *
+ * What counts as an override is {@link resolveEndpointOverride}: the
+ * `endpoint` option, else `AWS_ENDPOINT_URL_VERIFIEDPERMISSIONS`, else
+ * `AWS_ENDPOINT_URL` — the AWS SDK's own precedence, and the same rule the aws
+ * lexicon's `api/read-client.ts` applies to every transport it owns (#1694).
+ * It is restated here rather than imported for the reason above: cedar does
+ * not depend on the aws lexicon, and a lexicon build compiles against the
+ * published core, so a helper hoisted into core would reach neither lexicon
+ * until the next core release.
  */
 
 const DEFAULT_REGION = "us-east-1";
@@ -166,6 +175,24 @@ export function avpUrl(endpoint?: string, region = DEFAULT_REGION): string {
   return `${(endpoint ?? `https://${SERVICE}.${region}.amazonaws.com`).replace(/\/$/, "")}/`;
 }
 
+/** The service-specific endpoint variable the AWS SDK reads for Verified Permissions. */
+const SERVICE_ENDPOINT_ENV_VAR = "AWS_ENDPOINT_URL_VERIFIEDPERMISSIONS";
+
+/**
+ * The one rule for what an endpoint override is (#1694): the `endpoint`
+ * option when given, else `AWS_ENDPOINT_URL_VERIFIEDPERMISSIONS`, else the
+ * ambient `AWS_ENDPOINT_URL`. The result is both the target and, through
+ * {@link requestHeaders}, the fact that decides whether the request is signed.
+ * Returns `undefined` for real AWS. Mirrors the aws lexicon's
+ * `resolveEndpointOverride` for this one service.
+ */
+export function resolveEndpointOverride(
+  endpoint: string | undefined,
+  env: Record<string, string | undefined> = process.env,
+): string | undefined {
+  return endpoint || env[SERVICE_ENDPOINT_ENV_VAR] || env.AWS_ENDPOINT_URL || undefined;
+}
+
 /**
  * Whether this process has anything to authenticate with.
  *
@@ -176,7 +203,7 @@ export function avpUrl(endpoint?: string, region = DEFAULT_REGION): string {
  */
 export function credentialsAvailable(env: Record<string, string | undefined> = process.env): boolean {
   return Boolean(
-    env.AWS_ENDPOINT_URL ||
+    resolveEndpointOverride(undefined, env) ||
       env.AWS_ACCESS_KEY_ID ||
       env.AWS_PROFILE ||
       env.AWS_SESSION_TOKEN ||
@@ -256,7 +283,7 @@ export async function avpCall(
 ): Promise<Record<string, unknown>> {
   const env = options.env ?? process.env;
   const http = options.http ?? defaultHttp;
-  const endpoint = options.endpoint ?? env.AWS_ENDPOINT_URL;
+  const endpoint = resolveEndpointOverride(options.endpoint, env);
   const url = avpUrl(endpoint, options.region);
   const payloadJson = JSON.stringify(payload);
   const res = await http(

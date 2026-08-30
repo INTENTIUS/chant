@@ -37,6 +37,7 @@ async function runGenerateComponents(ctx: CommandContext): Promise<number> {
   const paramsResolution = resolveCliBuildParams(config.buildParams, {
     cli: parseParamFlags(args.param),
     paramsFile: args.paramsFile,
+    verbose: args.verbose,
   });
   if (!paramsResolution.success) {
     for (const message of paramsResolution.errors) console.error(message);
@@ -125,6 +126,7 @@ export async function runBuild(ctx: CommandContext): Promise<number> {
       plugins,
       fold: args.fold,
       sandbox: args.sandbox,
+      verbose: args.verbose,
       params,
       paramsFile: args.paramsFile,
     });
@@ -146,6 +148,8 @@ export async function runBuild(ctx: CommandContext): Promise<number> {
     env: args.env,
     fold: args.fold,
     sandbox: args.sandbox,
+    foldRank: args.foldRank,
+    foldRankCollapsedFile: args.foldRankCollapsedFile,
     params,
     paramsFile: args.paramsFile,
   });

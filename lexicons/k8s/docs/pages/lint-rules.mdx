@@ -1,0 +1,137 @@
+---
+title: "Lint Rules"
+description: "Built-in lint rules and post-synth checks for Kubernetes manifests"
+diataxis: reference
+---
+
+The Kubernetes lexicon ships lint rules that run during `chant lint` and post-synth checks that validate the serialized YAML after `chant build`.
+
+## Lint rules
+
+Lint rules analyze your TypeScript source code before build.
+
+### WK8001 — Hardcoded namespace
+
+**Severity:** warning | **Category:** correctness
+
+Flags hardcoded namespace strings in resource constructors. Namespaces should be parameterized or derived from configuration.
+
+```typescript
+// Bad — hardcoded namespace
+new Deployment({ metadata: { namespace: "production" } });
+
+// Good — parameterized
+new Deployment({ metadata: { namespace: config.namespace } });
+```
+
+## Post-synth checks
+
+Post-synth checks run against the serialized YAML after build.
+
+### Security
+
+| Rule | Description |
+|------|-------------|
+| WK8005 | Hardcoded secrets in environment variables |
+| WK8041 | API keys detected in env values |
+| WK8042 | Private keys in ConfigMaps or Secrets |
+| WK8202 | Privileged container (`privileged: true`) |
+| WK8203 | Writable root filesystem (`readOnlyRootFilesystem` not set) |
+| WK8204 | Container running as root (`runAsNonRoot` not set) |
+| WK8205 | Capabilities not dropped (`drop: ["ALL"]` missing) |
+| WK8207 | Host network access (`hostNetwork: true`) |
+| WK8208 | Host PID namespace (`hostPID: true`) |
+| WK8209 | Host IPC namespace (`hostIPC: true`) |
+
+### Best practices
+
+| Rule | Description |
+|------|-------------|
+| WK8006 | Latest image tag or untagged image |
+| WK8101 | Deployment selector doesn't match template labels |
+| WK8102 | Resource missing metadata.labels |
+| WK8103 | Container missing name |
+| WK8104 | Unnamed container ports |
+| WK8105 | Missing imagePullPolicy |
+
+### Reliability
+
+| Rule | Description |
+|------|-------------|
+| WK8201 | Container missing resource limits |
+| WK8301 | Port-serving container missing health probes (skips Jobs/CronJobs and port-less workers) |
+| WK8302 | Single replica Deployment |
+| WK8303 | HA Deployment without PodDisruptionBudget |
+
+### Custom resources
+
+Every CRD-generated class ships its `spec` field schema in the lexicon JSON (`specSchema`), so a custom resource is checked against the CRD the way the API server's structural schema would check it, before apply. Built-in kinds are typed by the generated `.d.ts` and are not covered here.
+
+| Rule | Description |
+|------|-------------|
+| WK8501 | Custom resource `spec` has a field the CRD schema does not declare (with a "did you mean" suggestion) |
+| WK8502 | Custom resource `spec` field has the wrong scalar type, or a value outside its enum |
+
+### Secret provenance
+
+WK8503 is the consumption side of the [secret provenance vocabulary](/chant/architecture/core-type-system/): every secret reference in a pod spec (`envFrom.secretRef`, `env[].valueFrom.secretKeyRef`, secret volumes, projected secret sources, `imagePullSecrets`) must resolve to a Secret the same output produces — a literal `Secret`, an `ExternalSecret` target, an `InfisicalSecret` / `InfisicalDynamicSecret` managed secret reference, or a cert-manager `Certificate` `secretName`. A secret that legitimately lives outside the build (minted by a human, an operator, a `just` target) is declared, not suppressed: a `declareSecret({ name, provenance: "referenced" | "from-provider" | "generated-once" })` declaration covering the name waives the check. References marked `optional: true` are skipped. There is no suppression comment; demote via `lint.rules` if you must.
+
+A `committed-encrypted` declaration is the exception to that waiver, on purpose. The other three kinds are promises about something outside the build; `declareSecret({ name, provenance: "committed-encrypted", file })` is a claim about an artifact inside it — sops ciphertext committed to the repo, which the build emits as a sidecar file for Flux to decrypt. So it joins the producer set instead, with its namespace read from the ciphertext's own (cleartext) metadata, and namespace matching applies to it exactly as it does to a literal `Secret`.
+
+WK8504 makes that claim falsifiable. It reads the emitted sidecar — not the primary output, which never carries ciphertext — and fires when the declared file produced no file at all, when the document is not a `v1` Secret of the declared name, when it has no top-level `sops` block, or when any `data`/`stringData` value is not `ENC[...]`-shaped. The last case is the one that matters: someone edits the file by hand, forgets `sops -e`, and commits plaintext. Only the offending key name reaches the message. A declaration that fails WK8504 produces nothing, so WK8503 fires too rather than being quietly waived by a broken claim.
+
+| Rule | Description |
+|------|-------------|
+| WK8503 | Workload consumes a Secret nothing in the output produces (error; waived by a `SecretProvenance` declaration) |
+| WK8504 | `committed-encrypted` declaration does not resolve — missing file, wrong `metadata.name`, no `sops` block, or an unencrypted `data`/`stringData` value (error) |
+
+### Argo CD
+
+Quality checks for the [Argo CD composites](/chant/lexicons/k8s/argo-composites/). ARGO001/ARGO004 are declarative (source AST); ARGO002/003/005 are post-synth (cross-resource / filesystem).
+
+| Rule | Description |
+|------|-------------|
+| ARGO001 | Production `Application` enables automated `prune` without the `argocd.chant.dev/allow-prune` override |
+| ARGO002 | `Application.spec.project` references an undeclared `AppProject` |
+| ARGO003 | `Application.spec.destination` references an unregistered cluster |
+| ARGO004 | `ApplicationSet` template doesn't scope to a single static `AppProject` |
+| ARGO005 | `Application` `source.path` doesn't resolve to a directory (warn) |
+
+### Flux
+
+Quality checks for the [Flux composites](/chant/lexicons/k8s/flux-composites/) (`FluxGitSource` / `FluxAppFor`). FLUX001 is declarative (source AST); FLUX002/003 are post-synth (cross-resource).
+
+| Rule | Description |
+|------|-------------|
+| FLUX001 | `GitRepository` has no `spec.ref` pin — Flux falls back to the `master` branch |
+| FLUX002 | `Kustomization.spec.sourceRef` references an undeclared source (the bootstrap `flux-system` repo is exempt) |
+| FLUX003 | `Kustomization.spec.dependsOn` names a `Kustomization` nothing in the build declares, or itself (warn) |
+
+## Running lint
+
+```bash
+# Lint your chant project
+chant lint
+
+# Build (also runs post-synth checks)
+chant build
+```
+
+To suppress a rule on a specific line:
+
+```typescript
+// chant-disable-next-line WK8001
+export const deploy = new Deployment({ metadata: { namespace: "prod" } });
+```
+
+To suppress globally in `chant.config.ts`:
+
+```typescript
+export default {
+  lint: {
+    rules: {
+      WK8001: "off",
+    },
+  },
+};
+```

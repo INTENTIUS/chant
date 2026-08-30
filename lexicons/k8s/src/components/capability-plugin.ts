@@ -25,8 +25,11 @@ export const K8S_VERB_FAMILIES = {
 export const k8sCapabilityPlugin: CapabilityPlugin = {
   name: "k8s",
   // The lexicon package's own version (#1505) — lockstep releases bump it, so
-  // a literal here was stale one release after it was written.
-  version: ownPackageVersion(import.meta.url),
+  // a literal here was stale one release after it was written. A getter, so
+  // the package.json read happens on first access rather than at import time.
+  get version(): string {
+    return ownPackageVersion(import.meta.url);
+  },
   capabilities(): Array<Capability<never, unknown>> {
     return [
       kubectlApplyCapability as Capability<never, unknown>,

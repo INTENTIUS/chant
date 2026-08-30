@@ -1,7 +1,11 @@
 import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { createMockPlugin, staticDescribeResources } from "@intentius/chant-test-utils";
 import type { LexiconPlugin, ResourceMetadata } from "../../lexicon";
 import type { BuildResult } from "../../build";
+import type { BuildArchiveManifest } from "../../components/verbs/build-archive";
 import type { ParsedArgs } from "../registry";
 
 /**
@@ -28,6 +32,7 @@ const loadChantConfigMock = vi.fn();
 const buildMock = vi.fn();
 const discoverComponentsMock = vi.fn();
 const findBuildManifestByArtifactDigestMock = vi.fn();
+const readBuildManifestMock = vi.fn();
 
 vi.mock("../../lifecycle/git", () => ({
   getHeadCommit: (...args: unknown[]) => getHeadCommitMock(...args),
@@ -38,6 +43,7 @@ vi.mock("../../lifecycle/git", () => ({
 
 vi.mock("../../lifecycle/build-ledger-store", () => ({
   findBuildManifestByArtifactDigest: (...args: unknown[]) => findBuildManifestByArtifactDigestMock(...args),
+  readBuildManifest: (...args: unknown[]) => readBuildManifestMock(...args),
 }));
 
 vi.mock("../../lifecycle/release-ledger", async () => {
@@ -66,7 +72,7 @@ vi.mock("../../components/discover", () => ({
   discoverComponents: (...args: unknown[]) => discoverComponentsMock(...args),
 }));
 
-const { runComponentsReleaseRecord, runComponentsStatus, runComponentsUnknown } = await import("./components");
+const { runComponentsReleaseRecord, runComponentsStatus, runComponentsExport, runComponentsUnknown } = await import("./components");
 
 function makeArgs(overrides: Partial<ParsedArgs>): ParsedArgs {
   return {
@@ -126,6 +132,7 @@ describe("components handlers", () => {
     buildMock.mockReset().mockResolvedValue(makeBuildResult({}));
     discoverComponentsMock.mockReset().mockResolvedValue({ components: new Map(), sourceFiles: [], errors: [] });
     findBuildManifestByArtifactDigestMock.mockReset().mockResolvedValue(undefined);
+    readBuildManifestMock.mockReset().mockResolvedValue(null);
 
     delete process.env.GITHUB_RUN_ID;
     delete process.env.CI_PIPELINE_ID;
@@ -566,6 +573,197 @@ describe("components handlers", () => {
       const exit = await runComponentsStatus(ctx);
       expect(exit).toBe(0);
       expect(stderrBuf.join("\n")).toContain("malformed");
+    });
+  });
+
+  describe("runComponentsExport", () => {
+    const originalCwd = process.cwd();
+    let srcDir: string;
+    let outDir: string;
+
+    function makeManifest(overrides: Partial<BuildArchiveManifest> = {}): BuildArchiveManifest {
+      return {
+        version: 1,
+        component: "search-service",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        manifestDigest: "sha256:manifest1",
+        contents: [
+          { kind: "template", path: "search.template.json", digest: "sha256:tmpl1", mediaType: "application/json" },
+          { kind: "asset", path: "dist/search.zip", digest: "sha256:asset1", mediaType: "application/octet-stream" },
+        ],
+        ...overrides,
+      };
+    }
+
+    beforeEach(async () => {
+      srcDir = await mkdtemp(join(tmpdir(), "chant-export-src-"));
+      outDir = await mkdtemp(join(tmpdir(), "chant-export-out-"));
+      process.chdir(srcDir);
+    });
+
+    afterEach(async () => {
+      process.chdir(originalCwd);
+      await rm(srcDir, { recursive: true, force: true });
+      await rm(outDir, { recursive: true, force: true });
+    });
+
+    test("-o/--output is required", async () => {
+      const ctx = { args: makeArgs({ path: "export", digest: "sha256:manifest1" }), plugins: [], serializers: [] };
+      const exit = await runComponentsExport(ctx);
+      expect(exit).toBe(1);
+      expect(stderrBuf.join("\n")).toContain("-o/--output <dir> is required");
+    });
+
+    test("without --digest, requires environment and --component", async () => {
+      const ctx = { args: makeArgs({ path: "export", output: outDir }), plugins: [], serializers: [] };
+      const exit = await runComponentsExport(ctx);
+      expect(exit).toBe(1);
+      expect(stderrBuf.join("\n")).toContain("Environment and --component are required");
+    });
+
+    test("--digest resolves the manifest directly and materializes every entry plus manifest.json", async () => {
+      await writeFile(join(srcDir, "search.template.json"), '{"Resources":{}}');
+      await mkdir(join(srcDir, "dist"), { recursive: true });
+      await writeFile(join(srcDir, "dist", "search.zip"), "zip-bytes");
+
+      readBuildManifestMock.mockResolvedValue(makeManifest());
+
+      const ctx = {
+        args: makeArgs({ path: "export", component: "search-service", digest: "sha256:manifest1", output: outDir }),
+        plugins: [],
+        serializers: [],
+      };
+      const exit = await runComponentsExport(ctx);
+
+      expect(exit).toBe(0);
+      expect(readBuildManifestMock).toHaveBeenCalledWith("sha256:manifest1");
+      expect(await readFile(join(outDir, "search.template.json"), "utf-8")).toBe('{"Resources":{}}');
+      expect(await readFile(join(outDir, "dist", "search.zip"), "utf-8")).toBe("zip-bytes");
+      const manifestOut = JSON.parse(await readFile(join(outDir, "manifest.json"), "utf-8"));
+      expect(manifestOut.manifestDigest).toBe("sha256:manifest1");
+      expect(manifestOut.contents).toHaveLength(2);
+    });
+
+    test("resolves via the release ledger's latest record when --digest is omitted (manifestDigest present)", async () => {
+      readReleaseLedgerMock.mockResolvedValue({
+        records: [
+          {
+            version: 1, component: "search-service", env: "prod", digest: "sha256:artifact1",
+            gitSha: "abc", runId: "1", timestamp: "2026-01-01T00:00:00.000Z", actor: "alice",
+            manifestDigest: "sha256:manifest1",
+          },
+        ],
+        malformed: 0,
+      });
+      readBuildManifestMock.mockResolvedValue(makeManifest({ contents: [] }));
+
+      const ctx = {
+        args: makeArgs({ path: "export", extraPositional: "prod", component: "search-service", output: outDir }),
+        plugins: [],
+        serializers: [],
+      };
+      const exit = await runComponentsExport(ctx);
+
+      expect(exit).toBe(0);
+      expect(readBuildManifestMock).toHaveBeenCalledWith("sha256:manifest1");
+      expect(findBuildManifestByArtifactDigestMock).not.toHaveBeenCalled();
+    });
+
+    test("falls back to findBuildManifestByArtifactDigest when the release record carries no manifestDigest", async () => {
+      readReleaseLedgerMock.mockResolvedValue({
+        records: [
+          {
+            version: 1, component: "search-service", env: "prod", digest: "sha256:artifact1",
+            gitSha: "abc", runId: "1", timestamp: "2026-01-01T00:00:00.000Z", actor: "alice",
+          },
+        ],
+        malformed: 0,
+      });
+      findBuildManifestByArtifactDigestMock.mockResolvedValue(makeManifest({ contents: [] }));
+
+      const ctx = {
+        args: makeArgs({ path: "export", extraPositional: "prod", component: "search-service", output: outDir }),
+        plugins: [],
+        serializers: [],
+      };
+      const exit = await runComponentsExport(ctx);
+
+      expect(exit).toBe(0);
+      expect(findBuildManifestByArtifactDigestMock).toHaveBeenCalledWith("sha256:artifact1");
+    });
+
+    test("no release record for the component/env -> error", async () => {
+      readReleaseLedgerMock.mockResolvedValue({ records: [], malformed: 0 });
+      const ctx = {
+        args: makeArgs({ path: "export", extraPositional: "prod", component: "search-service", output: outDir }),
+        plugins: [],
+        serializers: [],
+      };
+      const exit = await runComponentsExport(ctx);
+      expect(exit).toBe(1);
+      expect(stderrBuf.join("\n")).toContain("No release record for component");
+    });
+
+    test("--digest with no persisted manifest -> error", async () => {
+      readBuildManifestMock.mockResolvedValue(null);
+      const ctx = {
+        args: makeArgs({ path: "export", digest: "sha256:missing", output: outDir }),
+        plugins: [],
+        serializers: [],
+      };
+      const exit = await runComponentsExport(ctx);
+      expect(exit).toBe(1);
+      expect(stderrBuf.join("\n")).toContain("No persisted build manifest found");
+    });
+
+    test("a source file missing on disk is reported per entry and fails the command", async () => {
+      readBuildManifestMock.mockResolvedValue(makeManifest());
+      // Neither entry's source file exists in srcDir.
+      const ctx = {
+        args: makeArgs({ path: "export", digest: "sha256:manifest1", output: outDir }),
+        plugins: [],
+        serializers: [],
+      };
+      const exit = await runComponentsExport(ctx);
+      expect(exit).toBe(1);
+      expect(stderrBuf.join("\n")).toContain("not found on disk");
+    });
+
+    test("--json emits a structured per-entry summary", async () => {
+      await writeFile(join(srcDir, "search.template.json"), "{}");
+      await mkdir(join(srcDir, "dist"), { recursive: true });
+      await writeFile(join(srcDir, "dist", "search.zip"), "zip-bytes");
+      readBuildManifestMock.mockResolvedValue(makeManifest());
+
+      const ctx = {
+        args: makeArgs({ path: "export", digest: "sha256:manifest1", output: outDir, json: true }),
+        plugins: [],
+        serializers: [],
+      };
+      const exit = await runComponentsExport(ctx);
+      expect(exit).toBe(0);
+
+      const parsed = JSON.parse(stdoutBuf.join(""));
+      expect(parsed.component).toBe("search-service");
+      expect(parsed.manifestDigest).toBe("sha256:manifest1");
+      expect(parsed.entries).toHaveLength(2);
+      expect(parsed.entries.every((e: { status: string }) => e.status === "materialized")).toBe(true);
+    });
+
+    test("a --component that mismatches the resolved --digest manifest warns but still exports", async () => {
+      await writeFile(join(srcDir, "search.template.json"), "{}");
+      await mkdir(join(srcDir, "dist"), { recursive: true });
+      await writeFile(join(srcDir, "dist", "search.zip"), "zip-bytes");
+      readBuildManifestMock.mockResolvedValue(makeManifest());
+
+      const ctx = {
+        args: makeArgs({ path: "export", component: "other-service", digest: "sha256:manifest1", output: outDir }),
+        plugins: [],
+        serializers: [],
+      };
+      const exit = await runComponentsExport(ctx);
+      expect(exit).toBe(0);
+      expect(stderrBuf.join("\n")).toContain("does not match the resolved manifest's component");
     });
   });
 

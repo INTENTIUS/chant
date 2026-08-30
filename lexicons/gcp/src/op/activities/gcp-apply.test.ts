@@ -6,6 +6,7 @@ import {
   pubSubTopicBody,
   cloudRunServiceBody,
   resolveGcpProject,
+  resolveGcpEndpoint,
   applyResource,
   deleteResource,
   waitForOperation,
@@ -232,6 +233,44 @@ describe("resolveGcpProject (#711)", () => {
   test("throws when neither is present", () => {
     expect(() => resolveGcpProject({ metadata: { name: "b" } }, {} as NodeJS.ProcessEnv))
       .toThrow(/no GCP project/);
+  });
+});
+
+describe("resolveGcpEndpoint (#1449)", () => {
+  test("an explicit endpoint arg wins", () => {
+    expect(
+      resolveGcpEndpoint({ endpoint: "http://arg:1" }, { GCP_ENDPOINT_URL: "http://env:2" } as NodeJS.ProcessEnv),
+    ).toBe("http://arg:1");
+  });
+
+  test("falls back to GCP_ENDPOINT_URL — the same variable the read path honours", () => {
+    expect(resolveGcpEndpoint({}, { GCP_ENDPOINT_URL: "http://localhost:4588" } as NodeJS.ProcessEnv))
+      .toBe("http://localhost:4588");
+  });
+
+  test("undefined when neither is set — each kind then uses its real-GCP host", () => {
+    expect(resolveGcpEndpoint({}, {} as NodeJS.ProcessEnv)).toBeUndefined();
+  });
+
+  test("gcpApply honours GCP_ENDPOINT_URL, so nativeApply({ target: 'gcp' }) reaches floci-gcp without passing an endpoint", async () => {
+    const path = "/tmp/chant-1449-endpoint-test.yaml";
+    writeFileSync(path, JSON.stringify(BUCKET));
+    const prev = process.env.GCP_ENDPOINT_URL;
+    process.env.GCP_ENDPOINT_URL = "http://localhost:4588";
+    try {
+      const urls: string[] = [];
+      const http: GcpHttp = async (_method, url) => {
+        urls.push(url);
+        return { status: 200, text: "{}" };
+      };
+      await gcpApply({ manifestPath: path, project: "p" }, undefined, http);
+      expect(urls.length).toBeGreaterThan(0);
+      for (const url of urls) expect(url.startsWith("http://localhost:4588/")).toBe(true);
+    } finally {
+      if (prev === undefined) delete process.env.GCP_ENDPOINT_URL;
+      else process.env.GCP_ENDPOINT_URL = prev;
+      unlinkSync(path);
+    }
   });
 });
 

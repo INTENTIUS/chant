@@ -1,6 +1,7 @@
 ---
 title: CLI Overview
 description: Complete command-line interface reference for chant
+diataxis: reference
 ---
 
 chant provides a CLI for building, linting, and managing infrastructure definitions.
@@ -50,6 +51,7 @@ These commands are for **lexicon authors** — project users don't typically nee
 | [`dev publish`](/chant/cli/dev-publish/) | Package lexicon for distribution |
 | [`dev onboard`](/chant/cli/onboard/) | Onboard a new lexicon plugin |
 | [`dev check-lexicon`](/chant/cli/check-lexicon/) | Validate a lexicon bundle |
+| [`dev surface-diff`](/chant/cli/surface-diff/) | Diff a regenerated lexicon's API surface against its baseline |
 
 ## Op Commands
 
@@ -139,7 +141,7 @@ Reported during serialization. Common causes: circular dependencies between reso
 
 ### `--verbose, -v`
 
-Show stack traces on errors.
+Show stack traces on errors. For `chant build`, also list every resolved build parameter and every per-file fold decision instead of the one-line summaries.
 
 ### `--help, -h`
 

@@ -7,7 +7,13 @@
  * with the full codegen pipeline.
  */
 
-import type { K8sParseResult, ParsedProperty, ParsedPropertyType, GroupVersionKind } from "../spec/parse";
+import type {
+  K8sParseResult,
+  ParsedProperty,
+  ParsedPropertyType,
+  GroupVersionKind,
+  CrdFieldSchema,
+} from "../spec/parse";
 import type { CRDSpec } from "./types";
 import { namespaceSegmentForGroup } from "../group-namespace";
 import type { PropertyConstraints } from "@intentius/chant/codegen/json-schema";
@@ -66,6 +72,7 @@ export function parseCRDSpec(spec: CRDSpec): K8sParseResult[] {
   const properties = schema ? extractProperties(schema) : [];
   const propertyTypes = schema ? extractPropertyTypes(schema, typeName) : [];
   const status = schema ? extractStatusType(schema, typeName) : {};
+  const specSchema = schema?.properties?.spec ? toFieldSchema(schema.properties.spec) : undefined;
 
   const attributes = [
     { name: "name", tsType: "string" },
@@ -85,6 +92,10 @@ export function parseCRDSpec(spec: CRDSpec): K8sParseResult[] {
     propertyTypes: status.propertyType ? [...propertyTypes, status.propertyType] : propertyTypes,
     enums: [],
     gvk,
+    // chant #1372 — the spec's field schema, shipped in the lexicon JSON so
+    // the post-synth checks (WK8501/WK8502) can validate a custom resource
+    // the way the API server's structural schema would, before apply.
+    ...(specSchema ? { specSchema } : {}),
     // chant #1074 — the CRD declares its own plural and scope, so the
     // operation surface for a custom resource comes from the same document its
     // types do, exactly as the OpenAPI `paths` supply them for built-in kinds.
@@ -265,10 +276,12 @@ function extractStatusType(
   const statusSchema = schema.properties?.status;
   if (!statusSchema) return {};
 
-  // The `.d.ts` accessor is deliberately opaque — CRD typing lives in the
-  // lexicon JSON (the same channel `spec` uses, which is also `Record<string,
-  // unknown>` in the constructor). The rich, per-field status shape is carried
-  // by the property type below, surfaced through LSP / validation / MCP.
+  // The `.d.ts` accessor is deliberately opaque, like the constructor's
+  // `spec: Record<string, unknown>`. The writable side is typed through the
+  // lexicon JSON instead (`specSchema`, chant #1372, checked by WK8501/WK8502).
+  // Status is server-owned and never validated; the property type below only
+  // registers its name so the shape is discoverable (chant #1372 reviewed the
+  // claim that it fed LSP / validation — it did not, and does not need to).
   const attribute = { name: "status", tsType: "Record<string, unknown>" };
 
   // Opaque status (preserve-unknown or no schema) → read-only record only.
@@ -291,6 +304,59 @@ function extractStatusType(
   };
 
   return { attribute, propertyType };
+}
+
+// ── Spec field schema (chant #1372) ────────────────────────────────
+
+/**
+ * Reduce an `openAPIV3Schema` node to the compact {@link CrdFieldSchema} the
+ * lexicon JSON ships. Walks the whole tree; drops descriptions, formats,
+ * defaults and numeric bounds. `allOf`/`oneOf`/`anyOf` are not modelled — a
+ * node that relies on them with no `type` of its own comes out untyped, which
+ * the validators treat as "anything goes".
+ */
+export function toFieldSchema(node: OpenAPISchema): CrdFieldSchema {
+  const out: CrdFieldSchema = {};
+
+  if (node["x-kubernetes-int-or-string"]) {
+    out.open = true;
+    return out;
+  }
+
+  const type = node.type;
+  if (type === "string" || type === "integer" || type === "number" || type === "boolean" || type === "object" || type === "array") {
+    out.type = type;
+  } else if (node.properties) {
+    out.type = "object";
+  } else if (node.items) {
+    out.type = "array";
+  }
+
+  if (node.enum && node.enum.length > 0) {
+    out.enum = node.enum.map((v) => String(v));
+  }
+
+  if (out.type === "object") {
+    if (node.properties) {
+      const fields: Record<string, CrdFieldSchema> = {};
+      for (const [name, child] of Object.entries(node.properties)) {
+        fields[name] = toFieldSchema(child);
+      }
+      out.fields = fields;
+    }
+    if (node.required && node.required.length > 0) {
+      out.required = [...node.required];
+    }
+    if (node["x-kubernetes-preserve-unknown-fields"] || node.additionalProperties || !node.properties) {
+      out.open = true;
+    }
+  } else if (out.type === "array") {
+    if (node.items) out.items = toFieldSchema(node.items);
+  } else if (node["x-kubernetes-preserve-unknown-fields"] && !out.type) {
+    out.open = true;
+  }
+
+  return out;
 }
 
 /**

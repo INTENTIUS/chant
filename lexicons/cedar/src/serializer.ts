@@ -34,6 +34,7 @@ import type { LexiconOutput } from "@intentius/chant/lexicon-output";
 import { walkValue, type SerializerVisitor } from "@intentius/chant/serializer-walker";
 import { policyToJson, splitPolicySet, templateToJson, type PolicyJson } from "./spec/wasm";
 import { serializeDogwood } from "./dogwood/serialize";
+import { schemaEntities } from "./schema-artifact";
 import {
   conditionStrings,
   getProps,
@@ -263,10 +264,25 @@ export const cedarSerializer: Serializer = {
     // and a project holding only temporal policies still gets its files.
     const dogwood = serializeDogwood(entities);
 
-    if (policyText.length === 0 && !dogwood) return "";
+    // The project schema, as a file beside the policies (#1697). This is what
+    // turns CEDE010's parse-only advisory into validation: `findSchema` in
+    // lint/post-synth/wasm-helpers.ts reads it straight back out of `files`.
+    const schemas = schemaEntities(entities);
+
+    if (policyText.length === 0 && !dogwood && schemas.length === 0) return "";
 
     const files: Record<string, string> = {};
     const warnings: string[] = [...(dogwood?.warnings ?? [])];
+
+    for (const schema of schemas) {
+      if (files[schema.filename] !== undefined) {
+        warnings.push(
+          `cedar: schema "${schema.name}" targets ${schema.filename}, which another schema already wrote; give one of them an explicit \`filename\``,
+        );
+        continue;
+      }
+      files[schema.filename] = schema.text;
+    }
     let primary = "";
 
     if (policyText.length > 0) {

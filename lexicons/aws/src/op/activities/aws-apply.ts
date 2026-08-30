@@ -1,20 +1,29 @@
 import { readFileSync } from "node:fs";
 import { safeHeartbeat, sleep } from "@intentius/chant/op";
+import { awsDeployCapabilitiesForBody } from "../../components/cloud-executor.js";
+import { resolveEndpointOverride } from "../../api/read-client.js";
+import { ownershipStackTagsForBody } from "../../ownership.js";
 
 const DEFAULT_REGION = "us-east-1";
 const CFN_API_VERSION = "2010-05-15";
-const DEFAULT_CAPABILITIES = ["CAPABILITY_NAMED_IAM"];
 
 export interface AwsApplyArgs {
   /** Path to a built CloudFormation template (JSON/YAML). */
   templatePath: string;
   /** CloudFormation stack name — the deploy boundary. */
   stackName: string;
-  /** CFN endpoint override (e.g. Floci `http://localhost:4566`). Default: real CloudFormation. */
+  /**
+   * CFN endpoint override (e.g. Floci `http://localhost:4566`). Omitted,
+   * `AWS_ENDPOINT_URL_CLOUDFORMATION` then `AWS_ENDPOINT_URL` answer — the same
+   * rule the read client applies (#1694). With neither: real CloudFormation.
+   */
   endpoint?: string;
   /** Region (real CFN host + `Version` context). Default: `us-east-1`. */
   region?: string;
-  /** Capabilities to acknowledge. Default: `["CAPABILITY_NAMED_IAM"]`. */
+  /**
+   * Capabilities to acknowledge. Default: `CAPABILITY_NAMED_IAM`, plus
+   * `CAPABILITY_AUTO_EXPAND` when the template has a top-level `Transform` (#980).
+   */
   capabilities?: string[];
   /** Stack-settle timeout in ms. Default: `300000`. */
   timeoutMs?: number;
@@ -37,9 +46,17 @@ const defaultHttp: AwsHttp = async (url, form, signal) => {
 
 // ── Pure helpers (CFN Query protocol) ─────────────────────────────────────────
 
-/** The CloudFormation endpoint URL — the override, or the real regional host. */
-export function cfnUrl(endpoint?: string, region = DEFAULT_REGION): string {
-  return `${(endpoint ?? `https://cloudformation.${region}.amazonaws.com`).replace(/\/$/, "")}/`;
+/**
+ * The CloudFormation endpoint URL — the override, or the real regional host.
+ * `env` is what the ambient-variable fallback reads; injectable for tests.
+ */
+export function cfnUrl(
+  endpoint?: string,
+  region = DEFAULT_REGION,
+  env: Record<string, string | undefined> = process.env,
+): string {
+  const override = resolveEndpointOverride("cloudformation", endpoint, env);
+  return `${(override ?? `https://cloudformation.${region}.amazonaws.com`).replace(/\/$/, "")}/`;
 }
 
 /** A CFN Query-protocol form body: `Action` + `Version` + params. */
@@ -51,6 +68,22 @@ export function cfnForm(action: string, params: Record<string, string>): Record<
 export function capabilityParams(capabilities: string[]): Record<string, string> {
   const out: Record<string, string> = {};
   capabilities.forEach((c, i) => (out[`Capabilities.member.${i + 1}`] = c));
+  return out;
+}
+
+/**
+ * Stack tags as the CFN `Tags.member.N.Key/Value` list params (#1222). Sorted
+ * so the request is deterministic. Empty in, empty out — a template without an
+ * ownership marker adds no `Tags` parameter at all.
+ */
+export function tagParams(tags: Record<string, string>): Record<string, string> {
+  const out: Record<string, string> = {};
+  Object.keys(tags)
+    .sort()
+    .forEach((key, i) => {
+      out[`Tags.member.${i + 1}.Key`] = key;
+      out[`Tags.member.${i + 1}.Value`] = tags[key];
+    });
   return out;
 }
 
@@ -111,10 +144,10 @@ export async function waitForStackSettled(
  * CloudFormation API directly (create-or-update + poll to a settled stack),
  * targeting a local Floci emulator or real AWS by endpoint override. The direct
  * twin of `azApply`/`gcpApply`: it speaks the CloudFormation Query API over HTTP
- * rather than shelling `aws cloudformation deploy` (that CLI path is still
- * available via `nativeApply({ target: "cloudformation" })`). The stack is the
- * ownership boundary, so deletes ride CloudFormation itself — no separate prune.
- * `http` is injectable for tests.
+ * rather than shelling `aws cloudformation deploy` — and since chant #1449 it is
+ * also what `nativeApply({ target: "cloudformation" })` runs, so no CLI path
+ * remains. The stack is the ownership boundary, so deletes ride CloudFormation
+ * itself — no separate prune. `http` is injectable for tests.
  */
 export async function awsApply(
   args: AwsApplyArgs,
@@ -122,8 +155,8 @@ export async function awsApply(
   http: AwsHttp = defaultHttp,
 ): Promise<{ stackName: string; status: string; action: "created" | "updated" | "unchanged" }> {
   const url = cfnUrl(args.endpoint, args.region);
-  const capabilities = args.capabilities ?? DEFAULT_CAPABILITIES;
   const templateBody = readFileSync(args.templatePath, "utf8");
+  const capabilities = args.capabilities ?? awsDeployCapabilitiesForBody(templateBody);
   const timeoutMs = args.timeoutMs ?? 300_000;
   const intervalMs = args.intervalMs ?? 3_000;
 
@@ -133,7 +166,17 @@ export async function awsApply(
   }
   const exists = desc.status < 300;
 
-  const params = { StackName: args.stackName, TemplateBody: templateBody, ...capabilityParams(capabilities) };
+  // Stamp the template's ownership marker as the STACK's own tags (#1222):
+  // stack-level teardown verifies ownership on DescribeStacks tags, and this
+  // is the write that makes every future stack teardown-eligible. A template
+  // carrying no marker adds nothing.
+  const stackTags = ownershipStackTagsForBody(templateBody);
+  const params = {
+    StackName: args.stackName,
+    TemplateBody: templateBody,
+    ...capabilityParams(capabilities),
+    ...tagParams(stackTags),
+  };
   let action: "created" | "updated";
   if (!exists) {
     const res = await http(url, cfnForm("CreateStack", params), signal);
@@ -161,12 +204,18 @@ export async function awsApply(
   return { stackName: args.stackName, status, action };
 }
 
+/** {@link awsDelete}'s arguments: {@link AwsApplyArgs} minus the template — a
+ * delete needs no body, so teardown (#1222) can call it with a stack name
+ * alone. Op builders that thread `templatePath` through keep working; it is
+ * simply unused here. */
+export type AwsDeleteArgs = Omit<AwsApplyArgs, "templatePath"> & { templatePath?: string };
+
 /**
  * The inverse of {@link awsApply} — DeleteStack, then poll until the stack is
  * gone. Idempotent: an already-absent stack is a no-op. `http` is injectable.
  */
 export async function awsDelete(
-  args: AwsApplyArgs,
+  args: AwsDeleteArgs,
   signal?: AbortSignal,
   http: AwsHttp = defaultHttp,
 ): Promise<{ stackName: string; deleted: boolean }> {
@@ -191,4 +240,65 @@ export async function awsDelete(
     await sleep(intervalMs, signal);
   }
   throw new Error(`CloudFormation stack ${args.stackName} delete did not complete within ${timeoutMs}ms`);
+}
+
+export interface RollbackStackArgs {
+  /** CloudFormation stack name to roll back. */
+  stackName: string;
+  /** CFN endpoint override — same resolution rule as {@link AwsApplyArgs.endpoint} (#1694). */
+  endpoint?: string;
+  /** Region (real CFN host). Default: `us-east-1`. */
+  region?: string;
+  /** Stack-settle timeout in ms. Default: `300000`. */
+  timeoutMs?: number;
+  /** Poll interval in ms. Default: `3000`. */
+  intervalMs?: number;
+}
+
+/**
+ * The saga compensation for {@link awsApply} — CloudFormation `RollbackStack`
+ * via the same Query-API client, then poll until the stack settles. Returns the
+ * stack to its last known stable state after a failed update (#1449 — this
+ * replaces the Temporal lexicon exec-ing `aws cloudformation rollback-stack`).
+ *
+ * Degrades rather than crashes in two cases where there is nothing to do:
+ * an absent stack (nothing applied, nothing to revert) and a target that does
+ * not implement the action — Floci answers `UnknownAction` (#947). Both return
+ * `rolledBack: false` with a logged warning; every other API error throws,
+ * because a compensation that silently fails leaves partial state looking
+ * reverted when it isn't. `http` is injectable for tests.
+ */
+export async function rollbackStack(
+  args: RollbackStackArgs,
+  signal?: AbortSignal,
+  http: AwsHttp = defaultHttp,
+): Promise<{ stackName: string; rolledBack: boolean; status?: string }> {
+  const url = cfnUrl(args.endpoint, args.region);
+  const timeoutMs = args.timeoutMs ?? 300_000;
+  const intervalMs = args.intervalMs ?? 3_000;
+
+  const res = await http(url, cfnForm("RollbackStack", { StackName: args.stackName }), signal);
+  if (res.status >= 300) {
+    if (isStackMissing(res.text)) {
+      console.warn(`rollbackStack: stack ${args.stackName} does not exist — nothing to roll back`);
+      return { stackName: args.stackName, rolledBack: false };
+    }
+    // Local emulators (Floci) don't implement RollbackStack → `UnknownAction` (#947).
+    if (/UnknownAction|not supported/i.test(res.text)) {
+      console.warn(
+        `rollbackStack: the target doesn't support RollbackStack (a local emulator such as Floci) — skipping automated rollback of ${args.stackName}`,
+      );
+      return { stackName: args.stackName, rolledBack: false };
+    }
+    throw new Error(`CloudFormation RollbackStack failed (${res.status}): ${cfnErrorMessage(res.text) ?? res.text}`);
+  }
+
+  const status = await waitForStackSettled(url, args.stackName, http, { timeoutMs, intervalMs }, signal);
+  // A settled rollback ends in `ROLLBACK_COMPLETE`/`UPDATE_ROLLBACK_COMPLETE` —
+  // classified a failure by the deploy-path matcher, but the success state here.
+  if (!/ROLLBACK_COMPLETE$/.test(status)) {
+    throw new Error(`CloudFormation stack ${args.stackName} rollback → ${status}`);
+  }
+  console.log(`rolled back: ${args.stackName} (${status}) [${url}]`);
+  return { stackName: args.stackName, rolledBack: true, status };
 }

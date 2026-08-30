@@ -107,7 +107,7 @@ describe("gitlabSerializer.serialize", () => {
     entities.set("jobA", new MockJob({ stage: "build", script: ["build1"] }));
     entities.set("jobB", new MockJob({ stage: "build", script: ["build2"] }));
 
-    const output = gitlabSerializer.serialize(entities);
+    const output = gitlabSerializer.serialize(entities) as string;
     // "build" should appear only once in the stages list
     const stagesSection = output.split("\n\n")[0]; // stages is the first section
     const stagesMatch = stagesSection.match(/- build/g);

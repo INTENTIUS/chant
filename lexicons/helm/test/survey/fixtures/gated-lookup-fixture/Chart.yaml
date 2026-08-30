@@ -1,0 +1,13 @@
+apiVersion: v2
+name: gated-lookup-fixture
+description: >-
+  Survey fixture (#1234): the kube-prometheus-stack shape. A bundled subchart
+  carries a control-flow `lookup` behind a values gate the defaults leave
+  disabled — pinnable with a recorded conditional hazard, unpinnable the
+  moment the gate is flipped on. Static-refuse costs this chart;
+  values-aware reachability recovers it.
+type: application
+version: 0.1.0
+dependencies:
+  - name: kid
+    version: 0.1.0

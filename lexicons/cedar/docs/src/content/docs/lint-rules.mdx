@@ -1,10 +1,13 @@
 ---
 title: "Lint Rules"
 description: "The bare-permit wall, schema-absent references, and cross-domain checks."
+diataxis: reference
 ---
 
 {/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-cedar` — DO NOT EDIT.
-    Edit lexicons/cedar/src/codegen/docs.ts instead; changes here are overwritten. */}
+    Edit lexicons/cedar/docs/pages/lint-rules.mdx instead; changes here are overwritten. */}
+
+
 Rules under the `CED` prefix. The complete generated table is on [All Rules](../rules/); this page is the reasoning.
 
 ## The two engines, and why there is only one
@@ -65,7 +68,7 @@ halves in the same build, which is the arrangement chant already has.
 ## Coverage, two ways
 
 ```bash
-npx chant coverage --lexicon cedar     # schema -> generated artifacts
+npx chant cedar coverage               # schema -> generated artifacts
 ```
 
 The MCP tool asks the other half:

@@ -88,9 +88,9 @@ describe("runBuild --components --generate (chant #1108 build-time parameters)",
       undefined,
       [{ name: "tier", value: "light", source: "default" }],
     );
-    // A parameter at its default collapses into the count line now; the
-    // provenance forwarded above is where its value is asserted.
-    expect(stderr.join("\n")).toContain("at their defaults");
+    // The echo is a one-line count (#1424); the provenance forwarded above
+    // is where the value is asserted.
+    expect(stderr.join("\n")).toContain("1 build parameter resolved (1 default)");
     vi.restoreAllMocks();
   });
 

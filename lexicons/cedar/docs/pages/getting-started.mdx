@@ -1,0 +1,87 @@
+---
+title: "Getting Started"
+description: "Scaffold, generate, build — in that order."
+diataxis: tutorial
+---
+
+Three steps, in this order. The second one is the one people skip.
+
+## 1. Scaffold
+
+```bash
+npx chant init --lexicon cedar --template default my-authz
+cd my-authz && npm install
+```
+
+Three templates ship: `default` (a permit/forbid pair), `avp-embedding` (a
+multi-tenant store bound for Verified Permissions), and `gateway-policy-set`
+(API routes as entities, behind a deny floor). Each writes a
+`schema.cedarschema` at the project root and a `src/policies.ts` typed
+against it.
+
+## 2. Generate
+
+```bash
+npx chant cedar generate
+```
+
+This is not optional and it is not a one-time setup step. The classes and
+action constants `policies.ts` imports **do not exist** until generate has read
+your schema. Re-run it whenever the schema changes.
+
+The output lands in **your project**, at `src/generated/cedar/` by default,
+and `src/policies.ts` imports from there:
+
+```typescript
+import { Policy, ReadAction, WriteAction } from "./generated/cedar";
+```
+
+It is your artifact, not the package's. It never goes under `node_modules`,
+so it survives `npm ci`; commit it, or run `chant cedar generate` in CI before
+`chant build`. `cedar.outDir` in `chant.config.ts` moves it (see
+[Schema](../schema/)).
+
+What it produces, per declaration:
+
+| Schema | Generated |
+|---|---|
+| `entity Document in [Folder] = { … }` | `Document`, `DocumentAttributes`, `DocumentUid` |
+| `action read appliesTo { … }` | `ReadAction`, `ReadContext` |
+| — | `Policy`, `EntityTypeName`, `ActionUid`, `PolicyScope`, `ALL_ACTIONS`, `ALL_ENTITY_TYPES` |
+
+`@intentius/chant-lexicon-cedar` itself also exports a `Policy` and the
+classes for the schema it bundles. Those describe the package's sample
+entity model, not yours, which is why the scaffold imports from
+`./generated/cedar`.
+
+## 3. Build
+
+```bash
+npx chant build
+```
+
+Three artifacts land in `dist/`: the `.cedar` text, `policies.cedar.json`,
+and your `schema.cedarschema`. The schema is emitted beside the policies so
+every policy set is validated against it by `cedar-wasm` — the real Cedar
+validator, running in-process. No CLI on PATH, no Docker. A project with no
+schema of its own gets a parse-only check and CEDE010 says so.
+
+## Then
+
+```bash
+npx chant cedar coverage   # is every schema declaration generated?
+```
+
+The MCP tool `cedar:coverage` answers the harder question — which schema
+declarations the *policy set* actually reaches. See [Lint Rules](../lint-rules/).
+
+## The example projects
+
+Two ship with the lexicon:
+
+- `examples/getting-started` — one permit, one forbid, against the bundled default schema.
+- `examples/basic-policies` — a project-local `schema.cedarschema` and a four-policy set.
+
+Both are exercised in CI: the emitted `.cedar` text is handed straight to
+`cedar-wasm`, so a policy set chant is happy with but Cedar rejects fails the
+build rather than the deploy.

@@ -69,3 +69,33 @@ export function auditDocsReachability(lexiconDir: string): DocsReachability {
 
   return { hasSite: true, pages, unreachable };
 }
+
+export interface DocsClassification {
+  /** Whether this lexicon has a docs/pages/ directory at all. */
+  hasPages: boolean;
+  /** Authored page files under docs/pages/ that lack a valid `diataxis` field. */
+  unclassified: string[];
+}
+
+const QUADRANTS = new Set(["tutorial", "how-to", "reference", "explanation"]);
+
+/**
+ * Audit docs/pages/ for authored pages with no Diátaxis quadrant (#1731).
+ *
+ * The docs pipeline throws on the same condition, so this is the cheap
+ * pre-flight that reports every offender at once instead of the first one.
+ */
+export function auditDocsClassification(lexiconDir: string): DocsClassification {
+  const pagesDir = join(lexiconDir, "docs", "pages");
+  if (!existsSync(pagesDir)) return { hasPages: false, unclassified: [] };
+  const unclassified: string[] = [];
+  for (const file of readdirSync(pagesDir).sort()) {
+    if (!file.endsWith(".mdx") && !file.endsWith(".md")) continue;
+    const text = readFileSync(join(pagesDir, file), "utf-8");
+    const end = text.startsWith("---\n") ? text.indexOf("\n---", 4) : -1;
+    const fm = end === -1 ? "" : text.slice(4, end);
+    const value = fm.match(/^diataxis:\s*(.+)$/m)?.[1].trim();
+    if (!value || !QUADRANTS.has(value)) unclassified.push(file);
+  }
+  return { hasPages: true, unclassified };
+}

@@ -4,14 +4,14 @@
 
 import { describe, expect, it } from "vitest";
 import { temporalSerializer } from "./serializer";
-import { DECLARABLE_MARKER } from "@intentius/chant/declarable";
+import { DECLARABLE_MARKER, type Declarable } from "@intentius/chant/declarable";
 
 // ── Test helpers ───────────────────────────────────────────────────
 
 function makeEntity(
   entityType: string,
   props: Record<string, unknown>,
-): Record<string, unknown> {
+): Declarable {
   return {
     [DECLARABLE_MARKER]: true,
     entityType,
@@ -19,22 +19,22 @@ function makeEntity(
     kind: "resource",
     props,
     attributes: {},
-  };
+  } as unknown as Declarable;
 }
 
-function makeServer(props: Record<string, unknown> = {}): [string, Record<string, unknown>] {
+function makeServer(props: Record<string, unknown> = {}): [string, Declarable] {
   return ["server", makeEntity("Temporal::Server", props)];
 }
 
-function makeNamespace(name: string, props: Record<string, unknown> = {}): [string, Record<string, unknown>] {
+function makeNamespace(name: string, props: Record<string, unknown> = {}): [string, Declarable] {
   return [name, makeEntity("Temporal::Namespace", { name, ...props })];
 }
 
-function makeSearchAttr(name: string, props: Record<string, unknown> = {}): [string, Record<string, unknown>] {
+function makeSearchAttr(name: string, props: Record<string, unknown> = {}): [string, Declarable] {
   return [name, makeEntity("Temporal::SearchAttribute", { name, type: "Text", ...props })];
 }
 
-function makeSchedule(name: string, props: Record<string, unknown> = {}): [string, Record<string, unknown>] {
+function makeSchedule(name: string, props: Record<string, unknown> = {}): [string, Declarable] {
   return [name, makeEntity("Temporal::Schedule", {
     scheduleId: name,
     spec: { intervals: [{ every: "1d" }] },
@@ -345,7 +345,7 @@ describe("temporal serializer", () => {
 
   // ── Temporal::Op ──────────────────────────────────────────────────
 
-  function makeOp(name: string, phases: unknown[] = []): [string, Record<string, unknown>] {
+  function makeOp(name: string, phases: unknown[] = []): [string, Declarable] {
     return [name, makeEntity("Temporal::Op", { name, overview: `${name} op`, phases })];
   }
 

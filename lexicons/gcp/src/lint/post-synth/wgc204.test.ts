@@ -1,10 +1,9 @@
 import { describe, test, expect } from "vitest";
+import { makePostSynthCtx } from "@intentius/chant-test-utils";
 import { wgc204 } from "./wgc204";
 
 function makeCtx(yaml: string) {
-  return {
-    outputs: new Map([["gcp", yaml]]),
-  };
+  return makePostSynthCtx("gcp", yaml);
 }
 
 describe("WGC204: missing shielded VM config", () => {

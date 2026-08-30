@@ -172,7 +172,8 @@ export interface ImageRef {
   source: "container" | "service" | "step";
 }
 
-function parseDoc(yaml: string): Record<string, unknown> | undefined {
+/** Parse a workflow YAML into a structured document, tolerant of parse errors. */
+export function parseDoc(yaml: string): Record<string, unknown> | undefined {
   try {
     return parseYAML(yaml);
   } catch {
@@ -180,7 +181,8 @@ function parseDoc(yaml: string): Record<string, unknown> | undefined {
   }
 }
 
-function jobEntries(yaml: string): Array<[string, Record<string, unknown>]> {
+/** Every job in the workflow as `[name, rawJobObject]`, via the structural parser. */
+export function jobEntries(yaml: string): Array<[string, Record<string, unknown>]> {
   const doc = parseDoc(yaml);
   const jobs = doc?.jobs;
   if (!jobs || typeof jobs !== "object") return [];
@@ -189,6 +191,26 @@ function jobEntries(yaml: string): Array<[string, Record<string, unknown>]> {
     if (val && typeof val === "object" && !Array.isArray(val)) {
       out.push([name, val as Record<string, unknown>]);
     }
+  }
+  return out;
+}
+
+/**
+ * Every step object (raw, as parsed from YAML — `uses`, `with`, `id`, `run`,
+ * `env`, etc.) grouped by owning job. Unlike {@link extractJobs} (which only
+ * lifts `uses`/`run`/`name`), this hands back each step's full object so a
+ * check can read arbitrary keys (`with:` inputs, `id:`) without growing a new
+ * bespoke regex extractor per key. See GHA060.
+ */
+export function extractStepsByJob(yaml: string): Map<string, Array<Record<string, unknown>>> {
+  const out = new Map<string, Array<Record<string, unknown>>>();
+  for (const [job, jobObj] of jobEntries(yaml)) {
+    const steps = jobObj.steps;
+    if (!Array.isArray(steps)) continue;
+    out.set(
+      job,
+      steps.filter((s): s is Record<string, unknown> => !!s && typeof s === "object" && !Array.isArray(s)),
+    );
   }
   return out;
 }
@@ -460,6 +482,19 @@ export function grantsWrite(perms: PermissionsValue): boolean {
  */
 export function stripUsesComment(uses: string): string {
   return uses.replace(/\s+#.*$/, "").trim();
+}
+
+/**
+ * Extract a `uses:` value's trailing inline comment, if any — the
+ * human-readable version label reviewers rely on when a ref is pinned to an
+ * opaque commit SHA (e.g. `actions/setup-node@1a2b…9a0b # v4.0.2` → `v4.0.2`).
+ * Returns undefined for no comment or an empty (`# ` with nothing after it)
+ * one, since both mean "no annotation" to a reviewer. See GHA059.
+ */
+export function extractUsesComment(rawUses: string): string | undefined {
+  const m = rawUses.match(/\s+#\s*(.*)$/);
+  const comment = m?.[1]?.trim();
+  return comment ? comment : undefined;
 }
 
 export function parseActionUses(rawUses: string): { owner: string; repo: string; slug: string; gitRef: string } | undefined {

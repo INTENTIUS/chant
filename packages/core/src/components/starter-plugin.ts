@@ -41,6 +41,10 @@ import {
   waitEndpointCapability,
   healthGateCapability,
   shellCapability,
+  ensureSecretCapability,
+  wranglerDeployCapability,
+  wranglerVersionsPromoteCapability,
+  r2SyncCapability,
 } from "./verbs/index";
 import { ownPackageVersion, type CapabilityPlugin } from "./capability-plugin";
 
@@ -64,7 +68,16 @@ export const STARTER_VERB_FAMILIES = {
   // cloud-specific waits (`wait-for-stack`/`wait-steady-state`/`wait-job`) are
   // contributed by the relevant lexicon (aws) — see docs/components/cloud-boundary.
   waitVerify: ["wait-cluster-healthy", "wait-endpoint", "health-gate"],
+  // generated-once secret materialization (#1829, epic #1365): read-then-write,
+  // present means done; the k8s store adapter is #1830.
+  secrets: ["ensure-secret"],
   escapeHatch: ["shell"],
+  // The Cloudflare Workers apply leaves (#1293, epic #1296) — placed in core
+  // rather than a cloudflare lexicon (decided explicitly, see ./verbs/wrangler.ts's
+  // module doc): the epic cedes the Workers plane to `wrangler` entirely, and
+  // there is no cloudflare lexicon for these three verbs to live in. Revisit
+  // if/when the zone-plane lexicon (#1294) lands.
+  cloudflare: ["wrangler-deploy", "wrangler-versions-promote", "r2-sync"],
 } as const;
 
 /**
@@ -88,7 +101,11 @@ function starterCapabilities(): Array<Capability<never, unknown>> {
     waitClusterHealthyCapability,
     waitEndpointCapability,
     healthGateCapability,
+    ensureSecretCapability,
     shellCapability,
+    wranglerDeployCapability,
+    wranglerVersionsPromoteCapability,
+    r2SyncCapability,
   ] as unknown as Array<Capability<never, unknown>>;
 }
 
@@ -100,8 +117,11 @@ function starterCapabilities(): Array<Capability<never, unknown>> {
 export const starterCapabilityPlugin: CapabilityPlugin = {
   name: "starter",
   // The core package's own version (#1505) — lockstep releases bump it, so a
-  // literal here would go stale every `just release`.
-  version: ownPackageVersion(import.meta.url),
+  // literal here would go stale every `just release`. A getter, so the
+  // package.json read happens on first access rather than at import time.
+  get version(): string {
+    return ownPackageVersion(import.meta.url);
+  },
   capabilities: starterCapabilities,
   families: () => STARTER_VERB_FAMILIES,
 };

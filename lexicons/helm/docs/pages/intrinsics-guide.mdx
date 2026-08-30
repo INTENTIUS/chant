@@ -1,0 +1,69 @@
+---
+title: "Intrinsics Reference"
+description: "All Helm template intrinsics and how they map to Go template expressions"
+diataxis: reference
+---
+
+## Values proxy
+
+```typescript
+import { values } from "@intentius/chant-lexicon-helm";
+
+values.replicaCount           // {{ .Values.replicaCount }}
+values.image.repository       // {{ .Values.image.repository }}
+values.x.pipe("upper")        // {{ .Values.x | upper }}
+```
+
+## Built-in objects
+
+```typescript
+import { Release, ChartRef } from "@intentius/chant-lexicon-helm";
+
+Release.Name         // {{ .Release.Name }}
+Release.Namespace    // {{ .Release.Namespace }}
+Release.IsUpgrade    // {{ .Release.IsUpgrade }}
+ChartRef.Name        // {{ .Chart.Name }}
+ChartRef.Version     // {{ .Chart.Version }}
+```
+
+## Template functions
+
+| Function | Output |
+|----------|--------|
+| `include("name")` | `{{ include "name" . }}` |
+| `required("msg", values.x)` | `{{ required "msg" .Values.x }}` |
+| `helmDefault("val", values.x)` | `{{ default "val" .Values.x }}` |
+| `toYaml(values.x)` | `{{ toYaml .Values.x }}` |
+| `toYaml(values.x, 12)` | `{{ toYaml .Values.x \| nindent 12 }}` |
+| `quote(values.x)` | `{{ .Values.x \| quote }}` |
+| `printf("%s:%s", a, b)` | `{{ printf "%s:%s" a b }}` |
+| `tpl(values.x)` | `{{ tpl .Values.x . }}` |
+| `lookup("v1", "Secret", "ns", "name")` | `{{ lookup "v1" "Secret" "ns" "name" }}` |
+
+## Control flow
+
+```typescript
+import { If, Range, With, values } from "@intentius/chant-lexicon-helm";
+
+// Conditional resource
+export const ingress = If(values.ingress.enabled, new Ingress({ ... }));
+
+// Conditional value
+const image = If(values.image.tag, printf("%s:%s", values.image.repo, values.image.tag));
+```
+
+## Resource ordering
+
+| Function | Output |
+|----------|--------|
+| `withOrder(5)` | `helm.sh/hook: pre-install,pre-upgrade` + `helm.sh/hook-weight: "5"` |
+| `argoWave(2)` | `argocd.argoproj.io/sync-wave: "2"` |
+
+```typescript
+import { withOrder, argoWave } from "@intentius/chant-lexicon-helm";
+
+const job = new Job({
+  metadata: { annotations: { ...withOrder(-5) } },
+  // ...
+});
+```

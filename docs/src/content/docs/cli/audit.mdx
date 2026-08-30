@@ -1,6 +1,7 @@
 ---
 title: "chant audit"
 description: Audit an existing repository's CI/CD pipelines for security issues
+diataxis: reference
 ---
 
 ## Synopsis
@@ -12,7 +13,7 @@ chant audit <repo-url> [flags]
 
 ## Description
 
-`chant audit` runs chant's security, correctness, and best-practice rules against an **existing** repository's config — CI/CD pipelines plus IaC and manifests (Kubernetes, Helm, Docker, CloudFormation, ARM, Config Connector) — including files chant didn't generate. Point it at a local directory or a public repo URL and it produces a tiered report grouped by category, with findings worth a pull request split from lower-priority hygiene.
+`chant audit` runs chant's security, correctness, and best-practice rules against an **existing** repository's config — CI/CD pipelines plus IaC and manifests (Kubernetes, Helm, Docker, CloudFormation, ARM, Config Connector, fountain) — including files chant didn't generate. Point it at a local directory or a public repo URL and it produces a tiered report grouped by category, with findings worth a pull request split from lower-priority hygiene.
 
 It is read-only and requires no chant project — it reads the repo's CI files directly and runs the same post-synth security checks the build pipeline uses (GitHub Actions `GHA*`, GitLab CI `WGL*`; Forgejo workflows are GitHub-dialect, so the GitHub tier applies to them too).
 
@@ -27,6 +28,9 @@ What it scans:
 - Azure ARM — `.json` deployment templates (`$schema` with `deploymentTemplate` + `resources`), for a local path — runs the `AZR*` checks (public blob access, missing encryption/TDE, HTTPS-only, TLS 1.2, …)
 - GCP Config Connector — `*.{yml,yaml}` with a `cnrm.cloud.google.com` apiVersion, for a local path — runs the `WGC*` checks (public IAM, open firewalls, public Cloud SQL, missing encryption, Workload Identity, …)
 - Helm charts — any directory with a `Chart.yaml`, for a local path — runs the `WHM*` checks (privileged/root containers, `:latest` images, inline Secrets, chart structure, …). The whole chart is audited as one unit.
+- fountain manifests — `*.{yml,yaml}` with `apiVersion: fountain.dev/v1` (`fountain apply` files, single or multi-document), for a local path — runs the `FTN*` checks (unrestricted networking, credential-shaped `env_vars`, vault shadowing, unresolvable `${VAR}` references, …). The documents are parsed back into the entity graph, so these are the same rules `chant build` runs — and a fountain document is never misread as a Kubernetes manifest.
+- Secrets & credentials (`SEC*`) — every file above, plus `.env*`, `.pem`, `.key`, `.crt`, `.cer`, `.pfx`, and `.p12` files, are scanned for likely secrets regardless of which lexicons are installed. See [Secrets & credentials detection](#secrets--credentials-detection) below.
+- Wrangler config (`WRG*`) — `wrangler.toml`, Cloudflare Workers' native deploy config. TOML is not a format any lexicon parses, so this is audit-only (#446): no lexicon package to install, no authoring surface — chant never writes Wrangler config, it only reads it for these checks. Runs regardless of which lexicons are installed, the same as `SEC*`. See [Wrangler config detection](#wrangler-config-detection) below.
 
 Every rule a finding cites links to its entry in the [audit rules reference](/chant/lint-rules/audit-rules/).
 
@@ -106,6 +110,7 @@ For tooling, `--format json` emits a **versioned** envelope (stable contract). T
 {
   "schemaVersion": "1.0",
   "tool": { "name": "chant-audit", "version": "0.7.0" },
+  "status": "ok",
   "snapshot": { "target": "...", "host": "github.com", "repo": "owner/repo", "commit": "…", "files": ["..."], "generatedAt": "…", "toolVersion": "0.7.0" },
   "summary": { "total": 0, "quickWin": 0, "needsReview": 0, "reportOnly": 0, "errors": 0, "warnings": 0, "infos": 0, "security": 0, "correctness": 0, "bestPractice": 0 },
   "findings": [
@@ -121,7 +126,28 @@ For tooling, `--format json` emits a **versioned** envelope (stable contract). T
 - Additive changes (new fields) keep the same `schemaVersion`; renamed or removed fields bump it.
 - Consumers should check the **major** version and **ignore unknown fields**.
 - The `snapshot` anchors findings to an exact commit for reproducibility.
+- `status` is `"ok"` when at least one lexicon ran, `"no-lexicons"` when none could (see [Prerequisites](#prerequisites)). Check it before trusting an empty `findings`. An optional `unclaimed` list names files that wanted a lexicon that is not installed.
 - For maximum stability, integrate via `--format sarif` — an industry-standard, independently-versioned format.
+
+### SARIF
+
+`--format sarif` emits a [SARIF 2.1.0](https://docs.oasis-open.org/sarif/sarif/v2.1.0/sarif-v2.1.0.html) document — the interchange format most CI platforms and code-review surfaces (GitHub code scanning, GitLab, Azure DevOps, many SAST/IDE viewers) render as inline, file-and-line annotations instead of scraped text:
+
+- Each `run.tool.driver.rules[]` entry carries the finding's `helpUri` (the same authority citation as the other formats) plus a `help.text` with the catalog's remediation guidance, and a `properties.category`/`properties.dimension` pair (`security`, `correctness`, or `best-practice`) for rule-level triage.
+- Each `run.results[]` entry carries `properties.tier` (`merge-worthy` or `report-only`) alongside the standard `ruleId`, `level`, `message`, and `locations` (file + line, when known).
+- Secrets findings (`SEC001`–`SEC010`) redact the same as every other format — a result's `message.text` never carries the matched value, only the rule id, kind, location, and fingerprint.
+
+Upload it to GitHub code scanning from a workflow:
+
+```yaml
+- name: Audit
+  run: npx @intentius/chant audit . --format sarif --output audit.sarif
+
+- name: Upload to code scanning
+  uses: github/codeql-action/upload-sarif@v3
+  with:
+    sarif_file: audit.sarif
+```
 
 ## Tokens
 
@@ -150,9 +176,79 @@ npm i @intentius/chant-lexicon-docker   # Dockerfiles / Compose
 npm i @intentius/chant-lexicon-aws      # CloudFormation
 npm i @intentius/chant-lexicon-azure    # ARM templates
 npm i @intentius/chant-lexicon-gcp      # Config Connector
+npm i @intentius/chant-lexicon-fountain # fountain manifests
 ```
 
-If a needed lexicon package is missing, the command tells you which package to install — either as a friendly error (CI files, detected by path) or, for content-detected file types, as a note when nothing was found.
+Without a project to install into, put every lexicon you need on the same `npx` path:
+
+```bash
+npx -p @intentius/chant -p @intentius/chant-lexicon-github -p @intentius/chant-lexicon-k8s chant audit .
+```
+
+A bare `npx @intentius/chant audit .` has no lexicons and cannot detect anything. It does not report clean in that case. It says it had nothing to look with, lists each file that looked like it wanted a lexicon (by path, filename, and a few content markers), prints the `npx -p ...` line that covers exactly those files, and exits with code 2:
+
+```
+chant audit had nothing to look with: no audit lexicon is installed, so nothing under . was inspected.
+This is not a clean result. Detection and checks live in the lexicon packages.
+
+Files that wanted a lexicon:
+  .github/workflows/ci.yml  ->  github
+  Dockerfile  ->  docker
+  infra/main.tf  ->  terraform (not audited; see chant carve)
+  k8s/deploy.yaml  ->  k8s
+
+Run it with the lexicons those files need:
+  npx -p @intentius/chant -p @intentius/chant-lexicon-github -p @intentius/chant-lexicon-docker -p @intentius/chant-lexicon-k8s chant audit .
+```
+
+With `--json` the same run emits `"status": "no-lexicons"` plus `unclaimed`, `missingLexicons`, and `install` fields, and no `findings`.
+
+When some lexicons are installed and files on disk look like they belong to one that is not, the report leads with a one-line note naming the skipped files and the `npm i` to fix it, and `--json` carries them in `unclaimed`. Terraform (`*.tf`) is listed the same way so you know the audit never reads HCL; see [the carve-out tutorial](/chant/tutorials/terraform-carve-out/) for that path.
+
+If a lexicon package is present for detection but its checks fail to load, the command surfaces that as an error naming the package.
+
+## Secrets & credentials detection
+
+The `SEC*` rules (see the [rules reference](/chant/lint-rules/audit-rules/)) scan the raw text of every scanned file for likely credentials — independent of lexicon, so they run even for file types no installed lexicon claims. Two layers:
+
+- **Pattern detectors** for well-known credential shapes: `SEC001` AWS access key ID, `SEC002` AWS secret access key, `SEC003` GitHub token, `SEC004` Slack token, `SEC005` Google API key, `SEC006` Stripe live secret key, `SEC007` PEM private key block, `SEC008` bearer/authorization token, `SEC009` credentials embedded in a connection string (`scheme://user:pass@host`).
+- **`SEC010`, a high-entropy heuristic** — a catch-all for a random-looking token (real character-class diversity, not a pure-hex run like a git SHA) that doesn't match a known shape. Its entropy threshold defaults to a conservative `4.0` bits/char and is tunable via `.chant-audit.json` (below).
+
+**Redaction is unconditional.** A secrets finding's message, JSON, SARIF, and HTML report output carry only the rule id, the kind of secret, the file/line location, and a non-reversible fingerprint of the value — never the matched value itself.
+
+### Suppressing a secrets finding
+
+Two ways, matching the other false-positive escape hatches in the tool:
+
+- **Inline marker** — a comment containing `chant-audit-ignore` on the flagged line (or the line immediately above it, for a PEM block whose `-----BEGIN…-----` line can't carry a trailing comment) suppresses every secrets finding on that line. Scope it to specific rules with `chant-audit-ignore: SEC001,SEC010`; bare `chant-audit-ignore` suppresses all of them.
+
+  ```yaml
+  # chant-audit-ignore: SEC010
+  fixture_token: "not-a-real-secret-just-looks-random-9f3k2"
+  ```
+
+- **Config allowlist** — a `.chant-audit.json` at the audited root:
+
+  ```json
+  {
+    "secrets": {
+      "entropyThreshold": 4.5,
+      "allow": [
+        { "ruleId": "SEC010", "file": "fixtures/example.env", "fingerprint": "a1b2c3d4e5f6a1b2" }
+      ]
+    }
+  }
+  ```
+
+  Copy the `fingerprint` straight from the finding's message or JSON output — it's a hash of the value, so allowlisting a false positive never means writing the secret into the config. An allow entry needs `ruleId` and/or `fingerprint`; `file` alone never blanket-suppresses everything in a file.
+
+## Wrangler config detection
+
+The `WRG*` rules (see the [rules reference](/chant/lint-rules/audit-rules/)) read `wrangler.toml` — parsed with a small dependency-free TOML parser built for this (`packages/core/src/toml.ts`), not a full spec implementation, but enough for real deploy configs (tables, arrays of tables, dotted/nested `[env.<name>]` blocks, inline tables). Like `SEC*`, this runs independent of lexicon — it does not need any `@intentius/chant-lexicon-*` package installed, since Wrangler config is audit-only: chant has no authoring surface or serializer for it.
+
+Checks cover: a production-named environment exposed on the public `*.workers.dev` subdomain (`WRG001`), a credential-shaped key committed in `[vars]` instead of `wrangler secret` (`WRG002`), observability explicitly disabled (`WRG003`), an unscoped wildcard route matching every zone on the account (`WRG004`), a non-production environment sharing a KV/R2/D1 binding id with production (`WRG005`), and static assets served from the project root (`WRG006`).
+
+A file that fails to parse (or isn't found) contributes no findings rather than failing the audit — same tolerance as the rest of the engine.
 
 ## Usage
 
@@ -185,3 +281,5 @@ chant audit . --tier merge-worthy --json --fail-on merge-worthy
 | `none` (default) | never (read-only) |
 | `merge-worthy` | any merge-worthy finding exists |
 | `warning` | any error- or warning-severity finding exists |
+
+Independent of `--fail-on`, the command exits 2 when no audit lexicon is installed (nothing was inspected, see [Prerequisites](#prerequisites)) and 1 on a hard failure such as an unreachable repo or a missing path.

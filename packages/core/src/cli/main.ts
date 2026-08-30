@@ -23,12 +23,14 @@ import { runCarveAdvise, runCarveUnknown } from "./handlers/carve";
 import { runCarveEmit } from "./handlers/carve-emit";
 import { runCarveBridge } from "./handlers/carve-bridge";
 import { runCarveApply } from "./handlers/carve-apply";
-import { runLifecycleSnapshot, runLifecycleShow, runLifecycleDiff, runLifecycleRollback, runLifecyclePlan, runLifecycleAffected, runLifecycleLog, runLifecycleUnknown } from "./handlers/lifecycle";
-import { runComponentsStatus, runComponentsReleaseRecord, runComponentsUnknown } from "./handlers/components";
+import { runLifecycleSnapshot, runLifecycleShow, runLifecycleDiff, runLifecycleRollback, runLifecyclePlan, runLifecycleAffected, runLifecycleLog, runLifecycleTeardown, runLifecycleUnknown } from "./handlers/lifecycle";
+import { runComponentsStatus, runComponentsReleaseRecord, runComponentsExport, runComponentsUnknown } from "./handlers/components";
+import { runScenarioCheck, runScenarioUnknown } from "./handlers/scenario";
 import { runGraph } from "./handlers/graph";
 import { runExplain } from "./handlers/explain";
 import { runSearch } from "./handlers/search";
 import { runOp, runOpList, runOpStatus, runOpSignal, runOpCancel, runOpLog } from "./handlers/run";
+import { runOperator, runOperatorStatus, runApprove } from "./handlers/operator";
 import { runEmulator } from "./handlers/emulator";
 import { splitJoinedFlags, dispatchCommandGroup, collectCommandGroups, formatCommandGroupsHelp, type CommandGroup } from "./command-group";
 import type { LexiconPlugin } from "../lexicon";
@@ -78,6 +80,12 @@ const BOOLEAN_FLAGS = new Set([
   "--fold",
   "--no-fold",
   "--sandbox",
+  "--yes",
+  "--confirm-prod",
+  "--once",
+  "--check-live",
+  "--check-snapshot",
+  "--fail-on-drift",
 ]);
 
 /**
@@ -228,6 +236,10 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.emit = args[++i];
     } else if (arg === "--dry-run") {
       result.dryRun = true;
+    } else if (arg === "--yes") {
+      result.yes = true;
+    } else if (arg === "--confirm-prod") {
+      result.confirmProd = true;
     } else if (arg === "--strict") {
       result.strict = true;
     } else if (arg === "--validate") {
@@ -296,6 +308,12 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.at = args[++i];
     } else if (arg === "--ambient") {
       result.ambient = true;
+    } else if (arg === "--check-live") {
+      result.checkLive = true;
+    } else if (arg === "--check-snapshot") {
+      result.checkSnapshot = true;
+    } else if (arg === "--fail-on-drift") {
+      result.failOnDrift = true;
     } else if (arg === "--run-examples") {
       result.runExamples = true;
     } else if (arg === "--pinned-digest") {
@@ -328,6 +346,17 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.fold = false;
     } else if (arg === "--sandbox") {
       result.sandbox = true;
+    } else if (arg === "--fold-rank") {
+      // chant #1083 — same context-sensitive shape as --report above:
+      // `--fold-rank` alone prints the ranked-blocker report; `--fold-rank
+      // <path>` ALSO writes the Brendan Gregg collapsed-format export there.
+      const next = args[i + 1];
+      if (next && !next.startsWith("-")) {
+        result.foldRankCollapsedFile = next;
+        i++;
+      } else {
+        result.foldRank = true;
+      }
     } else if (arg === "--param") {
       // chant #1118/#1127 — `--param name=value` (space-separated) and
       // `--param=name=value` (joined, split above at its first `=` into flag
@@ -341,6 +370,14 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.paramsFile = args[++i];
     } else if (arg === "--projection") {
       result.projection = args[++i];
+    } else if (arg === "--interval") {
+      result.interval = args[++i];
+    } else if (arg === "--lease-ttl") {
+      result.leaseTtl = args[++i];
+    } else if (arg === "--once") {
+      result.once = true;
+    } else if (arg === "--note") {
+      result.note = args[++i];
     } else if (arg.startsWith("--")) {
       // chant #1127 — every recognized flag is matched above; anything left
       // starting with `--` is unrecognized, whether it arrived bare
@@ -456,6 +493,24 @@ Ops:
                         consumer to render live wave/component/phase/step
                         progress instead of tailing raw logs (additive; run
                         semantics/exit code unchanged)
+  operator               Run scheduled ticks for discovered ConvergeOps
+                        locally, no Temporal (#1485): acquire/renew a per-op
+                        lease (git ref CAS), tick on --interval, record every
+                        result as a ledger fact. --env <env> scopes to one
+                        environment; --interval <dur> (default 60s) and
+                        --lease-ttl <dur> (default 5m) tune cadence; --once
+                        runs a single round and exits (cron/systemd-timer/
+                        CronJob invokers use this instead of the daemon)
+  operator status        Last tick, outcomes, and pending gates per
+                        ConvergeOp, read from the chant/lifecycle orphan
+                        branch alone — no daemon needs to be running
+                        (--env <env>, --json)
+  approve <op> <gate>    Record a gate's out-of-band resolution fact
+                        (--actor <name>, --note <text>) — the durable
+                        counterpart to a converge tick's gate-as-fact
+                        outcome; see the pending-gates list in operator
+                        status. Does not itself unblock the gated op's local
+                        dispatch (re-run --temporal, or merge its PR)
 
   graph                 Show Op dependency graph (--stacks for cross-stack order,
                         --format ir|mermaid|dot|layout for the lint-gated graph IR,
@@ -484,7 +539,17 @@ Lifecycle (alias: lc):
   lifecycle plan <env>      Typed change set (create/update/delete/adopt) vs live
   lifecycle affected        Stacks a change affects (--base <ref> [--include-dependents])
                             --json: emit the ChangeSet as JSON
+  lifecycle teardown <env>  Plan what deleting the environment would remove —
+                            marker-scoped (this project's stack + env); --yes
+                            executes the plan (production-like names also need
+                            --confirm-prod, or an interactive confirmation)
   lifecycle log [env]       History of lifecycle snapshots
+
+Plan scenarios (#1292):
+  scenario check            Evaluate every declared Scenario's expect clause
+                            offline, against its given fixture (no cloud, no
+                            credentials); --json: emit verdicts as JSON.
+                            Nonzero exit on any failing scenario.
 
 Component release ledger + status:
   components status [env]  What's built vs what's deployed where, joined by
@@ -495,6 +560,11 @@ Component release ledger + status:
   components release <env> Append one immutable release record
                             (--component <name> --digest <sha256:...>
                              [--git-sha <sha>] [--run-id <id>] [--actor <name>])
+  components export <env>  Materialize a persisted build archive manifest to
+                            a portable directory (--component <name>
+                            [--digest <manifestDigest>] -o <dir> [--json]);
+                            copies every image/template/asset/sbom entry
+                            byte-for-byte plus a self-describing manifest.json
 
 Lexicon development:
   dev generate          Generate lexicon artifacts (+ validate + coverage)
@@ -542,7 +612,9 @@ Options:
   --fix                 Auto-fix fixable issues (lint command)
   --force               Force overwrite existing files (import command)
   -w, --watch           Watch for changes and rebuild/re-lint (build, lint)
-  -v, --verbose         Show stack traces on errors
+  -v, --verbose         Show stack traces on errors; (build) list every
+                        resolved build parameter and per-file fold decision
+                        instead of the one-line summaries
   -h, --help            Show this help message
   -p, --profile <name>  Temporal worker profile to use (run command)
   --local               Run an Op with the local in-process executor (default)
@@ -552,6 +624,8 @@ Options:
                         OR with a path arg: SARIF report destination (migrate)
                         OR '--report gitlab-mr': emit the GitLab MR plan-widget
                         JSON (lifecycle plan)
+                        OR '--report markdown': emit a reviewer-facing markdown
+                        render, holes and disruption included (lifecycle plan)
   --from <name>         Source lexicon for migrate (default: github)
   --to <name>           Target lexicon for migrate (default: gitlab)
   --emit <fmt>          Migration output format: yaml (default) or ts
@@ -572,12 +646,20 @@ Options:
                         composite factory calls (#1022/#1023), falling back
                         to run per-file for anything else outside the fold
                         subset (a cross-file-only reference, a re-export,
-                        \`export default\`, ...). Logs which path each file
-                        took. DEFAULT since #1134 — this flag forces it on
+                        \`export default\`, ...). Logs a fold/run count
+                        (per-file lines under --verbose). DEFAULT since #1134 — this flag forces it on
                         over a chant.config.ts \`build.fold: false\`.
   --no-fold             (build) Opt out of folding for this invocation: every
                         source module is imported and run, the pre-#1134
                         behavior. Beats chant.config.ts's build.fold.
+  --fold-rank [<path>]  (build, with --fold) Rank run-mode files by dominator
+                        retained-count over the forward import-failure graph
+                        (#1083) — fixing the top blocker unblocks the most
+                        files. Files held back only by the reverse rule
+                        (#1044) are reported separately, never folded into
+                        the ranking. With a path argument, also writes a
+                        Brendan Gregg collapsed-format export (weighted by
+                        retained count) there, for any flame/icicle viewer.
   --sandbox             (build) Run run-fallback source files (or every
                         file, without --fold) together, isolated, in one
                         sandboxed child process instead of in-process
@@ -608,6 +690,7 @@ Examples:
   chant build ./infra/ --components --generate gitlab --output .gitlab-ci.yml
   chant run --components search-service --env staging
   chant run --components all --env production
+  chant components export prod --component search-service -o ./dist/search-service
   chant import template.json --output ./infra/
   chant import --from prod --name my-bucket --output src/
   chant lint ./infra/
@@ -768,6 +851,10 @@ const registry: CommandDef[] = [
   { name: "run log", handler: runOpLog },
   { name: "run", handler: runOp },
 
+  { name: "operator status", handler: runOperatorStatus },
+  { name: "operator", handler: runOperator },
+  { name: "approve", handler: runApprove },
+
   { name: "graph", handler: runGraph },
   { name: "vendor", handler: runVendor },
 
@@ -778,11 +865,18 @@ const registry: CommandDef[] = [
   { name: "lifecycle rollback", handler: runLifecycleRollback },
   { name: "lifecycle plan", requiresPlugins: true, handler: runLifecyclePlan },
   { name: "lifecycle affected", requiresPlugins: true, handler: runLifecycleAffected },
+  { name: "lifecycle teardown", requiresPlugins: true, handler: runLifecycleTeardown },
   { name: "lifecycle log", handler: runLifecycleLog },
+
+  // Plan scenarios (#1292) — fully offline, no plugin network calls, but
+  // requiresPlugins:true so the build step has serializers to partition
+  // against, same as every other build-then-something verb.
+  { name: "scenario check", requiresPlugins: true, handler: runScenarioCheck },
 
   // Component release ledger + status surface (#568, epic #551)
   { name: "components status", requiresPlugins: true, handler: runComponentsStatus },
   { name: "components release", handler: runComponentsReleaseRecord },
+  { name: "components export", handler: runComponentsExport },
 
   // Local emulators of configured lexicons (#920). Compound so the action word
   // lands in args.path (not consumed as a project dir) and projectPath is forced ".".
@@ -798,6 +892,7 @@ const registry: CommandDef[] = [
   { name: "carve", handler: runCarveUnknown },
   { name: "emulator", requiresPlugins: true, handler: runEmulator },
   { name: "lifecycle", handler: runLifecycleUnknown },
+  { name: "scenario", handler: runScenarioUnknown },
   { name: "dev", handler: runDevUnknown },
   { name: "serve", handler: runServeUnknown },
   { name: "components", handler: runComponentsUnknown },

@@ -1,6 +1,6 @@
 import { createRequire } from "module";
 import { detectTemplate } from "./detect";
-import type { LexiconPlugin, IntrinsicDef, ObservationResult, DeepObservationResult, DependencyObservation, ResourceMetadata, ExportedTemplate, ResourceSelector, InitTemplateSet, StackStatusObservation } from "@intentius/chant/lexicon";
+import type { LexiconPlugin, IntrinsicDef, ObservationResult, DeepObservationResult, DependencyObservation, DisruptionQuery, DisruptionVerdict, ResourceMetadata, ExportedTemplate, ResourceSelector, InitTemplateSet, StackStatusObservation } from "@intentius/chant/lexicon";
 const require = createRequire(import.meta.url);
 import type { LintRule } from "@intentius/chant/lint/rule";
 import type { TemplateParser } from "@intentius/chant/import/parser";
@@ -19,12 +19,13 @@ import { applyAwsEndpointArgv } from "./components/cloud-executor";
 import { stackDoesNotExist } from "./stack-errors";
 import {
   AwsReadError,
-  describeStackOutputs,
+  describeStackDetail,
   describeStackResources,
   type AwsReadClientOptions,
   type StackResource,
 } from "./api/read-client";
 import { awsDeepNormalizationHooks, observeResourcesDeepAws } from "./deep-observe";
+import { awsDisruption } from "./disruption";
 import { awsReferenceCatalog } from "./reference-catalog";
 import { AMBIENT_KINDS } from "./ambient";
 import { canDescribe, describeOwnProperties, stampRegion } from "./properties";
@@ -36,6 +37,7 @@ import { parseStackTemplate } from "./import/live-export";
 import { awsCompletions } from "./lsp/completions";
 import { awsHover } from "./lsp/hover";
 import { AWS_TAG_OWNERSHIP_KEYS } from "./ownership";
+import { readOwnership } from "@intentius/chant/ownership";
 
 /** Re-exported from ./stack-errors so the long-standing import path (and its
  * tests) keep working now that the deep reader shares the classifier. */
@@ -47,14 +49,25 @@ export { stackDoesNotExist } from "./stack-errors";
  * Provides serializer, lint rules, template detection,
  * import parsing, and code generation for AWS CloudFormation.
  */
-/** #1265 — the ownership notice is about the environment, so it is said once. */
-let warnedOwnership = false;
+/**
+ * The stack's own tags did not resolve a marker for this read, so `owned: true`
+ * withheld nothing. Returned as a run-level note rather than printed (#1265):
+ * core says it once per run, after the answer, however many stacks were read.
+ * The text is the contract consumers grep for.
+ */
+const OWNERSHIP_UNRESOLVED_NOTE =
+  "ownership filter not applied on describeResources (this stack's own tags carry no chant marker, or DescribeStacks did not answer) — returning all, each with the verdict the read supports; use `chant import --from <env> --owned` for ownership-filtered export";
 
 export const awsPlugin: LexiconPlugin = {
   name: "aws",
-  // The thin read is sourced from describe-stack-resources, which returns no
-  // tags — so `owned` on that path can only answer `unknown`, and does (#1348).
-  ownershipChannel: { keys: AWS_TAG_OWNERSHIP_KEYS, reads: ["observeResourcesDeep", "exportResources"] },
+  // The thin read's marker channel is the STACK's own tags (#1998), read off
+  // the DescribeStacks call it already makes for the outputs.
+  // describe-stack-resources carries no per-resource tags, so the stack is the
+  // granularity — the same boundary teardown verifies on (#1222).
+  ownershipChannel: {
+    keys: AWS_TAG_OWNERSHIP_KEYS,
+    reads: ["describeResources", "observeResourcesDeep", "exportResources"],
+  },
   serializer: awsSerializer,
   // Local emulator (#920): Floci + the AWS env that redirects the SDK / observe.
   emulator: FLOCI_EMULATOR,
@@ -499,7 +512,7 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
     {
       file: "chant-aws-carve-terraform.md",
       name: "chant-aws-carve-terraform",
-      description: "Demo carving a resource out of Terraform into native chant — advise, emit, bridge, apply — fully offline",
+      description: "Demo carving a resource out of Terraform into native chant — advise, emit, audit, bridge, apply — fully offline",
       triggers: [
         { type: "context", value: "terraform" },
         { type: "context", value: "carve" },
@@ -558,30 +571,30 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
     // The applier's own transport, pointed at the read APIs (#1206). Multi-region
     // estates target this stack's region, not the ambient one.
     const client: AwsReadClientOptions = {
-      ...(process.env.AWS_ENDPOINT_URL ? { endpoint: process.env.AWS_ENDPOINT_URL } : {}),
       ...(options.region ? { region: options.region } : {}),
     };
 
-    if (options.owned) {
-      // describe-stack-resources does not return tags, so ownership cannot be
-      // determined here. Degrade to detect-only rather than silently filtering.
-      //
-      // Once per process, not once per stack (#1265). It is a property of the
-      // environment, not of each stack, and a four-stack project printed four
-      // identical copies ahead of every answer — enough that an agent piping
-      // `graph --format ir` with `2>&1` had to skip lines to find the JSON.
-      warnedOwnership ||
-        // eslint-disable-next-line no-console
-        console.warn(
-        "[aws] ownership filter unavailable on describeResources (no tags from describe-stack-resources) — returning all, each with an explicit `unknown` verdict; use `chant import --from <env> --owned` for ownership-filtered export",
-        );
-      warnedOwnership = true;
-    }
+    // The note for the read paths that never reach the stack's tags at all: a
+    // missing stack, and a failed stack read. Core dedupes it across stacks and
+    // prints it once per run with the footer, rather than ahead of every answer
+    // (#1265).
+    const unresolvedNotes = options.owned ? [OWNERSHIP_UNRESOLVED_NOTE] : undefined;
 
     // Derive stack name. A multi-stack project passes the explicit CloudFormation
     // stack this observation targets (see `stacks` in ChantConfig); otherwise the
     // single-stack convention is the stack named after the environment (#932).
     const stackName = options.stack ?? `${options.environment}`;
+
+    // Effect receipt rows (#1835): a receipt is never a stack member (the
+    // applier never writes it, #1832), so the stack read honestly reports it
+    // absent even while the parameter exists — which would arrive downstream
+    // as "the effect never ran". The serializer rendered each receipt's
+    // derived path into the template Metadata; read those parameters directly,
+    // and report a failed read as an `unobserved` hole rather than a wrong
+    // answer.
+    const { observeReceiptRows } = await import("./receipt-store");
+    const receiptObs = await observeReceiptRows(options.entityNames, options.buildOutput, client);
+    const receiptHoles = Object.keys(receiptObs.unobserved).length > 0 ? receiptObs.unobserved : undefined;
 
     // Describe stack resources. The endpoint override rides the client, so a
     // local emulator (Floci) is observed instead of real AWS (#926) — behold
@@ -600,7 +613,12 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
       if (err instanceof AwsReadError && stackDoesNotExist(err.message)) {
         const { observeByIdentity } = await import("./identity-observe");
         const identity = await observeByIdentity(options.entityNames, options.entities, resources, client);
-        return observation({ ...resources, ...identity.resources }, undefined, identity.queried);
+        return observation(
+          { ...resources, ...identity.resources, ...receiptObs.resources },
+          receiptHoles,
+          identity.queried,
+          unresolvedNotes,
+        );
       }
       // Any other failure (credentials, throttling, a region that can't be
       // reached) establishes nothing about what is deployed. Reporting every
@@ -610,54 +628,78 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
       const reason = /credential|token|expired|AccessDenied|not authorized|Unauthorized/i.test(detail)
         ? "no-credentials"
         : "read-failed";
+      // A receipt row the leg above did read stays read: its answer came from
+      // GetParameter, not from the failed stack call, so it is not a hole.
+      const stackHoles = unobservedAll(
+        options.entityNames.filter((n) => !(n in receiptObs.resources)),
+        reason,
+        `DescribeStackResources failed for stack "${stackName}": ${detail}`,
+      );
       return observation(
-        {},
-        unobservedAll(
-          options.entityNames,
-          reason,
-          `DescribeStackResources failed for stack "${stackName}": ${detail}`,
-        ),
+        { ...receiptObs.resources },
+        { ...stackHoles, ...receiptObs.unobserved },
+        undefined,
+        unresolvedNotes,
       );
     }
 
     // Map logical names from build to stack resources
     const stackResourceMap = new Map(stackResources.map((r) => [r.logicalId, r]));
 
-    // Get stack outputs. A stack whose resources read fine but whose outputs do
-    // not is still a usable observation, so this failure is swallowed exactly as
-    // the non-zero exit code used to be.
+    // Get the stack's outputs and its own tags — one DescribeStacks call. A
+    // stack whose resources read fine but whose DescribeStacks does not is
+    // still a usable observation, so this failure is swallowed exactly as the
+    // non-zero exit code used to be. `undefined` tags mean the call did not
+    // answer, which is an unread channel rather than an absent marker.
     let stackOutputs: Record<string, string> = {};
+    let stackTags: Record<string, string> | undefined;
     try {
-      stackOutputs = await describeStackOutputs(stackName, client);
+      const detail = await describeStackDetail(stackName, client);
+      stackOutputs = detail.outputs;
+      stackTags = detail.tags;
     } catch {
       stackOutputs = {};
+      stackTags = undefined;
     }
+
+    // The marker channel on this path (#1998). describe-stack-resources carries
+    // no per-resource tags, but the stack's own tags carry the identity the
+    // apply paths stamped from the template's `Metadata["chant:ownership"]`
+    // block — the same channel teardown verifies on (#1222). Every member of a
+    // marked stack belongs to that stack's identity, so the verdict and the
+    // marker are the stack's, read back verbatim.
+    const stackMarker = stackTags ? readOwnership(stackTags, AWS_TAG_OWNERSHIP_KEYS) : undefined;
+    const stackOwnership: ResourceMetadata["ownership"] =
+      stackTags === undefined ? "unknown" : stackMarker ? "owned" : "foreign";
+    // `owned: true` withheld nothing, so say why whenever the marker did not resolve.
+    const notes = options.owned && stackMarker === undefined ? unresolvedNotes : undefined;
+
+    // The outputs are the stack's, not any member's (#1279). They used to be
+    // copied onto every resource's `attributes`, so a VPC carried the stack's
+    // `expWebIp` and no `CidrBlock`. They ride the envelope once, keyed by the
+    // stack, scrubbed of anything that looks secret.
+    const exports: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(stackOutputs)) {
+      exports[key] = /password|secret|token|key/i.test(key) ? "[REDACTED]" : value;
+    }
+    const stackExports = Object.keys(exports).length > 0 ? { [stackName]: exports } : undefined;
 
     for (const entityName of options.entityNames) {
       const stackResource = stackResourceMap.get(entityName);
       if (!stackResource) continue;
-
-      const attributes: Record<string, unknown> = {};
-      // Include stack outputs as attributes (scrub sensitive ones)
-      for (const [key, value] of Object.entries(stackOutputs)) {
-        if (/password|secret|token|key/i.test(key)) {
-          attributes[key] = "[REDACTED]";
-        } else {
-          attributes[key] = value;
-        }
-      }
 
       resources[entityName] = {
         type: stackResource.type,
         physicalId: stackResource.physicalId ?? "",
         status: stackResource.status ?? "",
         lastUpdated: stackResource.timestamp ?? "",
-        // Total verdict (#1089): describe-stack-resources returns no tags, so
-        // this path cannot read the ownership marker. Say `unknown` explicitly
-        // rather than leaving the field off and letting each consumer guess —
-        // the change set never escalates `unknown` to a delete.
-        ownership: "unknown",
-        attributes: Object.keys(attributes).length > 0 ? attributes : undefined,
+        // Total verdict (#1089), from the stack's own tags. `unknown` is kept
+        // for the one case that earns it — DescribeStacks did not answer, so
+        // the channel was never read — and the change set never escalates
+        // `unknown` to a delete. `marker` is set only where the stack really
+        // carries one: absent means absent, never a guess.
+        ownership: stackOwnership,
+        ...(stackMarker ? { marker: stackMarker } : {}),
       };
     }
 
@@ -669,9 +711,9 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
     const { observeByIdentity } = await import("./identity-observe");
     const identity = await observeByIdentity(options.entityNames, options.entities, resources, client);
 
-    // Each resource's OWN properties, on top of the stack outputs above (#1279).
-    // Until this, a node's `attrs` were the stack's exports replicated onto
-    // every member, so no instance carried its own `VpcId`.
+    // Each resource's OWN properties (#1279). Until this, a node's `attrs` were
+    // the stack's exports replicated onto every member, so no instance carried
+    // its own `VpcId`.
     const own = await describeOwnProperties(resources, options.region);
     const withProperties = stampProviderDefaults(stampRegion(own.resources, options.region));
 
@@ -701,13 +743,25 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
           detail: `the stack was read, but this resource's own properties were not — ${own.failures.get(type) ?? "the describe call failed"}`,
         };
       }
-      return observation({ ...described, ...identity.resources }, holes, identity.queried);
+      return observation(
+        { ...described, ...identity.resources, ...receiptObs.resources },
+        { ...holes, ...receiptObs.unobserved },
+        identity.queried,
+        notes,
+        stackExports,
+      );
     }
 
     // Every entity the stack answered for was answered for: an entity the
     // template doesn't carry is genuinely not in this stack, which is an
     // absence, not a hole — unless the identity fallback saw it live (#1647).
-    return observation({ ...withProperties, ...identity.resources }, undefined, identity.queried);
+    return observation(
+      { ...withProperties, ...identity.resources, ...receiptObs.resources },
+      receiptHoles,
+      identity.queried,
+      notes,
+      stackExports,
+    );
   },
 
   /**
@@ -730,6 +784,20 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
   }): Promise<DependencyObservation> {
     const { observeAwsDependencies } = await import("./dependencies");
     return observeAwsDependencies({ observed: options.observed, region: options.region });
+  },
+
+  /**
+   * What a pending update costs (#1665), read off the Registry schema the
+   * codegen already compiled: a changed `createOnlyProperties` entry is a
+   * replacement, and `replacementStrategy: delete_then_create` makes it a
+   * destroy. A conditionally-create-only property is `unknown` on purpose —
+   * the schema says "depends on the value", which is not an answer.
+   */
+  classifyDisruption(options: {
+    environment: string;
+    changes: DisruptionQuery[];
+  }): Record<string, DisruptionVerdict> {
+    return awsDisruption(options);
   },
 
   /**
@@ -802,6 +870,21 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
     // deployed-green from mid-deploy or broken.
     const healthy = /^(CREATE|UPDATE|IMPORT)_COMPLETE$/.test(status);
     return { stack: options.stack, present: true, status, healthy };
+  },
+
+  // Env teardown at STACK granularity (#1222): `describeResources` carries no
+  // tags, so per-resource marker selection is impossible here — the env's
+  // stacks are enumerated instead (`stacks[]`, else the env-named default) and
+  // ownership is verified on each stack's own DescribeStacks tags. Execution
+  // is DeleteStack via the applier's `awsDelete`. See ./teardown.ts.
+  async teardownOwned(options) {
+    const { teardownOwned } = await import("./teardown");
+    return teardownOwned(options);
+  },
+
+  async executeTeardown(options) {
+    const { executeTeardown } = await import("./teardown");
+    return executeTeardown(options);
   },
 
   async exportResources(options: {

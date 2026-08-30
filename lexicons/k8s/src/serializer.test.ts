@@ -348,7 +348,7 @@ describe("k8sSerializer", () => {
       }),
     );
 
-    const result = k8sSerializer.serialize(entities);
+    const result = k8sSerializer.serialize(entities) as string;
     expect(result).toContain("env: prod");
     // Should not contain "dev" since explicit overrides
     const envLines = result.split("\n").filter((l: string) => l.includes("env:"));
@@ -366,7 +366,7 @@ describe("k8sSerializer", () => {
       }),
     );
 
-    const result = k8sSerializer.serialize(entities);
+    const result = k8sSerializer.serialize(entities) as string;
     expect(result).toContain("kind: Deployment");
     // Only one document — property entities should not appear as separate docs
     expect(result.split("---").length).toBeLessThanOrEqual(2);
@@ -406,7 +406,7 @@ describe("k8sSerializer", () => {
       }),
     );
 
-    const result = k8sSerializer.serialize(entities);
+    const result = k8sSerializer.serialize(entities) as string;
     const docs = result.split("---");
     // First document should be the Namespace
     expect(docs[0]).toContain("kind: Namespace");
@@ -449,7 +449,7 @@ describe("k8sSerializer", () => {
       }),
     );
 
-    const result = k8sSerializer.serialize(entities);
+    const result = k8sSerializer.serialize(entities) as string;
     const lines = result.split("\n");
     const keyLines = lines.filter((l: string) => /^\w+:/.test(l));
     const keys = keyLines.map((l: string) => l.split(":")[0]);

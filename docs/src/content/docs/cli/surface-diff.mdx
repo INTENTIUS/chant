@@ -1,0 +1,86 @@
+---
+title: "chant dev surface-diff"
+description: Regenerate a lexicon and diff its public API surface against the committed baseline
+diataxis: reference
+---
+
+## Synopsis
+
+```
+chant dev surface-diff <dir> [--check] [--update-snapshot [--bump]] [--force]
+                             [--run-examples] [--pinned-digest <file>] [-f json]
+```
+
+## Description
+
+`chant dev surface-diff` regenerates a lexicon from its upstream spec, validates the result, extracts the public API surface (every exported resource and property type with its `resourceType`, props, attrs, create-only set and taggability) and diffs it against the lexicon's committed `surface.snapshot.json`. It never edits generated code. Failures in any step are captured and reported.
+
+The delta has four categories.
+
+| Section | Meaning | Severity |
+|---|---|---|
+| `Added` | A TS export with no counterpart in the baseline | additive |
+| `Removed` | A baseline export with no counterpart in the fresh surface | breaking |
+| `Renamed` | A removal and an addition that carry the same `resourceType` and the same kind (resource or property) | breaking |
+| `Changed` | An export present on both sides whose shape moved (props, attrs, required flags, createOnly, taggable) | additive or breaking per change |
+
+`Renamed` exists because a lexicon's TS name can change while the upstream type it stands for does not (chant #1460). The aws lexicon derives short names from the CloudFormation type and disambiguates collisions, so an unrelated neighbour appearing upstream can shift a name. Reported as a removal plus an addition that reads as AWS having deleted something; reported as a rename it reads as what happened.
+
+```
+Renamed (28):
+  ~ MacieSession -> Session [resource] (AWS::Macie::Session)
+  ~ PanoramaPackage -> Package [resource] (AWS::Panorama::Package)
+  ~ Space_SpaceSettings -> SageMakerSpace_SpaceSettings [property] (AWS::SageMaker::Space.SpaceSettings)
+Removed (95):
+  - ...
+Added (55):
+  + ...
+
+Severity: breaking
+```
+
+Pairing keys on kind plus `resourceType`. One old name and one new name under a type pair directly. When a type has several of each (the property types of one renamed parent resource, usually) the pairs are chosen by name similarity and whatever does not pair is left as a plain removal or addition. Entries with an empty `resourceType` are never paired. A renamed entry whose shape also moved carries the same detail lines a `Changed` entry would.
+
+A rename is still breaking: the old import no longer resolves, for a resource and for a property type alike. The category is separate so a reviewer can check consumers against the genuine removals without first separating them from the renames by hand.
+
+## Re-baselining against an `always` gate
+
+`--update-snapshot` writes the fresh surface only after a passing run, and for a lexicon whose snapshot gate runs in `always` mode (k8s and azure, #1475) that would deadlock. A stale baseline fails the `surface-matches-snapshot` validate check on every run, and a stale baseline is exactly what a re-baseline starts from.
+
+The update run is therefore exempt from that one check (#1825). It runs validate with `CHANT_SNAPSHOT_UPDATE=1`, which skips `surface-matches-snapshot` and nothing else. A failure in generate, build, lint or any other validate check still refuses the write, so a broken surface cannot become the baseline. The write itself repairs the staleness the skipped check would have reported, and the next plain run is green.
+
+## Options
+
+| Flag | Description |
+|------|-------------|
+| `--check` | Fail if the committed baseline differs from a fresh regen. Never writes the snapshot. For a pinned lexicon, a fresh regen at the pinned version must equal the baseline. |
+| `--update-snapshot` | After a successful run, write the fresh surface as the new baseline. The run's validate skips only the `surface-matches-snapshot` check, so an `always` gate cannot deadlock the re-baseline (#1825) |
+| `--bump` | With `--update-snapshot`, bump the lexicon's `package.json` version by the delta severity (0.x-aware) so the accepted surface is publishable (#616) |
+| `--force` | Bypass the spec cache and re-fetch upstream |
+| `--run-examples` | Also run the example build harness (needs cloud credentials) |
+| `--pinned-digest <file>` | Verify the spec's SHA-256 digest against this file before regenerating |
+| `-f json` | Emit `{ ok, changed, severity, delta, failures }` as JSON. `delta` carries `added`, `removed`, `renamed` and `changed` arrays |
+
+## Example
+
+```bash
+# Report the delta for the aws lexicon
+chant dev surface-diff lexicons/aws
+
+# CI: confirm a pinned lexicon's baseline is in sync
+chant dev surface-diff lexicons/k8s --check
+
+# Accept drift and make it publishable
+chant dev surface-diff lexicons/aws --update-snapshot --bump
+```
+
+## Exit code
+
+- `0` — Regeneration and validation succeeded (with `--check`, the baseline also matched)
+- `1` — A step failed, or `--check` found drift
+
+## See also
+
+- [Generation](/chant/lexicon-authoring/generate/) — pinning the upstream schema the diff regenerates from
+- [`chant dev check-lexicon`](/chant/cli/check-lexicon/) — completeness checks on the same directory
+- [`chant dev generate`](/chant/cli/generate/) — the generation pipeline surface-diff runs

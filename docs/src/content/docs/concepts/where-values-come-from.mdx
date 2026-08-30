@@ -1,20 +1,22 @@
 ---
 title: Where Values Come From
-description: The determinism boundary — which values resolve at synthesis as static data, which arrive at apply as deploy-time inputs, and which lookups synthesis refuses to perform.
+description: The determinism boundary — which values resolve at synthesis as static data, which arrive at apply as deploy-time inputs, which state is provisioned once and thereafter only referenced, and which lookups synthesis refuses to perform.
+diataxis: explanation
 ---
 
 import { Aside } from '@astrojs/starlight/components';
 
-Every value in a chant resource comes from one of three places. Two are allowed. One is refused, by construction. This page draws that boundary and names which is which, so the rest of the docs can point here instead of re-deriving it.
+Every value in a chant resource comes from one of four places. Two are allowed. One is refused, by construction. The fourth never enters chant at all — it lives in the estate, and chant declares where it came from without ever reading it. This page draws those boundaries and names which is which, so the rest of the docs can point here instead of re-deriving it.
 
 The boundary exists because synthesis is pure. `chant build` imports your files, reads the resource objects they export, and emits output. It never calls an API, reads a secret, or touches mutable state. That is what makes the output deterministic and auditable — every value traces to a line in the source. The boundary is the price of that property, and it is worth paying.
 
-## The three origins
+## The four origins
 
 | Origin | Resolved | Example | Allowed |
 |---|---|---|---|
 | **Static data** | At synthesis | a literal, a `const`, a cross-resource reference | Yes |
 | **Deploy-time input** | At apply, by the platform | a parameter, an intrinsic, an output from another stack | Yes |
+| **Provisioned state** | Once, at first materialization — thereafter referenced | a minted master key, a generated credential | Declared, never read |
 | **Runtime lookup** | At synthesis, by reaching out | an API call, a secret read, an HTTP fetch during build | No |
 
 ### Static data
@@ -31,6 +33,12 @@ Some values are not known when you build. A VPC ID minted by another system. A s
 
 The placeholder is static. The value arrives later. Synthesis emits `${StackName}-data` or a parameter reference and stops. The deploy mechanism fills it in. Determinism holds because the build never saw the resolved value.
 
+### Provisioned state
+
+Some values are not known at build and never resolved at apply either. A master encryption key minted the first time an estate comes up. A generated database password. These are provisioned — generated once, at first materialization, and thereafter only referenced. Present means done: a later run must find the value where it is and leave it alone, never mint over it.
+
+chant's part in this is a declaration, not the value. The value lives in the estate — a cluster Secret, a vault entry — and no code path in chant ever holds it. What the source declares is the secret's name, its provenance, and its contract, and the vocabulary for that is the [secret-provenance taxonomy](#the-secret-provenance-taxonomy) below.
+
 ### Runtime lookup
 
 Reaching out during the build — calling a cloud API to discover an ID, reading a secret store, fetching HTTP, reading mutable state — is refused. The [evaluability rules](/chant/lint-rules/evaluability/) (EVL) reject it. A value that depends on a function call, a network round-trip, or the moment you ran the build is not a value synthesis can own. Same source would stop meaning same output.
@@ -38,16 +46,57 @@ Reaching out during the build — calling a cloud API to discover an ID, reading
 `process.env.X` read at module scope is this category too: the value depends on whatever process happens to be running the build, not on the source. [Build-time parameters](/chant/concepts/build-time-parameters/) are the supported way across this exact boundary — the same environment-dependence, but resolved explicitly at build invocation instead of read ambiently.
 
 <Aside type="note" title="The test">
-If a value can change without the source changing, it is not static data. It is either a deploy-time input the platform resolves at apply, or it belongs before synthesis — written into the source by an agent or a script. It is never a lookup the build performs.
+If a value can change without the source changing, it is not static data. It is a deploy-time input the platform resolves at apply, or provisioned state chant declares but never reads, or it belongs before synthesis — written into the source by an agent or a script. It is never a lookup the build performs.
 </Aside>
+
+## The secret-provenance taxonomy
+
+Provisioned state is where secrets live, and secrets get their own vocabulary. A [`SecretDeclaration`](/chant/architecture/core-type-system/#secretdeclaration) records where a secret's value comes from — never what the value is. Declarations are ordinary entities to discovery (`chant list` shows them, lint reads them), and no serializer ever emits them. Four kinds, each with a primitive.
+
+| Kind | What is declared | What never appears |
+|---|---|---|
+| `referenced` | The name, and optionally a `scope` saying where consumers find it. The value exists out of band — a human or an external process put it there. | The value, or anything that resolves to it at build. |
+| `from-provider` | The name, plus a `provider` ref naming the binding declarable that materializes it (e.g. a `K8s::Infisical::InfisicalSecret`). The declaration points at the seam; it does not re-model it. | The provider's payload, credentials for the provider, the delivered value. |
+| `generated-once` | The name and the declared key-set (`keys`). Minted at first materialization, never regenerated. | Mint parameters carrying material, the minted value, any hash of it. |
+| `committed-encrypted` | The name and a `file` — a repo-relative path to sops-style ciphertext committed alongside the source — plus the optional `encryption` tool, public `recipients`, and declared key-set. Flux decrypts it on the way into the cluster. | The plaintext, at every stage. The ciphertext bytes never enter the primary output an applier reads; they are copied out as a sidecar file. |
+
+A `referenced` declaration is the typed waiver that makes a consumed-but-unproduced check possible: a resource that consumes a secret nothing declares is an error, and the declaration is how you say "produced elsewhere, on purpose."
+
+<Aside type="caution" title="The hard line">
+chant never holds, logs, hashes, or compares a secret value. "Mismatch" anywhere in this taxonomy means presence, declared key-set, and metadata — never a value or a value-derived hash. The line is structural, not policy: no declaration kind has a field that could carry material. `value`, `data`, `stringData`, and the rest are typed `never` on every factory input and rejected at runtime, naming only the offending key.
+</Aside>
+
+### A worked case: `MASTER_SECRETS_KEY`
+
+fountain-ops mints a `MASTER_SECRETS_KEY` on first deploy and asserts it stays byte-identical across every re-run of the whole pipeline. In shell that contract is read-then-write: present means done, never mint over an existing value. In chant it is a `generated-once` declaration:
+
+```typescript
+import { declareSecret } from "@intentius/chant";
+
+export const masterSecrets = declareSecret({
+  name: "master-secrets",
+  provenance: "generated-once",
+  keys: ["MASTER_SECRETS_KEY"],
+});
+```
+
+This says: a secret named `master-secrets` exists in the estate, it carries exactly the key `MASTER_SECRETS_KEY`, and its value was minted once by a materializer. What the value is, what it protects, whether the bytes changed — none of that is representable here. A materializer checks the contract on every run: the secret exists, the declared keys are present, the metadata matches. On mismatch it fails loudly. On match it does nothing. It never regenerates.
+
+### Why the generated-once contract lives in a primitive
+
+Present-means-done can be enforced in a script, and fountain-ops did exactly that. But the contract has more edges than a script shows, and they are edges the [capability](/chant/components/capabilities/) model already has words for. Minting is a mutation with no safe undo, so the materialization verb declares `rollbackPolicy: "needs-opt-out"` and falls under [COMP003](/chant/lint-rules/composition/#comp003-mutating-capability-with-no-rollback) like any other mutating capability — the step must carry an explicit reason or a compensation, checked by lint before anything runs. That is sticky knowledge captured once in the capability, not re-scripted per estate.
+
+The declaration also changes what cleanup may touch. A `generated-once` secret never enters the prunable set — an undeclared-but-owned secret is reported, loudly, as retained rather than deleted. Removing one is an explicit, gated operation, never a side effect of a diff.
 
 ## When a value must come from outside
 
-Two ways across the boundary, neither of which breaks it.
+Three ways across the boundary, none of which breaks it.
 
-**Resolve it before synthesis.** An agent or a script looks the value up — a VPC ID, a secret — and writes it into a source file. By the time `chant build` runs, the value is a literal. This is the natural division of labor with agentic workflows. Agents resolve what changes; chant synthesizes what shouldn't. The dynamic step happens first, and it happens outside synthesis.
+**Resolve it before synthesis.** An agent or a script looks the value up — a VPC ID, a hostname — and writes it into a source file. By the time `chant build` runs, the value is a literal. This is the natural division of labor with agentic workflows. Agents resolve what changes; chant synthesizes what shouldn't. The dynamic step happens first, and it happens outside synthesis.
 
 **Defer it to apply.** Emit a deploy-time input — a parameter or a lexicon intrinsic — and let the platform resolve it. The build commits to the *shape*, not the value. See your lexicon's intrinsics for what it can defer.
+
+**Declare it and leave it in the estate.** A secret's value should never cross into source or artifact in either direction. Declare its provenance — the name, the kind, the contract — and let a materializer or a provider binding put the value where consumers read it. The build commits to the contract, and the value stays where it was minted.
 
 What you cannot do is collapse these into the build itself. The moment synthesis performs the lookup, the output stops being a pure function of the source, and the properties that justify the whole approach — determinism, auditability, walk-away-zero — go with it.
 
@@ -58,5 +107,7 @@ It would be convenient to let config pull a value from a secret store at build t
 ## See also
 
 - [TypeScript as Data](/chant/concepts/typescript-as-data/) — the supported static subset, pattern by pattern
+- [SecretDeclaration](/chant/architecture/core-type-system/#secretdeclaration) — the type reference for the provenance vocabulary
+- [Capabilities](/chant/components/capabilities/) — the verb registry where materialization's sticky knowledge lives
 - [Evaluability Rules](/chant/lint-rules/evaluability/) — the EVL rules that enforce the boundary
 - [Philosophy](/chant/concepts/philosophy/) — why synthesis is pure and where operational work lives

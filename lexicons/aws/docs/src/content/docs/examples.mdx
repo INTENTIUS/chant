@@ -1,10 +1,13 @@
 ---
 title: "Examples"
 description: "Walkthrough of the AWS CloudFormation lexicon examples"
+diataxis: how-to
 ---
 
 {/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-aws` — DO NOT EDIT.
-    Edit lexicons/aws/src/codegen/docs.ts instead; changes here are overwritten. */}
+    Edit lexicons/aws/docs/pages/examples.mdx instead; changes here are overwritten. */}
+
+
 Runnable examples live in the lexicon's `examples/` directory — one per built-in composite. Clone the repo and try them:
 
 ```bash
@@ -70,7 +73,7 @@ exports.handler = async () => {
 });
 ```
 
-Produces 3 resources: S3 Bucket (encrypted, public access blocked) + IAM Role (with S3 read policy) + Lambda Function. The `BUCKET_NAME` environment variable is auto-injected.
+Produces 4 resources: S3 Bucket (encrypted, public access blocked) + IAM Role (with S3 read policy) + Lambda Function, plus a Bucket Policy in `bucket-policy.ts` that denies requests made without TLS. The `BUCKET_NAME` environment variable is auto-injected.
 
 ## Lambda DynamoDB
 
@@ -339,6 +342,7 @@ import { ECRRepository, ECRRepository_ImageScanningConfiguration } from "@intent
 // chant-disable-next-line COR004
 export const apiRepo = new ECRRepository({
   RepositoryName: "alb-api",
+  ImageTagMutability: "IMMUTABLE",
   ImageScanningConfiguration: new ECRRepository_ImageScanningConfiguration({
     ScanOnPush: true,
   }),
@@ -347,6 +351,7 @@ export const apiRepo = new ECRRepository({
 // chant-disable-next-line COR004
 export const uiRepo = new ECRRepository({
   RepositoryName: "alb-ui",
+  ImageTagMutability: "IMMUTABLE",
   ImageScanningConfiguration: new ECRRepository_ImageScanningConfiguration({
     ScanOnPush: true,
   }),
@@ -440,6 +445,7 @@ src/
 ├── chant.config.ts   # Lint config: strict preset + custom plugin
 ├── defaults.ts       # Encryption, versioning, access block, Lambda trust policy
 ├── data-bucket.ts    # S3 bucket
+├── data-bucket-policy.ts # TLS-only bucket policy
 ├── lambda-api.ts     # Composite factory + SecureApi/HighMemoryApi presets
 ├── health-api.ts     # SecureApi — minimal health check
 ├── upload-api.ts     # SecureApi + S3 PutObject policy

@@ -1,6 +1,7 @@
 ---
 title: "chant serve mcp"
 description: Start an MCP server for AI agent integration
+diataxis: reference
 ---
 
 ## Synopsis
@@ -113,7 +114,7 @@ Show the current state of an Op's latest workflow run.
 | `name` | `string` | Yes | Op name |
 | `profile` | `string` | No | Temporal connection profile |
 
-Returns `{ workflowId, runId, status, startTime, closeTime, taskQueue, activitiesCompleted, activitiesScheduled }`.
+Returns `{ workflowId, runId, status, startTime, closeTime, taskQueue, activitiesCompleted, activitiesScheduled, progress, gate }`. `progress` is the per-phase `StepRecord[]` array (present when the Op's `*.op.ts` is discoverable; see [Progress and gate state](/chant/guide/ops-reference/#progress-and-gate-state)) — the same shape `--progress-json` streams. `gate` is the pending gate (`{ signalName, description?, since }`) or `null` when none is blocking.
 
 ### `op-signal`
 

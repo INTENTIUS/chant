@@ -24,10 +24,11 @@
  * When the build emits no schema there is nothing to validate against, and
  * `validate()` cannot be called at all — it has no optional-schema mode, and an
  * empty schema is legal Cedar that reports every policy as inapplicable, which
- * would be worse than useless. Schema-driven codegen is #1650; until a schema
- * is emitted beside the policies, this check says so once, as an advisory,
- * rather than passing silently and claiming a guarantee it did not check.
- * CEDC010's parse gate still applies in that state.
+ * would be worse than useless. A project schema is emitted beside the policies
+ * by the plugin's `buildRoots` hook (#1697, `src/schema-artifact.ts`), so the
+ * no-schema state is now the project with no schema of its own; there this
+ * check says so once, as an advisory, rather than passing silently and
+ * claiming a guarantee it did not check. CEDC010's parse gate still applies.
  */
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
 import { parsedPolicySets } from "./cedar-helpers";

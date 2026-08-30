@@ -1,12 +1,13 @@
 import { describe, test, expect } from "vitest";
+import { makePostSynthCtx } from "@intentius/chant-test-utils";
 import {
-  parseK8sManifests,
+  docsToManifests,
   extractContainers,
   extractPodSpec,
   WORKLOAD_KINDS,
 } from "./k8s-helpers";
 
-describe("parseK8sManifests", () => {
+describe("docsToManifests", () => {
   test("splits multi-doc YAML", () => {
     const yaml = `
 apiVersion: v1
@@ -19,7 +20,7 @@ kind: Deployment
 metadata:
   name: deploy
 `;
-    const manifests = parseK8sManifests(yaml);
+    const manifests = docsToManifests(makePostSynthCtx("k8s", yaml));
     expect(manifests.length).toBe(2);
     expect(manifests[0].kind).toBe("Service");
     expect(manifests[1].kind).toBe("Deployment");
@@ -34,16 +35,15 @@ metadata:
 data:
   key: value
 `;
-    const manifests = parseK8sManifests(yaml);
+    const manifests = docsToManifests(makePostSynthCtx("k8s", yaml));
     expect(manifests.length).toBe(1);
     expect(manifests[0].kind).toBe("ConfigMap");
   });
 
   test("handles empty/invalid YAML gracefully", () => {
-    expect(parseK8sManifests("")).toEqual([]);
-    expect(parseK8sManifests("---")).toEqual([]);
-    // "---\n---" doesn't split on /\n---\n/ — the full string is parsed as empty object
-    expect(parseK8sManifests("---\n---\n")).toEqual([]);
+    expect(docsToManifests(makePostSynthCtx("k8s", ""))).toEqual([]);
+    expect(docsToManifests(makePostSynthCtx("k8s", "---"))).toEqual([]);
+    expect(docsToManifests(makePostSynthCtx("k8s", "---\n---\n"))).toEqual([]);
   });
 
   test("skips blank documents between separators", () => {
@@ -60,8 +60,25 @@ kind: Service
 metadata:
   name: s
 `;
-    const manifests = parseK8sManifests(yaml);
+    const manifests = docsToManifests(makePostSynthCtx("k8s", yaml));
     expect(manifests.length).toBe(2);
+  });
+
+  test("falls back to parsing ctx.outputs when ctx.docs is absent (hand-rolled test contexts)", () => {
+    const ctx = {
+      outputs: new Map([["k8s", "apiVersion: v1\nkind: Pod\nmetadata:\n  name: p\n"]]),
+      entities: new Map(),
+      buildResult: {
+        outputs: new Map([["k8s", "apiVersion: v1\nkind: Pod\nmetadata:\n  name: p\n"]]),
+        entities: new Map(),
+        warnings: [],
+        errors: [],
+        sourceFileCount: 1,
+      },
+    };
+    const manifests = docsToManifests(ctx);
+    expect(manifests.length).toBe(1);
+    expect(manifests[0].kind).toBe("Pod");
   });
 });
 

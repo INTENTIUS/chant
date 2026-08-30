@@ -1,5 +1,14 @@
 import { describe, expect, test } from "vitest";
-import { buildChangeSet, renderChangeSet, summarize, gitlabMrReport } from "./change-set";
+import {
+  buildChangeSet,
+  renderChangeSet,
+  renderChangeSetMarkdown,
+  summarize,
+  gitlabMrReport,
+  unobservedPlanNotice,
+  type ChangeSet,
+  type ChangeSetEntry,
+} from "./change-set";
 import type { ResourceMetadata } from "../lexicon";
 
 const meta = (over: Partial<ResourceMetadata> = {}): ResourceMetadata => ({
@@ -346,6 +355,47 @@ describe("buildChangeSet: not-observed is not absent (#1089)", () => {
     expect(e.queried).toBe("from-entry");
   });
 
+  // #1674 — lexicon attribution and the provider's physical id per entry.
+  test("stamps every entry with the lexicon it was built for, when given one", () => {
+    const cs = buildChangeSet("prod", {
+      declared: new Set(["web", "api"]),
+      observedNow: { web: meta(), "sg-0abc123": meta({ ownership: "foreign" }) },
+      observedThen: undefined,
+    }, { lexicon: "aws" });
+    expect(cs.entries.map((e) => e.lexicon)).toEqual(["aws", "aws", "aws"]);
+    const without = buildChangeSet("prod", { declared: new Set(["web"]), observedNow: {}, observedThen: undefined });
+    expect(without.entries[0]).not.toHaveProperty("lexicon");
+  });
+
+  test("physicalId comes from the live observation — name stays the lexicon's key", () => {
+    const cs = buildChangeSet("prod", {
+      declared: new Set(["web"]),
+      observedNow: {
+        web: meta({ physicalId: "arn:aws:elasticloadbalancing:us-east-1:123:loadbalancer/app/web/abc" }),
+        "sg-0abc123": meta({ physicalId: "sg-0abc123", ownership: "foreign" }),
+        "pod-xyz": meta({ physicalId: "default/pod-xyz", ownerChain: { root: "declared", entity: "web" } }),
+        owned: meta({ physicalId: "i-0deadbeef", ownership: "owned" }),
+      },
+      observedThen: undefined,
+    });
+    const byName = Object.fromEntries(cs.entries.map((e) => [e.name, e]));
+    expect(byName.web.physicalId).toBe("arn:aws:elasticloadbalancing:us-east-1:123:loadbalancer/app/web/abc");
+    expect(byName["sg-0abc123"]).toMatchObject({ action: "adopt", physicalId: "sg-0abc123", name: "sg-0abc123" });
+    expect(byName["pod-xyz"]).toMatchObject({ action: "runtime", physicalId: "default/pod-xyz" });
+    expect(byName.owned).toMatchObject({ action: "delete", physicalId: "i-0deadbeef" });
+  });
+
+  test("physicalId is absent when no side reported one, and falls back to the snapshot's when the resource is gone", () => {
+    const cs = buildChangeSet("prod", {
+      declared: new Set(["web"]),
+      observedNow: {},
+      observedThen: { gone: meta({ physicalId: "i-gone" }) },
+    });
+    const byName = Object.fromEntries(cs.entries.map((e) => [e.name, e]));
+    expect(byName.web).not.toHaveProperty("physicalId");
+    expect(byName.gone).toMatchObject({ action: "noop", physicalId: "i-gone" });
+  });
+
   test("a returned resource wins over an unobserved claim for the same name", () => {
     const cs = buildChangeSet("prod", {
       declared: new Set(["queue"]),
@@ -403,5 +453,139 @@ describe("buildChangeSet: not-observed is not absent (#1089)", () => {
       unobserved: { a: { reason: "read-failed" } },
     });
     expect(gitlabMrReport(cs)).toEqual({ create: 0, update: 0, delete: 0 });
+  });
+});
+
+// ── Markdown report (#1983) ──────────────────────────────────────────────
+
+function entry(overrides: Partial<ChangeSetEntry> = {}): ChangeSetEntry {
+  return {
+    name: "db",
+    type: "AWS::RDS::DBInstance",
+    lexicon: "aws",
+    action: "update",
+    evidence: { declared: true, inSnapshot: true, live: true, observed: true },
+    ownership: "unknown",
+    ...overrides,
+  };
+}
+
+function set(entries: ChangeSetEntry[]): ChangeSet {
+  return { env: "prod", entries };
+}
+
+describe("unobservedPlanNotice (#1983)", () => {
+  test("empty when nothing is unobserved", () => {
+    expect(unobservedPlanNotice(set([entry({ action: "noop" })]))).toEqual([]);
+  });
+
+  test("one notice naming the count, matching the CLI's stderr wording", () => {
+    const cs = set([
+      entry({ name: "a", action: "unobserved", unobservedReason: "no-binding" }),
+      entry({ name: "b", action: "unobserved", unobservedReason: "read-failed" }),
+      entry({ name: "c", action: "noop" }),
+    ]);
+    expect(unobservedPlanNotice(cs)).toEqual([
+      "2 declared entity(ies) could not be observed — no create/update/delete is proposed for them. This plan is incomplete, not clean.",
+    ]);
+  });
+});
+
+describe("renderChangeSetMarkdown (#1983)", () => {
+  test("empty plan: header only, no ANSI, deterministic", () => {
+    const out = renderChangeSetMarkdown(set([]));
+    expect(out).toBe(
+      "## Plan for `prod`\n\n0 create, 0 update, 0 effect, 0 delete, 0 adopt, 0 runtime, 0 noop, 0 unobserved\n",
+    );
+    expect(out).not.toMatch(/\x1b\[/);
+  });
+
+  test("counts header and grouped sections, attributed to lexicon", () => {
+    const cs = set([
+      entry({ name: "new-bucket", type: "S3::Bucket", lexicon: "aws", action: "create", evidence: { declared: true, inSnapshot: false, live: false, observed: true } }),
+      entry({ name: "web", type: "K8s::Apps::Deployment", lexicon: "k8s", action: "noop", evidence: { declared: true, inSnapshot: true, live: true, observed: true } }),
+    ]);
+    const out = renderChangeSetMarkdown(cs);
+    expect(out).toContain("## Plan for `prod`");
+    expect(out).toContain("1 create, 0 update, 0 effect, 0 delete, 0 adopt, 0 runtime, 1 noop, 0 unobserved");
+    expect(out).toContain("### CREATE");
+    expect(out).toContain("- `new-bucket` (S3::Bucket) `aws`");
+    expect(out).toContain("### NOOP");
+    expect(out).toContain("- `web` (K8s::Apps::Deployment) `k8s`");
+  });
+
+  test("deltas render in a fenced block, forced path marked", () => {
+    const cs = set([
+      entry({
+        deltas: [
+          { path: "attributes.DBInstanceIdentifier", oldValue: "app-db", newValue: "app-db-2" },
+          { path: "attributes.AllocatedStorage", oldValue: 20, newValue: 40 },
+        ],
+        disruption: "destroy",
+        disruptionBecause: ["attributes.DBInstanceIdentifier"],
+        disruptionDetail: "DBInstanceIdentifier is create-only",
+      }),
+    ]);
+    const out = renderChangeSetMarkdown(cs);
+    expect(out).toContain("**destroy**: DBInstanceIdentifier is create-only");
+    expect(out).toContain("```");
+    expect(out).toContain("! attributes.DBInstanceIdentifier: app-db → app-db-2");
+    expect(out).toContain("attributes.AllocatedStorage: 20 → 40");
+  });
+
+  test("disruption count rides the header, same as the human render", () => {
+    const cs = set([entry({ disruption: "in-place" }), entry({ name: "web", disruption: "destroy" })]);
+    const out = renderChangeSetMarkdown(cs);
+    expect(out).toContain("**Disruption:** 1 in-place, 1 destroy");
+  });
+
+  test("unobserved renders both the prominent notice and its own section, same wording as the human render", () => {
+    const cs = set([
+      entry({ name: "crd-widget", action: "unobserved", unobservedReason: "no-binding", unobservedDetail: "no kubectl context for prod" }),
+    ]);
+    const out = renderChangeSetMarkdown(cs);
+    expect(out).toContain(
+      "> **1 declared entity(ies) could not be observed — no create/update/delete is proposed for them. This plan is incomplete, not clean.**",
+    );
+    expect(out).toContain("### UNOBSERVED (declared; chant could not read live state — no action proposed)");
+    expect(out).toContain("- `crd-widget`");
+    expect(out).toContain("no binding for this environment");
+    expect(out).toContain("no kubectl context for prod");
+  });
+
+  test("a clean plan (no holes) carries no unobserved notice at all", () => {
+    const out = renderChangeSetMarkdown(set([entry({ action: "noop" })]));
+    expect(out).not.toContain("could not be observed");
+    expect(out).not.toContain("UNOBSERVED");
+  });
+
+  test("effect entries render as their own line, no deltas", () => {
+    const cs = set([
+      entry({
+        name: "receipt-x",
+        action: "effect",
+        effect: "seed-admin",
+        effectReason: "receipt-absent",
+        effectDetail: "no receipt recorded yet",
+        deltas: undefined,
+      }),
+    ]);
+    const out = renderChangeSetMarkdown(cs);
+    expect(out).toContain("- effect will fire: `seed-admin` — receipt `receipt-x`");
+    expect(out).toContain("no receipt recorded yet");
+  });
+
+  test("a group past the fold threshold collapses into <details>, a small one does not", () => {
+    const many = Array.from({ length: 25 }, (_, i) =>
+      entry({ name: `bucket-${i}`, action: "create", evidence: { declared: true, inSnapshot: false, live: false, observed: true }, deltas: undefined }),
+    );
+    const out = renderChangeSetMarkdown(set(many));
+    expect(out).toContain("<details><summary>25 entries — click to expand</summary>");
+    expect(out).toContain("</details>");
+    expect(out).toContain("- `bucket-0`");
+    expect(out).toContain("- `bucket-24`");
+
+    const few = renderChangeSetMarkdown(set(many.slice(0, 3)));
+    expect(few).not.toContain("<details>");
   });
 });

@@ -2,6 +2,7 @@ import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";
 import { sep } from "node:path";
 import { createMockPlugin, staticDescribeResources, staticObservation, staticDeepObservation, staticListArtifacts } from "@intentius/chant-test-utils";
 import type { LexiconPlugin, ResourceMetadata } from "../../lexicon";
+import { deepObservation } from "../../deep-observation";
 import type { BuildResult } from "../../build";
 import type { ParsedArgs } from "../registry";
 
@@ -52,7 +53,7 @@ vi.mock("../../config", async () => {
   };
 });
 
-const { runLifecycleDiff, runLifecyclePlan, runLifecycleSnapshot, runLifecycleShow, runLifecycleLog, runLifecycleUnknown } = await import("./lifecycle");
+const { runLifecycleDiff, runLifecyclePlan, runLifecycleSnapshot, runLifecycleShow, runLifecycleLog, runLifecycleTeardown, runLifecycleUnknown } = await import("./lifecycle");
 
 function makeArgs(overrides: Partial<ParsedArgs>): ParsedArgs {
   return {
@@ -298,6 +299,81 @@ describe("runLifecycleDiff --live", () => {
     const readKeys = readSnapshotMock.mock.calls.map((c) => c[1]);
     expect(readKeys).toContain("loom-backend__aws");
     expect(readKeys).toContain("loom-agents__aws");
+  });
+
+  // #1264 — each stack declares the region it deploys to. The diff dropped it
+  // on the way to the live read, so a multi-region estate compared every stack
+  // against the ambient region and reported the out-of-region ones as absent.
+  test("multi-stack: each stack's declared region reaches the thin and deep reads", async () => {
+    buildMock.mockResolvedValue(makeBuildResult({ aws: ["bucket"] }));
+    fetchLifecycleMock.mockResolvedValue(undefined);
+    readSnapshotMock.mockResolvedValue(null);
+    loadChantConfigMock.mockResolvedValue({ config: { stacks: [
+      { name: "app-us-east-1", src: "src/us-east-1", region: "us-east-1" },
+      { name: "app-us-west-2", src: "src/us-west-2", region: "us-west-2" },
+    ] } });
+
+    const thinReads: Array<{ stack?: string; region?: string }> = [];
+    const deepReads: Array<{ stack?: string; region?: string }> = [];
+    const plugins: LexiconPlugin[] = [
+      createMockPlugin({
+        name: "aws",
+        emulator: awsEmulatorStub,
+        describeResources: async (options: { stack?: string; region?: string }) => {
+          thinReads.push({ stack: options.stack, region: options.region });
+          return {};
+        },
+        observeResourcesDeep: async (options: { stack?: string; region?: string }) => {
+          deepReads.push({ stack: options.stack, region: options.region });
+          return deepObservation({});
+        },
+      }),
+    ];
+
+    const exit = await runLifecycleDiff({
+      args: makeArgs({ path: "diff", extraPositional: "prod", live: true }),
+      plugins,
+      serializers: plugins.map((p) => p.serializer),
+    });
+
+    expect(exit).toBe(0);
+    expect(thinReads).toEqual([
+      { stack: "app-us-east-1", region: "us-east-1" },
+      { stack: "app-us-west-2", region: "us-west-2" },
+    ]);
+    expect(deepReads).toEqual([
+      { stack: "app-us-east-1", region: "us-east-1" },
+      { stack: "app-us-west-2", region: "us-west-2" },
+    ]);
+  });
+
+  test("stack without a declared region: no region reaches the live read", async () => {
+    buildMock.mockResolvedValue(makeBuildResult({ aws: ["bucket"] }));
+    fetchLifecycleMock.mockResolvedValue(undefined);
+    readSnapshotMock.mockResolvedValue(null);
+    loadChantConfigMock.mockResolvedValue({ config: { stacks: [{ name: "app", src: "src/app" }] } });
+
+    const reads: Array<Record<string, unknown>> = [];
+    const plugins: LexiconPlugin[] = [
+      createMockPlugin({
+        name: "aws",
+        emulator: awsEmulatorStub,
+        describeResources: async (options: Record<string, unknown>) => {
+          reads.push(options);
+          return {};
+        },
+      }),
+    ];
+
+    await runLifecycleDiff({
+      args: makeArgs({ path: "diff", extraPositional: "prod", live: true }),
+      plugins,
+      serializers: plugins.map((p) => p.serializer),
+    });
+
+    expect(reads).toHaveLength(1);
+    expect(reads[0].stack).toBe("app");
+    expect("region" in reads[0]).toBe(false);
   });
 
   test("warns and skips lexicons without describeResources", async () => {
@@ -677,6 +753,25 @@ describe("runLifecyclePlan", () => {
     expect(stdoutBuf.join("\n")).toContain("bucket");
   });
 
+  // #1983 — `--report markdown` emits the reviewer-facing projection instead
+  // of the human render, same as `--report gitlab-mr` swaps in the widget JSON.
+  test("--report markdown emits the markdown projection instead of the human render", async () => {
+    buildMock.mockResolvedValue(makeBuildResult({ aws: ["bucket"] }));
+    const plugins: LexiconPlugin[] = [
+      createMockPlugin({ name: "aws", emulator: awsEmulatorStub, describeResources: staticDescribeResources({}) }),
+    ];
+    const exit = await runLifecyclePlan({
+      args: makeArgs({ path: "plan", extraPositional: "prod", reportFile: "markdown" }),
+      plugins,
+      serializers: plugins.map((p) => p.serializer),
+    });
+    expect(exit).toBe(0);
+    const out = stdoutBuf.join("\n");
+    expect(out).toContain("## Plan for `prod`");
+    expect(out).toContain("### CREATE");
+    expect(out).toContain("- `bucket`");
+  });
+
   // #1620 — the resolved read address rides plan entries the same way it rides
   // the live diff. Regression: the plan path dropped the observation's queried
   // map, so only unobserved rows ever carried an address while the docs
@@ -702,6 +797,251 @@ describe("runLifecyclePlan", () => {
     const plan = JSON.parse(stdoutBuf.join("\n"));
     const web = plan.entries.find((e: { name: string }) => e.name === "web");
     expect(web.queried).toBe("/apis/apps/v1/namespaces/default/deployments/web");
+  });
+
+  // #1674 — the plan merges every lexicon's change set into one flat
+  // `entries[]`; each row must still say which lexicon observed it, and carry
+  // the provider's physical id so an adopt/delete/runtime row named by a live
+  // key can be told apart from a declared entity name.
+  test("--json carries lexicon attribution and physicalId per entry across the merge", async () => {
+    buildMock.mockResolvedValue(makeBuildResult({ aws: ["bucket"], k8s: ["web"] }));
+    const plugins: LexiconPlugin[] = [
+      createMockPlugin({
+        name: "aws",
+        emulator: awsEmulatorStub,
+        describeResources: async () => ({
+          observation: "v1" as const,
+          resources: {
+            bucket: meta({ type: "AWS::S3::Bucket", physicalId: "arn:aws:s3:::my-bucket" }),
+            "sg-0abc123": meta({ type: "AWS::EC2::SecurityGroup", physicalId: "sg-0abc123", ownership: "foreign" }),
+          },
+        }),
+      }),
+      createMockPlugin({
+        name: "k8s",
+        describeResources: async () => ({
+          observation: "v1" as const,
+          resources: { web: meta({ type: "K8s::Apps::Deployment", physicalId: "default/web" }) },
+        }),
+      }),
+    ];
+    const exit = await runLifecyclePlan({
+      args: makeArgs({ path: "plan", extraPositional: "prod", json: true }),
+      plugins,
+      serializers: plugins.map((p) => p.serializer),
+    });
+    expect(exit).toBe(0);
+    const plan = JSON.parse(stdoutBuf.join("\n"));
+    const byName = Object.fromEntries(plan.entries.map((e: { name: string }) => [e.name, e]));
+    expect(byName.bucket).toMatchObject({ lexicon: "aws", physicalId: "arn:aws:s3:::my-bucket", action: "noop" });
+    expect(byName["sg-0abc123"]).toMatchObject({ lexicon: "aws", physicalId: "sg-0abc123", action: "adopt" });
+    expect(byName.web).toMatchObject({ lexicon: "k8s", physicalId: "default/web", action: "noop" });
+    // `name` is untouched: the adopt row is still keyed by the live key.
+    expect(byName["sg-0abc123"].name).toBe("sg-0abc123");
+  });
+
+  // #1665 — per-change disruption. Core defines the contract and reports it;
+  // the lexicon that owns the spec answers, and every degradation is `unknown`.
+  describe("disruption classification (#1665)", () => {
+    const drifted = (lexicon: string, type: string) => {
+      readSnapshotMock.mockResolvedValue(JSON.stringify({
+        lexicon,
+        environment: "prod",
+        commit: "abc",
+        timestamp: "2026-04-01T00:00:00Z",
+        resources: { db: meta({ type, attributes: { Engine: "postgres" } }) },
+      }));
+      return staticDescribeResources({ db: meta({ type, attributes: { Engine: "mysql" } }) });
+    };
+
+    test("a lexicon's verdict reaches --json and the stderr warning", async () => {
+      buildMock.mockResolvedValue(makeBuildResult({ aws: ["db"] }));
+      const plugins: LexiconPlugin[] = [
+        createMockPlugin({
+          name: "aws",
+          emulator: awsEmulatorStub,
+          describeResources: drifted("aws", "AWS::RDS::DBInstance"),
+          classifyDisruption: ({ changes }) =>
+            Object.fromEntries(
+              changes.map((c) => [
+                c.name,
+                { disruption: "destroy" as const, because: c.deltas.map((d) => d.path), detail: "Engine is create-only" },
+              ]),
+            ),
+        }),
+      ];
+      const exit = await runLifecyclePlan({
+        args: makeArgs({ path: "plan", extraPositional: "prod", json: true }),
+        plugins,
+        serializers: plugins.map((p) => p.serializer),
+      });
+      expect(exit).toBe(0);
+      const plan = JSON.parse(stdoutBuf.join("\n"));
+      const db = plan.entries.find((e: { name: string }) => e.name === "db");
+      expect(db).toMatchObject({
+        action: "update",
+        disruption: "destroy",
+        disruptionDetail: "Engine is create-only",
+      });
+      expect(db.disruptionBecause).toContain("attributes.Engine");
+      // The --json shape has no column for it, so the warning is what a CI
+      // consumer hears.
+      expect(stderrBuf.join("\n")).toContain("replace the resource rather than mutating it in place");
+    });
+
+    test("a lexicon with no classifier leaves every update unknown, never in-place", async () => {
+      buildMock.mockResolvedValue(makeBuildResult({ k8s: ["db"] }));
+      const plugins: LexiconPlugin[] = [
+        createMockPlugin({ name: "k8s", describeResources: drifted("k8s", "K8s::Apps::Deployment") }),
+      ];
+      const exit = await runLifecyclePlan({
+        args: makeArgs({ path: "plan", extraPositional: "prod", json: true }),
+        plugins,
+        serializers: plugins.map((p) => p.serializer),
+      });
+      expect(exit).toBe(0);
+      const plan = JSON.parse(stdoutBuf.join("\n"));
+      const db = plan.entries.find((e: { name: string }) => e.name === "db");
+      expect(db.disruption).toBe("unknown");
+      expect(db.disruptionDetail).toContain("k8s lexicon does not classify disruption");
+      expect(stderrBuf.join("\n")).toContain("could not be classified");
+    });
+
+    test("the human render carries the verdict", async () => {
+      buildMock.mockResolvedValue(makeBuildResult({ aws: ["db"] }));
+      const plugins: LexiconPlugin[] = [
+        createMockPlugin({
+          name: "aws",
+          emulator: awsEmulatorStub,
+          describeResources: drifted("aws", "AWS::RDS::DBInstance"),
+          classifyDisruption: () => ({ db: { disruption: "in-place" as const, detail: "no create-only property changed" } }),
+        }),
+      ];
+      const exit = await runLifecyclePlan({
+        args: makeArgs({ path: "plan", extraPositional: "prod" }),
+        plugins,
+        serializers: plugins.map((p) => p.serializer),
+      });
+      expect(exit).toBe(0);
+      const out = stdoutBuf.join("\n");
+      expect(out).toContain("Disruption: 1 in-place");
+      expect(out).toContain("— in-place: no create-only property changed");
+      expect(stderrBuf.join("\n")).not.toContain("could not be classified");
+    });
+  });
+
+  // #1832 — effect receipts are declared, diffed, and observed like any
+  // resource, but observe-only to the generic apply path: the plan compares
+  // live value to resolved expectation and proposes the fire, never a create.
+  describe("effect receipts (#1832)", () => {
+    const receiptEntity = (lexicon: string) => ({
+      lexicon,
+      entityType: lexicon === "chant" ? "Chant::EffectReceipt" : `${lexicon}::Receipt`,
+      name: "dbMigrated",
+      effect: "db-migrate",
+      flavor: "existence" as const,
+      inputs: {},
+      [Symbol.for("chant.declarable")]: true,
+      [Symbol.for("chant.effect-receipt")]: true,
+    });
+
+    const buildWithReceipt = (lexicon: string): BuildResult => {
+      const base = makeBuildResult({ aws: ["bucket"] });
+      base.entities.set("dbMigrated", receiptEntity(lexicon) as unknown as Parameters<typeof base.entities.set>[1]);
+      if (lexicon !== "aws") (base.manifest.lexicons as string[]).push(lexicon);
+      return base;
+    };
+
+    test("an absent receipt is an effect row, never a create", async () => {
+      buildMock.mockResolvedValue(buildWithReceipt("aws"));
+      const plugins: LexiconPlugin[] = [
+        createMockPlugin({
+          name: "aws",
+          emulator: awsEmulatorStub,
+          describeResources: async () => ({
+            observation: "v1" as const,
+            resources: { bucket: meta() },
+            // dbMigrated neither returned nor unobserved: confirmed absent.
+          }),
+        }),
+      ];
+      const exit = await runLifecyclePlan({
+        args: makeArgs({ path: "plan", extraPositional: "prod", json: true }),
+        plugins,
+        serializers: plugins.map((p) => p.serializer),
+      });
+      expect(exit).toBe(0);
+      const plan = JSON.parse(stdoutBuf.join("\n"));
+      const row = plan.entries.find((e: { name: string }) => e.name === "dbMigrated");
+      expect(row).toMatchObject({ action: "effect", effect: "db-migrate", effectReason: "receipt-absent", lexicon: "aws" });
+      expect(plan.entries.filter((e: { name: string; action: string }) => e.name === "dbMigrated")).toHaveLength(1);
+    });
+
+    test("a live receipt carrying the existence marker is a clean noop, and the render says nothing fires", async () => {
+      buildMock.mockResolvedValue(buildWithReceipt("aws"));
+      const plugins: LexiconPlugin[] = [
+        createMockPlugin({
+          name: "aws",
+          emulator: awsEmulatorStub,
+          describeResources: async () => ({
+            observation: "v1" as const,
+            resources: {
+              bucket: meta(),
+              dbMigrated: meta({ type: "aws::Receipt", attributes: { value: "chant.effect-receipt:exists" } }),
+            },
+          }),
+        }),
+      ];
+      const exit = await runLifecyclePlan({
+        args: makeArgs({ path: "plan", extraPositional: "prod" }),
+        plugins,
+        serializers: plugins.map((p) => p.serializer),
+      });
+      expect(exit).toBe(0);
+      expect(stdoutBuf.join("\n")).toContain("0 effect");
+      expect(stdoutBuf.join("\n")).not.toContain("effect will fire");
+    });
+
+    test("a stale receipt renders effect will fire", async () => {
+      buildMock.mockResolvedValue(buildWithReceipt("aws"));
+      const plugins: LexiconPlugin[] = [
+        createMockPlugin({
+          name: "aws",
+          emulator: awsEmulatorStub,
+          describeResources: async () => ({
+            observation: "v1" as const,
+            resources: {
+              bucket: meta(),
+              dbMigrated: meta({ type: "aws::Receipt", attributes: { value: "something-else" } }),
+            },
+          }),
+        }),
+      ];
+      const exit = await runLifecyclePlan({
+        args: makeArgs({ path: "plan", extraPositional: "prod" }),
+        plugins,
+        serializers: plugins.map((p) => p.serializer),
+      });
+      expect(exit).toBe(0);
+      expect(stdoutBuf.join("\n")).toContain("effect will fire: db-migrate");
+    });
+
+    test("a receipt no loaded lexicon observes is unobserved, loudly", async () => {
+      buildMock.mockResolvedValue(buildWithReceipt("chant"));
+      const plugins: LexiconPlugin[] = [
+        createMockPlugin({ name: "aws", emulator: awsEmulatorStub, describeResources: staticDescribeResources({ bucket: meta() }) }),
+      ];
+      const exit = await runLifecyclePlan({
+        args: makeArgs({ path: "plan", extraPositional: "prod", json: true }),
+        plugins,
+        serializers: plugins.map((p) => p.serializer),
+      });
+      expect(exit).toBe(0);
+      const plan = JSON.parse(stdoutBuf.join("\n"));
+      const row = plan.entries.find((e: { name: string }) => e.name === "dbMigrated");
+      expect(row).toMatchObject({ action: "unobserved", unobservedReason: "unsupported-kind" });
+      expect(stderrBuf.join("\n")).toContain("could not be observed");
+    });
   });
 
   // #1166 — plan is always a live read (no `--live` flag of its own), so a
@@ -1101,5 +1441,235 @@ describe("runLifecycleUnknown", () => {
     expect(stderr).toContain("show");
     expect(stderr).toContain("diff");
     expect(stderr).toContain("log");
+  });
+});
+
+describe("runLifecycleTeardown (#1222 — plan only)", () => {
+  let stdoutBuf: string[];
+  let stderrBuf: string[];
+
+  beforeEach(() => {
+    stdoutBuf = [];
+    stderrBuf = [];
+    vi.spyOn(console, "log").mockImplementation((s: string) => { stdoutBuf.push(s); });
+    vi.spyOn(console, "error").mockImplementation((s: string) => { stderrBuf.push(s); });
+    loadChantConfigMock.mockReset();
+    loadChantConfigMock.mockResolvedValue({
+      config: { environments: ["dev", "prod"], ownership: { stack: "shop", env: "dev" } },
+    });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  const run = (overrides: Partial<ParsedArgs>, plugins: LexiconPlugin[]) =>
+    runLifecycleTeardown({
+      args: makeArgs({ command: "lifecycle", path: "teardown", ...overrides }),
+      plugins,
+      serializers: [],
+    });
+
+  test("requires an environment", async () => {
+    expect(await run({}, [])).toBe(1);
+    expect(stderrBuf.join("\n")).toContain("Environment is required");
+  });
+
+  test("exits nonzero on an environment the project does not declare", async () => {
+    expect(await run({ extraPositional: "staging" }, [])).toBe(1);
+    const stderr = stderrBuf.join("\n");
+    expect(stderr).toContain('Unknown environment "staging"');
+    expect(stderr).toContain("dev, prod");
+  });
+
+  test("--yes executes the planned set and prints per-candidate outcomes", async () => {
+    const executeTeardown = vi.fn(async () => ({
+      outcomes: [{ name: "web", outcome: "deleted" as const }],
+    }));
+    const plugin = createMockPlugin({
+      name: "k8s",
+      teardownOwned: async () => ({
+        candidates: [{ name: "web", type: "K8s::Apps::Deployment", marker: { stack: "shop", env: "dev" } }],
+      }),
+      executeTeardown,
+    });
+    expect(await run({ extraPositional: "dev", yes: true }, [plugin])).toBe(0);
+    expect(executeTeardown).toHaveBeenCalledWith({
+      environment: "dev",
+      marker: { stack: "shop", env: "dev" },
+      candidates: [{ name: "web", type: "K8s::Apps::Deployment", marker: { stack: "shop", env: "dev" } }],
+    });
+    const out = stdoutBuf.join("\n");
+    expect(out).toContain("Outcomes:");
+    expect(out).toContain("deleted");
+    expect(out).toContain("1 deleted, 0 failed, 0 not prunable, 0 retained, 0 skipped");
+    expect(out).not.toContain("plan only");
+  });
+
+  test("--yes exits nonzero when a candidate stays failed after the retry pass", async () => {
+    const executeTeardown = vi.fn(async () => ({
+      outcomes: [{ name: "web", outcome: "failed" as const, detail: "conflict" }],
+    }));
+    const plugin = createMockPlugin({
+      name: "k8s",
+      teardownOwned: async () => ({
+        candidates: [{ name: "web", type: "K8s::Apps::Deployment", marker: { stack: "shop", env: "dev" } }],
+      }),
+      executeTeardown,
+    });
+    expect(await run({ extraPositional: "dev", yes: true }, [plugin])).toBe(1);
+    expect(executeTeardown).toHaveBeenCalledTimes(2); // pass + bounded retry
+    expect(stderrBuf.join("\n")).toContain("failed to delete after the retry pass");
+  });
+
+  test("--yes with a lexicon that only enumerates reports skipped, not deleted", async () => {
+    const plugin = createMockPlugin({
+      name: "gcp",
+      teardownOwned: async () => ({
+        candidates: [{ name: "bucket", type: "GCP::Storage::Bucket", marker: { stack: "shop", env: "dev" } }],
+      }),
+    });
+    expect(await run({ extraPositional: "dev", yes: true }, [plugin])).toBe(0);
+    expect(stdoutBuf.join("\n")).toContain("skipped");
+    expect(stderrBuf.join("\n")).toContain("no teardown execution in these lexicons yet");
+  });
+
+  test("--yes on a production-like environment demands --confirm-prod when not interactive", async () => {
+    const executeTeardown = vi.fn();
+    const plugin = createMockPlugin({
+      name: "k8s",
+      teardownOwned: async () => ({ candidates: [] }),
+      executeTeardown,
+    });
+    expect(await run({ extraPositional: "prod", yes: true }, [plugin])).toBe(1);
+    expect(stderrBuf.join("\n")).toContain("--confirm-prod");
+    expect(executeTeardown).not.toHaveBeenCalled();
+  });
+
+  test("--yes --confirm-prod tears a production-like environment down non-interactively", async () => {
+    const executeTeardown = vi.fn(async () => ({
+      outcomes: [{ name: "web", outcome: "deleted" as const }],
+    }));
+    const plugin = createMockPlugin({
+      name: "k8s",
+      teardownOwned: async () => ({
+        candidates: [{ name: "web", type: "K8s::Apps::Deployment", marker: { stack: "shop", env: "prod" } }],
+      }),
+      executeTeardown,
+    });
+    expect(await run({ extraPositional: "prod", yes: true, confirmProd: true }, [plugin])).toBe(0);
+    expect(executeTeardown).toHaveBeenCalledTimes(1);
+  });
+
+  test("the prod guard never fires without --yes — planning production is safe", async () => {
+    const plugin = createMockPlugin({
+      name: "k8s",
+      teardownOwned: async () => ({ candidates: [] }),
+    });
+    expect(await run({ extraPositional: "prod" }, [plugin])).toBe(0);
+    expect(stderrBuf.join("\n")).not.toContain("--confirm-prod");
+  });
+
+  test("--yes --json emits the execution report", async () => {
+    const plugin = createMockPlugin({
+      name: "k8s",
+      teardownOwned: async () => ({
+        candidates: [{ name: "web", type: "K8s::Apps::Deployment", marker: { stack: "shop", env: "dev" } }],
+      }),
+      executeTeardown: async () => ({ outcomes: [{ name: "web", outcome: "deleted" as const }] }),
+    });
+    expect(await run({ extraPositional: "dev", yes: true, json: true }, [plugin])).toBe(0);
+    const parsed = JSON.parse(stdoutBuf.join("\n"));
+    expect(parsed.outcomes).toEqual([
+      {
+        lexicon: "k8s",
+        name: "web",
+        type: "K8s::Apps::Deployment",
+        marker: { stack: "shop", env: "dev" },
+        outcome: "deleted",
+      },
+    ]);
+  });
+
+  test("refuses when the project declares no ownership.stack", async () => {
+    loadChantConfigMock.mockResolvedValue({ config: { environments: ["dev"] } });
+    expect(await run({ extraPositional: "dev" }, [])).toBe(1);
+    expect(stderrBuf.join("\n")).toContain("no ownership.stack");
+  });
+
+  test("prints the would-delete set with resource, type, and marker identity", async () => {
+    const plugin = createMockPlugin({
+      name: "k8s",
+      teardownOwned: async () => ({
+        candidates: [
+          { name: "web", type: "K8s::Apps::Deployment", physicalId: "web-1", marker: { stack: "shop", env: "dev" } },
+        ],
+      }),
+    });
+    expect(await run({ extraPositional: "dev" }, [plugin])).toBe(0);
+    const out = stdoutBuf.join("\n");
+    expect(out).toContain("Teardown plan");
+    expect(out).toContain("plan only");
+    expect(out).toContain("web");
+    expect(out).toContain("K8s::Apps::Deployment");
+    expect(out).toContain("shop/dev");
+    expect(stderrBuf.join("\n")).toContain("re-run with --yes to execute");
+  });
+
+  test("never selects foreign-stack or foreign-env resources on the fallback path", async () => {
+    const plugin = createMockPlugin({
+      name: "k8s",
+      describeResources: staticObservation({
+        mine: { type: "K8s::Apps::Deployment", status: "READY", marker: { stack: "shop", env: "dev" } },
+        theirs: { type: "K8s::Apps::Deployment", status: "READY", marker: { stack: "blog", env: "dev" } },
+        prodTwin: { type: "K8s::Apps::Deployment", status: "READY", marker: { stack: "shop", env: "prod" } },
+        unmarked: { type: "K8s::Apps::Deployment", status: "READY" },
+      }),
+    });
+    expect(await run({ extraPositional: "dev" }, [plugin])).toBe(0);
+    const out = stdoutBuf.join("\n");
+    expect(out).toContain("mine");
+    expect(out).not.toContain("theirs");
+    expect(out).not.toContain("prodTwin");
+    expect(out).not.toContain("unmarked");
+  });
+
+  test("an empty would-delete set is loud, not silent", async () => {
+    const plugin = createMockPlugin({
+      name: "k8s",
+      teardownOwned: async () => ({ candidates: [] }),
+    });
+    expect(await run({ extraPositional: "dev" }, [plugin])).toBe(0);
+    expect(stderrBuf.join("\n")).toContain("nothing would be deleted");
+  });
+
+  test("holes are surfaced loudly (#1089)", async () => {
+    const plugin = createMockPlugin({
+      name: "k8s",
+      teardownOwned: async () => ({
+        candidates: [],
+        holes: [{ name: "crds", type: "K8s::CRD", reason: "unsupported-kind" as const, detail: "no reader" }],
+      }),
+    });
+    expect(await run({ extraPositional: "dev" }, [plugin])).toBe(0);
+    expect(stderrBuf.join("\n")).toContain("incomplete, not clean");
+    const out = stdoutBuf.join("\n");
+    expect(out).toContain("HOLES");
+    expect(out).toContain("crds");
+    expect(out).toContain("unsupported-kind");
+  });
+
+  test("--json emits the plan as JSON", async () => {
+    const plugin = createMockPlugin({
+      name: "k8s",
+      teardownOwned: async () => ({
+        candidates: [{ name: "web", type: "K8s::Apps::Deployment", marker: { stack: "shop", env: "dev" } }],
+      }),
+    });
+    expect(await run({ extraPositional: "dev", json: true }, [plugin])).toBe(0);
+    const parsed = JSON.parse(stdoutBuf.join("\n"));
+    expect(parsed.environment).toBe("dev");
+    expect(parsed.stack).toBe("shop");
+    expect(parsed.entries).toHaveLength(1);
   });
 });

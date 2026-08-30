@@ -1,16 +1,17 @@
 // Cross-lexicon configuration.
-// In production, populate these from CloudFormation stack outputs:
-//   aws cloudformation describe-stacks --stack-name eks-microservice \
-//     --query 'Stacks[0].Outputs'
+// Every value is declared in chant.config.ts's buildParams. Supply with
+// --param, --params-file, or the env vars named there.
+
+import { params } from "@intentius/chant/params";
 
 export const config = {
-  clusterName: process.env.EKS_CLUSTER_NAME ?? "eks-microservice",
-  region: process.env.AWS_REGION ?? "us-east-1",
-  appRoleArn: process.env.APP_ROLE_ARN ?? "arn:aws:iam::123456789012:role/eks-microservice-app-role",
-  albCertificateArn: process.env.ALB_CERT_ARN || "",
-  externalDnsRoleArn: process.env.EXTERNAL_DNS_ROLE_ARN ?? "arn:aws:iam::123456789012:role/eks-microservice-external-dns-role",
-  fluentBitRoleArn: process.env.FLUENT_BIT_ROLE_ARN ?? "arn:aws:iam::123456789012:role/eks-microservice-fluent-bit-role",
-  adotRoleArn: process.env.ADOT_ROLE_ARN ?? "arn:aws:iam::123456789012:role/eks-microservice-adot-role",
-  domain: process.env.DOMAIN ?? "api.eks-microservice-demo.dev",
-  appImage: process.env.APP_IMAGE ?? "nginxinc/nginx-unprivileged:stable",
+  clusterName: params.clusterName as string,
+  region: params.region as string,
+  appRoleArn: params.appRoleArn as string,
+  albCertificateArn: params.albCertificateArn as string,
+  externalDnsRoleArn: params.externalDnsRoleArn as string,
+  fluentBitRoleArn: params.fluentBitRoleArn as string,
+  adotRoleArn: params.adotRoleArn as string,
+  domain: params.domain as string,
+  appImage: params.appImage as string,
 };

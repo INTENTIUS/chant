@@ -2,10 +2,13 @@ import type { Declarable } from "./declarable";
 import type { Serializer, SerializerResult } from "./serializer";
 import type { OwnershipMarker } from "./ownership";
 import type { BuildError, DiscoveryErrorType } from "./errors";
-import type { IntrinsicDef, BuildRootContribution } from "./lexicon";
+import type { IntrinsicDef, BuildRootContribution, BuildRootContributor } from "./lexicon";
 import type { BuildParamProvenance } from "./provenance";
 import { DiscoveryError, BuildError as BuildErrorClass } from "./errors";
 import { LexiconOutput, isLexiconOutput } from "./lexicon-output";
+import { isSecretDeclaration } from "./secret-provenance";
+import { splitReceiptEntities } from "./effect-receipt";
+import { isScenario } from "./lifecycle/scenario";
 import { AttrRef } from "./attrref";
 import { isAttrRefLike } from "./utils";
 import { isChildProject, type ChildProjectInstance } from "./child-project";
@@ -112,7 +115,10 @@ export function computeStackGraph(
   // Dependency map: node → producers it depends on.
   const nodes = lexiconNames.length
     ? [...lexiconNames]
-    : [...new Set([...entities.values()].map((e) => e.lexicon))];
+    : // Secret provenance declarations (#1828) and plan scenarios (#1292) never
+      // form a stack — their pseudo-lexicon has no serializer and must not
+      // appear in the manifest.
+      [...new Set([...entities.values()].filter((e) => !isSecretDeclaration(e) && !isScenario(e)).map((e) => e.lexicon))];
   const deps = new Map<string, Set<string>>();
   for (const n of nodes) deps.set(n, new Set());
   for (const { from, to } of edges) {
@@ -229,7 +235,7 @@ export interface BuildOptions {
    * binaries); a contributed name colliding with a discovered entity is a
    * build error, never a silent overwrite.
    */
-  buildRoots?: Array<() => Promise<BuildRootContribution>>;
+  buildRoots?: BuildRootContributor[];
 }
 
 export interface BuildResult {
@@ -294,6 +300,14 @@ export function partitionByLexicon(
   for (const [name, entity] of entities) {
     // LexiconOutput instances are collected separately; skip them here
     if (isLexiconOutput(entity)) continue;
+    // Secret provenance declarations (#1828) are serializer-neutral: data
+    // that lint and lexicons read from the entity map, never output. Keeping
+    // them out of every partition means no serializer sees them and no
+    // "No serializer found" warning fires for their pseudo-lexicon.
+    if (isSecretDeclaration(entity)) continue;
+    // Plan scenarios (#1292) are serializer-neutral the same way: a checkable
+    // expectation the CLI reads off the entity map, never output.
+    if (isScenario(entity)) continue;
     const lexicon = entity.lexicon;
     if (!partitions.has(lexicon)) {
       partitions.set(lexicon, new Map());
@@ -590,13 +604,18 @@ export interface BuildRootMergeResult {
  */
 export async function mergeBuildRootEntities(
   entities: Map<string, Declarable>,
-  contributors: ReadonlyArray<() => Promise<BuildRootContribution>>,
+  contributors: ReadonlyArray<BuildRootContributor>,
 ): Promise<BuildRootMergeResult> {
   const warnings: string[] = [];
   const errors: string[] = [];
   for (const contribute of contributors) {
     try {
-      const contribution = await contribute();
+      // The discovered set, read-only, so a contributor can react to what the
+      // project DECLARED (a committed-encrypted `declareSecret()` naming a
+      // ciphertext file to resolve). Contributors run in order, so this also
+      // carries what earlier contributors added; the merge below is still the
+      // only writer, which is what keeps the collision refusal meaningful.
+      const contribution = await contribute({ entities });
       warnings.push(...(contribution.warnings ?? []));
       for (const [name, entity] of contribution.entities) {
         if (entities.has(name)) {
@@ -785,20 +804,34 @@ async function buildFromDiscoveryResult(
   const outputs = new Map<string, string | SerializerResult>();
   for (const [lexiconName, lexiconEntities] of partitions) {
     const serializer = serializersByName.get(lexiconName);
+    // #1832: effect receipts are withheld from the apply-bound entity set at
+    // this seam — the narrowest choke point every applier's input flows
+    // through, since appliers consume the serialized outputs assembled here.
+    // Receipts ride `SerializeContext.receipts` instead, so a lexicon can
+    // render them for visibility (#1835) without them ever entering the
+    // document an applier writes (or prunes) from. The `effect()` step is the
+    // sole receipt writer (epic #1703, decision 3).
+    const { applyBound, receipts } = splitReceiptEntities(lexiconEntities);
     if (serializer) {
       const lexiconLexiconOutputs = [
         ...(outputsByLexicon.get(lexiconName) ?? []),
         ...unassignedOutputs,
       ];
-      const serialized = serializer.serialize(lexiconEntities, lexiconLexiconOutputs, {
+      const serialized = serializer.serialize(applyBound, lexiconLexiconOutputs, {
         ownership: options?.ownership,
         config: options?.config,
+        ...(receipts.size > 0 ? { receipts } : {}),
       });
       // Collect any non-fatal serializer diagnostics into the build warnings.
       if (typeof serialized !== "string" && serialized.warnings) {
         for (const w of serialized.warnings) warnings.push(w);
       }
       outputs.set(lexiconName, serialized);
+    } else if (applyBound.size === 0 && receipts.size > 0) {
+      // A partition holding only receipts (the core factory's "chant"
+      // pseudo-lexicon) has nothing apply-bound to serialize; that is the
+      // designed shape until a lexicon materializes the receipt (#1835), not
+      // a missing-serializer problem.
     } else {
       warnings.push(`No serializer found for lexicon "${lexiconName}"`);
     }

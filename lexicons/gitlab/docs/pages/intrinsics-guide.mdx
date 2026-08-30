@@ -1,0 +1,57 @@
+---
+title: "Intrinsics Guide"
+description: "Worked examples for the GitLab reference() intrinsic and its chant syntax"
+diataxis: reference
+---
+
+See [Intrinsic Functions](../intrinsics/) for the generated reference table (name, description, output key, whether it's a tagged template, whether folding can reduce it). This page is the worked-example companion.
+
+The GitLab lexicon provides one intrinsic function: `reference()`, which maps to GitLab's `!reference` YAML tag.
+
+`reference()` is a plain function call, not a TypeScript tagged template — like any function call used as a value, it's outside the subset [folding](/chant/concepts/typescript-as-data/#folded-vs-run) can reduce. A file that calls `reference()` anywhere in a resource's properties falls back to the normal run path.
+
+## `reference()` — reuse job properties
+
+The `reference()` intrinsic lets you reuse properties from other jobs or hidden keys. It produces the `!reference` YAML tag:
+
+{{file:docs-snippets/src/reference-basic.ts}}
+
+Serializes to:
+
+```yaml
+deploy:
+  script: !reference [.setup, script]
+```
+
+### Syntax
+
+```typescript
+reference(jobName: string, property: string): ReferenceTag
+```
+
+- `jobName` — the job or hidden key to reference (e.g. `".setup"`, `"build"`)
+- `property` — the property to extract (e.g. `"script"`, `"before_script"`, `"rules"`)
+
+### Use cases
+
+{{file:docs-snippets/src/reference-shared.ts}}
+
+Produces:
+
+```yaml
+test:
+  stage: test
+  before_script: !reference [.node-setup, before_script]
+  script:
+    - npm test
+
+lint:
+  stage: test
+  before_script: !reference [.node-setup, before_script]
+  script:
+    - npm run lint
+```
+
+### When to use `reference()` vs direct imports
+
+{{file:docs-snippets/src/reference-vs-import.ts}}

@@ -18,6 +18,8 @@ import {
   DriverGateUnsupportedError,
   DriverRunFailure,
   UnknownDependencyError,
+  accumulateComponentOutputs,
+  collectComponentOutputs,
   resolveComponentGraph,
   resolveWiring,
   runComponentDeploy,
@@ -408,6 +410,49 @@ describe("runComponentDeploy — output wiring", () => {
     const result = await runInterpretDriver([jarLib, emrJob], registry, { env: "dev" });
     expect(result.ok).toBe(true);
     expect(submitCalls[0]!.input).toMatchObject({ jar: "s3://bucket/jar-lib.jar" });
+  });
+});
+
+describe("collectComponentOutputs / accumulateComponentOutputs — the shared accumulator (#700)", () => {
+  // Exported so the durable path's `accumulateComponentOutputs` activity
+  // (lexicons/temporal/src/component-op/activities.ts) captures outputs via
+  // the same function `runComponentDeploy` does — the accumulation twin of
+  // the already-shared `resolveStepInput`.
+  const phaseOutputs = {
+    Apply: { stackStatus: "CREATE_COMPLETE", outputs: { ClusterArn: "arn:cluster", ApiRepoUri: "repo" } },
+    Publish: { uri: "repo@sha256:abc", digest: "sha256:abc" },
+  };
+
+  it("namespaces publish outputs under `publish` and merges stack outputs at the top level", () => {
+    expect(collectComponentOutputs(phaseOutputs)).toEqual({
+      ClusterArn: "arn:cluster",
+      ApiRepoUri: "repo",
+      publish: { uri: "repo@sha256:abc", digest: "sha256:abc" },
+    });
+  });
+
+  it("returns undefined when no phase output looks like a publish or stack result", () => {
+    expect(collectComponentOutputs({ Verify: { ok: true } })).toBeUndefined();
+  });
+
+  it("records under the component name, merging over a seeded entry, and returns the map", () => {
+    const seeded = { "shared-alb": { Seeded: "keep" }, other: { x: 1 } };
+    const out = accumulateComponentOutputs(seeded, "shared-alb", phaseOutputs);
+    expect(out).toBe(seeded);
+    expect(out["shared-alb"]).toEqual({
+      Seeded: "keep",
+      ClusterArn: "arn:cluster",
+      ApiRepoUri: "repo",
+      publish: { uri: "repo@sha256:abc", digest: "sha256:abc" },
+    });
+    expect(out.other).toEqual({ x: 1 });
+    // Plain data throughout — survives the Temporal activity JSON boundary unchanged.
+    expect(JSON.parse(JSON.stringify(out))).toEqual(out);
+  });
+
+  it("is a no-op when the component exposed nothing", () => {
+    const map = { other: { x: 1 } };
+    expect(accumulateComponentOutputs(map, "svc", { Verify: { ok: true } })).toEqual({ other: { x: 1 } });
   });
 });
 

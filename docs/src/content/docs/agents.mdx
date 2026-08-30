@@ -1,0 +1,54 @@
+---
+title: Agents Start Here
+description: A copy-paste prompt that gets an agent from zero to a working chant build
+diataxis: how-to
+---
+
+Paste this into your agent. It installs chant, scaffolds a project, and points the
+agent at the skills and MCP tools that carry the rest of the work — see
+[Agent Integration](/chant/guide/agent-integration/) for what those surfaces do
+once installed.
+
+````text
+You're setting up chant (https://intentius.io/chant), a TypeScript-first
+infrastructure tool: typed resources in, spec-native output out, validated by
+semantic lint rules.
+
+1. Pick the lexicon (platform plugin) for this project's target — aws, azure,
+   gcp, k8s, helm, docker, github, gitlab, forgejo, or temporal — then install
+   it (this also installs the chant CLI):
+
+     npm install --save-dev @intentius/chant-lexicon-<name>
+
+2. Scaffold the project (use `.` if this repo is already the project root):
+
+     npx chant init . --lexicon <name>
+
+   This writes `chant.config.ts`, starter resources, and — unless
+   `--skip-mcp`/`--skip-install` were passed — a `skills/` directory and an
+   MCP server entry in your IDE's config.
+
+3. Read every `skills/*/SKILL.md` chant init just wrote before authoring
+   anything. They're the operational playbook for this platform: which
+   composites exist, what to validate, how to deploy. Don't guess at the
+   platform's shape — the skill already has it.
+
+4. Author resources as typed, exported TypeScript objects (no YAML, no
+   string templates). Cross-file references are plain `import`/`export`.
+
+5. Validate before you call it done:
+
+     npx chant build   # synthesizes spec-native output; fails on type errors
+     npx chant lint     # semantic rules — fails on real misconfigurations, not style
+
+6. Query the estate instead of reading a synthesized dump — one compact,
+   edge-aware line per match:
+
+     npx chant search "kind:<Type> attr:<name>=<value>"
+
+If an MCP server is configured, prefer its `build`, `lint`, and `search`
+tools over shelling out — same operations, no terminal round-trip.
+````
+
+Once this runs clean, the [Agent Integration](/chant/guide/agent-integration/)
+guide covers skills, MCP tools, and Ops in depth for everything past scaffolding.

@@ -28,11 +28,27 @@ import { wk8306 } from "./wk8306";
 import { wk8401 } from "./wk8401";
 import { wk8402 } from "./wk8402";
 import { wk8403 } from "./wk8403";
+import { wk8404 } from "./wk8404";
+import { wk8405 } from "./wk8405";
+import { wk8406 } from "./wk8406";
+import { wk8407 } from "./wk8407";
 import { argo002 } from "./argo002";
 import { argo003 } from "./argo003";
 import { argo005 } from "./argo005";
 import { flux002 } from "./flux002";
 import { flux003 } from "./flux003";
+import { wk8501 } from "./wk8501";
+import { wk8502 } from "./wk8502";
+import { wk8503 } from "./wk8503";
+import { wk8504 } from "./wk8504";
+import { wk8505 } from "./wk8505";
+import { declareSecret, type SecretDeclarationInput } from "@intentius/chant/secret-provenance";
+import type { Declarable } from "@intentius/chant/declarable";
+import type { SerializerResult } from "@intentius/chant/serializer";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { getCrdSchemaRegistry, setCrdSchemaRegistry, validateSpec } from "./crd-schema-helpers";
 
 function makeCtx(yaml: string): PostSynthContext {
   return {
@@ -1547,6 +1563,235 @@ describe("WK8403: spec.rayVersion does not match image tag", () => {
   });
 });
 
+// ── WK8404: GPU request without a matching toleration ─────────────────────────
+
+function servingRuntime(opts: {
+  resources?: Record<string, unknown>;
+  tolerations?: unknown[];
+  kind?: string;
+}) {
+  return {
+    apiVersion: "serving.kserve.io/v1alpha1",
+    kind: opts.kind ?? "ServingRuntime",
+    metadata: { name: "vllm-runtime", namespace: "models" },
+    spec: {
+      containers: [
+        {
+          name: "kserve-container",
+          image: "vllm/vllm-openai:v0.7.0",
+          ...(opts.resources && { resources: opts.resources }),
+        },
+      ],
+      ...(opts.tolerations && { tolerations: opts.tolerations }),
+    },
+  };
+}
+
+describe("WK8404: GPU request without a matching toleration", () => {
+  test("flags a GPU request with no toleration", () => {
+    const ctx = makeCtx(JSON.stringify(servingRuntime({
+      resources: { requests: { "nvidia.com/gpu": "1" }, limits: { "nvidia.com/gpu": "1" } },
+    })));
+    const diags = wk8404.check(ctx);
+    expect(diags.length).toBe(1);
+    expect(diags[0].checkId).toBe("WK8404");
+    expect(diags[0].severity).toBe("error");
+    expect(diags[0].message).toContain("nvidia.com/gpu");
+  });
+
+  test("passes with an explicit nvidia.com/gpu toleration", () => {
+    const ctx = makeCtx(JSON.stringify(servingRuntime({
+      resources: { requests: { "nvidia.com/gpu": "1" }, limits: { "nvidia.com/gpu": "1" } },
+      tolerations: [{ key: "nvidia.com/gpu", operator: "Exists", effect: "NoSchedule" }],
+    })));
+    expect(wk8404.check(ctx).length).toBe(0);
+  });
+
+  test("passes with a wildcard Exists toleration (no key)", () => {
+    const ctx = makeCtx(JSON.stringify(servingRuntime({
+      resources: { requests: { "nvidia.com/gpu": "1" } },
+      tolerations: [{ operator: "Exists" }],
+    })));
+    expect(wk8404.check(ctx).length).toBe(0);
+  });
+
+  test("skips containers that don't request a GPU", () => {
+    const ctx = makeCtx(JSON.stringify(servingRuntime({
+      resources: { requests: { cpu: "2" }, limits: { cpu: "2" } },
+    })));
+    expect(wk8404.check(ctx).length).toBe(0);
+  });
+
+  test("also flags a plain Deployment requesting a GPU with no toleration", () => {
+    const ctx = makeCtx(JSON.stringify({
+      apiVersion: "apps/v1",
+      kind: "Deployment",
+      metadata: { name: "gpu-app" },
+      spec: {
+        template: {
+          spec: {
+            containers: [
+              { name: "app", image: "app:1.0", resources: { requests: { "nvidia.com/gpu": "2" }, limits: { "nvidia.com/gpu": "2" } } },
+            ],
+          },
+        },
+      },
+    }));
+    const diags = wk8404.check(ctx);
+    expect(diags.length).toBe(1);
+    expect(diags[0].entity).toBe("gpu-app");
+  });
+});
+
+// ── WK8405: Serving workload without a PodDisruptionBudget ─────────────────────
+
+function inferenceService(opts: { name?: string; labels?: Record<string, string> }) {
+  return {
+    apiVersion: "serving.kserve.io/v1beta1",
+    kind: "InferenceService",
+    metadata: {
+      name: opts.name ?? "llama-3-8b",
+      namespace: "serving",
+      labels: { "app.kubernetes.io/component": "inference-service", ...opts.labels },
+    },
+    spec: {
+      predictor: {
+        model: { runtime: "vllm-runtime", storageUri: "gs://my-models/llama-3-8b/v1" },
+      },
+    },
+  };
+}
+
+function pdb(matchLabels: Record<string, string>) {
+  return {
+    apiVersion: "policy/v1",
+    kind: "PodDisruptionBudget",
+    metadata: { name: "pdb" },
+    spec: { minAvailable: 1, selector: { matchLabels } },
+  };
+}
+
+describe("WK8405: Serving workload without a PDB", () => {
+  test("flags an InferenceService with no covering PDB", () => {
+    const ctx = makeCtx(JSON.stringify(inferenceService({})));
+    const diags = wk8405.check(ctx);
+    expect(diags.length).toBe(1);
+    expect(diags[0].checkId).toBe("WK8405");
+    expect(diags[0].severity).toBe("info");
+  });
+
+  test("passes when a PDB selector covers the InferenceService's labels", () => {
+    const ctx = manifestsCtx(
+      inferenceService({}),
+      pdb({ "app.kubernetes.io/component": "inference-service" }),
+    );
+    expect(wk8405.check(ctx).length).toBe(0);
+  });
+
+  test("flags a Deployment labeled as a serving component with no PDB", () => {
+    const ctx = makeCtx(JSON.stringify({
+      apiVersion: "apps/v1",
+      kind: "Deployment",
+      metadata: { name: "serving-dep", labels: { "app.kubernetes.io/component": "vllm-serving-runtime" } },
+      spec: { replicas: 1, template: { spec: { containers: [{ name: "app", image: "app:1.0" }] } } },
+    }));
+    const diags = wk8405.check(ctx);
+    expect(diags.length).toBe(1);
+    expect(diags[0].entity).toBe("serving-dep");
+  });
+
+  test("ignores a plain Deployment with no serving component label", () => {
+    const ctx = makeCtx(JSON.stringify({
+      apiVersion: "apps/v1",
+      kind: "Deployment",
+      metadata: { name: "other-dep", labels: { "app.kubernetes.io/component": "web" } },
+      spec: { replicas: 1, template: { spec: { containers: [{ name: "app", image: "app:1.0" }] } } },
+    }));
+    expect(wk8405.check(ctx).length).toBe(0);
+  });
+});
+
+// ── WK8406: No resource limits on a GPU pod ─────────────────────────────────
+
+describe("WK8406: GPU container missing resource limits", () => {
+  test("flags a GPU-requesting container with no limits", () => {
+    const ctx = makeCtx(JSON.stringify(servingRuntime({
+      resources: { requests: { "nvidia.com/gpu": "1" } },
+    })));
+    const diags = wk8406.check(ctx);
+    expect(diags.length).toBe(1);
+    expect(diags[0].checkId).toBe("WK8406");
+    expect(diags[0].severity).toBe("warning");
+    expect(diags[0].message).toContain("cpu, memory");
+  });
+
+  test("flags a GPU-requesting container missing only memory limit", () => {
+    const ctx = makeCtx(JSON.stringify(servingRuntime({
+      resources: { requests: { "nvidia.com/gpu": "1" }, limits: { cpu: "4", "nvidia.com/gpu": "1" } },
+    })));
+    const diags = wk8406.check(ctx);
+    expect(diags.length).toBe(1);
+    expect(diags[0].message).toContain("memory");
+    expect(diags[0].message).not.toContain("cpu,");
+  });
+
+  test("passes with full cpu/memory limits on the GPU container", () => {
+    const ctx = makeCtx(JSON.stringify(servingRuntime({
+      resources: { requests: { "nvidia.com/gpu": "1" }, limits: { cpu: "4", memory: "16Gi", "nvidia.com/gpu": "1" } },
+    })));
+    expect(wk8406.check(ctx).length).toBe(0);
+  });
+
+  test("ignores containers with no GPU request even without limits", () => {
+    const ctx = makeCtx(JSON.stringify(servingRuntime({})));
+    expect(wk8406.check(ctx).length).toBe(0);
+  });
+});
+
+// ── WK8407: Unpinned model version ──────────────────────────────────────────
+
+describe("WK8407: Unpinned model version", () => {
+  test("flags a storageUri with no version segment", () => {
+    const manifest = inferenceService({});
+    manifest.spec.predictor.model.storageUri = "gs://my-models-bucket";
+    const diags = wk8407.check(makeCtx(JSON.stringify(manifest)));
+    expect(diags.length).toBe(1);
+    expect(diags[0].checkId).toBe("WK8407");
+    expect(diags[0].severity).toBe("warning");
+  });
+
+  test("flags a floating tag (latest) as unpinned", () => {
+    const manifest = inferenceService({});
+    manifest.spec.predictor.model.storageUri = "gs://my-models-bucket/llama-3-8b/latest";
+    const diags = wk8407.check(makeCtx(JSON.stringify(manifest)));
+    expect(diags.length).toBe(1);
+  });
+
+  test("passes a pinned storageUri (scheme://id/version)", () => {
+    const manifest = inferenceService({});
+    manifest.spec.predictor.model.storageUri = "gs://my-models/llama-3-8b/2024-07-01";
+    const diags = wk8407.check(makeCtx(JSON.stringify(manifest)));
+    expect(diags.length).toBe(0);
+  });
+
+  test("passes a pinned storageUri with a semver version", () => {
+    const manifest = inferenceService({});
+    manifest.spec.predictor.model.storageUri = "hf://meta-llama/Llama-3-8B/v1.0.0";
+    const diags = wk8407.check(makeCtx(JSON.stringify(manifest)));
+    expect(diags.length).toBe(0);
+  });
+
+  test("ignores non-InferenceService manifests", () => {
+    const ctx = makeCtx(JSON.stringify({
+      apiVersion: "apps/v1",
+      kind: "Deployment",
+      metadata: { name: "app" },
+      spec: { template: { spec: { containers: [{ name: "app", image: "app:1.0" }] } } },
+    }));
+    expect(wk8407.check(ctx).length).toBe(0);
+  });
+});
+
 // ── ARGO002: Application.spec.project references a declared AppProject ─────────
 
 function argoApp(name: string, spec: Record<string, unknown>) {
@@ -1789,5 +2034,742 @@ describe("FLUX003: Kustomization dependsOn names declared Kustomizations", () =>
   test("skips a Kustomization without dependsOn", () => {
     const ctx = manifestsCtx(fluxKustomization("hello", gitSourceRef("flux-system")));
     expect(flux003.check(ctx).length).toBe(0);
+  });
+});
+
+// ── WK8501 / WK8502: custom-resource spec against the CRD schema (chant #1372) ──
+
+describe("WK8501/WK8502: custom resource spec validated against the shipped CRD schema", () => {
+  const hasLexicon = getCrdSchemaRegistry().size > 0;
+
+  function microVm(spec: Record<string, unknown>) {
+    return {
+      apiVersion: "lambda.aws.amazon.com/v1alpha1",
+      kind: "MicroVM",
+      metadata: { name: "agent-1", namespace: "vms" },
+      spec,
+    };
+  }
+
+  // chant #13 — CAPI's own Cluster (K8s::CAPI::Cluster) and ACK's S3 Bucket
+  // (K8s::S3::Bucket), the CAPI/CAPA and ACK kinds this suite's WK8501/WK8502
+  // coverage exercises. Same shape as `microVm` above: a bare manifest, spec
+  // supplied per test.
+  function capiCluster(spec: Record<string, unknown>) {
+    return {
+      apiVersion: "cluster.x-k8s.io/v1beta2",
+      kind: "Cluster",
+      metadata: { name: "prod-cluster", namespace: "capi-system" },
+      spec,
+    };
+  }
+
+  function ackBucket(spec: Record<string, unknown>) {
+    return {
+      apiVersion: "s3.services.k8s.aws/v1alpha1",
+      kind: "Bucket",
+      metadata: { name: "build-artifacts", namespace: "aws-system" },
+      spec,
+    };
+  }
+
+  test("metadata", () => {
+    expect(wk8501.id).toBe("WK8501");
+    expect(wk8502.id).toBe("WK8502");
+  });
+
+  test.skipIf(!hasLexicon)("the lexicon ships a spec schema for every CRD-derived kind", () => {
+    const registry = getCrdSchemaRegistry();
+    for (const key of ["lambda.aws.amazon.com/v1alpha1/MicroVM", "cert-manager.io/v1/Certificate", "ray.io/v1/RayCluster"]) {
+      expect(registry.get(key)?.type, key).toBe("object");
+    }
+    // Built-in kinds are typed by the .d.ts and carry no schema.
+    expect(registry.has("apps/v1/Deployment")).toBe(false);
+  });
+
+  test.skipIf(!hasLexicon)("WK8501 flags a misspelled MicroVM field and suggests the real one", () => {
+    // The kubemicrovm-ops case from #1372: `classname` type-checks, applies
+    // cleanly, and the controller runs the VM with the default class.
+    const ctx = manifestsCtx(microVm({ classname: "large", imageRef: "img" }));
+    const diags = wk8501.check(ctx);
+    expect(diags.length).toBe(1);
+    expect(diags[0].severity).toBe("error");
+    expect(diags[0].entity).toBe("agent-1");
+    expect(diags[0].message).toContain('unknown field "spec.classname"');
+    expect(diags[0].message).toContain('did you mean "className"');
+    // WK8502 has nothing to say about a field the schema does not know.
+    expect(wk8502.check(ctx).length).toBe(0);
+  });
+
+  test.skipIf(!hasLexicon)("WK8502 flags a wrong-typed scalar and a value outside its enum", () => {
+    const ctx = manifestsCtx(microVm({
+      className: "large",
+      maxIdleDurationSeconds: "300",
+      desiredState: "Runing",
+      autoResumeEnabled: "yes",
+    }));
+    const diags = wk8502.check(ctx);
+    const messages = diags.map((d) => d.message);
+    expect(messages).toEqual([
+      expect.stringContaining('"spec.maxIdleDurationSeconds" expects an integer, got string "300"'),
+      expect.stringContaining('"spec.desiredState" must be one of "Running", "Suspended", "Terminated", got string "Runing"'),
+      expect.stringContaining('"spec.autoResumeEnabled" expects a boolean, got string "yes"'),
+    ]);
+    expect(diags.every((d) => d.checkId === "WK8502" && d.severity === "error")).toBe(true);
+    expect(wk8501.check(ctx).length).toBe(0);
+  });
+
+  test.skipIf(!hasLexicon)("a well-formed custom resource passes both checks", () => {
+    const ctx = manifestsCtx(
+      microVm({ className: "large", desiredState: "Running", maxIdleDurationSeconds: 300, tags: { team: "ml", any: 1 } }),
+      {
+        apiVersion: "cert-manager.io/v1",
+        kind: "Certificate",
+        metadata: { name: "web-tls" },
+        spec: {
+          secretName: "web-tls",
+          dnsNames: ["example.com"],
+          issuerRef: { name: "letsencrypt", kind: "ClusterIssuer" },
+          privateKey: { algorithm: "ECDSA", size: 256 },
+        },
+      },
+    );
+    expect(wk8501.check(ctx)).toEqual([]);
+    expect(wk8502.check(ctx)).toEqual([]);
+  });
+
+  test.skipIf(!hasLexicon)("walks nested objects and array elements", () => {
+    const ctx = manifestsCtx({
+      apiVersion: "cert-manager.io/v1",
+      kind: "Certificate",
+      metadata: { name: "web-tls" },
+      spec: {
+        secretName: "web-tls",
+        issuerRef: { nmae: "letsencrypt" },
+        additionalOutputFormats: [{ type: "DER" }, { type: "PEM" }],
+        privateKey: { algorithm: "DSA" },
+      },
+    });
+    expect(wk8501.check(ctx).map((d) => d.message)).toEqual([
+      expect.stringContaining('unknown field "spec.issuerRef.nmae" (did you mean "name"?)'),
+    ]);
+    expect(wk8502.check(ctx).map((d) => d.message)).toEqual([
+      expect.stringContaining('"spec.additionalOutputFormats[1].type" must be one of "DER", "CombinedPEM"'),
+      expect.stringContaining('"spec.privateKey.algorithm" must be one of "RSA", "ECDSA", "Ed25519"'),
+    ]);
+  });
+
+  // chant #13 — coverage proving the epic's actual point: the CAPI/CAPA and
+  // ACK sources added in #10/#11/#12 carry the same WK8501/WK8502 schema
+  // guarantee as every other CRD source, not just types with no lint behind
+  // them.
+
+  test.skipIf(!hasLexicon)("WK8501 flags a misspelled CAPI Cluster field and suggests the real one", () => {
+    const ctx = manifestsCtx(capiCluster({ paused: true, clusterNetwok: { serviceDomain: "cluster.local" } }));
+    const diags = wk8501.check(ctx);
+    expect(diags.length).toBe(1);
+    expect(diags[0].severity).toBe("error");
+    expect(diags[0].entity).toBe("prod-cluster");
+    expect(diags[0].message).toContain('unknown field "spec.clusterNetwok"');
+    expect(diags[0].message).toContain('did you mean "clusterNetwork"');
+    // WK8502 has nothing to say about a field the schema does not know.
+    expect(wk8502.check(ctx).length).toBe(0);
+  });
+
+  test.skipIf(!hasLexicon)("WK8502 flags a wrong-typed scalar and an out-of-enum value on CAPI Cluster", () => {
+    const ctx = manifestsCtx(capiCluster({
+      paused: "yes",
+      availabilityGates: [{ conditionType: "Ready", polarity: "Postive" }],
+    }));
+    const diags = wk8502.check(ctx);
+    const messages = diags.map((d) => d.message);
+    expect(messages).toEqual([
+      expect.stringContaining('"spec.paused" expects a boolean, got string "yes"'),
+      expect.stringContaining('"spec.availabilityGates[0].polarity" must be one of "Positive", "Negative", got string "Postive"'),
+    ]);
+    expect(diags.every((d) => d.checkId === "WK8502" && d.severity === "error")).toBe(true);
+    expect(wk8501.check(ctx).length).toBe(0);
+  });
+
+  test.skipIf(!hasLexicon)("WK8501 flags a misspelled ACK S3 Bucket field and suggests the real one", () => {
+    const ctx = manifestsCtx(ackBucket({ nmae: "build-artifacts", objectLockEnabledForBucket: true }));
+    const diags = wk8501.check(ctx);
+    expect(diags.length).toBe(1);
+    expect(diags[0].severity).toBe("error");
+    expect(diags[0].entity).toBe("build-artifacts");
+    expect(diags[0].message).toContain('unknown field "spec.nmae"');
+    expect(diags[0].message).toContain('did you mean "name"');
+    expect(wk8502.check(ctx).length).toBe(0);
+  });
+
+  test.skipIf(!hasLexicon)("WK8502 flags a wrong-typed scalar on ACK S3 Bucket", () => {
+    const ctx = manifestsCtx(ackBucket({ name: "build-artifacts", objectLockEnabledForBucket: "true" }));
+    const diags = wk8502.check(ctx);
+    expect(diags.length).toBe(1);
+    expect(diags[0].checkId).toBe("WK8502");
+    expect(diags[0].severity).toBe("error");
+    expect(diags[0].message).toContain('"spec.objectLockEnabledForBucket" expects a boolean, got string "true"');
+    expect(wk8501.check(ctx).length).toBe(0);
+  });
+
+  test("built-in kinds and unknown apiVersion/kind pairs are never checked", () => {
+    const ctx = manifestsCtx(
+      { apiVersion: "apps/v1", kind: "Deployment", metadata: { name: "web" }, spec: { replicas: "2", bogus: true } },
+      { apiVersion: "example.com/v1", kind: "Widget", metadata: { name: "w" }, spec: { bogus: true } },
+    );
+    expect(wk8501.check(ctx)).toEqual([]);
+    expect(wk8502.check(ctx)).toEqual([]);
+  });
+
+  test("open objects and int-or-string accept anything (stub registry)", () => {
+    setCrdSchemaRegistry(new Map([[
+      "example.com/v1/Widget",
+      {
+        type: "object",
+        fields: {
+          labels: { type: "object", open: true },
+          port: { open: true },
+          replicas: { type: "integer" },
+          items: { type: "array", items: { type: "string" } },
+        },
+      },
+    ]]));
+    try {
+      const ok = manifestsCtx({
+        apiVersion: "example.com/v1", kind: "Widget", metadata: { name: "w" },
+        spec: { labels: { anything: { nested: true } }, port: "http", replicas: 2, items: ["a"] },
+      });
+      expect(wk8501.check(ok)).toEqual([]);
+      expect(wk8502.check(ok)).toEqual([]);
+
+      const bad = manifestsCtx({
+        apiVersion: "example.com/v1", kind: "Widget", metadata: { name: "w" },
+        spec: { replicas: 2.5, items: "a" },
+      });
+      expect(wk8502.check(bad).map((d) => d.message)).toEqual([
+        expect.stringContaining('"spec.replicas" expects an integer, got number 2.5'),
+        expect.stringContaining('"spec.items" expects an array, got string "a"'),
+      ]);
+    } finally {
+      setCrdSchemaRegistry(null);
+    }
+  });
+
+  test("validateSpec reports unknown fields and type mismatches with dotted paths", () => {
+    const schema = { type: "object" as const, fields: { a: { type: "object" as const, fields: { b: { type: "boolean" as const } } } } };
+    expect(validateSpec({ a: { b: "x", c: 1 }, d: 2 }, schema)).toEqual([
+      { kind: "type-mismatch", path: "spec.a.b", message: expect.stringContaining("expects a boolean") },
+      { kind: "unknown-field", path: "spec.a.c", message: expect.stringContaining('unknown field "spec.a.c"') },
+      { kind: "unknown-field", path: "spec.d", message: expect.stringContaining('unknown field "spec.d"') },
+    ]);
+  });
+});
+
+// ── WK8503: consumed-but-unproduced Secret ──────────────────────────
+
+describe("WK8503: workload consumes a Secret nothing in the output produces", () => {
+  function appConsuming(name: string) {
+    return {
+      apiVersion: "apps/v1",
+      kind: "Deployment",
+      metadata: { name: "app", namespace: "web" },
+      spec: {
+        template: {
+          spec: {
+            containers: [
+              { name: "app", image: "app:1.0", envFrom: [{ secretRef: { name } }] },
+            ],
+          },
+        },
+      },
+    };
+  }
+
+  /** Like manifestsCtx, but with SecretProvenance declarations discovered as entities. */
+  function ctxWithDeclarations(decls: SecretDeclarationInput[], ...objs: unknown[]): PostSynthContext {
+    const ctx = manifestsCtx(...objs);
+    decls.forEach((d, i) => ctx.entities.set(`secretDecl${i}`, declareSecret(d as never)));
+    return ctx;
+  }
+
+  test("metadata", () => {
+    expect(wk8503.id).toBe("WK8503");
+  });
+
+  test("fires when nothing produces the consumed Secret", () => {
+    const diags = wk8503.check(manifestsCtx(appConsuming("fountain-secrets")));
+    expect(diags.length).toBe(1);
+    expect(diags[0].checkId).toBe("WK8503");
+    expect(diags[0].severity).toBe("error");
+    expect(diags[0].entity).toBe("app");
+    expect(diags[0].message).toContain('Secret "fountain-secrets"');
+    expect(diags[0].message).toContain("envFrom.secretRef");
+  });
+
+  test("quiet when a Secret manifest in the output produces it", () => {
+    const ctx = manifestsCtx(
+      appConsuming("fountain-secrets"),
+      { apiVersion: "v1", kind: "Secret", metadata: { name: "fountain-secrets", namespace: "web" }, stringData: {} },
+    );
+    expect(wk8503.check(ctx)).toEqual([]);
+  });
+
+  test("quiet when an ExternalSecret materializes the target name", () => {
+    const ctx = manifestsCtx(
+      appConsuming("fountain-secrets"),
+      {
+        apiVersion: "external-secrets.io/v1",
+        kind: "ExternalSecret",
+        metadata: { name: "fountain-secrets-eso", namespace: "web" },
+        spec: {
+          secretStoreRef: { name: "store", kind: "ClusterSecretStore" },
+          target: { name: "fountain-secrets", creationPolicy: "Owner" },
+          data: [],
+        },
+      },
+    );
+    expect(wk8503.check(ctx)).toEqual([]);
+  });
+
+  test("an ExternalSecret with no explicit target produces its own name", () => {
+    const ctx = manifestsCtx(
+      appConsuming("fountain-secrets"),
+      {
+        apiVersion: "external-secrets.io/v1",
+        kind: "ExternalSecret",
+        metadata: { name: "fountain-secrets", namespace: "web" },
+        spec: { secretStoreRef: { name: "store", kind: "ClusterSecretStore" }, data: [] },
+      },
+    );
+    expect(wk8503.check(ctx)).toEqual([]);
+  });
+
+  test("quiet when an InfisicalSecret's managedSecretReference produces it", () => {
+    const ctx = manifestsCtx(
+      appConsuming("fountain-secrets"),
+      {
+        apiVersion: "secrets.infisical.com/v1alpha1",
+        kind: "InfisicalSecret",
+        metadata: { name: "fountain-sync", namespace: "infisical-operator" },
+        spec: {
+          managedSecretReference: { secretName: "fountain-secrets", secretNamespace: "web" },
+        },
+      },
+    );
+    expect(wk8503.check(ctx)).toEqual([]);
+  });
+
+  test("an InfisicalSecret targeting a different namespace does not cover the consumer", () => {
+    const ctx = manifestsCtx(
+      appConsuming("fountain-secrets"),
+      {
+        apiVersion: "secrets.infisical.com/v1alpha1",
+        kind: "InfisicalSecret",
+        metadata: { name: "fountain-sync", namespace: "web" },
+        spec: {
+          managedSecretReference: { secretName: "fountain-secrets", secretNamespace: "other" },
+        },
+      },
+    );
+    expect(wk8503.check(ctx).length).toBe(1);
+  });
+
+  test("quiet when a cert-manager Certificate materializes the secretName", () => {
+    const consumer = {
+      apiVersion: "apps/v1",
+      kind: "StatefulSet",
+      metadata: { name: "db", namespace: "web" },
+      spec: {
+        template: {
+          spec: {
+            containers: [{ name: "db", image: "db:1" }],
+            volumes: [{ name: "tls", secret: { secretName: "db-tls" } }],
+          },
+        },
+      },
+    };
+    const ctx = manifestsCtx(consumer, {
+      apiVersion: "cert-manager.io/v1",
+      kind: "Certificate",
+      metadata: { name: "db-cert", namespace: "web" },
+      spec: { secretName: "db-tls", issuerRef: { name: "issuer" } },
+    });
+    expect(wk8503.check(ctx)).toEqual([]);
+  });
+
+  test("a `referenced` provenance declaration waives the check", () => {
+    const ctx = ctxWithDeclarations(
+      [{ name: "fountain-secrets", provenance: "referenced", scope: "minted by `just secret`" }],
+      appConsuming("fountain-secrets"),
+    );
+    expect(wk8503.check(ctx)).toEqual([]);
+  });
+
+  test("a `generated-once` provenance declaration waives the check", () => {
+    const ctx = ctxWithDeclarations(
+      [{ name: "fountain-secrets", provenance: "generated-once", keys: ["token"] }],
+      appConsuming("fountain-secrets"),
+    );
+    expect(wk8503.check(ctx)).toEqual([]);
+  });
+
+  test("a declaration covering a different name does not waive the check", () => {
+    const ctx = ctxWithDeclarations(
+      [{ name: "some-other-secret", provenance: "referenced" }],
+      appConsuming("fountain-secrets"),
+    );
+    const diags = wk8503.check(ctx);
+    expect(diags.length).toBe(1);
+    expect(diags[0].message).toContain('"fountain-secrets"');
+  });
+
+  test("optional references are skipped", () => {
+    const ctx = manifestsCtx({
+      apiVersion: "apps/v1",
+      kind: "Deployment",
+      metadata: { name: "app", namespace: "web" },
+      spec: {
+        template: {
+          spec: {
+            containers: [
+              {
+                name: "app",
+                image: "app:1.0",
+                envFrom: [{ secretRef: { name: "maybe-env", optional: true } }],
+                env: [{ name: "TOKEN", valueFrom: { secretKeyRef: { name: "maybe-key", key: "t", optional: true } } }],
+              },
+            ],
+            volumes: [{ name: "v", secret: { secretName: "maybe-vol", optional: true } }],
+          },
+        },
+      },
+    });
+    expect(wk8503.check(ctx)).toEqual([]);
+  });
+
+  test("covers secretKeyRef, projected sources, imagePullSecrets, and initContainers", () => {
+    const ctx = manifestsCtx({
+      apiVersion: "batch/v1",
+      kind: "CronJob",
+      metadata: { name: "sync", namespace: "web" },
+      spec: {
+        jobTemplate: {
+          spec: {
+            template: {
+              spec: {
+                imagePullSecrets: [{ name: "registry-creds" }],
+                initContainers: [
+                  { name: "init", image: "i:1", env: [{ name: "T", valueFrom: { secretKeyRef: { name: "api-token", key: "t" } } }] },
+                ],
+                containers: [{ name: "sync", image: "s:1" }],
+                volumes: [
+                  { name: "p", projected: { sources: [{ secret: { name: "projected-secret" } }] } },
+                ],
+              },
+            },
+          },
+        },
+      },
+    });
+    const secrets = wk8503.check(ctx).map((d) => d.message.match(/consumes Secret "([^"]+)"/)?.[1]).sort();
+    expect(secrets).toEqual(["api-token", "projected-secret", "registry-creds"]);
+  });
+
+  test("a Secret in an explicit different namespace does not cover the consumer", () => {
+    const ctx = manifestsCtx(
+      appConsuming("fountain-secrets"),
+      { apiVersion: "v1", kind: "Secret", metadata: { name: "fountain-secrets", namespace: "other" }, stringData: {} },
+    );
+    expect(wk8503.check(ctx).length).toBe(1);
+  });
+
+  test("a Secret with no namespace covers a namespaced consumer", () => {
+    const ctx = manifestsCtx(
+      appConsuming("fountain-secrets"),
+      { apiVersion: "v1", kind: "Secret", metadata: { name: "fountain-secrets" }, stringData: {} },
+    );
+    expect(wk8503.check(ctx)).toEqual([]);
+  });
+
+  test("reports a missing Secret once per workload even when referenced twice", () => {
+    const ctx = manifestsCtx({
+      apiVersion: "apps/v1",
+      kind: "Deployment",
+      metadata: { name: "app", namespace: "web" },
+      spec: {
+        template: {
+          spec: {
+            containers: [
+              {
+                name: "app",
+                image: "app:1.0",
+                envFrom: [{ secretRef: { name: "fountain-secrets" } }],
+                env: [{ name: "T", valueFrom: { secretKeyRef: { name: "fountain-secrets", key: "t" } } }],
+              },
+            ],
+          },
+        },
+      },
+    });
+    expect(wk8503.check(ctx).length).toBe(1);
+  });
+});
+
+// ── WK8504: committed-encrypted declaration does not resolve ─────────
+//
+// The fixture is a real sops-shaped document (cleartext structure, ENC[...]
+// values, an age recipient block, a mac). Nothing here decrypts anything.
+
+describe("WK8504: committed-encrypted secret declaration does not resolve", () => {
+  const CIPHERTEXT = readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), "..", "..", "testdata", "sops", "db-credentials.sops.yaml"),
+    "utf-8",
+  );
+
+  /**
+   * A context whose k8s output carries `manifests` in the primary document and
+   * the ciphertext as a SIDECAR — the only place the check can find it.
+   */
+  function sopsCtx(
+    opts: { ciphertext?: string; file?: string; declaredName?: string; manifests?: unknown[]; omitSidecar?: boolean } = {},
+  ): PostSynthContext {
+    const primary = (opts.manifests ?? []).map((o) => JSON.stringify(o)).join("\n---\n");
+    const file = opts.file ?? "secrets/db-credentials.sops.yaml";
+    const output: SerializerResult = {
+      primary,
+      files: opts.omitSidecar
+        ? {}
+        : { "db-credentials.sops.yaml": opts.ciphertext ?? CIPHERTEXT },
+    };
+    const outputs = new Map<string, string | SerializerResult>([["k8s", output]]);
+    const entities = new Map<string, Declarable>([
+      [
+        "dbCredentials",
+        declareSecret({
+          name: opts.declaredName ?? "db-credentials",
+          provenance: "committed-encrypted",
+          file,
+          keys: ["POSTGRES_USER", "POSTGRES_PASSWORD"],
+        }),
+      ],
+    ]);
+    return {
+      outputs,
+      entities,
+      buildResult: { outputs, entities, warnings: [], errors: [], sourceFileCount: 1 },
+    };
+  }
+
+  test("metadata", () => {
+    expect(wk8504.id).toBe("WK8504");
+  });
+
+  test("quiet when the declared file resolved to encrypted ciphertext", () => {
+    expect(wk8504.check(sopsCtx())).toEqual([]);
+  });
+
+  test("quiet when the project declares no committed-encrypted secret", () => {
+    expect(wk8504.check(manifestsCtx({ apiVersion: "v1", kind: "ConfigMap", metadata: { name: "c" } }))).toEqual([]);
+  });
+
+  test("fires when the build emitted no file for the declaration", () => {
+    const diags = wk8504.check(sopsCtx({ omitSidecar: true }));
+    expect(diags.length).toBe(1);
+    expect(diags[0].checkId).toBe("WK8504");
+    expect(diags[0].severity).toBe("error");
+    expect(diags[0].entity).toBe("db-credentials");
+    expect(diags[0].message).toContain("secrets/db-credentials.sops.yaml");
+    expect(diags[0].message).toContain("did not resolve");
+  });
+
+  test("fires when metadata.name disagrees with the declaration", () => {
+    const diags = wk8504.check(sopsCtx({ declaredName: "other-credentials" }));
+    // The name mismatch; the sidecar filename still matches, so it is found.
+    expect(diags.some((d) => /metadata\.name "db-credentials"/.test(d.message))).toBe(true);
+  });
+
+  test("fires when the document carries no sops block", () => {
+    const decrypted = CIPHERTEXT.slice(0, CIPHERTEXT.indexOf("sops:"));
+    const diags = wk8504.check(sopsCtx({ ciphertext: decrypted }));
+    expect(diags.some((d) => /no top-level `sops` block/.test(d.message))).toBe(true);
+  });
+
+  test("fires when a data value is not ENC[...], naming the key and not the value", () => {
+    const leaked = CIPHERTEXT.replace(/POSTGRES_PASSWORD: ENC\[[^\]]*\]/, "POSTGRES_PASSWORD: hunter2");
+    const diags = wk8504.check(sopsCtx({ ciphertext: leaked }));
+    expect(diags.length).toBe(1);
+    expect(diags[0].message).toContain('stringData."POSTGRES_PASSWORD" is not encrypted');
+    expect(diags[0].message).not.toContain("hunter2");
+  });
+
+  test("reports every problem on a declaration at once", () => {
+    const broken = CIPHERTEXT.replace("kind: Secret", "kind: ConfigMap").replace(
+      /POSTGRES_USER: ENC\[[^\]]*\]/,
+      "POSTGRES_USER: postgres",
+    );
+    expect(wk8504.check(sopsCtx({ ciphertext: broken })).length).toBeGreaterThanOrEqual(2);
+  });
+
+  test("post-synth checks that read only the primary output stay blind to the sidecar", () => {
+    // The ciphertext must never reach the primary output — that is what makes
+    // applying an undecrypted Secret structurally impossible — so the rules
+    // that look for hardcoded material see nothing here.
+    const ctx = sopsCtx({ manifests: [{ apiVersion: "apps/v1", kind: "Deployment", metadata: { name: "app" } }] });
+    expect(wk8005.check(ctx)).toEqual([]);
+    expect(wk8041.check(ctx)).toEqual([]);
+    expect(wk8042.check(ctx)).toEqual([]);
+  });
+
+  describe("WK8503 is satisfied through the producer set, not the waiver set", () => {
+    function consumerIn(namespace: string) {
+      return {
+        apiVersion: "apps/v1",
+        kind: "Deployment",
+        metadata: { name: "api", namespace },
+        spec: {
+          template: {
+            spec: {
+              containers: [
+                { name: "api", image: "api:1.0", envFrom: [{ secretRef: { name: "db-credentials" } }] },
+              ],
+            },
+          },
+        },
+      };
+    }
+
+    test("a resolved declaration produces the Secret in its own namespace", () => {
+      // The fixture is `namespace: apps`, read from the ciphertext itself.
+      expect(wk8503.check(sopsCtx({ manifests: [consumerIn("apps")] }))).toEqual([]);
+    });
+
+    test("namespace matching applies — another namespace is not covered", () => {
+      const diags = wk8503.check(sopsCtx({ manifests: [consumerIn("platform")] }));
+      expect(diags.length).toBe(1);
+      expect(diags[0].message).toContain('Secret "db-credentials"');
+    });
+
+    test("a declaration whose file did not resolve waives nothing", () => {
+      const ctx = sopsCtx({ omitSidecar: true, manifests: [consumerIn("apps")] });
+      expect(wk8504.check(ctx).length).toBe(1);
+      expect(wk8503.check(ctx).length).toBe(1);
+    });
+
+    test("a declaration whose ciphertext is not encrypted waives nothing", () => {
+      const leaked = CIPHERTEXT.replace(/POSTGRES_USER: ENC\[[^\]]*\]/, "POSTGRES_USER: postgres");
+      const ctx = sopsCtx({ ciphertext: leaked, manifests: [consumerIn("apps")] });
+      expect(wk8504.check(ctx).length).toBe(1);
+      expect(wk8503.check(ctx).length).toBe(1);
+    });
+  });
+});
+
+// ── WK8505: committed-encrypted secret with no Flux decryption wiring ─────
+//
+// Reuses the FLUX002 fixture helpers (fluxKustomization, gitSourceRef) and
+// the same real sops-shaped ciphertext fixture WK8504 validates against.
+
+describe("WK8505: committed-encrypted secret with no Flux decryption wiring", () => {
+  const CIPHERTEXT = readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), "..", "..", "testdata", "sops", "db-credentials.sops.yaml"),
+    "utf-8",
+  );
+
+  /**
+   * A context carrying one committed-encrypted declaration (resolved to its
+   * sidecar unless `omitSidecar`) plus whatever Flux/other manifests are
+   * passed in the primary output.
+   */
+  function sopsCtx(opts: { manifests?: unknown[]; omitSidecar?: boolean } = {}): PostSynthContext {
+    const primary = (opts.manifests ?? []).map((o) => JSON.stringify(o)).join("\n---\n");
+    const output: SerializerResult = {
+      primary,
+      files: opts.omitSidecar ? {} : { "db-credentials.sops.yaml": CIPHERTEXT },
+    };
+    const outputs = new Map<string, string | SerializerResult>([["k8s", output]]);
+    const entities = new Map<string, Declarable>([
+      [
+        "dbCredentials",
+        declareSecret({
+          name: "db-credentials",
+          provenance: "committed-encrypted",
+          file: "secrets/db-credentials.sops.yaml",
+          keys: ["POSTGRES_USER", "POSTGRES_PASSWORD"],
+        }),
+      ],
+    ]);
+    return {
+      outputs,
+      entities,
+      buildResult: { outputs, entities, warnings: [], errors: [], sourceFileCount: 1 },
+    };
+  }
+
+  test("metadata", () => {
+    expect(wk8505.id).toBe("WK8505");
+  });
+
+  test("quiet when the build has no Flux Kustomization at all", () => {
+    expect(wk8505.check(sopsCtx())).toEqual([]);
+  });
+
+  test("quiet when the build declares no committed-encrypted secret", () => {
+    const ctx = manifestsCtx(fluxKustomization("app", gitSourceRef("flux-system")));
+    expect(wk8505.check(ctx)).toEqual([]);
+  });
+
+  test("fires when a Kustomization exists but none sets spec.decryption", () => {
+    const ctx = sopsCtx({ manifests: [fluxKustomization("app", gitSourceRef("flux-system"))] });
+    const diags = wk8505.check(ctx);
+    expect(diags.length).toBe(1);
+    expect(diags[0].checkId).toBe("WK8505");
+    expect(diags[0].severity).toBe("warning");
+    expect(diags[0].entity).toBe("db-credentials");
+    expect(diags[0].message).toContain("spec.decryption");
+  });
+
+  test("quiet when a Kustomization sets spec.decryption", () => {
+    const ctx = sopsCtx({
+      manifests: [
+        fluxKustomization("app", {
+          ...gitSourceRef("flux-system"),
+          decryption: { provider: "sops", secretRef: { name: "sops-age" } },
+        }),
+      ],
+    });
+    expect(wk8505.check(ctx)).toEqual([]);
+  });
+
+  test("a decrypting Kustomization elsewhere in the build satisfies every declaration", () => {
+    const ctx = sopsCtx({
+      manifests: [
+        fluxKustomization("infra", gitSourceRef("flux-system")),
+        fluxKustomization("secrets", {
+          ...gitSourceRef("flux-system"),
+          decryption: { provider: "sops", secretRef: { name: "sops-age" } },
+        }),
+      ],
+    });
+    expect(wk8505.check(ctx)).toEqual([]);
+  });
+
+  test("an unresolved declaration does not also fire WK8505 — WK8504 already reports it", () => {
+    const ctx = sopsCtx({ omitSidecar: true, manifests: [fluxKustomization("app", gitSourceRef("flux-system"))] });
+    expect(wk8504.check(ctx).length).toBe(1);
+    expect(wk8505.check(ctx)).toEqual([]);
+  });
+
+  test("skips kustomize.config.k8s.io Kustomizations (not Flux CRs)", () => {
+    const ctx = sopsCtx({
+      manifests: [
+        {
+          apiVersion: "kustomize.config.k8s.io/v1beta1",
+          kind: "Kustomization",
+          metadata: { name: "overlay" },
+          spec: {},
+        },
+      ],
+    });
+    expect(wk8505.check(ctx)).toEqual([]);
   });
 });

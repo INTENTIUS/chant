@@ -82,6 +82,22 @@ describe("PROVIDER_VERSION_OVERRIDES", () => {
     ]);
   });
 
+  it("keeps both pinned Microsoft.AzureStackHCI files, newest first (#1795)", () => {
+    // 2026-05-01-preview is the naive "latest by date" but carries only the
+    // cluster/edge family; the VM family lives in 2026-04-01-preview. The pin
+    // keeps both, in pin order, and drops the unpinned dates.
+    const paths = [
+      "schemas/2026-04-01-preview/Microsoft.AzureStackHCI.json",
+      "schemas/2026-04-30/Microsoft.AzureStackHCI.json",
+      "schemas/2026-05-01-preview/Microsoft.AzureStackHCI.json",
+    ];
+    const result = latestVersionPerProvider(paths);
+    expect(result.get("Microsoft.AzureStackHCI")?.map((f) => f.apiVersion)).toEqual([
+      "2026-05-01-preview",
+      "2026-04-01-preview",
+    ]);
+  });
+
   it("pins Microsoft.Management and Microsoft.Subscription to their latest GA dates (#1545)", () => {
     const paths = [
       "schemas/2023-04-01/Microsoft.Management.json",

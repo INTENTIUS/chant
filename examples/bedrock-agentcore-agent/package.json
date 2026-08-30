@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "The composite/base path for #882: a Bedrock AgentCore agent (Runtime + RuntimeEndpoint + Memory + Gateway/GatewayTarget + WorkloadIdentity + IAM) as one CloudFormation stack, deployed with cfn-deploy + wait-for-stack — no bespoke verb.",
+  "description": "The composite/base path for #882: a Bedrock AgentCore agent (Runtime + Memory + Gateway/GatewayTarget + WorkloadIdentity + IAM) as one CloudFormation stack, deployed with cfn-deploy + wait-for-stack — no bespoke verb.",
   "devDependencies": {
     "@intentius/chant": "*",
     "@intentius/chant-lexicon-aws": "*",

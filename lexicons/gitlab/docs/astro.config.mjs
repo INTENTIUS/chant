@@ -21,44 +21,59 @@ export default defineConfig({
                   "slug": "index"
             },
             {
-                  "label": "Pipeline Concepts",
-                  "slug": "pipeline-concepts"
+                  "label": "How-to guides",
+                  "items": [
+                        {
+                              "label": "Examples",
+                              "slug": "examples"
+                        },
+                        {
+                              "label": "Migration",
+                              "slug": "migration"
+                        }
+                  ]
             },
             {
-                  "label": "Predefined Variables",
-                  "slug": "variables"
+                  "label": "Reference",
+                  "items": [
+                        {
+                              "label": "Intrinsics",
+                              "slug": "intrinsics"
+                        },
+                        {
+                              "label": "All Rules",
+                              "slug": "rules"
+                        },
+                        {
+                              "label": "Serialization",
+                              "slug": "serialization"
+                        },
+                        {
+                              "label": "AI Skills",
+                              "slug": "skills"
+                        },
+                        {
+                              "label": "Intrinsics Guide",
+                              "slug": "intrinsics-guide"
+                        },
+                        {
+                              "label": "Lint Rules",
+                              "slug": "lint-rules"
+                        },
+                        {
+                              "label": "Predefined Variables",
+                              "slug": "variables"
+                        }
+                  ]
             },
             {
-                  "label": "Intrinsics Guide",
-                  "slug": "intrinsics-guide"
-            },
-            {
-                  "label": "Lint Rules",
-                  "slug": "lint-rules"
-            },
-            {
-                  "label": "Examples",
-                  "slug": "examples"
-            },
-            {
-                  "label": "AI Skills",
-                  "slug": "skills"
-            },
-            {
-                  "label": "Intrinsics",
-                  "slug": "intrinsics"
-            },
-            {
-                  "label": "All Rules",
-                  "slug": "rules"
-            },
-            {
-                  "label": "Serialization",
-                  "slug": "serialization"
-            },
-            {
-                  "label": "Migration",
-                  "slug": "migration"
+                  "label": "Explanation",
+                  "items": [
+                        {
+                              "label": "Pipeline Concepts",
+                              "slug": "pipeline-concepts"
+                        }
+                  ]
             }
       ],
     }),

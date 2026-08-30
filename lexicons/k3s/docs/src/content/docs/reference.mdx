@@ -1,0 +1,36 @@
+---
+title: Entities & Rules
+description: Entity-to-file mapping and lint rules for the k3s lexicon
+diataxis: reference
+---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-k3s` — DO NOT EDIT.
+    Edit lexicons/k3s/docs/pages/reference.mdx instead; changes here are overwritten. */}
+
+
+## Entities
+
+| Entity | Emits | For |
+|---|---|---|
+| `Server` | `config.yaml` | `k3s server` — every server flag as a YAML key |
+| `Agent` | `<name>.config.yaml` | `k3s agent` — requires `server` |
+| `Registries` | `registries.yaml` | containerd mirrors, auth, TLS |
+
+Config keys are the CLI flag names, verbatim: if `k3s server --help` shows
+`--write-kubeconfig-mode`, the declaration key is
+`"write-kubeconfig-mode"`. The typed surface is generated from the pinned
+k3s release's own flag definitions (v1.36.3+k3s1), so a regeneration is a
+reviewable diff against a known upstream.
+
+## Rules
+
+| Rule | Severity | What it catches |
+|---|---|---|
+| K3S001 | error | literal `token` / `agent-token` in source |
+| K3S101 | error | a literal secret reaching the build |
+| K3S102 | error | literal registry credentials in registries.yaml |
+| K3S103 | error | an Agent with no `server` to join |
+| K3S104 | warning | kubeconfig written wider than 0644 |
+| K3S105 | warning | registry TLS verification disabled |
+| K3S106 | warning | tls-san missing for a declared bind/advertise address |
+| K3S107 | warning | disable names a component the config also configures |

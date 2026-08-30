@@ -43,7 +43,7 @@ import {
  * report, not something to skip quietly; see {@link EXPECTED_EXCLUSIONS}.
  */
 
-const CORPUS = discoverCorpus();
+const CORPUS = await discoverCorpus();
 
 /**
  * Corpus entries known NOT to round-trip today, with why — checked by name,
@@ -73,7 +73,7 @@ const report: ReportRow[] = [];
  * composite instance compounds across repeat calls) rather than misreport
  * cross-build state bleed as a JSON-boundary defect.
  */
-async function buildBothWays(entry: ReturnType<typeof discoverCorpus>[number]) {
+async function buildBothWays(entry: Awaited<ReturnType<typeof discoverCorpus>>[number]) {
   // chant #1112 — both sides are loaded per call, never captured once at
   // module scope, so neither is built by a chant-core copy the project files
   // were not loaded into. See {@link loadBuild} for what a stale one silently

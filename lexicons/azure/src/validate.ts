@@ -44,6 +44,12 @@ export async function validate(opts?: { basePath?: string }): Promise<ValidateRe
     // after bounding (#438), so match required names by substring.
     requiredNamesMatchSubstring: true,
     basePath,
+    // chant #1475 — azure generates from a commit sha of
+    // azure-resource-manager-schemas (#1144), so a fresh generate is
+    // deterministic. Gate the surface on every validate: the #1144 pin left
+    // the snapshot 483 entries behind until #1572 re-baselined it, because
+    // nothing compared the two on a PR.
+    checkSurfaceSnapshot: "always",
     coverageThresholds: {
       minPropertyPct: 1,
       minLifecyclePct: 1,

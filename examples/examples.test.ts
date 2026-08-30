@@ -16,6 +16,7 @@ import { gcpSerializer } from "@intentius/chant-lexicon-gcp";
 import { azureSerializer } from "@intentius/chant-lexicon-azure";
 import { k8sSerializer } from "@intentius/chant-lexicon-k8s";
 import { gitlabSerializer } from "@intentius/chant-lexicon-gitlab";
+import { githubSerializer } from "@intentius/chant-lexicon-github";
 import { helmSerializer } from "@intentius/chant-lexicon-helm";
 import { flySerializer } from "@intentius/chant-lexicon-fly";
 import type { PostSynthContext } from "@intentius/chant/lint/post-synth";
@@ -31,6 +32,8 @@ import flyDurableDeployOp from "./fly-durable-deploy/ops/fly-durable-deploy.op";
 import flyRollbackOp from "./fly-deploy-rollback/ops/fly-deploy.op";
 import flyRollbackGuardedOp from "./fly-deploy-rollback/ops/fly-deploy-guarded.op";
 import deployGatedOp from "./getting-started/deploy-gated.op";
+import localAwsMigrateOp from "./local-op-quickstart/ops/local-aws-migrate.op";
+import { schemaSeeded } from "./local-op-quickstart/ops/receipts";
 import observeOp from "./getting-started/observe.op";
 import reconcileOp from "./getting-started/reconcile.op";
 import applyOp from "./getting-started/apply.op";
@@ -121,11 +124,58 @@ describeExample("gitlab-aws-alb-ui", {
   examplesDir: import.meta.dirname,
 });
 
+// ── GitHub per-PR preview environments (#1223) ───────────────────────
+// One source tree, two lexicon outputs: the k8s workload a PR gets a live
+// copy of, and the GitHub Actions workflow that deploys it on PR open and
+// sweeps it on close. `environments` mixes a literal with a `pr-*` pattern
+// (#1221), and the ownership marker follows the env build parameter (#1396),
+// which is what makes `chant lifecycle teardown pr-<n> --yes` selective.
+// Built here with the default env (`local`); CI supplies CHANT_ENV=pr-<n>.
+
+describeExample(
+  "github-pr-preview",
+  {
+    lexicon: "k8s+github",
+    serializer: [k8sSerializer, githubSerializer],
+    outputKey: ["github", "k8s"],
+    examplesDir: import.meta.dirname,
+  },
+  {
+    checks: (workflow) => {
+      // One workflow, both halves of the loop, gated on the PR action.
+      expect(workflow).toContain("name: pr-preview");
+      expect(workflow).toContain("if: github.event.action != 'closed'");
+      expect(workflow).toContain("if: github.event.action == 'closed'");
+      // The env identity is set once, at workflow level, from the PR number.
+      expect(workflow).toContain("CHANT_ENV: pr-${{ github.event.number }}");
+      // Deploy applies through the local Op executor; teardown is the
+      // marker-scoped sweep with the non-interactive flag.
+      expect(workflow).toContain("npx chant run preview-apply");
+      expect(workflow).toContain('npx chant lifecycle teardown "$CHANT_ENV" --yes');
+      // The sticky comment is keyed on the hidden marker and is a scripted
+      // gh api find-and-update — no marketplace action to pin.
+      expect(workflow).toContain("<!-- chant-pr-preview -->");
+      expect(workflow).toContain("gh api -X PATCH");
+      expect(workflow).toContain("gh api -X POST");
+      // Every uses: is pinned to a full commit SHA (GHA's pinned-action lints).
+      const uses = [...workflow.matchAll(/uses:\s*(\S+)/g)].map((m) => m[1]);
+      expect(uses.length).toBeGreaterThan(0);
+      for (const ref of uses) {
+        expect(ref).toMatch(/@[0-9a-f]{40}$/);
+      }
+      // Env var names survive serialization verbatim (the #1223 serializer fix).
+      expect(workflow).toContain("KUBECONFIG_DATA:");
+      expect(workflow).not.toContain("kubeconfig_data");
+    },
+  },
+);
+
 // ── Bedrock AgentCore agent — composite/base path (#882) ─────────────
-// AgentCoreAgent wires Runtime + RuntimeEndpoint + Memory + Gateway/
+// AgentCoreAgent wires Runtime + Memory + Gateway/
 // GatewayTarget + WorkloadIdentity + IAM into one CloudFormation stack,
 // deployed by agent.component.ts with cfn-deploy + wait-for-stack (no
-// bespoke verb). The agentcore-deploy version-promotion capability is
+// bespoke verb). No RuntimeEndpoint: AgentCore owns the managed DEFAULT one
+// (#978). The agentcore-deploy version-promotion capability is
 // deferred — see the example's README.
 
 describeExample(
@@ -142,7 +192,7 @@ describeExample(
       expect(template.AWSTemplateFormatVersion).toBe("2010-09-09");
 
       expect(template.Resources.agentRuntime.Type).toBe("AWS::BedrockAgentCore::Runtime");
-      expect(template.Resources.agentEndpoint.Type).toBe("AWS::BedrockAgentCore::RuntimeEndpoint");
+      expect(template.Resources.agentEndpoint).toBeUndefined();
       expect(template.Resources.agentMemory.Type).toBe("AWS::BedrockAgentCore::Memory");
       expect(template.Resources.agentGateway.Type).toBe("AWS::BedrockAgentCore::Gateway");
       expect(template.Resources.agentGatewayTarget.Type).toBe("AWS::BedrockAgentCore::GatewayTarget");
@@ -154,16 +204,15 @@ describeExample(
       expect(template.Resources.agentRuntime.Properties.RoleArn).toEqual({
         "Fn::GetAtt": ["agentRole", "Arn"],
       });
-      expect(template.Resources.agentEndpoint.Properties.AgentRuntimeId).toEqual({
-        "Fn::GetAtt": ["agentRuntime", "AgentRuntimeId"],
-      });
 
       // The kebab-case example name is sanitized for the Runtime family's
       // no-hyphen CFN pattern (^[a-zA-Z][a-zA-Z0-9_]{0,47}$).
       expect(template.Resources.agentRuntime.Properties.AgentRuntimeName).toBe("support_agent");
 
       expect(template.Outputs.RuntimeArn).toBeDefined();
-      expect(template.Outputs.EndpointArn).toBeDefined();
+      expect(template.Outputs.DefaultEndpointArn.Value).toEqual({
+        "Fn::Sub": "${agentRuntime.AgentRuntimeArn}/runtime-endpoint/DEFAULT",
+      });
       expect(template.Outputs.GatewayUrl).toBeDefined();
     },
   },
@@ -724,16 +773,16 @@ describe("k8s-eks-microservice example", () => {
   });
 
   test("combined build succeeds with both serializers", async () => {
-    const result = await build(srcDir, [awsSerializer, k8sSerializer]);
+    const result = await build(srcDir, [awsSerializer, k8sSerializer], undefined, await declaredBuildOptions(srcDir));
     expect(result.errors).toHaveLength(0);
     expect(result.outputs.has("aws")).toBe(true);
     expect(result.outputs.has("k8s")).toBe(true);
   });
 
   test("CloudFormation template contains all expected resources", async () => {
-    const result = await build(srcDir, [awsSerializer]);
+    const result = await build(srcDir, [awsSerializer], undefined, await declaredBuildOptions(srcDir));
     expect(result.errors).toHaveLength(0);
-    const parsed = JSON.parse(result.outputs.get("aws")!);
+    const parsed = JSON.parse((result.outputs.get("aws") as string));
     expect(parsed.AWSTemplateFormatVersion).toBe("2010-09-09");
     // 17 VPC + 1 cluster + 1 nodegroup + 1 OIDC + 8 IAM roles + 1 IAM policy + 4 addons + 1 KMS key + 1 HostedZone = 35
     expect(Object.keys(parsed.Resources)).toHaveLength(35);
@@ -749,8 +798,8 @@ describe("k8s-eks-microservice example", () => {
   });
 
   test("EKS cluster has correct properties", async () => {
-    const result = await build(srcDir, [awsSerializer]);
-    const parsed = JSON.parse(result.outputs.get("aws")!);
+    const result = await build(srcDir, [awsSerializer], undefined, await declaredBuildOptions(srcDir));
+    const parsed = JSON.parse((result.outputs.get("aws") as string));
     const cluster = parsed.Resources.cluster;
     expect(cluster.Type).toBe("AWS::EKS::Cluster");
     expect(cluster.Properties.Name).toBe("eks-microservice");
@@ -765,8 +814,8 @@ describe("k8s-eks-microservice example", () => {
   });
 
   test("managed node group has correct scaling and instance config", async () => {
-    const result = await build(srcDir, [awsSerializer]);
-    const parsed = JSON.parse(result.outputs.get("aws")!);
+    const result = await build(srcDir, [awsSerializer], undefined, await declaredBuildOptions(srcDir));
+    const parsed = JSON.parse((result.outputs.get("aws") as string));
     const ng = parsed.Resources.nodegroup;
     expect(ng.Type).toBe("AWS::EKS::Nodegroup");
     expect(ng.Properties.InstanceTypes).toEqual(["t3.medium"]);
@@ -778,8 +827,8 @@ describe("k8s-eks-microservice example", () => {
   });
 
   test("IAM roles have correct trust policies", async () => {
-    const result = await build(srcDir, [awsSerializer]);
-    const parsed = JSON.parse(result.outputs.get("aws")!);
+    const result = await build(srcDir, [awsSerializer], undefined, await declaredBuildOptions(srcDir));
+    const parsed = JSON.parse((result.outputs.get("aws") as string));
     const clusterRolePolicy =
       parsed.Resources.clusterRole.Properties.AssumeRolePolicyDocument;
     expect(clusterRolePolicy.Statement.Principal.Service).toBe(
@@ -801,16 +850,16 @@ describe("k8s-eks-microservice example", () => {
   });
 
   test("OIDC provider references cluster", async () => {
-    const result = await build(srcDir, [awsSerializer]);
-    const parsed = JSON.parse(result.outputs.get("aws")!);
+    const result = await build(srcDir, [awsSerializer], undefined, await declaredBuildOptions(srcDir));
+    const parsed = JSON.parse((result.outputs.get("aws") as string));
     const oidc = parsed.Resources.oidcProvider;
     expect(oidc.Type).toBe("AWS::IAM::OIDCProvider");
     expect(oidc.Properties.ClientIdList).toEqual(["sts.amazonaws.com"]);
   });
 
   test("stack outputs expose all required ARNs and IDs", async () => {
-    const result = await build(srcDir, [awsSerializer]);
-    const parsed = JSON.parse(result.outputs.get("aws")!);
+    const result = await build(srcDir, [awsSerializer], undefined, await declaredBuildOptions(srcDir));
+    const parsed = JSON.parse((result.outputs.get("aws") as string));
     const outputNames = Object.keys(parsed.Outputs);
     for (const name of [
       "vpcId",
@@ -833,9 +882,9 @@ describe("k8s-eks-microservice example", () => {
   });
 
   test("K8s output contains all expected resources", async () => {
-    const result = await build(srcDir, [k8sSerializer]);
+    const result = await build(srcDir, [k8sSerializer], undefined, await declaredBuildOptions(srcDir));
     expect(result.errors).toHaveLength(0);
-    const docs = parseK8sDocs(result.outputs.get("k8s")!);
+    const docs = parseK8sDocs((result.outputs.get("k8s") as string));
     expect(docs).toHaveLength(36);
     const kinds = docs.map((d) => d.kind);
     expect(kinds.filter((k) => k === "Deployment")).toHaveLength(3);
@@ -846,8 +895,8 @@ describe("k8s-eks-microservice example", () => {
   });
 
   test("IRSA ServiceAccount has role-arn annotation", async () => {
-    const result = await build(srcDir, [k8sSerializer]);
-    const docs = parseK8sDocs(result.outputs.get("k8s")!);
+    const result = await build(srcDir, [k8sSerializer], undefined, await declaredBuildOptions(srcDir));
+    const docs = parseK8sDocs((result.outputs.get("k8s") as string));
     const appSa = docs.find(
       (d) => d.kind === "ServiceAccount" && d.name === "microservice-app-sa",
     );
@@ -856,8 +905,8 @@ describe("k8s-eks-microservice example", () => {
   });
 
   test("ALB Ingress has correct annotations", async () => {
-    const result = await build(srcDir, [k8sSerializer]);
-    const docs = parseK8sDocs(result.outputs.get("k8s")!);
+    const result = await build(srcDir, [k8sSerializer], undefined, await declaredBuildOptions(srcDir));
+    const docs = parseK8sDocs((result.outputs.get("k8s") as string));
     const ingress = docs.find((d) => d.kind === "Ingress");
     expect(ingress).toBeDefined();
     expect(ingress!.doc).toContain(
@@ -870,8 +919,8 @@ describe("k8s-eks-microservice example", () => {
   });
 
   test("app resources are in the microservice namespace", async () => {
-    const result = await build(srcDir, [k8sSerializer]);
-    const docs = parseK8sDocs(result.outputs.get("k8s")!);
+    const result = await build(srcDir, [k8sSerializer], undefined, await declaredBuildOptions(srcDir));
+    const docs = parseK8sDocs((result.outputs.get("k8s") as string));
     for (const name of [
       "microservice-api",
       "microservice-app-sa",
@@ -884,15 +933,15 @@ describe("k8s-eks-microservice example", () => {
   });
 
   test("all resources have managed-by: chant label", async () => {
-    const result = await build(srcDir, [k8sSerializer]);
-    const docs = parseK8sDocs(result.outputs.get("k8s")!);
+    const result = await build(srcDir, [k8sSerializer], undefined, await declaredBuildOptions(srcDir));
+    const docs = parseK8sDocs((result.outputs.get("k8s") as string));
     for (const doc of docs) {
       expect(doc.doc).toContain("app.kubernetes.io/managed-by: chant");
     }
   });
 
   test("generated K8s YAML passes all post-synth error-level checks", async () => {
-    const result = await build(srcDir, [k8sSerializer]);
+    const result = await build(srcDir, [k8sSerializer], undefined, await declaredBuildOptions(srcDir));
     expect(result.errors).toHaveLength(0);
     const ctx: PostSynthContext = {
       outputs: result.outputs,
@@ -938,16 +987,16 @@ describe("k8s-gke-microservice example", () => {
   });
 
   test("combined build succeeds with both serializers", async () => {
-    const result = await build(srcDir, [gcpSerializer, k8sSerializer]);
+    const result = await build(srcDir, [gcpSerializer, k8sSerializer], undefined, await declaredBuildOptions(srcDir));
     expect(result.errors).toHaveLength(0);
     expect(result.outputs.has("gcp")).toBe(true);
     expect(result.outputs.has("k8s")).toBe(true);
   });
 
   test("GCP Config Connector output contains all expected resources", async () => {
-    const result = await build(srcDir, [gcpSerializer]);
+    const result = await build(srcDir, [gcpSerializer], undefined, await declaredBuildOptions(srcDir));
     expect(result.errors).toHaveLength(0);
-    const docs = result.outputs.get("gcp")!.split("---").filter((d) => d.trim());
+    const docs = (result.outputs.get("gcp") as string).split("---").filter((d) => d.trim());
     // 4 SAs + 8 IAM bindings + DNS zone = 13
     // (VPC/cluster composites return plain objects — not yet generated as Declarables)
     expect(docs.length).toBeGreaterThanOrEqual(13);
@@ -958,8 +1007,8 @@ describe("k8s-gke-microservice example", () => {
   });
 
   test("IAM bindings reference correct SA emails", async () => {
-    const result = await build(srcDir, [gcpSerializer]);
-    const output = result.outputs.get("gcp")!;
+    const result = await build(srcDir, [gcpSerializer], undefined, await declaredBuildOptions(srcDir));
+    const output = (result.outputs.get("gcp") as string);
     expect(output).toContain("gke-microservice-app");
     expect(output).toContain("gke-microservice-dns");
     expect(output).toContain("gke-microservice-logging");
@@ -972,9 +1021,9 @@ describe("k8s-gke-microservice example", () => {
   });
 
   test("K8s output contains all expected resources", async () => {
-    const result = await build(srcDir, [k8sSerializer]);
+    const result = await build(srcDir, [k8sSerializer], undefined, await declaredBuildOptions(srcDir));
     expect(result.errors).toHaveLength(0);
-    const docs = parseK8sDocs(result.outputs.get("k8s")!);
+    const docs = parseK8sDocs((result.outputs.get("k8s") as string));
     expect(docs.length).toBeGreaterThanOrEqual(28);
     const kinds = docs.map((d) => d.kind);
     expect(kinds.filter((k) => k === "Deployment")).toHaveLength(2);
@@ -986,8 +1035,8 @@ describe("k8s-gke-microservice example", () => {
   });
 
   test("Workload Identity SA has iam.gke.io/gcp-service-account annotation", async () => {
-    const result = await build(srcDir, [k8sSerializer]);
-    const docs = parseK8sDocs(result.outputs.get("k8s")!);
+    const result = await build(srcDir, [k8sSerializer], undefined, await declaredBuildOptions(srcDir));
+    const docs = parseK8sDocs((result.outputs.get("k8s") as string));
     const appSa = docs.find(
       (d) => d.kind === "ServiceAccount" && d.name === "microservice-app-sa",
     );
@@ -996,16 +1045,16 @@ describe("k8s-gke-microservice example", () => {
   });
 
   test("GCE Ingress has correct annotations", async () => {
-    const result = await build(srcDir, [k8sSerializer]);
-    const docs = parseK8sDocs(result.outputs.get("k8s")!);
+    const result = await build(srcDir, [k8sSerializer], undefined, await declaredBuildOptions(srcDir));
+    const docs = parseK8sDocs((result.outputs.get("k8s") as string));
     const ingress = docs.find((d) => d.kind === "Ingress");
     expect(ingress).toBeDefined();
     expect(ingress!.doc).toContain("kubernetes.io/ingress.class: gce");
   });
 
   test("app resources are in the microservice namespace", async () => {
-    const result = await build(srcDir, [k8sSerializer]);
-    const docs = parseK8sDocs(result.outputs.get("k8s")!);
+    const result = await build(srcDir, [k8sSerializer], undefined, await declaredBuildOptions(srcDir));
+    const docs = parseK8sDocs((result.outputs.get("k8s") as string));
     for (const name of [
       "microservice-api",
       "microservice-app-sa",
@@ -1018,15 +1067,15 @@ describe("k8s-gke-microservice example", () => {
   });
 
   test("all resources have managed-by: chant label", async () => {
-    const result = await build(srcDir, [k8sSerializer]);
-    const docs = parseK8sDocs(result.outputs.get("k8s")!);
+    const result = await build(srcDir, [k8sSerializer], undefined, await declaredBuildOptions(srcDir));
+    const docs = parseK8sDocs((result.outputs.get("k8s") as string));
     for (const doc of docs) {
       expect(doc.doc).toContain("app.kubernetes.io/managed-by: chant");
     }
   });
 
   test("generated K8s YAML passes all post-synth error-level checks", async () => {
-    const result = await build(srcDir, [k8sSerializer]);
+    const result = await build(srcDir, [k8sSerializer], undefined, await declaredBuildOptions(srcDir));
     expect(result.errors).toHaveLength(0);
     const ctx: PostSynthContext = {
       outputs: result.outputs,
@@ -1072,16 +1121,16 @@ describe("k8s-aks-microservice example", () => {
   });
 
   test("combined build succeeds with both serializers", async () => {
-    const result = await build(srcDir, [azureSerializer, k8sSerializer]);
+    const result = await build(srcDir, [azureSerializer, k8sSerializer], undefined, await declaredBuildOptions(srcDir));
     expect(result.errors).toHaveLength(0);
     expect(result.outputs.has("azure")).toBe(true);
     expect(result.outputs.has("k8s")).toBe(true);
   });
 
   test("ARM template contains all expected resources", async () => {
-    const result = await build(srcDir, [azureSerializer]);
+    const result = await build(srcDir, [azureSerializer], undefined, await declaredBuildOptions(srcDir));
     expect(result.errors).toHaveLength(0);
-    const parsed = JSON.parse(result.outputs.get("azure")!);
+    const parsed = JSON.parse((result.outputs.get("azure") as string));
     expect(parsed.$schema).toContain("deploymentTemplate.json");
     const types = parsed.resources.map((r: any) => r.type);
     expect(types).toContain("Microsoft.ContainerService/managedClusters");
@@ -1093,8 +1142,8 @@ describe("k8s-aks-microservice example", () => {
   });
 
   test("AKS cluster has correct properties", async () => {
-    const result = await build(srcDir, [azureSerializer]);
-    const parsed = JSON.parse(result.outputs.get("azure")!);
+    const result = await build(srcDir, [azureSerializer], undefined, await declaredBuildOptions(srcDir));
+    const parsed = JSON.parse((result.outputs.get("azure") as string));
     const cluster = parsed.resources.find(
       (r: any) => r.type === "Microsoft.ContainerService/managedClusters",
     );
@@ -1107,9 +1156,9 @@ describe("k8s-aks-microservice example", () => {
   });
 
   test("K8s output contains all expected resources", async () => {
-    const result = await build(srcDir, [k8sSerializer]);
+    const result = await build(srcDir, [k8sSerializer], undefined, await declaredBuildOptions(srcDir));
     expect(result.errors).toHaveLength(0);
-    const docs = parseK8sDocs(result.outputs.get("k8s")!);
+    const docs = parseK8sDocs((result.outputs.get("k8s") as string));
     expect(docs.length).toBeGreaterThanOrEqual(22);
     const kinds = docs.map((d) => d.kind);
     expect(kinds.filter((k) => k === "Deployment")).toHaveLength(2);
@@ -1120,8 +1169,8 @@ describe("k8s-aks-microservice example", () => {
   });
 
   test("Workload Identity SA has azure.workload.identity/client-id annotation", async () => {
-    const result = await build(srcDir, [k8sSerializer]);
-    const docs = parseK8sDocs(result.outputs.get("k8s")!);
+    const result = await build(srcDir, [k8sSerializer], undefined, await declaredBuildOptions(srcDir));
+    const docs = parseK8sDocs((result.outputs.get("k8s") as string));
     const appSa = docs.find(
       (d) => d.kind === "ServiceAccount" && d.name === "microservice-app-sa",
     );
@@ -1130,16 +1179,16 @@ describe("k8s-aks-microservice example", () => {
   });
 
   test("AGIC Ingress has correct annotations", async () => {
-    const result = await build(srcDir, [k8sSerializer]);
-    const docs = parseK8sDocs(result.outputs.get("k8s")!);
+    const result = await build(srcDir, [k8sSerializer], undefined, await declaredBuildOptions(srcDir));
+    const docs = parseK8sDocs((result.outputs.get("k8s") as string));
     const ingress = docs.find((d) => d.kind === "Ingress");
     expect(ingress).toBeDefined();
     expect(ingress!.doc).toContain("kubernetes.io/ingress.class: azure/application-gateway");
   });
 
   test("app resources are in the microservice namespace", async () => {
-    const result = await build(srcDir, [k8sSerializer]);
-    const docs = parseK8sDocs(result.outputs.get("k8s")!);
+    const result = await build(srcDir, [k8sSerializer], undefined, await declaredBuildOptions(srcDir));
+    const docs = parseK8sDocs((result.outputs.get("k8s") as string));
     for (const name of [
       "microservice-api",
       "microservice-app-sa",
@@ -1152,15 +1201,15 @@ describe("k8s-aks-microservice example", () => {
   });
 
   test("all resources have managed-by: chant label", async () => {
-    const result = await build(srcDir, [k8sSerializer]);
-    const docs = parseK8sDocs(result.outputs.get("k8s")!);
+    const result = await build(srcDir, [k8sSerializer], undefined, await declaredBuildOptions(srcDir));
+    const docs = parseK8sDocs((result.outputs.get("k8s") as string));
     for (const doc of docs) {
       expect(doc.doc).toContain("app.kubernetes.io/managed-by: chant");
     }
   });
 
   test("generated K8s YAML passes all post-synth error-level checks", async () => {
-    const result = await build(srcDir, [k8sSerializer]);
+    const result = await build(srcDir, [k8sSerializer], undefined, await declaredBuildOptions(srcDir));
     expect(result.errors).toHaveLength(0);
     const ctx: PostSynthContext = {
       outputs: result.outputs,
@@ -1199,9 +1248,9 @@ describe("gitlab-cells-single-region-gke example", () => {
   });
 
   test("GCP build succeeds with expected resources", async () => {
-    const result = await build(srcDir, [gcpSerializer]);
+    const result = await build(srcDir, [gcpSerializer], undefined, await declaredBuildOptions(srcDir));
     expect(result.errors).toHaveLength(0);
-    const output = result.outputs.get("gcp")!;
+    const output = (result.outputs.get("gcp") as string);
     expect(output).toContain("ContainerCluster");
     expect(output).toContain("SQLInstance");
     expect(output).toContain("RedisInstance");
@@ -1210,9 +1259,9 @@ describe("gitlab-cells-single-region-gke example", () => {
   });
 
   test("K8s build succeeds with expected resources", async () => {
-    const result = await build(srcDir, [k8sSerializer]);
+    const result = await build(srcDir, [k8sSerializer], undefined, await declaredBuildOptions(srcDir));
     expect(result.errors).toHaveLength(0);
-    const docs = parseK8sDocs(result.outputs.get("k8s")!);
+    const docs = parseK8sDocs((result.outputs.get("k8s") as string));
     const kinds = docs.map((d) => d.kind);
     const namespaces = docs.filter((d) => d.kind === "Namespace").map((d) => d.name);
     expect(namespaces).toContain("system");
@@ -1222,15 +1271,15 @@ describe("gitlab-cells-single-region-gke example", () => {
   });
 
   test("Helm build succeeds", async () => {
-    const result = await build(srcDir, [helmSerializer]);
+    const result = await build(srcDir, [helmSerializer], undefined, await declaredBuildOptions(srcDir));
     expect(result.errors).toHaveLength(0);
     expect(result.outputs.has("helm")).toBe(true);
   });
 
   test("GitLab CI build succeeds with expected stages", async () => {
-    const result = await build(srcDir, [gitlabSerializer]);
+    const result = await build(srcDir, [gitlabSerializer], undefined, await declaredBuildOptions(srcDir));
     expect(result.errors).toHaveLength(0);
-    const yaml = result.outputs.get("gitlab")!;
+    const yaml = (result.outputs.get("gitlab") as string);
     expect(yaml).toContain("stage: infra");
     expect(yaml).toContain("stage: system");
     expect(yaml).toContain("stage: deploy-canary");
@@ -1250,9 +1299,9 @@ describe("ray-kuberay-gke example", () => {
   });
 
   test("GCP build succeeds with expected resources", async () => {
-    const result = await build(srcDir, [gcpSerializer]);
+    const result = await build(srcDir, [gcpSerializer], undefined, await declaredBuildOptions(srcDir));
     expect(result.errors).toHaveLength(0);
-    const output = result.outputs.get("gcp")!;
+    const output = (result.outputs.get("gcp") as string);
     expect(output).toContain("ContainerCluster");
     expect(output).toContain("NodePool");
     expect(output).toContain("FilestoreInstance");
@@ -1264,9 +1313,9 @@ describe("ray-kuberay-gke example", () => {
   });
 
   test("K8s build succeeds with expected resources", async () => {
-    const result = await build(srcDir, [k8sSerializer]);
+    const result = await build(srcDir, [k8sSerializer], undefined, await declaredBuildOptions(srcDir));
     expect(result.errors).toHaveLength(0);
-    const docs = parseK8sDocs(result.outputs.get("k8s")!);
+    const docs = parseK8sDocs((result.outputs.get("k8s") as string));
     const kinds = docs.map((d) => d.kind);
     expect(kinds).toContain("Namespace");
     expect(kinds).toContain("NetworkPolicy");
@@ -1279,8 +1328,8 @@ describe("ray-kuberay-gke example", () => {
   });
 
   test("RayCluster CR has production defaults", async () => {
-    const result = await build(srcDir, [k8sSerializer]);
-    const output = result.outputs.get("k8s")!;
+    const result = await build(srcDir, [k8sSerializer], undefined, await declaredBuildOptions(srcDir));
+    const output = (result.outputs.get("k8s") as string);
     // preStop hook — serialized as array ["ray", "stop"]
     expect(output).toContain("preStop");
     // terminationGracePeriodSeconds
@@ -1294,8 +1343,8 @@ describe("ray-kuberay-gke example", () => {
   });
 
   test("NetworkPolicy uses podSelector for intra-cluster rules", async () => {
-    const result = await build(srcDir, [k8sSerializer]);
-    const output = result.outputs.get("k8s")!;
+    const result = await build(srcDir, [k8sSerializer], undefined, await declaredBuildOptions(srcDir));
+    const output = (result.outputs.get("k8s") as string);
     const docs = parseK8sDocs(output);
     const netpol = docs.find((d) => d.kind === "NetworkPolicy")!;
     expect(netpol).toBeDefined();
@@ -1709,5 +1758,76 @@ describe("cockroachdb-multi-region-gke (#1704)", () => {
         expect(declared.has(m[1]), `${region}: ${m[1]}`).toBe(true);
       }
     }
+  });
+});
+
+// ── Testing harness — testing-harness-aws (#1224) ────────────────────
+// Build-validated here (the live deploy/destroy runs against Floci via
+// `just testing-harness-e2e`, which Docker-gates itself). The build asserts
+// the two resources and the per-env naming the harness's isolation rides on:
+// every physical name folds in the stack name, which the harness sets to the
+// per-run `test-<suite>-<nonce>` environment.
+
+describeExample(
+  "testing-harness-aws",
+  {
+    lexicon: "aws",
+    serializer: awsSerializer,
+    outputKey: "aws",
+    examplesDir: import.meta.dirname,
+  },
+  {
+    checks: (output) => {
+      const template = JSON.parse(output) as {
+        Resources: Record<string, { Type: string; Properties: Record<string, unknown> }>;
+      };
+      const resources = Object.values(template.Resources);
+      expect(resources.map((r) => r.Type).sort()).toEqual(["AWS::S3::Bucket", "AWS::SQS::Queue"]);
+      // Stack-name-folded physical names — two parallel suites never collide.
+      expect(JSON.stringify(template.Resources.dataBucket.Properties.BucketName)).toContain("AWS::StackName");
+      expect(JSON.stringify(template.Resources.taskQueue.Properties.QueueName)).toContain("AWS::StackName");
+    },
+  },
+);
+
+// ── Gated migration effect — local-op-quickstart (#1835) ─────────────
+// The live loop (Floci + `--temporal`) is documented in the example README;
+// CI shape-validates the Op and the receipt row it rides on. The SSM
+// materialization, store, and observation leg have their own coverage under
+// lexicons/aws/src/{effect-receipt-row,receipt-store}.test.ts.
+
+describe("local-op-quickstart gated migration (#1835)", () => {
+  test("the receipt is an aws-materialized SSM row with a static expectation", () => {
+    expect(schemaSeeded.lexicon).toBe("aws");
+    expect(schemaSeeded.entityType).toBe("AWS::SSM::Parameter");
+    expect(schemaSeeded.effect).toBe("demo-schema-seed");
+    expect(schemaSeeded.props.Type).toBe("String");
+  });
+
+  test("local-aws-migrate wraps the gated seed in an effect step, receipt as data", () => {
+    const props = (localAwsMigrateOp as unknown as {
+      props: {
+        name: string;
+        phases: Array<{
+          name: string;
+          steps: Array<{
+            kind?: string;
+            fn?: string;
+            receipt?: { name: string; effect: string };
+            expectation?: string;
+            steps?: Array<{ kind: string; signalName?: string; fn?: string }>;
+          }>;
+        }>;
+      };
+    }).props;
+    expect(props.name).toBe("local-aws-migrate");
+    expect(props.phases.map((p) => p.name)).toEqual(["Emulator", "Build", "Deploy", "Migrate"]);
+    const migrate = props.phases.find((p) => p.name === "Migrate")!.steps[0];
+    expect(migrate.kind).toBe("effect");
+    expect(migrate.receipt).toMatchObject({ name: "schemaSeeded", effect: "demo-schema-seed" });
+    // Fully static inputs — the expectation is stamped at synthesis (#1703 d5).
+    expect(migrate.expectation).toMatch(/^sha256:/);
+    // The gate pauses only when the effect will fire; the seed runs after it.
+    expect(migrate.steps!.map((s) => s.kind)).toEqual(["gate", "activity"]);
   });
 });

@@ -1,0 +1,22 @@
+---
+title: Lint Rules
+description: Temporal lexicon lint rules.
+diataxis: reference
+---
+
+The Temporal lexicon ships one source-level lint rule and four post-synth
+checks. See [Lint Rules](/chant/lexicons/temporal/rules/) for the generated,
+always-current table.
+
+- `TMP020` — use a named `TEMPORAL_ACTIVITY_PROFILES` entry instead of an
+  inline `ActivityOptions` object in `proxyActivities()`
+- `TMP001` — `TemporalNamespace` retention shorter than 3 days may cause data
+  loss (post-synth)
+- `TMP002` — `TemporalSchedule` with `overlap: "AllowAll"` should have a note
+  explaining the intent (post-synth)
+- `TMP010` — `TemporalSchedule` cron expressions must be valid 5- or 6-field
+  syntax (post-synth)
+- `TMP011` — `SearchAttribute.namespace` must reference a declared
+  `TemporalNamespace` entity (post-synth)
+
+To write custom rules for your project, see the [lint-rules authoring guide](/chant/lexicon-authoring/lint-rules/).

@@ -1,0 +1,75 @@
+---
+title: "AI Skills"
+description: "AI agent skills bundled with the GitLab CI/CD lexicon"
+diataxis: reference
+---
+
+The GitLab lexicon ships an AI skill called **chant-gitlab** that teaches AI coding agents (like Claude Code) how to build, validate, and deploy GitLab CI pipelines from a chant project.
+
+## What are skills?
+
+Skills are structured markdown documents bundled with a lexicon. When an AI agent works in a chant project, it discovers and loads relevant skills automatically — giving it operational knowledge about the deployment workflow without requiring the user to explain each step.
+
+## Installation
+
+When you scaffold a new project with `chant init --lexicon gitlab`, the skill is installed to `skills/chant-gitlab/SKILL.md` for automatic discovery by Claude Code.
+
+For existing projects, create the file manually:
+
+```
+.claude/
+  skills/
+    chant-gitlab/
+      SKILL.md    # skill content (see below)
+```
+
+## Skill: chant-gitlab
+
+The `chant-gitlab` skill covers the full deployment lifecycle:
+
+- **Build** — `chant build src/ --output .gitlab-ci.yml`
+- **Validate** — `chant lint src/` + GitLab CI Lint API
+- **Deploy** — commit and push the generated YAML
+- **Status** — GitLab UI or pipelines API
+- **Retry** — retry failed jobs via UI or API
+- **Cancel** — cancel running pipelines via API
+- **Troubleshooting** — job logs, lint rule codes (WGL001–WGL004), post-synth checks (WGL010–WGL048)
+
+The skill is invocable as a slash command: `/chant-gitlab`
+
+## Skill: chant-gitlab-migrate
+
+Operational glue for translating GitHub Actions workflows to GitLab CI/CD. The skill detects the user's intent (paste a `.github/workflows/*.yml`, ask about migrating, etc.), invokes `chant migrate`, surfaces the report, and suggests GitLab-native upgrade moments like `--use-composites`.
+
+See [Migration](../migration) for the full CLI surface, supported translations, and limitations.
+
+## MCP integration
+
+The lexicon also provides MCP (Model Context Protocol) tools and resources that AI agents can use programmatically:
+
+| MCP tool | Description |
+|----------|-------------|
+| `build` | Build the chant project |
+| `lint` | Run lint rules |
+| `explain` | Summarize project resources |
+| `scaffold` | Generate starter files |
+| `search` | Search available resource types |
+| `gitlab:diff` | Compare current build output against previous |
+| `gitlab:migrate` | Translate a GitHub Actions workflow into GitLab CI/CD (see [Migration](../migration)) |
+| `gitlab:checks` | Build and return the pipeline's security/correctness findings (the WGL checks) |
+| `gitlab:pipeline` | Build and return the pipeline's stages and jobs (name, stage, run order), as written |
+| `gitlab:references` | Build and list what the pipeline pulls in (includes, components, images) and whether each is pinned |
+| `gitlab:affected` | Given a job, list the jobs that would re-run because they depend on it |
+| `gitlab:pipeline-yaml` | Build and return the generated `.gitlab-ci.yml` |
+| `gitlab:source` | Given a job, where it came from in the TypeScript — the declaring file and the composite that expanded it, if any (entity-level, not a YAML-line source map) |
+| `gitlab:owns` | Given a job, whether it is declared (owned) by chant in this project. Pipeline jobs are not taggable cloud resources, so ownership here means "declared here" — live ownership markers apply to cloud lexicons |
+| `gitlab:compare` | Given a GitHub Actions workflow file, migrate it to GitLab CI and report which security properties survive (translated/approximated/needs-review/lost) — the migration safety view |
+
+The `gitlab:checks` / `gitlab:pipeline` / `gitlab:references` / `gitlab:affected` / `gitlab:pipeline-yaml` / `gitlab:source` / `gitlab:owns` / `gitlab:compare` tools are **read-only**: they build (or migrate) from source and never touch the live GitLab instance. They give an agent a *before-it-runs* view of the pipeline — what it does, what it pulls in, whether it is safe, where it came from, and what survives a migration — to complement the *after-it-ran* view it gets from the instance.
+
+> **Why no `github:compare`?** The GitHub → GitLab migration lives in the GitLab lexicon (the GitHub lexicon does not depend on GitLab). A `github:compare` would invert that dependency, so the migration safety view is exposed once, here, as `gitlab:compare`.
+
+| MCP resource | Description |
+|--------------|-------------|
+| `resource-catalog` | JSON list of all supported GitLab CI entity types |
+| `examples/basic-pipeline` | Example pipeline with build, test, and deploy jobs |

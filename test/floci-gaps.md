@@ -399,3 +399,265 @@ a reconcile regenerates the networking estate but cannot carry the AKS
 cluster; the authored cluster source stays as-is. `test/azure-cc-e2e.sh`
 asserts exactly that split. Entry stands until the listing includes modeled
 providers.
+
+## 11. `AWS::CloudWatch::Dashboard` deploys via CloudFormation but the CloudWatch API refuses to read it back
+
+**Status:** confirmed 2026-08-24 against `floci/floci:latest`, unfiled. Found
+while building the `MonitoringStack` composite (chant#1139).
+
+```
+$ aws cloudformation deploy --stack-name monitoring-stack-check --template-file template.json
+Successfully created/updated stack - monitoring-stack-check
+
+$ aws cloudformation describe-stack-resources --stack-name monitoring-stack-check \
+    --query 'StackResources[?ResourceType==`AWS::CloudWatch::Dashboard`]'
+[{"LogicalResourceId":"monitoringDashboard","PhysicalResourceId":"monitoringDashboard-28e4fce3",
+  "ResourceType":"AWS::CloudWatch::Dashboard","ResourceStatus":"CREATE_COMPLETE"}]
+
+$ aws cloudwatch list-dashboards
+An error occurred (UnsupportedOperation) when calling the ListDashboards operation:
+Operation ListDashboards is not supported by CloudWatch JSON.
+
+$ aws cloudwatch get-dashboard --dashboard-name floci-check-dashboard
+An error occurred (UnsupportedOperation) when calling the GetDashboard operation:
+Operation GetDashboard is not supported by CloudWatch JSON.
+```
+
+CloudFormation's own resource-type handler accepts the create and reports
+`CREATE_COMPLETE` (`monitoring` shows `"running"` on `/_localstack/health`),
+but the CloudWatch service surface behind that same emulator has no
+dashboard-reading operations at all — not partial, absent.
+
+**Effect on chant:** synthesis and `cfn-deploy` for a `CwDashboard` resource
+(via the new `MonitoringStack` composite or a bare declaration) both work
+end-to-end on Floci, so the write half of the composite's Floci coverage is
+real. What cannot be exercised here is reading the dashboard back — a
+`lifecycle snapshot --deep`/live-diff over a Dashboard degrades exactly like
+entry 1's Cloud Control gap, for the same underlying reason (the emulator
+reports a service `running` that only partially implements it). The
+`AWS::CloudWatch::Alarm` half has no such gap — `describe-alarms` returns the
+alarm with every property (`Namespace`, `MetricName`, `Dimensions`,
+`Threshold`, `ComparisonOperator`, `EvaluationPeriods`) round-tripped exactly.
+
+**Priority:** low. Real AWS serves both operations; the composite's write
+path (the half a `cfn-deploy` estate depends on) is unaffected.
+
+## 12. `AWS::CloudWatch::Dashboard`'s physical id ignores the declared `DashboardName`
+
+**Status:** confirmed 2026-08-24 against `floci/floci:latest`, unfiled. Same
+deploy as entry 11.
+
+The CloudFormation schema for `AWS::CloudWatch::Dashboard` declares
+`DashboardName` as `createOnly` and its `primaryIdentifier` — on real AWS the
+physical resource id is the dashboard name you set (or a generated one only
+when you omit it). Here, with `DashboardName: "floci-check-dashboard"`
+explicit in the deployed template, `describe-stack-resources` still reports
+`PhysicalResourceId: "monitoringDashboard-28e4fce3"` — the logical id plus a
+random suffix, not the name that was declared.
+
+**Effect on chant:** nothing observed yet — nothing in the composite or its
+tests depends on the dashboard's physical id, and the property itself
+(`DashboardName`) round-trips correctly in the template and (per entry 11) is
+unreadable back from the API either way. Filed because a future live-read or
+drift check over dashboards would trip on it: the physical id a `describe-
+stack-resources` call reports would not match the name an estate declared.
+
+**Priority:** low, same reasoning as entry 11.
+
+## 13. CloudFormation `AWS::ECR::Repository` drops `ImageScanningConfiguration`
+
+**Status:** confirmed 2026-08-24 against `ghcr.io/lex00/floci:latest`,
+unfiled. Found while building the `EcrRepository` composite (chant #1139).
+
+```
+$ docker run -d --rm --name chant-floci-ecr -p 4600:4566 ghcr.io/lex00/floci:latest
+$ export AWS_ENDPOINT_URL=http://localhost:4600 AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_REGION=us-east-1
+
+$ cat > template.json <<'JSON'
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Resources": {
+    "Repo": {
+      "Type": "AWS::ECR::Repository",
+      "Properties": {
+        "RepositoryName": "chant-ecr-verify",
+        "ImageTagMutability": "MUTABLE",
+        "ImageScanningConfiguration": {"ScanOnPush": true},
+        "LifecyclePolicy": {"LifecyclePolicyText": "{\"rules\":[{\"rulePriority\":1,\"selection\":{\"tagStatus\":\"untagged\",\"countType\":\"sinceImagePushed\",\"countUnit\":\"days\",\"countNumber\":14},\"action\":{\"type\":\"expire\"}}]}"}
+      }
+    }
+  }
+}
+JSON
+$ aws cloudformation create-stack --stack-name ecr-verify --template-body file://template.json
+$ aws cloudformation wait stack-create-complete --stack-name ecr-verify
+
+$ aws ecr describe-repositories --repository-names chant-ecr-verify \
+    --query 'repositories[0].imageScanningConfiguration'
+{"scanOnPush": false}
+
+$ aws ecr get-lifecycle-policy --repository-name chant-ecr-verify
+{"lifecyclePolicyText": "{\"rules\":[{\"rulePriority\":1,\"selection\": …}]}", …}
+```
+
+The template asked for `ScanOnPush: true`; the repository that comes back
+has scanning off. `LifecyclePolicy`, `ImageTagMutability`, and
+`EncryptionConfiguration` all round-trip correctly through the same
+CloudFormation create — only `ImageScanningConfiguration` is dropped.
+
+The raw ECR API is not at fault — `create-repository
+--image-scanning-configuration scanOnPush=true` against the same emulator
+returns `{"scanOnPush": true}` immediately. (The companion
+`put-image-scanning-configuration` call is a dead end for isolating this
+further: AWS itself deprecated that operation in favor of registry-level
+scanning config, and Floci returns `UnsupportedOperation` for it — consistent
+with real ECR, not a gap.) So this is specifically the CloudFormation
+resource-provider glue for `AWS::ECR::Repository` silently dropping one
+documented property, not an ECR gap.
+
+**Effect on chant:** the `EcrRepository` composite (defaults `scanOnPush` to
+`true`) synthesizes correct CloudFormation, but a Floci-backed
+`cfn-deploy`/apply loop cannot assert scan-on-push took effect —
+`describe-repositories` reads back the pre-gap `false`. The composite's own
+tests stay unit-level (construct the template, assert its shape) rather than
+asserting post-apply state through Floci; the manual repro above is the
+closest this got to emulator coverage. Unblocked by switching the assertion
+to the raw ECR `create-repository` API instead of describe-after-CFN, which
+is not representative of how these repositories are actually deployed.
+
+## 14. CloudFormation drops most declared `AWS::S3::Bucket` sub-configuration, and `AWS::S3::BucketPolicy` applies nothing at all
+
+**Status:** confirmed 2026-08-24 against `floci/floci:1.5.34`, unfiled. Same
+class as entry 4 (CloudFormation not applying a declared resource's
+properties) — S3, not EC2 security groups, this time. Found building the
+`BucketDeployment` composite (chant#1139) — a bucket declaring encryption,
+a public-access-block, a website configuration and a tag through
+CloudFormation, plus a sibling `AWS::S3::BucketPolicy`.
+
+```
+$ aws cloudformation create-stack --stack-name probe --template-body file://template.json
+# template.json declares one AWS::S3::Bucket with BucketEncryption,
+# PublicAccessBlockConfiguration (open, for the website case),
+# WebsiteConfiguration and one Tag, plus one AWS::S3::BucketPolicy
+# (Bucket: {Ref: bucket}) granting public s3:GetObject.
+$ aws cloudformation describe-stacks --stack-name probe --query 'Stacks[0].StackStatus'
+"CREATE_COMPLETE"
+$ aws cloudformation describe-stack-resources --stack-name probe
+# both siteBucket and siteBucketPolicy report CREATE_COMPLETE
+
+$ aws s3api get-bucket-encryption --bucket chant-bucket-deployment-probe
+{"ServerSideEncryptionConfiguration":{"Rules":[{"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"},...}]}}   # <- correct
+
+$ aws s3api get-bucket-website --bucket chant-bucket-deployment-probe
+An error occurred (NoSuchWebsiteConfiguration) …                 # <- declared, not applied
+$ aws s3api get-bucket-tagging --bucket chant-bucket-deployment-probe
+{"TagSet":[]}                                                     # <- declared one tag, applied none
+$ aws s3api get-public-access-block --bucket chant-bucket-deployment-probe
+An error occurred (NoSuchPublicAccessBlockConfiguration) …       # <- declared, not applied
+$ aws s3api get-bucket-policy --bucket chant-bucket-deployment-probe
+An error occurred (NoSuchBucketPolicy) …                          # <- CREATE_COMPLETE, applies nothing
+```
+
+Every one of the four round-trips through the plain S3 API once put there
+directly instead of through CloudFormation:
+
+```
+$ aws s3api put-bucket-website --bucket ... --website-configuration '{"IndexDocument":{"Suffix":"index.html"}}'
+$ aws s3api get-bucket-website --bucket ...
+{"IndexDocument":{"Suffix":"index.html"}}                         # <- round-trips
+$ aws s3api put-bucket-tagging --bucket ... --tagging '{"TagSet":[{"Key":"env","Value":"prod"}]}'
+$ aws s3api get-bucket-tagging --bucket ...
+{"TagSet":[{"Key":"env","Value":"prod"}]}                          # <- round-trips
+$ aws s3api put-public-access-block --bucket ... --public-access-block-configuration BlockPublicAcls=true,...
+$ aws s3api get-public-access-block --bucket ...
+{"PublicAccessBlockConfiguration":{"BlockPublicAcls":true,...}}   # <- round-trips
+$ aws s3api put-bucket-policy --bucket ... --policy '{"Version":"2012-10-17","Statement":[...]}'
+$ aws s3api get-bucket-policy --bucket ...
+{"Policy":"{...}"}                                                 # <- round-trips
+```
+
+So the S3 API itself is fine on this emulator (encryption also round-trips
+correctly through CloudFormation, singling it out as the one sub-resource
+the provider does forward) — the gap is `CloudFormationResourceProvisioner`'s
+S3 bucket path calling only the encryption API and silently skipping
+`WebsiteConfiguration`, `PublicAccessBlockConfiguration` and `Tags`, and its
+`AWS::S3::BucketPolicy` provisioner not calling `PutBucketPolicy` at all
+despite reporting `CREATE_COMPLETE`.
+
+**Effect on chant:** `BucketDeployment` (chant#1139) declares all four on
+Floci and a clean apply will read back as if none of them were ever asked
+for — the composite itself is correct (`aws cloudformation get-template`
+still shows every property; this is purely an apply-time gap), so the
+composite's tests exercise the generated template's shape directly rather
+than a Floci round-trip. A drift-acceptance estate built on this composite
+would report false `absent` drift on all four properties until this lands,
+the same shape as entry 4's SG rules — actual out-of-band drift (a rule
+added on top of what CloudFormation *did* apply) would still surface
+correctly for `BucketEncryption`, the one property this path forwards.
+
+## 15. CloudFormation `AWS::DynamoDB::Table` drops StreamSpecification and TimeToLiveSpecification, ignores custom ProvisionedThroughput
+
+**Status:** confirmed 2026-08-24 against `ghcr.io/lex00/floci:main-20260825a`
+(`latest`), unfiled. Found while building the `DynamoDBTable` composite
+(chant #1139).
+
+```
+$ docker run -d --rm --name chant-floci-dynamo -p 4599:4566 ghcr.io/lex00/floci:latest
+$ export AWS_ENDPOINT_URL=http://localhost:4599 AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_REGION=us-east-1
+
+$ cat > template.json <<'JSON'
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Resources": {
+    "T": {
+      "Type": "AWS::DynamoDB::Table",
+      "Properties": {
+        "TableName": "chant-dynamo-verify",
+        "BillingMode": "PROVISIONED",
+        "AttributeDefinitions": [{"AttributeName": "pk", "AttributeType": "S"}],
+        "KeySchema": [{"AttributeName": "pk", "KeyType": "HASH"}],
+        "ProvisionedThroughput": {"ReadCapacityUnits": 2, "WriteCapacityUnits": 2},
+        "StreamSpecification": {"StreamViewType": "NEW_AND_OLD_IMAGES"},
+        "TimeToLiveSpecification": {"Enabled": true, "AttributeName": "expiresAt"}
+      }
+    }
+  }
+}
+JSON
+$ aws cloudformation create-stack --stack-name dynamo-verify --template-body file://template.json
+$ aws cloudformation wait stack-create-complete --stack-name dynamo-verify
+
+$ aws dynamodb describe-table --table-name chant-dynamo-verify \
+    --query 'Table.{Prov:ProvisionedThroughput,Stream:StreamSpecification}'
+{
+    "Prov": {"NumberOfDecreasesToday": 0, "ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
+    "Stream": null
+}
+$ aws dynamodb describe-time-to-live --table-name chant-dynamo-verify
+{"TimeToLiveDescription": {"TimeToLiveStatus": "DISABLED"}}
+```
+
+The template asked for `ReadCapacityUnits`/`WriteCapacityUnits` of 2/2, a
+stream, and TTL on `expiresAt`. The table that comes back has the emulator's
+default 5/5 capacity, no `StreamSpecification` at all (so no `StreamArn`
+either), and TTL still disabled. A GSI's own `ProvisionedThroughput` in the
+same template comes back as `0/0` rather than the value given.
+
+The raw DynamoDB API is not at fault — `create-table` with the same
+`--provisioned-throughput`/`--stream-specification`, followed by
+`update-time-to-live`, applies all three correctly on the same emulator (see
+repro in the PR that added this entry, chant #1139). So this is specifically
+the CloudFormation resource-provider glue for `AWS::DynamoDB::Table` silently
+dropping three of its documented properties, not a DynamoDB gap.
+
+**Effect on chant:** any composite or hand-authored template that sets
+`Table.StreamSpecification`, `Table.TimeToLiveSpecification`, or a non-default
+`ProvisionedThroughput` (table- or GSI-level) synthesizes correctly and the
+generated CloudFormation is right, but a Floci-backed `cfn-deploy`/apply loop
+cannot be used to assert those settings took effect — `describe-table` and
+`describe-time-to-live` read back the pre-gap state. The `DynamoDBTable`
+composite's own tests therefore stay unit-level (construct the template,
+assert its shape) rather than asserting post-apply state through Floci; the
+manual repro above is the closest this got to emulator coverage. Unblocked by
+switching the assertion to the raw DynamoDB API instead of describe-after-CFN,
+which is not representative of how these tables are actually deployed.

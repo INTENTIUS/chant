@@ -1,6 +1,7 @@
 ---
 title: Watching Lifecycle
 description: Continuous drift detection by scheduling lifecycle snapshots and live diffs in Temporal
+diataxis: how-to
 ---
 
 import { Aside } from '@astrojs/starlight/components';
@@ -60,6 +61,8 @@ The two phases compile down to a workflow that, on each tick:
 
 Set `live: false` on the composite to use digest-only diff (faster, no cloud queries) for environments without `describeResources()` coverage. With `live: true` (the default) you get external-mutation detection. (See the [Runtime observation coverage matrix](/chant/lexicons/overview/#runtime-observation-coverage) for which lexicons report what.)
 
+`receipts: [myReceipt, ...]` (typed `EffectReceipt` references) adds a read-only `Receipts` phase that reads each effect receipt through the receipt store and reports absent or differing receipts as findings, surfaced as a `StaleReceipts` search attribute — it never runs an effect and never writes a receipt.
+
 ## The Temporal UI experience
 
 Each generated workflow opens with:
@@ -112,7 +115,7 @@ The next tick should show `Drift = "false"` again.
 
 ## How drift becomes a search attribute
 
-`outcomeAttribute` is a generic Op feature, not a `WatchOp`-specific one — see [Outcome-based search attributes](/chant/guide/ops/#outcome-based-search-attributes) for the full contract. The composite wires it like this:
+`outcomeAttribute` is a generic Op feature, not a `WatchOp`-specific one — see [Outcome-based search attributes](/chant/guide/ops-reference/#outcome-based-search-attributes) for the full contract. The composite wires it like this:
 
 ```typescript
 phase("Diff", [

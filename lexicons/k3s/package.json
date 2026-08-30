@@ -1,6 +1,6 @@
 {
   "name": "@intentius/chant-lexicon-k3s",
-  "version": "0.44.14",
+  "version": "0.52.1",
   "type": "module",
   "files": [
     "src/",
@@ -16,6 +16,11 @@
       "development": "./src/*.ts",
       "types": "./dist/*.d.ts",
       "default": "./src/*.ts"
+    },
+    "./op/activities": {
+      "development": "./src/op/activities/index.ts",
+      "types": "./dist/op/activities/index.d.ts",
+      "default": "./src/op/activities/index.ts"
     },
     "./lint/post-synth": {
       "development": "./src/lint/post-synth/index.ts",
@@ -38,14 +43,14 @@
     "@intentius/chant": "*",
     "tsc-alias": "^1.8.17",
     "typescript": "^5.9.3",
-    "js-yaml": "^4.1.0",
+    "js-yaml": "^4.3.1",
     "@types/js-yaml": "^4.0.9"
   },
   "publishConfig": {
     "access": "public"
   },
   "peerDependencies": {
-    "@intentius/chant": "^0.44.14",
+    "@intentius/chant": "^0.52.1",
     "typescript": "^5.9.3"
   },
   "description": "k3s lexicon for chant — the k3s distro's host configuration as declarable data",

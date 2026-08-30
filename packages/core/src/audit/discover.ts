@@ -22,7 +22,8 @@
  *   - Helm charts are a directory BUNDLE keyed by `Chart.yaml`; the helm checks
  *     read `output.files`, so the whole chart is one AuditInput.
  *   - k8s `detectTemplate` matches any `apiVersion`+`kind`, including GCP Config
- *     Connector (`cnrm.cloud.google.com`) resources, so gcp must be tried first.
+ *     Connector (`cnrm.cloud.google.com`) resources and fountain
+ *     (`fountain.dev/v1`) manifests, so gcp and fountain must be tried first.
  *   - aws/azure checks `JSON.parse` their input, so YAML/templated content is
  *     normalized to a JSON string here.
  */
@@ -34,7 +35,7 @@ import type { LexiconPlugin } from "../lexicon";
 import type { AuditInput, AuditLexicon } from "./core";
 
 /** Lexicons the auditor knows how to detect and run checks for. */
-export const AUDIT_LEXICONS = ["github", "gitlab", "forgejo", "k8s", "docker", "aws", "azure", "gcp", "helm"] as const;
+export const AUDIT_LEXICONS = ["github", "gitlab", "forgejo", "k8s", "docker", "aws", "azure", "gcp", "helm", "fountain"] as const;
 
 /**
  * Load the plugins used for detection. Each is loaded in isolation (no
@@ -101,6 +102,27 @@ function isYaml(name: string): boolean {
 
 function isDockerfileName(name: string): boolean {
   return name === "Dockerfile" || name.startsWith("Dockerfile.") || name.endsWith(".Dockerfile") || name.endsWith(".dockerfile");
+}
+
+/**
+ * Filenames the secrets scan (#443) wants that no lexicon otherwise reads —
+ * dotenv files and key/cert material. Included in `isCandidatePath` so both
+ * the local walk and the remote fetch pick them up; `classifyFiles` doesn't
+ * claim them for any lexicon, they just ride along for `scanForSecrets`.
+ */
+function isSecretBearingName(name: string): boolean {
+  if (/^\.env(\..+)?$/i.test(name)) return true;
+  return /\.(pem|key|crt|cer|pfx|p12)$/i.test(name);
+}
+
+/**
+ * `wrangler.toml` (#446) — Cloudflare Workers' declarative deploy config.
+ * Native TOML, so it rides along the same way secret-bearing filenames do:
+ * `wrangler.ts` reads it directly (no lexicon plugin, no authoring surface),
+ * so it only needs to be a candidate path, not a `detectTemplate` entry.
+ */
+function isWranglerConfigName(name: string): boolean {
+  return name === "wrangler.toml";
 }
 
 /** Split a possibly multi-document YAML string into per-doc parsed objects. */
@@ -171,6 +193,13 @@ const CONTENT_DETECTORS: ContentDetector[] = [
     detect: (plugin, _name, content) => (anyDoc(plugin, content) ? content : null),
   },
   {
+    // fountain (`apiVersion: fountain.dev/v1`) — must win over k8s, whose
+    // detectTemplate matches any apiVersion+kind document (#1566).
+    lexicon: "fountain",
+    accepts: isYaml,
+    detect: (plugin, _name, content) => (anyDoc(plugin, content) ? content : null),
+  },
+  {
     lexicon: "k8s",
     accepts: isYaml,
     detect: (plugin, _name, content) => (anyDoc(plugin, content) ? content : null),
@@ -223,8 +252,12 @@ export interface DetectPlugin {
   detectTemplate?: (data: unknown) => boolean;
 }
 
-/** Which CI lexicon a path belongs to (by location — content can't disambiguate github vs forgejo). */
-function ciLexiconForPath(path: string): AuditLexicon | undefined {
+/**
+ * Which CI lexicon a path belongs to (by location — content can't disambiguate
+ * github vs forgejo). Exported for the fetch module: known-path lexicons stay a
+ * direct path match even in search-first (large-repo) discovery (#520).
+ */
+export function ciLexiconForPath(path: string): AuditLexicon | undefined {
   if (/^\.github\/workflows\/[^/]+\.ya?ml$/.test(path)) return "github";
   if (/^\.forgejo\/workflows\/[^/]+\.ya?ml$/.test(path)) return "forgejo";
   if (path === ".gitlab-ci.yml") return "gitlab";
@@ -240,7 +273,67 @@ export function isCandidatePath(path: string): boolean {
   if (ciLexiconForPath(path)) return true;
   if (isDockerfileName(name)) return true;
   if (name === "Chart.yaml") return true;
+  if (isSecretBearingName(name)) return true;
+  if (isWranglerConfigName(name)) return true;
   return /\.(ya?ml|json|template)$/i.test(name);
+}
+
+/**
+ * What a candidate file looks like it wants, judged cheaply by core alone
+ * (path, filename, a few content markers) with no lexicon plugin involved.
+ * Names the lexicon that would have claimed a file when that lexicon isn't
+ * installed (#1623). Deliberately coarse: precision comes from the plugin's
+ * `detectTemplate`, which is exactly what's missing in that case.
+ * `terraform` is not an audit lexicon; `*.tf` is surfaced so the user learns
+ * the audit never reads it (see `chant carve`).
+ */
+export type LexiconHint = AuditLexicon | "terraform";
+
+export function hintLexiconForFile(path: string, content: string): LexiconHint | undefined {
+  const name = basename(path);
+  const ci = ciLexiconForPath(path);
+  if (ci) return ci;
+  if (isDockerfileName(name)) return "docker";
+  if (name === "Chart.yaml") return "helm";
+  if (/\.tf$/i.test(name)) return "terraform";
+  const head = content.slice(0, 64 * 1024);
+  if (/cnrm\.cloud\.google\.com/.test(head)) return "gcp";
+  if (/fountain\.dev\/v1/.test(head)) return "fountain";
+  if (/AWSTemplateFormatVersion|["']?Type["']?\s*:\s*["']AWS::/.test(head)) return "aws";
+  if (/deploymentTemplate\.json/.test(head)) return "azure";
+  if (isYaml(name)) {
+    if (/^apiVersion:/m.test(head) && /^kind:/m.test(head)) return "k8s";
+    if (/^services:/m.test(head)) return "docker";
+  }
+  return undefined;
+}
+
+/** A candidate file that looked like it belonged to a lexicon the audit did not have. */
+export interface UnclaimedFile {
+  path: string;
+  lexicon: LexiconHint;
+}
+
+/**
+ * Files no loaded lexicon claimed, paired with the lexicon core guesses they
+ * wanted. Only files whose guessed lexicon is absent are reported; a file an
+ * installed lexicon declined is that plugin's call, not a coverage gap.
+ */
+export function unclaimedFiles(files: RepoFile[], inputs: AuditInput[], plugins: DetectPlugin[]): UnclaimedFile[] {
+  const loaded = new Set<string>(plugins.map((p) => p.name));
+  const claimed = new Set<string>();
+  for (const i of inputs) {
+    if (i.files) for (const rel of Object.keys(i.files)) claimed.add(i.path === "." ? rel : `${i.path}/${rel}`);
+    else claimed.add(i.path);
+  }
+  const out: UnclaimedFile[] = [];
+  for (const f of files) {
+    if (claimed.has(f.path)) continue;
+    const lexicon = hintLexiconForFile(f.path, f.content);
+    if (!lexicon || loaded.has(lexicon)) continue;
+    out.push({ path: f.path, lexicon });
+  }
+  return out;
 }
 
 /** Collect Helm charts as bundles from an in-memory file set; returns inputs + chart path-prefixes. */
@@ -315,15 +408,26 @@ export function classifyFiles(files: RepoFile[], plugins: DetectPlugin[]): Audit
  * then handed to the shared `classifyFiles`. Detection is skipped for any
  * lexicon whose plugin isn't provided, so a caller can scope discovery.
  */
-export function discoverByDetection(root: string, plugins: LexiconPlugin[]): AuditInput[] {
+export function discoverByDetection(root: string, plugins: DetectPlugin[]): AuditInput[] {
+  return classifyFiles(collectCandidates(root), plugins);
+}
+
+/** The walk half of `discoverByDetection`: candidate files read into memory, paths relative to the root. */
+export function collectCandidates(root: string): RepoFile[] {
   const all: string[] = [];
   walkFiles(root, all);
   const files: RepoFile[] = [];
   for (const full of all) {
     const path = relative(root, full);
+    // Terraform is never audited; the path alone is enough to say so (#1623).
+    // Kept out of `isCandidatePath` so remote fetches never pull HCL.
+    if (/\.tf$/i.test(path)) {
+      files.push({ path, content: "" });
+      continue;
+    }
     if (!isCandidatePath(path)) continue;
     const content = readSafe(full);
     if (content !== undefined) files.push({ path, content });
   }
-  return classifyFiles(files, plugins);
+  return files;
 }

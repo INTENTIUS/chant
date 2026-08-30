@@ -6,7 +6,7 @@ description: "Every lint rule and post-synth check provided by the AWS CloudForm
 {/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-aws` — DO NOT EDIT.
     Edit lexicons/aws/src/codegen/docs.ts instead; changes here are overwritten. */}
 
-The AWS CloudFormation lexicon provides **50** rules: 3 lint rules and 47 post-synth checks.
+The AWS CloudFormation lexicon provides **63** rules: 3 lint rules and 60 post-synth checks.
 
 ## Lint Rules
 
@@ -69,3 +69,16 @@ Post-synth checks validate the serialized output after the build pipeline comple
 | `WAW053` | ECR repository does not scan images on push |
 | `WAW054` | ECR repository does not have immutable image tags |
 | `WAW055` | CloudWatch Logs log group has no retention period set |
+| `WAW056` | SCP guardrail has no Deny statement — it constrains nothing |
+| `WAW057` | SCP guardrail is attached to no targets — it enforces nothing |
+| `WAW058` | Organization audit trail missing, not logging, or scoped down to a single region |
+| `WAW059` | Wildcard Resource where the declared graph enumerates the touched set — tighten to the consumers' declared Arns |
+| `WAW060` | IAM policy attached to no principal — it grants nothing |
+| `WAW061` | Subnet CidrBlock falls outside its VPC's CidrBlock — fails at deploy time |
+| `WAW062` | Duplicate export name or explicit resource name within a template — fails at deploy time |
+| `WAW063` | IAM policy denies an action another attached policy on the same role allows — explicit Deny wins, runtime 403 |
+| `WAW064` | Transit Gateway route table declares a Blackhole route — confirm the traffic drop is intentional, not an accident |
+| `WAW065` | Transit Gateway route table has associations but no propagations, or an attachment wired into no route table |
+| `WAW066` | Private subnet's route table has no default route, or its default route targets a gateway that does not exist in the template |
+| `WAW067` | A single-AZ NAT gateway serves private subnets across multiple Availability Zones — single point of failure for cross-AZ egress |
+| `WAW068` | VPN Gateway or Transit Gateway has only one attached VPN Connection — no redundant path for hybrid connectivity |

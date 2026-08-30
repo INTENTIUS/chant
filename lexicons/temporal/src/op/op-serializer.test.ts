@@ -5,12 +5,14 @@
 
 import { describe, expect, it } from "vitest";
 import { serializeOps } from "./serializer";
-import { DECLARABLE_MARKER } from "@intentius/chant/declarable";
+import { DECLARABLE_MARKER, type Declarable } from "@intentius/chant/declarable";
+import { phase, gate, effect, envTeardown, shell, stepOutput } from "@intentius/chant/op";
 import type { OpConfig } from "@intentius/chant/op";
+import { EffectReceipt, receiptExpectation } from "@intentius/chant/effect-receipt";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function makeOp(config: OpConfig): [string, Record<string, unknown>] {
+function makeOp(config: OpConfig): [string, Declarable] {
   return [
     config.name,
     {
@@ -20,7 +22,7 @@ function makeOp(config: OpConfig): [string, Record<string, unknown>] {
       kind: "resource",
       props: config,
       attributes: {},
-    },
+    } as unknown as Declarable,
   ];
 }
 
@@ -92,6 +94,108 @@ describe("serializeOps()", () => {
       const wf = serializeOps(ops)["ops/deploy/workflow.ts"];
       expect(wf).toContain("TEMPORAL_ACTIVITY_PROFILES.fastIdempotent");
       expect(wf).toContain("TEMPORAL_ACTIVITY_PROFILES.longInfra");
+    });
+
+    it("binds one proxy per (activity, profile) pair with distinct identifiers (#1698)", () => {
+      const ops = new Map([
+        makeOp({
+          name: "deploy", overview: "o",
+          phases: [
+            { name: "Quick", steps: [{ kind: "activity", fn: "shellCmd", args: { cmd: "echo a" } }] },
+            { name: "Slow", steps: [{ kind: "activity", fn: "shellCmd", args: { cmd: "echo b" }, profile: "longInfra" }] },
+            { name: "Again", steps: [{ kind: "activity", fn: "shellCmd", args: { cmd: "echo c" } }] },
+          ],
+        }),
+      ]);
+      const wf = serializeOps(ops)["ops/deploy/workflow.ts"];
+      // No duplicate top-level const declarations.
+      const declared = [...wf.matchAll(/^const \{ ([^}]+) \} = proxyActivities/gm)]
+        .flatMap((m) => m[1].split(",").map((x) => x.trim().split(":").pop()!.trim()));
+      expect(new Set(declared).size).toBe(declared.length);
+      expect(declared).toEqual(["shellCmd", "shellCmd_longInfra"]);
+      expect(wf).toMatch(/const \{ shellCmd \} = proxyActivities<typeof activities>\(\s*TEMPORAL_ACTIVITY_PROFILES\.fastIdempotent,/);
+      expect(wf).toMatch(/const \{ shellCmd: shellCmd_longInfra \} = proxyActivities<typeof activities>\(\s*TEMPORAL_ACTIVITY_PROFILES\.longInfra,/);
+      // Each step calls the binding for its own profile.
+      expect(wf).toContain('await shellCmd({"cmd":"echo a"});');
+      expect(wf).toContain('await shellCmd_longInfra({"cmd":"echo b"});');
+      expect(wf).toContain('await shellCmd({"cmd":"echo c"});');
+    });
+
+    it("keeps the authored step order when a phase mixes gates and activities (#1698)", () => {
+      const ops = new Map([
+        makeOp({
+          name: "replay", overview: "o",
+          phases: [
+            {
+              name: "Replay",
+              steps: [
+                { kind: "activity", fn: "shellCmd", args: { cmd: "warm" } },
+                { kind: "gate", signalName: "approve-replay" },
+                { kind: "activity", fn: "shellCmd", args: { cmd: "measure" } },
+              ],
+            },
+          ],
+        }),
+      ]);
+      const wf = serializeOps(ops)["ops/replay/workflow.ts"];
+      const warm = wf.indexOf('await shellCmd({"cmd":"warm"});');
+      const gate = wf.indexOf("await condition(() => resumeApproveReplayCleared");
+      const measure = wf.indexOf('await shellCmd({"cmd":"measure"});');
+      expect(warm).toBeGreaterThan(-1);
+      expect(gate).toBeGreaterThan(warm);
+      expect(measure).toBeGreaterThan(gate);
+    });
+
+    it("emits envTeardown with its env + confirmProd args, after a preceding gate (#1222, #1698)", () => {
+      // Authored with the real builders: a human gate composed before the
+      // teardown step must survive codegen in authored order, and the step's
+      // args must carry the env and the explicit prod confirmation.
+      const ops = new Map([
+        makeOp({
+          name: "env-down", overview: "o",
+          phases: [
+            phase("Teardown", [
+              gate("approve-teardown", { description: "Release the staging teardown" }),
+              envTeardown("staging", { confirmProd: true }),
+            ]),
+          ],
+        }),
+      ]);
+      const wf = serializeOps(ops)["ops/env-down/workflow.ts"];
+      expect(wf).toContain('await envTeardown({"env":"staging","confirmProd":true});');
+      // The builder defaults to the longInfra profile.
+      expect(wf).toMatch(/const \{ envTeardown \} = proxyActivities<typeof activities>\(\s*TEMPORAL_ACTIVITY_PROFILES\.longInfra,/);
+      const gateIdx = wf.indexOf("await condition(() => resumeApproveTeardownCleared");
+      const stepIdx = wf.indexOf("await envTeardown(");
+      expect(gateIdx).toBeGreaterThan(-1);
+      expect(stepIdx).toBeGreaterThan(gateIdx);
+    });
+
+    it("splits a parallel phase into one Promise.all per run of activities around a gate (#1698)", () => {
+      const ops = new Map([
+        makeOp({
+          name: "par", overview: "o",
+          phases: [
+            {
+              name: "P", parallel: true,
+              steps: [
+                { kind: "activity", fn: "shellCmd", args: { cmd: "a" } },
+                { kind: "activity", fn: "shellCmd", args: { cmd: "b" } },
+                { kind: "gate", signalName: "go" },
+                { kind: "activity", fn: "shellCmd", args: { cmd: "c" } },
+              ],
+            },
+          ],
+        }),
+      ]);
+      const wf = serializeOps(ops)["ops/par/workflow.ts"];
+      const all = wf.indexOf("await Promise.all([");
+      const gate = wf.indexOf("await condition(() => resumeGoCleared");
+      const c = wf.indexOf('await shellCmd({"cmd":"c"});');
+      expect(all).toBeGreaterThan(-1);
+      expect(gate).toBeGreaterThan(all);
+      expect(c).toBeGreaterThan(gate);
+      expect(wf.match(/Promise\.all/g)).toHaveLength(1);
     });
 
     it("passes the whole profile object to proxyActivities (carries every retry field, incl. nonRetryableErrorTypes)", () => {
@@ -599,6 +703,325 @@ describe("serializeOps()", () => {
       expect(wf).toContain("const [__r0, __r1] = await Promise.all([");
       expect(wf).toContain('upsertSearchAttributes({ "AlphaOk": [String(__r0?.ok)] });');
       expect(wf).toContain('upsertSearchAttributes({ "BetaOk": [String(__r1?.ok)] });');
+    });
+  });
+
+  // ── step-output references (#1290) ──────────────────────────────────────────
+
+  describe("step-output references", () => {
+    it("captures the producer's result and wires it into the consumer's args", () => {
+      const ops = new Map([
+        makeOp({
+          name: "reconcile",
+          overview: "reconcile",
+          phases: [
+            { name: "Diff", steps: [{ kind: "activity", fn: "lifecycleDiff", args: { env: "prod" }, id: "diff" }] },
+            {
+              name: "Apply",
+              steps: [
+                { kind: "activity", fn: "applyStacks", args: { stacks: stepOutput("diff", "driftedStacks") } },
+              ],
+            },
+          ],
+        }),
+      ]);
+      const wf = serializeOps(ops)["ops/reconcile/workflow.ts"];
+      expect(wf).toContain('const __r0 = await lifecycleDiff({"env":"prod"});');
+      expect(wf).toContain('await applyStacks({"stacks":__r0?.driftedStacks});');
+    });
+
+    it("a whole-value reference (no path) wires in the bare variable", () => {
+      const ops = new Map([
+        makeOp({
+          name: "reconcile",
+          overview: "reconcile",
+          phases: [
+            { name: "Diff", steps: [{ kind: "activity", fn: "lifecycleDiff", args: { env: "prod" }, id: "diff" }] },
+            { name: "Apply", steps: [{ kind: "activity", fn: "applyStacks", args: { diff: stepOutput("diff") } }] },
+          ],
+        }),
+      ]);
+      const wf = serializeOps(ops)["ops/reconcile/workflow.ts"];
+      expect(wf).toContain('await applyStacks({"diff":__r0});');
+    });
+
+    it("a step referenced only for its output (no outcomeAttribute) still gets captured", () => {
+      const ops = new Map([
+        makeOp({
+          name: "reconcile",
+          overview: "reconcile",
+          phases: [
+            { name: "Diff", steps: [{ kind: "activity", fn: "lifecycleDiff", id: "diff" }] },
+            { name: "Apply", steps: [{ kind: "activity", fn: "applyStacks", args: { x: stepOutput("diff", "x") } }] },
+          ],
+        }),
+      ]);
+      const wf = serializeOps(ops)["ops/reconcile/workflow.ts"];
+      expect(wf).toContain("const __r0 = await lifecycleDiff({});");
+    });
+
+    it("a step both outcome-attributed and referenced shares one capture variable", () => {
+      const ops = new Map([
+        makeOp({
+          name: "reconcile",
+          overview: "reconcile",
+          phases: [
+            {
+              name: "Diff",
+              steps: [
+                {
+                  kind: "activity",
+                  fn: "lifecycleDiff",
+                  id: "diff",
+                  outcomeAttribute: { name: "Drift", from: "drifted" },
+                },
+              ],
+            },
+            { name: "Apply", steps: [{ kind: "activity", fn: "applyStacks", args: { x: stepOutput("diff", "driftedStacks") } }] },
+          ],
+        }),
+      ]);
+      const wf = serializeOps(ops)["ops/reconcile/workflow.ts"];
+      expect(wf).toContain("const __r0 = await lifecycleDiff({});");
+      expect(wf).toContain('upsertSearchAttributes({ "Drift": [String(__r0?.drifted)] });');
+      expect(wf).toContain('await applyStacks({"x":__r0?.driftedStacks});');
+    });
+
+    it("a nested field path renders as a chained optional-access expression", () => {
+      const ops = new Map([
+        makeOp({
+          name: "reconcile",
+          overview: "reconcile",
+          phases: [
+            { name: "Diff", steps: [{ kind: "activity", fn: "lifecycleDiff", id: "diff" }] },
+            {
+              name: "Apply",
+              steps: [{ kind: "activity", fn: "applyStacks", args: { x: stepOutput("diff", "result.healthy") } }],
+            },
+          ],
+        }),
+      ]);
+      const wf = serializeOps(ops)["ops/reconcile/workflow.ts"];
+      expect(wf).toContain('await applyStacks({"x":__r0?.result?.healthy});');
+    });
+
+    it("a reference nested inside a plain object arg value is wired through too", () => {
+      const ops = new Map([
+        makeOp({
+          name: "reconcile",
+          overview: "reconcile",
+          phases: [
+            { name: "Diff", steps: [{ kind: "activity", fn: "lifecycleDiff", id: "diff" }] },
+            {
+              name: "Apply",
+              steps: [
+                { kind: "activity", fn: "applyStacks", args: { config: { stacks: stepOutput("diff", "driftedStacks") } } },
+              ],
+            },
+          ],
+        }),
+      ]);
+      const wf = serializeOps(ops)["ops/reconcile/workflow.ts"];
+      expect(wf).toContain('await applyStacks({"config":{"stacks":__r0?.driftedStacks}});');
+    });
+
+    it("a run with no references keeps the plain JSON.stringify fast path", () => {
+      const ops = new Map([
+        makeOp({
+          name: "plain",
+          overview: "plain",
+          phases: [{ name: "P", steps: [{ kind: "activity", fn: "shellCmd", args: { cmd: "true" } }] }],
+        }),
+      ]);
+      const wf = serializeOps(ops)["ops/plain/workflow.ts"];
+      expect(wf).toContain('await shellCmd({"cmd":"true"});');
+    });
+
+    it("counter is shared with outcomeAttribute captures: __r0, __r1, ... in authored order", () => {
+      const ops = new Map([
+        makeOp({
+          name: "reconcile",
+          overview: "reconcile",
+          phases: [
+            {
+              name: "P",
+              steps: [
+                { kind: "activity", fn: "first", outcomeAttribute: { name: "First" } },
+                { kind: "activity", fn: "diffIt", id: "diff" },
+                { kind: "activity", fn: "applyStacks", args: { x: stepOutput("diff", "x") } },
+              ],
+            },
+          ],
+        }),
+      ]);
+      const wf = serializeOps(ops)["ops/reconcile/workflow.ts"];
+      expect(wf).toContain("const __r0 = await first({});");
+      expect(wf).toContain("const __r1 = await diffIt({});");
+      expect(wf).toContain('await applyStacks({"x":__r1?.x});');
+    });
+
+    // ── defense-in-depth against scope-invalid refs (#1950 finding 2) ─────────
+    //
+    // `validateStepOutputRefs` (TMP013) is what's supposed to keep these out
+    // of `serializeOps`, but `serializeOps` is itself a public export a
+    // caller can invoke directly, bypassing `chant build`'s lint pass. Both
+    // of these reproduced a real bug: the reference resolved by "was this
+    // producer ever captured" alone, with no notion of scope, so the
+    // generated code referenced a `const __rN` from outside the block it was
+    // declared in (TS2304).
+
+    it("throws, not emits, for an onFailure ref to a main-phase step", () => {
+      const ops = new Map([
+        makeOp({
+          name: "reconcile",
+          overview: "reconcile",
+          phases: [{ name: "Diff", steps: [{ kind: "activity", fn: "lifecycleDiff", args: { env: "prod" }, id: "diff" }] }],
+          onFailure: [
+            { name: "Rollback", steps: [{ kind: "activity", fn: "applyStacks", args: { x: stepOutput("diff", "driftedStacks") } }] },
+          ],
+        }),
+      ]);
+      expect(() => serializeOps(ops)).toThrow(/reconcile/);
+      expect(() => serializeOps(ops)).toThrow(/onFailure/);
+    });
+
+    it("throws, not emits, for a reference nested inside an effect step's nested steps", () => {
+      const seeded = EffectReceipt("seeded", { effect: "db-seed", flavor: "hash", inputs: { file: "seed.sql" } });
+      const ops = new Map([
+        makeOp({
+          name: "reconcile",
+          overview: "reconcile",
+          phases: [
+            {
+              name: "P",
+              steps: [
+                { kind: "activity", fn: "lifecycleDiff", args: { env: "prod" }, id: "diff" },
+                effect(seeded, [{ kind: "activity", fn: "applyStacks", args: { x: stepOutput("diff", "driftedStacks") } }]),
+              ],
+            },
+          ],
+        }),
+      ]);
+      expect(() => serializeOps(ops)).toThrow(/reconcile/);
+      expect(() => serializeOps(ops)).toThrow(/nested inside an effect step/);
+    });
+  });
+
+  describe("effect steps (#1834)", () => {
+    const seeded = EffectReceipt("seeded", {
+      effect: "db-seed",
+      flavor: "hash",
+      inputs: { file: "seed.sql" },
+    });
+
+    const seedOps = () =>
+      new Map([
+        makeOp({
+          name: "seed",
+          overview: "o",
+          phases: [phase("Seed", [effect(seeded, [shell("npm run db:seed")])])],
+        }),
+      ]);
+
+    it("emits read-compare-run-write with the receipt identity and expectation as data", () => {
+      const wf = serializeOps(seedOps())["ops/seed/workflow.ts"];
+      const readArgs = JSON.stringify({
+        receipt: { name: "seeded", effect: "db-seed", flavor: "hash", inputs: { file: "seed.sql" } },
+        expectation: receiptExpectation(seeded),
+      });
+      expect(wf).toContain(`const __eff0 = await receiptRead(${readArgs});`);
+      expect(wf).toContain("if (__eff0.current === __eff0.expectation) {");
+      expect(wf).toContain('log.info("effect already applied: seeded");');
+      expect(wf).toContain("import { proxyActivities, condition, defineSignal, setHandler, upsertSearchAttributes, log } from '@temporalio/workflow';");
+    });
+
+    it("nests the wrapped steps inside the mismatch branch and writes the receipt last", () => {
+      const wf = serializeOps(seedOps())["ops/seed/workflow.ts"];
+      const read = wf.indexOf("const __eff0 = await receiptRead(");
+      const elseBranch = wf.indexOf("} else {");
+      const nested = wf.indexOf('await shellCmd({"cmd":"npm run db:seed"});');
+      const write = wf.indexOf("await receiptWrite({ receipt: ");
+      const close = wf.indexOf("\n  }", write);
+      expect(read).toBeGreaterThan(-1);
+      expect(elseBranch).toBeGreaterThan(read);
+      expect(nested).toBeGreaterThan(elseBranch);
+      expect(write).toBeGreaterThan(nested);
+      expect(close).toBeGreaterThan(write);
+      // The write carries the receipt as data and the run-resolved expectation.
+      expect(wf).toContain("expectation: __eff0.expectation });");
+      // Sole writer: exactly one write emitted.
+      expect(wf.match(/await receiptWrite\(/g)).toHaveLength(1);
+    });
+
+    it("binds receiptRead/receiptWrite once, at the fastIdempotent profile (#1698)", () => {
+      const wf = serializeOps(seedOps())["ops/seed/workflow.ts"];
+      expect(wf).toMatch(
+        /const \{ receiptRead, shellCmd, receiptWrite \} = proxyActivities<typeof activities>\(\s*TEMPORAL_ACTIVITY_PROFILES\.fastIdempotent,/,
+      );
+    });
+
+    it("keeps authored order around a phase-level gate (gate first, effect after) (#1698)", () => {
+      const ops = new Map([
+        makeOp({
+          name: "gated-seed",
+          overview: "o",
+          phases: [
+            phase("Seed", [
+              gate("approve-seed"),
+              effect(seeded, [shell("npm run db:seed")]),
+            ]),
+          ],
+        }),
+      ]);
+      const wf = serializeOps(ops)["ops/gated-seed/workflow.ts"];
+      const gateIdx = wf.indexOf("await condition(() => resumeApproveSeedCleared");
+      const readIdx = wf.indexOf("await receiptRead(");
+      expect(gateIdx).toBeGreaterThan(-1);
+      expect(readIdx).toBeGreaterThan(gateIdx);
+    });
+
+    it("a gate nested inside the effect pauses only on the effect-will-fire path", () => {
+      const ops = new Map([
+        makeOp({
+          name: "inner-gate",
+          overview: "o",
+          phases: [
+            phase("Seed", [
+              effect(seeded, [gate("approve-fire"), shell("npm run db:seed")]),
+            ]),
+          ],
+        }),
+      ]);
+      const wf = serializeOps(ops)["ops/inner-gate/workflow.ts"];
+      expect(wf).toContain('const resumeApproveFire = defineSignal<[{ approver?: string }?]>("approve-fire");');
+      const elseBranch = wf.indexOf("} else {");
+      const gateIdx = wf.indexOf("await condition(() => resumeApproveFireCleared");
+      const nested = wf.indexOf('await shellCmd({"cmd":"npm run db:seed"});');
+      expect(gateIdx).toBeGreaterThan(elseBranch);
+      expect(nested).toBeGreaterThan(gateIdx);
+    });
+
+    it("refuses an effect step in a parallel phase", () => {
+      const ops = new Map([
+        makeOp({
+          name: "par-effect",
+          overview: "o",
+          phases: [phase("P", [effect(seeded, [shell("x")])], { parallel: true })],
+        }),
+      ]);
+      expect(() => serializeOps(ops)).toThrow(/parallel phase/);
+    });
+
+    it("ops without effect steps do not import log (unchanged emission)", () => {
+      const ops = new Map([
+        makeOp({
+          name: "plain",
+          overview: "o",
+          phases: [phase("P", [shell("x")])],
+        }),
+      ]);
+      const wf = serializeOps(ops)["ops/plain/workflow.ts"];
+      expect(wf).toContain("import { proxyActivities, condition, defineSignal, setHandler, upsertSearchAttributes } from '@temporalio/workflow';");
     });
   });
 });

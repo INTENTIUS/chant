@@ -1,0 +1,69 @@
+---
+title: "AI Skills"
+description: "AI agent skills bundled with the GitHub Actions lexicon"
+diataxis: reference
+---
+
+The GitHub Actions lexicon ships AI skills that teach AI coding agents (like Claude Code) how to build, validate, and deploy GitHub Actions workflows from a chant project.
+
+## What are skills?
+
+Skills are structured markdown documents bundled with a lexicon. When an AI agent works in a chant project, it discovers and loads relevant skills automatically — giving it operational knowledge about the deployment workflow without requiring the user to explain each step.
+
+## Installation
+
+When you scaffold a new project with `chant init --lexicon github`, skills are installed to `.claude/skills/` for automatic discovery by Claude Code.
+
+For existing projects, create the files manually:
+
+```
+.claude/
+  skills/
+    chant-github/
+      SKILL.md    # skill content
+```
+
+## Skill: chant-github
+
+The inline `chant-github` skill covers the full workflow lifecycle:
+
+- **Build** — `chant build src/ --output .github/workflows/ci.yml`
+- **Validate** — `chant lint src/`
+- **Deploy** — commit and push the generated YAML
+- **Status** — GitHub Actions UI or `gh run list`
+- **Troubleshooting** — lint rule codes (GHA001–GHA020), post-synth checks (GHA006–GHA058)
+
+The skill is invocable as a slash command: `/chant-github`
+
+## Skill: github-actions-patterns
+
+A file-based skill loaded from `src/skills/github-actions-patterns.md`. It provides pattern knowledge for:
+
+- **Workflow structure** — name, on, permissions, jobs
+- **Trigger patterns** — push, pull_request, schedule, workflow_dispatch
+- **Matrix strategy** — multi-OS, multi-version builds
+- **Caching** — SetupNode cache option, CacheAction composite
+- **Permissions** — least-privilege patterns
+- **Reusable workflows** — ReusableWorkflowCallJob
+- **Artifacts** — upload/download between jobs
+- **Concurrency** — group + cancel-in-progress
+
+## MCP integration
+
+The lexicon provides MCP (Model Context Protocol) tools and resources that AI agents can use programmatically:
+
+| MCP tool | Description |
+|----------|-------------|
+| `diff` | Compare current build output against previous output |
+| `github:checks` | Build the workflow and return its security findings (the GHA checks) |
+| `github:workflow` | Triggers and jobs as written — name, run order, step count |
+| `github:references` | Actions and images pulled in, and whether each is pinned to a commit SHA |
+| `github:affected` | Given a job, the jobs that would re-run because they depend on it |
+| `github:workflow-yaml` | The generated workflow YAML |
+
+The `github:*` tools are **read-only context tools** (#327): each builds from your source and returns what chant already computes — before the workflow runs or merges. None touch the live GitHub instance, run history, or write anything.
+
+| MCP resource | Description |
+|--------------|-------------|
+| `resource-catalog` | JSON list of all supported GitHub Actions entity types |
+| `examples/basic-ci` | Example CI workflow with TypeScript source |

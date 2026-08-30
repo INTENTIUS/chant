@@ -1,10 +1,14 @@
-import { resolve } from "node:path";
+import { resolve, join, dirname } from "node:path";
+import { readFile } from "node:fs/promises";
 import type { ResourceDefinition } from "./types";
 import { getContext } from "./resources/context";
 import { readSnapshot, readEnvironmentSnapshots } from "../../lifecycle/git";
 import { discoverOps } from "../../op/discover";
 import { makeTemporalClient } from "../handlers/run";
-import { resolveWorkflowId } from "../handlers/run-client";
+import { resolveWorkflowId, fetchNormalizedHistory } from "../handlers/run-client";
+import { extractStepRecords, countActivities, queryGateState } from "../handlers/op-progress";
+import { loadOkfBundle } from "../../okf-read";
+import { loadChantConfigUpward, resolveKnowledgeDir } from "../../config";
 
 type PluginResourceEntry = { definition: ResourceDefinition; handler: () => Promise<string> };
 
@@ -40,6 +44,12 @@ export const coreResourceDefinitions: ResourceDefinition[] = [
     uri: "chant://ops/{name}/runs/latest",
     name: "Op latest run",
     description: "Latest run state for a named Op",
+    mimeType: "application/json",
+  },
+  {
+    uri: "chant://knowledge",
+    name: "Knowledge bundle",
+    description: "The project's OKF knowledge bundle (#1864, #1059): index.md and every authored concept, empty when no bundle exists",
     mimeType: "application/json",
   },
   {
@@ -122,6 +132,34 @@ export async function handleResourcesRead(
     };
   }
 
+  // Authored knowledge (#1867, #1864, design #1059): same bundle the CLI's
+  // `chant explain` reads, over MCP — the resource path has no local
+  // filesystem, so this is the only way an MCP client sees the `knowledge/`
+  // directory's contents at all. Resolved from cwd, matching every other
+  // path-less resource here (`chant://ops`, `chant://state/...`). A missing
+  // bundle is not an error — `loadOkfBundle` already treats it as empty, and
+  // a missing `index.md` reads as `index: null` rather than throwing.
+  if (uri === "chant://knowledge") {
+    const cwd = resolve(".");
+    const loaded = await loadChantConfigUpward(cwd);
+    const projectRoot = loaded.configPath ? dirname(loaded.configPath) : cwd;
+    const dir = resolveKnowledgeDir(loaded.config, projectRoot);
+    const bundle = await loadOkfBundle(dir);
+    let index: string | null = null;
+    try {
+      index = await readFile(join(dir, "index.md"), "utf8");
+    } catch {
+      index = null;
+    }
+    return {
+      contents: [{
+        uri,
+        mimeType: "application/json",
+        text: JSON.stringify({ dir, index, concepts: bundle.concepts }, null, 2),
+      }],
+    };
+  }
+
   // Op resources
   if (uri === "chant://ops") {
     const { ops } = await discoverOps();
@@ -140,11 +178,16 @@ export async function handleResourcesRead(
   if (uri.startsWith("chant://ops/") && uri.endsWith("/runs/latest")) {
     const name = uri.replace("chant://ops/", "").replace("/runs/latest", "");
     try {
+      const { ops } = await discoverOps();
+      const config = ops.get(name)?.config;
+
       const { client } = await makeTemporalClient(undefined, resolve("."));
       const handle = client.workflow.getHandle(resolveWorkflowId(name));
       const desc = await handle.describe();
-      const history = await handle.fetchHistory();
-      const events = history.events ?? [];
+      const history = await fetchNormalizedHistory(handle);
+      const { completed: activitiesCompleted, scheduled: activitiesScheduled } = countActivities(history);
+      const progress = config ? extractStepRecords(config, history, { final: Boolean(desc.closeTime) }) : undefined;
+      const gate = await queryGateState(handle);
       const result = {
         workflowId: desc.workflowId,
         runId: desc.runId,
@@ -152,8 +195,10 @@ export async function handleResourcesRead(
         startTime: desc.startTime,
         closeTime: desc.closeTime ?? null,
         taskQueue: desc.taskQueue,
-        activitiesCompleted: events.filter((e) => e.eventType === "ActivityTaskCompleted").length,
-        activitiesScheduled: events.filter((e) => e.eventType === "ActivityTaskScheduled").length,
+        activitiesCompleted,
+        activitiesScheduled,
+        ...(progress ? { progress } : {}),
+        gate: gate ?? null,
       };
       return {
         contents: [{ uri, mimeType: "application/json", text: JSON.stringify(result, null, 2) }],

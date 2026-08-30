@@ -173,6 +173,10 @@ gitlab-runtime-e2e:
 forgejo-runtime-e2e:
     bash test/forgejo-runtime-e2e.sh
 
+# Per-PR preview loop (#1223) on a real runner: deploy on PR open, teardown on PR close, against mudflaps (on-demand, needs Docker + network)
+forgejo-preview-e2e:
+    bash test/forgejo-preview-e2e.sh
+
 # Left-of-line proof capture (#1084): profile chant build --fold vs cdk synth on the matched pair, one measurement on both (on-demand, needs network for pinned installs; no cloud credentials)
 leftness-capture:
     bash test/leftness/capture.sh
@@ -205,6 +209,25 @@ azure-drift-e2e:
 azure-cc-e2e:
     bash test/azure-cc-e2e.sh
 
+# AWS stack-level env teardown (#1222): deploy two envs + a foreign stack, tear one env
+# down, assert only that env's marker-verified stack is deleted
+# (Floci in Docker; on-demand, needs Docker only)
+aws-teardown-e2e:
+    bash test/aws-teardown-e2e.sh
+
+# Worked example for the @intentius/chant/testing live-stack harness (#1224):
+# deployStack into a nonce'd test env on Floci, assert output + live stack,
+# destroy in afterAll — including the teardown-survives-a-failing-test fixture
+# (Floci in Docker; on-demand, needs Docker only)
+testing-harness-e2e:
+    CHANT_HARNESS_E2E=1 npx vitest run examples/testing-harness-aws/harness.e2e.test.ts
+
+# Pinnability survey over the upstream chart corpus (#1228 Phase 0): pull each
+# pinned chart, render twice with closed inputs, assert every verdict against
+# expected.txt (on-demand here; CI runs it via helm-survey.yml — needs helm 4 + network)
+helm-survey:
+    CHANT_HELM_SURVEY=1 npx vitest run lexicons/helm/test/survey/survey.test.ts
+
 # Prove the adopt-alb-services GENERATED pipeline deploys multi-service across isolated jobs, with cross-stack outputs threaded as artifacts (Floci in Docker; on-demand, needs Docker + aws CLI)
 adopt-alb-services-e2e:
     bash test/adopt-alb-services-e2e.sh
@@ -224,8 +247,12 @@ docs-build:
 docs-serve: docs-build
     npx serve .docs-dist
 
+# Check every core docs page carries a Diátaxis quadrant matching its sidebar group
+docs-check:
+    node scripts/check-docs-diataxis.mjs
+
 # Check internal doc links across the unified site (requires lychee: brew install lychee)
-docs-check-links: docs-build
+docs-check-links: docs-check docs-build
     #!/usr/bin/env bash
     set -euo pipefail
     if ! command -v lychee >/dev/null 2>&1; then

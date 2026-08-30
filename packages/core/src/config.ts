@@ -7,6 +7,7 @@ import { DEFAULT_SBOM_FORMAT, type SbomFormat } from "./components/verbs/sbom-ge
 import type { Severity } from "./components/verbs/vuln-scan";
 import type { VulnPolicy } from "./components/verbs/vuln-gate";
 import type { BuildParamsConfig } from "./build-params";
+import type { BuildParamProvenance } from "./provenance";
 import { findProjectConfig } from "./project-root";
 import { evaluateProjectConfig } from "./config-sandbox";
 
@@ -21,6 +22,12 @@ import { evaluateProjectConfig } from "./config-sandbox";
  * `./live-endpoint.ts`'s `applyLiveEndpoint`, the CLI-side consumer.
  */
 export type EnvironmentDeclaration = string | { name: string; endpoint?: string };
+
+/**
+ * `ownership.env`: a literal environment identity, or a reference to a
+ * declared build parameter whose resolved value becomes the identity (#1396).
+ */
+export type OwnershipEnv = string | { param: string };
 
 /** The declared name of one `environments` entry, whichever form it takes. */
 export function environmentName(entry: EnvironmentDeclaration): string {
@@ -38,15 +45,72 @@ export function environmentNames(environments: EnvironmentDeclaration[] | undefi
 }
 
 /**
+ * Whether a declared environment name is a glob pattern rather than a literal
+ * (#1221) — it contains at least one `*`.
+ */
+export function isEnvironmentPattern(declaredName: string): boolean {
+  return declaredName.includes("*");
+}
+
+/**
+ * Anchored `*`-glob match (#1221): each `*` in `pattern` matches any run of
+ * characters (possibly empty); everything else matches itself. Deliberately
+ * the whole surface — no `?`, no character classes, no regex. A pattern with
+ * no `*` degenerates to string equality.
+ */
+export function matchesEnvironmentPattern(pattern: string, name: string): boolean {
+  const parts = pattern.split("*");
+  if (parts.length === 1) return pattern === name;
+  const first = parts[0];
+  const last = parts[parts.length - 1];
+  if (!name.startsWith(first)) return false;
+  let cursor = first.length;
+  for (let i = 1; i < parts.length - 1; i++) {
+    const part = parts[i];
+    if (part === "") continue;
+    const at = name.indexOf(part, cursor);
+    if (at === -1) return false;
+    cursor = at + part.length;
+  }
+  return name.length - cursor >= last.length && name.endsWith(last);
+}
+
+/**
+ * Environment-membership test (#1221): is `name` covered by this project's
+ * declared `environments`? A literal entry matches by equality; an entry
+ * containing `*` matches as a glob pattern (`"pr-*"` covers `pr-42`).
+ * Literals are checked first across the whole list, then patterns — so a
+ * name that is declared outright never depends on pattern order. `undefined`
+ * / empty `environments` returns `false`; callers that treat "no declared
+ * environments" as "anything goes" (e.g. {@link unknownEnvError} in
+ * `./env.ts`) guard that case themselves.
+ */
+export function matchesDeclaredEnvironment(
+  environments: EnvironmentDeclaration[] | undefined,
+  name: string,
+): boolean {
+  const names = environmentNames(environments) ?? [];
+  if (names.includes(name)) return true;
+  return names.some((declared) => isEnvironmentPattern(declared) && matchesEnvironmentPattern(declared, name));
+}
+
+/**
  * The endpoint `name` declares (chant #1166) — `undefined` for a bare-string
  * entry, an entry with no `endpoint` set, or a name this project doesn't
  * declare at all. `./live-endpoint.ts`'s `applyLiveEndpoint` is the consumer:
  * it injects this into the ambient env var each observing lexicon's CLI
  * shell-out reads (e.g. `AWS_ENDPOINT_URL`), unless that var is already set —
  * ambient always wins.
+ *
+ * A pattern entry (#1221) can carry an endpoint too: `{ name: "pr-*",
+ * endpoint }` supplies the endpoint for every `pr-<n>` environment. A literal
+ * entry always wins over a pattern — declaring `pr-special` alongside
+ * `pr-*` resolves `pr-special` to the literal entry's endpoint (or none).
  */
 export function environmentEndpoint(environments: EnvironmentDeclaration[] | undefined, name: string): string | undefined {
-  const found = environments?.find((e) => environmentName(e) === name);
+  const found =
+    environments?.find((e) => environmentName(e) === name) ??
+    environments?.find((e) => isEnvironmentPattern(environmentName(e)) && matchesEnvironmentPattern(environmentName(e), name));
   return found && typeof found !== "string" ? found.endpoint : undefined;
 }
 
@@ -69,7 +133,7 @@ export const ChantConfigSchema = z.object({
   lint: z.record(z.string(), z.unknown()).optional(),
   ownership: z.object({
     stack: z.string().min(1).optional(),
-    env: z.string().min(1).optional(),
+    env: z.union([z.string().min(1), z.object({ param: z.string().min(1) })]).optional(),
     enabled: z.boolean().optional(),
   }).optional(),
   build: z.object({
@@ -116,6 +180,9 @@ export const ChantConfigSchema = z.object({
     }).optional(),
     scanner: z.enum(["grype", "trivy"]).optional(),
     vexSources: z.array(z.string()).optional(),
+  }).optional(),
+  knowledge: z.object({
+    dir: z.string().min(1).optional(),
   }).optional(),
 }).passthrough();
 
@@ -193,8 +260,17 @@ export interface ChantConfig {
   ownership?: {
     /** Stack identity stamped onto resources (required to enable stamping). */
     stack?: string;
-    /** Optional environment identity. */
-    env?: string;
+    /**
+     * Optional environment identity. Either a literal, or a reference to one
+     * of this project's declared `buildParams` (`{ param: "env" }`), in which
+     * case the marker takes whatever value that parameter resolves to for the
+     * build — the same value `params.env` reads in source (#1396). A
+     * reference is the only way to make the marker follow `--param env=prod`:
+     * the config is evaluated before build parameters exist, so a literal
+     * computed from `process.env` here and a parameter mapped to the same
+     * variable are two sources of truth that nothing keeps in step.
+     */
+    env?: OwnershipEnv;
     /** Set false to disable stamping even when `stack` is present. */
     enabled?: boolean;
   };
@@ -326,6 +402,21 @@ export interface ChantConfig {
     scanner?: "grype" | "trivy";
     /** Default VEX document paths (OpenVEX/CycloneDX) applied to every gate. Read where the gate step is composed. */
     vexSources?: string[];
+  };
+
+  /**
+   * OKF knowledge bundle location (#1864, design #1059, epic #1057) — the
+   * *input* side of `chant explain --format okf` (#1058): a project may
+   * author knowledge as an OKF v0.2 bundle (a directory of markdown files
+   * with YAML frontmatter) that `./okf-read.ts`'s `loadOkfBundle` reads and
+   * binds to discovered entities via each concept's `binds` frontmatter key.
+   * Convention-first: `knowledge/` beside `chant.config.ts` is used when this
+   * is unset. Set `dir` only when that name is already taken by something
+   * else in the project. See {@link resolveKnowledgeDir}.
+   */
+  knowledge?: {
+    /** Bundle directory, relative to the project root. Defaults to `"knowledge"`. */
+    dir?: string;
   };
 }
 
@@ -490,14 +581,92 @@ function warnIfFragmentShadowsProjectConfig(configPath: string): void {
 /** Top-level keys that make a config a *project* config rather than a lint fragment. */
 const PROJECT_CONFIG_KEYS = new Set(Object.keys(ChantConfigSchema.shape).filter((k) => k !== "lint"));
 
+/** Whether an `ownership.env` entry is a build-parameter reference rather than a literal. */
+export function isOwnershipParamRef(env: OwnershipEnv | undefined): env is { param: string } {
+  return typeof env === "object" && env !== null && typeof env.param === "string";
+}
+
 /**
- * Resolve the ownership marker to stamp from project config, or undefined when
- * ownership marking is off (no `stack`, or `enabled: false`).
+ * The ownership stack identity alone — `ownership.stack` when marking is on
+ * (no `stack`, or `enabled: false`, means off). For callers that need the
+ * stack and nothing else (a field manager, a prune selector) and so have no
+ * build parameters to resolve `env` against.
  */
-export function resolveOwnershipMarker(config: ChantConfig): OwnershipMarker | undefined {
+export function resolveOwnershipStack(config: ChantConfig): string | undefined {
   const o = config.ownership;
   if (!o || !o.stack || o.enabled === false) return undefined;
-  return { stack: o.stack, env: o.env };
+  return o.stack;
+}
+
+/**
+ * Resolve the `env` half of the ownership marker (#1396). A literal is
+ * returned as-is. A `{ param }` reference is looked up in this build's resolved
+ * build parameters and must find one: a reference to a parameter that was
+ * never declared, or that resolved to no value, throws rather than quietly
+ * stamping a marker without an env — an env-less marker is exactly what lets
+ * a prod deployment go unseen by `--owned` filtering scoped to prod.
+ */
+export function resolveOwnershipEnv(
+  config: ChantConfig,
+  buildParams: readonly BuildParamProvenance[] | undefined,
+): string | undefined {
+  const env = config.ownership?.env;
+  if (!isOwnershipParamRef(env)) return env;
+  const name = env.param;
+  const declared = config.buildParams?.[name];
+  if (!declared) {
+    throw new Error(
+      `ownership.env references build parameter "${name}", which chant.config.ts's buildParams does not declare`,
+    );
+  }
+  const resolved = buildParams?.find((p) => p.name === name);
+  if (!resolved) {
+    throw new Error(
+      `ownership.env references build parameter "${name}", which resolved to no value for this build — pass --param ${name}=<value>${declared.env ? `, set ${declared.env}` : ""}, or give it a default`,
+    );
+  }
+  return String(resolved.value);
+}
+
+/**
+ * Resolve the ownership marker to stamp from project config, or undefined when
+ * ownership marking is off (no `stack`, or `enabled: false`). `buildParams` is
+ * this build's resolved parameters (`resolveBuildParams`'s provenance), which
+ * an `ownership.env: { param }` reference resolves against — see {@link
+ * resolveOwnershipEnv}; it throws when the reference cannot be satisfied.
+ */
+export function resolveOwnershipMarker(
+  config: ChantConfig,
+  buildParams?: readonly BuildParamProvenance[],
+): OwnershipMarker | undefined {
+  const stack = resolveOwnershipStack(config);
+  if (stack === undefined) return undefined;
+  return { stack, env: resolveOwnershipEnv(config, buildParams) };
+}
+
+/**
+ * The divergence #1396 is about, made loud when it cannot be removed: a
+ * project whose `ownership.env` is a literal while it also declares a build
+ * parameter named `env` has two answers to "which environment is this", and
+ * the manifest carries both (the ownership marker from config, the labels
+ * from the parameter). Returns a warning naming both values when they differ;
+ * undefined when there is nothing to say (no literal, no `env` parameter, or
+ * the two agree). The fix is the `{ param: "env" }` reference.
+ */
+export function ownershipEnvDisagreement(
+  config: ChantConfig,
+  buildParams: readonly BuildParamProvenance[] | undefined,
+): string | undefined {
+  const literal = config.ownership?.env;
+  if (typeof literal !== "string") return undefined;
+  if (resolveOwnershipStack(config) === undefined) return undefined;
+  const param = buildParams?.find((p) => p.name === "env");
+  if (!param || String(param.value) === literal) return undefined;
+  return (
+    `ownership.env is "${literal}" but the env build parameter resolved to ${JSON.stringify(param.value)} (${param.source}) — ` +
+    `the ownership marker and params.env disagree about which environment this build is for. ` +
+    `Use ownership: { env: { param: "env" } } so the marker follows the parameter.`
+  );
 }
 
 /**
@@ -630,6 +799,18 @@ export function resolveVulnPolicy(config: ChantConfig): Partial<VulnPolicy> {
   if (v.exploitabilityFixableOnly !== undefined) out.exploitabilityFixableOnly = v.exploitabilityFixableOnly;
   if (v.license) out.license = v.license;
   return out;
+}
+
+/**
+ * Resolve the OKF knowledge bundle directory (#1864, design #1059):
+ * `knowledge.dir` relative to `projectPath` when configured, else the
+ * `knowledge/` convention beside `chant.config.ts`. Never checks existence —
+ * a project with no bundle yet resolves a path all the same, and
+ * `okf-read.ts`'s `loadOkfBundle` treats a missing directory as an empty
+ * bundle rather than an error.
+ */
+export function resolveKnowledgeDir(config: ChantConfig, projectPath: string): string {
+  return join(projectPath, config.knowledge?.dir ?? "knowledge");
 }
 
 /**

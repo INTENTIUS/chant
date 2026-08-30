@@ -56,12 +56,24 @@ import {
   AwsReadError,
   describeStackResources,
   getResource,
+  listResources,
   type AwsReadClientOptions,
   type AwsReadHttp,
+  type StackResource,
 } from "./api/read-client";
+import { declaredIdentifier } from "./identity-observe";
 import { AWS_TAG_OWNERSHIP_KEYS } from "./ownership";
+import {
+  AWS_DEEP_BLIND_SPOTS,
+  EC2_TOPOLOGY_GENERATED_NAMES,
+  EC2_TOPOLOGY_SERVICE_DEFAULTS,
+  EC2_TOPOLOGY_SOURCES,
+} from "./deep-topology";
 import { applyAwsEndpointArgv } from "./components/cloud-executor";
 import { toIngressRules } from "./dependencies";
+import { createRequire } from "node:module";
+
+const require = createRequire(import.meta.url);
 
 /**
  * Where each type's live model comes from.
@@ -103,6 +115,9 @@ export const DEEP_SOURCES: Record<string, DeepSource> = {
     id: "GroupId",
     toModel: securityGroupToModel,
   },
+  // The EC2 topology types the folds fold over (#1269), sources and
+  // translations alongside their type in ./deep-topology.ts.
+  ...EC2_TOPOLOGY_SOURCES,
 };
 
 /**
@@ -110,6 +125,74 @@ export const DEEP_SOURCES: Record<string, DeepSource> = {
  * cannot drift apart — the shape of bug #1280 is about.
  */
 export const DEEP_READABLE_TYPES: ReadonlySet<string> = new Set(Object.keys(DEEP_SOURCES));
+
+/**
+ * A child type this reader enumerates under one declared parent (#1015's
+ * out-of-band case) — the console-added SNS subscription or inline role
+ * policy that no property diff can see, because it is not a property of
+ * anything declared: it is a whole resource CloudFormation never made.
+ *
+ * Cloud Control's `ListResources` takes the parent as a `ResourceModel`
+ * scope, which is what `model` builds from the physical id the stack read
+ * already resolved. Every listed child is then sorted into declared (it is
+ * some stack resource's physical id, or some declared entity's spelled
+ * identity) or out-of-band; the out-of-band ones ride into the observation
+ * as live resources nobody declared, which the deep diff reports as
+ * undeclared entities.
+ */
+export interface DeepChildSource {
+  /** The child's CloudFormation type — what `ListResources` is asked for. */
+  childType: string;
+  /** The `ResourceModel` scoping the listing to one parent. */
+  model: (parentPhysicalId: string) => Record<string, unknown>;
+  /**
+   * Legacy declared forms of the same live child. `AWS::IAM::Policy` attached
+   * to a role creates the same inline policy `AWS::IAM::RolePolicy` lists, but
+   * under its own physical id — the policy name, which is the second part of
+   * the RolePolicy identifier. Without this leg every legacy inline policy
+   * reads as out-of-band on a stack that declared it.
+   */
+  declaredVia?: Array<{
+    type: string;
+    /** The part of the child identifier that carries that type's physical id. */
+    part: (identifier: string) => string | undefined;
+  }>;
+}
+
+/**
+ * Parent type → the child types worth listing under it. Scoped like
+ * {@link DEEP_SOURCES}: the high-signal cases first — the issue's own
+ * examples — and widened per type, not by wildcard. A child type Cloud
+ * Control cannot list parent-scoped does not belong here.
+ */
+export const DEEP_CHILD_SOURCES: Record<string, readonly DeepChildSource[]> = {
+  "AWS::IAM::Role": [
+    {
+      childType: "AWS::IAM::RolePolicy",
+      model: (roleName) => ({ RoleName: roleName }),
+      // A RolePolicy identifier is `PolicyName|RoleName` — the schema's own
+      // primaryIdentifier order, which is what the manifest records and what
+      // `declaredIdentifier` joins by. The legacy type's physical id is the
+      // policy name, the first part.
+      declaredVia: [{ type: "AWS::IAM::Policy", part: (id) => id.split("|")[0] }],
+    },
+  ],
+  "AWS::SNS::Topic": [
+    {
+      childType: "AWS::SNS::Subscription",
+      model: (topicArn) => ({ TopicArn: topicArn }),
+    },
+  ],
+};
+
+/**
+ * The name an out-of-band child reports under. There is no chant entity name
+ * to use — nobody declared it — so the name has to carry the finding on its
+ * own: what kind of thing, and which one.
+ */
+export function outOfBandChildName(childType: string, identifier: string): string {
+  return `${childType}:${identifier}`;
+}
 
 /**
  * `describe-security-groups` -> the `AWS::EC2::SecurityGroup` resource model.
@@ -202,6 +285,7 @@ export const AWS_SERVICE_DEFAULTS: Record<string, Record<string, unknown>> = {
     "SecurityGroupEgress[].CidrIp": "0.0.0.0/0",
     "SecurityGroupEgress[].IpProtocol": "-1",
   },
+  ...EC2_TOPOLOGY_SERVICE_DEFAULTS,
 };
 
 /**
@@ -215,6 +299,7 @@ export const AWS_SERVICE_DEFAULTS: Record<string, Record<string, unknown>> = {
  */
 export const AWS_GENERATED_NAMES: Record<string, ReadonlySet<string>> = {
   "AWS::EC2::SecurityGroup": new Set(["GroupName"]),
+  ...EC2_TOPOLOGY_GENERATED_NAMES,
 };
 
 /** Stable JSON with sorted keys — the fallback ordering key for a set-like array. */
@@ -224,6 +309,58 @@ function canonicalJson(value: unknown): string {
       ? Object.fromEntries(Object.entries(v as Record<string, unknown>).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))
       : v,
   ) ?? "";
+}
+
+/**
+ * The read-only properties of one type, as index-erased patterns, straight from
+ * the CloudFormation schema's `readOnlyProperties` (#1641).
+ *
+ * The codegen already turns that list into each class's GetAtt attributes
+ * (`attrs` in `lexicon-aws.json`), so this reads the same registry from the
+ * other side: a path the schema says only the service can write is an
+ * attribute, and an attribute the live read reports is not property drift. No
+ * declaration can contain one, so `<undeclared> -> value` is the shape every
+ * clean apply would otherwise produce. `AWS::IAM::ManagedPolicy.PolicyArn`,
+ * which is also the type's Cloud Control primary identifier, is the case that
+ * surfaced it.
+ *
+ * The manifest spells an array element `Subscribers.*.Status`; the
+ * normalization pass spells the same thing `Subscribers[].Status`.
+ *
+ * Complements {@link AWS_READ_ONLY_NAMES} rather than replacing it: the
+ * name-based list also covers translated models (an EC2 row mapped onto the
+ * CloudFormation shape) and nested documents the schema never enumerates.
+ */
+export function schemaReadOnlyPatterns(entityType: string): ReadonlySet<string> {
+  const cached = readOnlyByType.get(entityType);
+  if (cached) return cached;
+  const entry = manifestByType().get(entityType);
+  const patterns = new Set<string>();
+  for (const attr of Object.values(entry?.attrs ?? {})) {
+    patterns.add(attr.replace(/\.\*(?=\.|$)/g, "[]"));
+  }
+  readOnlyByType.set(entityType, patterns);
+  return patterns;
+}
+
+interface ManifestEntry {
+  resourceType: string;
+  kind: string;
+  attrs?: Record<string, string>;
+}
+
+const readOnlyByType = new Map<string, ReadonlySet<string>>();
+let manifestIndex: Map<string, ManifestEntry> | undefined;
+function manifestByType(): Map<string, ManifestEntry> {
+  if (!manifestIndex) {
+    const manifest = require("./generated/lexicon-aws.json") as Record<string, ManifestEntry>;
+    manifestIndex = new Map(
+      Object.values(manifest)
+        .filter((e) => e.kind === "resource")
+        .map((e) => [e.resourceType, e]),
+    );
+  }
+  return manifestIndex;
 }
 
 /** The final segment of an index-erased pattern (`Policies[].PolicyName` → `PolicyName`). */
@@ -243,8 +380,22 @@ export const awsDeepNormalizationHooks: DeepNormalizationHooks = {
   prune(node: DeepNode): boolean {
     // Read-only / server-populated. Pruned on both sides: if source somehow
     // declares an arn-shaped output, comparing it to the live one is still
-    // meaningless.
+    // meaningless. The schema's own `readOnlyProperties` first (#1641), then
+    // the name-based list for what the schema does not enumerate.
+    if (schemaReadOnlyPatterns(node.entityType).has(node.pattern)) return true;
     if (AWS_READ_ONLY_NAMES.has(lastSegment(node.pattern))) return true;
+
+    // A declared property this type's source cannot see (#1269). With nothing
+    // live to stand against it would report `value -> <absent>` on every clean
+    // apply — a blind spot rendered as drift. Counterpart-gated the other way
+    // round: a live tree that does carry the field is still compared.
+    if (
+      node.side === "declared" &&
+      node.counterpart === "absent" &&
+      AWS_DEEP_BLIND_SPOTS[node.entityType]?.has(node.pattern)
+    ) {
+      return true;
+    }
 
     // Provider defaults, on the live side only, and only where source is silent
     // about the property. `"unknown"` (a one-sided normalization) never prunes:
@@ -424,7 +575,6 @@ export async function observeResourcesDeepAws(
 
   const stackName = options.stack ?? options.environment;
   const client: AwsReadClientOptions = {
-    ...(process.env.AWS_ENDPOINT_URL ? { endpoint: process.env.AWS_ENDPOINT_URL } : {}),
     ...(options.region ? { region: options.region } : {}),
     ...(options.http ? { http: options.http } : {}),
   };
@@ -550,7 +700,117 @@ export async function observeResourcesDeepAws(
     };
   });
 
+  // The out-of-band pass (#1015): under each declared parent whose type names
+  // child sources, list what actually exists and keep what nothing declared.
+  // A parent `--owned` withheld keeps its children out too — reporting a
+  // foreign resource's children while withholding the resource itself would
+  // be the filter half-applied. A parent with no deep reader of its own
+  // (`unsupported-kind`) still gets its children enumerated: listing under it
+  // needs only the physical id the stack already resolved.
+  const parents: Array<{ resource: StackResource; sources: readonly DeepChildSource[] }> = [];
+  for (const entityName of options.entityNames) {
+    const resource = byLogicalId.get(entityName);
+    const sources = resource ? DEEP_CHILD_SOURCES[resource.type] : undefined;
+    if (!resource?.physicalId || !sources) continue;
+    if (unobserved[entityName]?.reason === "filtered") continue;
+    parents.push({ resource, sources });
+  }
+  const children = await enumerateOutOfBandChildren({
+    parents,
+    allStackResources: stackResources,
+    entities: options.entities,
+    client,
+    normalize: (childType, properties) =>
+      normalizeDeepProperties(properties, {
+        entityType: childType,
+        side: "live",
+        hooks: awsDeepNormalizationHooks,
+      }),
+    concurrently: boundedConcurrently,
+  });
+  for (const [name, child] of Object.entries(children)) {
+    if (!resources[name]) resources[name] = child;
+  }
+
   return deepObservation(resources, unobserved);
+}
+
+/**
+ * List every child-sourced type under its declared parents and return the
+ * resources nothing declared, named by {@link outOfBandChildName}.
+ *
+ * "Declared" is answered three ways, in order of how directly the stack says
+ * it: the child identifier is some stack resource's physical id (the normal
+ * case — a declared `AWS::SNS::Subscription` deploys under its ARN); a
+ * `declaredVia` legacy form's physical id is the identifier's relevant part;
+ * or a declared entity's props spell the identifier (`declaredIdentifier`,
+ * the carve case — declared in source, not yet in any stack).
+ *
+ * A listing that fails is silence about that parent's children, never a
+ * finding and never a hole: there is no declared entity to hang a hole on,
+ * and fabricating one would put an undeclared name in the unobserved report.
+ * `UnsupportedOperation` — an emulator without parent-scoped listing — lands
+ * here too, which is what keeps the Floci lanes quiet.
+ */
+async function enumerateOutOfBandChildren(args: {
+  parents: Array<{ resource: StackResource; sources: readonly DeepChildSource[] }>;
+  allStackResources: StackResource[];
+  entities?: Map<string, { entityType: string; props: Record<string, unknown> }>;
+  client: AwsReadClientOptions;
+  normalize: (childType: string, properties: Record<string, unknown>) => Record<string, unknown>;
+  concurrently: <T>(items: T[], fn: (item: T) => Promise<void>) => Promise<unknown>;
+}): Promise<Record<string, DeepResourceObservation>> {
+  const out: Record<string, DeepResourceObservation> = {};
+  if (args.parents.length === 0) return out;
+
+  // Physical ids by type, over the WHOLE stack — a stack resource that is not
+  // a declared chant entity (a nested stack's row, a resource another tool
+  // added to the same stack) is still stack-managed, not out-of-band.
+  const addTo = (map: Map<string, Set<string>>, key: string, value: string) => {
+    const set = map.get(key) ?? new Set<string>();
+    set.add(value);
+    map.set(key, set);
+  };
+  const stackIdsByType = new Map<string, Set<string>>();
+  for (const r of args.allStackResources) {
+    if (r.physicalId) addTo(stackIdsByType, r.type, r.physicalId);
+  }
+  const declaredIdsByType = new Map<string, Set<string>>();
+  for (const entity of args.entities?.values() ?? []) {
+    const id = declaredIdentifier(entity.entityType, entity.props ?? {});
+    if (id) addTo(declaredIdsByType, entity.entityType, id);
+  }
+
+  const isDeclared = (source: DeepChildSource, identifier: string): boolean => {
+    if (stackIdsByType.get(source.childType)?.has(identifier)) return true;
+    if (declaredIdsByType.get(source.childType)?.has(identifier)) return true;
+    for (const via of source.declaredVia ?? []) {
+      const part = via.part(identifier);
+      if (part && stackIdsByType.get(via.type)?.has(part)) return true;
+    }
+    return false;
+  };
+
+  const listings = args.parents.flatMap(({ resource, sources }) =>
+    sources.map((source) => ({ physicalId: resource.physicalId as string, source })),
+  );
+  await args.concurrently(listings, async ({ physicalId, source }) => {
+    let listed;
+    try {
+      listed = await listResources(source.childType, args.client, source.model(physicalId));
+    } catch {
+      return;
+    }
+    for (const child of listed) {
+      if (!child.identifier || isDeclared(source, child.identifier)) continue;
+      out[outOfBandChildName(source.childType, child.identifier)] = {
+        type: source.childType,
+        physicalId: child.identifier,
+        properties: args.normalize(source.childType, child.properties),
+      };
+    }
+  });
+  return out;
 }
 
 /**

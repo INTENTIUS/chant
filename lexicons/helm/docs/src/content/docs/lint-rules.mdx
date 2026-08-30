@@ -1,7 +1,12 @@
 ---
 title: "Lint Rules"
 description: "Built-in lint rules and post-synth checks for Helm charts"
+diataxis: reference
 ---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-helm` — DO NOT EDIT.
+    Edit lexicons/helm/docs/pages/lint-rules.mdx instead; changes here are overwritten. */}
+
 The Helm lexicon ships lint rules that run during `chant lint` and post-synth checks that validate the generated chart after `chant build`.
 
 ## AST Rules
@@ -87,3 +92,54 @@ the upstream chart directly.
 |------|-------------|
 | WHM501 | Detect values keys that are defined but never referenced in templates |
 | WHM502 | Detect deprecated or invalid Kubernetes API versions |
+| WHM504 | Detect supplied values that never survive coalescing (dead assignments) |
+
+## Values provenance
+
+Helm coalesces values from several layers — each (sub)chart's own
+`values.yaml`, the parent chart's overrides under the dependency's
+alias-or-name key, supplied values files, `--set` flags — and only the
+result reaches the templates. The coalesced tree exists on no side of the
+usual tooling: `helm template --debug` does not print it, and
+`helm get values --all` needs an installed release.
+
+The lexicon extracts it at build time with a probe (`probeCoalescedValues`):
+the chart is copied, every (sub)chart's templates are replaced with a single
+`chant-values-probe.yaml` template that prints `{{ toYaml .Values }}`, the
+copy is rendered, and the probe documents are lifted out. Coalescing is
+helm's own — parent-overrides-child, `global` propagation, alias scoping and
+`import-values` all behave exactly as a real render, because it is a real
+render. The copy is discarded afterwards; the probe document can never
+appear in a real render of the chart. A dependency disabled by a
+`condition:` renders no probe document and is reported separately, with the
+condition that disabled it.
+
+Three products come out of the probe:
+
+- a coalesced-values digest — `sha256:` over the canonical JSON of the
+  per-instance trees, following the same conventions as the render input
+  digest. Two renders that coalesce the same values everywhere share it.
+- `valueSources` — every coalesced path attributed to the layer that won
+  it: `chart default`, `parent override`, `supplied file`, or `--set`
+  (subchart paths are scope-prefixed, e.g. `web.replicas`). "Why is this
+  field this value" becomes a lookup rather than a grep.
+- dead assignments — supplied values that never survive coalescing, which
+  WHM504 reports.
+
+### WHM504 — Dead value assignment
+
+**Severity:** warning
+
+Flags a supplied value that never survives coalescing:
+
+- shadowed — a later supplied layer assigns the same path, so the earlier
+  assignment is unreachable (two maps merging is not a shadow);
+- disabled subchart — the path targets a dependency a `condition:`
+  disabled, so no rendered chart ever reads it;
+- unknown subchart — a values map under a top-level key that names no
+  dependency, no chart default and not `global`, on a chart that has
+  dependencies: the classic silently-ignored typo of a subchart name.
+
+Each finding names the path, the layer that supplied it, and what shadowed
+or disabled it. The check reports over the probe runs of the current build;
+when no probe ran, it reports nothing.

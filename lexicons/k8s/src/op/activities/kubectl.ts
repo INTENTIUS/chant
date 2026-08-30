@@ -35,7 +35,7 @@ import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { loadAll } from "js-yaml";
 import { safeHeartbeat } from "@intentius/chant/op";
-import { loadChantConfig, resolveOwnershipMarker } from "@intentius/chant/config";
+import { loadChantConfig, resolveOwnershipStack } from "@intentius/chant/config";
 import {
   hasOwnershipMarker,
   LABEL_OWNERSHIP_KEYS,
@@ -45,6 +45,7 @@ import type { K8sClient, K8sObject } from "@intentius/chant-k8s-client";
 import { defaultK8sConnector, type K8sConnector } from "../../api/connect";
 import { operationFor } from "../../api/operation-surface";
 import { DEFAULT_IMPORT_TYPES } from "../../api/sweep-types";
+import { isGeneratedOnce } from "../../secret-labels";
 
 /**
  * How the apply treats chant-owned objects that are no longer declared. The
@@ -133,6 +134,15 @@ export interface ApplyManifestResult {
   applied: AppliedRef[];
   /** Objects deleted because they carried chant's marker and are no longer declared. */
   pruned: AppliedRef[];
+  /**
+   * Owned, no longer declared, and deliberately KEPT (#1830, epic #1365
+   * decision 5): Secrets carrying the `chant.intentius.io/generated-once`
+   * label never enter the prunable set — the stored bytes are the only copy
+   * of material chant never held. Reported loudly here and on the console;
+   * deletion is an explicit act (`kubectl delete`, or a future gated op),
+   * never a prune's. Present whenever the prune ran.
+   */
+  retained?: AppliedRef[];
 }
 
 /** Read a manifest path — one file, or every YAML/JSON file in a directory. */
@@ -185,7 +195,7 @@ async function resolveApplyIdentity(
   if (stack === undefined) {
     try {
       const { config } = await loadChantConfig(args.cwd ?? process.cwd());
-      stack = resolveOwnershipMarker(config)?.stack;
+      stack = resolveOwnershipStack(config);
     } catch (err) {
       console.warn(
         `[k8s] could not read the project config to derive a field manager ` +
@@ -351,15 +361,15 @@ export async function applyManifest(
     }
 
     const deleteMode = args.deleteMode ?? "never";
-    const pruned =
+    const { pruned, retained } =
       deleteMode === "never" || args.dryRun
-        ? []
+        ? { pruned: [], retained: [] }
         : await pruneOrphans(client, applied, {
             ...(stack !== undefined ? { stack } : {}),
             signal,
           });
 
-    return { fieldManager, applied, pruned };
+    return { fieldManager, applied, pruned, retained };
   } finally {
     clearInterval(heartbeatInterval);
   }
@@ -407,7 +417,7 @@ async function pruneOrphans(
   client: K8sClient,
   applied: readonly AppliedRef[],
   options: { stack?: string; signal?: AbortSignal },
-): Promise<AppliedRef[]> {
+): Promise<{ pruned: AppliedRef[]; retained: AppliedRef[] }> {
   const stack = options.stack;
   const selector = [
     `${LABEL_OWNERSHIP_KEYS.managedBy}=${OWNERSHIP_MANAGED_BY_VALUE}`,
@@ -476,6 +486,7 @@ async function pruneOrphans(
   });
 
   const candidates: AppliedRef[] = [];
+  const retained: AppliedRef[] = [];
   const seen = new Set<string>();
   for (const { target, item } of found.flat()) {
     const name = item.metadata?.name;
@@ -494,6 +505,18 @@ async function pruneOrphans(
     const key = refKey(ref);
     if (declared.has(key) || seen.has(key)) continue;
     seen.add(key);
+    // A generated-once Secret never enters the prunable set (#1830, epic
+    // #1365 decision 5): its bytes are the only copy of material chant never
+    // held, so no sweep may destroy them. Kept, and said loudly — deletion is
+    // an explicit act (`kubectl delete`, or a future gated op).
+    if (target.kind === "Secret" && isGeneratedOnce(item.metadata?.labels)) {
+      retained.push(ref);
+      console.log(
+        `${ref.apiVersion} ${ref.kind}/${ref.name} retained (generated-once — owned and no longer declared, ` +
+          `but never pruned; delete it explicitly if you mean to)`,
+      );
+      continue;
+    }
     candidates.push(ref);
   }
 
@@ -504,7 +527,7 @@ async function pruneOrphans(
     safeHeartbeat({ step: "prune", pruned: `${ref.kind}/${ref.name}` });
     console.log(`${ref.apiVersion} ${ref.kind}/${ref.name} pruned (chant-owned, no longer declared)`);
   }
-  return pruned;
+  return { pruned, retained };
 }
 
 function refKey(ref: AppliedRef): string {

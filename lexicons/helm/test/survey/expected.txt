@@ -1,0 +1,13 @@
+cert-manager deterministic-as-is crds=0 caps=0 lookup-control=0 lookup-value=0 hazards=0 unstable-lines=0 values=no
+ingress-nginx pinnable-with-closed-inputs crds=0 caps=18 lookup-control=0 lookup-value=0 hazards=0 unstable-lines=0 values=no
+external-secrets pinnable-with-closed-inputs crds=14 caps=2 lookup-control=0 lookup-value=0 hazards=0 unstable-lines=0 values=no
+argo-cd pinnable-with-closed-inputs crds=3 caps=15 lookup-control=0 lookup-value=0 hazards=0 unstable-lines=0 values=no
+kube-prometheus-stack pinnable-with-closed-inputs crds=10 caps=121 lookup-control=1 lookup-value=2 hazards=1 unstable-lines=0 values=no
+prometheus pinnable-with-closed-inputs crds=0 caps=30 lookup-control=0 lookup-value=0 hazards=0 unstable-lines=0 values=no
+grafana pinnable-with-closed-inputs crds=0 caps=13 lookup-control=1 lookup-value=2 hazards=1 unstable-lines=4 values=no
+loki pinnable-with-closed-inputs crds=0 caps=45 lookup-control=0 lookup-value=1 hazards=0 unstable-lines=0 values=yes
+vault pinnable-with-closed-inputs crds=0 caps=10 lookup-control=0 lookup-value=0 hazards=0 unstable-lines=0 values=no
+traefik pinnable-with-closed-inputs crds=19 caps=6 lookup-control=0 lookup-value=1 hazards=0 unstable-lines=0 values=no
+metrics-server pinnable-with-closed-inputs crds=0 caps=3 lookup-control=0 lookup-value=0 hazards=0 unstable-lines=0 values=no
+harbor pinnable-with-closed-inputs crds=0 caps=1 lookup-control=0 lookup-value=5 hazards=0 unstable-lines=34 values=no
+kyverno pinnable-with-closed-inputs crds=11 caps=5 lookup-control=0 lookup-value=1 hazards=0 unstable-lines=0 values=no

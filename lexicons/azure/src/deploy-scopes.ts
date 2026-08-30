@@ -85,7 +85,20 @@ interface LexiconEntry {
 
 let _cached: Map<string, DeployScope[]> | undefined;
 
-const __dirname_ = dirname(fileURLToPath(import.meta.url));
+/**
+ * Directory of this module, resolved lazily. On workerd `import.meta.url`
+ * is undefined and `fileURLToPath` throws, so this must never run at module
+ * scope (#1621): the post-synth barrel imports this file and a module-scope
+ * throw kills the worker at startup. Returns undefined when unresolvable;
+ * callers then take the documented resource-group-only fallback.
+ */
+function moduleDir(): string | undefined {
+  try {
+    return dirname(fileURLToPath(import.meta.url));
+  } catch {
+    return undefined;
+  }
+}
 
 /**
  * Load per-resource deployment scopes from the lexicon JSON.
@@ -98,11 +111,12 @@ export function loadDeployScopes(): Map<string, DeployScope[]> {
   const map = new Map<string, DeployScope[]>();
   try {
     let content: string | undefined;
+    const dir = moduleDir();
     // Try generated/ (dev) first, then dist/meta.json (installed package)
-    for (const candidate of [
-      join(__dirname_, "generated", "lexicon-azure.json"),
-      join(__dirname_, "..", "dist", "meta.json"),
-    ]) {
+    for (const candidate of dir ? [
+      join(dir, "generated", "lexicon-azure.json"),
+      join(dir, "..", "dist", "meta.json"),
+    ] : []) {
       try { content = readFileSync(candidate, "utf-8"); break; } catch {}
     }
     if (content) {

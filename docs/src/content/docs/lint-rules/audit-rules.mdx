@@ -1,6 +1,7 @@
 ---
 title: Audit rules reference
 description: Every rule chant audit can report, with its tier, fix kind, and remediation.
+diataxis: reference
 ---
 
 This is the reference for every rule [`chant audit`](/chant/cli/audit/) can report. Each finding in a report links to its rule here.
@@ -41,7 +42,7 @@ Authority: [OSSF Scorecard — Token-Permissions](https://github.com/ossf/scorec
 
 **No explicit permissions block** — merge-worthy · deterministic
 
-Add a top-level `permissions: { contents: read }` and widen only where a job needs it.
+Add a top-level `permissions: \{ contents: read }` and widen only where a job needs it.
 
 Authority: [OSSF Scorecard — Token-Permissions](https://github.com/ossf/scorecard/blob/main/docs/checks.md#token-permissions) · [GitHub — Automatic token authentication](https://docs.github.com/en/actions/security-for-github-actions/security-guides/automatic-token-authentication)
 
@@ -169,7 +170,7 @@ Authority: [GitHub Security Lab — Preventing pwn requests](https://securitylab
 
 **Untrusted input interpolated into run:** — merge-worthy · guidance
 
-Pass untrusted `${{ }}` values via an `env:` var and reference `"$VAR"`, never inline in the script.
+Pass untrusted `$\{\{ }}` values via an `env:` var and reference `"$VAR"`, never inline in the script.
 
 Authority: [GitHub — Understanding the risk of script injections](https://docs.github.com/en/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions#understanding-the-risk-of-script-injections)
 
@@ -332,6 +333,72 @@ Authority: [GitHub Security Lab — Preventing pwn requests](https://securitylab
 **Dependency update has no cooldown window** — report-only · guidance
 
 Add a cooldown so new releases aren't merged instantly.
+
+### GHA059
+
+**Stale or missing pin annotation** — merge-worthy · guidance
+
+Add or correct the trailing version comment on the SHA-pinned reference so it matches the digest.
+
+Authority: [OSSF Scorecard — Pinned-Dependencies](https://github.com/ossf/scorecard/blob/main/docs/checks.md#pinned-dependencies) · [GitHub — Using third-party actions](https://docs.github.com/en/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions#using-third-party-actions)
+
+### GHA060
+
+**Over-scoped generated token** — merge-worthy · guidance
+
+Narrow the GitHub App token's permission-* inputs to the scopes its consuming steps actually use, or remove the unused ones.
+
+Authority: [OSSF Scorecard — Token-Permissions](https://github.com/ossf/scorecard/blob/main/docs/checks.md#token-permissions) · [GitHub — Automatic token authentication](https://docs.github.com/en/actions/security-for-github-actions/security-guides/automatic-token-authentication)
+
+### GHA061
+
+**Action reference outside the configured usage policy** — merge-worthy · guidance
+
+Replace the reference with one from the approved allowlist, or get it added if it should be trusted.
+
+### GHA062
+
+**Pinned reference matches a known-vulnerability advisory** — merge-worthy · guidance
+
+Bump the reference to a patched ref/commit named by the advisory.
+
+Authority: [OSSF Scorecard — Vulnerabilities](https://github.com/ossf/scorecard/blob/main/docs/checks.md#vulnerabilities)
+
+### GHA063
+
+**Dependency setup action without caching enabled** — report-only · guidance
+
+Enable the setup action's `cache:` option or add an actions/cache step.
+
+### GHA064
+
+**Expensive runner without justification** — report-only · guidance
+
+Confirm the job needs that OS, or move it to a Linux runner.
+
+### GHA065
+
+**Unbounded matrix fan-out** — report-only · guidance
+
+Trim the matrix with include/exclude, or cap it with max-parallel.
+
+### GHA066
+
+**Unbounded artifact retention** — report-only · guidance
+
+Set a retention-days sized to how long the artifact is actually needed.
+
+### GHA067
+
+**Unconditional heavy step with no path filter** — report-only · guidance
+
+Scope the trigger's paths, or add an if: guard to the step.
+
+### GHA068
+
+**Pull-request workflow missing a concurrency group** — report-only · guidance
+
+Add a concurrency group with cancel-in-progress: true.
 
 ## GitLab CI (WGL)
 
@@ -603,6 +670,18 @@ Authority: [OSSF Scorecard — Pinned-Dependencies](https://github.com/ossf/scor
 
 Add a `workflow:name` for clearer pipeline naming.
 
+### WGL049
+
+**Dependency install without a cache** — report-only · guidance
+
+Add a `cache:` covering the dependency directory.
+
+### WGL050
+
+**Merge-request job missing interruptible** — report-only · guidance
+
+Add `interruptible: true` so a superseded pipeline can be cancelled.
+
 ## Forgejo (WFJ)
 
 ### WFJ010
@@ -828,6 +907,62 @@ Set spec.rayVersion so KubeRay picks the right autoscaler image.
 **rayVersion does not match the head image tag** — report-only · guidance
 
 Align spec.rayVersion with the Ray version in the head container image.
+
+### WK8404
+
+**GPU request without a matching toleration** — merge-worthy · guidance
+
+Add a toleration for the nvidia.com/gpu taint (or a wildcard Exists toleration) so the pod can schedule onto a GPU node pool.
+
+### WK8405
+
+**Serving workload has no PodDisruptionBudget** — report-only · guidance
+
+Add a PDB selecting the InferenceService/serving Deployment so a node drain can't take down every replica at once.
+
+### WK8406
+
+**GPU container missing resource limits** — merge-worthy · guidance
+
+Set CPU and memory limits on GPU-requesting containers to avoid starving the (scarce, expensive) GPU node.
+
+### WK8407
+
+**Unpinned model version** — merge-worthy · guidance
+
+Pin the InferenceService model storageUri to an explicit version segment (e.g. via the Model composite's required version) instead of a floating tag.
+
+### WK8501
+
+**Custom resource spec has a field its CRD does not declare** — merge-worthy · guidance
+
+Fix the field name; the API server prunes unknown fields and the controller never sees them.
+
+### WK8502
+
+**Custom resource spec field has the wrong type or enum value** — merge-worthy · guidance
+
+Match the CRD schema: use the declared scalar type and one of the enum values.
+
+### WK8503
+
+**Workload consumes a Secret nothing in the output produces** — merge-worthy · guidance
+
+Produce the Secret in the same build (Secret, ExternalSecret, InfisicalSecret, cert-manager Certificate), or declare its provenance with declareSecret() if it exists out of band.
+
+### WK8504
+
+**committed-encrypted secret declaration does not resolve** — merge-worthy · guidance
+
+Point `file` at the committed ciphertext, make its metadata.name match the declaration, and re-run `sops -e -i` so every data/stringData value is ENC[...].
+
+Authority: [Kubernetes — Good practices for Secrets](https://kubernetes.io/docs/concepts/security/secrets-good-practices/)
+
+### WK8505
+
+**committed-encrypted secret with no Flux decryption wiring** — report-only · guidance
+
+Add decryption: "sops" to the FluxAppFor reconciling the path that carries the ciphertext sidecar, or ignore if that Kustomization is declared in a different build.
 
 ## Docker (DKRD)
 
@@ -1228,6 +1363,66 @@ Authority: [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.
 Keep an organization CloudTrail with IsLogging: true and IsMultiRegionTrail: true.
 
 Authority: [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.com/wellarchitected/latest/security-pillar/welcome.html)
+
+### WAW059
+
+**Wildcard Resource where the declared graph enumerates the touched set** — report-only · guidance
+
+Tighten Resource from "*" to the Fn::GetAtt Arn list of the declared resources the role's consumers touch.
+
+### WAW060
+
+**IAM policy attached to no principal** — report-only · guidance
+
+Attach the policy via Roles/Users/Groups or reference it from a principal's ManagedPolicyArns — unattached it grants nothing.
+
+### WAW061
+
+**Subnet CidrBlock not contained in its VPC's CidrBlock** — merge-worthy · guidance
+
+Fix the subnet's CidrBlock so it falls within the VPC's CidrBlock range.
+
+### WAW062
+
+**Duplicate export name or explicit resource name within a template** — merge-worthy · guidance
+
+Give each duplicated Export/name a distinct literal value.
+
+### WAW063
+
+**IAM policy denies an action another attached policy on the same role allows** — merge-worthy · guidance
+
+Remove or narrow the Deny, or move the Allow off this role — the explicit Deny always wins.
+
+### WAW064
+
+**Transit Gateway route table declares a Blackhole route** — report-only · guidance
+
+Confirm the traffic drop is intentional; remove the route if it isn't.
+
+### WAW065
+
+**Transit Gateway route table wiring is incomplete** — report-only · guidance
+
+Add the missing TransitGatewayRouteTablePropagation, or wire the orphaned attachment into a route table.
+
+### WAW066
+
+**Private subnet's route table has no working default route** — merge-worthy · guidance
+
+Add a 0.0.0.0/0 route to a NAT gateway/Transit Gateway that exists in the template.
+
+### WAW067
+
+**Single-AZ NAT gateway serves multi-AZ private subnets** — report-only · guidance
+
+Add one NAT gateway per Availability Zone and point each AZ's subnets at its own.
+
+### WAW068
+
+**VPN Gateway or Transit Gateway has only one attached VPN Connection** — report-only · guidance
+
+Attach a second VPNConnection (ideally to a separate Customer Gateway) for redundancy.
 
 ## Azure ARM (AZR)
 
@@ -1718,3 +1913,219 @@ Remove values defined but never referenced.
 **Deprecated/invalid Kubernetes API version** — merge-worthy · guidance
 
 Update to a supported apiVersion.
+
+### WHM503
+
+**Pinned render carries Secret data** — merge-worthy · guidance
+
+Declare the value with runtimeSlot() or replace the Secret with HelmExternalSecret.
+
+Authority: [Kubernetes — Good practices for Secrets](https://kubernetes.io/docs/concepts/security/secrets-good-practices/)
+
+### WHM504
+
+**Dead value assignment** — merge-worthy · guidance
+
+Remove supplied values that never survive coalescing (shadowed, disabled subchart, or unknown subchart).
+
+## fountain (FTN)
+
+Run against fountain manifests (`apiVersion: fountain.dev/v1`) — standalone `fountain apply` YAML is parsed back into the entity graph, so the same rules fire on `chant build` and `chant audit`.
+
+### FTN001
+
+**Literal credential in a fountain declaration** — merge-worthy · guidance
+
+Use a $\{VAR} substitution reference or an environment secret; never a literal in source.
+
+Authority: [OWASP Top 10 for LLM Applications — LLM01: Prompt Injection](https://owasp.org/www-project-top-10-for-large-language-model-applications/)
+
+### FTN010
+
+**Environment does not set networking_type explicitly** — merge-worthy · guidance
+
+Set networking_type — an open sandbox by silence is not a reviewed decision.
+
+Authority: [fountain — Environment, Vault, and Agent primitives](https://github.com/BinaryBourbon/fountain/blob/main/docs/primitives.md)
+
+### FTN011
+
+**Environment uses networking_type: unrestricted** — merge-worthy · guidance
+
+Prefer limited with an allowed_hosts allowlist; an empty list denies all egress.
+
+Authority: [fountain — Environment, Vault, and Agent primitives](https://github.com/BinaryBourbon/fountain/blob/main/docs/primitives.md)
+
+### FTN012
+
+**Cloud-credential-shaped key or value in Environment env_vars** — merge-worthy · guidance
+
+env_vars is plaintext config — move credentials to a secret, or serve the capability outside the sandbox.
+
+Authority: [OWASP Top 10 for LLM Applications — LLM01: Prompt Injection](https://owasp.org/www-project-top-10-for-large-language-model-applications/)
+
+### FTN013
+
+**Agent $\{VAR} reference does not resolve against its environment** — report-only · guidance
+
+Declare the key on the environment, or confirm a vault supplies it at conversation create.
+
+### FTN014
+
+**Vault key shadows a declared Environment key** — report-only · guidance
+
+Vault values win on key collision silently — rename the key or confirm the override is intended.
+
+### FTN015
+
+**Secret-shaped MCP env key is a literal, not a $\{VAR} reference** — merge-worthy · guidance
+
+Reference the value with $\{VAR} so it resolves at spawn instead of living in source.
+
+Authority: [OWASP Top 10 for LLM Applications — LLM01: Prompt Injection](https://owasp.org/www-project-top-10-for-large-language-model-applications/)
+
+### FTN016
+
+**Agent runtime or model is not a valid value** — merge-worthy · guidance
+
+Use a known runtime and a canonical provider/model_id.
+
+### FTN017
+
+**Two declarations of one kind resolve to the same fountain name** — merge-worthy · guidance
+
+fountain reconciles by name — rename one, or the second silently overwrites the first.
+
+## Secrets & credentials (SEC)
+
+Lexicon-independent — scans the raw text of every scanned file for likely credentials, regardless of which audit lexicons are installed. Matched values are always redacted; see [suppressing false positives](/chant/cli/audit/#suppressing-a-secrets-finding).
+
+### SEC001
+
+**AWS access key ID found** — merge-worthy · guidance
+
+Remove the key from source, rotate it in IAM, and load it from a secret store or environment variable instead.
+
+Authority: [GitHub — About secret scanning](https://docs.github.com/en/code-security/secret-scanning/introduction/about-secret-scanning)
+
+### SEC002
+
+**AWS secret access key found** — merge-worthy · guidance
+
+Remove the key from source, rotate it in IAM, and load it from a secret store or environment variable instead.
+
+Authority: [GitHub — About secret scanning](https://docs.github.com/en/code-security/secret-scanning/introduction/about-secret-scanning)
+
+### SEC003
+
+**GitHub token found** — merge-worthy · guidance
+
+Remove the token from source and revoke it at github.com/settings/tokens; use a GitHub Actions secret instead.
+
+Authority: [GitHub — About secret scanning](https://docs.github.com/en/code-security/secret-scanning/introduction/about-secret-scanning)
+
+### SEC004
+
+**Slack token found** — merge-worthy · guidance
+
+Remove the token from source and revoke it in the Slack app's OAuth settings.
+
+Authority: [GitHub — About secret scanning](https://docs.github.com/en/code-security/secret-scanning/introduction/about-secret-scanning)
+
+### SEC005
+
+**Google API key found** — merge-worthy · guidance
+
+Remove the key from source and regenerate it in the Google Cloud Console credentials page.
+
+Authority: [GitHub — About secret scanning](https://docs.github.com/en/code-security/secret-scanning/introduction/about-secret-scanning)
+
+### SEC006
+
+**Stripe live secret key found** — merge-worthy · guidance
+
+Remove the key from source and roll it in the Stripe dashboard immediately — this is a live-mode key.
+
+Authority: [GitHub — About secret scanning](https://docs.github.com/en/code-security/secret-scanning/introduction/about-secret-scanning)
+
+### SEC007
+
+**Private key block found** — merge-worthy · guidance
+
+Remove the private key from source, rotate the keypair, and load the key from a secret store instead.
+
+Authority: [GitHub — About secret scanning](https://docs.github.com/en/code-security/secret-scanning/introduction/about-secret-scanning)
+
+### SEC008
+
+**Bearer/authorization token found** — merge-worthy · guidance
+
+Remove the token from source; if it's long-lived, revoke and reissue it via the issuing service.
+
+Authority: [GitHub — About secret scanning](https://docs.github.com/en/code-security/secret-scanning/introduction/about-secret-scanning)
+
+### SEC009
+
+**Credentials embedded in a connection string** — merge-worthy · guidance
+
+Move the username/password out of the URI into a secret store, and rotate the credential.
+
+Authority: [GitHub — About secret scanning](https://docs.github.com/en/code-security/secret-scanning/introduction/about-secret-scanning)
+
+### SEC010
+
+**High-entropy string — possible secret** — merge-worthy · guidance
+
+Confirm whether this is a live credential; if so, remove it from source and rotate it. If it's a false positive, suppress with a `chant-audit-ignore` comment or an allowlist entry.
+
+Authority: [GitHub — About secret scanning](https://docs.github.com/en/code-security/secret-scanning/introduction/about-secret-scanning)
+
+## Wrangler config (WRG)
+
+Lexicon-independent, audit-only (#446) — scans `wrangler.toml`, Cloudflare Workers' native deploy config, which the engine cannot otherwise parse (it is not YAML/JSON). No authoring surface: chant does not write Wrangler config, it only reads it for these checks.
+
+### WRG001
+
+**Production environment exposed on *.workers.dev** — merge-worthy · guidance
+
+Remove workers_dev (or set it to false) for this environment and rely on its custom domain/route instead of the shared public subdomain.
+
+Authority: [Cloudflare Workers — workers.dev](https://developers.cloudflare.com/workers/configuration/routing/workers-dev/)
+
+### WRG002
+
+**Credential-shaped key stored in [vars]** — merge-worthy · guidance
+
+Move the value out of [vars] and into `wrangler secret put \<name>` so it isn't committed to source or visible in `wrangler dev`/the dashboard.
+
+Authority: [Cloudflare Workers — Secrets](https://developers.cloudflare.com/workers/configuration/secrets/)
+
+### WRG003
+
+**Observability explicitly disabled** — report-only · guidance
+
+Set observability.enabled = true (or remove the override) so Workers Logs are recorded for this deployment.
+
+### WRG004
+
+**Unscoped wildcard route** — merge-worthy · guidance
+
+Scope the route pattern to the intended zone (e.g. "example.com/*") instead of a bare "*" or "*/*" that matches every zone on the account.
+
+Authority: [Cloudflare Workers — Routes](https://developers.cloudflare.com/workers/configuration/routing/routes/)
+
+### WRG005
+
+**Non-production environment shares a data store with production** — merge-worthy · guidance
+
+Give the non-production environment its own KV namespace/R2 bucket/D1 database id instead of reusing production's.
+
+Authority: [Cloudflare Workers — Wrangler environments](https://developers.cloudflare.com/workers/wrangler/configuration/#environments)
+
+### WRG006
+
+**Static assets served from the project root** — merge-worthy · guidance
+
+Point [site].bucket / [assets].directory at a dedicated public output folder, not the project root, so non-public files (config, source maps, .git) aren't served.
+
+Authority: [Cloudflare Workers — Static assets](https://developers.cloudflare.com/workers/static-assets/)

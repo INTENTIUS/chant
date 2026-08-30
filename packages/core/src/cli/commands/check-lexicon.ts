@@ -2,10 +2,11 @@ import { existsSync, readdirSync, readFileSync } from "fs";
 import { join, basename } from "path";
 import { auditIntrinsics } from "./check-lexicon-intrinsics";
 import { checkExamplesBuild } from "./check-lexicon-examples";
-import { auditDocsReachability } from "./check-lexicon-docs";
+import { auditDocsClassification, auditDocsReachability } from "./check-lexicon-docs";
 import { auditMcpNames, lexiconNameFor } from "./check-lexicon-mcp";
 import { loadLexiconFromDir, registers, safeList } from "./check-lexicon-plugin";
 import { RULE_CATALOG } from "../../audit/catalog";
+import type { LexiconPlugin } from "../../lexicon";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -64,6 +65,45 @@ function countSubdirs(dir: string): number {
       return contents.length > 0 && !(contents.length === 1 && contents[0] === ".gitkeep");
     })
     .length;
+}
+
+/**
+ * #1330 — gate on the plugin's own spec-coverage accounting.
+ *
+ * fountain's `coverage.test.ts` asserts `unaccountedKinds == []` in CI, but a
+ * lexicon-local test is a convention, not a check-lexicon contract — the same
+ * class of gap #1342 closed for LSP providers. `coverageReport()` gives core
+ * the one fact to gate on: which upstream spec kinds are neither modeled nor
+ * on the lexicon's exclusion list. A lexicon without the member passes
+ * vacuously, the same conditional shape as the docs-reachability and
+ * Diátaxis checks; a report that throws fails, for the same reason `safeList`
+ * treats a throw as worse than absence.
+ */
+export async function coverageReportCheck(plugin: LexiconPlugin | undefined): Promise<CheckItem> {
+  const report = plugin?.coverageReport;
+  const hasReport = typeof report === "function";
+  let unaccounted: string[] = [];
+  let error: string | undefined;
+  if (hasReport) {
+    try {
+      unaccounted = (await report.call(plugin))?.unaccountedKinds ?? [];
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+    }
+  }
+  return {
+    name: "coverageReport() leaves no spec kind unaccounted",
+    tier: 1,
+    pass: !hasReport || (error === undefined && unaccounted.length === 0),
+    detail:
+      error !== undefined
+        ? `threw: ${error}`
+        : unaccounted.length > 0
+          ? `${unaccounted.length} unaccounted: ${unaccounted.join(", ")}`
+          : hasReport
+            ? "all spec kinds accounted for"
+            : undefined,
+  };
 }
 
 // ── Check runner ─────────────────────────────────────────────────────
@@ -254,12 +294,14 @@ export async function checkLexicon(dir: string): Promise<CheckResult> {
   // checks only ever counted example directories; none tried to build one,
   // so `lexicons/aws/examples/core-concepts` shipped with a discovery-time
   // "Duplicate export name" error while this tool reported "All tier-1
-  // checks passed." See ./check-lexicon-examples.ts for exactly what
-  // "builds" means here (discovery + serialization, not post-synth/lint).
+  // checks passed." chant #1400 — and the built output must pass the
+  // lexicon's own post-synth checks at error severity; three aws examples
+  // taught patterns (no TLS-only bucket policy, mutable ECR tags) the
+  // lexicon flags as errors. See ./check-lexicon-examples.ts.
   const exampleBuilds = await checkExamplesBuild(dir);
   const brokenExamples = exampleBuilds.filter((e) => !e.ok);
   items.push({
-    name: "Every shipped example builds",
+    name: "Every shipped example builds and passes its own post-synth checks",
     tier: 1,
     pass: brokenExamples.length === 0,
     detail:
@@ -373,6 +415,24 @@ export async function checkLexicon(dir: string): Promise<CheckResult> {
         ? `${docsReach.unreachable.length} unreachable: ${docsReach.unreachable.join(", ")}`
         : undefined,
   });
+
+  // Authored pages name their Diátaxis quadrant; the sidebar is built from
+  // it, so an untagged page cannot be placed (#1731).
+  const docsClass = auditDocsClassification(dir);
+  items.push({
+    name: "Every authored doc page has a diataxis quadrant",
+    tier: 1,
+    pass: !docsClass.hasPages || docsClass.unclassified.length === 0,
+    detail:
+      docsClass.unclassified.length > 0
+        ? `${docsClass.unclassified.length} unclassified: ${docsClass.unclassified.join(", ")}`
+        : undefined,
+  });
+
+  // #1330 — fountain's spec-coverage gate lived in a lexicon-local vitest
+  // assertion, a convention rather than a check-lexicon contract. The plugin
+  // now states the fact directly via `coverageReport()`.
+  items.push(await coverageReportCheck(plugin));
 
   // ── Tier 2: Recommended ────────────────────────────────────────
 

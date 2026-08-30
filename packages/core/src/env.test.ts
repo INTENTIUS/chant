@@ -2,7 +2,7 @@ import { describe, test, expect } from "vitest";
 import { mkdir, writeFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { env, unknownEnvError, ENV_VAR } from "./env";
+import { env, unknownEnvError, isProdLikeEnvironment, ENV_VAR } from "./env";
 import { discover } from "./discovery/index";
 
 const withEnv = async (value: string | undefined, fn: () => void | Promise<void>): Promise<void> => {
@@ -52,6 +52,25 @@ describe("unknownEnvError", () => {
       unknownEnvError("stage", ["prod", { name: "floci", endpoint: "http://localhost:4566" }]),
     ).toMatch(/Unknown environment "stage".*prod, floci/);
   });
+
+  // #1221 — an entry containing `*` is a glob pattern, so an unbounded family
+  // (per-PR environments, per-suite test environments) is declarable without
+  // listing each name.
+  test("accepts an env covered by a declared glob pattern (#1221)", () => {
+    expect(unknownEnvError("pr-42", ["dev", "prod", "pr-*"])).toBeUndefined();
+    expect(unknownEnvError("test-suite-a", ["prod", { name: "test-*", endpoint: "http://localhost:4566" }])).toBeUndefined();
+  });
+
+  test("rejects an env no pattern covers, listing the patterns among the declared entries (#1221)", () => {
+    expect(unknownEnvError("stage", ["dev", "prod", "pr-*"])).toMatch(/Unknown environment "stage".*dev, prod, pr-\*/);
+    expect(unknownEnvError("pr", ["pr-*"])).toMatch(/Unknown environment "pr"/); // prefix alone is not covered
+  });
+
+  test("a literal entry still matches by equality, never as a pattern (#1221)", () => {
+    // `prod` contains no `*`: nothing about pattern support changes it.
+    expect(unknownEnvError("prod", ["prod", "pr-*"])).toBeUndefined();
+    expect(unknownEnvError("production", ["prod"])).toMatch(/Unknown environment "production"/);
+  });
 });
 
 describe("env-aware discovery (#505)", () => {
@@ -84,6 +103,21 @@ describe("env-aware discovery (#505)", () => {
     } finally {
       await rm(prodDir, { recursive: true, force: true });
       await rm(devDir, { recursive: true, force: true });
+    }
+  });
+});
+
+
+describe("isProdLikeEnvironment (#1222)", () => {
+  test("matches prod, production, and separator-delimited variants", () => {
+    for (const name of ["prod", "production", "Prod", "PRODUCTION", "prod-eu", "us-prod", "prod2", "production-east", "eu_prod"]) {
+      expect(isProdLikeEnvironment(name)).toBe(true);
+    }
+  });
+
+  test("does not match names that merely contain the letters", () => {
+    for (const name of ["dev", "staging", "preprod", "product-demo", "reproduction", "pr-123"]) {
+      expect(isProdLikeEnvironment(name)).toBe(false);
     }
   });
 });

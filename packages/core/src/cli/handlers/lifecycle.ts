@@ -3,8 +3,9 @@ import { commandBuildParams } from "../build-params-cli";
 import { build } from "../../build";
 import { takeSnapshot } from "../../lifecycle/snapshot";
 import { readSnapshot, readSnapshotAt, readEnvironmentSnapshots, listSnapshots, fetchLifecycle, pushLifecycle, snapshotStorageKey, StaleLifecycleBranchError } from "../../lifecycle/git";
-import { deepDiffForLexicon } from "../../lifecycle/deep-observe";
+import { deepDiffForLexicon, type DeclaredEntities } from "../../lifecycle/deep-observe";
 import { countPropertyDrift, type DeepDiffResult } from "../../lifecycle/deep-diff";
+import { describePathOrigin, getPathProvenance } from "../../provenance";
 import {
   acceptDeviations,
   baselineForLexicon,
@@ -17,7 +18,10 @@ import {
 } from "../../lifecycle/observation-baseline";
 import { computeBuildDigest, diffDigests } from "../../lifecycle/digest";
 import { diffLive, diffLiveArtifacts, diffSnapshots, type LiveDiffResult, type LiveArtifactDiffResult, type SnapshotDiffResult } from "../../lifecycle/live-diff";
-import { buildChangeSet, renderChangeSet, gitlabMrReport, summarize, type ChangeSet } from "../../lifecycle/change-set";
+import { buildChangeSet, renderChangeSet, renderChangeSetMarkdown, gitlabMrReport, unobservedPlanNotice, type ChangeSet } from "../../lifecycle/change-set";
+import { mergeReceiptEntries, observedValueResolver, planReceipts, readReceiptValue, type ReceiptReading } from "../../lifecycle/receipt-plan";
+import { annotateDisruption, disruptionNotices } from "../../lifecycle/disruption";
+import { collectEffectReceipts, isEffectReceipt } from "../../effect-receipt";
 import {
   formatUnobserved,
   mergeObservations,
@@ -30,7 +34,9 @@ import { discoverComponents } from "../../components/discover";
 import { cfnDeployStacks } from "./components";
 import { affectedStacks } from "../../lifecycle/affected";
 import { rollbackToRevision } from "../../lifecycle/rollback";
-import { loadChantConfig, environmentNames } from "../../config";
+import { loadChantConfig, environmentNames, matchesDeclaredEnvironment, resolveOwnershipStack } from "../../config";
+import { unknownEnvError, isProdLikeEnvironment } from "../../env";
+import { planTeardown, executeTeardown, type TeardownPlan, type TeardownReport } from "../../lifecycle/teardown";
 import { collectBuildRootContributors } from "../plugins";
 import { applyLiveEndpoint } from "../../live-endpoint";
 import { isResourceDeclarable } from "../../declarable";
@@ -51,7 +57,7 @@ import type { ChantConfig } from "../../config";
  * then `config.sourceDir`, then "." (the root). Snapshot/diff/plan all use this
  * so their build digests stay consistent.
  */
-function resolveBuildRoot(args: ParsedArgs, config: ChantConfig): string {
+export function resolveBuildRoot(args: ParsedArgs, config: ChantConfig): string {
   return resolve(args.src ?? config.sourceDir ?? ".");
 }
 
@@ -109,7 +115,7 @@ export async function runLifecycleSnapshot(ctx: CommandContext): Promise<number>
   const declaredParams = await commandBuildParams(config.buildParams, args);
   if (!declaredParams) return 1;
   const declaredEnvNames = environmentNames(config.environments);
-  if (declaredEnvNames && !declaredEnvNames.includes(environment)) {
+  if (declaredEnvNames && !matchesDeclaredEnvironment(config.environments, environment)) {
     console.error(formatError({
       message: `Unknown environment "${environment}"`,
       hint: `Defined environments: ${declaredEnvNames.join(", ")}`,
@@ -356,6 +362,10 @@ export async function runLifecycleDiff(ctx: CommandContext): Promise<number> {
   // committed set. Absent is the normal state (nothing accepted yet).
   const baseline = args.live ? await readObservationBaseline(environment) : null;
   const accepted: Record<string, DeviationToAccept[]> = {};
+  // Effect receipts across every target's build (#1833) — `--update-baseline`
+  // refuses to accept drift on them (the effect step is their only writer),
+  // and recognition is marker-based so materialized lexicon rows are caught.
+  const receiptEntities = new Set<string>();
 
   // #1166 — an environment can declare its own endpoint (a local emulator like
   // Floci), so `--live` is self-sufficient even when the ambient shell never
@@ -416,6 +426,7 @@ export async function runLifecycleDiff(ctx: CommandContext): Promise<number> {
           buildResult,
           json,
           stack: target.stack,
+          region: target.region,
           componentStacks,
           baseline,
           updateBaseline: args.updateBaseline,
@@ -426,6 +437,9 @@ export async function runLifecycleDiff(ctx: CommandContext): Promise<number> {
         totalChecked += r.totalLexiconsChecked;
         for (const [lexicon, deviations] of Object.entries(r.toAccept)) {
           (accepted[lexicon] ??= []).push(...deviations);
+        }
+        if (args.updateBaseline) {
+          for (const name of collectEffectReceipts(buildResult.entities).keys()) receiptEntities.add(name);
         }
         if (json) {
           if (target.stack) perStackJson[target.stack] = r.byLexicon;
@@ -440,7 +454,7 @@ export async function runLifecycleDiff(ctx: CommandContext): Promise<number> {
     // accepted, so it stops re-alerting. Runs before the summary lines so the
     // "no drift" verdict below still describes the run that produced it.
     if (args.live && args.updateBaseline) {
-      await recordAcceptedBaseline(environment, baseline, accepted, json);
+      await recordAcceptedBaseline(environment, baseline, accepted, json, receiptEntities);
     }
 
     if (args.live) {
@@ -492,6 +506,7 @@ async function recordAcceptedBaseline(
   existing: ObservationBaseline | null,
   accepted: Record<string, DeviationToAccept[]>,
   json: boolean,
+  receipts?: ReadonlySet<string>,
 ): Promise<void> {
   const total = Object.values(accepted).reduce((n, d) => n + d.length, 0);
   if (total === 0) {
@@ -502,11 +517,14 @@ async function recordAcceptedBaseline(
     }
     return;
   }
-  let next = existing ?? emptyBaseline(environment);
-  for (const [lexicon, deviations] of Object.entries(accepted)) {
-    next = acceptDeviations(next, lexicon, deviations);
-  }
   try {
+    // `acceptDeviations` throws on an effect-receipt deviation (#1833) —
+    // inside the try so the refusal reaches the operator as a formatted
+    // error, with no baseline written at all.
+    let next = existing ?? emptyBaseline(environment);
+    for (const [lexicon, deviations] of Object.entries(accepted)) {
+      next = acceptDeviations(next, lexicon, deviations, { receipts });
+    }
     await writeObservationBaseline(next);
     const pushed = await pushLifecycle();
     if (!json) {
@@ -517,7 +535,7 @@ async function recordAcceptedBaseline(
     }
   } catch (err) {
     console.error(formatError({
-      message: `--update-baseline: could not write the baseline — ${err instanceof Error ? err.message : String(err)}`,
+      message: `--update-baseline: baseline not updated — ${err instanceof Error ? err.message : String(err)}`,
     }));
   }
 }
@@ -650,6 +668,11 @@ interface LiveDiffArgs {
   /** Deployed stack name for a multi-stack project (#932); scopes the live
    * observation (which CloudFormation stack to query) and the snapshot read. */
   stack?: string;
+  /** Region that stack is deployed in, from `stacks[].region` (#1264). Same
+   * contract as snapshot (#1261): without it every stack is read against the
+   * ambient region, so a multi-region estate reports its out-of-region stacks
+   * as absent rather than unobserved. */
+  region?: string;
   /** Component projects deploy one CFN stack per component; observe them all and
    * union (the same fix graph/plan use), else every deployed resource reads as
    * "missing". Empty → the single-stack observe path. */
@@ -710,6 +733,9 @@ async function observeLexicon(
     declared: Set<string>;
     entities: Map<string, { entityType: string; props: Record<string, unknown> }>;
     stack?: string;
+    /** Region the stack is deployed in (#1264); the read targets it instead of
+     * the ambient region. */
+    region?: string;
     componentStacks?: string[];
     owned?: boolean;
     /** `--namespace <ns>` (#1629): where to read an entity that declares no
@@ -723,6 +749,7 @@ async function observeLexicon(
     buildOutput: opts.buildOutput,
     entityNames,
     entities: opts.entities,
+    ...(opts.region ? { region: opts.region } : {}),
     ...(opts.owned !== undefined ? { owned: opts.owned } : {}),
     ...(opts.namespace ? { namespace: opts.namespace } : {}),
   };
@@ -746,6 +773,7 @@ async function observeLexicon(
       resources: {},
       unobserved: unobservedAll(entityNames, "read-failed", message, opts.entities),
       queried: {},
+      notes: [],
     };
   }
 }
@@ -777,13 +805,17 @@ async function runLifecycleDiffLive(args: LiveDiffArgs): Promise<LiveDiffOutcome
     // declared name the reader can never resolve reads as missing (see
     // lifecycle/observe.ts).
     const declared = new Set<string>();
-    const entities = new Map<string, { entityType: string; props: Record<string, unknown> }>();
+    const entities: DeclaredEntities = new Map();
     for (const [name, entity] of args.buildResult.entities) {
       if (entity.lexicon === lexiconName && isResourceDeclarable(entity)) {
         declared.add(name);
+        // Path origins are carried across explicitly (#1443): this map is plain
+        // objects, and the symbol-keyed provenance channel does not survive it.
+        const pathOrigins = getPathProvenance(entity);
         entities.set(name, {
           entityType: entity.entityType,
           props: (entity.props != null ? entity.props : {}) as Record<string, unknown>,
+          ...(pathOrigins ? { pathOrigins } : {}),
         });
       }
     }
@@ -811,6 +843,7 @@ async function runLifecycleDiffLive(args: LiveDiffArgs): Promise<LiveDiffOutcome
         declared,
         entities,
         stack: args.stack,
+        region: args.region,
         componentStacks: args.componentStacks,
         ...(args.namespace ? { namespace: args.namespace } : {}),
       });
@@ -839,6 +872,7 @@ async function runLifecycleDiffLive(args: LiveDiffArgs): Promise<LiveDiffOutcome
           buildOutput,
           entities,
           stack: args.stack,
+          region: args.region,
           componentStacks: args.componentStacks,
           baseline: baselineForLexicon(args.baseline, lexiconName),
         });
@@ -936,7 +970,10 @@ function renderDeepDiff(lexiconName: string, deep: DeepDiffResult): void {
         const declared = "declared" in change ? formatValue(change.declared) : "<undeclared>";
         const live = "live" in change ? formatValue(change.live) : "<absent>";
         const baseline = "baseline" in change ? ` [accepted: ${formatValue(change.baseline)}]` : "";
-        console.log(`      ${change.path}: ${declared} → ${live}${baseline}`);
+        // Both sides of the attribution, where each is known (#1443/#1189).
+        const from = change.origin ? ` [from: ${describePathOrigin(change.origin)}]` : "";
+        const owner = change.owner ? ` [owner: ${change.owner}]` : "";
+        console.log(`      ${change.path}: ${declared} → ${live}${baseline}${from}${owner}`);
       }
     }
   }
@@ -1111,6 +1148,15 @@ export async function runLifecyclePlan(ctx: CommandContext): Promise<number> {
   const merged: ChangeSet = { env: environment, entries: [] };
   let checked = 0;
 
+  // Effect receipts (#1832): declared, diffed, and observed like any resource,
+  // but observe-only to the generic apply path — the plan compares live value
+  // to resolved expectation and proposes the fire, never a create/update.
+  const receipts = collectEffectReceipts(buildResult.entities);
+  const receiptReadings = new Map<string, ReceiptReading>();
+  // Every lexicon's observed resources merged, for resolving a receipt's
+  // reference inputs against observed values / stack outputs at plan time.
+  const allObservedResources: Record<string, ResourceMetadata> = {};
+
   // #1166 — same self-sufficiency as `chant graph --live`: an environment can
   // declare its own endpoint, applied here unless the ambient shell already
   // set it. `chant lifecycle plan` is always a live read (no `--live` flag of
@@ -1141,11 +1187,14 @@ export async function runLifecyclePlan(ctx: CommandContext): Promise<number> {
       const declared = new Set<string>();
       const entities = new Map<string, { entityType: string; props: Record<string, unknown> }>();
       for (const [name, entity] of buildResult.entities) {
-        if (entity.lexicon === lexiconName && isResourceDeclarable(entity)) {
+        // A receipt has no `props` payload of its own but is declared, diffed,
+        // and observed like any resource (#1832) — it joins the declared axis
+        // so its lexicon's observation can confirm presence or absence.
+        if (entity.lexicon === lexiconName && (isResourceDeclarable(entity) || isEffectReceipt(entity))) {
           declared.add(name);
           entities.set(name, {
             entityType: entity.entityType,
-            props: (entity.props != null ? entity.props : {}) as Record<string, unknown>,
+            props: (isResourceDeclarable(entity) && entity.props != null ? entity.props : {}) as Record<string, unknown>,
           });
         }
       }
@@ -1170,6 +1219,37 @@ export async function runLifecyclePlan(ctx: CommandContext): Promise<number> {
         ...(args.namespace ? { namespace: args.namespace } : {}),
       });
 
+      Object.assign(allObservedResources, observed.resources);
+      for (const [receiptName, receipt] of receipts) {
+        if (receipt.lexicon !== lexiconName) continue;
+        const live = observed.resources[receiptName];
+        const hole = observed.unobserved[receiptName];
+        if (live) {
+          receiptReadings.set(receiptName, {
+            observed: true,
+            present: true,
+            value: readReceiptValue(live.attributes),
+            type: live.type,
+            ...(live.physicalId ? { physicalId: live.physicalId } : {}),
+            lexicon: lexiconName,
+          });
+        } else if (hole) {
+          receiptReadings.set(receiptName, {
+            observed: false,
+            present: false,
+            lexicon: lexiconName,
+            ...(hole.type ? { type: hole.type } : {}),
+            unobservedReason: hole.reason,
+            ...(hole.detail ? { unobservedDetail: hole.detail } : {}),
+          });
+        } else {
+          // Neither returned nor named unobserved: the lexicon looked and
+          // confirmed the receipt absent — the same claim the change set
+          // reads off a bare observation (#1089).
+          receiptReadings.set(receiptName, { observed: true, present: false, lexicon: lexiconName });
+        }
+      }
+
       const content = await readSnapshot(environment, lexiconName);
       const observedThen = content ? (JSON.parse(content) as LifecycleSnapshot).resources : undefined;
 
@@ -1181,8 +1261,21 @@ export async function runLifecyclePlan(ctx: CommandContext): Promise<number> {
         // The resolved read address rides every entry, not just unobserved
         // ones — the diff path already passes it (#1620); plan lost it.
         queried: observed.queried,
+      }, {
+        // Attribution survives the flat merge below (#1674).
+        lexicon: lexiconName,
       });
-      merged.entries.push(...cs.entries);
+
+      // Disruption (#1665) is asked of THIS lexicon, before the merge: the
+      // deltas are paths into its own observation shape, and the replacement
+      // rules are in the spec it compiled. A lexicon that answers nothing
+      // leaves every update `unknown` — never `in-place`.
+      const classified = await annotateDisruption(
+        cs,
+        environment,
+        plugin.classifyDisruption ? (o) => plugin.classifyDisruption!(o) : undefined,
+      );
+      merged.entries.push(...classified.entries);
       checked++;
     }
   } finally {
@@ -1196,15 +1289,30 @@ export async function runLifecyclePlan(ctx: CommandContext): Promise<number> {
     return 1;
   }
 
+  // Receipt classification (#1832): live value vs resolved expectation.
+  // Absent/stale proposes the fire; unobservable is a loud hole; whatever the
+  // generic classification proposed for a receipt (a create, a delete) is
+  // replaced — the effect step is the sole writer, and a receipt is never a
+  // prune candidate.
+  if (receipts.size > 0) {
+    const receiptEntries = planReceipts(receipts, receiptReadings, observedValueResolver(allObservedResources));
+    mergeReceiptEntries(merged, receipts, receiptEntries);
+  }
+
   merged.entries.sort((a, b) => a.name.localeCompare(b.name));
 
   // Say it on stderr too, so `--json` and `--report gitlab-mr` consumers (whose
-  // shapes have no room for it) still learn the plan has a hole (#1089).
-  const unobservedCount = summarize(merged).unobserved;
-  if (unobservedCount > 0) {
-    console.error(formatWarning({
-      message: `${unobservedCount} declared entity(ies) could not be observed — no create/update/delete is proposed for them. This plan is incomplete, not clean.`,
-    }));
+  // shapes have no room for it) still learn the plan has a hole (#1089). The
+  // `markdown` report carries the same wording in its own body instead — a
+  // reviewer reading a comment never sees this stderr.
+  for (const notice of unobservedPlanNotice(merged)) {
+    console.error(formatWarning({ message: notice }));
+  }
+
+  // Same reason as above (#1665): the `--json` and `--report gitlab-mr` shapes
+  // have no column for how much an update hurts.
+  for (const notice of disruptionNotices(merged)) {
+    console.error(formatWarning({ message: notice }));
   }
 
   // `--report gitlab-mr` emits the GitLab MR plan-widget artifact instead of the
@@ -1215,6 +1323,14 @@ export async function runLifecyclePlan(ctx: CommandContext): Promise<number> {
     return 0;
   }
 
+  // `--report markdown` emits the reviewer-facing projection (#1983) — a
+  // counts header, entries grouped and attributed to their lexicon, holes and
+  // disruption both carried in the body rather than left to stderr.
+  if (args.reportFile === "markdown") {
+    console.log(renderChangeSetMarkdown(merged));
+    return 0;
+  }
+
   if (args.json) {
     console.log(JSON.stringify(merged, null, 2));
   } else {
@@ -1222,6 +1338,227 @@ export async function runLifecyclePlan(ctx: CommandContext): Promise<number> {
   }
 
   return 0;
+}
+
+/**
+ * chant lifecycle teardown <environment> (#1222).
+ *
+ * Enumerates what deleting the environment would remove: every live resource
+ * carrying this project's ownership marker (managed-by + `ownership.stack`)
+ * with the requested env identity. Stateless — live markers only, no build, no
+ * snapshot. Without `--yes` nothing is deleted; with it the planned set is
+ * executed per lexicon with one bounded retry pass over failures, and every
+ * candidate's outcome is reported (deleted / failed / not-prunable / retained / skipped —
+ * never silence). A production-like environment name additionally requires an
+ * interactive confirmation, or `--confirm-prod` non-interactively.
+ */
+export async function runLifecycleTeardown(ctx: CommandContext): Promise<number> {
+  const { args, plugins } = ctx;
+  const environment = args.extraPositional;
+
+  if (!environment) {
+    console.error(formatError({ message: "Environment is required: chant lifecycle teardown <environment>" }));
+    return 1;
+  }
+
+  const { config } = await loadChantConfig(resolve("."));
+
+  // Refuse an env the project does not declare — a typo here is the difference
+  // between tearing down `dev` and tearing down `prod`. Literal `environments`
+  // entries only (#1221's pattern entries would extend this same check).
+  const envErr = unknownEnvError(environment, config.environments);
+  if (envErr) {
+    console.error(formatError({ message: envErr }));
+    return 1;
+  }
+
+  // Teardown selects on the ownership marker; a project that stamps none has
+  // nothing to key on, and "delete what looks like mine" is not a fallback.
+  const stack = resolveOwnershipStack(config);
+  if (stack === undefined) {
+    console.error(formatError({
+      message: "This project declares no ownership.stack — teardown is marker-scoped and has nothing to select on",
+      hint: 'Set `ownership: { stack: "<name>" }` in chant.config.ts and deploy, so resources carry the marker teardown keys on.',
+    }));
+    return 1;
+  }
+
+  // The prod guard (#1222): a production-like name never falls to `--yes`
+  // alone. Interactive runs re-type the environment name; non-interactive
+  // runs say `--confirm-prod` explicitly. Checked before any live read so a
+  // refused teardown touches nothing at all.
+  if (args.yes && isProdLikeEnvironment(environment) && !args.confirmProd) {
+    if (!process.stdin.isTTY) {
+      console.error(formatError({
+        message: `"${environment}" looks like a production environment — --yes alone is not enough`,
+        hint: "Re-run with --yes --confirm-prod to tear it down non-interactively.",
+      }));
+      return 1;
+    }
+    const confirmed = await promptProdTeardown(environment);
+    if (!confirmed) {
+      console.error(formatError({ message: "Confirmation did not match — nothing was deleted." }));
+      return 1;
+    }
+  }
+
+  // #1166 — teardown is always a live read (and with --yes, a live write), so
+  // an environment's declared endpoint applies here too, unless the ambient
+  // shell already set it.
+  const readingPlugins = plugins.filter((p) => p.teardownOwned || p.describeResources || p.executeTeardown);
+  const endpointResult = applyLiveEndpoint(config.environments, environment, readingPlugins);
+  if (endpointResult.notice) console.error(formatWarning({ message: endpointResult.notice }));
+
+  let plan: TeardownPlan;
+  let report: TeardownReport | undefined;
+  try {
+    // A multi-stack project's declared stacks, for stack-shaped teardowns
+    // (aws enumerates and deletes whole CloudFormation stacks). A single-stack
+    // project passes nothing and the env-named default convention applies.
+    const deployedStacks = (config.stacks ?? []).map((s) => ({
+      name: s.name,
+      ...(s.region ? { region: s.region } : {}),
+    }));
+    plan = await planTeardown({
+      environment,
+      stack,
+      plugins,
+      ...(deployedStacks.length > 0 ? { deployedStacks } : {}),
+    });
+    if (args.yes) {
+      report = await executeTeardown({
+        environment,
+        stack,
+        plugins,
+        plan,
+        ...(deployedStacks.length > 0 ? { deployedStacks } : {}),
+      });
+    }
+  } finally {
+    endpointResult.restore();
+  }
+
+  if (args.json) {
+    console.log(JSON.stringify(report ?? plan, null, 2));
+    return report && report.outcomes.some((o) => o.outcome === "failed") ? 1 : 0;
+  }
+
+  console.log(formatBold(
+    args.yes
+      ? `Teardown — environment: ${environment}, stack: ${stack}`
+      : `Teardown plan — environment: ${environment}, stack: ${stack} (plan only — nothing is deleted)`,
+  ));
+
+  if (plan.entries.length === 0) {
+    console.error(formatWarning({
+      message: `No live resources carry the marker stack "${stack}" + env "${environment}" — nothing would be deleted.` +
+        (plan.holes.length > 0
+          ? " But this plan has holes (below) — parts of the estate could not be read, so \"nothing\" is a claim about what was readable, not about the environment."
+          : " If this environment is deployed, check that its resources were stamped (ownership marking on, and the env identity resolved at build time)."),
+    }));
+  } else {
+    console.log(`\n${plan.entries.length} resource(s) would be deleted:`);
+    console.log("RESOURCE".padEnd(28) + "TYPE".padEnd(32) + "MARKER".padEnd(24) + "LEXICON");
+    console.log("-".repeat(96));
+    for (const entry of plan.entries) {
+      console.log(
+        entry.name.padEnd(28) +
+        entry.type.padEnd(32) +
+        `${entry.marker.stack}/${entry.marker.env}`.padEnd(24) +
+        entry.lexicon,
+      );
+    }
+  }
+
+  // Holes are loud (#1089): an unreadable kind is unknown, not absent, and the
+  // execution half must not treat this plan as the whole delete set.
+  if (plan.holes.length > 0) {
+    console.error(formatWarning({
+      message: `${plan.holes.length} hole(s) — resources chant may own but could not read. This plan is incomplete, not clean.`,
+    }));
+    console.log(formatBold("\nHOLES (stamped kinds the read could not cover):"));
+    for (const hole of plan.holes) {
+      console.log(`  ? ${hole.lexicon}: ${hole.name}${hole.type ? ` (${hole.type})` : ""} — ${hole.reason}${hole.detail ? `: ${hole.detail}` : ""}`);
+    }
+  }
+
+  if (plan.skipped.length > 0) {
+    console.error(formatWarning({
+      message: `Skipped (no teardown enumeration and no describeResources): ${plan.skipped.join(", ")} — those lexicons' resources are not in this plan.`,
+    }));
+  }
+
+  if (!report) {
+    console.error(formatWarning({ message: "Plan only — re-run with --yes to execute." }));
+    return 0;
+  }
+
+  if (report.outcomes.length > 0) {
+    console.log(formatBold("\nOutcomes:"));
+    console.log("RESOURCE".padEnd(28) + "OUTCOME".padEnd(14) + "LEXICON".padEnd(12) + "DETAIL");
+    console.log("-".repeat(96));
+    for (const o of report.outcomes) {
+      console.log(
+        o.name.padEnd(28) +
+        o.outcome.padEnd(14) +
+        o.lexicon.padEnd(12) +
+        (o.detail ?? "") +
+        (o.retried ? " (after retry)" : ""),
+      );
+    }
+  }
+
+  const counts = { deleted: 0, failed: 0, "not-prunable": 0, retained: 0, skipped: 0 };
+  for (const o of report.outcomes) counts[o.outcome]++;
+  console.log(
+    `\n${counts.deleted} deleted, ${counts.failed} failed, ${counts["not-prunable"]} not prunable, ` +
+    `${counts.retained} retained, ${counts.skipped} skipped`,
+  );
+
+  if (report.unimplemented.length > 0) {
+    console.error(formatWarning({
+      message: `Not executed (no teardown execution in these lexicons yet): ${report.unimplemented.join(", ")} — their candidates are reported as skipped, not deleted.`,
+    }));
+  }
+  if (counts.retained > 0) {
+    console.error(formatWarning({
+      message: `${counts.retained} resource(s) retained — owned by this env but deliberately kept (generated-once secrets are never swept). ` +
+        `The environment is NOT clean while they exist; delete them explicitly (e.g. kubectl delete) if you mean to.`,
+    }));
+  }
+  if (plan.holes.length > 0) {
+    console.error(formatWarning({
+      message: "This teardown ran over an incomplete plan (holes above) — the environment cannot be called clean.",
+    }));
+  }
+  if (counts.failed > 0) {
+    console.error(formatError({
+      message: `${counts.failed} candidate(s) failed to delete after the retry pass — see the outcomes above.`,
+    }));
+    return 1;
+  }
+
+  return 0;
+}
+
+/**
+ * The interactive half of the prod guard: the operator re-types the
+ * environment name. Anything else — including EOF — refuses.
+ */
+async function promptProdTeardown(environment: string): Promise<boolean> {
+  const { createInterface } = await import("node:readline");
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  return new Promise((resolvePrompt) => {
+    rl.question(
+      `"${environment}" looks like a production environment. Type the environment name to confirm teardown: `,
+      (answer) => {
+        resolvePrompt(answer.trim() === environment);
+        rl.close();
+      },
+    );
+    // EOF (Ctrl-D) closes the interface without answering — that is a refusal.
+    rl.on("close", () => resolvePrompt(false));
+  });
 }
 
 /**
@@ -1252,7 +1589,7 @@ export async function runLifecycleLog(ctx: CommandContext): Promise<number> {
 export async function runLifecycleUnknown(ctx: CommandContext): Promise<number> {
   console.error(formatError({
     message: `Unknown state subcommand: ${ctx.args.extraPositional ?? ctx.args.path}`,
-    hint: "Available: chant lifecycle snapshot, chant lifecycle show, chant lifecycle diff, chant lifecycle plan, chant lifecycle log",
+    hint: "Available: chant lifecycle snapshot, chant lifecycle show, chant lifecycle diff, chant lifecycle plan, chant lifecycle teardown, chant lifecycle log",
   }));
   return 1;
 }

@@ -1,0 +1,407 @@
+/**
+ * Render diffing (#1249 offline, #1250 live — epic #1228 Phase 6), the two
+ * halves of `chant helm diff` (./commands.ts).
+ *
+ * `diffRenders` (#1249) is the offline half: given two content digests
+ * already in the render store (render-store.ts), report what changed
+ * between them — no cluster, no credentials, no live read. This is the
+ * pre-flight question a pin, a chart bump, or a values change all raise:
+ * "what will this touch?"
+ *
+ * Pairing is document-level, keyed on `(kind, namespace, name)` — the same
+ * identity `RenderManifest.documents` already indexes (render-store.ts).
+ * That index exists precisely so two renders can be matched without
+ * reparsing a whole stream: a document present on both sides with the same
+ * per-document digest is unchanged and costs nothing further; one whose
+ * digest differs is parsed on both sides and diffed field by field.
+ *
+ * Field-level diffing reuses core's `flattenDeepProperties` /
+ * `deepValueEqual` (packages/core/src/deep-observation.ts) — the same
+ * path-flattening core's own live-drift diff (lifecycle/deep-diff.ts) is
+ * built on. This module does not reuse `diffDeep` itself for the offline
+ * path: that function's shape is declared/live/baseline/fieldOwners,
+ * tailored to a source tree vs a cluster read. A stored render has neither
+ * a baseline nor a field owner, and both sides here are equally "declared"
+ * — reusing the flatten/compare primitives without the three-way apparatus
+ * is the right cut for render-to-render.
+ *
+ * Duplicate documents (an aliased dependency emitting the same CRD twice,
+ * render-digest.ts's canonicalization note) are matched positionally within
+ * their `(kind, namespace, name)` group: first occurrence to first, second
+ * to second. A group with more entries on one side reports the surplus as
+ * added or removed rather than guessing which duplicate corresponds to
+ * which.
+ *
+ * A document neither side's manifest could index (unparseable, or missing
+ * `kind`/`metadata.name` — render-store.ts's `indexRenderDocuments`) cannot
+ * be paired by identity. It is never silently dropped: `unindexed` counts
+ * it on whichever side(s) it appears, so a diff over two renders that both
+ * carry unindexable documents does not quietly under-report.
+ *
+ * `diffRenderLive` (#1250) is the online complement: given a single
+ * `contentDigest` resolved from the render store, read the live property
+ * tree for every document the render recorded — by identity
+ * (kind/namespace/name), not by helm release — and diff each one against
+ * the render's own stored bytes with `lifecycle/deep-diff.ts`. This *does*
+ * reuse `diffDeep`'s three-way apparatus (via `diffDeepObservation`): the
+ * declared side is the render's stored documents, the live side is a
+ * cluster read, which is exactly that function's shape.
+ *
+ * The declared side for the live path is the render's stored documents,
+ * never a fresh `helm template` run and never a chant TS build. A digest
+ * not in the store — an unpinned render was never persisted
+ * (`render-store.ts`'s `persistHelmRender` refuses that) — has nothing to
+ * diff against and comes back `found: false`, never a false "no drift" over
+ * documents nobody has (epic AC: unpinned releases handled without false
+ * drift).
+ *
+ * The live side reuses the exact seam `observeResourcesDeepHelm` (#1247)
+ * uses — the k8s lexicon's typed client and normalization hooks — so a
+ * document this reads and one a release's `describeResources` reads compare
+ * under the same rules (secret masking, managed-fields ownership, pruning).
+ * Hook resources need no special handling here the way the release-scoped
+ * read needs a second `helm get hooks` channel: `helm template` (what
+ * produced the stored render) already includes hook manifests as ordinary
+ * documents, so they are simply rows in `manifest.documents` like any other.
+ */
+
+import yaml from "js-yaml";
+
+import { deepValueEqual, flattenDeepProperties, normalizeDeepObservation } from "@intentius/chant/deep-observation";
+import type { DeepDiffResult } from "@intentius/chant/lifecycle/deep-diff";
+import { diffDeepObservation } from "@intentius/chant/lifecycle/deep-observe";
+import type { K8sConnector } from "@intentius/chant-lexicon-k8s/api/connect";
+import { observeResourcesDeepK8s } from "@intentius/chant-lexicon-k8s/deep-observe";
+import { gvkToTypeName } from "@intentius/chant-lexicon-k8s/spec/parse";
+
+import { helmDeepNormalizationHooks } from "./deep-observe-hooks";
+import { CLUSTER_SCOPED_KINDS } from "./release-observe";
+import { loadRenderManifest, readRenderDocument, type RenderDocumentEntry, type RenderManifest } from "./render-store";
+
+// ---------------------------------------------------------------------------
+// Offline: render-to-render (#1249)
+// ---------------------------------------------------------------------------
+
+/** How one field within a changed document differs between the two renders. */
+export interface RenderFieldChange {
+  /** Path within the document's property tree (`spec.replicas`, `data.zeta`). */
+  path: string;
+  /**
+   * `changed` — both renders have the path, with different values.
+   * `added` — only the right-hand (`to`) render has it.
+   * `removed` — only the left-hand (`from`) render has it.
+   */
+  kind: "changed" | "added" | "removed";
+  /** Value on the `from` side. Absent for `added`. */
+  before?: unknown;
+  /** Value on the `to` side. Absent for `removed`. */
+  after?: unknown;
+}
+
+/** Identity of one document, for reporting — the same triple documents are paired on. */
+export interface RenderDiffDocumentRef {
+  kind: string;
+  namespace: string | null;
+  name: string;
+  /** The `# Source:` origin path, when the document carried one. */
+  source: string | null;
+}
+
+/** A document present on only one side. */
+export interface AddedOrRemovedDocument extends RenderDiffDocumentRef {
+  digest: string;
+}
+
+/** A document present on both sides with different content. */
+export interface ChangedDocument extends RenderDiffDocumentRef {
+  /** Per-document digest on the `from` side. */
+  beforeDigest: string;
+  /** Per-document digest on the `to` side. */
+  afterDigest: string;
+  /** Field-level differences, sorted by path. Empty only if a document parses but yields no leaves. */
+  changes: RenderFieldChange[];
+}
+
+export interface RenderDiffResult {
+  from: { contentDigest: string; chart: string; releaseName: string };
+  to: { contentDigest: string; chart: string; releaseName: string };
+  /** Present only on `to`. Sorted by kind/namespace/name. */
+  added: AddedOrRemovedDocument[];
+  /** Present only on `from`. Sorted by kind/namespace/name. */
+  removed: AddedOrRemovedDocument[];
+  /** Present on both, different bytes. Sorted by kind/namespace/name. */
+  changed: ChangedDocument[];
+  /** Present on both with equal per-document digest — reported as identities only, no field pass run. */
+  unchanged: RenderDiffDocumentRef[];
+  /**
+   * Documents each manifest's index could not identify — present in the
+   * stream (`docCount`) but absent from `documents` (unparseable, or no
+   * `kind` + `metadata.name`). Never matched, never silently dropped.
+   */
+  unindexed: { from: number; to: number };
+}
+
+function docKey(doc: Pick<RenderDocumentEntry, "kind" | "namespace" | "name">): string {
+  return `${doc.kind}\0${doc.namespace ?? ""}\0${doc.name}`;
+}
+
+function docRef(doc: RenderDocumentEntry): RenderDiffDocumentRef {
+  return { kind: doc.kind, namespace: doc.namespace, name: doc.name, source: doc.source };
+}
+
+/** Group a manifest's document entries by identity, preserving occurrence order for duplicate matching. */
+function groupByIdentity(documents: readonly RenderDocumentEntry[]): Map<string, RenderDocumentEntry[]> {
+  const groups = new Map<string, RenderDocumentEntry[]>();
+  for (const doc of documents) {
+    const key = docKey(doc);
+    const group = groups.get(key);
+    if (group) group.push(doc);
+    else groups.set(key, [doc]);
+  }
+  return groups;
+}
+
+function compareRefs(a: RenderDiffDocumentRef, b: RenderDiffDocumentRef): number {
+  return (
+    a.kind.localeCompare(b.kind) ||
+    (a.namespace ?? "").localeCompare(b.namespace ?? "") ||
+    a.name.localeCompare(b.name)
+  );
+}
+
+/**
+ * Field-level diff between a document's two parsed trees. Both sides are
+ * flattened with `flattenDeepProperties` (no ordering hooks — a stored
+ * render carries no lexicon to supply one, so arrays are compared
+ * positionally, exactly as the canonicalized bytes ordered them) and walked
+ * path by path.
+ */
+function diffDocumentFields(beforeText: string, afterText: string, entityType: string): RenderFieldChange[] {
+  const beforeTree = (yaml.load(beforeText) ?? {}) as Record<string, unknown>;
+  const afterTree = (yaml.load(afterText) ?? {}) as Record<string, unknown>;
+  const beforeFlat = flattenDeepProperties(beforeTree, { entityType, side: "declared" });
+  const afterFlat = flattenDeepProperties(afterTree, { entityType, side: "live" });
+
+  const paths = [...new Set([...beforeFlat.keys(), ...afterFlat.keys()])].sort();
+  const changes: RenderFieldChange[] = [];
+  for (const path of paths) {
+    const hasBefore = beforeFlat.has(path);
+    const hasAfter = afterFlat.has(path);
+    const beforeValue = beforeFlat.get(path);
+    const afterValue = afterFlat.get(path);
+    if (hasBefore && hasAfter && deepValueEqual(beforeValue, afterValue)) continue;
+    const kind: RenderFieldChange["kind"] = !hasBefore ? "added" : !hasAfter ? "removed" : "changed";
+    changes.push({
+      path,
+      kind,
+      ...(hasBefore ? { before: beforeValue } : {}),
+      ...(hasAfter ? { after: afterValue } : {}),
+    });
+  }
+  return changes;
+}
+
+export interface DiffRendersOptions {
+  /** Render store root override; defaults to `renderStoreRoot()`. */
+  root?: string;
+}
+
+/**
+ * Diff two renders already in the store, by content digest. Offline: every
+ * byte compared comes from the archive (render-store.ts), never a cluster.
+ *
+ * Throws when either digest has no manifest — a diff over a render nobody
+ * persisted is a usage error, not an empty report.
+ */
+export function diffRenders(from: string, to: string, options?: DiffRendersOptions): RenderDiffResult {
+  const opts = { root: options?.root };
+  const fromManifest = requireManifest(from, opts.root);
+  const toManifest = requireManifest(to, opts.root);
+
+  const fromGroups = groupByIdentity(fromManifest.documents);
+  const toGroups = groupByIdentity(toManifest.documents);
+
+  const added: AddedOrRemovedDocument[] = [];
+  const removed: AddedOrRemovedDocument[] = [];
+  const changed: ChangedDocument[] = [];
+  const unchanged: RenderDiffDocumentRef[] = [];
+
+  const keys = new Set([...fromGroups.keys(), ...toGroups.keys()]);
+  for (const key of keys) {
+    const fromEntries = fromGroups.get(key) ?? [];
+    const toEntries = toGroups.get(key) ?? [];
+    const pairCount = Math.min(fromEntries.length, toEntries.length);
+
+    for (let i = 0; i < pairCount; i++) {
+      const fromDoc = fromEntries[i];
+      const toDoc = toEntries[i];
+      if (fromDoc.digest === toDoc.digest) {
+        unchanged.push(docRef(fromDoc));
+        continue;
+      }
+      const fromRead = readRenderDocument(from, fromDoc, opts);
+      const toRead = readRenderDocument(to, toDoc, opts);
+      /* c8 ignore next 5 -- indexed entries always resolve; defensive only */
+      if (!fromRead || !toRead) {
+        throw new Error(
+          `render diff: indexed document ${fromDoc.kind}/${fromDoc.name} failed to resolve from its own store entry`,
+        );
+      }
+      changed.push({
+        ...docRef(fromDoc),
+        beforeDigest: fromDoc.digest,
+        afterDigest: toDoc.digest,
+        changes: diffDocumentFields(fromRead.text, toRead.text, fromDoc.kind),
+      });
+    }
+    for (let i = pairCount; i < fromEntries.length; i++) {
+      removed.push({ ...docRef(fromEntries[i]), digest: fromEntries[i].digest });
+    }
+    for (let i = pairCount; i < toEntries.length; i++) {
+      added.push({ ...docRef(toEntries[i]), digest: toEntries[i].digest });
+    }
+  }
+
+  return {
+    from: { contentDigest: fromManifest.contentDigest, chart: fromManifest.chart, releaseName: fromManifest.releaseName },
+    to: { contentDigest: toManifest.contentDigest, chart: toManifest.chart, releaseName: toManifest.releaseName },
+    added: added.sort(compareRefs),
+    removed: removed.sort(compareRefs),
+    changed: changed.sort(compareRefs),
+    unchanged: unchanged.sort(compareRefs),
+    unindexed: {
+      from: fromManifest.docCount - fromManifest.documents.length,
+      to: toManifest.docCount - toManifest.documents.length,
+    },
+  };
+}
+
+function requireManifest(contentDigest: string, root?: string): RenderManifest {
+  const manifest = loadRenderManifest(contentDigest, { root });
+  if (!manifest) {
+    throw new Error(
+      `no stored render for ${contentDigest} — resolve it first (chant helm renders), or check ` +
+        `CHANT_HELM_RENDER_ROOT if the store root was overridden.`,
+    );
+  }
+  return manifest;
+}
+
+/** True when the diff found no added, removed, or changed documents. */
+export function renderDiffIsEmpty(result: RenderDiffResult): boolean {
+  return result.added.length === 0 && result.removed.length === 0 && result.changed.length === 0;
+}
+
+// ---------------------------------------------------------------------------
+// Live: render-to-live (#1250)
+// ---------------------------------------------------------------------------
+
+export interface RenderLiveDiffOptions {
+  /** The stored render to diff against the cluster — a `contentDigest` from `chant helm renders`. */
+  contentDigest: string;
+  /** The chant environment the live read targets — resolves the k8s cluster binding (`k8s.profiles.<environment>.context`), same as any other live read. */
+  environment: string;
+  /** Render store root override (tests); defaults to `renderStoreRoot()`. */
+  root?: string;
+  owned?: boolean;
+}
+
+export interface RenderLiveDiffDeps {
+  /** Forwarded to the k8s reader — a test passes a fake cluster's connector. */
+  connect?: K8sConnector;
+}
+
+export type RenderLiveDiffOutcome =
+  | { found: true; manifest: RenderManifest; diff: DeepDiffResult }
+  /** No such render in the store — refuse the diff rather than report a false clean result. */
+  | { found: false; contentDigest: string };
+
+function splitApiVersion(apiVersion: string): { group: string; version: string } {
+  const slash = apiVersion.indexOf("/");
+  return slash > 0
+    ? { group: apiVersion.slice(0, slash), version: apiVersion.slice(slash + 1) }
+    : { group: "", version: apiVersion };
+}
+
+/** Row key convention shared with the release-scoped reads (#1246/#1247): `<Kind>/<namespace>/<name>`, `cluster:<Kind>/<name>`. */
+export function documentKey(kind: string, namespace: string | undefined, name: string): string {
+  return namespace ? `${kind}/${namespace}/${name}` : `cluster:${kind}/${name}`;
+}
+
+/**
+ * A namespace-silent document defaults to the render's target namespace —
+ * the same rule a deployed release applies to its manifest (`helm apply
+ * -n <ns>` targets whatever a namespace-silent object's `.Release.Namespace`
+ * would have filled in) — unless the kind is cluster-scoped, in which case a
+ * missing namespace is never defaulted.
+ */
+export function resolveDocumentNamespace(
+  kind: string,
+  declared: string | null,
+  renderNamespace: string | null,
+): string | undefined {
+  if (declared) return declared;
+  if (CLUSTER_SCOPED_KINDS.has(kind)) return undefined;
+  return renderNamespace ?? undefined;
+}
+
+/** The document minus the envelope the row's `type` already carries — mirrors `deep-observe.ts`'s `declaredTreeOf`. */
+function declaredTreeOf(doc: Record<string, unknown>, namespace: string | undefined): Record<string, unknown> {
+  const { apiVersion: _apiVersion, kind: _kind, ...rest } = doc;
+  const metadata = (rest.metadata ?? {}) as Record<string, unknown>;
+  return {
+    ...rest,
+    ...(namespace ? { metadata: { ...metadata, ...(metadata.namespace === undefined ? { namespace } : {}) } } : {}),
+  };
+}
+
+/**
+ * Diff one stored render's documents against the live cluster.
+ *
+ * `found: false` when `contentDigest` is not in the store — never fabricates
+ * a document, and never reports "no drift" over a render this has no bytes
+ * for. On a found render, every document indexed in its manifest becomes a
+ * synthetic declared entity (keyed like a release's rows), read live through
+ * the k8s lexicon's deep observer, and diffed property-by-property.
+ */
+export async function diffRenderLive(
+  options: RenderLiveDiffOptions,
+  deps: RenderLiveDiffDeps = {},
+): Promise<RenderLiveDiffOutcome> {
+  const manifest = loadRenderManifest(options.contentDigest, { root: options.root });
+  if (!manifest) return { found: false, contentDigest: options.contentDigest };
+
+  const entities = new Map<string, { entityType: string; props: Record<string, unknown> }>();
+  for (const docEntry of manifest.documents) {
+    const resolved = readRenderDocument(
+      options.contentDigest,
+      { kind: docEntry.kind, name: docEntry.name, namespace: docEntry.namespace },
+      { root: options.root },
+    );
+    if (!resolved) continue; // integrity gap between the index and the content — skip, never fabricate
+    const parsed: unknown = yaml.load(resolved.text);
+    if (parsed === null || typeof parsed !== "object") continue;
+    const namespace = resolveDocumentNamespace(docEntry.kind, docEntry.namespace, manifest.namespace);
+    const key = documentKey(docEntry.kind, namespace, docEntry.name);
+    const { group, version } = splitApiVersion(docEntry.apiVersion);
+    entities.set(key, {
+      entityType: gvkToTypeName({ group, version, kind: docEntry.kind }),
+      props: declaredTreeOf(parsed as Record<string, unknown>, namespace),
+    });
+  }
+
+  const k8sOptions = {
+    environment: options.environment,
+    buildOutput: "",
+    entityNames: [...entities.keys()],
+    entities,
+    ...(options.owned !== undefined ? { owned: options.owned } : {}),
+  };
+  const raw = deps.connect
+    ? await observeResourcesDeepK8s(k8sOptions, deps.connect)
+    : await observeResourcesDeepK8s(k8sOptions);
+  const live = normalizeDeepObservation(raw);
+  const diff = diffDeepObservation(entities, live, helmDeepNormalizationHooks);
+
+  return { found: true, manifest, diff };
+}

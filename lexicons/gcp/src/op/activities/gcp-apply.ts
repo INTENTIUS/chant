@@ -427,6 +427,21 @@ export function orderByReferences(resources: GcpResource[]): GcpResource[] {
 
 // ── Resolution + HTTP ─────────────────────────────────────────────────────────
 
+/**
+ * Resolve the endpoint override (#1449): an explicit `endpoint` arg wins, then
+ * the `GCP_ENDPOINT_URL` env — the same variable the read path honours
+ * (`describe-resources`, floci-gcp), so an apply lands wherever `--live` is
+ * already looking. `undefined` means no override: each kind falls back to its
+ * real-GCP host. The same rule the aws applier applies to `AWS_ENDPOINT_URL`
+ * (#1694) and the fly applier to `FLY_FLAPS_BASE_URL`. Pure.
+ */
+export function resolveGcpEndpoint(
+  args: { endpoint?: string } = {},
+  env: NodeJS.ProcessEnv = process.env,
+): string | undefined {
+  return args.endpoint || env.GCP_ENDPOINT_URL || undefined;
+}
+
 /** Resolve the project: `GOOGLE_CLOUD_PROJECT` env, else the CNRM project-id annotation. Pure. */
 export function resolveGcpProject(resource: GcpResource, env: NodeJS.ProcessEnv = process.env): string {
   const project = env.GOOGLE_CLOUD_PROJECT || resource.metadata?.annotations?.[PROJECT_ID_ANNOTATION];
@@ -585,7 +600,8 @@ export function parseManifest(content: string, path: string): GcpResource[] {
 export interface GcpApplyArgs {
   /** Path to a built CNRM manifest (YAML multi-doc or JSON). */
   manifestPath: string;
-  /** GCS/GCP endpoint override for all kinds (e.g. floci-gcp `:4588`). Default: each kind's real-GCP host. */
+  /** GCS/GCP endpoint override for all kinds (e.g. floci-gcp `:4588`).
+   * Default: `GCP_ENDPOINT_URL` env, else each kind's real-GCP host. */
   endpoint?: string;
   /** Project override. Default: `GOOGLE_CLOUD_PROJECT` env / CNRM annotation. */
   project?: string;
@@ -742,8 +758,9 @@ export async function gcpApply(
   notPrunable: GcpNotPrunable[];
 }> {
   const resources = orderByReferences(parseManifest(readFileSync(args.manifestPath, "utf8"), args.manifestPath));
+  const endpoint = resolveGcpEndpoint(args);
   const resolve = (mapper: ResourceMapper, resource?: GcpResource) => ({
-    base: (args.endpoint ?? mapper.defaultHost).replace(/\/$/, ""),
+    base: (endpoint ?? mapper.defaultHost).replace(/\/$/, ""),
     project: args.project ?? (resource ? resolveGcpProject(resource) : ""),
   });
 
@@ -831,7 +848,7 @@ export async function gcpDelete(
       notAttempted.push({ kind, name: r.metadata?.name ?? "?", reason: "unsupported-kind" });
       continue;
     }
-    const base = (args.endpoint ?? mapper.defaultHost).replace(/\/$/, "");
+    const base = (resolveGcpEndpoint(args) ?? mapper.defaultHost).replace(/\/$/, "");
     const project = args.project ?? resolveGcpProject(r);
     safeHeartbeat({ step: "gcpDelete", kind: mapper.kind, name: r.metadata?.name });
     const result = await deleteResource(mapper, r, { base, project }, http, signal);

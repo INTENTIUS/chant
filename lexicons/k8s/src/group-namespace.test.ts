@@ -27,6 +27,18 @@ describe("namespaceSegmentForGroup", () => {
   test("the toolkit groups collapse to Flux", () => {
     expect(namespaceSegmentForGroup("kustomize.toolkit.fluxcd.io")).toBe("Flux");
   });
+
+  test("serving.kserve.io takes the KServe override", () => {
+    expect(namespaceSegmentForGroup("serving.kserve.io")).toBe("KServe");
+  });
+
+  test("cluster.x-k8s.io takes the CAPI override, avoiding the Cluster::Cluster stutter", () => {
+    expect(namespaceSegmentForGroup("cluster.x-k8s.io")).toBe("CAPI");
+  });
+
+  test("infrastructure.cluster.x-k8s.io is not overridden — first segment reads fine", () => {
+    expect(namespaceSegmentForGroup("infrastructure.cluster.x-k8s.io")).toBe("Infrastructure");
+  });
 });
 
 // #1628: rendered and imported entityTypes used to bypass the overrides, so a
@@ -60,5 +72,24 @@ spec:
 
     expect(ir.resources.length).toBe(1);
     expect(ir.resources[0].type).toBe("K8s::Argo::Application");
+  });
+
+  test("an imported InferenceService is typed K8s::KServe::InferenceService", () => {
+    const ir = new K8sParser().parse(`
+apiVersion: serving.kserve.io/v1beta1
+kind: InferenceService
+metadata:
+  name: sklearn-iris
+  namespace: kserve-test
+spec:
+  predictor:
+    model:
+      modelFormat:
+        name: sklearn
+      storageUri: gs://kfserving-examples/models/sklearn/1.0/model
+`);
+
+    expect(ir.resources.length).toBe(1);
+    expect(ir.resources[0].type).toBe("K8s::KServe::InferenceService");
   });
 });

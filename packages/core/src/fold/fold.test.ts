@@ -151,6 +151,47 @@ describe("fold — cross-resource attribute refs", () => {
     expect(foldResult).toEqual(runResult);
     expect(foldResult).toEqual({ __attrRef: { entity: "bucket", attribute: "arn" } });
   });
+
+  // chant #1535 — the const is not a bare `new` but a conditional that yields
+  // one. Indexing the folded `{__resource}` envelope by the attribute name
+  // returned `undefined`, so `Principal: { Federated: provider.Arn }` emitted
+  // `Principal: {}` with no diagnostic.
+  test("property access on a const bound to a conditional `new` becomes the same symbolic ref", () => {
+    const src = `
+      const flag = true;
+      const provider = flag ? new OIDCProvider({ Url: "https://x" }) : undefined;
+      const ref = provider.Arn;
+      const nested = { Principal: { Federated: provider ? provider.Arn : "fallback" } };
+    `;
+    expect(foldConst(src, "ref")).toEqual({ __attrRef: { entity: "provider", attribute: "Arn" } });
+    expect(foldConst(src, "nested")).toEqual({
+      Principal: { Federated: { __attrRef: { entity: "provider", attribute: "Arn" } } },
+    });
+  });
+
+  test("element access on a const bound to a conditional `new` becomes the same symbolic ref", () => {
+    const src = `
+      const provider = true ? new OIDCProvider({}) : undefined;
+      const ref = provider["Arn"];
+    `;
+    expect(foldConst(src, "ref")).toEqual({ __attrRef: { entity: "provider", attribute: "Arn" } });
+  });
+
+  test("the untaken branch still folds to undefined, as the run path would see it", () => {
+    const src = `
+      const provider = false ? new OIDCProvider({}) : undefined;
+      const ref = provider ? provider.Arn : "fallback";
+    `;
+    expect(foldConst(src, "ref")).toBe("fallback");
+  });
+
+  test("attribute read on an inline resource expression throws a located FoldError rather than folding to undefined", () => {
+    const src = `
+      const ref = (true ? new OIDCProvider({}) : undefined).Arn;
+    `;
+    expect(() => foldConst(src, "ref")).toThrow(FoldError);
+    expect(() => foldConst(src, "ref")).toThrow(/attribute "Arn" read on an inline resource expression is not foldable/);
+  });
 });
 
 describe("fold — element access", () => {
@@ -394,7 +435,11 @@ describe("fold — registered call-form intrinsics (#1044)", () => {
     expect(() => fold(expr, consts, [REF])).toThrow(FoldError);
   });
 
-  test("an array method taking a closure is rejected — .map is arbitrary JS, not a registered intrinsic", () => {
+  test("an array method taking a closure is rejected — the closure argument, not .map itself, is what fails (chant #1966)", () => {
+    // chant #1966 — `.map` is now attempted (a real method on a real folded
+    // array), so the rejection moves from "no case for this call" to the
+    // closure argument itself: a function used as a value is never foldable,
+    // with or without a registered intrinsic inside it.
     const consts = parseConsts(`const cidrs = ["10.0.0.0/24"]; const x = cidrs.map((c) => Ref(c));`);
     const expr = consts.get("x");
     if (!expr) throw new Error("fixture error");
@@ -405,7 +450,7 @@ describe("fold — registered call-form intrinsics (#1044)", () => {
       error = e;
     }
     expect(error).toBeInstanceOf(FoldError);
-    expect((error as FoldError).message).toContain("cidrs.map(...)");
+    expect((error as FoldError).message).toContain("a function used as a value is not foldable");
   });
 
   test("a user-defined function is rejected however it's named", () => {

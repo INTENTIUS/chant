@@ -1,6 +1,6 @@
 {
   "name": "@intentius/chant-lexicon-fly",
-  "version": "0.44.14",
+  "version": "0.52.1",
   "type": "module",
   "files": [
     "src/",
@@ -24,6 +24,11 @@
       "development": "./src/detect.ts",
       "types": "./dist/detect.d.ts",
       "default": "./src/detect.ts"
+    },
+    "./components": {
+      "development": "./src/components/index.ts",
+      "types": "./dist/components/index.d.ts",
+      "default": "./src/components/index.ts"
     },
     "./op/activities": {
       "development": "./src/op/activities/index.ts",
@@ -57,7 +62,7 @@
     "typescript": "^5.9.3"
   },
   "peerDependencies": {
-    "@intentius/chant": "^0.44.14",
+    "@intentius/chant": "^0.52.1",
     "typescript": "^5.9.3"
   },
   "description": "Fly.io Machines lexicon for chant — declarative IaC in TypeScript",

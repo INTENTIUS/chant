@@ -18,7 +18,7 @@ produces two files from the same in-memory model:
 
 `src/policies.ts` imports `ReadAction`, `WriteAction`, `DeleteAction` and
 `UserUid` from the lexicon. Those come from `schema.cedarschema` by way of
-`chant generate` — so an action the schema never declared, or an entity type
+`chant cedar generate` — so an action the schema never declared, or an entity type
 name with a typo in it, fails to compile. Cedar's own validator catches the
 same class of mistake, but only after the policy text has been written and
 only if it is run.
@@ -37,5 +37,9 @@ export default {
 } satisfies ChantConfig;
 ```
 
-Edit the schema, re-run `chant generate`, and a renamed entity type becomes a
-compiler-guided refactor rather than a find-and-replace over policy text.
+Edit the schema, re-run `chant cedar generate`, and a renamed entity type
+becomes a compiler-guided refactor rather than a find-and-replace over policy
+text. In a consumer project the output lands in `src/generated/cedar/` and the
+policies import from there; this example imports from the package because its
+schema is a subset of the one the package bundles, so it builds in the
+monorepo with no generate step.

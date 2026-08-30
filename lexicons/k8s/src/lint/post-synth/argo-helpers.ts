@@ -6,7 +6,7 @@
  * Excluded from check auto-discovery by the "helper" filename filter.
  */
 import type { PostSynthContext } from "@intentius/chant/lint/post-synth";
-import { getPrimaryOutput, parseK8sManifests, type K8sManifest } from "./k8s-helpers";
+import { docsToManifests, type K8sManifest } from "./k8s-helpers";
 
 /** The always-present, in-cluster Argo destination. */
 export const IN_CLUSTER_SERVER = "https://kubernetes.default.svc";
@@ -17,11 +17,7 @@ export const CLUSTER_SECRET_TYPE_LABEL = "argocd.argoproj.io/secret-type";
 
 /** All manifests across every lexicon output. */
 export function allManifests(ctx: PostSynthContext): K8sManifest[] {
-  const manifests: K8sManifest[] = [];
-  for (const [, output] of ctx.outputs) {
-    manifests.push(...parseK8sManifests(getPrimaryOutput(output)));
-  }
-  return manifests;
+  return docsToManifests(ctx);
 }
 
 /** Manifests of a given Argo kind. */

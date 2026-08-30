@@ -51,6 +51,28 @@ export function findResourceRefs(value: unknown): Set<string> {
 }
 
 /**
+ * Build the reverse of `findResourceRefs` for a whole template: logical id →
+ * the set of logical ids whose Properties reference it via Ref/Fn::GetAtt.
+ * Lets a check walk the graph consumer-ward (who uses this role?) instead of
+ * dependency-ward. Used by WAW059.
+ */
+export function buildReverseRefIndex(template: CFTemplate): Map<string, Set<string>> {
+  const index = new Map<string, Set<string>>();
+  for (const [logicalId, resource] of Object.entries(template.Resources ?? {})) {
+    for (const target of findResourceRefs(resource.Properties)) {
+      if (target === logicalId) continue;
+      let consumers = index.get(target);
+      if (!consumers) {
+        consumers = new Set();
+        index.set(target, consumers);
+      }
+      consumers.add(logicalId);
+    }
+  }
+  return index;
+}
+
+/**
  * Check if a value is a CloudFormation intrinsic function (Ref, Fn::*, etc.)
  * that cannot be statically evaluated.
  */
@@ -145,6 +167,46 @@ export function getContainerDefinitions(resource: CFResource): Array<Record<stri
  */
 export function isFullTierEnv(env: string | undefined): boolean {
   return env === "prod" || env === "production" || env === "full";
+}
+
+/**
+ * Parse an IPv4 CIDR literal ("10.0.0.0/16") into its numeric base address
+ * and prefix length. Returns null for anything that isn't a plain IPv4 CIDR
+ * (IPv6, malformed octets, out-of-range prefix) — callers treat that as
+ * "can't prove statically" rather than an error.
+ */
+export function parseIpv4Cidr(cidr: string): { base: number; prefix: number } | null {
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})\/(\d{1,2})$/.exec(cidr.trim());
+  if (!m) return null;
+  const octets = m.slice(1, 5).map(Number);
+  if (octets.some((o) => o < 0 || o > 255)) return null;
+  const prefix = Number(m[5]);
+  if (prefix < 0 || prefix > 32) return null;
+  const base = ((octets[0] << 24) | (octets[1] << 16) | (octets[2] << 8) | octets[3]) >>> 0;
+  return { base, prefix };
+}
+
+/** [networkAddress, broadcastAddress] for a parsed IPv4 CIDR block. */
+function ipv4Range(cidr: { base: number; prefix: number }): [number, number] {
+  const maskBits = cidr.prefix === 0 ? 0 : (0xffffffff << (32 - cidr.prefix)) >>> 0;
+  const network = (cidr.base & maskBits) >>> 0;
+  const broadcast = (network | (~maskBits >>> 0)) >>> 0;
+  return [network, broadcast];
+}
+
+/**
+ * Whether `inner` (an IPv4 CIDR literal) falls entirely within `outer`.
+ * Returns null — not false — when either literal isn't a plain, parseable
+ * IPv4 CIDR (e.g. IPv6, or a CloudFormation intrinsic already stringified
+ * elsewhere); a null means "statically unprovable", not "violation".
+ */
+export function ipv4CidrContains(outer: string, inner: string): boolean | null {
+  const outerCidr = parseIpv4Cidr(outer);
+  const innerCidr = parseIpv4Cidr(inner);
+  if (!outerCidr || !innerCidr) return null;
+  const [oStart, oEnd] = ipv4Range(outerCidr);
+  const [iStart, iEnd] = ipv4Range(innerCidr);
+  return iStart >= oStart && iEnd <= oEnd;
 }
 
 /**

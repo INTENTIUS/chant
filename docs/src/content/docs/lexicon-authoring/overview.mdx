@@ -1,6 +1,7 @@
 ---
 title: Lexicon Authoring Overview
 description: When and how to create a custom lexicon plugin for chant
+diataxis: explanation
 ---
 
 import Diagram from '../../../components/Diagram.astro';
@@ -61,6 +62,7 @@ Every lexicon must implement these 4 methods to support the full generation and 
 | `generate` | `(options?) => Promise<void>` | Generate lexicon artifacts (types, registry, runtime) from upstream spec |
 | `validate` | `(options?) => Promise<void>` | Validate generated artifacts |
 | `coverage` | `(options?) => Promise<void>` | Analyze spec coverage across resource dimensions |
+| `coverageReport` | `() => Promise<{ unaccountedKinds?: string[] }>` | Offline kind accounting; check-lexicon fails when any kind is unaccounted |
 | `package` | `(options?) => Promise<void>` | Package lexicon into a distributable bundle |
 
 ### Optional members
@@ -78,6 +80,7 @@ family beyond the two best-known readers was missing from it.
 | `declarativeRules()` | `RuleSpec[]` | Declarative lint rules (compiled via `rule()`). No shipped lexicon uses this — see [Write Lint Rules](/chant/lexicon-authoring/lint-rules/) |
 | `postSynthChecks()` | `PostSynthCheck[]` | Post-build validation checks |
 | `auditCatalog()` | `Record<string, RuleMeta>` | Title, tier, fix kind and authority for this lexicon's checks, for `chant audit` — see [Post-Synth Checks](/chant/lexicon-authoring/post-synth-checks/) |
+| `auditEntities()` | `Map<string, Declarable>` | Parse standalone manifest content into the entity graph so entity-reading checks fire on `chant audit` (parse-to-graph). Must tolerate malformed input |
 
 **Language surface**
 
@@ -106,9 +109,12 @@ family beyond the two best-known readers was missing from it.
 | `observeResourcesDeep()` | `DeepObservationResult` | The full live property tree per entity, for property-level drift |
 | `deepNormalizationHooks` | `DeepNormalizationHooks` | Which fields are server-populated or order-insensitive, applied to both the live and declared trees |
 | `observeDependencies()` | `DependencyObservation` | What the estate *relies on* but does not declare — a shared subnet, another team's network |
+| `classifyDisruption()` | `Record<string, DisruptionVerdict>` | Whether applying a pending `update` replaces the resource or mutates it in place, from the spec this lexicon compiled. Every degradation is `unknown` |
 | `ambientKinds()` | `string[]` | Kinds this lexicon can enumerate beyond the declared estate, so a caller knows `--ambient` is relevant without paying for a scan |
 | `observeAmbient()` | `Record<string, ResourceMetadata>` | Resources of a managed kind that exist while being neither declared nor referenced — the unattached security group |
 | `describeStackStatus()` | `StackStatusObservation \| null` | Whether one deploy unit is present and healthy, by deployed name. For multi-stack component projects |
+| `teardownOwned()` | `TeardownEnumeration` | What this lexicon would delete for one marker identity (stack + env) — enumeration only; unreadable kinds report as holes |
+| `executeTeardown()` | `TeardownExecution` | Delete the handed-over teardown candidates, one outcome per candidate (deleted / failed / not-prunable / retained with reason) — core retries failures once |
 | `listArtifacts()` | `Record<string, ArtifactMetadata>` | Runtime artifacts rather than 1:1 resources — Helm releases, Docker containers |
 | `ownershipChannel` | `OwnershipChannel` | Where this lexicon can stamp and read chant's ownership marker, per read path |
 | `referenceCatalog` | `ReferenceCatalog` | How observed resources reference each other, so `chant graph --live` can rebuild edges from a bag of nodes |
@@ -127,6 +133,7 @@ family beyond the two best-known readers was missing from it.
 | `commands()` | `CommandGroup` | A CLI verb group mounted under `chant <name> <verb>` — core dispatches to it wholesale and knows nothing about what's inside |
 | `emulator` | `EmulatorCapability` or a list of them | Local emulator(s) `chant emulator` boots — see [Declaring a Local Emulator](/chant/lexicon-authoring/emulator/) |
 | `generateComponentPipeline()` | `ComponentPipelineResult` | Turn the component graph into CI YAML. CI-provider lexicons only (gitlab, github, forgejo) |
+| `generateOpPipeline()` | `OpPipelineResult` | Turn a set of scheduled Ops into cron-triggered CI YAML, one file per Op. CI-provider lexicons only (gitlab, github, forgejo) |
 | `buildRoots()` | `Promise<BuildRootContribution>` | Render config-declared build roots that are not typed chant source into entities, merged into the build before partitioning — k8s implements it for `k8s.kustomize.roots` |
 | `configSchema` | `ZodObject` | The shape of this lexicon's own `chant.config.ts` namespace — see [Owning a config namespace](#owning-a-config-namespace) |
 | `upstreamPin` | `UpstreamPin` | How this lexicon pins its upstream schema and where to look for a newer one, for self-upgrade tooling |

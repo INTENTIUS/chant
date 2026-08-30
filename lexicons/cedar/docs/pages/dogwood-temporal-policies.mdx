@@ -1,0 +1,321 @@
+---
+title: "Temporal Policies"
+description: "The typed builders, the parser primitives, and which operators are really macros."
+diataxis: reference
+group: "Dogwood"
+---
+
+A `Dogwood::TemporalPolicy` is a `Cedar::Policy` with three extra clause
+forms. Upstream's policy grammar differs from Cedar's in exactly one rule:
+
+```
+cond = { cond_kw ~ (extension_marker | guardrails_tag? ~ "{" ~ expr ~ "}") }
+```
+
+| Prop | Emits | What it is |
+|---|---|---|
+| `when` / `unless` | `when { … }` | Ordinary Cedar expression strings, same as `Cedar::Policy` |
+| `whenGuardrails` / `unlessGuardrails` | `when guardrails { … }` | A Cedar expression with a tag upstream discards when lowering. It marks a clause for a reader; it does not change what the policy means |
+| `whenTemporal` / `unlessTemporal` | `when temporal { … }` | The temporal sub-language, dispatched to a different parser |
+
+Clause order in the emitted file is fixed — every `when` form, then every
+`unless` form — rather than taken from the author. Conditions are a
+conjunction, so order carries no meaning, and fixing it means a policy that
+gains a temporal clause does not reshuffle the clauses already there.
+
+## The primitives
+
+These seven are the whole temporal keyword set in upstream's
+`extension/temporal/grammar.pest`. Everything else you will read about dogwood
+is built out of them.
+
+| Builder | Renders | Notes |
+|---|---|---|
+| `formerly(w, φ)` | `formerly within 1h φ` | φ held at some point in the window |
+| `previous(w, φ)` | `previous within 30s φ` | φ held at the immediately preceding timepoint in the window |
+| `since(φ, w, ψ)` | `φ since within 1h ψ` | Infix; φ has held continuously since ψ |
+| `exists(binder, φ)` | `exists (total: Long). φ` | Binds a value for the body to compare |
+| `tp(binder)` | `tp(t)` | Binds the timepoint under evaluation |
+| `count(binders, φ)` | `count for (t: Timepoint). where φ` | The aggregation domain is mandatory |
+| `sum(over, binders, φ)` | `sum a for (a: Long), (t: Timepoint). where φ` | `over` names the summed variable |
+
+Plus `and`, `not`, `compare`, and `predicate` for an event head.
+
+Two properties of the operator set are worth stating plainly. All of them are
+**past-only** — there is no future operator, and no way to write one. And
+`formerly`, `previous` and `since` all carry a **mandatory window**: an
+integer and one of `s`, `m`, `h`, `d`, and nothing else. The builders take the
+window as an argument, so a windowless operator has nowhere to live; DWDC012
+catches the ones that arrive by other routes.
+
+## Four policies
+
+Approval before action:
+
+```typescript
+import { TemporalPolicy, dogwood } from "@intentius/chant-lexicon-cedar";
+
+export const readAfterLogin = new TemporalPolicy({
+  annotations: { id: "read_after_login" },
+  action: { eq: 'Drupe::Action::"Read"' },
+  whenTemporal: [
+    dogwood.formerly(
+      "1h",
+      dogwood.predicate('Drupe::Action::"Login"', "response", {
+        "input.user": dogwood.ctx("input.user"),
+      }),
+    ),
+  ],
+});
+```
+
+A rate limit, from the `count` primitive:
+
+```typescript
+export const rateLimited = new TemporalPolicy({
+  annotations: { id: "rate_limited" },
+  action: { eq: 'Drupe::Action::"Transfer"' },
+  whenTemporal: [
+    dogwood.compare(
+      dogwood.count(
+        [dogwood.typedBinder("t", "Timepoint")],
+        dogwood.formerly(
+          "15m",
+          dogwood.and(dogwood.predicate('Drupe::Action::"Transfer"', "request"), dogwood.tp("t")),
+        ),
+      ),
+      "<",
+      5,
+    ),
+  ],
+});
+```
+
+A budget, from `sum` behind a macro, with `exists` naming the total:
+
+```typescript
+import { TemporalMacroLibrary, TemporalPolicy, dogwood } from "@intentius/chant-lexicon-cedar";
+
+const sumFormerly = dogwood.defTemporalMacro(
+  "sum_formerly",
+  ["?a", "?w", "?body"],
+  dogwood.sum(
+    "?a",
+    [dogwood.typedBinder("?a", "Long"), dogwood.typedBinder("$t", "Timepoint")],
+    dogwood.formerly(
+      dogwood.macroWindow("?w"),
+      dogwood.and(dogwood.macroCondition("?body"), dogwood.tp("$t")),
+    ),
+  ),
+  "Sums the numeric value `?a` over occurrences of `?body` within window `?w`.",
+);
+
+export const library = new TemporalMacroLibrary({ macros: [sumFormerly], inline: true });
+
+export const transferBudget = new TemporalPolicy({
+  annotations: { id: "transfer_sum_over_100" },
+  action: { eq: 'Drupe::Action::"Alert"' },
+  whenTemporal: [
+    dogwood.exists(
+      dogwood.typedBinder("total", "Long"),
+      dogwood.and(
+        dogwood.compare(
+          dogwood.call("sum_formerly", [
+            dogwood.varRef("a"),
+            dogwood.interval("1h"),
+            dogwood.predicate('Drupe::Action::"Transfer"', "request", {
+              "input.user": dogwood.varRef("_"),
+              "input.amount": dogwood.varRef("a"),
+            }),
+          ]),
+          "==",
+          dogwood.varRef("total"),
+        ),
+        dogwood.compare(dogwood.varRef("total"), ">", 100),
+      ),
+    ),
+  ],
+});
+```
+
+Sequencing, with a guardrail and a break-glass exemption:
+
+```typescript
+export const noToolAfterSensitiveRead = new TemporalPolicy({
+  effect: "forbid",
+  annotations: { id: "no_tool_after_sensitive_read" },
+  action: { eq: 'Drupe::Action::"Invoke"' },
+  whenGuardrails: ['context.input.tool != "audit"'],
+  whenTemporal: [
+    dogwood.since(
+      dogwood.predicate('Drupe::Action::"Read"', "response", {
+        "output.classification": dogwood.varRef("c"),
+      }),
+      "30m",
+      dogwood.predicate('Drupe::Action::"Login"', "request"),
+    ),
+  ],
+  unless: ['principal in Drupe::Group::"breakglass"'],
+});
+```
+
+Those four emit this, and the golden test in `src/dogwood/serialize.test.ts`
+pins it byte for byte:
+
+```
+// Sums the numeric value `?a` over occurrences of `?body` within window `?w`.
+def temporal sum_formerly(?a, ?w, ?body) {
+    sum ?a for (?a: Long), ($t: Timepoint). where formerly within ?w (?body && tp($t))
+};
+
+@id("read_after_login")
+permit (
+  principal,
+  action == Drupe::Action::"Read",
+  resource
+)
+when temporal {
+    formerly within 1h Drupe::Action::"Login"::response{ input.user: context.input.user }
+};
+
+@id("transfer_sum_over_100")
+permit (
+  principal,
+  action == Drupe::Action::"Alert",
+  resource
+)
+when temporal {
+    exists (total: Long). (sum_formerly(a, 1h, Drupe::Action::"Transfer"::request{ input.user: _, input.amount: a })) == total && total > 100
+};
+
+@id("no_tool_after_sensitive_read")
+forbid (
+  principal,
+  action == Drupe::Action::"Invoke",
+  resource
+)
+when guardrails { context.input.tool != "audit" }
+when temporal {
+    Drupe::Action::"Read"::response{ output.classification: c } since within 30m Drupe::Action::"Login"::request{}
+}
+unless { principal in Drupe::Group::"breakglass" };
+
+@id("rate_limited")
+permit (
+  principal,
+  action == Drupe::Action::"Transfer",
+  resource
+)
+when temporal {
+    (count for (t: Timepoint). where formerly within 15m (Drupe::Action::"Transfer"::request{} && tp(t))) < 5
+};
+```
+
+## Primitives versus macros
+
+This is the distinction to get right, and the reason the builder list above is
+shorter than most write-ups of dogwood.
+
+`count_within`, `sum_within` and `count_distinct_within` are **not**
+operators. They are macros defined in
+`dogwood-language/configuration/default_macros.dw`, alongside `bind`:
+
+```
+def temporal count_within(?w, ?s) {
+    count for ($t: Timepoint). where (formerly within ?w (?s && tp($t)))
+};
+```
+
+`once` is not even that. It appears in upstream's examples as an ordinary
+user-defined macro and ships in no library at all. (The grammar rule behind
+`formerly` is internally named `once_op`, which is where the confusion
+starts.) If you want `once`, define it — chant will not pretend it exists.
+
+A caller who passes `--macros` replaces the entire default library, so a
+policy built on `count_within` is a policy built on an assumption about the
+far end. chant therefore exposes the four as **calls**:
+
+```typescript
+dogwood.countWithin("15m", dogwood.predicate('Drupe::Action::"Transfer"', "request"));
+// count_within(15m, Drupe::Action::"Transfer"::request{})
+```
+
+A call that resolves to nothing at the other end is a missing-macro error,
+which is comprehensible. A first-class builder emitting a name the callee's
+library does not define would be a mystery.
+
+The way to stop assuming is to emit the definitions yourself:
+
+```typescript
+import { TemporalMacroLibrary, dogwood } from "@intentius/chant-lexicon-cedar";
+
+export const macros = new TemporalMacroLibrary({ macros: dogwood.defaultMacroLibrary() });
+```
+
+That writes `macros.dw` with upstream's four definitions verbatim. With
+`inline: true` they go at the top of `policies.dw` instead, and a policy set's
+own `def` shadows a same-named library macro — which makes inlining the
+strongest form: the definitions travel with the policies and win over whatever
+`--macros` the caller supplies.
+
+## Writing macros
+
+```typescript
+dogwood.defTemporalMacro("once", ["?w", "?s"], dogwood.formerly(dogwood.macroWindow("?w"), dogwood.macroCondition("?s")));
+dogwood.defCedarMacro("is_small", ["?n"], "?n < 100");
+```
+
+Two sigils, and they are not interchangeable:
+
+- `?p` splices the call-site argument literally. Build one with
+  `macroWindow("?w")` in window position, `macroCondition("?s")` in condition
+  position, `macroTerm("?a")` in term position.
+- `$t` is a fresh binder the macro introduces, gensym'd at every expansion.
+
+Both are legal only inside a macro body; upstream's well-formedness pass
+rejects them anywhere else, so the builders validate them at definition time.
+
+A call site supplies a window as a **bare interval** — `once(1h, …)`, no
+`within` — because the keyword belongs to the operator and stays in the body.
+That is `dogwood.interval("1h")`.
+
+## Terms
+
+Numbers and booleans lift to literals. A bare string does not, and that is
+deliberate: `"alice"` is a Cedar string literal and `alice` is a binder
+reference, and guessing which one was meant is how a policy silently stops
+matching.
+
+| Builder | Renders |
+|---|---|
+| `str("alice")` | `"alice"` |
+| `varRef("a")` | `a` |
+| `ctx("input.user")` | `context.input.user` |
+| `scopeRef("principal", "dept")` | `principal.dept` |
+| `entityUid('Drupe::OAuthUser::"alice"')` | `Drupe::OAuthUser::"alice"` |
+| `decimalOf("1.50")` | `decimal("1.50")` |
+| `arrayOf(1, 2)` | `[1, 2]` |
+| `wildcard()` | `*` |
+
+## Precedence, and who handles it
+
+The renderer parenthesises rather than relying on the reader knowing the
+grammar. `!` binds tighter than `since` and `&&`, so `!a since within W b`
+negates only `a`; an aggregate's `where` body is greedy, so
+`count for (…). where φ == 3` would read `== 3` as part of φ. Aggregates and
+macro calls in comparison position are wrapped on both sides, and `exists`
+binds maximally to the right so it is wrapped inside an `&&` chain.
+
+## The escape hatch
+
+`dogwood.raw("formerly within 1h …")` emits temporal source verbatim. It is
+the one builder that can produce something the walls exist to catch, which is
+why the walls read the serialized text rather than the in-memory tree — see
+[Validation](../dogwood-validation/).
+
+## Next
+
+- [Event Schemas](../dogwood-event-schemas/) — what the `request`/`response`
+  kinds in those predicates come from
+- [Validation](../dogwood-validation/) — what checks a policy set before it
+  leaves the build

@@ -313,11 +313,19 @@ export function resolveStepInput(
 
 // ── Step + phase execution ───────────────────────────────────────────────
 
-/** A step executed and its resolved input, kept so saga rollback can call the same capability's `rollback` with the same input. */
+/**
+ * A step executed and its resolved input, kept so saga rollback can call the
+ * same capability's `rollback` with the same input. `output` is the step's
+ * own `run()` result — threaded through to `rollback` (#1944) as the
+ * serializable identity channel `Capability.rollback`'s doc comment
+ * describes, alongside object identity (which already works here, since this
+ * driver runs entirely in-process — see this module's own doc comment).
+ */
 interface ExecutedStep {
   step: DriverStep;
   resolvedInput: Record<string, unknown>;
   phaseName: string;
+  output: unknown;
 }
 
 class StepFailure extends Error {
@@ -435,7 +443,7 @@ async function runPhase(
     }
     return {
       records: [record],
-      executed: record.status === "ok" ? [{ step: entry, resolvedInput, phaseName: phaseDef.phase }] : [],
+      executed: record.status === "ok" ? [{ step: entry, resolvedInput, phaseName: phaseDef.phase, output }] : [],
       failed: record.status === "fail",
     };
   };
@@ -505,7 +513,7 @@ async function rollbackExecuted(
   registry: CapabilityRegistry,
 ): Promise<DriverStepRecord[]> {
   const records: DriverStepRecord[] = [];
-  for (const { step, resolvedInput, phaseName } of [...executed].reverse()) {
+  for (const { step, resolvedInput, phaseName, output } of [...executed].reverse()) {
     const start = Date.now();
     try {
       const capability = registry.resolve(step.kind);
@@ -521,7 +529,7 @@ async function rollbackExecuted(
         });
         continue;
       }
-      await capability.rollback(ctx, resolvedInput as never);
+      await capability.rollback(ctx, resolvedInput as never, output as never);
       records.push({
         component: ctx.component,
         phase: phaseName,
@@ -603,37 +611,77 @@ export async function runComponentDeploy(
     return { component: component.name, ok: false, records };
   }
 
-  // Publish-family outputs (publish-image / publish-artifact / load-image-on-host all
-  // return at least one of uri/digest/key — see ../verbs/publish.ts) become this
-  // component's `@<name>.publish.*` for downstream cross-component references.
-  const publishOutput = findPublishOutput(phaseOutputs);
-  if (publishOutput) {
-    componentOutputs[component.name] = { ...componentOutputs[component.name], publish: publishOutput };
-  }
-
-  // Stack outputs from an apply step (cfn-deploy returns `CfnDeployOutput.outputs`)
-  // become resolvable by downstream components' `stackOutput(<name>, ...)`
-  // references — the cross-stack apply-order integration deferred in #556.
-  // Merged at the top level of this component's entry (peer to `publish`, which
-  // is namespaced under its own key), so `resolveWiring`'s stackOutput branch —
-  // `resolvePath(componentOutputs[stack], name)` — finds each output by name.
-  // Keyed by the component's own name, which by convention is the stack name a
-  // `stackOutput` reference targets (see the pilots and composition-and-wiring.mdx).
-  const stackOutputs = findStackOutputs(phaseOutputs);
-  if (stackOutputs) {
-    componentOutputs[component.name] = { ...componentOutputs[component.name], ...stackOutputs };
-  }
+  // Publish-family and stack outputs become this component's entry in
+  // `componentOutputs` — through the same exported accumulator the durable
+  // path's `accumulateComponentOutputs` activity calls (#700), so local and
+  // Temporal runs can never diverge on what downstream references see.
+  accumulateComponentOutputs(componentOutputs, component.name, phaseOutputs);
 
   return { component: component.name, ok: true, records };
 }
 
 /**
+ * Collect the cross-component outputs one finished component exposes to its
+ * downstream consumers, from every phase output it produced:
+ *
+ *   - publish-family outputs (publish-image / publish-artifact /
+ *     load-image-on-host all return at least one of uri/digest/key — see
+ *     ./verbs/publish.ts) are namespaced under `publish`, so downstream
+ *     `@<name>.publish.*` references resolve;
+ *   - stack outputs from an apply step (cfn-deploy returns
+ *     `CfnDeployOutput.outputs`) are merged at the top level, peer to
+ *     `publish`, so `resolveWiring`'s stackOutput branch —
+ *     `resolvePath(componentOutputs[stack], name)` — finds each output by
+ *     name (the cross-stack apply-order integration deferred in #556, closed
+ *     in #699). The entry is keyed by the component's own name, which by
+ *     convention is the stack name a `stackOutput` reference targets (see the
+ *     pilots and composition-and-wiring.mdx).
+ *
+ * Both halves are generic by output *shape*, not by capability `kind`, keeping
+ * the driver free of per-capability branching. Returns `undefined` when the
+ * component exposed nothing.
+ *
+ * Exported, like `resolveStepInput`, so the durable Temporal path
+ * (lexicons/temporal/src/component-op/activities.ts) accumulates outputs via
+ * this exact function rather than re-deriving it (#700). The resolver and the
+ * accumulator are the two halves of one contract; sharing only the resolver
+ * is how the cross-stack gap #699 closed locally could reopen durably.
+ */
+export function collectComponentOutputs(
+  phaseOutputs: Record<string, Record<string, unknown>>,
+): Record<string, unknown> | undefined {
+  const publishOutput = findPublishOutput(phaseOutputs);
+  const stackOutputs = findStackOutputs(phaseOutputs);
+  if (!publishOutput && !stackOutputs) return undefined;
+  return { ...(stackOutputs ?? {}), ...(publishOutput ? { publish: publishOutput } : {}) };
+}
+
+/**
+ * Record a finished component's outputs (`collectComponentOutputs`) into the
+ * shared `componentOutputs` map under the component's own name, merging over
+ * any seeded entry (`--seed-outputs`, or a durable parent workflow's
+ * thread-through). Mutates and returns `componentOutputs`, so a Temporal
+ * activity can hand the updated map back to its workflow over the JSON
+ * boundary — every value in it is plain activity-result data, so the map is
+ * serializable by construction. A no-op when the component exposed nothing.
+ */
+export function accumulateComponentOutputs(
+  componentOutputs: Record<string, Record<string, unknown>>,
+  componentName: string,
+  phaseOutputs: Record<string, Record<string, unknown>>,
+): Record<string, Record<string, unknown>> {
+  const collected = collectComponentOutputs(phaseOutputs);
+  if (collected) {
+    componentOutputs[componentName] = { ...componentOutputs[componentName], ...collected };
+  }
+  return componentOutputs;
+}
+
+/**
  * Find the output of the last step that looks like a publish result (carries
- * `uri`, `digest`, or `key`) across every phase this component ran, so the
- * driver can populate `@<component>.publish.*` for a downstream consumer.
- * Generic by shape, not by capability `kind` — any capability whose output
- * carries one of these fields is eligible, keeping the driver free of
- * per-capability branching.
+ * `uri`, `digest`, or `key`) across every phase this component ran, so
+ * `collectComponentOutputs` can populate `@<component>.publish.*` for a
+ * downstream consumer.
  */
 function findPublishOutput(
   phaseOutputs: Record<string, Record<string, unknown>>,
@@ -651,9 +699,6 @@ function findPublishOutput(
  * Find the stack `outputs` map produced by an apply-style step (cfn-deploy
  * returns `CfnDeployOutput.outputs`) across every phase this component ran, so
  * a deployed stack's outputs can seed downstream `stackOutput()` resolution.
- * Generic by shape — any output carrying an `outputs` record is eligible —
- * keeping the driver free of per-capability branching, the same way
- * `findPublishOutput` is.
  */
 function findStackOutputs(
   phaseOutputs: Record<string, Record<string, unknown>>,

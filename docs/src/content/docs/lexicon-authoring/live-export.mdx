@@ -1,6 +1,7 @@
 ---
 title: Implementing Live Export
 description: How to implement exportResources() and the ownership marker so your lexicon participates in chant import --from and ownership-gated reconciliation.
+diataxis: how-to
 ---
 
 import { Aside } from '@astrojs/starlight/components';
@@ -74,7 +75,7 @@ metadata.ownership = classifyOwnership(labels, "label");
 ```
 
 <Aside type="note">
-Where a target has **no durable marker channel**, log that ownership is unavailable and degrade to detect-only — never silently return everything. (AWS `describeResources` does this: `describe-stack-resources` returns no tags, so it warns and skips the filter.)
+Where a target has **no durable marker channel**, log that ownership is unavailable and degrade to detect-only — never silently return everything. (AWS `describeResources` does this whenever the stack's own tags carry no marker: `describe-stack-resources` returns no per-resource tags, so the stack is the granularity, and an unmarked stack means no filter to apply.)
 </Aside>
 
 ## See also

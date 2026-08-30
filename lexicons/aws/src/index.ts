@@ -7,6 +7,29 @@ export type { DefaultTags, TagEntry } from "./default-tags";
 export { templateTransform, isTemplateTransform, TEMPLATE_TRANSFORM_MARKER } from "./template-transform";
 export type { TemplateTransform } from "./template-transform";
 
+// Effect receipts (#1835, epic #1703): the aws materialization row
+// (`AWS::SSM::Parameter`, plain String, path derived from the ownership
+// marker) and the SSM-backed receipt store behind the `effect()` op step.
+export {
+  EffectReceipt,
+  receiptParameterName,
+  AWS_EFFECT_RECEIPT_ENTITY_TYPE,
+  EFFECT_RECEIPTS_METADATA_KEY,
+  RECEIPT_PATH_PREFIX,
+  RECEIPT_UNRESOLVED_VALUE_NOTE,
+} from "./effect-receipt-row";
+export type { AwsEffectReceiptDeclaration } from "./effect-receipt-row";
+export { awsReceiptStore, observeReceiptRows, ssmGetParameter, ssmPutParameter } from "./receipt-store";
+export type { AwsReceiptStoreOptions, ReceiptRowObservation } from "./receipt-store";
+
+// Typed Op step-builder wrappers (chant #1288 Stage 2) — awsApply/awsDelete/
+// flociUp/flociDown with authoring-time types derived from this lexicon's
+// own *Args interfaces (see ./op/builders.ts's module doc for why these live
+// here rather than in core or the temporal barrel). Opt-in:
+// `@intentius/chant-lexicon-temporal`'s same-named exports are core's
+// original untyped builders, unchanged, for cloud-agnostic authoring.
+export { awsApply, awsDelete, flociUp, flociDown } from "./op/builders";
+
 // Serializer
 export { awsSerializer } from "./serializer";
 
@@ -44,14 +67,18 @@ export {
 export {
   describeStackResources,
   describeStackOutputs,
+  describeStackDetail,
   getResource,
   listResources,
   parseResourceDescription,
+  resolveEndpointOverride,
+  serviceEndpointEnvVar,
   AwsReadError,
   type AwsReadHttp,
   type AwsReadClientOptions,
   type CloudControlDescription,
   type StackResource,
+  type StackDetail,
   type AwsCredentials,
   type AwsCredentialResolver,
   type AwsCredentialSource,
@@ -120,25 +147,31 @@ export {
   LambdaFunction, LambdaNode, LambdaPython, NodeLambda, PythonLambda,
   LambdaApi,
   LambdaScheduled, ScheduledLambda,
-  LambdaSqs, LambdaEventBridge, LambdaDynamoDB, LambdaS3, LambdaSns,
-  VpcDefault, FargateAlb, AlbShared, FargateService, RdsInstance, RdsPostgres,
+  LambdaSqs, LambdaEventBridge, LambdaDynamoDB, DynamoDBTable, EcrRepository, LambdaS3, LambdaSns,
+  VpcDefault, FargateAlb, AlbShared, FargateService, FARGATE_SERVICE_LIMITS, NlbService, RdsInstance, RdsPostgres,
   EfsWithAccessPoint,
-  Ec2InstanceRole, MinimalVpc, EksCluster,
+  Ec2InstanceRole, Ec2InstanceBundle, MinimalVpc, EksCluster,
   SolrFargateService,
   MicrovmApp, MICROVM_LIMITS,
-  AgentCoreAgent,
+  AgentCoreAgent, agentCoreDefaultEndpointArn, AGENTCORE_LIMITS,
   OrganizationRoot, GovernanceFoundation, RegionRestriction, OrganizationTrail,
+  StepFunctionsWorkflow,
+  MonitoringStack,
+  BucketDeployment,
 } from "./composites/index";
 export type {
   LambdaFunctionProps, LambdaApiProps, ScheduledLambdaProps,
-  LambdaSqsProps, LambdaEventBridgeProps, LambdaDynamoDBProps, LambdaS3Props, LambdaSnsProps,
-  VpcDefaultProps, FargateAlbProps, AlbSharedProps, FargateServiceProps, RdsInstanceProps, RdsPostgresProps,
+  LambdaSqsProps, LambdaEventBridgeProps, LambdaDynamoDBProps, DynamoDBTableProps, DynamoDBKey, DynamoDBCapacity, DynamoDBGlobalSecondaryIndex, EcrRepositoryProps, EcrLifecycleRule, EcrEncryption, LambdaS3Props, LambdaSnsProps,
+  VpcDefaultProps, FargateAlbProps, AlbSharedProps, FargateServiceProps, NlbServiceProps, RdsInstanceProps, RdsPostgresProps,
   EfsWithAccessPointProps,
-  Ec2InstanceRoleProps, MinimalVpcProps, EksClusterProps,
+  Ec2InstanceRoleProps, Ec2InstanceBundleProps, Ec2InstanceBundleIngressRule, MinimalVpcProps, EksClusterProps,
   SolrFargateServiceProps,
   MicrovmAppProps, MicrovmAppResult, MicrovmAppBuildConnectorProps, MicrovmMemoryMiB,
   AgentCoreAgentProps, AgentCoreAgentResult,
   OrganizationRootProps, GovernanceFoundationProps, RegionRestrictionProps, OrganizationTrailProps,
+  StepFunctionsWorkflowProps,
+  MonitoringStackProps, MonitoringMetricSpec,
+  BucketDeploymentProps, BucketDeploymentResult,
 } from "./composites/index";
 
 // Code generation pipeline

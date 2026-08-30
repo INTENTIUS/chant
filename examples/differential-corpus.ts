@@ -4,6 +4,7 @@ import type { Serializer, SerializerResult } from "@intentius/chant/serializer";
 import type { DiscoveryError, BuildError } from "@intentius/chant/errors";
 import type { IntrinsicDef, LexiconPlugin } from "@intentius/chant/lexicon";
 import type { BuildParamProvenance } from "@intentius/chant/provenance";
+import { resolveProjectLexicons } from "@intentius/chant/cli";
 import { awsSerializer, awsPlugin } from "@intentius/chant-lexicon-aws";
 import { gcpSerializer, gcpPlugin } from "@intentius/chant-lexicon-gcp";
 import { azureSerializer, azurePlugin } from "@intentius/chant-lexicon-azure";
@@ -239,22 +240,41 @@ function isDir(p: string): boolean {
  *    handful of lexicons (aws+k8s, gcp+k8s, gitlab+aws, …) and passing the
  *    full set costs nothing (`build()` only invokes a serializer for
  *    lexicons actually discovered).
- *  - `lexicons/*<dot>/examples/*<dot>/src` build fixtures are built with ONLY
- *    that lexicon's own serializer, matching how every lexicon's own
- *    `examples/examples.test.ts` already builds them (e.g.
- *    `lexicons/helm/examples/examples.test.ts` uses `helmSerializer` alone).
- *    This isn't just precedent for its own sake: a helm chart embeds
- *    `@intentius/chant-lexicon-k8s` resources (`StatefulSet`, `Container`, …)
- *    as template values, not as independently-deployable k8s manifests —
- *    running `k8sSerializer` over them too tries to serialize those nested,
- *    helm-intrinsic-bearing objects as standalone k8s YAML, which breaks
- *    regardless of fold. That's a real pre-existing bug the differential's
- *    first draft (all-serializers-everywhere) surfaced as a false positive;
- *    it reproduces identically with `fold: false`, so it's an artifact of
- *    the harness's serializer choice, not of folding — see the #1025
- *    implementation notes.
+ *  - `lexicons/*<dot>/examples/*<dot>/src` build fixtures are built with the
+ *    lexicons THAT FIXTURE'S OWN `chant.config.ts` declares (chant #1996),
+ *    resolved the same way `chant build` itself resolves them
+ *    (`resolveProjectLexicons`, ../packages/core/src/cli/plugins.ts) —
+ *    reading `lexicons` from the fixture's config, falling back to a plain
+ *    text scan of its source when the config declares none. Most fixtures
+ *    declare only their directory's own lexicon, matching precedent (every
+ *    lexicon's own `examples/examples.test.ts` builds with that lexicon's
+ *    serializer alone, e.g. `lexicons/helm/examples/examples.test.ts` uses
+ *    `helmSerializer`), but a fixture that opts a SECOND lexicon in — e.g.
+ *    `lexicons/helm/examples/stateful-service` declaring `["helm", "k8s"]` —
+ *    is built with both, so `--sandbox`'s active-lexicon allowlist matches
+ *    what a real `chant build` for that directory would grant. Forcing the
+ *    single directory lexicon regardless of the fixture's own config (the
+ *    pre-#1996 behavior) UNDER-reported the allowlist for exactly that case:
+ *    `stateful-service` folds fully under a real `chant build --fold
+ *    --sandbox`, but read as demoted here because `k8s` — active for that
+ *    fixture's real build — was never in `lexicons`, so arm 1 of
+ *    `isTrustedExecutableBinding` (chant #1093) refused a `k8s` construction
+ *    the CLI would actually have trusted.
+ *
+ *    A helm chart embedding `@intentius/chant-lexicon-k8s` resources
+ *    (`StatefulSet`, `Container`, …) as template values, not as
+ *    independently-deployable k8s manifests, is still why `k8sSerializer`
+ *    stays OUT of a fixture that doesn't declare `k8s` itself — running it
+ *    over those nested, helm-intrinsic-bearing objects tries to serialize
+ *    them as standalone k8s YAML, which breaks regardless of fold. That's a
+ *    real pre-existing bug the differential's first draft
+ *    (all-serializers-everywhere) surfaced as a false positive; it
+ *    reproduces identically with `fold: false`, so it's an artifact of the
+ *    harness's serializer choice, not of folding — see the #1025
+ *    implementation notes. #1996 only widens the harness to match a
+ *    fixture's OWN declared set, never beyond it.
  */
-export function discoverCorpus(): CorpusEntry[] {
+export async function discoverCorpus(): Promise<CorpusEntry[]> {
   const entries: CorpusEntry[] = [];
 
   const examplesDir = resolve(ROOT, "examples");
@@ -284,13 +304,21 @@ export function discoverCorpus(): CorpusEntry[] {
       if (!exDirent.isDirectory()) continue;
       const srcDir = resolve(lexExamplesDir, exDirent.name, "src");
       if (isDir(srcDir)) {
+        // chant #1996 — the fixture's OWN declared lexicons, not just the
+        // directory it happens to live under; falls back to `[lexDirent.name]`
+        // only if resolution comes back empty (defensive — every fixture seen
+        // in practice declares at least its own directory's lexicon, either
+        // explicitly or via `resolveProjectLexicons`'s own source-scan
+        // fallback).
+        const resolvedNames = await resolveProjectLexicons(srcDir);
+        const lexiconNames = resolvedNames.length > 0 ? resolvedNames : [lexDirent.name];
         entries.push({
           name: `lexicons/${lexDirent.name}/examples/${exDirent.name}`,
           srcDir,
-          serializers: [serializer],
-          intrinsics: INTRINSICS_BY_LEXICON[lexDirent.name] ?? [],
-          plugins: PLUGIN_BY_LEXICON[lexDirent.name] ? [PLUGIN_BY_LEXICON[lexDirent.name]] : [],
-          lexicons: [lexDirent.name],
+          serializers: lexiconNames.map((n) => SERIALIZER_BY_LEXICON[n]).filter((s): s is Serializer => s !== undefined),
+          intrinsics: lexiconNames.flatMap((n) => INTRINSICS_BY_LEXICON[n] ?? []),
+          plugins: lexiconNames.map((n) => PLUGIN_BY_LEXICON[n]).filter((p): p is LexiconPlugin => p !== undefined),
+          lexicons: lexiconNames,
         });
       }
     }

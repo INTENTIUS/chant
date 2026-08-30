@@ -1,6 +1,7 @@
 ---
 title: Completeness Checklist
 description: What makes a production-quality lexicon — tier 1/2/3 checks
+diataxis: reference
 ---
 
 The `chant dev check-lexicon` command evaluates a lexicon directory against three tiers of completeness. Run it from anywhere:
@@ -29,7 +30,7 @@ These must all pass for the command to exit 0. Run for real via `just check-lexi
 | `dist/manifest.json declares a chantVersion` | Present and shaped like a version — see [below](#chantversion) |
 | `package.json routes exports["."].default at ./src/index.ts and deletes emitted JS in build` | The packaging shape every consumer depends on |
 | `At least 1 example in examples/` | A non-empty subdirectory |
-| `Every shipped example builds` | Discovers and serializes each `examples/*/src/` rather than counting directories (chant #1067) |
+| `Every shipped example builds and passes its own post-synth checks` | Discovers and serializes each `examples/*/src/` rather than counting directories (chant #1067), then runs the lexicon's own post-synth checks against the output and fails on any error-severity finding (chant #1400) |
 | `Registered intrinsics are exported by the package` | Every `intrinsics()` entry's `name` resolves to a real export of `src/index.ts` (chant #1067) |
 | `Registered intrinsics' isTag matches how they're authored` | `isTag: true` requires a first parameter typed `TemplateStringsArray`; `isTag: false` requires anything else (chant #1067) |
 | `Registered intrinsics' foldsAsCall opt-in is only on plain calls` | The call-form opt-in cannot be declared on a tagged template, which has no call form to fold (chant #1044) |
@@ -38,6 +39,8 @@ These must all pass for the command to exit 0. Run for real via `just check-lexi
 | `serializer.test.ts exists` | Serializer unit test |
 | `At least 1 .mdx doc page` | Documentation exists |
 | `Every doc page is reachable from the sidebar` | Starlight has no auto-discovery, so a page missing from the sidebar is reachable only by direct URL (chant #1312) |
+| `Every authored doc page has a diataxis quadrant` | Pages under `docs/pages/` name their [Diátaxis](https://diataxis.fr) quadrant; the sidebar is grouped from it (chant #1731) |
+| `coverageReport() leaves no spec kind unaccounted` | A plugin declaring `coverageReport()` must account for every upstream spec kind — modeled or on its exclusion list, computed offline from committed snapshots (chant #1330); lexicons without the member pass vacuously |
 
 ### `chantVersion`
 

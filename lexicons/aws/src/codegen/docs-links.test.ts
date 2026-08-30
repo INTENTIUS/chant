@@ -4,6 +4,18 @@ import { join, basename } from "path";
 
 const docsDir = join(import.meta.dirname, "..", "..", "docs", "src", "content", "docs");
 const docsSource = join(import.meta.dirname, "docs.ts");
+const pagesDir = join(import.meta.dirname, "..", "..", "docs", "pages");
+
+/** Authored prose lives in docs/pages/ (chant #1731); docs.ts keeps only the overview strings. */
+function authoredSources(): Array<{ name: string; path: string }> {
+  const sources = [{ name: "docs.ts", path: docsSource }];
+  if (existsSync(pagesDir)) {
+    for (const file of readdirSync(pagesDir).sort()) {
+      if (file.endsWith(".mdx")) sources.push({ name: `docs/pages/${file}`, path: join(pagesDir, file) });
+    }
+  }
+  return sources;
+}
 const docsExist = existsSync(docsDir);
 
 /**
@@ -108,36 +120,38 @@ describe("docs internal links", () => {
     });
   }
 
-  // Validate source docs.ts — catches broken links before regeneration
-  test("docs.ts source — cross-page links use ../ not ./", () => {
-    if (!docsExist) return; // needs generated slugs for validation
-    const content = readFileSync(docsSource, "utf-8");
-    const links = extractMarkdownLinks(content);
-    const errors: string[] = [];
-    for (const link of links) {
-      const pathPart = link.href.split("#")[0];
-      // Links in docs.ts extraPages are rendered on non-index pages,
-      // so they must use ../ to navigate to sibling pages
-      if (pathPart.startsWith("./") && slugs.has(pathPart.slice(2).replace(/\/$/, ""))) {
-        errors.push(`line ${link.line}: [${link.text}](${link.href}) — use "../" prefix for cross-page links`);
+  // Validate the authored sources — docs.ts and docs/pages/*.mdx — so a
+  // broken link is caught before regeneration.
+  for (const source of authoredSources()) {
+    test(`${source.name} — cross-page links use ../ not ./`, () => {
+      if (!docsExist) return; // needs generated slugs for validation
+      const content = readFileSync(source.path, "utf-8");
+      const links = extractMarkdownLinks(content);
+      const errors: string[] = [];
+      for (const link of links) {
+        const pathPart = link.href.split("#")[0];
+        // Authored pages render as non-index pages, so sibling links must use ../
+        if (pathPart.startsWith("./") && slugs.has(pathPart.slice(2).replace(/\/$/, ""))) {
+          errors.push(`line ${link.line}: [${link.text}](${link.href}) — use "../" prefix for cross-page links`);
+        }
       }
-    }
-    if (errors.length > 0) {
-      throw new Error(`docs.ts has ./ links that will break on non-index pages:\n${errors.join("\n")}`);
-    }
-  });
+      if (errors.length > 0) {
+        throw new Error(`${source.name} has ./ links that will break on non-index pages:\n${errors.join("\n")}`);
+      }
+    });
 
-  test("docs.ts source — link targets exist as pages", () => {
-    if (!docsExist) return; // needs generated slugs for validation
-    const content = readFileSync(docsSource, "utf-8");
-    const links = extractMarkdownLinks(content);
-    const errors: string[] = [];
-    for (const link of links) {
-      const error = resolveTarget(link.href, slugs);
-      if (error) errors.push(`line ${link.line}: [${link.text}](${link.href}) — ${error}`);
-    }
-    if (errors.length > 0) {
-      throw new Error(`docs.ts has links to non-existent pages:\n${errors.join("\n")}`);
-    }
-  });
+    test(`${source.name} — link targets exist as pages`, () => {
+      if (!docsExist) return; // needs generated slugs for validation
+      const content = readFileSync(source.path, "utf-8");
+      const links = extractMarkdownLinks(content);
+      const errors: string[] = [];
+      for (const link of links) {
+        const error = resolveTarget(link.href, slugs);
+        if (error) errors.push(`line ${link.line}: [${link.text}](${link.href}) — ${error}`);
+      }
+      if (errors.length > 0) {
+        throw new Error(`${source.name} has links to non-existent pages:\n${errors.join("\n")}`);
+      }
+    });
+  }
 });

@@ -67,4 +67,25 @@ export const awsAuditCatalog: Record<string, RuleMeta> = {
   WAW056: auditRule("WAW056", "merge-worthy", "guidance", "SCP guardrail has no Deny statement", "Add a Deny statement — SCPs only filter permissions, so a Deny-less SCP guards nothing.", { authority: [AWS_SEC] }),
   WAW057: auditRule("WAW057", "merge-worthy", "guidance", "SCP guardrail attached to no targets", "Attach the SCP to the organization root or an OU via TargetIds.", { authority: [AWS_SEC] }),
   WAW058: auditRule("WAW058", "merge-worthy", "guidance", "Organization audit trail dropped or scoped down", "Keep an organization CloudTrail with IsLogging: true and IsMultiRegionTrail: true.", { authority: [AWS_SEC] }),
+
+  // #1225 — least-privilege tightening the declared graph can prove. Report-only,
+  // so no authority citation (those are reserved for merge-worthy entries).
+  WAW059: auditRule("WAW059", "report-only", "guidance", "Wildcard Resource where the declared graph enumerates the touched set", "Tighten Resource from \"*\" to the Fn::GetAtt Arn list of the declared resources the role's consumers touch.", { category: "security" }),
+  WAW060: auditRule("WAW060", "report-only", "guidance", "IAM policy attached to no principal", "Attach the policy via Roles/Users/Groups or reference it from a principal's ManagedPolicyArns — unattached it grants nothing.", { category: "security" }),
+
+  // #1140 — error-injection benchmark family (companion to epic #1139): static
+  // catches for the deploy-time/runtime failure class stock CDK can't see pre-synth.
+  WAW061: auditRule("WAW061", "merge-worthy", "guidance", "Subnet CidrBlock not contained in its VPC's CidrBlock", "Fix the subnet's CidrBlock so it falls within the VPC's CidrBlock range.", { category: "correctness" }),
+  WAW062: auditRule("WAW062", "merge-worthy", "guidance", "Duplicate export name or explicit resource name within a template", "Give each duplicated Export/name a distinct literal value.", { category: "correctness" }),
+  WAW063: auditRule("WAW063", "merge-worthy", "guidance", "IAM policy denies an action another attached policy on the same role allows", "Remove or narrow the Deny, or move the Allow off this role — the explicit Deny always wins.", { category: "correctness" }),
+
+  // #826 — network-topology resiliency (Well-Architected Reliability Pillar):
+  // TGW route hygiene, private-subnet and NAT-gateway cross-resource joins,
+  // VPN redundancy. No live state needed — all determinable from the
+  // declared template.
+  WAW064: auditRule("WAW064", "report-only", "guidance", "Transit Gateway route table declares a Blackhole route", "Confirm the traffic drop is intentional; remove the route if it isn't.", { category: "best-practice" }),
+  WAW065: auditRule("WAW065", "report-only", "guidance", "Transit Gateway route table wiring is incomplete", "Add the missing TransitGatewayRouteTablePropagation, or wire the orphaned attachment into a route table.", { category: "best-practice" }),
+  WAW066: auditRule("WAW066", "merge-worthy", "guidance", "Private subnet's route table has no working default route", "Add a 0.0.0.0/0 route to a NAT gateway/Transit Gateway that exists in the template.", { category: "correctness" }),
+  WAW067: auditRule("WAW067", "report-only", "guidance", "Single-AZ NAT gateway serves multi-AZ private subnets", "Add one NAT gateway per Availability Zone and point each AZ's subnets at its own.", { category: "best-practice" }),
+  WAW068: auditRule("WAW068", "report-only", "guidance", "VPN Gateway or Transit Gateway has only one attached VPN Connection", "Attach a second VPNConnection (ideally to a separate Customer Gateway) for redundancy.", { category: "best-practice" }),
 };

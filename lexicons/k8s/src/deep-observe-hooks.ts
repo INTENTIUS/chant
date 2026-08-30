@@ -22,14 +22,18 @@
  * are sets addressed by a well-known identity (containers by name, ports by
  * containerPort+protocol). None of that needs a live object in hand.
  *
- * What does *not* live here is the managed-fields prune — whether one
- * specific field on one specific live object is chant-owned, foreign-owned,
- * or contested. That is inherently per-object (it depends on *that* object's
+ * What does *not* live here is the managed-fields ownership walk — which
+ * manager owns one specific field on one specific live object. That is
+ * inherently per-object (it depends on *that* object's
  * `metadata.managedFields`, which the declared tree never carries and which
  * differs between two Deployments of the same type), so it cannot be
  * expressed as a fixed rule keyed only by entity type and path — the shape
  * every other hook in this file takes. `./deep-observe.ts` computes it once
- * per resource and layers it on top of the rules below.
+ * per resource and attaches it to the observation as `fieldOwners`. Since
+ * chant #1191 ownership no longer prunes anything: a foreign-owned field
+ * nobody declared is reported as `undeclared` drift, and the only static
+ * subtraction for foreign writes is `K8S_SYSTEM_METADATA_PRUNE_PATTERNS`
+ * (core's `managed-fields`), applied below.
  *
  * The *entity-type-agnostic* half of these rules — which fields every
  * Kubernetes API object carries regardless of kind, and the well-known
@@ -41,19 +45,17 @@
  * keyed by chant's own k8s entityType catalog.
  */
 
-import { createRequire } from "module";
+import { existsSync, readFileSync } from "fs";
+import { dirname, join } from "path";
+import { fileURLToPath } from "url";
 import type { DeepArrayElement, DeepNode, DeepNormalizationHooks } from "@intentius/chant/lexicon";
-import { K8S_OBJECT_ENVELOPE_PRUNE_PATTERNS, k8sListMapOrderKey } from "@intentius/chant/managed-fields";
+import {
+  K8S_OBJECT_ENVELOPE_PRUNE_PATTERNS,
+  K8S_SYSTEM_METADATA_PRUNE_PATTERNS,
+  k8sListMapOrderKey,
+} from "@intentius/chant/managed-fields";
 import { LABEL_OWNERSHIP_KEYS, OWNERSHIP_MANAGED_BY_VALUE } from "@intentius/chant/ownership";
-
-// This module ships as ESM (tsx strips types from src/ directly), where a bare
-// `require` is not defined — the same reason serializer.ts and the LSP modules
-// already build one. The bug only surfaced on a LIVE deep read that meets an
-// associative list (every k8s estate does: a Deployment's containers), so
-// `lifecycle diff --live` crashed with `require is not defined` on exactly the
-// estates the generated table exists for (#1441 regression, found on
-// kubemicrovm-ops).
-const require = createRequire(import.meta.url);
+import { GENERATED_ONCE_LABEL_KEY } from "./secret-labels";
 
 /**
  * Kubernetes-defaulted fields, per entity type, as index-erased property
@@ -114,6 +116,10 @@ export const K8S_SERVICE_DEFAULTS: Record<string, Record<string, unknown>> = {
     "spec.ipFamilyPolicy": "SingleStack",
     "spec.ports[].protocol": "TCP",
   },
+  "K8s::Core::Secret": {
+    // The API server defaults an untyped Secret to Opaque (#1830).
+    "type": "Opaque",
+  },
 };
 
 /**
@@ -141,6 +147,9 @@ export const K8S_SERVER_ASSIGNED_PATTERNS: Record<string, ReadonlySet<string>> =
 const K8S_OWNERSHIP_LABEL_PATTERNS: ReadonlySet<string> = new Set([
   `metadata.labels.${LABEL_OWNERSHIP_KEYS.stack}`,
   `metadata.labels.${LABEL_OWNERSHIP_KEYS.env}`,
+  // The generated-once marker (#1830) is stamped by the secret store at
+  // mint time, never by a serializer — chant's own signature, not drift.
+  `metadata.labels.${GENERATED_ONCE_LABEL_KEY}`,
 ]);
 
 const K8S_MANAGED_BY_LABEL_PATTERN = `metadata.labels.${LABEL_OWNERSHIP_KEYS.managedBy}`;
@@ -184,9 +193,61 @@ type ListMapKeyTable = Record<string, string[][]>;
 
 let cachedListMapKeys: ListMapKeyTable | undefined;
 
+/**
+ * Where the generated table lives: next to this module, resolved from
+ * `import.meta.url`. This module ships as ESM (tsx strips types from src/
+ * directly), where a bare `require` is not defined — the #1441 regression
+ * crashed `lifecycle diff --live` with `require is not defined` on every
+ * estate with a Deployment, and azure's apiVersion registry hit the same
+ * class of bug in #1581. A plain fs read has no module-system dependency.
+ */
+export function listMapKeyTablePath(): string {
+  return join(dirname(fileURLToPath(import.meta.url)), "generated", "list-map-keys.json");
+}
+
+/**
+ * Load the spec-derived table once. A missing or unreadable file degrades to
+ * an EMPTY table, which routes every list through `k8sListMapOrderKey`'s
+ * hand-written conventions — the same fallback an unlisted property already
+ * takes. The empty table is cached by the caller too, so an absent artifact
+ * costs one failed read and one warning, not one per array element
+ * (chant #1476).
+ *
+ * Degrading is the right call here, unlike azure's apiVersion registry
+ * (#1581) where a silent fallback bypasses correctness-bearing pins. Without
+ * the table, drift detection narrows back to the six hardcoded properties:
+ * less coverage, never wrong answers. The warning names the regen command so
+ * the narrowing is not silent.
+ */
+export function loadListMapKeyTable(path: string = listMapKeyTablePath()): ListMapKeyTable {
+  if (!existsSync(path)) {
+    warnMissingTable(path, "not found");
+    return {};
+  }
+  try {
+    return JSON.parse(readFileSync(path, "utf-8")) as ListMapKeyTable;
+  } catch (err) {
+    warnMissingTable(path, `unreadable: ${err instanceof Error ? err.message : String(err)}`);
+    return {};
+  }
+}
+
+function warnMissingTable(path: string, reason: string): void {
+  console.warn(
+    `k8s: list-map-keys table ${reason} (${path}); list identity falls back to the ` +
+      "hand-written conventions in @intentius/chant/managed-fields. Run `npm run generate` " +
+      "in lexicons/k8s (dev checkout) or reinstall @intentius/chant-lexicon-k8s.",
+  );
+}
+
 function listMapKeyTable(): ListMapKeyTable {
-  cachedListMapKeys ??= require("./generated/list-map-keys.json") as ListMapKeyTable;
+  cachedListMapKeys ??= loadListMapKeyTable();
   return cachedListMapKeys;
+}
+
+/** Test hook: replace (or drop) the cached table so the next lookup reloads it. */
+export function resetListMapKeyTableCache(table?: ListMapKeyTable): void {
+  cachedListMapKeys = table;
 }
 
 /** Last dotted segment of an index-erased path: `spec.template.spec.containers` → `containers`. */
@@ -253,11 +314,36 @@ function isRecordLike(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+/**
+ * The paths on a `K8s::Core::Secret` whose values are secret material —
+ * `data.<key>` (live and declared base64) and `stringData.<key>` (declared
+ * plaintext). Masked on BOTH sides by core's normalization pass, so presence
+ * and key names still classify as drift while no value (or value-derived
+ * comparison) ever reaches a diff row — #1365 decision 6, the contract #1830's
+ * generated-once secrets rely on. Key-name masking alone cannot do this:
+ * Secret keys are arbitrary (`app.conf`), not name-shaped.
+ */
+const K8S_SECRET_ENTITY_TYPE = "K8s::Core::Secret";
+const K8S_SECRET_VALUE_PATTERN = /^(?:data|stringData)\./;
+
 export const k8sDeepNormalizationHooks: DeepNormalizationHooks = {
+  mask(node: DeepNode): boolean {
+    return node.entityType === K8S_SECRET_ENTITY_TYPE && K8S_SECRET_VALUE_PATTERN.test(node.pattern);
+  },
+
   prune(node: DeepNode): boolean {
     if (K8S_OBJECT_ENVELOPE_PRUNE_PATTERNS.has(node.pattern)) return true;
 
     if (node.side !== "live" || node.counterpart !== "absent") return false;
+
+    // What Kubernetes' own controllers stamp on every object of a kind
+    // (rollout counters, selector hashes, client-side-apply bookkeeping) is
+    // not drift. This is the static allowlist that stands in for the
+    // managed-fields prune since #1191: any *other* foreign-owned field
+    // nobody declared — a `kubectl label` from the console — now reaches the
+    // diff and reports as `undeclared`, with the accepted baseline as the
+    // valve for the ones an estate has decided to live with.
+    if (K8S_SYSTEM_METADATA_PRUNE_PATTERNS.has(node.pattern)) return true;
 
     // chant's own ownership marker is not drift (see the sets' docs).
     if (K8S_OWNERSHIP_LABEL_PATTERNS.has(node.pattern)) return true;

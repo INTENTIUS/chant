@@ -1,0 +1,68 @@
+name: helm-survey
+
+# Pinnability survey over the upstream chart corpus (#1231, epic #1228 Phase 0):
+# pull each chart at its pinned version, render twice with closed inputs,
+# classify, and fail on any drift from expected.txt. Path-scoped rather than in
+# the gating chant workflow so unrelated PRs never depend on 13 chart-repo
+# pulls; the weekly run catches external drift (a repo dropping a pinned
+# version, a helm behavior change) with no code change involved.
+run-name: helm-survey — ${{ github.head_ref || github.ref_name }}
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'lexicons/helm/**'
+      - '.github/workflows/helm-survey.yml'
+  pull_request:
+    paths:
+      - 'lexicons/helm/**'
+      - '.github/workflows/helm-survey.yml'
+  schedule:
+    # Mondays at 08:00 UTC — after lexicon-upgrade (06:00) and
+    # emulator-freshness (07:00), to spread the load.
+    - cron: '0 8 * * 1'
+  workflow_dispatch:
+
+concurrency:
+  group: helm-survey-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  survey:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm install
+
+      # Same pin as the chant workflow: the helm lexicon targets Helm 4
+      # (epic #1228) and the runner image ships Helm 3. The verdicts in
+      # expected.txt are properties of (chart, values, helm binary), so the
+      # binary is pinned like everything else.
+      - name: Install Helm 4 (pinned)
+        run: |
+          curl -fsSL -o /tmp/helm.tgz https://get.helm.sh/helm-v4.1.1-linux-amd64.tar.gz
+          echo "5d4c7623283e6dfb1971957f4b755468ab64917066a8567dd50464af298f4031  /tmp/helm.tgz" | sha256sum -c -
+          tar -xzf /tmp/helm.tgz -C /tmp
+          sudo install /tmp/linux-amd64/helm /usr/local/bin/helm
+          helm version --short
+
+      # The survey needs no generated lexicon artifacts — the harness imports
+      # only src/pinnability, which loads without a generation step — so the
+      # artifact check is skipped instead of paying ~55s of generation for
+      # nothing.
+      - name: Run the pinnability survey
+        env:
+          CHANT_HELM_SURVEY: '1'
+          CHANT_SKIP_ARTIFACT_CHECK: '1'
+        run: npx vitest run lexicons/helm/test/survey/survey.test.ts

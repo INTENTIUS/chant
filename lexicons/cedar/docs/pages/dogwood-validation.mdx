@@ -1,0 +1,181 @@
+---
+title: "Dogwood Validation"
+description: "The DWD walls that always run, and the CLI-gated checks that need the binary."
+diataxis: reference
+group: "Dogwood"
+---
+
+Validation splits by what needs a binary, and the split is the point.
+
+Everything answerable in TypeScript runs on every build and gates. Full `.dw`
+validation needs upstream's own frontend, which ships as a Rust CLI and nothing
+else — no npm package, no wasm build, no bindings — so it runs when the binary
+is there and says so out loud when it is not.
+
+| Check | Severity | Needs the binary |
+|---|---|---|
+| DWDC010 — a temporal predicate names a declared event kind | error | no |
+| DWDC011 — a window fits inside `max_window` | error | no |
+| DWDC012 — `formerly`/`previous`/`since` carries its window | error | no |
+| DWDC013 — an embedded AgentCore temporal statement has its event schema emitted | warning | no |
+| DWDS010 — an emitted event schema pins something | warning | no |
+| DWDE010 — the set validates clean under `dogwood validate` | error | yes |
+| DWDE011 — the lowered Cedar validates under `cedar-wasm` | error | yes |
+
+The DWD family is an ordinary set of
+[post-synth checks](/chant/guide/organizational-policy/) under the prefix the
+cedar serializer declares in `extraRulePrefixes`. There is no second policy
+engine here; dogwood is a target, the same as Cedar.
+
+Every one of them reads the **emitted text**, not the in-memory model, for the
+same reason the CED checks read `policies.cedar.json`: `chant audit` runs over
+a checked-in artifact chant did not write, and a wall that only fires on
+chant's own output is not a wall. It also keeps the builders and the walls
+independent — DWDC012 catches a windowless `formerly` even though the builders
+cannot construct one, because `raw()` and a hand-written `.dw` both can.
+
+## The TypeScript walls
+
+**DWDC010** compares every predicate head in the temporal regions of a `.dw`
+file against the event kinds the emitted `.dwschema` declares. Upstream rejects
+the same thing with code `extension`. The check is silent when no `.dwschema`
+was emitted: with none supplied, `ServiceSchema::defaults()` decides the kinds
+at the far end, and guessing that a project's out-of-band schema matches
+upstream's default would fail builds for a policy set that is fine.
+
+**DWDC011** fires with or without an emitted schema, because the cap applies
+either way — 24h by default. See
+[Event Schemas](../dogwood-event-schemas/#max_window).
+
+**DWDC012** is the wall behind the typed builders. `formerly(w, body)` has
+nowhere to put a missing window, so the builders make it unrepresentable; the
+check is what covers `raw()`, hand-written files, and audits of trees chant
+never wrote.
+
+**DWDC013** asks the question prior to DWDC010's, and only of statements that
+left the `.dw` file behind. A policy embedded in `Definition.Policy.Statement`
+travels as one string; the engine at the other end cannot match a temporal
+predicate until it knows what an event is. A build that embeds temporal text
+and emits no `.dwschema` has shipped half a policy — the statement deploys, the
+predicates match nothing, and a `formerly`-guarded forbid stops denying.
+Warning rather than error, because a project may register the service schema
+through a separate pipeline, and failing that build would be chant asserting a
+fact it cannot check.
+
+**DWDS010** is report-only. chant does not know whether cross-principal
+correlation was wanted, only that an unpinned schema should not slip through a
+review unremarked.
+
+Scanning is confined to the temporal regions of a file — every
+`temporal { … }` body and every `def temporal` body — so a Cedar attribute
+named `since` is not mistaken for the operator, and `context.retryWindow == 3`
+is not mistaken for a window.
+
+## The CLI-gated half
+
+**DWDE010** runs `dogwood validate --format json` over each emitted policy set
+and reports every finding. What it catches that the walls cannot: macro
+expansion, the temporal type checker, and the Cedar body checked against the
+action schema through upstream's own frontend.
+
+**DWDE011** takes the `dogwood lower` output — plain Cedar with the temporal
+conditions hoisted into `context.*` slots, plus an augmented schema declaring
+them — and runs the published `@cedar-policy/cedar-wasm` over it. That is a
+different validator from the one vendored inside upstream, which makes a
+finding here meaningful: it is drift between the Cedar upstream pins and the
+Cedar the rest of chant validates against. The #1657 verification put all 86
+upstream example bundles through this exact path and every one validated clean
+in strict mode.
+
+### When the binary is absent
+
+One `info` finding, naming the binary, where chant looked, and the issue. Not
+silence. A check that quietly passes when it could not run is claiming a
+guarantee it never made.
+
+## Pointing chant at a binary
+
+There is no published build. You build it from the pinned revision:
+
+```bash
+git clone https://github.com/dogwood-policy/dogwood
+cd dogwood && git checkout 5063bcc2d6d6cf5024d1b0498e6cc8ef52cbcf0c
+cargo build --release
+```
+
+Resolution order:
+
+1. An explicit `configureDogwoodCli({ binary })` call — taken as given, since
+   its caller knows.
+2. `$CHANT_DOGWOOD_BINARY`.
+3. `cedar.dogwood.binary` in a `chant.config.json`, resolved by walking up
+   from the working directory.
+4. `dogwood` on `PATH`.
+
+```bash
+export CHANT_DOGWOOD_BINARY=/path/to/dogwood/target/release/dogwood
+```
+
+```json
+{ "cedar": { "dogwood": { "binary": "./vendor/dogwood" } } }
+```
+
+The config knob reads `chant.config.json` only, and that is a real limitation
+rather than an oversight: a post-synth check's `check()` is synchronous, while
+chant's config loader is async and, under `chant build --sandbox`, evaluates a
+`chant.config.ts` in a child process. JSON is data, so reading it executes
+nothing. A project on `chant.config.ts` uses the environment variable or the
+programmatic override.
+
+A path from the environment or the config that is not executable is resolved
+past rather than returned to fail later, and the advisory names where chant
+looked.
+
+## Why exit codes decide nothing
+
+Three properties of the CLI shape the adapter, all verified against the pinned
+sources.
+
+**Exit 2 is ambiguous.** It covers a rejected policy set *and* clap's own usage
+error for an unknown flag — and upstream's published guide claims exit 1 for
+the latter. Reading a bare non-zero exit as "your policy is bad" would fail a
+build over a flag rename in a sync nobody outside Amazon can review. So the
+adapter branches on the JSON on stdout, in both directions: a `passed: false`
+with a zero exit is still a rejection, and the reverse is still a pass.
+
+**There are two JSON shapes.** A type-check finding arrives in a report —
+`passed`, `passed_without_warnings`, `errors[]`, `warnings[]`. A fatal parse,
+macro or lowering error replaces the whole report with a bare error object
+carrying the same diagnostic fields at the top level plus `related[]`. Both
+normalize into one diagnostic type, so nothing downstream has to know which
+arrived.
+
+**A run that produced no usable JSON is neither a pass nor a rejection.** It is
+reported at `warning` severity as "could not be validated", and the policy set
+is explicitly described as neither accepted nor rejected.
+
+Two smaller contract facts the adapter encodes: `--format json` writes to
+stdout for success and fatal alike, and `--emit` is ignored under
+`--format json` (the JSON always carries all three lowered artifacts), so it is
+not passed.
+
+Diagnostic labels are **byte offsets** into the `.dw` source, and findings
+report them as byte ranges. Converting to line and column would mean
+re-deriving line breaks over a file the adapter does not hold, and a wrong line
+number is worse than an honest offset.
+
+## Nothing in gating CI runs it
+
+By design, from the epic: upstream instability is priced, not absorbed. The
+CLI-gated checks are for a developer with the binary and for on-demand
+harnesses in the `forgejo-runtime-e2e` shape. `PolicyReplayOp` shares that
+rule and the same binary discovery — see [Replay](../dogwood-replay/) — with
+one difference: a replay step with no binary **fails**, where a build check
+with no binary reports and moves on. A check that could not run should not
+block a build; a replay that could not run has produced no answer at all.
+
+## Next
+
+- [Replay](../dogwood-replay/) — the third verb, wrapped as an activity and an
+  Op rather than as a build check
+- [Lint Rules](../lint-rules/) — the cedar half of the same check set

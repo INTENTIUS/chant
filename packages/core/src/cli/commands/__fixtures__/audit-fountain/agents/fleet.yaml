@@ -1,0 +1,27 @@
+apiVersion: fountain.dev/v1
+kind: Environment
+metadata:
+  name: dev
+spec:
+  networking_type: unrestricted
+  env_vars:
+    API_URL: https://api.example.com
+    AWS_SECRET_ACCESS_KEY: not-a-real-secret
+---
+apiVersion: fountain.dev/v1
+kind: Vault
+metadata:
+  name: staging
+spec:
+  secrets:
+    - key: API_URL
+      value: https://staging.example.com
+---
+apiVersion: fountain.dev/v1
+kind: Agent
+metadata:
+  name: researcher
+spec:
+  model: anthropic/claude-sonnet-4-6
+  runtime: claude
+  environment: dev

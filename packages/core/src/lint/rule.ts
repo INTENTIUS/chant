@@ -50,6 +50,21 @@ export interface LintDiagnostic {
 }
 
 /**
+ * The slice of the project's `chant.config` a config-aware rule reads
+ * (#1221) — threaded into {@link LintContext} by `runLint` when the caller
+ * resolved the project's config (`chant lint` does; a bare unit test or the
+ * LSP's single-file lint may not). Structurally mirrors the corresponding
+ * `ChantConfig` fields (../config.ts) without importing them, so `rule.ts`
+ * stays dependency-light for lexicon rule authors.
+ */
+export interface LintProjectConfig {
+  /** Declared environments — a bare name or `{ name, endpoint }` (#1166). */
+  environments?: Array<string | { name: string; endpoint?: string }>;
+  /** Ownership marking config — `env` is a literal or a build-parameter reference (#1396). */
+  ownership?: { stack?: string; env?: string | { param: string }; enabled?: boolean };
+}
+
+/**
  * Context provided to lint rules during checking
  */
 export interface LintContext {
@@ -74,6 +89,14 @@ export interface LintContext {
    * call is a violation.
    */
   intrinsics?: readonly IntrinsicDef[];
+  /**
+   * chant #1221 — the project's resolved config slice for config-aware rules
+   * (COR021 reads `environments` + `ownership`). Threaded from `runLint`;
+   * undefined when the caller never loaded a project config (a unit test
+   * constructing a context directly, the LSP's single-file path), in which
+   * case config-aware rules stay silent.
+   */
+  projectConfig?: LintProjectConfig;
 }
 
 /**

@@ -1,6 +1,7 @@
 ---
 title: "CockroachDB Multi-Region on GKE"
 description: "One CockroachDB cluster across three GCP regions — nine nodes, three composites, four Ops — with a local k3d smoke test that needs no cloud account."
+diataxis: tutorial
 ---
 
 import { Aside } from '@astrojs/starlight/components';
@@ -177,7 +178,7 @@ phase("Clusters ready", [
 ], { parallel: true }),
 ```
 
-The readiness phase is the clearest trade. The script waited on `kubectl wait --for=condition=Ready containercluster/...` and then polled `gcloud container node-pools describe` sixty times in a bash loop. Both are Config Connector resources, so [`waitForReady`](/chant/guide/ops/#phases-and-steps) reads their own Ready condition — and fails fast on a terminal one instead of polling out the timeout.
+The readiness phase is the clearest trade. The script waited on `kubectl wait --for=condition=Ready containercluster/...` and then polled `gcloud container node-pools describe` sixty times in a bash loop. Both are Config Connector resources, so [`waitForReady`](/chant/guide/ops-reference/#step-builders) reads their own Ready condition — and fails fast on a terminal one instead of polling out the timeout.
 
 ### Where the gate goes
 
@@ -280,7 +281,7 @@ The [example README](https://github.com/intentius/chant/tree/main/examples/cockr
 ## Further reading
 
 - [GCP Config Connector lexicon](/chant/lexicons/gcp/) — resource reference and composites
-- [GKE Composites](/chant/lexicons/k8s/gke-composites/) — `GkeExternalDnsAgent`, `GceIngress`, and the rest of the GKE surface (`CockroachDbRegionStack` is not documented there yet — #1723)
+- [GKE Composites](/chant/lexicons/k8s/gke-composites/) — `GkeExternalDnsAgent`, `GceIngress`, `CockroachDbRegionStack`, and the rest of the GKE surface
 - [Ops](/chant/guide/ops/) — phases, gates, profiles, and compensation
 - [Build-Time Parameters](/chant/concepts/build-time-parameters/) — declaring what varies per deployment
 - [Multi-Stack Projects](/chant/guide/multi-stack/) — splitting one project across stacks

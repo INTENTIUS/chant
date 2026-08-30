@@ -25,6 +25,9 @@ export type { LifecycleSnapshotArgs, LifecycleDiffArgs, LifecycleDiffResult } fr
 export { chantTeardown } from "./teardown";
 export type { ChantTeardownArgs } from "./teardown";
 
+export { envTeardown } from "./env-teardown";
+export type { EnvTeardownArgs, EnvTeardownResult, EnvTeardownDeps } from "./env-teardown";
+
 // k3d activities relocated to the k8s lexicon (#809), then to their own k3d
 // lexicon (#1410) — loadActivities(["k3d"]) provides k3dUp/k3dDown. The step
 // builders stay in core.
@@ -41,15 +44,20 @@ export type { ChantTeardownArgs } from "./teardown";
 export { reconcilePr } from "./reconcile";
 export type { ReconcilePrArgs, ReconcileResult, ReconcileMode, ReconcileEntry } from "./reconcile";
 
-export { nativeApply, compensateApply } from "./apply";
+export { nativeApply, compensateApply, hasNativeRollback } from "./apply";
 export type {
   NativeApplyArgs,
   NativeApplyResult,
   CompensateApplyArgs,
+  CompensateApplyResult,
   ApplyTarget,
-  ShellApplyTarget,
   DeleteMode,
   K8sApplier,
+  AzureApplier,
+  GcpApplier,
+  FlyApplier,
+  AwsApplier,
+  AwsRollback,
 } from "./apply";
 
 // argo activity (waitForArgoSync) relocated to the k8s lexicon (#809) —
@@ -57,6 +65,9 @@ export type {
 
 export { policyGate } from "./policy";
 export type { PolicyGateArgs } from "./policy";
+
+export { guardValidate, parseGuardFindings } from "./guard-validate";
+export type { GuardValidateArgs, GuardValidateResult, GuardFinding } from "./guard-validate";
 
 export { workflowSupplyChainAudit, collectAuditRefs, defaultActionRefResolver } from "./workflow-audit";
 export type {
@@ -80,6 +91,9 @@ export type {
   GitlabRefResolver,
   PipelineRefResolution,
 } from "./pipeline-audit";
+
+export { convergeTick, planConvergeTick } from "./converge";
+export type { ConvergeTickArgs, ConvergeTickResult, ConvergeTickPlan, SerializedConvergeRule } from "./converge";
 
 export {
   lexiconUpgrade,

@@ -133,10 +133,11 @@ export function readOwnership(
  * A read path that can resolve an ownership verdict from the marker (#1348).
  *
  * Per-path rather than per-lexicon because the answer genuinely differs by
- * path: aws stamps tags at synthesis and reads them on the deep observation and
- * on live export, but `describeResources` is sourced from
- * `describe-stack-resources`, which returns no tags at all — so an `owned: true`
- * thin read against aws can only answer `unknown`.
+ * path — in granularity as much as in availability. aws stamps tags at
+ * synthesis and reads them per resource on the deep observation and on live
+ * export; its `describeResources` is sourced from `describe-stack-resources`,
+ * which returns no per-resource tags, so it resolves the verdict from the
+ * STACK's own tags instead (#1998).
  */
 export type OwnershipReadPath = "describeResources" | "observeResourcesDeep" | "exportResources";
 

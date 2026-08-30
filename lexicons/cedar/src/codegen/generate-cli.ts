@@ -6,13 +6,15 @@
  * schema bundled at `src/spec/default-schema.cedarschema` when there is not
  * (#1650), so this always has something to generate from and no longer needs
  * the scaffold's swallow-and-continue guard.
+ *
+ * This script is the package's own build step, so the project root is the
+ * package root and the output is `src/generated/` (the monorepo case of
+ * `resolveGeneratedDir`). A consumer runs `chant generate --lexicon cedar`
+ * instead, which writes into the consumer's tree (#1696).
  */
-import { generate, writeGeneratedFiles } from "./generate";
-import { dirname } from "path";
-import { fileURLToPath } from "url";
+import { generate, packageDir, resolveGeneratedDir, writeGeneratedFiles } from "./generate";
 
-// <pkg>/src/codegen/generate-cli.ts → three levels up is the package root.
-const pkgDir = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
+const pkgDir = packageDir();
 
 const result = await generate({ verbose: true, projectRoot: pkgDir });
-writeGeneratedFiles(result, pkgDir);
+writeGeneratedFiles(result, resolveGeneratedDir({ projectRoot: pkgDir }));

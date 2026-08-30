@@ -33,6 +33,17 @@ import type { ChantConfig } from "@intentius/chant/config";
 export const CEDAR_DEFAULT_SCHEMA_PATH = "schema.cedarschema";
 
 /**
+ * Where `generate()` writes when `cedar.outDir` is unset and the project is a
+ * consumer of the published package (#1696).
+ *
+ * Relative to the project root. Inside this lexicon's own checkout the
+ * package directory *is* the project root, and the output stays at
+ * `src/generated/` so `src/index.ts` can re-export it; see
+ * `resolveGeneratedDir` in `codegen/generate.ts`.
+ */
+export const CEDAR_DEFAULT_OUT_DIR = "src/generated/cedar";
+
+/**
  * `strictObject`, not `object`. Core applies `.strict()` to the top level of a
  * declared namespace itself; `validation` is nested, and is the lexicon's own
  * to close.
@@ -46,6 +57,19 @@ export const cedarConfigSchema = z.strictObject({
    * checkout still produces artifacts.
    */
   schema: z.string().optional(),
+
+  /**
+   * Directory `generate()` writes the typed classes into, relative to the
+   * project root. Defaults to {@link CEDAR_DEFAULT_OUT_DIR}.
+   *
+   * The output used to land in the installed package's own `src/generated/`,
+   * which `npm ci` wipes (#1696). It is the project's artifact — the classes
+   * describe the project's schema, not the package's — so it lives in the
+   * project tree, and `src/policies.ts` imports from it rather than from
+   * `@intentius/chant-lexicon-cedar`. Commit it or regenerate it in CI; either
+   * way it is never under `node_modules`.
+   */
+  outDir: z.string().optional(),
 
   /**
    * Knobs for the `cedar-wasm` validator. `mode` is a single-variant enum on
@@ -122,7 +146,7 @@ export type CedarConfigNamespace = NonNullable<ChantConfig["cedar"]>;
 /**
  * Read the `cedar` namespace out of the project's config.
  *
- * Searches upward from `startDir`, so `chant generate` finds the config from a
+ * Searches upward from `startDir`, so `chant cedar generate` finds the config from a
  * subdirectory the same way `chant build` does. A project with no config, or
  * one with no `cedar` key, gets `{}` — the schema resolution order in
  * `spec/fetch.ts` handles that case without needing to know why.
@@ -133,15 +157,37 @@ export type CedarConfigNamespace = NonNullable<ChantConfig["cedar"]>;
  * never loaded.
  */
 export async function loadCedarConfig(startDir: string): Promise<CedarConfig> {
+  return (await loadCedarProject(startDir)).config;
+}
+
+/** A project as cedar's commands see it: the root paths resolve against, and the namespace. */
+export interface CedarProject {
+  /** The directory holding `chant.config.*`, or `startDir` when there is none. */
+  projectRoot: string;
+  config: CedarConfig;
+}
+
+/**
+ * {@link loadCedarConfig}, plus the directory the config was found in.
+ *
+ * `cedar.schema` and `cedar.outDir` are relative to the config file, not to
+ * wherever the command was run (#1696) — `chant cedar generate` from a subdirectory
+ * has to write to the same place as the same command from the root.
+ */
+export async function loadCedarProject(startDir: string): Promise<CedarProject> {
   const { loadChantConfigUpward } = await import("@intentius/chant/config");
+  const { dirname } = await import("path");
   try {
-    const { config } = await loadChantConfigUpward(startDir);
+    const { config, configPath } = await loadChantConfigUpward(startDir);
     const parsed = cedarConfigSchema.safeParse(config.cedar ?? {});
-    return parsed.success ? parsed.data : {};
+    return {
+      projectRoot: configPath ? dirname(configPath) : startDir,
+      config: parsed.success ? parsed.data : {},
+    };
   } catch {
     // A project whose config does not load is not this function's problem to
     // report — every other command reports it first, and generation falling
     // back to the bundled schema is the same behaviour as having no config.
-    return {};
+    return { projectRoot: startDir, config: {} };
   }
 }

@@ -1,6 +1,7 @@
 ---
 title: Component Contract
 description: The shape a component takes — identity, an optional build, a deploy composition, and the three archetypes — plus the portable JSON projection.
+diataxis: reference
 ---
 
 import { Aside } from '@astrojs/starlight/components';
@@ -21,6 +22,7 @@ interface Component {
   // verify + rollback fall out of the capabilities used
 
   liveNames?: string[];       // optional: live entity/resource name(s), when they differ from `name`
+  composites?: string[];      // optional: composite kind(s) this component deploys, when a consumer can't infer it from `name`
 }
 ```
 
@@ -42,11 +44,11 @@ Because `deploy` is a composition, build-only and apply-only shapes are first-cl
 | **Infra** | apply → verify (no build) | A DynamoDB table, an EMR cluster, RDS/OpenSearch |
 | **Producer / library** | build → publish (no service apply) | A Java/JAR build published to S3 for EMR |
 
-A producer emits an artifact other components consume; its `deploy` is a single Publish phase. See [cross-component wiring](/chant/components/composition-and-wiring/#cross-component-outputs).
+A producer emits an artifact other components consume; its `deploy` is a single Publish phase. See [cross-component wiring](/chant/components/wiring-howto/#cross-component-outputs).
 
 ## A worked service
 
-An ALB/ECS target: build an image, promote it at deploy time, apply the stack that registers the service on a shared ALB, wait for steady state. The shared-ALB values arrive as [cross-stack outputs](/chant/components/composition-and-wiring/#cross-stack-outputs), resolved by the graph rather than by a `describe-stacks` shell script.
+An ALB/ECS target: build an image, promote it at deploy time, apply the stack that registers the service on a shared ALB, wait for steady state. The shared-ALB values arrive as [cross-stack outputs](/chant/components/wiring-howto/#cross-stack-outputs), resolved by the graph rather than by a `describe-stacks` shell script.
 
 ```ts
 import { phase, type Component } from "@intentius/chant/components/component";

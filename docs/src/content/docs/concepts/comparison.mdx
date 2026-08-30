@@ -1,6 +1,7 @@
 ---
 title: How chant compares
 description: Where chant fits in the infrastructure tooling landscape.
+diataxis: explanation
 ---
 
 ## What chant is
@@ -51,10 +52,13 @@ A tool can satisfy more than one.
 | **Formae** | ✓ | ✓ | ✓ | ✓ |
 | **Terraform** | ✓ | ✓ | — | — |
 | **CDK** | ✓ | ✓ | — | — |
+| **Alchemy** | ✓ | ✓ | — | — |
 
 chant is a static subset of TypeScript (code as data) that compiles to native spec (configuration as data). Because the source is not executed, it satisfies the code and data paradigms at once.
 
 The other rows sit on one side of that line. **CDK** executes its source, so the configuration exists as the output of a program run rather than as data available beforehand. **Terraform** authors configuration in a DSL (HCL) that is evaluated with functions and applied against state, so it is code rather than inert data. **ConfigHub** keeps configuration as data in a store, which places it in the data paradigms and not the code ones. **Formae** reaches all four the way chant does, through Pkl, a dedicated configuration language that evaluates to data. Formae and chant differ on the language and the runtime model: chant compiles a subset of a general-purpose language (TypeScript) and you invoke the lifecycle you want, where Formae uses a purpose-built language and an always-on agent that observes and reconciles.
+
+**[Alchemy](https://alchemy.run)** is the TypeScript-native tool on the executed side, and the one most worth naming explicitly: it is actively developed and its stated goal — infrastructure should feel like code, not configuration — is the same goal chant has. (Read against `alchemy@2.0.0-beta.74`, published under npm's `latest` tag as of this writing; the project ships fast pre-1.0 betas, so treat specifics as dated rather than fixed.) Its resources are [Effect](https://effect.website/) programs — Layers composed together and run inside a `Stack` — and the desired-state graph exists only once that program runs to produce it, which lands Alchemy in the same cell as CDK: code and configuration-as-code, not data. The disagreement with chant is narrower than "code vs. config": both agree infrastructure should feel like code; they disagree about whether that requires running it. Alchemy answers yes and gets composition, control flow, and Effect's type safety by executing resources as async programs. chant answers no and gets the same code-feel — autocomplete, go-to-definition, refactoring, cross-file references — from a statically evaluable subset, without executing anything. `typescript-as-data` is chant's answer to that question, not a rejection of Alchemy's.
 
 The paradigms say where each tool sits. Underneath, the mechanics differ.
 
@@ -65,8 +69,9 @@ The paradigms say where each tool sits. Underneath, the mechanics differ.
 | **Terraform** | HCL | Executed | State file | Yes (state file) | Yes |
 | **ConfigHub** | YAML data | Stored | The store | Yes (database) | Yes |
 | **Formae** | Pkl | Compiled | Source | No | Yes |
+| **Alchemy** | TypeScript (Effect-based) | Executed | State store | Yes | Yes |
 
-*Build model* is how source becomes the applied result: **compiled** (evaluated to data with no side effects), **executed** (run as a program, which can reach the environment and vary by run), or **stored** (configuration is already data in a store, applied by a worker). chant and Formae are the compiled, storeless pair, and differ in the authoring language: a subset of a general-purpose language versus a purpose-built one. ConfigHub keeps the data in a database. CDK and Terraform execute their source.
+*Build model* is how source becomes the applied result: **compiled** (evaluated to data with no side effects), **executed** (run as a program, which can reach the environment and vary by run), or **stored** (configuration is already data in a store, applied by a worker). chant and Formae are the compiled, storeless pair, and differ in the authoring language: a subset of a general-purpose language versus a purpose-built one. ConfigHub keeps the data in a database. CDK, Terraform, and Alchemy execute their source. Alchemy's store is not a single mandatory backend — the default is a local `.alchemy/state/` directory, with a Cloudflare Durable Object/D1-backed store available for team or CI use — but a store is always required.
 
 ## Design decisions and their consequences
 
@@ -97,6 +102,8 @@ The core architectural difference is what happens when you "run" each tool:
 
 **CDK:** Your TypeScript *executes*. Constructors run, methods are called, side effects happen. The result is captured as a CloudFormation template, which is then deployed. The execution can be nondeterministic — same code, different environment, potentially different output.
 
+**Alchemy:** Your TypeScript also executes, by design. Resources are Effect programs — Layers composed together and run inside a `Stack` — and the desired-state graph exists only once that run has produced it. Planning, applying, and destroying are separate CLI verbs, so there's a real preview step before anything changes; the graph the preview walks is still the output of a program run, not data that existed beforehand. This is an explicit design position, not an oversight — Alchemy's bet is that running the code is what buys composition, control flow, and Effect's type safety.
+
 **chant:** by default, chant reduces your TypeScript directly from the AST to the resource objects it declares, executing none of it. Synthesis does nothing else. No API calls, no state, no deployment. Source outside that foldable subset falls back to being imported and run, per file; a separate evaluability lint pass (EVL) restricts source to literals, constants, and cross-resource references, so that executed result is equivalent to static data too. Same conforming source always produces the same output — see [Folded vs Run](/chant/concepts/typescript-as-data/#folded-vs-run).
 
 This matters for:
@@ -113,6 +120,8 @@ The most consequential design difference after execution model is the lifecycle 
 **Terraform** treats state as authoritative — the state file IS the source of truth for what's deployed. This enables precise plan/apply workflows: the tool knows exactly what exists, what changed, and what to do. The cost is operational burden: state must be locked during operations, stored in a backend with access controls, and protected from corruption. Sensitive data (database passwords, API keys) ends up in state because the tool needs it for diffing.
 
 **CDK** inherits CloudFormation's authoritative lifecycle model, which AWS manages as a service. Less operational burden, but the same architectural commitment: state is truth.
+
+**Alchemy** looks the closest to chant's model on the surface — state defaults to local files in `.alchemy/state/`, in-repo, inspectable, no separate service (a Cloudflare-backed store is available for team or CI use) — but the role is different. Alchemy's `reconcile` step is documented as convergent: it reads live cloud state before deciding what to do, and can rediscover a resource by its deterministic physical name even without its prior state. Ownership is also read live — a provider returns `Unowned(attrs)` for a resource that carries someone else's tags, and by default that fails the run (`OwnedBySomeoneElse`) unless the operator opts in with `--adopt`. That narrows the gap with chant's live-projection model. What doesn't narrow: the stored state, not a live query, is still what tells Alchemy which resources exist and are eligible to be deleted on a plan — the same role a Terraform state file plays, with a lighter operational cost. Same storage mechanism as a chant snapshot; a different role. chant's snapshot is evidence that can be deleted between runs with no change in behavior. Alchemy's state store drives the plan.
 
 **chant** is designed with an observational lifecycle model — snapshots record what was observed at a point in time, not what must be true now. It does not give up the precise change set, though: chant computes a create/update/delete plan against the live system using [cloud-side ownership markers](/chant/configuration/config-file/#ownership) rather than a hosted state file. What it drops is the *authoritative file*, and with it the costs:
 

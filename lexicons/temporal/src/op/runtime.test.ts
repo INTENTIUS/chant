@@ -150,6 +150,61 @@ describe("temporal runtime harness (#161)", () => {
     expect(unsignalled.durationMs).toBeGreaterThan(47 * 60 * 60 * 1000); // ~48h
   }, 120_000);
 
+  test("gate query — gateState reports the pending gate, then clears (#1676)", async () => {
+    const rec = (tag: string): ActivityFn => async () => { void tag; };
+    const op = opMap({
+      name: "gate-query-op", overview: "o",
+      phases: [
+        { name: "Before", steps: [{ kind: "activity", fn: "before" }] },
+        {
+          name: "Approve",
+          steps: [{ kind: "gate", signalName: "gate-approve-query", timeout: "48h", description: "needs review" }],
+        },
+        { name: "After", steps: [{ kind: "activity", fn: "after" }] },
+      ],
+    });
+
+    const files = serializeOps(op);
+    const wfKey = Object.keys(files).find((k) => k.endsWith("/workflow.ts"))!;
+    const wfPath = join(GEN_DIR, "gate-query-op.workflow.ts");
+    writeFileSync(wfPath, files[wfKey]);
+
+    const worker = await Worker.create({
+      connection: env.nativeConnection,
+      namespace: env.namespace,
+      taskQueue: "gate-query-op",
+      workflowsPath: wfPath,
+      activities: { before: rec("before"), after: rec("after") },
+    });
+
+    const handle = await env.client.workflow.start(workflowFn("gate-query-op"), {
+      taskQueue: "gate-query-op",
+      workflowId: `gate-query-op-${wfCounter++}`,
+    });
+
+    await worker.runUntil(async () => {
+      // Poll until the gate is registered — the workflow task that runs
+      // "Before" and reaches the gate needs to land first.
+      let pending: unknown;
+      for (let i = 0; i < 50; i++) {
+        pending = await handle.query("gateState");
+        if (pending !== null) break;
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      expect(pending).toEqual({
+        signalName: "gate-approve-query",
+        description: "needs review",
+        since: expect.any(String),
+      });
+
+      await handle.signal("gate-approve-query");
+      await handle.result();
+
+      const cleared = await handle.query("gateState");
+      expect(cleared).toBeNull();
+    });
+  }, 120_000);
+
   test("compensation — failing activity runs onFailure in reverse, then re-throws (#168)", async () => {
     const order: string[] = [];
     const activities: Record<string, ActivityFn> = {

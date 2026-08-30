@@ -169,6 +169,7 @@ export const testEntity = {
         format: "json",
         serializers: [awsSerializer],
         fold: true,
+        verbose: true,
       });
 
       expect(result.success).toBe(true);
@@ -181,6 +182,327 @@ export const testEntity = {
     } finally {
       errorSpy.mockRestore();
     }
+  });
+
+  test("#1083 — --fold-rank ranks blockers and, given a path, writes a collapsed-format export", async () => {
+    const thisDir = dirname(fileURLToPath(import.meta.url));
+    const runtimePath = resolvePath(thisDir, "../../runtime");
+
+    // A pair of files that fold fine (same shape as the #1022 test above),
+    // so the build produces output and the "no output" guard doesn't fire —
+    // unrelated to the ranking below.
+    await writeFile(
+      join(testDir, "resources.ts"),
+      `
+        import { createResource } from ${JSON.stringify(runtimePath)};
+        export const Bucket = createResource("Test::Bucket", "aws", { arn: "Arn" });
+      `,
+    );
+    await writeFile(
+      join(testDir, "main.ts"),
+      `
+        import { Bucket } from "./resources";
+        export const bucket = new Bucket({ name: "my-bucket" });
+      `,
+    );
+    // a.ts fails directly (process.env); b.ts fails because it imports a.ts.
+    await writeFile(join(testDir, "a.ts"), `export const a = process.env.SOMETHING;`);
+    await writeFile(
+      join(testDir, "b.ts"),
+      `
+        import { a } from "./a";
+        export const b = a;
+      `,
+    );
+
+    const awsSerializer: Serializer = {
+      name: "aws",
+      rulePrefix: "TEST",
+      serialize: (entities) => JSON.stringify([...entities.keys()]),
+    };
+
+    const collapsedPath = join(testDir, "out", "fold.collapsed");
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const result = await buildCommand({
+        path: testDir,
+        format: "json",
+        serializers: [awsSerializer],
+        fold: true,
+        foldRank: true,
+        foldRankCollapsedFile: collapsedPath,
+      });
+
+      expect(result.success).toBe(true);
+
+      const lines = errorSpy.mock.calls.map((call) => String(call[0]));
+      const rankingLine = lines.find((l) => l.includes("fold-rank:") && l.includes("blocker(s)"));
+      expect(rankingLine).toBeDefined();
+      const aLine = lines.find((l) => l.includes("retained 2") && l.includes("a.ts"));
+      expect(aLine).toBeDefined();
+
+      expect(existsSync(collapsedPath)).toBe(true);
+      const collapsed = readFileSync(collapsedPath, "utf-8").trim().split("\n");
+      expect(collapsed.sort()).toEqual(["fold;a.ts 1", "fold;a.ts;b.ts 1"].sort());
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  describe("#1396 — ownership.env resolves from the env build parameter", () => {
+    const thisDir = dirname(fileURLToPath(import.meta.url));
+    const runtimePath = resolvePath(thisDir, "../../runtime");
+    const paramsPath = resolvePath(thisDir, "../../params");
+
+    // A label-stamping serializer in miniature: the resource's own `env` prop
+    // (from params.env) next to the ownership marker's env (from context).
+    const labelSerializer: Serializer = {
+      name: "aws",
+      rulePrefix: "TEST",
+      serialize: (entities, _outputs, context) =>
+        JSON.stringify(
+          [...entities.values()].map((e) => ({
+            label: (e as unknown as { props: { env: string } }).props.env,
+            marker: context?.ownership,
+          })),
+        ),
+    };
+
+    async function writeProject(ownershipEnv: string) {
+      await writeFile(
+        join(testDir, "chant.config.ts"),
+        `
+          export default {
+            ownership: { stack: "fountain", env: ${ownershipEnv} },
+            buildParams: {
+              env: { type: "string", default: "dev", env: "CHANT_TEST_1396_ENV" },
+            },
+          };
+        `,
+      );
+      await writeFile(
+        join(testDir, "resources.ts"),
+        `
+          import { createResource } from ${JSON.stringify(runtimePath)};
+          export const Bucket = createResource("Test::Bucket", "aws", { arn: "Arn" });
+        `,
+      );
+      await writeFile(
+        join(testDir, "main.ts"),
+        `
+          import { Bucket } from "./resources";
+          import { params } from ${JSON.stringify(paramsPath)};
+          export const bucket = new Bucket({ env: params.env });
+        `,
+      );
+    }
+
+    function built(): Array<{ label: string; marker?: { stack: string; env?: string } }> {
+      return JSON.parse(readFileSync(outputFile, "utf-8"));
+    }
+
+    test("--param env=prod drives both the label and the ownership marker", async () => {
+      await writeProject(`{ param: "env" }`);
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        const result = await buildCommand({
+          path: testDir,
+          output: outputFile,
+          format: "json",
+          serializers: [labelSerializer],
+          params: { env: "prod" },
+        });
+        expect(result.errors).toEqual([]);
+        expect(result.success).toBe(true);
+        expect(built()).toEqual([{ label: "prod", marker: { stack: "fountain", env: "prod" } }]);
+      } finally {
+        errorSpy.mockRestore();
+      }
+    });
+
+    test("with no parameter supplied, both follow the declared default", async () => {
+      await writeProject(`{ param: "env" }`);
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        const result = await buildCommand({
+          path: testDir,
+          output: outputFile,
+          format: "json",
+          serializers: [labelSerializer],
+        });
+        expect(result.success).toBe(true);
+        expect(built()).toEqual([{ label: "dev", marker: { stack: "fountain", env: "dev" } }]);
+      } finally {
+        errorSpy.mockRestore();
+      }
+    });
+
+    test("a literal ownership.env that disagrees with --param env is warned about", async () => {
+      await writeProject(`"dev"`);
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        const result = await buildCommand({
+          path: testDir,
+          output: outputFile,
+          format: "json",
+          serializers: [labelSerializer],
+          params: { env: "prod" },
+        });
+        expect(result.success).toBe(true);
+        expect(built()).toEqual([{ label: "prod", marker: { stack: "fountain", env: "dev" } }]);
+        expect(result.warnings.some((w) => w.includes('ownership.env is "dev"') && w.includes('"prod"'))).toBe(true);
+      } finally {
+        errorSpy.mockRestore();
+      }
+    });
+
+    test("a reference to an undeclared parameter fails the build", async () => {
+      await writeProject(`{ param: "environment" }`);
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        const result = await buildCommand({
+          path: testDir,
+          output: outputFile,
+          format: "json",
+          serializers: [labelSerializer],
+        });
+        expect(result.success).toBe(false);
+        expect(result.errors.some((e) => e.includes('build parameter "environment"'))).toBe(true);
+      } finally {
+        errorSpy.mockRestore();
+      }
+    });
+  });
+
+  describe("#1221 — dynamic-env legality against declared environments", () => {
+    const thisDir = dirname(fileURLToPath(import.meta.url));
+    const runtimePath = resolvePath(thisDir, "../../runtime");
+    const paramsPath = resolvePath(thisDir, "../../params");
+
+    // Serializer exposing the physical name (from params.env interpolation)
+    // next to the ownership marker, so one test can assert both are disjoint
+    // across two builds.
+    const namingSerializer: Serializer = {
+      name: "aws",
+      rulePrefix: "TEST",
+      serialize: (entities, _outputs, context) =>
+        JSON.stringify(
+          [...entities.values()].map((e) => ({
+            name: (e as unknown as { props: { name: string } }).props.name,
+            marker: context?.ownership,
+          })),
+        ),
+    };
+
+    async function writeProject(environments: string) {
+      await writeFile(
+        join(testDir, "chant.config.ts"),
+        `
+          export default {
+            environments: ${environments},
+            ownership: { stack: "billing", env: { param: "env" } },
+            buildParams: {
+              env: { type: "string", default: "dev" },
+            },
+          };
+        `,
+      );
+      await writeFile(
+        join(testDir, "resources.ts"),
+        `
+          import { createResource } from ${JSON.stringify(runtimePath)};
+          export const Bucket = createResource("Test::Bucket", "aws", { arn: "Arn" });
+        `,
+      );
+      await writeFile(
+        join(testDir, "main.ts"),
+        `
+          import { Bucket } from "./resources";
+          import { params } from ${JSON.stringify(paramsPath)};
+          export const uploads = new Bucket({ name: \`billing-\${params.env}-uploads\` });
+        `,
+      );
+    }
+
+    function built(): Array<{ name: string; marker?: { stack: string; env?: string } }> {
+      return JSON.parse(readFileSync(outputFile, "utf-8"));
+    }
+
+    async function buildWithEnv(env: string) {
+      return buildCommand({
+        path: testDir,
+        output: outputFile,
+        format: "json",
+        serializers: [namingSerializer],
+        params: { env },
+      });
+    }
+
+    test("--param env=pr-42 is legal when a pr-* pattern entry is declared", async () => {
+      await writeProject(`["dev", "prod", "pr-*"]`);
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        const result = await buildWithEnv("pr-42");
+        expect(result.errors).toEqual([]);
+        expect(result.success).toBe(true);
+        expect(built()).toEqual([{ name: "billing-pr-42-uploads", marker: { stack: "billing", env: "pr-42" } }]);
+      } finally {
+        errorSpy.mockRestore();
+      }
+    });
+
+    test("--param env outside the declared entries (no pattern covers it) fails the build", async () => {
+      await writeProject(`["dev", "prod"]`);
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        const result = await buildWithEnv("pr-42");
+        expect(result.success).toBe(false);
+        expect(result.errors.some((e) => e.includes('Unknown environment "pr-42"'))).toBe(true);
+      } finally {
+        errorSpy.mockRestore();
+      }
+    });
+
+    test("a literal entry still matches by equality", async () => {
+      await writeProject(`["dev", "prod", "pr-*"]`);
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        const result = await buildWithEnv("prod");
+        expect(result.errors).toEqual([]);
+        expect(built()).toEqual([{ name: "billing-prod-uploads", marker: { stack: "billing", env: "prod" } }]);
+      } finally {
+        errorSpy.mockRestore();
+      }
+    });
+
+    test("two builds with different --param env yield disjoint names and disjoint markers", async () => {
+      await writeProject(`["dev", "prod", "pr-*"]`);
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        expect((await buildWithEnv("pr-1")).success).toBe(true);
+        const first = built();
+        expect((await buildWithEnv("pr-2")).success).toBe(true);
+        const second = built();
+        expect(first).toEqual([{ name: "billing-pr-1-uploads", marker: { stack: "billing", env: "pr-1" } }]);
+        expect(second).toEqual([{ name: "billing-pr-2-uploads", marker: { stack: "billing", env: "pr-2" } }]);
+        expect(first[0].name).not.toBe(second[0].name);
+        expect(first[0].marker?.env).not.toBe(second[0].marker?.env);
+      } finally {
+        errorSpy.mockRestore();
+      }
+    });
+
+    test("a project with no declared environments accepts any dynamic value, as before", async () => {
+      await writeProject(`undefined`);
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        const result = await buildWithEnv("anything-goes");
+        expect(result.errors).toEqual([]);
+        expect(built()).toEqual([{ name: "billing-anything-goes-uploads", marker: { stack: "billing", env: "anything-goes" } }]);
+      } finally {
+        errorSpy.mockRestore();
+      }
+    });
   });
 
   test("#1064 — a declared build-time parameter binds to params.<name> and folds to a literal", async () => {
@@ -235,10 +557,10 @@ export const testEntity = {
       expect(result.resourceCount).toBe(1);
       expect(result.buildParams).toEqual([{ name: "tier", value: "production", source: "cli" }]);
 
-      const loggedParamLine = errorSpy.mock.calls
-        .map((call) => String(call[0]))
-        .some((line) => line.includes("[param] tier") && line.includes("production") && line.includes("cli"));
-      expect(loggedParamLine).toBe(true);
+      // #1424 — without --verbose the echo is a one-line count by source.
+      const logged = errorSpy.mock.calls.map((call) => String(call[0]));
+      expect(logged.some((line) => line.includes("1 build parameter resolved (1 from cli)"))).toBe(true);
+      expect(logged.some((line) => line.includes("[param] tier"))).toBe(false);
     } finally {
       errorSpy.mockRestore();
     }
@@ -346,6 +668,19 @@ export const testEntity = {
 
       expect(result.success).toBe(true);
       expect(result.resourceCount).toBe(1);
+      // #1424 — the default report is one summary line, not one line per file.
+      const logged = errorSpy.mock.calls.map((call) => String(call[0]));
+      expect(logged.some((line) => /^.*fold: \d+ files? folded, \d+ ran/.test(line))).toBe(true);
+      expect(logged.some((line) => line.includes("[fold:"))).toBe(false);
+
+      errorSpy.mockClear();
+      const verboseResult = await buildCommand({
+        path: testDir,
+        format: "json",
+        serializers: [mockSerializer],
+        verbose: true,
+      });
+      expect(verboseResult.success).toBe(true);
       const anyFoldLine = errorSpy.mock.calls.map((call) => String(call[0])).some((line) => line.includes("[fold:"));
       expect(anyFoldLine).toBe(true);
 
@@ -360,7 +695,7 @@ export const testEntity = {
       expect(runResult.resourceCount).toBe(1);
       const anyFoldLineOff = errorSpy.mock.calls
         .map((call) => String(call[0]))
-        .some((line) => line.includes("[fold:"));
+        .some((line) => line.includes("[fold:") || line.includes("fold: "));
       expect(anyFoldLineOff).toBe(false);
     } finally {
       errorSpy.mockRestore();
@@ -433,6 +768,186 @@ export const testEntity = {
     expect(existsSync(join(testDir, "dist", "ops", "alb-deploy", "workflow.ts"))).toBe(true);
     expect(existsSync(join(testDir, "dist", "ops", "alb-deploy", "activities.ts"))).toBe(true);
     expect(existsSync(join(testDir, "dist", "ops", "alb-deploy", "worker.ts"))).toBe(true);
+  });
+
+  describe("committed-encrypted secret sidecars", () => {
+    const CIPHERTEXT = 'apiVersion: v1\nkind: Secret\nstringData:\n  T: ENC[AES256_GCM,data:xx]\nsops:\n  version: 3.9.4\n';
+
+    /** A serializer standing in for the k8s one: a sidecar plus a primary doc. */
+    const sidecarSerializer: Serializer = {
+      name: "multi",
+      rulePrefix: "MULTI",
+      serialize: () => ({
+        primary: "kind: Deployment\n",
+        files: { "db.sops.yaml": CIPHERTEXT },
+        verbatimFiles: ["db.sops.yaml"],
+      }),
+    };
+
+    async function writeProject(fileValue: string): Promise<void> {
+      const modulePath = resolvePath(
+        dirname(fileURLToPath(import.meta.url)),
+        "..",
+        "..",
+        "secret-provenance",
+      );
+      await writeFile(
+        join(testDir, "infra.ts"),
+        `import { declareSecret } from ${JSON.stringify(modulePath)};
+export const dbCredentials = declareSecret({ name: "db-credentials", provenance: "committed-encrypted", file: ${JSON.stringify(fileValue)} });
+export const x = { [Symbol.for("chant.declarable")]: true, entityType: "X", lexicon: "multi", kind: "resource", props: {}, attributes: {} };`,
+      );
+    }
+
+    test("a build with no --output refuses, naming the flag", async () => {
+      await writeProject("secrets/db.sops.yaml");
+
+      const result = await buildCommand({
+        path: testDir,
+        format: "yaml",
+        serializers: [sidecarSerializer],
+        // no `output` — the sidecar would be echoed to stderr and lost
+      } as BuildOptions);
+
+      expect(result.success).toBe(false);
+      expect(result.errors.join("\n")).toContain("--output");
+      expect(result.errors.join("\n")).toContain("db.sops.yaml");
+    });
+
+    test("with --output the sidecar lands beside the primary, byte for byte", async () => {
+      await writeProject("secrets/db.sops.yaml");
+      const outputPath = join(testDir, "dist", "manifests.yaml");
+
+      const result = await buildCommand({
+        path: testDir,
+        output: outputPath,
+        format: "yaml",
+        serializers: [sidecarSerializer],
+      });
+
+      expect(result.errors).toEqual([]);
+      expect(readFileSync(join(testDir, "dist", "db.sops.yaml"), "utf-8")).toBe(CIPHERTEXT);
+    });
+
+    test("a declared sidecar is never round-tripped through JSON.parse", async () => {
+      // YAML is a JSON superset, so a ciphertext file that happens to parse as
+      // JSON would otherwise be rewritten key-sorted (or re-emitted as YAML),
+      // breaking the `sops` MAC. Declared files skip that path entirely.
+      const jsonish = '{"b": 1, "a": 2}\n';
+      const jsonSidecar: Serializer = {
+        name: "multi",
+        rulePrefix: "MULTI",
+        serialize: () => ({
+          primary: "kind: Deployment\n",
+          files: { "db.sops.yaml": jsonish },
+          verbatimFiles: ["db.sops.yaml"],
+        }),
+      };
+      await writeProject("secrets/db.sops.yaml");
+      const outputPath = join(testDir, "dist", "manifests.yaml");
+
+      const result = await buildCommand({
+        path: testDir,
+        output: outputPath,
+        format: "yaml",
+        serializers: [jsonSidecar],
+      });
+
+      expect(result.errors).toEqual([]);
+      expect(readFileSync(join(testDir, "dist", "db.sops.yaml"), "utf-8")).toBe(jsonish);
+    });
+  });
+
+  describe("SerializerResult.verbatimFiles — general channel (#1937)", () => {
+    test("a verbatim file whose content happens to be valid JSON survives byte-identical", async () => {
+      // Deliberately not key-sorted or 2-space indented — content the JSON
+      // round trip below would reformat. The old workaround (skip the round
+      // trip only because a file happens to fail JSON.parse, true for the
+      // committed-encrypted `.sops.yaml` case but never a real guarantee)
+      // could not protect this case. `verbatimFiles` can, structurally.
+      const raw = '{"b":1,"a":2,   "nested":{"z":true}}';
+      const verbatimSerializer: Serializer = {
+        name: "multi",
+        rulePrefix: "MULTI",
+        serialize: () => ({
+          primary: "{}",
+          files: { "raw.json": raw },
+          verbatimFiles: ["raw.json"],
+        }),
+      };
+      await writeFile(
+        join(testDir, "infra.ts"),
+        `export const x = { [Symbol.for("chant.declarable")]: true, entityType: "X", lexicon: "multi", kind: "resource", props: {}, attributes: {} };`,
+      );
+      const outputPath = join(testDir, "dist", "manifest.json");
+
+      const result = await buildCommand({
+        path: testDir,
+        output: outputPath,
+        format: "json",
+        serializers: [verbatimSerializer],
+      });
+
+      expect(result.errors).toEqual([]);
+      expect(readFileSync(join(testDir, "dist", "raw.json"), "utf-8")).toBe(raw);
+    });
+  });
+
+  describe("additional-file basename collisions across lexicons (#1937)", () => {
+    const lexASerializer = (content: string): Serializer => ({
+      name: "lexa",
+      rulePrefix: "LEXA",
+      serialize: () => ({ primary: "{}", files: { "shared.yaml": content } }),
+    });
+    const lexBSerializer = (content: string): Serializer => ({
+      name: "lexb",
+      rulePrefix: "LEXB",
+      serialize: () => ({ primary: "{}", files: { "shared.yaml": content } }),
+    });
+
+    async function writeTwoLexiconProject(): Promise<void> {
+      await writeFile(
+        join(testDir, "infra.ts"),
+        [
+          `export const a = { [Symbol.for("chant.declarable")]: true, entityType: "A", lexicon: "lexa", kind: "resource", props: {}, attributes: {} };`,
+          `export const b = { [Symbol.for("chant.declarable")]: true, entityType: "B", lexicon: "lexb", kind: "resource", props: {}, attributes: {} };`,
+        ].join("\n"),
+      );
+    }
+
+    test("differing content at the same basename fails the build, naming the basename and both sources", async () => {
+      await writeTwoLexiconProject();
+      const outputPath = join(testDir, "dist", "manifest.json");
+
+      const result = await buildCommand({
+        path: testDir,
+        output: outputPath,
+        format: "json",
+        serializers: [lexASerializer("from lexa\n"), lexBSerializer("from lexb\n")],
+      });
+
+      expect(result.success).toBe(false);
+      const message = result.errors.join("\n");
+      expect(message).toContain("shared.yaml");
+      expect(message).toContain("lexa");
+      expect(message).toContain("lexb");
+    });
+
+    test("identical content at the same basename passes", async () => {
+      await writeTwoLexiconProject();
+      const outputPath = join(testDir, "dist", "manifest.json");
+      const shared = "same content for both\n";
+
+      const result = await buildCommand({
+        path: testDir,
+        output: outputPath,
+        format: "json",
+        serializers: [lexASerializer(shared), lexBSerializer(shared)],
+      });
+
+      expect(result.errors).toEqual([]);
+      expect(readFileSync(join(testDir, "dist", "shared.yaml"), "utf-8")).toBe(shared);
+    });
   });
 
   test("op worker files go to <project>/dist/ops even with no --output (#878)", async () => {

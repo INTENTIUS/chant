@@ -1,0 +1,162 @@
+---
+title: "Pipeline Concepts"
+description: "Jobs, stages, artifacts, caching, images, rules, environments, and triggers in the GitLab CI/CD lexicon"
+diataxis: explanation
+---
+
+import Diagram from '../../components/Diagram.astro';
+
+Every exported `Job` declaration becomes a job entry in the generated `.gitlab-ci.yml`. The serializer handles the translation automatically:
+
+<Diagram name="pipeline-hierarchy" alt="GitLab Pipeline with stages (build, test, deploy) each containing jobs, with stage dependencies flowing left to right" caption="GitLab CI pipeline hierarchy" />
+
+- Property names use spec-native snake_case (`expire_in`, `allow_failure`)
+- Converts export names to kebab-case job keys (`buildApp` → `build-app`)
+- Collects stages from all jobs into a `stages:` list
+- Collapses single-property objects (`new Image({ name: "node:20" })` → `image: node:20`)
+
+{{file:docs-snippets/src/job-basic.ts}}
+
+Produces this YAML:
+
+```yaml
+stages:
+  - build
+
+build-app:
+  stage: build
+  image: node:20
+  script:
+    - npm ci
+    - npm run build
+```
+
+## Resource types
+
+The lexicon provides 3 resource types and 16 property types:
+
+### Resources
+
+| Type | Description |
+|------|-------------|
+| `Job` | A CI/CD job — the fundamental unit of a pipeline |
+| `Workflow` | Top-level `workflow:` configuration (pipeline-level rules, name, auto_cancel) |
+| `Default` | Top-level `default:` block (shared defaults inherited by all jobs) |
+
+### Property types
+
+| Type | Used in | Description |
+|------|---------|-------------|
+| `Image` | Job, Default | Docker image for the job runner |
+| `Cache` | Job, Default | Files cached between pipeline runs |
+| `Artifacts` | Job | Files passed between stages or stored after completion |
+| `Rule` | Job, Workflow | Conditional execution rules (`rules:` entries) |
+| `Environment` | Job | Deployment target environment |
+| `Trigger` | Job | Downstream pipeline trigger |
+| `Include` | Workflow | External YAML file inclusion |
+| `AllowFailure` | Job | Failure tolerance configuration |
+| `Retry` | Job | Automatic retry on failure |
+| `Parallel` | Job | Job parallelization (matrix builds) |
+| `Release` | Job | GitLab Release creation |
+| `AutoCancel` | Workflow | Pipeline auto-cancellation settings |
+| `Need` | Job | Job dependency for DAG-mode execution |
+| `Inherit` | Job | Controls which global defaults a job inherits |
+| `Service` | Job, Default | Sidecar service container (e.g. Docker-in-Docker, databases) |
+| `WorkflowRule` | Workflow | Conditional rules for pipeline-level execution |
+
+## Shared config
+
+Extract reusable objects into a shared config file and import them across your pipeline files:
+
+{{file:docs-snippets/src/pipeline-shared-config.ts}}
+
+## Jobs
+
+A `Job` is the fundamental unit. Every exported `Job` becomes a job entry in the YAML:
+
+{{file:docs-snippets/src/job-test.ts}}
+
+Key properties:
+- `script` — **required** (or `trigger`/`run`). Array of shell commands to execute.
+- `stage` — which pipeline stage this job belongs to. Defaults to `test` if omitted.
+- `image` — Docker image. Use `new Image({ name: "..." })` or pass a string to the YAML.
+- `needs` — job dependencies for DAG-mode execution (run before stage ordering).
+
+## Stages
+
+Stages define the execution order of a pipeline. The serializer automatically collects unique stage values from all jobs:
+
+{{file:docs-snippets/src/stages.ts}}
+
+Produces:
+
+```yaml
+stages:
+  - test
+  - build
+  - deploy
+```
+
+Jobs in the same stage run in parallel. Stages run sequentially in declaration order.
+
+## Artifacts and caching
+
+**Artifacts** are files produced by a job and passed to later stages or stored for download. **Caches** persist files between pipeline runs to speed up builds. Both are shown in the shared config:
+
+{{file:docs-snippets/src/config.ts:4-22}}
+
+The key difference: artifacts are for passing files between **stages in the same pipeline**; caches are for speeding up **repeated pipeline runs**.
+
+## Conditional execution with rules
+
+`Rule` objects control when a job runs. They map to `rules:` entries in the YAML:
+
+{{file:docs-snippets/src/rules-conditions.ts}}
+
+Produces:
+
+```yaml
+deploy:
+  stage: deploy
+  script:
+    - npm run deploy
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      when: manual
+```
+
+The `if` property maps directly to `if:` in the YAML. Use the `CI` pseudo-parameter object for type-safe variable references.
+
+## Environments
+
+`Environment` defines a deployment target:
+
+{{file:docs-snippets/src/environment.ts}}
+
+GitLab tracks deployments to environments and provides rollback capabilities in the UI.
+
+## Images and services
+
+`Image` specifies the Docker image for a job:
+
+{{file:docs-snippets/src/images.ts}}
+
+## Workflow
+
+`Workflow` controls pipeline-level settings — when pipelines run, auto-cancellation, and global includes:
+
+{{file:docs-snippets/src/workflow.ts}}
+
+## Default
+
+`Default` sets shared configuration inherited by all jobs:
+
+{{file:docs-snippets/src/defaults.ts}}
+
+Jobs can override any default property individually.
+
+## Triggers
+
+`Trigger` creates downstream pipeline jobs:
+
+{{file:docs-snippets/src/trigger.ts}}

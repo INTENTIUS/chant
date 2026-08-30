@@ -26,7 +26,20 @@ export interface ParsedArgs {
   temporal?: boolean;
   /** `chant run` — emit the structured OpRunResult as JSON on stdout. */
   json?: boolean;
-  /** `chant run --components <name|all> --progress-json` — stream one NDJSON `RunProgressEvent` (../../components/run-progress.ts) per line to stdout while the run executes (local executor only), so a consumer can render live wave/component/phase/step progress instead of tailing raw logs. Purely additive: run semantics, ordering, and exit code are unchanged; omitted (undefined, not false) when the flag isn't passed. */
+  /**
+   * `chant run --components <name|all> --progress-json` (local executor) —
+   * stream one NDJSON `RunProgressEvent` (../../components/run-progress.ts)
+   * per line to stdout while the run executes, so a consumer can render live
+   * wave/component/phase/step progress instead of tailing raw logs.
+   *
+   * `chant run <name> --temporal --progress-json` (chant #1676) — the same
+   * flag on an Op's durable path streams one NDJSON `StepRecord`
+   * (../../op/local-executor.ts, reconstructed from workflow history by
+   * ../handlers/op-progress.ts) per settled step instead.
+   *
+   * Both are purely additive: run semantics, ordering, and exit code are
+   * unchanged; omitted (undefined, not false) when the flag isn't passed.
+   */
   progressJson?: boolean;
   live: boolean;
   /** `chant migrate --from <name>` (default "github") */
@@ -85,6 +98,13 @@ export interface ParsedArgs {
   namespace?: string;
   /** `chant lifecycle rollback --dry-run` — compute the rollback delta and print it; open no PR, push nothing, leave no branch. */
   dryRun?: boolean;
+  /** `chant lifecycle teardown <env> --yes` — execute the planned deletion
+   * (#1222). Without it the command plans and stops. */
+  yes?: boolean;
+  /** `chant lifecycle teardown <env> --yes --confirm-prod` — the non-interactive
+   * form of the extra confirmation a production-like environment name demands
+   * (#1222). Meaningless without `--yes`. */
+  confirmProd?: boolean;
   /** `chant import --verbatim` — keep server-defaulted fields in live import */
   verbatim?: boolean;
   /** `chant lifecycle … --src <dir>` — build root override for lifecycle commands */
@@ -178,6 +198,25 @@ export interface ParsedArgs {
    * what is declared, which is a broader read and a different claim.
    */
   ambient?: boolean;
+  /**
+   * `chant search "<q>" --at <ref> --check-live --env <name>` (#1268) —
+   * additionally read the estate live and diff the matched rows against the
+   * snapshot the answer came from, reusing `diffLive` (the same engine
+   * `lifecycle diff --live` uses) scoped to just those rows. Requires `--at`.
+   */
+  checkLive?: boolean;
+  /**
+   * `chant search "<q>" --live --check-snapshot --env <name>` (#1268) — the
+   * reverse of `--check-live`: answer live, diff the matched rows against the
+   * most recently recorded snapshot. Requires `--live`.
+   */
+  checkSnapshot?: boolean;
+  /**
+   * `chant search "<q>" --check-live|--check-snapshot --fail-on-drift`
+   * (#1268) — exit non-zero when the scoped check finds drift, so it is usable
+   * as a CI gate. Meaningless without one of the two flags above.
+   */
+  failOnDrift?: boolean;
 
   /** `chant dev surface-diff --run-examples` — also run the example build harness */
   runExamples?: boolean;
@@ -187,9 +226,9 @@ export interface ParsedArgs {
   check?: boolean;
   /** `chant dev surface-diff --update-snapshot --bump` — bump the lexicon's package.json version by the drift severity so the accepted surface is publishable (#616). */
   bump?: boolean;
-  /** `chant components release record --component <name>` (#568) — component name for the release record being appended. */
+  /** `chant components release record --component <name>` (#568) — component name for the release record being appended. Also `chant components export <env> --component <name>` (#929) — which component's most recent recorded build to export. */
   component?: string;
-  /** `chant components release record --digest <sha256:...>` (#568) — artifact digest to record, joining this release to the build archive/ledger. */
+  /** `chant components release record --digest <sha256:...>` (#568) — artifact digest to record, joining this release to the build archive/ledger. Also `chant components export --digest <manifestDigest>` (#929) — a build archive manifest digest to export directly, bypassing env/component resolution. */
   digest?: string;
   /** `chant components release record --git-sha <sha>` (#568) — git commit the deploy was built from. */
   gitSha?: string;
@@ -211,6 +250,10 @@ export interface ParsedArgs {
   fold?: boolean;
   /** `chant build --sandbox` (#1045 Phase 2) — opt-in: run-fallback source files (or every file, without `--fold`) execute together, isolated, in one sandboxed child process instead of in-process. Also settable project-wide via `chant.config.ts`'s `build.sandbox: true`; the flag always wins when set. Default (flag omitted): in-process execution, unchanged. */
   sandbox?: boolean;
+  /** `chant build --fold --fold-rank` (#1083) — after a `--fold` build, print blockers ranked by dominator retained-count over the forward import-failure graph, plus the separate reverse-taint bucket (chant #1044). Bare boolean form; see {@link foldRankCollapsedFile} for the file-writing form. No-op without `--fold`. */
+  foldRank?: boolean;
+  /** `chant build --fold --fold-rank <path>` (#1083) — same ranking as {@link foldRank}, ALSO exported in Brendan Gregg collapsed stack format (weighted by retained count) to `<path>`, so it renders in any flame/icicle viewer. Mutually exclusive with the bare-boolean form at the parse level (same context-sensitive lookahead as `--report`), but the text report still prints either way. */
+  foldRankCollapsedFile?: string;
   /** `chant build --param name=value` (#1064) — repeatable. Bound to `params.<name>` (`@intentius/chant/params`) for source to reference, after validation against `chant.config.ts`'s declared `buildParams`. Highest precedence over `--params-file`/a declared `env` mapping/the declared `default`. */
   param?: string[];
   /** `chant build --params-file <path>` (#1064) — a JSON file of `{ "name": value }` build-time parameter values. Second precedence, after `--param`. */
@@ -221,6 +264,14 @@ export interface ParsedArgs {
    * forgejo today) — the same generator `chant build --components --generate
    * <lexicon>` uses, reused rather than re-derived. */
   projection?: string;
+  /** `chant operator --interval <duration>` (#1485) — poll interval between rounds, e.g. "30s", "5m". Default: 60s. */
+  interval?: string;
+  /** `chant operator --lease-ttl <duration>` (#1485) — how long an acquired lease is valid before it's reclaimable by another operator. Default: 5m. */
+  leaseTtl?: string;
+  /** `chant operator --once` (#1485) — run a single round and exit, instead of looping until Ctrl-C. Also the offline test/cron-invoker story. */
+  once?: boolean;
+  /** `chant approve <op> <gate> --note <text>` (#1485) — optional free-text context recorded on the gate-resolution fact (e.g. a PR URL). */
+  note?: string;
 }
 
 /**

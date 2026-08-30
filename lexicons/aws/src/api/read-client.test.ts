@@ -13,6 +13,8 @@ import {
   getResource,
   listResources,
   parseResourceDescription,
+  resolveEndpointOverride,
+  serviceEndpointEnvVar,
   serviceUrl,
   xmlLeaves,
   xmlMembers,
@@ -196,6 +198,15 @@ describe("Cloud Control", () => {
     expect(await listResources("AWS::S3::Bucket", { http })).toEqual([]);
   });
 
+  test("listResources scopes a child listing with ResourceModel, JSON-encoded as the API takes it", async () => {
+    const { http, calls } = recording(() => respond(JSON.stringify({ ResourceDescriptions: [] })));
+    await listResources("AWS::IAM::RolePolicy", { http }, { RoleName: "app-role" });
+    expect(JSON.parse(calls[0].body)).toEqual({
+      TypeName: "AWS::IAM::RolePolicy",
+      ResourceModel: JSON.stringify({ RoleName: "app-role" }),
+    });
+  });
+
   test("parseResourceDescription refuses anything that is not a model object", () => {
     expect(parseResourceDescription(null)).toBeNull();
     expect(parseResourceDescription({ Identifier: "a" })).toBeNull();
@@ -313,5 +324,90 @@ describe("SigV4 on the read path", () => {
     await describeStackResources("web", { credentials, now, http, env: {} });
     expect(calls[0].url).toBe("https://cloudformation.us-east-1.amazonaws.com/");
     expect(calls[0].headers.authorization).toContain("/20150830/us-east-1/cloudformation/aws4_request");
+  });
+});
+
+describe("what counts as an endpoint override (#1694)", () => {
+  const credentials = { accessKeyId: "AKIDEXAMPLE", secretAccessKey: "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY" };
+  const now = new Date("2015-08-30T12:36:00Z");
+
+  test("the option, then the service variable, then AWS_ENDPOINT_URL — the SDK's precedence", () => {
+    const env = { AWS_ENDPOINT_URL: "http://all:1", AWS_ENDPOINT_URL_CLOUDFORMATION: "http://cfn:2" };
+    expect(resolveEndpointOverride("cloudformation", "http://opt:3", env)).toBe("http://opt:3");
+    expect(resolveEndpointOverride("cloudformation", undefined, env)).toBe("http://cfn:2");
+    expect(resolveEndpointOverride("cloudcontrolapi", undefined, env)).toBe("http://all:1");
+    expect(resolveEndpointOverride("cloudformation", undefined, {})).toBeUndefined();
+    expect(resolveEndpointOverride("cloudformation", "", { AWS_ENDPOINT_URL: "" })).toBeUndefined();
+  });
+
+  test("the service variable is named by the SDK's service id, not the signing name", () => {
+    expect(serviceEndpointEnvVar("cloudformation")).toBe("AWS_ENDPOINT_URL_CLOUDFORMATION");
+    expect(serviceEndpointEnvVar("cloudcontrolapi")).toBe("AWS_ENDPOINT_URL_CLOUDCONTROL");
+    expect(serviceEndpointEnvVar("bedrock-agentcore")).toBe("AWS_ENDPOINT_URL_BEDROCK_AGENTCORE");
+  });
+
+  test("AWS_ENDPOINT_URL alone retargets the request and leaves it unsigned, like the option", async () => {
+    const { http, calls } = recording(() => respond(stackXml));
+    await describeStackResources("web", {
+      region: "us-west-1",
+      credentials,
+      http,
+      env: { AWS_ENDPOINT_URL: "http://localhost:4566" },
+    });
+    expect(calls[0].url).toBe("http://localhost:4566/");
+    expect(calls[0].headers.authorization).toContain("Signature=unsigned");
+    expect(calls[0].headers["x-amz-date"]).toBeUndefined();
+  });
+
+  test("the service-specific variable does the same, for Cloud Control too", async () => {
+    const { http, calls } = recording(() => respond(JSON.stringify({ ResourceDescription: {} })));
+    await getResource("AWS::EC2::VPC", "vpc-01", {
+      region: "eu-west-1",
+      credentials,
+      http,
+      env: { AWS_ENDPOINT_URL_CLOUDCONTROL: "http://localhost:4566" },
+    });
+    expect(calls[0].url).toBe("http://localhost:4566/");
+    expect(calls[0].headers.authorization).toContain("Signature=unsigned");
+  });
+
+  test("the option is the same override — same target, same unsigned headers", async () => {
+    const viaEnv = recording(() => respond(stackXml));
+    const viaOption = recording(() => respond(stackXml));
+    await describeStackResources("web", {
+      region: "us-west-1",
+      credentials,
+      http: viaEnv.http,
+      env: { AWS_ENDPOINT_URL: "http://localhost:4566" },
+    });
+    await describeStackResources("web", {
+      endpoint: "http://localhost:4566",
+      region: "us-west-1",
+      credentials,
+      http: viaOption.http,
+      env: {},
+    });
+    expect(viaOption.calls[0]).toEqual(viaEnv.calls[0]);
+  });
+
+  test("signEndpointOverride signs against an override the environment named", async () => {
+    const { http, calls } = recording(() => respond(stackXml));
+    await describeStackResources("web", {
+      region: "us-west-1",
+      credentials,
+      signEndpointOverride: true,
+      now,
+      http,
+      env: { AWS_ENDPOINT_URL: "https://vpce-1234.cloudformation.us-west-1.vpce.amazonaws.com" },
+    });
+    expect(calls[0].url).toBe("https://vpce-1234.cloudformation.us-west-1.vpce.amazonaws.com/");
+    expect(calls[0].headers.authorization).toMatch(/Signature=[0-9a-f]{64}$/);
+  });
+
+  test("neither option nor variable: the real regional host, signed", async () => {
+    const { http, calls } = recording(() => respond(stackXml));
+    await describeStackResources("web", { region: "us-west-1", credentials, now, http, env: {} });
+    expect(calls[0].url).toBe("https://cloudformation.us-west-1.amazonaws.com/");
+    expect(calls[0].headers.authorization).toMatch(/Signature=[0-9a-f]{64}$/);
   });
 });

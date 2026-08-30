@@ -32,6 +32,20 @@ import {
 import { Sub, Join, Select, Split } from "../intrinsics";
 import { ecsTrustPolicy } from "./ecs-trust-policy";
 
+/**
+ * The ALB `ListenerRule`'s real `Priority` bounds (documented on
+ * `elasticloadbalancing:CreateRule`, and enforced the same way for a
+ * CloudFormation-managed rule) — not an opinion this composite holds.
+ *
+ * Exported for the same reason as `MICROVM_LIMITS` (#1374, #1420): a
+ * consumer routing to the same shared ALB through another control plane
+ * needs the same numbers, and copying them is how two sources of truth
+ * start.
+ */
+export const FARGATE_SERVICE_LIMITS = {
+  priority: { min: 1, max: 50000 },
+} as const;
+
 export interface FargateServiceProps {
   // Wiring to shared ALB.
   //
@@ -44,7 +58,7 @@ export interface FargateServiceProps {
   albSecurityGroupId: Value<string>;
   executionRoleArn: Value<string>;
 
-  // Routing — at least one required
+  // Routing — at least one required. Bounds: {@link FARGATE_SERVICE_LIMITS.priority}.
   priority: number;
   pathPatterns?: string[];
   hostHeaders?: string[];
@@ -99,8 +113,10 @@ export const FargateService = Composite((props: FargateServiceProps) => {
   if (!props.pathPatterns && !props.hostHeaders) {
     throw new Error("FargateService requires at least one of pathPatterns or hostHeaders");
   }
-  if (props.priority < 1 || props.priority > 50000) {
-    throw new Error("FargateService priority must be between 1 and 50000");
+  if (props.priority < FARGATE_SERVICE_LIMITS.priority.min || props.priority > FARGATE_SERVICE_LIMITS.priority.max) {
+    throw new Error(
+      `FargateService priority must be between ${FARGATE_SERVICE_LIMITS.priority.min} and ${FARGATE_SERVICE_LIMITS.priority.max}`,
+    );
   }
 
   const containerPort = props.containerPort ?? 80;
