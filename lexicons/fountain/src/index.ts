@@ -4,6 +4,16 @@ export { fountainPlugin } from "./plugin";
 // Serializer
 export { fountainSerializer } from "./serializer";
 
+// Deep observation (#1217) — the reader plus the noise rules it shares with
+// core's normalization pass.
+export { observeResourcesDeepFountain } from "./deep-observe";
+export type { FountainDeepObserveOptions } from "./deep-observe";
+export {
+  fountainDeepNormalizationHooks,
+  FOUNTAIN_SERVER_FIELDS,
+  FOUNTAIN_DEFAULTS,
+} from "./deep-observe-hooks";
+
 // Generated resources — Environment, Vault, Agent, and property types.
 export * from "./generated/index";
 

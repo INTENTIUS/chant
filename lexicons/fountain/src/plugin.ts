@@ -21,6 +21,7 @@ import { FountainGenerator } from "./import/generator";
 import { sitesToTemplateIR } from "./import/local-agents";
 import { completions } from "./lsp/completions";
 import { hover } from "./lsp/hover";
+import { fountainDeepNormalizationHooks } from "./deep-observe-hooks";
 
 /**
  * fountain lexicon plugin.
@@ -170,6 +171,17 @@ export const fountainPlugin: LexiconPlugin = {
     const { describeResources } = await import("./describe-resources");
     return describeResources(options);
   },
+
+  // Dynamic, never static: `chant build` must not resolve the live transport
+  // just to synthesize a manifest. The hooks below are plain data and are
+  // imported statically, because core normalizes the *declared* tree with them
+  // whether or not a live read ever happens.
+  async observeResourcesDeep(options) {
+    const { observeResourcesDeepFountain } = await import("./deep-observe");
+    return observeResourcesDeepFountain(options);
+  },
+
+  deepNormalizationHooks: fountainDeepNormalizationHooks,
 
   referenceCatalog: fountainReferenceCatalog,
 
