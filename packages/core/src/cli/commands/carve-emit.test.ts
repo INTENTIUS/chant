@@ -1,9 +1,10 @@
 import { describe, test, expect, vi } from "vitest";
-import { mkdtempSync, writeFileSync, rmSync, readFileSync } from "fs";
+import { mkdtempSync, writeFileSync, rmSync, readFileSync, existsSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { carveEmit, formatCarveEmit } from "./carve-emit";
 import { loadHcl2json } from "../../terraform/parse";
+import { listCarveManifests } from "../../terraform/manifest";
 import type { ImportResult, LiveImportOptions } from "./import";
 import type { LexiconPlugin } from "../../lexicon";
 
@@ -35,12 +36,30 @@ resource "aws_lambda_function" "api" {
 resource "random_pet" "suffix" {
   length = 2
 }
+resource "kubernetes_config_map" "demo" {
+  metadata { name = "demo-config" }
+}
 `;
+
+// A state file for the bucket, so the --state path reaches the same gate the
+// --env path does rather than stopping at "not found in state".
+const TFSTATE = JSON.stringify({
+  version: 4,
+  resources: [
+    {
+      mode: "managed",
+      type: "kubernetes_config_map",
+      name: "demo",
+      instances: [{ attributes: { id: "default/demo-config" } }],
+    },
+  ],
+});
 
 async function withEstate<T>(fn: (dir: string) => Promise<T>): Promise<T> {
   const dir = mkdtempSync(join(tmpdir(), "chant-carve-emit-"));
   try {
     writeFileSync(join(dir, "main.tf"), ESTATE);
+    writeFileSync(join(dir, "terraform.tfstate"), TFSTATE);
     return await fn(dir);
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -139,6 +158,58 @@ describe("carveEmit — emit + boundary", () => {
       expect(text).toContain("Adopted live as AWS::S3::Bucket");
       expect(text).toContain("inbound");
       expect(text).toContain("carve bridge"); // points at the next step
+    });
+  });
+
+  test("a failed live import fails the emit and writes no carve manifest (#2015)", async () => {
+    if (!parserAvailable) return;
+    await withEstate(async (dir) => {
+      const out = join(dir, "carveout");
+      const li = vi.fn(
+        async (_p: LexiconPlugin[], _o: LiveImportOptions): Promise<ImportResult> => ({
+          success: false,
+          generatedFiles: [],
+          warnings: [],
+          error: "no stack in prod exports AWS::S3::Bucket",
+        }),
+      );
+      const res = await carveEmit(
+        { from: dir, select: "aws_s3_bucket.assets", env: "prod", output: out },
+        { plugins: noPlugins, liveImport: li },
+      );
+
+      expect(res.ok).toBe(false);
+      expect(res.error).toContain("no stack in prod exports AWS::S3::Bucket");
+      expect(res.manifestPath).toBeUndefined();
+      // Bridge/apply compose from the manifest; one written here would make
+      // bridge excise a `.tf` block for a resource that was never emitted.
+      expect(listCarveManifests(out)).toEqual([]);
+      expect(existsSync(out)).toBe(false);
+      // No false "Adopted live" line on the failure path.
+      expect(formatCarveEmit(res)).not.toContain("Adopted live");
+    });
+  });
+
+  test("a type emit cannot carve is refused identically on --state and --env (#2015)", async () => {
+    if (!parserAvailable) return;
+    await withEstate(async (dir) => {
+      const li = fakeImport();
+      const live = await carveEmit(
+        { from: dir, select: "kubernetes_config_map.demo", env: "prod" },
+        { plugins: noPlugins, liveImport: li },
+      );
+      const state = await carveEmit(
+        { from: dir, select: "kubernetes_config_map.demo", statePath: join(dir, "terraform.tfstate") },
+        { plugins: noPlugins, liveImport: li },
+      );
+
+      expect(live.ok).toBe(false);
+      expect(state.ok).toBe(false);
+      expect(live.error).toBe(state.error);
+      expect(live.error).toContain("kubernetes_config_map cannot be emitted yet");
+      // advise ranks it (tier 2), so it gets past resolveTier — the emit gate
+      // is what refuses it, before the AWS exporter is ever reached.
+      expect(li).not.toHaveBeenCalled();
     });
   });
 

@@ -12,7 +12,7 @@
  *   null   — no known native mapping (unsupported provider/type) → score 0
  */
 
-import { AWS_CARVE_TYPES } from "./aws-resources";
+import { AWS_CARVE_TYPES, awsCarveType } from "./aws-resources";
 
 export interface TierInfo {
   tier: 1 | 2 | 3;
@@ -109,4 +109,31 @@ export const IDENTITY_ATTR: Record<string, string> = {
 
 export function resolveTier(tfType: string): TierInfo | null {
   return TIER_MAP[tfType] ?? null;
+}
+
+/**
+ * Can `chant carve emit` produce chant source for this type? Narrower than
+ * `resolveTier`: the tier map also ranks the kubernetes types, which advise
+ * bands but no emit path can adopt (#999, blocked on the provider seam #2016).
+ * Both emit paths — `--state` and `--env` — gate on this, so a type either
+ * command refuses is refused by the other with the same message.
+ */
+export function canCarveEmit(tfType: string): boolean {
+  return awsCarveType(tfType) !== undefined;
+}
+
+/** The types `canCarveEmit` accepts, sorted, for user-facing hints. */
+export function carveEmitTypes(): string[] {
+  return AWS_CARVE_TYPES.map((t) => t.tfType).sort();
+}
+
+/**
+ * Can `chant carve bridge` render a Terraform `data` source for this type? A
+ * dotted `IDENTITY_ATTR` is a path into nested blocks, and a data source body
+ * is flat `attr = value` — `manifest.metadata.name = "x"` is not valid HCL.
+ * An absent entry is fine: the bridge writes a TODO comment for the identity.
+ */
+export function canBridge(tfType: string): boolean {
+  const attr = IDENTITY_ATTR[tfType];
+  return attr === undefined || !attr.includes(".");
 }

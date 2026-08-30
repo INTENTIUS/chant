@@ -1,6 +1,6 @@
 import { describe, test, expect } from "vitest";
 import { AWS_CARVE_TYPES, AWS_FOLD_MAPPERS, awsCarveType, applyAwsMapper, applyAwsFold } from "./aws-resources";
-import { TIER_MAP, FOLDS_INTO, IDENTITY_ATTR } from "./tier-map";
+import { TIER_MAP, FOLDS_INTO, IDENTITY_ATTR, canBridge, canCarveEmit, carveEmitTypes } from "./tier-map";
 import { canAdoptFromState } from "./adopt-state";
 
 describe("AWS carve-out table", () => {
@@ -11,6 +11,29 @@ describe("AWS carve-out table", () => {
     const emitAws = AWS_CARVE_TYPES.map((t) => t.tfType).sort();
     expect(tierAws).toEqual(emitAws);
     for (const t of emitAws) expect(canAdoptFromState(t)).toBe(true);
+  });
+
+  test("the emit gate is narrower than the tier map, which also ranks k8s (#2015)", () => {
+    // `carve advise` bands kubernetes types; emit has no path for them, so the
+    // gate both emit paths share must refuse them.
+    expect(TIER_MAP.kubernetes_config_map).toBeDefined();
+    expect(canCarveEmit("kubernetes_config_map")).toBe(false);
+    expect(canCarveEmit("kubernetes_manifest")).toBe(false);
+    expect(canCarveEmit("random_pet")).toBe(false);
+    expect(canCarveEmit("aws_s3_bucket")).toBe(true);
+    expect(carveEmitTypes()).toEqual(AWS_CARVE_TYPES.map((t) => t.tfType).sort());
+    // State adoption and live emit gate on the same table.
+    for (const t of carveEmitTypes()) expect(canAdoptFromState(t)).toBe(true);
+  });
+
+  test("canBridge rejects a dotted identity attribute (#2015)", () => {
+    // A data source body is flat `attr = value`; a dotted path is not HCL.
+    expect(IDENTITY_ATTR.kubernetes_manifest).toContain(".");
+    expect(canBridge("kubernetes_manifest")).toBe(false);
+    expect(canBridge("aws_s3_bucket")).toBe(true);
+    // No identity entry at all is fine — the bridge writes a TODO comment.
+    expect(canBridge("random_pet")).toBe(true);
+    for (const t of AWS_CARVE_TYPES) expect(canBridge(t.tfType)).toBe(true);
   });
 
   test("covers the common carve targets across families", () => {

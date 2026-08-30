@@ -14,7 +14,7 @@ chant carve advise --from <terraform-dir> [flags]
 
 `chant carve advise` points at a Terraform estate and ranks each resource and module by **peelability**: how cleanly it could be carved into native chant source. Clean leaves score high, load-bearing or unmappable resources score low.
 
-It is read-only. It parses `.tf` (and optionally `.tfstate`), scores, and prints. It emits no chant source, patches no Terraform, and touches no live resource. The emit, boundary-bridging, and apply phases are a separate, gated design (see issue #197); this command is the analysis slice that is useful on its own.
+It is read-only. It parses `.tf` (and optionally `.tfstate`), scores, and prints. It emits no chant source, patches no Terraform, and touches no live resource. The emit, boundary-bridging, and apply phases have shipped as [`chant carve emit|bridge|apply`](/chant/cli/carve-out/); this command is the analysis slice that is useful on its own. Advise ranks more types than emit can adopt — it bands the kubernetes provider types, which emit and bridge refuse.
 
 Use it to decide where an incremental move off Terraform is worth starting. The point is not to carve the whole estate. Small, cleanly-mappable pieces move; the gnarly long tail stays in Terraform.
 

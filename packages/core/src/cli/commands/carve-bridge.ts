@@ -14,7 +14,7 @@ import { join, basename, relative, resolve } from "path";
 import { parseTerraformDir, Hcl2JsonNotInstalled } from "../../terraform/parse";
 import { boundaryReport, type CarveReport } from "../../terraform/carve";
 import { generateBridge, type BridgePlan, type CarvedIdentity } from "../../terraform/bridge";
-import { IDENTITY_ATTR } from "../../terraform/tier-map";
+import { IDENTITY_ATTR, canBridge } from "../../terraform/tier-map";
 import { resolveCarveManifest, writeCarveManifest, type CarveManifest } from "../../terraform/manifest";
 import { newFileDiff, unifiedDiff } from "../../terraform/unified-diff";
 
@@ -73,6 +73,24 @@ export async function carveBridge(opts: CarveBridgeOptions): Promise<CarveBridge
     const found = boundaryReport(graph, select);
     if (!found) return { ok: false, error: `${select} not found in ${opts.from}` };
     report = found;
+
+    // Refuse a carve set whose data source cannot be written as valid HCL: a
+    // dotted identity attribute is a path into nested blocks, and a data body
+    // is flat `attr = value`. `kubernetes_manifest` is the standing case — the
+    // provider has no `kubernetes_manifest` data source either; its generic
+    // read is `kubernetes_resource`, a different shape (#999).
+    const carvedTypes = report.carveSet.map((m) => m.type).filter((t): t is string => t !== undefined);
+    const unbridgeable = [...new Set(carvedTypes.filter((t) => !canBridge(t)))];
+    if (unbridgeable.length) {
+      return {
+        ok: false,
+        error:
+          `${select} cannot be bridged: ${unbridgeable
+            .map((t) => `${t} identifies itself by \`${IDENTITY_ATTR[t]}\``)
+            .join(", ")}, a path into nested blocks that a Terraform data source body cannot express. ` +
+          `Bridging these types needs a data-source mapping — see chant issue #999.`,
+      };
+    }
 
     // Physical identities for the carved resources, for the data sources.
     const identities = new Map<string, CarvedIdentity>();
