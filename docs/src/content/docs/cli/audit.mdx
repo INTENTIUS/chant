@@ -214,7 +214,7 @@ Upload it to GitHub code scanning from a workflow:
 
 ## Tokens
 
-Auditing a URL calls the host's API. Set a host-specific token to lift rate limits (and, for GitHub, to resolve action SHAs and image digests for the inline fix diffs):
+Auditing a URL calls the host's API — auditing a local path reaches nothing, and `packages/core/src/audit/fetch.ts` is the only audit module that touches the network at all ([Network Egress](/chant/reference/network-egress/)). Set a host-specific token to lift rate limits (and, for GitHub, to resolve action SHAs and image digests for the inline fix diffs):
 
 - `GITHUB_TOKEN` — GitHub, plus action-SHA and image-digest resolution (always queries the GitHub/registry APIs)
 - `GITLAB_TOKEN` — GitLab

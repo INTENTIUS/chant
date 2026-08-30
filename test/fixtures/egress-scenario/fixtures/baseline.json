@@ -1,0 +1,14 @@
+{
+  "lexicon": "aws",
+  "environment": "test",
+  "commit": "0000000000000000000000000000000000000000",
+  "timestamp": "2026-01-01T00:00:00.000Z",
+  "resources": {
+    "assetBucket": {
+      "type": "AWS::S3::Bucket",
+      "physicalId": "chant-egress-guard-fixture",
+      "status": "CREATE_COMPLETE",
+      "ownership": "owned"
+    }
+  }
+}

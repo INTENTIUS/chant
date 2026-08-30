@@ -12,7 +12,9 @@ chant scenario check [flags]
 
 ## Description
 
-`chant scenario check` evaluates every [`Scenario`](/chant/concepts/plan-scenarios/) declared in the project. For each one it builds a `ChangeSet` the same way `chant lifecycle plan` does, with one substitution: the scenario's `given` fixture stands in for a live observation, so no plugin's `describeResources` ever runs and no credentials are ever read. Fully offline — safe in CI, safe on every PR.
+`chant scenario check` evaluates every [`Scenario`](/chant/concepts/plan-scenarios/) declared in the project. For each one it builds a `ChangeSet` the same way `chant lifecycle plan` does, with one substitution: the scenario's `given` fixture stands in for a live observation, so no plugin's `describeResources` ever runs and no credentials are ever read. Safe in CI, safe on every PR.
+
+No provider is contacted on either fixture form. A `given` of `snapshot("fixtures/….json")` is a file read and reaches nothing at all; a `given` of `snapshot(env)` first runs `git fetch <remote> chant/lifecycle` to refresh the recorded snapshots, which reaches the git remote the repository is already cloned from and nothing else. [Network Egress](/chant/reference/network-egress/) has the full picture and the guard test that holds it.
 
 The resulting change set is checked against the scenario's `expect` clauses. Output is per-scenario pass/fail with a legible detail on every failing clause — what was expected and what the plan actually proposes, naming resources for `deletes` and `unobserved` failures.
 

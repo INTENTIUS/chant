@@ -7,7 +7,7 @@ import { packageLexicon } from "../lexicons/aws/src/codegen/package";
 import { writeFileSync, mkdirSync } from "fs";
 import { join } from "path";
 
-const pkgDir = join(import.meta.dir, "..", "lexicons", "aws");
+const pkgDir = join(import.meta.dirname, "..", "lexicons", "aws");
 const distDir = join(pkgDir, "dist");
 
 const { spec, stats } = await packageLexicon({ verbose: true });

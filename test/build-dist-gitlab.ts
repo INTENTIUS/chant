@@ -7,7 +7,7 @@ import { packageLexicon } from "../lexicons/gitlab/src/codegen/package";
 import { writeFileSync, mkdirSync } from "fs";
 import { join } from "path";
 
-const pkgDir = join(import.meta.dir, "..", "lexicons", "gitlab");
+const pkgDir = join(import.meta.dirname, "..", "lexicons", "gitlab");
 const distDir = join(pkgDir, "dist");
 
 const { spec, stats } = await packageLexicon({ verbose: true });

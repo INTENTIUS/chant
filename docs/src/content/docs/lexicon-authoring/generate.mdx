@@ -96,6 +96,8 @@ const schemas = await extractFromZip(zipData, (name) => name.endsWith(".json"));
 
 > See `lexicons/aws/src/spec/fetch.ts` for the AWS schema fetcher.
 
+Reach for `fetchWithCache` from `src/spec/fetch.ts` and nowhere else. Generation is the one phase allowed to fetch: a serializer, a plugin hook or a lint rule that reached upstream would put a network call on `chant build`, which [Network Egress](/chant/reference/network-egress/) guarantees is offline and a guard test fails on. `fetchWithCache` also caches to disk and falls back to the committed snapshot when the endpoint is unreachable, so generation itself survives a network that is not there.
+
 ## Runtime Factories
 
 Use `createResource` and `createProperty` to generate Declarable-marked constructors:

@@ -183,6 +183,7 @@ export default defineConfig({
 					label: 'Reference',
 					items: [
 						{ label: 'Project Structure', slug: 'getting-started/project-structure' },
+						{ label: 'Network Egress', slug: 'reference/network-egress' },
 						{
 							label: 'CLI',
 							items: [
