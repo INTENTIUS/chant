@@ -322,7 +322,7 @@ export function awsCarveType(tfType: string): AwsCarveType | undefined {
 }
 
 /**
- * How a folded sub-resource (see `FOLDS_INTO`) joins its parent's emitted
+ * How a folded sub-resource (see the provider's `foldsInto`) joins its parent's emitted
  * properties (#1637). Terraform splits configuration the CloudFormation shape
  * keeps inside the parent resource, so the fold is not just a carve-set
  * membership claim: the sub-resource's attributes have to land in the parent's

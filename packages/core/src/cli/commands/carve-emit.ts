@@ -17,21 +17,14 @@ import { basename, join, resolve } from "path";
 import { cdkNotSupported, isCloudAssembly } from "../../cdk/assembly";
 import { parseTerraformDir, Hcl2JsonNotInstalled } from "../../terraform/parse";
 import { boundaryReport, deferredParamName, type CarveReport } from "../../terraform/carve";
-import { canCarveEmit, carveEmitTypes, resolveTier } from "../../terraform/tier-map";
+import { carveEmitTypes, resolveTier } from "../../terraform/tier-map";
+import { resolveEmitProvider } from "../../terraform/carve-provider";
 import { readStateResource, type StateResource } from "../../terraform/state";
 import { writeCarveManifest, type CarveManifest } from "../../terraform/manifest";
 import { adoptFromState, type DeferredParam, type FoldedContribution } from "../../terraform/adopt-state";
 import { getChantVersion } from "./init";
 import type { LexiconPlugin, ResourceSelector } from "../../lexicon";
 import type { ImportResult, LiveImportOptions } from "./import";
-
-/**
- * The lexicon emit targets. `canCarveEmit` admits only AWS carve-table types,
- * so both the scaffolded project and the live import are AWS. Widening this
- * needs the lexicon-agnostic emit seam (#999, #2016) — deriving it from
- * `tier.mapsTo` does not work: a `k8s:Namespace` mapping has no `::` to split.
- */
-const EMIT_LEXICON = "aws";
 
 export interface CarveEmitOptions {
   /** Terraform estate directory (`--from`). */
@@ -108,23 +101,23 @@ export async function carveEmit(opts: CarveEmitOptions, deps: CarveEmitDeps): Pr
 
   if (!report) return { ok: false, error: `${opts.select} not found in ${opts.from}` };
 
-  const tier = tfType ? resolveTier(tfType) : null;
-  if (!tier) {
+  if (!tfType || !resolveTier(tfType)) {
     return {
       ok: false,
       error: `${opts.select} (${tfType ?? "unknown type"}) has no known native mapping, so it cannot be emitted. Advisor bands it "leave in Terraform".`,
     };
   }
 
-  // `carve advise` ranks every type in the tier map; emit produces source only
-  // for the ones with a native constructor mapping. Both adoption paths refuse
-  // the rest here — before any file is written or any cloud call is made — so
+  // `carve advise` ranks every type a provider declares; emit produces source
+  // only for the ones that provider can adopt. Both adoption paths refuse the
+  // rest here — before any file is written or any cloud call is made — so
   // neither path can proceed on a type the other rejects.
-  if (!canCarveEmit(tfType!)) {
+  const provider = resolveEmitProvider(tfType);
+  if (!provider) {
     return {
       ok: false,
       error:
-        `${tfType} cannot be emitted yet (no native constructor mapping).\n` +
+        `${tfType} cannot be emitted yet (no carve provider adopts it).\n` +
         `Supported types: ${carveEmitTypes().join(", ")}. ` +
         `Coverage is expanding — see chant issue #1001.`,
     };
@@ -158,7 +151,7 @@ export async function carveEmit(opts: CarveEmitOptions, deps: CarveEmitDeps): Pr
     mkdirSync(srcDir, { recursive: true });
     const outPath = join(srcDir, adopted.fileName);
     writeFileSync(outPath, adopted.content);
-    const scaffolded = scaffoldProject(outDir, EMIT_LEXICON, params);
+    const scaffolded = scaffoldProject(outDir, provider.lexicon, params);
 
     const manifestPath = persistManifest(outDir, opts, report, tfType, "tfstate", [outPath], params);
     return {
@@ -174,19 +167,28 @@ export async function carveEmit(opts: CarveEmitOptions, deps: CarveEmitDeps): Pr
   }
 
   // ── Adoption path 2: live import (cloud→code) ──
-  // The live import filters a CloudFormation stack's template by logical ID, not
-  // the Terraform physical name — so select by native type, narrowing to a
-  // logical ID only when the caller passes --live-name (a stack with several of
-  // that type). `identity` (the TF physical name) is not a valid CFN selector.
+  // The provider names the selector type its live export filters on — for aws a
+  // CloudFormation type, filtered by logical ID rather than the Terraform
+  // physical name, so `--live-name` (not `identity`) is what narrows a stack
+  // holding several of that type.
+  const selectorType = provider.liveSelectorType?.(tfType);
+  if (!selectorType) {
+    return {
+      ok: false,
+      error:
+        `${tfType} has no live adoption path — the ${provider.name} carve provider adopts it from state only.\n` +
+        `Re-run with --state <tfstate>.`,
+    };
+  }
   const selector: ResourceSelector = opts.liveName
-    ? { type: tier.mapsTo, name: opts.liveName }
-    : { type: tier.mapsTo };
+    ? { type: selectorType, name: opts.liveName }
+    : { type: selectorType };
 
   const emit = await deps.liveImport(deps.plugins, {
     environment: opts.env!,
     selector,
     output: opts.output,
-    lexicon: EMIT_LEXICON,
+    lexicon: provider.lexicon,
   });
 
   // A failed import emitted no source. Reporting success here would write a

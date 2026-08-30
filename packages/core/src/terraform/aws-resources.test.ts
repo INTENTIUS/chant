@@ -1,13 +1,13 @@
 import { describe, test, expect } from "vitest";
 import { AWS_CARVE_TYPES, AWS_FOLD_MAPPERS, awsCarveType, applyAwsMapper, applyAwsFold } from "./aws-resources";
-import { TIER_MAP, FOLDS_INTO, IDENTITY_ATTR, canBridge, canCarveEmit, carveEmitTypes } from "./tier-map";
+import { tierMap, foldParentOf, identityAttrOf, canBridge, canCarveEmit, carveEmitTypes } from "./tier-map";
 import { canAdoptFromState } from "./adopt-state";
 
 describe("AWS carve-out table", () => {
   test("advise and emit cover exactly the same AWS types (no cliff)", () => {
     // Every AWS type the advisor ranks (tier map) must be emittable, and vice
     // versa. Non-AWS entries (kubernetes_manifest) are excluded.
-    const tierAws = Object.keys(TIER_MAP).filter((t) => t.startsWith("aws_")).sort();
+    const tierAws = Object.keys(tierMap()).filter((t) => t.startsWith("aws_")).sort();
     const emitAws = AWS_CARVE_TYPES.map((t) => t.tfType).sort();
     expect(tierAws).toEqual(emitAws);
     for (const t of emitAws) expect(canAdoptFromState(t)).toBe(true);
@@ -16,7 +16,7 @@ describe("AWS carve-out table", () => {
   test("the emit gate is narrower than the tier map, which also ranks k8s (#2015)", () => {
     // `carve advise` bands kubernetes types; emit has no path for them, so the
     // gate both emit paths share must refuse them.
-    expect(TIER_MAP.kubernetes_config_map).toBeDefined();
+    expect(tierMap().kubernetes_config_map).toBeDefined();
     expect(canCarveEmit("kubernetes_config_map")).toBe(false);
     expect(canCarveEmit("kubernetes_manifest")).toBe(false);
     expect(canCarveEmit("random_pet")).toBe(false);
@@ -28,7 +28,7 @@ describe("AWS carve-out table", () => {
 
   test("canBridge rejects a dotted identity attribute (#2015)", () => {
     // A data source body is flat `attr = value`; a dotted path is not HCL.
-    expect(IDENTITY_ATTR.kubernetes_manifest).toContain(".");
+    expect(identityAttrOf("kubernetes_manifest")).toContain(".");
     expect(canBridge("kubernetes_manifest")).toBe(false);
     expect(canBridge("aws_s3_bucket")).toBe(true);
     // No identity entry at all is fine — the bridge writes a TODO comment.
@@ -126,7 +126,7 @@ describe("applyAwsMapper", () => {
 describe("folded sub-resource mappers (#1637)", () => {
   test("every fold mapper is for a type that actually folds", () => {
     for (const tfType of Object.keys(AWS_FOLD_MAPPERS)) {
-      expect(FOLDS_INTO[tfType]).toBeDefined();
+      expect(foldParentOf(tfType)).toBeDefined();
     }
   });
 
@@ -226,12 +226,12 @@ describe("folded sub-resource mappers (#1637)", () => {
 
 describe("tier + identity coverage maps (#998)", () => {
   test("kubernetes provider types rank, with _v1 aliases sharing the entry", () => {
-    expect(TIER_MAP.kubernetes_manifest).toEqual({ tier: 1, mapsTo: "k8s:manifest" });
+    expect(tierMap().kubernetes_manifest).toEqual({ tier: 1, mapsTo: "k8s:manifest" });
     for (const t of ["kubernetes_deployment", "kubernetes_config_map", "kubernetes_service", "kubernetes_namespace"]) {
-      expect(TIER_MAP[t]).toMatchObject({ tier: 2 });
-      expect(TIER_MAP[`${t}_v1`]).toEqual(TIER_MAP[t]);
+      expect(tierMap()[t]).toMatchObject({ tier: 2 });
+      expect(tierMap()[`${t}_v1`]).toEqual(tierMap()[t]);
     }
-    expect(TIER_MAP.kubernetes_horizontal_pod_autoscaler_v2).toEqual(TIER_MAP.kubernetes_horizontal_pod_autoscaler);
+    expect(tierMap().kubernetes_horizontal_pod_autoscaler_v2).toEqual(tierMap().kubernetes_horizontal_pod_autoscaler);
   });
 
   test("S3 and ECR sub-resources fold into their parent", () => {
@@ -239,17 +239,17 @@ describe("tier + identity coverage maps (#998)", () => {
       "aws_s3_bucket_website_configuration", "aws_s3_bucket_cors_configuration", "aws_s3_bucket_logging",
       "aws_s3_bucket_ownership_controls", "aws_s3_bucket_notification",
     ]) {
-      expect(FOLDS_INTO[t]).toBe("aws_s3_bucket");
+      expect(foldParentOf(t)).toBe("aws_s3_bucket");
     }
-    expect(FOLDS_INTO.aws_ecr_lifecycle_policy).toBe("aws_ecr_repository");
-    expect(FOLDS_INTO.aws_ecr_repository_policy).toBe("aws_ecr_repository");
+    expect(foldParentOf("aws_ecr_lifecycle_policy")).toBe("aws_ecr_repository");
+    expect(foldParentOf("aws_ecr_repository_policy")).toBe("aws_ecr_repository");
   });
 
   test("identity attrs cover the expanded types, including a dotted non-AWS path", () => {
-    expect(IDENTITY_ATTR.aws_elasticache_cluster).toBe("cluster_id");
-    expect(IDENTITY_ATTR.aws_ecs_task_definition).toBe("family");
-    expect(IDENTITY_ATTR.aws_route53_record).toBe("name");
-    expect(IDENTITY_ATTR.aws_eks_node_group).toBe("node_group_name");
-    expect(IDENTITY_ATTR.kubernetes_manifest).toBe("manifest.metadata.name");
+    expect(identityAttrOf("aws_elasticache_cluster")).toBe("cluster_id");
+    expect(identityAttrOf("aws_ecs_task_definition")).toBe("family");
+    expect(identityAttrOf("aws_route53_record")).toBe("name");
+    expect(identityAttrOf("aws_eks_node_group")).toBe("node_group_name");
+    expect(identityAttrOf("kubernetes_manifest")).toBe("manifest.metadata.name");
   });
 });

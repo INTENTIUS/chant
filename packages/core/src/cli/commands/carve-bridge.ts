@@ -15,7 +15,7 @@ import { cdkNotSupported, isCloudAssembly } from "../../cdk/assembly";
 import { parseTerraformDir, Hcl2JsonNotInstalled } from "../../terraform/parse";
 import { boundaryReport, type CarveReport } from "../../terraform/carve";
 import { generateBridge, type BridgePlan, type CarvedIdentity } from "../../terraform/bridge";
-import { IDENTITY_ATTR, canBridge } from "../../terraform/tier-map";
+import { identityAttrOf, canBridge } from "../../terraform/tier-map";
 import { resolveCarveManifest, writeCarveManifest, type CarveManifest } from "../../terraform/manifest";
 import { newFileDiff, unifiedDiff } from "../../terraform/unified-diff";
 
@@ -88,7 +88,7 @@ export async function carveBridge(opts: CarveBridgeOptions): Promise<CarveBridge
         ok: false,
         error:
           `${select} cannot be bridged: ${unbridgeable
-            .map((t) => `${t} identifies itself by \`${IDENTITY_ATTR[t]}\``)
+            .map((t) => `${t} identifies itself by \`${identityAttrOf(t)}\``)
             .join(", ")}, a path into nested blocks that a Terraform data source body cannot express. ` +
           `Bridging these types needs a data-source mapping — see chant issue #999.`,
       };
@@ -98,7 +98,7 @@ export async function carveBridge(opts: CarveBridgeOptions): Promise<CarveBridge
     const identities = new Map<string, CarvedIdentity>();
     for (const node of graph.nodes) {
       if (node.type && node.identity) {
-        identities.set(node.address, { attr: IDENTITY_ATTR[node.type], value: node.identity });
+        identities.set(node.address, { attr: identityAttrOf(node.type), value: node.identity });
       }
     }
 

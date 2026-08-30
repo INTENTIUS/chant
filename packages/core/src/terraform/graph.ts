@@ -11,7 +11,7 @@
  * graph building stays unit-testable on hand-written fixtures.
  */
 
-import { IDENTITY_ATTR } from "./tier-map";
+import { identityAttrOf } from "./tier-map";
 import type { Hcl2JsonTree, TfEdge, TfGraph, TfNode } from "./types";
 
 /**
@@ -143,12 +143,12 @@ function blockHasMeta(block: unknown, key: string): boolean {
 
 /**
  * The resource's physical name, if its identity attribute is a plain literal
- * (not interpolated). A dotted `IDENTITY_ATTR` entry walks nested blocks —
+ * (not interpolated). A dotted identity attribute walks nested blocks —
  * hcl2json renders a nested block as a one-element array, so arrays step
  * through their first element (`manifest.metadata.name`).
  */
 function literalIdentity(block: unknown, type: string): string | undefined {
-  const attr = IDENTITY_ATTR[type];
+  const attr = identityAttrOf(type);
   if (!attr || !block || typeof block !== "object") return undefined;
   let value: unknown = block;
   for (const segment of attr.split(".")) {
