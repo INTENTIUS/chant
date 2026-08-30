@@ -19,6 +19,7 @@
     "@intentius/chant-lexicon-aws": "*",
     "@intentius/chant-lexicon-azure": "*",
     "@intentius/chant-lexicon-cedar": "workspace:*",
+    "@intentius/chant-lexicon-cpln": "workspace:*",
     "@intentius/chant-lexicon-docker": "*",
     "@intentius/chant-lexicon-fly": "*",
     "@intentius/chant-lexicon-forgejo": "*",

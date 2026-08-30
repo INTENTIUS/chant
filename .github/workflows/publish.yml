@@ -85,6 +85,7 @@ jobs:
       - run: npm run --prefix lexicons/k3s prepack
       - run: npm run --prefix lexicons/cedar prepack
       - run: npm run --prefix lexicons/render prepack
+      - run: npm run --prefix lexicons/cpln prepack
       - run: npx vitest run
 
   publish:

@@ -1,0 +1,48 @@
+---
+title: "Applying"
+description: "What the serializer emits and how to apply it."
+diataxis: how-to
+---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-cpln` — DO NOT EDIT.
+    Edit lexicons/cpln/docs/pages/applying.mdx instead; changes here are overwritten. */}
+
+
+`chant build` emits one multi-document YAML file for `cpln apply`.
+
+```yaml
+kind: gvc
+name: prod
+tags:
+  chant.intentius.io/managed-by: chant
+spec:
+  staticPlacement:
+    locationLinks:
+      - /org/acme/location/aws-us-east-1
+
+---
+kind: workload
+name: web
+gvc: prod
+tags:
+  chant.intentius.io/managed-by: chant
+spec:
+  type: serverless
+  containers:
+    - name: main
+      image: nginx:1.27
+```
+
+Apply it:
+
+```bash
+cpln apply --file dist/cpln.yaml --ready
+```
+
+## Notes on the output
+
+**Only authoring surface is emitted.** Control Plane's guidance is to export with `-o yaml-slim` rather than `-o yaml` before re-applying, because the server-side fields (`status`, `id`, `created`, `lastModified`, `links`) break `cpln apply`. Those are attributes in this lexicon rather than properties, so they never reach a document — the shape you can declare is already the slim shape.
+
+**Ordering is resolved by `cpln apply`** for a multi-document file, so a single apply call is preferred over several sequential ones. Documents are still emitted GVC-first and sorted within a kind, so the file diffs cleanly between builds.
+
+**`--ready` does not fail fast** on terminal container errors — a non-zero exit, an image pull failure, a crashloop. On a misconfigured first deploy it sits through its full timeout while the container is dead. For first deploys and workload type migrations, Control Plane documents a patience-windowed pattern instead.

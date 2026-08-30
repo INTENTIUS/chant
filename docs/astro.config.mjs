@@ -278,6 +278,7 @@ export default defineConfig({
 								{ label: 'GCP Config Connector', link: '/lexicons/gcp/' },
 								{ label: 'Fly Machines', link: '/lexicons/fly/' },
 								{ label: 'Fountain', link: '/lexicons/fountain/' },
+								{ label: 'Control Plane', link: '/lexicons/cpln/' },
 								{
 									label: 'Kubernetes',
 									items: [

@@ -1,0 +1,39 @@
+---
+title: "Drift and Ownership"
+description: "Live observation, the tags ownership channel, and the live graph."
+diataxis: explanation
+---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-cpln` — DO NOT EDIT.
+    Edit lexicons/cpln/docs/pages/adoption.mdx instead; changes here are overwritten. */}
+
+
+## Live observation
+
+`describeResources()` reads the live org and reports what each declared resource actually looks like, which is what `chant plan` diffs against.
+
+```bash
+CPLN_ORG=acme CPLN_TOKEN=$(cat sa-key) chant plan
+```
+
+Use the env var rather than `--token`: the flag leaks into process listings and logs, and Control Plane's own guidance says so.
+
+The read is a lookup, not a fetch. Control Plane exposes an **org-wide rollup** for the GVC-scoped kinds (`/org/{org}/workload` alongside `/org/{org}/gvc/{gvc}/workload`), so each declared kind is listed once and indexed — one request per kind, rather than one per resource or one per GVC. No secret value is read on this path; `-reveal` is never called.
+
+## Ownership
+
+Every kind carries a free-form `tags` map, and every read path returns it, so chant's marker resolves on the thin read:
+
+| Key | Value |
+|---|---|
+| `chant.intentius.io/managed-by` | `chant` |
+| `chant.intentius.io/stack` | the stack name |
+| `chant.intentius.io/env` | the environment, when set |
+
+That is what lets `chant delete` be precise without an authoritative state file: a resource carrying the marker is this stack's; one without it is never auto-deleted. It is a cleaner channel than most targets offer — aws's thin read returns no tags at all and can only answer `unknown`.
+
+Ownership means *carries chant's marker*, not *carries only chant's marker*, so co-stamping with other tooling is fine.
+
+## The live graph
+
+`chant graph --live` reconstructs edges from observed resources. Control Plane links are strings and edge matching is exact, so `describeResources` resolves each link down to the bare name it ends in and files it under `refs.*` — `refs.gvc`, `refs.identity`, `refs.pullSecrets`. GVC membership is modelled as containment, so the renderer draws a box rather than a line from every resource to its GVC.

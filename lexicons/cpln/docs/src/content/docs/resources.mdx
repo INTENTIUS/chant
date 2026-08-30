@@ -1,0 +1,47 @@
+---
+title: "Resources"
+description: "The eight Control Plane kinds the lexicon declares, and what is not modelled."
+diataxis: reference
+---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-cpln` — DO NOT EDIT.
+    Edit lexicons/cpln/docs/pages/resources.mdx instead; changes here are overwritten. */}
+
+
+The lexicon models eight kinds — the workload surface rather than every kind the API exposes.
+
+## Org-scoped
+
+| Class | `kind` | What it is |
+|---|---|---|
+| `Gvc` | `gvc` | Global Virtual Cloud — the placement and networking boundary |
+| `Secret` | `secret` | An org-scoped secret, in one of 12 types |
+| `Policy` | `policy` | Permissions bound to principals over a target |
+| `Domain` | `domain` | A custom domain with TLS, CORS and routing |
+| `IpSet` | `ipset` | Dedicated IP addresses bound to a workload |
+
+## GVC-scoped
+
+These take a required `gvc`.
+
+| Class | `kind` | What it is |
+|---|---|---|
+| `Workload` | `workload` | A running unit of work — serverless, standard, stateful or cron |
+| `Identity` | `identity` | Cloud access and network grants; the principal a policy grants to |
+| `VolumeSet` | `volumeset` | Persistent storage for stateful workloads |
+
+## The `gvc` property
+
+The OpenAPI document has no `gvc` field on `workload` — the GVC is a URL segment there. The `cpln apply` manifest format does have one, and Control Plane's guidance is that you set either the manifest key or the `--gvc` flag, not both. This lexicon always uses the key, so an emitted manifest is self-contained and does not depend on how it is applied.
+
+`identity` and `volumeset` carry a `gvc` of their own in the spec, in two different shapes. All three are normalized to the same required `gvc: string`.
+
+## What is not modelled
+
+Not out of reach, just out of the first pass — each is a row in `src/kinds.ts` away: `group`, `serviceaccount`, `cloudaccount`, `auditctx`, `agent`, `user`, `image`, `location`, `org`, `mk8s`. `chant cpln coverage` reports the gap rather than hiding it.
+
+## One untyped subtree
+
+`spec.sidecar.envoy` on `gvc` and `workload` resolves to `Record<string, unknown>`. It is a raw Envoy bootstrap fragment Control Plane passes through verbatim, and expanding it costs 81 property-type classes on `gvc` alone — more than four times every other shape in the lexicon combined — to type a field whose contents are Envoy's contract rather than Control Plane's.
+
+Upstream reference: [docs.controlplane.com/reference](https://docs.controlplane.com/reference/api).

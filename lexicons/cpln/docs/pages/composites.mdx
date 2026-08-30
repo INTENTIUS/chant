@@ -1,0 +1,47 @@
+---
+title: "Composites"
+description: "GvcEnvironment, ServerlessService, CronJob, StatefulService, SecretAccess."
+diataxis: reference
+order: 4
+---
+
+Five composites, each encoding rules that are easy to violate by omission rather than by writing something wrong.
+
+## `GvcEnvironment`
+
+A GVC with its locations and pull secrets.
+
+```typescript
+export const { gvc } = GvcEnvironment({
+  name: "prod",
+  org: "acme",
+  locations: ["aws-us-east-1", "gcp-us-central1"],
+  pullSecrets: ["registry-creds"],
+});
+```
+
+Pull secrets are **GVC-level**, not per workload — looking for them on a workload is a common wrong turn. Location ids are validated against the `<provider>-<region>` form before they become links.
+
+## `ServerlessService`
+
+A serverless workload with the port, firewall and autoscaling a public HTTP service needs. Serverless must expose exactly one HTTP port, and the external firewall starts closed in both directions, so a workload that looks entirely correct serves nothing until a CIDR is added.
+
+## `CronJob`
+
+A scheduled workload. It has no knobs for probes, autoscaling or `timeoutSeconds` — cron accepts all three and ignores them, so offering them would invite a silent no-op.
+
+## `StatefulService`
+
+A stateful workload and its volume set, mounted. Validates the performance class capacity floor at build time — `high-throughput-ssd` has a 200 GB minimum where the others have 10 GB — because `fileSystemType` and `performanceClass` are both immutable and correcting either later means data loss.
+
+## `SecretAccess`
+
+The identity and policy a workload needs to read a secret, with the GVC-qualified principal link. Pairs with `secretRef(name, field)` for the reference itself.
+
+```typescript
+export const { identity, policy } = SecretAccess({
+  name: "web-identity",
+  gvc: "prod",
+  secrets: ["db-password"],
+});
+```

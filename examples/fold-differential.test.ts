@@ -219,6 +219,11 @@ const report: ReportRow[] = [];
  * one blocker behind, plus `examples/k8s-aks-microservice` and
  * `k8s-gke-microservice`, whose ingress config chains
  * `config.domain.split(".").slice(-2).join(".")`.
+ *
+ * The cpln lexicon (#1533) added three entries and two of them: its
+ * `secret-access` example stays out because it reads the secret's value from
+ * `process.env` at build time, which is the pattern that lexicon's own docs
+ * recommend and which the folder refuses on purpose.
  */
 const EXPECTED_FOLD: readonly string[] = [
   "examples/adopt-alb-services",
@@ -266,6 +271,8 @@ const EXPECTED_FOLD: readonly string[] = [
   "lexicons/azure/examples/sql-database",
   "lexicons/azure/examples/vnet-vms",
   "lexicons/azure/examples/web-app",
+  "lexicons/cpln/examples/basic-service",
+  "lexicons/cpln/examples/stateful-postgres",
   "lexicons/docker/examples/basic-app",
   "lexicons/fly/examples/getting-started",
   "lexicons/gcp/examples/basic-bucket",
