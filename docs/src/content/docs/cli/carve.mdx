@@ -16,7 +16,7 @@ chant carve advise --from <terraform-dir | cdk.out> [flags]
 
 Two sources are read. A **Terraform estate** is parsed from `.tf` (and optionally `.tfstate`), and each resource and module is ranked. A **CDK cloud assembly** (`cdk.out`) is read from its synthesized JSON, and each *construct* is ranked. Which one is in `--from` is decided by looking at the directory, not by a second flag.
 
-It is read-only either way. It parses, scores, and prints. It emits no chant source, patches nothing, and touches no live resource. The emit, boundary-bridging, and apply phases have shipped as [`chant carve emit|bridge|apply`](/chant/cli/carve-out/) and read Terraform only; this command is the analysis slice that is useful on its own. Advise also ranks more than emit can adopt — it bands the kubernetes provider types and every CDK construct, which emit and bridge refuse.
+It is read-only either way. It parses, scores, and prints. It emits no chant source, patches nothing, and touches no live resource. The emit, boundary-bridging, and apply phases have shipped as [`chant carve emit|bridge|apply`](/chant/cli/carve-out/) and read Terraform only; this command is the analysis slice that is useful on its own. Advise also ranks more than emit can adopt — it bands the google and kubernetes provider types and every CDK construct, which emit and bridge refuse.
 
 Use it to decide where an incremental move is worth starting. The point is not to carve everything. Small, cleanly-mappable pieces move; the gnarly long tail stays where it is.
 
@@ -233,6 +233,8 @@ The CDK source stays inside that promise and does not bump the version. Every fi
 ## Coverage
 
 The tier map is a curated seed covering the common tier-1 leaves people carve first. A type it does not know scores 0 (leave where it is), which is the safe default: the advisor never claims something is carvable when it cannot map it. Both sources read the same table — the Terraform advisor keys it by Terraform type, the CDK advisor by the CloudFormation type the same entry names — so adding a type lights it up for both at once.
+
+Three Terraform providers contribute entries: `aws_*` maps to CloudFormation types, `google_*` to Config Connector types, and `kubernetes_*` to manifests. A fourth is a file under `packages/core/src/terraform/providers/` and a line in that directory's index.
 
 Terraform state is read only for root-module resources; resources nested inside a module are not descended into. A CDK nested stack is not descended into either: it is reported as one disqualified construct with the reason.
 
