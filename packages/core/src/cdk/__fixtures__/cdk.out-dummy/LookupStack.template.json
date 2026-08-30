@@ -1,0 +1,29 @@
+{
+  "Resources": {
+    "AppSg8C4F1E22": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "LookupStack/AppSg",
+        "SecurityGroupEgress": [
+          {
+            "CidrIp": "0.0.0.0/0",
+            "Description": "Allow all outbound traffic by default",
+            "IpProtocol": "-1"
+          }
+        ],
+        "VpcId": "vpc-12345678"
+      },
+      "Metadata": {
+        "aws:cdk:path": "LookupStack/AppSg/Resource"
+      }
+    },
+    "AppBucketD9A1C0F3": {
+      "Type": "AWS::S3::Bucket",
+      "UpdateReplacePolicy": "Retain",
+      "DeletionPolicy": "Retain",
+      "Metadata": {
+        "aws:cdk:path": "LookupStack/AppBucket/Resource"
+      }
+    }
+  }
+}

@@ -1,39 +1,43 @@
 ---
 title: "chant carve advise"
-description: Read-only Terraform peelability advisor — rank which resources are cheap to carve into native chant
+description: Read-only peelability advisor for Terraform estates and CDK cloud assemblies — rank what is cheap to carve into native chant
 diataxis: reference
 ---
 
 ## Synopsis
 
 ```
-chant carve advise --from <terraform-dir> [flags]
+chant carve advise --from <terraform-dir | cdk.out> [flags]
 ```
 
 ## Description
 
-`chant carve advise` points at a Terraform estate and ranks each resource and module by **peelability**: how cleanly it could be carved into native chant source. Clean leaves score high, load-bearing or unmappable resources score low.
+`chant carve advise` points at foreign infrastructure and ranks each piece by **peelability**: how cleanly it could be carved into native chant source. Clean leaves score high, load-bearing or unmappable pieces score low.
 
-It is read-only. It parses `.tf` (and optionally `.tfstate`), scores, and prints. It emits no chant source, patches no Terraform, and touches no live resource. The emit, boundary-bridging, and apply phases have shipped as [`chant carve emit|bridge|apply`](/chant/cli/carve-out/); this command is the analysis slice that is useful on its own. Advise ranks more types than emit can adopt — it bands the kubernetes provider types, which emit and bridge refuse.
+Two sources are read. A **Terraform estate** is parsed from `.tf` (and optionally `.tfstate`), and each resource and module is ranked. A **CDK cloud assembly** (`cdk.out`) is read from its synthesized JSON, and each *construct* is ranked. Which one is in `--from` is decided by looking at the directory, not by a second flag.
 
-Use it to decide where an incremental move off Terraform is worth starting. The point is not to carve the whole estate. Small, cleanly-mappable pieces move; the gnarly long tail stays in Terraform.
+It is read-only either way. It parses, scores, and prints. It emits no chant source, patches nothing, and touches no live resource. The emit, boundary-bridging, and apply phases have shipped as [`chant carve emit|bridge|apply`](/chant/cli/carve-out/) and read Terraform only; this command is the analysis slice that is useful on its own. Advise also ranks more than emit can adopt — it bands the kubernetes provider types and every CDK construct, which emit and bridge refuse.
+
+Use it to decide where an incremental move is worth starting. The point is not to carve everything. Small, cleanly-mappable pieces move; the gnarly long tail stays where it is.
 
 ## Flags
 
 | Flag | Description |
 |------|-------------|
-| `--from <dir>` | The Terraform estate directory to analyze (required) |
-| `--state <path>` | Optional `.tfstate` for accurate `count`/`for_each` instance counts |
+| `--from <dir>` | The Terraform estate directory or CDK cloud assembly to analyze (required) |
+| `--state <path>` | Optional `.tfstate` for accurate `count`/`for_each` instance counts (Terraform only) |
 | `--json` | Emit the full per-resource breakdown as JSON (see [The JSON report](#the-json-report)) |
 | `--report <path>` | Write the JSON report to a file |
 
 ## The parser is installed on demand
 
-The advisor parses HCL with [`@cdktf/hcl2json`](https://www.npmjs.com/package/@cdktf/hcl2json), HashiCorp's own parser compiled to wasm. It is not a chant dependency, because only carve-out users need it. The first run without it fails with an install hint:
+Terraform only. The advisor parses HCL with [`@cdktf/hcl2json`](https://www.npmjs.com/package/@cdktf/hcl2json), HashiCorp's own parser compiled to wasm. It is not a chant dependency, because only carve-out users need it. The first run without it fails with an install hint:
 
 ```bash
 npm install -D @cdktf/hcl2json
 ```
+
+A CDK cloud assembly needs nothing installed. The assembly is already JSON, and its templates are already in `AWS::*` type space — the same space the tier map keys on.
 
 ## Scoring model
 
@@ -61,6 +65,56 @@ An `output` block that reads the carved resource counts too. It is an inbound de
 | 0–49 | leave in Terraform | unmappable or load-bearing |
 
 Terraform sub-resources that inline into a parent (for example `aws_s3_bucket_versioning` into `aws_s3_bucket`) are folded into the parent's carve set. They are not ranked on their own, and their edge to the parent is not counted as boundary work.
+
+## CDK cloud assemblies
+
+Point `--from` at a `cdk.out` directory and the same model ranks constructs. Three files carry everything the advisor reads: `manifest.json` (which artifacts are stacks), `tree.json` (the construct tree), and the `*.template.json` files themselves. Nothing reads your CDK source, so a Python or Java app is ranked through the same code path as a TypeScript one.
+
+**Constructs rank, not CloudFormation resources.** An L2 construct emits several resources — a `Function` emits a role, a policy and the function — and they carve together or not at all. Every resource names its emitting construct in `Metadata["aws:cdk:path"]`, and `tree.json` says which ancestor of that path is a construct someone actually wrote, so resources fold up to the shallowest L2 or L3 ancestor. That construct ranks once, and the `members` field names the resources folded into it. This is the CDK analogue of Terraform sub-resources folding into their parent.
+
+**An L3 subtree ranks as one Composite candidate.** A pattern construct, or a grouping construct you wrote yourself, is a chant Composite in waiting. It is reported with `kind: "module"` — the same tier-2 treatment a Terraform module gets — instead of having its leaves scored separately.
+
+**Edges are exact, including across stacks.** `Ref`, `Fn::GetAtt` and `Fn::Sub` are intra-stack. `Fn::ImportValue` is resolved through the exporting stack's `Outputs` back to the construct that produces the value, so a cross-stack dependency is a real edge between two constructs and shows up from both ends: inbound on the exporter, outbound on the importer, both tagged `crossStack: true`. `DependsOn` counts too. A stack `Output` that reads a construct is the CloudFormation twin of a Terraform `output` block, and is weighted the same way — except when its export is imported somewhere, in which case the direct cross-stack edge stands for that dependency rather than charging it twice.
+
+Three signals are CDK's own, layered on the shared score:
+
+| Signal | Effect |
+|--------|--------|
+| Asset-backed (`aws:asset:*` metadata) | `-10`, reported as a `penalties.asset` term. Carving a Lambda whose code is a CDK asset moves the bundling too |
+| Nested stack (`AWS::CloudFormation::Stack`) | Score 0 with the reason. Its resources live in a template the advisor does not descend into, so carving it means carving that whole template |
+| Dummy lookup values | Score 0 for **every** construct, with the reason. An assembly synthesized with unresolved context lookups — or still holding a placeholder like `vpc-12345678` — is not a faithful picture of any account, so no score it produces is worth reading |
+
+Synthesis scaffolding never appears: the `CDKMetadata` resource, the bootstrap version parameter and asset parameters describe the synthesis rather than the infrastructure.
+
+`--state` is refused against an assembly rather than ignored — it is a Terraform option, and a synthesized template already carries its own instance counts. So are `carve emit`, `carve bridge` and `carve apply`: bridging a CDK carve means rewriting the surviving app's source, which does not generalize across jsii languages.
+
+```
+$ chant carve advise --from ./cdk.out
+
+CDK cloud-assembly carve-out advisory for ./cdk.out
+  6 construct(s) scored. Advises only — nothing is emitted or changed.
+
+CLEAN LEAF — carve now  (3)
+   88  DataStack/Assets -> AWS::S3::Bucket
+       1 inbound (a reimport each)
+       2 CloudFormation resources fold into this construct.
+
+CARVABLE — has boundary work  (2)
+   69  AppStack/Api
+       1 inbound (a reimport each), 1 stack output(s) reading it (one-line rewrite each), tier 2 map
+       L3 construct subtree — a Composite candidate (#1000). Its leaves rank here as one unit rather than separately.
+       3 CloudFormation resources fold into this construct.
+   67  AppStack/Handler -> AWS::Lambda::Function
+       2 outbound (deferred input each), tier 2 map, asset-backed
+       Asset-backed (Code) — carving it moves the CDK bundling too, not just the resource.
+       3 CloudFormation resources fold into this construct.
+
+LEAVE IN CDK  (1)
+    0  AppStack/Reports.NestedStack
+       not carvable as it stands
+       Nested stack — its resources live in a template this advisor does not descend into, so
+       carving it means carving that whole template. Advise the nested assembly on its own.
+```
 
 ## Example
 
@@ -103,6 +157,7 @@ Read it top to bottom: the log group has no dependents and a clean native map, s
 {
   "version": 1,
   "from": "./infra",
+  "source": "terraform",
   "advisory": "read-only — emits nothing, patches nothing, touches no live resource",
   "count": 8,
   "bands": { "clean leaf": 6, "carvable w/ edits": 1, "leave in Terraform": 1 },
@@ -152,6 +207,19 @@ Read it top to bottom: the log group has no dependents and a clean native map, s
 - The lists are the carve *set's* boundary, so a folded sub-resource is never an endpoint: it carves with its parent, and edges internal to the set are not boundary work.
 - `boundary` present with two empty lists means no boundary work. `boundary` absent means the report was produced by a chant that predates the field — "none" and "not reported" are different claims.
 
+### What a CDK report adds
+
+The shape is the same. `source` says `"cdk"`, and:
+
+- `address` is a **construct path** (`AppStack/Handler`) rather than a Terraform address. It is still an opaque string identifier, but it does not split on `.` into a type the way a Terraform address does.
+- `kind` is still `"resource"` or `"module"`. An L3 construct subtree is a `module`, which is what that value already means: a candidate for one chant Composite rather than several resources.
+- `mapsTo` is the CloudFormation type — the identity map, which is the point. A synthesized template is already in the type space chant's AWS lexicon constructors take.
+- `members` names the CloudFormation resources folded into the construct (`id`, `type`, `stack`, `path`). Absent on the Terraform path, where a fold is expressed by the child's absence from the ranking instead.
+- `notes` carries what the arithmetic cannot say: why a construct was disqualified, that it is asset-backed, that it is an L3 Composite candidate.
+- `bridge` takes two more values: `cdk-import` where Terraform says `tf-data-source` (the surviving app reimports what was carved), and `cfn-output-rewrite` where it says `tf-output-rewrite`. A boundary edge whose two ends are in different templates also carries `crossStack: true`.
+- `diagnostics` is a top-level list of anything about the read the scores alone do not say — a missing `tree.json`, an assembly synthesized from unresolved context lookups.
+- Band names do not change. A construct in the lowest band is still `"leave in Terraform"` in the JSON, because the band is part of this contract and readers key on it; only the heading a person reads says "LEAVE IN CDK".
+
 ### Version policy
 
 `version` is a single integer, currently `1`.
@@ -160,10 +228,14 @@ Read it top to bottom: the log group has no dependents and a clean native map, s
 - **Removing or renaming a field, or changing what one means, bumps the version.** So does narrowing a type. (An optional field becoming always-present is additive; the reverse is not.)
 - A reader handed a version it does not know should refuse the report and say so, rather than half-reading it.
 
+The CDK source stays inside that promise and does not bump the version. Every field an existing reader validates keeps its type and meaning; everything new is additive and ignorable. A reader that reproduces a score as `100 + sum(breakdown.penalties)` still gets the right number, because the CDK asset term is one more entry in that same map.
+
 ## Coverage
 
-The tier map is a curated seed covering the common tier-1 leaves people carve first. A resource type it does not know scores 0 (leave in Terraform), which is the safe default: the advisor never claims a resource is carvable when it cannot map it. State is read only for root-module resources; resources nested inside a module are not descended into.
+The tier map is a curated seed covering the common tier-1 leaves people carve first. A type it does not know scores 0 (leave where it is), which is the safe default: the advisor never claims something is carvable when it cannot map it. Both sources read the same table — the Terraform advisor keys it by Terraform type, the CDK advisor by the CloudFormation type the same entry names — so adding a type lights it up for both at once.
+
+Terraform state is read only for root-module resources; resources nested inside a module are not descended into. A CDK nested stack is not descended into either: it is reported as one disqualified construct with the reason.
 
 :::caution
-This command advises only. It reads `.tf` and (with `--state`) `.tfstate`, and prints a ranking. It writes nothing to your Terraform, generates no chant source, and makes no cloud API calls.
+This command advises only. It reads `.tf` and (with `--state`) `.tfstate`, or a cloud assembly's JSON, and prints a ranking. It writes nothing to your Terraform or your CDK app, generates no chant source, and makes no cloud API calls.
 :::

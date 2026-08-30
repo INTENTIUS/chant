@@ -1,0 +1,171 @@
+{
+  "Parameters": {
+    "EnvName": {
+      "Type": "String",
+      "Default": "dev"
+    },
+    "BootstrapVersion": {
+      "Type": "AWS::SSM::Parameter::Value<String>",
+      "Default": "/cdk-bootstrap/hnb659fds/version",
+      "Description": "Version of the CDK Bootstrap resources in this environment"
+    }
+  },
+  "Conditions": {
+    "IsProd": { "Fn::Equals": [{ "Ref": "EnvName" }, "prod"] }
+  },
+  "Resources": {
+    "ApiQueue4A6E9832": {
+      "Type": "AWS::SQS::Queue",
+      "Properties": {
+        "VisibilityTimeout": 300
+      },
+      "UpdateReplacePolicy": "Delete",
+      "DeletionPolicy": "Delete",
+      "Metadata": {
+        "aws:cdk:path": "AppStack/Api/Queue/Resource"
+      }
+    },
+    "ApiTopic1B2C3D4E": {
+      "Type": "AWS::SNS::Topic",
+      "Properties": {
+        "DisplayName": "api-events"
+      },
+      "Metadata": {
+        "aws:cdk:path": "AppStack/Api/Topic/Resource"
+      }
+    },
+    "ApiTopicQueueSubscriptionAA11BB22": {
+      "Type": "AWS::SNS::Subscription",
+      "Properties": {
+        "Protocol": "sqs",
+        "TopicArn": { "Ref": "ApiTopic1B2C3D4E" },
+        "Endpoint": { "Fn::GetAtt": ["ApiQueue4A6E9832", "Arn"] }
+      },
+      "Metadata": {
+        "aws:cdk:path": "AppStack/Api/Topic/QueueSubscription/Resource"
+      }
+    },
+    "HandlerServiceRoleFCDC14AE": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Statement": [
+            {
+              "Action": "sts:AssumeRole",
+              "Effect": "Allow",
+              "Principal": { "Service": "lambda.amazonaws.com" }
+            }
+          ],
+          "Version": "2012-10-17"
+        }
+      },
+      "Metadata": {
+        "aws:cdk:path": "AppStack/Handler/ServiceRole/Resource"
+      }
+    },
+    "HandlerServiceRoleDefaultPolicy4C43A1F9": {
+      "Type": "AWS::IAM::Policy",
+      "Properties": {
+        "PolicyDocument": {
+          "Statement": [
+            {
+              "Action": ["s3:GetObject", "s3:PutObject"],
+              "Effect": "Allow",
+              "Resource": {
+                "Fn::Join": [
+                  "",
+                  [
+                    { "Fn::ImportValue": "DataStack:ExportsOutputFnGetAttAssets675B7A57ArnE0B2A4A8" },
+                    "/*"
+                  ]
+                ]
+              }
+            }
+          ],
+          "Version": "2012-10-17"
+        },
+        "PolicyName": "HandlerServiceRoleDefaultPolicy4C43A1F9",
+        "Roles": [{ "Ref": "HandlerServiceRoleFCDC14AE" }]
+      },
+      "Metadata": {
+        "aws:cdk:path": "AppStack/Handler/ServiceRole/DefaultPolicy/Resource"
+      }
+    },
+    "Handler886CB40B": {
+      "Type": "AWS::Lambda::Function",
+      "Properties": {
+        "Code": {
+          "S3Bucket": { "Fn::Sub": "cdk-hnb659fds-assets-${AWS::AccountId}-${AWS::Region}" },
+          "S3Key": "9f8e7d6c5b4a39281706f5e4d3c2b1a09f8e7d6c5b4a39281706f5e4d3c2b1a0.zip"
+        },
+        "Environment": {
+          "Variables": {
+            "QUEUE_URL": { "Ref": "ApiQueue4A6E9832" }
+          }
+        },
+        "Handler": "index.handler",
+        "Role": { "Fn::GetAtt": ["HandlerServiceRoleFCDC14AE", "Arn"] },
+        "Runtime": "nodejs20.x"
+      },
+      "DependsOn": ["HandlerServiceRoleDefaultPolicy4C43A1F9", "HandlerServiceRoleFCDC14AE"],
+      "Metadata": {
+        "aws:cdk:path": "AppStack/Handler/Resource",
+        "aws:asset:path": "asset.9f8e7d6c5b4a39281706f5e4d3c2b1a0",
+        "aws:asset:is-bundled": false,
+        "aws:asset:property": "Code"
+      }
+    },
+    "LegacyBucket": {
+      "Type": "AWS::S3::Bucket",
+      "Condition": "IsProd",
+      "Properties": {
+        "BucketName": { "Fn::Sub": "legacy-${EnvName}-archive" }
+      },
+      "UpdateReplacePolicy": "Retain",
+      "DeletionPolicy": "Retain",
+      "Metadata": {
+        "aws:cdk:path": "AppStack/Legacy"
+      }
+    },
+    "ReportsNestedStackReportsNestedStackResource7B21D4C6": {
+      "Type": "AWS::CloudFormation::Stack",
+      "Properties": {
+        "TemplateURL": {
+          "Fn::Join": [
+            "",
+            [
+              "https://s3.",
+              { "Ref": "AWS::Region" },
+              ".",
+              { "Ref": "AWS::URLSuffix" },
+              "/cdk-hnb659fds-assets-",
+              { "Ref": "AWS::AccountId" },
+              "-",
+              { "Ref": "AWS::Region" },
+              "/1a2b3c4d5e6f70819a2b3c4d5e6f70819a2b3c4d5e6f70819a2b3c4d5e6f7081.json"
+            ]
+          ]
+        }
+      },
+      "UpdateReplacePolicy": "Delete",
+      "DeletionPolicy": "Delete",
+      "Metadata": {
+        "aws:cdk:path": "AppStack/Reports.NestedStack/Reports.NestedStackResource"
+      }
+    },
+    "CDKMetadata": {
+      "Type": "AWS::CDK::Metadata",
+      "Properties": {
+        "Analytics": "v2:deflate64:H4sIAAAAAAAA/y2K0QqAIAwAv8V3XVEE9V4fEEQfIGtJmDrYVoT4740ed3fY4wr7BgtCvIYuBl+w7gLuoIm2y9lgAWJv6TylOUYVXpLK5x0Ipp98yRz5Uqz+MvzQZlvibDpsMK1SUteYWvwNyxu2AlgAAAA="
+      },
+      "Metadata": {
+        "aws:cdk:path": "AppStack/CDKMetadata/Default"
+      }
+    }
+  },
+  "Outputs": {
+    "QueueUrl": {
+      "Value": { "Ref": "ApiQueue4A6E9832" }
+    }
+  }
+}
