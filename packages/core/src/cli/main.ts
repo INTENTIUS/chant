@@ -461,10 +461,12 @@ Commands:
                          --all-projects)
   migrate <file>        Translate a workflow between lexicons
                         (default: --from github --to gitlab)
-  carve advise          Read-only Terraform peelability advisor: rank which
-                        --from <tf-dir>   resources are cheap to carve into native chant
+  carve advise          Read-only peelability advisor: rank which resources
+                        --from <dir>      are cheap to carve into native chant
                         (--json, --report <path>). Emits nothing, changes nothing.
-                        Needs @cdktf/hcl2json (npm install -D @cdktf/hcl2json).
+                        --from a Terraform dir needs @cdktf/hcl2json
+                        (npm install -D @cdktf/hcl2json); --from a CDK cloud
+                        assembly (cdk.out) needs nothing and ranks constructs.
   carve emit            Adopt a selected TF resource into chant source + report
                         --from <tf-dir>   its boundary. --state <tfstate> adopts offline
                         --select <addr>   (recommended for TF-managed resources); --env

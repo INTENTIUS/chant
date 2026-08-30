@@ -64,6 +64,12 @@ export interface TfEdge {
    * parameter. Empty when the reference came from a non-object block shape.
    */
   via: string[];
+  /**
+   * The two ends live in different templates — a CloudFormation
+   * `Fn::ImportValue` resolved through the exporting stack's `Outputs` (#1056).
+   * Never set on the Terraform path, where a single estate is one namespace.
+   */
+  crossStack?: boolean;
 }
 
 export interface TfGraph {

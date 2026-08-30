@@ -1,0 +1,201 @@
+{
+  "version": "tree-0.1",
+  "tree": {
+    "id": "App",
+    "path": "",
+    "constructInfo": { "fqn": "aws-cdk-lib.App", "version": "2.150.0" },
+    "children": {
+      "DataStack": {
+        "id": "DataStack",
+        "path": "DataStack",
+        "constructInfo": { "fqn": "aws-cdk-lib.Stack", "version": "2.150.0" },
+        "children": {
+          "Assets": {
+            "id": "Assets",
+            "path": "DataStack/Assets",
+            "constructInfo": { "fqn": "aws-cdk-lib.aws_s3.Bucket", "version": "2.150.0" },
+            "children": {
+              "Resource": {
+                "id": "Resource",
+                "path": "DataStack/Assets/Resource",
+                "attributes": { "aws:cdk:cloudformation:type": "AWS::S3::Bucket" },
+                "constructInfo": { "fqn": "aws-cdk-lib.aws_s3.CfnBucket", "version": "2.150.0" }
+              },
+              "Policy": {
+                "id": "Policy",
+                "path": "DataStack/Assets/Policy",
+                "constructInfo": { "fqn": "aws-cdk-lib.aws_s3.BucketPolicy", "version": "2.150.0" },
+                "children": {
+                  "Resource": {
+                    "id": "Resource",
+                    "path": "DataStack/Assets/Policy/Resource",
+                    "attributes": { "aws:cdk:cloudformation:type": "AWS::S3::BucketPolicy" },
+                    "constructInfo": { "fqn": "aws-cdk-lib.aws_s3.CfnBucketPolicy", "version": "2.150.0" }
+                  }
+                }
+              }
+            }
+          },
+          "Table": {
+            "id": "Table",
+            "path": "DataStack/Table",
+            "constructInfo": { "fqn": "aws-cdk-lib.aws_dynamodb.Table", "version": "2.150.0" },
+            "children": {
+              "Resource": {
+                "id": "Resource",
+                "path": "DataStack/Table/Resource",
+                "attributes": { "aws:cdk:cloudformation:type": "AWS::DynamoDB::Table" },
+                "constructInfo": { "fqn": "aws-cdk-lib.aws_dynamodb.CfnTable", "version": "2.150.0" }
+              }
+            }
+          },
+          "CDKMetadata": {
+            "id": "CDKMetadata",
+            "path": "DataStack/CDKMetadata",
+            "constructInfo": { "fqn": "constructs.Construct", "version": "10.3.0" },
+            "children": {
+              "Default": {
+                "id": "Default",
+                "path": "DataStack/CDKMetadata/Default",
+                "constructInfo": { "fqn": "aws-cdk-lib.CfnResource", "version": "2.150.0" }
+              }
+            }
+          }
+        }
+      },
+      "AppStack": {
+        "id": "AppStack",
+        "path": "AppStack",
+        "constructInfo": { "fqn": "aws-cdk-lib.Stack", "version": "2.150.0" },
+        "children": {
+          "Api": {
+            "id": "Api",
+            "path": "AppStack/Api",
+            "constructInfo": { "fqn": "constructs.Construct", "version": "10.3.0" },
+            "children": {
+              "Queue": {
+                "id": "Queue",
+                "path": "AppStack/Api/Queue",
+                "constructInfo": { "fqn": "aws-cdk-lib.aws_sqs.Queue", "version": "2.150.0" },
+                "children": {
+                  "Resource": {
+                    "id": "Resource",
+                    "path": "AppStack/Api/Queue/Resource",
+                    "attributes": { "aws:cdk:cloudformation:type": "AWS::SQS::Queue" },
+                    "constructInfo": { "fqn": "aws-cdk-lib.aws_sqs.CfnQueue", "version": "2.150.0" }
+                  }
+                }
+              },
+              "Topic": {
+                "id": "Topic",
+                "path": "AppStack/Api/Topic",
+                "constructInfo": { "fqn": "aws-cdk-lib.aws_sns.Topic", "version": "2.150.0" },
+                "children": {
+                  "Resource": {
+                    "id": "Resource",
+                    "path": "AppStack/Api/Topic/Resource",
+                    "attributes": { "aws:cdk:cloudformation:type": "AWS::SNS::Topic" },
+                    "constructInfo": { "fqn": "aws-cdk-lib.aws_sns.CfnTopic", "version": "2.150.0" }
+                  },
+                  "QueueSubscription": {
+                    "id": "QueueSubscription",
+                    "path": "AppStack/Api/Topic/QueueSubscription",
+                    "constructInfo": { "fqn": "aws-cdk-lib.aws_sns.Subscription", "version": "2.150.0" },
+                    "children": {
+                      "Resource": {
+                        "id": "Resource",
+                        "path": "AppStack/Api/Topic/QueueSubscription/Resource",
+                        "attributes": { "aws:cdk:cloudformation:type": "AWS::SNS::Subscription" },
+                        "constructInfo": { "fqn": "aws-cdk-lib.aws_sns.CfnSubscription", "version": "2.150.0" }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "Handler": {
+            "id": "Handler",
+            "path": "AppStack/Handler",
+            "constructInfo": { "fqn": "aws-cdk-lib.aws_lambda.Function", "version": "2.150.0" },
+            "children": {
+              "ServiceRole": {
+                "id": "ServiceRole",
+                "path": "AppStack/Handler/ServiceRole",
+                "constructInfo": { "fqn": "aws-cdk-lib.aws_iam.Role", "version": "2.150.0" },
+                "children": {
+                  "Resource": {
+                    "id": "Resource",
+                    "path": "AppStack/Handler/ServiceRole/Resource",
+                    "attributes": { "aws:cdk:cloudformation:type": "AWS::IAM::Role" },
+                    "constructInfo": { "fqn": "aws-cdk-lib.aws_iam.CfnRole", "version": "2.150.0" }
+                  },
+                  "DefaultPolicy": {
+                    "id": "DefaultPolicy",
+                    "path": "AppStack/Handler/ServiceRole/DefaultPolicy",
+                    "constructInfo": { "fqn": "aws-cdk-lib.aws_iam.Policy", "version": "2.150.0" },
+                    "children": {
+                      "Resource": {
+                        "id": "Resource",
+                        "path": "AppStack/Handler/ServiceRole/DefaultPolicy/Resource",
+                        "attributes": { "aws:cdk:cloudformation:type": "AWS::IAM::Policy" },
+                        "constructInfo": { "fqn": "aws-cdk-lib.aws_iam.CfnPolicy", "version": "2.150.0" }
+                      }
+                    }
+                  }
+                }
+              },
+              "Code": {
+                "id": "Code",
+                "path": "AppStack/Handler/Code",
+                "constructInfo": { "fqn": "aws-cdk-lib.aws_s3_assets.Asset", "version": "2.150.0" }
+              },
+              "Resource": {
+                "id": "Resource",
+                "path": "AppStack/Handler/Resource",
+                "attributes": { "aws:cdk:cloudformation:type": "AWS::Lambda::Function" },
+                "constructInfo": { "fqn": "aws-cdk-lib.aws_lambda.CfnFunction", "version": "2.150.0" }
+              }
+            }
+          },
+          "Legacy": {
+            "id": "Legacy",
+            "path": "AppStack/Legacy",
+            "attributes": { "aws:cdk:cloudformation:type": "AWS::S3::Bucket" },
+            "constructInfo": { "fqn": "aws-cdk-lib.aws_s3.CfnBucket", "version": "2.150.0" }
+          },
+          "Reports.NestedStack": {
+            "id": "Reports.NestedStack",
+            "path": "AppStack/Reports.NestedStack",
+            "constructInfo": { "fqn": "aws-cdk-lib.NestedStack", "version": "2.150.0" },
+            "children": {
+              "Reports.NestedStackResource": {
+                "id": "Reports.NestedStackResource",
+                "path": "AppStack/Reports.NestedStack/Reports.NestedStackResource",
+                "attributes": { "aws:cdk:cloudformation:type": "AWS::CloudFormation::Stack" },
+                "constructInfo": { "fqn": "aws-cdk-lib.CfnStack", "version": "2.150.0" }
+              }
+            }
+          },
+          "CDKMetadata": {
+            "id": "CDKMetadata",
+            "path": "AppStack/CDKMetadata",
+            "constructInfo": { "fqn": "constructs.Construct", "version": "10.3.0" },
+            "children": {
+              "Default": {
+                "id": "Default",
+                "path": "AppStack/CDKMetadata/Default",
+                "constructInfo": { "fqn": "aws-cdk-lib.CfnResource", "version": "2.150.0" }
+              }
+            }
+          }
+        }
+      },
+      "Tree": {
+        "id": "Tree",
+        "path": "Tree",
+        "constructInfo": { "fqn": "aws-cdk-lib.TreeMetadata", "version": "2.150.0" }
+      }
+    }
+  }
+}

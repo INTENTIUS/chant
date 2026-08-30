@@ -1,0 +1,26 @@
+{
+  "version": "36.0.0",
+  "artifacts": {
+    "LookupStack": {
+      "type": "aws:cloudformation:stack",
+      "environment": "aws://123456789012/us-east-1",
+      "properties": {
+        "templateFile": "LookupStack.template.json",
+        "validateOnSynth": false
+      },
+      "displayName": "LookupStack"
+    }
+  },
+  "missing": [
+    {
+      "key": "vpc-provider:account=123456789012:filter.isDefault=true:region=us-east-1:returnAsymmetricSubnets=true",
+      "provider": "vpc-provider",
+      "props": {
+        "account": "123456789012",
+        "region": "us-east-1",
+        "filter": { "isDefault": "true" },
+        "returnAsymmetricSubnets": true
+      }
+    }
+  ]
+}
