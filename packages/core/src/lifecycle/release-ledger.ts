@@ -32,6 +32,25 @@ import { sortedJsonReplacer } from "../utils";
 import { appendReleaseRecordLine, readReleaseLedgerLines, listLedgerEnvironments as gitListLedgerEnvironments } from "./git";
 
 /**
+ * The id space a `ReleaseRecord.runId` lives in, and how to reach the run
+ * (#2045).
+ */
+export interface RunOrigin {
+  /**
+   * Which id space minted `runId`: `github` (a GitHub Actions run id — also
+   * the spelling Forgejo Actions uses, since it implements the same env
+   * contract; `url` disambiguates the actual host), `gitlab` (a CI pipeline
+   * id), `op` (an orchestrator/Op run id), or `local` (minted on the machine
+   * that ran the deploy, resolvable nowhere).
+   */
+  forge: "github" | "gitlab" | "op" | "local";
+  /** Repo/project slug on the forge (`GITHUB_REPOSITORY` / `CI_PROJECT_PATH`), when the environment named one. */
+  repo?: string;
+  /** Resolved link to the run, when the environment provided enough to build one. */
+  url?: string;
+}
+
+/**
  * One immutable deploy record: `(component, env, artifact digest, git sha,
  * run id, timestamp, actor)`, referencing the build archive by digest — the
  * exact shape epic #551 "Build & deploy observability" asks for.
@@ -54,8 +73,19 @@ export interface ReleaseRecord {
   digest: string;
   /** Git commit SHA the deploy was built from. */
   gitSha: string;
-  /** Orchestrator run identifier (a `DriverRunResult`/Op run id, or a CI run id in generate mode) — the pointer back into the deploy event log. */
+  /** Orchestrator run identifier (a `DriverRunResult`/Op run id, or a CI run id in generate mode) — the pointer back into the deploy event log. Which id space it lives in, and how to follow it, is `runOrigin`'s job (#2045). */
   runId: string;
+  /**
+   * Where `runId` can be resolved (#2045). A bare `runId` names a run in one
+   * of several mutually incompatible id spaces — a GitHub Actions run id, a
+   * GitLab pipeline id, an Op run id, a locally minted id — and without this
+   * a reader can tell them apart only by inference from whoever wrote the
+   * record. Written at record time from the same environment the id came
+   * from, so the two cannot skew. Optional: records written before this
+   * field existed, and callers passing an id whose origin they did not
+   * declare, simply have none.
+   */
+  runOrigin?: RunOrigin;
   /**
    * When this record was written. The caller supplies this — the session
    * cannot call `Date.now()` reliably in every context, so the CLI resolves
@@ -131,6 +161,54 @@ export function validateReleaseRecord(record: Partial<ReleaseRecord>): string[] 
 
 /** Input a caller supplies to record one deploy — `version` is filled in, everything else is required (see `ReleaseRecord`). */
 export type ReleaseRecordInput = Omit<ReleaseRecord, "version">;
+
+/**
+ * Resolve a run id and its origin from the same environment, in one step, so
+ * the two cannot skew (#2045). Resolution order mirrors what
+ * `chant components release` always did — explicit id, then
+ * `GITHUB_RUN_ID`, then `CI_PIPELINE_ID`, then a locally minted
+ * `local-<ms>` — but now each source also names its id space:
+ *
+ *  - the GitHub path records `repo` (`GITHUB_REPOSITORY`) and builds the run
+ *    `url` from `GITHUB_SERVER_URL` — which also makes a Forgejo instance's
+ *    runs resolvable, since Forgejo Actions implements the same env contract;
+ *  - the GitLab path records `repo` (`CI_PROJECT_PATH`) and takes
+ *    `CI_PIPELINE_URL` verbatim;
+ *  - the local mint says `local` in a field instead of only in the id's
+ *    spelling.
+ *
+ * An explicit id still gets an origin when it matches the id the environment
+ * itself is advertising (a CI job passing `--run-id $GITHUB_RUN_ID`);
+ * otherwise the caller's id is recorded without one — guessing an origin the
+ * caller did not state would be exactly the inference this field exists to
+ * remove.
+ */
+export function resolveRunId(
+  explicit?: string,
+  env: NodeJS.ProcessEnv = process.env,
+): { runId: string; runOrigin?: RunOrigin } {
+  const githubOrigin = (id: string): RunOrigin => ({
+    forge: "github",
+    ...(env.GITHUB_REPOSITORY ? { repo: env.GITHUB_REPOSITORY } : {}),
+    ...(env.GITHUB_SERVER_URL && env.GITHUB_REPOSITORY
+      ? { url: `${env.GITHUB_SERVER_URL}/${env.GITHUB_REPOSITORY}/actions/runs/${id}` }
+      : {}),
+  });
+  const gitlabOrigin = (): RunOrigin => ({
+    forge: "gitlab",
+    ...(env.CI_PROJECT_PATH ? { repo: env.CI_PROJECT_PATH } : {}),
+    ...(env.CI_PIPELINE_URL ? { url: env.CI_PIPELINE_URL } : {}),
+  });
+
+  if (explicit) {
+    if (env.GITHUB_RUN_ID && explicit === env.GITHUB_RUN_ID) return { runId: explicit, runOrigin: githubOrigin(explicit) };
+    if (env.CI_PIPELINE_ID && explicit === env.CI_PIPELINE_ID) return { runId: explicit, runOrigin: gitlabOrigin() };
+    return { runId: explicit };
+  }
+  if (env.GITHUB_RUN_ID) return { runId: env.GITHUB_RUN_ID, runOrigin: githubOrigin(env.GITHUB_RUN_ID) };
+  if (env.CI_PIPELINE_ID) return { runId: env.CI_PIPELINE_ID, runOrigin: gitlabOrigin() };
+  return { runId: `local-${Date.now()}`, runOrigin: { forge: "local" } };
+}
 
 /**
  * Append one immutable release record to the `<env>` ledger on the

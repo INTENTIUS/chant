@@ -30,7 +30,7 @@
  * env vars, timestamp is a real `new Date()` taken at record time).
  */
 import { getHeadCommit, pushLifecycle, StaleLifecycleBranchError } from "../lifecycle/git";
-import { appendReleaseRecord, InvalidReleaseRecordError, type ReleaseRecord } from "../lifecycle/release-ledger";
+import { appendReleaseRecord, InvalidReleaseRecordError, type ReleaseRecord, type RunOrigin } from "../lifecycle/release-ledger";
 import type { DriverStepRecord } from "./driver";
 
 /**
@@ -117,6 +117,8 @@ export interface AutoReleaseRunInfo {
   digest?: string;
   /** Orchestrator run identifier — a Temporal `runId`, or a locally generated id for the local executor (mirrors `runComponentsReleaseRecord`'s `--run-id` default). */
   runId: string;
+  /** The id space `runId` lives in (#2045) — `{ forge: "op" }` for a Temporal run, `{ forge: "local" }` for a local-executor mint. Recorded verbatim as the release record's `runOrigin`. */
+  runOrigin?: RunOrigin;
   /** The bypassed capability-profile divergences, when the caller deliberately overrode a deploy-time profile assertion (chant #1244) — recorded verbatim as the release record's `profileOverride`. */
   profileOverride?: string;
   /** The deploy's input-side digest, when `digest` is a rendered-content identity (a pinned helm deploy, chant #1242) — recorded as the release record's `inputDigest` so ledger queries can still join on inputs across clusters whose bytes legitimately differ. */
@@ -204,6 +206,7 @@ export async function maybeRecordAutoRelease(
         digest,
         gitSha,
         runId: run.runId,
+        ...(run.runOrigin ? { runOrigin: run.runOrigin } : {}),
         timestamp,
         actor,
         ...(run.profileOverride ? { profileOverride: run.profileOverride } : {}),
