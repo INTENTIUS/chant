@@ -126,7 +126,8 @@ describe("carveBridge", () => {
       expect(patch).toContain("+      ASSETS_BUCKET = data.aws_s3_bucket.assets.bucket");
 
       const m = readCarveManifest(res.manifestPath!)!;
-      expect(m.bridge!.patch).toBe(res.patchPath);
+      // The manifest records the patch relative to its own directory (#2039).
+      expect(m.bridge!.patch).toBe("aws_s3_bucket-assets-bridge.patch");
       expect(formatCarveBridge(res)).toContain("git apply");
 
       // The patch really applies: `git apply` from the estate reproduces the
