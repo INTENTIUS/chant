@@ -614,3 +614,38 @@ describe("Wrangler config audit (#446)", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 });
+
+describe("nginx config audit (#1979)", () => {
+  function tmpRepo(): string {
+    const dir = join(tmpdir(), `chant-audit-nginx-${process.pid}-${Math.random().toString(36).slice(2)}`);
+    mkdirSync(dir, { recursive: true });
+    return dir;
+  }
+
+  test("audits an nginx config end to end, even when no lexicon is installed", async () => {
+    // The whole-path proof the family shipped without: an nginx file must
+    // survive candidate COLLECTION (isCandidatePath) before the NGX scanner
+    // can ever see it — a scanner-level unit test cannot catch a filter that
+    // drops the file first.
+    const dir = tmpRepo();
+    mkdirSync(join(dir, "nginx"), { recursive: true });
+    writeFileSync(
+      join(dir, "nginx", "default.conf"),
+      "server {\n  listen 80;\n  location /files {\n    autoindex on;\n  }\n}\n",
+    );
+    const result = await auditCommand({ path: dir, plugins: [], format: "json" });
+    expect(result.status).toBe("no-lexicons"); // no lexicon installed — still not a clean miss
+    expect(result.findings.map((f) => f.checkId)).toContain("NGX003");
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("a systemd-style conf.d drop-in is collected but contributes nothing (content-confirmed)", async () => {
+    const dir = tmpRepo();
+    mkdirSync(join(dir, "conf.d"), { recursive: true });
+    writeFileSync(join(dir, "conf.d", "override.conf"), "[Service]\nRestart=always\n");
+    const result = await auditCommand({ path: dir, plugins: [] });
+    expect(result.success).toBe(true);
+    expect(result.findings.map((f) => f.checkId)).not.toEqual(expect.arrayContaining([expect.stringMatching(/^NGX/)]));
+    rmSync(dir, { recursive: true, force: true });
+  });
+});
