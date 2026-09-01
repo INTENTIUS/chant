@@ -95,7 +95,10 @@ describe("carveApply", () => {
       expect(stamped).toContain('{"Key":"chant:env","Value":"prod"}');
 
       const m = readCarveManifest(res.manifestPath!)!;
-      expect(m.apply!.stampedFiles).toEqual([emitted]);
+      // Recorded relative to the manifest's directory (#2039), not the
+      // run-time absolute path the stamping itself used.
+      expect(m.apply!.stampedFiles).toEqual(["assets.ts"]);
+      expect(m.emit!.files).toEqual(["assets.ts"]);
       expect(formatCarveApply(res)).toContain("Stamped the ownership marker into");
 
       // Idempotent: a second graduation leaves the source stable.

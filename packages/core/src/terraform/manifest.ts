@@ -9,14 +9,23 @@
  */
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "fs";
-import { join } from "path";
+import { isAbsolute, join, relative } from "path";
 import type { CarveReport } from "./carve";
 import type { OwnershipMarker } from "../ownership";
 
 export const CARVE_MANIFEST_SUFFIX = ".carve.json";
 
+/**
+ * Version 2 (#2039): `emit.files`, `bridge.written`, `bridge.patch` and
+ * `apply.stampedFiles` are recorded relative to the manifest's own directory,
+ * so the manifest stays true when the tree is copied, moved, or checked out
+ * elsewhere. Version-1 manifests recorded them absolute; readers resolve
+ * either through `resolveManifestFilePath`.
+ */
+export const CARVE_MANIFEST_VERSION = 2;
+
 export interface CarveManifest {
-  version: 1;
+  version: 1 | 2;
   /** Terraform address of the carved resource, e.g. `aws_s3_bucket.assets`. */
   target: string;
   /** Terraform resource type, when known. */
@@ -30,7 +39,13 @@ export interface CarveManifest {
   /** Recorded by `carve emit`. */
   emit?: {
     source: "tfstate" | "live";
-    /** Emitted chant source file path(s). */
+    /**
+     * Emitted chant source file path(s), relative to the manifest's directory
+     * (absolute in version-1 manifests). The manifest sits at the scaffolded
+     * project's root, so these are also project-root-relative — the same base
+     * `chant graph --format ir` uses for `sourceLoc.file`, which is the join
+     * from a carved Terraform address to the chant entity it became (#2040).
+     */
     files: string[];
     /**
      * Deferred outbound inputs declared as build parameters in the emitted
@@ -53,9 +68,10 @@ export interface CarveManifest {
   };
   /** Recorded by `carve bridge`. */
   bridge?: {
+    /** Files written, relative to the manifest's directory (absolute in version-1 manifests). */
     written: string[];
     appliedInPlace: boolean;
-    /** The git-applyable `.patch` carrying the whole survivor edit. */
+    /** The git-applyable `.patch` carrying the whole survivor edit, relative to the manifest's directory (absolute in version-1 manifests). */
     patch?: string;
     /** Carved addresses whose own `.tf` block the rewrites remove (#998). */
     excised?: string[];
@@ -65,7 +81,7 @@ export interface CarveManifest {
   apply?: {
     marker: OwnershipMarker;
     ownershipTags: Record<string, string>;
-    /** Emitted files the marker was stamped into (`--write-source`). */
+    /** Emitted files the marker was stamped into (`--write-source`), relative to the manifest's directory (absolute in version-1 manifests). */
     stampedFiles?: string[];
     at: string;
   };
@@ -81,20 +97,62 @@ export function carveManifestPath(outDir: string, target: string): string {
   return join(outDir, `${carveSlug(target)}${CARVE_MANIFEST_SUFFIX}`);
 }
 
+/**
+ * Relative-to-`outDir` spelling of a recorded file path. Absolute entries
+ * (the run-time spelling every step naturally produces, and every version-1
+ * manifest on disk) are rewritten; already-relative entries pass through.
+ */
+function relativizePath(outDir: string, p: string): string {
+  return isAbsolute(p) ? relative(outDir, p) : p;
+}
+
+/**
+ * Normalize a manifest to the version-2 on-disk contract: recorded file
+ * paths relative to the manifest's own directory (#2039). `from` and
+ * `statePath` stay absolute — they locate the Terraform estate, a different
+ * tree the manifest does not travel with.
+ */
+function normalizeManifest(outDir: string, manifest: CarveManifest): CarveManifest {
+  const out: CarveManifest = { ...manifest, version: CARVE_MANIFEST_VERSION };
+  if (manifest.emit) {
+    out.emit = { ...manifest.emit, files: manifest.emit.files.map((f) => relativizePath(outDir, f)) };
+  }
+  if (manifest.bridge) {
+    out.bridge = {
+      ...manifest.bridge,
+      written: manifest.bridge.written.map((f) => relativizePath(outDir, f)),
+      ...(manifest.bridge.patch !== undefined ? { patch: relativizePath(outDir, manifest.bridge.patch) } : {}),
+    };
+  }
+  if (manifest.apply?.stampedFiles) {
+    out.apply = { ...manifest.apply, stampedFiles: manifest.apply.stampedFiles.map((f) => relativizePath(outDir, f)) };
+  }
+  return out;
+}
+
+/**
+ * Resolve a manifest-recorded file path against the manifest's directory.
+ * Absolute paths (version-1 manifests) pass through untouched, so both
+ * on-disk spellings read the same.
+ */
+export function resolveManifestFilePath(manifestDir: string, p: string): string {
+  return isAbsolute(p) ? p : join(manifestDir, p);
+}
+
 /** Write (or overwrite) a manifest into the output dir. Returns the path. */
 export function writeCarveManifest(outDir: string, manifest: CarveManifest): string {
   mkdirSync(outDir, { recursive: true });
   const path = carveManifestPath(outDir, manifest.target);
-  writeFileSync(path, JSON.stringify(manifest, null, 2) + "\n");
+  writeFileSync(path, JSON.stringify(normalizeManifest(outDir, manifest), null, 2) + "\n");
   return path;
 }
 
-/** Read a manifest, or null when absent/unreadable/not a v1 manifest. */
+/** Read a manifest, or null when absent/unreadable/not a known-version manifest. */
 export function readCarveManifest(path: string): CarveManifest | null {
   if (!existsSync(path)) return null;
   try {
     const parsed = JSON.parse(readFileSync(path, "utf-8")) as CarveManifest;
-    if (parsed?.version !== 1) return null;
+    if (parsed?.version !== 1 && parsed?.version !== 2) return null;
     if (typeof parsed.target !== "string" || typeof parsed.boundary !== "object") return null;
     return parsed;
   } catch {
@@ -147,7 +205,11 @@ export function resolveCarveManifest(outDir: string, select?: string): ResolvedM
   return { manifest: manifests[0].manifest, path: manifests[0].path };
 }
 
-/** Read-modify-write a section of an existing manifest. No-op when absent. */
+/**
+ * Read-modify-write a section of an existing manifest. No-op when absent.
+ * The whole manifest is re-normalized on write, so updating a version-1
+ * manifest also migrates its recorded paths to the relative contract.
+ */
 export function updateCarveManifest(
   outDir: string,
   target: string,
@@ -157,6 +219,6 @@ export function updateCarveManifest(
   const manifest = readCarveManifest(path);
   if (!manifest) return undefined;
   Object.assign(manifest, patch);
-  writeFileSync(path, JSON.stringify(manifest, null, 2) + "\n");
+  writeFileSync(path, JSON.stringify(normalizeManifest(outDir, manifest), null, 2) + "\n");
   return path;
 }

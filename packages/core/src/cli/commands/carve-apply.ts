@@ -15,7 +15,7 @@ import { cdkNotSupported, isCloudAssembly } from "../../cdk/assembly";
 import { parseTerraformDir, Hcl2JsonNotInstalled } from "../../terraform/parse";
 import { boundaryReport } from "../../terraform/carve";
 import { graduationPlan, stampOwnershipIntoSource, type GraduationPlan } from "../../terraform/graduate";
-import { resolveCarveManifest, updateCarveManifest } from "../../terraform/manifest";
+import { resolveCarveManifest, resolveManifestFilePath, updateCarveManifest } from "../../terraform/manifest";
 import { resolveEmitProvider } from "../../terraform/carve-provider";
 
 export interface CarveApplyOptions {
@@ -82,7 +82,9 @@ export async function carveApply(opts: CarveApplyOptions): Promise<CarveApplyRes
   // tags the source actually carries into the apply.
   let stamped: string[] | undefined;
   if (opts.writeSource) {
-    const files = resolved.manifest?.emit?.files ?? [];
+    // Manifest paths are relative to the manifest's own directory (#2039);
+    // resolve them back to real files (absolute version-1 entries pass through).
+    const files = (resolved.manifest?.emit?.files ?? []).map((f) => resolveManifestFilePath(outDir, f));
     if (files.length === 0) {
       return {
         ok: false,

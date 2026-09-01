@@ -106,7 +106,9 @@ describe("carve emit --state (real adoption from tfstate)", () => {
       expect(manifest.target).toBe("aws_s3_bucket.assets");
       expect(manifest.statePath).toBe(join(dir, "terraform.tfstate"));
       expect(manifest.emit!.source).toBe("tfstate");
-      expect(manifest.emit!.files).toEqual([join(out, "src", "assets.ts")]);
+      // Recorded relative to the manifest's own directory (#2039) — the same
+      // base the graph IR's sourceLoc uses, which is the #2040 join.
+      expect(manifest.emit!.files).toEqual([join("src", "assets.ts")]);
       expect(manifest.boundary.inbound.map((e) => e.survivor)).toEqual(["aws_lambda_function.api"]);
 
       const text = formatCarveEmit(res);
