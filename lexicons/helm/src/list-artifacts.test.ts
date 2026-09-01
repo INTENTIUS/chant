@@ -128,7 +128,7 @@ describe("helm listArtifacts", () => {
       const result = await listArtifacts({ environment: "prod", entities: new Map() });
       expect(ledgerMock).toHaveBeenCalledWith("prod");
       expect(result["release/default/web"].attributes).toMatchObject({ inputDigest: "sha256:input-digest" });
-      expect(result["release/default/web"].attributes.contentDigest).toBeUndefined();
+      expect(result["release/default/web"].attributes!.contentDigest).toBeUndefined();
     });
 
     test("a pinned deploy reports contentDigest and inputDigest — joinable to `helm renders`", async () => {
@@ -155,7 +155,7 @@ describe("helm listArtifacts", () => {
         malformed: 0,
       });
       const result = await listArtifacts({ environment: "prod", entities: new Map() });
-      expect(result["release/default/web"].attributes.inputDigest).toBe("sha256:newer");
+      expect(result["release/default/web"].attributes!.inputDigest).toBe("sha256:newer");
     });
 
     test("a release deployed outside chant reports nothing — absent is the honest answer", async () => {
@@ -166,9 +166,9 @@ describe("helm listArtifacts", () => {
       ledgerMock.mockResolvedValue({ records: [ledgerRecord({})], malformed: 0 });
 
       const result = await listArtifacts({ environment: "prod", entities: new Map() });
-      expect(result["release/default/web"].attributes.inputDigest).toBe("sha256:input-digest");
-      expect(result["release/default/manual"].attributes.inputDigest).toBeUndefined();
-      expect(result["release/default/manual"].attributes.contentDigest).toBeUndefined();
+      expect(result["release/default/web"].attributes!.inputDigest).toBe("sha256:input-digest");
+      expect(result["release/default/manual"].attributes!.inputDigest).toBeUndefined();
+      expect(result["release/default/manual"].attributes!.contentDigest).toBeUndefined();
     });
 
     test("one name in several namespaces is ambiguous against a namespace-less record — neither joins", async () => {
@@ -179,8 +179,8 @@ describe("helm listArtifacts", () => {
       ledgerMock.mockResolvedValue({ records: [ledgerRecord({})], malformed: 0 });
 
       const result = await listArtifacts({ environment: "prod", entities: new Map() });
-      expect(result["release/default/web"].attributes.inputDigest).toBeUndefined();
-      expect(result["release/staging-ns/web"].attributes.inputDigest).toBeUndefined();
+      expect(result["release/default/web"].attributes!.inputDigest).toBeUndefined();
+      expect(result["release/staging-ns/web"].attributes!.inputDigest).toBeUndefined();
     });
 
     test("an unreadable ledger joins nothing rather than failing the snapshot", async () => {
@@ -189,7 +189,7 @@ describe("helm listArtifacts", () => {
 
       const result = await listArtifacts({ environment: "prod", entities: new Map() });
       expect(result["release/default/web"]).toBeDefined();
-      expect(result["release/default/web"].attributes.inputDigest).toBeUndefined();
+      expect(result["release/default/web"].attributes!.inputDigest).toBeUndefined();
     });
   });
 });
