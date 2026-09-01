@@ -281,6 +281,19 @@ function isDir(p: string): boolean {
  *    implementation notes. #1996 only widens the harness to match a
  *    fixture's OWN declared set, never beyond it.
  */
+/**
+ * Fixtures every differential suite must NOT build (#2035). The two suites
+ * disagreed: `lexicons/helm/examples/examples.test.ts` skips
+ * `helm-render-external-secrets` explicitly ("fetches a real upstream chart
+ * at build time"), while this corpus built it in all six differential
+ * suites — passing only because CI installs helm and the runner has
+ * outbound network; on a cold runner the suite reached
+ * `charts.external-secrets.io`. The hermetic coverage for the HelmRender
+ * codepath is `render.test.ts`, via a local chart. Keyed by corpus entry
+ * name.
+ */
+const NETWORK_FIXTURES = new Set(["lexicons/helm/examples/helm-render-external-secrets"]);
+
 export async function discoverCorpus(): Promise<CorpusEntry[]> {
   const entries: CorpusEntry[] = [];
 
@@ -317,10 +330,12 @@ export async function discoverCorpus(): Promise<CorpusEntry[]> {
         // in practice declares at least its own directory's lexicon, either
         // explicitly or via `resolveProjectLexicons`'s own source-scan
         // fallback).
+        const entryName = `lexicons/${lexDirent.name}/examples/${exDirent.name}`;
+        if (NETWORK_FIXTURES.has(entryName)) continue;
         const resolvedNames = await resolveProjectLexicons(srcDir);
         const lexiconNames = resolvedNames.length > 0 ? resolvedNames : [lexDirent.name];
         entries.push({
-          name: `lexicons/${lexDirent.name}/examples/${exDirent.name}`,
+          name: entryName,
           srcDir,
           serializers: lexiconNames.map((n) => SERIALIZER_BY_LEXICON[n]).filter((s): s is Serializer => s !== undefined),
           intrinsics: lexiconNames.flatMap((n) => INTRINSICS_BY_LEXICON[n] ?? []),

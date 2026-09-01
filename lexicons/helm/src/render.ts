@@ -34,7 +34,7 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { Composite } from "@intentius/chant";
@@ -51,6 +51,7 @@ import {
   loadRenderContent,
   persistHelmRender,
   renderCacheKey,
+  renderStoreRoot,
 } from "./render-store";
 import { probeCoalescedValues, type CoalescedValuesProbe } from "./values-probe";
 
@@ -172,7 +173,18 @@ interface RenderedDoc {
   [k: string]: unknown;
 }
 
-const CACHE_ROOT = join(homedir(), ".chant", "helm-renders");
+/**
+ * Root of the legacy unpinned cache — the same directory (and the same
+ * `CHANT_HELM_RENDER_ROOT` override) as the content-addressed render store
+ * (#2035). Before this the unprofiled path hardcoded `~/.chant/helm-renders`
+ * and honoured no environment variable, so a hermetic or air-gapped build
+ * had no way to hand it a pre-rendered chart short of pre-warming `$HOME`.
+ * A function, not a module-level constant, so the override is read when a
+ * render happens rather than when this module loaded.
+ */
+function cacheRoot(): string {
+  return renderStoreRoot();
+}
 
 /**
  * Legacy cache key — truncated, unprefixed, input-derived. Since #1238 this
@@ -251,7 +263,7 @@ function renderViaHelm(props: HelmRenderProps, profile?: HelmCapabilityProfile):
         "--repository-config",
         "/dev/null",
         "--repository-cache",
-        join(CACHE_ROOT, "_helm-repo-cache"),
+        join(cacheRoot(), "_helm-repo-cache"),
       ]
     : [];
 
@@ -302,7 +314,7 @@ function loadOrRender(props: HelmRenderProps, profile?: HelmCapabilityProfile): 
   if (props.noCache) {
     return renderViaHelm(props, profile);
   }
-  const cacheDir = join(CACHE_ROOT, cacheKey(props, profile));
+  const cacheDir = join(cacheRoot(), cacheKey(props, profile));
   const cachePath = join(cacheDir, "manifests.yaml");
   if (existsSync(cachePath)) {
     return readFileSync(cachePath, "utf8");
