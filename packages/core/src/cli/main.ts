@@ -23,6 +23,7 @@ import { runCarveAdvise, runCarveUnknown } from "./handlers/carve";
 import { runCarveEmit } from "./handlers/carve-emit";
 import { runCarveBridge } from "./handlers/carve-bridge";
 import { runCarveApply } from "./handlers/carve-apply";
+import { runCarveStatus } from "./handlers/carve-status";
 import { runLifecycleSnapshot, runLifecycleShow, runLifecycleDiff, runLifecycleRollback, runLifecyclePlan, runLifecycleAffected, runLifecycleLog, runLifecycleTeardown, runLifecycleWhoami, runLifecycleUnknown } from "./handlers/lifecycle";
 import { runComponentsStatus, runComponentsReleaseRecord, runComponentsExport, runComponentsUnknown } from "./handlers/components";
 import { runScenarioCheck, runScenarioUnknown } from "./handlers/scenario";
@@ -498,6 +499,10 @@ Commands:
                         --env <env>       is optional with a carve manifest present.
                                           --write-source stamps the ownership marker
                                           into the emitted chant source.
+  carve status          Status read over a tree of carve manifests: every
+                        [--from <dir>]    *.carve.json under --from (default: cwd) with
+                        (--json)          its target, stage (planned/emitted/bridged/
+                                          applied) and path. Read-only.
 
 Ops:
   run <name>            Start an Op workflow (spawns worker + submits to Temporal)
@@ -872,6 +877,9 @@ const registry: CommandDef[] = [
   // Apply graduation (#197): ownership marker + finalized apply runbook.
   // BYOL-honest — no cloud call; --write saves the graduation doc.
   { name: "carve apply", handler: runCarveApply },
+  // Status read over a tree of carve manifests (#2038): the contract a
+  // renderer replaces its own walk-and-guess discovery with. Read-only.
+  { name: "carve status", handler: runCarveStatus },
   { name: "init", handler: runInit },
   { name: "init lexicon", handler: runInitLexicon },
 { name: "update", handler: runUpdate },
