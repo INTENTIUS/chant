@@ -461,6 +461,14 @@ export interface ComponentPipelineResult {
   stages: string[];
   /** Every generated job, in emit order. */
   jobs: ComponentPipelineJob[];
+  /**
+   * The environment this pipeline deploys — `options.env` with the
+   * generator's default applied (#2046). Generators set it so a consumer
+   * (the graph IR's `pipeline` projection, behold) can join a pipeline to
+   * its environment without lexing a job's `run:`/`script:` line, where the
+   * value otherwise survives only as a shell argument.
+   */
+  env?: string;
 }
 
 /**

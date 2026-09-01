@@ -62,9 +62,24 @@ export type { GeneratedJob, GenerateGithubOptions, GenerateGithubResult };
  * apply its dialect transform + emit, rather than re-deriving the graph.
  */
 export interface GithubPipelineDoc {
+  /**
+   * The workflow's `name:` — `chant-components-<env>` (#2046), so two
+   * pipelines generated for two environments are tellable apart in the
+   * committed file, the Actions UI, and the API without lexing a job's
+   * `run:` line.
+   */
+  name: string;
+  /** The environment the pipeline deploys — `options.env` with the default applied (#2046). */
+  environment: string;
   /** The `on:` trigger mapping (a bare `workflow_dispatch`). */
   on: Record<string, unknown>;
-  /** The `env:` mapping, when `options.variables` is set. */
+  /**
+   * The `env:` mapping: the caller's `variables`, plus `CHANT_ENV` naming the
+   * deployed environment (#2046) — the machine-readable identity on the
+   * document itself. `CHANT_ENV` always reflects the environment baked into
+   * the run lines, so a caller-supplied variable of the same name cannot make
+   * the document lie about what its jobs deploy.
+   */
   env?: Record<string, unknown>;
   /** The `jobs:` mapping — one entry per component. */
   jobsDoc: Record<string, unknown>;
@@ -185,8 +200,10 @@ export function buildGithubPipelineDoc(
   });
 
   return {
+    name: `chant-components-${env}`,
+    environment: env,
     on: { workflow_dispatch: {} },
-    ...(options.variables && Object.keys(options.variables).length > 0 ? { env: options.variables } : {}),
+    env: { ...options.variables, CHANT_ENV: env },
     jobsDoc,
     stages,
     jobs,
@@ -199,6 +216,7 @@ export function buildGithubPipelineDoc(
  */
 export function emitPipelineYAML(doc: GithubPipelineDoc): string {
   const sections: string[] = [];
+  sections.push("name: " + emitYAML(doc.name, 0));
   sections.push("on:" + emitYAML(doc.on, 1));
   if (doc.env && Object.keys(doc.env).length > 0) {
     sections.push("env:" + emitYAML(doc.env, 1));
@@ -218,5 +236,5 @@ export function generateGithubPipeline(
   options: GenerateGithubOptions = {},
 ): GenerateGithubResult {
   const doc = buildGithubPipelineDoc(components, options);
-  return { yaml: emitPipelineYAML(doc), stages: doc.stages, jobs: doc.jobs };
+  return { yaml: emitPipelineYAML(doc), stages: doc.stages, jobs: doc.jobs, env: doc.environment };
 }

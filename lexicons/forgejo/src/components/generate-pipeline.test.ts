@@ -57,6 +57,14 @@ describe("generateForgejoPipeline: structure (github-shaped)", () => {
     }
   });
 
+  test("the environment identity passes through the dialect untransformed (#2046)", () => {
+    const result = generateForgejoPipeline(pilotComponents(), { env: "staging" });
+    const parsed = parseYAML(result.yaml);
+    expect(parsed.name).toBe("chant-components-staging");
+    expect(parsed.env).toEqual({ CHANT_ENV: "staging" });
+    expect(result.env).toBe("staging");
+  });
+
   test("needs: mirrors dependsOn — search-service waits on shared-alb, nothing else", () => {
     const jobs = parsedJobs(generateForgejoPipeline(pilotComponents()).yaml);
     expect(jobs["search-service"].needs).toEqual(["shared-alb"]);

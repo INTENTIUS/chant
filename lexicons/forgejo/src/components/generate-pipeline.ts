@@ -56,6 +56,10 @@ export function generateForgejoPipeline(
   const doc = buildGithubPipelineDoc(components, options);
 
   const forgejoDoc: GithubPipelineDoc = {
+    // The environment identity (#2046) is dialect-neutral: name, environment,
+    // and the env-map's CHANT_ENV entry pass through untransformed.
+    name: doc.name,
+    environment: doc.environment,
     on: forgejoize(doc.on, dialectOptions),
     ...(doc.env ? { env: forgejoize(doc.env, dialectOptions) } : {}),
     jobsDoc: forgejoize(doc.jobsDoc, dialectOptions),
@@ -63,5 +67,5 @@ export function generateForgejoPipeline(
     jobs: doc.jobs,
   };
 
-  return { yaml: emitPipelineYAML(forgejoDoc), stages: doc.stages, jobs: doc.jobs };
+  return { yaml: emitPipelineYAML(forgejoDoc), stages: doc.stages, jobs: doc.jobs, env: doc.environment };
 }
