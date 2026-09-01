@@ -127,6 +127,22 @@ export const CF_STATIC_ASSETS: Authority = {
   name: "Cloudflare Workers — Static assets",
   url: "https://developers.cloudflare.com/workers/static-assets/",
 };
+export const MOZILLA_TLS: Authority = {
+  name: "Mozilla — Server Side TLS",
+  url: "https://wiki.mozilla.org/Security/Server_Side_TLS",
+};
+export const CWE_DIR_LISTING: Authority = {
+  name: "CWE-548 — Exposure of Information Through Directory Listing",
+  url: "https://cwe.mitre.org/data/definitions/548.html",
+};
+export const GIXY_ALIAS: Authority = {
+  name: "Gixy — alias traversal",
+  url: "https://github.com/yandex/gixy/blob/master/docs/en/plugins/aliastraversal.md",
+};
+export const NGINX_STUB_STATUS: Authority = {
+  name: "nginx — ngx_http_stub_status_module",
+  url: "https://nginx.org/en/docs/http/ngx_http_stub_status_module.html",
+};
 export const CWE_HARDCODED_CREDS: Authority = {
   name: "CWE-798 — Use of Hard-coded Credentials",
   url: "https://cwe.mitre.org/data/definitions/798.html",
@@ -197,6 +213,14 @@ export const RULE_CATEGORY: Record<string, Category> = {
   WRG004: "security",
   WRG005: "security",
   WRG006: "security",
+  // NGX — nginx config audit (#1979), lexicon-independent like SEC/WRG.
+  NGX001: "security",
+  NGX002: "security",
+  NGX003: "security",
+  NGX004: "security",
+  NGX005: "security",
+  NGX006: "best-practice",
+  NGX007: "best-practice",
   // AGT — agent configuration (`chant audit --agents`). Core-owned like COR/EXT:
   // these run against the machine's own agent config, not against any one
   // lexicon's emitted output, so no lexicon ships them.
@@ -246,6 +270,17 @@ export const RULE_CATALOG: Record<string, RuleMeta> = {
   WRG004: meta("WRG004", M, G, "Unscoped wildcard route", "Scope the route pattern to the intended zone (e.g. \"example.com/*\") instead of a bare \"*\" or \"*/*\" that matches every zone on the account.", [CF_ROUTES]),
   WRG005: meta("WRG005", M, G, "Non-production environment shares a data store with production", "Give the non-production environment its own KV namespace/R2 bucket/D1 database id instead of reusing production's.", [CF_ENVIRONMENTS]),
   WRG006: meta("WRG006", M, G, "Static assets served from the project root", "Point [site].bucket / [assets].directory at a dedicated public output folder, not the project root, so non-public files (config, source maps, .git) aren't served.", [CF_STATIC_ASSETS]),
+
+  // nginx config audit (#1979, the #446 follow-up) — lexicon-independent,
+  // same shape as SEC/WRG: `nginx.ts` scans every nginx config it detects
+  // regardless of which (if any) audit lexicons are installed.
+  NGX001: meta("NGX001", M, G, "Deprecated TLS protocol enabled", "Remove SSLv2/SSLv3/TLSv1/TLSv1.1 from ssl_protocols and serve TLSv1.2 and TLSv1.3 only.", [MOZILLA_TLS]),
+  NGX002: meta("NGX002", M, G, "Weak cipher suite enabled", "Remove the RC4/DES/MD5/NULL/EXPORT-class entries from ssl_ciphers and use a modern cipher list (e.g. Mozilla's intermediate configuration).", [MOZILLA_TLS]),
+  NGX003: meta("NGX003", M, G, "Directory listing enabled", "Remove `autoindex on` (or scope it to a directory that is genuinely meant to be enumerated) so file listings aren't served to anyone who asks.", [CWE_DIR_LISTING]),
+  NGX004: meta("NGX004", M, G, "alias path traversal", "End the location prefix with \"/\" so it matches the trailing slash of the alias target — without it, a request for \"<prefix>../\" escapes the aliased directory.", [GIXY_ALIAS]),
+  NGX005: meta("NGX005", M, G, "Status endpoint with no access restriction", "Restrict the stub_status location with allow/deny (or auth_basic/auth_request) so connection metrics aren't public reconnaissance.", [NGINX_STUB_STATUS]),
+  NGX006: meta("NGX006", R, G, "Server version disclosure", "Add `server_tokens off;` in the http block so nginx stops advertising its exact version in the Server header and error pages."),
+  NGX007: meta("NGX007", R, G, "Access logging disabled at server scope", "Re-enable access_log at http/server scope (silencing a single noisy location is fine) so requests are recorded for incident investigation."),
 
   // ── Agent configuration (`chant audit --agents`) ──────────────────
   AGT001: agentMeta(

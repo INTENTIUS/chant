@@ -2130,6 +2130,62 @@ Point [site].bucket / [assets].directory at a dedicated public output folder, no
 
 Authority: [Cloudflare Workers — Static assets](https://developers.cloudflare.com/workers/static-assets/)
 
+## nginx config (NGX)
+
+Lexicon-independent, audit-only (#1979) — parses nginx's native directive/block config (`nginx.conf` and `.conf` files under nginx-ish directories, confirmed by content). No authoring surface: chant does not write nginx config, it only reads it for these checks.
+
+### NGX001
+
+**Deprecated TLS protocol enabled** — merge-worthy · guidance
+
+Remove SSLv2/SSLv3/TLSv1/TLSv1.1 from ssl_protocols and serve TLSv1.2 and TLSv1.3 only.
+
+Authority: [Mozilla — Server Side TLS](https://wiki.mozilla.org/Security/Server_Side_TLS)
+
+### NGX002
+
+**Weak cipher suite enabled** — merge-worthy · guidance
+
+Remove the RC4/DES/MD5/NULL/EXPORT-class entries from ssl_ciphers and use a modern cipher list (e.g. Mozilla's intermediate configuration).
+
+Authority: [Mozilla — Server Side TLS](https://wiki.mozilla.org/Security/Server_Side_TLS)
+
+### NGX003
+
+**Directory listing enabled** — merge-worthy · guidance
+
+Remove `autoindex on` (or scope it to a directory that is genuinely meant to be enumerated) so file listings aren't served to anyone who asks.
+
+Authority: [CWE-548 — Exposure of Information Through Directory Listing](https://cwe.mitre.org/data/definitions/548.html)
+
+### NGX004
+
+**alias path traversal** — merge-worthy · guidance
+
+End the location prefix with "/" so it matches the trailing slash of the alias target — without it, a request for "\<prefix>../" escapes the aliased directory.
+
+Authority: [Gixy — alias traversal](https://github.com/yandex/gixy/blob/master/docs/en/plugins/aliastraversal.md)
+
+### NGX005
+
+**Status endpoint with no access restriction** — merge-worthy · guidance
+
+Restrict the stub_status location with allow/deny (or auth_basic/auth_request) so connection metrics aren't public reconnaissance.
+
+Authority: [nginx — ngx_http_stub_status_module](https://nginx.org/en/docs/http/ngx_http_stub_status_module.html)
+
+### NGX006
+
+**Server version disclosure** — report-only · guidance
+
+Add `server_tokens off;` in the http block so nginx stops advertising its exact version in the Server header and error pages.
+
+### NGX007
+
+**Access logging disabled at server scope** — report-only · guidance
+
+Re-enable access_log at http/server scope (silencing a single noisy location is fine) so requests are recorded for incident investigation.
+
 ## Agent configuration (AGT)
 
 Run by `chant audit --agents` against the agent configuration on a machine — instruction files, MCP servers, skills, plugins, and permissions at system, user, and project scope. Unlike every other family here, these do not fire on repository YAML.
