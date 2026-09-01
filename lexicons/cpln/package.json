@@ -1,6 +1,6 @@
 {
   "name": "@intentius/chant-lexicon-cpln",
-  "version": "0.54.0",
+  "version": "0.54.1",
   "type": "module",
   "files": [
     "src/",
@@ -49,7 +49,7 @@
     "typescript": "^5.9.3"
   },
   "peerDependencies": {
-    "@intentius/chant": "^0.54.0",
+    "@intentius/chant": "^0.54.1",
     "typescript": "^5.9.3"
   },
   "description": "Control Plane (cpln) lexicon for chant — declarative IaC in TypeScript",
