@@ -208,6 +208,46 @@ describe("op.json IR (#1289)", () => {
     expect(transformStep?.args).toEqual({ value: "test" });
   });
 
+  it("resolves entity-identifying args into a step's entities, and echoes the key list on the contract (#2022)", () => {
+    const ir = buildOpIR(representativeOp());
+
+    // httpCheck's contract declares `url` as entity-identifying, so the Verify
+    // step carries the resolved join — a renderer no longer invents one.
+    const verify = ir.phases.find((p) => p.name === "Verify")!;
+    const check = verify.steps.find((s): s is OpIRActivityStep => s.kind === "activity" && s.fn === "httpCheck")!;
+    expect(check.entities).toEqual(["https://app.example.com/healthz"]);
+    expect(ir.activityContracts.httpCheck.entities).toEqual(["url"]);
+
+    // An activity with no entity declaration stays without one — no guessing
+    // off scope-shaped args.
+    const build = ir.phases.find((p) => p.name === "Build")!;
+    const sh = build.steps.find((s): s is OpIRActivityStep => s.kind === "activity" && s.fn === "shellCmd")!;
+    expect(sh.entities).toBeUndefined();
+    expect(ir.activityContracts.shellCmd.entities).toBeUndefined();
+  });
+
+  it("skips a non-string entity arg (a step-output ref resolves at run time, not at serialization) (#2022)", () => {
+    const registry = new Map<string, ActivityContract>();
+    collectActivityContracts(ownActivityContracts as Record<string, unknown>, registry);
+    const config: OpConfig = {
+      name: "test-ref-entity",
+      overview: "An entity arg holding a step-output ref rather than a literal",
+      phases: [
+        phase("Probe", [
+          { kind: "activity", fn: "resolveEndpoint", args: {}, outcomeAttribute: undefined },
+          { kind: "activity", fn: "httpCheck", args: { url: stepOutput("resolve-endpoint", "url") } as Record<string, unknown> },
+        ]),
+      ],
+    };
+    const ir = buildOpIR(config, registry);
+    const probe = ir.phases.find((p) => p.name === "Probe")!;
+    const check = probe.steps.find((s): s is OpIRActivityStep => s.kind === "activity" && s.fn === "httpCheck")!;
+    // The join the IR cannot resolve is left to the consumer, who still holds
+    // the contract's own `entities` key list.
+    expect(check.entities).toBeUndefined();
+    expect(ir.activityContracts.httpCheck.entities).toEqual(["url"]);
+  });
+
   it("opConfigFromIR throws on formatVersion mismatch", () => {
     const staleIR: OpIR = {
       formatVersion: "0.9",
