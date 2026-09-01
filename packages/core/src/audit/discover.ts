@@ -33,6 +33,7 @@ import { basename, join, relative } from "path";
 import { parseYAML } from "../yaml";
 import type { LexiconPlugin } from "../lexicon";
 import type { AuditInput, AuditLexicon } from "./core";
+import { isNginxConfigPath } from "./nginx";
 
 /** Lexicons the auditor knows how to detect and run checks for. */
 export const AUDIT_LEXICONS = ["github", "gitlab", "forgejo", "k8s", "docker", "aws", "azure", "gcp", "helm", "fountain"] as const;
@@ -267,6 +268,15 @@ export function ciLexiconForPath(path: string): AuditLexicon | undefined {
 /**
  * Whether a path is worth reading/fetching at all. Bounds the local walk and,
  * crucially, the remote fetch (so we never pull a whole repo's contents).
+ *
+ * nginx configs (#1979) ride along the way `wrangler.toml` does: the NGX
+ * scanner (`./nginx.ts`) reads them directly, no lexicon plugin — but a
+ * scanner can only see what this filter admits, so its own path detector is
+ * part of the candidate set. (Found the hard way: the checks shipped wired
+ * into the CLI while no `.conf` ever survived collection, so they were
+ * unreachable on both the local and hosted paths.) Content confirmation —
+ * a `conf.d/` file that isn't nginx — happens at parse time in the scanner,
+ * never here.
  */
 export function isCandidatePath(path: string): boolean {
   const name = basename(path);
@@ -275,6 +285,7 @@ export function isCandidatePath(path: string): boolean {
   if (name === "Chart.yaml") return true;
   if (isSecretBearingName(name)) return true;
   if (isWranglerConfigName(name)) return true;
+  if (isNginxConfigPath(path)) return true;
   return /\.(ya?ml|json|template)$/i.test(name);
 }
 
