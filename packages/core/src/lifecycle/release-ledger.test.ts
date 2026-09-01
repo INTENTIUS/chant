@@ -11,6 +11,7 @@ import {
   InvalidReleaseRecordError,
   latestPerComponent,
   recordsForDigest,
+  resolveRunId,
   type ReleaseRecord,
   type ReleaseRecordInput,
 } from "./release-ledger";
@@ -232,6 +233,69 @@ describe("release-ledger", () => {
       const found = recordsForDigest(records, "sha256:shared");
       expect(found).toHaveLength(2);
       expect(found.every((r) => r.digest === "sha256:shared")).toBe(true);
+    });
+  });
+
+  describe("resolveRunId (#2045)", () => {
+    test("GitHub Actions env resolves id + origin together, with repo and run url", () => {
+      const env = {
+        GITHUB_RUN_ID: "18234771902",
+        GITHUB_REPOSITORY: "INTENTIUS/chant",
+        GITHUB_SERVER_URL: "https://github.com",
+      };
+      expect(resolveRunId(undefined, env)).toEqual({
+        runId: "18234771902",
+        runOrigin: {
+          forge: "github",
+          repo: "INTENTIUS/chant",
+          url: "https://github.com/INTENTIUS/chant/actions/runs/18234771902",
+        },
+      });
+    });
+
+    test("a Forgejo instance resolves through the same env contract to its own host", () => {
+      const env = {
+        GITHUB_RUN_ID: "42",
+        GITHUB_REPOSITORY: "intentius/loomster",
+        GITHUB_SERVER_URL: "https://forge.example.dev",
+      };
+      expect(resolveRunId(undefined, env).runOrigin!.url).toBe("https://forge.example.dev/intentius/loomster/actions/runs/42");
+    });
+
+    test("GitLab CI env records the project path and takes CI_PIPELINE_URL verbatim", () => {
+      const env = {
+        CI_PIPELINE_ID: "991",
+        CI_PROJECT_PATH: "group/app",
+        CI_PIPELINE_URL: "https://gitlab.com/group/app/-/pipelines/991",
+      };
+      expect(resolveRunId(undefined, env)).toEqual({
+        runId: "991",
+        runOrigin: { forge: "gitlab", repo: "group/app", url: "https://gitlab.com/group/app/-/pipelines/991" },
+      });
+    });
+
+    test("outside CI the mint says local in a field, not only in the id's spelling", () => {
+      const { runId, runOrigin } = resolveRunId(undefined, {});
+      expect(runId).toMatch(/^local-\d+$/);
+      expect(runOrigin).toEqual({ forge: "local" });
+    });
+
+    test("an explicit id gets an origin only when it matches what the environment advertises", () => {
+      const env = { GITHUB_RUN_ID: "42", GITHUB_REPOSITORY: "o/r", GITHUB_SERVER_URL: "https://github.com" };
+      expect(resolveRunId("42", env).runOrigin?.forge).toBe("github");
+      expect(resolveRunId("something-else", env).runOrigin).toBeUndefined();
+    });
+
+    test("a record carrying runOrigin round-trips through the ledger", async () => {
+      await withTestDir(async (dir) => {
+        await initRepo(dir);
+        const input = makeInput({
+          runOrigin: { forge: "github", repo: "o/r", url: "https://github.com/o/r/actions/runs/1" },
+        });
+        await appendReleaseRecord(input, { cwd: dir });
+        const { records } = await readReleaseLedger("prod", { cwd: dir });
+        expect(records[0].runOrigin).toEqual(input.runOrigin);
+      });
     });
   });
 });

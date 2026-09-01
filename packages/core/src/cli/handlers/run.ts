@@ -655,6 +655,8 @@ async function recordAutoReleasesForRun(
         success: true,
         records: componentResult.records,
         runId,
+        // A local-executor id resolves nowhere — say so in a field (#2045).
+        runOrigin: { forge: "local" },
       },
       { disabled },
     );
@@ -1030,7 +1032,8 @@ async function runComponentTemporal(
     const disabled = resolveAutoReleaseDisabled(config, ctx.args.noReleaseRecord);
     const env = ctx.args.env ?? "local";
     const outcome = await maybeRecordAutoRelease(
-      { component: component.name, env, success: true, digest, runId: finalDesc.runId },
+      // A Temporal workflow run id lives in the orchestrator's id space (#2045).
+      { component: component.name, env, success: true, digest, runId: finalDesc.runId, runOrigin: { forge: "op" } },
       { disabled },
     );
     if (!outcome.recorded && outcome.reason === "error") {

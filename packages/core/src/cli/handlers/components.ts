@@ -34,6 +34,7 @@ import {
   readReleaseLedger,
   listReleaseEnvironments,
   latestPerComponent,
+  resolveRunId,
   InvalidReleaseRecordError,
 } from "../../lifecycle/release-ledger";
 import { reconcileStatus, liveEvidenceFromChangeSet, compareAcrossEnvironments, mergeLiveEvidence, type LiveComponentEvidence } from "../../lifecycle/status";
@@ -94,7 +95,9 @@ export async function runComponentsReleaseRecord(ctx: CommandContext): Promise<n
   }
 
   const gitSha = args.gitSha ?? (await getHeadCommit().catch(() => undefined));
-  const runId = args.runId ?? process.env.GITHUB_RUN_ID ?? process.env.CI_PIPELINE_ID ?? `local-${Date.now()}`;
+  // Id + origin resolved together from the same environment (#2045), so the
+  // recorded runId always says which id space it lives in and how to reach it.
+  const { runId, runOrigin } = resolveRunId(args.runId);
   const actor = args.actor ?? process.env.GITHUB_ACTOR ?? process.env.GITLAB_USER_LOGIN ?? process.env.USER;
   // Who approved a gated change (#1035). Optional — omitted for an ungated
   // change, and never defaulted to `actor`, since recording the approver as the
@@ -122,6 +125,7 @@ export async function runComponentsReleaseRecord(ctx: CommandContext): Promise<n
       digest,
       gitSha,
       runId,
+      ...(runOrigin ? { runOrigin } : {}),
       timestamp,
       actor,
       ...(approver ? { approver } : {}),
