@@ -218,6 +218,8 @@ export interface GenerateComponentsResult {
   stages?: string[];
   /** Every generated job, for a machine-readable view (`--format json`). */
   jobs?: Array<{ jobName: string; component: string; stage: string; needs: string[] }>;
+  /** The environment the pipeline deploys — the generator's own resolution (`ComponentPipelineResult.env`, #2046). */
+  env?: string;
   error?: string;
   /** This invocation's resolved build-time parameters (chant #1108) — the generate-mode counterpart of `../cli/commands/build.ts`'s `BuildResult.buildParams`. Empty when the project declares/supplies none. */
   buildParams?: BuildParamProvenance[];
@@ -287,8 +289,8 @@ export async function generateComponentsPipeline(
   }));
 
   try {
-    const { yaml, stages, jobs } = plugin.generateComponentPipeline(driverComponents, options);
-    return { success: true, yaml, stages, jobs, buildParams };
+    const { yaml, stages, jobs, env } = plugin.generateComponentPipeline(driverComponents, options);
+    return { success: true, yaml, stages, jobs, ...(env ? { env } : {}), buildParams };
   } catch (err) {
     if (err instanceof UnknownDependencyError || err instanceof DependencyCycleError) {
       return { success: false, error: err.message };

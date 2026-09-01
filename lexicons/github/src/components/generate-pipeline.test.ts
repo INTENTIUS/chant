@@ -249,18 +249,36 @@ describe("generateGithubPipeline: a cross-cutting change is one generator edit, 
 });
 
 describe("generateGithubPipeline: options", () => {
-  test("emits a top-level env: block when variables are provided", () => {
+  test("merges caller variables into the env: block alongside CHANT_ENV", () => {
     const result = generateGithubPipeline(pilotComponents(), {
-      variables: { CHANT_ENV: "staging" },
+      env: "staging",
+      variables: { AWS_REGION: "eu-west-1" },
     });
     const parsed = parseYAML(result.yaml);
-    expect(parsed.env).toEqual({ CHANT_ENV: "staging" });
+    expect(parsed.env).toEqual({ AWS_REGION: "eu-west-1", CHANT_ENV: "staging" });
   });
 
-  test("omits the env: block when no variables are provided", () => {
-    const result = generateGithubPipeline(pilotComponents());
-    const parsed = parseYAML(result.yaml);
-    expect(parsed.env).toBeUndefined();
+  test("the document carries its environment identity: name + CHANT_ENV (#2046)", () => {
+    const staging = generateGithubPipeline(pilotComponents(), { env: "staging" });
+    const prod = generateGithubPipeline(pilotComponents());
+
+    // Two environments' workflows are tellable apart without lexing a run: line.
+    expect(parseYAML(staging.yaml).name).toBe("chant-components-staging");
+    expect(parseYAML(prod.yaml).name).toBe("chant-components-production");
+    expect(parseYAML(staging.yaml).env).toEqual({ CHANT_ENV: "staging" });
+    expect(parseYAML(prod.yaml).env).toEqual({ CHANT_ENV: "production" });
+
+    // And the machine-readable result names it too.
+    expect(staging.env).toBe("staging");
+    expect(prod.env).toBe("production");
+  });
+
+  test("CHANT_ENV always reflects the environment baked into the run lines — a caller variable cannot override it", () => {
+    const result = generateGithubPipeline(pilotComponents(), {
+      env: "staging",
+      variables: { CHANT_ENV: "prod" },
+    });
+    expect((parseYAML(result.yaml).env as Record<string, unknown>).CHANT_ENV).toBe("staging");
   });
 
   test("uses a custom container image for every job when provided", () => {

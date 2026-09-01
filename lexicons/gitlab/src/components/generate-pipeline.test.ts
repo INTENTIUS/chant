@@ -213,12 +213,33 @@ describe("generateGitlabPipeline: a cross-cutting change is one generator edit, 
 });
 
 describe("generateGitlabPipeline: options", () => {
-  test("emits a variables: block when provided", () => {
+  test("merges caller variables into the variables: block alongside CHANT_ENV", () => {
     const result = generateGitlabPipeline(pilotComponents(), {
-      variables: { CHANT_ENV: "staging" },
+      env: "staging",
+      variables: { AWS_REGION: "eu-west-1" },
     });
     const parsed = parseYAML(result.yaml);
-    expect(parsed.variables).toEqual({ CHANT_ENV: "staging" });
+    expect(parsed.variables).toEqual({ AWS_REGION: "eu-west-1", CHANT_ENV: "staging" });
+  });
+
+  test("the document carries its environment identity: workflow name + CHANT_ENV (#2046)", () => {
+    const staging = generateGitlabPipeline(pilotComponents(), { env: "staging" });
+    const prod = generateGitlabPipeline(pilotComponents());
+
+    expect(parseYAML(staging.yaml).workflow).toEqual({ name: "chant-components-staging" });
+    expect(parseYAML(prod.yaml).workflow).toEqual({ name: "chant-components-production" });
+    expect(parseYAML(staging.yaml).variables).toEqual({ CHANT_ENV: "staging" });
+
+    expect(staging.env).toBe("staging");
+    expect(prod.env).toBe("production");
+  });
+
+  test("CHANT_ENV always reflects the environment baked into the script lines — a caller variable cannot override it", () => {
+    const result = generateGitlabPipeline(pilotComponents(), {
+      env: "staging",
+      variables: { CHANT_ENV: "prod" },
+    });
+    expect((parseYAML(result.yaml).variables as Record<string, unknown>).CHANT_ENV).toBe("staging");
   });
 
   test("uses a custom image for every job when provided", () => {

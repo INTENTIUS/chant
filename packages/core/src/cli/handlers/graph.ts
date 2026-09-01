@@ -635,6 +635,9 @@ async function buildPipelineProjection(
     success: true,
     pipeline: {
       provider: lexicon,
+      // The environment the projected pipeline deploys (#2046) — the
+      // generator's own resolution, carried rather than re-derived.
+      ...(result.env ? { env: result.env } : {}),
       stages: result.stages ?? [],
       nodes: jobs.map((j) => ({ id: j.jobName, kind: "CIJob" as const, component: j.component, stage: j.stage })),
       edges: jobs.flatMap((j) => j.needs.map((dep) => ({ from: j.jobName, to: dep, kind: "needs" as const }))),

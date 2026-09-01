@@ -190,6 +190,13 @@ export interface IRPipelineEdge {
 export interface IRPipeline {
   /** The CI-provider lexicon that produced this projection (e.g. "gitlab"). */
   provider: string;
+  /**
+   * The environment the projected pipeline deploys (#2046) — copied from the
+   * generator's own resolution (`ComponentPipelineResult.env`), so the IR
+   * carries the identity instead of leaving a consumer to lex it out of a
+   * job's run line.
+   */
+  env?: string;
   /** Wave-ordered stage names — 1:1 with the component graph's `groups.byWave` keys. */
   stages: string[];
   nodes: IRPipelineNode[];

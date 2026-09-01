@@ -90,10 +90,15 @@ export function generateGitlabPipeline(
   }
 
   const doc: Record<string, unknown> = {};
+  // `workflow:name` + a CHANT_ENV variable give the document a recoverable
+  // environment identity (#2046): two pipelines generated for two
+  // environments were previously identical except for one shell argument in
+  // each job's `script:`. CHANT_ENV always reflects the environment baked
+  // into the run lines, so a caller-supplied variable of the same name cannot
+  // make the document lie about what its jobs deploy.
+  doc.workflow = { name: `chant-components-${env}` };
   doc.stages = stages;
-  if (options.variables && Object.keys(options.variables).length > 0) {
-    doc.variables = options.variables;
-  }
+  doc.variables = { ...options.variables, CHANT_ENV: env };
 
   waves.forEach((wave, waveIndex) => {
     const stage = stages[waveIndex];
@@ -131,6 +136,7 @@ export function generateGitlabPipeline(
   // `stages:[]` is the plain scalar "stages:[]" — a colon opens a mapping only
   // when whitespace or the line's end follows it — which is how GitLab's own
   // reader takes it, and now how `parseYAML` does too (chant #2013).
+  sections.push("workflow:" + emitYAML(doc.workflow, 1));
   sections.push(stages.length > 0 ? "stages:" + emitYAML(stages, 1) : "stages: []");
   if (doc.variables) sections.push("variables:" + emitYAML(doc.variables, 1));
   for (const job of jobs) {
@@ -138,5 +144,5 @@ export function generateGitlabPipeline(
     sections.push(`${job.jobName}:` + emitYAML(props, 1));
   }
 
-  return { yaml: sections.join("\n\n") + "\n", stages, jobs };
+  return { yaml: sections.join("\n\n") + "\n", stages, jobs, env };
 }
