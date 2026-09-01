@@ -75,6 +75,18 @@ export interface ActivityContract<Args = unknown, Return = unknown> {
    * per #1290 — a later step's reference into this one's output.
    */
   returns?: z.ZodType<Return>;
+  /**
+   * Names of top-level args whose values identify what the activity's effect
+   * touches in the estate (#2022) — an entity id, a resource address, a
+   * target endpoint — as opposed to scope (`env`, a stack name) or mechanics
+   * (a timeout, a mode). op.json's IR resolves these per step into
+   * `OpIRActivityStep.entities`, so a renderer can join a step to the estate
+   * nodes it touches instead of inventing joins off scope fields. Optional
+   * and partial by design, like the contract itself: an activity whose
+   * touched set is not spelled in its args (e.g. an applier that derives
+   * stack members internally) simply declares none.
+   */
+  entities?: string[];
 }
 
 /** Declare an activity contract. */
@@ -82,12 +94,14 @@ export function activityContract<ArgsSchema extends z.ZodTypeAny, ReturnSchema e
   name: string,
   args: ArgsSchema,
   returns?: ReturnSchema,
+  opts?: { entities?: string[] },
 ): ActivityContract<z.infer<ArgsSchema>, ReturnSchema extends z.ZodTypeAny ? z.infer<ReturnSchema> : unknown> {
   return {
     [CONTRACT_BRAND]: true,
     name,
     args,
     ...(returns ? { returns } : {}),
+    ...(opts?.entities && opts.entities.length > 0 ? { entities: opts.entities } : {}),
   } as ActivityContract<z.infer<ArgsSchema>, ReturnSchema extends z.ZodTypeAny ? z.infer<ReturnSchema> : unknown>;
 }
 

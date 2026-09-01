@@ -27,6 +27,12 @@
  *    TMP012 does it — only activities this lexicon has a contract for are
  *    covered; a step calling an activity from another lexicon (or one with
  *    no registered contract yet) simply has no entry here.
+ *  - Every step whose contract declares entity-identifying args
+ *    (`ActivityContract.entities`, chant #2022) gets those args' literal
+ *    string values resolved into `entities` — the estate join a renderer
+ *    otherwise had to invent off scope fields like `stackName`. The contract
+ *    entry echoes the declared key list, so a consumer can resolve values
+ *    this serialization could not (a step-output ref) itself.
  *    JSON-Schema-incompatible contracts (schemas containing transforms or
  *    custom types that zod cannot serialize) are skipped gracefully: the
  *    activity appears in the Op's step graph but has no entry in
@@ -98,6 +104,15 @@ export interface OpIRActivityStep {
   args: Record<string, unknown>;
   /** Resolved to its effective value — `ActivityStep.profile ?? "fastIdempotent"`. */
   profile: string;
+  /**
+   * What this step's effect touches in the estate (#2022): the string values
+   * of the args its contract declares as entity-identifying
+   * (`ActivityContract.entities`), resolved per step at serialization the
+   * same way `profile` is. Absent when the activity has no contract, the
+   * contract declares no entity args, or none of them holds a literal string
+   * in this step (a step-output ref resolves at run time, not here).
+   */
+  entities?: string[];
   outcomeAttribute?: { name: string; from?: string };
 }
 
@@ -129,6 +144,8 @@ export interface OpIRPhase {
 export interface OpIRActivityContract {
   args: Record<string, unknown>;
   returns?: Record<string, unknown>;
+  /** Names of args the contract declares as entity-identifying (#2022) — the key a consumer uses to resolve entities out of any step's `args` itself, including values this serialization could not (a step-output ref). */
+  entities?: string[];
 }
 
 export interface OpIR {
@@ -157,12 +174,32 @@ function effectiveProfile(step: ActivityStep): string {
   return step.profile ?? "fastIdempotent";
 }
 
-function irActivityStep(step: ActivityStep): OpIRActivityStep {
+/**
+ * The step's entity-identifying arg values (#2022): the literal strings at
+ * the arg names its contract declares in `entities`. A non-string there (a
+ * step-output ref placeholder, a structured value) is skipped — the IR only
+ * states joins it can resolve at serialization; a consumer holding the
+ * contract's own `entities` key list can resolve the rest itself.
+ */
+function stepEntities(step: ActivityStep, contracts: ReadonlyMap<string, ActivityContract>): string[] | undefined {
+  const declared = contracts.get(step.fn)?.entities;
+  if (!declared || declared.length === 0) return undefined;
+  const values: string[] = [];
+  for (const key of declared) {
+    const value = (step.args ?? {})[key];
+    if (typeof value === "string") values.push(value);
+  }
+  return values.length > 0 ? values : undefined;
+}
+
+function irActivityStep(step: ActivityStep, contracts: ReadonlyMap<string, ActivityContract>): OpIRActivityStep {
+  const entities = stepEntities(step, contracts);
   return {
     kind: "activity",
     fn: step.fn,
     args: step.args ?? {},
     profile: effectiveProfile(step),
+    ...(entities ? { entities } : {}),
     ...(step.outcomeAttribute ? { outcomeAttribute: step.outcomeAttribute } : {}),
   };
 }
@@ -176,27 +213,27 @@ function irGateStep(step: GateStep): OpIRGateStep {
   };
 }
 
-function irEffectStep(step: EffectStep): OpIREffectStep {
+function irEffectStep(step: EffectStep, contracts: ReadonlyMap<string, ActivityContract>): OpIREffectStep {
   return {
     kind: "effect",
     receipt: step.receipt,
     ...(step.expectation !== undefined ? { expectation: step.expectation } : {}),
-    steps: step.steps.map((s) => (s.kind === "activity" ? irActivityStep(s) : irGateStep(s))),
+    steps: step.steps.map((s) => (s.kind === "activity" ? irActivityStep(s, contracts) : irGateStep(s))),
     ...(step.description ? { description: step.description } : {}),
   };
 }
 
-function irStep(step: StepDefinition): OpIRStep {
-  if (step.kind === "activity") return irActivityStep(step);
+function irStep(step: StepDefinition, contracts: ReadonlyMap<string, ActivityContract>): OpIRStep {
+  if (step.kind === "activity") return irActivityStep(step, contracts);
   if (step.kind === "gate") return irGateStep(step);
-  return irEffectStep(step);
+  return irEffectStep(step, contracts);
 }
 
-function irPhase(phase: PhaseDefinition): OpIRPhase {
+function irPhase(phase: PhaseDefinition, contracts: ReadonlyMap<string, ActivityContract>): OpIRPhase {
   return {
     name: phase.name,
     parallel: phase.parallel ?? false,
-    steps: phase.steps.map(irStep),
+    steps: phase.steps.map((s) => irStep(s, contracts)),
   };
 }
 
@@ -256,6 +293,7 @@ export function buildOpIR(config: OpConfig, contractRegistry: Map<string, Activi
           contracts.set(step.fn, {
             args,
             ...(returns ? { returns } : {}),
+            ...(contract.entities && contract.entities.length > 0 ? { entities: contract.entities } : {}),
           });
         } catch {
           // zod 4's toJSONSchema throws on schemas containing transforms or custom types.
@@ -275,8 +313,8 @@ export function buildOpIR(config: OpConfig, contractRegistry: Map<string, Activi
     ...(config.namespace ? { namespace: config.namespace } : {}),
     depends: config.depends ?? [],
     searchAttributes: config.searchAttributes ?? {},
-    phases: config.phases.map(irPhase),
-    onFailure: (config.onFailure ?? []).map(irPhase),
+    phases: config.phases.map((p) => irPhase(p, contractRegistry)),
+    onFailure: (config.onFailure ?? []).map((p) => irPhase(p, contractRegistry)),
     activityProfiles: sortedEntries(profiles),
     activityContracts: sortedEntries(contracts),
   };

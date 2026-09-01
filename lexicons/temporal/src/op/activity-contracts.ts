@@ -53,6 +53,11 @@ export const httpCheckContract = activityContract(
     intervalMs: z.number().optional(),
   }),
   z.object({ status: z.number() }),
+  // The check's effect is entity-scoped (#2022): `url` names the service the
+  // step probes, so op.json resolves it into the step's `entities` — the join
+  // a renderer draws to the estate node it targets. The scope-ish args
+  // (retries, interval) stay mechanics.
+  { entities: ["url"] },
 );
 
 export const chantTeardownContract = activityContract(
