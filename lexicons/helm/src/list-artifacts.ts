@@ -17,8 +17,44 @@ import { promisify } from "node:util";
 import type { ArtifactMetadata } from "@intentius/chant/lexicon";
 import { loadChantConfigUpward } from "@intentius/chant/config";
 import { resolveClusterTarget } from "@intentius/chant/kubectl-context";
+import { readReleaseLedger, latestPerComponent, type ReleaseRecord } from "@intentius/chant/lifecycle/release-ledger";
 
 const execAsync = promisify(exec);
+
+/**
+ * The render identity a chant deploy recorded for a release (#2031). `helm
+ * list` cannot know which bytes a release was installed from — but the
+ * release ledger already records it on deploy (#1243): the input digest for
+ * an unpinned deploy, contentDigest + inputDigest for a pinned one. This
+ * reads that record back, so an observed release joins `helm renders` /
+ * `helm diff` by digest instead of by chart-name prefix matching.
+ *
+ * The join key is the ledger record's `component`, which the helm deploy
+ * activity defaults to the release name (`args.component ?? args.name`,
+ * ./op/activities/helm.ts). Deliberately best-effort and honest about
+ * absence:
+ *
+ *  - a release deployed outside chant has no record, and reports nothing;
+ *  - a ledger that cannot be read (no repo, no lifecycle branch) joins
+ *    nothing rather than failing the snapshot;
+ *  - two observed releases sharing one name (different namespaces) are
+ *    ambiguous — the record does not carry a namespace — so neither joins;
+ *  - a record whose `component` was overridden away from the release name
+ *    does not join (the honest miss, same as today).
+ */
+function renderIdentityOf(
+  record: ReleaseRecord | undefined,
+): { inputDigest?: string; contentDigest?: string } {
+  if (!record) return {};
+  if (record.inputDigest) {
+    // Pinned deploy (#1242): `digest` is the render's contentDigest, the
+    // input identity rides alongside.
+    return { inputDigest: record.inputDigest, contentDigest: record.digest };
+  }
+  // Unpinned deploy: the record is keyed by the input digest itself
+  // (`ReleaseRecord.inputDigest` is "absent when digest is already input-side").
+  return { inputDigest: record.digest };
+}
 
 interface HelmListEntry {
   name?: string;
@@ -75,9 +111,29 @@ export async function listArtifacts(options: {
     return result;
   }
 
+  // The environment's latest release record per component (#2031) — the
+  // deploy-side identity read back. Best-effort: an unreadable ledger joins
+  // nothing rather than blocking the snapshot.
+  let recorded: Map<string, ReleaseRecord> = new Map();
+  try {
+    const { records } = await readReleaseLedger(options.environment);
+    recorded = latestPerComponent(records);
+  } catch {
+    recorded = new Map();
+  }
+
+  // A name observed in several namespaces is ambiguous against a record that
+  // carries no namespace — neither joins.
+  const nameCounts = new Map<string, number>();
+  for (const entry of entries) {
+    if (entry.name) nameCounts.set(entry.name, (nameCounts.get(entry.name) ?? 0) + 1);
+  }
+
   for (const entry of entries) {
     if (!entry.name || !entry.namespace) continue;
     const key = `release/${entry.namespace}/${entry.name}`;
+    const record = nameCounts.get(entry.name) === 1 ? recorded.get(entry.name) : undefined;
+    const { inputDigest, contentDigest } = renderIdentityOf(record);
     result[key] = {
       type: "Helm::Release",
       physicalId: `${entry.namespace}/${entry.name}`,
@@ -88,6 +144,8 @@ export async function listArtifacts(options: {
         revision: entry.revision,
         appVersion: entry.app_version,
         namespace: entry.namespace,
+        inputDigest,
+        contentDigest,
       }),
     };
   }
