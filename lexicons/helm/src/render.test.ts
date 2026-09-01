@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeAll, beforeEach, afterEach } from "vitest";
-import { mkdirSync, writeFileSync, rmSync, existsSync, readFileSync, mkdtempSync } from "node:fs";
+import { mkdirSync, writeFileSync, rmSync, existsSync, readFileSync, readdirSync, mkdtempSync } from "node:fs";
 import { delimiter, join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
@@ -235,6 +235,39 @@ describe.skipIf(!fixtureAvailable)("HelmRender", () => {
       props: { spec: { replicas: number } };
     };
     expect(dep.props.spec.replicas).toBe(3);
+  });
+
+  test("CHANT_HELM_RENDER_ROOT redirects the unpinned cache — the air-gapped handoff (#2035)", () => {
+    // Before #2035 the unprofiled path hardcoded ~/.chant/helm-renders and
+    // honoured no environment variable, so a hermetic build had no way to be
+    // handed a pre-rendered chart short of pre-warming $HOME.
+    const root = mkdtempSync(join(tmpdir(), "chant-helm-render-root-"));
+    const origRoot = process.env.CHANT_HELM_RENDER_ROOT;
+    process.env.CHANT_HELM_RENDER_ROOT = root;
+    try {
+      const first = HelmRender({ name: "rel-rooted", chart: CHART_DIR });
+      expect(Object.keys(first.members as Record<string, unknown>).length).toBeGreaterThanOrEqual(2);
+      // The cache landed under the override, not under $HOME.
+      const cached = readdirSync(root).filter((d) => !d.startsWith("_"));
+      expect(cached.length).toBe(1);
+      expect(existsSync(join(root, cached[0], "manifests.yaml"))).toBe(true);
+
+      // A machine with no helm at all renders from the handed-over store.
+      const emptyDir = join(tmpdir(), "chant-helm-render-empty-path");
+      if (!existsSync(emptyDir)) mkdirSync(emptyDir);
+      const origPath = process.env.PATH;
+      process.env.PATH = emptyDir;
+      try {
+        const second = HelmRender({ name: "rel-rooted", chart: CHART_DIR });
+        expect(Object.keys(second.members as Record<string, unknown>).length).toBeGreaterThanOrEqual(2);
+      } finally {
+        process.env.PATH = origPath;
+      }
+    } finally {
+      if (origRoot === undefined) delete process.env.CHANT_HELM_RENDER_ROOT;
+      else process.env.CHANT_HELM_RENDER_ROOT = origRoot;
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   test("cache reuse: second render with same args skips helm CLI", () => {

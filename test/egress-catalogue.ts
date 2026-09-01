@@ -200,15 +200,17 @@ export const OFFLINE_SHELL_OUTS: readonly ShellOut[] = [
     conditional: true,
     reachesNetwork: true,
   },
-  // This guard's first finding, tracked as chant #2035: the render store that
-  // would let a hermetic build skip the fetch is only reachable through a
-  // capability profile, and the corpus builds the fixture that needs it while
-  // the helm lexicon's own example suite skips it for exactly this reason.
-  // Enumerated here rather than fixed here.
+  // This guard's first finding, fixed as chant #2035: the unpinned render
+  // cache now honours `CHANT_HELM_RENDER_ROOT` (the same root as the pinned
+  // render store), so a hermetic build can be handed a pre-rendered chart,
+  // and the differential corpus no longer builds the network-reaching
+  // fixture the helm lexicon's own example suite always skipped. The
+  // shell-out itself remains: a consumer project declaring a repo-fetching
+  // `HelmRender` still renders on first synth.
   {
     binary: "helm",
     from: "chant build, on a project declaring HelmRender",
-    note: "`helm version`, then `helm template <name> <chart> --include-crds [--repo <url> --version <v>]`. A `HelmRender` composite resolves at synthesis time, so a project that declares one puts a chart render on its build path. With `repo` set, helm fetches the chart from that repository — **this is the one build-path shell-out that reaches a network**, on first synth only: the rendered manifests are cached under `~/.chant/helm-renders/` and every later build reads the cache. A project declaring no `HelmRender` never spawns it.",
+    note: "`helm version`, then `helm template <name> <chart> --include-crds [--repo <url> --version <v>]`. A `HelmRender` composite resolves at synthesis time, so a project that declares one puts a chart render on its build path. With `repo` set, helm fetches the chart from that repository — **this is the one build-path shell-out that reaches a network**, on first synth only: the rendered manifests are cached under the render root (`CHANT_HELM_RENDER_ROOT`, default `~/.chant/helm-renders/`) and every later build reads the cache. A project declaring no `HelmRender` never spawns it.",
     conditional: true,
     reachesNetwork: true,
   },

@@ -301,7 +301,9 @@ const EXPECTED_FOLD: readonly string[] = [
   "lexicons/helm/examples/composites-infrastructure",
   "lexicons/helm/examples/composites-production",
   "lexicons/helm/examples/cron-job",
-  "lexicons/helm/examples/helm-render-external-secrets",
+  // helm-render-external-secrets left the corpus in #2035 (network-reaching
+  // fixture the helm lexicon's own suite always skipped) — not a fold
+  // regression.
   "lexicons/helm/examples/microservice-chart",
   "lexicons/helm/examples/multi-container",
   "lexicons/helm/examples/stateful-service",
