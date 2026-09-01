@@ -54,8 +54,8 @@ function resolveRelative(from: string, spec: string): string | undefined {
   return undefined;
 }
 
-/** Static (non-type-only) imports and re-exports of a file, resolved to paths. */
-function staticImports(sf: ts.SourceFile): string[] {
+/** Static (non-type-only) import/re-export specifiers of a file. */
+function staticSpecifiers(sf: ts.SourceFile): string[] {
   const out: string[] = [];
   for (const stmt of sf.statements) {
     let spec: string | undefined;
@@ -66,7 +66,16 @@ function staticImports(sf: ts.SourceFile): string[] {
       if (stmt.isTypeOnly) continue;
       spec = (stmt.moduleSpecifier as ts.StringLiteral).text;
     }
-    if (!spec || !spec.startsWith(".")) continue;
+    if (spec) out.push(spec);
+  }
+  return out;
+}
+
+/** Static (non-type-only) imports and re-exports of a file, resolved to paths. */
+function staticImports(sf: ts.SourceFile): string[] {
+  const out: string[] = [];
+  for (const spec of staticSpecifiers(sf)) {
+    if (!spec.startsWith(".")) continue;
     const resolved = resolveRelative(sf.fileName, spec);
     if (resolved) out.push(resolved);
   }
@@ -170,5 +179,29 @@ describe("edge-imported lexicon modules are init-safe", () => {
     const offenders: string[] = [];
     for (const sf of transitiveClosure(barrels()).values()) offenders.push(...moduleScopeOffenses(sf));
     expect(offenders, "move these into a function (lazy) — they crash edge bundles").toEqual([]);
+  });
+
+  test("no static import of the full @intentius/chant barrel in the transitive import graph", () => {
+    // The relative-import walk above stops at package specifiers, and the bare
+    // core barrel is exactly the package import that must never appear: its
+    // static graph reaches build() → discovery/fold-import → the TypeScript
+    // compiler, whose own module init touches __filename and crashes workerd
+    // at startup. This is how WHM503's `../../render` import (whose render.ts
+    // imports `@intentius/chant` for Composite) broke the hosted audit's
+    // 0.53.1 bump. Subpath imports (`@intentius/chant/lint/post-synth`,
+    // `@intentius/chant/effect-receipt`, …) are the deliberately edge-clean
+    // seams and stay allowed.
+    const offenders: string[] = [];
+    for (const sf of transitiveClosure(barrels()).values()) {
+      for (const spec of staticSpecifiers(sf)) {
+        if (spec === "@intentius/chant") {
+          offenders.push(sf.fileName.replace(lexiconsDir, "lexicons"));
+        }
+      }
+    }
+    expect(
+      offenders,
+      "these edge-reachable modules import the full core barrel — import the specific subpath (or split the needed piece into a light module) instead",
+    ).toEqual([]);
   });
 });

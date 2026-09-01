@@ -22,8 +22,11 @@
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
 import yaml from "js-yaml";
 
-import type { HelmRenderRecord } from "../../render";
-import { getHelmRenderRecords } from "../../render";
+// From ./render-records, NOT ./render: this barrel is edge-imported by the
+// hosted audit, and render.ts's static graph reaches the TypeScript compiler
+// through the @intentius/chant barrel — whose module init crashes workerd.
+import type { HelmRenderRecord } from "../../render-records";
+import { getHelmRenderRecords } from "../../render-records";
 import { loadRenderManifest, readRenderDocument } from "../../render-store";
 
 interface ParsedSecretDoc {

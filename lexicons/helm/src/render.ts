@@ -54,6 +54,7 @@ import {
   renderStoreRoot,
 } from "./render-store";
 import { probeCoalescedValues, type CoalescedValuesProbe } from "./values-probe";
+import { recordHelmRender } from "./render-records";
 
 export interface HelmRenderProps {
   /** Logical name for the render (used in cache key + composite name). */
@@ -110,61 +111,11 @@ export interface HelmRenderProps {
   sourceRef?: string;
 }
 
-/**
- * What one `HelmRender` invocation recorded about itself. `capabilityProfile`
- * is the profile identity the render was pinned against; `undefined` means
- * the render was unpinned and its bytes depend on the local helm binary's
- * defaults.
- *
- * Pinned renders (profile present — the v1 gate, see #1237) also carry the
- * digest pair:
- *
- * - `inputDigest` — `sha256:` over the canonical JSON of the declared inputs
- *   (chart reference, version, values, capability facts). Shared with the
- *   release-ledger digest #1243 records on deploy, via `helmInputDigest`.
- *   Answers "same inputs?" without touching any bytes.
- * - `contentDigest` — `sha256:` over the canonical rendered bytes
- *   (`canonicalizeRender`). The artifact identity: answers "same bytes on
- *   the cluster?".
- *
- * They diverge exactly when the render is not a function of its declared
- * inputs — `renderStability` in ./render-digest.ts names that.
- *
- * Unpinned renders record neither digest. Their bytes are a function of the
- * local helm binary's defaulted capabilities, so a digest over them would
- * assert an identity the render does not have — it would differ across
- * machines that did nothing differently, and equal digests would still
- * prove nothing about a cluster. No digest is the honest record.
- */
-export interface HelmRenderRecord {
-  /** The render's logical name (`HelmRenderProps.name`) — also the helm release name baked into the bytes. */
-  name: string;
-  chart: string;
-  version?: string;
-  capabilityProfile?: HelmCapabilityProfile;
-  /** Input-side identity (#1237/#1243). Present only for pinned renders. */
-  inputDigest?: string;
-  /** Content-side identity over canonical rendered bytes (#1237). Present only for pinned renders. */
-  contentDigest?: string;
-  /**
-   * The build-time coalesced-values probe's digest (#1251), present only
-   * when the probe ran — a pinned render of a local chart (the probe needs
-   * the chart source on disk, so a repo-fetched chart never gets one).
-   */
-  coalescedValuesDigest?: string;
-}
-
-const renderRecords: HelmRenderRecord[] = [];
-
-/** Every render recorded in this process, in invocation order. */
-export function getHelmRenderRecords(): readonly HelmRenderRecord[] {
-  return renderRecords;
-}
-
-/** Reset the record list (test isolation). */
-export function clearHelmRenderRecords(): void {
-  renderRecords.length = 0;
-}
+// The invocation-record ledger lives in ./render-records.ts — a module with
+// no runtime imports — so WHM503 (edge-imported via the post-synth barrel)
+// can read it without pulling this module's heavy static graph. Re-exported
+// here to keep the lexicon's public surface unchanged.
+export { getHelmRenderRecords, clearHelmRenderRecords, type HelmRenderRecord } from "./render-records";
 
 interface RenderedDoc {
   apiVersion?: string;
@@ -502,7 +453,7 @@ export const HelmRender = Composite<HelmRenderProps>((props) => {
       }
     : {};
 
-  renderRecords.push({
+  recordHelmRender({
     name: props.name,
     chart: props.chart,
     version: props.version,
