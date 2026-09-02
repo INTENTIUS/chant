@@ -72,8 +72,22 @@ export interface ChangeSet {
    * can sum it here. Optional — when absent, guardrails that want a live
    * denominator (see {@link removalDeltaCap}) fall back to the plan-relative
    * one.
+   *
+   * Superseded by {@link ChangeSet.managedCounts}: a single pooled total lets
+   * non-deletable and cross-collection live entries dilute the delete
+   * fraction (wiping 3 of 4 teams reads as 12.5% when 20 team members pad
+   * the pool). Kept for compatibility — a change set carrying only this
+   * total keeps the 0.55.0 pooled behavior.
    */
   managedCount?: number;
+  /**
+   * Live managed-entry counts per resource type, keyed by
+   * `ChangeSetEntry.resourceType`. When present, {@link removalDeltaCap}
+   * evaluates the delete fraction per resource type instead of against the
+   * pooled `managedCount`, so live entries of one type cannot dilute a wipe
+   * of another. Supersedes `managedCount`.
+   */
+  managedCounts?: Readonly<Record<string, number>>;
 }
 
 /** Options controlling diff behaviour. */
@@ -291,29 +305,54 @@ export type GuardrailCheck = (resolved: ChangeSet, ctx?: GuardrailContext) => Gu
 
 /** Config for `removalDeltaCap`. */
 export interface RemovalDeltaCapOptions {
-  /** Max fraction of pre-existing entries that may be deleted. Must be in (0,1]. Default 0.25. */
+  /**
+   * Max fraction of pre-existing entries that may be deleted. Must be in
+   * (0,1]: `removalDeltaCap` throws an `Error` on any value outside that
+   * range (0, negatives, above 1, NaN) rather than silently disabling the
+   * cap. Default 0.25.
+   */
   maxFraction?: number;
   /**
-   * Live managed-entry denominator (#2067). When positive, deletes are divided
-   * by this count of live entries under management instead of the plan's
-   * non-create entries — a converged cycle deleting one stale entry out of
-   * many no longer reads as 1/1 = 100%. Defaults to `changeSet.managedCount`;
-   * when neither is present (or not positive) the cap keeps its plan-relative
-   * behavior.
+   * Pooled live managed-entry denominator (#2067). When positive, deletes are
+   * divided by this count of live entries under management instead of the
+   * plan's non-create entries — a converged cycle deleting one stale entry
+   * out of many no longer reads as 1/1 = 100%. Defaults to
+   * `changeSet.managedCount`; when neither is present (or not positive) the
+   * cap keeps its plan-relative behavior.
+   *
+   * Superseded by {@link RemovalDeltaCapOptions.managedTotals} — the pooled
+   * total lets unrelated live entries dilute the delete fraction.
    */
   managedTotal?: number;
+  /**
+   * Live managed-entry counts per resource type (keys =
+   * `ChangeSetEntry.resourceType`), mirroring {@link ChangeSet.managedCounts}
+   * and winning over it when both are present. When per-type counts are
+   * available from either source, the cap is evaluated per resource type:
+   * each type's deletes divide by that type's live count when present and
+   * positive, else by that type's own plan non-creates. Supersedes
+   * `managedTotal`.
+   */
+  managedTotals?: Readonly<Record<string, number>>;
 }
 
 /**
  * Resolve rename aliases. A create entry carrying a `previously` key matching a
- * delete entry's key is collapsed into an update, removing the delete. Returns a
- * new ChangeSet with renames resolved. Provider-agnostic — works on any entry
- * whose `after.previously` is a string.
+ * delete entry's key OF THE SAME RESOURCE TYPE is collapsed into an update,
+ * removing the delete. Matching across resource types would let e.g. a team
+ * create with `previously: "old"` swallow an unrelated member delete keyed
+ * "old", hiding a real delete from guardrail counting. Returns a new ChangeSet
+ * with renames resolved. Provider-agnostic — works on any entry whose
+ * `after.previously` is a string.
  */
 export function resolveRenames(changeSet: ChangeSet): ChangeSet {
+  // Keys and resource types are both free-form strings, so scope the lookup
+  // with an unambiguous composite key ("\u0000" cannot appear in either).
+  const typedKey = (resourceType: string, key: string): string => `${resourceType}\u0000${key}`;
+
   const deleteEntries = new Map<string, ChangeSetEntry>();
   for (const e of changeSet.entries) {
-    if (e.kind === "delete") deleteEntries.set(e.key, e);
+    if (e.kind === "delete") deleteEntries.set(typedKey(e.resourceType, e.key), e);
   }
 
   const resolvedDeletes = new Set<string>();
@@ -327,11 +366,11 @@ export function resolveRenames(changeSet: ChangeSet): ChangeSet {
     const previously = after["previously"];
     if (typeof previously !== "string") continue;
 
-    const deleted = deleteEntries.get(previously);
+    const deleted = deleteEntries.get(typedKey(e.resourceType, previously));
     if (!deleted) continue;
 
-    resolvedDeletes.add(previously);
-    resolvedCreates.add(e.key);
+    resolvedDeletes.add(typedKey(e.resourceType, previously));
+    resolvedCreates.add(typedKey(e.resourceType, e.key));
     syntheticUpdates.push({
       kind: "update",
       resourceType: e.resourceType,
@@ -346,8 +385,8 @@ export function resolveRenames(changeSet: ChangeSet): ChangeSet {
 
   const filteredEntries = changeSet.entries.filter(
     (e) =>
-      !(e.kind === "delete" && resolvedDeletes.has(e.key)) &&
-      !(e.kind === "create" && resolvedCreates.has(e.key)),
+      !(e.kind === "delete" && resolvedDeletes.has(typedKey(e.resourceType, e.key))) &&
+      !(e.kind === "create" && resolvedCreates.has(typedKey(e.resourceType, e.key))),
   );
 
   return { ...changeSet, entries: [...filteredEntries, ...syntheticUpdates] };
@@ -358,10 +397,23 @@ export function resolveRenames(changeSet: ChangeSet): ChangeSet {
  * (deletes + updates; creates excluded so a flood of new entries can't dilute
  * the delete fraction). Guards against a typo wiping the config in one apply.
  *
- * With a live denominator (`opts.managedTotal`, else `changeSet.managedCount`;
- * #2067) deletes are measured against the live entries under management
- * instead — so a converged cycle's plan of exactly one stale delete does not
- * trip at 1/1 = 100%. Without one, behavior is plan-relative as before.
+ * With per-type live counts (`opts.managedTotals`, else
+ * `changeSet.managedCounts`) the cap is evaluated PER RESOURCE TYPE: for each
+ * type with deletes, that type's deletes divide by that type's live count when
+ * present and positive, else by that type's own plan non-creates. Any type
+ * over `maxFraction` blocks, and the diagnostic names the worst offender. The
+ * pooled denominator this replaces was unsafe — live entries of one type
+ * (team members, repos) diluted a wipe of another (teams, org secrets) below
+ * the cap.
+ *
+ * With only a pooled live denominator (`opts.managedTotal`, else
+ * `changeSet.managedCount`; #2067) deletes are measured against the pooled
+ * live entries under management — so a converged cycle's plan of exactly one
+ * stale delete does not trip at 1/1 = 100%. Without either, behavior is
+ * plan-relative as before.
+ *
+ * Throws on a `maxFraction` outside (0,1] (NaN included) — fail closed, never
+ * silently disable the cap.
  *
  * CONTRACT: pass a RENAME-RESOLVED change set (see {@link resolveRenames}).
  */
@@ -370,8 +422,19 @@ export function removalDeltaCap(
   opts: RemovalDeltaCapOptions = {},
 ): GuardrailDiagnostic | null {
   const maxFraction = opts.maxFraction ?? 0.25;
-  const deletes = changeSet.entries.filter((e) => e.kind === "delete").length;
+  if (!(maxFraction > 0 && maxFraction <= 1)) {
+    // The negated form catches NaN too. A bad cap must never pass silently:
+    // maxFraction: 5 would otherwise wave every wipe through.
+    throw new Error(
+      `removalDeltaCap: maxFraction must be in (0, 1], got ${String(maxFraction)}`,
+    );
+  }
+  const managedTotals = opts.managedTotals ?? changeSet.managedCounts;
+  if (managedTotals !== undefined) {
+    return removalDeltaCapPerType(changeSet, managedTotals, maxFraction);
+  }
 
+  const deletes = changeSet.entries.filter((e) => e.kind === "delete").length;
   const managedTotal = opts.managedTotal ?? changeSet.managedCount;
   if (managedTotal !== undefined && managedTotal > 0) {
     const fraction = deletes / managedTotal;
@@ -400,6 +463,73 @@ export function removalDeltaCap(
     };
   }
   return null;
+}
+
+/** One resource type's delete fraction, for the per-type cap evaluation. */
+interface TypeFraction {
+  resourceType: string;
+  deletes: number;
+  total: number;
+  fraction: number;
+  /** True when `total` is a live count; false for the plan-relative fallback. */
+  live: boolean;
+}
+
+/**
+ * Per-resource-type evaluation for {@link removalDeltaCap}. Each type with
+ * deletes gets its own denominator: the type's live count from `managedTotals`
+ * when present and positive, else that type's plan non-creates (the same
+ * plan-relative rule as the typeless cap, scoped to the type). Blocks when ANY
+ * type exceeds `maxFraction`; the message leads with the worst offender and
+ * lists the rest.
+ */
+function removalDeltaCapPerType(
+  changeSet: ChangeSet,
+  managedTotals: Readonly<Record<string, number>>,
+  maxFraction: number,
+): GuardrailDiagnostic | null {
+  const deletesByType = new Map<string, number>();
+  const nonCreatesByType = new Map<string, number>();
+  for (const e of changeSet.entries) {
+    if (e.kind === "create") continue;
+    nonCreatesByType.set(e.resourceType, (nonCreatesByType.get(e.resourceType) ?? 0) + 1);
+    if (e.kind === "delete") {
+      deletesByType.set(e.resourceType, (deletesByType.get(e.resourceType) ?? 0) + 1);
+    }
+  }
+
+  const tripping: TypeFraction[] = [];
+  for (const [resourceType, deletes] of deletesByType) {
+    const liveCount = managedTotals[resourceType];
+    // A zero (or negative) live count means "no live info for this type",
+    // never a looser or divide-by-zero cap — same rule as the pooled total.
+    const live = liveCount !== undefined && liveCount > 0;
+    const total = live ? (liveCount as number) : nonCreatesByType.get(resourceType)!;
+    const fraction = deletes / total;
+    if (fraction > maxFraction) tripping.push({ resourceType, deletes, total, fraction, live });
+  }
+
+  if (tripping.length === 0) return null;
+
+  // Worst offender first; deterministic tie-break by delete count then name.
+  tripping.sort(
+    (a, b) =>
+      b.fraction - a.fraction ||
+      b.deletes - a.deletes ||
+      a.resourceType.localeCompare(b.resourceType),
+  );
+  const [worst, ...rest] = tripping as [TypeFraction, ...TypeFraction[]];
+  const pct = (f: number): number => Math.round(f * 100);
+  const describe = (t: TypeFraction): string =>
+    `${t.deletes} of ${t.total} ${t.live ? "live" : "planned"} ${t.resourceType} entries (${pct(t.fraction)}%)`;
+
+  return {
+    guardrail: "removalDeltaCap",
+    message:
+      `${describe(worst)} would be deleted, exceeding the ${pct(maxFraction)}% threshold. ` +
+      (rest.length > 0 ? `Also over the cap: ${rest.map(describe).join(", ")}. ` : "") +
+      `Check for typos in config or raise maxFraction to proceed.`,
+  };
 }
 
 /**

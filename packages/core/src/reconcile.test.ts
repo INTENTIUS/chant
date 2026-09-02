@@ -189,16 +189,51 @@ describe("resolveRenames", () => {
     expect(resolveRenames(cs)).toBe(cs);
   });
 
-  test("preserves managedCount on the resolved set (#2067)", () => {
+  test("preserves managedCount and managedCounts on the resolved set", () => {
     const cs: ChangeSet = {
       org: "acme",
       managedCount: 7,
+      managedCounts: { team: 4, member: 3 },
       entries: [
         { kind: "delete", resourceType: "team", key: "old", before: { slug: "old" } },
         { kind: "create", resourceType: "team", key: "new", after: { previously: "old" } },
       ],
     };
-    expect(resolveRenames(cs).managedCount).toBe(7);
+    const resolved = resolveRenames(cs);
+    expect(resolved.managedCount).toBe(7);
+    expect(resolved.managedCounts).toEqual({ team: 4, member: 3 });
+  });
+
+  test("only matches previously within the same resourceType", () => {
+    // A team create claiming previously "old" must NOT swallow a member
+    // delete that happens to share the key — that would hide a real delete
+    // from guardrail counting.
+    const cs: ChangeSet = {
+      org: "acme",
+      entries: [
+        { kind: "delete", resourceType: "member", key: "old", before: { login: "old" } },
+        { kind: "create", resourceType: "team", key: "new", after: { previously: "old" } },
+      ],
+    };
+    const resolved = resolveRenames(cs);
+    expect(resolved).toBe(cs); // untouched: no same-type match exists
+    expect(resolved.entries.filter((e) => e.kind === "delete")).toHaveLength(1);
+
+    // With a same-type delete alongside the cross-type collision, exactly
+    // the team delete collapses; the member delete survives.
+    const both: ChangeSet = {
+      org: "acme",
+      entries: [
+        { kind: "delete", resourceType: "member", key: "old", before: { login: "old" } },
+        { kind: "delete", resourceType: "team", key: "old", before: { slug: "old" } },
+        { kind: "create", resourceType: "team", key: "new", after: { previously: "old" } },
+      ],
+    };
+    const bothResolved = resolveRenames(both);
+    expect(bothResolved.entries.filter((e) => e.kind === "delete")).toEqual([
+      { kind: "delete", resourceType: "member", key: "old", before: { login: "old" } },
+    ]);
+    expect(bothResolved.entries.find((e) => e.kind === "update")!.before).toEqual({ slug: "old" });
   });
 });
 
@@ -285,6 +320,141 @@ describe("removalDeltaCap", () => {
     // A zero live count means "no live info" — it never divides by zero and
     // never loosens the cap; behavior stays exactly plan-relative.
     expect(removalDeltaCap(cs, { managedTotal: 0 })).toEqual(expected);
+  });
+
+  test("a changeSet with only the legacy managedCount deep-equals the 0.55.0 behavior", () => {
+    const entries = Array.from({ length: 4 }, (_, i) => ({
+      kind: "delete" as const,
+      resourceType: "x",
+      key: `k${i}`,
+    }));
+    expect(removalDeltaCap({ org: "acme", managedCount: 10, entries })).toEqual({
+      guardrail: "removalDeltaCap",
+      message:
+        "4 of 10 live managed entries (40%) would be deleted, exceeding the 25% threshold. " +
+        "Check for typos in config or raise maxFraction to proceed.",
+    });
+    expect(removalDeltaCap({ org: "acme", managedCount: 20, entries })).toBeNull(); // 4/20
+  });
+
+  // Per-resource-type mode — the three-repo review cases. The pooled
+  // denominator let live entries of one type dilute a wipe of another.
+
+  test("3 of 4 team deletes blocks at 75% even with 20 live members in another type", () => {
+    const cs: ChangeSet = {
+      org: "acme",
+      managedCounts: { team: 4, member: 20 },
+      entries: Array.from({ length: 3 }, (_, i) => ({
+        kind: "delete" as const,
+        resourceType: "team",
+        key: `t${i}`,
+      })),
+    };
+    // Pooled (0.55.0) this read 3/24 = 12.5% and sailed under the default cap.
+    expect(removalDeltaCap({ ...cs, managedCounts: undefined, managedCount: 24 })).toBeNull();
+    const d = removalDeltaCap(cs)!;
+    expect(d.guardrail).toBe("removalDeltaCap");
+    expect(d.message).toContain("3 of 4 live team entries (75%) would be deleted");
+  });
+
+  test("a full org-secret wipe blocks at 100% regardless of live repo count", () => {
+    const cs: ChangeSet = {
+      org: "acme",
+      managedCounts: { "org-secret": 2, repo: 75 },
+      entries: [
+        { kind: "delete", resourceType: "org-secret", key: "s1" },
+        { kind: "delete", resourceType: "org-secret", key: "s2" },
+      ],
+    };
+    // Pooled this read 2/77 = 2.6% and passed.
+    expect(removalDeltaCap({ ...cs, managedCounts: undefined, managedCount: 77 })).toBeNull();
+    const d = removalDeltaCap(cs)!;
+    expect(d.message).toContain("2 of 2 live org-secret entries (100%) would be deleted");
+  });
+
+  test("a type with no live count falls back to its own plan non-creates", () => {
+    const cs: ChangeSet = {
+      org: "acme",
+      managedCounts: { team: 10 },
+      entries: [
+        { kind: "delete", resourceType: "team", key: "t0" }, // 1/10 live: fine
+        { kind: "delete", resourceType: "webhook", key: "w0" },
+        { kind: "delete", resourceType: "webhook", key: "w1" },
+        { kind: "update", resourceType: "webhook", key: "w2" },
+      ],
+    };
+    // webhook has no live count → plan-relative within the type: 2/3 = 67%.
+    const d = removalDeltaCap(cs)!;
+    expect(d.message).toContain("2 of 3 planned webhook entries (67%) would be deleted");
+    // team creates never pad the webhook denominator, and vice versa.
+    expect(d.message).not.toContain("team");
+  });
+
+  test("passes when every type stays under the cap, and zero live counts fall back", () => {
+    const cs: ChangeSet = {
+      org: "acme",
+      managedCounts: { team: 10, member: 20 },
+      entries: [
+        { kind: "delete", resourceType: "team", key: "t0" },
+        { kind: "delete", resourceType: "member", key: "m0" },
+        { kind: "delete", resourceType: "member", key: "m1" },
+      ],
+    };
+    expect(removalDeltaCap(cs)).toBeNull(); // 1/10 and 2/20
+
+    // A zero live count for a type means "no live info for it" — that type
+    // is measured plan-relative (1/1 here), never divided by zero.
+    const zero: ChangeSet = {
+      org: "acme",
+      managedCounts: { team: 0 },
+      entries: [{ kind: "delete", resourceType: "team", key: "t0" }],
+    };
+    expect(removalDeltaCap(zero)!.message).toContain("1 of 1 planned team entries (100%)");
+  });
+
+  test("names the worst offender first and lists other tripping types", () => {
+    const cs: ChangeSet = {
+      org: "acme",
+      managedCounts: { "org-secret": 2, team: 4 },
+      entries: [
+        { kind: "delete", resourceType: "team", key: "t0" },
+        { kind: "delete", resourceType: "team", key: "t1" },
+        { kind: "delete", resourceType: "team", key: "t2" },
+        { kind: "delete", resourceType: "org-secret", key: "s0" },
+        { kind: "delete", resourceType: "org-secret", key: "s1" },
+      ],
+    };
+    const d = removalDeltaCap(cs)!;
+    // 100% secrets beats 75% teams for the headline; teams are still listed.
+    expect(d.message).toMatch(/^2 of 2 live org-secret entries \(100%\) would be deleted/);
+    expect(d.message).toContain("Also over the cap: 3 of 4 live team entries (75%)");
+  });
+
+  test("opts.managedTotals wins over changeSet counts; per-type wins over pooled", () => {
+    const cs: ChangeSet = {
+      org: "acme",
+      managedCounts: { team: 2 },
+      managedCount: 100,
+      entries: [{ kind: "delete", resourceType: "team", key: "t0" }],
+    };
+    // Per-type (2) beats the diluting pooled 100: 1/2 = 50% trips.
+    expect(removalDeltaCap(cs)).not.toBeNull();
+    // Explicit opts.managedTotals overrides the change set's counts.
+    expect(removalDeltaCap(cs, { managedTotals: { team: 10 } })).toBeNull();
+  });
+
+  test("maxFraction outside (0,1] throws instead of silently disabling the cap", () => {
+    const cs: ChangeSet = {
+      org: "acme",
+      entries: [{ kind: "delete", resourceType: "x", key: "a" }],
+    };
+    for (const bad of [Number.NaN, 0, 1.5, -1]) {
+      expect(() => removalDeltaCap(cs, { maxFraction: bad })).toThrow(/maxFraction must be in \(0, 1\]/);
+    }
+    // The bounds themselves: 1 is allowed (nothing short of a full wipe trips)…
+    expect(removalDeltaCap(cs, { maxFraction: 1, managedTotal: 2 })).toBeNull();
+    // …and the default 0.25 stays valid explicitly.
+    expect(removalDeltaCap(cs, { maxFraction: 0.25, managedTotal: 10 })).toBeNull();
   });
 });
 
