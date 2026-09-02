@@ -43,10 +43,10 @@ belongs to Temporal.
 
 ## The graduation story
 
-- **Dev loops, CI, drift / observation Ops → local.** No server, no Docker, no
+- **Dev loops, CI, drift / observation Ops -> local.** No server, no Docker, no
   cloud. `chant run hello` works in under a minute on a laptop with nothing
   running. Retries and `onFailure` rollback still apply.
-- **Long-running deploys, gated rollouts, scheduled jobs → Temporal.** When you
+- **Long-running deploys, gated rollouts, scheduled jobs -> Temporal.** When you
   need a workflow to survive a process crash, pause for human approval, or run
   on a schedule, configure a Temporal profile and pass `--temporal`.
 

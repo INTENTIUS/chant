@@ -35,7 +35,7 @@ checkpoint = commit, restore = rollback.
 
 It composes two smaller examples:
 [`local-fly`](https://github.com/INTENTIUS/chant/tree/main/examples/local-fly)
-(App + Machine → flaps via `flyApply`) and
+(App + Machine -> flaps via `flyApply`) and
 [`sprites-agent-task`](https://github.com/INTENTIUS/chant/tree/main/examples/sprites-agent-task)
 (checkpoint-as-compensation on a Sprite).
 
@@ -144,7 +144,7 @@ chant run fly-deploy
 ```
 
 Each env var also gates its emulator, so real mode boots no container (no Docker
-required) and the phase list is just `Sandbox → Checkpoint → Build → Deploy →
+required) and the phase list is just `Sandbox -> Checkpoint -> Build -> Deploy ->
 Teardown`. The deploy is orchestrated by the Op in both modes; the Sprite is the
 rollback boundary, not the deploy host. See the
 [example README](https://github.com/INTENTIUS/chant/tree/main/examples/fly-deploy-rollback)

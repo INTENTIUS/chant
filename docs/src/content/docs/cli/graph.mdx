@@ -159,7 +159,7 @@ chant graph --stacks ./infra
 chant graph --stacks ./infra --json
 ```
 
-The output is the stacks, their dependency edges (consumer → producer), a topological apply **order**, and **waves** — levels whose stacks have no inter-dependency and may apply concurrently. `--json` emits the full graph (`nodes`, `edges`, `order`, `waves`, `cycles`). A dependency cycle is reported and exits non-zero.
+The output is the stacks, their dependency edges (consumer -> producer), a topological apply **order**, and **waves** — levels whose stacks have no inter-dependency and may apply concurrently. `--json` emits the full graph (`nodes`, `edges`, `order`, `waves`, `cycles`). A dependency cycle is reported and exits non-zero.
 
 ```
 Apply order (waves apply top-to-bottom; a wave's stacks are parallel-safe):
@@ -179,7 +179,7 @@ chant graph --components ./infra
 chant graph --components ./infra --json
 ```
 
-The output is the same shape as `--stacks`: a topological **order**, **waves** (components with no inter-dependency, safe to run concurrently), and dependency **edges** (consumer → producer). `--json` emits the full result. A dependency cycle, or a `dependsOn` naming an undiscovered component, is reported and exits non-zero.
+The output is the same shape as `--stacks`: a topological **order**, **waves** (components with no inter-dependency, safe to run concurrently), and dependency **edges** (consumer -> producer). `--json` emits the full result. A dependency cycle, or a `dependsOn` naming an undiscovered component, is reported and exits non-zero.
 
 ```
 Deploy order (waves apply top-to-bottom; a wave's components are parallel-safe):

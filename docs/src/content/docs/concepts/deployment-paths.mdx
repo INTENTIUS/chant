@@ -11,7 +11,7 @@ chant covers the synthesis step — TypeScript in, validated artifacts out — a
 
 Use none of the lifecycle layers and chant is a deterministic compiler you hand off from — no executor, no state file, nothing to run. The orchestration layer is Temporal-native when you want durability and zero-dependency when you don't: the local executor runs Ops in-process, and only gated or destructive applies need a Temporal cluster.
 
-<Diagram name="deployment-paths" alt="Decision tree: existing deploy pipeline → hand off; need observability, gates, or rollback → Ops or Raw Temporal" caption="Choosing your deployment model" />
+<Diagram name="deployment-paths" alt="Decision tree: existing deploy pipeline -> hand off; need observability, gates, or rollback -> Ops or Raw Temporal" caption="Choosing your deployment model" />
 
 ## Hand Off to an Existing Pipeline
 

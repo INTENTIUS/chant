@@ -35,7 +35,7 @@ Two chant lexicons, one `src/` directory: the GCP lexicon produces Config Connec
 ## What you'll learn
 
 - How Config Connector turns GCP resources into K8s CRDs — and why that means one `kubectl apply` creates real GCP infrastructure
-- The cross-lexicon value flow: CC outputs → `.env` → `config.ts` → K8s composite props
+- The cross-lexicon value flow: CC outputs -> `.env` -> `config.ts` -> K8s composite props
 - How `WorkloadIdentityServiceAccount` wires a K8s SA to a GCP SA (annotation + IAM binding)
 - The deploy order that matters: CC resources first, K8s workloads second — and why teardown reverses it
 

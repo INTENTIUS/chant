@@ -29,14 +29,14 @@ const result = await generatePipeline({
 
 The pipeline executes these steps in order:
 
-1. **`fetchSchemas(opts)`** → `Map<typeName, Buffer>` — raw schema files keyed by type name
+1. **`fetchSchemas(opts)`** -> `Map<typeName, Buffer>` — raw schema files keyed by type name
 2. **`augmentSchemas(schemas, opts, log)`** *(optional)* — patch or overlay schemas before parsing. Skipped when `opts.schemaSource` is provided (e.g. during testing). Returns `{ schemas, extraResults?, warnings? }`
-3. **`parseSchema(typeName, data)`** → `T | null` — parse each schema buffer. Return `null` to skip a file
+3. **`parseSchema(typeName, data)`** -> `T | null` — parse each schema buffer. Return `null` to skip a file
 4. **`augmentResults(results, opts, log)`** *(optional)* — add synthetic resources or fallbacks after parsing. Returns `{ results, warnings? }`
-5. **`createNaming(results)`** → `NamingStrategy` — build the naming strategy from all parsed results
-6. **`generateRegistry(results, naming)`** → `string` — JSON content for the lexicon registry
-7. **`generateTypes(results, naming)`** → `string` — TypeScript declaration content (`.d.ts`)
-8. **`generateRuntimeIndex(results, naming)`** → `string` — runtime index with factory exports (`index.ts`)
+5. **`createNaming(results)`** -> `NamingStrategy` — build the naming strategy from all parsed results
+6. **`generateRegistry(results, naming)`** -> `string` — JSON content for the lexicon registry
+7. **`generateTypes(results, naming)`** -> `string` — TypeScript declaration content (`.d.ts`)
+8. **`generateRuntimeIndex(results, naming)`** -> `string` — runtime index with factory exports (`index.ts`)
 
 ### `ParsedResult` contract
 
@@ -249,7 +249,7 @@ docs-only branch twice picked up a resource-count move with nothing in the
 commit explaining it (chant #1390).
 
 Where there is no version, pin the **content**: `lexicons/aws/src/spec/pin.ts`
-records a `sha256` over the extracted schemas — sorted `typeName` →
+records a `sha256` over the extracted schemas — sorted `typeName` ->
 `sha256(schema)` — plus the type names it covered, and generation refuses when
 upstream no longer matches:
 

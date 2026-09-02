@@ -6,7 +6,7 @@ diataxis: tutorial
 
 import { Aside } from '@astrojs/starlight/components';
 
-Two chant lexicons, one `src/` directory: the Azure lexicon produces an ARM template for the AKS cluster and managed identities; the K8s lexicon produces kubectl-ready YAML for workloads. Managed identity client IDs flow between them via `.env` → `config.ts`.
+Two chant lexicons, one `src/` directory: the Azure lexicon produces an ARM template for the AKS cluster and managed identities; the K8s lexicon produces kubectl-ready YAML for workloads. Managed identity client IDs flow between them via `.env` -> `config.ts`.
 
 Unlike GKE (which requires a bootstrap management cluster) and EKS (which requires NS delegation for ACM), AKS deploys in a single pass — the ARM template creates the cluster directly, no separate bootstrap step needed.
 
@@ -33,7 +33,7 @@ Unlike GKE (which requires a bootstrap management cluster) and EKS (which requir
 
 - How AKS Workload Identity differs from GKE WI and IRSA: OIDC federation with Azure AD vs K8s SA annotation alone
 - Why AKS doesn't need a bootstrap step (contrast with GKE's Config Connector management cluster)
-- The cross-lexicon value flow: ARM outputs → `.env` → `config.ts` → K8s composite props
+- The cross-lexicon value flow: ARM outputs -> `.env` -> `config.ts` -> K8s composite props
 - AKS-specific nuances: AGIC (Application Gateway Ingress Controller) provisioning time, federated credential requirement
 
 ## Cost
@@ -85,7 +85,7 @@ npm run build:k8s && npm run apply
 
 ### Delete order: K8s resources before resource group
 
-Always delete K8s resources before deleting the Azure resource group. AGIC must be running to clean up Application Gateway backend pools. `npm run teardown` handles this: `kubectl delete` → 30s drain wait → `az group delete --no-wait`.
+Always delete K8s resources before deleting the Azure resource group. AGIC must be running to clean up Application Gateway backend pools. `npm run teardown` handles this: `kubectl delete` -> 30s drain wait -> `az group delete --no-wait`.
 
 ## Further reading
 

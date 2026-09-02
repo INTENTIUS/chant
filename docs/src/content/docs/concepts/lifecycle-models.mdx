@@ -9,7 +9,7 @@ import Diagram from '../../../components/Diagram.astro';
 
 Every infrastructure tool takes a position on the lifecycle — how infrastructure is created, changed, reconciled, and retired — usually implicitly, and usually welded to the compiler so you can't take one without the other. chant declines that bet: **pluggable lexicons in, pluggable lifecycles out, pure synthesis in the middle.** Bring your own lifecycle, and chant makes it durable.
 
-<Aside type="note" title="What “lifecycle” means here">
+<Aside type="note" title='What "lifecycle" means here'>
 Three things wear this name; this page is careful about which:
 
 - **the lifecycle** (this page) — the *model*: how infrastructure is created, changed, reconciled, and retired.
@@ -100,4 +100,4 @@ The moment a *mutation* trusts the snapshot — uses it to decide what to create
 - [How chant compares](/chant/concepts/comparison/) — these axes mapped across tools
 - [Ops](/chant/guide/ops/) — the reconcile (`ReconcileOp`) and apply (`ApplyOp`) workflows
 - [Contributing a Lifecycle](/chant/contributing/lifecycles/) — bring your own lifecycle: write one as Ops, or plug one in
-- [`lifecycle-reconcile-aws` example](https://github.com/INTENTIUS/chant/tree/main/lexicons/aws/examples/lifecycle-reconcile-aws) — the dial on a real stack: deploy → drift → diff → reconcile / apply
+- [`lifecycle-reconcile-aws` example](https://github.com/INTENTIUS/chant/tree/main/lexicons/aws/examples/lifecycle-reconcile-aws) — the dial on a real stack: deploy -> drift -> diff -> reconcile / apply

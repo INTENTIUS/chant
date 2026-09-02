@@ -68,7 +68,7 @@ Shared testing utilities — mock entities, test directories, assertion helpers,
 
 ## Key Interactions
 
-### CLI ↔ Core
+### CLI and Core
 
 The CLI imports the `build()` function from core and passes it:
 - **Input directory** — where to find infrastructure files
@@ -79,7 +79,7 @@ The core returns:
 - **Entities** — map of discovered declarables
 - **Errors** — any errors encountered
 
-### Core ↔ Serializer
+### Core and Serializer
 
 The core defines a `Serializer` interface that lexicons must implement:
 
@@ -101,7 +101,7 @@ Create new lexicons by implementing the `LexiconPlugin` interface. Core provides
 
 - **`createResource`/`createProperty`** — runtime factories for Declarable constructors
 - **`NamingStrategy`** — collision-free TypeScript class name generation, parameterized by data tables
-- **`generatePipeline`** — orchestrates fetch → parse → name → generate with provider-specific callbacks
+- **`generatePipeline`** — orchestrates fetch -> parse -> name -> generate with provider-specific callbacks
 - **`packagePipeline`** — bundles generated artifacts into a distributable `BundleSpec`
 - **`fetchWithCache`/`extractFromZip`** — HTTP fetch with caching and zip extraction
 - **`LexiconIndex`/`lexiconCompletions`/`lexiconHover`** — LSP completion and hover from lexicon JSON

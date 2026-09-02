@@ -101,7 +101,7 @@ On a successful run, `chant run --components` auto-emits one immutable release r
 
 #### `run --components <name> --temporal`
 
-Compiles the named component's composition to a Temporal workflow (phases → workflow, capability steps → activities, `gate` → durable wait-for-signal, `onFailure`/`rollback` → saga compensation — mirroring `Temporal::Op` codegen), writes it to `dist/components/<name>/`, spawns the worker, and submits the workflow. Unlike local mode, a `gate` is fully supported here: the workflow durably waits for the signal, survivable across a worker crash.
+Compiles the named component's composition to a Temporal workflow (phases -> workflow, capability steps -> activities, `gate` -> durable wait-for-signal, `onFailure`/`rollback` -> saga compensation — mirroring `Temporal::Op` codegen), writes it to `dist/components/<name>/`, spawns the worker, and submits the workflow. Unlike local mode, a `gate` is fully supported here: the workflow durably waits for the signal, survivable across a worker crash.
 
 ```bash
 chant run --components search-service --temporal

@@ -15,7 +15,7 @@ chant import --from <env> [flags]
 
 `chant import` reads an existing infrastructure template (e.g. a CloudFormation JSON template), detects which lexicon handles it, and generates TypeScript resource definitions. This lets you adopt chant incrementally by importing your current infrastructure rather than rewriting it from scratch.
 
-With `--from <env>` it reads the **live** cloud/cluster instead of a file: it resolves the environment, calls each project lexicon's `exportResources()` for full-fidelity config, and generates TypeScript from that. This is the cloud→code direction — the way to adopt an orphaned resource back into source.
+With `--from <env>` it reads the **live** cloud/cluster instead of a file: it resolves the environment, calls each project lexicon's `exportResources()` for full-fidelity config, and generates TypeScript from that. This is the cloud->code direction — the way to adopt an orphaned resource back into source.
 
 The import process:
 

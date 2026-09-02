@@ -6,7 +6,7 @@ diataxis: tutorial
 
 import { Aside } from '@astrojs/starlight/components';
 
-Two chant lexicons, one `src/` directory: the AWS lexicon produces a CloudFormation template for the EKS cluster and IAM roles; the K8s lexicon produces kubectl-ready YAML for workloads. IAM role ARNs flow between them via `.env` → `config.ts`.
+Two chant lexicons, one `src/` directory: the AWS lexicon produces a CloudFormation template for the EKS cluster and IAM roles; the K8s lexicon produces kubectl-ready YAML for workloads. IAM role ARNs flow between them via `.env` -> `config.ts`.
 
 The deploy is intentionally two-phase: ACM certificate DNS validation requires your domain's NS records to be delegated before the cert can be issued. The example handles this gracefully — you can deploy and use the cluster without TLS, then add the cert later.
 
@@ -31,9 +31,9 @@ The deploy is intentionally two-phase: ACM certificate DNS validation requires y
 
 ## What you'll learn
 
-- How IRSA (IAM Roles for Service Accounts) works: OIDC provider → trust policy → `eks.amazonaws.com/role-arn` annotation
+- How IRSA (IAM Roles for Service Accounts) works: OIDC provider -> trust policy -> `eks.amazonaws.com/role-arn` annotation
 - Why the two-phase deploy exists: ACM cert validation requires NS delegation, which requires the Route53 zone to exist first
-- The cross-lexicon value flow: CF stack outputs → `.env` → `config.ts` → K8s composite props
+- The cross-lexicon value flow: CF stack outputs -> `.env` -> `config.ts` -> K8s composite props
 - EKS-specific nuances: ALB controller is installed as an EKS addon (not a K8s manifest), KMS envelope encryption for secrets
 
 ## Cost
@@ -101,7 +101,7 @@ Without NS delegation, ACM's HTTP-01 validation CNAME can't be resolved and the 
 
 ### Delete order matters
 
-Always delete K8s resources before the CloudFormation stack. The ALB controller (installed as an EKS addon) must be running to clean up the ALB it provisioned. Deleting the CF stack first removes the addon → controller → ALB becomes orphaned.
+Always delete K8s resources before the CloudFormation stack. The ALB controller (installed as an EKS addon) must be running to clean up the ALB it provisioned. Deleting the CF stack first removes the addon -> controller -> ALB becomes orphaned.
 
 ```bash
 npm run teardown  # handles the ordering: kubectl delete → drain → cfn delete-stack

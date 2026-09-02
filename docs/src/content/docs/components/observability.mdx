@@ -42,7 +42,7 @@ Helm chart deploys join the same digest-keyed queries. The helm lexicon's [`helm
 A release record is never edited or replaced in place. Recording a new deploy appends a new line; it never rewrites a previous one. This is what makes "which build was in staging last Tuesday" answerable months later, even after staging has moved on through a dozen newer digests — the same reason the timestamp is always a real `new Date()` taken at record time by the CLI, never threaded in from elsewhere.
 </Aside>
 
-The binding key is the **digest** — the same identity [`publish-image`/`load-image-on-host`](/chant/components/build-archive/) promote by. Because publish never rebuilds, that identity threads build → dev → staging → prod unchanged, so comparing environments is a digest comparison, never a guess through CI logs.
+The binding key is the **digest** — the same identity [`publish-image`/`load-image-on-host`](/chant/components/build-archive/) promote by. Because publish never rebuilds, that identity threads build -> dev -> staging -> prod unchanged, so comparing environments is a digest comparison, never a guess through CI logs.
 
 ## Build ledger: SBOM and referrer discovery
 

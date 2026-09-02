@@ -45,7 +45,7 @@ Every rule is a `when(predicate, action, { id, why })`: a typed comparison over 
 
 ## What one tick does
 
-Phases: **Observe → Converge**.
+Phases: **Observe -> Converge**.
 
 1. **Observe** — `lifecycleSnapshot` + `lifecycleDiff --live`, the same pair [`WatchOp`](/chant/guide/ops/) runs, giving the tick a `Drift` search attribute for the Temporal UI.
 2. **Converge** — one `convergeTick` activity: derive the typed symptom (the status join + change-set counts + unobserved reasons), evaluate every rule against it, dispatch matched `run()` rules up to `budget` via the existing local runner (`chant run <op>`), and append one record to the converge ledger.
