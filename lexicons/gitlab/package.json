@@ -1,6 +1,6 @@
 {
   "name": "@intentius/chant-lexicon-gitlab",
-  "version": "0.55.0",
+  "version": "0.56.0",
   "description": "GitLab CI lexicon for chant — declarative IaC in TypeScript",
   "license": "Apache-2.0",
   "homepage": "https://intentius.io/chant",
@@ -67,8 +67,8 @@
     "typescript": "^5.9.3"
   },
   "peerDependencies": {
-    "@intentius/chant": "^0.55.0",
-    "@intentius/chant-lexicon-github": "^0.55.0",
+    "@intentius/chant": "^0.56.0",
+    "@intentius/chant-lexicon-github": "^0.56.0",
     "typescript": "^5.9.3"
   },
   "peerDependenciesMeta": {
