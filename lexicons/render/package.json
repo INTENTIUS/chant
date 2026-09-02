@@ -1,6 +1,6 @@
 {
   "name": "@intentius/chant-lexicon-render",
-  "version": "0.54.2",
+  "version": "0.54.3",
   "type": "module",
   "files": [
     "src/",
@@ -48,7 +48,7 @@
     "typescript": "^5.9.3"
   },
   "peerDependencies": {
-    "@intentius/chant": "^0.54.2",
+    "@intentius/chant": "^0.54.3",
     "typescript": "^5.9.3"
   },
   "description": "Render (render.com) lexicon for chant — services, datastores, env groups, projects as typed TypeScript, applied straight to the Render API",
