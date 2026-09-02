@@ -251,9 +251,10 @@ async function loadMigrationRules(targetLexicon: string): Promise<LintRule[]> {
  * setup steps, suggested GitLab improvements, caveats.
  *
  * The same data backs the SARIF report (via formatSarif); this is the
- * human-readable surface.
+ * human-readable surface. Exported so downstream migrate consumers can render
+ * the same report without reimplementing it (#2066).
  */
-function formatMarkdownSummary(
+export function formatMarkdownSummary(
   provenance: Array<Record<string, unknown>>,
   diagnostics: Array<Record<string, unknown>>,
   sourceContent?: string,

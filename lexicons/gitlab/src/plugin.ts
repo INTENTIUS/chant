@@ -289,6 +289,7 @@ export const test = new Job({
             emit: { type: "string", enum: ["yaml", "ts"], description: "Output format (default: yaml)" },
             useComposites: { type: "boolean", description: "Recognise composite patterns and emit NodePipeline/NodeCI calls" },
             strict: { type: "boolean", description: "Escalate needs-review diagnostics to errors" },
+            security: { type: "boolean", description: "Run security-aware migration analysis (classify property fates + GitLab security checks)" },
           },
           required: ["content"],
         },
@@ -298,6 +299,7 @@ export const test = new Job({
             emit: (params.emit as "yaml" | "ts" | undefined) ?? "yaml",
             useComposites: !!params.useComposites,
             strict: !!params.strict,
+            security: !!params.security,
             sourceFile: "<mcp-input>",
           });
           return {
@@ -305,6 +307,7 @@ export const test = new Job({
             diagnostics: result.diagnostics,
             provenance: result.provenance,
             stages: result.stages,
+            securityPosture: result.securityPosture,
           };
         },
       },
@@ -326,6 +329,7 @@ export const test = new Job({
           useComposites: opts.useComposites,
           sourceFile: opts.sourceFile,
           strict: opts.strict,
+          security: opts.security,
         });
         // The composites rewriter (when enabled) replaces several Job
         // resources with a single Composite resource — stages: in the
@@ -336,6 +340,7 @@ export const test = new Job({
           output: result.output,
           provenance: result.provenance as unknown as Array<Record<string, unknown>>,
           diagnostics: result.diagnostics as unknown as Array<Record<string, unknown>>,
+          securityPosture: result.securityPosture,
         };
       },
     };

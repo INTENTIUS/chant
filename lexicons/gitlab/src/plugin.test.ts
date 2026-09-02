@@ -214,6 +214,28 @@ describe("gitlabPlugin", () => {
   });
 
   // -----------------------------------------------------------------------
+  // Migration source (#2066)
+  // -----------------------------------------------------------------------
+
+  test("migrationSource transform passes security through and returns securityPosture", async () => {
+    const src = gitlabPlugin.migrationSource!("github")!;
+    const workflow = `on: push
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "$TOKEN"
+        env:
+          TOKEN: \${{ secrets.TOKEN }}
+`;
+    const result = await src.transform(workflow, { emit: "yaml", security: true });
+    expect(result.securityPosture).toContain("## Security posture");
+    // The security option reached the transform: the secret-reference fate
+    // shows up as a posture row, not the "nothing detected" fallback.
+    expect(result.securityPosture).toContain("Secret reference");
+  });
+
+  // -----------------------------------------------------------------------
   // Skills
   // -----------------------------------------------------------------------
 

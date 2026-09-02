@@ -82,6 +82,24 @@ describe("forgejo plugin", () => {
     expect(forgejoPlugin.migrationSource?.("gitlab")).toBeUndefined();
   });
 
+  // #2066 regression (the gitlab wrapper dropped both fields; lock the
+  // forgejo seam too): security passes through, securityPosture comes back.
+  it("migrationSource transform with security: true carries securityPosture", async () => {
+    const src = forgejoPlugin.migrationSource!("github")!;
+    const workflow = `on: push
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo hello
+`;
+    const result = await src.transform(workflow, { emit: "yaml", security: true });
+    expect(result.securityPosture).toContain("## Security posture");
+    expect(result.securityPosture).toContain("Least-privilege permissions");
+  });
+
   it("mcpTools() includes the diff tool and context tools", () => {
     const tools = forgejoPlugin.mcpTools?.();
     expect(Array.isArray(tools)).toBe(true);
