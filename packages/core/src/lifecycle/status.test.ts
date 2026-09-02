@@ -413,6 +413,44 @@ describe("status", () => {
       expect(result.digestB).toBe("sha256:abc");
       expect(result.same).toBe(false);
     });
+
+    test("pinned helm records compare on inputDigest — per-cluster bytes legitimately differ (ReleaseRecord.inputDigest's own contract)", () => {
+      // Same chart+values rendered against two clusters' capability profiles:
+      // contentDigests (recorded as `digest`) differ, inputDigests match —
+      // prod IS running what staging tested.
+      const result = compareAcrossEnvironments(
+        "web",
+        { name: "staging", records: [record({ component: "web", env: "staging", digest: "sha256:staging-bytes", inputDigest: "sha256:inputs" })] },
+        { name: "prod", records: [record({ component: "web", env: "prod", digest: "sha256:prod-bytes", inputDigest: "sha256:inputs" })] },
+      );
+      expect(result.same).toBe(true);
+      expect(result.comparedOn).toEqual({ a: "sha256:inputs", b: "sha256:inputs" });
+      // The exact bytes each cluster got stay visible.
+      expect(result.digestA).toBe("sha256:staging-bytes");
+      expect(result.digestB).toBe("sha256:prod-bytes");
+    });
+
+    test("differing inputDigests are a real difference, whatever the bytes say", () => {
+      const result = compareAcrossEnvironments(
+        "web",
+        { name: "staging", records: [record({ component: "web", env: "staging", digest: "sha256:same-bytes", inputDigest: "sha256:inputs-v2" })] },
+        { name: "prod", records: [record({ component: "web", env: "prod", digest: "sha256:same-bytes", inputDigest: "sha256:inputs-v1" })] },
+      );
+      expect(result.same).toBe(false);
+    });
+
+    test("one side input-identified, the other content-identified: compared honestly on what each carries", () => {
+      // Mixed deploys (a pinned helm release in prod, an unpinned one in
+      // staging where the record's digest IS the input digest): staging's
+      // digest against prod's inputDigest is the only meaningful join.
+      const result = compareAcrossEnvironments(
+        "web",
+        { name: "staging", records: [record({ component: "web", env: "staging", digest: "sha256:inputs" })] },
+        { name: "prod", records: [record({ component: "web", env: "prod", digest: "sha256:prod-bytes", inputDigest: "sha256:inputs" })] },
+      );
+      expect(result.same).toBe(true);
+      expect(result.comparedOn).toEqual({ a: "sha256:inputs", b: "sha256:inputs" });
+    });
   });
 
   describe("mergeLiveEvidence (#57 — per-component stack presence overlay)", () => {
