@@ -337,6 +337,38 @@ function lineNumberFor(starts: number[], index: number): number {
  * the filesystem and network. Findings never carry the matched value —
  * only its rule id, kind, file/line, and a redaction-safe fingerprint.
  */
+/**
+ * Machine-generated dependency lockfiles. Skipped entirely: they are wall-to-
+ * wall content-integrity hashes (`sha512-…` and friends), which the entropy
+ * heuristic reads as hundreds of "possible secrets" per file — a single
+ * `package-lock.json` produced 438 merge-worthy SEC010 findings on the first
+ * repo that dogfooded this at `--fail-on merge-worthy`. Integrity hashes are
+ * public by construction, a credential does not live in a lockfile, and no
+ * other scanner reads them.
+ */
+const LOCKFILE_NAMES = new Set([
+  "package-lock.json",
+  "npm-shrinkwrap.json",
+  "yarn.lock",
+  "pnpm-lock.yaml",
+  "bun.lock",
+  "deno.lock",
+  "Cargo.lock",
+  "poetry.lock",
+  "uv.lock",
+  "Pipfile.lock",
+  "composer.lock",
+  "Gemfile.lock",
+  "go.sum",
+  "flake.lock",
+]);
+
+/** Is this a dependency lockfile the secrets scan should skip? */
+export function isLockfilePath(path: string): boolean {
+  const name = path.split("/").pop() ?? path;
+  return LOCKFILE_NAMES.has(name);
+}
+
 export function scanForSecrets(files: ScannableFile[], opts: SecretsScanOptions = {}): AuditFinding[] {
   const entropyThreshold = opts.entropyThreshold ?? DEFAULT_ENTROPY_THRESHOLD;
   const entropyMinLength = opts.entropyMinLength ?? DEFAULT_ENTROPY_MIN_LENGTH;
@@ -347,6 +379,7 @@ export function scanForSecrets(files: ScannableFile[], opts: SecretsScanOptions 
 
   for (const file of files) {
     if (!file.content) continue;
+    if (isLockfilePath(file.path)) continue;
     const lines = file.content.split("\n");
     const starts = lineStarts(file.content);
     const claimed: Array<[number, number]> = [];
