@@ -65,7 +65,7 @@ This implementation mirrors GitLab's official architecture blueprint:
 ## What you'll learn
 
 - How a TypeScript `cells[]` array fans out to GCP infra, K8s namespaces, Helm charts, and CI pipeline jobs — one entry, everything generated
-- The three-tier request routing logic: session cookie → routable token → topology lookup
+- The three-tier request routing logic: session cookie -> routable token -> topology lookup
 - How routable runner tokens pin CI jobs to the correct cell — and the bootstrapping trick that makes it work
 - Why the Topology Service needs a fallback, and how health-aware routing works
 - The 9-stage canary-first pipeline and why each stage exists
@@ -238,7 +238,7 @@ Stages 4 and 5 enforce the canary pattern: if cell-alpha's Helm install fails or
 
 ### Moving orgs between cells
 
-The Topology Service's org → cell mapping can be updated at any time — no downtime, no data movement required.
+The Topology Service's org -> cell mapping can be updated at any time — no downtime, no data movement required.
 
 **Via the pipeline** — stage 9 is a manual `migrate-org` job. Trigger it from the GitLab UI with `ORG_ID` and `TARGET_CELL` as pipeline variables.
 

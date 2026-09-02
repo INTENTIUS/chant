@@ -43,6 +43,12 @@ jobs:
       - name: Check Diátaxis classification and sidebar reachability
         run: node scripts/check-docs-diataxis.mjs
 
+      # Prose lint on the `sentences` trope ruleset — a ratchet against the
+      # committed baseline, same posture as the repo-wide typecheck: new
+      # AI-trope prose fails, existing debt is baselined and burns down.
+      - name: Lint docs prose (sentences ratchet)
+        run: node scripts/lint-docs-sentences.mjs
+
       - name: Build unified docs
         run: chmod +x scripts/build-docs.sh && ./scripts/build-docs.sh
 

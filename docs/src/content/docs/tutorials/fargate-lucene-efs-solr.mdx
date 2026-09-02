@@ -88,7 +88,7 @@ My AWS region is us-east-1.
 The agent handles the full sequence:
 
 - **Build** — runs `chant build` in each stack, producing three CloudFormation templates
-- **Deploy** — deploys infra → solr → connectors in order, reading each stack's outputs and passing them as `--parameter-overrides` to the next
+- **Deploy** — deploys infra -> solr -> connectors in order, reading each stack's outputs and passing them as `--parameter-overrides` to the next
 - **Verify** — polls the ALB health check and confirms Solr is reachable at `/solr/`
 
 <Aside type="tip">

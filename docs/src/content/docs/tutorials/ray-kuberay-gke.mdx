@@ -51,7 +51,7 @@ GKE cluster (3× n2-standard-4) + Filestore ENTERPRISE (1Ti) + NAT gateway ≈ $
 - Why `RayCluster` uses podSelector-only NetworkPolicy — the GKE pod CIDR mismatch problem
 - How GCS object-store spillover prevents head OOM on large models and shuffled datasets
 - Why pre-built Artifact Registry images matter at scale vs `runtimeEnv` pip installs
-- Workload Identity wiring: GSA → K8s ServiceAccount → GCS access without key files
+- Workload Identity wiring: GSA -> K8s ServiceAccount -> GCS access without key files
 
 ## Key patterns
 
@@ -122,7 +122,7 @@ When a worker pod is evicted (spot instance reclaim, node drain, rolling upgrade
 
 The head pod needs GCS credentials for spillover. The composite emits a `ServiceAccount` named `${name}-head`. The infra layer creates a GCP service account (`ray-workload`) and two IAM bindings:
 
-1. `roles/storage.objectAdmin` on the spillover bucket → scoped to the minimum needed
+1. `roles/storage.objectAdmin` on the spillover bucket -> scoped to the minimum needed
 2. `roles/iam.workloadIdentityUser` binding `[ray-system/ray-head]` to the GCP SA
 
 The `defaults.serviceAccount` prop on `RayCluster` injects the Workload Identity annotation:

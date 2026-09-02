@@ -76,7 +76,7 @@ chant now exposes what `chant build` already computes about a pipeline — its j
 
 ## Forgejo lexicon (Codeberg / Forgejo / Gitea)
 
-A new lexicon for **[Forgejo Actions](/chant/lexicons/forgejo/)** — the CI behind Codeberg, self-hosted Forgejo, and Gitea — built as a **thin dialect of the github lexicon**. Forgejo runs GitHub-Actions-compatible YAML, so you author exactly as for GitHub (same entities and composites, imported from `@intentius/chant-lexicon-forgejo`) and the dialect applies on build. The differentiated value is the github→forgejo **compare**: what the move silently costs.
+A new lexicon for **[Forgejo Actions](/chant/lexicons/forgejo/)** — the CI behind Codeberg, self-hosted Forgejo, and Gitea — built as a **thin dialect of the github lexicon**. Forgejo runs GitHub-Actions-compatible YAML, so you author exactly as for GitHub (same entities and composites, imported from `@intentius/chant-lexicon-forgejo`) and the dialect applies on build. The differentiated value is the github->forgejo **compare**: what the move silently costs.
 
 | # | Capability |
 |---|---|
@@ -87,7 +87,7 @@ A new lexicon for **[Forgejo Actions](/chant/lexicons/forgejo/)** — the CI beh
 
 ## CI/CD pipeline security audit
 
-A workflow/pipeline security pass across the github and gitlab lexicons, split along chant's architectural boundary: deterministic checks run in the pure build, live-resolution checks run in the operational layer. Both lexicons were abstracted to the **same core problems** — pin & vet external references, least-privilege tokens, trust boundaries against untrusted input, secret containment, unsound expressions, artifact/cache hygiene — so the GitHub → GitLab migration can map problem → problem and carry the security invariant across the edge.
+A workflow/pipeline security pass across the github and gitlab lexicons, split along chant's architectural boundary: deterministic checks run in the pure build, live-resolution checks run in the operational layer. Both lexicons were abstracted to the **same core problems** — pin & vet external references, least-privilege tokens, trust boundaries against untrusted input, secret containment, unsound expressions, artifact/cache hygiene — so the GitHub -> GitLab migration can map problem -> problem and carry the security invariant across the edge.
 
 | # | Capability |
 |---|---|
@@ -100,7 +100,7 @@ A workflow/pipeline security pass across the github and gitlab lexicons, split a
 
 ## Live import & the lifecycle dial
 
-The follow-on to the observation thread: chant turned its single observational drift workflow into a full family — **observe → reconcile → authoritative**, chosen per environment. It gained *live import* (regenerate TypeScript from running cloud/cluster state) and *projection + cloud-side ownership* (a precise create/update/delete change set computed against live), **without** hosting an authoritative state file. The snapshot is never load-bearing — the projection reads ownership from the live resource only. Primitives need no executor; only gated/destructive Ops require Temporal.
+The follow-on to the observation thread: chant turned its single observational drift workflow into a full family — **observe -> reconcile -> authoritative**, chosen per environment. It gained *live import* (regenerate TypeScript from running cloud/cluster state) and *projection + cloud-side ownership* (a precise create/update/delete change set computed against live), **without** hosting an authoritative state file. The snapshot is never load-bearing — the projection reads ownership from the live resource only. Primitives need no executor; only gated/destructive Ops require Temporal.
 
 | # | Capability |
 |---|---|

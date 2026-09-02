@@ -54,7 +54,7 @@ Everything under `lexicons/*/examples/` is the feature tier and is not listed in
 
 The golden tier teaches chant in ordered levels — synthesis and lint first, then Ops, then a gate, then the lifecycle dial, then a full app — over the same declarations. It lives in two directories:
 
-- `examples/getting-started` holds **L1–L4**. L1 is pure synthesis and lint, L2 wraps the same declarations in a local Op, L3 adds an approval gate on Temporal, L4 turns the lifecycle dial (observe → reconcile → authoritative). Each level adds one capability without rewriting the declarations.
+- `examples/getting-started` holds **L1–L4**. L1 is pure synthesis and lint, L2 wraps the same declarations in a local Op, L3 adds an approval gate on Temporal, L4 turns the lifecycle dial (observe -> reconcile -> authoritative). Each level adds one capability without rewriting the declarations.
 - `examples/alert-triage` is **L5**, the capstone: chant manifests plus a raw-Temporal triage workflow, a worker, two event sources, and a local dev stack ([#74](https://github.com/INTENTIUS/chant/issues/74)).
 
 `examples/local-op-quickstart` is a separate, standalone first taste — the smallest possible Op, runnable in under a minute with no cluster. It is not part of the leveled arc.
@@ -63,6 +63,6 @@ The getting-started docs point new users at the golden example, and reference de
 
 ## Adding an example — which tier?
 
-- Showing one resource, composite, or feature of a lexicon → feature example under that lexicon's `examples/`.
-- Showing a complete, substrate-specific deployment → reference deployment under `examples/`, usually with a tutorial.
-- Teaching chant itself, level by level → the golden example ([#216](https://github.com/INTENTIUS/chant/issues/216)), not a new top-level example.
+- Showing one resource, composite, or feature of a lexicon -> feature example under that lexicon's `examples/`.
+- Showing a complete, substrate-specific deployment -> reference deployment under `examples/`, usually with a tutorial.
+- Teaching chant itself, level by level -> the golden example ([#216](https://github.com/INTENTIUS/chant/issues/216)), not a new top-level example.

@@ -1,10 +1,10 @@
 ---
 title: Reconciliation
-description: The two reconciliation directions — reconcile (cloud→code) and apply (code→cloud) — the dial as per-environment configuration, and when to pick each.
+description: The two reconciliation directions — reconcile (cloud->code) and apply (code->cloud) — the dial as per-environment configuration, and when to pick each.
 diataxis: explanation
 ---
 
-Reconcile and apply are chant's two reconciliation directions — cloud→code and code→cloud — each exposed as an Op composite. Both sit on the same dial as observe, chosen per environment. This page covers the dial as configuration and when to reach for each position. For the `ReconcileOp` / `ApplyOp` commands and flags, see [Reconciling Lifecycle](/chant/guide/reconciling-lifecycle/).
+Reconcile and apply are chant's two reconciliation directions — cloud->code and code->cloud — each exposed as an Op composite. Both sit on the same dial as observe, chosen per environment. This page covers the dial as configuration and when to reach for each position. For the `ReconcileOp` / `ApplyOp` commands and flags, see [Reconciling Lifecycle](/chant/guide/reconciling-lifecycle/).
 
 ## The dial as configuration
 
@@ -30,6 +30,6 @@ The position is not a config field. `environments` in `chant.config.ts` is just 
 
 - [Reconciling Lifecycle](/chant/guide/reconciling-lifecycle/) — the `ReconcileOp` / `ApplyOp` commands and flags
 - [Lifecycle Models](/chant/concepts/lifecycle-models/) — the three axes and the dial
-- [Live Import](/chant/guide/live-import/) — the cloud→code regeneration the reconcile workflow uses
+- [Live Import](/chant/guide/live-import/) — the cloud->code regeneration the reconcile workflow uses
 - [Durable Workflows](/chant/concepts/durable-workflows/) — why gated apply wants Temporal
-- [`lifecycle-reconcile-aws` example](https://github.com/INTENTIUS/chant/tree/main/lexicons/aws/examples/lifecycle-reconcile-aws) — the whole loop on a real stack: deploy → drift → diff → reconcile / apply
+- [`lifecycle-reconcile-aws` example](https://github.com/INTENTIUS/chant/tree/main/lexicons/aws/examples/lifecycle-reconcile-aws) — the whole loop on a real stack: deploy -> drift -> diff -> reconcile / apply

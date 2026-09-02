@@ -195,7 +195,7 @@ and injected as attributes.
 
 The closure rule is **depth one by reference, plus whatever chains your
 [`referenceCatalog`](#live-graph-edges-referencecatalog--enrichliveattrs)
-declares as meaningful** — aws follows `SubnetId` → `RouteTableId` → `GatewayId`
+declares as meaningful** — aws follows `SubnetId` -> `RouteTableId` -> `GatewayId`
 because the catalog says those references matter, not because they happen to be
 reachable. Without a rule, a VPC transitively reaches most of an account.
 
@@ -297,7 +297,7 @@ referenceCatalog?: ReferenceCatalog;   // { identities, refs }
 ```
 
 - **`identities`** — which attr paths identify each kind (its id / ARN / name). chant indexes every node by these (and its `physicalId`, and its own id).
-- **`refs`** — per `(kind, attr path)`, that the value there references another resource. Each rule is tagged `reference` (→ a graph edge) or **`containment`** (subnet ∈ VPC → a boundary box, not a line). `path` supports `a.b` and `arr[].id`.
+- **`refs`** — per `(kind, attr path)`, that the value there references another resource. Each rule is tagged `reference` (-> a graph edge) or **`containment`** (subnet ∈ VPC -> a boundary box, not a line). `path` supports `a.b` and `arr[].id`.
 
 ```typescript
 export const myReferenceCatalog: ReferenceCatalog = {

@@ -30,7 +30,7 @@ This model fits environments where the registry is not known — or not wanted �
 | `publish-image` | promote the bytes into the environment registry (ECR/ACR/Artifact Registry); the target pulls | yes |
 | `load-image-on-host` | copy the tarball to the host and `docker load` | no |
 
-`load-image-on-host` is genuinely registry-free: build → archive → host → the host's local Docker store, no pull. It suits a single host, air-gapped, or no-registry case. `publish-image` suits a fleet, where hosts share cached layers pulled once.
+`load-image-on-host` is genuinely registry-free: build -> archive -> host -> the host's local Docker store, no pull. It suits a single host, air-gapped, or no-registry case. `publish-image` suits a fleet, where hosts share cached layers pulled once.
 
 <Aside type="note" title="Registry-less caveat">
 `load-image-on-host` makes *your built* image registry-free. Third-party images a compose file references (`postgres:16`, `redis`) still pull from their upstream registry at `compose up` unless you archive and load them too.

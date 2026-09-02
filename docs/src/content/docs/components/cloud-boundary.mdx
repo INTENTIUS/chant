@@ -31,7 +31,7 @@ This is literal, not aspirational: core ships only the agnostic verbs (`docker-b
 
 ## Two kinds of agnostic, only one is free
 
-- **Structural agnosticism (always).** Every component and every cloud shares the contract, the grammar, and one orchestrator. A GCP component and an AWS component are both build → publish → apply → verify, differing only in leaf verbs. Uniform orchestration, one driver, one lint envelope, no per-cloud special-casing. This is most of the value.
+- **Structural agnosticism (always).** Every component and every cloud shares the contract, the grammar, and one orchestrator. A GCP component and an AWS component are both build -> publish -> apply -> verify, differing only in leaf verbs. Uniform orchestration, one driver, one lint envelope, no per-cloud special-casing. This is most of the value.
 - **Portable component (write once, any cloud).** Only for the subset composed entirely of agnostic capabilities. The clean path is Kubernetes: a `kubectl`-apply component runs on EKS, AKS, and GKE because k8s levels the apply family to a single verb. Off-cluster a component is structurally uniform but cloud-bound, because `cfn-deploy` is AWS by definition. This is why standardizing pipelines was easier inside k8s and harder outside it.
 
 <Aside type="note" title="The honest claim">

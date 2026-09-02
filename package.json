@@ -14,7 +14,8 @@
     "generate:barrels": "tsx scripts/generate-post-synth-barrels.ts",
     "generate:egress-catalogue": "tsx scripts/generate-egress-catalogue.ts",
     "generate:fold-coverage": "tsx scripts/generate-fold-coverage.ts",
-    "typecheck": "tsx scripts/typecheck.ts"
+    "typecheck": "tsx scripts/typecheck.ts",
+    "lint:docs-prose": "node scripts/lint-docs-sentences.mjs"
   },
   "dependencies": {
     "@intentius/chant-lexicon-aws": "*",
@@ -40,6 +41,7 @@
     "@typescript-eslint/eslint-plugin": "^8.54.0",
     "@typescript-eslint/parser": "^8.54.0",
     "eslint": "^9.39.2",
+    "sentences": "0.1.1",
     "tsc-alias": "^1.8.17",
     "typescript": "^5.9.3",
     "vite-tsconfig-paths": "^5.0.0",

@@ -1,6 +1,6 @@
 ---
 title: Reconciling Lifecycle
-description: The two reconciliation directions as Op composites — ReconcileOp (cloud→code) and ApplyOp (code→cloud) — the commands and flags for each.
+description: The two reconciliation directions as Op composites — ReconcileOp (cloud->code) and ApplyOp (code->cloud) — the commands and flags for each.
 diataxis: how-to
 ---
 
@@ -31,7 +31,7 @@ export default op;        // the Op — discovered by `chant run prod-reconcile`
 export { schedule };      // the TemporalSchedule — deployed by `chant build`
 ```
 
-Phases: **Snapshot → Plan → Reconcile**, where the Reconcile phase's `reconcilePr` activity regenerates source ([live import](/chant/guide/live-import/)) and opens the PR in one step. Run `chant run prod-reconcile` for a one-shot reconcile on the local executor; give it a `schedule` to run continuously on Temporal. The PR's diff *is* the regenerated TypeScript, so review is a normal code review.
+Phases: **Snapshot -> Plan -> Reconcile**, where the Reconcile phase's `reconcilePr` activity regenerates source ([live import](/chant/guide/live-import/)) and opens the PR in one step. Run `chant run prod-reconcile` for a one-shot reconcile on the local executor; give it a `schedule` to run continuously on Temporal. The PR's diff *is* the regenerated TypeScript, so review is a normal code review.
 
 Reconcile never mutates the cloud. It only changes source — the safest reconciliation direction, and a good first step past pure observation.
 
@@ -57,7 +57,7 @@ Authority stays with the platform — chant hosts no state file. Deletes ride th
 
 ## See also
 
-- [`lifecycle-reconcile-aws` example](https://github.com/INTENTIUS/chant/tree/main/lexicons/aws/examples/lifecycle-reconcile-aws) — the whole loop on a real stack: deploy → drift → diff → reconcile / apply
-- [Live Import](/chant/guide/live-import/) — the cloud→code regeneration the reconcile workflow uses
+- [`lifecycle-reconcile-aws` example](https://github.com/INTENTIUS/chant/tree/main/lexicons/aws/examples/lifecycle-reconcile-aws) — the whole loop on a real stack: deploy -> drift -> diff -> reconcile / apply
+- [Live Import](/chant/guide/live-import/) — the cloud->code regeneration the reconcile workflow uses
 - [Ops](/chant/guide/ops/) — `ReconcileOp` and `ApplyOp` in depth
 - [Reconciliation](/chant/concepts/reconciliation/) — the dial as per-environment configuration, and when to pick reconcile vs. apply vs. observe

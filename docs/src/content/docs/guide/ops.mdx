@@ -84,7 +84,7 @@ Once this works end-to-end, swap `shell()` for `kubectlApply()`, `helmInstall()`
 
 Each `phase()` has a name and an ordered list of steps. All steps in a phase run sequentially by default. Set `parallel: true` to run them concurrently via `Promise.all`.
 
-A reconcile activity is also available via `activity("reconcilePr", args)`: given the change-set entries that triggered it, it regenerates TypeScript with `chant import --from <env>` and opens a reviewable PR (modes: `pull-request`, `issue`, `report`). It never commits to the main branch. It is the building block for the reconcile workflow (cloud → code).
+A reconcile activity is also available via `activity("reconcilePr", args)`: given the change-set entries that triggered it, it regenerates TypeScript with `chant import --from <env>` and opens a reviewable PR (modes: `pull-request`, `issue`, `report`). It never commits to the main branch. It is the building block for the reconcile workflow (cloud -> code).
 
 ## Gate steps
 
@@ -140,9 +140,9 @@ The `WatchOp` composite pairs an Op with a `TemporalSchedule` so `chant lifecycl
 
 See **[Watching Lifecycle](/chant/guide/watching-lifecycle/)** for the full walk-through: composite shape, generated workflow, Temporal UI filters (`Watch = "true"` / `Drift = "true"`), smoke-testing drift end-to-end, and how to triage each diff category. For the conceptual background on what drift means and why chant snapshots are observational, see [Drift Detection](/chant/concepts/drift-detection/).
 
-## Reconcile (cloud → code)
+## Reconcile (cloud -> code)
 
-The `ReconcileOp` composite takes the next step on the dial: when live drifts from declarations, open a PR that regenerates the affected TypeScript. Phases are **snapshot → plan → regenerate → open PR** — the plan is `chant lifecycle plan`, and the regenerate-and-PR step is the `reconcilePr` activity.
+The `ReconcileOp` composite takes the next step on the dial: when live drifts from declarations, open a PR that regenerates the affected TypeScript. Phases are **snapshot -> plan -> regenerate -> open PR** — the plan is `chant lifecycle plan`, and the regenerate-and-PR step is the `reconcilePr` activity.
 
 ```typescript
 import { ReconcileOp } from "@intentius/chant-lexicon-temporal";
@@ -163,7 +163,7 @@ export { schedule };      // the TemporalSchedule — deployed by `chant build`
 
 Run `chant run prod-reconcile` for a one-shot reconcile on the local executor; give it a `schedule` to run continuously on Temporal, where the cron and run history are the value (as with `WatchOp`). The primitives need no executor — only the scheduled, durable form requires Temporal.
 
-## Apply (code → cloud)
+## Apply (code -> cloud)
 
 The `ApplyOp` composite is the other direction: compute the plan, then apply it. Authority stays with the platform; chant hosts no state file.
 
@@ -258,7 +258,7 @@ export const { op } = PolicyReplayOp({
 });
 ```
 
-Phases are **artifacts → replay → report**: `chant build` emits the `.dw` bundle, the `dogwoodReplay` activity runs it through upstream's CLI and writes a divergence report, and `dogwoodReplayReport` acts on the finding mode. Unlike the two audit Ops above it ships from the **cedar** lexicon rather than the temporal one, because it hands back an Op and no schedule — pair it with a `TemporalSchedule` yourself for the recurring form. The replay step needs the `dogwood` binary; without one the step fails rather than reporting nothing found.
+Phases are **artifacts -> replay -> report**: `chant build` emits the `.dw` bundle, the `dogwoodReplay` activity runs it through upstream's CLI and writes a divergence report, and `dogwoodReplayReport` acts on the finding mode. Unlike the two audit Ops above it ships from the **cedar** lexicon rather than the temporal one, because it hands back an Op and no schedule — pair it with a `TemporalSchedule` yourself for the recurring form. The replay step needs the `dogwood` binary; without one the step fails rather than reporting nothing found.
 
 ## Op dependencies
 
