@@ -1,5 +1,5 @@
 import { describe, test, expect } from "vitest";
-import { mkdtempSync, writeFileSync, rmSync, readFileSync, existsSync } from "fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, existsSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { carveApply, formatCarveApply } from "./carve-apply";
@@ -105,6 +105,36 @@ describe("carveApply", () => {
       const again = await carveApply({ from: dir, output: out, env: "prod", stack: "assets", writeSource: true });
       expect(again.ok).toBe(true);
       expect(readFileSync(emitted, "utf-8")).toBe(stamped);
+    });
+  });
+
+  test("a RELATIVE --output still records stampedFiles relative to the manifest's directory, not the cwd (#2059)", async () => {
+    if (!parserAvailable) return;
+    await withEstate(async (dir) => {
+      // The behold carve-demo shape: run FROM the project dir with
+      // `--output carveout`. The bug: resolveManifestFilePath joined against
+      // the relative outDir, producing a cwd-relative path ("carveout/…")
+      // that normalize-on-write passed through — two spellings in one manifest.
+      const out = join(dir, "carveout");
+      const manifest = manifestFor("aws_s3_bucket.assets", dir);
+      manifest.emit = { source: "tfstate", files: [join("src", "assets.ts")], at: "t" };
+      writeCarveManifest(out, manifest);
+      mkdirSync(join(out, "src"), { recursive: true });
+      writeFileSync(join(out, "src", "assets.ts"), 'export const assets = new Bucket({\n  BucketName: "b",\n});\n');
+
+      const prevCwd = process.cwd();
+      process.chdir(dir);
+      try {
+        const res = await carveApply({ from: ".", output: "carveout", env: "prod", stack: "assets", writeSource: true });
+        expect(res.ok).toBe(true);
+        const m = readCarveManifest(res.manifestPath!)!;
+        // One spelling: manifest-dir-relative, same as emit.files — never
+        // "carveout/src/assets.ts" (relative to wherever the command ran).
+        expect(m.apply!.stampedFiles).toEqual([join("src", "assets.ts")]);
+        expect(m.emit!.files).toEqual([join("src", "assets.ts")]);
+      } finally {
+        process.chdir(prevCwd);
+      }
     });
   });
 

@@ -9,7 +9,7 @@
  */
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "fs";
-import { isAbsolute, join, relative } from "path";
+import { isAbsolute, join, relative, resolve } from "path";
 import type { CarveReport } from "./carve";
 import type { OwnershipMarker } from "../ownership";
 
@@ -100,10 +100,14 @@ export function carveManifestPath(outDir: string, target: string): string {
 /**
  * Relative-to-`outDir` spelling of a recorded file path. Absolute entries
  * (the run-time spelling every step naturally produces, and every version-1
- * manifest on disk) are rewritten; already-relative entries pass through.
+ * manifest on disk) are rewritten against the RESOLVED outDir — a caller's
+ * relative `--output` must not change what "relative to the manifest's
+ * directory" means (#2059). Already-relative entries pass through: they can
+ * only have come from a reader honouring the contract, and re-basing them
+ * against an unknowable original cwd would corrupt, not normalize.
  */
 function relativizePath(outDir: string, p: string): string {
-  return isAbsolute(p) ? relative(outDir, p) : p;
+  return isAbsolute(p) ? relative(resolve(outDir), p) : p;
 }
 
 /**
@@ -136,7 +140,11 @@ function normalizeManifest(outDir: string, manifest: CarveManifest): CarveManife
  * on-disk spellings read the same.
  */
 export function resolveManifestFilePath(manifestDir: string, p: string): string {
-  return isAbsolute(p) ? p : join(manifestDir, p);
+  // Always ABSOLUTE (#2059): `join` with a relative manifestDir produced a
+  // cwd-relative path, which `relativizePath` then passed through untouched —
+  // so `carve apply --output carveout` recorded `stampedFiles` relative to
+  // wherever the command happened to run, two spellings in one manifest.
+  return isAbsolute(p) ? p : resolve(manifestDir, p);
 }
 
 /** Write (or overwrite) a manifest into the output dir. Returns the path. */
