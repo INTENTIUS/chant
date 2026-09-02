@@ -478,8 +478,19 @@ export interface CrossEnvComparison {
   envB: string;
   digestA?: string;
   digestB?: string;
-  /** True only when both envs have a recorded digest and they match. */
+  /**
+   * True only when both envs have a recorded digest and their *comparable*
+   * identities match. For a record carrying `inputDigest` (a pinned helm
+   * deploy, chant#1242/#1243), that field is the comparable identity —
+   * `ReleaseRecord.inputDigest`'s own contract: profiles are per cluster, two
+   * environments legitimately render to different bytes, so cross-environment
+   * "is prod running what staging tested" joins on the input side while
+   * `digest` proves the exact bytes each cluster got. Records without it
+   * compare on `digest` exactly as before.
+   */
   same: boolean;
+  /** The identities `same` was decided on (`inputDigest ?? digest` per side), when both sides had one and they differ from the digests shown. */
+  comparedOn?: { a: string; b: string };
 }
 
 /** Compare the latest recorded digest for `component` between two environments' release records. */
@@ -490,12 +501,16 @@ export function compareAcrossEnvironments(
 ): CrossEnvComparison {
   const latestA = latestPerComponent(envA.records).get(component);
   const latestB = latestPerComponent(envB.records).get(component);
+  const idA = latestA ? latestA.inputDigest ?? latestA.digest : undefined;
+  const idB = latestB ? latestB.inputDigest ?? latestB.digest : undefined;
+  const comparedOnInputs = (latestA?.inputDigest ?? latestB?.inputDigest) !== undefined;
   return {
     component,
     envA: envA.name,
     envB: envB.name,
     digestA: latestA?.digest,
     digestB: latestB?.digest,
-    same: !!latestA && !!latestB && latestA.digest === latestB.digest,
+    same: !!idA && !!idB && idA === idB,
+    ...(comparedOnInputs && idA && idB ? { comparedOn: { a: idA, b: idB } } : {}),
   };
 }
