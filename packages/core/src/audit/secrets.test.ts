@@ -300,4 +300,19 @@ describe("scanForSecrets — file handling", () => {
     expect(findings[0].severity).toBe("error");
     expect(findings[0].lexicon).toBe("secrets");
   });
+
+  test("dependency lockfiles are skipped entirely — integrity hashes are not secrets", () => {
+    // The exact false-positive class that failed the first dogfooding repo:
+    // one lockfile's sha512 integrity fields read as hundreds of SEC010s.
+    const integrity = `"integrity": "sha512-${"a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8s9T0u1V2w3X4y5Z6".repeat(2)}"`;
+    for (const path of ["package-lock.json", "web/package-lock.json", "yarn.lock", "pnpm-lock.yaml", "Cargo.lock", "go.sum"]) {
+      expect(scanForSecrets([{ path, content: `${integrity}\n` }]), path).toEqual([]);
+    }
+    // Even a real credential shape stays silent there — the file is skipped,
+    // not entropy-tuned; a credential does not live in a machine-written
+    // lockfile, and per-file skipping is what keeps the rule explainable.
+    expect(scanForSecrets([{ path: "package-lock.json", content: `${FAKE_AWS_KEY}\n` }])).toEqual([]);
+    // A non-lockfile with the same content still fires.
+    expect(scanForSecrets([{ path: "config.json", content: `${integrity}\n` }]).length).toBeGreaterThan(0);
+  });
 });
