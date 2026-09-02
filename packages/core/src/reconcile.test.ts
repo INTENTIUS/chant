@@ -102,6 +102,23 @@ describe("diffCollection", () => {
     ]);
   });
 
+  test("returns the live entry count for managedCount accumulation (#2067)", () => {
+    const out: ChangeSetEntry[] = [];
+    const count = diffCollection<D, L>({
+      resourceType: "thing",
+      desired: new Map([["a", { name: "a", v: 1 }]]),
+      live: new Map([
+        ["a", { name: "a", v: 1 }],
+        ["b", { name: "b", v: 2 }],
+        ["c", { name: "c", v: 3 }],
+      ]),
+      compareFields: () => [],
+      opts: noOpts,
+      out,
+    });
+    expect(count).toBe(3);
+  });
+
   test("honours createAfter / updateAfter mappers", () => {
     const out: ChangeSetEntry[] = [];
     diffCollection<D, L>({
@@ -171,6 +188,18 @@ describe("resolveRenames", () => {
     const cs: ChangeSet = { org: "acme", entries: [{ kind: "delete", resourceType: "team", key: "old" }] };
     expect(resolveRenames(cs)).toBe(cs);
   });
+
+  test("preserves managedCount on the resolved set (#2067)", () => {
+    const cs: ChangeSet = {
+      org: "acme",
+      managedCount: 7,
+      entries: [
+        { kind: "delete", resourceType: "team", key: "old", before: { slug: "old" } },
+        { kind: "create", resourceType: "team", key: "new", after: { previously: "old" } },
+      ],
+    };
+    expect(resolveRenames(cs).managedCount).toBe(7);
+  });
 });
 
 describe("removalDeltaCap", () => {
@@ -199,6 +228,64 @@ describe("removalDeltaCap", () => {
     };
     expect(removalDeltaCap(cs)).toBeNull(); // 1/4 = 25%, not > 25%
   });
+
+  // Live-denominator mode (#2067) — the warden reference cases.
+
+  test("one stale delete of 10 live managed entries passes at the default cap", () => {
+    const cs: ChangeSet = {
+      org: "acme",
+      entries: [{ kind: "delete", resourceType: "x", key: "stale" }],
+    };
+    // Plan-relative this is 1/1 = 100% and trips; against the live count it
+    // is 1/10 = 10% and passes — the routine converged-cycle cleanup.
+    expect(removalDeltaCap(cs)).not.toBeNull();
+    expect(removalDeltaCap(cs, { managedTotal: 10 })).toBeNull();
+  });
+
+  test("4 deletes of 10 live managed entries blocks, with the live-mode message", () => {
+    const cs: ChangeSet = {
+      org: "acme",
+      entries: Array.from({ length: 4 }, (_, i) => ({
+        kind: "delete" as const,
+        resourceType: "x",
+        key: `k${i}`,
+      })),
+    };
+    const d = removalDeltaCap(cs, { managedTotal: 10 })!;
+    expect(d.guardrail).toBe("removalDeltaCap");
+    expect(d.message).toContain("4 of 10 live managed entries (40%)");
+  });
+
+  test("reads changeSet.managedCount when opts.managedTotal is absent", () => {
+    const cs: ChangeSet = {
+      org: "acme",
+      managedCount: 10,
+      entries: [{ kind: "delete", resourceType: "x", key: "stale" }],
+    };
+    expect(removalDeltaCap(cs)).toBeNull(); // 1/10 via the change set's own count
+    // An explicit managedTotal wins over the change set's count.
+    expect(removalDeltaCap({ ...cs, managedCount: 2 }, { managedTotal: 10 })).toBeNull();
+  });
+
+  test("without managed info the diagnostic deep-equals the plan-relative one", () => {
+    const cs: ChangeSet = {
+      org: "acme",
+      entries: [
+        { kind: "delete", resourceType: "x", key: "a" },
+        { kind: "delete", resourceType: "x", key: "b" },
+      ],
+    };
+    const expected = {
+      guardrail: "removalDeltaCap",
+      message:
+        "2 of 2 managed entries (100%) would be deleted, exceeding the 25% threshold. " +
+        "Check for typos in config or raise maxFraction to proceed.",
+    };
+    expect(removalDeltaCap(cs)).toEqual(expected);
+    // A zero live count means "no live info" — it never divides by zero and
+    // never loosens the cap; behavior stays exactly plan-relative.
+    expect(removalDeltaCap(cs, { managedTotal: 0 })).toEqual(expected);
+  });
 });
 
 describe("runGuardrailChecks", () => {
@@ -220,6 +307,19 @@ describe("runGuardrailChecks", () => {
   test("returns ok when every check passes", () => {
     const cs: ChangeSet = { org: "acme", entries: [{ kind: "create", resourceType: "x", key: "a" }] };
     expect(runGuardrailChecks(cs, [() => null])).toEqual({ ok: true });
+  });
+
+  test("threads live context to checks that take it (#2067)", () => {
+    const cs: ChangeSet = {
+      org: "acme",
+      entries: [{ kind: "delete", resourceType: "x", key: "stale" }],
+    };
+    const check: GuardrailCheck = (resolved, ctx) =>
+      removalDeltaCap(resolved, { managedTotal: ctx?.managedCount });
+    // Without ctx the check falls back to plan-relative and trips (1/1).
+    expect(runGuardrailChecks(cs, [check]).ok).toBe(false);
+    // With the live count threaded through, 1/10 passes.
+    expect(runGuardrailChecks(cs, [check], { managedCount: 10 })).toEqual({ ok: true });
   });
 });
 

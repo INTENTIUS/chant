@@ -66,6 +66,14 @@ export interface ChangeSet {
   org: string;
   /** All proposed changes, in stable order. */
   entries: ChangeSetEntry[];
+  /**
+   * Live entries under management across the diffed collections (#2067).
+   * `diffCollection` returns each collection's live count so the diff layer
+   * can sum it here. Optional — when absent, guardrails that want a live
+   * denominator (see {@link removalDeltaCap}) fall back to the plan-relative
+   * one.
+   */
+  managedCount?: number;
 }
 
 /** Options controlling diff behaviour. */
@@ -147,8 +155,11 @@ export interface DiffCollectionParams<D, L> {
  * when `compareFields` reports differences, and ownership-gated deletes for
  * live-not-desired. This is the selective-by-omission + ownership-gated-delete
  * pattern shared by every keyed-collection diff.
+ *
+ * Returns the live entry count for this collection, so the diff layer can sum
+ * `ChangeSet.managedCount` across the collections it diffs (#2067).
  */
-export function diffCollection<D, L>(params: DiffCollectionParams<D, L>): void {
+export function diffCollection<D, L>(params: DiffCollectionParams<D, L>): number {
   const {
     resourceType,
     keyPrefix = "",
@@ -193,6 +204,8 @@ export function diffCollection<D, L>(params: DiffCollectionParams<D, L>): void {
       out.push({ kind: "delete", resourceType, key: entryKey, before: l });
     }
   }
+
+  return live.size;
 }
 
 // ---------------------------------------------------------------------------
@@ -263,13 +276,32 @@ export interface GuardrailDiagnostic {
 /** Aggregated guardrail result. */
 export type GuardrailResult = { ok: true } | { ok: false; diagnostics: GuardrailDiagnostic[] };
 
-/** A guardrail check over a (rename-resolved) change set. Returns null when it passes. */
-export type GuardrailCheck = (resolved: ChangeSet) => GuardrailDiagnostic | null;
+/** Live context threaded to guardrail checks by `runGuardrailChecks` (#2067). */
+export interface GuardrailContext {
+  /** Live entries under management this cycle (see `ChangeSet.managedCount`). */
+  managedCount?: number;
+}
+
+/**
+ * A guardrail check over a (rename-resolved) change set. Returns null when it
+ * passes. `ctx` carries live context when the caller has it (#2067); a check
+ * written against the single-argument shape keeps working unchanged.
+ */
+export type GuardrailCheck = (resolved: ChangeSet, ctx?: GuardrailContext) => GuardrailDiagnostic | null;
 
 /** Config for `removalDeltaCap`. */
 export interface RemovalDeltaCapOptions {
   /** Max fraction of pre-existing entries that may be deleted. Must be in (0,1]. Default 0.25. */
   maxFraction?: number;
+  /**
+   * Live managed-entry denominator (#2067). When positive, deletes are divided
+   * by this count of live entries under management instead of the plan's
+   * non-create entries — a converged cycle deleting one stale entry out of
+   * many no longer reads as 1/1 = 100%. Defaults to `changeSet.managedCount`;
+   * when neither is present (or not positive) the cap keeps its plan-relative
+   * behavior.
+   */
+  managedTotal?: number;
 }
 
 /**
@@ -318,13 +350,18 @@ export function resolveRenames(changeSet: ChangeSet): ChangeSet {
       !(e.kind === "create" && resolvedCreates.has(e.key)),
   );
 
-  return { org: changeSet.org, entries: [...filteredEntries, ...syntheticUpdates] };
+  return { ...changeSet, entries: [...filteredEntries, ...syntheticUpdates] };
 }
 
 /**
  * Refuse if deletes exceed `maxFraction` of the pre-existing managed entries
  * (deletes + updates; creates excluded so a flood of new entries can't dilute
  * the delete fraction). Guards against a typo wiping the config in one apply.
+ *
+ * With a live denominator (`opts.managedTotal`, else `changeSet.managedCount`;
+ * #2067) deletes are measured against the live entries under management
+ * instead — so a converged cycle's plan of exactly one stale delete does not
+ * trip at 1/1 = 100%. Without one, behavior is plan-relative as before.
  *
  * CONTRACT: pass a RENAME-RESOLVED change set (see {@link resolveRenames}).
  */
@@ -333,9 +370,25 @@ export function removalDeltaCap(
   opts: RemovalDeltaCapOptions = {},
 ): GuardrailDiagnostic | null {
   const maxFraction = opts.maxFraction ?? 0.25;
+  const deletes = changeSet.entries.filter((e) => e.kind === "delete").length;
+
+  const managedTotal = opts.managedTotal ?? changeSet.managedCount;
+  if (managedTotal !== undefined && managedTotal > 0) {
+    const fraction = deletes / managedTotal;
+    if (fraction > maxFraction) {
+      return {
+        guardrail: "removalDeltaCap",
+        message:
+          `${deletes} of ${managedTotal} live managed entries (${Math.round(fraction * 100)}%) would be deleted, ` +
+          `exceeding the ${Math.round(maxFraction * 100)}% threshold. ` +
+          `Check for typos in config or raise maxFraction to proceed.`,
+      };
+    }
+    return null;
+  }
+
   const total = changeSet.entries.filter((e) => e.kind !== "create").length;
   if (total === 0) return null;
-  const deletes = changeSet.entries.filter((e) => e.kind === "delete").length;
   const fraction = deletes / total;
   if (fraction > maxFraction) {
     return {
@@ -353,12 +406,18 @@ export function removalDeltaCap(
  * Run a set of guardrail checks against a change set. Resolves renames ONCE,
  * then runs every check on the resolved set, aggregating any diagnostics. The
  * caller composes provider-specific checks (e.g. an admin floor) as closures.
+ * `ctx` (optional, #2067) threads live context — e.g. the managed-live count —
+ * to every check; single-argument checks ignore it.
  */
-export function runGuardrailChecks(changeSet: ChangeSet, checks: GuardrailCheck[]): GuardrailResult {
+export function runGuardrailChecks(
+  changeSet: ChangeSet,
+  checks: GuardrailCheck[],
+  ctx?: GuardrailContext,
+): GuardrailResult {
   const resolved = resolveRenames(changeSet);
   const diagnostics: GuardrailDiagnostic[] = [];
   for (const check of checks) {
-    const d = check(resolved);
+    const d = check(resolved, ctx);
     if (d) diagnostics.push(d);
   }
   return diagnostics.length > 0 ? { ok: false, diagnostics } : { ok: true };
