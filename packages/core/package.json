@@ -1,6 +1,6 @@
 {
   "name": "@intentius/chant",
-  "version": "0.54.1",
+  "version": "0.54.2",
   "description": "Declarative infrastructure-as-code toolkit — TypeScript on Node.js",
   "license": "Apache-2.0",
   "homepage": "https://intentius.io/chant",
