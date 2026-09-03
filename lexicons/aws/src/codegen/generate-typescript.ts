@@ -179,12 +179,12 @@ function staticTypeScript(): string {
     ["And", "(conditions: unknown[]): any"],
     ["Base64", "(value: unknown): any"],
     ["Cidr", "(ipBlock: unknown, count: unknown, cidrBits?: unknown): any"],
-    ["Condition", "(condition: string): any"],
+    ["And", "(...conditions: unknown[]): any"],
     ["Equals", "(a: unknown, b: unknown): any"],
     ["FindInMap", "(mapName: string, firstKey: unknown, secondKey: unknown): any"],
     ["GetAtt", "(logicalName: string, attribute: string): any"],
     ["GetAZs", "(region?: string): any"],
-    ["If", "(condition: string, valueIfTrue: unknown, valueIfFalse: unknown): any"],
+    ["If", "(condition: string | Declarable, valueIfTrue: unknown, valueIfFalse: unknown): any"],
     ["ImportValue", "(sharedValue: unknown): any"],
     ["Join", "(delimiter: string, values: unknown[]): any"],
     ["Not", "(condition: unknown): any"],
@@ -230,7 +230,7 @@ function staticTypeScript(): string {
   lines.push("");
   lines.push("export interface CFResourceAttributes {");
   lines.push("  DependsOn?: Declarable | Declarable[] | string | string[];");
-  lines.push("  Condition?: string;");
+  lines.push("  Condition?: string | Declarable;");
   lines.push('  DeletionPolicy?: "Delete" | "Retain" | "RetainExceptOnCreate" | "Snapshot";');
   lines.push('  UpdateReplacePolicy?: "Delete" | "Retain" | "Snapshot";');
   lines.push("  UpdatePolicy?: {");

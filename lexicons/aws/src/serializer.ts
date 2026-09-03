@@ -19,8 +19,9 @@ import type { LexiconOutput } from "@intentius/chant/lexicon-output";
 import { walkValue, type SerializerVisitor } from "@intentius/chant/serializer-walker";
 import { isChildProject, type ChildProjectInstance } from "@intentius/chant/child-project";
 import { isStackOutput, type StackOutput } from "@intentius/chant/stack-output";
-import { isAttrRefLike } from "@intentius/chant/utils";
+import { isAttrRefLike, getLogicalName } from "@intentius/chant/utils";
 import { resolveDependsOn } from "@intentius/chant/resource-attributes";
+import { isCondition } from "./condition";
 import { isDefaultTags, type TagEntry } from "./default-tags";
 import { isTemplateTransform } from "./template-transform";
 import { loadTaggableResources } from "./taggable";
@@ -41,6 +42,7 @@ interface CFTemplate {
   Metadata?: Record<string, unknown>;
   Transform?: string | string[];
   Parameters?: Record<string, CFParameter>;
+  Conditions?: Record<string, unknown>;
   Resources: Record<string, CFResource>;
   Outputs?: Record<string, CFOutput>;
 }
@@ -347,6 +349,13 @@ function serializeToTemplate(
       }
 
       template.Parameters[name] = param;
+    } else if (isCondition(entity)) {
+      // Condition declarable → Conditions section (#2068), lifted the way
+      // Parameter is lifted into Parameters above.
+      if (!template.Conditions) {
+        template.Conditions = {};
+      }
+      template.Conditions[name] = toCFValue(entity.expression, entityNames);
     } else if (isChildProject(entity)) {
       // ChildProjectInstance → AWS::CloudFormation::Stack resource
       const childProject = entity as ChildProjectInstance;
@@ -396,8 +405,13 @@ function serializeToTemplate(
             resource.DependsOn = resolved.length === 1 ? resolved[0] : resolved;
           }
         }
-        // Pass-through attributes
-        if (attrs.Condition) resource.Condition = attrs.Condition as string;
+        // Pass-through attributes. Condition accepts the Condition declarable
+        // as well as a name string (#2068).
+        if (attrs.Condition) {
+          resource.Condition = isCondition(attrs.Condition)
+            ? entityNames.get(attrs.Condition) ?? getLogicalName(attrs.Condition)
+            : attrs.Condition as string;
+        }
         if (attrs.DeletionPolicy) resource.DeletionPolicy = attrs.DeletionPolicy as string;
         if (attrs.UpdateReplacePolicy) resource.UpdateReplacePolicy = attrs.UpdateReplacePolicy as string;
         if (attrs.UpdatePolicy) resource.UpdatePolicy = attrs.UpdatePolicy;
@@ -470,6 +484,13 @@ function serializeToTemplate(
       const exportName = (stackOutput as { exportName?: string }).exportName;
       if (exportName) {
         output.Export = { Name: exportName };
+      }
+      // Same defensive read: condition (#2068/#2069) postdates older cores.
+      const condition = (stackOutput as { condition?: unknown }).condition;
+      if (condition) {
+        output.Condition = isCondition(condition)
+          ? entityNames.get(condition) ?? getLogicalName(condition)
+          : condition as string;
       }
       template.Outputs[name] = output;
     }

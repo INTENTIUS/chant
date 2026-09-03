@@ -313,6 +313,12 @@ function parseAndWrite(
     };
   }
 
+  // Sections the parser read but import cannot carry, named by the parser
+  // rather than dropped silently (#2069).
+  if (ir.warnings) {
+    warnings.push(...ir.warnings);
+  }
+
   const generator = plugin.templateGenerator!();
 
   // Check output directory

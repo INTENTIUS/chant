@@ -1,0 +1,16 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Parameters": { "Cutover": { "Type": "String", "Default": "false", "AllowedValues": ["true", "false"] } },
+  "Conditions": {
+    "DoCutover": { "Fn::Equals": [ { "Ref": "Cutover" }, "true" ] },
+    "NoCutover": { "Fn::Not": [ { "Condition": "DoCutover" } ] }
+  },
+  "Resources": {
+    "Rule": {
+      "Type": "AWS::Logs::LogGroup",
+      "Condition": "DoCutover",
+      "Properties": { "LogGroupName": { "Fn::If": [ "DoCutover", "/cut/on", "/cut/off" ] }, "RetentionInDays": 7 }
+    }
+  },
+  "Outputs": { "RuleName": { "Condition": "DoCutover", "Value": { "Ref": "Rule" } } }
+}

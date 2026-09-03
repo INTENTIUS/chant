@@ -830,7 +830,7 @@
   "formatting/bold-first-bullet": 1
  },
  "docs/src/content/docs/lint-rules/audit-rules.mdx": {
-  "formatting/em-dash-density": 491,
+  "formatting/em-dash-density": 492,
   "claude/sounds-like-claude": 1,
   "claude/colon-reveal": 148,
   "tricolon/comma-series": 1,

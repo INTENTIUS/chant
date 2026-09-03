@@ -187,11 +187,11 @@ Principal: { Service: ["lambda.amazonaws.com", "edgelambda.amazonaws.com"] },
 
 ## Conditions
 
-Use the `If` intrinsic for conditional values within resource properties:
+Declare a condition with the `Condition` declarable and the condition intrinsics (`Equals`, `And`, `Or`, `Not`). The serializer lifts each declared `Condition` into the template's `Conditions` section, the way `Parameter` is lifted into `Parameters`. Reference it with the `If` intrinsic for conditional property values, or with the resource-level `Condition` attribute to gate a whole resource:
 
 {{file:docs-snippets/src/conditions.ts}}
 
-CloudFormation `Conditions` blocks are recognized by the serializer when importing existing templates. For new stacks, use TypeScript logic for build-time decisions and `If` for deploy-time decisions.
+`If`, the resource-level `Condition` attribute, a `stackOutput`'s `condition` option, and `And`/`Or`/`Not` operands all accept either the `Condition` declarable or a condition name string. A template that references a condition it never declares fails the build (WAW069) — CloudFormation would reject it at deploy time. `chant import` regenerates `Conditions` sections from existing templates. Prefer plain TypeScript logic for decisions that can be made at build time; conditions are for decisions the deployment makes from parameter values.
 
 ## Mappings
 

@@ -33,6 +33,10 @@ export interface StackOutput extends Declarable {
   /** When set, the serializer emits a cross-stack export under this name
    * (CloudFormation `Output.Export.Name`) in addition to the plain output. */
   readonly exportName?: string;
+  /** When set, the output is gated on a declared condition (CloudFormation
+   * `Output.Condition`) — a condition name, or the condition Declarable
+   * itself, resolved to its logical name at serialization (#2068/#2069). */
+  readonly condition?: string | Declarable;
 }
 
 /** What a wrapping intrinsic's lexicon gets derived from: either a nested
@@ -108,7 +112,7 @@ export function isStackOutput(value: unknown): value is StackOutput {
  */
 export function stackOutput(
   ref: AttrRef | Intrinsic | string,
-  options?: { description?: string; exportName?: string; lexicon?: string },
+  options?: { description?: string; exportName?: string; lexicon?: string; condition?: string | Declarable },
 ): StackOutput {
   // Duck-type, not `instanceof` (chant #1137): AttrRef also implements
   // Intrinsic (a global-symbol marker), so `isIntrinsic(ref)` alone already
@@ -147,6 +151,7 @@ export function stackOutput(
     sourceRef: ref,
     description: options?.description,
     exportName: options?.exportName,
+    condition: options?.condition,
   };
 
   return output;

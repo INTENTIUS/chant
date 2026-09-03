@@ -1,6 +1,6 @@
 import { loadLexiconRegistry } from "@intentius/chant/codegen/registry";
 import { createRequire } from "module";
-import type { TemplateIR, ResourceIR, ParameterIR } from "@intentius/chant/import/parser";
+import type { TemplateIR, ResourceIR, ParameterIR, ConditionIR, OutputIR } from "@intentius/chant/import/parser";
 const require = createRequire(import.meta.url);
 import type { TypeScriptGenerator, GeneratedFile } from "@intentius/chant/import/generator";
 import { topoSort } from "@intentius/chant/codegen/topo-sort";
@@ -51,10 +51,31 @@ export class CFGenerator implements TypeScriptGenerator {
       lines.push("");
     }
 
+    // Generate conditions in dependency order ({ Condition: ... } references
+    // point at earlier declarations) — #2069
+    const conditions = ir.conditions ?? [];
+    const sortedConditions = this.sortConditions(conditions);
+    for (const condition of sortedConditions) {
+      lines.push(this.generateCondition(condition, ir, importedSymbols));
+    }
+
+    if (conditions.length > 0) {
+      lines.push("");
+    }
+
     // Generate resources in dependency order
     const sortedResources = this.sortByDependencies(ir.resources);
     for (const resource of sortedResources) {
       lines.push(this.generateResource(resource, ir, importedSymbols));
+    }
+
+    // Generate outputs (#2069)
+    const outputs = ir.outputs ?? [];
+    if (outputs.length > 0) {
+      lines.push("");
+      for (const output of outputs) {
+        lines.push(this.generateOutput(output, ir, importedSymbols));
+      }
     }
 
     return [
@@ -71,10 +92,14 @@ export class CFGenerator implements TypeScriptGenerator {
   private collectImportedSymbols(ir: TemplateIR): Set<string> {
     const symbols = new Set<string>();
     if (ir.parameters.length > 0) symbols.add("Parameter");
-    const intrinsics = ["Sub", "Ref", "If", "Join", "Select", "Split", "Base64", "GetAZs", "GetAtt"] as const;
+    if ((ir.conditions ?? []).length > 0) symbols.add("Condition");
+    if ((ir.outputs ?? []).length > 0) symbols.add("stackOutput");
+    const intrinsics = ["Sub", "Ref", "If", "Join", "Select", "Split", "Base64", "GetAZs", "GetAtt", "Equals", "And", "Or", "Not"] as const;
     for (const name of intrinsics) {
       if (irUsesIntrinsic(ir, name)) symbols.add(name);
     }
+    // Outputs whose value is a Ref envelope render as Ref(<var>) (#2069)
+    if ((ir.outputs ?? []).some((o) => hasIntrinsicInValue(o.value, "Ref"))) symbols.add("Ref");
     if (this.needsAWSPseudo(ir)) symbols.add("AWS");
     for (const resource of ir.resources) {
       const parsed = this.parseResourceType(resource.type);
@@ -94,54 +119,14 @@ export class CFGenerator implements TypeScriptGenerator {
    * Generate import statements
    */
   private generateImports(ir: TemplateIR): string {
-    const imports: Set<string> = new Set();
-    const serviceImports: Map<string, Set<string>> = new Map();
-
-    // Collect what we need to import
-    const needsParameter = ir.parameters.length > 0;
-    if (needsParameter) {
-      imports.add("Parameter");
+    // Everything comes from the flat @intentius/chant-lexicon-aws package,
+    // and the needed symbol set is exactly what collectImportedSymbols
+    // computes for variable-name conflict detection.
+    const allImports = [...this.collectImportedSymbols(ir)];
+    if (allImports.length === 0) {
+      return "";
     }
-
-    // Check for intrinsics
-    const intrinsics = ["Sub", "Ref", "If", "Join", "Select", "Split", "Base64", "GetAZs", "GetAtt"] as const;
-    for (const name of intrinsics) {
-      if (irUsesIntrinsic(ir, name)) imports.add(name);
-    }
-
-    // Check for AWS pseudo-parameters
-    if (this.needsAWSPseudo(ir)) {
-      imports.add("AWS");
-    }
-
-    // Collect service imports (skip unknown resource types)
-    for (const resource of ir.resources) {
-      const parsed = this.parseResourceType(resource.type);
-      if (!parsed) continue;
-      const { service, resourceClass } = parsed;
-      if (!serviceImports.has(service)) {
-        serviceImports.set(service, new Set());
-      }
-      serviceImports.get(service)!.add(resourceClass);
-    }
-
-    // Build import lines
-    const importLines: string[] = [];
-
-    // Merge service resource imports into the core imports set
-    for (const [_service, resources] of serviceImports) {
-      for (const r of resources) {
-        imports.add(r);
-      }
-    }
-
-    // All imports come from the flat @intentius/chant-lexicon-aws package
-    const allImports = [...imports];
-    if (allImports.length > 0) {
-      importLines.push(`import { ${allImports.join(", ")} } from "@intentius/chant-lexicon-aws";`);
-    }
-
-    return importLines.join("\n");
+    return `import { ${allImports.join(", ")} } from "@intentius/chant-lexicon-aws";`;
   }
 
   /**
@@ -238,6 +223,76 @@ export class CFGenerator implements TypeScriptGenerator {
   }
 
   /**
+   * Sort conditions so `{ Condition: ... }` references point at earlier
+   * declarations (#2069).
+   */
+  private sortConditions(conditions: ConditionIR[]): ConditionIR[] {
+    return topoSort(
+      conditions,
+      (c) => c.name,
+      (c) => [
+        ...collectDependencies(c.expression, (obj) =>
+          obj.__intrinsic === "ConditionRef" ? (obj.name as string) : null,
+        ),
+      ],
+    );
+  }
+
+  /**
+   * Render a condition reference as the condition's variable when the
+   * template declares it, or as a literal name string when it doesn't (an
+   * undeclared reference stays visible rather than breaking generation).
+   */
+  private conditionVarRef(name: string, ir: TemplateIR, importedSymbols: Set<string>): string {
+    const declared = (ir.conditions ?? []).some((c) => c.name === name);
+    return declared ? this.safeVarName(name, importedSymbols) : JSON.stringify(name);
+  }
+
+  /**
+   * Generate a condition declaration (#2069)
+   */
+  private generateCondition(condition: ConditionIR, ir: TemplateIR, importedSymbols: Set<string>): string {
+    const varName = this.safeVarName(condition.name, importedSymbols);
+    const exprStr = this.generateValue(condition.expression, ir, importedSymbols);
+    return `export const ${varName} = new Condition(${exprStr});`;
+  }
+
+  /**
+   * Generate an output declaration as stackOutput(...) (#2069)
+   */
+  private generateOutput(output: OutputIR, ir: TemplateIR, importedSymbols: Set<string>): string {
+    const varName = this.safeVarName(output.name, importedSymbols);
+
+    // A bare Ref envelope becomes Ref(<var>) — stackOutput takes an intrinsic
+    // or attribute reference, not the resource/parameter object itself.
+    let valueStr: string;
+    const value = output.value as Record<string, unknown> | null;
+    if (value !== null && typeof value === "object" && !Array.isArray(value) && value.__intrinsic === "Ref" && !(value.name as string).startsWith("AWS::")) {
+      valueStr = `Ref(${this.safeVarName(value.name as string, importedSymbols)})`;
+    } else {
+      valueStr = this.generateValue(output.value, ir, importedSymbols);
+    }
+
+    const opts: string[] = [];
+    if (output.description) opts.push(`description: ${JSON.stringify(output.description)}`);
+    if (output.exportName !== undefined) {
+      opts.push(`exportName: ${this.generateValue(output.exportName, ir, importedSymbols)}`);
+    }
+    if (output.condition) {
+      opts.push(`condition: ${this.conditionVarRef(output.condition, ir, importedSymbols)}`);
+    }
+    // A literal output has no entity to derive its lexicon from.
+    if (typeof output.value === "string") {
+      opts.push(`lexicon: "aws"`);
+    }
+
+    if (opts.length > 0) {
+      return `export const ${varName} = stackOutput(${valueStr}, { ${opts.join(", ")} });`;
+    }
+    return `export const ${varName} = stackOutput(${valueStr});`;
+  }
+
+  /**
    * Generate a parameter declaration
    */
   private generateParameter(param: ParameterIR, importedSymbols: Set<string>): string {
@@ -263,6 +318,12 @@ export class CFGenerator implements TypeScriptGenerator {
     const varName = this.safeVarName(resource.logicalId, importedSymbols);
     const { resourceClass } = parsed;
     const propsStr = this.generateProps(resource.properties, ir, importedSymbols);
+
+    // Resource-level Condition key → the attributes argument (#2069)
+    if (resource.condition) {
+      const condRef = this.conditionVarRef(resource.condition, ir, importedSymbols);
+      return `export const ${varName} = new ${resourceClass}(${propsStr}, { Condition: ${condRef} });`;
+    }
 
     if (propsStr === "{}") {
       return `export const ${varName} = new ${resourceClass}();`;
@@ -344,9 +405,29 @@ export class CFGenerator implements TypeScriptGenerator {
 
       if (obj.__intrinsic === "If") {
         const condition = obj.condition as string;
+        const condRef = this.conditionVarRef(condition, ir, importedSymbols);
         const trueVal = this.generateValue(obj.valueIfTrue, ir, importedSymbols);
         const falseVal = this.generateValue(obj.valueIfFalse, ir, importedSymbols);
-        return `If("${condition}", ${trueVal}, ${falseVal})`;
+        return `If(${condRef}, ${trueVal}, ${falseVal})`;
+      }
+
+      if (obj.__intrinsic === "Equals") {
+        const left = this.generateValue(obj.left, ir, importedSymbols);
+        const right = this.generateValue(obj.right, ir, importedSymbols);
+        return `Equals(${left}, ${right})`;
+      }
+
+      if (obj.__intrinsic === "And" || obj.__intrinsic === "Or") {
+        const operands = (obj.conditions as unknown[]).map((c) => this.generateValue(c, ir, importedSymbols));
+        return `${obj.__intrinsic}(${operands.join(", ")})`;
+      }
+
+      if (obj.__intrinsic === "Not") {
+        return `Not(${this.generateValue(obj.condition, ir, importedSymbols)})`;
+      }
+
+      if (obj.__intrinsic === "ConditionRef") {
+        return this.conditionVarRef(obj.name as string, ir, importedSymbols);
       }
 
       if (obj.__intrinsic === "Join") {

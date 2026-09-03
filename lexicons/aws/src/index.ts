@@ -1,6 +1,9 @@
 // Parameter
 export { Parameter } from "./parameter";
 
+// Condition (#2068) — the Conditions-section declarable
+export { Condition, isCondition, CONDITION_ENTITY_TYPE } from "./condition";
+
 // Default Tags
 export { defaultTags, isDefaultTags, DEFAULT_TAGS_MARKER } from "./default-tags";
 export type { DefaultTags, TagEntry } from "./default-tags";
@@ -105,6 +108,10 @@ export {
   Split,
   Base64,
   GetAZs,
+  Equals,
+  And,
+  Or,
+  Not,
   SubIntrinsic,
   RefIntrinsic,
   GetAttIntrinsic,
@@ -114,7 +121,12 @@ export {
   SplitIntrinsic,
   Base64Intrinsic,
   GetAZsIntrinsic,
+  EqualsIntrinsic,
+  AndIntrinsic,
+  OrIntrinsic,
+  NotIntrinsic,
 } from "./intrinsics";
+export type { ConditionOperand } from "./intrinsics";
 
 // Pseudo-parameters
 export {

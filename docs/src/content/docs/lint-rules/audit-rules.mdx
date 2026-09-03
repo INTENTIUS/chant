@@ -1424,6 +1424,12 @@ Add one NAT gateway per Availability Zone and point each AZ's subnets at its own
 
 Attach a second VPNConnection (ideally to a separate Customer Gateway) for redundancy.
 
+### WAW069
+
+**Template references a condition it never declares** — merge-worthy · guidance
+
+Declare the condition in the Conditions section (new Condition(...)), or fix the referenced name.
+
 ## Azure ARM (AZR)
 
 Run against ARM deployment templates (JSON).
