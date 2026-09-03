@@ -32,11 +32,21 @@ export function hasIntrinsicInValue(value: unknown, name: string): boolean {
 }
 
 /**
- * Check if any resource in the IR uses a given intrinsic.
+ * Check if any resource, condition, or output in the IR uses a given intrinsic.
  */
 export function irUsesIntrinsic(ir: TemplateIR, name: string): boolean {
   for (const resource of ir.resources) {
     if (hasIntrinsicInValue(resource.properties, name)) {
+      return true;
+    }
+  }
+  for (const condition of ir.conditions ?? []) {
+    if (hasIntrinsicInValue(condition.expression, name)) {
+      return true;
+    }
+  }
+  for (const output of ir.outputs ?? []) {
+    if (hasIntrinsicInValue(output.value, name) || hasIntrinsicInValue(output.exportName, name)) {
       return true;
     }
   }

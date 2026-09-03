@@ -218,7 +218,7 @@ function generateRuntimeIndex(
   return coreGenerateRuntimeIndex(resourceEntries, propertyEntries, {
     lexiconName: "aws",
     intrinsicReExports: {
-      names: ["Sub", "Ref", "GetAtt", "If", "Join", "Select", "Split", "Base64"],
+      names: ["Sub", "Ref", "GetAtt", "If", "Join", "Select", "Split", "Base64", "Equals", "And", "Or", "Not"],
       from: "../intrinsics",
     },
     pseudoReExports: {

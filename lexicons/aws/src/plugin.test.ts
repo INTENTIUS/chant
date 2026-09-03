@@ -48,11 +48,15 @@ describe("awsPlugin", () => {
 
   test("returns intrinsics", () => {
     const intrinsics = awsPlugin.intrinsics!();
-    expect(intrinsics.length).toBe(9);
+    expect(intrinsics.length).toBe(13);
     const names = intrinsics.map((i) => i.name);
     expect(names).toContain("Sub");
     expect(names).toContain("Ref");
     expect(names).toContain("GetAtt");
+    expect(names).toContain("Equals");
+    expect(names).toContain("And");
+    expect(names).toContain("Or");
+    expect(names).toContain("Not");
   });
 
   test("returns pseudo-parameters", () => {

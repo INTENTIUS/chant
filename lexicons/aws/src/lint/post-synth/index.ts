@@ -60,6 +60,7 @@ import { waw065 } from "./waw065";
 import { waw066 } from "./waw066";
 import { waw067 } from "./waw067";
 import { waw068 } from "./waw068";
+import { waw069 } from "./waw069";
 
 export const postSynthChecks: PostSynthCheck[] = [
   cor020,
@@ -122,4 +123,5 @@ export const postSynthChecks: PostSynthCheck[] = [
   waw066,
   waw067,
   waw068,
+  waw069,
 ];

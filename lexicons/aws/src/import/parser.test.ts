@@ -198,3 +198,99 @@ describe("CFParser", () => {
     expect(vars.KEY).toBe("value");
   });
 });
+
+describe("CFParser conditions and outputs (#2069)", () => {
+  const parser = new CFParser();
+
+  const template = JSON.stringify({
+    AWSTemplateFormatVersion: "2010-09-09",
+    Parameters: { Cutover: { Type: "String", Default: "false" } },
+    Conditions: {
+      DoCutover: { "Fn::Equals": [{ Ref: "Cutover" }, "true"] },
+      NoCutover: { "Fn::Not": [{ Condition: "DoCutover" }] },
+    },
+    Resources: {
+      Rule: {
+        Type: "AWS::Logs::LogGroup",
+        Condition: "DoCutover",
+        Properties: { LogGroupName: { "Fn::If": ["DoCutover", "/on", "/off"] } },
+      },
+    },
+    Outputs: {
+      RuleName: { Condition: "DoCutover", Value: { Ref: "Rule" }, Description: "d", Export: { Name: "rule-name" } },
+      Plain: { Value: "literal" },
+    },
+  });
+
+  test("parses the Conditions section, Condition references included", () => {
+    const ir = parser.parse(template);
+    expect(ir.conditions).toHaveLength(2);
+    expect(ir.conditions![0]).toEqual({
+      name: "DoCutover",
+      expression: { __intrinsic: "Equals", left: { __intrinsic: "Ref", name: "Cutover" }, right: "true" },
+    });
+    expect(ir.conditions![1]).toEqual({
+      name: "NoCutover",
+      expression: { __intrinsic: "Not", condition: { __intrinsic: "ConditionRef", name: "DoCutover" } },
+    });
+  });
+
+  test("carries the resource-level Condition key", () => {
+    const ir = parser.parse(template);
+    expect(ir.resources[0].condition).toBe("DoCutover");
+  });
+
+  test("parses Outputs with Condition, Description, and Export", () => {
+    const ir = parser.parse(template);
+    expect(ir.outputs).toHaveLength(2);
+    expect(ir.outputs![0]).toEqual({
+      name: "RuleName",
+      value: { __intrinsic: "Ref", name: "Rule" },
+      description: "d",
+      exportName: "rule-name",
+      condition: "DoCutover",
+    });
+    expect(ir.outputs![1]).toEqual({
+      name: "Plain",
+      value: "literal",
+      description: undefined,
+      exportName: undefined,
+      condition: undefined,
+    });
+  });
+
+  test("a single-key Condition object in resource properties is NOT a condition reference", () => {
+    const ir = parser.parse(
+      JSON.stringify({
+        Resources: {
+          Role: {
+            Type: "AWS::IAM::Role",
+            Properties: {
+              Policy: { Condition: "not-a-ref" },
+            },
+          },
+        },
+      }),
+    );
+    expect(ir.resources[0].properties.Policy).toEqual({ Condition: "not-a-ref" });
+  });
+
+  test("names sections import cannot carry instead of dropping them silently", () => {
+    const ir = parser.parse(
+      JSON.stringify({
+        Resources: { R: { Type: "AWS::S3::Bucket" } },
+        Mappings: { M: {} },
+        Rules: { R1: {} },
+      }),
+    );
+    expect(ir.warnings).toEqual([
+      'Template section "Mappings" is not carried by import — it is dropped from the generated source',
+      'Template section "Rules" is not carried by import — it is dropped from the generated source',
+    ]);
+  });
+
+  test("no warnings for fully-carried templates", () => {
+    const ir = parser.parse(template);
+    expect(ir.warnings).toBeUndefined();
+  });
+});

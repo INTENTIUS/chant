@@ -3,6 +3,8 @@ import type {
   TemplateIR,
   ResourceIR,
   ParameterIR,
+  ConditionIR,
+  OutputIR,
 } from "@intentius/chant/import/parser";
 import { BaseValueParser } from "@intentius/chant/import/base-parser";
 import yaml from "js-yaml";
@@ -114,8 +116,19 @@ interface CFTemplate {
   AWSTemplateFormatVersion?: string;
   Description?: string;
   Parameters?: Record<string, CFParameter>;
+  Conditions?: Record<string, unknown>;
   Resources?: Record<string, CFResource>;
-  Outputs?: Record<string, unknown>;
+  Outputs?: Record<string, CFOutput>;
+}
+
+/**
+ * CloudFormation output
+ */
+interface CFOutput {
+  Value: unknown;
+  Description?: string;
+  Export?: { Name?: unknown };
+  Condition?: string;
 }
 
 /**
@@ -135,6 +148,7 @@ interface CFResource {
   Properties?: Record<string, unknown>;
   Metadata?: Record<string, unknown>;
   DependsOn?: string | string[];
+  Condition?: string;
 }
 
 /**
@@ -156,16 +170,80 @@ export class CFParser extends BaseValueParser implements TemplateParser {
     const template = parsed as CFTemplate;
 
     const parameters = this.parseParameters(template.Parameters ?? {});
+    const conditions = this.parseConditions(template.Conditions ?? {});
     const resources = this.parseResources(template.Resources ?? {});
+    const outputs = this.parseOutputs(template.Outputs ?? {});
+    const warnings = this.collectDroppedSectionWarnings(template as unknown as Record<string, unknown>);
 
     return {
       parameters,
+      conditions: conditions.length > 0 ? conditions : undefined,
       resources,
+      outputs: outputs.length > 0 ? outputs : undefined,
+      warnings: warnings.length > 0 ? warnings : undefined,
       metadata: {
         version: template.AWSTemplateFormatVersion ?? "2010-09-09",
         description: template.Description,
       },
     };
+  }
+
+  /**
+   * Template sections import carries. Anything else is named in a warning
+   * rather than dropped silently (#2069).
+   */
+  private static readonly CARRIED_SECTIONS = new Set([
+    "AWSTemplateFormatVersion",
+    "Description",
+    "Parameters",
+    "Conditions",
+    "Resources",
+    "Outputs",
+  ]);
+
+  private collectDroppedSectionWarnings(template: Record<string, unknown>): string[] {
+    const warnings: string[] = [];
+    for (const key of Object.keys(template)) {
+      if (!CFParser.CARRIED_SECTIONS.has(key)) {
+        warnings.push(`Template section "${key}" is not carried by import — it is dropped from the generated source`);
+      }
+    }
+    return warnings;
+  }
+
+  /**
+   * Parse the Conditions section (#2069). Inside a condition expression the
+   * single-key `{ "Condition": "<name>" }` form references another declared
+   * condition; `inConditionExpression` scopes that dispatch to this section
+   * so a resource property that happens to hold a single-key `Condition`
+   * object is left alone.
+   */
+  private inConditionExpression = false;
+
+  private parseConditions(conditions: Record<string, unknown>): ConditionIR[] {
+    return Object.entries(conditions).map(([name, expression]) => {
+      this.inConditionExpression = true;
+      try {
+        return { name, expression: this.parseValue(expression) };
+      } finally {
+        this.inConditionExpression = false;
+      }
+    });
+  }
+
+  /**
+   * Parse the Outputs section (#2069).
+   */
+  private parseOutputs(outputs: Record<string, CFOutput>): OutputIR[] {
+    return Object.entries(outputs)
+      .filter(([_, output]) => typeof output === "object" && output !== null)
+      .map(([name, output]) => ({
+        name,
+        value: this.parseValue(output.Value),
+        description: output.Description,
+        exportName: output.Export?.Name !== undefined ? this.parseValue(output.Export.Name) : undefined,
+        condition: typeof output.Condition === "string" ? output.Condition : undefined,
+      }));
   }
 
   /**
@@ -192,6 +270,7 @@ export class CFParser extends BaseValueParser implements TemplateParser {
         type: resource.Type,
         properties: this.parseProperties(resource.Properties ?? {}),
         metadata: resource.Metadata,
+        condition: typeof resource.Condition === "string" ? resource.Condition : undefined,
       }));
   }
 
@@ -212,6 +291,12 @@ export class CFParser extends BaseValueParser implements TemplateParser {
    * CFN-specific intrinsic dispatch table.
    */
   protected dispatchIntrinsic(key: string, value: unknown, _obj: Record<string, unknown>): unknown | null {
+    // `{ "Condition": "<name>" }` — only valid inside the Conditions section
+    // (#2069); see parseConditions for the scoping.
+    if (key === "Condition" && this.inConditionExpression && typeof value === "string") {
+      return { __intrinsic: "ConditionRef", name: value };
+    }
+
     if (key === "Ref") {
       return { __intrinsic: "Ref", name: value };
     }

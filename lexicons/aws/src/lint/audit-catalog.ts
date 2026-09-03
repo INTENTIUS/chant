@@ -88,4 +88,5 @@ export const awsAuditCatalog: Record<string, RuleMeta> = {
   WAW066: auditRule("WAW066", "merge-worthy", "guidance", "Private subnet's route table has no working default route", "Add a 0.0.0.0/0 route to a NAT gateway/Transit Gateway that exists in the template.", { category: "correctness" }),
   WAW067: auditRule("WAW067", "report-only", "guidance", "Single-AZ NAT gateway serves multi-AZ private subnets", "Add one NAT gateway per Availability Zone and point each AZ's subnets at its own.", { category: "best-practice" }),
   WAW068: auditRule("WAW068", "report-only", "guidance", "VPN Gateway or Transit Gateway has only one attached VPN Connection", "Attach a second VPNConnection (ideally to a separate Customer Gateway) for redundancy.", { category: "best-practice" }),
+  WAW069: auditRule("WAW069", "merge-worthy", "guidance", "Template references a condition it never declares", "Declare the condition in the Conditions section (new Condition(...)), or fix the referenced name.", { category: "correctness" }),
 };

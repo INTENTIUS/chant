@@ -6,7 +6,7 @@ description: "Every lint rule and post-synth check provided by the AWS CloudForm
 {/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-aws` — DO NOT EDIT.
     Edit lexicons/aws/src/codegen/docs.ts instead; changes here are overwritten. */}
 
-The AWS CloudFormation lexicon provides **63** rules: 3 lint rules and 60 post-synth checks.
+The AWS CloudFormation lexicon provides **64** rules: 3 lint rules and 61 post-synth checks.
 
 ## Lint Rules
 
@@ -82,3 +82,4 @@ Post-synth checks validate the serialized output after the build pipeline comple
 | `WAW066` | Private subnet's route table has no default route, or its default route targets a gateway that does not exist in the template |
 | `WAW067` | A single-AZ NAT gateway serves private subnets across multiple Availability Zones — single point of failure for cross-AZ egress |
 | `WAW068` | VPN Gateway or Transit Gateway has only one attached VPN Connection — no redundant path for hybrid connectivity |
+| `WAW069` | Template references a condition it never declares — resource/output Condition keys, Fn::If, and Condition references must name an entry in the Conditions section |

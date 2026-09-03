@@ -1,4 +1,8 @@
-import { Bucket, DbInstance, Instance } from "@intentius/chant-lexicon-aws";
+import { Bucket, Condition, DbInstance, Equals, Instance, Ref } from "@intentius/chant-lexicon-aws";
+import { environment } from "./parameter-declaration";
+
+// The condition a resource-level Condition attribute references
+export const IsProduction = new Condition(Equals(Ref(environment), "prod"));
 
 // DeletionPolicy — protect data from accidental stack deletion
 export const dbInstance = new DbInstance(
@@ -24,7 +28,7 @@ export const prodBucket = new Bucket(
       RestrictPublicBuckets: true,
     },
   },
-  { Condition: "IsProduction" },
+  { Condition: IsProduction },
 );
 
 // Metadata — attach cfn-init configuration to an EC2 instance

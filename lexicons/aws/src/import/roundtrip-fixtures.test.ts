@@ -112,6 +112,56 @@ describe("parameters.json build roundtrip", () => {
   });
 });
 
+describe("with-conditions.json build roundtrip (#2069)", () => {
+  test("Conditions, Condition keys, and the conditioned output round-trip exactly", async () => {
+    const content = readFileSync(join(roundtripDir, "with-conditions.json"), "utf-8");
+    const source = JSON.parse(content);
+
+    const ir = parser.parse(content);
+    const files = generator.generate(ir);
+    const mainFile = files.find((f) => f.path === "main.ts")!;
+
+    // The generated source declares both conditions and keeps the references
+    expect(mainFile.content).toContain("new Condition(Equals(Ref(Cutover), \"true\"))");
+    expect(mainFile.content).toContain("new Condition(Not(DoCutover))");
+    expect(mainFile.content).toContain("{ Condition: DoCutover }");
+    expect(mainFile.content).toContain("stackOutput(Ref(Rule), { condition: DoCutover })");
+
+    const dir = mkdtempSync(join(import.meta.dirname, "../../.roundtrip-tmp-"));
+    try {
+      const srcDir = join(dir, "src");
+      mkdirSync(srcDir);
+      writeFileSync(join(srcDir, "main.ts"), mainFile.content);
+
+      const result = await build(srcDir, [awsSerializer]);
+      expect(result.errors).toHaveLength(0);
+
+      const template = JSON.parse(result.outputs.get("aws") as string);
+
+      // The Conditions section round-trips exactly, {Condition: ...} ref included
+      expect(template.Conditions).toEqual(source.Conditions);
+      // The resource keeps its Condition key and its Fn::If
+      expect(template.Resources.Rule.Condition).toBe("DoCutover");
+      expect(template.Resources.Rule.Properties.LogGroupName).toEqual(
+        source.Resources.Rule.Properties.LogGroupName,
+      );
+      // The conditioned output round-trips exactly
+      expect(template.Outputs).toEqual(source.Outputs);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("a section import cannot carry is named in a warning, never dropped silently", () => {
+    const template = JSON.parse(readFileSync(join(roundtripDir, "with-conditions.json"), "utf-8"));
+    template.Mappings = { RegionMap: { "us-east-1": { AMI: "ami-123" } } };
+    const ir = parser.parse(JSON.stringify(template));
+    expect(ir.warnings).toEqual([
+      'Template section "Mappings" is not carried by import — it is dropped from the generated source',
+    ]);
+  });
+});
+
 describe("SAM roundtrip fixtures", () => {
   const fixtures = readdirSync(samDir).filter(
     (f) => f.endsWith(".yaml") || f.endsWith(".yml"),

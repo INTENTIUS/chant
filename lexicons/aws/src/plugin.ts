@@ -111,6 +111,10 @@ export const awsPlugin: LexiconPlugin = {
       { name: "Split", description: "Fn::Split — split string by delimiter", isTag: false, foldsAsCall: true },
       { name: "Base64", description: "Fn::Base64 — encode to Base64", isTag: false, foldsAsCall: true },
       { name: "GetAZs", description: "Fn::GetAZs — list Availability Zones", isTag: false, foldsAsCall: true },
+      { name: "Equals", description: "Fn::Equals — condition comparing two values", isTag: false, foldsAsCall: true },
+      { name: "And", description: "Fn::And — condition conjunction", isTag: false, foldsAsCall: true },
+      { name: "Or", description: "Fn::Or — condition disjunction", isTag: false, foldsAsCall: true },
+      { name: "Not", description: "Fn::Not — condition negation", isTag: false, foldsAsCall: true },
     ];
   },
 
