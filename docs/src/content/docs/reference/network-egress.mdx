@@ -121,8 +121,9 @@ Freshness checks that run in this repository's own CI, against `api.github.com`.
 |---|---|---|---|
 | `packages/core/src/op/emulator-freshness.ts` | `fetch` | `api.github.com` release metadata | Reports how far behind an emulator's pinned image is. Advisory, never gating, and reached only from `scripts/check-emulator-freshness.ts` — no CLI command calls it. |
 | `scripts/dogwood-freshness.ts` | `fetch` | `api.github.com` commit and tree metadata | Compares the committed dogwood pin against upstream for `scripts/check-dogwood-freshness.ts`. The transport is injectable, which is why the comparison half is unit-tested without a network. |
+| `scripts/prior-art-sweep.ts` | `fetch` | the rule indexes of the tools the audit rules credit: `raw.githubusercontent.com`, `api.github.com` directory listings, and a few tools' own docs sites (checkov.io, PSRule for Azure, the Bicep linter page) | Diffs each credited tool's published rule list against `scripts/prior-art/snapshot.json` so a rule that appears or disappears upstream, or a credit whose upstream id no longer resolves, is reported. Run by the monthly `prior-art-sweep` workflow and by hand; never by a CLI command or a test. |
 
-**30 modules** across `packages/`, `lexicons/`, `scripts/`, `ops/` call a network primitive directly. Every other module that reaches the network does so through one of them.
+**31 modules** across `packages/`, `lexicons/`, `scripts/`, `ops/` call a network primitive directly. Every other module that reaches the network does so through one of them.
 
 {/* GENERATED:egress-catalogue:end */}
 
