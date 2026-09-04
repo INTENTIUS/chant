@@ -16,6 +16,8 @@
  */
 
 import type { Authority, RuleMeta } from "@intentius/chant/audit/catalog";
+import { fountainAuditLineage } from "./audit-lineage";
+import { applyLineage } from "@intentius/chant/audit/catalog";
 
 const FOUNTAIN_PRIMITIVES: Authority = {
   name: "fountain — Environment, Vault, and Agent primitives",
@@ -115,3 +117,6 @@ export const fountainAuditCatalog: Record<string, RuleMeta> = {
     "fountain reconciles by name — rename one, or the second silently overwrites the first.",
   ),
 };
+
+// Prior art credits live beside the rules in ./audit-lineage.ts (see core audit/prior-art.ts).
+applyLineage(fountainAuditCatalog, fountainAuditLineage);

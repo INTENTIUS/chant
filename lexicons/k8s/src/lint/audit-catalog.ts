@@ -2,7 +2,8 @@
  * The k8s lexicon's chant audit catalog — metadata for its post-synth rules
  * (WK8 and ARGO Kubernetes-manifest rules). Contributed via k8sPlugin.auditCatalog() (#687).
  */
-import { auditRule, K8S_PSS, K8S_SECRETS, SCORECARD_PINNED, type RuleMeta } from "@intentius/chant/audit/catalog";
+import { auditRule, K8S_PSS, K8S_SECRETS, SCORECARD_PINNED, type RuleMeta, applyLineage } from "@intentius/chant/audit/catalog";
+import { k8sAuditLineage } from "./audit-lineage";
 
 export const k8sAuditCatalog: Record<string, RuleMeta> = {
   ARGO002: auditRule("ARGO002", "merge-worthy", "guidance", "Argo Application references an undeclared AppProject", "Declare the named AppProject or reference an existing project.", { category: "correctness" }),
@@ -46,3 +47,6 @@ export const k8sAuditCatalog: Record<string, RuleMeta> = {
   WK8504: auditRule("WK8504", "merge-worthy", "guidance", "committed-encrypted secret declaration does not resolve", "Point `file` at the committed ciphertext, make its metadata.name match the declaration, and re-run `sops -e -i` so every data/stringData value is ENC[...].", { authority: [K8S_SECRETS] }),
   WK8505: auditRule("WK8505", "report-only", "guidance", "committed-encrypted secret with no Flux decryption wiring", "Add decryption: \"sops\" to the FluxAppFor reconciling the path that carries the ciphertext sidecar, or ignore if that Kustomization is declared in a different build.", { category: "correctness" }),
 };
+
+// Prior art credits live beside the rules in ./audit-lineage.ts (see core audit/prior-art.ts).
+applyLineage(k8sAuditCatalog, k8sAuditLineage);

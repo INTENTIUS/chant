@@ -14,6 +14,8 @@
     "generate:barrels": "tsx scripts/generate-post-synth-barrels.ts",
     "generate:egress-catalogue": "tsx scripts/generate-egress-catalogue.ts",
     "generate:fold-coverage": "tsx scripts/generate-fold-coverage.ts",
+    "generate:audit-rules-doc": "tsx scripts/generate-audit-rules-doc.ts",
+    "sweep:prior-art": "tsx scripts/prior-art-sweep.ts",
     "typecheck": "tsx scripts/typecheck.ts",
     "lint:docs-prose": "node scripts/lint-docs-sentences.mjs"
   },

@@ -9,6 +9,8 @@
  * role — so every entry is constructed directly with `yamlBased: false`.
  */
 import type { RuleMeta } from "@intentius/chant/audit/catalog";
+import { k3sAuditLineage } from "./audit-lineage";
+import { applyLineage } from "@intentius/chant/audit/catalog";
 
 function entityRule(
   id: string,
@@ -63,3 +65,6 @@ export const k3sAuditCatalog: Record<string, RuleMeta> = {
     "Remove the component's config key, or drop it from `disable`.",
   ),
 };
+
+// Prior art credits live beside the rules in ./audit-lineage.ts (see core audit/prior-art.ts).
+applyLineage(k3sAuditCatalog, k3sAuditLineage);

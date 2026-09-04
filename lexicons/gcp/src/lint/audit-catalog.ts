@@ -2,7 +2,8 @@
  * The gcp lexicon's `chant audit` catalog — metadata for the WGC* Config
  * Connector post-synth rules. Contributed via `gcpPlugin.auditCatalog()` (#687).
  */
-import { auditRule, type RuleMeta, type Authority } from "@intentius/chant/audit/catalog";
+import { auditRule, type RuleMeta, type Authority, applyLineage } from "@intentius/chant/audit/catalog";
+import { gcpAuditLineage } from "./audit-lineage";
 
 const GCP_SEC: Authority = { name: "Google Cloud — Security best practices", url: "https://cloud.google.com/security/best-practices" };
 
@@ -36,3 +37,6 @@ export const gcpAuditCatalog: Record<string, RuleMeta> = {
   WGC502: auditRule("WGC502", "merge-worthy", "guidance", "Org Policy guardrail defines no rules", "Add rules to the OrgPolicyPolicy — without them the constraint binds nothing.", { authority: [GCP_SEC] }),
   WGC503: auditRule("WGC503", "merge-worthy", "guidance", "Audit logging dropped or scoped down", "Keep auditLogConfigs populated and remove exemptedMembers from the IAMAuditConfig.", { authority: [GCP_SEC] }),
 };
+
+// Prior art credits live beside the rules in ./audit-lineage.ts (see core audit/prior-art.ts).
+applyLineage(gcpAuditCatalog, gcpAuditLineage);

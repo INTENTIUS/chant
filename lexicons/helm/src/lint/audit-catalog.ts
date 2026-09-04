@@ -2,7 +2,8 @@
  * The helm lexicon's chant audit catalog — metadata for its post-synth rules
  * (WHM Helm-chart rules). Contributed via helmPlugin.auditCatalog() (#687).
  */
-import { auditRule, K8S_PSS, K8S_SECRETS, SCORECARD_PINNED, type RuleMeta } from "@intentius/chant/audit/catalog";
+import { auditRule, K8S_PSS, K8S_SECRETS, SCORECARD_PINNED, type RuleMeta, applyLineage } from "@intentius/chant/audit/catalog";
+import { helmAuditLineage } from "./audit-lineage";
 
 export const helmAuditCatalog: Record<string, RuleMeta> = {
   WHM005: auditRule("WHM005", "report-only", "guidance", "Sub-chart wrapper with no templates", "Deploy the upstream chart directly instead of an empty wrapper.", { category: "best-practice" }),
@@ -29,3 +30,6 @@ export const helmAuditCatalog: Record<string, RuleMeta> = {
   WHM503: auditRule("WHM503", "merge-worthy", "guidance", "Pinned render carries Secret data", "Declare the value with runtimeSlot() or replace the Secret with HelmExternalSecret.", { authority: [K8S_SECRETS] }),
   WHM504: auditRule("WHM504", "merge-worthy", "guidance", "Dead value assignment", "Remove supplied values that never survive coalescing (shadowed, disabled subchart, or unknown subchart).", { category: "correctness" }),
 };
+
+// Prior art credits live beside the rules in ./audit-lineage.ts (see core audit/prior-art.ts).
+applyLineage(helmAuditCatalog, helmAuditLineage);

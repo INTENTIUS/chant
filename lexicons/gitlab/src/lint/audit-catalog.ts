@@ -2,7 +2,8 @@
  * The gitlab lexicon's chant audit catalog — metadata for its post-synth rules
  * (WGL GitLab CI rules). Contributed via gitlabPlugin.auditCatalog() (#687).
  */
-import { auditRule, GH_INJECTION, GH_OIDC, GH_PWN, GH_SECRETS, SCORECARD_PINNED, type RuleMeta } from "@intentius/chant/audit/catalog";
+import { auditRule, GH_INJECTION, GH_OIDC, GH_PWN, GH_SECRETS, SCORECARD_PINNED, type RuleMeta, applyLineage } from "@intentius/chant/audit/catalog";
+import { gitlabAuditLineage } from "./audit-lineage";
 
 export const gitlabAuditCatalog: Record<string, RuleMeta> = {
   WGL010: auditRule("WGL010", "merge-worthy", "guidance", "Job references an undefined stage", "Add the stage to `stages:` or fix the job's `stage:`.", { category: "correctness" }),
@@ -50,3 +51,6 @@ export const gitlabAuditCatalog: Record<string, RuleMeta> = {
   WGL049: auditRule("WGL049", "report-only", "guidance", "Dependency install without a cache", "Add a `cache:` covering the dependency directory.", { category: "efficiency" }),
   WGL050: auditRule("WGL050", "report-only", "guidance", "Merge-request job missing interruptible", "Add `interruptible: true` so a superseded pipeline can be cancelled.", { category: "efficiency" }),
 };
+
+// Prior art credits live beside the rules in ./audit-lineage.ts (see core audit/prior-art.ts).
+applyLineage(gitlabAuditCatalog, gitlabAuditLineage);

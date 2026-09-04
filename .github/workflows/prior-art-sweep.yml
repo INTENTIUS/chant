@@ -1,0 +1,56 @@
+name: prior-art-sweep
+
+# Does any tool chant's audit rules credit now check something chant does not,
+# and does every credit still resolve? scripts/prior-art-sweep.ts fetches each
+# credited tool's rule index and diffs it against scripts/prior-art/snapshot.json.
+# Monthly, and on demand. A non-empty delta opens (or refreshes) one issue; the
+# snapshot itself is only moved by a PR that runs `--update-snapshot`, so the
+# issue stays open until someone has looked.
+
+on:
+  schedule:
+    - cron: '0 7 1 * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Sweep the prior-art indexes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          npx tsx scripts/prior-art-sweep.ts --json > sweep.json
+          npx tsx scripts/prior-art-sweep.ts > sweep.md
+          cat sweep.md
+      - uses: actions/upload-artifact@v4
+        with:
+          name: prior-art-sweep
+          path: |
+            sweep.json
+            sweep.md
+      - name: Open or refresh the sweep issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          delta=$(node -e 'const r=require("./sweep.json"); console.log(r.reports.reduce((n,t)=>n+t.newUpstream.length+t.goneUpstream.length+t.staleCredits.length+t.errors.length,0))')
+          if [ "$delta" = "0" ]; then echo "no delta"; exit 0; fi
+          title="prior-art sweep: $delta change(s) across the credited tools"
+          existing=$(gh issue list --label prior-art --state open --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            gh issue edit "$existing" --title "$title" --body-file sweep.md
+          else
+            gh label create prior-art --description "Prior-art sweep findings" --color 5319e7 2>/dev/null || true
+            gh issue create --title "$title" --body-file sweep.md --label prior-art
+          fi

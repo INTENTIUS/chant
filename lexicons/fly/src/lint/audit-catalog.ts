@@ -16,6 +16,8 @@
  */
 
 import type { RuleMeta } from "@intentius/chant/audit/catalog";
+import { flyAuditLineage } from "./audit-lineage";
+import { applyLineage } from "@intentius/chant/audit/catalog";
 
 /** Entity-based rule: everything fly ships. */
 function rule(
@@ -44,3 +46,6 @@ export const flyAuditCatalog: Record<string, RuleMeta> = {
     "Declare the Volume in the same stack, or point the mount at one that is.",
   ),
 };
+
+// Prior art credits live beside the rules in ./audit-lineage.ts (see core audit/prior-art.ts).
+applyLineage(flyAuditCatalog, flyAuditLineage);

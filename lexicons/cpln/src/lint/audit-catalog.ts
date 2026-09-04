@@ -16,6 +16,8 @@
  */
 
 import type { Authority, RuleMeta } from "@intentius/chant/audit/catalog";
+import { cplnAuditLineage } from "./audit-lineage";
+import { applyLineage } from "@intentius/chant/audit/catalog";
 
 // ── Authorities ────────────────────────────────────────────────────
 
@@ -228,3 +230,6 @@ export const cplnAuditCatalog: Record<string, RuleMeta> = {
     "Pick exactly one target scope, target a policy-targetable kind, and never set origin by hand.",
   ),
 };
+
+// Prior art credits live beside the rules in ./audit-lineage.ts (see core audit/prior-art.ts).
+applyLineage(cplnAuditCatalog, cplnAuditLineage);

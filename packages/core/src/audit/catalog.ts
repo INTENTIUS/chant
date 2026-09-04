@@ -17,6 +17,11 @@
  * test asserts the aggregate stays in sync with the lexicons' post-synth checks.
  */
 
+import type { Lineage } from "./prior-art";
+import { applyLineage as attachLineage } from "./prior-art";
+import { coreAuditLineage } from "./lineage";
+export { PRIOR_ART, applyLineage, lineageLabel, type Lineage, type LineageRelation, type PriorArtEntry, type PriorArtTool } from "./prior-art";
+
 export type Tier = "merge-worthy" | "report-only";
 
 /** deterministic = safe auto-fix/diff; guidance = report text only (needs judgment). */
@@ -48,6 +53,11 @@ export interface RuleMeta {
   title: string;
   /** External backing so a finding isn't just chant's opinion. */
   authority?: Authority[];
+  /**
+   * Prior art: the open-source tools whose rules check the same condition
+   * (./prior-art.ts). Credit, not authority — never affects tier or category.
+   */
+  lineage?: Lineage[];
   /** One-line fix guidance (always present). */
   remediation: string;
   /**
@@ -159,13 +169,14 @@ function meta(
   title: string,
   remediation: string,
   authority?: Authority[],
+  lineage?: Lineage[],
 ): RuleMeta {
   // An authority citation is the strongest security signal, so it wins. Otherwise
   // the curated RULE_CATEGORY map (defined below, before RULE_CATALOG runs)
   // decides correctness vs best-practice vs security-without-authority; the drift
   // test guarantees every id is mapped, so the fallback is only a type belt.
   const category: Category = authority && authority.length > 0 ? "security" : RULE_CATEGORY[id] ?? "best-practice";
-  return { id, tier, fixKind, category, title, remediation, authority, yamlBased: true };
+  return { id, tier, fixKind, category, title, remediation, authority, ...(lineage?.length ? { lineage } : {}), yamlBased: true };
 }
 
 const M = "merge-worthy" as const;
@@ -337,6 +348,9 @@ export const RULE_CATALOG: Record<string, RuleMeta> = {
   ),
 };
 
+// Prior art credits for the core static rules (SEC/WRG/NGX/AGT/EXT) — ./lineage.ts.
+attachLineage(RULE_CATALOG, coreAuditLineage);
+
 /**
  * Build one catalog entry — the lexicon-facing constructor for
  * `LexiconPlugin.auditCatalog()` (#687), so a lexicon can declare its own rules'
@@ -351,10 +365,20 @@ export function auditRule(
   fixKind: FixKind,
   title: string,
   remediation: string,
-  opts?: { authority?: Authority[]; category?: Category },
+  opts?: { authority?: Authority[]; category?: Category; lineage?: Lineage[] },
 ): RuleMeta {
   const category: Category = opts?.authority && opts.authority.length > 0 ? "security" : (opts?.category ?? "best-practice");
-  return { id, tier, fixKind, category, title, remediation, authority: opts?.authority, yamlBased: true };
+  return {
+    id,
+    tier,
+    fixKind,
+    category,
+    title,
+    remediation,
+    authority: opts?.authority,
+    ...(opts?.lineage?.length ? { lineage: opts.lineage } : {}),
+    yamlBased: true,
+  };
 }
 
 /**
