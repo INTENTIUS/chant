@@ -29,13 +29,13 @@ import { Card, CardGrid } from '@astrojs/starlight/components';
 		Output is native to the target spec — standard CloudFormation, standard GitLab CI. Zero lock-in. If you stop using chant, the artifacts keep working.
 	</Card>
 	<Card title="Lexicons" icon="rocket">
-		Each operational area is a lexicon. Ten ship today — [AWS](/chant/lexicons/aws/) (1500+ resources, full type coverage), Azure, GCP, Kubernetes, Helm, Docker, GitHub Actions, GitLab CI, Forgejo, and Temporal. Build your own for any operational area.
+		Each operational area is a lexicon. Seventeen ship today — [AWS](/chant/lexicons/aws/) (1500+ resources, full type coverage), Azure, GCP, Kubernetes, Helm, k3d, k3s, Docker, GitHub Actions, GitLab CI, Forgejo, Temporal, Fly Machines, Fountain, Render, Control Plane, and Cedar. Build your own for any operational area.
 	</Card>
 	<Card title="Bring Your Own Lifecycle" icon="setting">
 		Pluggable lexicons in, pluggable lifecycles out, deterministic synthesis in the middle. The compiler is the foundation; the lifecycle is yours to choose — observe drift, reconcile (`cloud → code` PRs), or apply (`code → cloud`), per environment, with no authoritative state file. Lexicons are a shipped plugin contract; lifecycles today are durable rails you compose from Ops, with a foreign-backend plug as stated direction. [Lifecycle Models](/chant/concepts/lifecycle-models/).
 	</Card>
 	<Card title="Deployment Ops & Drift" icon="approve-check-circle">
-		Declare deployment phases in `*.op.ts`. `chant build` generates Temporal worker code; `chant run` starts a durable workflow with gate steps, parallel phases, and automatic rollback. `chant lifecycle diff --live` catches out-of-band drift across nine lexicons; `WatchOp` runs the same check on a cron.
+		Declare deployment phases in `*.op.ts`. `chant build` generates Temporal worker code; `chant run` starts a durable workflow with gate steps, parallel phases, and automatic rollback. `chant lifecycle diff --live` catches out-of-band drift across fourteen lexicons; `WatchOp` runs the same check on a cron.
 	</Card>
 	<Card title="Component Releases" icon="add-document">
 		Declare a releasable unit in `*.component.ts` — what it builds, what it produces, how it deploys — and one generic orchestrator runs it. Compose from a bounded capability set, with SBOM, SLSA provenance, and keyless signing attached to the artifact and a `verify` gate before apply. New components add no new pipelines. [Components](/chant/components/overview/).

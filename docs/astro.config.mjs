@@ -280,6 +280,7 @@ export default defineConfig({
 								{ label: 'Fly Machines', link: '/lexicons/fly/' },
 								{ label: 'Fountain', link: '/lexicons/fountain/' },
 								{ label: 'Control Plane', link: '/lexicons/cpln/' },
+								{ label: 'Cedar', link: '/lexicons/cedar/' },
 								{
 									label: 'Kubernetes',
 									items: [
@@ -291,6 +292,8 @@ export default defineConfig({
 									],
 								},
 								{ label: 'Helm Charts', link: '/lexicons/helm/' },
+								{ label: 'k3d', link: '/lexicons/k3d/' },
+								{ label: 'k3s', link: '/lexicons/k3s/' },
 								{ label: 'GitHub Actions', link: '/lexicons/github/' },
 								{ label: 'GitLab CI/CD', link: '/lexicons/gitlab/' },
 								{ label: 'Forgejo Actions', link: '/lexicons/forgejo/' },
