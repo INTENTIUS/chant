@@ -42,10 +42,11 @@ A gate or schedule in the Op fails fast in local mode with an actionable message
 
 ### `run list`
 
-List all discovered Ops (`*.op.ts` files) with their current Temporal run status. Requires `--temporal`.
+List all discovered Ops (`*.op.ts` files) with their current Temporal run status. Requires `--temporal`. With `--components`, list discovered components and their component workflows instead.
 
 ```bash
-chant run list
+chant run list --temporal
+chant run list --components --temporal
 ```
 
 Output columns: `NAME`, `PHASES`, `TASK-QUEUE`, `DEPENDS`, `OVERVIEW`, `STATUS`.
@@ -55,7 +56,8 @@ Output columns: `NAME`, `PHASES`, `TASK-QUEUE`, `DEPENDS`, `OVERVIEW`, `STATUS`.
 Show the current state of an Op's latest workflow run.
 
 ```bash
-chant run status alb-deploy
+chant run status alb-deploy --temporal
+chant run status search-service --components --temporal
 ```
 
 ### `run signal <name> <signal>`
@@ -67,6 +69,12 @@ chant run signal alb-deploy gate-dns-delegation
 ```
 
 The signal name must match the `signalName` passed to the `gate()` builder in the Op definition. Pass `--components` to signal a component's durable gate instead (see `run --components` below).
+
+For an approval gate, `--approver <name>` records who approved. It rides the signal payload into workflow history, and defaults to `GITHUB_ACTOR`, `GITLAB_USER_LOGIN`, or `USER` when omitted.
+
+```bash
+chant run signal alb-deploy release-approval --temporal --approver alex
+```
 
 ### `run cancel <name>`
 
@@ -83,7 +91,8 @@ Pass `--components` to cancel a component's durable workflow instead.
 Show run history for an Op.
 
 ```bash
-chant run log alb-deploy
+chant run log alb-deploy --temporal
+chant run log search-service --components --temporal
 ```
 
 ### `run --components <name|all>`
@@ -96,6 +105,21 @@ chant run --components all --env production
 ```
 
 A `gate` anywhere in a local-mode component's composition fails fast, before any step runs, with an actionable message pointing at `--temporal`.
+
+`--param name=value` and `--params-file <path>` bind declared build-time parameters for the component build, with the same precedence as [`chant build`](/chant/cli/build/#build-time-parameters). `--sandbox` runs any project source the driver has to execute in one isolated child process; an Op with a `policyGate` step is refused under `--sandbox`, since that gate builds the project in the chant process.
+
+#### Cross-job outputs: `--dump-outputs` and `--seed-outputs`
+
+A single-component run in one CI job can reference a component that ran in an earlier job. `--dump-outputs <file>` writes the accumulated cross-component and cross-stack outputs after the run as JSON keyed by component name. It is written even when the run fails, so a resumed run still has what completed. `--seed-outputs <file>` (repeatable) loads such files before the run, so a `stackOutput()` or `@<dep>.publish.*` reference to an upstream component resolves.
+
+```bash
+chant run --components shared-alb --env staging --dump-outputs out/shared-alb.json
+chant run --components search-service --env staging --seed-outputs out/shared-alb.json
+```
+
+#### Streaming progress: `--progress-json`
+
+`--progress-json` streams one NDJSON record per line to stdout while the run executes, so a consumer can render live progress instead of tailing logs. On the local component path each line is a `RunProgressEvent` (wave, component, phase, step). On `chant run <name> --temporal` each line is a `StepRecord` for a settled step, keyed by declared-step identity. Run semantics, ordering and exit code are unchanged.
 
 On a successful run, `chant run --components` auto-emits one immutable release record per component that published a digest-bearing artifact — `(component, env, digest, gitSha, runId, timestamp, actor)`, appended to the same [release ledger](/chant/components/observability/) the standalone [`chant components release`](/chant/cli/components/) command writes to. This is a post-run CLI step: it never runs inside the Temporal workflow (determinism), and it never runs at all when the deploy fails. See [Auto-recorded releases](#auto-recorded-releases) below.
 
@@ -145,6 +169,14 @@ The `--no-release-record` flag always wins over config for that one invocation. 
 | `-p, --profile <name>` | Temporal worker profile to use (from `chant.config.ts`); implies Temporal mode |
 | `--report` | Print a deployment report instead of running (`run <name> --temporal` only) |
 | `--force` | Required for `run cancel` |
+| `--progress-json` | Stream one NDJSON progress record per line to stdout while the run executes (`run --components`, `run <name> --temporal`) |
+| `--dump-outputs <file>` | After the run, write the accumulated cross-component outputs as JSON to `file` (`run --components`) |
+| `--seed-outputs <file>` | Before the run, load outputs written by `--dump-outputs`; repeatable (`run --components`) |
+| `--param <name=value>` | Bind a declared build-time parameter for the component build; repeatable (`run --components`) |
+| `--params-file <path>` | JSON file of build-time parameter values (`run --components`) |
+| `--sandbox` | Execute project source in one isolated child process. Refuses an Op with a `policyGate` step |
+| `--approver <name>` | Who approved a gated change; rides the gate signal into workflow history (`run signal`) |
+| `-v, --verbose` | List every resolved build parameter, and show stack traces on errors |
 
 ## Exit Codes
 

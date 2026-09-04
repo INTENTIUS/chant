@@ -9,6 +9,7 @@ diataxis: reference
 ```
 chant operator [flags]
 chant operator status [flags]
+chant operator log [flags]
 chant approve <op> <gate> [flags]
 ```
 
@@ -62,19 +63,41 @@ chant operator status --json
 | `--env <name>` | Scope to ConvergeOps declaring this environment |
 | `--json` | Emit the same data as a JSON array instead of the human-readable form |
 
+### `operator log`
+
+The history behind `status`. Every tick record for the discovered `ConvergeOp`s and every gate resolution against them, merged into one timeline ordered by timestamp, oldest first, read from the `chant/lifecycle` orphan branch. No daemon needs to be running.
+
+```bash
+chant operator log
+chant operator log --env staging --op staging-converge
+chant operator log --since 2026-08-25T00:00:00Z --limit 50 --json
+```
+
+| Flag | Meaning |
+|---|---|
+| `--env <name>` | Scope to ConvergeOps declaring this environment |
+| `--op <name>` | Restrict to one ConvergeOp by name. Omitted, every discovered ConvergeOp's ticks are merged |
+| `--since <iso>` | Keep entries at or after this ISO-8601 instant. Inclusive |
+| `--limit <n>` | Keep only the newest `n` entries. They still print oldest-first |
+| `--json` | Emit `{ entries, malformed }` as one document on stdout. `malformed` counts ledger lines that could not be parsed, per ledger, so a shorter timeline is never silent |
+
+Each tick line carries the tick's own id in brackets, so an outcome can be traced back to the tick that produced it. See the [Operator guide](/chant/guide/operator/#chant-operator-log) for the output format.
+
 ### `approve <op> <gate>`
 
 Record a gate's out-of-band resolution — the durable counterpart to a converge tick's `gated` outcome (see the [Operator guide's Gate-as-fact section](/chant/guide/operator/#gate-as-fact)).
 
 ```bash
 chant approve fountain-apply rollout-gate
-chant approve fountain-apply rollout-gate --actor alex --note "https://github.com/org/repo/pull/123"
+chant approve fountain-apply rollout-gate --actor alex --url "https://github.com/org/repo/pull/123"
+chant approve fountain-apply rollout-gate --note "paged on-call first; see the incident channel"
 ```
 
 | Flag | Default | Meaning |
 |---|---|---|
 | `--actor <name>` | `$GITHUB_ACTOR` / `$GITLAB_USER_LOGIN` / `$USER` | Who resolved the gate — recorded on the resolution fact |
-| `--note <text>` | — | Free-text context (e.g. a PR URL) recorded alongside the resolution |
+| `--url <url>` | the surrounding CI job's PR/MR, when there is one | The address this resolution happened at, typically the PR or MR that carried the change. Recorded typed on the resolution fact so a reader is not sniffing free text for a link. Must be an absolute http or https URL |
+| `--note <text>` | — | Free-text context recorded alongside the resolution. The link belongs in `--url`; this is for everything else |
 
 Recording a resolution does **not** retroactively unblock the gated op's own local dispatch — the local executor still refuses any Op containing a gate, unconditionally. Re-run it with `--temporal`, or let the merged PR the note points at carry the change itself.
 

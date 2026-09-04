@@ -7,11 +7,12 @@ diataxis: reference
 ## Synopsis
 
 ```
-chant lifecycle snapshot <env> [lexicon] [--src <dir>]
+chant lifecycle snapshot <env> [lexicon] [--deep] [--ambient] [--src <dir>]
 chant lifecycle show <env>
-chant lifecycle diff <env> [--live] [--src <dir>]
+chant lifecycle diff <env> [--live] [--namespace <ns>] [--update-baseline] [--src <dir>]
 chant lifecycle diff <env> --between <refA> <refB> [lexicon] [--json]
-chant lifecycle plan <env> [lexicon] [--json] [--owned] [--report gitlab-mr|markdown] [--src <dir>]
+chant lifecycle plan <env> [lexicon] [--json] [--owned] [--namespace <ns>] [--report gitlab-mr|markdown] [--src <dir>]
+chant lifecycle rollback [env] --to <ref> [--dry-run]
 chant lifecycle affected --base <ref> [--head <ref>] [--include-dependents] [--json]
 chant lifecycle whoami <env> [lexicon] [--json] [--strict]
 chant lifecycle teardown <env> [--yes] [--confirm-prod] [--json]
@@ -44,7 +45,15 @@ Query the provider API for the current deployed state, then save a snapshot to t
 ```bash
 chant lifecycle snapshot dev
 chant lifecycle snapshot prod aws   # snapshot only the aws lexicon
+chant lifecycle snapshot prod --deep
+chant lifecycle snapshot prod --ambient
 ```
+
+| Flag | Meaning |
+|---|---|
+| `--deep` | Also record each resource's normalized property tree, not just its identity. This is what a fold over topology needs, and what a snapshot-backed query needs to answer a property question at all. Costs more provider calls and a larger record, so it is opt-in. Only lexicons with a deep reader contribute property trees |
+| `--ambient` | Also record resources of a kind this project manages that exist in the account without being declared, so a later `chant search --at <ref> --ambient` filters a set that was actually recorded. Opt-in for the same reason as on `search`: it asks the provider what exists, which is a broader read than resolving out from what is declared |
+| `--src <dir>` | Build root override for this invocation |
 
 ### `lifecycle show <env>`
 
@@ -550,6 +559,22 @@ export default Op({
 ```
 
 Steps run in authored order, so a `gate(...)` placed before `envTeardown` holds the deletion until the signal arrives — the durable equivalent of pausing at the plan. The guards are the CLI's guards: an undeclared environment and a missing `ownership.stack` fail the step before any live read, and a production-like name needs `envTeardown("prod", { confirmProd: true })` — the authored counterpart of `--confirm-prod`, since an Op never prompts. The step fails when any candidate is still `failed` after the retry pass, naming the survivors; a fully clean run returns the same per-candidate report the CLI prints. See the [Ops reference](/chant/guide/ops-reference/#step-builders) for the builder row.
+
+### `lifecycle rollback [env] --to <ref>`
+
+Open a pull request that restores the project's `sourceDir` to a prior git revision. The rollback happens in source, where it can be reviewed. No cloud is touched by this command. Once a human merges the PR, the project's own gated apply rolls the environment back from the restored source. The optional `env` positional only names the environment in the PR title.
+
+```bash
+chant lifecycle rollback prod --to v1.4.2
+chant lifecycle rollback prod --to 3f9c1a2 --dry-run
+```
+
+| Flag | Meaning |
+|---|---|
+| `--to <ref>` | The git revision to restore `sourceDir` to. Required |
+| `--dry-run` | Compute the rollback delta and print it as a patch on stdout. No PR is opened, nothing is pushed, no branch is left behind |
+
+When `sourceDir` already matches the target revision the command says so and exits zero without opening anything. On success the PR URL is the only thing on stdout, so a consumer can read it; the summary goes to stderr.
 
 ### `lifecycle log [env]`
 

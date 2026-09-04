@@ -7,9 +7,10 @@ diataxis: reference
 ## Synopsis
 
 ```
-chant carve emit   --from <tf-dir> --select <address> --env <env>
-chant carve bridge --from <tf-dir> --select <address> [--apply-rewrites]
-chant carve apply  --from <tf-dir> --select <address> --env <env> [--write]
+chant carve emit   --from <tf-dir> --select <address> (--state <tfstate> | --env <env> [--live-name <id>]) [-o <dir>]
+chant carve bridge --from <tf-dir> --select <address> [--apply-rewrites] [-o <dir>]
+chant carve apply  --from <tf-dir> --select <address> --env <env> [--stack <name>] [--write] [--write-source] [-o <dir>]
+chant carve status [--from <dir>] [--json]
 ```
 
 ## Description
@@ -56,7 +57,20 @@ Resolves the ownership marker that makes the resource chant-owned and finalizes 
 chant carve apply --from ./infra --select aws_s3_bucket.assets --env prod --stack assets
 ```
 
-This is BYOL-honest: it makes no cloud call. It computes the marker and the plan; the apply itself is whatever lifecycle you brought — the native CLI, a CI pipeline, an ApplyOp — and it stamps the ownership marker the emitted source carries. `--write` saves the graduation doc.
+This is BYOL-honest: it makes no cloud call. It computes the marker and the plan; the apply itself is whatever lifecycle you brought — the native CLI, a CI pipeline, an ApplyOp — and it stamps the ownership marker the emitted source carries. `--write` saves the graduation doc. `--write-source` stamps the ownership marker into the emitted chant source as well, so the adopted declaration carries the identity `chant lifecycle` reads back.
+
+### 4. `carve status`
+
+Read-only. It walks the tree under `--from` for every `*.carve.json` manifest the three steps above write. Without `--from` it walks the current directory. Each carved address prints as one row with the step it has reached, so a renderer no longer has to discover manifests by guessing depth.
+
+```
+chant carve status --from ./infra
+chant carve status --from ./infra --json
+```
+
+`--json` emits the same rows as one document on stdout. An empty tree says so and points at `carve emit`.
+
+Manifests record file paths relative to their own directory, so a tree that moves still reads correctly.
 
 ## The handoff, end to end
 

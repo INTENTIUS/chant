@@ -21,6 +21,7 @@ chant lint [path] [flags]
 | `--format` | `string` | `stylish` | Output format: `stylish`, `json`, or `sarif` |
 | `--fix` | `bool` | `false` | Auto-fix fixable issues |
 | `-w, --watch` | `bool` | `false` | Watch for file changes and re-lint |
+| `--sandbox` | `bool` | `false` | Run any project source the lint has to execute in one isolated child process rather than in the chant process. The same boundary as [`chant build --sandbox`](/chant/cli/build/#sandboxed-execution); composes with `--watch` |
 
 ## Usage
 
@@ -39,6 +40,9 @@ chant lint --fix
 
 # Watch mode
 chant lint --watch
+
+# Keep project source out of the chant process
+chant lint --sandbox
 ```
 
 ## Exit Codes
