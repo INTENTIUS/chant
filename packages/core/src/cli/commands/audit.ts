@@ -280,7 +280,16 @@ function renderSarif(findings: AuditFinding[], catalog: Record<string, RuleMeta>
       shortDescription: { text: m?.title ?? id },
       ...(m?.remediation ? { help: { text: m.remediation } } : {}),
       helpUri: m?.authority?.[0]?.url,
-      ...(m?.category ? { properties: { category: m.category, dimension: m.category } } : {}),
+      // `priorArt` credits the upstream tools whose rules check the same thing
+      // (audit/prior-art.ts) — tool key, upstream rule id, doc URL, relation.
+      ...(m?.category || m?.lineage?.length
+        ? {
+            properties: {
+              ...(m?.category ? { category: m.category, dimension: m.category } : {}),
+              ...(m?.lineage?.length ? { priorArt: m.lineage } : {}),
+            },
+          }
+        : {}),
     };
   });
   const results = findings.map((f) => {

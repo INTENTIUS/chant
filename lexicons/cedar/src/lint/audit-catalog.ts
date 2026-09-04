@@ -25,7 +25,8 @@
  * about it.
  */
 
-import { auditRule, type RuleMeta } from "@intentius/chant/audit/catalog";
+import { auditRule, type RuleMeta, applyLineage } from "@intentius/chant/audit/catalog";
+import { cedarAuditLineage } from "./audit-lineage";
 
 export const cedarAuditCatalog: Record<string, RuleMeta> = {
   // ── Pre-synth lint rule ────────────────────────────────────────
@@ -192,3 +193,6 @@ export const cedarAuditCatalog: Record<string, RuleMeta> = {
     { category: "security" },
   ),
 };
+
+// Prior art credits live beside the rules in ./audit-lineage.ts (see core audit/prior-art.ts).
+applyLineage(cedarAuditCatalog, cedarAuditLineage);

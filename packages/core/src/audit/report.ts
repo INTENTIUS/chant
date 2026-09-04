@@ -11,7 +11,7 @@
  */
 
 import type { AuditFinding } from "./core";
-import { ruleDocUrl, type RuleMeta } from "./catalog";
+import { lineageLabel, ruleDocUrl, type RuleMeta } from "./catalog";
 import type { ProveOptions } from "./proof";
 import { buildReportModel, type EnrichedFinding, type GuidanceCluster, type QuickWinFile } from "./report-model";
 
@@ -22,8 +22,10 @@ function ruleLink(id: string): string {
 
 /** External backing for a merge-worthy rule (OSSF Scorecard, CIS, vendor docs). */
 function authorityLinks(meta: RuleMeta): string {
-  if (!meta.authority?.length) return "";
-  return ` — per ${meta.authority.map((a) => `[${a.name}](${a.url})`).join(", ")}`;
+  const authority = meta.authority?.length ? ` — per ${meta.authority.map((a) => `[${a.name}](${a.url})`).join(", ")}` : "";
+  // Prior art rides beside the authority: the tool that checked this first.
+  const lineage = meta.lineage?.length ? ` · prior art: ${meta.lineage.map((l) => `[${lineageLabel(l)}](${l.url})`).join(", ")}` : "";
+  return authority + lineage;
 }
 
 export interface RenderOptions {

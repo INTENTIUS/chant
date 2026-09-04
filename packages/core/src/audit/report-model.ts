@@ -7,7 +7,7 @@
 
 import type { AuditFinding } from "./core";
 import type { UnclaimedFile } from "./discover";
-import { RULE_CATALOG, ruleDocUrl, type Authority, type Category, type FixKind, type RuleMeta, type Tier } from "./catalog";
+import { RULE_CATALOG, ruleDocUrl, type Authority, type Category, type FixKind, type Lineage, type RuleMeta, type Tier } from "./catalog";
 import { proveFix, unifiedDiff, type ProveOptions } from "./proof";
 import type { Severity } from "../lint/rule";
 
@@ -106,6 +106,8 @@ export interface SerializedFinding {
   title: string;
   remediation: string;
   authority: Authority[];
+  /** Prior art: upstream tools whose rules check the same condition (credit, not authority). */
+  lineage: Lineage[];
   /** Link to this rule's entry in the audit rules reference. */
   docUrl: string;
 }
@@ -311,6 +313,7 @@ export function buildReportJson(
       title: f.meta.title,
       remediation: f.meta.remediation,
       authority: f.meta.authority ?? [],
+      lineage: f.meta.lineage ?? [],
       docUrl: ruleDocUrl(f.checkId),
     })),
     unclaimed: opts.unclaimed && opts.unclaimed.length > 0 ? opts.unclaimed : undefined,

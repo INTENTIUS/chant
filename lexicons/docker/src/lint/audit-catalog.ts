@@ -2,7 +2,8 @@
  * The docker lexicon's `chant audit` catalog — metadata for the DKRD*
  * Dockerfile/Compose post-synth rules. Contributed via `dockerPlugin.auditCatalog()` (#687).
  */
-import { auditRule, SCORECARD_PINNED, type RuleMeta, type Authority } from "@intentius/chant/audit/catalog";
+import { auditRule, SCORECARD_PINNED, type RuleMeta, type Authority, applyLineage } from "@intentius/chant/audit/catalog";
+import { dockerAuditLineage } from "./audit-lineage";
 
 const DOCKER_SEC: Authority = { name: "Docker — Security best practices", url: "https://docs.docker.com/develop/security-best-practices/" };
 
@@ -14,3 +15,6 @@ export const dockerAuditCatalog: Record<string, RuleMeta> = {
   DKRD011: auditRule("DKRD011", "report-only", "guidance", "ADD used where COPY would do", "Prefer COPY unless fetching a URL or extracting an archive.", { category: "best-practice" }),
   DKRD012: auditRule("DKRD012", "merge-worthy", "guidance", "No USER instruction — container runs as root", "Add a non-root USER instruction.", { authority: [DOCKER_SEC] }),
 };
+
+// Prior art credits live beside the rules in ./audit-lineage.ts (see core audit/prior-art.ts).
+applyLineage(dockerAuditCatalog, dockerAuditLineage);

@@ -5,7 +5,8 @@
  * #350); core keeps only the generic catalog machinery + cross-cutting ids.
  */
 
-import { auditRule, type RuleMeta, type Authority } from "@intentius/chant/audit/catalog";
+import { auditRule, type RuleMeta, type Authority, applyLineage } from "@intentius/chant/audit/catalog";
+import { awsAuditLineage } from "./audit-lineage";
 
 /** AWS Well-Architected Security Pillar — the authority chant cites for AWS security findings. */
 const AWS_SEC: Authority = {
@@ -90,3 +91,6 @@ export const awsAuditCatalog: Record<string, RuleMeta> = {
   WAW068: auditRule("WAW068", "report-only", "guidance", "VPN Gateway or Transit Gateway has only one attached VPN Connection", "Attach a second VPNConnection (ideally to a separate Customer Gateway) for redundancy.", { category: "best-practice" }),
   WAW069: auditRule("WAW069", "merge-worthy", "guidance", "Template references a condition it never declares", "Declare the condition in the Conditions section (new Condition(...)), or fix the referenced name.", { category: "correctness" }),
 };
+
+// Prior art credits live beside the rules in ./audit-lineage.ts (see core audit/prior-art.ts).
+applyLineage(awsAuditCatalog, awsAuditLineage);

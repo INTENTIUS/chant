@@ -6,7 +6,7 @@ diataxis: reference
 
 This is the reference for every rule [`chant audit`](/chant/cli/audit/) can report. Each finding in a report links to its rule here.
 
-Each rule is tagged with its **tier** — `merge-worthy` (a security or correctness issue worth a PR) or `report-only` (hygiene) — and its **fix kind** — `deterministic` (a safe mechanical fix the report can apply as a diff) or `guidance` (needs a judgement call).
+Each rule is tagged with its **tier** — `merge-worthy` (a security or correctness issue worth a PR) or `report-only` (hygiene) — and its **fix kind** — `deterministic` (a safe mechanical fix the report can apply as a diff) or `guidance` (needs a judgement call). Where an open-source tool checks the same thing, the rule says so under **Prior art**; the [Prior art](#prior-art) section at the end lists every tool the rules on this page credit.
 
 ## GitHub Actions (GHA)
 
@@ -24,11 +24,19 @@ Give each workflow a unique `name:`.
 
 Remove the empty matrix axis or give it values; an empty axis produces zero jobs.
 
+| | |
+|---|---|
+| Prior art | [actionlint `Unexpected empty mappings`](https://github.com/rhysd/actionlint/blob/main/docs/checks.md#unexpected-empty-mappings) (overlaps) |
+
 ### GHA011
 
 **needs references a non-existent job** — merge-worthy · guidance
 
 Fix the `needs:` target to name a real job.
+
+| | |
+|---|---|
+| Prior art | [actionlint `Job dependencies validation`](https://github.com/rhysd/actionlint/blob/main/docs/checks.md#job-dependencies-validation) (equivalent) |
 
 ### GHA013
 
@@ -36,7 +44,10 @@ Fix the `needs:` target to name a real job.
 
 Add an explicit least-privilege `permissions:` block to jobs under `pull_request_target`/`workflow_dispatch`.
 
-Authority: [OSSF Scorecard — Token-Permissions](https://github.com/ossf/scorecard/blob/main/docs/checks.md#token-permissions) · [GitHub — Automatic token authentication](https://docs.github.com/en/actions/security-for-github-actions/security-guides/automatic-token-authentication)
+| | |
+|---|---|
+| Authority | [OSSF Scorecard — Token-Permissions](https://github.com/ossf/scorecard/blob/main/docs/checks.md#token-permissions) · [GitHub — Automatic token authentication](https://docs.github.com/en/actions/security-for-github-actions/security-guides/automatic-token-authentication) |
+| Prior art | [poutine `default_permissions_on_risky_events`](https://boostsecurityio.github.io/poutine/rules/default_permissions_on_risky_events/) (overlaps) · [zizmor `excessive-permissions`](https://docs.zizmor.sh/audits/#excessive-permissions) (overlaps) · [OpenSSF Scorecard `Token-Permissions`](https://github.com/ossf/scorecard/blob/main/docs/checks.md#token-permissions) (overlaps) |
 
 ### GHA017
 
@@ -44,7 +55,10 @@ Authority: [OSSF Scorecard — Token-Permissions](https://github.com/ossf/scorec
 
 Add a top-level `permissions: \{ contents: read }` and widen only where a job needs it.
 
-Authority: [OSSF Scorecard — Token-Permissions](https://github.com/ossf/scorecard/blob/main/docs/checks.md#token-permissions) · [GitHub — Automatic token authentication](https://docs.github.com/en/actions/security-for-github-actions/security-guides/automatic-token-authentication)
+| | |
+|---|---|
+| Authority | [OSSF Scorecard — Token-Permissions](https://github.com/ossf/scorecard/blob/main/docs/checks.md#token-permissions) · [GitHub — Automatic token authentication](https://docs.github.com/en/actions/security-for-github-actions/security-guides/automatic-token-authentication) |
+| Prior art | [zizmor `excessive-permissions`](https://docs.zizmor.sh/audits/#excessive-permissions) (overlaps) · [OpenSSF Scorecard `Token-Permissions`](https://github.com/ossf/scorecard/blob/main/docs/checks.md#token-permissions) (overlaps) |
 
 ### GHA018
 
@@ -52,7 +66,10 @@ Authority: [OSSF Scorecard — Token-Permissions](https://github.com/ossf/scorec
 
 Don't check out / run PR head code under `pull_request_target`; split into a privileged + unprivileged workflow.
 
-Authority: [GitHub Security Lab — Preventing pwn requests](https://securitylab.github.com/resources/github-actions-preventing-pwn-requests/)
+| | |
+|---|---|
+| Authority | [GitHub Security Lab — Preventing pwn requests](https://securitylab.github.com/resources/github-actions-preventing-pwn-requests/) |
+| Prior art | [OpenSSF Scorecard `Dangerous-Workflow`](https://github.com/ossf/scorecard/blob/main/docs/checks.md#dangerous-workflow) (overlaps) · [octoscan `dangerous-checkout`](https://github.com/synacktiv/octoscan#dangerous-checkout) (overlaps) · [poutine `untrusted_checkout_exec`](https://boostsecurityio.github.io/poutine/rules/untrusted_checkout_exec/) (overlaps) |
 
 ### GHA019
 
@@ -60,13 +77,20 @@ Authority: [GitHub Security Lab — Preventing pwn requests](https://securitylab
 
 Break the cycle in the job dependency graph.
 
+| | |
+|---|---|
+| Prior art | [actionlint `Job dependencies validation`](https://github.com/rhysd/actionlint/blob/main/docs/checks.md#job-dependencies-validation) (equivalent) |
+
 ### GHA021
 
 **actions/checkout not pinned to a SHA** — merge-worthy · deterministic
 
 Pin `actions/checkout` to a full 40-char commit SHA.
 
-Authority: [OSSF Scorecard — Pinned-Dependencies](https://github.com/ossf/scorecard/blob/main/docs/checks.md#pinned-dependencies) · [GitHub — Using third-party actions](https://docs.github.com/en/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions#using-third-party-actions)
+| | |
+|---|---|
+| Authority | [OSSF Scorecard — Pinned-Dependencies](https://github.com/ossf/scorecard/blob/main/docs/checks.md#pinned-dependencies) · [GitHub — Using third-party actions](https://docs.github.com/en/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions#using-third-party-actions) |
+| Prior art | [zizmor `unpinned-uses`](https://docs.zizmor.sh/audits/#unpinned-uses) (overlaps) · [OpenSSF Scorecard `Pinned-Dependencies`](https://github.com/ossf/scorecard/blob/main/docs/checks.md#pinned-dependencies) (overlaps) |
 
 ### GHA022
 
@@ -80,11 +104,19 @@ Add `timeout-minutes:` to bound runaway jobs.
 
 Replace `::set-output` with `$GITHUB_OUTPUT`.
 
+| | |
+|---|---|
+| Prior art | [actionlint `Check deprecated workflow commands`](https://github.com/rhysd/actionlint/blob/main/docs/checks.md#check-deprecated-workflow-commands) (overlaps) |
+
 ### GHA024
 
 **Missing concurrency block** — report-only · guidance
 
 Add a `concurrency:` group to deploy workflows.
+
+| | |
+|---|---|
+| Prior art | [zizmor `concurrency-limits`](https://docs.zizmor.sh/audits/#concurrency-limits) (overlaps) |
 
 ### GHA025
 
@@ -92,13 +124,20 @@ Add a `concurrency:` group to deploy workflows.
 
 Gate `pull_request_target` jobs and avoid running untrusted code with elevated scope.
 
-Authority: [GitHub Security Lab — Preventing pwn requests](https://securitylab.github.com/resources/github-actions-preventing-pwn-requests/)
+| | |
+|---|---|
+| Authority | [GitHub Security Lab — Preventing pwn requests](https://securitylab.github.com/resources/github-actions-preventing-pwn-requests/) |
+| Prior art | [zizmor `dangerous-triggers`](https://docs.zizmor.sh/audits/#dangerous-triggers) (overlaps) |
 
 ### GHA026
 
 **Secret used without environment protection** — report-only · guidance
 
 Move secret-consuming jobs behind a protected `environment:`.
+
+| | |
+|---|---|
+| Prior art | [zizmor `secrets-outside-env`](https://docs.zizmor.sh/audits/#secrets-outside-env) (equivalent) |
 
 ### GHA027
 
@@ -112,13 +151,20 @@ Add `if: always()` to cleanup steps.
 
 Add an `on:` trigger; the workflow never runs without one.
 
+| | |
+|---|---|
+| Prior art | [actionlint `Missing required keys and key duplicates`](https://github.com/rhysd/actionlint/blob/main/docs/checks.md#missing-required-keys-and-key-duplicates) (overlaps) |
+
 ### GHA029
 
 **Action not pinned to a commit SHA** — merge-worthy · deterministic
 
 Pin the action to a full commit SHA instead of a tag/branch.
 
-Authority: [OSSF Scorecard — Pinned-Dependencies](https://github.com/ossf/scorecard/blob/main/docs/checks.md#pinned-dependencies) · [GitHub — Using third-party actions](https://docs.github.com/en/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions#using-third-party-actions)
+| | |
+|---|---|
+| Authority | [OSSF Scorecard — Pinned-Dependencies](https://github.com/ossf/scorecard/blob/main/docs/checks.md#pinned-dependencies) · [GitHub — Using third-party actions](https://docs.github.com/en/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions#using-third-party-actions) |
+| Prior art | [zizmor `unpinned-uses`](https://docs.zizmor.sh/audits/#unpinned-uses) (overlaps) · [OpenSSF Scorecard `Pinned-Dependencies`](https://github.com/ossf/scorecard/blob/main/docs/checks.md#pinned-dependencies) (overlaps) |
 
 ### GHA030
 
@@ -126,7 +172,10 @@ Authority: [OSSF Scorecard — Pinned-Dependencies](https://github.com/ossf/scor
 
 Pin the image to an immutable `@sha256:` digest.
 
-Authority: [OSSF Scorecard — Pinned-Dependencies](https://github.com/ossf/scorecard/blob/main/docs/checks.md#pinned-dependencies)
+| | |
+|---|---|
+| Authority | [OSSF Scorecard — Pinned-Dependencies](https://github.com/ossf/scorecard/blob/main/docs/checks.md#pinned-dependencies) |
+| Prior art | [zizmor `unpinned-images`](https://docs.zizmor.sh/audits/#unpinned-images) (overlaps) |
 
 ### GHA031
 
@@ -134,7 +183,10 @@ Authority: [OSSF Scorecard — Pinned-Dependencies](https://github.com/ossf/scor
 
 Verify the action owner/slug; it resembles a well-known action.
 
-Authority: [OSSF Scorecard — Pinned-Dependencies](https://github.com/ossf/scorecard/blob/main/docs/checks.md#pinned-dependencies)
+| | |
+|---|---|
+| Authority | [OSSF Scorecard — Pinned-Dependencies](https://github.com/ossf/scorecard/blob/main/docs/checks.md#pinned-dependencies) |
+| Prior art | [zizmor `typosquat-uses`](https://docs.zizmor.sh/audits/#typosquat-uses) (equivalent) |
 
 ### GHA032
 
@@ -142,13 +194,20 @@ Authority: [OSSF Scorecard — Pinned-Dependencies](https://github.com/ossf/scor
 
 Replace the archived action or one with a disclosed security issue.
 
+| | |
+|---|---|
+| Prior art | [zizmor `archived-uses`](https://docs.zizmor.sh/audits/#archived-uses) (overlaps) · [zizmor `known-vulnerable-actions`](https://docs.zizmor.sh/audits/#known-vulnerable-actions) (overlaps) |
+
 ### GHA033
 
 **Blanket write-all permissions** — merge-worthy · deterministic
 
 Replace `write-all` with the specific scopes the jobs need (default `contents: read`).
 
-Authority: [OSSF Scorecard — Token-Permissions](https://github.com/ossf/scorecard/blob/main/docs/checks.md#token-permissions) · [GitHub — Automatic token authentication](https://docs.github.com/en/actions/security-for-github-actions/security-guides/automatic-token-authentication)
+| | |
+|---|---|
+| Authority | [OSSF Scorecard — Token-Permissions](https://github.com/ossf/scorecard/blob/main/docs/checks.md#token-permissions) · [GitHub — Automatic token authentication](https://docs.github.com/en/actions/security-for-github-actions/security-guides/automatic-token-authentication) |
+| Prior art | [zizmor `excessive-permissions`](https://docs.zizmor.sh/audits/#excessive-permissions) (overlaps) · [OpenSSF Scorecard `Token-Permissions`](https://github.com/ossf/scorecard/blob/main/docs/checks.md#token-permissions) (overlaps) |
 
 ### GHA034
 
@@ -156,7 +215,10 @@ Authority: [OSSF Scorecard — Token-Permissions](https://github.com/ossf/scorec
 
 Move write scopes to the single job that needs them; keep the workflow least-privilege.
 
-Authority: [OSSF Scorecard — Token-Permissions](https://github.com/ossf/scorecard/blob/main/docs/checks.md#token-permissions) · [GitHub — Automatic token authentication](https://docs.github.com/en/actions/security-for-github-actions/security-guides/automatic-token-authentication)
+| | |
+|---|---|
+| Authority | [OSSF Scorecard — Token-Permissions](https://github.com/ossf/scorecard/blob/main/docs/checks.md#token-permissions) · [GitHub — Automatic token authentication](https://docs.github.com/en/actions/security-for-github-actions/security-guides/automatic-token-authentication) |
+| Prior art | [zizmor `excessive-permissions`](https://docs.zizmor.sh/audits/#excessive-permissions) (overlaps) · [OpenSSF Scorecard `Token-Permissions`](https://github.com/ossf/scorecard/blob/main/docs/checks.md#token-permissions) (overlaps) |
 
 ### GHA035
 
@@ -164,7 +226,9 @@ Authority: [OSSF Scorecard — Token-Permissions](https://github.com/ossf/scorec
 
 Drop the elevated `permissions:` on triggers that can run untrusted code.
 
-Authority: [GitHub Security Lab — Preventing pwn requests](https://securitylab.github.com/resources/github-actions-preventing-pwn-requests/) · [OSSF Scorecard — Token-Permissions](https://github.com/ossf/scorecard/blob/main/docs/checks.md#token-permissions)
+| | |
+|---|---|
+| Authority | [GitHub Security Lab — Preventing pwn requests](https://securitylab.github.com/resources/github-actions-preventing-pwn-requests/) · [OSSF Scorecard — Token-Permissions](https://github.com/ossf/scorecard/blob/main/docs/checks.md#token-permissions) |
 
 ### GHA036
 
@@ -172,7 +236,10 @@ Authority: [GitHub Security Lab — Preventing pwn requests](https://securitylab
 
 Pass untrusted `$\{\{ }}` values via an `env:` var and reference `"$VAR"`, never inline in the script.
 
-Authority: [GitHub — Understanding the risk of script injections](https://docs.github.com/en/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions#understanding-the-risk-of-script-injections)
+| | |
+|---|---|
+| Authority | [GitHub — Understanding the risk of script injections](https://docs.github.com/en/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions#understanding-the-risk-of-script-injections) |
+| Prior art | [zizmor `template-injection`](https://docs.zizmor.sh/audits/#template-injection) (equivalent) · [poutine `injection`](https://boostsecurityio.github.io/poutine/rules/injection/) (equivalent) · [actionlint `Script injection by potentially untrusted inputs`](https://github.com/rhysd/actionlint/blob/main/docs/checks.md#script-injection-by-potentially-untrusted-inputs) (equivalent) · [octoscan `expression-injection`](https://github.com/synacktiv/octoscan#expression-injection) (equivalent) · [OpenSSF Scorecard `Dangerous-Workflow`](https://github.com/ossf/scorecard/blob/main/docs/checks.md#dangerous-workflow) (overlaps) |
 
 ### GHA037
 
@@ -180,7 +247,10 @@ Authority: [GitHub — Understanding the risk of script injections](https://docs
 
 Don't write untrusted input to `$GITHUB_ENV`/`$GITHUB_PATH`; sanitize or avoid.
 
-Authority: [GitHub — Understanding the risk of script injections](https://docs.github.com/en/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions#understanding-the-risk-of-script-injections)
+| | |
+|---|---|
+| Authority | [GitHub — Understanding the risk of script injections](https://docs.github.com/en/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions#understanding-the-risk-of-script-injections) |
+| Prior art | [zizmor `github-env`](https://docs.zizmor.sh/audits/#github-env) (equivalent) · [octoscan `dangerous-write`](https://github.com/synacktiv/octoscan#dangerous-write) (overlaps) |
 
 ### GHA038
 
@@ -188,7 +258,10 @@ Authority: [GitHub — Understanding the risk of script injections](https://docs
 
 Avoid checking out untrusted code under `workflow_run`; treat it as privileged.
 
-Authority: [GitHub Security Lab — Preventing pwn requests](https://securitylab.github.com/resources/github-actions-preventing-pwn-requests/)
+| | |
+|---|---|
+| Authority | [GitHub Security Lab — Preventing pwn requests](https://securitylab.github.com/resources/github-actions-preventing-pwn-requests/) |
+| Prior art | [OpenSSF Scorecard `Dangerous-Workflow`](https://github.com/ossf/scorecard/blob/main/docs/checks.md#dangerous-workflow) (overlaps) · [octoscan `dangerous-checkout`](https://github.com/synacktiv/octoscan#dangerous-checkout) (overlaps) |
 
 ### GHA039
 
@@ -196,7 +269,10 @@ Authority: [GitHub Security Lab — Preventing pwn requests](https://securitylab
 
 Gate on a non-spoofable identity, not a commit-author field.
 
-Authority: [GitHub Security Lab — Preventing pwn requests](https://securitylab.github.com/resources/github-actions-preventing-pwn-requests/)
+| | |
+|---|---|
+| Authority | [GitHub Security Lab — Preventing pwn requests](https://securitylab.github.com/resources/github-actions-preventing-pwn-requests/) |
+| Prior art | [zizmor `bot-conditions`](https://docs.zizmor.sh/audits/#bot-conditions) (overlaps) · [octoscan `bot-check`](https://github.com/synacktiv/octoscan#bot-check) (overlaps) · [poutine `confused_deputy_auto_merge`](https://boostsecurityio.github.io/poutine/rules/confused_deputy_auto_merge/) (overlaps) |
 
 ### GHA040
 
@@ -204,7 +280,10 @@ Authority: [GitHub Security Lab — Preventing pwn requests](https://securitylab
 
 Don't run untrusted-code triggers on self-hosted runners.
 
-Authority: [GitHub Security Lab — Preventing pwn requests](https://securitylab.github.com/resources/github-actions-preventing-pwn-requests/)
+| | |
+|---|---|
+| Authority | [GitHub Security Lab — Preventing pwn requests](https://securitylab.github.com/resources/github-actions-preventing-pwn-requests/) |
+| Prior art | [poutine `pr_runs_on_self_hosted`](https://boostsecurityio.github.io/poutine/rules/pr_runs_on_self_hosted/) (equivalent) · [zizmor `self-hosted-runner`](https://docs.zizmor.sh/audits/#self-hosted-runner) (overlaps) · [octoscan `runner-label`](https://github.com/synacktiv/octoscan#runner-label) (overlaps) |
 
 ### GHA041
 
@@ -212,7 +291,10 @@ Authority: [GitHub Security Lab — Preventing pwn requests](https://securitylab
 
 Pass only the specific secrets the reusable workflow needs.
 
-Authority: [GitHub — Using secrets in GitHub Actions](https://docs.github.com/en/actions/security-for-github-actions/security-guides/using-secrets-in-github-actions)
+| | |
+|---|---|
+| Authority | [GitHub — Using secrets in GitHub Actions](https://docs.github.com/en/actions/security-for-github-actions/security-guides/using-secrets-in-github-actions) |
+| Prior art | [zizmor `secrets-inherit`](https://docs.zizmor.sh/audits/#secrets-inherit) (equivalent) |
 
 ### GHA042
 
@@ -220,7 +302,10 @@ Authority: [GitHub — Using secrets in GitHub Actions](https://docs.github.com/
 
 Pass named secrets instead of the whole `secrets` context.
 
-Authority: [GitHub — Using secrets in GitHub Actions](https://docs.github.com/en/actions/security-for-github-actions/security-guides/using-secrets-in-github-actions)
+| | |
+|---|---|
+| Authority | [GitHub — Using secrets in GitHub Actions](https://docs.github.com/en/actions/security-for-github-actions/security-guides/using-secrets-in-github-actions) |
+| Prior art | [zizmor `overprovisioned-secrets`](https://docs.zizmor.sh/audits/#overprovisioned-secrets) (equivalent) · [poutine `job_all_secrets`](https://boostsecurityio.github.io/poutine/rules/job_all_secrets/) (equivalent) |
 
 ### GHA043
 
@@ -228,7 +313,10 @@ Authority: [GitHub — Using secrets in GitHub Actions](https://docs.github.com/
 
 Put secret-consuming jobs behind a protected environment.
 
-Authority: [GitHub — Using secrets in GitHub Actions](https://docs.github.com/en/actions/security-for-github-actions/security-guides/using-secrets-in-github-actions)
+| | |
+|---|---|
+| Authority | [GitHub — Using secrets in GitHub Actions](https://docs.github.com/en/actions/security-for-github-actions/security-guides/using-secrets-in-github-actions) |
+| Prior art | [zizmor `secrets-outside-env`](https://docs.zizmor.sh/audits/#secrets-outside-env) (equivalent) |
 
 ### GHA044
 
@@ -236,7 +324,10 @@ Authority: [GitHub — Using secrets in GitHub Actions](https://docs.github.com/
 
 Remove the hardcoded credential, move it to a secret, and rotate it (responsible disclosure first).
 
-Authority: [GitHub — Using secrets in GitHub Actions](https://docs.github.com/en/actions/security-for-github-actions/security-guides/using-secrets-in-github-actions)
+| | |
+|---|---|
+| Authority | [GitHub — Using secrets in GitHub Actions](https://docs.github.com/en/actions/security-for-github-actions/security-guides/using-secrets-in-github-actions) |
+| Prior art | [zizmor `hardcoded-container-credentials`](https://docs.zizmor.sh/audits/#hardcoded-container-credentials) (equivalent) · [actionlint `Hardcoded credentials`](https://github.com/rhysd/actionlint/blob/main/docs/checks.md#hardcoded-credentials) (equivalent) · [octoscan `credentials`](https://github.com/synacktiv/octoscan#credentials) (equivalent) |
 
 ### GHA045
 
@@ -244,7 +335,9 @@ Authority: [GitHub — Using secrets in GitHub Actions](https://docs.github.com/
 
 Reference secrets via `env:`, not inline in the shell command.
 
-Authority: [GitHub — Understanding the risk of script injections](https://docs.github.com/en/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions#understanding-the-risk-of-script-injections) · [GitHub — Using secrets in GitHub Actions](https://docs.github.com/en/actions/security-for-github-actions/security-guides/using-secrets-in-github-actions)
+| | |
+|---|---|
+| Authority | [GitHub — Understanding the risk of script injections](https://docs.github.com/en/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions#understanding-the-risk-of-script-injections) · [GitHub — Using secrets in GitHub Actions](https://docs.github.com/en/actions/security-for-github-actions/security-guides/using-secrets-in-github-actions) |
 
 ### GHA046
 
@@ -252,11 +345,19 @@ Authority: [GitHub — Understanding the risk of script injections](https://docs
 
 Fix the always-true/false `if:` — it may neutralize a security gate.
 
+| | |
+|---|---|
+| Prior art | [actionlint `Constant conditions at `if:``](https://github.com/rhysd/actionlint/blob/main/docs/checks.md#constant-conditions-at-if) (equivalent) · [zizmor `unsound-condition`](https://docs.zizmor.sh/audits/#unsound-condition) (overlaps) · [poutine `if_always_true`](https://boostsecurityio.github.io/poutine/rules/if_always_true/) (overlaps) |
+
 ### GHA047
 
 **Ineffective contains() guard (reversed args)** — merge-worthy · guidance
 
 Swap the `contains()` arguments so the guard actually filters.
+
+| | |
+|---|---|
+| Prior art | [zizmor `unsound-contains`](https://docs.zizmor.sh/audits/#unsound-contains) (equivalent) |
 
 ### GHA048
 
@@ -264,13 +365,20 @@ Swap the `contains()` arguments so the guard actually filters.
 
 Simplify the indirect `if:` so its effect is reviewable.
 
+| | |
+|---|---|
+| Prior art | [zizmor `obfuscation`](https://docs.zizmor.sh/audits/#obfuscation) (overlaps) |
+
 ### GHA049
 
 **Persisted checkout credentials reachable by an artifact** — merge-worthy · guidance
 
 Use `persist-credentials: false` or exclude `.git` from uploaded artifacts.
 
-Authority: [GitHub — Using secrets in GitHub Actions](https://docs.github.com/en/actions/security-for-github-actions/security-guides/using-secrets-in-github-actions)
+| | |
+|---|---|
+| Authority | [GitHub — Using secrets in GitHub Actions](https://docs.github.com/en/actions/security-for-github-actions/security-guides/using-secrets-in-github-actions) |
+| Prior art | [zizmor `artipacked`](https://docs.zizmor.sh/audits/#artipacked) (equivalent) · [octoscan `dangerous-artefact`](https://github.com/synacktiv/octoscan#dangerous-artefact) (overlaps) |
 
 ### GHA050
 
@@ -278,7 +386,10 @@ Authority: [GitHub — Using secrets in GitHub Actions](https://docs.github.com/
 
 Don't populate caches from untrusted code paths (poisoning risk).
 
-Authority: [GitHub Security Lab — Preventing pwn requests](https://securitylab.github.com/resources/github-actions-preventing-pwn-requests/)
+| | |
+|---|---|
+| Authority | [GitHub Security Lab — Preventing pwn requests](https://securitylab.github.com/resources/github-actions-preventing-pwn-requests/) |
+| Prior art | [zizmor `cache-poisoning`](https://docs.zizmor.sh/audits/#cache-poisoning) (overlaps) |
 
 ### GHA051
 
@@ -286,13 +397,20 @@ Authority: [GitHub Security Lab — Preventing pwn requests](https://securitylab
 
 Migrate publish/release to OIDC short-lived credentials.
 
+| | |
+|---|---|
+| Prior art | [zizmor `use-trusted-publishing`](https://docs.zizmor.sh/audits/#use-trusted-publishing) (overlaps) |
+
 ### GHA052
 
 **Software piped to a shell without verification** — merge-worthy · guidance
 
 Verify a checksum/signature before executing fetched scripts.
 
-Authority: [OSSF Scorecard — Pinned-Dependencies](https://github.com/ossf/scorecard/blob/main/docs/checks.md#pinned-dependencies)
+| | |
+|---|---|
+| Authority | [OSSF Scorecard — Pinned-Dependencies](https://github.com/ossf/scorecard/blob/main/docs/checks.md#pinned-dependencies) |
+| Prior art | [poutine `unverified_script_exec`](https://boostsecurityio.github.io/poutine/rules/unverified_script_exec/) (equivalent) · [OpenSSF Scorecard `Pinned-Dependencies`](https://github.com/ossf/scorecard/blob/main/docs/checks.md#pinned-dependencies) (overlaps) |
 
 ### GHA053
 
@@ -300,7 +418,10 @@ Authority: [OSSF Scorecard — Pinned-Dependencies](https://github.com/ossf/scor
 
 Remove `ACTIONS_ALLOW_UNSECURE_COMMANDS`; use `$GITHUB_ENV`/`$GITHUB_PATH`.
 
-Authority: [GitHub — Understanding the risk of script injections](https://docs.github.com/en/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions#understanding-the-risk-of-script-injections)
+| | |
+|---|---|
+| Authority | [GitHub — Understanding the risk of script injections](https://docs.github.com/en/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions#understanding-the-risk-of-script-injections) |
+| Prior art | [zizmor `insecure-commands`](https://docs.zizmor.sh/audits/#insecure-commands) (equivalent) · [octoscan `unsecure-commands`](https://github.com/synacktiv/octoscan#unsecure-commands) (equivalent) |
 
 ### GHA054
 
@@ -308,11 +429,19 @@ Authority: [GitHub — Understanding the risk of script injections](https://docs
 
 Replace the flagged feature with the safe alternative.
 
+| | |
+|---|---|
+| Prior art | [zizmor `misfeature`](https://docs.zizmor.sh/audits/#misfeature) (overlaps) |
+
 ### GHA055
 
 **Runtime install of a tool already on the runner** — report-only · guidance
 
 Drop the redundant install to save time.
+
+| | |
+|---|---|
+| Prior art | [zizmor `superfluous-actions`](https://docs.zizmor.sh/audits/#superfluous-actions) (overlaps) |
 
 ### GHA056
 
@@ -320,13 +449,20 @@ Drop the redundant install to save time.
 
 Add a `name:` to the workflow.
 
+| | |
+|---|---|
+| Prior art | [zizmor `anonymous-definition`](https://docs.zizmor.sh/audits/#anonymous-definition) (overlaps) |
+
 ### GHA057
 
 **Dependency update can execute untrusted code** — merge-worthy · guidance
 
 Disable the option that lets dependency updates run external code.
 
-Authority: [GitHub Security Lab — Preventing pwn requests](https://securitylab.github.com/resources/github-actions-preventing-pwn-requests/)
+| | |
+|---|---|
+| Authority | [GitHub Security Lab — Preventing pwn requests](https://securitylab.github.com/resources/github-actions-preventing-pwn-requests/) |
+| Prior art | [zizmor `dependabot-execution`](https://docs.zizmor.sh/audits/#dependabot-execution) (equivalent) |
 
 ### GHA058
 
@@ -334,13 +470,20 @@ Authority: [GitHub Security Lab — Preventing pwn requests](https://securitylab
 
 Add a cooldown so new releases aren't merged instantly.
 
+| | |
+|---|---|
+| Prior art | [zizmor `dependabot-cooldown`](https://docs.zizmor.sh/audits/#dependabot-cooldown) (equivalent) |
+
 ### GHA059
 
 **Stale or missing pin annotation** — merge-worthy · guidance
 
 Add or correct the trailing version comment on the SHA-pinned reference so it matches the digest.
 
-Authority: [OSSF Scorecard — Pinned-Dependencies](https://github.com/ossf/scorecard/blob/main/docs/checks.md#pinned-dependencies) · [GitHub — Using third-party actions](https://docs.github.com/en/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions#using-third-party-actions)
+| | |
+|---|---|
+| Authority | [OSSF Scorecard — Pinned-Dependencies](https://github.com/ossf/scorecard/blob/main/docs/checks.md#pinned-dependencies) · [GitHub — Using third-party actions](https://docs.github.com/en/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions#using-third-party-actions) |
+| Prior art | [zizmor `ref-version-mismatch`](https://docs.zizmor.sh/audits/#ref-version-mismatch) (equivalent) |
 
 ### GHA060
 
@@ -348,7 +491,10 @@ Authority: [OSSF Scorecard — Pinned-Dependencies](https://github.com/ossf/scor
 
 Narrow the GitHub App token's permission-* inputs to the scopes its consuming steps actually use, or remove the unused ones.
 
-Authority: [OSSF Scorecard — Token-Permissions](https://github.com/ossf/scorecard/blob/main/docs/checks.md#token-permissions) · [GitHub — Automatic token authentication](https://docs.github.com/en/actions/security-for-github-actions/security-guides/automatic-token-authentication)
+| | |
+|---|---|
+| Authority | [OSSF Scorecard — Token-Permissions](https://github.com/ossf/scorecard/blob/main/docs/checks.md#token-permissions) · [GitHub — Automatic token authentication](https://docs.github.com/en/actions/security-for-github-actions/security-guides/automatic-token-authentication) |
+| Prior art | [zizmor `github-app`](https://docs.zizmor.sh/audits/#github-app) (overlaps) |
 
 ### GHA061
 
@@ -356,13 +502,20 @@ Authority: [OSSF Scorecard — Token-Permissions](https://github.com/ossf/scorec
 
 Replace the reference with one from the approved allowlist, or get it added if it should be trusted.
 
+| | |
+|---|---|
+| Prior art | [zizmor `forbidden-uses`](https://docs.zizmor.sh/audits/#forbidden-uses) (equivalent) |
+
 ### GHA062
 
 **Pinned reference matches a known-vulnerability advisory** — merge-worthy · guidance
 
 Bump the reference to a patched ref/commit named by the advisory.
 
-Authority: [OSSF Scorecard — Vulnerabilities](https://github.com/ossf/scorecard/blob/main/docs/checks.md#vulnerabilities)
+| | |
+|---|---|
+| Authority | [OSSF Scorecard — Vulnerabilities](https://github.com/ossf/scorecard/blob/main/docs/checks.md#vulnerabilities) |
+| Prior art | [zizmor `known-vulnerable-actions`](https://docs.zizmor.sh/audits/#known-vulnerable-actions) (equivalent) · [poutine `known_vulnerability_in_build_component`](https://boostsecurityio.github.io/poutine/rules/known_vulnerability_in_build_component/) (equivalent) · [octoscan `known-vulnerability`](https://github.com/synacktiv/octoscan#known-vulnerability) (equivalent) · [OpenSSF Scorecard `Vulnerabilities`](https://github.com/ossf/scorecard/blob/main/docs/checks.md#vulnerabilities) (overlaps) |
 
 ### GHA063
 
@@ -400,6 +553,10 @@ Scope the trigger's paths, or add an if: guard to the step.
 
 Add a concurrency group with cancel-in-progress: true.
 
+| | |
+|---|---|
+| Prior art | [zizmor `concurrency-limits`](https://docs.zizmor.sh/audits/#concurrency-limits) (overlaps) |
+
 ## GitLab CI (WGL)
 
 ### WGL010
@@ -407,6 +564,10 @@ Add a concurrency group with cancel-in-progress: true.
 **Job references an undefined stage** — merge-worthy · guidance
 
 Add the stage to `stages:` or fix the job's `stage:`.
+
+| | |
+|---|---|
+| Prior art | [GitLab CI/CD YAML reference `stage: supported values are the default stages or stages listed in `stages``](https://docs.gitlab.com/ci/yaml/#stage) (equivalent) |
 
 ### WGL011
 
@@ -420,17 +581,29 @@ Fix the `rules:` so the job can run; it is currently unreachable.
 
 Replace the deprecated GitLab CI property.
 
+| | |
+|---|---|
+| Prior art | [GitLab CI/CD YAML reference `Deprecated keywords (only/except, globally-defined image/services/cache/before_script/after_script)`](https://docs.gitlab.com/ci/yaml/deprecated_keywords/#only--except) (equivalent) |
+
 ### WGL013
 
 **Invalid needs target** — merge-worthy · guidance
 
 Fix the dangling/self `needs:` reference.
 
+| | |
+|---|---|
+| Prior art | [GitLab CI/CD YAML reference `Error: 'job' does not exist in the pipeline (needs)`](https://docs.gitlab.com/ci/yaml/needs/#error-job-does-not-exist-in-the-pipeline) (equivalent) |
+
 ### WGL014
 
 **Invalid extends target** — merge-worthy · guidance
 
 Point `extends:` at a template that exists in the pipeline.
+
+| | |
+|---|---|
+| Prior art | [GitLab CI/CD YAML reference `extends: supported values are the name(s) of another job in the pipeline`](https://docs.gitlab.com/ci/yaml/#extends) (equivalent) |
 
 ### WGL015
 
@@ -444,7 +617,10 @@ Break the cycle in the job dependency graph.
 
 Move the secret out of `variables:` into a masked/protected CI variable and rotate it.
 
-Authority: [GitHub — Using secrets in GitHub Actions](https://docs.github.com/en/actions/security-for-github-actions/security-guides/using-secrets-in-github-actions)
+| | |
+|---|---|
+| Authority | [GitHub — Using secrets in GitHub Actions](https://docs.github.com/en/actions/security-for-github-actions/security-guides/using-secrets-in-github-actions) |
+| Prior art | [GitLab CI/CD YAML reference `CI/CD variable security (secrets belong in masked/protected variables, not in .gitlab-ci.yml)`](https://docs.gitlab.com/ci/variables/#cicd-variable-security) (overlaps) |
 
 ### WGL017
 
@@ -488,11 +664,19 @@ Add `expire_in:` to artifacts to avoid disk bloat.
 
 Add real conditions to the job's `rules:`.
 
+| | |
+|---|---|
+| Prior art | [GitLab CI/CD YAML reference `Pipeline warning: Job may allow multiple pipelines to run for a single action (final `when` rule without conditions)`](https://docs.gitlab.com/ci/debugging/#job-may-allow-multiple-pipelines-to-run-for-a-single-action-warning) (overlaps) |
+
 ### WGL024
 
 **Manual job without allow_failure** — report-only · guidance
 
 Add `allow_failure: true` so a manual job doesn't block the pipeline.
+
+| | |
+|---|---|
+| Prior art | [GitLab CI/CD YAML reference `allow_failure default: true for manual jobs, false for rules:when: manual`](https://docs.gitlab.com/ci/yaml/#allow_failure) (overlaps) |
 
 ### WGL025
 
@@ -500,11 +684,19 @@ Add `allow_failure: true` so a manual job doesn't block the pipeline.
 
 Add a `cache.key` to avoid cross-job cache collisions.
 
+| | |
+|---|---|
+| Prior art | [GitLab CI/CD YAML reference `cache:key: all jobs with `cache` but no `cache:key` share the `default` cache`](https://docs.gitlab.com/ci/yaml/#cachekey) (overlaps) |
+
 ### WGL026
 
 **Privileged DinD service without TLS** — merge-worthy · guidance
 
 Set `DOCKER_TLS_CERTDIR` for privileged Docker-in-Docker services.
+
+| | |
+|---|---|
+| Prior art | [GitLab CI/CD YAML reference `Docker-in-Docker with TLS enabled (recommended); DOCKER_TLS_CERTDIR`](https://docs.gitlab.com/ci/docker/docker_in_docker/#docker-in-docker-with-tls-enabled-in-the-docker-executor-recommended) (overlaps) |
 
 ### WGL027
 
@@ -524,7 +716,10 @@ Drop `needs:` already implied by stage ordering.
 
 Pin `include:project`/component to a tag or commit SHA, not a branch.
 
-Authority: [OSSF Scorecard — Pinned-Dependencies](https://github.com/ossf/scorecard/blob/main/docs/checks.md#pinned-dependencies)
+| | |
+|---|---|
+| Authority | [OSSF Scorecard — Pinned-Dependencies](https://github.com/ossf/scorecard/blob/main/docs/checks.md#pinned-dependencies) |
+| Prior art | [GitLab CI/CD YAML reference `include:project ref guidance: use a specific SHA hash, protected branch/tag rules`](https://docs.gitlab.com/ci/yaml/#includeproject) (overlaps) · [GitLab CI/CD YAML reference `CI/CD component security best practices: use pinned versions (commit SHA preferred), avoid `latest``](https://docs.gitlab.com/ci/components/#for-component-users) (overlaps) |
 
 ### WGL030
 
@@ -532,7 +727,10 @@ Authority: [OSSF Scorecard — Pinned-Dependencies](https://github.com/ossf/scor
 
 Use HTTPS and pin the remote include to an immutable ref.
 
-Authority: [OSSF Scorecard — Pinned-Dependencies](https://github.com/ossf/scorecard/blob/main/docs/checks.md#pinned-dependencies)
+| | |
+|---|---|
+| Authority | [OSSF Scorecard — Pinned-Dependencies](https://github.com/ossf/scorecard/blob/main/docs/checks.md#pinned-dependencies) |
+| Prior art | [GitLab CI/CD YAML reference `include:remote: treat as a third-party dependency; verify integrity with include:integrity`](https://docs.gitlab.com/ci/yaml/#includeremote) (overlaps) |
 
 ### WGL031
 
@@ -540,7 +738,10 @@ Authority: [OSSF Scorecard — Pinned-Dependencies](https://github.com/ossf/scor
 
 Pin the image to an immutable `@sha256:` digest.
 
-Authority: [OSSF Scorecard — Pinned-Dependencies](https://github.com/ossf/scorecard/blob/main/docs/checks.md#pinned-dependencies)
+| | |
+|---|---|
+| Authority | [OSSF Scorecard — Pinned-Dependencies](https://github.com/ossf/scorecard/blob/main/docs/checks.md#pinned-dependencies) |
+| Prior art | [GitLab CI/CD YAML reference `Use checksum to keep your image secure (image@sha256:digest)`](https://docs.gitlab.com/ci/docker/using_docker_images/#use-checksum-to-keep-your-image-secure) (overlaps) |
 
 ### WGL032
 
@@ -548,7 +749,9 @@ Authority: [OSSF Scorecard — Pinned-Dependencies](https://github.com/ossf/scor
 
 Verify the include source; it resembles a well-known project.
 
-Authority: [OSSF Scorecard — Pinned-Dependencies](https://github.com/ossf/scorecard/blob/main/docs/checks.md#pinned-dependencies)
+| | |
+|---|---|
+| Authority | [OSSF Scorecard — Pinned-Dependencies](https://github.com/ossf/scorecard/blob/main/docs/checks.md#pinned-dependencies) |
 
 ### WGL033
 
@@ -556,7 +759,10 @@ Authority: [OSSF Scorecard — Pinned-Dependencies](https://github.com/ossf/scor
 
 Set a specific `aud:` on the OIDC id_token.
 
-Authority: [GitHub — Security hardening with OpenID Connect](https://docs.github.com/en/actions/concepts/security/openid-connect)
+| | |
+|---|---|
+| Authority | [GitHub — Security hardening with OpenID Connect](https://docs.github.com/en/actions/concepts/security/openid-connect) |
+| Prior art | [GitLab CI/CD YAML reference `id_tokens: the required `aud` sub-keyword configures the aud claim`](https://docs.gitlab.com/ci/yaml/#id_tokens) (overlaps) |
 
 ### WGL034
 
@@ -564,7 +770,9 @@ Authority: [GitHub — Security hardening with OpenID Connect](https://docs.gith
 
 Restrict OIDC token minting to protected pipelines.
 
-Authority: [GitHub — Security hardening with OpenID Connect](https://docs.github.com/en/actions/concepts/security/openid-connect) · [GitHub Security Lab — Preventing pwn requests](https://securitylab.github.com/resources/github-actions-preventing-pwn-requests/)
+| | |
+|---|---|
+| Authority | [GitHub — Security hardening with OpenID Connect](https://docs.github.com/en/actions/concepts/security/openid-connect) · [GitHub Security Lab — Preventing pwn requests](https://securitylab.github.com/resources/github-actions-preventing-pwn-requests/) |
 
 ### WGL035
 
@@ -572,7 +780,10 @@ Authority: [GitHub — Security hardening with OpenID Connect](https://docs.gith
 
 Pass untrusted variables via the environment and quote them; don't inline.
 
-Authority: [GitHub — Understanding the risk of script injections](https://docs.github.com/en/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions#understanding-the-risk-of-script-injections)
+| | |
+|---|---|
+| Authority | [GitHub — Understanding the risk of script injections](https://docs.github.com/en/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions#understanding-the-risk-of-script-injections) |
+| Prior art | [poutine `injection`](https://boostsecurityio.github.io/poutine/rules/injection/) (overlaps) |
 
 ### WGL036
 
@@ -580,7 +791,9 @@ Authority: [GitHub — Understanding the risk of script injections](https://docs
 
 Block privileged/DinD services on merge-request pipelines.
 
-Authority: [GitHub Security Lab — Preventing pwn requests](https://securitylab.github.com/resources/github-actions-preventing-pwn-requests/)
+| | |
+|---|---|
+| Authority | [GitHub Security Lab — Preventing pwn requests](https://securitylab.github.com/resources/github-actions-preventing-pwn-requests/) |
 
 ### WGL037
 
@@ -588,7 +801,9 @@ Authority: [GitHub Security Lab — Preventing pwn requests](https://securitylab
 
 Don't gate security decisions on a regex over an untrusted ref variable.
 
-Authority: [GitHub Security Lab — Preventing pwn requests](https://securitylab.github.com/resources/github-actions-preventing-pwn-requests/)
+| | |
+|---|---|
+| Authority | [GitHub Security Lab — Preventing pwn requests](https://securitylab.github.com/resources/github-actions-preventing-pwn-requests/) |
 
 ### WGL038
 
@@ -596,7 +811,10 @@ Authority: [GitHub Security Lab — Preventing pwn requests](https://securitylab
 
 Scope secret-like variables to protected branches/pipelines.
 
-Authority: [GitHub — Using secrets in GitHub Actions](https://docs.github.com/en/actions/security-for-github-actions/security-guides/using-secrets-in-github-actions) · [GitHub Security Lab — Preventing pwn requests](https://securitylab.github.com/resources/github-actions-preventing-pwn-requests/)
+| | |
+|---|---|
+| Authority | [GitHub — Using secrets in GitHub Actions](https://docs.github.com/en/actions/security-for-github-actions/security-guides/using-secrets-in-github-actions) · [GitHub Security Lab — Preventing pwn requests](https://securitylab.github.com/resources/github-actions-preventing-pwn-requests/) |
+| Prior art | [GitLab CI/CD YAML reference `Protect a CI/CD variable (available only to protected branches/tags)`](https://docs.gitlab.com/ci/variables/#protect-a-cicd-variable) (overlaps) · [GitLab CI/CD YAML reference `Merge request pipelines from forked projects can steal secrets in the parent project`](https://docs.gitlab.com/ci/pipelines/merge_request_pipelines/#use-with-forked-projects) (overlaps) |
 
 ### WGL039
 
@@ -604,7 +822,10 @@ Authority: [GitHub — Using secrets in GitHub Actions](https://docs.github.com/
 
 Stop echoing the secret-like variable; mask it.
 
-Authority: [GitHub — Using secrets in GitHub Actions](https://docs.github.com/en/actions/security-for-github-actions/security-guides/using-secrets-in-github-actions)
+| | |
+|---|---|
+| Authority | [GitHub — Using secrets in GitHub Actions](https://docs.github.com/en/actions/security-for-github-actions/security-guides/using-secrets-in-github-actions) |
+| Prior art | [GitLab CI/CD YAML reference `CI/CD variable security: accidental-leak-job example (echo of $PASSWORD); mask sensitive variables`](https://docs.gitlab.com/ci/variables/#mask-a-cicd-variable) (overlaps) |
 
 ### WGL040
 
@@ -612,7 +833,9 @@ Authority: [GitHub — Using secrets in GitHub Actions](https://docs.github.com/
 
 Move the credential to a masked CI variable and rotate it.
 
-Authority: [GitHub — Using secrets in GitHub Actions](https://docs.github.com/en/actions/security-for-github-actions/security-guides/using-secrets-in-github-actions)
+| | |
+|---|---|
+| Authority | [GitHub — Using secrets in GitHub Actions](https://docs.github.com/en/actions/security-for-github-actions/security-guides/using-secrets-in-github-actions) |
 
 ### WGL041
 
@@ -632,7 +855,9 @@ Remove the dead `rules:` entries after the catch-all.
 
 Tighten the regex; a match-anything gate is no gate.
 
-Authority: [GitHub Security Lab — Preventing pwn requests](https://securitylab.github.com/resources/github-actions-preventing-pwn-requests/)
+| | |
+|---|---|
+| Authority | [GitHub Security Lab — Preventing pwn requests](https://securitylab.github.com/resources/github-actions-preventing-pwn-requests/) |
 
 ### WGL044
 
@@ -640,13 +865,19 @@ Authority: [GitHub Security Lab — Preventing pwn requests](https://securitylab
 
 Mark sensitive artifacts non-public (`public: false`).
 
+| | |
+|---|---|
+| Prior art | [GitLab CI/CD YAML reference `artifacts:public (default true: downloadable by anonymous users in public pipelines)`](https://docs.gitlab.com/ci/yaml/#artifactspublic) (overlaps) |
+
 ### WGL045
 
 **Artifact path may capture a credential file** — merge-worthy · guidance
 
 Narrow the artifact path so it can't capture credential files.
 
-Authority: [GitHub — Using secrets in GitHub Actions](https://docs.github.com/en/actions/security-for-github-actions/security-guides/using-secrets-in-github-actions)
+| | |
+|---|---|
+| Authority | [GitHub — Using secrets in GitHub Actions](https://docs.github.com/en/actions/security-for-github-actions/security-guides/using-secrets-in-github-actions) |
 
 ### WGL046
 
@@ -654,7 +885,10 @@ Authority: [GitHub — Using secrets in GitHub Actions](https://docs.github.com/
 
 Don't populate caches from merge-request pipelines (poisoning risk).
 
-Authority: [GitHub Security Lab — Preventing pwn requests](https://securitylab.github.com/resources/github-actions-preventing-pwn-requests/)
+| | |
+|---|---|
+| Authority | [GitHub Security Lab — Preventing pwn requests](https://securitylab.github.com/resources/github-actions-preventing-pwn-requests/) |
+| Prior art | [GitLab CI/CD YAML reference `Cache key names: protected and non-protected branches do not share the cache by default`](https://docs.gitlab.com/ci/caching/#cache-key-names) (overlaps) |
 
 ### WGL047
 
@@ -662,13 +896,20 @@ Authority: [GitHub Security Lab — Preventing pwn requests](https://securitylab
 
 Verify a checksum/signature before executing fetched scripts.
 
-Authority: [OSSF Scorecard — Pinned-Dependencies](https://github.com/ossf/scorecard/blob/main/docs/checks.md#pinned-dependencies)
+| | |
+|---|---|
+| Authority | [OSSF Scorecard — Pinned-Dependencies](https://github.com/ossf/scorecard/blob/main/docs/checks.md#pinned-dependencies) |
+| Prior art | [poutine `unverified_script_exec`](https://boostsecurityio.github.io/poutine/rules/unverified_script_exec/) (equivalent) |
 
 ### WGL048
 
 **Pipeline without workflow:name** — report-only · guidance
 
 Add a `workflow:name` for clearer pipeline naming.
+
+| | |
+|---|---|
+| Prior art | [GitLab CI/CD YAML reference `Use pipeline names (workflow:name)`](https://docs.gitlab.com/ci/debugging/#use-pipeline-names) (overlaps) |
 
 ### WGL049
 
@@ -724,11 +965,19 @@ Ensure the source path exists under the build root.
 
 Declare the GitRepository/OCIRepository/Bucket, or point sourceRef at the bootstrap flux-system repo.
 
+| | |
+|---|---|
+| Prior art | [Flux Kustomization API reference `.spec.sourceRef`](https://fluxcd.io/flux/components/kustomize/kustomizations/#source-reference) (overlaps) |
+
 ### FLUX003
 
 **Flux Kustomization dependsOn names an undeclared Kustomization** — report-only · guidance
 
 Fix the dependsOn name, or ignore if the dependency is declared in another repo.
+
+| | |
+|---|---|
+| Prior art | [Flux Kustomization API reference `.spec.dependsOn`](https://fluxcd.io/flux/components/kustomize/kustomizations/#dependencies) (overlaps) |
 
 ### WK8005
 
@@ -736,7 +985,10 @@ Fix the dependsOn name, or ignore if the dependency is declared in another repo.
 
 Use a secretKeyRef instead of a literal value, and rotate the secret.
 
-Authority: [Kubernetes — Good practices for Secrets](https://kubernetes.io/docs/concepts/security/secrets-good-practices/)
+| | |
+|---|---|
+| Authority | [Kubernetes — Good practices for Secrets](https://kubernetes.io/docs/concepts/security/secrets-good-practices/) |
+| Prior art | [Fairwinds Polaris `sensitiveContainerEnvVar`](https://polaris.docs.fairwinds.com/checks/security/) (overlaps) · [KubeLinter `env-var-secret`](https://github.com/stackrox/kube-linter/blob/main/docs/generated/checks.md#env-var-secret) (overlaps) |
 
 ### WK8006
 
@@ -744,7 +996,10 @@ Authority: [Kubernetes — Good practices for Secrets](https://kubernetes.io/doc
 
 Pin the image to an explicit version tag (ideally a digest).
 
-Authority: [OSSF Scorecard — Pinned-Dependencies](https://github.com/ossf/scorecard/blob/main/docs/checks.md#pinned-dependencies)
+| | |
+|---|---|
+| Authority | [OSSF Scorecard — Pinned-Dependencies](https://github.com/ossf/scorecard/blob/main/docs/checks.md#pinned-dependencies) |
+| Prior art | [KubeLinter `latest-tag`](https://github.com/stackrox/kube-linter/blob/main/docs/generated/checks.md#latest-tag) (equivalent) · [Fairwinds Polaris `tagNotSpecified`](https://polaris.docs.fairwinds.com/checks/reliability/) (equivalent) · [Checkov `CKV_K8S_14`](https://www.checkov.io/5.Policy%20Index/kubernetes.html) (equivalent) |
 
 ### WK8041
 
@@ -752,7 +1007,10 @@ Authority: [OSSF Scorecard — Pinned-Dependencies](https://github.com/ossf/scor
 
 Move the key to a Secret and rotate it.
 
-Authority: [Kubernetes — Good practices for Secrets](https://kubernetes.io/docs/concepts/security/secrets-good-practices/)
+| | |
+|---|---|
+| Authority | [Kubernetes — Good practices for Secrets](https://kubernetes.io/docs/concepts/security/secrets-good-practices/) |
+| Prior art | [Fairwinds Polaris `sensitiveContainerEnvVar`](https://polaris.docs.fairwinds.com/checks/security/) (overlaps) · [KubeLinter `env-var-secret`](https://github.com/stackrox/kube-linter/blob/main/docs/generated/checks.md#env-var-secret) (overlaps) · [Datree `prevent-exposed-secrets-aws`](https://hub.datree.io/built-in-rules/prevent-exposed-secrets-aws) (overlaps) |
 
 ### WK8042
 
@@ -760,13 +1018,20 @@ Authority: [Kubernetes — Good practices for Secrets](https://kubernetes.io/doc
 
 Store private keys in a Secret, not a ConfigMap.
 
-Authority: [Kubernetes — Good practices for Secrets](https://kubernetes.io/docs/concepts/security/secrets-good-practices/)
+| | |
+|---|---|
+| Authority | [Kubernetes — Good practices for Secrets](https://kubernetes.io/docs/concepts/security/secrets-good-practices/) |
+| Prior art | [Fairwinds Polaris `sensitiveConfigmapContent`](https://polaris.docs.fairwinds.com/checks/security/) (overlaps) · [Datree `prevent-exposed-secrets-privatekey`](https://hub.datree.io/built-in-rules/prevent-exposed-secrets-privatekey) (overlaps) |
 
 ### WK8101
 
 **Deployment selector does not match template labels** — merge-worthy · guidance
 
 Align spec.selector with the pod template labels.
+
+| | |
+|---|---|
+| Prior art | [KubeLinter `mismatching-selector`](https://github.com/stackrox/kube-linter/blob/main/docs/generated/checks.md#mismatching-selector) (equivalent) · [kube-score `deployment-pod-selector-labels-match-template-metadata-labels`](https://github.com/zegl/kube-score/blob/master/README_CHECKS.md) (equivalent) |
 
 ### WK8102
 
@@ -792,11 +1057,19 @@ Name ports for clearer Service/NetworkPolicy config.
 
 Set imagePullPolicy explicitly to avoid surprising defaults.
 
+| | |
+|---|---|
+| Prior art | [Fairwinds Polaris `pullPolicyNotAlways`](https://polaris.docs.fairwinds.com/checks/reliability/) (overlaps) · [kube-score `container-image-pull-policy`](https://github.com/zegl/kube-score/blob/master/README_CHECKS.md) (overlaps) · [Checkov `CKV_K8S_15`](https://www.checkov.io/5.Policy%20Index/kubernetes.html) (overlaps) |
+
 ### WK8201
 
 **Container missing resource limits** — report-only · guidance
 
 Set CPU and memory limits.
+
+| | |
+|---|---|
+| Prior art | [Fairwinds Polaris `cpuLimitsMissing`](https://polaris.docs.fairwinds.com/checks/efficiency/) (overlaps) · [Checkov `CKV_K8S_13`](https://www.checkov.io/5.Policy%20Index/kubernetes.html) (overlaps) · [kube-score `container-resources`](https://github.com/zegl/kube-score/blob/master/README_CHECKS.md) (overlaps) |
 
 ### WK8202
 
@@ -804,7 +1077,10 @@ Set CPU and memory limits.
 
 Remove privileged: true; grant only the specific capabilities needed.
 
-Authority: [Kubernetes — Pod Security Standards](https://kubernetes.io/docs/concepts/security/pod-security-standards/)
+| | |
+|---|---|
+| Authority | [Kubernetes — Pod Security Standards](https://kubernetes.io/docs/concepts/security/pod-security-standards/) |
+| Prior art | [KubeLinter `privileged-container`](https://github.com/stackrox/kube-linter/blob/main/docs/generated/checks.md#privileged-container) (equivalent) · [Fairwinds Polaris `runAsPrivileged`](https://polaris.docs.fairwinds.com/checks/security/) (equivalent) · [Checkov `CKV_K8S_16`](https://www.checkov.io/5.Policy%20Index/kubernetes.html) (equivalent) |
 
 ### WK8203
 
@@ -812,7 +1088,10 @@ Authority: [Kubernetes — Pod Security Standards](https://kubernetes.io/docs/co
 
 Set readOnlyRootFilesystem: true.
 
-Authority: [Kubernetes — Pod Security Standards](https://kubernetes.io/docs/concepts/security/pod-security-standards/)
+| | |
+|---|---|
+| Authority | [Kubernetes — Pod Security Standards](https://kubernetes.io/docs/concepts/security/pod-security-standards/) |
+| Prior art | [KubeLinter `no-read-only-root-fs`](https://github.com/stackrox/kube-linter/blob/main/docs/generated/checks.md#no-read-only-root-fs) (equivalent) · [Fairwinds Polaris `notReadOnlyRootFilesystem`](https://polaris.docs.fairwinds.com/checks/security/) (equivalent) · [Checkov `CKV_K8S_22`](https://www.checkov.io/5.Policy%20Index/kubernetes.html) (equivalent) |
 
 ### WK8204
 
@@ -820,7 +1099,10 @@ Authority: [Kubernetes — Pod Security Standards](https://kubernetes.io/docs/co
 
 Set runAsNonRoot: true (and a non-zero runAsUser).
 
-Authority: [Kubernetes — Pod Security Standards](https://kubernetes.io/docs/concepts/security/pod-security-standards/)
+| | |
+|---|---|
+| Authority | [Kubernetes — Pod Security Standards](https://kubernetes.io/docs/concepts/security/pod-security-standards/) |
+| Prior art | [Fairwinds Polaris `runAsRootAllowed`](https://polaris.docs.fairwinds.com/checks/security/) (equivalent) · [Checkov `CKV_K8S_23`](https://www.checkov.io/5.Policy%20Index/kubernetes.html) (equivalent) · [KubeLinter `run-as-non-root`](https://github.com/stackrox/kube-linter/blob/main/docs/generated/checks.md#run-as-non-root) (overlaps) |
 
 ### WK8205
 
@@ -828,7 +1110,10 @@ Authority: [Kubernetes — Pod Security Standards](https://kubernetes.io/docs/co
 
 drop: [ALL] and add back only what is required.
 
-Authority: [Kubernetes — Pod Security Standards](https://kubernetes.io/docs/concepts/security/pod-security-standards/)
+| | |
+|---|---|
+| Authority | [Kubernetes — Pod Security Standards](https://kubernetes.io/docs/concepts/security/pod-security-standards/) |
+| Prior art | [kubesec `containers[] .securityContext .capabilities .drop | index("ALL")`](https://kubesec.io/basics/containers-securitycontext-capabilities-drop-index-all/) (equivalent) · [KICS `No Drop Capabilities for Containers`](https://docs.kics.io/latest/queries/kubernetes-queries/268ca686-7fb7-4ae9-b129-955a2a89064e/) (overlaps) · [KubeLinter `drop-net-raw-capability`](https://github.com/stackrox/kube-linter/blob/main/docs/generated/checks.md#drop-net-raw-capability) (overlaps) |
 
 ### WK8207
 
@@ -836,7 +1121,10 @@ Authority: [Kubernetes — Pod Security Standards](https://kubernetes.io/docs/co
 
 Remove hostNetwork; it bypasses network isolation.
 
-Authority: [Kubernetes — Pod Security Standards](https://kubernetes.io/docs/concepts/security/pod-security-standards/)
+| | |
+|---|---|
+| Authority | [Kubernetes — Pod Security Standards](https://kubernetes.io/docs/concepts/security/pod-security-standards/) |
+| Prior art | [KubeLinter `host-network`](https://github.com/stackrox/kube-linter/blob/main/docs/generated/checks.md#host-network) (equivalent) · [Fairwinds Polaris `hostNetworkSet`](https://polaris.docs.fairwinds.com/checks/security/) (equivalent) · [Checkov `CKV_K8S_19`](https://www.checkov.io/5.Policy%20Index/kubernetes.html) (equivalent) |
 
 ### WK8208
 
@@ -844,7 +1132,10 @@ Authority: [Kubernetes — Pod Security Standards](https://kubernetes.io/docs/co
 
 Remove hostPID.
 
-Authority: [Kubernetes — Pod Security Standards](https://kubernetes.io/docs/concepts/security/pod-security-standards/)
+| | |
+|---|---|
+| Authority | [Kubernetes — Pod Security Standards](https://kubernetes.io/docs/concepts/security/pod-security-standards/) |
+| Prior art | [KubeLinter `host-pid`](https://github.com/stackrox/kube-linter/blob/main/docs/generated/checks.md#host-pid) (equivalent) · [Fairwinds Polaris `hostPIDSet`](https://polaris.docs.fairwinds.com/checks/security/) (equivalent) · [Checkov `CKV_K8S_17`](https://www.checkov.io/5.Policy%20Index/kubernetes.html) (equivalent) |
 
 ### WK8209
 
@@ -852,7 +1143,10 @@ Authority: [Kubernetes — Pod Security Standards](https://kubernetes.io/docs/co
 
 Remove hostIPC.
 
-Authority: [Kubernetes — Pod Security Standards](https://kubernetes.io/docs/concepts/security/pod-security-standards/)
+| | |
+|---|---|
+| Authority | [Kubernetes — Pod Security Standards](https://kubernetes.io/docs/concepts/security/pod-security-standards/) |
+| Prior art | [KubeLinter `host-ipc`](https://github.com/stackrox/kube-linter/blob/main/docs/generated/checks.md#host-ipc) (equivalent) · [Fairwinds Polaris `hostIPCSet`](https://polaris.docs.fairwinds.com/checks/security/) (equivalent) · [Checkov `CKV_K8S_18`](https://www.checkov.io/5.Policy%20Index/kubernetes.html) (equivalent) |
 
 ### WK8301
 
@@ -860,11 +1154,19 @@ Authority: [Kubernetes — Pod Security Standards](https://kubernetes.io/docs/co
 
 Add liveness and readiness probes.
 
+| | |
+|---|---|
+| Prior art | [kube-score `pod-probes`](https://github.com/zegl/kube-score/blob/master/README_CHECKS.md) (overlaps) · [Fairwinds Polaris `readinessProbeMissing`](https://polaris.docs.fairwinds.com/checks/reliability/) (overlaps) · [Checkov `CKV_K8S_8`](https://www.checkov.io/5.Policy%20Index/kubernetes.html) (overlaps) |
+
 ### WK8302
 
 **Deployment has a single replica** — report-only · guidance
 
 Use replicas >= 2 for availability.
+
+| | |
+|---|---|
+| Prior art | [Fairwinds Polaris `deploymentMissingReplicas`](https://polaris.docs.fairwinds.com/checks/reliability/) (equivalent) · [kube-score `deployment-replicas`](https://github.com/zegl/kube-score/blob/master/README_CHECKS.md) (equivalent) · [Datree `ensure-minimum-two-replicas`](https://hub.datree.io/built-in-rules/ensure-minimum-two-replicas) (equivalent) |
 
 ### WK8303
 
@@ -872,17 +1174,29 @@ Use replicas >= 2 for availability.
 
 Add a PDB to protect availability during disruptions.
 
+| | |
+|---|---|
+| Prior art | [kube-score `deployment-has-poddisruptionbudget`](https://github.com/zegl/kube-score/blob/master/README_CHECKS.md) (overlaps) · [Fairwinds Polaris `missingPodDisruptionBudget`](https://polaris.docs.fairwinds.com/checks/reliability/) (overlaps) · [KICS `Deployment Without PodDisruptionBudget`](https://docs.kics.io/latest/queries/kubernetes-queries/b23e9b98-0cb6-4fc9-b257-1f3270442678/) (overlaps) |
+
 ### WK8304
 
 **SSL redirect without a certificate** — report-only · guidance
 
 Provide a certificate and HTTPS listen-ports for the ssl-redirect annotation.
 
+| | |
+|---|---|
+| Prior art | [Fairwinds Polaris `tlsSettingsMissing`](https://polaris.docs.fairwinds.com/checks/security/) (overlaps) |
+
 ### WK8305
 
 **Ingress backend port does not match the Service** — merge-worthy · guidance
 
 Point the Ingress backend at a declared Service port.
+
+| | |
+|---|---|
+| Prior art | [KubeLinter `dangling-ingress`](https://github.com/stackrox/kube-linter/blob/main/docs/generated/checks.md#dangling-ingress) (overlaps) · [kube-score `ingress-targets-service`](https://github.com/zegl/kube-score/blob/master/README_CHECKS.md) (overlaps) |
 
 ### WK8306
 
@@ -920,11 +1234,19 @@ Add a toleration for the nvidia.com/gpu taint (or a wildcard Exists toleration) 
 
 Add a PDB selecting the InferenceService/serving Deployment so a node drain can't take down every replica at once.
 
+| | |
+|---|---|
+| Prior art | [kube-score `deployment-has-poddisruptionbudget`](https://github.com/zegl/kube-score/blob/master/README_CHECKS.md) (overlaps) · [Fairwinds Polaris `missingPodDisruptionBudget`](https://polaris.docs.fairwinds.com/checks/reliability/) (overlaps) |
+
 ### WK8406
 
 **GPU container missing resource limits** — merge-worthy · guidance
 
 Set CPU and memory limits on GPU-requesting containers to avoid starving the (scarce, expensive) GPU node.
+
+| | |
+|---|---|
+| Prior art | [Checkov `CKV_K8S_13`](https://www.checkov.io/5.Policy%20Index/kubernetes.html) (overlaps) · [kube-score `container-resources`](https://github.com/zegl/kube-score/blob/master/README_CHECKS.md) (overlaps) · [KubeLinter `unset-memory-requirements`](https://github.com/stackrox/kube-linter/blob/main/docs/generated/checks.md#unset-memory-requirements) (overlaps) |
 
 ### WK8407
 
@@ -938,11 +1260,19 @@ Pin the InferenceService model storageUri to an explicit version segment (e.g. v
 
 Fix the field name; the API server prunes unknown fields and the controller never sees them.
 
+| | |
+|---|---|
+| Prior art | [KubeLinter `schema-validation`](https://github.com/stackrox/kube-linter/blob/main/docs/generated/checks.md#schema-validation) (overlaps) |
+
 ### WK8502
 
 **Custom resource spec field has the wrong type or enum value** — merge-worthy · guidance
 
 Match the CRD schema: use the declared scalar type and one of the enum values.
+
+| | |
+|---|---|
+| Prior art | [KubeLinter `schema-validation`](https://github.com/stackrox/kube-linter/blob/main/docs/generated/checks.md#schema-validation) (overlaps) |
 
 ### WK8503
 
@@ -950,19 +1280,29 @@ Match the CRD schema: use the declared scalar type and one of the enum values.
 
 Produce the Secret in the same build (Secret, ExternalSecret, InfisicalSecret, cert-manager Certificate), or declare its provenance with declareSecret() if it exists out of band.
 
+| | |
+|---|---|
+| Prior art | [KubeLinter `env-value-from`](https://github.com/stackrox/kube-linter/blob/main/docs/generated/checks.md#env-value-from) (overlaps) |
+
 ### WK8504
 
 **committed-encrypted secret declaration does not resolve** — merge-worthy · guidance
 
 Point `file` at the committed ciphertext, make its metadata.name match the declaration, and re-run `sops -e -i` so every data/stringData value is ENC[...].
 
-Authority: [Kubernetes — Good practices for Secrets](https://kubernetes.io/docs/concepts/security/secrets-good-practices/)
+| | |
+|---|---|
+| Authority | [Kubernetes — Good practices for Secrets](https://kubernetes.io/docs/concepts/security/secrets-good-practices/) |
 
 ### WK8505
 
 **committed-encrypted secret with no Flux decryption wiring** — report-only · guidance
 
 Add decryption: "sops" to the FluxAppFor reconciling the path that carries the ciphertext sidecar, or ignore if that Kustomization is declared in a different build.
+
+| | |
+|---|---|
+| Prior art | [Flux Kustomization API reference `.spec.decryption`](https://fluxcd.io/flux/components/kustomize/kustomizations/#decryption) (overlaps) |
 
 ## Docker (DKRD)
 
@@ -974,7 +1314,10 @@ Run against Dockerfiles and Compose files.
 
 Pin the image to an explicit version tag (ideally a digest).
 
-Authority: [OSSF Scorecard — Pinned-Dependencies](https://github.com/ossf/scorecard/blob/main/docs/checks.md#pinned-dependencies)
+| | |
+|---|---|
+| Authority | [OSSF Scorecard — Pinned-Dependencies](https://github.com/ossf/scorecard/blob/main/docs/checks.md#pinned-dependencies) |
+| Prior art | [hadolint `DL3007`](https://github.com/hadolint/hadolint/wiki/DL3007) (overlaps) · [Checkov `CKV_DOCKER_7`](https://www.checkov.io/5.Policy%20Index/dockerfile.html) (overlaps) · [KICS `image_version_using_latest`](https://docs.kics.io/latest/queries/dockerfile-queries/f45ea400-6bbe-4501-9fc7-1c3d75c32067/) (overlaps) |
 
 ### DKRD002
 
@@ -988,7 +1331,10 @@ Remove the unused volume or mount it in a service.
 
 Don't expose SSH from a container; use exec/ephemeral access instead.
 
-Authority: [Docker — Security best practices](https://docs.docker.com/develop/security-best-practices/)
+| | |
+|---|---|
+| Authority | [Docker — Security best practices](https://docs.docker.com/develop/security-best-practices/) |
+| Prior art | [Checkov `CKV_DOCKER_1`](https://www.checkov.io/5.Policy%20Index/dockerfile.html) (overlaps) · [KICS `Exposing Port 22 (SSH)`](https://docs.kics.io/latest/queries/dockerfile-queries/5907595b-5b6d-4142-b173-dbb0e73fbff8/) (overlaps) |
 
 ### DKRD010
 
@@ -996,11 +1342,19 @@ Authority: [Docker — Security best practices](https://docs.docker.com/develop/
 
 Add --no-install-recommends to keep images small.
 
+| | |
+|---|---|
+| Prior art | [hadolint `DL3015`](https://github.com/hadolint/hadolint/wiki/DL3015) (equivalent) · [KICS `apt_get_not_avoiding_additional_packages`](https://docs.kics.io/latest/queries/dockerfile-queries/7384dfb2-fcd1-4fbf-91cd-6c44c318c33c/) (equivalent) |
+
 ### DKRD011
 
 **ADD used where COPY would do** — report-only · guidance
 
 Prefer COPY unless fetching a URL or extracting an archive.
+
+| | |
+|---|---|
+| Prior art | [hadolint `DL3020`](https://github.com/hadolint/hadolint/wiki/DL3020) (equivalent) · [Checkov `CKV_DOCKER_4`](https://www.checkov.io/5.Policy%20Index/dockerfile.html) (overlaps) · [Dockle `CIS-DI-0009`](https://github.com/goodwithtech/dockle/blob/master/CHECKPOINT.md#cis-di-0009) (overlaps) |
 
 ### DKRD012
 
@@ -1008,7 +1362,10 @@ Prefer COPY unless fetching a URL or extracting an archive.
 
 Add a non-root USER instruction.
 
-Authority: [Docker — Security best practices](https://docs.docker.com/develop/security-best-practices/)
+| | |
+|---|---|
+| Authority | [Docker — Security best practices](https://docs.docker.com/develop/security-best-practices/) |
+| Prior art | [Checkov `CKV_DOCKER_3`](https://www.checkov.io/5.Policy%20Index/dockerfile.html) (equivalent) · [KICS `missing_user_instruction`](https://docs.kics.io/latest/queries/dockerfile-queries/fd54f200-402c-4333-a5a4-36ef6709af2f/) (equivalent) · [Dockle `CIS-DI-0001`](https://github.com/goodwithtech/dockle/blob/master/CHECKPOINT.md#cis-di-0001) (overlaps) |
 
 ## AWS CloudFormation (WAW / COR / EXT)
 
@@ -1020,11 +1377,19 @@ Run against CloudFormation templates (JSON or YAML).
 
 Break the dependency cycle between resources.
 
+| | |
+|---|---|
+| Prior art | [cfn-lint `E3004`](https://github.com/aws-cloudformation/cfn-lint/blob/main/docs/rules.md#E3004) (equivalent) |
+
 ### EXT001
 
 **Extension constraint violation** — merge-worthy · guidance
 
 Fix the cross-property constraint flagged by the cfn-lint extension schema.
+
+| | |
+|---|---|
+| Prior art | [cfn-lint](https://github.com/aws-cloudformation/cfn-lint/blob/main/docs/cfn-schema-specification.md#extending-the-schemas-with-new-keywords) (equivalent) · [cfn-lint `E3014`](https://github.com/aws-cloudformation/cfn-lint/blob/main/docs/rules.md#E3014) (equivalent) · [cfn-lint `E3021`](https://github.com/aws-cloudformation/cfn-lint/blob/main/docs/rules.md#E3021) (equivalent) |
 
 ### WAW010
 
@@ -1032,11 +1397,19 @@ Fix the cross-property constraint flagged by the cfn-lint extension schema.
 
 Remove DependsOn already implied by a Ref/GetAtt.
 
+| | |
+|---|---|
+| Prior art | [cfn-lint `W3005`](https://github.com/aws-cloudformation/cfn-lint/blob/main/docs/rules.md#W3005) (equivalent) |
+
 ### WAW011
 
 **Deprecated Lambda runtime** — report-only · guidance
 
 Upgrade to a supported Lambda runtime.
+
+| | |
+|---|---|
+| Prior art | [cfn-lint `W2531`](https://github.com/aws-cloudformation/cfn-lint/blob/main/docs/rules.md#W2531) (equivalent) · [Checkov `CKV_AWS_363`](https://www.checkov.io/5.Policy%20Index/cloudformation.html) (equivalent) |
 
 ### WAW013
 
@@ -1068,13 +1441,20 @@ Replace the deprecated CloudFormation property.
 
 Add tags for cost allocation and compliance.
 
+| | |
+|---|---|
+| Prior art | [KICS `Lambda Function Without Tags`](https://docs.kics.io/latest/queries/cloudformation-queries/aws/8df8e857-bd59-44fa-9f4c-d77594b95b46/) (extends) · [KICS `EFS Without Tags`](https://docs.kics.io/latest/queries/cloudformation-queries/aws/08e39832-5e42-4304-98a0-aa5b43393162/) (extends) |
+
 ### WAW018
 
 **S3 bucket missing public access block** — merge-worthy · guidance
 
 Add a PublicAccessBlockConfiguration blocking all public access.
 
-Authority: [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.com/wellarchitected/latest/security-pillar/welcome.html)
+| | |
+|---|---|
+| Authority | [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.com/wellarchitected/latest/security-pillar/welcome.html) |
+| Prior art | [AWS Guard Rules Registry `S3_BUCKET_LEVEL_PUBLIC_ACCESS_PROHIBITED`](https://github.com/aws-cloudformation/aws-guard-rules-registry/blob/main/rules/aws/amazon_s3/s3_bucket_level_public_access_prohibited.guard) (equivalent) · [Checkov `CKV_AWS_53`](https://www.checkov.io/5.Policy%20Index/cloudformation.html) (extends) · [Checkov `CKV_AWS_56`](https://www.checkov.io/5.Policy%20Index/cloudformation.html) (extends) |
 
 ### WAW019
 
@@ -1082,7 +1462,10 @@ Authority: [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.
 
 Restrict the CIDR on SSH/RDP/database ports to known sources.
 
-Authority: [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.com/wellarchitected/latest/security-pillar/welcome.html)
+| | |
+|---|---|
+| Authority | [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.com/wellarchitected/latest/security-pillar/welcome.html) |
+| Prior art | [AWS Guard Rules Registry `RESTRICTED_INCOMING_TRAFFIC`](https://github.com/aws-cloudformation/aws-guard-rules-registry/blob/main/rules/aws/amazon_ec2/restricted_common_ports.guard) (overlaps) · [KICS `EC2 Sensitive Port Is Publicly Exposed`](https://docs.kics.io/latest/queries/cloudformation-queries/aws/494b03d3-bf40-4464-8524-7c56ad0700ed/) (overlaps) · [Checkov `CKV_AWS_24`](https://www.checkov.io/5.Policy%20Index/cloudformation.html) (extends) |
 
 ### WAW020
 
@@ -1090,7 +1473,10 @@ Authority: [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.
 
 Scope the policy to specific actions (least privilege).
 
-Authority: [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.com/wellarchitected/latest/security-pillar/welcome.html)
+| | |
+|---|---|
+| Authority | [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.com/wellarchitected/latest/security-pillar/welcome.html) |
+| Prior art | [Checkov `CKV_AWS_63`](https://www.checkov.io/5.Policy%20Index/cloudformation.html) (equivalent) · [cfn_nag `F4`](https://github.com/stelligent/cfn_nag/blob/master/lib/cfn-nag/custom_rules/IamPolicyWildcardActionRule.rb) (overlaps) · [AWS Guard Rules Registry `IAM_ROLE_NO_WILDCARD_ACTIONS_ON_PERMISSIONS`](https://github.com/aws-cloudformation/aws-guard-rules-registry/blob/main/rules/aws/iam/iam_role_no_wildcard_actions_on_permissions.guard) (overlaps) |
 
 ### WAW021
 
@@ -1098,7 +1484,10 @@ Authority: [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.
 
 Enable StorageEncrypted for encryption at rest.
 
-Authority: [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.com/wellarchitected/latest/security-pillar/welcome.html)
+| | |
+|---|---|
+| Authority | [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.com/wellarchitected/latest/security-pillar/welcome.html) |
+| Prior art | [cfn_nag `F27`](https://github.com/stelligent/cfn_nag/blob/master/lib/cfn-nag/custom_rules/RDSDBInstanceStorageEncryptedRule.rb) (equivalent) · [Checkov `CKV_AWS_16`](https://www.checkov.io/5.Policy%20Index/cloudformation.html) (equivalent) · [AWS Guard Rules Registry `RDS_STORAGE_ENCRYPTED`](https://github.com/aws-cloudformation/aws-guard-rules-registry/blob/main/rules/aws/amazon_rds/rds_storage_encrypted.guard) (equivalent) |
 
 ### WAW022
 
@@ -1106,11 +1495,19 @@ Authority: [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.
 
 Consider a VpcConfig for network isolation if the function needs VPC resources.
 
+| | |
+|---|---|
+| Prior art | [cfn_nag `W89`](https://github.com/stelligent/cfn_nag/blob/master/lib/cfn-nag/custom_rules/LambdaFunctionInsideVPCRule.rb) (equivalent) · [Checkov `CKV_AWS_117`](https://www.checkov.io/5.Policy%20Index/cloudformation.html) (equivalent) · [AWS Guard Rules Registry `LAMBDA_INSIDE_VPC`](https://github.com/aws-cloudformation/aws-guard-rules-registry/blob/main/rules/aws/lambda/lambda_inside_vpc.guard) (equivalent) |
+
 ### WAW023
 
 **CloudFront has no WAF web ACL** — report-only · guidance
 
 Consider attaching a WAF web ACL.
+
+| | |
+|---|---|
+| Prior art | [Checkov `CKV_AWS_68`](https://www.checkov.io/5.Policy%20Index/cloudformation.html) (equivalent) · [KICS `CloudFront Without WAF`](https://docs.kics.io/latest/queries/cloudformation-queries/aws/0f139403-303f-467c-96bd-e717e6cfd62d/) (equivalent) |
 
 ### WAW024
 
@@ -1118,13 +1515,20 @@ Consider attaching a WAF web ACL.
 
 Enable access logging for audit trails.
 
+| | |
+|---|---|
+| Prior art | [cfn_nag `W52`](https://github.com/stelligent/cfn_nag/blob/master/lib/cfn-nag/custom_rules/ElasticLoadBalancerV2AccessLoggingRule.rb) (equivalent) · [Checkov `CKV_AWS_91`](https://www.checkov.io/5.Policy%20Index/cloudformation.html) (equivalent) · [KICS `ELBv2 ALB Access Log Disabled`](https://docs.kics.io/latest/queries/cloudformation-queries/aws/c62e8b7d-1fdf-4050-ac4c-76ba9e1d9621/) (equivalent) |
+
 ### WAW025
 
 **SNS topic not encrypted** — merge-worthy · guidance
 
 Set KmsMasterKeyId for encryption at rest.
 
-Authority: [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.com/wellarchitected/latest/security-pillar/welcome.html)
+| | |
+|---|---|
+| Authority | [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.com/wellarchitected/latest/security-pillar/welcome.html) |
+| Prior art | [cfn_nag `W47`](https://github.com/stelligent/cfn_nag/blob/master/lib/cfn-nag/custom_rules/SnsTopicKmsMasterKeyIdRule.rb) (equivalent) · [Checkov `CKV_AWS_26`](https://www.checkov.io/5.Policy%20Index/cloudformation.html) (equivalent) · [AWS Guard Rules Registry `SNS_ENCRYPTED_KMS`](https://github.com/aws-cloudformation/aws-guard-rules-registry/blob/main/rules/aws/amazon_sns/sns_encrypted_kms.guard) (equivalent) |
 
 ### WAW026
 
@@ -1132,7 +1536,10 @@ Authority: [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.
 
 Enable SqsManagedSseEnabled or set KmsMasterKeyId.
 
-Authority: [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.com/wellarchitected/latest/security-pillar/welcome.html)
+| | |
+|---|---|
+| Authority | [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.com/wellarchitected/latest/security-pillar/welcome.html) |
+| Prior art | [Checkov `CKV_AWS_27`](https://www.checkov.io/5.Policy%20Index/cloudformation.html) (equivalent) · [KICS `SQS With SSE Disabled`](https://docs.kics.io/latest/queries/cloudformation-queries/aws/12726829-93ed-4d51-9cbe-13423f4299e1/) (equivalent) · [cfn_nag `W48`](https://github.com/stelligent/cfn_nag/blob/master/lib/cfn-nag/custom_rules/SqsQueueKmsMasterKeyIdRule.rb) (overlaps) |
 
 ### WAW027
 
@@ -1140,19 +1547,30 @@ Authority: [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.
 
 Enable PITR for recovery.
 
+| | |
+|---|---|
+| Prior art | [cfn_nag `W78`](https://github.com/stelligent/cfn_nag/blob/master/lib/cfn-nag/custom_rules/DynamoDBBackupRule.rb) (equivalent) · [Checkov `CKV_AWS_28`](https://www.checkov.io/5.Policy%20Index/cloudformation.html) (equivalent) · [AWS Guard Rules Registry `DYNAMODB_PITR_ENABLED`](https://github.com/aws-cloudformation/aws-guard-rules-registry/blob/main/rules/aws/dynamodb/dynamodb_pitr_enabled.guard) (equivalent) |
+
 ### WAW028
 
 **EBS volume not encrypted** — merge-worthy · guidance
 
 Enable encryption at rest.
 
-Authority: [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.com/wellarchitected/latest/security-pillar/welcome.html)
+| | |
+|---|---|
+| Authority | [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.com/wellarchitected/latest/security-pillar/welcome.html) |
+| Prior art | [cfn_nag `F1`](https://github.com/stelligent/cfn_nag/blob/master/lib/cfn-nag/custom_rules/EbsVolumeHasSseRule.rb) (equivalent) · [Checkov `CKV_AWS_3`](https://www.checkov.io/5.Policy%20Index/cloudformation.html) (equivalent) · [AWS Guard Rules Registry `ENCRYPTED_VOLUMES`](https://github.com/aws-cloudformation/aws-guard-rules-registry/blob/main/rules/aws/amazon_ec2/encrypted_volumes.guard) (equivalent) |
 
 ### WAW029
 
 **Invalid DependsOn target** — merge-worthy · guidance
 
 Fix the dangling/self DependsOn reference.
+
+| | |
+|---|---|
+| Prior art | [cfn-lint `E3005`](https://github.com/aws-cloudformation/cfn-lint/blob/main/docs/rules.md#E3005) (equivalent) |
 
 ### WAW030
 
@@ -1172,7 +1590,10 @@ Set ServiceAccountRoleArn (IRSA) for addons that need it.
 
 Enable transit encryption for the EFS volume.
 
-Authority: [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.com/wellarchitected/latest/security-pillar/welcome.html)
+| | |
+|---|---|
+| Authority | [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.com/wellarchitected/latest/security-pillar/welcome.html) |
+| Prior art | [Checkov `CKV_AWS_97`](https://www.checkov.io/5.Policy%20Index/cloudformation.html) (equivalent) · [KICS `EFS Volume With Disabled Transit Encryption`](https://docs.kics.io/latest/queries/cloudformation-queries/aws/c1282e03-b285-4637-aee7-eefe3a7bb658/) (equivalent) |
 
 ### WAW033
 
@@ -1210,7 +1631,10 @@ Fix the invalid AttrRef producing null property values.
 
 Set PubliclyAccessible: false and reach the database through the VPC.
 
-Authority: [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.com/wellarchitected/latest/security-pillar/welcome.html)
+| | |
+|---|---|
+| Authority | [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.com/wellarchitected/latest/security-pillar/welcome.html) |
+| Prior art | [cfn_nag `F22`](https://github.com/stelligent/cfn_nag/blob/master/lib/cfn-nag/custom_rules/RDSInstancePubliclyAccessibleRule.rb) (equivalent) · [Checkov `CKV_AWS_17`](https://www.checkov.io/5.Policy%20Index/cloudformation.html) (equivalent) · [KICS `RDS DB Instance Publicly Accessible`](https://docs.kics.io/latest/queries/cloudformation-queries/aws/de38e1d5-54cb-4111-a868-6f7722695007/) (equivalent) |
 
 ### WAW039
 
@@ -1218,11 +1642,19 @@ Authority: [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.
 
 Set a positive BackupRetentionPeriod.
 
+| | |
+|---|---|
+| Prior art | [cfn_nag `W75`](https://github.com/stelligent/cfn_nag/blob/master/lib/cfn-nag/custom_rules/RDSInstanceBackupRetentionPeriodRule.rb) (equivalent) · [AWS Guard Rules Registry `DB_INSTANCE_BACKUP_ENABLED`](https://github.com/aws-cloudformation/aws-guard-rules-registry/blob/main/rules/aws/amazon_rds/db_instance_backup_enabled.guard) (equivalent) · [KICS `RDS With Backup Disabled`](https://docs.kics.io/latest/queries/cloudformation-queries/aws/8c415f6f-7b90-4a27-a44a-51047e1506f9/) (equivalent) |
+
 ### WAW040
 
 **RDS deletion protection disabled (full tier)** — merge-worthy · guidance
 
 Set DeletionProtection: true on the full/production tier.
+
+| | |
+|---|---|
+| Prior art | [cfn_nag `F80`](https://github.com/stelligent/cfn_nag/blob/master/lib/cfn-nag/custom_rules/RDSInstanceDeletionProtectionRule.rb) (equivalent) · [AWS Guard Rules Registry `RDS_INSTANCE_DELETION_PROTECTION_ENABLED`](https://github.com/aws-cloudformation/aws-guard-rules-registry/blob/main/rules/aws/amazon_rds/rds_instance_deletion_protection_enabled.guard) (equivalent) · [KICS `RDS DB Instance With Deletion Protection Disabled`](https://docs.kics.io/latest/queries/cloudformation-queries/aws/2c161e58-cb52-454f-abea-6470c37b5e6e/) (equivalent) |
 
 ### WAW041
 
@@ -1230,7 +1662,9 @@ Set DeletionProtection: true on the full/production tier.
 
 Set RequireTLS: true on the DB proxy.
 
-Authority: [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.com/wellarchitected/latest/security-pillar/welcome.html)
+| | |
+|---|---|
+| Authority | [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.com/wellarchitected/latest/security-pillar/welcome.html) |
 
 ### WAW042
 
@@ -1238,7 +1672,10 @@ Authority: [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.
 
 Add a Deny statement keyed on aws:SecureTransport = false.
 
-Authority: [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.com/wellarchitected/latest/security-pillar/welcome.html)
+| | |
+|---|---|
+| Authority | [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.com/wellarchitected/latest/security-pillar/welcome.html) |
+| Prior art | [AWS Guard Rules Registry `S3_BUCKET_SSL_REQUESTS_ONLY`](https://github.com/aws-cloudformation/aws-guard-rules-registry/blob/main/rules/aws/amazon_s3/s3_bucket_ssl_requests_only.guard) (equivalent) · [KICS `S3 Bucket Without SSL In Write Actions`](https://docs.kics.io/latest/queries/cloudformation-queries/aws/38c64e76-c71e-4d92-a337-60174d1de1c9/) (overlaps) |
 
 ### WAW043
 
@@ -1246,7 +1683,10 @@ Authority: [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.
 
 Set EnableKeyRotation: true on the customer-managed key.
 
-Authority: [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.com/wellarchitected/latest/security-pillar/welcome.html)
+| | |
+|---|---|
+| Authority | [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.com/wellarchitected/latest/security-pillar/welcome.html) |
+| Prior art | [cfn_nag `F19`](https://github.com/stelligent/cfn_nag/blob/master/lib/cfn-nag/custom_rules/KMSKeyRotationRule.rb) (equivalent) · [Checkov `CKV_AWS_7`](https://www.checkov.io/5.Policy%20Index/cloudformation.html) (equivalent) · [AWS Guard Rules Registry `CMK_BACKING_KEY_ROTATION_ENABLED`](https://github.com/aws-cloudformation/aws-guard-rules-registry/blob/main/rules/aws/aws_kms/cmk_backing_key_rotation_enabled.guard) (equivalent) |
 
 ### WAW044
 
@@ -1254,7 +1694,10 @@ Authority: [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.
 
 Add a redirect DefaultAction (Protocol: HTTPS) to the HTTP listener on the full/production tier.
 
-Authority: [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.com/wellarchitected/latest/security-pillar/welcome.html)
+| | |
+|---|---|
+| Authority | [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.com/wellarchitected/latest/security-pillar/welcome.html) |
+| Prior art | [Checkov `CKV_AWS_2`](https://www.checkov.io/5.Policy%20Index/cloudformation.html) (overlaps) · [cfn_nag `W56`](https://github.com/stelligent/cfn_nag/blob/master/lib/cfn-nag/custom_rules/ElasticLoadBalancerV2ListenerProtocolRule.rb) (overlaps) |
 
 ### WAW045
 
@@ -1262,7 +1705,10 @@ Authority: [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.
 
 Set SslPolicy to a TLS 1.2+ predefined policy.
 
-Authority: [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.com/wellarchitected/latest/security-pillar/welcome.html)
+| | |
+|---|---|
+| Authority | [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.com/wellarchitected/latest/security-pillar/welcome.html) |
+| Prior art | [cfn_nag `W55`](https://github.com/stelligent/cfn_nag/blob/master/lib/cfn-nag/custom_rules/ElasticLoadBalancerV2ListenerSslPolicyRule.rb) (equivalent) · [Checkov `CKV_AWS_103`](https://www.checkov.io/5.Policy%20Index/cloudformation.html) (equivalent) · [AWS Guard Rules Registry `ELBV2_LISTENER_SSL_POLICY_RULE`](https://github.com/aws-cloudformation/aws-guard-rules-registry/blob/main/rules/aws/elastic_load_balancing_v2/elbv2_listener_ssl_policy_rule.guard) (equivalent) |
 
 ### WAW046
 
@@ -1270,7 +1716,9 @@ Authority: [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.
 
 Move the value to Secrets (Secrets Manager/SSM Parameter Store).
 
-Authority: [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.com/wellarchitected/latest/security-pillar/welcome.html)
+| | |
+|---|---|
+| Authority | [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.com/wellarchitected/latest/security-pillar/welcome.html) |
 
 ### WAW047
 
@@ -1278,7 +1726,9 @@ Authority: [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.
 
 Remove Privileged: true from the container definition.
 
-Authority: [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.com/wellarchitected/latest/security-pillar/welcome.html)
+| | |
+|---|---|
+| Authority | [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.com/wellarchitected/latest/security-pillar/welcome.html) |
 
 ### WAW048
 
@@ -1292,7 +1742,10 @@ Add a LogConfiguration (e.g. awslogs) to the container.
 
 Restrict the CIDR; only ALB:80/443 is exempt from this rule.
 
-Authority: [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.com/wellarchitected/latest/security-pillar/welcome.html)
+| | |
+|---|---|
+| Authority | [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.com/wellarchitected/latest/security-pillar/welcome.html) |
+| Prior art | [cfn_nag `W2`](https://github.com/stelligent/cfn_nag/blob/master/lib/cfn-nag/custom_rules/SecurityGroupIngressOpenToWorldRule.rb) (overlaps) · [AWS Guard Rules Registry `EC2_SECURITY_GROUP_INGRESS_OPEN_TO_WORLD_RULE`](https://github.com/aws-cloudformation/aws-guard-rules-registry/blob/main/rules/aws/amazon_ec2/ec2_security_group_ingress_open_to_world_rule.guard) (overlaps) · [KICS `Unrestricted Security Group Ingress`](https://docs.kics.io/latest/queries/cloudformation-queries/aws/4a1e6b34-1008-4e61-a5f2-1f7c276f8d14/) (overlaps) |
 
 ### WAW050
 
@@ -1300,7 +1753,9 @@ Authority: [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.
 
 Set UserPoolAddOns.AdvancedSecurityMode to AUDIT or ENFORCED.
 
-Authority: [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.com/wellarchitected/latest/security-pillar/welcome.html)
+| | |
+|---|---|
+| Authority | [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.com/wellarchitected/latest/security-pillar/welcome.html) |
 
 ### WAW051
 
@@ -1308,7 +1763,9 @@ Authority: [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.
 
 Drop "implicit" from AllowedOAuthFlows; use the code grant.
 
-Authority: [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.com/wellarchitected/latest/security-pillar/welcome.html)
+| | |
+|---|---|
+| Authority | [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.com/wellarchitected/latest/security-pillar/welcome.html) |
 
 ### WAW052
 
@@ -1316,7 +1773,10 @@ Authority: [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.
 
 Set MfaConfiguration: ON on the full/production tier.
 
-Authority: [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.com/wellarchitected/latest/security-pillar/welcome.html)
+| | |
+|---|---|
+| Authority | [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.com/wellarchitected/latest/security-pillar/welcome.html) |
+| Prior art | [cfn_nag `F78`](https://github.com/stelligent/cfn_nag/blob/master/lib/cfn-nag/custom_rules/CognitoUserPoolMfaConfigurationOnorOptionalRule.rb) (overlaps) · [AWS Guard Rules Registry `COGNITO_USER_POOL_MFA_CONFIGURATION_RULE`](https://github.com/aws-cloudformation/aws-guard-rules-registry/blob/main/rules/aws/aws_cognito/cognito_user_pool_mfa_configuration_rule.guard) (overlaps) · [KICS `Cognito UserPool Without MFA`](https://docs.kics.io/latest/queries/cloudformation-queries/aws/74a18d1a-cf02-4a31-8791-ed0967ad7fdc/) (overlaps) |
 
 ### WAW053
 
@@ -1324,7 +1784,10 @@ Authority: [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.
 
 Set ImageScanningConfiguration.ScanOnPush: true.
 
-Authority: [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.com/wellarchitected/latest/security-pillar/welcome.html)
+| | |
+|---|---|
+| Authority | [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.com/wellarchitected/latest/security-pillar/welcome.html) |
+| Prior art | [cfn_nag `W79`](https://github.com/stelligent/cfn_nag/blob/master/lib/cfn-nag/custom_rules/ECRRepositoryScanOnPushRule.rb) (equivalent) · [Checkov `CKV_AWS_163`](https://www.checkov.io/5.Policy%20Index/cloudformation.html) (equivalent) · [AWS Guard Rules Registry `ECR_REPO_SCAN_ON_PUSH`](https://github.com/aws-cloudformation/aws-guard-rules-registry/blob/main/rules/aws/aws_ecr/ecr_repo_scan_on_push_rule.guard) (equivalent) |
 
 ### WAW054
 
@@ -1332,7 +1795,10 @@ Authority: [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.
 
 Set ImageTagMutability: IMMUTABLE.
 
-Authority: [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.com/wellarchitected/latest/security-pillar/welcome.html)
+| | |
+|---|---|
+| Authority | [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.com/wellarchitected/latest/security-pillar/welcome.html) |
+| Prior art | [Checkov `CKV_AWS_51`](https://www.checkov.io/5.Policy%20Index/cloudformation.html) (equivalent) · [KICS `ECR Image Tag Not Immutable`](https://docs.kics.io/latest/queries/cloudformation-queries/aws/33f41d31-86b1-46a4-81f7-9c9a671f59ac/) (equivalent) |
 
 ### WAW055
 
@@ -1340,13 +1806,19 @@ Authority: [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.
 
 Set an explicit RetentionInDays.
 
+| | |
+|---|---|
+| Prior art | [cfn_nag `W86`](https://github.com/stelligent/cfn_nag/blob/master/lib/cfn-nag/custom_rules/LogsLogGroupRetentionRule.rb) (equivalent) · [Checkov `CKV_AWS_66`](https://www.checkov.io/5.Policy%20Index/cloudformation.html) (equivalent) · [AWS Guard Rules Registry `CW_LOGGROUP_RETENTION_PERIOD_CHECK`](https://github.com/aws-cloudformation/aws-guard-rules-registry/blob/main/rules/aws/cloudwatch/cw_loggroup_retention_period_check.guard) (equivalent) |
+
 ### WAW056
 
 **SCP guardrail has no Deny statement** — merge-worthy · guidance
 
 Add a Deny statement — SCPs only filter permissions, so a Deny-less SCP guards nothing.
 
-Authority: [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.com/wellarchitected/latest/security-pillar/welcome.html)
+| | |
+|---|---|
+| Authority | [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.com/wellarchitected/latest/security-pillar/welcome.html) |
 
 ### WAW057
 
@@ -1354,7 +1826,9 @@ Authority: [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.
 
 Attach the SCP to the organization root or an OU via TargetIds.
 
-Authority: [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.com/wellarchitected/latest/security-pillar/welcome.html)
+| | |
+|---|---|
+| Authority | [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.com/wellarchitected/latest/security-pillar/welcome.html) |
 
 ### WAW058
 
@@ -1362,13 +1836,20 @@ Authority: [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.
 
 Keep an organization CloudTrail with IsLogging: true and IsMultiRegionTrail: true.
 
-Authority: [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.com/wellarchitected/latest/security-pillar/welcome.html)
+| | |
+|---|---|
+| Authority | [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.com/wellarchitected/latest/security-pillar/welcome.html) |
+| Prior art | [AWS Guard Rules Registry `MULTI_REGION_CLOUD_TRAIL_ENABLED`](https://github.com/aws-cloudformation/aws-guard-rules-registry/blob/main/rules/aws/cloudtrail/multi_region_cloud_trail_enabled.guard) (overlaps) · [Checkov `CKV_AWS_67`](https://www.checkov.io/5.Policy%20Index/cloudformation.html) (overlaps) · [KICS `CloudTrail Logging Disabled`](https://docs.kics.io/latest/queries/cloudformation-queries/aws/5c0b06d5-b7a4-484c-aeb0-75a836269ff0/) (overlaps) |
 
 ### WAW059
 
 **Wildcard Resource where the declared graph enumerates the touched set** — report-only · guidance
 
 Tighten Resource from "*" to the Fn::GetAtt Arn list of the declared resources the role's consumers touch.
+
+| | |
+|---|---|
+| Prior art | [cfn_nag `W12`](https://github.com/stelligent/cfn_nag/blob/master/lib/cfn-nag/custom_rules/IamPolicyWildcardResourceRule.rb) (overlaps) · [cfn_nag `W11`](https://github.com/stelligent/cfn_nag/blob/master/lib/cfn-nag/custom_rules/IamRoleWildcardResourceOnPermissionsPolicyRule.rb) (overlaps) · [AWS Guard Rules Registry `IAM_POLICYDOCUMENT_NO_WILDCARD_RESOURCE`](https://github.com/aws-cloudformation/aws-guard-rules-registry/blob/main/rules/aws/iam/iam_policydocument_no_wildcard_resource.guard) (overlaps) |
 
 ### WAW060
 
@@ -1382,11 +1863,19 @@ Attach the policy via Roles/Users/Groups or reference it from a principal's Mana
 
 Fix the subnet's CidrBlock so it falls within the VPC's CidrBlock range.
 
+| | |
+|---|---|
+| Prior art | [cfn-lint `E3059`](https://github.com/aws-cloudformation/cfn-lint/blob/main/docs/rules.md#E3059) (equivalent) |
+
 ### WAW062
 
 **Duplicate export name or explicit resource name within a template** — merge-worthy · guidance
 
 Give each duplicated Export/name a distinct literal value.
+
+| | |
+|---|---|
+| Prior art | [cfn-lint `E3019`](https://github.com/aws-cloudformation/cfn-lint/blob/main/docs/rules.md#E3019) (overlaps) |
 
 ### WAW063
 
@@ -1430,6 +1919,10 @@ Attach a second VPNConnection (ideally to a separate Customer Gateway) for redun
 
 Declare the condition in the Conditions section (new Condition(...)), or fix the referenced name.
 
+| | |
+|---|---|
+| Prior art | [cfn-lint `E8002`](https://github.com/aws-cloudformation/cfn-lint/blob/main/docs/rules.md#E8002) (equivalent) |
+
 ## Azure ARM (AZR)
 
 Run against ARM deployment templates (JSON).
@@ -1440,17 +1933,29 @@ Run against ARM deployment templates (JSON).
 
 Remove dependsOn already implied by reference()/resourceId().
 
+| | |
+|---|---|
+| Prior art | [Bicep linter `no-unnecessary-dependson`](https://learn.microsoft.com/en-us/azure/azure-resource-manager/bicep/linter-rule-no-unnecessary-dependson) (equivalent) |
+
 ### AZR011
 
 **Missing or invalid apiVersion** — merge-worthy · guidance
 
 Set a valid YYYY-MM-DD apiVersion on every resource.
 
+| | |
+|---|---|
+| Prior art | [ARM Template Toolkit (arm-ttk) `apiVersions-Should-Be-Recent`](https://github.com/Azure/arm-ttk/blob/master/arm-ttk/testcases/deploymentTemplate/apiVersions-Should-Be-Recent.test.ps1) (overlaps) |
+
 ### AZR012
 
 **Deprecated API version** — report-only · guidance
 
 Move to a current apiVersion.
+
+| | |
+|---|---|
+| Prior art | [ARM Template Toolkit (arm-ttk) `apiVersions-Should-Be-Recent`](https://github.com/Azure/arm-ttk/blob/master/arm-ttk/testcases/deploymentTemplate/apiVersions-Should-Be-Recent.test.ps1) (overlaps) · [Bicep linter `use-recent-api-versions`](https://learn.microsoft.com/en-us/azure/azure-resource-manager/bicep/linter-rule-use-recent-api-versions) (overlaps) |
 
 ### AZR013
 
@@ -1464,7 +1969,10 @@ Add the required location property.
 
 Set allowBlobPublicAccess to false.
 
-Authority: [Microsoft Cloud Security Benchmark](https://learn.microsoft.com/en-us/security/benchmark/azure/)
+| | |
+|---|---|
+| Authority | [Microsoft Cloud Security Benchmark](https://learn.microsoft.com/en-us/security/benchmark/azure/) |
+| Prior art | [PSRule for Azure `Azure.Storage.BlobPublicAccess`](https://azure.github.io/PSRule.Rules.Azure/en/rules/Azure.Storage.BlobPublicAccess/) (equivalent) · [Checkov `CKV_AZURE_59`](https://www.checkov.io/5.Policy%20Index/arm.html) (equivalent) |
 
 ### AZR015
 
@@ -1472,7 +1980,9 @@ Authority: [Microsoft Cloud Security Benchmark](https://learn.microsoft.com/en-u
 
 Enable encryption services for data at rest.
 
-Authority: [Microsoft Cloud Security Benchmark](https://learn.microsoft.com/en-us/security/benchmark/azure/)
+| | |
+|---|---|
+| Authority | [Microsoft Cloud Security Benchmark](https://learn.microsoft.com/en-us/security/benchmark/azure/) |
 
 ### AZR016
 
@@ -1480,11 +1990,19 @@ Authority: [Microsoft Cloud Security Benchmark](https://learn.microsoft.com/en-u
 
 Enable soft-delete.
 
+| | |
+|---|---|
+| Prior art | [PSRule for Azure `Azure.KeyVault.SoftDelete`](https://azure.github.io/PSRule.Rules.Azure/en/rules/Azure.KeyVault.SoftDelete/) (equivalent) · [Checkov `CKV_AZURE_111`](https://www.checkov.io/5.Policy%20Index/arm.html) (equivalent) · [KICS `Key Vault Not Recoverable`](https://docs.kics.io/latest/queries/azureresourcemanager-queries/azure/7c25f361-7c66-44bf-9b69-022acd5eb4bd/) (overlaps) |
+
 ### AZR017
 
 **Key Vault purge protection not enabled** — report-only · guidance
 
 Enable purge protection.
+
+| | |
+|---|---|
+| Prior art | [PSRule for Azure `Azure.KeyVault.PurgeProtect`](https://azure.github.io/PSRule.Rules.Azure/en/rules/Azure.KeyVault.PurgeProtect/) (equivalent) · [Checkov `CKV_AZURE_110`](https://www.checkov.io/5.Policy%20Index/arm.html) (equivalent) · [KICS `Key Vault Not Recoverable`](https://docs.kics.io/latest/queries/azureresourcemanager-queries/azure/7c25f361-7c66-44bf-9b69-022acd5eb4bd/) (overlaps) |
 
 ### AZR018
 
@@ -1492,13 +2010,20 @@ Enable purge protection.
 
 Enable auditing for compliance and threat detection.
 
+| | |
+|---|---|
+| Prior art | [PSRule for Azure `Azure.SQL.Auditing`](https://azure.github.io/PSRule.Rules.Azure/en/rules/Azure.SQL.Auditing/) (equivalent) · [Checkov `CKV_AZURE_23`](https://www.checkov.io/5.Policy%20Index/arm.html) (equivalent) · [KICS `SQL Server Database Without Auditing`](https://docs.kics.io/latest/queries/azureresourcemanager-queries/azure/e055285c-bc01-48b4-8aa5-8a54acdd29df/) (equivalent) |
+
 ### AZR019
 
 **SQL database missing TDE** — merge-worthy · guidance
 
 Enable Transparent Data Encryption.
 
-Authority: [Microsoft Cloud Security Benchmark](https://learn.microsoft.com/en-us/security/benchmark/azure/)
+| | |
+|---|---|
+| Authority | [Microsoft Cloud Security Benchmark](https://learn.microsoft.com/en-us/security/benchmark/azure/) |
+| Prior art | [PSRule for Azure `Azure.SQL.TDE`](https://azure.github.io/PSRule.Rules.Azure/en/rules/Azure.SQL.TDE/) (equivalent) |
 
 ### AZR020
 
@@ -1506,13 +2031,20 @@ Authority: [Microsoft Cloud Security Benchmark](https://learn.microsoft.com/en-u
 
 Enable a system- or user-assigned identity.
 
+| | |
+|---|---|
+| Prior art | [PSRule for Azure `Azure.AppService.ManagedIdentity`](https://azure.github.io/PSRule.Rules.Azure/en/rules/Azure.AppService.ManagedIdentity/) (equivalent) · [Checkov `CKV_AZURE_71`](https://www.checkov.io/5.Policy%20Index/arm.html) (equivalent) |
+
 ### AZR021
 
 **App Service not HTTPS-only** — merge-worthy · guidance
 
 Set httpsOnly to true.
 
-Authority: [Microsoft Cloud Security Benchmark](https://learn.microsoft.com/en-us/security/benchmark/azure/)
+| | |
+|---|---|
+| Authority | [Microsoft Cloud Security Benchmark](https://learn.microsoft.com/en-us/security/benchmark/azure/) |
+| Prior art | [PSRule for Azure `Azure.AppService.UseHTTPS`](https://azure.github.io/PSRule.Rules.Azure/en/rules/Azure.AppService.UseHTTPS/) (equivalent) · [Checkov `CKV_AZURE_14`](https://www.checkov.io/5.Policy%20Index/arm.html) (equivalent) · [KICS `Website Not Forcing HTTPS`](https://docs.kics.io/latest/queries/azureresourcemanager-queries/azure/488847ff-6031-487c-bf42-98fd6ac5c9a0/) (equivalent) |
 
 ### AZR022
 
@@ -1520,13 +2052,20 @@ Authority: [Microsoft Cloud Security Benchmark](https://learn.microsoft.com/en-u
 
 Set minTlsVersion to 1.2+.
 
-Authority: [Microsoft Cloud Security Benchmark](https://learn.microsoft.com/en-us/security/benchmark/azure/)
+| | |
+|---|---|
+| Authority | [Microsoft Cloud Security Benchmark](https://learn.microsoft.com/en-us/security/benchmark/azure/) |
+| Prior art | [PSRule for Azure `Azure.AppService.MinTLS`](https://azure.github.io/PSRule.Rules.Azure/en/rules/Azure.AppService.MinTLS/) (equivalent) · [Checkov `CKV_AZURE_15`](https://www.checkov.io/5.Policy%20Index/arm.html) (equivalent) · [KICS `Web App Not Using TLS Last Version`](https://docs.kics.io/latest/queries/azureresourcemanager-queries/azure/b5c851d5-00f1-43dc-a8de-3218fd6f71be/) (equivalent) |
 
 ### AZR023
 
 **VM not using a managed disk** — report-only · guidance
 
 Use a managed disk.
+
+| | |
+|---|---|
+| Prior art | [PSRule for Azure `Azure.VM.UseManagedDisks`](https://azure.github.io/PSRule.Rules.Azure/en/rules/Azure.VM.UseManagedDisks/) (equivalent) · [Checkov `CKV_AZURE_92`](https://www.checkov.io/5.Policy%20Index/arm.html) (equivalent) |
 
 ### AZR024
 
@@ -1540,11 +2079,19 @@ Enable boot diagnostics.
 
 Enable Kubernetes RBAC.
 
+| | |
+|---|---|
+| Prior art | [PSRule for Azure `Azure.AKS.UseRBAC`](https://azure.github.io/PSRule.Rules.Azure/en/rules/Azure.AKS.UseRBAC/) (equivalent) · [Checkov `CKV_AZURE_5`](https://www.checkov.io/5.Policy%20Index/arm.html) (equivalent) · [KICS `AKS Cluster RBAC Disabled`](https://docs.kics.io/latest/queries/azureresourcemanager-queries/azure/9307a2ed-35c2-413d-94de-a1a0682c2158/) (equivalent) |
+
 ### AZR026
 
 **AKS cluster missing network policy** — report-only · guidance
 
 Configure a networkPolicy.
+
+| | |
+|---|---|
+| Prior art | [PSRule for Azure `Azure.AKS.NetworkPolicy`](https://azure.github.io/PSRule.Rules.Azure/en/rules/Azure.AKS.NetworkPolicy/) (equivalent) · [Checkov `CKV_AZURE_7`](https://www.checkov.io/5.Policy%20Index/arm.html) (equivalent) · [KICS `AKS Cluster Network Policy Not Configured`](https://docs.kics.io/latest/queries/azureresourcemanager-queries/azure/25c0228e-4444-459b-a2df-93c7df40b7ed/) (equivalent) |
 
 ### AZR027
 
@@ -1552,7 +2099,10 @@ Configure a networkPolicy.
 
 Disable the admin user; use Azure AD / service principals.
 
-Authority: [Microsoft Cloud Security Benchmark](https://learn.microsoft.com/en-us/security/benchmark/azure/)
+| | |
+|---|---|
+| Authority | [Microsoft Cloud Security Benchmark](https://learn.microsoft.com/en-us/security/benchmark/azure/) |
+| Prior art | [PSRule for Azure `Azure.ACR.AdminUser`](https://azure.github.io/PSRule.Rules.Azure/en/rules/Azure.ACR.AdminUser/) (equivalent) · [Checkov `CKV_AZURE_137`](https://www.checkov.io/5.Policy%20Index/arm.html) (equivalent) |
 
 ### AZR028
 
@@ -1566,7 +2116,10 @@ Associate an NSG to control traffic.
 
 Enable encryption for data at rest.
 
-Authority: [Microsoft Cloud Security Benchmark](https://learn.microsoft.com/en-us/security/benchmark/azure/)
+| | |
+|---|---|
+| Authority | [Microsoft Cloud Security Benchmark](https://learn.microsoft.com/en-us/security/benchmark/azure/) |
+| Prior art | [Checkov `CKV_AZURE_2`](https://www.checkov.io/5.Policy%20Index/arm.html) (equivalent) · [KICS `Azure Managed Disk Without Encryption`](https://docs.kics.io/latest/queries/azureresourcemanager-queries/azure/350f3955-b5be-436f-afaa-3d2be2fa6cdd/) (equivalent) · [PSRule for Azure `Azure.VM.ADE`](https://azure.github.io/PSRule.Rules.Azure/en/rules/Azure.VM.ADE/) (overlaps) |
 
 ### AZR030
 
@@ -1580,7 +2133,9 @@ Move the resource to a project deployed at a scope its schema supports.
 
 Set enforcementMode to Default so the assigned guardrail applies.
 
-Authority: [Microsoft Cloud Security Benchmark](https://learn.microsoft.com/en-us/security/benchmark/azure/)
+| | |
+|---|---|
+| Authority | [Microsoft Cloud Security Benchmark](https://learn.microsoft.com/en-us/security/benchmark/azure/) |
 
 ### AZR032
 
@@ -1588,7 +2143,9 @@ Authority: [Microsoft Cloud Security Benchmark](https://learn.microsoft.com/en-u
 
 Pair the policy definition with a policy assignment — unassigned it enforces nothing.
 
-Authority: [Microsoft Cloud Security Benchmark](https://learn.microsoft.com/en-us/security/benchmark/azure/)
+| | |
+|---|---|
+| Authority | [Microsoft Cloud Security Benchmark](https://learn.microsoft.com/en-us/security/benchmark/azure/) |
 
 ### AZR033
 
@@ -1596,7 +2153,9 @@ Authority: [Microsoft Cloud Security Benchmark](https://learn.microsoft.com/en-u
 
 Set blockSubscriptionsLeavingTenant: true on the Microsoft.Subscription/policies resource.
 
-Authority: [Microsoft Cloud Security Benchmark](https://learn.microsoft.com/en-us/security/benchmark/azure/)
+| | |
+|---|---|
+| Authority | [Microsoft Cloud Security Benchmark](https://learn.microsoft.com/en-us/security/benchmark/azure/) |
 
 ## GCP Config Connector (WGC)
 
@@ -1608,7 +2167,10 @@ Run against Config Connector (cnrm.cloud.google.com) manifests.
 
 Configure encryption (e.g. a CMEK key) for data at rest.
 
-Authority: [Google Cloud — Security best practices](https://cloud.google.com/security/best-practices)
+| | |
+|---|---|
+| Authority | [Google Cloud — Security best practices](https://cloud.google.com/security/best-practices) |
+| Prior art | [Google Cloud Policy Library `GCPStorageCMEKEncryptionConstraintV1`](https://github.com/GoogleCloudPlatform/policy-library/blob/master/policies/templates/gcp_storage_cmek_encryption_v1.yaml) (overlaps) |
 
 ### WGC102
 
@@ -1616,7 +2178,10 @@ Authority: [Google Cloud — Security best practices](https://cloud.google.com/s
 
 Remove allUsers/allAuthenticatedUsers bindings.
 
-Authority: [Google Cloud — Security best practices](https://cloud.google.com/security/best-practices)
+| | |
+|---|---|
+| Authority | [Google Cloud — Security best practices](https://cloud.google.com/security/best-practices) |
+| Prior art | [Checkov `CKV_GCP_28`](https://www.checkov.io/5.Policy%20Index/terraform.html) (overlaps) · [KICS `Cloud Storage Anonymous or Publicly Accessible`](https://docs.kics.io/latest/queries/terraform-queries/gcp/a6cd52a1-3056-4910-96a5-894de9f3f3b3/) (overlaps) · [Google Cloud Policy Library `GCPStorageBucketWorldReadableConstraintV1`](https://github.com/GoogleCloudPlatform/policy-library/blob/master/policies/templates/gcp_storage_bucket_world_readable_v1.yaml) (overlaps) |
 
 ### WGC103
 
@@ -1630,7 +2195,10 @@ Add the cnrm.cloud.google.com/project-id annotation.
 
 Enable uniformBucketLevelAccess.
 
-Authority: [Google Cloud — Security best practices](https://cloud.google.com/security/best-practices)
+| | |
+|---|---|
+| Authority | [Google Cloud — Security best practices](https://cloud.google.com/security/best-practices) |
+| Prior art | [Checkov `CKV_GCP_29`](https://www.checkov.io/5.Policy%20Index/terraform.html) (overlaps) · [KICS `Google Storage Bucket Level Access Disabled`](https://docs.kics.io/latest/queries/terraform-queries/gcp/bb0db090-5509-4853-a827-75ced0b3caa0/) (overlaps) · [Google Cloud Policy Library `GCPStorageBucketPolicyOnlyConstraintV1`](https://github.com/GoogleCloudPlatform/policy-library/blob/master/policies/templates/gcp_storage_bucket_policy_only_v1.yaml) (overlaps) |
 
 ### WGC105
 
@@ -1638,7 +2206,10 @@ Authority: [Google Cloud — Security best practices](https://cloud.google.com/s
 
 Restrict authorizedNetworks to known sources.
 
-Authority: [Google Cloud — Security best practices](https://cloud.google.com/security/best-practices)
+| | |
+|---|---|
+| Authority | [Google Cloud — Security best practices](https://cloud.google.com/security/best-practices) |
+| Prior art | [Checkov `CKV_GCP_11`](https://www.checkov.io/5.Policy%20Index/terraform.html) (overlaps) · [KICS `SQL DB Instance Publicly Accessible`](https://docs.kics.io/latest/queries/terraform-queries/gcp/b187edca-b81e-4fdc-aff4-aab57db45edb/) (overlaps) · [Google Cloud Policy Library `GCPSQLWorldReadableConstraintV1`](https://github.com/GoogleCloudPlatform/policy-library/blob/master/policies/templates/gcp_sql_world_readable_v1.yaml) (overlaps) |
 
 ### WGC106
 
@@ -1652,11 +2223,19 @@ Add the cnrm.cloud.google.com/deletion-policy annotation.
 
 Enable object versioning.
 
+| | |
+|---|---|
+| Prior art | [Checkov `CKV_GCP_78`](https://www.checkov.io/5.Policy%20Index/terraform.html) (overlaps) · [KICS `Cloud Storage Bucket Versioning Disabled`](https://docs.kics.io/latest/queries/terraform-queries/gcp/e7e961ac-d17e-4413-84bc-8a1fbe242944/) (overlaps) |
+
 ### WGC108
 
 **Cloud SQL backups disabled** — report-only · guidance
 
 Enable backup configuration.
+
+| | |
+|---|---|
+| Prior art | [Checkov `CKV_GCP_14`](https://www.checkov.io/5.Policy%20Index/terraform.html) (overlaps) · [KICS `SQL DB Instance Backup Disabled`](https://docs.kics.io/latest/queries/terraform-queries/gcp/cf3c7631-cd1e-42f3-8801-a561214a6e79/) (overlaps) · [Google Cloud Policy Library `GCPSQLBackupConstraintV1`](https://github.com/GoogleCloudPlatform/policy-library/blob/master/policies/templates/gcp_sql_backup_v1.yaml) (overlaps) |
 
 ### WGC109
 
@@ -1664,7 +2243,10 @@ Enable backup configuration.
 
 Restrict sourceRanges to known sources.
 
-Authority: [Google Cloud — Security best practices](https://cloud.google.com/security/best-practices)
+| | |
+|---|---|
+| Authority | [Google Cloud — Security best practices](https://cloud.google.com/security/best-practices) |
+| Prior art | [Google Cloud Policy Library `GCPRestrictedFirewallRulesConstraintV1`](https://github.com/GoogleCloudPlatform/policy-library/blob/master/policies/templates/gcp_restricted_firewall_rules_v1.yaml) (overlaps) · [Checkov `CKV2_GCP_12`](https://www.checkov.io/5.Policy%20Index/terraform.html) (overlaps) |
 
 ### WGC110
 
@@ -1672,7 +2254,10 @@ Authority: [Google Cloud — Security best practices](https://cloud.google.com/s
 
 Set a rotationPeriod on the CryptoKey.
 
-Authority: [Google Cloud — Security best practices](https://cloud.google.com/security/best-practices)
+| | |
+|---|---|
+| Authority | [Google Cloud — Security best practices](https://cloud.google.com/security/best-practices) |
+| Prior art | [Checkov `CKV_GCP_43`](https://www.checkov.io/5.Policy%20Index/terraform.html) (overlaps) · [KICS `High Google KMS Crypto Key Rotation Period`](https://docs.kics.io/latest/queries/terraform-queries/gcp/d8c57c4e-bf6f-4e32-a2bf-8643532de77b/) (overlaps) · [Google Cloud Policy Library `GCPCMEKRotationConstraintV1`](https://github.com/GoogleCloudPlatform/policy-library/blob/master/policies/templates/gcp_cmek_rotation_v1.yaml) (overlaps) |
 
 ### WGC111
 
@@ -1704,7 +2289,10 @@ Add the app.kubernetes.io/managed-by label.
 
 Enable Workload Identity on the ContainerCluster.
 
-Authority: [Google Cloud — Security best practices](https://cloud.google.com/security/best-practices)
+| | |
+|---|---|
+| Authority | [Google Cloud — Security best practices](https://cloud.google.com/security/best-practices) |
+| Prior art | [Google Cloud Policy Library `GCPGKEEnableWorkloadIdentityConstraintV1`](https://github.com/GoogleCloudPlatform/policy-library/blob/master/policies/templates/gcp_gke_enable_workload_identity_v1.yaml) (overlaps) · [Checkov `CKV_GCP_69`](https://www.checkov.io/5.Policy%20Index/terraform.html) (overlaps) |
 
 ### WGC203
 
@@ -1712,7 +2300,10 @@ Authority: [Google Cloud — Security best practices](https://cloud.google.com/s
 
 Use narrowly-scoped OAuth scopes instead of cloud-platform.
 
-Authority: [Google Cloud — Security best practices](https://cloud.google.com/security/best-practices)
+| | |
+|---|---|
+| Authority | [Google Cloud — Security best practices](https://cloud.google.com/security/best-practices) |
+| Prior art | [Google Cloud Policy Library `GCPGKEAllowedNodeSAConstraintV1`](https://github.com/GoogleCloudPlatform/policy-library/blob/master/policies/templates/gcp_gke_allowed_node_sa_v1.yaml) (overlaps) · [Checkov `CKV_GCP_31`](https://www.checkov.io/5.Policy%20Index/terraform.html) (overlaps) · [KICS `VM With Full Cloud Access`](https://docs.kics.io/latest/queries/terraform-queries/gcp/bc280331-27b9-4acb-a010-018e8098aa5d/) (overlaps) |
 
 ### WGC204
 
@@ -1720,11 +2311,19 @@ Authority: [Google Cloud — Security best practices](https://cloud.google.com/s
 
 Enable Shielded VM configuration.
 
+| | |
+|---|---|
+| Prior art | [Checkov `CKV_GCP_39`](https://www.checkov.io/5.Policy%20Index/terraform.html) (overlaps) · [KICS `Shielded VM Disabled`](https://docs.kics.io/latest/queries/terraform-queries/gcp/1b44e234-3d73-41a8-9954-0b154135280e/) (overlaps) |
+
 ### WGC301
 
 **No IAMAuditConfig found** — report-only · guidance
 
 Configure audit logging via IAMAuditConfig.
+
+| | |
+|---|---|
+| Prior art | [Google Cloud Policy Library `GCPIAMAuditLogConstraint`](https://github.com/GoogleCloudPlatform/policy-library/blob/master/policies/templates/gcp_iam_audit_log.yaml) (overlaps) · [Checkov `CKV2_GCP_5`](https://www.checkov.io/5.Policy%20Index/terraform.html) (overlaps) |
 
 ### WGC302
 
@@ -1737,6 +2336,10 @@ Declare the GCP APIs you depend on.
 **No VPC Service Controls perimeter** — report-only · guidance
 
 Consider an AccessContextManager ServicePerimeter.
+
+| | |
+|---|---|
+| Prior art | [Google Cloud Policy Library `GCPVPCSCEnsureProjectConstraintV1`](https://github.com/GoogleCloudPlatform/policy-library/blob/master/policies/templates/gcp_vpc_sc_ensure_project_v1.yaml) (overlaps) |
 
 ### WGC401
 
@@ -1762,7 +2365,9 @@ Fix the field's type/structure.
 
 Enable enforce on the rule (or remove the policy deliberately) — a disabled org policy constrains nothing.
 
-Authority: [Google Cloud — Security best practices](https://cloud.google.com/security/best-practices)
+| | |
+|---|---|
+| Authority | [Google Cloud — Security best practices](https://cloud.google.com/security/best-practices) |
 
 ### WGC502
 
@@ -1770,7 +2375,9 @@ Authority: [Google Cloud — Security best practices](https://cloud.google.com/s
 
 Add rules to the OrgPolicyPolicy — without them the constraint binds nothing.
 
-Authority: [Google Cloud — Security best practices](https://cloud.google.com/security/best-practices)
+| | |
+|---|---|
+| Authority | [Google Cloud — Security best practices](https://cloud.google.com/security/best-practices) |
 
 ### WGC503
 
@@ -1778,7 +2385,10 @@ Authority: [Google Cloud — Security best practices](https://cloud.google.com/s
 
 Keep auditLogConfigs populated and remove exemptedMembers from the IAMAuditConfig.
 
-Authority: [Google Cloud — Security best practices](https://cloud.google.com/security/best-practices)
+| | |
+|---|---|
+| Authority | [Google Cloud — Security best practices](https://cloud.google.com/security/best-practices) |
+| Prior art | [Google Cloud Policy Library `GCPIAMAuditLogConstraint`](https://github.com/GoogleCloudPlatform/policy-library/blob/master/policies/templates/gcp_iam_audit_log.yaml) (overlaps) · [Checkov `CKV2_GCP_5`](https://www.checkov.io/5.Policy%20Index/terraform.html) (overlaps) · [KICS `IAM Audit Not Properly Configured`](https://docs.kics.io/latest/queries/terraform-queries/gcp/89fe890f-b480-460c-8b6b-7d8b1468adb4/) (overlaps) |
 
 ## Helm (WHM)
 
@@ -1790,11 +2400,19 @@ Run against Helm charts (Chart.yaml + templates).
 
 Deploy the upstream chart directly instead of an empty wrapper.
 
+| | |
+|---|---|
+| Prior art | [helm lint `templatesDirExists`](https://github.com/helm/helm/blob/main/pkg/chart/v2/lint/rules/template.go) (overlaps) |
+
 ### WHM101
 
 **Chart.yaml missing required fields** — merge-worthy · guidance
 
 Set apiVersion (v2), name, and version in Chart.yaml.
+
+| | |
+|---|---|
+| Prior art | [helm lint `Chartfile (validateChartName, validateChartAPIVersion, validateChartVersion)`](https://github.com/helm/helm/blob/main/pkg/chart/v2/lint/rules/chartfile.go) (equivalent) · [chart-testing (ct) `ct lint --chart-yaml-schema`](https://github.com/helm/chart-testing/blob/main/doc/ct_lint.md) (overlaps) |
 
 ### WHM102
 
@@ -1807,6 +2425,10 @@ Add a values.schema.json to validate values.
 **Invalid Go template syntax** — merge-worthy · guidance
 
 Fix the unbalanced template braces.
+
+| | |
+|---|---|
+| Prior art | [helm lint `Templates (render error)`](https://github.com/helm/helm/blob/main/pkg/chart/v2/lint/rules/template.go) (equivalent) |
 
 ### WHM104
 
@@ -1856,13 +2478,20 @@ Add at least one Helm test for application charts.
 
 Set limits/requests via values or defaults.
 
+| | |
+|---|---|
+| Prior art | [kube-score `container-resources`](https://github.com/zegl/kube-score/blob/master/README_CHECKS.md) (overlaps) · [KubeLinter `unset-cpu-requirements`](https://github.com/stackrox/kube-linter/blob/main/docs/generated/checks.md#unset-cpu-requirements) (overlaps) · [Fairwinds Polaris `cpuRequestsMissing`](https://polaris.docs.fairwinds.com/checks/efficiency/) (overlaps) |
+
 ### WHM401
 
 **Container image uses :latest or no tag** — merge-worthy · guidance
 
 Pin the image to an explicit version tag.
 
-Authority: [OSSF Scorecard — Pinned-Dependencies](https://github.com/ossf/scorecard/blob/main/docs/checks.md#pinned-dependencies)
+| | |
+|---|---|
+| Authority | [OSSF Scorecard — Pinned-Dependencies](https://github.com/ossf/scorecard/blob/main/docs/checks.md#pinned-dependencies) |
+| Prior art | [kube-score `container-image-tag`](https://github.com/zegl/kube-score/blob/master/README_CHECKS.md) (equivalent) · [KICS `Invalid Image Tag`](https://docs.kics.io/latest/queries/kubernetes-queries/583053b7-e632-46f0-b989-f81ff8045385/) (equivalent) · [Datree `ensure-image-pinned-version`](https://hub.datree.io/built-in-rules/ensure-image-pinned-version) (equivalent) |
 
 ### WHM402
 
@@ -1870,7 +2499,10 @@ Authority: [OSSF Scorecard — Pinned-Dependencies](https://github.com/ossf/scor
 
 Set runAsNonRoot in the security context.
 
-Authority: [Kubernetes — Pod Security Standards](https://kubernetes.io/docs/concepts/security/pod-security-standards/)
+| | |
+|---|---|
+| Authority | [Kubernetes — Pod Security Standards](https://kubernetes.io/docs/concepts/security/pod-security-standards/) |
+| Prior art | [kubesec `containers[] .securityContext .runAsNonRoot == true`](https://kubesec.io/basics/containers-securitycontext-runasnonroot-true/) (equivalent) · [KICS `Container Running As Root`](https://docs.kics.io/latest/queries/kubernetes-queries/cf34805e-3872-4c08-bf92-6ff7bb0cfadb/) (equivalent) · [kube-score `container-security-context-user-group-id`](https://github.com/zegl/kube-score/blob/master/README_CHECKS.md) (overlaps) |
 
 ### WHM403
 
@@ -1878,7 +2510,10 @@ Authority: [Kubernetes — Pod Security Standards](https://kubernetes.io/docs/co
 
 Set readOnlyRootFilesystem.
 
-Authority: [Kubernetes — Pod Security Standards](https://kubernetes.io/docs/concepts/security/pod-security-standards/)
+| | |
+|---|---|
+| Authority | [Kubernetes — Pod Security Standards](https://kubernetes.io/docs/concepts/security/pod-security-standards/) |
+| Prior art | [kubesec `containers[] .securityContext .readOnlyRootFilesystem == true`](https://kubesec.io/basics/containers-securitycontext-readonlyrootfilesystem-true/) (equivalent) · [KICS `Root Container Not Mounted Read-only`](https://docs.kics.io/latest/queries/kubernetes-queries/a9c2f49d-0671-4fc9-9ece-f4e261e128d0/) (equivalent) · [kube-score `container-security-context-readonlyrootfilesystem`](https://github.com/zegl/kube-score/blob/master/README_CHECKS.md) (equivalent) |
 
 ### WHM404
 
@@ -1886,13 +2521,20 @@ Authority: [Kubernetes — Pod Security Standards](https://kubernetes.io/docs/co
 
 Remove privileged mode.
 
-Authority: [Kubernetes — Pod Security Standards](https://kubernetes.io/docs/concepts/security/pod-security-standards/)
+| | |
+|---|---|
+| Authority | [Kubernetes — Pod Security Standards](https://kubernetes.io/docs/concepts/security/pod-security-standards/) |
+| Prior art | [kubesec `containers[] .securityContext .privileged == true`](https://kubesec.io/basics/containers-securitycontext-privileged-true/) (equivalent) · [KICS `Container Is Privileged`](https://docs.kics.io/latest/queries/kubernetes-queries/dd29336b-fe57-445b-a26e-e6aa867ae609/) (equivalent) · [kube-score `container-security-context-privileged`](https://github.com/zegl/kube-score/blob/master/README_CHECKS.md) (equivalent) |
 
 ### WHM405
 
 **Resource specs missing cpu/memory** — report-only · guidance
 
 Set cpu and memory in limits/requests.
+
+| | |
+|---|---|
+| Prior art | [Checkov `CKV_K8S_10`](https://www.checkov.io/5.Policy%20Index/kubernetes.html) (overlaps) · [Checkov `CKV_K8S_12`](https://www.checkov.io/5.Policy%20Index/kubernetes.html) (overlaps) · [kubesec `containers[] .resources .limits .memory`](https://kubesec.io/basics/containers-resources-limits-memory/) (overlaps) |
 
 ### WHM406
 
@@ -1906,7 +2548,10 @@ Manage CRD upgrades outside Helm or via a separate chart.
 
 Use ExternalSecret/SealedSecret instead of inline Secret data.
 
-Authority: [Kubernetes — Good practices for Secrets](https://kubernetes.io/docs/concepts/security/secrets-good-practices/)
+| | |
+|---|---|
+| Authority | [Kubernetes — Good practices for Secrets](https://kubernetes.io/docs/concepts/security/secrets-good-practices/) |
+| Prior art | [KICS `Using Kubernetes Native Secret Management`](https://docs.kics.io/latest/queries/kubernetes-queries/b9c83569-459b-4110-8f79-6305aa33cb37/) (overlaps) |
 
 ### WHM501
 
@@ -1920,13 +2565,20 @@ Remove values defined but never referenced.
 
 Update to a supported apiVersion.
 
+| | |
+|---|---|
+| Prior art | [Pluto `detect-files`](https://github.com/FairwindsOps/pluto) (equivalent) · [helm lint `validateNoDeprecations`](https://github.com/helm/helm/blob/main/pkg/chart/v2/lint/rules/deprecations.go) (equivalent) · [kube-score `stable-version`](https://github.com/zegl/kube-score/blob/master/README_CHECKS.md) (equivalent) |
+
 ### WHM503
 
 **Pinned render carries Secret data** — merge-worthy · guidance
 
 Declare the value with runtimeSlot() or replace the Secret with HelmExternalSecret.
 
-Authority: [Kubernetes — Good practices for Secrets](https://kubernetes.io/docs/concepts/security/secrets-good-practices/)
+| | |
+|---|---|
+| Authority | [Kubernetes — Good practices for Secrets](https://kubernetes.io/docs/concepts/security/secrets-good-practices/) |
+| Prior art | [KICS `Using Kubernetes Native Secret Management`](https://docs.kics.io/latest/queries/kubernetes-queries/b9c83569-459b-4110-8f79-6305aa33cb37/) (overlaps) |
 
 ### WHM504
 
@@ -1944,7 +2596,9 @@ Run against fountain manifests (`apiVersion: fountain.dev/v1`) — standalone `f
 
 Use a $\{VAR} substitution reference or an environment secret; never a literal in source.
 
-Authority: [OWASP Top 10 for LLM Applications — LLM01: Prompt Injection](https://owasp.org/www-project-top-10-for-large-language-model-applications/)
+| | |
+|---|---|
+| Authority | [OWASP Top 10 for LLM Applications — LLM01: Prompt Injection](https://owasp.org/www-project-top-10-for-large-language-model-applications/) |
 
 ### FTN010
 
@@ -1952,7 +2606,9 @@ Authority: [OWASP Top 10 for LLM Applications — LLM01: Prompt Injection](https
 
 Set networking_type — an open sandbox by silence is not a reviewed decision.
 
-Authority: [fountain — Environment, Vault, and Agent primitives](https://github.com/BinaryBourbon/fountain/blob/main/docs/primitives.md)
+| | |
+|---|---|
+| Authority | [fountain — Environment, Vault, and Agent primitives](https://github.com/BinaryBourbon/fountain/blob/main/docs/primitives.md) |
 
 ### FTN011
 
@@ -1960,7 +2616,9 @@ Authority: [fountain — Environment, Vault, and Agent primitives](https://githu
 
 Prefer limited with an allowed_hosts allowlist; an empty list denies all egress.
 
-Authority: [fountain — Environment, Vault, and Agent primitives](https://github.com/BinaryBourbon/fountain/blob/main/docs/primitives.md)
+| | |
+|---|---|
+| Authority | [fountain — Environment, Vault, and Agent primitives](https://github.com/BinaryBourbon/fountain/blob/main/docs/primitives.md) |
 
 ### FTN012
 
@@ -1968,7 +2626,9 @@ Authority: [fountain — Environment, Vault, and Agent primitives](https://githu
 
 env_vars is plaintext config — move credentials to a secret, or serve the capability outside the sandbox.
 
-Authority: [OWASP Top 10 for LLM Applications — LLM01: Prompt Injection](https://owasp.org/www-project-top-10-for-large-language-model-applications/)
+| | |
+|---|---|
+| Authority | [OWASP Top 10 for LLM Applications — LLM01: Prompt Injection](https://owasp.org/www-project-top-10-for-large-language-model-applications/) |
 
 ### FTN013
 
@@ -1988,7 +2648,10 @@ Vault values win on key collision silently — rename the key or confirm the ove
 
 Reference the value with $\{VAR} so it resolves at spawn instead of living in source.
 
-Authority: [OWASP Top 10 for LLM Applications — LLM01: Prompt Injection](https://owasp.org/www-project-top-10-for-large-language-model-applications/)
+| | |
+|---|---|
+| Authority | [OWASP Top 10 for LLM Applications — LLM01: Prompt Injection](https://owasp.org/www-project-top-10-for-large-language-model-applications/) |
+| Prior art | [agent-audit `auth-bypass/env-secret-in-config`](https://raw.githubusercontent.com/piiiico/agent-audit/main/README.md) (overlaps) · [mcp-audit (APIsec) `Secrets Detection`](https://raw.githubusercontent.com/apisec-inc/mcp-audit/main/README.md) (overlaps) |
 
 ### FTN016
 
@@ -2012,7 +2675,10 @@ Lexicon-independent — scans the raw text of every scanned file for likely cred
 
 Remove the key from source, rotate it in IAM, and load it from a secret store or environment variable instead.
 
-Authority: [GitHub — About secret scanning](https://docs.github.com/en/code-security/secret-scanning/introduction/about-secret-scanning)
+| | |
+|---|---|
+| Authority | [GitHub — About secret scanning](https://docs.github.com/en/code-security/secret-scanning/introduction/about-secret-scanning) |
+| Prior art | [gitleaks `aws-access-token`](https://github.com/gitleaks/gitleaks/blob/master/config/gitleaks.toml) (equivalent) · [TruffleHog `aws`](https://github.com/trufflesecurity/trufflehog/blob/main/pkg/detectors/aws/access_keys/accesskey.go) (overlaps) · [detect-secrets `AWSKeyDetector`](https://github.com/Yelp/detect-secrets/blob/master/detect_secrets/plugins/aws.py) (equivalent) |
 
 ### SEC002
 
@@ -2020,7 +2686,10 @@ Authority: [GitHub — About secret scanning](https://docs.github.com/en/code-se
 
 Remove the key from source, rotate it in IAM, and load it from a secret store or environment variable instead.
 
-Authority: [GitHub — About secret scanning](https://docs.github.com/en/code-security/secret-scanning/introduction/about-secret-scanning)
+| | |
+|---|---|
+| Authority | [GitHub — About secret scanning](https://docs.github.com/en/code-security/secret-scanning/introduction/about-secret-scanning) |
+| Prior art | [gitleaks `generic-api-key`](https://github.com/gitleaks/gitleaks/blob/master/config/gitleaks.toml) (overlaps) · [TruffleHog `aws`](https://github.com/trufflesecurity/trufflehog/blob/main/pkg/detectors/aws/access_keys/accesskey.go) (overlaps) · [detect-secrets `AWSKeyDetector`](https://github.com/Yelp/detect-secrets/blob/master/detect_secrets/plugins/aws.py) (overlaps) |
 
 ### SEC003
 
@@ -2028,7 +2697,10 @@ Authority: [GitHub — About secret scanning](https://docs.github.com/en/code-se
 
 Remove the token from source and revoke it at github.com/settings/tokens; use a GitHub Actions secret instead.
 
-Authority: [GitHub — About secret scanning](https://docs.github.com/en/code-security/secret-scanning/introduction/about-secret-scanning)
+| | |
+|---|---|
+| Authority | [GitHub — About secret scanning](https://docs.github.com/en/code-security/secret-scanning/introduction/about-secret-scanning) |
+| Prior art | [gitleaks `github-pat`](https://github.com/gitleaks/gitleaks/blob/master/config/gitleaks.toml) (overlaps) · [TruffleHog `github`](https://github.com/trufflesecurity/trufflehog/blob/main/pkg/detectors/github/v2/github.go) (equivalent) · [detect-secrets `GitHubTokenDetector`](https://github.com/Yelp/detect-secrets/blob/master/detect_secrets/plugins/github_token.py) (overlaps) |
 
 ### SEC004
 
@@ -2036,7 +2708,10 @@ Authority: [GitHub — About secret scanning](https://docs.github.com/en/code-se
 
 Remove the token from source and revoke it in the Slack app's OAuth settings.
 
-Authority: [GitHub — About secret scanning](https://docs.github.com/en/code-security/secret-scanning/introduction/about-secret-scanning)
+| | |
+|---|---|
+| Authority | [GitHub — About secret scanning](https://docs.github.com/en/code-security/secret-scanning/introduction/about-secret-scanning) |
+| Prior art | [gitleaks `slack-bot-token`](https://github.com/gitleaks/gitleaks/blob/master/config/gitleaks.toml) (overlaps) · [TruffleHog `slack`](https://github.com/trufflesecurity/trufflehog/blob/main/pkg/detectors/slack/slack.go) (overlaps) · [detect-secrets `SlackDetector`](https://github.com/Yelp/detect-secrets/blob/master/detect_secrets/plugins/slack.py) (overlaps) |
 
 ### SEC005
 
@@ -2044,7 +2719,10 @@ Authority: [GitHub — About secret scanning](https://docs.github.com/en/code-se
 
 Remove the key from source and regenerate it in the Google Cloud Console credentials page.
 
-Authority: [GitHub — About secret scanning](https://docs.github.com/en/code-security/secret-scanning/introduction/about-secret-scanning)
+| | |
+|---|---|
+| Authority | [GitHub — About secret scanning](https://docs.github.com/en/code-security/secret-scanning/introduction/about-secret-scanning) |
+| Prior art | [gitleaks `gcp-api-key`](https://github.com/gitleaks/gitleaks/blob/master/config/gitleaks.toml) (equivalent) · [TruffleHog `googlegemini`](https://github.com/trufflesecurity/trufflehog/blob/main/pkg/detectors/googlegemini/googlegemini.go) (overlaps) |
 
 ### SEC006
 
@@ -2052,7 +2730,10 @@ Authority: [GitHub — About secret scanning](https://docs.github.com/en/code-se
 
 Remove the key from source and roll it in the Stripe dashboard immediately — this is a live-mode key.
 
-Authority: [GitHub — About secret scanning](https://docs.github.com/en/code-security/secret-scanning/introduction/about-secret-scanning)
+| | |
+|---|---|
+| Authority | [GitHub — About secret scanning](https://docs.github.com/en/code-security/secret-scanning/introduction/about-secret-scanning) |
+| Prior art | [gitleaks `stripe-access-token`](https://github.com/gitleaks/gitleaks/blob/master/config/gitleaks.toml) (overlaps) · [TruffleHog `stripe`](https://github.com/trufflesecurity/trufflehog/blob/main/pkg/detectors/stripe/stripe.go) (overlaps) · [detect-secrets `StripeDetector`](https://github.com/Yelp/detect-secrets/blob/master/detect_secrets/plugins/stripe.py) (overlaps) |
 
 ### SEC007
 
@@ -2060,7 +2741,10 @@ Authority: [GitHub — About secret scanning](https://docs.github.com/en/code-se
 
 Remove the private key from source, rotate the keypair, and load the key from a secret store instead.
 
-Authority: [GitHub — About secret scanning](https://docs.github.com/en/code-security/secret-scanning/introduction/about-secret-scanning)
+| | |
+|---|---|
+| Authority | [GitHub — About secret scanning](https://docs.github.com/en/code-security/secret-scanning/introduction/about-secret-scanning) |
+| Prior art | [gitleaks `private-key`](https://github.com/gitleaks/gitleaks/blob/master/config/gitleaks.toml) (equivalent) · [TruffleHog `privatekey`](https://github.com/trufflesecurity/trufflehog/blob/main/pkg/detectors/privatekey/privatekey.go) (equivalent) · [detect-secrets `PrivateKeyDetector`](https://github.com/Yelp/detect-secrets/blob/master/detect_secrets/plugins/private_key.py) (equivalent) |
 
 ### SEC008
 
@@ -2068,7 +2752,10 @@ Authority: [GitHub — About secret scanning](https://docs.github.com/en/code-se
 
 Remove the token from source; if it's long-lived, revoke and reissue it via the issuing service.
 
-Authority: [GitHub — About secret scanning](https://docs.github.com/en/code-security/secret-scanning/introduction/about-secret-scanning)
+| | |
+|---|---|
+| Authority | [GitHub — About secret scanning](https://docs.github.com/en/code-security/secret-scanning/introduction/about-secret-scanning) |
+| Prior art | [gitleaks `curl-auth-header`](https://github.com/gitleaks/gitleaks/blob/master/config/gitleaks.toml) (overlaps) |
 
 ### SEC009
 
@@ -2076,7 +2763,10 @@ Authority: [GitHub — About secret scanning](https://docs.github.com/en/code-se
 
 Move the username/password out of the URI into a secret store, and rotate the credential.
 
-Authority: [GitHub — About secret scanning](https://docs.github.com/en/code-security/secret-scanning/introduction/about-secret-scanning)
+| | |
+|---|---|
+| Authority | [GitHub — About secret scanning](https://docs.github.com/en/code-security/secret-scanning/introduction/about-secret-scanning) |
+| Prior art | [detect-secrets `BasicAuthDetector`](https://github.com/Yelp/detect-secrets/blob/master/detect_secrets/plugins/basic_auth.py) (equivalent) · [TruffleHog `uri`](https://github.com/trufflesecurity/trufflehog/blob/main/pkg/detectors/uri/uri.go) (overlaps) · [gitleaks `curl-auth-user`](https://github.com/gitleaks/gitleaks/blob/master/config/gitleaks.toml) (overlaps) |
 
 ### SEC010
 
@@ -2084,7 +2774,10 @@ Authority: [GitHub — About secret scanning](https://docs.github.com/en/code-se
 
 Confirm whether this is a live credential; if so, remove it from source and rotate it. If it's a false positive, suppress with a `chant-audit-ignore` comment or an allowlist entry.
 
-Authority: [GitHub — About secret scanning](https://docs.github.com/en/code-security/secret-scanning/introduction/about-secret-scanning)
+| | |
+|---|---|
+| Authority | [GitHub — About secret scanning](https://docs.github.com/en/code-security/secret-scanning/introduction/about-secret-scanning) |
+| Prior art | [detect-secrets `Base64HighEntropyString`](https://github.com/Yelp/detect-secrets/blob/master/detect_secrets/plugins/high_entropy_strings.py) (overlaps) · [detect-secrets `HexHighEntropyString`](https://github.com/Yelp/detect-secrets/blob/master/detect_secrets/plugins/high_entropy_strings.py) (overlaps) · [gitleaks `generic-api-key`](https://github.com/gitleaks/gitleaks/blob/master/config/gitleaks.toml) (overlaps) |
 
 ## Wrangler config (WRG)
 
@@ -2096,7 +2789,9 @@ Lexicon-independent, audit-only (#446) — scans `wrangler.toml`, Cloudflare Wor
 
 Remove workers_dev (or set it to false) for this environment and rely on its custom domain/route instead of the shared public subdomain.
 
-Authority: [Cloudflare Workers — workers.dev](https://developers.cloudflare.com/workers/configuration/routing/workers-dev/)
+| | |
+|---|---|
+| Authority | [Cloudflare Workers — workers.dev](https://developers.cloudflare.com/workers/configuration/routing/workers-dev/) |
 
 ### WRG002
 
@@ -2104,7 +2799,9 @@ Authority: [Cloudflare Workers — workers.dev](https://developers.cloudflare.co
 
 Move the value out of [vars] and into `wrangler secret put \<name>` so it isn't committed to source or visible in `wrangler dev`/the dashboard.
 
-Authority: [Cloudflare Workers — Secrets](https://developers.cloudflare.com/workers/configuration/secrets/)
+| | |
+|---|---|
+| Authority | [Cloudflare Workers — Secrets](https://developers.cloudflare.com/workers/configuration/secrets/) |
 
 ### WRG003
 
@@ -2118,7 +2815,9 @@ Set observability.enabled = true (or remove the override) so Workers Logs are re
 
 Scope the route pattern to the intended zone (e.g. "example.com/*") instead of a bare "*" or "*/*" that matches every zone on the account.
 
-Authority: [Cloudflare Workers — Routes](https://developers.cloudflare.com/workers/configuration/routing/routes/)
+| | |
+|---|---|
+| Authority | [Cloudflare Workers — Routes](https://developers.cloudflare.com/workers/configuration/routing/routes/) |
 
 ### WRG005
 
@@ -2126,7 +2825,9 @@ Authority: [Cloudflare Workers — Routes](https://developers.cloudflare.com/wor
 
 Give the non-production environment its own KV namespace/R2 bucket/D1 database id instead of reusing production's.
 
-Authority: [Cloudflare Workers — Wrangler environments](https://developers.cloudflare.com/workers/wrangler/configuration/#environments)
+| | |
+|---|---|
+| Authority | [Cloudflare Workers — Wrangler environments](https://developers.cloudflare.com/workers/wrangler/configuration/#environments) |
 
 ### WRG006
 
@@ -2134,7 +2835,9 @@ Authority: [Cloudflare Workers — Wrangler environments](https://developers.clo
 
 Point [site].bucket / [assets].directory at a dedicated public output folder, not the project root, so non-public files (config, source maps, .git) aren't served.
 
-Authority: [Cloudflare Workers — Static assets](https://developers.cloudflare.com/workers/static-assets/)
+| | |
+|---|---|
+| Authority | [Cloudflare Workers — Static assets](https://developers.cloudflare.com/workers/static-assets/) |
 
 ## nginx config (NGX)
 
@@ -2146,7 +2849,10 @@ Lexicon-independent, audit-only (#1979) — parses nginx's native directive/bloc
 
 Remove SSLv2/SSLv3/TLSv1/TLSv1.1 from ssl_protocols and serve TLSv1.2 and TLSv1.3 only.
 
-Authority: [Mozilla — Server Side TLS](https://wiki.mozilla.org/Security/Server_Side_TLS)
+| | |
+|---|---|
+| Authority | [Mozilla — Server Side TLS](https://wiki.mozilla.org/Security/Server_Side_TLS) |
+| Prior art | [gixy-ng (maintained Gixy fork) `weak_ssl_tls`](https://gixy.getpagespeed.com/plugins/weak_ssl_tls/) (overlaps) |
 
 ### NGX002
 
@@ -2154,7 +2860,10 @@ Authority: [Mozilla — Server Side TLS](https://wiki.mozilla.org/Security/Serve
 
 Remove the RC4/DES/MD5/NULL/EXPORT-class entries from ssl_ciphers and use a modern cipher list (e.g. Mozilla's intermediate configuration).
 
-Authority: [Mozilla — Server Side TLS](https://wiki.mozilla.org/Security/Server_Side_TLS)
+| | |
+|---|---|
+| Authority | [Mozilla — Server Side TLS](https://wiki.mozilla.org/Security/Server_Side_TLS) |
+| Prior art | [gixy-ng (maintained Gixy fork) `weak_ssl_tls`](https://gixy.getpagespeed.com/plugins/weak_ssl_tls/) (overlaps) |
 
 ### NGX003
 
@@ -2162,7 +2871,9 @@ Authority: [Mozilla — Server Side TLS](https://wiki.mozilla.org/Security/Serve
 
 Remove `autoindex on` (or scope it to a directory that is genuinely meant to be enumerated) so file listings aren't served to anyone who asks.
 
-Authority: [CWE-548 — Exposure of Information Through Directory Listing](https://cwe.mitre.org/data/definitions/548.html)
+| | |
+|---|---|
+| Authority | [CWE-548 — Exposure of Information Through Directory Listing](https://cwe.mitre.org/data/definitions/548.html) |
 
 ### NGX004
 
@@ -2170,7 +2881,10 @@ Authority: [CWE-548 — Exposure of Information Through Directory Listing](https
 
 End the location prefix with "/" so it matches the trailing slash of the alias target — without it, a request for "\<prefix>../" escapes the aliased directory.
 
-Authority: [Gixy — alias traversal](https://github.com/yandex/gixy/blob/master/docs/en/plugins/aliastraversal.md)
+| | |
+|---|---|
+| Authority | [Gixy — alias traversal](https://github.com/yandex/gixy/blob/master/docs/en/plugins/aliastraversal.md) |
+| Prior art | [Gixy `alias_traversal`](https://github.com/yandex/gixy) (equivalent) · [gixy-ng (maintained Gixy fork) `alias_traversal`](https://gixy.getpagespeed.com/plugins/aliastraversal/) (equivalent) |
 
 ### NGX005
 
@@ -2178,13 +2892,20 @@ Authority: [Gixy — alias traversal](https://github.com/yandex/gixy/blob/master
 
 Restrict the stub_status location with allow/deny (or auth_basic/auth_request) so connection metrics aren't public reconnaissance.
 
-Authority: [nginx — ngx_http_stub_status_module](https://nginx.org/en/docs/http/ngx_http_stub_status_module.html)
+| | |
+|---|---|
+| Authority | [nginx — ngx_http_stub_status_module](https://nginx.org/en/docs/http/ngx_http_stub_status_module.html) |
+| Prior art | [gixy-ng (maintained Gixy fork) `status_page_exposed`](https://gixy.getpagespeed.com/checks/status-page-exposed/) (overlaps) |
 
 ### NGX006
 
 **Server version disclosure** — report-only · guidance
 
 Add `server_tokens off;` in the http block so nginx stops advertising its exact version in the Server header and error pages.
+
+| | |
+|---|---|
+| Prior art | [gixy-ng (maintained Gixy fork) `version_disclosure`](https://gixy.getpagespeed.com/plugins/version_disclosure/) (equivalent) |
 
 ### NGX007
 
@@ -2202,7 +2923,9 @@ Run by `chant audit --agents` against the agent configuration on a machine — i
 
 Pin the package spec to an exact version (`server@1.2.3`), so a new upstream release can't execute on this machine unreviewed.
 
-Authority: [OSSF Scorecard — Pinned-Dependencies](https://github.com/ossf/scorecard/blob/main/docs/checks.md#pinned-dependencies)
+| | |
+|---|---|
+| Authority | [OSSF Scorecard — Pinned-Dependencies](https://github.com/ossf/scorecard/blob/main/docs/checks.md#pinned-dependencies) |
 
 ### AGT002
 
@@ -2210,7 +2933,10 @@ Authority: [OSSF Scorecard — Pinned-Dependencies](https://github.com/ossf/scor
 
 Replace the value with an environment reference (`$\{TOKEN}`) and keep the secret in a secret store — agent config files sync, back up, and get shared.
 
-Authority: [CWE-798 — Use of Hard-coded Credentials](https://cwe.mitre.org/data/definitions/798.html)
+| | |
+|---|---|
+| Authority | [CWE-798 — Use of Hard-coded Credentials](https://cwe.mitre.org/data/definitions/798.html) |
+| Prior art | [agent-audit `auth-bypass/env-secret-in-config`](https://raw.githubusercontent.com/piiiico/agent-audit/main/README.md) (equivalent) · [mcp-audit (APIsec) `Secrets Detection`](https://raw.githubusercontent.com/apisec-inc/mcp-audit/main/README.md) (overlaps) · [Snyk Agent Scan (formerly mcp-scan) `W008`](https://raw.githubusercontent.com/invariantlabs-ai/mcp-scan/main/docs/issue-codes.md) (overlaps) |
 
 ### AGT003
 
@@ -2218,7 +2944,9 @@ Authority: [CWE-798 — Use of Hard-coded Credentials](https://cwe.mitre.org/dat
 
 Use an https:// endpoint. Tool arguments and results — including data the agent read locally — otherwise cross the network in the clear.
 
-Authority: [CWE-319 — Cleartext Transmission of Sensitive Information](https://cwe.mitre.org/data/definitions/319.html)
+| | |
+|---|---|
+| Authority | [CWE-319 — Cleartext Transmission of Sensitive Information](https://cwe.mitre.org/data/definitions/319.html) |
 
 ### AGT004
 
@@ -2226,7 +2954,9 @@ Authority: [CWE-319 — Cleartext Transmission of Sensitive Information](https:/
 
 Pin the source to a tag or commit sha, so the instructions the agent follows can't change upstream without a local edit.
 
-Authority: [OSSF Scorecard — Pinned-Dependencies](https://github.com/ossf/scorecard/blob/main/docs/checks.md#pinned-dependencies)
+| | |
+|---|---|
+| Authority | [OSSF Scorecard — Pinned-Dependencies](https://github.com/ossf/scorecard/blob/main/docs/checks.md#pinned-dependencies) |
 
 ### AGT005
 
@@ -2251,3 +2981,51 @@ Delete the shadowed declarations. The harness silently picks one, so the file yo
 **Instruction file exceeds the attention budget** — report-only · guidance
 
 Move situational guidance into skills that load on demand, so the always-on instructions stay short enough to be followed reliably.
+
+## Prior art
+
+chant's rules were written against the output chant emits, but much of what they check was checked first by a dedicated tool. Each rule above that has a counterpart names it under **Prior art**, with the upstream rule id and how the two relate.
+
+- `equivalent` is the same condition at the same scope.
+- `overlaps` shares the core condition, with one side narrower or broader, or expressed for a different dialect of the same control.
+- `extends` means chant checks a strict superset of the upstream rule.
+
+This is credit rather than authority, and it never changes a rule's tier or category. A credit counts once per upstream rule cited, so a chant rule that names two zizmor audits adds two.
+
+| Tool | Kind | Licence | Credits |
+|---|---|---|---|
+| [Checkov](https://www.checkov.io/) | scanner | Apache-2.0 | 63 |
+| [KICS](https://docs.kics.io/) | scanner | Apache-2.0 | 44 |
+| [zizmor](https://docs.zizmor.sh/) | scanner | MIT | 38 |
+| [cfn_nag](https://github.com/stelligent/cfn_nag) | scanner | MIT | 20 |
+| [GitLab CI/CD YAML reference](https://docs.gitlab.com/ci/yaml/) | specification | CC-BY-SA-4.0 | 20 |
+| [AWS Guard Rules Registry](https://github.com/aws-cloudformation/aws-guard-rules-registry) | scanner | Apache-2.0 | 19 |
+| [Fairwinds Polaris](https://polaris.docs.fairwinds.com/) | scanner | Apache-2.0 | 18 |
+| [KubeLinter](https://github.com/stackrox/kube-linter) | scanner | Apache-2.0 | 17 |
+| [kube-score](https://github.com/zegl/kube-score) | scanner | MIT | 15 |
+| [PSRule for Azure](https://azure.github.io/PSRule.Rules.Azure/) | scanner | MIT | 13 |
+| [Google Cloud Policy Library](https://github.com/GoogleCloudPlatform/policy-library) | scanner | Apache-2.0 | 12 |
+| [poutine](https://boostsecurityio.github.io/poutine/) | scanner | Apache-2.0 | 11 |
+| [OpenSSF Scorecard](https://github.com/ossf/scorecard) | scanner | Apache-2.0 | 11 |
+| [cfn-lint](https://github.com/aws-cloudformation/cfn-lint) | scanner | MIT-0 | 10 |
+| [gitleaks](https://github.com/gitleaks/gitleaks) | scanner | MIT | 10 |
+| [octoscan](https://github.com/synacktiv/octoscan) | scanner | GPL-3.0 | 10 |
+| [detect-secrets](https://github.com/Yelp/detect-secrets) | scanner | Apache-2.0 | 9 |
+| [actionlint](https://github.com/rhysd/actionlint) | scanner | MIT | 8 |
+| [TruffleHog](https://github.com/trufflesecurity/trufflehog) | scanner | AGPL-3.0 | 8 |
+| [gixy-ng (maintained Gixy fork)](https://github.com/dvershinin/gixy) | scanner | MPL-2.0 | 5 |
+| [kubesec](https://kubesec.io/) | scanner | Apache-2.0 | 5 |
+| [Datree](https://hub.datree.io/built-in-rules) | scanner | Apache-2.0 | 4 |
+| [helm lint](https://helm.sh/docs/helm/helm_lint/) | vendor-validator | Apache-2.0 | 4 |
+| [Flux Kustomization API reference](https://fluxcd.io/flux/components/kustomize/kustomizations/) | specification | n/a | 3 |
+| [hadolint](https://github.com/hadolint/hadolint) | scanner | GPL-3.0 | 3 |
+| [agent-audit](https://github.com/piiiico/agent-audit) | scanner | MIT | 2 |
+| [ARM Template Toolkit (arm-ttk)](https://github.com/Azure/arm-ttk) | scanner | MIT | 2 |
+| [Bicep linter](https://learn.microsoft.com/en-us/azure/azure-resource-manager/bicep/linter) | scanner | MIT | 2 |
+| [Dockle](https://github.com/goodwithtech/dockle) | scanner | Apache-2.0 | 2 |
+| [mcp-audit (APIsec)](https://github.com/apisec-inc/mcp-audit) | scanner | MIT | 2 |
+| [Snyk Agent Scan (formerly mcp-scan)](https://github.com/invariantlabs-ai/mcp-scan) | scanner | Apache-2.0 | 1 |
+| [chart-testing (ct)](https://github.com/helm/chart-testing) | vendor-validator | Apache-2.0 | 1 |
+| [Gixy](https://github.com/yandex/gixy) | scanner | MPL-2.0 | 1 |
+| [Pluto](https://github.com/FairwindsOps/pluto) | scanner | Apache-2.0 | 1 |
+

@@ -471,6 +471,13 @@ export const EGRESS_CATALOGUE: readonly EgressSite[] = [
     destination: "`api.github.com` commit and tree metadata",
     why: "Compares the committed dogwood pin against upstream for `scripts/check-dogwood-freshness.ts`. The transport is injectable, which is why the comparison half is unit-tested without a network.",
   },
+  {
+    file: "scripts/prior-art-sweep.ts",
+    primitives: ["fetch"],
+    phase: "maintenance",
+    destination: "the rule indexes of the tools the audit rules credit: `raw.githubusercontent.com`, `api.github.com` directory listings, and a few tools' own docs sites (checkov.io, PSRule for Azure, the Bicep linter page)",
+    why: "Diffs each credited tool's published rule list against `scripts/prior-art/snapshot.json` so a rule that appears or disappears upstream, or a credit whose upstream id no longer resolves, is reported. Run by the monthly `prior-art-sweep` workflow and by hand; never by a CLI command or a test.",
+  },
 ];
 
 // ── The scanner ──────────────────────────────────────────────────────────────

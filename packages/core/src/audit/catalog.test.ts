@@ -1,7 +1,7 @@
 import { describe, test, expect } from "vitest";
 import { readdirSync } from "fs";
 import { join } from "path";
-import { RULE_CATALOG, RULE_CATEGORY, auditRule, resolveAuditCatalog } from "./catalog";
+import { PRIOR_ART, RULE_CATALOG, RULE_CATEGORY, auditRule, resolveAuditCatalog } from "./catalog";
 import { loadPlugins } from "../cli/plugins";
 
 /**
@@ -121,6 +121,33 @@ describe("RULE_CATALOG (aggregated: core static + lexicon-contributed, #687)", (
         }
       }
     }
+  });
+
+  test("lineage entries key into PRIOR_ART, link over https, and use a known relation", async () => {
+    const relations = new Set(["equivalent", "overlaps", "extends"]);
+    for (const [id, m] of Object.entries(await aggregate())) {
+      for (const l of m.lineage ?? []) {
+        expect(l.tool in PRIOR_ART, `${id} credits unregistered tool "${l.tool}"`).toBe(true);
+        expect(l.url.startsWith("https://"), `${id} lineage url ${l.url}`).toBe(true);
+        expect(relations.has(l.relation), `${id} lineage relation ${l.relation}`).toBe(true);
+      }
+    }
+  });
+
+  test("lineage is credit, not authority: it never forces a category or tier", () => {
+    const m = auditRule("ZZZ001", "report-only", "guidance", "t", "r", {
+      lineage: [{ tool: Object.keys(PRIOR_ART)[0] as never, url: "https://example.invalid/x", relation: "overlaps" }],
+    });
+    expect(m.category).toBe("best-practice");
+    expect(m.tier).toBe("report-only");
+    expect(m.lineage?.length).toBe(1);
+  });
+
+  test("every registered prior-art tool is credited by at least one rule", async () => {
+    const used = new Set<string>();
+    for (const m of Object.values(await aggregate())) for (const l of m.lineage ?? []) used.add(l.tool);
+    const idle = Object.keys(PRIOR_ART).filter((k) => !used.has(k)).sort();
+    expect(idle, "PRIOR_ART entries no rule credits").toEqual([]);
   });
 
   test("flagship security rules carry an authority citation", async () => {

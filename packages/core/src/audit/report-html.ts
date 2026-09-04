@@ -9,7 +9,7 @@
  */
 
 import type { AuditFinding } from "./core";
-import { ruleDocUrl, type RuleMeta } from "./catalog";
+import { ruleDocUrl, type RuleMeta, lineageLabel } from "./catalog";
 import { buildReportModel, buildReportJson, type AuditSnapshot, type BuildModelOptions, type EnrichedFinding, type GuidanceCluster, type QuickWinFile, type ReportCounts } from "./report-model";
 
 export type { AuditSnapshot } from "./report-model";
@@ -48,9 +48,14 @@ function ruleLink(id: string): string {
 
 /** External backing for a merge-worthy rule (OSSF Scorecard, CIS, vendor docs). */
 function authorityLinks(meta: RuleMeta): string {
-  if (!meta.authority?.length) return "";
-  const links = meta.authority.map((a) => `<a href="${esc(a.url)}">${esc(a.name)}</a>`).join(", ");
-  return ` <span class="muted">per ${links}</span>`;
+  const parts: string[] = [];
+  if (meta.authority?.length) {
+    parts.push(`per ${meta.authority.map((a) => `<a href="${esc(a.url)}">${esc(a.name)}</a>`).join(", ")}`);
+  }
+  if (meta.lineage?.length) {
+    parts.push(`prior art: ${meta.lineage.map((l) => `<a href="${esc(l.url)}">${esc(lineageLabel(l))}</a>`).join(", ")}`);
+  }
+  return parts.length ? ` <span class="muted">${parts.join(" · ")}</span>` : "";
 }
 
 function renderDiff(diff: string): string {

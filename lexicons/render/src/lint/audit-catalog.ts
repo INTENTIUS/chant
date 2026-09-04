@@ -10,6 +10,8 @@
  */
 
 import type { RuleMeta } from "@intentius/chant/audit/catalog";
+import { renderAuditLineage } from "./audit-lineage";
+import { applyLineage } from "@intentius/chant/audit/catalog";
 
 /** Entity-based rule: everything render ships. */
 function rule(
@@ -45,3 +47,6 @@ export const renderAuditCatalog: Record<string, RuleMeta> = {
     "Move the service to a paid instance type, or drop numInstances/autoscaling/disk.",
   ),
 };
+
+// Prior art credits live beside the rules in ./audit-lineage.ts (see core audit/prior-art.ts).
+applyLineage(renderAuditCatalog, renderAuditLineage);

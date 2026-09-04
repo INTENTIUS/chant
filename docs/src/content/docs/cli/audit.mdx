@@ -179,7 +179,9 @@ For tooling, `--format json` emits a **versioned** envelope (stable contract). T
   "findings": [
     { "checkId": "GHA033", "severity": "warning", "message": "…", "file": "…", "entity": "…", "lexicon": "github",
       "tier": "merge-worthy", "fixKind": "deterministic", "category": "security", "title": "…", "remediation": "…",
-      "authority": [{ "name": "…", "url": "…" }], "docUrl": "https://intentius.io/chant/lint-rules/audit-rules/#gha033" }
+      "authority": [{ "name": "…", "url": "…" }],
+      "lineage": [{ "tool": "zizmor", "rule": "excessive-permissions", "url": "…", "relation": "equivalent" }],
+      "docUrl": "https://intentius.io/chant/lint-rules/audit-rules/#gha033" }
   ]
 }
 ```
@@ -190,13 +192,14 @@ For tooling, `--format json` emits a **versioned** envelope (stable contract). T
 - Consumers should check the **major** version and **ignore unknown fields**.
 - The `snapshot` anchors findings to an exact commit for reproducibility.
 - `status` is `"ok"` when at least one lexicon ran, `"no-lexicons"` when none could (see [Prerequisites](#prerequisites)). Check it before trusting an empty `findings`. An optional `unclaimed` list names files that wanted a lexicon that is not installed.
+- `lineage` credits the open-source tools whose rules check the same condition, with the upstream rule id and how the two relate. It is credit, not authority, and is empty for a rule with no known counterpart. The [audit rules reference](/chant/lint-rules/audit-rules/#prior-art) lists every tool credited.
 - For maximum stability, integrate via `--format sarif` — an industry-standard, independently-versioned format.
 
 ### SARIF
 
 `--format sarif` emits a [SARIF 2.1.0](https://docs.oasis-open.org/sarif/sarif/v2.1.0/sarif-v2.1.0.html) document — the interchange format most CI platforms and code-review surfaces (GitHub code scanning, GitLab, Azure DevOps, many SAST/IDE viewers) render as inline, file-and-line annotations instead of scraped text:
 
-- Each `run.tool.driver.rules[]` entry carries the finding's `helpUri` (the same authority citation as the other formats) plus a `help.text` with the catalog's remediation guidance, and a `properties.category`/`properties.dimension` pair (`security`, `correctness`, or `best-practice`) for rule-level triage.
+- Each `run.tool.driver.rules[]` entry carries the finding's `helpUri` (the same authority citation as the other formats) plus a `help.text` with the catalog's remediation guidance, and a `properties.category`/`properties.dimension` pair (`security`, `correctness`, or `best-practice`) for rule-level triage. A rule with prior art also carries `properties.priorArt`, the same `lineage` entries the JSON report emits.
 - Each `run.results[]` entry carries `properties.tier` (`merge-worthy` or `report-only`) alongside the standard `ruleId`, `level`, `message`, and `locations` (file + line, when known).
 - Secrets findings (`SEC001`–`SEC010`) redact the same as every other format — a result's `message.text` never carries the matched value, only the rule id, kind, location, and fingerprint.
 - `--agents` emits the same property bag under a `chant audit --agents` driver name, so one consumer can triage both. Its rules' `helpUri` points at the rule's own entry in the audit rules reference rather than an external authority, since an `AGT` finding is about a local file.

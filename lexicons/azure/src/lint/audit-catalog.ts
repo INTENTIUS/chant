@@ -2,7 +2,8 @@
  * The azure lexicon's `chant audit` catalog — metadata for the AZR* ARM
  * post-synth rules. Contributed via `azurePlugin.auditCatalog()` (#687).
  */
-import { auditRule, type RuleMeta, type Authority } from "@intentius/chant/audit/catalog";
+import { auditRule, type RuleMeta, type Authority, applyLineage } from "@intentius/chant/audit/catalog";
+import { azureAuditLineage } from "./audit-lineage";
 
 const AZ_SEC: Authority = { name: "Microsoft Cloud Security Benchmark", url: "https://learn.microsoft.com/en-us/security/benchmark/azure/" };
 
@@ -34,3 +35,6 @@ export const azureAuditCatalog: Record<string, RuleMeta> = {
   AZR032: auditRule("AZR032", "merge-worthy", "guidance", "Custom policy definition assigned nowhere", "Pair the policy definition with a policy assignment — unassigned it enforces nothing.", { authority: [AZ_SEC] }),
   AZR033: auditRule("AZR033", "merge-worthy", "guidance", "Subscriptions may leave the tenant", "Set blockSubscriptionsLeavingTenant: true on the Microsoft.Subscription/policies resource.", { authority: [AZ_SEC] }),
 };
+
+// Prior art credits live beside the rules in ./audit-lineage.ts (see core audit/prior-art.ts).
+applyLineage(azureAuditCatalog, azureAuditLineage);

@@ -830,16 +830,16 @@
   "formatting/bold-first-bullet": 1
  },
  "docs/src/content/docs/lint-rules/audit-rules.mdx": {
-  "formatting/em-dash-density": 492,
+  "formatting/em-dash-density": 348,
   "claude/sounds-like-claude": 1,
-  "claude/colon-reveal": 148,
+  "claude/colon-reveal": 6,
   "tricolon/comma-series": 1,
   "dead-metaphor/rare-lemma": 1,
-  "anaphora/repeated-opening": 25,
-  "repetition/near-duplicate": 39,
+  "repetition/near-duplicate": 33,
   "claude/contrast-tail": 3,
   "claude-technical-vocabulary": 1,
-  "discourse/punchy-fragments": 22,
+  "anaphora/repeated-opening": 9,
+  "discourse/punchy-fragments": 16,
   "claude/figurative-suffixes": 3
  },
  "docs/src/content/docs/lint-rules/auto-fix.mdx": {

@@ -2,7 +2,8 @@
  * The github lexicon's chant audit catalog — metadata for its post-synth rules
  * (GHA GitHub Actions rules). Contributed via githubPlugin.auditCatalog() (#687).
  */
-import { auditRule, GH_INJECTION, GH_PWN, GH_SECRETS, GH_THIRD_PARTY, GH_TOKEN, SCORECARD_PINNED, SCORECARD_TOKEN, SCORECARD_VULN, type RuleMeta } from "@intentius/chant/audit/catalog";
+import { auditRule, GH_INJECTION, GH_PWN, GH_SECRETS, GH_THIRD_PARTY, GH_TOKEN, SCORECARD_PINNED, SCORECARD_TOKEN, SCORECARD_VULN, type RuleMeta, applyLineage } from "@intentius/chant/audit/catalog";
+import { githubAuditLineage } from "./audit-lineage";
 
 export const githubAuditCatalog: Record<string, RuleMeta> = {
   GHA006: auditRule("GHA006", "report-only", "guidance", "Duplicate workflow name", "Give each workflow a unique `name:`.", { category: "correctness" }),
@@ -66,3 +67,6 @@ export const githubAuditCatalog: Record<string, RuleMeta> = {
   GHA067: auditRule("GHA067", "report-only", "guidance", "Unconditional heavy step with no path filter", "Scope the trigger's paths, or add an if: guard to the step.", { category: "efficiency" }),
   GHA068: auditRule("GHA068", "report-only", "guidance", "Pull-request workflow missing a concurrency group", "Add a concurrency group with cancel-in-progress: true.", { category: "efficiency" }),
 };
+
+// Prior art credits live beside the rules in ./audit-lineage.ts (see core audit/prior-art.ts).
+applyLineage(githubAuditCatalog, githubAuditLineage);

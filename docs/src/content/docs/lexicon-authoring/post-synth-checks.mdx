@@ -358,6 +358,37 @@ Two details worth knowing:
 - **Cross-cutting core ids** (`COR*`, `EXT*`) belong to core's static catalog,
   not to any lexicon, and are excluded from both the check and the test.
 
+### Prior art in `audit-lineage.ts`
+
+Most of what an audit rule checks was checked first by a dedicated open-source
+tool, and chant credits that tool per rule. The credits live in a sibling
+`lint/audit-lineage.ts`, one `Record<ruleId, Lineage[]>`, attached at the bottom
+of the catalog with `applyLineage`:
+
+```typescript
+// lint/audit-lineage.ts
+import type { Lineage } from "@intentius/chant/audit/catalog";
+
+export const myAuditLineage: Record<string, Lineage[]> = {
+  XYZ010: [
+    { tool: "checkov", rule: "CKV_AWS_53", url: "https://www.checkov.io/5.Policy%20Index/cloudformation.html", relation: "overlaps" },
+  ],
+};
+
+// lint/audit-catalog.ts, after the catalog
+applyLineage(myAuditCatalog, myAuditLineage);
+```
+
+`tool` must be a key of `PRIOR_ART` in `packages/core/src/audit/prior-art.ts`.
+That registry names and links each tool once and records its licence, so add a
+new tool there before crediting it. `relation` is `equivalent`, `overlaps` or
+`extends`, defined in the same file. Lineage is credit rather than authority.
+It never changes a rule's tier or category. A rule can have lineage without an
+authority, or the reverse. The credits render on the
+[audit rules reference](/chant/lint-rules/audit-rules/#prior-art) and ride along
+in the JSON and SARIF reports. `scripts/prior-art-sweep.ts` reports when a
+credited tool's index stops listing a cited rule.
+
 ## Target Count
 
 A mature lexicon should have at least **15 post-synth checks** covering all four categories (security, correctness, best practices, deprecation). The K8s and Azure lexicons each have 20 checks.
