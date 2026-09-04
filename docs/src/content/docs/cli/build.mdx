@@ -8,6 +8,7 @@ diataxis: reference
 
 ```
 chant build [path] [flags]
+chant build [path] --components --generate <lexicon> [--env <name>] [-o <file>]
 ```
 
 ## Description
@@ -29,6 +30,9 @@ It reaches no network. Every schema it needs is generated into the lexicon packa
 | `--sandbox` | `bool` | `false` | Run run-fallback source files (or every file, without `--fold`) together, isolated, in one sandboxed child process instead of in-process (opt-in). No filesystem write, no process spawn, no worker threads, no ambient environment visible to project source; network egress is not blocked — see [Sandboxed Execution](/chant/architecture/sandbox/) |
 | `--param <name=value>` | `string` | — | Bind a declared build-time parameter (`chant.config.ts`'s `buildParams`) to a value; repeatable. See [Build-Time Parameters](/chant/concepts/build-time-parameters/) |
 | `--params-file <path>` | `string` | — | JSON file of `{ "name": value }` build-time parameter values; second precedence, after `--param` |
+| `--env <name>` | `string` | — | Active environment. Sets `CHANT_ENV` so env-aware source re-evaluates for that environment, and selects the organizational policy that applies. Must be declared under `environments` in `chant.config.ts` when that list exists |
+| `--components --generate <lexicon>` | `string` | — | Generate mode. Synthesize a CI pipeline from the discovered `*.component.ts` declarations instead of running a lexicon build. See [Generate mode](#generate-mode-ci-pipelines-from-components) |
+| `--fold-rank [path]` | `bool` or `string` | off | After a folded build, print the run-fallback blockers ranked by how many files each one keeps from folding. With a path, also write the ranking in collapsed-stack format to that file for a flame-graph viewer. No-op with `--no-fold` |
 
 ## Usage
 
@@ -59,6 +63,16 @@ chant build --param tier=production --param env=staging
 
 # Or from a JSON file
 chant build --params-file ./params.prod.json
+
+# Re-evaluate env-aware source for one environment
+chant build --env prod
+
+# Rank what keeps files from folding; also export a flame-graph input
+chant build --fold-rank
+chant build --fold-rank ./fold-blockers.collapsed
+
+# Generate a CI pipeline from components instead of building resources
+chant build --components --generate github --env staging --output .github/workflows/components.yml
 ```
 
 ## Fold vs run
@@ -102,6 +116,14 @@ export default {
 ```
 
 The `--sandbox` flag always wins over `build.sandbox` when both are present.
+
+## Generate mode: CI pipelines from components
+
+`--components --generate <lexicon>` switches the build to the component discovery path. It reads every `*.component.ts` under the path, orders them by `dependsOn` into waves, and asks the named lexicon's `generateComponentPipeline` to render those waves as CI stages and jobs. The github, gitlab and forgejo lexicons implement it; naming any other lexicon fails with a message saying so.
+
+A components-only project need not declare a lexicon plugin at all. Lexicons are loaded best-effort here, so a project whose `chant.config.ts` lists none still generates.
+
+`--env <name>` is threaded into the generated pipeline as the environment it deploys, and `--param` / `--params-file` bind build-time parameters the same way they do for a resource build. With `--format json` the result is `{ stages, jobs, yaml }` on stdout. The same stages and jobs are available as graph IR through [`chant graph --components --format ir --projection <lexicon>`](/chant/cli/graph/#--projection-lexicon--the-cipipeline-projection-989).
 
 ## Build-time parameters
 

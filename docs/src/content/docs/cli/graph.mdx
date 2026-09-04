@@ -14,6 +14,8 @@ chant graph [path] --format layout [--node-sizes <json|-|@file>] [--layout-engin
 chant graph [path] --components --format ir --projection gitlab|github|forgejo
 chant graph --format ir --live --env <name>
 chant graph --format ir --live --env <name> --overlay
+chant graph --format ir --at <ref> --env <name>
+chant graph [path] [--env <name>] [--param name=value] [--params-file <path>] [--src <dir>] [--sandbox]
 ```
 
 ## Description
@@ -42,6 +44,14 @@ Edges are **reconstructed** from the live references: observed resources point a
 Scope today is **managed-only** — resources carrying chant's ownership marker; it isn't a full-account scan. Unlike the source graph, `--live` is not lint-gated (it reads the cloud, not source).
 
 Edge reconstruction is only as rich as the observed node attributes. AWS's plain `describe-stack-resources` metadata is too thin, so the AWS lexicon enriches from the deployed CloudFormation template (its `{Ref}`/`{Fn::GetAtt}` references, resolved to node ids) before reconstruction — so a managed AWS stack produces its topology. A lexicon without that enrichment yields nodes with fewer edges.
+
+### `--at <ref>`, a recorded snapshot
+
+`--format ir --at <ref> --env <name>` graphs a snapshot `chant lifecycle snapshot` recorded, instead of reading the estate now. `ref` is a commit on the `chant/lifecycle` orphan branch, or `latest`. It is the same projection `--live` produces, from a recorded observation, so it answers "what was deployed then" without credentials. `--live` and `--at` are two different observations with no rule for which wins, so passing both is refused.
+
+```bash
+chant graph --format ir --at latest --env prod
+```
 
 #### `--overlay` — declared vs provisioned
 
@@ -222,6 +232,18 @@ The projection lands in `ir.pipeline`, alongside the component graph's own `node
 `pipeline.nodes`/`pipeline.edges` are a distinct id space from the component graph's own `nodes`/`edges` (a CI-provider's job name isn't always identical to the component name), so a consumer renders them as two related graphs sharing one `component` join key rather than merging them into one. `--projection` only applies to `--format ir` — `mermaid`/`dot`/`layout` don't read `pipeline` yet, and `chant graph --components` without `--format` never builds an IR at all, so either combination is rejected with a clear error.
 
 Any lexicon whose plugin implements `generateComponentPipeline` works, not just gitlab/github/forgejo; an unsupported name fails with the same descriptive error `chant build --components --generate` gives.
+
+## Flags shared with `chant build`
+
+The infra-graph formats build the project the way `chant build` does, so the build's inputs apply here too:
+
+| Flag | Meaning |
+|---|---|
+| `--env <name>` | Active environment. Sets `CHANT_ENV` so env-aware source re-evaluates for it. Required with `--live` and `--at` |
+| `--param <name=value>` | Bind a declared build-time parameter; repeatable. Same precedence as [`chant build --param`](/chant/cli/build/#build-time-parameters) |
+| `--params-file <path>` | JSON file of build-time parameter values |
+| `--src <dir>` | Build root override, the same as `sourceDir` in `chant.config.ts` |
+| `--sandbox` | Run any source the build has to execute in one isolated child process. See [Sandboxed Execution](/chant/architecture/sandbox/) |
 
 ## Op graph (default)
 

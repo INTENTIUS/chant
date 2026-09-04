@@ -9,6 +9,8 @@ diataxis: reference
 ```
 chant import <template-file> [flags]
 chant import --from <env> [flags]
+chant import --kustomize <dir> [flags]
+chant import --agents [flags]
 ```
 
 ## Description
@@ -16,6 +18,8 @@ chant import --from <env> [flags]
 `chant import` reads an existing infrastructure template (e.g. a CloudFormation JSON template), detects which lexicon handles it, and generates TypeScript resource definitions. This lets you adopt chant incrementally by importing your current infrastructure rather than rewriting it from scratch.
 
 With `--from <env>` it reads the **live** cloud/cluster instead of a file: it resolves the environment, calls each project lexicon's `exportResources()` for full-fidelity config, and generates TypeScript from that. This is the cloud->code direction — the way to adopt an orphaned resource back into source.
+
+With `--kustomize <dir>` it renders a kustomization first and imports the rendered manifests through the k8s lexicon. It runs `kustomize build <dir>`, falling back to `kubectl kustomize <dir>` when the standalone binary is absent. The flag names the lexicon, so no template detection happens. A rendering error exits nonzero with the first line of the tool's message.
 
 The import process:
 
@@ -30,6 +34,7 @@ The import process:
 | Flag | Description |
 |------|-------------|
 | `--from <env>` | Import from a live environment instead of a template file |
+| `--kustomize <dir>` | Render the kustomization at `dir` and import the output as Kubernetes manifests. Needs `kustomize` or `kubectl` on the path |
 | `-d, --lexicon <name>` | With `--from`, restrict to one lexicon (e.g. `aws`, `k8s`) |
 | `--type <ResourceType>` | With `--from`, export only resources of this type |
 | `--name <name>` | With `--from`, export only the resource with this name |
@@ -110,6 +115,9 @@ chant import --from prod --name my-bucket --output src/
 
 # Keep server-defaulted fields
 chant import --from prod --verbatim
+
+# Render an overlay and import what it produces
+chant import --kustomize ./k8s/overlays/prod --output src/
 ```
 
 ## Exit Codes

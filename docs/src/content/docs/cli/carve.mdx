@@ -18,7 +18,7 @@ Two sources are read. A **Terraform estate** is parsed from `.tf` (and optionall
 
 It is read-only either way. It parses, scores, and prints. It emits no chant source, patches nothing, and touches no live resource. The emit, boundary-bridging, and apply phases have shipped as [`chant carve emit|bridge|apply`](/chant/cli/carve-out/) and read Terraform only; this command is the analysis slice that is useful on its own. Advise also ranks more than emit can adopt — it bands the google provider types, the typed kubernetes provider resources and every CDK construct, which emit refuses, and it bands `kubernetes_manifest`, which emit adopts but bridge still refuses.
 
-Use it to decide where an incremental move is worth starting. The point is not to carve everything. Small, cleanly-mappable pieces move; the gnarly long tail stays where it is.
+Use it to decide where an incremental move is worth starting. The point is not to carve everything. Small, cleanly-mappable pieces move; the gnarly long tail stays where it is. Once carving has begun, [`chant carve status`](/chant/cli/carve-out/#4-carve-status) reports where each carved address stands.
 
 ## Flags
 
