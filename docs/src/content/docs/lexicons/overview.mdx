@@ -24,6 +24,9 @@ A **lexicon** is a collection of types and semantic lint rules for an operationa
 | Fountain | `@intentius/chant-lexicon-fountain` | 3 resources (Environment, Vault, Agent) | [Reference](/chant/lexicons/fountain/) — sandboxed agent workloads; conversations are ops, not resources |
 | Render | `@intentius/chant-lexicon-render` | 14 resources (Public API) | [Reference](/chant/lexicons/render/) — services, datastores, env groups, projects; applied straight to the Public API |
 | Control Plane | `@intentius/chant-lexicon-cpln` | 8 resources, 142 property types | [Reference](/chant/lexicons/cpln/) — GVCs, workloads, identities and secrets |
+| Cedar | `@intentius/chant-lexicon-cedar` | Policy and Schema, plus entity and action types generated from your schema | [Reference](/chant/lexicons/cedar/) — emits `.cedar` and Cedar JSON; observes and imports against Amazon Verified Permissions |
+| k3d | `@intentius/chant-lexicon-k3d` | 1 resource (Cluster) + config property types, pinned to k3d v5.9.0 | [Reference](/chant/lexicons/k3d/) — emits the `k3d.io/v1alpha5` config `k3d cluster create --config` consumes; `k3dUp`/`k3dDown` Op activities |
+| k3s | `@intentius/chant-lexicon-k3s` | 3 resources (Server, Agent, Registries) | [Reference](/chant/lexicons/k3s/) — emits `config.yaml` and `registries.yaml` for `/etc/rancher/k3s/`; `k3sInstall`/`k3sUninstall` Op activities |
 
 ## Runtime observation coverage
 
