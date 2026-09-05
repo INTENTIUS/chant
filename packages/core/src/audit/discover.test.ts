@@ -113,6 +113,14 @@ describe("discoverByDetection (unified, detectTemplate-driven)", () => {
       expect(Object.keys(nested.files!).sort()).toEqual(["main.tf"]);
     });
 
+    test("a bundle's content is the whole root module in filename order, each file behind a `# file:` marker", () => {
+      const found = discoverByDetection(fixture("audit-terraform"), [terraform]);
+      const root = found.find((i) => i.lexicon === "terraform" && i.path === "infra")!;
+      expect(root.content).toContain("# file: main.tf\nresource \"null_resource\" \"root\" {}");
+      expect(root.content).toContain("# file: variables.tf\nvariable \"region\"");
+      expect(root.content.indexOf("# file: main.tf")).toBeLessThan(root.content.indexOf("# file: variables.tf"));
+    });
+
     test(".terraform/ contributes no bundle (walkFiles already skips dot-directories outside WALK_DOT_DIRS)", () => {
       const found = discoverByDetection(fixture("audit-terraform"), [terraform]);
       expect(found.some((i) => i.path.includes(".terraform"))).toBe(false);

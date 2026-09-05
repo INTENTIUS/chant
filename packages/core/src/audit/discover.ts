@@ -406,8 +406,15 @@ function classifyTerraform(files: RepoFile[], plugin: DetectPlugin | undefined):
     claimed.add(f.path);
   }
   for (const [dir, bundle] of byDir) {
-    const first = [...Object.keys(bundle)].sort()[0]!;
-    inputs.push({ path: dir === "" ? "." : dir, content: bundle[first], lexicon: "terraform", files: bundle });
+    // `content` is the whole root module, every `.tf` in filename order with a
+    // `# file:` line comment (legal HCL) marking each boundary, so a lexicon's
+    // `auditEntities(content)` sees the module Terraform itself would load,
+    // not one arbitrary file of it. `files` keeps the per-file split.
+    const content = Object.keys(bundle)
+      .sort()
+      .map((name) => `# file: ${name}\n${bundle[name]}`)
+      .join("\n");
+    inputs.push({ path: dir === "" ? "." : dir, content, lexicon: "terraform", files: bundle });
   }
   return { inputs, claimed };
 }
