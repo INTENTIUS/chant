@@ -70,6 +70,18 @@ describe("generateGitlabOpPipeline: one file, one job per scheduled Op", () => {
   });
 });
 
+describe("generateGitlabOpPipeline: no pull_request/push event model (#2084)", () => {
+  test("a pull_request trigger throws a clear error instead of silently ignoring it", () => {
+    const specs: ScheduledOpSpec[] = [{ name: "tf-plan", trigger: { kind: "pull_request" } }];
+    expect(() => generateGitlabOpPipeline(specs)).toThrow(/pull_request.*GitLab has no pull_request\/push event model/s);
+  });
+
+  test("a push trigger throws a clear error instead of silently ignoring it", () => {
+    const specs: ScheduledOpSpec[] = [{ name: "tf-apply", trigger: { kind: "push" } }];
+    expect(() => generateGitlabOpPipeline(specs)).toThrow(/push.*GitLab has no pull_request\/push event model/s);
+  });
+});
+
 describe("generateGitlabOpPipeline: a cross-cutting change is one generator edit, not per-job", () => {
   test("runCommand/beforeScript/extraScript apply uniformly across every job", () => {
     const specs: ScheduledOpSpec[] = [
