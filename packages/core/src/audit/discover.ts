@@ -21,6 +21,11 @@
  *     `detectTemplate` (which only knows Compose's `services:`) can't see them.
  *   - Helm charts are a directory BUNDLE keyed by `Chart.yaml`; the helm checks
  *     read `output.files`, so the whole chart is one AuditInput.
+ *   - Terraform is also a directory BUNDLE, keyed by that directory's own
+ *     `.tf` filenames, not recursively: a nested directory with its own
+ *     `.tf` files (e.g. `modules/foo`) is a separate root module and gets its
+ *     own AuditInput. `.tf` isn't YAML/JSON either, so `detectTemplate` can't
+ *     see it.
  *   - k8s `detectTemplate` matches any `apiVersion`+`kind`, including GCP Config
  *     Connector (`cnrm.cloud.google.com`) resources and fountain
  *     (`fountain.dev/v1`) manifests, so gcp and fountain must be tried first.
@@ -36,7 +41,7 @@ import type { AuditInput, AuditLexicon } from "./core";
 import { isNginxConfigPath } from "./nginx";
 
 /** Lexicons the auditor knows how to detect and run checks for. */
-export const AUDIT_LEXICONS = ["github", "gitlab", "forgejo", "k8s", "docker", "aws", "azure", "gcp", "helm", "fountain"] as const;
+export const AUDIT_LEXICONS = ["github", "gitlab", "forgejo", "k8s", "docker", "aws", "azure", "gcp", "helm", "fountain", "terraform"] as const;
 
 /**
  * Load the plugins used for detection. Each is loaded in isolation (no
@@ -103,6 +108,10 @@ function isYaml(name: string): boolean {
 
 function isDockerfileName(name: string): boolean {
   return name === "Dockerfile" || name.startsWith("Dockerfile.") || name.endsWith(".Dockerfile") || name.endsWith(".dockerfile");
+}
+
+function isTerraformFileName(name: string): boolean {
+  return /\.tf$/i.test(name);
 }
 
 /**
@@ -294,11 +303,11 @@ export function isCandidatePath(path: string): boolean {
  * (path, filename, a few content markers) with no lexicon plugin involved.
  * Names the lexicon that would have claimed a file when that lexicon isn't
  * installed (#1623). Deliberately coarse: precision comes from the plugin's
- * `detectTemplate`, which is exactly what's missing in that case.
- * `terraform` is not an audit lexicon; `*.tf` is surfaced so the user learns
- * the audit never reads it (see `chant carve`).
+ * `detectTemplate`, which is exactly what's missing in that case. `terraform`
+ * is a lexicon like any other here: a `.tf` file hints at it by name, the
+ * same way `Chart.yaml` hints at helm.
  */
-export type LexiconHint = AuditLexicon | "terraform";
+export type LexiconHint = AuditLexicon;
 
 export function hintLexiconForFile(path: string, content: string): LexiconHint | undefined {
   const name = basename(path);
@@ -306,7 +315,7 @@ export function hintLexiconForFile(path: string, content: string): LexiconHint |
   if (ci) return ci;
   if (isDockerfileName(name)) return "docker";
   if (name === "Chart.yaml") return "helm";
-  if (/\.tf$/i.test(name)) return "terraform";
+  if (isTerraformFileName(name)) return "terraform";
   const head = content.slice(0, 64 * 1024);
   if (/cnrm\.cloud\.google\.com/.test(head)) return "gcp";
   if (/fountain\.dev\/v1/.test(head)) return "fountain";
@@ -372,12 +381,45 @@ function classifyHelm(files: RepoFile[], plugin: DetectPlugin | undefined): { in
 }
 
 /**
+ * Collect Terraform root modules as directory bundles from an in-memory file
+ * set, modeled on `classifyHelm`. Unlike a Helm chart (its whole subtree is
+ * one bundle), a Terraform root module references only its own sibling
+ * files, so grouping is by each `.tf` file's immediate directory, not
+ * recursive: a nested directory with its own `.tf` files (`modules/foo`) is
+ * a separate root module and gets its own AuditInput. Returns inputs plus
+ * the exact `.tf` paths claimed, so the loose-file pass in `classifyFiles`
+ * can skip them.
+ */
+function classifyTerraform(files: RepoFile[], plugin: DetectPlugin | undefined): { inputs: AuditInput[]; claimed: Set<string> } {
+  const inputs: AuditInput[] = [];
+  const claimed = new Set<string>();
+  if (!plugin) return { inputs, claimed };
+  const byDir = new Map<string, Record<string, string>>();
+  for (const f of files) {
+    if (!isTerraformFileName(basename(f.path))) continue;
+    const slash = f.path.lastIndexOf("/");
+    const dir = slash === -1 ? "" : f.path.slice(0, slash);
+    const name = slash === -1 ? f.path : f.path.slice(slash + 1);
+    const bundle = byDir.get(dir) ?? {};
+    bundle[name] = f.content;
+    byDir.set(dir, bundle);
+    claimed.add(f.path);
+  }
+  for (const [dir, bundle] of byDir) {
+    const first = [...Object.keys(bundle)].sort()[0]!;
+    inputs.push({ path: dir === "" ? "." : dir, content: bundle[first], lexicon: "terraform", files: bundle });
+  }
+  return { inputs, claimed };
+}
+
+/**
  * Classify an in-memory set of repo files into per-lexicon audit inputs. Pure
  * (no fs, no network) so the local walk and the remote tree-fetch share exactly
  * one detection path. Each file maps to at most one lexicon: CI by path,
- * Dockerfiles by name, Helm charts as a bundle, everything else by the
- * precedence-ordered content detectors (delegating to each plugin's
- * `detectTemplate`). Lexicons whose plugin isn't provided are skipped.
+ * Dockerfiles by name, Helm charts and Terraform root modules as directory
+ * bundles, everything else by the precedence-ordered content detectors
+ * (delegating to each plugin's `detectTemplate`). Lexicons whose plugin isn't
+ * provided are skipped.
  */
 export function classifyFiles(files: RepoFile[], plugins: DetectPlugin[]): AuditInput[] {
   const byName = new Map(plugins.map((p) => [p.name, p]));
@@ -387,9 +429,12 @@ export function classifyFiles(files: RepoFile[], plugins: DetectPlugin[]): Audit
   const helm = classifyHelm(files, byName.get("helm"));
   const underChart = (p: string): boolean => helm.prefixes.some((pre) => (pre === "" ? true : p.startsWith(pre)));
 
-  const inputs: AuditInput[] = [...helm.inputs];
+  const terraform = classifyTerraform(files, byName.get("terraform"));
+
+  const inputs: AuditInput[] = [...helm.inputs, ...terraform.inputs];
   for (const { path, content } of files) {
     if (underChart(path)) continue;
+    if (terraform.claimed.has(path)) continue;
     const name = basename(path);
 
     const ci = ciLexiconForPath(path);
@@ -430,10 +475,11 @@ export function collectCandidates(root: string): RepoFile[] {
   const files: RepoFile[] = [];
   for (const full of all) {
     const path = relative(root, full);
-    // Terraform is never audited; the path alone is enough to say so (#1623).
-    // Kept out of `isCandidatePath` so remote fetches never pull HCL.
-    if (/\.tf$/i.test(path)) {
-      files.push({ path, content: "" });
+    // `.tf` is read locally so `classifyTerraform` can bundle real content.
+    // It stays out of `isCandidatePath` so remote fetches still never pull HCL.
+    if (isTerraformFileName(basename(path))) {
+      const content = readSafe(full);
+      if (content !== undefined) files.push({ path, content });
       continue;
     }
     if (!isCandidatePath(path)) continue;

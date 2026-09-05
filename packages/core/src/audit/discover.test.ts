@@ -92,6 +92,37 @@ describe("discoverByDetection (unified, detectTemplate-driven)", () => {
     const plugins = await loadAuditPlugins(["github", "definitely-not-a-real-lexicon"]);
     expect(plugins.map((p) => p.name)).toEqual(["github"]);
   });
+
+  test("loadAuditPlugins skips terraform quietly (package not installed yet, #2085)", async () => {
+    const plugins = await loadAuditPlugins(["github", "terraform"]);
+    expect(plugins.map((p) => p.name)).toEqual(["github"]);
+  });
+
+  describe("Terraform directories as bundles, modeled on classifyHelm", () => {
+    // No real @intentius/chant-lexicon-terraform package exists yet (#2085), so
+    // these tests supply a bare stand-in plugin rather than loadAuditPlugins().
+    const terraform = { name: "terraform" };
+
+    test("a directory with two .tf files, and a nested subdirectory with its own .tf file, classify as two separate terraform inputs", () => {
+      const found = discoverByDetection(fixture("audit-terraform"), [terraform]);
+      const tf = found.filter((i) => i.lexicon === "terraform");
+      expect(targets(tf)).toEqual(["terraform:infra", "terraform:infra/modules/foo"]);
+      const root = tf.find((i) => i.path === "infra")!;
+      expect(Object.keys(root.files!).sort()).toEqual(["main.tf", "variables.tf"]);
+      const nested = tf.find((i) => i.path === "infra/modules/foo")!;
+      expect(Object.keys(nested.files!).sort()).toEqual(["main.tf"]);
+    });
+
+    test(".terraform/ contributes no bundle (walkFiles already skips dot-directories outside WALK_DOT_DIRS)", () => {
+      const found = discoverByDetection(fixture("audit-terraform"), [terraform]);
+      expect(found.some((i) => i.path.includes(".terraform"))).toBe(false);
+    });
+
+    test("without the terraform plugin, .tf files are classified into nothing (skipped, same as an unloaded helm)", () => {
+      const found = discoverByDetection(fixture("audit-terraform"), []);
+      expect(found).toEqual([]);
+    });
+  });
 });
 
 describe("lexicon hints for unclaimed files (#1623)", () => {

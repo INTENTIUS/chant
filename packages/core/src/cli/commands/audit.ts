@@ -89,9 +89,9 @@ function lexiconPackage(name: string): string {
   return `@intentius/chant-lexicon-${name}`;
 }
 
-/** Missing audit lexicons the unclaimed files pointed at, in first-seen order. `terraform` is not installable. */
+/** Missing audit lexicons the unclaimed files pointed at, in first-seen order. */
 function wantedLexicons(unclaimed: UnclaimedFile[]): string[] {
-  return [...new Set(unclaimed.map((u) => u.lexicon))].filter((l) => l !== "terraform");
+  return [...new Set(unclaimed.map((u) => u.lexicon))];
 }
 
 /**
@@ -107,17 +107,10 @@ export function installLine(lexicons: string[], target: string): string {
 /** One-line coverage hint for the partial case: some lexicons loaded, others wanted by files on disk. */
 function missingLexiconHint(unclaimed: UnclaimedFile[]): string | undefined {
   const wanted = wantedLexicons(unclaimed);
-  const tf = unclaimed.filter((u) => u.lexicon === "terraform").length;
-  const parts: string[] = [];
-  if (wanted.length > 0) {
-    const n = unclaimed.length - tf;
-    parts.push(
-      `${n} file${n === 1 ? " looks" : "s look"} like ${wanted.join("/")} but ${wanted.length === 1 ? "that lexicon is" : "those lexicons are"} not installed, so ${n === 1 ? "it was" : "they were"} skipped` +
-        ` (npm i ${wanted.map(lexiconPackage).join(" ")}).`,
-    );
-  }
-  if (tf > 0) parts.push(`${tf} Terraform file${tf === 1 ? "" : "s"} skipped; the audit does not read HCL (see chant carve).`);
-  return parts.length > 0 ? parts.join(" ") : undefined;
+  if (wanted.length === 0) return undefined;
+  const n = unclaimed.length;
+  return `${n} file${n === 1 ? " looks" : "s look"} like ${wanted.join("/")} but ${wanted.length === 1 ? "that lexicon is" : "those lexicons are"} not installed, so ${n === 1 ? "it was" : "they were"} skipped` +
+    ` (npm i ${wanted.map(lexiconPackage).join(" ")}).`;
 }
 
 /** Human-readable diagnostic for the zero-lexicon case. */
@@ -129,11 +122,10 @@ function renderNoLexicons(target: string, unclaimed: UnclaimedFile[]): string {
   if (unclaimed.length > 0) {
     lines.push("", "Files that wanted a lexicon:");
     for (const u of unclaimed) {
-      const note = u.lexicon === "terraform" ? "terraform (not audited; see chant carve)" : u.lexicon;
-      lines.push(`  ${u.path}  ->  ${note}`);
+      lines.push(`  ${u.path}  ->  ${u.lexicon}`);
     }
   } else {
-    lines.push("", "No file under the target looked like CI, Kubernetes, Helm, Docker, CloudFormation, ARM, Config Connector, or fountain either.");
+    lines.push("", "No file under the target looked like CI, Kubernetes, Helm, Docker, CloudFormation, ARM, Config Connector, fountain, or Terraform either.");
   }
   lines.push("", "Run it with the lexicons those files need:");
   lines.push(`  ${installLine(wanted.length > 0 ? wanted : [...AUDIT_LEXICONS], target)}`);
