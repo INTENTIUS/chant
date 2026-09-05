@@ -16,6 +16,12 @@ import {
 
 const fixtures = join(dirname(fileURLToPath(import.meta.url)), "__fixtures__");
 
+/** The `props` of a parsed entity, narrowed through the guard the checks use. */
+function propsOf(entity: Declarable | undefined): Record<string, unknown> {
+  if (!entity || !isResourceDeclarable(entity)) throw new Error("not a ResourceDeclarable");
+  return entity.props as Record<string, unknown>;
+}
+
 /** `buildRoots` is optional on the contract; every test here needs it present. */
 function buildRoots(
   projectRoot: string,
@@ -105,7 +111,7 @@ describe("buildRoots", () => {
     expect(isDeclarable(terraformBlock)).toBe(true);
     expect(isResourceDeclarable(terraformBlock)).toBe(true);
 
-    const props = (terraformBlock as { props: Record<string, unknown> }).props;
+    const props = propsOf(terraformBlock);
     expect(props.address).toBe("terraform");
     expect(props.file).toBe("main.tf");
     expect(props.root).toBe("app");
@@ -126,7 +132,7 @@ describe("buildRoots", () => {
       "legacy/provider.null",
       "legacy/terraform",
     ]);
-    const body = (entities.get("legacy/terraform") as { props: { body: Record<string, unknown> } }).props.body;
+    const body = propsOf(entities.get("legacy/terraform")).body as Record<string, unknown>;
     expect(body.backend).toBeUndefined();
     expect(body.required_version).toBe(">= 1.5.0");
   });
@@ -185,8 +191,8 @@ describe("parseTerraformRootContent", () => {
     const entities = await parseTerraformRootContent(content, ".");
     expect([...entities.keys()].sort()).toEqual([`./null_resource.root`, `./var.region`]);
     expect(entities.get("./var.region")!.entityType).toBe(VARIABLE_TYPE);
-    expect((entities.get("./null_resource.root") as { props: { file: string } }).props.file).toBe("main.tf");
-    expect((entities.get("./var.region") as { props: { file: string } }).props.file).toBe("variables.tf");
+    expect(propsOf(entities.get("./null_resource.root")).file).toBe("main.tf");
+    expect(propsOf(entities.get("./var.region")).file).toBe("variables.tf");
   });
 
   it("parses a bare .tf string with no marker at all", async () => {

@@ -1,14 +1,41 @@
 ---
-title: Overview
-description: Terraform lexicon for chant
+title: "Terraform"
+description: "Existing Terraform root modules as declarable chant entities"
 ---
 
-The Terraform lexicon reads an estate's existing `.tf` files rather than
-generating types for them. Name your root modules under `terraform.roots` in
-`chant.config.ts` and every HCL block joins the build as an entity, visible to
-the post-synth checks and to `chant audit`, with nothing written back over the
-HCL.
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-terraform` — DO NOT EDIT.
+    Edit lexicons/terraform/src/codegen/docs.ts instead; changes here are overwritten. */}
 
-Start with [Getting Started](getting-started/).
 
-Run `just docs` to regenerate this site.
+The Terraform lexicon reads an estate's existing `.tf` files. There is no
+generated resource surface here and nothing is emitted back over the HCL:
+Terraform's types live in provider registries, one schema per provider and
+version, and an estate that already has a root module does not need a second,
+generated copy of it.
+
+What you declare is the directory. Each entry in `terraform.roots` names a
+root module; `buildRoots()` parses it at build time and every HCL block joins
+the build as an entity keyed `<root>/<address>`, carrying the block body
+verbatim. Those entities are what the post-synth checks and `chant audit`
+read.
+
+See [Getting Started](getting-started/) for the config shape, the block-to-entity
+mapping, and what TF001 reports.
+
+
+## At a Glance
+
+| Metric | Count |
+|--------|-------|
+| Resources | 0 |
+| Property types | 0 |
+| Services | 0 |
+| Intrinsic functions | 0 |
+| Pseudo-parameters | 0 |
+| Lint rules | 2 |
+
+**Lexicon version:** 0.57.0  
+**Namespace:** `Terraform`
+
+- [All Rules](./rules) — 2 rules
+- [Serialization](./serialization) — output format details

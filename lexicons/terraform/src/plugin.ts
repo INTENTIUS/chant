@@ -4,6 +4,7 @@ import type { Declarable } from "@intentius/chant/declarable";
 import { terraformSerializer } from "./serializer";
 import { rules } from "./lint/rules";
 import { postSynthChecks } from "./lint/post-synth";
+import { terraformAuditCatalog } from "./lint/audit-catalog";
 import { completions } from "./lsp/completions";
 import { hover } from "./lsp/hover";
 import { terraformConfigSchema, type TerraformConfig } from "./config";
@@ -74,6 +75,10 @@ export const terraformPlugin: LexiconPlugin = {
 
   postSynthChecks() {
     return postSynthChecks;
+  },
+
+  auditCatalog() {
+    return terraformAuditCatalog;
   },
 
   skills() {

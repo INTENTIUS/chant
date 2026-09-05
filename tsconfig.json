@@ -25,7 +25,7 @@
       "@intentius/chant": [
         "packages/core/src/index.ts"
       ],
-    "@intentius/chant/*": [
+      "@intentius/chant/*": [
         "packages/core/src/*"
       ],
       "@intentius/chant-lexicon-aws": [
@@ -141,6 +141,12 @@
       ],
       "@intentius/chant-k8s-client/*": [
         "packages/k8s-client/src/*"
+      ],
+      "@intentius/chant-lexicon-terraform": [
+        "lexicons/terraform/src/index.ts"
+      ],
+      "@intentius/chant-lexicon-terraform/*": [
+        "lexicons/terraform/src/*"
       ]
     }
   },
