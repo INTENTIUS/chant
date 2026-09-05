@@ -70,3 +70,35 @@ describe("generateForgejoOpPipeline: dialect applied", () => {
     expect(ghYaml).toMatch(/^permissions:/m);
   });
 });
+
+describe("generateForgejoOpPipeline: non-cron trigger survives the dialect transform (#2084)", () => {
+  test("a pull_request trigger round-trips through the Forgejo dialect, with permissions: still dropped", () => {
+    const specs: ScheduledOpSpec[] = [
+      { name: "tf-plan", trigger: { kind: "pull_request", branches: ["main"] }, findingMode: "issue" },
+    ];
+    const fj = generateForgejoOpPipeline(specs);
+    const gh = generateGithubOpPipeline(specs);
+
+    const fjDoc = parseFile(fj.files[0].yaml);
+    const ghDoc = parseFile(gh.files[0].yaml);
+
+    expect(fjDoc.on).toEqual({ pull_request: { branches: ["main"] } });
+    expect(fjDoc.on).toEqual(ghDoc.on);
+    expect(fj.jobs).toEqual(gh.jobs);
+    expect(fj.jobs[0].trigger).toEqual({ kind: "pull_request", branches: ["main"] });
+
+    expect(fj.files[0].yaml).not.toMatch(/^permissions:/m);
+    expect(gh.files[0].yaml).toMatch(/^permissions:/m);
+  });
+
+  test("a push trigger round-trips through the Forgejo dialect, with permissions: still dropped", () => {
+    const specs: ScheduledOpSpec[] = [{ name: "tf-apply", trigger: { kind: "push" } }];
+    const fj = generateForgejoOpPipeline(specs);
+    const ghDoc = parseFile(generateGithubOpPipeline(specs).files[0].yaml);
+    const fjDoc = parseFile(fj.files[0].yaml);
+
+    expect(fjDoc.on).toEqual({ push: { branches: ["main"] } });
+    expect(fjDoc.on).toEqual(ghDoc.on);
+    expect(fj.files[0].yaml).not.toMatch(/^permissions:/m);
+  });
+});

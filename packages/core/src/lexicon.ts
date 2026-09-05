@@ -482,14 +482,52 @@ export interface ComponentPipelineResult {
  */
 export type OpFindingMode = "report" | "issue" | "pull-request" | "merge-request";
 
+/**
+ * The CI-native trigger driving a scheduled Op's generated workflow. `cron`
+ * is the historical shape — the CI-only alternative to a Temporal
+ * `TemporalSchedule`. `pull_request` and `push` are generic beyond cron: a
+ * Terraform CI shape needs `plan` on `pull_request` (posted as a PR comment)
+ * and `apply` on `push` to the default branch, each its own Op with its own
+ * trigger (#2081, #2084).
+ */
+export type OpTrigger =
+  | { kind: "cron"; schedule: string }
+  | { kind: "pull_request"; branches?: string[] }
+  | { kind: "push"; branches?: string[] };
+
 /** One scheduled Op to generate CI for — the cron-triggered counterpart to a component (generate mode). */
 export interface ScheduledOpSpec {
   /** Op name (`*.op.ts`'s `Op({ name })`) — what `chant run <name>` targets. */
   name: string;
-  /** Cron expression driving the CI-native trigger — the CI-only alternative to a Temporal `TemporalSchedule`. */
-  schedule: string;
+  /**
+   * Cron expression driving the CI-native trigger — the CI-only alternative
+   * to a Temporal `TemporalSchedule`. Superseded by `trigger`; kept for
+   * backward compatibility, so an omitted `trigger` with `schedule` present
+   * still means `{ kind: "cron", schedule }` (see {@link resolveOpTrigger}).
+   */
+  schedule?: string;
+  /**
+   * The CI-native trigger driving this Op's generated workflow (#2084).
+   * Omit this and set only `schedule` for the pre-existing cron behavior;
+   * set explicitly for `pull_request`/`push`, or to spell cron the same way.
+   */
+  trigger?: OpTrigger;
   /** This Op's finding-mode, for permission/token wiring only (see {@link OpFindingMode}). Default: "report" — no elevated permissions. */
   findingMode?: OpFindingMode;
+}
+
+/**
+ * Resolve a `ScheduledOpSpec`'s effective trigger: `trigger` when given,
+ * else the backward-compatible `{ kind: "cron", schedule }` built from
+ * `schedule` — every pre-#2084 caller (`WorkflowAuditOp`, `PipelineAuditOp`,
+ * `ReconcileOp`, …, and their tests) sets only `schedule` and keeps meaning
+ * cron unchanged. Throws when neither is set — a `ScheduledOpSpec` needs
+ * exactly one trigger.
+ */
+export function resolveOpTrigger(spec: ScheduledOpSpec): OpTrigger {
+  if (spec.trigger) return spec.trigger;
+  if (spec.schedule) return { kind: "cron", schedule: spec.schedule };
+  throw new Error(`Scheduled Op "${spec.name}" has neither \`trigger\` nor \`schedule\` — one is required.`);
 }
 
 /** One CI job generated for a scheduled Op. */
@@ -498,8 +536,8 @@ export interface OpPipelineJob {
   jobName: string;
   /** The Op this job runs. */
   op: string;
-  /** Cron expression this job's workflow is scheduled on. */
-  schedule: string;
+  /** The trigger driving this job's generated workflow (#2084) — lets a consumer tell cron/`pull_request`/`push` jobs apart. */
+  trigger: OpTrigger;
   /** The finding-mode wired for this job. */
   findingMode: OpFindingMode;
 }

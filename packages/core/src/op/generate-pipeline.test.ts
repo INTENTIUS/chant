@@ -22,7 +22,12 @@ vi.mock("@intentius/chant-lexicon-gitlab", () => ({
     package: () => "gitlab",
     generateOpPipeline: (ops: ScheduledOpSpec[]): OpPipelineResult => ({
       files: ops.map((o) => ({ name: `${o.name}.yml`, yaml: `# ${o.name} @ ${o.schedule}` })),
-      jobs: ops.map((o) => ({ jobName: o.name, op: o.name, schedule: o.schedule, findingMode: o.findingMode ?? "report" })),
+      jobs: ops.map((o) => ({
+        jobName: o.name,
+        op: o.name,
+        trigger: o.trigger ?? { kind: "cron" as const, schedule: o.schedule! },
+        findingMode: o.findingMode ?? "report",
+      })),
     }),
   },
 }));
@@ -48,6 +53,22 @@ describe("generateOpsPipeline", () => {
     const result = await generateOpsPipeline(specs, "gitlab");
     expect(result.success).toBe(true);
     expect(result.files).toEqual([{ name: "alb-deploy.yml", yaml: "# alb-deploy @ 0 6 * * *" }]);
-    expect(result.jobs).toEqual([{ jobName: "alb-deploy", op: "alb-deploy", schedule: "0 6 * * *", findingMode: "issue" }]);
+    expect(result.jobs).toEqual([
+      { jobName: "alb-deploy", op: "alb-deploy", trigger: { kind: "cron", schedule: "0 6 * * *" }, findingMode: "issue" },
+    ]);
+  });
+
+  // #2084: `trigger` is new and optional — a spec built the old way (`schedule`
+  // only, no `trigger`) must still round-trip through `generateOpsPipeline`
+  // unchanged, since every pre-#2084 caller (`WorkflowAuditOp`,
+  // `PipelineAuditOp`, `ReconcileOp`) only ever sets `schedule`.
+  test("a legacy `{ schedule }` spec with no `trigger` round-trips unchanged", async () => {
+    const specs: ScheduledOpSpec[] = [{ name: "alb-deploy", schedule: "0 6 * * *" }];
+    const result = await generateOpsPipeline(specs, "gitlab");
+    expect(result.success).toBe(true);
+    expect(result.files).toEqual([{ name: "alb-deploy.yml", yaml: "# alb-deploy @ 0 6 * * *" }]);
+    expect(result.jobs).toEqual([
+      { jobName: "alb-deploy", op: "alb-deploy", trigger: { kind: "cron", schedule: "0 6 * * *" }, findingMode: "report" },
+    ]);
   });
 });

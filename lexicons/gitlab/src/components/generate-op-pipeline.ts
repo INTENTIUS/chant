@@ -27,6 +27,7 @@
  */
 
 import { emitYAML } from "@intentius/chant/yaml";
+import { resolveOpTrigger } from "@intentius/chant/lexicon";
 import type {
   ComponentPipelineOptions as GenerateGitlabOpOptions,
   OpFindingMode,
@@ -49,9 +50,9 @@ const STAGE = "scheduled-ops";
 const SELECTOR_VAR = "CHANT_SCHEDULED_OP";
 
 /** One setup line per Op in the generated file's header comment. */
-function setupLine(spec: ScheduledOpSpec, jobName: string, mode: OpFindingMode): string {
+function setupLine(spec: ScheduledOpSpec, cron: string, jobName: string, mode: OpFindingMode): string {
   const tokenNote = mode === "report" ? "" : " — needs a GITLAB_TOKEN CI/CD variable (masked, scope: api)";
-  return `#   ${jobName}: cron "${spec.schedule}", ${SELECTOR_VAR}="${spec.name}", finding-mode ${mode}${tokenNote}`;
+  return `#   ${jobName}: cron "${cron}", ${SELECTOR_VAR}="${spec.name}", finding-mode ${mode}${tokenNote}`;
 }
 
 /**
@@ -83,9 +84,16 @@ export function generateGitlabOpPipeline(
 
   for (const spec of ops) {
     const findingMode = spec.findingMode ?? "report";
+    const trigger = resolveOpTrigger(spec);
+    if (trigger.kind !== "cron") {
+      throw new Error(
+        `Scheduled Op "${spec.name}" has a "${trigger.kind}" trigger, but GitLab has no pull_request/push event model ` +
+          `(#2084) — only a project-level Pipeline Schedule (cron). Give it a cron trigger, or generate it for github/forgejo instead.`,
+      );
+    }
     const jobName = toJobName(spec.name);
-    jobs.push({ jobName, op: spec.name, schedule: spec.schedule, findingMode });
-    headerLines.push(setupLine(spec, jobName, findingMode));
+    jobs.push({ jobName, op: spec.name, trigger, findingMode });
+    headerLines.push(setupLine(spec, trigger.schedule, jobName, findingMode));
 
     const runParts = runCommand.map((part) => part.replace("{name}", spec.name));
     const script = [...beforeScript, runParts.join(" "), ...extraScript];
