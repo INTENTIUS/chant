@@ -6,10 +6,33 @@ diataxis: how-to
 
 The serializer converts chant's evaluated resource graph into your target platform's format (e.g. CloudFormation JSON, Kubernetes YAML, Terraform HCL).
 
+## The interface
+
+`Serializer` (`packages/core/src/serializer.ts`) requires `name`, `rulePrefix`
+and `serialize`. The other two members are optional:
+
+| Member | Required | Type | Notes |
+|---|---|---|---|
+| `name` | Yes | `string` | The lexicon name. Also the key its output is filed under in `BuildResult.outputs` |
+| `rulePrefix` | Yes | `string` | Every rule id this lexicon ships must start with it. `chant dev check-lexicon` fails otherwise (chant #1349) |
+| `serialize(entities, outputs?, context?)` | Yes | `string \| SerializerResult` | The whole job |
+| `extraRulePrefixes` | No | `readonly string[]` | Further id families this lexicon owns. k8s declares `["ARGO", "FLUX"]`, cedar `["DWD"]` |
+| `serializeCrossRef(output)` | No | `unknown` | How this lexicon renders a reference to another lexicon's `LexiconOutput` |
+
+## Authored properties live on `entity.props`
+
+A generated resource class defines `lexicon`, `entityType`, `kind` and `props`
+with `enumerable: false` (`packages/core/src/runtime.ts`), and defines the
+attribute accessors enumerably. `Object.entries(entity)` therefore yields the
+`AttrRef` accessors and never the properties the user wrote. Read `entity.props`,
+guarded by `isResourceDeclarable`, because not every `Declarable` carries one
+(outputs and parameters genuinely do not, chant #1049).
+
 ## Basic Serializer
 
 ```typescript
 import type { Serializer, Declarable } from "@intentius/chant";
+import { isResourceDeclarable } from "@intentius/chant/declarable";
 
 const mySerializer: Serializer = {
   name: "my-lexicon",
@@ -19,8 +42,10 @@ const mySerializer: Serializer = {
     const resources: Record<string, unknown> = {};
 
     for (const [name, entity] of entities) {
+      if (entity.kind === "property") continue;
       resources[name] = {
         type: entity.entityType,
+        properties: isResourceDeclarable(entity) ? entity.props : {},
       };
     }
 
@@ -31,35 +56,44 @@ const mySerializer: Serializer = {
 
 ## Using `walkValue` and `SerializerVisitor`
 
-The basic example above only emits `entity.entityType`. A real serializer must handle property values — including `AttrRef` (attribute references like `bucket.Arn`), nested `Declarable` references (property types), and `Intrinsic` values (Sub, Ref, etc.). Property names use spec-native casing and are passed through verbatim.
+The basic example above copies `entity.props` verbatim, which is wrong as soon
+as a property holds an `AttrRef` (an attribute reference like `bucket.Arn`), a
+nested `Declarable` (a property type), or an `Intrinsic`. Property names use
+spec-native casing and are passed through unchanged; the values are what need
+converting.
 
-Use `walkValue` and `SerializerVisitor` from `@intentius/chant/serializer-walker` to handle all of these generically:
+Use `walkValue` and `SerializerVisitor` from `@intentius/chant/serializer-walker`
+to handle all of them generically. The walker owns the dispatch chain (null,
+`AttrRef`, `Intrinsic`, `Declarable`, array, object) and calls your visitor for
+the three cases that are format-specific:
 
 ```typescript
 import type { Serializer, Declarable } from "@intentius/chant";
+import { isResourceDeclarable } from "@intentius/chant/declarable";
 import { walkValue, type SerializerVisitor } from "@intentius/chant/serializer-walker";
 
 const visitor: SerializerVisitor = {
-  // Convert AttrRef → your format (e.g. CFN's Fn::GetAtt)
+  // AttrRef in your format (here, CloudFormation's Fn::GetAtt)
   attrRef(logicalName, attribute) {
     return { "Fn::GetAtt": [logicalName, attribute] };
   },
 
-  // Convert resource Declarable reference → your format (e.g. CFN's Ref)
+  // A reference to another top-level resource (here, CloudFormation's Ref)
   resourceRef(logicalName) {
     return { Ref: logicalName };
   },
 
-  // Convert property Declarable → walked object of its properties
+  // A property-kind Declarable, inlined as its own walked props
   propertyDeclarable(entity, walk) {
-    const props: Record<string, unknown> = {};
-    for (const [key, val] of Object.entries(entity)) {
-      if (key === "entityType" || key === "lexicon") continue;
-      props[key] = walk(val);
+    if (!isResourceDeclarable(entity) || typeof entity.props !== "object" || entity.props === null) {
+      return undefined;
     }
-    return props;
+    const out: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(entity.props as Record<string, unknown>)) {
+      if (value !== undefined) out[key] = walk(value);
+    }
+    return out;
   },
-
 };
 
 const mySerializer: Serializer = {
@@ -67,7 +101,8 @@ const mySerializer: Serializer = {
   rulePrefix: "MY",
 
   serialize(entities: Map<string, Declarable>): string {
-    // Build a reverse map: Declarable instance → logical name
+    // walkValue resolves a Declarable reference by identity, so it needs the
+    // reverse map: Declarable instance -> logical name.
     const entityNames = new Map<Declarable, string>();
     for (const [name, entity] of entities) {
       entityNames.set(entity, name);
@@ -75,11 +110,9 @@ const mySerializer: Serializer = {
 
     const resources: Record<string, unknown> = {};
     for (const [name, entity] of entities) {
-      const properties: Record<string, unknown> = {};
-      for (const [key, val] of Object.entries(entity)) {
-        if (key === "entityType" || key === "lexicon") continue;
-        properties[key] = walkValue(val, entityNames, visitor);
-      }
+      if (entity.kind === "property") continue;
+      const raw = isResourceDeclarable(entity) ? entity.props : {};
+      const properties = walkValue(raw, entityNames, visitor) as Record<string, unknown>;
       resources[name] = { type: entity.entityType, properties };
     }
 
@@ -88,7 +121,46 @@ const mySerializer: Serializer = {
 };
 ```
 
-> See `lexicons/aws/src/serializer.ts` for the full AWS CloudFormation serializer.
+> See `lexicons/aws/src/serializer.ts` (`cfnVisitor`) for the full AWS
+> CloudFormation serializer, and `lexicons/k3d/src/serializer.ts` for a shorter
+> one over the same walker.
+
+## Stamping the ownership marker
+
+`serialize` receives a third argument, `SerializeContext`. When the build
+carries an ownership marker, the serializer stamps it into the target's own
+metadata channel (tags on AWS and Azure, labels on Kubernetes and GCP). That
+stamp is what later lets `chant lifecycle` delete precisely without a state
+file, so a lexicon that ignores it can never report an `owned` verdict.
+
+```typescript
+import type { SerializeContext } from "@intentius/chant/serializer";
+import { ownershipEntries, LABEL_OWNERSHIP_KEYS } from "@intentius/chant/ownership";
+
+serialize(entities, outputs?, context?: SerializeContext): string {
+  const stamp = context?.ownership
+    ? ownershipEntries(LABEL_OWNERSHIP_KEYS, context.ownership)
+    : {};
+  // merge `stamp` into each resource's labels, never overwriting an
+  // author's own key with the same name
+}
+```
+
+`LABEL_OWNERSHIP_KEYS` (`packages/core/src/ownership.ts`) is the shared
+label convention, `app.kubernetes.io/managed-by` plus
+`chant.intentius.io/{stack,env}`. A lexicon whose target uses tag keys with
+different syntax supplies its own `ChannelKeys`. Whatever you stamp, declare it
+on the plugin as `ownershipChannel` so the read paths that resolve a real
+verdict are visible to callers; `chant dev check-lexicon` verifies the
+declaration against the members you actually implement (chant #1348).
+
+`SerializeContext` also carries `config` (the resolved project config, so a
+serializer can read its own namespace) and `receipts` (effect receipts declared
+in this partition, withheld from `entities` because they must never enter the
+apply-bound document, chant #1832).
+
+`lexicons/k3d/src/serializer.ts` and `lexicons/k8s/src/serializer.ts` both stamp;
+`lexicons/k8s/src/serializer-ownership.test.ts` is the test to copy.
 
 ## Multi-file output
 
@@ -120,6 +192,13 @@ const mySerializer: Serializer = {
 
 The build pipeline writes each entry in `files` alongside the primary output file. File keys are relative filenames (not paths).
 
+`SerializerResult` carries two further fields:
+
+| Field | Type | What it does |
+|---|---|---|
+| `verbatimFiles` | `string[]` | Basenames from `files` that must reach disk byte-for-byte. The build's additional-file writer otherwise round-trips a file through `JSON.parse` and key-sorts it, which corrupts committed ciphertext or pre-formatted YAML (chant #1937) |
+| `warnings` | `string[]` | Non-fatal diagnostics, collected into the build's `warnings` array. A dialect dropping keys the target ignores reports them here |
+
 ## Child Projects
 
 If your lexicon needs to split resources into separate deployment units (like AWS nested stacks, Terraform modules, or Azure linked templates), use the core **child project** pattern. A child project is a subdirectory that builds independently to a valid template.
@@ -128,7 +207,7 @@ If your lexicon needs to split resources into separate deployment units (like AW
 
 Two core types support child projects:
 
-- **`stackOutput(ref)`** from `@intentius/chant/stack-output` — wraps an `AttrRef` into a `Declarable` with `kind: "output"`. The serializer emits it into the template's `Outputs` section.
+- **`stackOutput(ref, options?)`** from `@intentius/chant/stack-output` — wraps an `AttrRef`, an intrinsic containing one, or a literal string into a `Declarable` with `kind: "output"`. The serializer emits it into the template's `Outputs` section. `options` carries `description`, `exportName` (a cross-stack export) and `condition` (chant #2068).
 - **`ChildProjectInstance`** from `@intentius/chant/child-project` — a `Declarable` representing a reference to a child project directory. The build pipeline detects these, recursively builds the child, and attaches the `BuildResult`.
 
 ### 1. Create your lexicon's factory function
@@ -205,16 +284,16 @@ import { isStackOutput, type StackOutput } from "@intentius/chant/stack-output";
 for (const [name, entity] of entities) {
   if (isStackOutput(entity)) {
     const output = entity as StackOutput;
-    // Emit into your format's outputs section
-    // output.sourceRef is the AttrRef being exported
-    // output.description is optional
+    // Emit into your format's outputs section.
+    // output.sourceRef is the AttrRef, intrinsic or literal being exported.
+    // output.description, output.exportName and output.condition are optional.
   }
 }
 ```
 
 ### How it works at build time
 
-1. **Discovery** stops at child project boundaries — `findInfraFiles()` skips child project subdirectories
+1. **Discovery** stops at child project boundaries. `findInfraFiles()` treats a nested directory carrying its own `chant.config.ts` as a separate scope and does not descend into it (`packages/core/src/discovery/files.ts`)
 2. **Build** detects `ChildProjectInstance` entities and recursively builds each child project
 3. **Cycle detection** tracks the build stack and errors on circular references
 4. **Serialization** receives entities with populated `buildResult` — the serializer extracts child templates and emits parent references
@@ -223,22 +302,41 @@ for (const [name, entity] of entities) {
 
 ## Testing
 
-Your serializer test file (`serializer.test.ts`) should cover at minimum:
+`serializer.test.ts` is required by name (`chant dev check-lexicon`, tier 1).
+Twelve cases, in the order the shipped serializer tests use them. Case 12 is
+whatever is peculiar to your format:
 
-1. **Identity** — `serializer.name` and `serializer.rulePrefix` are correct
-2. **Empty** — `serialize(new Map())` returns empty string
-3. **Single resource** — produces valid output format
-4. **Name generation** — camelCase export -> kebab-case metadata name
-5. **Explicit name** — user-set name is preserved
-6. **Multi-doc** — multiple entities joined correctly
-7. **Default labels** — merged into all resources
-8. **Default annotations** — merged into all resources
-9. **Explicit overrides** — resource-level labels take precedence
-10. **Property entities** — `kind: "property"` skipped in output
-11. **DefaultLabels/Annotations entities** — skipped in output
-12. **Key ordering** — canonical order (e.g., apiVersion, kind, metadata, spec)
+| # | Case | What it asserts |
+|---|------|-----------------|
+| 1 | Serializer name | `serializer.name` is the lexicon name |
+| 2 | Rule prefix | `serializer.rulePrefix` is the declared prefix |
+| 3 | Empty map | `serialize(new Map())` returns `""` |
+| 4 | Single resource | One entity produces valid output in your format |
+| 5 | Derived name | A camelCase export name becomes your format's name form (kebab-case for k8s and cedar) |
+| 6 | Explicit name preserved | An author-set name is never overwritten by the derived one |
+| 7 | Multiple entities | Joined correctly (a `---` separator for YAML, one file per entity for k3s and k3d) |
+| 8 | Defaults applied | Whatever your format injects when the declaration says nothing |
+| 9 | Explicit overrides win | A resource-level value beats the default |
+| 10 | Property entities skipped | A `kind: "property"` entity is inlined where it is referenced, never emitted as its own document |
+| 11 | Key ordering | Output keys in canonical order, independent of the order props were written in |
+| 12 | Format-specific | Cedar parses its own output back through `cedar-wasm`; k3s asserts flag names survive as keys |
 
-Use `mockResource()` and `mockProperty()` helpers with `DECLARABLE_MARKER` to create test entities without constructing real resource classes. See [Testing Your Lexicon](/chant/lexicon-authoring/testing/) for the full pattern.
+`lexicons/cedar/src/serializer.test.ts` is sectioned by these numbers and is the
+clearest one to copy.
+
+Two cases the list above does not number, both of which shipped serializers
+test:
+
+- Ownership stamping, when the build carries a marker, plus the case where an
+  author's own key with the same name wins. See
+  `lexicons/k3d/src/serializer.test.ts` and
+  `lexicons/k8s/src/serializer-ownership.test.ts`.
+- Round-tripping, where the emitted text parses back to the declared values.
+  `lexicons/k3d/src/serializer.test.ts` does this with `js-yaml`.
+
+Use `mockResource()` and `mockProperty()` helpers with `DECLARABLE_MARKER` to
+create test entities without constructing real resource classes. See
+[Testing Your Lexicon](/chant/lexicon-authoring/testing/) for the full pattern.
 
 ## Next Steps
 

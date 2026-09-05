@@ -6,13 +6,74 @@ diataxis: how-to
 
 This guide documents what each test file in a lexicon should cover, with patterns and checklists. Follow these to ensure consistent test quality across lexicons.
 
+Two test files are required by name. `chant dev check-lexicon` fails tier 1
+without `src/plugin.test.ts` and `src/serializer.test.ts`.
+
+## Shared helpers: `@intentius/chant-test-utils`
+
+Before hand-rolling a fixture, check `packages/test-utils/src/`. 131 test files
+across the shipped lexicons import from it, and a lexicon that reimplements
+`makeCtx` gets a context that drifts from the one the real build path
+constructs.
+
+| Helper | Module | What it gives you |
+|---|---|---|
+| `createPostSynthContext(outputs)` | `fixtures.ts` | A `PostSynthContext` from a record of lexicon name to template object, JSON-serialized. Wires `ctx.docs` exactly as `runPostSynthChecks` does (chant #975) |
+| `makePostSynthCtx(lexicon, output, entities?)` | `post-synth-harness.ts` | The same, from an already-serialized string (YAML, JSON, TOML) |
+| `makePostSynthCtxFromFiles(lexicon, files, primary?, entities?)` | `post-synth-harness.ts` | From a multi-file `SerializerResult`, as helm produces |
+| `makePostSynthCtxFromJSON(lexicon, template, entities?)` | `post-synth-harness.ts` | From a plain object, for JSON formats |
+| `runCheck`, `expectNoDiagnostics`, `expectDiagnostic` | `post-synth-harness.ts` | Run one check and assert on its diagnostics |
+| `describeExample`, `describeAllExamples` | `example-harness.ts` | Register lint and build tests for `examples/*`, which tier 1 requires to build |
+| `createMockEntity`, `createMockSerializer`, `createMockLintRule`, `createMockLintContext` | `fixtures.ts` | Core-level fixtures for lint rule tests |
+| `createMockPlugin` | `mock-plugin.ts` | A `LexiconPlugin` with only the members you pass, for exercising a degradation path |
+| `describeObservationConformance` | `observation-conformance.ts` | The observation contract suite. See [Observation Contract](/chant/lexicon-authoring/observation-contract/) |
+| `describeApplyConformance` | `apply-conformance.ts` | The apply contract suite. See [Apply Conformance Suite](/chant/lexicon-authoring/applying-conformance/) |
+| `createTestDir`, `cleanupTestDir`, `withTestDir` | `fs.ts` | Temp-directory lifecycle |
+| `expectToThrow`, `FIXTURE` | `assertions.ts`, `fixture-constants.ts` | Assertion and constant helpers |
+
+The package is `@intentius/chant-test-utils`, with `./example-harness` as a
+second entry point. It is `private: true` and unpublished, and resolves through
+the root `workspaces: ["packages/*", "lexicons/*"]` entry, so no lexicon
+declares it as a dependency. A lexicon developed outside this repo has to copy
+the helpers it needs.
+
+## examples tests
+
+Tier 1 requires every shipped example to build and to pass the lexicon's own
+post-synth checks. `describeAllExamples` registers both tests per example
+directory:
+
+```typescript
+// examples/examples.test.ts
+import { describeAllExamples } from "@intentius/chant-test-utils/example-harness";
+import { mySerializer } from "@intentius/chant-lexicon-mylexicon";
+
+describeAllExamples(
+  {
+    lexicon: "mylexicon",
+    serializer: mySerializer,
+    outputKey: "mylexicon",
+    examplesDir: import.meta.dirname,
+  },
+  {
+    "getting-started": { skipLint: true },
+  },
+);
+```
+
+The second argument overrides per example: `checks(output)` for custom
+assertions, `skipLint`, `skipBuild`. See `lexicons/k8s/examples/examples.test.ts`.
+
 ## serializer.test.ts
 
-The serializer is the core of your lexicon — it converts declarables to output format. Cover these 12 cases:
+The serializer converts declarables to your output format. Cover these 12 cases,
+which are the same twelve listed in [Create a Serializer](/chant/lexicon-authoring/serializer/#testing).
 
 ### Mock helpers
 
-Create `mockResource` and `mockProperty` helpers using `DECLARABLE_MARKER`:
+Create `mockResource` and `mockProperty` helpers using `DECLARABLE_MARKER`. Both
+put the authored values under `props`, which is where a real generated class
+puts them:
 
 ```typescript
 import { DECLARABLE_MARKER } from "@intentius/chant/declarable";
@@ -42,24 +103,37 @@ function mockProperty(entityType: string, props: Record<string, unknown>): any {
 
 | # | Test case | What it verifies |
 |---|-----------|-----------------|
-| 1 | Serializer name | `serializer.name` matches lexicon |
-| 2 | Rule prefix | `serializer.rulePrefix` matches convention |
-| 3 | Empty entities | `serialize(new Map())` returns empty string |
-| 4 | Single resource | Produces valid output format (YAML/JSON) |
-| 5 | Auto-generated name | camelCase export name → kebab-case metadata.name |
-| 6 | Explicit name preserved | User-set metadata.name not overwritten |
-| 7 | Multi-resource | Multiple entities joined correctly (e.g., `---` separator) |
-| 8 | Default labels merged | `defaultLabels()` values appear in all resources |
-| 9 | Default annotations merged | `defaultAnnotations()` values appear in all resources |
-| 10 | Explicit labels override | Resource-level labels take precedence |
-| 11 | Property entities skipped | `kind: "property"` entities don't appear as separate documents |
-| 12 | Key ordering | Output keys in canonical order (e.g., apiVersion → kind → metadata → spec) |
+| 1 | Serializer name | `serializer.name` matches the lexicon |
+| 2 | Rule prefix | `serializer.rulePrefix` matches the declared prefix |
+| 3 | Empty entities | `serialize(new Map())` returns an empty string |
+| 4 | Single resource | Produces valid output in your format (YAML/JSON/text) |
+| 5 | Auto-generated name | camelCase export name becomes your format's name form |
+| 6 | Explicit name preserved | An author-set name is not overwritten |
+| 7 | Multi-resource | Multiple entities joined correctly (a `---` separator for YAML, one file per entity for k3s and k3d) |
+| 8 | Defaults merged | Whatever your format injects when the declaration is silent |
+| 9 | Explicit overrides win | A resource-level value beats the default |
+| 10 | Property entities skipped | `kind: "property"` entities are inlined, not emitted as separate documents |
+| 11 | Key ordering | Output keys in canonical order, independent of prop declaration order |
+| 12 | Format-specific | Whatever is peculiar to your format. Cedar parses its own output back through `cedar-wasm`; k3s asserts flag names survive as keys |
+
+`lexicons/cedar/src/serializer.test.ts` is sectioned by these numbers.
+
+Two more that every shipped serializer test covers:
+
+- Ownership stamping when the build carries a marker, plus the case where an
+  author's own key with the same name wins (`lexicons/k3d/src/serializer.test.ts`,
+  `lexicons/k8s/src/serializer-ownership.test.ts`).
+- Round-trip: the emitted text parses back to the declared values.
 
 Additional lexicon-specific cases:
 - Specless types (K8s: ConfigMap, Secret)
 - Fallback type resolution (GCP: derive GVK from entity type string)
 
 ## default-labels.test.ts
+
+Only for a lexicon that ships label/annotation declaration utilities, as k8s
+does (`lexicons/k8s/src/default-labels.ts`). `chant dev check-lexicon` does not
+look for this file.
 
 Test the label/annotation declaration utilities:
 
@@ -173,33 +247,39 @@ test("handles missing files gracefully", async () => {
 
 ## post-synth tests
 
-### Pattern: makeCtx helper
+### Pattern: build the context with the shared harness
+
+A hand-rolled `{ outputs: new Map(...) }` is not a `PostSynthContext`: it has no
+`entities`, no `buildResult`, and no lazy `ctx.docs`, so a check that reads any
+of them passes in the test and throws in the build. Use the harness.
 
 ```typescript
-function makeCtx(yaml: string) {
-  return {
-    outputs: new Map([["lexicon-name", yaml]]),
-  };
-}
+import { makePostSynthCtx } from "@intentius/chant-test-utils";
+
+const ctx = makePostSynthCtx("mylexicon", yaml);
 ```
+
+For a JSON format, `makePostSynthCtxFromJSON("aws", template)` serializes the
+object for you; `createPostSynthContext({ azure: template })` does the same
+keyed by lexicon, which is the form `lexicons/azure/src/lint/post-synth/*.test.ts`
+uses. For a multi-file serializer, `makePostSynthCtxFromFiles`.
 
 ### Structure
 
 Every post-synth check needs both positive and negative tests:
 
 ```typescript
+import { makePostSynthCtx, expectDiagnostic, expectNoDiagnostics } from "@intentius/chant-test-utils";
+
 describe("WGCXXX: description", () => {
   test("flags bad pattern", () => {
-    const yaml = `...bad yaml...`;
-    const diags = wgcXXX.check(makeCtx(yaml));
-    expect(diags.length).toBeGreaterThanOrEqual(1);
-    expect(diags[0].checkId).toBe("WGCXXX");
+    const ctx = makePostSynthCtx("mylexicon", `...bad yaml...`);
+    expectDiagnostic(wgcXXX, ctx, { checkId: "WGCXXX" });
   });
 
   test("no diagnostic when correct", () => {
-    const yaml = `...good yaml...`;
-    const diags = wgcXXX.check(makeCtx(yaml));
-    expect(diags).toHaveLength(0);
+    const ctx = makePostSynthCtx("mylexicon", `...good yaml...`);
+    expectNoDiagnostics(wgcXXX, ctx);
   });
 });
 ```
@@ -218,4 +298,7 @@ The chant YAML parser treats unquoted `https://...` as key-value pairs. Always q
 
 ## Next Steps
 
-With tests in place, run the full test suite: `npx vitest run lexicons/{name}` and verify all pass.
+Run the lexicon's suite with `npx vitest run lexicons/{name}`, then
+`chant dev check-lexicon lexicons/{name}` for the tier list. See the
+[Completeness Checklist](/chant/lexicon-authoring/completeness-checklist/) for
+what each tier row means.

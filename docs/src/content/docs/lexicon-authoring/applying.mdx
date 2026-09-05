@@ -20,6 +20,26 @@ Per resource in the plan, an applier returns exactly one verdict:
 
 The three are **disjoint and total**. Every resource handed to the applier appears in exactly one of them. A resource that appears in none was silently dropped, which is the failure this contract exists to prevent.
 
+Each bucket is an array of one shape, all three extending `ApplyRef` so a resource is named the same way everywhere. `packages/core/src/apply.ts` is the contract.
+
+```typescript
+interface ApplyRef { kind: string; name: string; }   // the provider's own type name, verbatim
+
+interface AppliedResource extends ApplyRef {
+  action: "created" | "updated" | "unchanged";
+  physicalId?: string;
+}
+interface PrunedResource extends ApplyRef {
+  deleted: boolean;      // false when the delete was a no-op; still PRUNED
+}
+interface NotAttemptedResource extends ApplyRef {
+  reason: NotAttemptedReason;
+  detail?: string;       // the status and body, the missing binding, the unsupported kind
+}
+```
+
+`applyRefKey(ref)` produces the `kind/name` string the conformance suite and the diagnostics use.
+
 ## Why NOT-ATTEMPTED
 
 The read path had two ways to return nothing for a declared entity and no way to tell them apart — the provider said it is absent, versus the lexicon never looked — and the second was classifying as `create`. That is what [`observation.ts`](/chant/lexicon-authoring/observation/) fixed.
@@ -64,16 +84,27 @@ Versioned and self-discriminating (`apply: "v1"`), so an un-migrated applier may
 
 Reporting NOT-ATTEMPTED requires the envelope. You cannot claim the guarantee without adopting the shape that can express its absence.
 
+Two helpers come with it, both from `@intentius/chant`:
+
+| Helper | Use |
+|---|---|
+| `notAttemptedAll(refs, reason, detail?)` | The whole-apply refusal. Turns every resource in the plan into a NOT-ATTEMPTED entry with one reason, for a bind that failed outright. The write-side peer of `unobservedAll`. |
+| `normalizeApply(value)` | Turns either accepted shape (or `undefined`) into three always-present arrays. What every consumer, and every conformance assertion, works with. |
+
+Returning nothing is not the way to say "I applied nothing because I could not". That normalizes to three empty arrays, which reads as an empty plan. Say it with `notAttemptedAll`.
+
 <Aside type="tip" title="Keep your own result too">
-The envelope is an interface, not a replacement. A lexicon's applier knows more than the shared vocabulary can hold — the CNRM `kind`, the ARM type, per-resource `created`/`updated`. Keep returning that, and project onto the envelope with a small `toApplyResult`. `gcpApply` is the reference.
+The envelope is an interface, not a replacement. A lexicon's applier knows more than the shared vocabulary can hold. A CNRM `kind` and a per-resource `created`/`updated` flag have no place in it. Keep returning that, and project onto the envelope with a small `toApplyResult` exported beside the applier. `toApplyResult` in `lexicons/gcp/src/op/activities/gcp-apply.ts` is the reference; `lexicons/azure/src/op/activities/az-apply.ts` and `lexicons/fly/src/op/activities/fly-apply.ts` export the same pair. The temporal apply activity looks the projection up by name, so an applier that exports the applier without it is refused rather than silently un-enveloped (`lexicons/temporal/src/op/activities/apply.ts`).
 </Aside>
 
 ## Ownership
 
-Prune deletes only what chant owns. The marker channel differs per provider — tags on Azure, labels on GCP, metadata on Fly, the field manager on Kubernetes — but the rule does not: **read the marker before issuing a delete, and never delete a resource that does not carry it.**
+Prune deletes only what chant owns. The marker channel differs per provider (tags on Azure, machine metadata on Fly), and the rule does not. Read the marker before issuing a delete, and never delete a resource that does not carry it. Which channel your lexicon reads on which path is declared as [`ownershipChannel`](/chant/lexicon-authoring/observation-contract/#declare-where-you-can-read-the-marker) on the plugin.
 
 [Assertion 4](/chant/lexicon-authoring/applying-conformance/#run-the-conformance-suite) is what holds you to it. A comment saying prune is owned-only is not enforcement, and every applier that got this wrong had the comment.
 
 ## See also
 
 - [Apply Conformance Suite](/chant/lexicon-authoring/applying-conformance/) — the suite that proves an applier honors this contract
+- [Observation Contract](/chant/lexicon-authoring/observation-contract/) — the read-side tri-state this one mirrors
+- [Implementing Observation](/chant/lexicon-authoring/observation/) — the reader that decides what an apply has left to do

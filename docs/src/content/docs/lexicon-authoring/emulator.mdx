@@ -16,7 +16,7 @@ be healthy, and tell tooling where it is. `chant emulator up|down|status` and
 import { emulatorLifecycle, type EmulatorCapability, type EmulatorSpec } from "@intentius/chant/op";
 
 export const MY_EMULATOR_SPEC: EmulatorSpec = {
-  name: "chant-myfake",                    // container name
+  name: "chant-myfake",                    // default container name
   image: "org/myfake:1.2.0",               // pinned, not :latest
   containerPort: 4599,
   healthPath: "/_myfake/health",
@@ -28,24 +28,45 @@ export const MY_EMULATOR: EmulatorCapability = {
   env: (endpoint) => ({ MYFAKE_ENDPOINT_URL: endpoint }),
 };
 
+const myfake = emulatorLifecycle(MY_EMULATOR_SPEC);
+export const myfakeUp = (args = {}, signal?: AbortSignal) => myfake.up(args, signal);
+export const myfakeDown = (args = {}, signal?: AbortSignal) => myfake.down(args, signal);
+
 // src/plugin.ts
 emulator: MY_EMULATOR,
 ```
+
+`EmulatorSpec` (`packages/core/src/op/emulator-lifecycle.ts:12`) has four
+required fields and three optional ones:
+
+| Field | Required | Meaning |
+|---|---|---|
+| `name` | yes | Default container name |
+| `image` | yes | Docker image, with a version tag |
+| `containerPort` | yes | Port the emulator listens on inside the container |
+| `healthPath` | yes | Health path on the host port |
+| `ready` | no | `(healthBody: string) => boolean`. Default: any 200 is ready |
+| `runArgs` | no | Extra `docker run` args inserted before the image, e.g. a socket mount |
+| `upstream` | no | `{ repo }`, the `owner/repo` whose latest release names the current version |
+
+`lexicons/fly/src/op/activities/flaps.ts:25` is the reference declaration.
 
 The same spec drives `emulatorLifecycle()`, so the wrapper your Ops already use
 and the capability chant boots are one object rather than two that can drift.
 
 ## Having one is not declaring one
 
-This distinction cost the repo three of its four emulators. azure and gcp both
-built the exact spec above in `src/op/activities/` and used it from their Ops,
-and neither set `plugin.emulator` — so `chant emulator up --all` booted Floci
-and nothing else, while the local-testing docs presented all three clouds as
-equal local targets (chant #1345). The wrapper is not the declaration.
+This distinction once cost the repo three of its four emulators. azure and gcp
+both built the exact spec above in `src/op/activities/` and used it from their
+Ops without setting `plugin.emulator`, so `chant emulator up --all` booted Floci
+and nothing else while the local-testing docs presented all three clouds as
+equal local targets (chant #1345). All five capabilities are declared now. The
+lesson holds anyway. The wrapper is not the declaration.
 
 ## More than one
 
-`emulator` takes a capability or an array of them. fly declares two:
+`emulator` is typed `EmulatorDeclaration`, which is one capability or a readonly
+array of them. fly declares two (`lexicons/fly/src/plugin.ts:33`):
 
 ```typescript
 emulator: [MUDFLAPS_EMULATOR, SPRITZER_EMULATOR],
@@ -59,18 +80,23 @@ emulator: [MUDFLAPS_EMULATOR, SPRITZER_EMULATOR],
 `env(endpoint)` returns what points tooling at the running emulator. Two things
 depend on getting it right:
 
-- **`chant emulator up --json`** hands it to a consumer verbatim, so credentials
-  and a region belong here too — Floci returns `AWS_ACCESS_KEY_ID: "test"`
-  alongside the endpoint.
-- **`--live --env <name>` endpoint injection** picks out only the variables whose
-  *value is the endpoint* and sets those, leaving the credentials alone. That
-  derivation replaced a hand-maintained map in core which listed two of the four
-  lexicons that have an endpoint variable — and asserted azure had none, while
-  azure's own `describe-resources.ts` read `AZURE_ENDPOINT_URL` on every call.
+- `chant emulator up --json` hands it to a consumer verbatim, so credentials and
+  a region belong here too. Floci returns `AWS_ACCESS_KEY_ID`,
+  `AWS_SECRET_ACCESS_KEY` and `AWS_REGION` alongside `AWS_ENDPOINT_URL`
+  (`lexicons/aws/src/op/activities/floci.ts:70`).
+- `--live --env <name>` endpoint injection picks out only the variables whose
+  value *is* the endpoint and sets those, leaving the credentials alone. Core
+  derives that by calling `env()` with a sentinel and keeping the keys that carry
+  it (`endpointEnvVars` in `packages/core/src/op/emulator-lifecycle.ts:82`). That
+  replaced a hand-maintained map which listed two of the four lexicons with an
+  endpoint variable and asserted azure had none, while azure's own
+  `describe-resources.ts` read `AZURE_ENDPOINT_URL` on every call.
 
-Return `{}` when the emulator is reached only through an explicit argument, as
-gcp's is. That is a real answer, and a better one than naming a variable nothing
-reads.
+Each of the five declared capabilities names exactly one endpoint variable:
+`AWS_ENDPOINT_URL`, `AZURE_ENDPOINT_URL`, `GCP_ENDPOINT_URL`,
+`FLY_FLAPS_BASE_URL` (mudflaps) and `SPRITES_BASE_URL` (spritzer). Return `{}`
+if your emulator is reached only through an explicit apply argument. That is a real answer, and a better one than naming a
+variable nothing reads.
 
 ## Pin the image
 

@@ -42,10 +42,12 @@ From the provided name, the command derives:
 
 ### Generated files
 
+35 files, as `initLexiconCommand` writes them (`packages/core/src/cli/commands/init-lexicon.ts`). Neither `dist/` nor `src/generated/*` is scaffolded; generation and packaging write those later.
+
 | File | Purpose |
 |------|---------|
 | `src/plugin.ts` | `LexiconPlugin` with all 4 required lifecycle methods |
-| `src/index.ts` | Re-exports plugin and serializer |
+| `src/index.ts` | Re-exports plugin and serializer; the package entry point |
 | `src/serializer.ts` | Stub `Serializer` producing minimal JSON |
 | `src/codegen/generate.ts` | Calls core `generatePipeline` with TODO callbacks |
 | `src/codegen/generate-cli.ts` | tsx entry point for `just generate` |
@@ -56,18 +58,19 @@ From the provided name, the command derives:
 | `src/spec/parse.ts` | `parseSchema` stub with `ParseResult` type |
 | `src/lint/rules/sample.ts` | Example `LintRule` using derived prefix |
 | `src/lint/rules/index.ts` | Re-export for lint rules |
-| `src/lsp/completions.ts` | Stub using core `lexiconCompletions` |
-| `src/lsp/hover.ts` | Stub using core `lexiconHover` |
-| `src/import/parser.ts` | Stub `TemplateParser` |
-| `src/import/generator.ts` | Stub `TypeScriptGenerator` |
-| `src/coverage.ts` | Stub coverage analysis |
+| `src/lsp/completions.ts`, `src/lsp/hover.ts` | Stubs using core `lexiconCompletions` / `lexiconHover` |
+| `src/lsp/completions.test.ts`, `src/lsp/hover.test.ts` | Tests for the LSP providers |
+| `src/plugin.test.ts`, `src/serializer.test.ts` | The two tests `chant dev check-lexicon` requires by name |
 | `src/validate.ts` | Stub validation checks |
 | `src/validate-cli.ts` | tsx entry point for `just validate` |
-| `package.json` | Package config with `workspace:*` dep on `@intentius/chant` |
-| `tsconfig.json` | Extends root TypeScript config |
-| `justfile` | `generate`, `validate`, `docs`, `package` recipes |
+| `src/generated/.gitkeep` | Placeholder for the generation output directory |
+| `package.json` | Package config with a `*` dev dependency on `@intentius/chant` |
+| `tsconfig.json`, `tsconfig.build.json` | Extends root TypeScript config; build config with `bundler` resolution |
+| `justfile` | `generate`, `validate`, `docs`, `docs-build`, `package` recipes |
 | `.gitignore` | Ignores snapshots, dist, cache |
 | `README.md` | Getting started guide |
+| `docs/` | Starlight site: `package.json`, `tsconfig.json`, `astro.config.mjs`, `src/content.config.ts`, `src/content/docs/index.mdx`, `pages/getting-started.mdx` |
+| `examples/getting-started/` | One example project: `package.json`, `src/infra.ts` |
 
 ## Usage
 

@@ -4,7 +4,23 @@ description: AI agent skill files contributed by lexicons
 diataxis: reference
 ---
 
-Lexicon authors can include skill files — markdown documents that teach AI agents how to work with the lexicon's resource types and patterns.
+Lexicon authors can include skill files: markdown documents that teach AI agents how to work with the lexicon's resource types and patterns. They live in `lexicons/<name>/src/skills/*.md` and are returned from the plugin's `skills()` member as `SkillDefinition[]`.
+
+`SkillDefinition` (`packages/core/src/lexicon.ts:191`) has three required fields
+and five optional ones.
+
+| Field | Required | Meaning |
+|---|---|---|
+| `name` | yes | The skill's identifier. Becomes the `skills/<name>/SKILL.md` directory on install |
+| `description` | yes | One-line summary |
+| `content` | yes | The full markdown, frontmatter included, read from the `.md` file |
+| `triggers` | no | `SkillTrigger[]` |
+| `parameters` | no | `SkillParameter[]` |
+| `examples` | no | `SkillExample[]` |
+| `preConditions` | no | `string[]` |
+| `postConditions` | no | `string[]` |
+
+No shipped lexicon populates the five optional fields; `name`, `description` and `content` are the working surface.
 
 ## Op-Aware Skills
 
@@ -40,11 +56,13 @@ Not all lexicons need Op-aware skills. Synthesis-only lexicons (those that don't
 
 A mature lexicon should include 3 skills covering different scopes:
 
+All three files live under `lexicons/azure/src/skills/`.
+
 | Skill | Purpose | Example |
 |-------|---------|---------|
-| **Core** | Syntax, resource types, basic usage | `chant-azure.md` — ARM resource declarations, intrinsics, pseudo-parameters |
-| **Platform-specific** | Cloud/platform security and integration patterns | `chant-azure-security.md` — Managed identity, encryption, TLS, NSG |
-| **Advanced patterns** | Complex usage, composites, multi-resource patterns | `chant-azure-patterns.md` — Linked templates, conditional resources, tagging strategies |
+| Core | Syntax, resource types, basic usage | `chant-azure.md`, ARM resource declarations, intrinsics, pseudo-parameters |
+| Platform-specific | Cloud and platform security and integration patterns | `chant-azure-security.md`, managed identity, encryption, TLS, NSG |
+| Advanced patterns | Complex usage, composites, multi-resource patterns | `chant-azure-patterns.md`, linked templates, conditional resources, tagging strategies |
 
 ## Skill File Format
 
@@ -67,9 +85,15 @@ When writing resources with chant and this lexicon:
 
 ### Frontmatter Fields
 
+chant does not parse this frontmatter. The file's whole text, frontmatter
+included, becomes `SkillDefinition.content` and is written verbatim to
+`skills/<name>/SKILL.md`, where the agent harness reads it. The `name` and
+`description` that chant itself uses come from the plugin's skill spec, not from
+here. Keep the two in sync by convention.
+
 | Field | Description |
 |-------|-------------|
-| `skill` | The skill name — must match the name registered in `plugin.ts` |
+| `skill` | The skill name. Match the name registered in `plugin.ts` |
 | `description` | One-line summary of what the skill covers |
 | `user-invocable` | `true` if the skill can be invoked directly by the user |
 
@@ -77,40 +101,46 @@ When writing resources with chant and this lexicon:
 
 Good skill content:
 
-- **Starts with overview** — What the skill covers and when to use it
-- **Uses code examples** — Real, runnable TypeScript snippets
-- **Maps to checks** — Security skills reference the post-synth checks they relate to
-- **Covers composites** — Shows how to use composites for common patterns
-- **Includes reference tables** — Quick-reference tables for functions, parameters, etc.
+- Starts with an overview of what the skill covers and when to use it
+- Uses real, runnable TypeScript snippets
+- References the post-synth checks a security skill relates to, by id
+- Shows how to use composites for common patterns
+- Includes quick-reference tables for functions and parameters
 
 ## Registering Skills in Plugin
 
 Return skill definitions from your plugin's `skills()` method:
 
+Use `createSkillsLoader` from `packages/core/src/lexicon-plugin-helpers.ts`. It
+resolves `skills/` relative to the module you pass `import.meta.url` from, reads
+each file, and returns a zero-argument function of the shape `skills()` wants. A
+missing file yields an empty `content` rather than throwing:
+
 ```typescript
-skills(): SkillDefinition[] {
-  const { readFileSync } = require("fs");
-  const { join, dirname } = require("path");
-  const dir = dirname(fileURLToPath(import.meta.url));
+// src/plugin.ts
+import { createSkillsLoader } from "@intentius/chant/lexicon-plugin-helpers";
 
-  const skills: SkillDefinition[] = [];
-
-  const skillFiles = [
-    { file: "chant-my-lexicon.md", name: "chant-my-lexicon", ... },
-    { file: "chant-my-lexicon-security.md", name: "chant-my-lexicon-security", ... },
-    { file: "chant-my-lexicon-patterns.md", name: "chant-my-lexicon-patterns", ... },
-  ];
-
-  for (const skill of skillFiles) {
-    try {
-      const content = readFileSync(join(dir, "skills", skill.file), "utf-8");
-      skills.push({ name: skill.name, content, ... });
-    } catch { /* skip missing */ }
-  }
-
-  return skills;
-}
+export const myPlugin: LexiconPlugin = {
+  // ...
+  skills: createSkillsLoader(import.meta.url, [
+    {
+      file: "chant-my-lexicon.md",
+      name: "chant-my-lexicon",
+      description: "Build, validate, and deploy My Lexicon output from a chant project",
+    },
+    {
+      file: "chant-my-lexicon-security.md",
+      name: "chant-my-lexicon-security",
+      description: "Security patterns and the checks that enforce them",
+    },
+  ]),
+};
 ```
+
+The `file` field is the filename inside `src/skills/`; every other field of
+`SkillFileSpec` is a `SkillDefinition` field minus `content`. Fifteen of the
+seventeen lexicons wire skills this way. `lexicons/fly/src/plugin.ts:79` is a
+short worked example; k3s keeps a hand-rolled loop for the same effect.
 
 ## Installation
 
@@ -118,14 +148,22 @@ Skills are installed automatically when you initialize a project:
 
 ```bash
 chant init --lexicon my-lexicon my-infra
+chant init --lexicon my-lexicon --skill chant-my-lexicon my-infra   # just one
 ```
 
-This copies skills to `skills/{name}/SKILL.md` in the project root.
+Each skill is written to `skills/<name>/SKILL.md` under the project root
+(`packages/core/src/cli/commands/init.ts:462`). `--skill` filters to a single
+skill by name and warns if no skill matches. Skill installation is best-effort.
+When the lexicon package cannot be loaded, `chant init` still succeeds and
+installs nothing.
 
 ## Lifecycle
 
-- **Install**: `chant init` copies skills to `skills/`
-- **Update**: `chant update` refreshes skills when a lexicon is updated
+| Command | Effect |
+|---|---|
+| `chant init` | Writes each skill to `skills/<name>/SKILL.md` |
+| `chant init --skill <name>` | Writes only that skill |
+| `chant update` | Rewrites `skills/<name>/SKILL.md` for every loaded plugin |
 
 ## Collecting Skills for Packaging
 
@@ -134,29 +172,36 @@ When building a lexicon bundle, use `collectSkills` from core to gather skill de
 ```typescript
 import { collectSkills } from "@intentius/chant/codegen/package";
 
-const skills = collectSkills(myPlugin.skills());
+const skills = collectSkills(myPlugin.skills!());
 ```
 
-This is passed to `packagePipeline` as part of the bundle configuration.
+`collectSkills` returns a `Map` keyed by `<name>.md`. Pass it as the
+`collectSkills` member of the `packagePipeline` config, which is typed
+`() => Map<string, string>`.
 
 ## Reference
 
-All 12 lexicons ship skills:
+Sixteen of the seventeen lexicons ship skills. Only k3d ships none
+(`lexicons/k3d/src/plugin.ts` returns `[]`).
 
 | Lexicon | Skills | Count |
 |---------|--------|-------|
 | AWS | `chant-aws`, `chant-aws-eks`, `chant-aws-carve-terraform` | 3 |
 | Azure | `chant-azure`, `chant-azure-security`, `chant-azure-patterns`, `chant-azure-aks` | 4 |
+| Cedar | `chant-cedar-authoring`, `chant-cedar-avp-embedding`, `chant-cedar-dogwood`, `chant-cedar-meta-policy` | 4 |
+| Control Plane | `chant-cpln`, `chant-cpln-workloads`, `chant-cpln-secrets` | 3 |
+| Docker | `chant-docker`, `chant-docker-patterns` | 2 |
+| Fly | `chant-fly`, `chant-fly-ops`, `chant-fly-patterns`, `chant-fly-sprites` | 4 |
+| Forgejo | `chant-forgejo` | 1 |
+| Fountain | `chant-fountain`, `chant-fountain-secrets`, `chant-fountain-locked-sandboxes` | 3 |
 | GCP | `chant-gcp`, `chant-gcp-security`, `chant-gcp-patterns`, `chant-gcp-gke` | 4 |
-| K8s | `chant-k8s`, `chant-k8s-patterns`, `chant-k8s-deployment-strategies`, `chant-k8s-security`, `chant-k8s-eks`, `chant-k8s-gke`, `chant-k8s-aks`, `chant-k8s-argo`, `chant-k8s-flux`, `chant-k8s-ray` | 10 |
 | GitHub | `chant-github`, `chant-github-patterns`, `chant-github-security` | 3 |
 | GitLab | `chant-gitlab`, `chant-gitlab-patterns`, `chant-gitlab-migrate` | 3 |
-| Forgejo | `chant-forgejo` | 1 |
 | Helm | `chant-helm`, `chant-helm-patterns`, `chant-helm-security` | 3 |
-| Docker | `chant-docker`, `chant-docker-patterns` | 2 |
+| K3s | `chant-k3s` | 1 |
+| K8s | `chant-k8s`, `chant-k8s-patterns`, `chant-k8s-deployment-strategies`, `chant-k8s-security`, `chant-k8s-eks`, `chant-k8s-gke`, `chant-k8s-aks`, `chant-k8s-argo`, `chant-k8s-flux`, `chant-k8s-ray` | 10 |
+| Render | `chant-render`, `chant-render-patterns` | 2 |
 | Temporal | `chant-temporal`, `chant-temporal-ops` | 2 |
-| Fly | `chant-fly`, `chant-fly-ops`, `chant-fly-patterns`, `chant-fly-sprites` | 4 |
-| Fountain | `chant-fountain`, `chant-fountain-secrets`, `chant-fountain-locked-sandboxes` | 3 |
 
 ## Next Steps
 

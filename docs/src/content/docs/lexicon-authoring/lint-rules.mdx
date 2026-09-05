@@ -28,7 +28,9 @@ export const myRule: LintRule = {
 };
 ```
 
-Wire imperative and declarative rules by importing them into the `lintRules()` array in your `plugin.ts` — they are not auto-discovered (post-synth checks are; see [Post-Synth Checks](/chant/lexicon-authoring/post-synth-checks/#wiring-checks-into-plugin)).
+`LintContext` (`packages/core/src/lint/rule.ts`) carries `sourceFile`, `entities`, `filePath`, and the optional `lexicon`, `intrinsics` and `projectConfig`. Each `LintDiagnostic` you return needs `file`, `line`, `column`, `ruleId`, `severity` and `message`, plus an optional `fix`.
+
+Wire imperative and declarative rules by importing them into the `lintRules()` array in your `plugin.ts`. They are not auto-discovered, unlike post-synth checks (see [Post-Synth Checks](/chant/lexicon-authoring/post-synth-checks/#wiring-checks-into-plugin)).
 
 ```typescript
 // plugin.ts
@@ -59,12 +61,20 @@ const spec: RuleSpec = {
 
 Return these from your plugin's `declarativeRules()` method.
 
-> **Untrodden.** No shipped lexicon uses `declarativeRules()`. All twelve write
-> imperative rules and return them from `lintRules()`. The seam is live —
-> `chant lint` compiles whatever it returns through `rule()` — and is covered by
-> contract tests (chant #1349), but you would be the first real adopter. Prefer
-> `lintRules()` unless the declarative form is a clear fit for what you're
-> checking.
+:::caution[Untrodden]
+No shipped lexicon uses `declarativeRules()`. All seventeen write imperative
+rules and return them from `lintRules()`. The seam is live (`chant lint`
+compiles whatever `declarativeRules()` returns through `rule()`, and it is
+covered by contract tests, chant #1349), but you would be the first real
+adopter. Prefer `lintRules()` unless the declarative form is a clear fit for
+what you are checking.
+:::
+
+`RuleSpec` is defined in `packages/core/src/lint/declarative.ts`. `selector` is a
+selector name or a compound `"parent > child"` expression resolved by
+`resolveSelector` (`packages/core/src/lint/selectors.ts`); `match` filters the
+selected nodes by `pattern`, `within`, `require` or a named `check`; `message`
+substitutes `{node}` with the node's text.
 
 ## Post-synth Checks
 
@@ -84,48 +94,84 @@ const myCheck: PostSynthCheck = {
 };
 ```
 
-Return these from your plugin's `postSynthChecks()` method.
+Drop the file in `src/lint/post-synth/`, run `npm run generate:barrels` from the
+repo root, and the committed barrel `src/lint/post-synth/index.ts` picks it up.
+Your plugin's `postSynthChecks()` returns that barrel. See
+[Post-Synth Checks](/chant/lexicon-authoring/post-synth-checks/#wiring-checks-into-plugin).
 
 ## Rule ID Conventions
 
-Rule IDs follow the pattern `{PREFIX}{CATEGORY}{NUMBER}`:
+A rule id is `{PREFIX}{NUMBER}`. The prefix is your serializer's `rulePrefix`
+(`packages/core/src/serializer.ts:83`), and `chant dev check-lexicon` fails at
+tier 1 on any rule or check id that does not start with it or with one of the
+serializer's `extraRulePrefixes`. k8s declares `rulePrefix: "WK8"` plus
+`extraRulePrefixes: ["ARGO", "FLUX"]` (`lexicons/k8s/src/serializer.ts:223`);
+cedar declares `"CED"` plus `["DWD"]`. Core's own cross-cutting ids (`COR*`,
+`EXT*`) are exempt.
 
-- **Prefix** — your lexicon's `rulePrefix` (e.g. `MY`, `AWS`, `K8S`)
-- **Category** — single letter: `D` (declarative), `S` (style), `C` (correctness), `E` (evaluability)
-- **Number** — three-digit sequential number
+The number is three digits. Most lexicons group families by the hundreds digit
+rather than by a letter: k3s uses `K3S001` for its source-level rule and
+`K3S101`-`K3S107` for its post-synth checks, gcp uses `WGC001`-`WGC003` then
+`WGC1xx` through `WGC5xx`, and github runs a flat `GHA001`-`GHA068`.
+
+A category letter after the prefix is a local convention in two lexicons, not a
+rule the tooling enforces. cedar splits `CEDC` (correctness), `CEDE`
+(evaluability) and `CEDS` (style); docker splits `DKRD` and `DKRS`. Copy it only
+if you want it; nothing checks for it, and fourteen lexicons do without.
 
 ## Testing
 
 ### Post-synth checks
 
-Every post-synth check needs both positive and negative tests. Use a `makeCtx` helper:
+Every post-synth check needs both positive and negative tests. Build the context
+with `makePostSynthCtx` from `@intentius/chant-test-utils`, which wires up
+`outputs`, `entities`, `buildResult` and the lazy `docs` accessor the same way a
+real build does:
 
 ```typescript
-function makeCtx(yaml: string) {
-  return {
-    outputs: new Map([["my-lexicon", yaml]]),
-  };
-}
+import { describe, test, expect } from "vitest";
+import { makePostSynthCtx } from "@intentius/chant-test-utils";
+import { myCheck } from "./my-check";
 
 describe("MYD010: description", () => {
   test("flags bad pattern", () => {
-    const yaml = `...bad yaml...`;
-    const diags = myCheck.check(makeCtx(yaml));
+    const diags = myCheck.check(makePostSynthCtx("my-lexicon", `...bad yaml...`));
     expect(diags.length).toBeGreaterThanOrEqual(1);
     expect(diags[0].checkId).toBe("MYD010");
   });
 
   test("no diagnostic when correct", () => {
-    const yaml = `...good yaml...`;
-    const diags = myCheck.check(makeCtx(yaml));
+    const diags = myCheck.check(makePostSynthCtx("my-lexicon", `...good yaml...`));
     expect(diags).toHaveLength(0);
   });
 });
 ```
 
+Sibling helpers cover the other output shapes: `makePostSynthCtxFromJSON` for a
+JSON template, `makePostSynthCtxFromFiles` for a multi-file `SerializerResult`.
+All three take an optional `entities` map as their last argument.
+
 ### Imperative and declarative rules
 
-Test imperative rules by constructing a minimal AST context and verifying the returned diagnostics array. Test declarative rules by running the `rule()` builder output against sample input strings.
+Test an imperative rule by building a `LintContext` around a `ts.SourceFile` and
+asserting on the diagnostics. `lexicons/k3s/src/lint/rules/token-literal.test.ts`
+is the smallest worked example:
+
+```typescript
+import * as ts from "typescript";
+import type { LintContext } from "@intentius/chant/lint/rule";
+
+function createContext(code: string, fileName = "cluster.ts"): LintContext {
+  const sourceFile = ts.createSourceFile(fileName, code, ts.ScriptTarget.Latest, true);
+  return { sourceFile, entities: [], filePath: fileName };
+}
+
+const diags = myRule.check(createContext(`const s = new Server({ token: "literal" });`));
+expect(diags[0].ruleId).toBe("MYD001");
+```
+
+Test a declarative rule the same way, against the `LintRule` that `rule(spec)`
+returns.
 
 See [Testing Your Lexicon](/chant/lexicon-authoring/testing/) for the full testing guide, including patterns for all test file types.
 

@@ -25,16 +25,34 @@ describeApplyConformance({
 });
 ```
 
+The config takes three scenario lists, and which assertions run depends on which you supply.
+
+| Field | Type | Drives |
+|---|---|---|
+| `lexicon` | `string` | Test titles. |
+| `scenarios` | `ApplyScenario[]` | Assertions 1, 2, 3. |
+| `pruneScenarios` | `PruneScenario[]` | Assertion 4. Optional, and an applier with no prune has nothing to assert. |
+| `idempotenceScenarios` | `IdempotenceScenario[]` | Assertion 5. Optional, but every applier claims idempotence, so its absence is a gap. |
+
+An `ApplyScenario` is `{ name, plan, run, expectApplied?, expectPruned?, expectNotAttempted? }`. `plan` is the `ApplyRef[]` the applier was handed; the three `expect*` lists name resources as `kind/name`. `run` returns either the `apply: "v1"` envelope or a partial `{ applied, pruned, notAttempted }`, so an un-migrated applier can still be held to assertions 1 through 3.
+
+A `PruneScenario` is `{ name, run, ownedOrphan, foreign }`. Its `run` returns `{ result, deletes }`, where `deletes` is every delete target the transport was asked for. `ownedOrphan` and `foreign` are substrings matched against those targets: exactly one delete must match the first, and none may match the second.
+
+An `IdempotenceScenario` is `{ name, run }`, and `run` returns `{ first, second }` from applying the same plan twice against a transport that remembers the first.
+
 What it proves:
 
 1. **Shape** — the buckets are disjoint. A resource cannot be both written and skipped.
 2. **Total reasons** — every not-attempted entry names a legal reason, every applied entry a legal action.
 3. **Nothing is dropped** — every resource in the plan is accounted for. *This is the suite's reason to exist.*
 4. **Owned-only prune** — given a foreign resource and an owned orphan in the same scope, exactly one delete is issued, against the orphan. **Asserted on the transport**, not the return value.
-5. **Idempotence** — the same plan applied twice creates nothing the second time.
+5. **Idempotence** — the same plan applied twice reports no `created` the second time.
 
-Assertion 4 is on the transport deliberately. An applier that returns a tidy result while issuing a delete against a stranger's resource passes every other check — which is precisely what the ARM target did when `owned-only` ran `az deployment --mode Complete`.
+Assertion 4 is on the transport deliberately. An applier that returns a tidy result while issuing a delete against a stranger's resource passes every other check, which is precisely what the ARM target did when `owned-only` ran `az deployment --mode Complete`.
+
+Three appliers run the suite today. `lexicons/gcp/src/op/activities/gcp-apply.test.ts` is the fullest, with all three scenario lists; `lexicons/azure/src/op/activities/az-apply.test.ts` and `lexicons/fly/src/op/activities/fly-apply.test.ts` are the others.
 
 ## See also
 
 - [Implementing Apply](/chant/lexicon-authoring/applying/) — what the tri-state, the reasons, and the envelope mean
+- [Observation Contract](/chant/lexicon-authoring/observation-contract/#prove-it-with-the-conformance-suite) — `describeObservationConformance`, the read-side twin of this suite

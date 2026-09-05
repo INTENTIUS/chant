@@ -6,29 +6,66 @@ diataxis: how-to
 
 import { Aside } from '@astrojs/starlight/components';
 
-The `chant import` command reads existing infrastructure files (YAML, Dockerfiles, Helm charts) and emits TypeScript source using your lexicon's types. Each lexicon implements import through three files: a parser, a generator, and roundtrip tests.
+The `chant import` command reads existing infrastructure files (YAML, JSON, Dockerfiles) and emits TypeScript source using your lexicon's types. Five optional plugin members cover import and its neighbours; a lexicon with no import story implements none of them.
+
+| Member | Returns | Drives |
+|---|---|---|
+| `detectTemplate(data)` | `boolean` | Which lexicon owns a template file. Core parses the file, asks each loaded plugin in turn, and takes the first `true` (`detectPlugin` in `packages/core/src/cli/commands/import.ts`). |
+| `templateParser()` | `TemplateParser` | Source format to `TemplateIR`. |
+| `templateGenerator()` | `TypeScriptGenerator` | `TemplateIR` to `GeneratedFile[]`. |
+| `migrationSource(from)` | `MigrationSource \| undefined` | `chant migrate`: another provider's format into this lexicon's. |
+| `agentConfigImporter()` | `AgentConfigImporter` | `chant import --agents`: local agent configuration into this lexicon's resources. |
+
+## The core IR
+
+Two interfaces in `packages/core/src/import/` are the whole contract between a lexicon and the import pipeline:
+
+```typescript
+interface TemplateParser    { parse(content: string): TemplateIR; }
+interface TypeScriptGenerator { generate(ir: TemplateIR): GeneratedFile[]; }
+interface GeneratedFile     { readonly path: string; readonly content: string; }
+```
+
+`TemplateIR` follows CloudFormation's vocabulary, and every lexicon maps onto it:
+
+```typescript
+interface TemplateIR {
+  readonly resources: ResourceIR[];
+  readonly parameters: ParameterIR[];
+  readonly conditions?: ConditionIR[];   // named boolean expressions (#2069)
+  readonly outputs?: OutputIR[];         // template outputs (#2069)
+  readonly metadata?: Record<string, unknown>;
+  readonly warnings?: string[];          // what you read but cannot carry
+}
+
+interface ResourceIR {
+  readonly logicalId: string;                      // becomes the export name
+  readonly type: string;                           // "GitHub::Actions::Workflow", "service", …
+  readonly properties: Record<string, unknown>;    // everything the source declared
+  readonly metadata?: Record<string, unknown>;
+  readonly condition?: string;                     // gating condition name, when declared
+}
+```
+
+Three rules follow from that shape:
+
+- Capture all properties. `properties` is a lossless intermediate, so every property from the source file should appear there for the generator to emit. Dropping properties silently causes roundtrip failures and user surprise.
+- Name what you cannot carry. A section you read and deliberately drop goes in `warnings`, which `chant import` prints (`parseAndWrite` pushes `ir.warnings` straight into the result). Silence is the failure mode #2069 closed.
+- `logicalId` becomes an export name. Core lowercases its first character when it writes the barrel re-exports, so emit a valid JavaScript identifier.
+
+### How core drives the two halves
+
+`generateOrganizedFiles` in `packages/core/src/cli/commands/import.ts` decides the file layout, not you. Up to three resources it calls `generate(ir)` once and writes whatever paths you return. Above three it buckets resources by category (`storage` / `compute` / `network` / `other`), calls `generate()` once per non-empty bucket, and takes `generated[0].content` for `<category>.ts`. So a generator must return at least one file for any IR it is handed, and its first file must be the whole content for those resources.
 
 ## The three files
 
 | File | Responsibility |
 |------|---------------|
-| `src/import/parser.ts` | Parse source format → IR |
-| `src/import/generator.ts` | IR → TypeScript source string |
+| `src/import/parser.ts` | Parse source format into IR |
+| `src/import/generator.ts` | IR into TypeScript source |
 | `src/import/roundtrip.test.ts` | End-to-end fixture tests |
 
-## The IR shape
-
-Every entity your parser produces must have this shape:
-
-```typescript
-interface EntityIR {
-  kind: string;           // discriminant — "service", "volume", etc.
-  name: string;           // identifier used as the export name
-  props: Record<string, unknown>;  // all properties, captured faithfully
-}
-```
-
-**Capture all props.** The IR is a lossless intermediate. Every property from the source file should appear in `props` so the generator can emit them. Dropping props silently causes roundtrip failures and user surprise.
+Two shapes are in use. github and gitlab implement `TemplateParser` / `TypeScriptGenerator` directly, so `plugin.ts` just returns `new GitHubActionsParser()`. docker keeps a lexicon-local `DockerIR` (`{ kind, name, props }`) that suits its multi-section source, and bridges it in `src/import/adapter.ts` with a `DockerTemplateParser` / `DockerTemplateGenerator` pair that maps `DockerIR` onto `ResourceIR` and back. Pick the second only when your source format genuinely does not fit `ResourceIR`; the examples below are docker's, so they show the local shape.
 
 ## parser.ts
 
@@ -217,11 +254,11 @@ src/import/testdata/
   full.yaml        # exercises every top-level section
 ```
 
-Load fixtures in tests using `readFileSync` relative to `import.meta.dir`:
+Load fixtures in tests using `readFileSync` relative to `import.meta.dirname`:
 
 ```typescript
 const testdata = (file: string) =>
-  readFileSync(join(import.meta.dir, "testdata", file), "utf8");
+  readFileSync(join(import.meta.dirname, "testdata", file), "utf8");
 ```
 
 ### roundtrip.test.ts pattern
@@ -281,9 +318,52 @@ test("simple.yaml → Service + Volume constructors", () => {
 | 3 | `full.yaml` → `Config` / `Secret` / `Network` constructors |
 | 4 | Multi-stage Dockerfile inline → `stages:` in output |
 
+## `chant migrate` — another provider's format
+
+`migrationSource(from)` is a separate hook for translating one lexicon's format into another, driven by `chant migrate <file> --from <lexicon> --to <lexicon>`. Core orchestrates I/O and exit codes; the target lexicon owns the translation.
+
+```typescript
+interface MigrationSource {
+  detect(content: string): boolean;                                    // does this look like `from`?
+  transform(content: string, opts: MigrateOptions): Promise<MigrationResult>;
+}
+```
+
+Implement it on the **target** lexicon, returning `undefined` for a `from` you do not handle. `lexicons/gitlab/src/plugin.ts` implements `migrationSource("github")` and `lexicons/forgejo/src/plugin.ts` does the same; both keep the transform behind a dynamic import so the migrate code stays out of the import graph until a translation actually runs.
+
+The CLI defaults `--from` to `github` and `--to` to `gitlab`. Its flags:
+
+| Flag | Meaning |
+|---|---|
+| `--from <lexicon>` | Source format (default `github`). |
+| `--to <lexicon>` | Target lexicon (default `gitlab`), loaded by name without a project context. |
+| `--emit yaml\|ts` | Emit target YAML or typed chant TypeScript (default `yaml`). |
+| `--strict` | |
+| `--validate` | Lint the result through the target lexicon's rules. |
+| `--use-composites` | |
+| `-o, --output <file>` | Write instead of printing. |
+| `--report <file>` | Write the SARIF provenance report. |
+
+## `chant import --agents` — local agent configuration
+
+`agentConfigImporter()` re-expresses skills, MCP servers and instruction files that `chant audit --agents` discovered as this lexicon's resources. Core does the harness-neutral discovery; the mapping onto concrete types is the lexicon's call, for the same reason `templateParser` is.
+
+```typescript
+interface AgentConfigImporter {
+  toTemplateIR(sites: AgentConfigSite[]): AgentImportOutcome;
+}
+```
+
+`lexicons/fountain/src/plugin.ts` is the only implementation, mapping onto fountain's `Agent` / `Environment` types. The CLI adds `--scope` and `--runtime` filters on top of the shared `--lexicon` / `--output` / `--force`.
+
 ## Reference implementations
 
-- **K8s** — uses `parseYAML`; iterates multi-document YAML separated by `---`
-- **AWS** — uses a custom YAML schema layer for CloudFormation intrinsic functions (`!Ref`, `!Sub`, etc.)
-- **Docker** — uses `parseYAML`; iterates top-level Compose sections
-- **Cedar** — the source format has its own grammar, so parsing is delegated to `@cedar-policy/cedar-wasm` rather than done here; the parser's own work is turning that module's output into props. Worth reading if your format has a real parser upstream
+| Lexicon | Files | Worth reading for |
+|---|---|---|
+| GitHub Actions | `lexicons/github/src/import/{parser,generator}.ts` | The direct shape: `TemplateParser` implemented on the class, one `ResourceIR` per workflow and per job, `main.ts` emitted as the single file |
+| GitLab CI | `lexicons/gitlab/src/import/{parser,generator}.ts` | The same shape over a flatter source document |
+| Forgejo | `lexicons/forgejo/src/migrate/` | A lexicon with `detectTemplate` and `migrationSource` but no parser of its own, because it runs GitHub-Actions-compatible YAML |
+| Docker | `lexicons/docker/src/import/{parser,generator,adapter}.ts` | The adapter shape: a lexicon-local IR bridged onto `ResourceIR` |
+| K8s | `lexicons/k8s/src/import/parser.ts` | `parseYAML` over multi-document YAML separated by `---` |
+| AWS | `lexicons/aws/src/import/parser.ts` | A custom YAML schema layer for CloudFormation intrinsics (`!Ref`, `!Sub`) |
+| Cedar | `lexicons/cedar/src/import/` | A format with a real upstream grammar: parsing is delegated to `@cedar-policy/cedar-wasm`, and the parser's own work is turning that output into properties |
